@@ -98,7 +98,6 @@ enum BrowserAction {
     Search,
     Favorite,
     Detail,
-    GenreFilter,
 }
 
 /// ROM browser winit application.
@@ -530,9 +529,10 @@ impl RomBrowserApp {
                                     &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")]
                                 } else {
                                     &[
-                                        ("A", "Details"),
-                                        ("B", "Filter"),
-                                        ("Select", "Favorite"),
+                                        ("A", "Launch"),
+                                        ("X", "Details"),
+                                        ("Y", "Fav"),
+                                        ("Select", "Fav"),
                                         ("Start", "Search"),
                                     ]
                                 };
@@ -1592,7 +1592,7 @@ impl RomBrowserApp {
             gilrs::Button::Start => Some(BrowserAction::Search),
             gilrs::Button::North => Some(BrowserAction::Detail), // Nintendo X button
             gilrs::Button::West => Some(BrowserAction::Favorite), // Nintendo Y button
-            gilrs::Button::Select => Some(BrowserAction::GenreFilter),
+            gilrs::Button::Select => Some(BrowserAction::Favorite),
             _ => None,
         }
     }
@@ -1753,10 +1753,6 @@ impl RomBrowserApp {
                     if self.selected_entry().is_some() {
                         self.detail_view_active = true;
                     }
-                }
-                BrowserAction::GenreFilter => {
-                    self.genre_filter_active = true;
-                    self.genre_cursor = 0;
                 }
             }
         }
