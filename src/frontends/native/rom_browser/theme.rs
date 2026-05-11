@@ -4,11 +4,11 @@
 
 use egui::Color32;
 
-/// Dark background colour (lighter grey for gradient top).
-pub const BG_COLOR: Color32 = Color32::from_rgb(42, 42, 50);
+/// Dark background colour (medium grey for gradient top).
+pub const BG_COLOR: Color32 = Color32::from_rgb(52, 52, 62);
 
-/// Slightly lighter background for gradient bottom.
-pub const BG_COLOR_LIGHT: Color32 = Color32::from_rgb(55, 55, 65);
+/// Lighter background for gradient bottom.
+pub const BG_COLOR_LIGHT: Color32 = Color32::from_rgb(72, 72, 82);
 
 /// Sidebar background colour (dark floating panel).
 pub const SIDEBAR_BG: Color32 = Color32::from_rgb(12, 12, 18);
@@ -54,6 +54,9 @@ pub const TITLE_HEIGHT: f32 = 0.0;
 
 /// Corner radius for cover art and UI elements.
 pub const CORNER_RADIUS: f32 = 8.0;
+
+/// Fixed height for the sidebar cover art area.
+pub const SIDEBAR_ART_HEIGHT: f32 = 260.0;
 
 /// Blur width for the selection glow effect.
 pub const SELECTION_GLOW: f32 = 12.0;

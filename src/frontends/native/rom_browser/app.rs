@@ -396,10 +396,10 @@ impl RomBrowserApp {
                 .fill(theme::SIDEBAR_BG)
                 .inner_margin(egui::Margin::same(12))
                 .outer_margin(egui::Margin {
-                    left: 8,
-                    right: 8,
-                    top: 8,
-                    bottom: 8,
+                    left: 10,
+                    right: 16,
+                    top: 10,
+                    bottom: 16,
                 })
                 .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
                 .stroke(egui::Stroke::NONE);
@@ -696,22 +696,34 @@ impl RomBrowserApp {
         entry: &RomEntry,
         tex_map: &HashMap<i64, (egui::TextureId, u32, u32)>,
     ) {
-        // Cover art image at the top of the sidebar, preserving aspect ratio.
+        // Fixed-height area for cover art so text position stays constant.
+        let avail_w = ui.available_width();
+        let art_area_h = theme::SIDEBAR_ART_HEIGHT;
+        let (art_rect, _) =
+            ui.allocate_exact_size(egui::vec2(avail_w, art_area_h), egui::Sense::hover());
+
         if let Some(game_id) = entry.metadata_game_id {
             if let Some(&(tex_id, tex_w, tex_h)) = tex_map.get(&game_id) {
-                let avail_w = ui.available_width();
                 let img_aspect = tex_w as f32 / tex_h.max(1) as f32;
-                let art_h = avail_w / img_aspect;
-                ui.add(
-                    egui::Image::from_texture(egui::load::SizedTexture::new(
-                        tex_id,
-                        egui::vec2(avail_w, art_h),
-                    ))
-                    .corner_radius(theme::CORNER_RADIUS),
+                // Fit image within the fixed area, preserving aspect ratio.
+                let (draw_w, draw_h) = if img_aspect > avail_w / art_area_h {
+                    (avail_w, avail_w / img_aspect)
+                } else {
+                    (art_area_h * img_aspect, art_area_h)
+                };
+                let cx = art_rect.center().x;
+                let cy = art_rect.center().y;
+                let img_rect =
+                    egui::Rect::from_center_size(egui::pos2(cx, cy), egui::vec2(draw_w, draw_h));
+                let rounding = egui::CornerRadius::same(theme::CORNER_RADIUS as u8);
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                ui.painter().add(
+                    egui::epaint::RectShape::filled(img_rect, rounding, egui::Color32::WHITE)
+                        .with_texture(tex_id, uv),
                 );
-                ui.add_space(8.0);
             }
         }
+        ui.add_space(8.0);
 
         ui.label(
             egui::RichText::new(&entry.display_name)
