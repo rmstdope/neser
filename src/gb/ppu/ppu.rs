@@ -495,7 +495,7 @@ impl Ppu {
             self.lyc_eq_ly_frozen = self.registers.lyc == 0;
             // Evaluate the STAT IRQ line synchronously at the point of LCD re-enable.
             // On real hardware, the LYC=LY comparison fires immediately when the LCD
-            // is turned on (SameBoy: GB_STAT_update at lcd-enable time). This means
+            // is turned on. This means
             // IF is updated before the NEXT instruction's service_interrupts() call.
             self.update_stat_irq();
         } else if was_enabled && !now_enabled {

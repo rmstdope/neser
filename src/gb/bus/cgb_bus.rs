@@ -499,7 +499,7 @@ impl CgbBus {
         self.cart.tick(u32::from(m_cycles));
 
         // HDMA state machine: activate pending HDMA when LCD turns on.
-        // Per SameBoy: HDMA requested with LCD off remains pending until LCD is enabled.
+        // HDMA requested with LCD off remains pending until LCD is enabled.
         // Once activated, actual transfers occur during HBlank periods (checked below).
         if self.hdma.is_hdma_pending() && self.ppu.is_lcd_enabled() {
             self.hdma.activate_hdma();
@@ -981,7 +981,7 @@ impl GbBus for CgbBus {
                         self.do_gdma_transfer();
                     }
                     HdmaAction::StartHdma => {
-                        // Per SameBoy: If HDMA is started while in HBlank (mode 0), transfer starts
+                        // If HDMA is started while in HBlank (mode 0), transfer starts
                         // immediately regardless of whether LCD is on or off. When LCD is off,
                         // mode is effectively 0, so one block transfers instantly.
                         if is_hblank {

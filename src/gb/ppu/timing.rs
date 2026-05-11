@@ -70,7 +70,7 @@ pub struct Timing {
     /// HBlank [252,456)), but STAT still shows a 4T lag at Mode 2 and Mode 3 starts.
     /// From scan 3 onwards, STAT uses physical mode for all transitions.
     third_scanline_after_enable: bool,
-    /// Mirrors SameBoy's `mode_for_interrupt` (-1 = suppress all mode IRQs,
+    /// (-1 = suppress all mode IRQs,
     /// 0-3 = mode whose STAT IRQ source is currently active).
     ///
     /// This differs from the STAT mode bits:
@@ -483,9 +483,8 @@ impl Timing {
     /// -1 = all mode IRQ sources suppressed (first scanline after LCD enable).
     /// 0-3 = the mode whose source is active.
     ///
-    /// This mirrors SameBoy's `mode_for_interrupt`. Mode 2 source activates
-    /// 4 T-cycles before the STAT mode bits change to Mode 2. Mode 0 source
-    /// also activates 4 T-cycles before HBlank begins (dot 252 with no penalty).
+    /// Mode 2 source activates 4 T-cycles before the STAT mode bits change to Mode 2.
+    /// Mode 0 source also activates 4 T-cycles before HBlank begins (dot 252 with no penalty).
     pub fn mode_for_irq(&self) -> i8 {
         self.mode_for_irq
     }

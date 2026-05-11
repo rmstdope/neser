@@ -102,7 +102,7 @@ pub struct Apu {
     #[serde(default)]
     skip_next_div_apu_event: bool,
     /// When `true`, the next DIV-APU event is serviced without advancing
-    /// `div_divider`. This models SameBoy's post-skip "SKIPPED" state: the
+    /// `div_divider`. The
     /// first event after a power-on-high skip still runs APU edge side effects,
     /// but keeps the seeded divider phase for length/envelope/sweep timing.
     #[serde(default)]
@@ -362,7 +362,7 @@ impl Apu {
         }
 
         // Decrement envelope countdowns every 8th FS event (64 Hz).
-        // Uses div_divider bit pattern to match SameBoy timing: fires when
+        // Uses div_divider bit pattern: fires when
         // div_divider & 7 == 7, i.e. on the 7th, 15th, 23rd … falling edges.
         if self.div_divider & 7 == 7 {
             trace_apu!(4; "GB APU decrement envelope countdowns");
@@ -710,7 +710,6 @@ impl Apu {
             self.skip_next_div_apu_event = false;
             self.div_apu_event_without_div_increment = false;
             // Reset CH4 counter model state (alignment, counter) on APU init,
-            // matching SameBoy's GB_apu_init which zeroes everything.
             self.ch4.apu_init();
             // On CGB, powering on resets all length counters to 0.
             if self.is_cgb {
@@ -731,7 +730,7 @@ impl Apu {
     /// "Starting the APU while bit 4 of the DIV register is set causes the APU
     /// to skip the first DIV-APU event."
     pub fn arm_skip_next_div_apu_event(&mut self) {
-        // SameBoy initializes this skipped-start phase to 1 so trigger-time
+        // Initializes this skipped-start phase to 1 so trigger-time
         // length glitches see `div_divider & 1 == 1`, even before the first
         // non-skipped DIV-APU event advances the divider. `extra_clk` uses this
         // LSB directly, so the following NR14 trigger can clock/reload length
@@ -803,8 +802,7 @@ mod tests {
     fn test_div_divider_does_not_advance_on_skipped_event() {
         // Power-on quirk: skip_next_div_apu_event suppresses both the FS
         // dispatch AND the div_divider increment. The following DIV-APU event is
-        // serviced without incrementing the divider, matching SameBoy's SKIPPED
-        // state before normal divider increments resume.
+        // serviced without incrementing the divider.
         let mut apu = powered_apu();
         apu.write_register(0xFF11, 0x3E);
         apu.write_register(0xFF12, 0x80);

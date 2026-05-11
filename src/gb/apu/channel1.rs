@@ -614,7 +614,7 @@ impl Channel1 {
 
     /// Decrement restart-hold after processing the deferred sweep tick.
     ///
-    /// SameBoy observes calculation completion against the pre-decrement hold
+    /// Observes calculation completion against the pre-decrement hold
     /// value, then drains the hold at the end of the same APU batch.
     fn clock_restart_hold_after_sweep_tick(&mut self) {
         if self.restart_hold > 0 {

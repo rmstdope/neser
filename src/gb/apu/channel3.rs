@@ -282,7 +282,7 @@ impl Channel3 {
 
         self.wave_pos = 0;
 
-        // SameBoy Core/apu.c NR34 handling refreshes current_sample_byte from
+        // Refreshes current_sample_byte from
         // wave RAM byte 0 only when CH3 is already active and sample_countdown
         // is 0: the channel is being retriggered exactly as the next wave byte
         // would be read. Other retriggers keep the previous fetched byte intact.

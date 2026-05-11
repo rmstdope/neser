@@ -521,7 +521,7 @@ mod tests {
 
         convert_autorun_for_rom(
             rom_path.to_str().expect("rom path to str"),
-            AutorunFormat::default(),
+            AutorunFormat::Json,
         )
         .expect("convert v2 to v3");
 

@@ -31,7 +31,7 @@ pub struct Channel4 {
     /// Envelope clock state for zombie mode glitch tracking.
     #[serde(default)]
     env_clock_state: EnvelopeClockState,
-    /// 14-bit up-counter for noise prescaler (SameBoy counter model).
+    /// 14-bit up-counter for noise prescaler.
     /// Tracks the hardware counter that drives LFSR clocking via
     /// rising-edge detection on bit(clock_shift).
     #[serde(default)]
@@ -531,9 +531,6 @@ impl Channel4 {
                 }
                 0x38 => 40, // shift=3, 7-bit, divisor_code=0
                 // Retrigger adds one extra period to the startup delay.
-                // SameBoy's prepare_noise_start increments counter_countdown
-                // by 1 when was_background_counting, which shifts the first
-                // LFSR clock by one full period in our freq_timer model.
                 _ => {
                     if was_active {
                         period * 2 + 4
@@ -550,7 +547,7 @@ impl Channel4 {
         // Reset envelope clock state on trigger.
         self.env_clock_state = EnvelopeClockState::default();
 
-        // Initialize counter model (SameBoy's prepare_noise_start).
+        // Initialize counter model.
         // Counter is NOT reset on trigger — only on APU init.
         let div = self.divisor_code;
         let mut initial_cd = if div == 0 {
@@ -573,7 +570,6 @@ impl Channel4 {
     }
 
     /// Reset counter model state when APU is turned on (NR52 bit 7 set).
-    /// Mirrors SameBoy's `GB_apu_init` which zeroes alignment and counter.
     pub fn apu_init(&mut self) {
         self.reset_counter_model();
     }

@@ -295,8 +295,7 @@ impl Timer {
     /// that our M-cycle model runs the bus tick *before* the register write, so no
     /// post-write T-cycles naturally fire the reload.
     ///
-    /// This mirrors SameBoy's `flush_pending_cycles` / `advance_tima_state_machine`
-    /// called at instruction end: the overflow fires within the same instruction slot,
+    /// The overflow fires within the same instruction slot,
     /// making the interrupt visible to `service_interrupts()` at the start of the
     /// next instruction.
     pub(crate) fn fire_write_overflow_if_pending(&mut self) -> bool {
