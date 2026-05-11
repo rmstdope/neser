@@ -47,7 +47,13 @@ pub const GRID_SPACING: f32 = 16.0;
 pub const GRID_PADDING: f32 = 20.0;
 
 /// Height reserved for the game title below cover art.
-pub const TITLE_HEIGHT: f32 = 36.0;
+pub const TITLE_HEIGHT: f32 = 0.0;
+
+/// Corner radius for cover art and UI elements.
+pub const CORNER_RADIUS: f32 = 8.0;
+
+/// Blur width for the selection glow effect.
+pub const SELECTION_GLOW: f32 = 12.0;
 
 /// Sidebar width as a fraction of window width.
 pub const SIDEBAR_FRACTION: f32 = 0.28;
@@ -128,8 +134,13 @@ mod tests {
     }
 
     #[test]
-    fn cell_height_is_taller_than_cover_width() {
+    fn cell_height_equals_cover_height() {
         let h = cell_height(150.0);
-        assert!(h > 150.0, "cell height should exceed cover width");
+        // With TITLE_HEIGHT = 0, cell height is purely cover art height.
+        let expected = 150.0 / COVER_ASPECT;
+        assert!(
+            (h - expected).abs() < 0.01,
+            "cell height should equal cover height when TITLE_HEIGHT is 0"
+        );
     }
 }

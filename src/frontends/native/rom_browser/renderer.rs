@@ -152,20 +152,31 @@ impl BrowserGl {
 
         let egui_glow = EguiGlow::new(event_loop, glow_context.clone(), None, None, true);
 
-        // Configure Press Start 2P font.
+        // Configure Inter font family.
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
-            "press_start_2p".to_owned(),
+            "inter_regular".to_owned(),
             egui::FontData::from_static(include_bytes!(
-                "../../../../assets/fonts/PressStart2P-Regular.ttf"
+                "../../../../assets/fonts/Inter-Regular.ttf"
             ))
             .into(),
+        );
+        fonts.font_data.insert(
+            "inter_bold".to_owned(),
+            egui::FontData::from_static(include_bytes!("../../../../assets/fonts/Inter-Bold.ttf"))
+                .into(),
         );
         fonts
             .families
             .entry(egui::FontFamily::Proportional)
             .or_default()
-            .insert(0, "press_start_2p".to_owned());
+            .insert(0, "inter_regular".to_owned());
+        // Map monospace family to Inter Bold for headings.
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .insert(0, "inter_bold".to_owned());
         egui_glow.egui_ctx.set_fonts(fonts);
 
         // Dark theme.

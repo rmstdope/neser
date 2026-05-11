@@ -367,11 +367,15 @@ impl RomBrowserApp {
             ui.ctx().global_style_mut(|s| {
                 s.text_styles.insert(
                     egui::TextStyle::Body,
-                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                    egui::FontId::new(14.0, egui::FontFamily::Proportional),
                 );
                 s.text_styles.insert(
                     egui::TextStyle::Small,
-                    egui::FontId::new(8.0, egui::FontFamily::Proportional),
+                    egui::FontId::new(11.0, egui::FontFamily::Proportional),
+                );
+                s.text_styles.insert(
+                    egui::TextStyle::Heading,
+                    egui::FontId::new(18.0, egui::FontFamily::Monospace),
                 );
             });
 
@@ -398,7 +402,7 @@ impl RomBrowserApp {
                     ui.label(
                         egui::RichText::new(&header_text)
                             .color(theme::HEADER_TEXT)
-                            .size(10.0),
+                            .size(14.0),
                     );
                 });
 
@@ -418,7 +422,7 @@ impl RomBrowserApp {
                     ui.label(
                         egui::RichText::new(footer_text)
                             .color(theme::DIM_TEXT)
-                            .size(8.0),
+                            .size(11.0),
                     );
                 });
 
@@ -478,7 +482,7 @@ impl RomBrowserApp {
             ui.label(
                 egui::RichText::new("NESER ROM Browser")
                     .color(theme::HEADER_TEXT)
-                    .size(14.0),
+                    .size(20.0),
             );
             ui.add_space(8.0);
 
@@ -495,7 +499,7 @@ impl RomBrowserApp {
                 ui.label(
                     egui::RichText::new(format!("{phase_label}: {} / {}", p.current, p.total))
                         .color(theme::DIM_TEXT)
-                        .size(10.0),
+                        .size(13.0),
                 );
                 ui.add_space(4.0);
                 ui.add(
@@ -513,13 +517,13 @@ impl RomBrowserApp {
                 ui.label(
                     egui::RichText::new(&title)
                         .color(theme::DIM_TEXT)
-                        .size(10.0),
+                        .size(12.0),
                 );
             } else {
                 ui.label(
                     egui::RichText::new("Scanning ROM library...")
                         .color(theme::DIM_TEXT)
-                        .size(10.0),
+                        .size(13.0),
                 );
                 ui.add_space(4.0);
                 ui.add(
@@ -551,13 +555,13 @@ impl RomBrowserApp {
                     ui.label(
                         egui::RichText::new("No ROMs found. Add ROM files to ~/.neser/roms/")
                             .color(theme::DIM_TEXT)
-                            .size(10.0),
+                            .size(13.0),
                     );
                 } else {
                     ui.label(
                         egui::RichText::new(format!("No games match \"{search_query}\""))
                             .color(theme::DIM_TEXT)
-                            .size(10.0),
+                            .size(13.0),
                     );
                 }
             });
@@ -568,6 +572,7 @@ impl RomBrowserApp {
         ui.allocate_rect(panel_rect, egui::Sense::hover());
         let painter = ui.painter_at(panel_rect);
         let origin = panel_rect.min;
+        let rounding = egui::CornerRadius::same(theme::CORNER_RADIUS as u8);
 
         for (i, entry) in entries.iter().enumerate() {
             let row = (i / cols) as f32;
@@ -580,90 +585,66 @@ impl RomBrowserApp {
                 continue;
             }
 
+            let cover_rect =
+                egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(cover_w, cover_h));
+
+            // Selection glow effect (drawn behind the image).
             if i == selected {
-                painter.rect_stroke(
-                    egui::Rect::from_min_max(
-                        egui::pos2(x - 3.0, y - 3.0),
-                        egui::pos2(x + cover_w + 3.0, y + cell_h + 3.0),
-                    ),
-                    egui::CornerRadius::same(4),
-                    egui::Stroke::new(2.5, theme::SELECTION_COLOR),
-                    egui::StrokeKind::Middle,
+                let glow_rect = cover_rect.expand(4.0);
+                painter.add(
+                    egui::epaint::RectShape::filled(glow_rect, rounding, theme::SELECTION_COLOR)
+                        .with_blur_width(theme::SELECTION_GLOW),
                 );
             }
 
-            let cover_rect =
-                egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(cover_w, cover_h));
+            // Cover art or placeholder with rounded corners.
             if let Some(game_id) = entry.metadata_game_id {
                 if let Some(&(tex_id, _, _)) = tex_map.get(&game_id) {
-                    painter.image(
-                        tex_id,
-                        cover_rect,
-                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
+                    let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+                    painter.add(
+                        egui::epaint::RectShape::filled(cover_rect, rounding, egui::Color32::WHITE)
+                            .with_texture(tex_id, uv),
                     );
                 } else {
-                    painter.rect_filled(
-                        cover_rect,
-                        egui::CornerRadius::ZERO,
-                        theme::PLACEHOLDER_BG,
-                    );
-                    let max_chars = (cover_w / 7.0) as usize;
+                    painter.rect_filled(cover_rect, rounding, theme::PLACEHOLDER_BG);
+                    let max_chars = (cover_w / 8.0) as usize;
                     let short = if entry.display_name.len() > max_chars && max_chars > 3 {
                         format!("{}...", &entry.display_name[..max_chars - 3])
                     } else {
                         entry.display_name.clone()
                     };
                     painter.text(
-                        egui::pos2(x + 6.0, y + cover_h / 2.0 - 5.0),
-                        egui::Align2::LEFT_TOP,
+                        cover_rect.center(),
+                        egui::Align2::CENTER_CENTER,
                         &short,
-                        egui::FontId::new(8.0, egui::FontFamily::Proportional),
+                        egui::FontId::new(10.0, egui::FontFamily::Proportional),
                         theme::DIM_TEXT,
                     );
                 }
             } else {
-                painter.rect_filled(cover_rect, egui::CornerRadius::ZERO, theme::PLACEHOLDER_BG);
-                let max_chars = (cover_w / 7.0) as usize;
+                painter.rect_filled(cover_rect, rounding, theme::PLACEHOLDER_BG);
+                let max_chars = (cover_w / 8.0) as usize;
                 let short = if entry.display_name.len() > max_chars && max_chars > 3 {
                     format!("{}...", &entry.display_name[..max_chars - 3])
                 } else {
                     entry.display_name.clone()
                 };
                 painter.text(
-                    egui::pos2(x + 6.0, y + cover_h / 2.0 - 5.0),
-                    egui::Align2::LEFT_TOP,
+                    cover_rect.center(),
+                    egui::Align2::CENTER_CENTER,
                     &short,
-                    egui::FontId::new(8.0, egui::FontFamily::Proportional),
+                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
                     theme::DIM_TEXT,
                 );
             }
 
-            let title_color = if i == selected {
-                theme::SELECTED_TEXT
-            } else {
-                theme::TEXT_COLOR
-            };
-            let max_chars = (cover_w / 8.0) as usize;
-            let title = if entry.display_name.len() > max_chars && max_chars > 3 {
-                format!("{}...", &entry.display_name[..max_chars - 3])
-            } else {
-                entry.display_name.clone()
-            };
-            painter.text(
-                egui::pos2(x + 2.0, y + cover_h + 4.0),
-                egui::Align2::LEFT_TOP,
-                &title,
-                egui::FontId::new(9.0, egui::FontFamily::Proportional),
-                title_color,
-            );
-
+            // Favourite heart badge.
             if entry.is_favorite {
                 painter.text(
-                    egui::pos2(x + cover_w - 14.0, y + 4.0),
+                    egui::pos2(x + cover_w - 16.0, y + 6.0),
                     egui::Align2::LEFT_TOP,
                     "\u{2665}",
-                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                    egui::FontId::new(14.0, egui::FontFamily::Proportional),
                     theme::FAVORITE_COLOR,
                 );
             }
@@ -680,10 +661,13 @@ impl RomBrowserApp {
             if let Some(&(tex_id, _, _)) = tex_map.get(&game_id) {
                 let avail_w = ui.available_width();
                 let art_h = avail_w / theme::COVER_ASPECT;
-                ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
-                    tex_id,
-                    egui::vec2(avail_w, art_h),
-                )));
+                ui.add(
+                    egui::Image::from_texture(egui::load::SizedTexture::new(
+                        tex_id,
+                        egui::vec2(avail_w, art_h),
+                    ))
+                    .rounding(theme::CORNER_RADIUS),
+                );
                 ui.add_space(8.0);
             }
         }
@@ -691,7 +675,7 @@ impl RomBrowserApp {
         ui.label(
             egui::RichText::new(&entry.display_name)
                 .color(theme::HEADER_TEXT)
-                .size(12.0),
+                .size(16.0),
         );
         ui.add_space(4.0);
         ui.separator();
@@ -701,28 +685,28 @@ impl RomBrowserApp {
             ui.label(
                 egui::RichText::new(format!("Genre: {}", entry.genres.join(", ")))
                     .color(theme::DIM_TEXT)
-                    .size(9.0),
+                    .size(12.0),
             );
         }
         if let Some(ref date) = entry.release_date {
             ui.label(
                 egui::RichText::new(format!("Released: {date}"))
                     .color(theme::DIM_TEXT)
-                    .size(9.0),
+                    .size(12.0),
             );
         }
         if let Some(players) = entry.players {
             ui.label(
                 egui::RichText::new(format!("Players: {players}"))
                     .color(theme::DIM_TEXT)
-                    .size(9.0),
+                    .size(12.0),
             );
         }
         if let Some(ref rating) = entry.rating {
             ui.label(
                 egui::RichText::new(format!("Rating: {rating}"))
                     .color(theme::DIM_TEXT)
-                    .size(9.0),
+                    .size(12.0),
             );
         }
 
@@ -733,7 +717,7 @@ impl RomBrowserApp {
             ui.label(
                 egui::RichText::new(overview)
                     .color(theme::TEXT_COLOR)
-                    .size(9.0),
+                    .size(12.0),
             );
         }
 
@@ -743,27 +727,27 @@ impl RomBrowserApp {
         ui.label(
             egui::RichText::new(format!("Mapper: {}", entry.mapper_label))
                 .color(theme::DIM_TEXT)
-                .size(9.0),
+                .size(12.0),
         );
         if let Some(ref crc) = entry.crc {
             ui.label(
                 egui::RichText::new(format!("CRC: {crc}"))
                     .color(theme::DIM_TEXT)
-                    .size(9.0),
+                    .size(12.0),
             );
         }
         if let Some(ref hw) = entry.hardware {
             ui.label(
                 egui::RichText::new(format!("Hardware: {hw}"))
                     .color(theme::DIM_TEXT)
-                    .size(9.0),
+                    .size(12.0),
             );
         }
         if entry.is_favorite {
             ui.label(
                 egui::RichText::new("\u{2665} Favourite")
                     .color(theme::FAVORITE_COLOR)
-                    .size(10.0),
+                    .size(13.0),
             );
         }
     }
@@ -793,7 +777,7 @@ impl RomBrowserApp {
                 ui.label(
                     egui::RichText::new(format!("Search: {query}\u{258C}    ({count} matches)"))
                         .color(theme::HEADER_TEXT)
-                        .size(10.0),
+                        .size(14.0),
                 );
             });
     }
@@ -832,7 +816,7 @@ impl RomBrowserApp {
                 ui.label(
                     egui::RichText::new("Filter by Genre")
                         .color(theme::HEADER_TEXT)
-                        .size(10.0),
+                        .size(14.0),
                 );
                 ui.separator();
 
@@ -854,7 +838,7 @@ impl RomBrowserApp {
                     } else {
                         format!("  {marker}{genre}")
                     };
-                    ui.label(egui::RichText::new(&label).color(color).size(9.0));
+                    ui.label(egui::RichText::new(&label).color(color).size(12.0));
                 }
             });
     }
@@ -897,10 +881,13 @@ impl RomBrowserApp {
                         && let Some(&(tex_id, _, _)) = tex_map.get(&game_id)
                     {
                         let art_h = boxart_w / theme::COVER_ASPECT;
-                        ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
-                            tex_id,
-                            egui::vec2(boxart_w, art_h),
-                        )));
+                        ui.add(
+                            egui::Image::from_texture(egui::load::SizedTexture::new(
+                                tex_id,
+                                egui::vec2(boxart_w, art_h),
+                            ))
+                            .rounding(theme::CORNER_RADIUS),
+                        );
                     }
 
                     // Right: metadata.
@@ -908,7 +895,7 @@ impl RomBrowserApp {
                         ui.label(
                             egui::RichText::new(&entry.display_name)
                                 .color(theme::HEADER_TEXT)
-                                .size(12.0),
+                                .size(18.0),
                         );
                         ui.separator();
 
@@ -916,54 +903,54 @@ impl RomBrowserApp {
                             ui.label(
                                 egui::RichText::new(format!("Genre: {}", entry.genres.join(", ")))
                                     .color(theme::DIM_TEXT)
-                                    .size(9.0),
+                                    .size(13.0),
                             );
                         }
                         if let Some(ref date) = entry.release_date {
                             ui.label(
                                 egui::RichText::new(format!("Released: {date}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(9.0),
+                                    .size(13.0),
                             );
                         }
                         if let Some(players) = entry.players {
                             ui.label(
                                 egui::RichText::new(format!("Players: {players}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(9.0),
+                                    .size(13.0),
                             );
                         }
                         if let Some(ref rating) = entry.rating {
                             ui.label(
                                 egui::RichText::new(format!("Rating: {rating}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(9.0),
+                                    .size(13.0),
                             );
                         }
                         ui.label(
                             egui::RichText::new(format!("Mapper: {}", entry.mapper_label))
                                 .color(theme::DIM_TEXT)
-                                .size(9.0),
+                                .size(13.0),
                         );
                         if let Some(ref crc) = entry.crc {
                             ui.label(
                                 egui::RichText::new(format!("CRC: {crc}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(9.0),
+                                    .size(13.0),
                             );
                         }
                         if let Some(ref hw) = entry.hardware {
                             ui.label(
                                 egui::RichText::new(format!("Hardware: {hw}"))
                                     .color(theme::DIM_TEXT)
-                                    .size(9.0),
+                                    .size(13.0),
                             );
                         }
                         if entry.is_favorite {
                             ui.label(
                                 egui::RichText::new("\u{2665} Favourite")
                                     .color(theme::FAVORITE_COLOR)
-                                    .size(10.0),
+                                    .size(14.0),
                             );
                         }
 
@@ -972,7 +959,7 @@ impl RomBrowserApp {
                             ui.label(
                                 egui::RichText::new(overview)
                                     .color(theme::TEXT_COLOR)
-                                    .size(9.0),
+                                    .size(13.0),
                             );
                         }
 
@@ -980,7 +967,7 @@ impl RomBrowserApp {
                         ui.label(
                             egui::RichText::new("Enter: Launch  |  Esc: Back to grid")
                                 .color(theme::DIM_TEXT)
-                                .size(9.0),
+                                .size(12.0),
                         );
                     });
                 });
