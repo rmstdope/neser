@@ -395,20 +395,33 @@ impl RomBrowserApp {
                 [theme::BG_COLOR, theme::BG_COLOR_LIGHT],
             ));
 
-            let sidebar_frame = egui::Frame::new()
-                .fill(theme::SIDEBAR_BG)
-                .inner_margin(egui::Margin::same(12))
-                .outer_margin(egui::Margin::same(32))
-                .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
+            // Right panel is transparent; the floating dark sidebar is drawn inside.
+            let sidebar_panel_frame = egui::Frame::new()
+                .fill(egui::Color32::TRANSPARENT)
+                .inner_margin(egui::Margin::same(0))
                 .stroke(egui::Stroke::NONE);
             egui::Panel::right("sidebar")
                 .exact_size(sidebar_w)
                 .resizable(false)
-                .frame(sidebar_frame)
+                .frame(sidebar_panel_frame)
                 .show_inside(ui, |ui| {
-                    if let Some(ref entry) = selected_entry {
-                        Self::render_sidebar_egui(ui, entry, &tex_map);
-                    }
+                    // Floating dark rectangle with margin inside the transparent panel.
+                    egui::Frame::new()
+                        .fill(theme::SIDEBAR_BG)
+                        .inner_margin(egui::Margin::same(12))
+                        .outer_margin(egui::Margin {
+                            left: 16,
+                            right: 16,
+                            top: 16,
+                            bottom: 16,
+                        })
+                        .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
+                        .stroke(egui::Stroke::NONE)
+                        .show(ui, |ui| {
+                            if let Some(ref entry) = selected_entry {
+                                Self::render_sidebar_egui(ui, entry, &tex_map);
+                            }
+                        });
                 });
 
             let bar_frame = egui::Frame::new()

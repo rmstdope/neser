@@ -77,7 +77,7 @@ pub const HEADER_HEIGHT: f32 = 48.0;
 pub const FOOTER_HEIGHT: f32 = 36.0;
 
 /// Smooth scroll speed (higher = faster, 1.0 = instant).
-pub const SCROLL_SPEED: f32 = 25.0;
+pub const SCROLL_SPEED: f32 = 50.0;
 
 /// Calculate the number of grid columns and cover width for a given area.
 ///
