@@ -848,54 +848,54 @@ impl RomBrowserApp {
                     ui.label(
                         egui::RichText::new(format!("Genre: {}", entry.genres.join(", ")))
                             .color(theme::DIM_TEXT)
-                            .size(12.0),
+                            .size(15.0),
                     );
                 }
                 if let Some(ref date) = entry.release_date {
                     ui.label(
                         egui::RichText::new(format!("Released: {date}"))
                             .color(theme::DIM_TEXT)
-                            .size(12.0),
+                            .size(15.0),
                     );
                 }
                 if let Some(players) = entry.players {
                     ui.label(
                         egui::RichText::new(format!("Players: {players}"))
                             .color(theme::DIM_TEXT)
-                            .size(12.0),
+                            .size(15.0),
                     );
                 }
                 if let Some(ref rating) = entry.rating {
                     ui.label(
                         egui::RichText::new(format!("Rating: {rating}"))
                             .color(theme::DIM_TEXT)
-                            .size(12.0),
+                            .size(15.0),
                     );
                 }
                 ui.label(
                     egui::RichText::new(format!("Mapper: {}", entry.mapper_label))
                         .color(theme::DIM_TEXT)
-                        .size(12.0),
+                        .size(15.0),
                 );
                 if let Some(ref crc) = entry.crc {
                     ui.label(
                         egui::RichText::new(format!("CRC: {crc}"))
                             .color(theme::DIM_TEXT)
-                            .size(12.0),
+                            .size(15.0),
                     );
                 }
                 if let Some(ref hw) = entry.hardware {
                     ui.label(
                         egui::RichText::new(format!("Hardware: {hw}"))
                             .color(theme::DIM_TEXT)
-                            .size(12.0),
+                            .size(15.0),
                     );
                 }
                 if entry.is_favorite {
                     ui.label(
                         egui::RichText::new("\u{2665} Favourite")
                             .color(theme::FAVORITE_COLOR)
-                            .size(13.0),
+                            .size(16.0),
                     );
                 }
             });
@@ -910,7 +910,7 @@ impl RomBrowserApp {
                     ui.label(
                         egui::RichText::new(overview)
                             .color(theme::TEXT_COLOR)
-                            .size(12.0),
+                            .size(15.0),
                     );
                 });
         }
