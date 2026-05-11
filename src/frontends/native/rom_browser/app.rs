@@ -356,14 +356,18 @@ impl RomBrowserApp {
         };
 
         gl.run_frame(|ui| {
-            ui.ctx().set_visuals(egui::Visuals {
-                dark_mode: true,
-                panel_fill: theme::BG_COLOR,
-                window_fill: theme::BG_COLOR,
-                extreme_bg_color: egui::Color32::from_rgb(10, 10, 15),
-                faint_bg_color: egui::Color32::from_rgb(20, 20, 30),
-                ..egui::Visuals::dark()
-            });
+            let mut visuals = egui::Visuals::dark();
+            visuals.dark_mode = true;
+            visuals.panel_fill = theme::BG_COLOR;
+            visuals.window_fill = theme::BG_COLOR;
+            visuals.extreme_bg_color = egui::Color32::from_rgb(10, 10, 15);
+            visuals.faint_bg_color = egui::Color32::from_rgb(20, 20, 30);
+            // Remove all widget/panel borders for a clean look.
+            visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
+            visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+            visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+            visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+            ui.ctx().set_visuals(visuals);
             ui.ctx().global_style_mut(|s| {
                 s.text_styles.insert(
                     egui::TextStyle::Body,
@@ -381,7 +385,9 @@ impl RomBrowserApp {
 
             let sidebar_frame = egui::Frame::new()
                 .fill(theme::SIDEBAR_BG)
-                .inner_margin(egui::Margin::same(8));
+                .inner_margin(egui::Margin::same(12))
+                .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
+                .stroke(egui::Stroke::NONE);
             egui::Panel::right("sidebar")
                 .exact_size(sidebar_w)
                 .resizable(false)
@@ -394,7 +400,8 @@ impl RomBrowserApp {
 
             let bar_frame = egui::Frame::new()
                 .fill(theme::BG_COLOR)
-                .inner_margin(egui::Margin::same(8));
+                .inner_margin(egui::Margin::same(8))
+                .stroke(egui::Stroke::NONE);
             egui::Panel::top("header")
                 .exact_size(theme::HEADER_HEIGHT)
                 .frame(bar_frame)
@@ -427,7 +434,11 @@ impl RomBrowserApp {
                 });
 
             egui::CentralPanel::default()
-                .frame(egui::Frame::new().fill(theme::BG_COLOR))
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::BG_COLOR)
+                        .stroke(egui::Stroke::NONE),
+                )
                 .show_inside(ui, |ui| {
                     Self::render_grid_egui(
                         ui,
@@ -599,10 +610,23 @@ impl RomBrowserApp {
 
             // Cover art or placeholder with rounded corners.
             if let Some(game_id) = entry.metadata_game_id {
-                if let Some(&(tex_id, _, _)) = tex_map.get(&game_id) {
+                if let Some(&(tex_id, tex_w, tex_h)) = tex_map.get(&game_id) {
+                    // Preserve the image's actual aspect ratio within the cell.
+                    let img_aspect = tex_w as f32 / tex_h.max(1) as f32;
+                    let (draw_w, draw_h) = if img_aspect > cover_w / cover_h {
+                        (cover_w, cover_w / img_aspect)
+                    } else {
+                        (cover_h * img_aspect, cover_h)
+                    };
+                    let draw_x = x + (cover_w - draw_w) / 2.0;
+                    let draw_y = y + (cover_h - draw_h) / 2.0;
+                    let img_rect = egui::Rect::from_min_size(
+                        egui::pos2(draw_x, draw_y),
+                        egui::vec2(draw_w, draw_h),
+                    );
                     let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
                     painter.add(
-                        egui::epaint::RectShape::filled(cover_rect, rounding, egui::Color32::WHITE)
+                        egui::epaint::RectShape::filled(img_rect, rounding, egui::Color32::WHITE)
                             .with_texture(tex_id, uv),
                     );
                 } else {
