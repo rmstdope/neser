@@ -973,20 +973,25 @@ impl RomBrowserApp {
                 ui.painter()
                     .rect_filled(outer_rect, outer_rounding, theme::LEGEND_ITEM_BG);
 
-                // Inner coloured button pill.
+                // Inner outlined button pill.
                 let pill_x = x + outer_pad_x;
                 let pill_rect = egui::Rect::from_min_size(
                     egui::pos2(pill_x, cy - pill_h / 2.0),
                     egui::vec2(pill_w, pill_h),
                 );
-                let pill_bg = Self::button_pill_color(btn);
-                ui.painter().rect_filled(pill_rect, pill_rounding, pill_bg);
+                let pill_color = Self::button_pill_color(btn);
+                ui.painter().rect_stroke(
+                    pill_rect,
+                    pill_rounding,
+                    egui::Stroke::new(1.5, pill_color),
+                    egui::StrokeKind::Outside,
+                );
                 ui.painter().text(
                     pill_rect.center(),
                     egui::Align2::CENTER_CENTER,
                     btn,
                     pill_font.clone(),
-                    theme::BUTTON_PILL_TEXT,
+                    pill_color,
                 );
 
                 // Action label.
