@@ -97,6 +97,11 @@ samesuite_apu_test_enabled!(
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
 samesuite_apu_test_enabled!(
+    test_samesuite_apu_channel_1_freq_change_timing_cgbd,
+    &format!("{BASE}/channel_1/channel_1_freq_change_timing-cgbDE.gb"),
+    SameSuiteHardware::Cgb(CgbModel::CgbD)
+);
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_nrx2_glitch,
     &format!("{BASE}/channel_1/channel_1_nrx2_glitch.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)

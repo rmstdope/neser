@@ -934,8 +934,12 @@ impl Channel1 {
     }
 
     pub fn write_nr13(&mut self, val: u8) {
+        self.write_nr13_with_apu_phase(val, None);
+    }
+
+    pub fn write_nr13_with_apu_phase(&mut self, val: u8, double_speed_phase_bits: Option<u8>) {
         self.freq = (self.freq & 0x0700) | u16::from(val);
-        self.apply_active_freq_rewrite_timing(None);
+        self.apply_active_freq_rewrite_timing(double_speed_phase_bits);
         trace_apu!(2; "GB APU CH1 write NR13=0x{:02X} freq=0x{:03X}", val, self.freq);
     }
 

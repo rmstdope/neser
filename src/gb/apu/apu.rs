@@ -606,7 +606,9 @@ impl Apu {
             0xFF10 => self.ch1.write_nr10(val, self.lf_div),
             0xFF11 => self.ch1.write_nr11(val),
             0xFF12 => self.ch1.write_nr12(val),
-            0xFF13 => self.ch1.write_nr13(val),
+            0xFF13 => self
+                .ch1
+                .write_nr13_with_apu_phase(val, double_speed_phase_bits),
             0xFF14 => self.ch1.write_nr14_with_apu_phase_and_length_quirk(
                 val,
                 extra_clk,
