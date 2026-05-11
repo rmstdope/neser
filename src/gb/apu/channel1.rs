@@ -112,7 +112,8 @@ pub struct Channel1 {
     env_timer: u8,                 // envelope period countdown
     /// True when the frequency timer reloaded exactly at the end of the last
     /// APU tick. CGB CH1 frequency rewrites can replace the freshly-reloaded
-    /// period before the next pulse step.
+    /// period before the next pulse step. Reset at the start of each tick so
+    /// only writes occurring before the next CH1 tick observe the reload.
     #[serde(default)]
     freq_timer_just_reloaded: bool,
     /// Latched square-wave PCM output. Duty register writes do not affect this
@@ -1016,7 +1017,7 @@ impl Channel1 {
             return;
         }
         let period = (2048 - self.freq) * 4;
-        // SameSuite's CGB-0/B/C timing ROM observes the freshly-reloaded period
+        // SameSuite's CGB-0/A/B/C timing ROM observes the freshly-reloaded period
         // taking effect one APU tick (at 2 MHz) later than on CGB-D/E.
         let cgb_revision_delay_t = if self.is_early_cgb_revision() {
             EARLY_CGB_FREQ_REWRITE_DELAY_T
