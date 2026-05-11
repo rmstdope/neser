@@ -398,12 +398,7 @@ impl RomBrowserApp {
             let sidebar_frame = egui::Frame::new()
                 .fill(theme::SIDEBAR_BG)
                 .inner_margin(egui::Margin::same(12))
-                .outer_margin(egui::Margin {
-                    left: 10,
-                    right: 0,
-                    top: 10,
-                    bottom: 16,
-                })
+                .outer_margin(egui::Margin::same(32))
                 .corner_radius(egui::CornerRadius::same(theme::CORNER_RADIUS as u8))
                 .stroke(egui::Stroke::NONE);
             egui::Panel::right("sidebar")
