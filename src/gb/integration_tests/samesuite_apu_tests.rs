@@ -86,17 +86,20 @@ samesuite_apu_test_enabled!(
     &format!("{BASE}/channel_1/channel_1_freq_change.gb"),
     SameSuiteHardware::Cgb(CgbModel::CgbE)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_freq_change_timing_cgb0bc,
     &format!("{BASE}/channel_1/channel_1_freq_change_timing-cgb0BC.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbC),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbB)
 );
-samesuite_apu_test!(
+samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_freq_change_timing_cgbde,
     &format!("{BASE}/channel_1/channel_1_freq_change_timing-cgbDE.gb"),
-    SameSuiteHardware::Cgb(CgbModel::CgbD),
-    "Known SameSuite APU CGB gap on neser; tracked under issue #2262"
+    SameSuiteHardware::Cgb(CgbModel::CgbE)
+);
+samesuite_apu_test_enabled!(
+    test_samesuite_apu_channel_1_freq_change_timing_cgbd,
+    &format!("{BASE}/channel_1/channel_1_freq_change_timing-cgbDE.gb"),
+    SameSuiteHardware::Cgb(CgbModel::CgbD)
 );
 samesuite_apu_test_enabled!(
     test_samesuite_apu_channel_1_nrx2_glitch,

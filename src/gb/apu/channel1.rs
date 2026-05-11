@@ -4,6 +4,19 @@ use crate::gb::model::CgbModel;
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
+/// Extra delay observed by SameSuite for freshly-reloaded CH1 frequency
+/// rewrites on CGB-0/A/B/C compared with CGB-D/E.
+const EARLY_CGB_FREQ_REWRITE_DELAY_T: u16 = 2;
+const LATE_CGB_FREQ_REWRITE_DELAY_T: u16 = 0;
+/// CGB-0/A/B/C non-reload rewrite windows where the old fast period is extended
+/// by one APU tick before the new period takes effect.
+const EARLY_CGB_REWRITE_EXTENSION_AMOUNT_T: u16 = 4;
+const EARLY_CGB_NORMAL_REWRITE_EXTENSION_TIMER_T: u16 = 6;
+const EARLY_CGB_DOUBLE_REWRITE_EXTENSION_TIMER_T: u16 = 2;
+/// CGB-D/E double-speed rewrite window where SameSuite observes the new period
+/// taking effect before the next nominal reload boundary.
+const LATE_CGB_DOUBLE_REWRITE_TIMER_T: u16 = 14;
+
 /// Envelope clock state for zombie mode glitch tracking.
 /// The envelope clock affects how NRx2 writes modify volume.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -98,6 +111,12 @@ pub struct Channel1 {
     pub(crate) length_counter: u8, // 0-64; silences when reaches 0
     volume: u8,                    // current volume 0-15
     env_timer: u8,                 // envelope period countdown
+    /// True when the frequency timer reloaded exactly at the end of the last
+    /// APU tick. CGB CH1 frequency rewrites can replace the freshly-reloaded
+    /// period before the next pulse step. Reset at the start of each tick so
+    /// only writes occurring before the next CH1 tick observe the reload.
+    #[serde(default)]
+    freq_timer_just_reloaded: bool,
     /// Latched square-wave PCM output. Duty register writes do not affect this
     /// until the current sample finishes and the duty step advances.
     #[serde(default)]
@@ -220,6 +239,7 @@ impl Channel1 {
             length_counter: 0,
             volume: 0,
             env_timer: 0,
+            freq_timer_just_reloaded: false,
             current_output: 0,
             sweep_shadow: 0,
             sweep_enabled: false,
@@ -329,14 +349,19 @@ impl Channel1 {
         if !self.active {
             return;
         }
+        // Only a reload on the final T-cycle can be observed by CPU register
+        // writes before the next CH1 tick; earlier reloads are immediately
+        // followed by additional timer decrements within this same tick.
+        self.freq_timer_just_reloaded = false;
         let period = (2048 - self.freq) * 4;
         if self.freq_timer == 0 {
             self.freq_timer = period;
         }
-        for _ in 0..4 {
+        for t in 0..4 {
             self.freq_timer -= 1;
             if self.freq_timer == 0 {
                 self.freq_timer = period;
+                self.freq_timer_just_reloaded = t == 3;
                 if self.triggered_once {
                     let old_pos = self.duty_pos;
                     self.duty_pos = (self.duty_pos + 1) & 7;
@@ -392,6 +417,19 @@ impl Channel1 {
     /// True when the model uses the deferred sweep recalc machinery.
     fn uses_deferred_sweep(&self) -> bool {
         self.is_cgb && self.cgb_model == CgbModel::CgbE
+    }
+
+    fn is_early_cgb_revision(&self) -> bool {
+        self.is_cgb
+            && matches!(
+                self.cgb_model,
+                CgbModel::Cgb0 | CgbModel::CgbA | CgbModel::CgbB | CgbModel::CgbC
+            )
+    }
+
+    fn matches_early_cgb_rewrite_extension_window(&self, double_speed: bool) -> bool {
+        (!double_speed && self.freq_timer == EARLY_CGB_NORMAL_REWRITE_EXTENSION_TIMER_T)
+            || (double_speed && self.freq_timer == EARLY_CGB_DOUBLE_REWRITE_EXTENSION_TIMER_T)
     }
 
     /// Synchronous sweep step (Phase 0-3 path, retained for DMG / pre-CGB-E).
@@ -896,7 +934,12 @@ impl Channel1 {
     }
 
     pub fn write_nr13(&mut self, val: u8) {
+        self.write_nr13_with_apu_phase(val, None);
+    }
+
+    pub fn write_nr13_with_apu_phase(&mut self, val: u8, double_speed_phase_bits: Option<u8>) {
         self.freq = (self.freq & 0x0700) | u16::from(val);
+        self.apply_active_freq_rewrite_timing(double_speed_phase_bits);
         trace_apu!(2; "GB APU CH1 write NR13=0x{:02X} freq=0x{:03X}", val, self.freq);
     }
 
@@ -935,6 +978,9 @@ impl Channel1 {
         let old_length_en = self.length_en;
         self.length_en = val & 0x40 != 0;
         self.freq = (self.freq & 0x00FF) | (u16::from(val & 0x07) << 8);
+        if val & 0x80 == 0 {
+            self.apply_active_freq_rewrite_timing(double_speed_phase_bits);
+        }
         // CGB-0/A/B clock length on extra even without current length_en set.
         let clocks_length_on_extra = self.length_en || cgb_early_extra_length_clock;
 
@@ -955,6 +1001,42 @@ impl Channel1 {
                 self.length_counter = 63;
             }
         }
+    }
+
+    fn apply_active_freq_rewrite_timing(&mut self, double_speed_phase_bits: Option<u8>) {
+        if !self.active {
+            return;
+        }
+        let double_speed = double_speed_phase_bits.is_some();
+        if self.is_early_cgb_revision()
+            && !self.freq_timer_just_reloaded
+            // These SameSuite probes use duty 0. At duty position 6, the next
+            // pulse step would enter the only high sample (position 7); early
+            // CGB revisions hold that transition off by one T-cycle group.
+            && self.current_output == 0
+            && self.duty_pos == 6
+            && self.matches_early_cgb_rewrite_extension_window(double_speed)
+        {
+            self.freq_timer += EARLY_CGB_REWRITE_EXTENSION_AMOUNT_T;
+            return;
+        }
+        let late_de_double_speed_rewrite = double_speed
+            && self.is_cgb
+            && matches!(self.cgb_model, CgbModel::CgbD | CgbModel::CgbE)
+            && self.freq_timer == LATE_CGB_DOUBLE_REWRITE_TIMER_T;
+        if !self.freq_timer_just_reloaded && !late_de_double_speed_rewrite {
+            return;
+        }
+        let period = (2048 - self.freq) * 4;
+        // SameSuite's CGB-0/A/B/C timing ROM observes the freshly-reloaded period
+        // taking effect one APU tick (at 2 MHz) later than on CGB-D/E.
+        let cgb_revision_delay_t = if self.is_early_cgb_revision() {
+            EARLY_CGB_FREQ_REWRITE_DELAY_T
+        } else {
+            LATE_CGB_FREQ_REWRITE_DELAY_T
+        };
+        self.freq_timer = period + cgb_revision_delay_t;
+        self.freq_timer_just_reloaded = false;
     }
 
     /// Length counter write when APU is powered off (DMG quirk).
