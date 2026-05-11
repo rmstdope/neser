@@ -3,6 +3,7 @@
 //! This module provides the shared ROM discovery and catalog enrichment logic
 //! used by both the TUI and native graphical frontends.
 
+pub mod enrichment_cache;
 pub mod favorites;
 pub mod rom_entry;
 
@@ -221,10 +222,10 @@ pub enum EnrichmentPhase {
 
 /// Enrich a ROM catalog with TheGamesDB metadata and cached cover art.
 ///
-/// For each ROM entry, this:
-/// 1. Fuzzy-matches the display name against the metadata DB titles
-/// 2. Fills in genres, overview, release date, players, rating
-/// 3. Downloads missing cover art via the image cache
+/// Uses a persistent enrichment cache to skip re-processing ROMs that have
+/// already been matched and had their images downloaded. Only new ROMs (not
+/// present in the cache) are fuzzy-matched against the metadata DB and have
+/// their images downloaded.
 ///
 /// The `progress_callback` is called for each ROM so the UI can display a
 /// progress bar. Pass `|_| {}` if no progress reporting is needed.
@@ -237,21 +238,49 @@ pub fn enrich_catalog(
 ) {
     use crate::platform::image_cache::ImageCache;
     use crate::platform::metadata::{MetadataDb, match_title};
+    use enrichment_cache::{CachedEnrichment, EnrichmentCache};
+
+    // Load persistent enrichment cache (stored in the image cache directory).
+    let cache_path = image_cache_path.join("enrichment_cache.json");
+    let mut ecache = EnrichmentCache::load(&cache_path);
+
+    // Apply cached enrichment data for known ROMs.
+    let mut uncached_indices: Vec<usize> = Vec::new();
+    for (i, entry) in catalog.iter_mut().enumerate() {
+        if let Some(cached) = ecache.get(&entry.path) {
+            entry.metadata_game_id = cached.metadata_game_id;
+            entry.genres.clone_from(&cached.genres);
+            entry.overview.clone_from(&cached.overview);
+            entry.release_date.clone_from(&cached.release_date);
+            entry.players = cached.players;
+            entry.rating.clone_from(&cached.rating);
+            entry.boxart_path.clone_from(&cached.boxart_path);
+            entry.screenshot_paths.clone_from(&cached.screenshot_paths);
+        } else {
+            uncached_indices.push(i);
+        }
+    }
+
+    // If everything is cached, we're done.
+    if uncached_indices.is_empty() {
+        return;
+    }
 
     let db = match MetadataDb::open(metadata_db_path) {
         Some(db) => db,
-        None => return, // No metadata DB available — skip enrichment.
+        None => return,
     };
 
     let titles = db.all_titles();
     let base_url = db.medium_base_url().to_string();
-    let total = catalog.len();
+    let uncached_total = uncached_indices.len();
 
-    // Phase 1: Match metadata.
-    for (i, entry) in catalog.iter_mut().enumerate() {
+    // Phase 1: Match metadata for uncached ROMs only.
+    for (step, &idx) in uncached_indices.iter().enumerate() {
+        let entry = &mut catalog[idx];
         progress_callback(EnrichmentProgress {
-            current: i + 1,
-            total,
+            current: step + 1,
+            total: uncached_total,
             game_title: entry.display_name.clone(),
             phase: EnrichmentPhase::MatchingMetadata,
         });
@@ -268,41 +297,70 @@ pub fn enrich_catalog(
         }
     }
 
-    // Phase 2: Download images.
+    // Phase 2: Download images for uncached ROMs only.
     let image_cache = match ImageCache::new(image_cache_path.to_path_buf(), base_url) {
         Ok(cache) => cache,
         Err(e) => {
             crate::platform::debugging::log_info(format!("Failed to create image cache: {e}"));
+            // Still save metadata matches to cache.
+            for &idx in &uncached_indices {
+                let entry = &catalog[idx];
+                ecache.insert(
+                    entry.path.clone(),
+                    CachedEnrichment {
+                        metadata_game_id: entry.metadata_game_id,
+                        genres: entry.genres.clone(),
+                        overview: entry.overview.clone(),
+                        release_date: entry.release_date.clone(),
+                        players: entry.players,
+                        rating: entry.rating.clone(),
+                        boxart_path: None,
+                        screenshot_paths: Vec::new(),
+                    },
+                );
+            }
+            ecache.save();
             return;
         }
     };
 
-    for (i, entry) in catalog.iter_mut().enumerate() {
+    for (step, &idx) in uncached_indices.iter().enumerate() {
+        let entry = &mut catalog[idx];
         progress_callback(EnrichmentProgress {
-            current: i + 1,
-            total,
+            current: step + 1,
+            total: uncached_total,
             game_title: entry.display_name.clone(),
             phase: EnrichmentPhase::DownloadingImages,
         });
 
-        let game_id = match entry.metadata_game_id {
-            Some(id) => id,
-            None => continue,
-        };
+        if let Some(game_id) = entry.metadata_game_id
+            && let Some(meta) = db.get_game(game_id)
+        {
+            let boxart_filename = meta.front_boxart();
+            let screenshot_filenames: Vec<&str> = meta.screenshots();
+            let cached_imgs =
+                image_cache.ensure_game_images(boxart_filename, &screenshot_filenames);
+            entry.boxart_path = cached_imgs.boxart_path;
+            entry.screenshot_paths = cached_imgs.screenshot_paths;
+        }
 
-        let meta = match db.get_game(game_id) {
-            Some(m) => m,
-            None => continue,
-        };
-
-        let boxart_filename = meta.front_boxart();
-        let screenshot_filenames: Vec<&str> = meta.screenshots();
-
-        let cached = image_cache.ensure_game_images(boxart_filename, &screenshot_filenames);
-
-        entry.boxart_path = cached.boxart_path;
-        entry.screenshot_paths = cached.screenshot_paths;
+        // Store enrichment result in persistent cache.
+        ecache.insert(
+            entry.path.clone(),
+            CachedEnrichment {
+                metadata_game_id: entry.metadata_game_id,
+                genres: entry.genres.clone(),
+                overview: entry.overview.clone(),
+                release_date: entry.release_date.clone(),
+                players: entry.players,
+                rating: entry.rating.clone(),
+                boxart_path: entry.boxart_path.clone(),
+                screenshot_paths: entry.screenshot_paths.clone(),
+            },
+        );
     }
+
+    ecache.save();
 }
 
 #[cfg(test)]
