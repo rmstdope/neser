@@ -168,9 +168,17 @@ fn file_stem(path: &Path) -> String {
 }
 
 /// Keywords in ROM filenames that indicate unofficial/non-original ROMs.
+/// Each keyword is checked as a case-insensitive substring of the filename
+/// and display name.
 const UNOFFICIAL_KEYWORDS: &[&str] = &[
-    "(hack)",
-    "[hack]",
+    "(hack",
+    "[hack",
+    " hack ",
+    " hack.",
+    "_hack_",
+    "_hack.",
+    "-hack-",
+    "-hack.",
     "(pirate)",
     "[pirate]",
     "(bootleg)",
@@ -764,5 +772,24 @@ mod tests {
     fn is_unofficial_rom_allows_region_variants() {
         let entry = make_entry_with_path("Metroid (Europe).nes", "Metroid");
         assert!(!is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_hack_suffix_in_filename() {
+        let entry =
+            make_entry_with_path("arkanoid-98-arkanoid-hack.nes", "Arkanoid 98 Arkanoid Hack");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_hack_with_spaces() {
+        let entry = make_entry_with_path("game hack version.nes", "Game Hack Version");
+        assert!(is_unofficial_rom(&entry));
+    }
+
+    #[test]
+    fn is_unofficial_rom_detects_hack_with_underscores() {
+        let entry = make_entry_with_path("game_hack_v2.nes", "Game");
+        assert!(is_unofficial_rom(&entry));
     }
 }
