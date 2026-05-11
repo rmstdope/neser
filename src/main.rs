@@ -254,20 +254,27 @@ fn run_native_frontend(
     let rom_path = app_context.borrow().config().frontend.rom_path.clone();
 
     if let Some(rom_path) = rom_path {
-        // ROM path provided via CLI — go straight to emulation.
+        // ROM path provided via CLI — go straight to emulation (no return to browser).
         run_native_emulator(app_context, &rom_path, None)
     } else {
-        // No ROM path — launch the ROM browser.
+        // No ROM path — launch the ROM browser in a loop.
+        // After emulation ends, return to the browser for another selection.
         let mut event_loop =
             EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
-        let browser = RomBrowserApp::new(app_context.clone());
-        match browser.run(&mut event_loop)? {
-            BrowserResult::RomSelected(path) => {
-                let rom_path = path.to_string_lossy().to_string();
-                // Reuse the same event loop for the emulator.
-                run_native_emulator(app_context, &rom_path, Some(&mut event_loop))
+        loop {
+            let browser = RomBrowserApp::new(app_context.clone());
+            match browser.run(&mut event_loop)? {
+                BrowserResult::RomSelected(path) => {
+                    let rom_path = path.to_string_lossy().to_string();
+                    // Run the emulator; when it exits, loop back to the browser.
+                    if let Err(e) =
+                        run_native_emulator(app_context.clone(), &rom_path, Some(&mut event_loop))
+                    {
+                        crate::platform::debugging::log_info(format!("Emulator error: {e}"));
+                    }
+                }
+                BrowserResult::Closed => return Ok(()),
             }
-            BrowserResult::Closed => Ok(()),
         }
     }
 }
