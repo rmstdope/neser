@@ -294,6 +294,9 @@ pub enum EnrichmentPhase {
 /// present in the cache) are fuzzy-matched against the metadata DB and have
 /// their images downloaded.
 ///
+/// When `rebuild` is true, the enrichment cache is cleared and all ROMs are
+/// re-processed from scratch.
+///
 /// The `progress_callback` is called for each ROM so the UI can display a
 /// progress bar. Pass `|_| {}` if no progress reporting is needed.
 #[cfg(feature = "native")]
@@ -301,6 +304,7 @@ pub fn enrich_catalog(
     catalog: &mut [RomEntry],
     metadata_db_path: &std::path::Path,
     image_cache_path: &std::path::Path,
+    rebuild: bool,
     mut progress_callback: impl FnMut(EnrichmentProgress),
 ) {
     use crate::platform::image_cache::ImageCache;
@@ -308,8 +312,13 @@ pub fn enrich_catalog(
     use enrichment_cache::{CachedEnrichment, EnrichmentCache};
 
     // Load persistent enrichment cache (stored in the image cache directory).
+    // When rebuilding, start with a fresh cache.
     let cache_path = image_cache_path.join("enrichment_cache.json");
-    let mut ecache = EnrichmentCache::load(&cache_path);
+    let mut ecache = if rebuild {
+        EnrichmentCache::load_empty(&cache_path)
+    } else {
+        EnrichmentCache::load(&cache_path)
+    };
 
     // Apply cached enrichment data for known ROMs.
     let mut uncached_indices: Vec<usize> = Vec::new();
@@ -630,7 +639,7 @@ mod tests {
         }];
 
         let mut progress_count = 0;
-        enrich_catalog(&mut catalog, &db_path, cache_dir.path(), |_| {
+        enrich_catalog(&mut catalog, &db_path, cache_dir.path(), false, |_| {
             progress_count += 1
         });
 
@@ -674,6 +683,7 @@ mod tests {
             &mut catalog,
             std::path::Path::new("/nonexistent/metadata.db"),
             std::path::Path::new("/nonexistent/cache"),
+            false,
             |_| {},
         );
 

@@ -53,6 +53,14 @@ impl EnrichmentCache {
         cache
     }
 
+    /// Create an empty cache bound to the given path (ignores any existing file).
+    pub fn load_empty(path: &Path) -> Self {
+        Self {
+            entries: HashMap::new(),
+            path: path.to_path_buf(),
+        }
+    }
+
     /// Look up cached enrichment for a ROM path.
     pub fn get(&self, rom_path: &Path) -> Option<&CachedEnrichment> {
         self.entries.get(rom_path)

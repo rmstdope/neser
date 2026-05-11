@@ -1177,6 +1177,7 @@ impl ApplicationHandler for RomBrowserApp {
                                     &mut catalog,
                                     &metadata_db_path,
                                     &image_cache_path,
+                                    rebuild,
                                     move |progress| {
                                         let _ = tx2.send(CatalogMessage::Progress(progress));
                                     },
