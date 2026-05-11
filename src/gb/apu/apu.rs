@@ -325,8 +325,10 @@ impl Apu {
 
         let increment_divider = !self.div_apu_event_without_div_increment;
         if increment_divider {
-            // Increment div_divider at the start of every serviced DIV-APU event,
-            // before any channel work. Low bits drive length/sweep/envelope sub-events.
+            // Increment div_divider at the start of serviced DIV-APU events,
+            // except for the first post-skip serviced event, which preserves the
+            // seeded power-on-high phase. Low bits drive length/sweep/envelope
+            // sub-events.
             self.div_divider = self.div_divider.wrapping_add(1);
         } else {
             self.div_apu_event_without_div_increment = false;
