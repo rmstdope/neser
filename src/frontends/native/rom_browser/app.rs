@@ -219,11 +219,11 @@ impl RomBrowserApp {
 
     /// Run the ROM browser using the provided event loop and return the result.
     ///
-    /// Returns `BrowserResult::RomSelected` if a ROM was chosen, or
-    /// `BrowserResult::Closed` if the user closed the window.
-    pub fn run(mut self, event_loop: EventLoop<()>) -> Result<BrowserResult, String> {
+    /// Uses `run_app_on_demand` so the event loop can be reused afterwards.
+    pub fn run(mut self, event_loop: &mut EventLoop<()>) -> Result<BrowserResult, String> {
+        use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
         event_loop
-            .run_app(&mut self)
+            .run_app_on_demand(&mut self)
             .map_err(|e| format!("Browser event loop error: {e}"))?;
         Ok(self.result)
     }

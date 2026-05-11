@@ -258,17 +258,14 @@ fn run_native_frontend(
         run_native_emulator(app_context, &rom_path, None)
     } else {
         // No ROM path — launch the ROM browser.
-        // Create a single EventLoop to be shared with the emulator if a ROM is selected.
-        let event_loop =
+        let mut event_loop =
             EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
         let browser = RomBrowserApp::new(app_context.clone());
-        match browser.run(event_loop)? {
+        match browser.run(&mut event_loop)? {
             BrowserResult::RomSelected(path) => {
                 let rom_path = path.to_string_lossy().to_string();
-                // Create a new EventLoop for the emulator (the browser's loop has exited).
-                let event_loop =
-                    EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
-                run_native_emulator(app_context, &rom_path, Some(event_loop))
+                // Reuse the same event loop for the emulator.
+                run_native_emulator(app_context, &rom_path, Some(&mut event_loop))
             }
             BrowserResult::Closed => Ok(()),
         }
@@ -280,7 +277,7 @@ fn run_native_frontend(
 fn run_native_emulator(
     app_context: Rc<RefCell<AppContext>>,
     rom_path: &str,
-    event_loop: Option<winit::event_loop::EventLoop<()>>,
+    event_loop: Option<&mut winit::event_loop::EventLoop<()>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use frontends::native::{NativeAudio, NativeEventLoop};
     use platform::audio::EmulatorAudio;
