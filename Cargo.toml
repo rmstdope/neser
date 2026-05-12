@@ -115,6 +115,7 @@ required-features = ["native"]
 hound = "3.5"
 serial_test = "3.2"
 tempfile = "3.24.0"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Improve runtime performance in debug builds (helps reduce audio underruns) while
 # keeping debuggability. This is a common setup for emulator-style workloads.
