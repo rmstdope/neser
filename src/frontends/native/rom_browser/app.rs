@@ -234,7 +234,7 @@ impl RomBrowserApp {
             filter_panel_anim: 0.0,
             filter_panel_cursor: 0,
             filter_panel_column: 0,
-            active_platform: None,
+            active_platform: Some(crate::platform::catalog::Platform::Nes),
             min_players_filter: None,
             favorites: Favorites::load(&favorites_path),
             show_favorites_only: false,
@@ -469,14 +469,14 @@ impl RomBrowserApp {
         let active_platform = self.active_platform;
         let min_players_filter = self.min_players_filter;
 
-        // Animate filter panel slide: lerp towards target.
+        // Animate filter panel slide with fixed-rate stepping (frame-rate independent).
         let anim_target = if self.filter_panel_active { 1.0 } else { 0.0 };
-        let anim_speed = 32.0; // speed factor for lerp (fast slide)
         let dt = self.gl.as_ref().map_or(0.016, |gl| gl.delta_time());
-        self.filter_panel_anim +=
-            (anim_target - self.filter_panel_anim) * (anim_speed * dt).min(1.0);
-        if (self.filter_panel_anim - anim_target).abs() < 0.001 {
-            self.filter_panel_anim = anim_target;
+        let anim_step = dt / 0.15; // complete in ~150ms
+        if self.filter_panel_anim < anim_target {
+            self.filter_panel_anim = (self.filter_panel_anim + anim_step).min(anim_target);
+        } else if self.filter_panel_anim > anim_target {
+            self.filter_panel_anim = (self.filter_panel_anim - anim_step).max(anim_target);
         }
         let filter_panel_anim = self.filter_panel_anim;
         let available_genres = self.available_genres.clone();
@@ -1492,7 +1492,7 @@ impl RomBrowserApp {
             egui::Align2::CENTER_CENTER,
             text,
             egui::FontId::proportional(16.0),
-            theme::DIM_TEXT,
+            egui::Color32::from_rgb(200, 200, 215),
         );
     }
 
