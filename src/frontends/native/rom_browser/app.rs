@@ -448,6 +448,9 @@ impl RomBrowserApp {
         let search_active = self.search_active;
         let search_query = self.search_query.clone();
         let genre_filter_active = self.genre_filter_active;
+        let filter_panel_active = self.filter_panel_active;
+        let filter_panel_cursor = self.filter_panel_cursor;
+        let active_platform = self.active_platform;
         let available_genres = self.available_genres.clone();
         let active_genres = self.active_genres.clone();
         let genre_cursor = self.genre_cursor;
@@ -571,6 +574,8 @@ impl RomBrowserApp {
                                     &[("Esc", "Close"), ("Enter", "Launch")]
                                 } else if genre_filter_active {
                                     &[("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
+                                } else if filter_panel_active {
+                                    &[("↑↓", "Navigate"), ("A", "Toggle"), ("B", "Close")]
                                 } else if detail_view_active {
                                     &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")]
                                 } else {
@@ -636,6 +641,17 @@ impl RomBrowserApp {
                     &available_genres,
                     &active_genres,
                     genre_cursor,
+                    display_w,
+                    display_h,
+                );
+            }
+            if filter_panel_active {
+                Self::render_filter_panel_egui(
+                    ui.ctx(),
+                    &available_genres,
+                    &active_genres,
+                    active_platform,
+                    filter_panel_cursor,
                     display_w,
                     display_h,
                 );
@@ -1225,6 +1241,103 @@ impl RomBrowserApp {
                         format!("  {marker}{genre}")
                     };
                     ui.label(egui::RichText::new(&label).color(color).size(12.0));
+                }
+            });
+    }
+
+    fn render_filter_panel_egui(
+        ctx: &egui::Context,
+        available_genres: &[String],
+        active_genres: &[String],
+        active_platform: Option<Platform>,
+        cursor: usize,
+        display_w: f32,
+        display_h: f32,
+    ) {
+        // Dim background.
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("filter_panel_dim"),
+        ));
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(display_w * 2.0, 10000.0)),
+            egui::CornerRadius::ZERO,
+            egui::Color32::from_black_alpha(150),
+        );
+
+        let item_count = 2 + available_genres.len();
+        let panel_w = 320.0_f32.min(display_w * 0.4);
+        let panel_h = (item_count as f32 * 28.0 + 100.0).min(display_h * 0.8);
+        let panel_x = 40.0;
+        let panel_y = (display_h - panel_h) / 2.0;
+
+        egui::Window::new("filter_panel")
+            .id(egui::Id::new("filter_panel_overlay"))
+            .fixed_pos(egui::pos2(panel_x, panel_y))
+            .fixed_size(egui::vec2(panel_w, panel_h))
+            .title_bar(false)
+            .resizable(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("Filters")
+                        .color(theme::HEADER_TEXT)
+                        .size(16.0),
+                );
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // Platform section
+                ui.label(
+                    egui::RichText::new("Platform")
+                        .color(theme::SELECTED_TEXT)
+                        .size(13.0),
+                );
+
+                let platforms = [Platform::Nes, Platform::Gb];
+                for (i, plat) in platforms.iter().enumerate() {
+                    let is_active = active_platform == Some(*plat);
+                    let marker = if is_active { "● " } else { "○ " };
+                    let is_cursor = i == cursor;
+                    let color = if is_cursor {
+                        theme::SELECTION_COLOR
+                    } else if is_active {
+                        theme::SELECTED_TEXT
+                    } else {
+                        theme::TEXT_COLOR
+                    };
+                    let prefix = if is_cursor { "▸ " } else { "  " };
+                    let label = format!("{prefix}{marker}{}", plat.label());
+                    ui.label(egui::RichText::new(&label).color(color).size(13.0));
+                }
+
+                if !available_genres.is_empty() {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("Genre")
+                            .color(theme::SELECTED_TEXT)
+                            .size(13.0),
+                    );
+
+                    for (i, genre) in available_genres.iter().enumerate() {
+                        let item_idx = i + 2; // offset by platform items
+                        let is_active = active_genres.contains(genre);
+                        let marker = if is_active { "☑ " } else { "☐ " };
+                        let is_cursor = item_idx == cursor;
+                        let color = if is_cursor {
+                            theme::SELECTION_COLOR
+                        } else if is_active {
+                            theme::SELECTED_TEXT
+                        } else {
+                            theme::TEXT_COLOR
+                        };
+                        let prefix = if is_cursor { "▸ " } else { "  " };
+                        let label = format!("{prefix}{marker}{genre}");
+                        ui.label(egui::RichText::new(&label).color(color).size(13.0));
+                    }
                 }
             });
     }
@@ -2223,6 +2336,22 @@ impl ApplicationHandler for RomBrowserApp {
                         }
                         _ => {}
                     }
+                } else if self.filter_panel_active {
+                    match event.logical_key {
+                        Key::Named(NamedKey::Escape) => {
+                            self.close_filter_panel();
+                        }
+                        Key::Named(NamedKey::ArrowUp) => {
+                            self.filter_panel_move_cursor_up();
+                        }
+                        Key::Named(NamedKey::ArrowDown) => {
+                            self.filter_panel_move_cursor_down();
+                        }
+                        Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+                            self.filter_panel_confirm();
+                        }
+                        _ => {}
+                    }
                 } else if self.detail_view_active {
                     // Detail view mode.
                     match event.logical_key {
@@ -2253,14 +2382,7 @@ impl ApplicationHandler for RomBrowserApp {
                             .contains(winit::keyboard::ModifiersState::SUPER);
                     match event.logical_key {
                         Key::Named(NamedKey::Escape) => {
-                            if !self.search_query.is_empty() || !self.active_genres.is_empty() {
-                                self.search_query.clear();
-                                self.active_genres.clear();
-                                self.rebuild_filtered();
-                            } else {
-                                self.result = BrowserResult::Closed;
-                                event_loop.exit();
-                            }
+                            self.open_filter_panel();
                         }
                         Key::Named(NamedKey::ArrowUp) => {
                             self.navigate_up();
