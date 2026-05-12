@@ -201,6 +201,26 @@ class TestGetGamesById(unittest.TestCase):
         client.get_games_by_id(list(range(25)))
         self.assertEqual(mock_get.call_count, 3)  # 10+10+5
 
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_handles_list_response_from_api(self, mock_get, _sleep):
+        """ByGameID may return games as a list instead of a dict."""
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {"count": 2, "games": [
+                {"id": 135, "game_title": "Castlevania"},
+                {"id": 140, "game_title": "Super Mario Bros."},
+            ]},
+            "remaining_monthly_allowance": 899,
+            "extra_allowance": 0,
+        }
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_games_by_id([135, 140])
+        self.assertEqual(len(result["games"]), 2)
+
 
 # ── get_games_images ──────────────────────────────────────────────────────────
 
@@ -244,6 +264,87 @@ class TestGetGamesImages(unittest.TestCase):
         client = TheGamesDbClient(api_key=FAKE_KEY, batch_size=10)
         client.get_games_images(list(range(25)))
         self.assertEqual(mock_get.call_count, 3)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_paginates_images_within_a_batch(self, mock_get, _sleep):
+        """Images endpoint may return multiple pages; all should be fetched."""
+        base_url = {"original": "https://cdn.thegamesdb.net/images/original/"}
+        page1 = MagicMock()
+        page1.status_code = 200
+        page1.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {
+                "count": 2,
+                "base_url": base_url,
+                "images": {
+                    "135": [{"id": 1, "type": "boxart", "side": "front",
+                              "filename": "boxart/front/135-1.jpg", "resolution": None}],
+                },
+            },
+            "pages": {
+                "previous": None,
+                "current": "https://api.thegamesdb.net/v1/Games/Images?games_id=135&page=1",
+                "next": "https://api.thegamesdb.net/v1/Games/Images?games_id=135&page=2",
+            },
+            "remaining_monthly_allowance": 890,
+        }
+        page2 = MagicMock()
+        page2.status_code = 200
+        page2.json.return_value = {
+            "code": 200, "status": "Success",
+            "data": {
+                "count": 2,
+                "base_url": base_url,
+                "images": {
+                    "135": [{"id": 2, "type": "screenshot", "side": None,
+                              "filename": "screenshots/135-1.jpg", "resolution": None}],
+                },
+            },
+            "pages": {
+                "previous": "https://api.thegamesdb.net/v1/Games/Images?games_id=135&page=1",
+                "current": "https://api.thegamesdb.net/v1/Games/Images?games_id=135&page=2",
+                "next": None,
+            },
+            "remaining_monthly_allowance": 889,
+        }
+        mock_get.side_effect = [page1, page2]
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_games_images([135])
+        self.assertEqual(mock_get.call_count, 2)
+        images_135 = result["images"]["135"]
+        ids = {img["id"] for img in images_135}
+        self.assertEqual(ids, {1, 2})
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_merges_images_across_pages_for_same_game(self, mock_get, _sleep):
+        """Images for the same game id on different pages must be merged, not overwritten."""
+        base_url = {"original": "https://cdn.thegamesdb.net/images/original/"}
+        def _img_page(img_id, img_type, has_next):
+            return {
+                "code": 200, "status": "Success",
+                "data": {
+                    "count": 1, "base_url": base_url,
+                    "images": {
+                        "135": [{"id": img_id, "type": img_type, "side": None,
+                                  "filename": f"{img_type}/{img_id}.jpg", "resolution": None}],
+                    },
+                },
+                "pages": {"previous": None, "current": "...",
+                          "next": "...?page=2" if has_next else None},
+                "remaining_monthly_allowance": 890,
+            }
+        resp1, resp2 = MagicMock(), MagicMock()
+        resp1.status_code = resp2.status_code = 200
+        resp1.json.return_value = _img_page(10, "fanart", has_next=True)
+        resp2.json.return_value = _img_page(11, "clearlogo", has_next=False)
+        mock_get.side_effect = [resp1, resp2]
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_games_images([135])
+        images_135 = result["images"]["135"]
+        ids = {img["id"] for img in images_135}
+        self.assertEqual(ids, {10, 11})
 
 
 # ── get_games_updates ─────────────────────────────────────────────────────────

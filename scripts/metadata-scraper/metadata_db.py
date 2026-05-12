@@ -292,6 +292,19 @@ class MetadataDb:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_game_image_counts_by_type(self, game_id: int) -> dict[str | None, int]:
+        """Returns a mapping of image type to count for the given game.
+
+        Types are the values stored in the ``type`` column (e.g. ``"boxart"``,
+        ``"screenshot"``, ``"fanart"``).  ``None`` is used for rows where the
+        type is not set.
+        """
+        rows = self._conn.execute(
+            "SELECT type, COUNT(*) AS cnt FROM images WHERE game_id = ? GROUP BY type",
+            (game_id,),
+        ).fetchall()
+        return {r["type"]: r["cnt"] for r in rows}
+
     def upsert_image_base_urls(self, base_urls: dict[str, str]):
         for size, url in base_urls.items():
             self._conn.execute(

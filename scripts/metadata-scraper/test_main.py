@@ -245,12 +245,20 @@ class TestInfoCommand(unittest.TestCase):
             mock_db.get_game_genres.return_value = []
             mock_db.get_game_developers.return_value = []
             mock_db.get_game_publishers.return_value = []
-            mock_db.get_game_images.return_value = [{"id": 1}, {"id": 2}, {"id": 3}]
+            mock_db.get_game_image_counts_by_type.return_value = {
+                "boxart": 2, "screenshot": 3, "fanart": 1,
+            }
             mock_db.get_reference.return_value = None
             captured = StringIO()
             import main as m
             m.main(output=captured)
-            self.assertIn("3", captured.getvalue())
+            output = captured.getvalue()
+            self.assertIn("boxart", output)
+            self.assertIn("2", output)
+            self.assertIn("screenshot", output)
+            self.assertIn("3", output)
+            self.assertIn("fanart", output)
+            self.assertIn("1", output)
 
 
 if __name__ == "__main__":

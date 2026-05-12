@@ -103,30 +103,38 @@ class TheGamesDbClient:
 
     def get_games_by_id(self, game_ids: list[int]) -> dict:
         """Fetch game(s) by id; batches automatically."""
-        all_games: dict = {}
+        all_games: list = []
         for batch in self._batch_ids(game_ids):
             params = {
                 "id": ",".join(str(i) for i in batch),
                 "fields": _ALL_FIELDS,
             }
             data = self._get("/v1/Games/ByGameID", params)
-            games = data.get("data", {}).get("games") or {}
-            all_games.update(games)
+            games = data.get("data", {}).get("games") or []
+            if isinstance(games, dict):
+                all_games.extend(games.values())
+            else:
+                all_games.extend(games)
         return {"games": all_games}
 
     def get_games_images(self, game_ids: list[int]) -> dict:
-        """Fetch all image types for the given game ids; batches automatically."""
+        """Fetch all image types for the given game ids; batches and paginates automatically."""
         all_images: dict = {}
         combined_base_url: dict = {}
         for batch in self._batch_ids(game_ids):
-            params = {"games_id": ",".join(str(i) for i in batch)}
-            data = self._get("/v1/Games/Images", params)
-            payload = data.get("data", {})
-            images = payload.get("images") or {}
-            all_images.update(images)
-            bu = payload.get("base_url") or {}
-            if bu:
-                combined_base_url = bu
+            page = 1
+            while True:
+                params = {"games_id": ",".join(str(i) for i in batch), "page": page}
+                data = self._get("/v1/Games/Images", params)
+                payload = data.get("data", {})
+                bu = payload.get("base_url") or {}
+                if bu:
+                    combined_base_url = bu
+                for game_id_key, imgs in (payload.get("images") or {}).items():
+                    all_images.setdefault(game_id_key, []).extend(imgs)
+                if not data.get("pages", {}).get("next"):
+                    break
+                page += 1
         return {"images": all_images, "base_url": combined_base_url}
 
     def get_games_updates(self, last_edit_id: int) -> dict:

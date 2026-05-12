@@ -195,7 +195,16 @@ def _cmd_info(args: argparse.Namespace, db: MetadataDb, output: IO[str]):
         genre_ids = db.get_game_genres(game["id"])
         dev_ids = db.get_game_developers(game["id"])
         pub_ids = db.get_game_publishers(game["id"])
-        image_count = len(db.get_game_images(game["id"]))
+        image_counts = db.get_game_image_counts_by_type(game["id"])
+        total_images = sum(image_counts.values())
+        if image_counts:
+            type_summary = ", ".join(
+                f"{t or 'unknown'}: {c}"
+                for t, c in sorted(image_counts.items(), key=lambda x: x[0] or "")
+            )
+            images_value = f"{total_images} ({type_summary})"
+        else:
+            images_value = "0"
 
         fields = [
             ("Release date", game.get("release_date") or ""),
@@ -209,7 +218,7 @@ def _cmd_info(args: argparse.Namespace, db: MetadataDb, output: IO[str]):
             ("YouTube",      game.get("youtube") or ""),
             ("Alternates",   game.get("alternates") or ""),
             ("Last updated", game.get("last_updated") or ""),
-            ("Images",       str(image_count)),
+            ("Images",       images_value),
         ]
         width = max(len(label) for label, _ in fields)
         for label, value in fields:

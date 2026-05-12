@@ -210,7 +210,7 @@ class TestSyncerIncrementalSync(unittest.TestCase):
             "last_update_id": 1000,
         }
         client.get_games_updates.return_value = {"updates": []}
-        client.get_games_by_id.return_value = {"games": {}}
+        client.get_games_by_id.return_value = {"games": []}
         client.get_games_images.return_value = {"images": {}, "base_url": BASE_URL}
 
         syncer.incremental_sync(platform_id=7, platform_info=PLATFORM_NES)
@@ -230,7 +230,7 @@ class TestSyncerIncrementalSync(unittest.TestCase):
             "updates": [{"game_id": 135, "edit_id": 1001}],
         }
         client.get_games_by_id.return_value = {
-            "games": {"135": SAMPLE_GAME},
+            "games": [SAMPLE_GAME],
         }
         client.get_games_images.return_value = {"images": {}, "base_url": BASE_URL}
 
@@ -256,7 +256,7 @@ class TestSyncerIncrementalSync(unittest.TestCase):
         client.get_games_updates.return_value = {
             "updates": [{"game_id": 135, "edit_id": 1005}],
         }
-        client.get_games_by_id.return_value = {"games": {"135": SAMPLE_GAME}}
+        client.get_games_by_id.return_value = {"games": [SAMPLE_GAME]}
         client.get_games_images.return_value = {"images": {}, "base_url": BASE_URL}
 
         syncer.incremental_sync(platform_id=7, platform_info=PLATFORM_NES)
@@ -412,7 +412,7 @@ class TestSyncerProgress(unittest.TestCase):
         client.get_games_updates.return_value = {
             "updates": [{"game_id": 135, "edit_id": 1001}],
         }
-        client.get_games_by_id.return_value = {"games": {"135": SAMPLE_GAME}}
+        client.get_games_by_id.return_value = {"games": [SAMPLE_GAME]}
         client.get_games_images.return_value = {"images": {}, "base_url": BASE_URL}
 
         syncer = Syncer(db=db, client=client, verbose=True)

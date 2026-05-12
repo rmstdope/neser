@@ -108,11 +108,8 @@ class Syncer:
         max_edit_id = max(u["edit_id"] for u in updates)
 
         games_result = self._client.get_games_by_id(changed_ids)
-        games = games_result.get("games") or {}
-        platform_games = [
-            g for g in (games.values() if isinstance(games, dict) else games)
-            if g.get("platform") == platform_id
-        ]
+        games = games_result.get("games") or []
+        platform_games = [g for g in games if g.get("platform") == platform_id]
         name = platform_info.get("name", f"Platform {platform_id}")
         label = platform_info.get("slug") or name
         pbar = tqdm(

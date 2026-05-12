@@ -270,6 +270,31 @@ class TestMetadataDbImages(unittest.TestCase):
         images = self.db.get_game_images(135)
         self.assertEqual(images, [])
 
+    def test_get_game_image_counts_by_type_returns_empty_dict_for_no_images(self):
+        counts = self.db.get_game_image_counts_by_type(135)
+        self.assertEqual(counts, {})
+
+    def test_get_game_image_counts_by_type_groups_by_type(self):
+        self.db.upsert_game({"id": 135, "game_title": "Castlevania", "platform": 7})
+        for img_id, img_type in [
+            (1, "boxart"), (2, "boxart"), (3, "screenshot"),
+            (4, "screenshot"), (5, "screenshot"), (6, "fanart"),
+        ]:
+            self.db.upsert_image({"id": img_id, "game_id": 135, "type": img_type,
+                                   "side": None, "filename": f"{img_id}.jpg", "resolution": None})
+        counts = self.db.get_game_image_counts_by_type(135)
+        self.assertEqual(counts, {"boxart": 2, "screenshot": 3, "fanart": 1})
+
+    def test_get_game_image_counts_by_type_handles_null_type(self):
+        self.db.upsert_game({"id": 135, "game_title": "Castlevania", "platform": 7})
+        self.db.upsert_image({"id": 1, "game_id": 135, "type": None,
+                               "side": None, "filename": "1.jpg", "resolution": None})
+        self.db.upsert_image({"id": 2, "game_id": 135, "type": "boxart",
+                               "side": None, "filename": "2.jpg", "resolution": None})
+        counts = self.db.get_game_image_counts_by_type(135)
+        self.assertEqual(counts.get("boxart"), 1)
+        self.assertEqual(counts.get(None), 1)
+
     def test_upsert_image_base_urls_stores_all_sizes(self):
         base_urls = {
             "original": "https://cdn.thegamesdb.net/images/original/",
