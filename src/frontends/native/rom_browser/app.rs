@@ -142,6 +142,8 @@ pub struct RomBrowserApp {
     detail_scroll_forward: bool,
     /// Filter panel overlay active.
     filter_panel_active: bool,
+    /// Animation progress for filter panel slide (0.0 = hidden, 1.0 = fully shown).
+    filter_panel_anim: f32,
     /// Cursor position in the filter panel (0 = platform section, then genres).
     filter_panel_cursor: usize,
     /// Active platform filter (`None` = show all platforms).
@@ -225,6 +227,7 @@ impl RomBrowserApp {
             detail_scroll_last_advance: Instant::now(),
             detail_scroll_forward: true,
             filter_panel_active: false,
+            filter_panel_anim: 0.0,
             filter_panel_cursor: 0,
             active_platform: None,
             favorites: Favorites::load(&favorites_path),
@@ -451,6 +454,17 @@ impl RomBrowserApp {
         let filter_panel_active = self.filter_panel_active;
         let filter_panel_cursor = self.filter_panel_cursor;
         let active_platform = self.active_platform;
+
+        // Animate filter panel slide: lerp towards target.
+        let anim_target = if self.filter_panel_active { 1.0 } else { 0.0 };
+        let anim_speed = 8.0; // speed factor for lerp
+        let dt = self.gl.as_ref().map_or(0.016, |gl| gl.delta_time());
+        self.filter_panel_anim +=
+            (anim_target - self.filter_panel_anim) * (anim_speed * dt).min(1.0);
+        if (self.filter_panel_anim - anim_target).abs() < 0.001 {
+            self.filter_panel_anim = anim_target;
+        }
+        let filter_panel_anim = self.filter_panel_anim;
         let available_genres = self.available_genres.clone();
         let active_genres = self.active_genres.clone();
         let genre_cursor = self.genre_cursor;
@@ -645,13 +659,14 @@ impl RomBrowserApp {
                     display_h,
                 );
             }
-            if filter_panel_active {
+            if filter_panel_active || filter_panel_anim > 0.0 {
                 Self::render_filter_panel_egui(
                     ui.ctx(),
                     &available_genres,
                     &active_genres,
                     active_platform,
                     filter_panel_cursor,
+                    filter_panel_anim,
                     display_w,
                     display_h,
                 );
@@ -1245,16 +1260,19 @@ impl RomBrowserApp {
             });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_filter_panel_egui(
         ctx: &egui::Context,
         available_genres: &[String],
         active_genres: &[String],
         active_platform: Option<Platform>,
         cursor: usize,
+        anim: f32,
         display_w: f32,
         display_h: f32,
     ) {
-        // Dim background.
+        // Dim background with animated alpha.
+        let dim_alpha = (150.0 * anim) as u8;
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
             egui::Id::new("filter_panel_dim"),
@@ -1262,14 +1280,19 @@ impl RomBrowserApp {
         painter.rect_filled(
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(display_w * 2.0, 10000.0)),
             egui::CornerRadius::ZERO,
-            egui::Color32::from_black_alpha(150),
+            egui::Color32::from_black_alpha(dim_alpha),
         );
 
-        let item_count = 2 + available_genres.len();
-        let panel_w = 320.0_f32.min(display_w * 0.4);
-        let panel_h = (item_count as f32 * 28.0 + 100.0).min(display_h * 0.8);
-        let panel_x = 40.0;
+        let panel_w = 500.0_f32.min(display_w * 0.55);
+        let panel_h = display_h * 0.6;
+        // Slide in from the left: at anim=0 the panel is fully off-screen.
+        let panel_x = -panel_w + (panel_w + 40.0) * anim;
         let panel_y = (display_h - panel_h) / 2.0;
+
+        let platform_count = Self::PLATFORMS.len();
+        let item_font = 16.0;
+        let header_font = 20.0;
+        let section_font = 14.0;
 
         egui::Window::new("filter_panel")
             .id(egui::Id::new("filter_panel_overlay"))
@@ -1282,47 +1305,46 @@ impl RomBrowserApp {
                 ui.label(
                     egui::RichText::new("Filters")
                         .color(theme::HEADER_TEXT)
-                        .size(16.0),
+                        .size(header_font),
                 );
-                ui.add_space(4.0);
+                ui.add_space(8.0);
                 ui.separator();
-                ui.add_space(4.0);
+                ui.add_space(8.0);
 
-                // Platform section
-                ui.label(
-                    egui::RichText::new("Platform")
-                        .color(theme::SELECTED_TEXT)
-                        .size(13.0),
-                );
+                // Two-column layout.
+                ui.columns(2, |cols| {
+                    // Left column: Platform
+                    cols[0].label(
+                        egui::RichText::new("Platform")
+                            .color(theme::SELECTED_TEXT)
+                            .size(section_font),
+                    );
+                    cols[0].add_space(4.0);
 
-                let platforms = Self::PLATFORMS;
-                for (i, plat) in platforms.iter().enumerate() {
-                    let is_active = active_platform == Some(*plat);
-                    let marker = if is_active { "● " } else { "○ " };
-                    let is_cursor = i == cursor;
-                    let color = if is_cursor {
-                        theme::SELECTION_COLOR
-                    } else if is_active {
-                        theme::SELECTED_TEXT
-                    } else {
-                        theme::TEXT_COLOR
-                    };
-                    let prefix = if is_cursor { "▸ " } else { "  " };
-                    let label = format!("{prefix}{marker}{}", plat.label());
-                    ui.label(egui::RichText::new(&label).color(color).size(13.0));
-                }
+                    for (i, plat) in Self::PLATFORMS.iter().enumerate() {
+                        let is_active = active_platform == Some(*plat);
+                        let marker = if is_active { "● " } else { "○ " };
+                        let is_cursor = i == cursor;
+                        let color = if is_cursor {
+                            theme::SELECTION_COLOR
+                        } else if is_active {
+                            theme::SELECTED_TEXT
+                        } else {
+                            theme::TEXT_COLOR
+                        };
+                        let prefix = if is_cursor { "▸ " } else { "  " };
+                        let label = format!("{prefix}{marker}{}", plat.label());
+                        cols[0].label(egui::RichText::new(&label).color(color).size(item_font));
+                    }
 
-                if !available_genres.is_empty() {
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(4.0);
-                    ui.label(
+                    // Right column: Genre
+                    cols[1].label(
                         egui::RichText::new("Genre")
                             .color(theme::SELECTED_TEXT)
-                            .size(13.0),
+                            .size(section_font),
                     );
+                    cols[1].add_space(4.0);
 
-                    let platform_count = Self::PLATFORMS.len();
                     for (i, genre) in available_genres.iter().enumerate() {
                         let item_idx = i + platform_count;
                         let is_active = active_genres.contains(genre);
@@ -1337,9 +1359,9 @@ impl RomBrowserApp {
                         };
                         let prefix = if is_cursor { "▸ " } else { "  " };
                         let label = format!("{prefix}{marker}{genre}");
-                        ui.label(egui::RichText::new(&label).color(color).size(13.0));
+                        cols[1].label(egui::RichText::new(&label).color(color).size(item_font));
                     }
-                }
+                });
             });
     }
 
@@ -2555,6 +2577,7 @@ mod tests {
             detail_scroll_last_advance: Instant::now(),
             detail_scroll_forward: true,
             filter_panel_active: false,
+            filter_panel_anim: 0.0,
             filter_panel_cursor: 0,
             active_platform: None,
             favorites: Favorites::load(&fav_path),
