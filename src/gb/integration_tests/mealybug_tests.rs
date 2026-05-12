@@ -120,26 +120,82 @@ fn test_m2_win_en_toggle_dmg_b() {
 }
 
 mealybug_ignored_dmg_b!(test_m3_bgp_change_dmg_b, "m3_bgp_change", "2348");
-mealybug_ignored_dmg_b!(test_m3_bgp_change_sprites_dmg_b, "m3_bgp_change_sprites", "2348");
-mealybug_ignored_dmg_b!(test_m3_lcdc_bg_en_change_dmg_b, "m3_lcdc_bg_en_change", "2349");
-mealybug_ignored_dmg_b!(test_m3_lcdc_bg_map_change_dmg_b, "m3_lcdc_bg_map_change", "2350");
-mealybug_ignored_dmg_b!(test_m3_lcdc_obj_en_change_dmg_b, "m3_lcdc_obj_en_change", "2351");
-mealybug_ignored_dmg_b!(test_m3_lcdc_obj_en_change_variant_dmg_b, "m3_lcdc_obj_en_change_variant", "2351");
-mealybug_ignored_dmg_b!(test_m3_lcdc_obj_size_change_dmg_b, "m3_lcdc_obj_size_change", "2352");
-mealybug_ignored_dmg_b!(test_m3_lcdc_obj_size_change_scx_dmg_b, "m3_lcdc_obj_size_change_scx", "2352");
-mealybug_ignored_dmg_b!(test_m3_lcdc_tile_sel_change_dmg_b, "m3_lcdc_tile_sel_change", "2353");
-mealybug_ignored_dmg_b!(test_m3_lcdc_tile_sel_win_change_dmg_b, "m3_lcdc_tile_sel_win_change", "2353");
-mealybug_ignored_dmg_b!(test_m3_lcdc_win_en_change_multiple_dmg_b, "m3_lcdc_win_en_change_multiple", "2354");
-mealybug_ignored_dmg_b!(test_m3_lcdc_win_en_change_multiple_wx_dmg_b, "m3_lcdc_win_en_change_multiple_wx", "2354");
-mealybug_ignored_dmg_b!(test_m3_lcdc_win_map_change_dmg_b, "m3_lcdc_win_map_change", "2355");
+mealybug_ignored_dmg_b!(
+    test_m3_bgp_change_sprites_dmg_b,
+    "m3_bgp_change_sprites",
+    "2348"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_bg_en_change_dmg_b,
+    "m3_lcdc_bg_en_change",
+    "2349"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_bg_map_change_dmg_b,
+    "m3_lcdc_bg_map_change",
+    "2350"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_obj_en_change_dmg_b,
+    "m3_lcdc_obj_en_change",
+    "2351"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_obj_en_change_variant_dmg_b,
+    "m3_lcdc_obj_en_change_variant",
+    "2351"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_obj_size_change_dmg_b,
+    "m3_lcdc_obj_size_change",
+    "2352"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_obj_size_change_scx_dmg_b,
+    "m3_lcdc_obj_size_change_scx",
+    "2352"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_tile_sel_change_dmg_b,
+    "m3_lcdc_tile_sel_change",
+    "2353"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_tile_sel_win_change_dmg_b,
+    "m3_lcdc_tile_sel_win_change",
+    "2353"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_win_en_change_multiple_dmg_b,
+    "m3_lcdc_win_en_change_multiple",
+    "2354"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_win_en_change_multiple_wx_dmg_b,
+    "m3_lcdc_win_en_change_multiple_wx",
+    "2354"
+);
+mealybug_ignored_dmg_b!(
+    test_m3_lcdc_win_map_change_dmg_b,
+    "m3_lcdc_win_map_change",
+    "2355"
+);
 mealybug_ignored_dmg_b!(test_m3_obp0_change_dmg_b, "m3_obp0_change", "2356");
 mealybug_ignored_dmg_b!(test_m3_scx_high_5_bits_dmg_b, "m3_scx_high_5_bits", "2357");
 mealybug_ignored_dmg_b!(test_m3_scx_low_3_bits_dmg_b, "m3_scx_low_3_bits", "2357");
 mealybug_ignored_dmg_b!(test_m3_scy_change_dmg_b, "m3_scy_change", "2358");
 mealybug_ignored_dmg_b!(test_m3_window_timing_dmg_b, "m3_window_timing", "2359");
-mealybug_ignored_dmg_b!(test_m3_window_timing_wx_0_dmg_b, "m3_window_timing_wx_0", "2359");
+mealybug_ignored_dmg_b!(
+    test_m3_window_timing_wx_0_dmg_b,
+    "m3_window_timing_wx_0",
+    "2359"
+);
 mealybug_ignored_dmg_b!(test_m3_wx_4_change_dmg_b, "m3_wx_4_change", "2360");
-mealybug_ignored_dmg_b!(test_m3_wx_4_change_sprites_dmg_b, "m3_wx_4_change_sprites", "2360");
+mealybug_ignored_dmg_b!(
+    test_m3_wx_4_change_sprites_dmg_b,
+    "m3_wx_4_change_sprites",
+    "2360"
+);
 mealybug_ignored_dmg_b!(test_m3_wx_5_change_dmg_b, "m3_wx_5_change", "2360");
 mealybug_ignored_dmg_b!(test_m3_wx_6_change_dmg_b, "m3_wx_6_change", "2360");
 
@@ -147,35 +203,125 @@ mealybug_ignored_dmg_b!(test_m3_wx_6_change_dmg_b, "m3_wx_6_change", "2360");
 // CGB-C tests (reference: expected/CPU CGB C/)
 // ============================================================================
 
-mealybug_ignored_cgb_c!(test_m2_win_en_toggle_cgb_c, "m2_win_en_toggle", "2347");
+#[test]
+fn test_m2_win_en_toggle_cgb_c() {
+    let bytes = read_rom_from_zip("m2_win_en_toggle.gb");
+    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m2_win_en_toggle_cgb_c");
+    const EXPECTED_CRC: u32 = 0x5BB7_9D8A;
+    assert_eq!(
+        crc, EXPECTED_CRC,
+        "m2_win_en_toggle CGB-C CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
+    );
+}
 mealybug_ignored_cgb_c!(test_m3_bgp_change_cgb_c, "m3_bgp_change", "2348");
-mealybug_ignored_cgb_c!(test_m3_bgp_change_sprites_cgb_c, "m3_bgp_change_sprites", "2348");
-mealybug_ignored_cgb_c!(test_m3_lcdc_bg_en_change_cgb_c, "m3_lcdc_bg_en_change", "2349");
-mealybug_ignored_cgb_c!(test_m3_lcdc_bg_en_change2_cgb_c, "m3_lcdc_bg_en_change2", "2349");
-mealybug_ignored_cgb_c!(test_m3_lcdc_bg_map_change_cgb_c, "m3_lcdc_bg_map_change", "2350");
-mealybug_ignored_cgb_c!(test_m3_lcdc_bg_map_change2_cgb_c, "m3_lcdc_bg_map_change2", "2350");
-mealybug_ignored_cgb_c!(test_m3_lcdc_obj_en_change_cgb_c, "m3_lcdc_obj_en_change", "2351");
-mealybug_ignored_cgb_c!(test_m3_lcdc_obj_en_change_variant_cgb_c, "m3_lcdc_obj_en_change_variant", "2351");
-mealybug_ignored_cgb_c!(test_m3_lcdc_obj_size_change_cgb_c, "m3_lcdc_obj_size_change", "2352");
-mealybug_ignored_cgb_c!(test_m3_lcdc_obj_size_change_scx_cgb_c, "m3_lcdc_obj_size_change_scx", "2352");
-mealybug_ignored_cgb_c!(test_m3_lcdc_tile_sel_change_cgb_c, "m3_lcdc_tile_sel_change", "2353");
-mealybug_ignored_cgb_c!(test_m3_lcdc_tile_sel_change2_cgb_c, "m3_lcdc_tile_sel_change2", "2353");
-mealybug_ignored_cgb_c!(test_m3_lcdc_tile_sel_win_change_cgb_c, "m3_lcdc_tile_sel_win_change", "2353");
-mealybug_ignored_cgb_c!(test_m3_lcdc_tile_sel_win_change2_cgb_c, "m3_lcdc_tile_sel_win_change2", "2353");
-mealybug_ignored_cgb_c!(test_m3_lcdc_win_en_change_multiple_cgb_c, "m3_lcdc_win_en_change_multiple", "2354");
-mealybug_ignored_cgb_c!(test_m3_lcdc_win_en_change_multiple_wx_cgb_c, "m3_lcdc_win_en_change_multiple_wx", "2354");
-mealybug_ignored_cgb_c!(test_m3_lcdc_win_map_change_cgb_c, "m3_lcdc_win_map_change", "2355");
-mealybug_ignored_cgb_c!(test_m3_lcdc_win_map_change2_cgb_c, "m3_lcdc_win_map_change2", "2355");
+mealybug_ignored_cgb_c!(
+    test_m3_bgp_change_sprites_cgb_c,
+    "m3_bgp_change_sprites",
+    "2348"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_bg_en_change_cgb_c,
+    "m3_lcdc_bg_en_change",
+    "2349"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_bg_en_change2_cgb_c,
+    "m3_lcdc_bg_en_change2",
+    "2349"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_bg_map_change_cgb_c,
+    "m3_lcdc_bg_map_change",
+    "2350"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_bg_map_change2_cgb_c,
+    "m3_lcdc_bg_map_change2",
+    "2350"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_obj_en_change_cgb_c,
+    "m3_lcdc_obj_en_change",
+    "2351"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_obj_en_change_variant_cgb_c,
+    "m3_lcdc_obj_en_change_variant",
+    "2351"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_obj_size_change_cgb_c,
+    "m3_lcdc_obj_size_change",
+    "2352"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_obj_size_change_scx_cgb_c,
+    "m3_lcdc_obj_size_change_scx",
+    "2352"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_tile_sel_change_cgb_c,
+    "m3_lcdc_tile_sel_change",
+    "2353"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_tile_sel_change2_cgb_c,
+    "m3_lcdc_tile_sel_change2",
+    "2353"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_tile_sel_win_change_cgb_c,
+    "m3_lcdc_tile_sel_win_change",
+    "2353"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_tile_sel_win_change2_cgb_c,
+    "m3_lcdc_tile_sel_win_change2",
+    "2353"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_win_en_change_multiple_cgb_c,
+    "m3_lcdc_win_en_change_multiple",
+    "2354"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_win_en_change_multiple_wx_cgb_c,
+    "m3_lcdc_win_en_change_multiple_wx",
+    "2354"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_win_map_change_cgb_c,
+    "m3_lcdc_win_map_change",
+    "2355"
+);
+mealybug_ignored_cgb_c!(
+    test_m3_lcdc_win_map_change2_cgb_c,
+    "m3_lcdc_win_map_change2",
+    "2355"
+);
 mealybug_ignored_cgb_c!(test_m3_obp0_change_cgb_c, "m3_obp0_change", "2356");
 mealybug_ignored_cgb_c!(test_m3_scx_high_5_bits_cgb_c, "m3_scx_high_5_bits", "2357");
-mealybug_ignored_cgb_c!(test_m3_scx_high_5_bits_change2_cgb_c, "m3_scx_high_5_bits_change2", "2357");
+mealybug_ignored_cgb_c!(
+    test_m3_scx_high_5_bits_change2_cgb_c,
+    "m3_scx_high_5_bits_change2",
+    "2357"
+);
 mealybug_ignored_cgb_c!(test_m3_scx_low_3_bits_cgb_c, "m3_scx_low_3_bits", "2357");
 mealybug_ignored_cgb_c!(test_m3_scy_change_cgb_c, "m3_scy_change", "2358");
 mealybug_ignored_cgb_c!(test_m3_scy_change2_cgb_c, "m3_scy_change2", "2358");
 mealybug_ignored_cgb_c!(test_m3_window_timing_cgb_c, "m3_window_timing", "2359");
-mealybug_ignored_cgb_c!(test_m3_window_timing_wx_0_cgb_c, "m3_window_timing_wx_0", "2359");
+mealybug_ignored_cgb_c!(
+    test_m3_window_timing_wx_0_cgb_c,
+    "m3_window_timing_wx_0",
+    "2359"
+);
 mealybug_ignored_cgb_c!(test_m3_wx_4_change_cgb_c, "m3_wx_4_change", "2360");
-mealybug_ignored_cgb_c!(test_m3_wx_4_change_sprites_cgb_c, "m3_wx_4_change_sprites", "2360");
+mealybug_ignored_cgb_c!(
+    test_m3_wx_4_change_sprites_cgb_c,
+    "m3_wx_4_change_sprites",
+    "2360"
+);
 mealybug_ignored_cgb_c!(test_m3_wx_5_change_cgb_c, "m3_wx_5_change", "2360");
 mealybug_ignored_cgb_c!(test_m3_wx_6_change_cgb_c, "m3_wx_6_change", "2360");
 
@@ -183,27 +329,93 @@ mealybug_ignored_cgb_c!(test_m3_wx_6_change_cgb_c, "m3_wx_6_change", "2360");
 // CGB-D tests (reference: expected/CPU CGB D/)
 // ============================================================================
 
-mealybug_ignored_cgb_d!(test_m2_win_en_toggle_cgb_d, "m2_win_en_toggle", "2347");
+#[test]
+fn test_m2_win_en_toggle_cgb_d() {
+    let bytes = read_rom_from_zip("m2_win_en_toggle.gb");
+    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m2_win_en_toggle_cgb_d");
+    const EXPECTED_CRC: u32 = 0x5BB7_9D8A;
+    assert_eq!(
+        crc, EXPECTED_CRC,
+        "m2_win_en_toggle CGB-D CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
+    );
+}
 mealybug_ignored_cgb_d!(test_m3_bgp_change_cgb_d, "m3_bgp_change", "2348");
-mealybug_ignored_cgb_d!(test_m3_bgp_change_sprites_cgb_d, "m3_bgp_change_sprites", "2348");
-mealybug_ignored_cgb_d!(test_m3_lcdc_bg_en_change_cgb_d, "m3_lcdc_bg_en_change", "2349");
-mealybug_ignored_cgb_d!(test_m3_lcdc_bg_map_change_cgb_d, "m3_lcdc_bg_map_change", "2350");
-mealybug_ignored_cgb_d!(test_m3_lcdc_obj_en_change_cgb_d, "m3_lcdc_obj_en_change", "2351");
-mealybug_ignored_cgb_d!(test_m3_lcdc_obj_en_change_variant_cgb_d, "m3_lcdc_obj_en_change_variant", "2351");
-mealybug_ignored_cgb_d!(test_m3_lcdc_obj_size_change_cgb_d, "m3_lcdc_obj_size_change", "2352");
-mealybug_ignored_cgb_d!(test_m3_lcdc_obj_size_change_scx_cgb_d, "m3_lcdc_obj_size_change_scx", "2352");
-mealybug_ignored_cgb_d!(test_m3_lcdc_tile_sel_change_cgb_d, "m3_lcdc_tile_sel_change", "2353");
-mealybug_ignored_cgb_d!(test_m3_lcdc_tile_sel_win_change_cgb_d, "m3_lcdc_tile_sel_win_change", "2353");
-mealybug_ignored_cgb_d!(test_m3_lcdc_win_en_change_multiple_cgb_d, "m3_lcdc_win_en_change_multiple", "2354");
-mealybug_ignored_cgb_d!(test_m3_lcdc_win_en_change_multiple_wx_cgb_d, "m3_lcdc_win_en_change_multiple_wx", "2354");
-mealybug_ignored_cgb_d!(test_m3_lcdc_win_map_change_cgb_d, "m3_lcdc_win_map_change", "2355");
+mealybug_ignored_cgb_d!(
+    test_m3_bgp_change_sprites_cgb_d,
+    "m3_bgp_change_sprites",
+    "2348"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_bg_en_change_cgb_d,
+    "m3_lcdc_bg_en_change",
+    "2349"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_bg_map_change_cgb_d,
+    "m3_lcdc_bg_map_change",
+    "2350"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_obj_en_change_cgb_d,
+    "m3_lcdc_obj_en_change",
+    "2351"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_obj_en_change_variant_cgb_d,
+    "m3_lcdc_obj_en_change_variant",
+    "2351"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_obj_size_change_cgb_d,
+    "m3_lcdc_obj_size_change",
+    "2352"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_obj_size_change_scx_cgb_d,
+    "m3_lcdc_obj_size_change_scx",
+    "2352"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_tile_sel_change_cgb_d,
+    "m3_lcdc_tile_sel_change",
+    "2353"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_tile_sel_win_change_cgb_d,
+    "m3_lcdc_tile_sel_win_change",
+    "2353"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_win_en_change_multiple_cgb_d,
+    "m3_lcdc_win_en_change_multiple",
+    "2354"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_win_en_change_multiple_wx_cgb_d,
+    "m3_lcdc_win_en_change_multiple_wx",
+    "2354"
+);
+mealybug_ignored_cgb_d!(
+    test_m3_lcdc_win_map_change_cgb_d,
+    "m3_lcdc_win_map_change",
+    "2355"
+);
 mealybug_ignored_cgb_d!(test_m3_obp0_change_cgb_d, "m3_obp0_change", "2356");
 mealybug_ignored_cgb_d!(test_m3_scx_high_5_bits_cgb_d, "m3_scx_high_5_bits", "2357");
 mealybug_ignored_cgb_d!(test_m3_scx_low_3_bits_cgb_d, "m3_scx_low_3_bits", "2357");
 mealybug_ignored_cgb_d!(test_m3_scy_change_cgb_d, "m3_scy_change", "2358");
 mealybug_ignored_cgb_d!(test_m3_window_timing_cgb_d, "m3_window_timing", "2359");
-mealybug_ignored_cgb_d!(test_m3_window_timing_wx_0_cgb_d, "m3_window_timing_wx_0", "2359");
+mealybug_ignored_cgb_d!(
+    test_m3_window_timing_wx_0_cgb_d,
+    "m3_window_timing_wx_0",
+    "2359"
+);
 mealybug_ignored_cgb_d!(test_m3_wx_4_change_cgb_d, "m3_wx_4_change", "2360");
-mealybug_ignored_cgb_d!(test_m3_wx_4_change_sprites_cgb_d, "m3_wx_4_change_sprites", "2360");
+mealybug_ignored_cgb_d!(
+    test_m3_wx_4_change_sprites_cgb_d,
+    "m3_wx_4_change_sprites",
+    "2360"
+);
 mealybug_ignored_cgb_d!(test_m3_wx_5_change_cgb_d, "m3_wx_5_change", "2360");
 mealybug_ignored_cgb_d!(test_m3_wx_6_change_cgb_d, "m3_wx_6_change", "2360");
