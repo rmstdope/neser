@@ -18,6 +18,7 @@ use winit::window::WindowId;
 use super::renderer::{BrowserGl, TextureKey};
 use super::theme;
 use crate::platform::app_context::SharedAppContext;
+use crate::platform::catalog::Platform;
 use crate::platform::catalog::RomEntry;
 use crate::platform::catalog::favorites::Favorites;
 
@@ -139,6 +140,12 @@ pub struct RomBrowserApp {
     detail_scroll_last_advance: Instant,
     /// Whether auto-scroll is going forward (true) or backward (false).
     detail_scroll_forward: bool,
+    /// Filter panel overlay active.
+    filter_panel_active: bool,
+    /// Cursor position in the filter panel (0 = platform section, then genres).
+    filter_panel_cursor: usize,
+    /// Active platform filter (`None` = show all platforms).
+    active_platform: Option<crate::platform::catalog::Platform>,
     /// Persistent favorites manager.
     favorites: Favorites,
     /// When true, show only favorited ROMs.
@@ -217,6 +224,9 @@ impl RomBrowserApp {
             detail_screenshot_index: 0,
             detail_scroll_last_advance: Instant::now(),
             detail_scroll_forward: true,
+            filter_panel_active: false,
+            filter_panel_cursor: 0,
+            active_platform: None,
             favorites: Favorites::load(&favorites_path),
             show_favorites_only: false,
             catalog_state: CatalogState::Idle,
@@ -266,6 +276,10 @@ impl RomBrowserApp {
             .iter()
             .enumerate()
             .filter(|(_, e)| {
+                // Platform filter.
+                if matches!(self.active_platform, Some(plat) if e.platform != plat) {
+                    return false;
+                }
                 // Favorites filter.
                 if self.show_favorites_only && !e.is_favorite {
                     return false;
@@ -1660,6 +1674,71 @@ impl RomBrowserApp {
         }
     }
 
+    /// Open the filter panel overlay.
+    fn open_filter_panel(&mut self) {
+        self.search_active = false;
+        self.genre_filter_active = false;
+        self.detail_view_active = false;
+        self.filter_panel_active = true;
+        self.filter_panel_cursor = 0;
+    }
+
+    /// Close the filter panel overlay.
+    fn close_filter_panel(&mut self) {
+        self.filter_panel_active = false;
+    }
+
+    /// Total number of selectable items in the filter panel
+    /// (platform options + genre options).
+    fn filter_panel_item_count(&self) -> usize {
+        // 2 platforms (NES, GB) + available genres
+        2 + self.available_genres.len()
+    }
+
+    /// Handle confirm action within the filter panel.
+    fn filter_panel_confirm(&mut self) {
+        let cursor = self.filter_panel_cursor;
+        if cursor < 2 {
+            // Platform selection (0 = NES, 1 = GB)
+            let selected = if cursor == 0 {
+                Platform::Nes
+            } else {
+                Platform::Gb
+            };
+            if self.active_platform == Some(selected) {
+                self.active_platform = None;
+            } else {
+                self.active_platform = Some(selected);
+            }
+        } else {
+            // Genre toggle
+            let genre_idx = cursor - 2;
+            if let Some(genre) = self.available_genres.get(genre_idx).cloned() {
+                if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
+                    self.active_genres.remove(pos);
+                } else {
+                    self.active_genres.push(genre);
+                }
+            }
+        }
+        self.rebuild_filtered();
+    }
+
+    /// Move the filter panel cursor up.
+    fn filter_panel_move_cursor_up(&mut self) {
+        if self.filter_panel_cursor > 0 {
+            self.filter_panel_cursor -= 1;
+        }
+    }
+
+    /// Move the filter panel cursor down.
+    fn filter_panel_move_cursor_down(&mut self) {
+        let max = self.filter_panel_item_count().saturating_sub(1);
+        if self.filter_panel_cursor < max {
+            self.filter_panel_cursor += 1;
+        }
+    }
+
     /// Ensure the selected cell is visible by adjusting scroll target.
     fn ensure_selected_visible(&mut self) {
         let Some(ref gl) = self.gl else { return };
@@ -1926,6 +2005,14 @@ impl RomBrowserApp {
                 }
                 _ => {}
             }
+        } else if self.filter_panel_active {
+            match action {
+                BrowserAction::Back => self.close_filter_panel(),
+                BrowserAction::Up => self.filter_panel_move_cursor_up(),
+                BrowserAction::Down => self.filter_panel_move_cursor_down(),
+                BrowserAction::Confirm => self.filter_panel_confirm(),
+                _ => {}
+            }
         } else if self.detail_view_active {
             match action {
                 BrowserAction::Back => self.detail_view_active = false,
@@ -1959,14 +2046,7 @@ impl RomBrowserApp {
                     self.open_detail_view();
                 }
                 BrowserAction::Back => {
-                    if !self.search_query.is_empty() || !self.active_genres.is_empty() {
-                        self.search_query.clear();
-                        self.active_genres.clear();
-                        self.rebuild_filtered();
-                    } else {
-                        self.result = BrowserResult::Closed;
-                        event_loop.exit();
-                    }
+                    self.open_filter_panel();
                 }
                 BrowserAction::Search => {
                     self.search_active = true;
@@ -2287,6 +2367,7 @@ impl ApplicationHandler for RomBrowserApp {
 mod tests {
     use super::*;
     use crate::platform::app_context::IntoSharedAppContext;
+    use crate::platform::catalog::Platform;
 
     #[test]
     fn browser_result_default_is_closed() {
@@ -2323,6 +2404,7 @@ mod tests {
             boxart_path: None,
             screenshot_paths: Vec::new(),
             is_favorite: false,
+            platform: Platform::Nes,
         }
     }
 
@@ -2352,6 +2434,9 @@ mod tests {
             detail_screenshot_index: 0,
             detail_scroll_last_advance: Instant::now(),
             detail_scroll_forward: true,
+            filter_panel_active: false,
+            filter_panel_cursor: 0,
+            active_platform: None,
             favorites: Favorites::load(&fav_path),
             show_favorites_only: false,
             catalog_state: CatalogState::Ready,
@@ -2664,5 +2749,141 @@ mod tests {
         } else {
             panic!("Expected CatalogState::Loading");
         }
+    }
+
+    #[test]
+    fn back_opens_filter_panel_instead_of_exiting() {
+        let mut app = test_browser(vec![make_entry("Zelda")]);
+        assert!(!app.filter_panel_active);
+
+        app.open_filter_panel();
+        assert!(app.filter_panel_active);
+        assert_eq!(app.filter_panel_cursor, 0);
+    }
+
+    #[test]
+    fn back_closes_filter_panel() {
+        let mut app = test_browser(vec![make_entry("Zelda")]);
+        app.filter_panel_active = true;
+
+        app.close_filter_panel();
+        assert!(!app.filter_panel_active);
+    }
+
+    #[test]
+    fn platform_filter_narrows_results() {
+        let mut nes = make_entry("Zelda");
+        nes.platform = Platform::Nes;
+        let mut gb = make_entry("Pokemon");
+        gb.platform = Platform::Gb;
+
+        let mut app = test_browser(vec![nes, gb]);
+        assert_eq!(app.filtered_indices.len(), 2);
+
+        app.active_platform = Some(Platform::Nes);
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 1);
+        assert_eq!(app.catalog[app.filtered_indices[0]].display_name, "Zelda");
+
+        app.active_platform = Some(Platform::Gb);
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 1);
+        assert_eq!(app.catalog[app.filtered_indices[0]].display_name, "Pokemon");
+
+        app.active_platform = None;
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 2);
+    }
+
+    #[test]
+    fn filter_panel_cursor_wraps_within_items() {
+        let mut app = test_browser(vec![make_entry("Zelda")]);
+        app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
+        app.filter_panel_active = true;
+        app.filter_panel_cursor = 0;
+
+        let total = app.filter_panel_item_count();
+        // 2 platforms + 2 genres = 4
+        assert_eq!(total, 4);
+
+        app.filter_panel_cursor = 3;
+        assert!(app.filter_panel_cursor < total);
+    }
+
+    #[test]
+    fn filter_panel_confirm_toggles_platform() {
+        let mut nes = make_entry("Zelda");
+        nes.platform = Platform::Nes;
+        let mut gb = make_entry("Pokemon");
+        gb.platform = Platform::Gb;
+
+        let mut app = test_browser(vec![nes, gb]);
+        app.filter_panel_active = true;
+        assert_eq!(app.active_platform, None);
+
+        // Cursor 0 = NES platform
+        app.filter_panel_cursor = 0;
+        app.filter_panel_confirm();
+        assert_eq!(app.active_platform, Some(Platform::Nes));
+        assert_eq!(app.filtered_indices.len(), 1);
+
+        // Confirm same platform again deselects it.
+        app.filter_panel_confirm();
+        assert_eq!(app.active_platform, None);
+        assert_eq!(app.filtered_indices.len(), 2);
+
+        // Cursor 1 = GB platform
+        app.filter_panel_cursor = 1;
+        app.filter_panel_confirm();
+        assert_eq!(app.active_platform, Some(Platform::Gb));
+        assert_eq!(app.filtered_indices.len(), 1);
+    }
+
+    #[test]
+    fn filter_panel_confirm_toggles_genre() {
+        let mut entry = make_entry("Zelda");
+        entry.genres = vec!["Action".to_string(), "RPG".to_string()];
+
+        let mut app = test_browser(vec![entry, make_entry("Mario")]);
+        app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
+        app.filter_panel_active = true;
+
+        // Cursor 2 = first genre ("Action"), after the 2 platform items
+        app.filter_panel_cursor = 2;
+        app.filter_panel_confirm();
+        assert!(app.active_genres.contains(&"Action".to_string()));
+        assert_eq!(app.filtered_indices.len(), 1);
+
+        // Toggle off
+        app.filter_panel_confirm();
+        assert!(!app.active_genres.contains(&"Action".to_string()));
+        assert_eq!(app.filtered_indices.len(), 2);
+    }
+
+    #[test]
+    fn filter_panel_move_cursor_up_down() {
+        let mut app = test_browser(vec![make_entry("Zelda")]);
+        app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
+        app.filter_panel_active = true;
+        app.filter_panel_cursor = 0;
+
+        app.filter_panel_move_cursor_down();
+        assert_eq!(app.filter_panel_cursor, 1);
+
+        app.filter_panel_move_cursor_down();
+        assert_eq!(app.filter_panel_cursor, 2);
+
+        app.filter_panel_move_cursor_up();
+        assert_eq!(app.filter_panel_cursor, 1);
+
+        // Should not go below 0
+        app.filter_panel_cursor = 0;
+        app.filter_panel_move_cursor_up();
+        assert_eq!(app.filter_panel_cursor, 0);
+
+        // Should not go above max
+        app.filter_panel_cursor = 3; // last item
+        app.filter_panel_move_cursor_down();
+        assert_eq!(app.filter_panel_cursor, 3);
     }
 }

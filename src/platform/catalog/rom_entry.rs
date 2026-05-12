@@ -2,6 +2,23 @@
 
 use std::path::PathBuf;
 
+/// The console platform a ROM targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Nes,
+    Gb,
+}
+
+impl Platform {
+    /// Short display label for the platform.
+    pub fn label(self) -> &'static str {
+        match self {
+            Platform::Nes => "NES",
+            Platform::Gb => "GB",
+        }
+    }
+}
+
 /// A discovered ROM enriched with metadata from the iNES header and ROM database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RomEntry {
@@ -39,6 +56,8 @@ pub struct RomEntry {
     pub screenshot_paths: Vec<PathBuf>,
     /// Whether this ROM is marked as a favorite by the user.
     pub is_favorite: bool,
+    /// The console platform this ROM targets.
+    pub platform: Platform,
 }
 
 impl RomEntry {
@@ -79,6 +98,7 @@ mod tests {
             boxart_path: None,
             screenshot_paths: Vec::new(),
             is_favorite: false,
+            platform: Platform::Nes,
         }
     }
 

@@ -192,6 +192,7 @@ impl RomList {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::catalog::Platform;
     use std::path::PathBuf;
 
     fn make_entries(names: &[&str]) -> Vec<RomEntry> {
@@ -215,6 +216,7 @@ mod tests {
                 boxart_path: None,
                 screenshot_paths: Vec::new(),
                 is_favorite: false,
+                platform: Platform::Nes,
             })
             .collect()
     }
@@ -335,6 +337,7 @@ mod tests {
             boxart_path: None,
             screenshot_paths: Vec::new(),
             is_favorite: false,
+            platform: Platform::Nes,
         };
         let mut list = RomList::new(vec![entry]);
 

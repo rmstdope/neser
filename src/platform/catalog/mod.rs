@@ -15,6 +15,7 @@ use crate::nes::console::{
     CartridgeCatalogOptions, default_catalog_csv_path, refresh_cartridge_catalog,
 };
 
+pub use rom_entry::Platform;
 pub use rom_entry::RomEntry;
 
 /// Load the ROM catalog from disk and enrich each entry with iNES + ROM DB metadata.
@@ -126,6 +127,7 @@ pub fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
         boxart_path: None,
         screenshot_paths: Vec::new(),
         is_favorite: false,
+        platform: Platform::Nes,
     }
 }
 
@@ -149,6 +151,7 @@ fn unreadable_entry(path: &Path) -> RomEntry {
         boxart_path: None,
         screenshot_paths: Vec::new(),
         is_favorite: false,
+        platform: Platform::Nes,
     }
 }
 
@@ -172,6 +175,7 @@ fn invalid_entry(path: &Path) -> RomEntry {
         boxart_path: None,
         screenshot_paths: Vec::new(),
         is_favorite: false,
+        platform: Platform::Nes,
     }
 }
 
@@ -739,6 +743,7 @@ mod tests {
             boxart_path: None,
             screenshot_paths: Vec::new(),
             is_favorite: false,
+            platform: Platform::Nes,
         }];
 
         let mut progress_count = 0;
@@ -779,6 +784,7 @@ mod tests {
             boxart_path: None,
             screenshot_paths: Vec::new(),
             is_favorite: false,
+            platform: Platform::Nes,
         }];
 
         // Should not panic with a non-existent DB path.
@@ -812,6 +818,7 @@ mod tests {
             boxart_path: None,
             screenshot_paths: Vec::new(),
             is_favorite: false,
+            platform: Platform::Nes,
         }
     }
 
