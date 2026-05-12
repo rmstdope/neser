@@ -1272,7 +1272,7 @@ impl RomBrowserApp {
         display_h: f32,
     ) {
         // Dim background with animated alpha.
-        let dim_alpha = (150.0 * anim) as u8;
+        let dim_alpha = (180.0 * anim) as u8;
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
             egui::Id::new("filter_panel_dim"),
@@ -1283,85 +1283,171 @@ impl RomBrowserApp {
             egui::Color32::from_black_alpha(dim_alpha),
         );
 
-        let panel_w = 500.0_f32.min(display_w * 0.55);
-        let panel_h = display_h * 0.6;
+        let panel_w = 480.0_f32.min(display_w * 0.5);
         // Slide in from the left: at anim=0 fully off-screen, at anim=1 left-aligned.
         let panel_x = -panel_w + panel_w * anim;
-        let panel_y = (display_h - panel_h) / 2.0;
 
         let platform_count = Self::PLATFORMS.len();
-        let item_font = 16.0;
-        let header_font = 20.0;
-        let section_font = 14.0;
 
-        egui::Window::new("filter_panel")
-            .id(egui::Id::new("filter_panel_overlay"))
-            .fixed_pos(egui::pos2(panel_x, panel_y))
-            .fixed_size(egui::vec2(panel_w, panel_h))
-            .title_bar(false)
-            .resizable(false)
-            .movable(false)
+        // Panel background colors.
+        let panel_bg = egui::Color32::from_rgba_premultiplied(28, 28, 38, 245);
+        let section_bg = egui::Color32::from_rgb(36, 36, 48);
+        let accent = theme::SELECTION_COLOR;
+        let corner_r = egui::CornerRadius::same(12);
+
+        // Paint the full-height panel background with rounded right corners.
+        let panel_rect =
+            egui::Rect::from_min_size(egui::pos2(panel_x, 0.0), egui::vec2(panel_w, display_h));
+        let panel_painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("filter_panel_bg"),
+        ));
+        // Shadow.
+        panel_painter.rect_filled(
+            panel_rect.expand(4.0),
+            egui::CornerRadius {
+                nw: 0,
+                ne: 16,
+                se: 16,
+                sw: 0,
+            },
+            egui::Color32::from_black_alpha(80),
+        );
+        // Main panel.
+        panel_painter.rect_filled(
+            panel_rect,
+            egui::CornerRadius {
+                nw: 0,
+                ne: 12,
+                se: 12,
+                sw: 0,
+            },
+            panel_bg,
+        );
+
+        // Use an Area for the panel content (unconstrained position for off-screen sliding).
+        egui::Area::new(egui::Id::new("filter_panel_area"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(panel_x + 24.0, 32.0))
             .show(ctx, |ui| {
+                ui.set_width(panel_w - 48.0);
+                ui.set_height(display_h - 64.0);
+
+                // Title.
+                ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new("Filters")
                         .color(theme::HEADER_TEXT)
-                        .size(header_font),
+                        .size(22.0)
+                        .strong(),
                 );
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
+                ui.add_space(12.0);
+
+                // Thin accent line.
+                let line_rect = ui.available_rect_before_wrap();
+                let line_y = line_rect.min.y;
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(line_rect.min.x, line_y),
+                        egui::pos2(line_rect.min.x + panel_w - 48.0, line_y),
+                    ],
+                    egui::Stroke::new(1.0, accent.linear_multiply(0.5)),
+                );
+                ui.add_space(16.0);
 
                 // Two-column layout.
                 ui.columns(2, |cols| {
-                    // Left column: Platform
-                    cols[0].label(
-                        egui::RichText::new("Platform")
-                            .color(theme::SELECTED_TEXT)
-                            .size(section_font),
-                    );
-                    cols[0].add_space(4.0);
+                    // ── Left column: Platform ──
+                    Self::render_filter_section_header(&mut cols[0], "PLATFORM", section_bg);
+                    cols[0].add_space(8.0);
 
                     for (i, plat) in Self::PLATFORMS.iter().enumerate() {
                         let is_active = active_platform == Some(*plat);
                         let is_cursor = i == cursor;
-                        let color = if is_cursor {
-                            theme::SELECTION_COLOR
-                        } else if is_active {
-                            theme::SELECTED_TEXT
-                        } else {
-                            theme::TEXT_COLOR
-                        };
-                        let prefix = if is_cursor { "▸ " } else { "  " };
-                        let marker = if is_active { "\u{25CF} " } else { "\u{25CB} " };
-                        let label = format!("{prefix}{marker}{}", plat.label());
-                        cols[0].label(egui::RichText::new(&label).color(color).size(item_font));
+
+                        let item_rect = cols[0]
+                            .horizontal(|ui| {
+                                if is_cursor {
+                                    ui.label(
+                                        egui::RichText::new("▸").color(accent).size(16.0).strong(),
+                                    );
+                                } else {
+                                    ui.add_space(14.0);
+                                }
+                                let _ = ui
+                                    .radio(is_active, egui::RichText::new(plat.label()).size(15.0));
+                            })
+                            .response
+                            .rect;
+
+                        if is_cursor {
+                            cols[0].painter().rect_filled(
+                                item_rect.expand2(egui::vec2(4.0, 1.0)),
+                                corner_r,
+                                accent.linear_multiply(0.12),
+                            );
+                        }
                     }
 
-                    // Right column: Genre
-                    cols[1].label(
-                        egui::RichText::new("Genre")
-                            .color(theme::SELECTED_TEXT)
-                            .size(section_font),
-                    );
-                    cols[1].add_space(4.0);
+                    // ── Right column: Genre ──
+                    Self::render_filter_section_header(&mut cols[1], "GENRE", section_bg);
+                    cols[1].add_space(8.0);
 
                     for (i, genre) in available_genres.iter().enumerate() {
                         let item_idx = i + platform_count;
                         let is_active = active_genres.contains(genre);
                         let is_cursor = item_idx == cursor;
-                        let color = if is_cursor {
-                            theme::SELECTION_COLOR
-                        } else if is_active {
-                            theme::SELECTED_TEXT
-                        } else {
-                            theme::TEXT_COLOR
-                        };
-                        let prefix = if is_cursor { "▸ " } else { "  " };
-                        let label = format!("{prefix}{genre}");
-                        cols[1].label(egui::RichText::new(&label).color(color).size(item_font));
+
+                        let mut checked = is_active;
+                        let item_rect = cols[1]
+                            .horizontal(|ui| {
+                                if is_cursor {
+                                    ui.label(
+                                        egui::RichText::new("▸").color(accent).size(16.0).strong(),
+                                    );
+                                } else {
+                                    ui.add_space(14.0);
+                                }
+                                ui.checkbox(&mut checked, egui::RichText::new(genre).size(15.0));
+                            })
+                            .response
+                            .rect;
+
+                        if is_cursor {
+                            cols[1].painter().rect_filled(
+                                item_rect.expand2(egui::vec2(4.0, 1.0)),
+                                corner_r,
+                                accent.linear_multiply(0.12),
+                            );
+                        }
                     }
                 });
+
+                // Footer hint at the bottom.
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("ESC to close  ·  ↑↓ navigate  ·  Enter toggle")
+                            .color(theme::DIM_TEXT)
+                            .size(12.0),
+                    );
+                });
             });
+    }
+
+    /// Render a styled section header label with a subtle background pill.
+    fn render_filter_section_header(ui: &mut egui::Ui, text: &str, bg: egui::Color32) {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(6), bg);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::proportional(11.0),
+            theme::DIM_TEXT,
+        );
     }
 
     fn render_detail_view_egui(
