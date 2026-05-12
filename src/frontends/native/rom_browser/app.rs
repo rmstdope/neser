@@ -135,8 +135,8 @@ pub struct RomBrowserApp {
     detail_view_active: bool,
     /// Currently selected screenshot index in the detail view.
     detail_screenshot_index: usize,
-    /// Timer for auto-scrolling screenshots (seconds since last advance).
-    detail_scroll_timer: f64,
+    /// Instant when the last screenshot auto-scroll advance happened.
+    detail_scroll_last_advance: Instant,
     /// Whether auto-scroll is going forward (true) or backward (false).
     detail_scroll_forward: bool,
     /// Persistent favorites manager.
@@ -215,7 +215,7 @@ impl RomBrowserApp {
             genre_cursor: 0,
             detail_view_active: false,
             detail_screenshot_index: 0,
-            detail_scroll_timer: 0.0,
+            detail_scroll_last_advance: Instant::now(),
             detail_scroll_forward: true,
             favorites: Favorites::load(&favorites_path),
             show_favorites_only: false,
@@ -439,7 +439,7 @@ impl RomBrowserApp {
         let genre_cursor = self.genre_cursor;
         let detail_view_active = self.detail_view_active;
         if detail_view_active {
-            self.advance_screenshot_auto_scroll(dt as f64);
+            self.advance_screenshot_auto_scroll();
         }
         let detail_screenshot_index = self.detail_screenshot_index;
         let show_favorites_only = self.show_favorites_only;
@@ -1620,20 +1620,20 @@ impl RomBrowserApp {
 
     /// Advance the auto-scroll carousel for screenshots in the detail view.
     /// Pauses longer at the first and last screenshot, then reverses direction.
-    fn advance_screenshot_auto_scroll(&mut self, dt: f64) {
+    fn advance_screenshot_auto_scroll(&mut self) {
         let count = self.detail_screenshot_count();
         if count <= 1 {
             return;
         }
-        self.detail_scroll_timer += dt;
+        let elapsed = self.detail_scroll_last_advance.elapsed().as_secs_f64();
         let pause =
             if self.detail_screenshot_index == 0 || self.detail_screenshot_index == count - 1 {
                 2.0
             } else {
                 1.5
             };
-        if self.detail_scroll_timer >= pause {
-            self.detail_scroll_timer = 0.0;
+        if elapsed >= pause {
+            self.detail_scroll_last_advance = Instant::now();
             if self.detail_scroll_forward {
                 if self.detail_screenshot_index + 1 < count {
                     self.detail_screenshot_index += 1;
@@ -1655,7 +1655,7 @@ impl RomBrowserApp {
         if self.selected_entry().is_some() {
             self.detail_view_active = true;
             self.detail_screenshot_index = 0;
-            self.detail_scroll_timer = 0.0;
+            self.detail_scroll_last_advance = Instant::now();
             self.detail_scroll_forward = true;
         }
     }
@@ -2350,7 +2350,7 @@ mod tests {
             genre_cursor: 0,
             detail_view_active: false,
             detail_screenshot_index: 0,
-            detail_scroll_timer: 0.0,
+            detail_scroll_last_advance: Instant::now(),
             detail_scroll_forward: true,
             favorites: Favorites::load(&fav_path),
             show_favorites_only: false,
@@ -2517,28 +2517,33 @@ mod tests {
         assert!(app.detail_scroll_forward);
 
         // Not enough time yet — stays at 0.
-        app.advance_screenshot_auto_scroll(1.0);
+        app.advance_screenshot_auto_scroll();
         assert_eq!(app.detail_screenshot_index, 0);
 
-        // Endpoint pause is 2.0s — advance past it.
-        app.advance_screenshot_auto_scroll(1.1);
+        // Simulate endpoint pause (2.0s) by backdating the last advance.
+        app.detail_scroll_last_advance = Instant::now() - std::time::Duration::from_secs_f64(2.1);
+        app.advance_screenshot_auto_scroll();
         assert_eq!(app.detail_screenshot_index, 1);
 
-        // Mid-point pause is 1.5s.
-        app.advance_screenshot_auto_scroll(1.6);
+        // Simulate mid-point pause (1.5s).
+        app.detail_scroll_last_advance = Instant::now() - std::time::Duration::from_secs_f64(1.6);
+        app.advance_screenshot_auto_scroll();
         assert_eq!(app.detail_screenshot_index, 2);
 
-        // At the last screenshot (endpoint), pause is 2.0s — reverses direction.
-        app.advance_screenshot_auto_scroll(2.1);
+        // At last screenshot, reverses direction.
+        app.detail_scroll_last_advance = Instant::now() - std::time::Duration::from_secs_f64(2.1);
+        app.advance_screenshot_auto_scroll();
         assert_eq!(app.detail_screenshot_index, 1);
         assert!(!app.detail_scroll_forward);
 
         // Continue backward.
-        app.advance_screenshot_auto_scroll(1.6);
+        app.detail_scroll_last_advance = Instant::now() - std::time::Duration::from_secs_f64(1.6);
+        app.advance_screenshot_auto_scroll();
         assert_eq!(app.detail_screenshot_index, 0);
 
-        // At the first screenshot again — reverses to forward.
-        app.advance_screenshot_auto_scroll(2.1);
+        // At first screenshot, reverses to forward.
+        app.detail_scroll_last_advance = Instant::now() - std::time::Duration::from_secs_f64(2.1);
+        app.advance_screenshot_auto_scroll();
         assert_eq!(app.detail_screenshot_index, 1);
         assert!(app.detail_scroll_forward);
     }
