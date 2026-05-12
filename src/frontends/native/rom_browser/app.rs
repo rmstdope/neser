@@ -1247,60 +1247,48 @@ impl RomBrowserApp {
                     ui.label(
                         egui::RichText::new(&entry.display_name)
                             .color(theme::HEADER_TEXT)
-                            .size(28.0)
+                            .size(26.0)
                             .family(egui::FontFamily::Monospace),
                     );
                     ui.add_space(4.0);
                     ui.separator();
                     ui.add_space(8.0);
 
-                    // Media row: cover art left, screenshots right.
+                    // Three-column layout.
                     let avail = ui.available_size();
-                    let media_h = (avail.y - 140.0).max(200.0); // reserve space for metadata + legend
+                    let col_gap = 16.0;
+                    let left_frac = 0.30;
+                    let mid_frac = 0.35;
+                    // right gets the remainder
+                    let left_w = avail.x * left_frac;
+                    let mid_w = avail.x * mid_frac;
+                    let right_w = avail.x - left_w - mid_w - col_gap * 2.0;
+                    let panel_h = avail.y;
 
                     ui.horizontal(|ui| {
-                        // Left: cover art.
-                        let art_w = avail.x * 0.35;
-                        if let Some(game_id) = entry.metadata_game_id
-                            && let Some(&(tex_id, tex_w, tex_h)) = tex_map.get(&game_id)
-                        {
-                            let img_aspect = tex_w as f32 / tex_h.max(1) as f32;
-                            let art_h = (art_w / img_aspect).min(media_h);
-                            let actual_w = art_h * img_aspect;
-                            ui.add(
-                                egui::Image::from_texture(egui::load::SizedTexture::new(
-                                    tex_id,
-                                    egui::vec2(actual_w, art_h),
-                                ))
-                                .corner_radius(theme::CORNER_RADIUS),
-                            );
-                        } else {
-                            // Placeholder.
-                            let (rect, _) = ui.allocate_exact_size(
-                                egui::vec2(art_w, media_h),
-                                egui::Sense::hover(),
-                            );
-                            ui.painter().rect_filled(
-                                rect,
-                                egui::CornerRadius::same(theme::CORNER_RADIUS as u8),
-                                theme::PLACEHOLDER_BG,
-                            );
-                            ui.painter().text(
-                                rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                &entry.display_name,
-                                egui::FontId::proportional(14.0),
-                                theme::DIM_TEXT,
-                            );
-                        }
-
-                        ui.add_space(16.0);
-
-                        // Right: screenshots.
+                        // ---- LEFT COLUMN: Cover art + metadata ----
                         ui.vertical(|ui| {
-                            if screenshot_textures.is_empty() {
+                            ui.set_width(left_w);
+                            ui.set_max_height(panel_h);
+
+                            // Cover art.
+                            let art_max_h = panel_h * 0.55;
+                            if let Some(game_id) = entry.metadata_game_id
+                                && let Some(&(tex_id, tex_w, tex_h)) = tex_map.get(&game_id)
+                            {
+                                let img_aspect = tex_w as f32 / tex_h.max(1) as f32;
+                                let art_h = (left_w / img_aspect).min(art_max_h);
+                                let actual_w = art_h * img_aspect;
+                                ui.add(
+                                    egui::Image::from_texture(egui::load::SizedTexture::new(
+                                        tex_id,
+                                        egui::vec2(actual_w, art_h),
+                                    ))
+                                    .corner_radius(theme::CORNER_RADIUS),
+                                );
+                            } else {
                                 let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), media_h),
+                                    egui::vec2(left_w, art_max_h * 0.7),
                                     egui::Sense::hover(),
                                 );
                                 ui.painter().rect_filled(
@@ -1311,175 +1299,184 @@ impl RomBrowserApp {
                                 ui.painter().text(
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
-                                    "No screenshots available",
-                                    egui::FontId::proportional(14.0),
+                                    &entry.display_name,
+                                    egui::FontId::proportional(13.0),
                                     theme::DIM_TEXT,
                                 );
-                            } else {
-                                let idx = screenshot_index.min(screenshot_textures.len() - 1);
-                                let (tex_id, tex_w, tex_h) = screenshot_textures[idx];
-
-                                // Main screenshot.
-                                let ss_area_w = ui.available_width();
-                                let ss_aspect = tex_w as f32 / tex_h.max(1) as f32;
-                                let thumb_row_h = if screenshot_textures.len() > 1 {
-                                    60.0
-                                } else {
-                                    0.0
-                                };
-                                let main_h =
-                                    (ss_area_w / ss_aspect).min(media_h - thumb_row_h - 8.0);
-                                let main_w = main_h * ss_aspect;
-
-                                // Blue glow border on selected screenshot.
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(main_w, main_h),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().rect_stroke(
-                                    rect.expand(3.0),
-                                    egui::CornerRadius::same(theme::CORNER_RADIUS as u8),
-                                    egui::Stroke::new(2.0, theme::SELECTION_COLOR),
-                                    egui::StrokeKind::Outside,
-                                );
-                                ui.painter().image(
-                                    tex_id,
-                                    rect,
-                                    egui::Rect::from_min_max(
-                                        egui::pos2(0.0, 0.0),
-                                        egui::pos2(1.0, 1.0),
-                                    ),
-                                    egui::Color32::WHITE,
-                                );
-
-                                // Thumbnail row.
-                                if screenshot_textures.len() > 1 {
-                                    ui.add_space(8.0);
-                                    ui.horizontal(|ui| {
-                                        let thumb_h = 50.0;
-                                        for (i, &(t_id, t_w, t_h)) in
-                                            screenshot_textures.iter().enumerate()
-                                        {
-                                            let t_aspect = t_w as f32 / t_h.max(1) as f32;
-                                            let t_w_px = thumb_h * t_aspect;
-                                            let (t_rect, _) = ui.allocate_exact_size(
-                                                egui::vec2(t_w_px, thumb_h),
-                                                egui::Sense::hover(),
-                                            );
-                                            // Highlight selected thumbnail.
-                                            if i == idx {
-                                                ui.painter().rect_stroke(
-                                                    t_rect.expand(2.0),
-                                                    egui::CornerRadius::same(4),
-                                                    egui::Stroke::new(2.0, theme::SELECTION_COLOR),
-                                                    egui::StrokeKind::Outside,
-                                                );
-                                            } else {
-                                                // Dim unselected thumbnails.
-                                                ui.painter().image(
-                                                    t_id,
-                                                    t_rect,
-                                                    egui::Rect::from_min_max(
-                                                        egui::pos2(0.0, 0.0),
-                                                        egui::pos2(1.0, 1.0),
-                                                    ),
-                                                    egui::Color32::from_white_alpha(120),
-                                                );
-                                            }
-                                            if i == idx {
-                                                ui.painter().image(
-                                                    t_id,
-                                                    t_rect,
-                                                    egui::Rect::from_min_max(
-                                                        egui::pos2(0.0, 0.0),
-                                                        egui::pos2(1.0, 1.0),
-                                                    ),
-                                                    egui::Color32::WHITE,
-                                                );
-                                            }
-                                            ui.add_space(4.0);
-                                        }
-                                    });
-                                }
                             }
-                        });
-                    });
 
-                    ui.add_space(12.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                            ui.add_space(12.0);
 
-                    // Metadata row.
-                    ui.horizontal_wrapped(|ui| {
-                        let meta_font = egui::FontId::proportional(15.0);
-                        let mut meta_items: Vec<String> = Vec::new();
-
-                        if !entry.genres.is_empty() {
-                            meta_items.push(format!("Genre: {}", entry.genres.join(", ")));
-                        }
-                        if let Some(ref date) = entry.release_date {
-                            meta_items.push(format!("Released: {date}"));
-                        }
-                        if let Some(players) = entry.players {
-                            meta_items.push(format!("Players: {players}"));
-                        }
-                        if let Some(ref rating) = entry.rating {
-                            meta_items.push(format!("Rating: {rating}"));
-                        }
-                        meta_items.push(format!("Mapper: {}", entry.mapper_label));
-                        if let Some(ref crc) = entry.crc {
-                            meta_items.push(format!("CRC: {crc}"));
-                        }
-                        if let Some(ref hw) = entry.hardware {
-                            meta_items.push(format!("Hardware: {hw}"));
-                        }
-                        if let Some(file_name) = entry.path.file_name() {
-                            meta_items.push(format!("File: {}", file_name.to_string_lossy()));
-                        }
-
-                        for (i, item) in meta_items.iter().enumerate() {
-                            ui.label(
-                                egui::RichText::new(item)
+                            // Metadata below cover art.
+                            let meta_font = egui::FontId::proportional(13.0);
+                            if !entry.genres.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Genre: {}",
+                                        entry.genres.join(", ")
+                                    ))
                                     .color(theme::DIM_TEXT)
                                     .font(meta_font.clone()),
-                            );
-                            if i + 1 < meta_items.len() {
+                                );
+                            }
+                            if let Some(ref date) = entry.release_date {
                                 ui.label(
-                                    egui::RichText::new("·")
+                                    egui::RichText::new(format!("Released: {date}"))
                                         .color(theme::DIM_TEXT)
                                         .font(meta_font.clone()),
                                 );
                             }
-                        }
-                        if entry.is_favorite {
-                            ui.label(
-                                egui::RichText::new("  \u{2665} Favourite")
-                                    .color(theme::FAVORITE_COLOR)
-                                    .size(15.0),
-                            );
-                        }
-                    });
-
-                    // Description.
-                    if let Some(ref overview) = entry.overview {
-                        ui.add_space(8.0);
-                        egui::ScrollArea::vertical()
-                            .max_height(ui.available_height() - 50.0)
-                            .show(ui, |ui| {
+                            if let Some(players) = entry.players {
                                 ui.label(
-                                    egui::RichText::new(overview)
-                                        .color(theme::TEXT_COLOR)
+                                    egui::RichText::new(format!("Players: {players}"))
+                                        .color(theme::DIM_TEXT)
+                                        .font(meta_font.clone()),
+                                );
+                            }
+                            if let Some(ref rating) = entry.rating {
+                                ui.label(
+                                    egui::RichText::new(format!("Rating: {rating}"))
+                                        .color(theme::DIM_TEXT)
+                                        .font(meta_font.clone()),
+                                );
+                            }
+                            ui.label(
+                                egui::RichText::new(format!("Mapper: {}", entry.mapper_label))
+                                    .color(theme::DIM_TEXT)
+                                    .font(meta_font.clone()),
+                            );
+                            if let Some(ref crc) = entry.crc {
+                                ui.label(
+                                    egui::RichText::new(format!("CRC: {crc}"))
+                                        .color(theme::DIM_TEXT)
+                                        .font(meta_font.clone()),
+                                );
+                            }
+                            if let Some(ref hw) = entry.hardware {
+                                ui.label(
+                                    egui::RichText::new(format!("Hardware: {hw}"))
+                                        .color(theme::DIM_TEXT)
+                                        .font(meta_font.clone()),
+                                );
+                            }
+                            if let Some(file_name) = entry.path.file_name() {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "File: {}",
+                                        file_name.to_string_lossy()
+                                    ))
+                                    .color(theme::DIM_TEXT)
+                                    .font(meta_font),
+                                );
+                            }
+                            if entry.is_favorite {
+                                ui.label(
+                                    egui::RichText::new("\u{2665} Favourite")
+                                        .color(theme::FAVORITE_COLOR)
                                         .size(14.0),
                                 );
-                            });
-                    }
+                            }
+                        });
 
-                    // Button legend at the very bottom.
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                        Self::render_button_legend(
-                            ui,
-                            &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")],
-                        );
+                        ui.add_space(col_gap);
+
+                        // ---- MIDDLE COLUMN: Screenshots stacked ----
+                        ui.vertical(|ui| {
+                            ui.set_width(mid_w);
+                            ui.set_max_height(panel_h);
+
+                            if screenshot_textures.is_empty() {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(mid_w, panel_h * 0.6),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(
+                                    rect,
+                                    egui::CornerRadius::same(theme::CORNER_RADIUS as u8),
+                                    theme::PLACEHOLDER_BG,
+                                );
+                                ui.painter().text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "No screenshots",
+                                    egui::FontId::proportional(14.0),
+                                    theme::DIM_TEXT,
+                                );
+                            } else {
+                                egui::ScrollArea::vertical()
+                                    .max_height(panel_h)
+                                    .show(ui, |ui| {
+                                        for (i, &(tex_id, tex_w, tex_h)) in
+                                            screenshot_textures.iter().enumerate()
+                                        {
+                                            let ss_aspect = tex_w as f32 / tex_h.max(1) as f32;
+                                            let img_w = mid_w;
+                                            let img_h = img_w / ss_aspect;
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                egui::vec2(img_w, img_h),
+                                                egui::Sense::hover(),
+                                            );
+                                            ui.painter().image(
+                                                tex_id,
+                                                rect,
+                                                egui::Rect::from_min_max(
+                                                    egui::pos2(0.0, 0.0),
+                                                    egui::pos2(1.0, 1.0),
+                                                ),
+                                                egui::Color32::WHITE,
+                                            );
+                                            // Highlight selected screenshot.
+                                            let idx =
+                                                screenshot_index.min(screenshot_textures.len() - 1);
+                                            if i == idx {
+                                                ui.painter().rect_stroke(
+                                                    rect.expand(2.0),
+                                                    egui::CornerRadius::same(
+                                                        theme::CORNER_RADIUS as u8,
+                                                    ),
+                                                    egui::Stroke::new(2.5, theme::SELECTION_COLOR),
+                                                    egui::StrokeKind::Outside,
+                                                );
+                                            }
+                                            ui.add_space(8.0);
+                                        }
+                                    });
+                            }
+                        });
+
+                        ui.add_space(col_gap);
+
+                        // ---- RIGHT COLUMN: Description + legend ----
+                        ui.vertical(|ui| {
+                            ui.set_width(right_w);
+                            ui.set_max_height(panel_h);
+
+                            if let Some(ref overview) = entry.overview {
+                                egui::ScrollArea::vertical()
+                                    .max_height(panel_h - 60.0)
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new(overview)
+                                                .color(theme::TEXT_COLOR)
+                                                .size(14.0),
+                                        );
+                                    });
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("No description available.")
+                                        .color(theme::DIM_TEXT)
+                                        .size(14.0),
+                                );
+                            }
+
+                            // Button legend at the bottom.
+                            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                                Self::render_button_legend(
+                                    ui,
+                                    &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")],
+                                );
+                            });
+                        });
                     });
                 });
             });
