@@ -1295,7 +1295,7 @@ impl RomBrowserApp {
                         .size(13.0),
                 );
 
-                let platforms = [Platform::Nes, Platform::Gb];
+                let platforms = Self::PLATFORMS;
                 for (i, plat) in platforms.iter().enumerate() {
                     let is_active = active_platform == Some(*plat);
                     let marker = if is_active { "● " } else { "○ " };
@@ -1322,8 +1322,9 @@ impl RomBrowserApp {
                             .size(13.0),
                     );
 
+                    let platform_count = Self::PLATFORMS.len();
                     for (i, genre) in available_genres.iter().enumerate() {
-                        let item_idx = i + 2; // offset by platform items
+                        let item_idx = i + platform_count;
                         let is_active = active_genres.contains(genre);
                         let marker = if is_active { "☑ " } else { "☐ " };
                         let is_cursor = item_idx == cursor;
@@ -1803,21 +1804,18 @@ impl RomBrowserApp {
 
     /// Total number of selectable items in the filter panel
     /// (platform options + genre options).
+    const PLATFORMS: [Platform; 3] = [Platform::Nes, Platform::Gb, Platform::Gbc];
+
     fn filter_panel_item_count(&self) -> usize {
-        // 2 platforms (NES, GB) + available genres
-        2 + self.available_genres.len()
+        Self::PLATFORMS.len() + self.available_genres.len()
     }
 
     /// Handle confirm action within the filter panel.
     fn filter_panel_confirm(&mut self) {
         let cursor = self.filter_panel_cursor;
-        if cursor < 2 {
-            // Platform selection (0 = NES, 1 = GB)
-            let selected = if cursor == 0 {
-                Platform::Nes
-            } else {
-                Platform::Gb
-            };
+        let platform_count = Self::PLATFORMS.len();
+        if cursor < platform_count {
+            let selected = Self::PLATFORMS[cursor];
             if self.active_platform == Some(selected) {
                 self.active_platform = None;
             } else {
@@ -1825,7 +1823,7 @@ impl RomBrowserApp {
             }
         } else {
             // Genre toggle
-            let genre_idx = cursor - 2;
+            let genre_idx = cursor - platform_count;
             if let Some(genre) = self.available_genres.get(genre_idx).cloned() {
                 if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
                     self.active_genres.remove(pos);
@@ -2925,10 +2923,10 @@ mod tests {
         app.filter_panel_cursor = 0;
 
         let total = app.filter_panel_item_count();
-        // 2 platforms + 2 genres = 4
-        assert_eq!(total, 4);
+        // 3 platforms + 2 genres = 5
+        assert_eq!(total, 5);
 
-        app.filter_panel_cursor = 3;
+        app.filter_panel_cursor = 4;
         assert!(app.filter_panel_cursor < total);
     }
 
@@ -2959,6 +2957,16 @@ mod tests {
         app.filter_panel_confirm();
         assert_eq!(app.active_platform, Some(Platform::Gb));
         assert_eq!(app.filtered_indices.len(), 1);
+
+        // Deselect GB
+        app.filter_panel_confirm();
+        assert_eq!(app.active_platform, None);
+
+        // Cursor 2 = GBC platform
+        app.filter_panel_cursor = 2;
+        app.filter_panel_confirm();
+        assert_eq!(app.active_platform, Some(Platform::Gbc));
+        assert_eq!(app.filtered_indices.len(), 0);
     }
 
     #[test]
@@ -2970,8 +2978,8 @@ mod tests {
         app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
         app.filter_panel_active = true;
 
-        // Cursor 2 = first genre ("Action"), after the 2 platform items
-        app.filter_panel_cursor = 2;
+        // Cursor 3 = first genre ("Action"), after the 3 platform items
+        app.filter_panel_cursor = 3;
         app.filter_panel_confirm();
         assert!(app.active_genres.contains(&"Action".to_string()));
         assert_eq!(app.filtered_indices.len(), 1);
@@ -3004,8 +3012,8 @@ mod tests {
         assert_eq!(app.filter_panel_cursor, 0);
 
         // Should not go above max
-        app.filter_panel_cursor = 3; // last item
+        app.filter_panel_cursor = 4; // last item
         app.filter_panel_move_cursor_down();
-        assert_eq!(app.filter_panel_cursor, 3);
+        assert_eq!(app.filter_panel_cursor, 4);
     }
 }

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub enum Platform {
     Nes,
     Gb,
+    Gbc,
 }
 
 impl Platform {
@@ -15,6 +16,7 @@ impl Platform {
         match self {
             Platform::Nes => "NES",
             Platform::Gb => "GB",
+            Platform::Gbc => "GBC",
         }
     }
 }

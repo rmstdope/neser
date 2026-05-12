@@ -27,7 +27,7 @@ pub fn refresh_cartridge_catalog(options: &CartridgeCatalogOptions) -> io::Resul
     let mut catalog_entries = existing_catalog_entries(options)?;
 
     if options.scan_enabled {
-        let discovered = collect_nes_files(&options.search_paths)?;
+        let discovered = collect_rom_files(&options.search_paths)?;
         catalog_entries.extend(discovered);
     }
 
@@ -47,15 +47,15 @@ fn existing_catalog_entries(options: &CartridgeCatalogOptions) -> io::Result<BTr
     read_catalog_entries(&options.catalog_csv_path).map(|entries| entries.into_iter().collect())
 }
 
-fn collect_nes_files(search_paths: &[PathBuf]) -> io::Result<BTreeSet<PathBuf>> {
+fn collect_rom_files(search_paths: &[PathBuf]) -> io::Result<BTreeSet<PathBuf>> {
     let mut files = BTreeSet::new();
     for root in search_paths {
-        collect_nes_files_under(root, &mut files)?;
+        collect_rom_files_under(root, &mut files)?;
     }
     Ok(files)
 }
 
-fn collect_nes_files_under(root: &Path, out: &mut BTreeSet<PathBuf>) -> io::Result<()> {
+fn collect_rom_files_under(root: &Path, out: &mut BTreeSet<PathBuf>) -> io::Result<()> {
     let Some(entries) = read_dir_if_exists(root)? else {
         return Ok(());
     };
@@ -77,8 +77,8 @@ fn collect_nes_files_under(root: &Path, out: &mut BTreeSet<PathBuf>) -> io::Resu
         }
 
         if file_type.is_dir() {
-            collect_nes_files_under(&path, out)?;
-        } else if file_type.is_file() && is_nes_file(&path) {
+            collect_rom_files_under(&path, out)?;
+        } else if file_type.is_file() && is_rom_file(&path) {
             out.insert(path);
         }
     }
@@ -94,10 +94,14 @@ fn read_dir_if_exists(path: &Path) -> io::Result<Option<fs::ReadDir>> {
     }
 }
 
-fn is_nes_file(path: &Path) -> bool {
+fn is_rom_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("nes"))
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("nes")
+                || ext.eq_ignore_ascii_case("gb")
+                || ext.eq_ignore_ascii_case("gbc")
+        })
 }
 
 fn read_catalog_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
@@ -286,5 +290,36 @@ mod tests {
         let home = PathBuf::from("/tmp/demo-home");
         let path = default_catalog_csv_path(&home);
         assert_eq!(path, home.join(".neser").join("cartridges.csv"));
+    }
+
+    #[test]
+    fn is_rom_file_accepts_gb_and_gbc_extensions() {
+        assert!(is_rom_file(Path::new("game.gb")));
+        assert!(is_rom_file(Path::new("game.GB")));
+        assert!(is_rom_file(Path::new("game.gbc")));
+        assert!(is_rom_file(Path::new("game.GBC")));
+        assert!(is_rom_file(Path::new("game.nes")));
+        assert!(is_rom_file(Path::new("game.NES")));
+        assert!(!is_rom_file(Path::new("game.txt")));
+        assert!(!is_rom_file(Path::new("game.zip")));
+    }
+
+    #[test]
+    fn scan_discovers_gb_files() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("roms");
+        write_file(&root.join("nes_game.nes"));
+        write_file(&root.join("gb_game.gb"));
+        write_file(&root.join("gbc_game.gbc"));
+        write_file(&root.join("notes.txt"));
+
+        let catalog_path = temp.path().join("cartridges.csv");
+        let options = CartridgeCatalogOptions::new(vec![root], catalog_path);
+
+        let entries = refresh_cartridge_catalog(&options).expect("refresh should succeed");
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().any(|p| p.ends_with("nes_game.nes")));
+        assert!(entries.iter().any(|p| p.ends_with("gb_game.gb")));
+        assert!(entries.iter().any(|p| p.ends_with("gbc_game.gbc")));
     }
 }

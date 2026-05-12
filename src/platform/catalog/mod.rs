@@ -82,6 +82,13 @@ pub fn dedup_by_crc(entries: &mut Vec<RomEntry>) {
 
 /// Parse one ROM file and build a `RomEntry`, falling back gracefully on errors.
 pub fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
+    let platform = platform_from_path(path);
+
+    // GB/GBC ROMs don't use iNES format — create a basic entry.
+    if platform == Platform::Gb {
+        return build_gb_rom_entry(path);
+    }
+
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(_) => return unreadable_entry(path),
@@ -127,35 +134,24 @@ pub fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
         boxart_path: None,
         screenshot_paths: Vec::new(),
         is_favorite: false,
-        platform: Platform::Nes,
+        platform,
     }
+}
+
+fn build_gb_rom_entry(path: &Path) -> RomEntry {
+    stub_entry(path, Platform::Gb)
 }
 
 fn unreadable_entry(path: &Path) -> RomEntry {
-    let display_name = file_stem(path);
-    RomEntry {
-        path: path.to_path_buf(),
-        search_key: display_name.to_lowercase(),
-        mapper_label: "-".to_string(),
-        display_name,
-        mapper: None,
-        hardware: None,
-        crc: None,
-        recording_duration: read_recording_duration(path),
-        metadata_game_id: None,
-        genres: Vec::new(),
-        overview: None,
-        release_date: None,
-        players: None,
-        rating: None,
-        boxart_path: None,
-        screenshot_paths: Vec::new(),
-        is_favorite: false,
-        platform: Platform::Nes,
-    }
+    stub_entry(path, platform_from_path(path))
 }
 
 fn invalid_entry(path: &Path) -> RomEntry {
+    stub_entry(path, platform_from_path(path))
+}
+
+/// Minimal entry for ROMs that cannot be parsed or are non-NES.
+fn stub_entry(path: &Path, platform: Platform) -> RomEntry {
     let display_name = file_stem(path);
     RomEntry {
         path: path.to_path_buf(),
@@ -175,7 +171,21 @@ fn invalid_entry(path: &Path) -> RomEntry {
         boxart_path: None,
         screenshot_paths: Vec::new(),
         is_favorite: false,
-        platform: Platform::Nes,
+        platform,
+    }
+}
+
+/// Determine the platform from a ROM file's extension.
+fn platform_from_path(path: &Path) -> Platform {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("gb") => Platform::Gb,
+        Some("gbc") => Platform::Gbc,
+        _ => Platform::Nes,
     }
 }
 
@@ -710,6 +720,34 @@ mod tests {
         assert!(entry.boxart_path.is_none());
         assert!(entry.screenshot_paths.is_empty());
         assert!(!entry.is_favorite);
+    }
+
+    #[test]
+    fn test_platform_from_path_nes() {
+        assert_eq!(platform_from_path(Path::new("game.nes")), Platform::Nes);
+        assert_eq!(platform_from_path(Path::new("game.NES")), Platform::Nes);
+    }
+
+    #[test]
+    fn test_platform_from_path_gb() {
+        assert_eq!(platform_from_path(Path::new("game.gb")), Platform::Gb);
+        assert_eq!(platform_from_path(Path::new("game.GB")), Platform::Gb);
+    }
+
+    #[test]
+    fn test_platform_from_path_gbc() {
+        assert_eq!(platform_from_path(Path::new("game.gbc")), Platform::Gbc);
+        assert_eq!(platform_from_path(Path::new("game.GBC")), Platform::Gbc);
+    }
+
+    #[test]
+    fn test_build_rom_entry_gb_file_has_gb_platform() {
+        let tmp = NamedTempFile::with_suffix(".gb").unwrap();
+        std::fs::write(tmp.path(), [0u8; 256]).unwrap();
+        let db = RomDb::from_csv_content("");
+
+        let entry = build_rom_entry(tmp.path(), &db);
+        assert_eq!(entry.platform, Platform::Gb);
     }
 
     #[cfg(feature = "native")]
