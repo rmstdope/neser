@@ -19,6 +19,15 @@ impl Platform {
             Platform::Gbc => "GBC",
         }
     }
+
+    /// TheGamesDB platform ID for metadata matching.
+    /// GB and GBC share the same TheGamesDB platform (Nintendo Game Boy = 4).
+    pub fn thegamesdb_id(self) -> i64 {
+        match self {
+            Platform::Nes => 7,
+            Platform::Gb | Platform::Gbc => 4,
+        }
+    }
 }
 
 /// A discovered ROM enriched with metadata from the iNES header and ROM database.

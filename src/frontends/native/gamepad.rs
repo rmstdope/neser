@@ -37,8 +37,8 @@ pub fn map_button_to_nes(button: gilrs::Button) -> Option<Button> {
     match button {
         gilrs::Button::South => Some(Button::B),
         gilrs::Button::East => Some(Button::A),
-        gilrs::Button::West => Some(Button::A),
-        gilrs::Button::North => Some(Button::B),
+        gilrs::Button::West => Some(Button::B),
+        gilrs::Button::North => Some(Button::A),
         gilrs::Button::Start | gilrs::Button::RightTrigger2 => Some(Button::Start),
         gilrs::Button::Select | gilrs::Button::LeftTrigger2 => Some(Button::Select),
         gilrs::Button::DPadUp => Some(Button::Up),
@@ -501,23 +501,23 @@ mod tests {
     // ── map_button_to_nes ─────────────────────────────────────────────────
 
     #[test]
-    fn nes_mapping_south_is_a() {
-        assert_eq!(map_button_to_nes(gilrs::Button::South), Some(Button::A));
+    fn nes_mapping_south_is_b() {
+        assert_eq!(map_button_to_nes(gilrs::Button::South), Some(Button::B));
     }
 
     #[test]
-    fn nes_mapping_east_is_b() {
-        assert_eq!(map_button_to_nes(gilrs::Button::East), Some(Button::B));
+    fn nes_mapping_east_is_a() {
+        assert_eq!(map_button_to_nes(gilrs::Button::East), Some(Button::A));
     }
 
     #[test]
-    fn nes_mapping_west_is_a_alternate() {
-        assert_eq!(map_button_to_nes(gilrs::Button::West), Some(Button::A));
+    fn nes_mapping_west_is_b_alternate() {
+        assert_eq!(map_button_to_nes(gilrs::Button::West), Some(Button::B));
     }
 
     #[test]
-    fn nes_mapping_north_is_b_alternate() {
-        assert_eq!(map_button_to_nes(gilrs::Button::North), Some(Button::B));
+    fn nes_mapping_north_is_a_alternate() {
+        assert_eq!(map_button_to_nes(gilrs::Button::North), Some(Button::A));
     }
 
     #[test]

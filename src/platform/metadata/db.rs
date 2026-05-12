@@ -77,6 +77,24 @@ impl MetadataDb {
             .unwrap_or_default()
     }
 
+    /// Load game titles and IDs for a specific platform.
+    ///
+    /// `platform_id` corresponds to TheGamesDB platform IDs (e.g. 7=NES, 4=GB).
+    /// Returns a vec of (game_id, title) pairs.
+    pub fn titles_for_platform(&self, platform_id: i64) -> Vec<(i64, String)> {
+        let mut stmt = match self
+            .conn
+            .prepare("SELECT id, game_title FROM games WHERE platform_id = ?1")
+        {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+
+        stmt.query_map(params![platform_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map(|rows| rows.filter_map(Result::ok).collect())
+            .unwrap_or_default()
+    }
+
     /// Look up full metadata for a game by its ID.
     pub fn get_game(&self, game_id: i64) -> Option<GameMetadata> {
         let (title, release_date, players, overview, rating) = self

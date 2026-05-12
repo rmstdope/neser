@@ -437,6 +437,10 @@ pub fn enrich_catalog(
     for (i, entry) in catalog.iter_mut().enumerate() {
         if let Some(cached) = ecache.get(&entry.path) {
             entry.metadata_game_id = cached.metadata_game_id;
+            if let Some(ref name) = cached.display_name {
+                entry.display_name.clone_from(name);
+                entry.search_key = entry.display_name.to_lowercase();
+            }
             entry.genres.clone_from(&cached.genres);
             entry.overview.clone_from(&cached.overview);
             entry.release_date.clone_from(&cached.release_date);
@@ -444,11 +448,6 @@ pub fn enrich_catalog(
             entry.rating.clone_from(&cached.rating);
             entry.boxart_path.clone_from(&cached.boxart_path);
             entry.screenshot_paths.clone_from(&cached.screenshot_paths);
-            // Re-enrich entries that have metadata but are missing screenshots
-            // (likely from a prior enrichment before screenshot support was added).
-            if cached.metadata_game_id.is_some() && cached.screenshot_paths.is_empty() {
-                uncached_indices.push(i);
-            }
         } else {
             uncached_indices.push(i);
         }
@@ -464,7 +463,16 @@ pub fn enrich_catalog(
         None => return,
     };
 
-    let titles = db.all_titles();
+    // Build per-platform title lists so ROMs only match against their own platform.
+    use std::collections::HashMap;
+    let mut platform_titles: HashMap<i64, Vec<(i64, String)>> = HashMap::new();
+    for &idx in &uncached_indices {
+        let pid = catalog[idx].platform.thegamesdb_id();
+        platform_titles
+            .entry(pid)
+            .or_insert_with(|| db.titles_for_platform(pid));
+    }
+
     let base_url = db.medium_base_url().to_string();
     let uncached_total = uncached_indices.len();
 
@@ -478,9 +486,16 @@ pub fn enrich_catalog(
             phase: EnrichmentPhase::MatchingMetadata,
         });
 
-        if let Some(m) = match_title(&entry.display_name, &titles) {
+        let pid = entry.platform.thegamesdb_id();
+        let titles = platform_titles
+            .get(&pid)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        if let Some(m) = match_title(&entry.display_name, titles) {
             entry.metadata_game_id = Some(m.game_id);
             if let Some(meta) = db.get_game(m.game_id) {
+                entry.display_name = meta.title;
+                entry.search_key = entry.display_name.to_lowercase();
                 entry.genres = meta.genres;
                 entry.overview = meta.overview;
                 entry.release_date = meta.release_date;
@@ -502,6 +517,7 @@ pub fn enrich_catalog(
                     entry.path.clone(),
                     CachedEnrichment {
                         metadata_game_id: entry.metadata_game_id,
+                        display_name: entry.metadata_game_id.map(|_| entry.display_name.clone()),
                         genres: entry.genres.clone(),
                         overview: entry.overview.clone(),
                         release_date: entry.release_date.clone(),
@@ -542,6 +558,7 @@ pub fn enrich_catalog(
             entry.path.clone(),
             CachedEnrichment {
                 metadata_game_id: entry.metadata_game_id,
+                display_name: entry.metadata_game_id.map(|_| entry.display_name.clone()),
                 genres: entry.genres.clone(),
                 overview: entry.overview.clone(),
                 release_date: entry.release_date.clone(),

@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 pub struct CachedEnrichment {
     /// TheGamesDB game ID matched via fuzzy title matching.
     pub metadata_game_id: Option<i64>,
+    /// Display name from metadata (overrides filename-based name).
+    #[serde(default)]
+    pub display_name: Option<String>,
     /// Genre names from TheGamesDB.
     pub genres: Vec<String>,
     /// Game overview/description.
@@ -110,6 +113,7 @@ mod tests {
     fn make_enrichment(game_id: Option<i64>) -> CachedEnrichment {
         CachedEnrichment {
             metadata_game_id: game_id,
+            display_name: game_id.map(|_| "Test Game".to_string()),
             genres: vec!["Action".to_string()],
             overview: Some("A game".to_string()),
             release_date: Some("1990-01-01".to_string()),

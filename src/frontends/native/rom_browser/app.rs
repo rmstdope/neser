@@ -113,6 +113,8 @@ pub struct RomBrowserApp {
     default_width: u32,
     default_height: u32,
     fullscreen: bool,
+    /// Tracks the instant of the last render_frame call for frame-to-frame dt.
+    last_render_instant: Instant,
     catalog: Vec<RomEntry>,
     /// Indices into `catalog` that match the current filter (search + genre).
     filtered_indices: Vec<usize>,
@@ -124,6 +126,11 @@ pub struct RomBrowserApp {
     /// Search overlay state.
     search_active: bool,
     search_query: String,
+    /// Animation progress for search panel slide (0.0 = hidden, 1.0 = fully shown).
+    search_anim: f32,
+    /// On-screen keyboard cursor position (row, col).
+    search_kb_row: usize,
+    search_kb_col: usize,
     /// Genre filter overlay state.
     genre_filter_active: bool,
     /// All available genres (collected from catalog).
@@ -215,6 +222,7 @@ impl RomBrowserApp {
             default_width,
             default_height,
             fullscreen,
+            last_render_instant: Instant::now(),
             catalog: Vec::new(),
             filtered_indices: Vec::new(),
             selected_index: 0,
@@ -222,6 +230,9 @@ impl RomBrowserApp {
             scroll_target: 0.0,
             search_active: false,
             search_query: String::new(),
+            search_anim: 0.0,
+            search_kb_row: 1,
+            search_kb_col: 0,
             genre_filter_active: false,
             available_genres: Vec::new(),
             active_genres: Vec::new(),
@@ -425,7 +436,9 @@ impl RomBrowserApp {
         }
 
         let (display_w, display_h) = gl.logical_size();
-        let dt = gl.delta_time();
+        // Measure true frame-to-frame time (includes vsync wait from last frame).
+        let dt = self.last_render_instant.elapsed().as_secs_f32().min(0.1);
+        self.last_render_instant = Instant::now();
         let diff = self.scroll_target - self.scroll_offset;
         if diff.abs() < 0.5 {
             self.scroll_offset = self.scroll_target;
@@ -471,14 +484,25 @@ impl RomBrowserApp {
 
         // Animate filter panel slide with fixed-rate stepping (frame-rate independent).
         let anim_target = if self.filter_panel_active { 1.0 } else { 0.0 };
-        let dt = self.gl.as_ref().map_or(0.016, |gl| gl.delta_time());
-        let anim_step = dt / 0.15; // complete in ~150ms
+        let anim_step = dt / 0.30; // complete in ~300ms
         if self.filter_panel_anim < anim_target {
             self.filter_panel_anim = (self.filter_panel_anim + anim_step).min(anim_target);
         } else if self.filter_panel_anim > anim_target {
             self.filter_panel_anim = (self.filter_panel_anim - anim_step).max(anim_target);
         }
         let filter_panel_anim = self.filter_panel_anim;
+
+        // Animate search panel slide with the same timing.
+        let search_anim_target = if self.search_active { 1.0 } else { 0.0 };
+        if self.search_anim < search_anim_target {
+            self.search_anim = (self.search_anim + anim_step).min(search_anim_target);
+        } else if self.search_anim > search_anim_target {
+            self.search_anim = (self.search_anim - anim_step).max(search_anim_target);
+        }
+        let search_anim = self.search_anim;
+        let search_kb_row = self.search_kb_row;
+        let search_kb_col = self.search_kb_col;
+
         let available_genres = self.available_genres.clone();
         let active_genres = self.active_genres.clone();
         let genre_cursor = self.genre_cursor;
@@ -609,7 +633,7 @@ impl RomBrowserApp {
                             // Button legend at the bottom of the sidebar.
                             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                                 let legend_items: &[(&str, &str)] = if search_active {
-                                    &[("Esc", "Close"), ("Enter", "Launch")]
+                                    &[("Tab", "Close"), ("Enter", "Launch")]
                                 } else if genre_filter_active {
                                     &[("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
                                 } else if filter_panel_active {
@@ -621,7 +645,7 @@ impl RomBrowserApp {
                                         ("A", "Details"),
                                         ("B", "Filter"),
                                         ("Select", "Favorite"),
-                                        ("Start", "Search"),
+                                        ("Tab", "Search"),
                                     ]
                                 };
                                 Self::render_button_legend(ui, legend_items);
@@ -665,12 +689,16 @@ impl RomBrowserApp {
                     );
                 });
 
-            if search_active {
-                Self::render_search_overlay_egui(
+            if search_active || search_anim > 0.0 {
+                Self::render_search_panel_egui(
                     ui.ctx(),
                     &search_query,
                     filtered_count,
+                    search_kb_row,
+                    search_kb_col,
+                    search_anim,
                     display_w,
+                    display_h,
                 );
             }
             if genre_filter_active && !available_genres.is_empty() {
@@ -1195,7 +1223,19 @@ impl RomBrowserApp {
         }
     }
 
-    fn render_search_overlay_egui(ctx: &egui::Context, query: &str, count: usize, display_w: f32) {
+    #[allow(clippy::too_many_arguments)]
+    fn render_search_panel_egui(
+        ctx: &egui::Context,
+        query: &str,
+        count: usize,
+        kb_row: usize,
+        kb_col: usize,
+        anim: f32,
+        display_w: f32,
+        display_h: f32,
+    ) {
+        // Dim background with animated alpha.
+        let dim_alpha = (180.0 * anim) as u8;
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
             egui::Id::new("search_dim"),
@@ -1203,24 +1243,163 @@ impl RomBrowserApp {
         painter.rect_filled(
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(display_w * 2.0, 10000.0)),
             egui::CornerRadius::ZERO,
-            egui::Color32::from_black_alpha(120),
+            egui::Color32::from_black_alpha(dim_alpha),
         );
 
-        let search_w = (display_w * 0.5).clamp(300.0, 600.0);
-        let search_x = (display_w - search_w) / 2.0;
+        let panel_w = 560.0_f32.min(display_w * 0.55);
+        let panel_x = -panel_w + panel_w * anim;
+        let panel_bg = egui::Color32::from_rgba_premultiplied(28, 28, 38, 140);
+        let accent = theme::SELECTION_COLOR;
+        let corner_r = egui::CornerRadius::same(12);
 
-        egui::Window::new("search")
-            .id(egui::Id::new("search_overlay"))
-            .fixed_pos(egui::pos2(search_x, 80.0))
-            .fixed_size(egui::vec2(search_w, 48.0))
-            .title_bar(false)
-            .resizable(false)
-            .movable(false)
+        // Panel background with rounded right corners and shadow.
+        let panel_rect =
+            egui::Rect::from_min_size(egui::pos2(panel_x, 0.0), egui::vec2(panel_w, display_h));
+        let bg_painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::new("search_panel_bg"),
+        ));
+        bg_painter.rect_filled(
+            panel_rect.expand(6.0),
+            corner_r,
+            egui::Color32::from_black_alpha(60),
+        );
+        bg_painter.rect_filled(panel_rect, corner_r, panel_bg);
+
+        // Content area.
+        egui::Area::new(egui::Id::new("search_panel_content"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(panel_x + 20.0, 30.0))
+            .constrain(false)
             .show(ctx, |ui| {
+                ui.set_clip_rect(panel_rect);
+                let content_w = panel_w - 40.0;
+                ui.set_max_width(content_w);
+
+                // Title.
                 ui.label(
-                    egui::RichText::new(format!("Search: {query}\u{258C}    ({count} matches)"))
-                        .color(theme::HEADER_TEXT)
+                    egui::RichText::new("Search")
+                        .color(egui::Color32::WHITE)
+                        .size(27.0),
+                );
+                ui.add_space(12.0);
+
+                // Search query bar.
+                let query_display = if query.is_empty() {
+                    "Type to search...".to_string()
+                } else {
+                    format!("{query}|")
+                };
+                let query_color = if query.is_empty() {
+                    egui::Color32::from_rgb(120, 120, 140)
+                } else {
+                    egui::Color32::WHITE
+                };
+                let bar_rect = ui.available_rect_before_wrap();
+                let bar_rect = egui::Rect::from_min_size(bar_rect.min, egui::vec2(content_w, 44.0));
+                ui.painter().rect_filled(
+                    bar_rect,
+                    egui::CornerRadius::same(8),
+                    egui::Color32::from_rgb(36, 36, 48),
+                );
+                ui.painter().rect_stroke(
+                    bar_rect,
+                    egui::CornerRadius::same(8),
+                    egui::Stroke::new(1.5, accent),
+                    egui::StrokeKind::Outside,
+                );
+                let text_pos = bar_rect.min + egui::vec2(14.0, 12.0);
+                ui.painter().text(
+                    text_pos,
+                    egui::Align2::LEFT_TOP,
+                    &query_display,
+                    egui::FontId::proportional(20.0),
+                    query_color,
+                );
+                ui.advance_cursor_after_rect(bar_rect);
+                ui.add_space(6.0);
+
+                // Match count.
+                ui.label(
+                    egui::RichText::new(format!("{count} matches"))
+                        .color(egui::Color32::from_rgb(160, 160, 175))
                         .size(14.0),
+                );
+                ui.add_space(16.0);
+
+                // On-screen keyboard.
+                let key_size = ((content_w - 9.0 * 6.0) / 10.0).min(44.0);
+                let key_spacing = 6.0;
+                let keyboard_w = 10.0 * key_size + 9.0 * key_spacing;
+
+                for (row_idx, row) in Self::SEARCH_KB_ROWS.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        // Center each row.
+                        let row_w =
+                            row.len() as f32 * key_size + (row.len() as f32 - 1.0) * key_spacing;
+                        let indent = (keyboard_w - row_w) / 2.0;
+                        ui.add_space(indent);
+
+                        for (col_idx, &ch) in row.iter().enumerate() {
+                            let is_selected = row_idx == kb_row && col_idx == kb_col;
+                            let key_rect = ui.available_rect_before_wrap();
+                            let key_rect = egui::Rect::from_min_size(
+                                key_rect.min,
+                                egui::vec2(key_size, key_size),
+                            );
+
+                            let (bg, fg, stroke) = if is_selected {
+                                (accent, egui::Color32::WHITE, egui::Stroke::new(2.0, accent))
+                            } else {
+                                (
+                                    egui::Color32::from_rgb(44, 44, 58),
+                                    egui::Color32::from_rgb(200, 200, 215),
+                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 75)),
+                                )
+                            };
+
+                            ui.painter()
+                                .rect_filled(key_rect, egui::CornerRadius::same(6), bg);
+                            ui.painter().rect_stroke(
+                                key_rect,
+                                egui::CornerRadius::same(6),
+                                stroke,
+                                egui::StrokeKind::Outside,
+                            );
+
+                            let label = match ch {
+                                ' ' => "SPC".to_string(),
+                                '\u{232B}' => "DEL".to_string(),
+                                '\u{21B5}' => "OK".to_string(),
+                                _ => ch.to_string(),
+                            };
+                            let font_size = match ch {
+                                ' ' | '\u{232B}' | '\u{21B5}' => 12.0,
+                                _ => 18.0,
+                            };
+                            ui.painter().text(
+                                key_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                &label,
+                                egui::FontId::proportional(font_size),
+                                fg,
+                            );
+
+                            ui.advance_cursor_after_rect(key_rect);
+                            if col_idx + 1 < row.len() {
+                                ui.add_space(key_spacing);
+                            }
+                        }
+                    });
+                    ui.add_space(key_spacing);
+                }
+
+                // Footer button legend.
+                ui.add_space(12.0);
+                Self::render_button_legend(
+                    ui,
+                    &[("Tab", "Close"), ("Enter", "Select"), ("Type", "Search")],
                 );
             });
     }
@@ -1316,8 +1495,8 @@ impl RomBrowserApp {
         let panel_x = -panel_w + panel_w * anim;
 
         // Panel background colors.
-        let panel_bg = egui::Color32::from_rgba_premultiplied(28, 28, 38, 245);
-        let section_bg = egui::Color32::from_rgb(36, 36, 48);
+        let panel_bg = egui::Color32::from_rgba_premultiplied(28, 28, 38, 140);
+        let section_bg = egui::Color32::from_rgba_premultiplied(36, 36, 48, 140);
         let accent = theme::SELECTION_COLOR;
         let corner_r = egui::CornerRadius::same(12);
 
@@ -1387,17 +1566,36 @@ impl RomBrowserApp {
                 );
                 ui.add_space(16.0);
 
-                // Two-column layout.
-                ui.columns(3, |cols| {
-                    // ── Column 0: Platform ──
-                    Self::render_filter_section_header(&mut cols[0], "PLATFORM", section_bg);
-                    cols[0].add_space(8.0);
+                // Three-column layout with custom widths: Platform(25%) | Players(20%) | Genre(55%)
+                let total_w = ui.available_width();
+                let spacing = ui.spacing().item_spacing.x;
+                let usable = total_w - spacing * 2.0;
+                let col0_w = usable * 0.25;
+                let col1_w = usable * 0.20;
+                let col2_w = usable * 0.55;
+                let top = ui.cursor().min;
+                let col_h = ui.available_height();
+
+                let col0_rect = egui::Rect::from_min_size(top, egui::vec2(col0_w, col_h));
+                let col1_rect = egui::Rect::from_min_size(
+                    egui::pos2(top.x + col0_w + spacing, top.y),
+                    egui::vec2(col1_w, col_h),
+                );
+                let col2_rect = egui::Rect::from_min_size(
+                    egui::pos2(top.x + col0_w + spacing + col1_w + spacing, top.y),
+                    egui::vec2(col2_w, col_h),
+                );
+
+                // ── Column 0: Platform ──
+                ui.scope_builder(egui::UiBuilder::new().max_rect(col0_rect), |ui| {
+                    Self::render_filter_section_header(ui, "PLATFORM", section_bg);
+                    ui.add_space(8.0);
 
                     for (i, plat) in Self::PLATFORMS.iter().enumerate() {
                         let is_active = active_platform == Some(*plat);
                         let is_cursor = column == 0 && i == cursor;
 
-                        let item_rect = cols[0]
+                        let item_rect = ui
                             .horizontal(|ui| {
                                 Self::paint_cursor_arrow(ui, is_cursor, accent);
                                 let _ = ui
@@ -1407,7 +1605,7 @@ impl RomBrowserApp {
                             .rect;
 
                         if is_cursor {
-                            cols[0].painter().rect_filled(
+                            ui.painter().rect_filled(
                                 item_rect.expand2(egui::vec2(4.0, 1.0)),
                                 corner_r,
                                 accent.linear_multiply(0.12),
@@ -1415,41 +1613,23 @@ impl RomBrowserApp {
                         }
                     }
 
-                    // ── Column 1: Genre ──
-                    Self::render_filter_section_header(&mut cols[1], "GENRE", section_bg);
-                    cols[1].add_space(8.0);
+                    // Legend at bottom of Platform column.
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                        ui.add_space(8.0);
+                        Self::render_button_legend(ui, &[("A", "Select"), ("B", "Close")]);
+                    });
+                });
 
-                    for (i, genre) in available_genres.iter().enumerate() {
-                        let is_active = active_genres.contains(genre);
-                        let is_cursor = column == 1 && i == cursor;
-
-                        let mut checked = is_active;
-                        let item_rect = cols[1]
-                            .horizontal(|ui| {
-                                Self::paint_cursor_arrow(ui, is_cursor, accent);
-                                ui.checkbox(&mut checked, egui::RichText::new(genre).size(20.0));
-                            })
-                            .response
-                            .rect;
-
-                        if is_cursor {
-                            cols[1].painter().rect_filled(
-                                item_rect.expand2(egui::vec2(4.0, 1.0)),
-                                corner_r,
-                                accent.linear_multiply(0.12),
-                            );
-                        }
-                    }
-
-                    // ── Column 2: Players ──
-                    Self::render_filter_section_header(&mut cols[2], "PLAYERS", section_bg);
-                    cols[2].add_space(8.0);
+                // ── Column 1: Players ──
+                ui.scope_builder(egui::UiBuilder::new().max_rect(col1_rect), |ui| {
+                    Self::render_filter_section_header(ui, "PLAYERS", section_bg);
+                    ui.add_space(8.0);
 
                     for (i, (value, label)) in Self::PLAYER_OPTIONS.iter().enumerate() {
                         let is_active = min_players_filter == *value;
-                        let is_cursor = column == 2 && i == cursor;
+                        let is_cursor = column == 1 && i == cursor;
 
-                        let item_rect = cols[2]
+                        let item_rect = ui
                             .horizontal(|ui| {
                                 Self::paint_cursor_arrow(ui, is_cursor, accent);
                                 let _ = ui.radio(is_active, egui::RichText::new(*label).size(20.0));
@@ -1458,7 +1638,7 @@ impl RomBrowserApp {
                             .rect;
 
                         if is_cursor {
-                            cols[2].painter().rect_filled(
+                            ui.painter().rect_filled(
                                 item_rect.expand2(egui::vec2(4.0, 1.0)),
                                 corner_r,
                                 accent.linear_multiply(0.12),
@@ -1467,16 +1647,46 @@ impl RomBrowserApp {
                     }
                 });
 
-                // Footer hint at the bottom.
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                // ── Column 2: Genre ──
+                ui.scope_builder(egui::UiBuilder::new().max_rect(col2_rect), |ui| {
+                    Self::render_filter_section_header(ui, "GENRE", section_bg);
                     ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "ESC close  ·  ↑↓ navigate  ·  ←→ switch column  ·  Enter toggle",
-                        )
-                        .color(theme::DIM_TEXT)
-                        .size(17.0),
-                    );
+
+                    let col_w = ui.available_width();
+                    let max_chars = ((col_w - 60.0) / 11.0).max(5.0) as usize;
+
+                    egui::ScrollArea::vertical()
+                        .id_salt("genre_scroll")
+                        .max_height(ui.available_height() - 8.0)
+                        .show(ui, |ui| {
+                            for (i, genre) in available_genres.iter().enumerate() {
+                                let is_active = active_genres.contains(genre);
+                                let is_cursor = column == 2 && i == cursor;
+
+                                let display_name = Self::truncate_label(genre, max_chars);
+
+                                let mut checked = is_active;
+                                let item_rect = ui
+                                    .horizontal(|ui| {
+                                        Self::paint_cursor_arrow(ui, is_cursor, accent);
+                                        ui.checkbox(
+                                            &mut checked,
+                                            egui::RichText::new(&display_name).size(20.0),
+                                        );
+                                    })
+                                    .response
+                                    .rect;
+
+                                if is_cursor {
+                                    ui.painter().rect_filled(
+                                        item_rect.expand2(egui::vec2(4.0, 1.0)),
+                                        corner_r,
+                                        accent.linear_multiply(0.12),
+                                    );
+                                    ui.scroll_to_rect(item_rect, Some(egui::Align::Center));
+                                }
+                            }
+                        });
                 });
             });
     }
@@ -1513,6 +1723,16 @@ impl RomBrowserApp {
                 color,
                 egui::Stroke::NONE,
             ));
+        }
+    }
+
+    /// Truncate a label to fit within `max_chars` characters, adding "…" if needed.
+    fn truncate_label(text: &str, max_chars: usize) -> String {
+        if text.chars().count() <= max_chars {
+            text.to_string()
+        } else {
+            let truncated: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+            format!("{truncated}…")
         }
     }
 
@@ -1961,6 +2181,81 @@ impl RomBrowserApp {
         }
     }
 
+    /// Open the search panel overlay.
+    fn open_search_panel(&mut self) {
+        self.filter_panel_active = false;
+        self.genre_filter_active = false;
+        self.detail_view_active = false;
+        self.search_active = true;
+        self.search_kb_row = 1;
+        self.search_kb_col = 0;
+    }
+
+    /// Close the search panel overlay.
+    fn close_search_panel(&mut self) {
+        self.search_active = false;
+    }
+
+    /// Handle confirm action on the on-screen keyboard.
+    fn search_kb_confirm(&mut self) {
+        let row = &Self::SEARCH_KB_ROWS[self.search_kb_row];
+        if self.search_kb_col < row.len() {
+            let ch = row[self.search_kb_col];
+            match ch {
+                '\u{232B}' => {
+                    // Backspace
+                    self.search_query.pop();
+                }
+                '\u{21B5}' => {
+                    // Enter — close search
+                    self.close_search_panel();
+                    return;
+                }
+                _ => {
+                    self.search_query.push(ch.to_ascii_lowercase());
+                }
+            }
+            self.rebuild_filtered();
+        }
+    }
+
+    /// Move on-screen keyboard cursor up.
+    fn search_kb_move_up(&mut self) {
+        if self.search_kb_row > 0 {
+            self.search_kb_row -= 1;
+            let row_len = Self::SEARCH_KB_ROWS[self.search_kb_row].len();
+            if self.search_kb_col >= row_len {
+                self.search_kb_col = row_len - 1;
+            }
+        }
+    }
+
+    /// Move on-screen keyboard cursor down.
+    fn search_kb_move_down(&mut self) {
+        if self.search_kb_row + 1 < Self::SEARCH_KB_ROWS.len() {
+            self.search_kb_row += 1;
+            let row_len = Self::SEARCH_KB_ROWS[self.search_kb_row].len();
+            if self.search_kb_col >= row_len {
+                self.search_kb_col = row_len - 1;
+            }
+        }
+    }
+
+    /// Move on-screen keyboard cursor left.
+    fn search_kb_move_left(&mut self) {
+        if self.search_kb_col > 0 {
+            self.search_kb_col -= 1;
+        }
+    }
+
+    /// Move on-screen keyboard cursor right.
+    fn search_kb_move_right(&mut self) {
+        let row_len = Self::SEARCH_KB_ROWS[self.search_kb_row].len();
+        if self.search_kb_col + 1 < row_len {
+            self.search_kb_col += 1;
+        }
+    }
+
     /// Open the filter panel overlay.
     fn open_filter_panel(&mut self) {
         self.search_active = false;
@@ -1983,6 +2278,16 @@ impl RomBrowserApp {
     const PLAYER_OPTIONS: [(Option<u32>, &'static str); 3] =
         [(None, "Any"), (Some(2), "2+"), (Some(4), "4+")];
 
+    /// On-screen QWERTY keyboard layout for search.
+    const SEARCH_KB_ROWS: [&'static [char]; 4] = [
+        &['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
+        &['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+        &['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', '-'],
+        &[
+            'Z', 'X', 'C', 'V', 'B', 'N', 'M', ' ', '\u{232B}', '\u{21B5}',
+        ],
+    ];
+
     /// Handle confirm action within the filter panel.
     fn filter_panel_confirm(&mut self) {
         let cursor = self.filter_panel_cursor;
@@ -1999,16 +2304,6 @@ impl RomBrowserApp {
                 }
             }
             1 => {
-                // Genre column
-                if let Some(genre) = self.available_genres.get(cursor).cloned() {
-                    if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
-                        self.active_genres.remove(pos);
-                    } else {
-                        self.active_genres.push(genre);
-                    }
-                }
-            }
-            2 => {
                 // Players column
                 if cursor < Self::PLAYER_OPTIONS.len() {
                     let (value, _) = Self::PLAYER_OPTIONS[cursor];
@@ -2016,6 +2311,16 @@ impl RomBrowserApp {
                         self.min_players_filter = None;
                     } else {
                         self.min_players_filter = value;
+                    }
+                }
+            }
+            2 => {
+                // Genre column
+                if let Some(genre) = self.available_genres.get(cursor).cloned() {
+                    if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
+                        self.active_genres.remove(pos);
+                    } else {
+                        self.active_genres.push(genre);
                     }
                 }
             }
@@ -2045,8 +2350,8 @@ impl RomBrowserApp {
     fn filter_panel_column_len(&self, col: usize) -> usize {
         match col {
             0 => Self::PLATFORMS.len(),
-            1 => self.available_genres.len(),
-            2 => Self::PLAYER_OPTIONS.len(),
+            1 => Self::PLAYER_OPTIONS.len(),
+            2 => self.available_genres.len(),
             _ => 0,
         }
     }
@@ -2302,15 +2607,12 @@ impl RomBrowserApp {
     fn apply_action(&mut self, action: BrowserAction, event_loop: &ActiveEventLoop) {
         if self.search_active {
             match action {
-                BrowserAction::Back => self.search_active = false,
-                BrowserAction::Up => self.navigate_up(),
-                BrowserAction::Down => self.navigate_down(),
-                BrowserAction::Confirm => {
-                    if let Some(entry) = self.selected_entry() {
-                        self.result = BrowserResult::RomSelected(entry.path.clone());
-                        event_loop.exit();
-                    }
-                }
+                BrowserAction::Back => self.close_search_panel(),
+                BrowserAction::Up => self.search_kb_move_up(),
+                BrowserAction::Down => self.search_kb_move_down(),
+                BrowserAction::Left => self.search_kb_move_left(),
+                BrowserAction::Right => self.search_kb_move_right(),
+                BrowserAction::Confirm => self.search_kb_confirm(),
                 _ => {}
             }
         } else if self.genre_filter_active {
@@ -2384,7 +2686,7 @@ impl RomBrowserApp {
                     self.open_filter_panel();
                 }
                 BrowserAction::Search => {
-                    self.search_active = true;
+                    self.open_search_panel();
                 }
                 BrowserAction::Favorite => self.toggle_favorite(),
                 BrowserAction::Detail => {
@@ -2514,27 +2816,63 @@ impl ApplicationHandler for RomBrowserApp {
                     return;
                 }
 
+                // Ctrl+F always toggles fullscreen regardless of active overlay.
+                if let Key::Character(ref ch) = event.logical_key
+                    && (ch.as_str() == "f" || ch.as_str() == "F")
+                    && ctrl
+                {
+                    if let Some(ref gl) = self.gl {
+                        let window = gl.window();
+                        if window.fullscreen().is_some() {
+                            window.set_fullscreen(None);
+                        } else {
+                            window
+                                .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                        }
+                    }
+                    return;
+                }
+
+                // Tab toggles search from any screen.
+                if matches!(event.logical_key, Key::Named(NamedKey::Tab)) {
+                    if self.search_active {
+                        self.close_search_panel();
+                    } else {
+                        // Close any other overlay first.
+                        self.filter_panel_active = false;
+                        self.genre_filter_active = false;
+                        self.detail_view_active = false;
+                        self.open_search_panel();
+                    }
+                    return;
+                }
+
                 if self.search_active {
                     // Search mode input handling.
+                    // Physical keyboard typing works directly; arrows move
+                    // the on-screen keyboard cursor for gamepad users.
                     match event.logical_key {
                         Key::Named(NamedKey::Escape) => {
-                            self.search_active = false;
+                            self.close_search_panel();
                         }
                         Key::Named(NamedKey::Backspace) => {
                             self.search_query.pop();
                             self.rebuild_filtered();
                         }
                         Key::Named(NamedKey::Enter) => {
-                            if let Some(entry) = self.selected_entry() {
-                                self.result = BrowserResult::RomSelected(entry.path.clone());
-                                event_loop.exit();
-                            }
+                            self.search_kb_confirm();
                         }
                         Key::Named(NamedKey::ArrowUp) => {
-                            self.navigate_up();
+                            self.search_kb_move_up();
                         }
                         Key::Named(NamedKey::ArrowDown) => {
-                            self.navigate_down();
+                            self.search_kb_move_down();
+                        }
+                        Key::Named(NamedKey::ArrowLeft) => {
+                            self.search_kb_move_left();
+                        }
+                        Key::Named(NamedKey::ArrowRight) => {
+                            self.search_kb_move_right();
                         }
                         Key::Character(ref ch) => {
                             self.search_query.push_str(ch.as_str());
@@ -2643,24 +2981,6 @@ impl ApplicationHandler for RomBrowserApp {
                         Key::Named(NamedKey::Enter) => {
                             // Open detail view; launch is done from the detail view.
                             self.open_detail_view();
-                        }
-                        Key::Character(ref ch) if ch.as_str() == "/" => {
-                            self.search_active = true;
-                        }
-                        Key::Character(ref ch)
-                            if (ch.as_str() == "f" || ch.as_str() == "F") && ctrl =>
-                        {
-                            // Toggle fullscreen.
-                            if let Some(ref gl) = self.gl {
-                                let window = gl.window();
-                                if window.fullscreen().is_some() {
-                                    window.set_fullscreen(None);
-                                } else {
-                                    window.set_fullscreen(Some(
-                                        winit::window::Fullscreen::Borderless(None),
-                                    ));
-                                }
-                            }
                         }
                         Key::Character(ref ch) if ch.as_str() == "g" && !ctrl => {
                             self.genre_filter_active = true;
@@ -2773,6 +3093,7 @@ mod tests {
             default_width: 1280,
             default_height: 720,
             fullscreen: false,
+            last_render_instant: Instant::now(),
             catalog: Vec::new(),
             filtered_indices: Vec::new(),
             selected_index: 0,
@@ -2780,6 +3101,9 @@ mod tests {
             scroll_target: 0.0,
             search_active: false,
             search_query: String::new(),
+            search_anim: 0.0,
+            search_kb_row: 1,
+            search_kb_col: 0,
             genre_filter_active: false,
             available_genres: Vec::new(),
             active_genres: Vec::new(),
@@ -3168,8 +3492,8 @@ mod tests {
         app.filter_panel_move_cursor_down();
         assert_eq!(app.filter_panel_cursor, 2); // bounded
 
-        // Genre column has 2 items
-        app.filter_panel_column = 1;
+        // Genre column has 2 items (now column 2)
+        app.filter_panel_column = 2;
         app.filter_panel_cursor = 0;
         app.filter_panel_move_cursor_down();
         assert_eq!(app.filter_panel_cursor, 1);
@@ -3226,8 +3550,8 @@ mod tests {
         app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
         app.filter_panel_active = true;
 
-        // Column 1 = Genre, cursor 0 = first genre ("Action")
-        app.filter_panel_column = 1;
+        // Column 2 = Genre, cursor 0 = first genre ("Action")
+        app.filter_panel_column = 2;
         app.filter_panel_cursor = 0;
         app.filter_panel_confirm();
         assert!(app.active_genres.contains(&"Action".to_string()));
@@ -3275,7 +3599,7 @@ mod tests {
         app.filter_panel_column = 0;
         app.filter_panel_cursor = 1;
 
-        // Move right to genre column
+        // Move right to players column
         app.filter_panel_move_right();
         assert_eq!(app.filter_panel_column, 1);
         assert_eq!(app.filter_panel_cursor, 1); // preserved
@@ -3289,12 +3613,12 @@ mod tests {
         app.filter_panel_move_left();
         assert_eq!(app.filter_panel_column, 0);
 
-        // Can go right to players column (column 2)
+        // Can go right to genre column (column 2)
         app.filter_panel_column = 1;
         app.filter_panel_move_right();
         assert_eq!(app.filter_panel_column, 2);
 
-        // Can't go right from players column
+        // Can't go right from genre column
         app.filter_panel_move_right();
         assert_eq!(app.filter_panel_column, 2);
     }
@@ -3335,7 +3659,7 @@ mod tests {
     fn filter_panel_confirm_toggles_player_filter() {
         let mut app = test_browser(vec![make_entry("Zelda")]);
         app.filter_panel_active = true;
-        app.filter_panel_column = 2; // Players column
+        app.filter_panel_column = 1; // Players column
         app.filter_panel_cursor = 0;
 
         // Cursor 0 = "Any" — should clear filter
@@ -3355,5 +3679,99 @@ mod tests {
         // Re-select same deselects (back to Any)
         app.filter_panel_confirm();
         assert_eq!(app.min_players_filter, None);
+    }
+
+    #[test]
+    fn open_search_panel_sets_state() {
+        let mut app = test_browser(vec![make_entry("A")]);
+        assert!(!app.search_active);
+        app.open_search_panel();
+        assert!(app.search_active);
+        assert_eq!(app.search_kb_row, 1);
+        assert_eq!(app.search_kb_col, 0);
+    }
+
+    #[test]
+    fn close_search_panel_clears_active() {
+        let mut app = test_browser(vec![make_entry("A")]);
+        app.open_search_panel();
+        app.close_search_panel();
+        assert!(!app.search_active);
+    }
+
+    #[test]
+    fn search_kb_confirm_types_character() {
+        let mut app = test_browser(vec![make_entry("A")]);
+        app.open_search_panel();
+        // Default cursor at row 1, col 0 = 'Q'
+        app.search_kb_confirm();
+        assert_eq!(app.search_query, "q");
+    }
+
+    #[test]
+    fn search_kb_confirm_backspace_deletes() {
+        let mut app = test_browser(vec![make_entry("A")]);
+        app.search_query = "hello".to_string();
+        app.open_search_panel();
+        // Backspace is at row 3, col 8
+        app.search_kb_row = 3;
+        app.search_kb_col = 8;
+        app.search_kb_confirm();
+        assert_eq!(app.search_query, "hell");
+    }
+
+    #[test]
+    fn search_kb_confirm_enter_closes_search() {
+        let mut app = test_browser(vec![make_entry("A")]);
+        app.open_search_panel();
+        // Enter is at row 3, col 9
+        app.search_kb_row = 3;
+        app.search_kb_col = 9;
+        app.search_kb_confirm();
+        assert!(!app.search_active);
+    }
+
+    #[test]
+    fn search_kb_navigation_bounded() {
+        let mut app = test_browser(vec![make_entry("A")]);
+        app.open_search_panel();
+        // Start at row 1, col 0. Moving up goes to row 0.
+        app.search_kb_move_up();
+        assert_eq!(app.search_kb_row, 0);
+        // Moving up again stays at 0.
+        app.search_kb_move_up();
+        assert_eq!(app.search_kb_row, 0);
+        // Move to bottom.
+        app.search_kb_move_down();
+        app.search_kb_move_down();
+        app.search_kb_move_down();
+        assert_eq!(app.search_kb_row, 3);
+        // Can't go past last row.
+        app.search_kb_move_down();
+        assert_eq!(app.search_kb_row, 3);
+    }
+
+    #[test]
+    fn search_kb_left_right_bounded() {
+        let mut app = test_browser(vec![make_entry("A")]);
+        app.open_search_panel();
+        // At col 0, can't go left.
+        app.search_kb_move_left();
+        assert_eq!(app.search_kb_col, 0);
+        // Move right to col 9 (end of 10-char row).
+        for _ in 0..20 {
+            app.search_kb_move_right();
+        }
+        assert_eq!(app.search_kb_col, 9);
+    }
+
+    #[test]
+    fn search_kb_space_inserts_space() {
+        let mut app = test_browser(vec![make_entry("A")]);
+        app.open_search_panel();
+        app.search_kb_row = 3;
+        app.search_kb_col = 7; // space key
+        app.search_kb_confirm();
+        assert_eq!(app.search_query, " ");
     }
 }
