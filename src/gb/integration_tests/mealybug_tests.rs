@@ -14,7 +14,8 @@
 //! `target/mealybug-captures/` alongside the CRC printed to stdout:
 //!
 //! ```bash
-//! NESER_CAPTURE_SCREEN=1 cargo test gb::integration_tests::mealybug -- --include-ignored
+//! NESER_CAPTURE_SCREEN=1 cargo test --no-default-features --lib \
+//!     gb::integration_tests::mealybug_tests -- --include-ignored --nocapture
 //! ```
 //!
 //! Compare each PNG to the reference image in the submodule:
@@ -27,6 +28,7 @@
 //! ```
 
 use std::io::Read;
+use std::sync::OnceLock;
 
 use super::helpers::{load_cgb_rom_from_bytes, load_gb_rom_from_bytes, run_to_breakpoint_and_crc};
 use crate::gb::model::{CgbModel, DmgModel};
@@ -35,11 +37,17 @@ const ZIP_PATH: &str = "roms/gb/automated_tests/mealybug-tearoom-tests/mealybug-
 
 const CYCLE_LIMIT: u64 = 10_000_000;
 
+/// Return the raw bytes of the mealybug ZIP archive, reading the file only once.
+fn zip_bytes() -> &'static [u8] {
+    static ZIP: OnceLock<Vec<u8>> = OnceLock::new();
+    ZIP.get_or_init(|| {
+        std::fs::read(ZIP_PATH).unwrap_or_else(|e| panic!("failed to read {ZIP_PATH}: {e}"))
+    })
+}
+
 /// Extract a ROM by filename from the mealybug zip archive and return its bytes.
 fn read_rom_from_zip(rom_name: &str) -> Vec<u8> {
-    let zip_data =
-        std::fs::read(ZIP_PATH).unwrap_or_else(|e| panic!("failed to read {ZIP_PATH}: {e}"));
-    let cursor = std::io::Cursor::new(zip_data);
+    let cursor = std::io::Cursor::new(zip_bytes());
     let mut archive =
         zip::ZipArchive::new(cursor).expect("mealybug zip should be a valid ZIP archive");
     let mut entry = archive
@@ -60,8 +68,7 @@ fn read_rom_from_zip(rom_name: &str) -> Vec<u8> {
 fn test_m2_win_en_toggle_dmg_b() {
     let bytes = read_rom_from_zip("m2_win_en_toggle.gb");
     let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m2_win_en_toggle_dmg_b")
-        .expect("m2_win_en_toggle should hit LD B,B breakpoint");
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m2_win_en_toggle_dmg_b");
     const EXPECTED_CRC: u32 = 0xCE29_5724;
     assert_eq!(
         crc, EXPECTED_CRC,

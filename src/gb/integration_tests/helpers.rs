@@ -88,34 +88,43 @@ pub fn detect_mooneye_result_with_limit<B: GbBus>(
     gb: &mut Gb<B>,
     cycle_limit: u64,
 ) -> MooneyeResult {
+    if !step_until_breakpoint(gb, cycle_limit) {
+        return MooneyeResult::Timeout;
+    }
+    let r = &gb.cpu.regs;
+    if r.b == FIBO_B
+        && r.c == FIBO_C
+        && r.d == FIBO_D
+        && r.e == FIBO_E
+        && r.h == FIBO_H
+        && r.l == FIBO_L
+    {
+        MooneyeResult::Pass
+    } else {
+        MooneyeResult::Fail {
+            b: r.b,
+            c: r.c,
+            d: r.d,
+            e: r.e,
+            h: r.h,
+            l: r.l,
+        }
+    }
+}
+
+/// Step `gb` until the `LD B,B` (0x40) opcode is about to execute, or until
+/// `cycle_limit` M-cycles have elapsed.
+///
+/// Returns `true` if the breakpoint was reached, `false` on timeout.
+fn step_until_breakpoint<B: GbBus>(gb: &mut Gb<B>, cycle_limit: u64) -> bool {
     let start = gb.cycles();
     loop {
-        let opcode = gb.cpu.bus.read(gb.cpu.regs.pc);
-        if opcode == LD_B_B {
-            let r = &gb.cpu.regs;
-            if r.b == FIBO_B
-                && r.c == FIBO_C
-                && r.d == FIBO_D
-                && r.e == FIBO_E
-                && r.h == FIBO_H
-                && r.l == FIBO_L
-            {
-                return MooneyeResult::Pass;
-            }
-            return MooneyeResult::Fail {
-                b: r.b,
-                c: r.c,
-                d: r.d,
-                e: r.e,
-                h: r.h,
-                l: r.l,
-            };
+        if gb.cpu.bus.read(gb.cpu.regs.pc) == LD_B_B {
+            return true;
         }
-
         if gb.cycles().saturating_sub(start) >= cycle_limit {
-            return MooneyeResult::Timeout;
+            return false;
         }
-
         gb.step();
     }
 }
@@ -203,11 +212,11 @@ pub fn load_cgb_rom_from_bytes(bytes: &[u8], model: CgbModel) -> Gb<CgbBus> {
 // Breakpoint-based screen capture helper
 // ============================================================================
 
-/// Run `gb` until the mealybug `LD B,B` (0x40) software breakpoint fires and
-/// return the CRC-32 of the screen buffer at that moment.
+/// Run `gb` until the `LD B,B` (0x40) software breakpoint fires and return the
+/// CRC-32 of the screen buffer at that moment.
 ///
-/// Returns `Some(crc)` when the breakpoint is hit within `cycle_limit` M-cycles,
-/// or `None` on timeout.
+/// Panics if the breakpoint is not reached within `cycle_limit` M-cycles, so
+/// that a hanging ROM is always a test failure rather than a silent pass.
 ///
 /// When the `NESER_CAPTURE_SCREEN` environment variable is set, saves a PNG to
 /// `target/mealybug-captures/<capture_name>.png` for visual baseline comparison.
@@ -215,29 +224,21 @@ pub fn run_to_breakpoint_and_crc<B: GbBus>(
     gb: &mut Gb<B>,
     cycle_limit: u64,
     capture_name: &str,
-) -> Option<u32> {
-    let start = gb.cycles();
+) -> u32 {
+    assert!(
+        step_until_breakpoint(gb, cycle_limit),
+        "{capture_name}: LD B,B breakpoint not reached within {cycle_limit} M-cycles"
+    );
 
-    loop {
-        let opcode = gb.cpu.bus.read(gb.cpu.regs.pc);
-        if opcode == LD_B_B {
-            let crc = gb.cpu.bus.ppu().screen_buffer().crc32();
+    let crc = gb.cpu.bus.ppu().screen_buffer().crc32();
 
-            if std::env::var_os("NESER_CAPTURE_SCREEN").is_some() {
-                let dir = std::path::Path::new("target/mealybug-captures");
-                std::fs::create_dir_all(dir).expect("create mealybug-captures dir");
-                let path = dir.join(format!("{capture_name}.png"));
-                save_screen_png(gb, path.to_str().expect("valid path"));
-                println!("[mealybug] {capture_name}: CRC={crc:#010X}, PNG saved to {path:?}");
-            }
-
-            return Some(crc);
-        }
-
-        if gb.cycles().saturating_sub(start) >= cycle_limit {
-            return None;
-        }
-
-        gb.step();
+    if std::env::var_os("NESER_CAPTURE_SCREEN").is_some() {
+        let dir = std::path::Path::new("target/mealybug-captures");
+        std::fs::create_dir_all(dir).expect("create mealybug-captures dir");
+        let path = dir.join(format!("{capture_name}.png"));
+        save_screen_png(gb, path.to_str().expect("valid path"));
+        println!("[mealybug] {capture_name}: CRC={crc:#010X}, PNG saved to {path:?}");
     }
+
+    crc
 }
