@@ -7,6 +7,7 @@ pub mod enrichment_cache;
 pub mod favorites;
 pub mod rom_entry;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::nes::cartridge::{HardwareType, ParsedRom, RomDb};
@@ -37,12 +38,16 @@ pub fn load_catalog(
         .map(|p| build_rom_entry(p, &rom_db))
         .collect();
     if include_unofficial {
-        Ok(entries)
+        let mut result = entries;
+        dedup_by_crc(&mut result);
+        Ok(result)
     } else {
-        Ok(entries
+        let mut result: Vec<RomEntry> = entries
             .into_iter()
             .filter(|e| !is_unofficial_rom(e))
-            .collect())
+            .collect();
+        dedup_by_crc(&mut result);
+        Ok(result)
     }
 }
 
@@ -62,6 +67,16 @@ fn read_catalog_paths(search_paths: &[String], rebuild: bool) -> Result<Vec<Path
     opts.rebuild_catalog = rebuild;
 
     refresh_cartridge_catalog(&opts).map_err(|e| format!("Catalog refresh failed: {e}"))
+}
+
+/// Remove duplicate ROM entries that share the same CRC32 hash, keeping
+/// only the first occurrence.  Entries without a CRC are always retained.
+pub fn dedup_by_crc(entries: &mut Vec<RomEntry>) {
+    let mut seen = HashSet::new();
+    entries.retain(|e| match &e.crc {
+        Some(crc) => seen.insert(crc.clone()),
+        None => true,
+    });
 }
 
 /// Parse one ROM file and build a `RomEntry`, falling back gracefully on errors.
@@ -990,5 +1005,57 @@ mod tests {
     fn is_unofficial_rom_detects_zzz_with_underscore() {
         let entry = make_entry_with_path("zzz_unknown_game.nes", "ZZZ Unknown Game");
         assert!(is_unofficial_rom(&entry));
+    }
+
+    fn make_entry_with_crc(name: &str, crc: Option<&str>) -> RomEntry {
+        let mut entry = make_entry_with_path(&format!("{name}.nes"), name);
+        entry.crc = crc.map(str::to_string);
+        entry
+    }
+
+    #[test]
+    fn dedup_by_crc_removes_duplicate_crc() {
+        let mut entries = vec![
+            make_entry_with_crc("Mario A", Some("AABBCCDD")),
+            make_entry_with_crc("Mario B", Some("AABBCCDD")),
+        ];
+        dedup_by_crc(&mut entries);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].display_name, "Mario A");
+    }
+
+    #[test]
+    fn dedup_by_crc_keeps_entries_without_crc() {
+        let mut entries = vec![
+            make_entry_with_crc("No CRC 1", None),
+            make_entry_with_crc("No CRC 2", None),
+        ];
+        dedup_by_crc(&mut entries);
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn dedup_by_crc_keeps_distinct_crcs() {
+        let mut entries = vec![
+            make_entry_with_crc("Game A", Some("11111111")),
+            make_entry_with_crc("Game B", Some("22222222")),
+        ];
+        dedup_by_crc(&mut entries);
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn dedup_by_crc_mixed_entries() {
+        let mut entries = vec![
+            make_entry_with_crc("Alpha", Some("AABBCCDD")),
+            make_entry_with_crc("Beta", None),
+            make_entry_with_crc("Gamma", Some("AABBCCDD")),
+            make_entry_with_crc("Delta", Some("11223344")),
+            make_entry_with_crc("Epsilon", None),
+        ];
+        dedup_by_crc(&mut entries);
+        assert_eq!(entries.len(), 4);
+        let names: Vec<&str> = entries.iter().map(|e| e.display_name.as_str()).collect();
+        assert_eq!(names, vec!["Alpha", "Beta", "Delta", "Epsilon"]);
     }
 }
