@@ -1272,7 +1272,7 @@ impl RomBrowserApp {
                             ui.set_max_height(panel_h);
 
                             // Cover art.
-                            let art_max_h = panel_h * 0.55;
+                            let art_max_h = panel_h * 0.65;
                             if let Some(game_id) = entry.metadata_game_id
                                 && let Some(&(tex_id, tex_w, tex_h)) = tex_map.get(&game_id)
                             {
@@ -1404,6 +1404,7 @@ impl RomBrowserApp {
                                 );
                             } else {
                                 egui::ScrollArea::vertical()
+                                    .id_salt("detail_screenshots")
                                     .max_height(panel_h)
                                     .show(ui, |ui| {
                                         for (i, &(tex_id, tex_w, tex_h)) in
@@ -1425,7 +1426,6 @@ impl RomBrowserApp {
                                                 ),
                                                 egui::Color32::WHITE,
                                             );
-                                            // Highlight selected screenshot.
                                             let idx =
                                                 screenshot_index.min(screenshot_textures.len() - 1);
                                             if i == idx {
@@ -1437,6 +1437,7 @@ impl RomBrowserApp {
                                                     egui::Stroke::new(2.5, theme::SELECTION_COLOR),
                                                     egui::StrokeKind::Outside,
                                                 );
+                                                ui.scroll_to_rect(rect, Some(egui::Align::Center));
                                             }
                                             ui.add_space(8.0);
                                         }
@@ -1453,6 +1454,7 @@ impl RomBrowserApp {
 
                             if let Some(ref overview) = entry.overview {
                                 egui::ScrollArea::vertical()
+                                    .id_salt("detail_description")
                                     .max_height(panel_h - 60.0)
                                     .show(ui, |ui| {
                                         ui.label(
@@ -1891,12 +1893,12 @@ impl RomBrowserApp {
                     }
                 }
                 BrowserAction::Favorite => self.toggle_favorite(),
-                BrowserAction::Left => {
+                BrowserAction::Up | BrowserAction::Left => {
                     if self.detail_screenshot_index > 0 {
                         self.detail_screenshot_index -= 1;
                     }
                 }
-                BrowserAction::Right => {
+                BrowserAction::Down | BrowserAction::Right => {
                     let count = self.detail_screenshot_count();
                     if count > 0 && self.detail_screenshot_index + 1 < count {
                         self.detail_screenshot_index += 1;
@@ -2121,12 +2123,12 @@ impl ApplicationHandler for RomBrowserApp {
                                 event_loop.exit();
                             }
                         }
-                        Key::Named(NamedKey::ArrowLeft) => {
+                        Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowLeft) => {
                             if self.detail_screenshot_index > 0 {
                                 self.detail_screenshot_index -= 1;
                             }
                         }
-                        Key::Named(NamedKey::ArrowRight) => {
+                        Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowRight) => {
                             let count = self.detail_screenshot_count();
                             if count > 0 && self.detail_screenshot_index + 1 < count {
                                 self.detail_screenshot_index += 1;
