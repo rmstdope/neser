@@ -457,7 +457,7 @@ impl RomBrowserApp {
 
         // Animate filter panel slide: lerp towards target.
         let anim_target = if self.filter_panel_active { 1.0 } else { 0.0 };
-        let anim_speed = 8.0; // speed factor for lerp
+        let anim_speed = 16.0; // speed factor for lerp (fast slide)
         let dt = self.gl.as_ref().map_or(0.016, |gl| gl.delta_time());
         self.filter_panel_anim +=
             (anim_target - self.filter_panel_anim) * (anim_speed * dt).min(1.0);
@@ -1329,6 +1329,7 @@ impl RomBrowserApp {
         egui::Area::new(egui::Id::new("filter_panel_area"))
             .order(egui::Order::Foreground)
             .fixed_pos(egui::pos2(panel_x + 24.0, 32.0))
+            .constrain(false)
             .show(ctx, |ui| {
                 ui.set_width(panel_w - 48.0);
                 ui.set_height(display_h - 64.0);
