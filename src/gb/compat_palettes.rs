@@ -286,13 +286,10 @@ pub fn is_nintendo_licensee(header: &[u8]) -> bool {
 /// Gets the palette combination index for a cartridge header.
 ///
 /// Returns the index into `PALETTE_COMBINATIONS` (0-54).
-/// Non-Nintendo games return 5 (the "Up button" default palette).
+/// All DMG games (including non-Nintendo) use the title checksum lookup,
+/// matching the real CGB boot ROM behaviour. Unknown checksums fall back to
+/// combination 0 (the "Default" / "Right+A" palette).
 pub fn get_palette_id(header: &[u8]) -> u8 {
-    // Non-Nintendo games get the default palette (combination 5)
-    if !is_nintendo_licensee(header) {
-        return 5; // Palette combination 5 = Up button
-    }
-
     let checksum = compute_title_checksum(header);
 
     // Find the checksum in the table
@@ -313,7 +310,7 @@ pub fn get_palette_id(header: &[u8]) -> u8 {
         // Mask off the $80 flag (logo tilemap indicator)
         PALETTE_PER_CHECKSUM[final_index] & 0x7F
     } else {
-        5 // Default fallback
+        0 // Default fallback (combination 0 = "Right+A")
     }
 }
 
@@ -503,11 +500,13 @@ mod tests {
     }
 
     #[test]
-    fn test_get_palette_id_non_nintendo() {
+    fn test_get_palette_id_non_nintendo_uses_checksum_lookup() {
+        // Non-Nintendo games must go through the title checksum lookup, not return a
+        // hardcoded default. An all-zero title gives checksum 0x00, which matches
+        // TITLE_CHECKSUMS[0] ("Default") → PALETTE_PER_CHECKSUM[0] = 0.
         let title: [u8; 16] = [0u8; 16];
-        let header = make_header(&title, 0x00);
-        // Non-Nintendo games get palette combination 5 (grayscale)
-        assert_eq!(get_palette_id(&header), 5);
+        let header = make_header(&title, 0x00); // old_licensee=0x00 → non-Nintendo
+        assert_eq!(get_palette_id(&header), 0);
     }
 
     #[test]
@@ -520,14 +519,16 @@ mod tests {
     }
 
     #[test]
-    fn test_get_palette_colors_default() {
+    fn test_get_palette_colors_non_nintendo_all_zero_title() {
+        // An all-zero title (checksum 0x00) for any DMG game should yield palette
+        // combination 0: OBJ0=PALETTES[4], OBJ1=PALETTES[4], BG=PALETTES[29].
+        // This is the real CGB boot ROM "Default" mapping — not a grayscale fallback.
         let title: [u8; 16] = [0u8; 16];
         let header = make_header(&title, 0x00);
         let palette = get_palette_colors(&header);
-        // Non-Nintendo → palette 5 → combination [0, 0, 0] → all palette 0
-        assert_eq!(palette.bg0, PALETTES[0]);
-        assert_eq!(palette.obj0, PALETTES[0]);
-        assert_eq!(palette.obj1, PALETTES[0]);
+        assert_eq!(palette.bg0, PALETTES[29]);
+        assert_eq!(palette.obj0, PALETTES[4]);
+        assert_eq!(palette.obj1, PALETTES[4]);
     }
 
     #[test]
