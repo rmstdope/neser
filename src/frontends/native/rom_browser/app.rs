@@ -146,10 +146,12 @@ pub struct RomBrowserApp {
     filter_panel_anim: f32,
     /// Cursor position within the current filter panel column.
     filter_panel_cursor: usize,
-    /// Active column in filter panel (0 = Platform, 1 = Genre).
+    /// Active column in filter panel (0 = Platform, 1 = Genre, 2 = Players).
     filter_panel_column: usize,
     /// Active platform filter (`None` = show all platforms).
     active_platform: Option<crate::platform::catalog::Platform>,
+    /// Minimum number of players filter (`None` = any, `Some(2)` = 2+, etc.).
+    min_players_filter: Option<u32>,
     /// Persistent favorites manager.
     favorites: Favorites,
     /// When true, show only favorited ROMs.
@@ -233,6 +235,7 @@ impl RomBrowserApp {
             filter_panel_cursor: 0,
             filter_panel_column: 0,
             active_platform: None,
+            min_players_filter: None,
             favorites: Favorites::load(&favorites_path),
             show_favorites_only: false,
             catalog_state: CatalogState::Idle,
@@ -300,6 +303,12 @@ impl RomBrowserApp {
                 // Genre filter: entry must have at least one of the active genres.
                 if !self.active_genres.is_empty()
                     && !e.genres.iter().any(|g| self.active_genres.contains(g))
+                {
+                    return false;
+                }
+                // Players filter.
+                if let Some(min) = self.min_players_filter
+                    && e.players.unwrap_or(1) < min
                 {
                     return false;
                 }
@@ -458,6 +467,7 @@ impl RomBrowserApp {
         let filter_panel_cursor = self.filter_panel_cursor;
         let filter_panel_column = self.filter_panel_column;
         let active_platform = self.active_platform;
+        let min_players_filter = self.min_players_filter;
 
         // Animate filter panel slide: lerp towards target.
         let anim_target = if self.filter_panel_active { 1.0 } else { 0.0 };
@@ -679,6 +689,7 @@ impl RomBrowserApp {
                     &available_genres,
                     &active_genres,
                     active_platform,
+                    min_players_filter,
                     filter_panel_cursor,
                     filter_panel_column,
                     filter_panel_anim,
@@ -1281,6 +1292,7 @@ impl RomBrowserApp {
         available_genres: &[String],
         active_genres: &[String],
         active_platform: Option<Platform>,
+        min_players_filter: Option<u32>,
         cursor: usize,
         column: usize,
         anim: f32,
@@ -1299,7 +1311,7 @@ impl RomBrowserApp {
             egui::Color32::from_black_alpha(dim_alpha),
         );
 
-        let panel_w = 480.0_f32.min(display_w * 0.5);
+        let panel_w = 600.0_f32.min(display_w * 0.6);
         // Slide in from the left: at anim=0 fully off-screen, at anim=1 left-aligned.
         let panel_x = -panel_w + panel_w * anim;
 
@@ -1376,8 +1388,8 @@ impl RomBrowserApp {
                 ui.add_space(16.0);
 
                 // Two-column layout.
-                ui.columns(2, |cols| {
-                    // ── Left column: Platform ──
+                ui.columns(3, |cols| {
+                    // ── Column 0: Platform ──
                     Self::render_filter_section_header(&mut cols[0], "PLATFORM", section_bg);
                     cols[0].add_space(8.0);
 
@@ -1403,7 +1415,7 @@ impl RomBrowserApp {
                         }
                     }
 
-                    // ── Right column: Genre ──
+                    // ── Column 1: Genre ──
                     Self::render_filter_section_header(&mut cols[1], "GENRE", section_bg);
                     cols[1].add_space(8.0);
 
@@ -1422,6 +1434,31 @@ impl RomBrowserApp {
 
                         if is_cursor {
                             cols[1].painter().rect_filled(
+                                item_rect.expand2(egui::vec2(4.0, 1.0)),
+                                corner_r,
+                                accent.linear_multiply(0.12),
+                            );
+                        }
+                    }
+
+                    // ── Column 2: Players ──
+                    Self::render_filter_section_header(&mut cols[2], "PLAYERS", section_bg);
+                    cols[2].add_space(8.0);
+
+                    for (i, (value, label)) in Self::PLAYER_OPTIONS.iter().enumerate() {
+                        let is_active = min_players_filter == *value;
+                        let is_cursor = column == 2 && i == cursor;
+
+                        let item_rect = cols[2]
+                            .horizontal(|ui| {
+                                Self::paint_cursor_arrow(ui, is_cursor, accent);
+                                let _ = ui.radio(is_active, egui::RichText::new(*label).size(20.0));
+                            })
+                            .response
+                            .rect;
+
+                        if is_cursor {
+                            cols[2].painter().rect_filled(
                                 item_rect.expand2(egui::vec2(4.0, 1.0)),
                                 corner_r,
                                 accent.linear_multiply(0.12),
@@ -1943,28 +1980,46 @@ impl RomBrowserApp {
     /// (platform options + genre options).
     const PLATFORMS: [Platform; 3] = [Platform::Nes, Platform::Gb, Platform::Gbc];
 
+    const PLAYER_OPTIONS: [(Option<u32>, &'static str); 3] =
+        [(None, "Any"), (Some(2), "2+"), (Some(4), "4+")];
+
     /// Handle confirm action within the filter panel.
     fn filter_panel_confirm(&mut self) {
         let cursor = self.filter_panel_cursor;
-        if self.filter_panel_column == 0 {
-            // Platform column
-            if cursor < Self::PLATFORMS.len() {
-                let selected = Self::PLATFORMS[cursor];
-                if self.active_platform == Some(selected) {
-                    self.active_platform = None;
-                } else {
-                    self.active_platform = Some(selected);
+        match self.filter_panel_column {
+            0 => {
+                // Platform column
+                if cursor < Self::PLATFORMS.len() {
+                    let selected = Self::PLATFORMS[cursor];
+                    if self.active_platform == Some(selected) {
+                        self.active_platform = None;
+                    } else {
+                        self.active_platform = Some(selected);
+                    }
                 }
             }
-        } else {
-            // Genre column
-            if let Some(genre) = self.available_genres.get(cursor).cloned() {
-                if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
-                    self.active_genres.remove(pos);
-                } else {
-                    self.active_genres.push(genre);
+            1 => {
+                // Genre column
+                if let Some(genre) = self.available_genres.get(cursor).cloned() {
+                    if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
+                        self.active_genres.remove(pos);
+                    } else {
+                        self.active_genres.push(genre);
+                    }
                 }
             }
+            2 => {
+                // Players column
+                if cursor < Self::PLAYER_OPTIONS.len() {
+                    let (value, _) = Self::PLAYER_OPTIONS[cursor];
+                    if self.min_players_filter == value && value.is_some() {
+                        self.min_players_filter = None;
+                    } else {
+                        self.min_players_filter = value;
+                    }
+                }
+            }
+            _ => {}
         }
         self.rebuild_filtered();
     }
@@ -1978,34 +2033,42 @@ impl RomBrowserApp {
 
     /// Move the filter panel cursor down within the current column.
     fn filter_panel_move_cursor_down(&mut self) {
-        let max = if self.filter_panel_column == 0 {
-            Self::PLATFORMS.len()
-        } else {
-            self.available_genres.len()
-        }
-        .saturating_sub(1);
+        let max = self
+            .filter_panel_column_len(self.filter_panel_column)
+            .saturating_sub(1);
         if self.filter_panel_cursor < max {
             self.filter_panel_cursor += 1;
         }
     }
 
-    /// Move the filter panel to the left column (Platform).
-    fn filter_panel_move_left(&mut self) {
-        if self.filter_panel_column > 0 {
-            self.filter_panel_column = 0;
-            self.filter_panel_cursor = self
-                .filter_panel_cursor
-                .min(Self::PLATFORMS.len().saturating_sub(1));
+    /// Return the number of items in a given filter panel column.
+    fn filter_panel_column_len(&self, col: usize) -> usize {
+        match col {
+            0 => Self::PLATFORMS.len(),
+            1 => self.available_genres.len(),
+            2 => Self::PLAYER_OPTIONS.len(),
+            _ => 0,
         }
     }
 
-    /// Move the filter panel to the right column (Genre).
+    /// Move the filter panel to the previous column.
+    fn filter_panel_move_left(&mut self) {
+        if self.filter_panel_column > 0 {
+            self.filter_panel_column -= 1;
+            let max = self
+                .filter_panel_column_len(self.filter_panel_column)
+                .saturating_sub(1);
+            self.filter_panel_cursor = self.filter_panel_cursor.min(max);
+        }
+    }
+
+    /// Move the filter panel to the next column.
     fn filter_panel_move_right(&mut self) {
-        if self.filter_panel_column == 0 && !self.available_genres.is_empty() {
-            self.filter_panel_column = 1;
-            self.filter_panel_cursor = self
-                .filter_panel_cursor
-                .min(self.available_genres.len().saturating_sub(1));
+        let next = self.filter_panel_column + 1;
+        let next_len = self.filter_panel_column_len(next);
+        if next_len > 0 {
+            self.filter_panel_column = next;
+            self.filter_panel_cursor = self.filter_panel_cursor.min(next_len.saturating_sub(1));
         }
     }
 
@@ -2730,6 +2793,7 @@ mod tests {
             filter_panel_cursor: 0,
             filter_panel_column: 0,
             active_platform: None,
+            min_players_filter: None,
             favorites: Favorites::load(&fav_path),
             show_favorites_only: false,
             catalog_state: CatalogState::Ready,
@@ -3225,9 +3289,71 @@ mod tests {
         app.filter_panel_move_left();
         assert_eq!(app.filter_panel_column, 0);
 
-        // Can't go right from genre column
+        // Can go right to players column (column 2)
         app.filter_panel_column = 1;
         app.filter_panel_move_right();
-        assert_eq!(app.filter_panel_column, 1);
+        assert_eq!(app.filter_panel_column, 2);
+
+        // Can't go right from players column
+        app.filter_panel_move_right();
+        assert_eq!(app.filter_panel_column, 2);
+    }
+
+    #[test]
+    fn filter_panel_player_filter_narrows_results() {
+        let mut entry1 = make_entry("Single");
+        entry1.players = Some(1);
+        let mut entry2 = make_entry("TwoPlayer");
+        entry2.players = Some(2);
+        let mut entry4 = make_entry("FourPlayer");
+        entry4.players = Some(4);
+
+        let mut app = test_browser(vec![entry1, entry2, entry4]);
+        assert_eq!(app.filtered_indices.len(), 3);
+
+        // Filter to 2+ players
+        app.min_players_filter = Some(2);
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 2);
+
+        // Filter to 4+ players
+        app.min_players_filter = Some(4);
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 1);
+        assert_eq!(
+            app.catalog[app.filtered_indices[0]].display_name,
+            "FourPlayer"
+        );
+
+        // Clear filter
+        app.min_players_filter = None;
+        app.rebuild_filtered();
+        assert_eq!(app.filtered_indices.len(), 3);
+    }
+
+    #[test]
+    fn filter_panel_confirm_toggles_player_filter() {
+        let mut app = test_browser(vec![make_entry("Zelda")]);
+        app.filter_panel_active = true;
+        app.filter_panel_column = 2; // Players column
+        app.filter_panel_cursor = 0;
+
+        // Cursor 0 = "Any" — should clear filter
+        app.filter_panel_confirm();
+        assert_eq!(app.min_players_filter, None);
+
+        // Cursor 1 = "2+"
+        app.filter_panel_cursor = 1;
+        app.filter_panel_confirm();
+        assert_eq!(app.min_players_filter, Some(2));
+
+        // Cursor 2 = "4+"
+        app.filter_panel_cursor = 2;
+        app.filter_panel_confirm();
+        assert_eq!(app.min_players_filter, Some(4));
+
+        // Re-select same deselects (back to Any)
+        app.filter_panel_confirm();
+        assert_eq!(app.min_players_filter, None);
     }
 }
