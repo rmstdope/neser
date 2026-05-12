@@ -144,8 +144,10 @@ pub struct RomBrowserApp {
     filter_panel_active: bool,
     /// Animation progress for filter panel slide (0.0 = hidden, 1.0 = fully shown).
     filter_panel_anim: f32,
-    /// Cursor position in the filter panel (0 = platform section, then genres).
+    /// Cursor position within the current filter panel column.
     filter_panel_cursor: usize,
+    /// Active column in filter panel (0 = Platform, 1 = Genre).
+    filter_panel_column: usize,
     /// Active platform filter (`None` = show all platforms).
     active_platform: Option<crate::platform::catalog::Platform>,
     /// Persistent favorites manager.
@@ -229,6 +231,7 @@ impl RomBrowserApp {
             filter_panel_active: false,
             filter_panel_anim: 0.0,
             filter_panel_cursor: 0,
+            filter_panel_column: 0,
             active_platform: None,
             favorites: Favorites::load(&favorites_path),
             show_favorites_only: false,
@@ -453,6 +456,7 @@ impl RomBrowserApp {
         let genre_filter_active = self.genre_filter_active;
         let filter_panel_active = self.filter_panel_active;
         let filter_panel_cursor = self.filter_panel_cursor;
+        let filter_panel_column = self.filter_panel_column;
         let active_platform = self.active_platform;
 
         // Animate filter panel slide: lerp towards target.
@@ -676,6 +680,7 @@ impl RomBrowserApp {
                     &active_genres,
                     active_platform,
                     filter_panel_cursor,
+                    filter_panel_column,
                     filter_panel_anim,
                     display_w,
                     display_h,
@@ -1277,6 +1282,7 @@ impl RomBrowserApp {
         active_genres: &[String],
         active_platform: Option<Platform>,
         cursor: usize,
+        column: usize,
         anim: f32,
         display_w: f32,
         display_h: f32,
@@ -1296,8 +1302,6 @@ impl RomBrowserApp {
         let panel_w = 480.0_f32.min(display_w * 0.5);
         // Slide in from the left: at anim=0 fully off-screen, at anim=1 left-aligned.
         let panel_x = -panel_w + panel_w * anim;
-
-        let platform_count = Self::PLATFORMS.len();
 
         // Panel background colors.
         let panel_bg = egui::Color32::from_rgba_premultiplied(28, 28, 38, 245);
@@ -1379,17 +1383,11 @@ impl RomBrowserApp {
 
                     for (i, plat) in Self::PLATFORMS.iter().enumerate() {
                         let is_active = active_platform == Some(*plat);
-                        let is_cursor = i == cursor;
+                        let is_cursor = column == 0 && i == cursor;
 
                         let item_rect = cols[0]
                             .horizontal(|ui| {
-                                if is_cursor {
-                                    ui.label(
-                                        egui::RichText::new("▸").color(accent).size(21.0).strong(),
-                                    );
-                                } else {
-                                    ui.add_space(14.0);
-                                }
+                                Self::paint_cursor_arrow(ui, is_cursor, accent);
                                 let _ = ui
                                     .radio(is_active, egui::RichText::new(plat.label()).size(20.0));
                             })
@@ -1410,20 +1408,13 @@ impl RomBrowserApp {
                     cols[1].add_space(8.0);
 
                     for (i, genre) in available_genres.iter().enumerate() {
-                        let item_idx = i + platform_count;
                         let is_active = active_genres.contains(genre);
-                        let is_cursor = item_idx == cursor;
+                        let is_cursor = column == 1 && i == cursor;
 
                         let mut checked = is_active;
                         let item_rect = cols[1]
                             .horizontal(|ui| {
-                                if is_cursor {
-                                    ui.label(
-                                        egui::RichText::new("▸").color(accent).size(21.0).strong(),
-                                    );
-                                } else {
-                                    ui.add_space(14.0);
-                                }
+                                Self::paint_cursor_arrow(ui, is_cursor, accent);
                                 ui.checkbox(&mut checked, egui::RichText::new(genre).size(20.0));
                             })
                             .response
@@ -1443,9 +1434,11 @@ impl RomBrowserApp {
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                     ui.add_space(8.0);
                     ui.label(
-                        egui::RichText::new("ESC to close  ·  ↑↓ navigate  ·  Enter toggle")
-                            .color(theme::DIM_TEXT)
-                            .size(17.0),
+                        egui::RichText::new(
+                            "ESC close  ·  ↑↓ navigate  ·  ←→ switch column  ·  Enter toggle",
+                        )
+                        .color(theme::DIM_TEXT)
+                        .size(17.0),
                     );
                 });
             });
@@ -1464,6 +1457,26 @@ impl RomBrowserApp {
             egui::FontId::proportional(16.0),
             theme::DIM_TEXT,
         );
+    }
+
+    /// Paint a small triangle cursor arrow, or an equal-width spacer.
+    fn paint_cursor_arrow(ui: &mut egui::Ui, is_cursor: bool, color: egui::Color32) {
+        let size = 14.0;
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size + 4.0), egui::Sense::hover());
+        if is_cursor {
+            let center = rect.center();
+            let half = size * 0.35;
+            let points = vec![
+                egui::pos2(center.x - half * 0.5, center.y - half),
+                egui::pos2(center.x + half, center.y),
+                egui::pos2(center.x - half * 0.5, center.y + half),
+            ];
+            ui.painter().add(egui::Shape::convex_polygon(
+                points,
+                color,
+                egui::Stroke::NONE,
+            ));
+        }
     }
 
     fn render_detail_view_egui(
@@ -1918,6 +1931,7 @@ impl RomBrowserApp {
         self.detail_view_active = false;
         self.filter_panel_active = true;
         self.filter_panel_cursor = 0;
+        self.filter_panel_column = 0;
     }
 
     /// Close the filter panel overlay.
@@ -1929,25 +1943,22 @@ impl RomBrowserApp {
     /// (platform options + genre options).
     const PLATFORMS: [Platform; 3] = [Platform::Nes, Platform::Gb, Platform::Gbc];
 
-    fn filter_panel_item_count(&self) -> usize {
-        Self::PLATFORMS.len() + self.available_genres.len()
-    }
-
     /// Handle confirm action within the filter panel.
     fn filter_panel_confirm(&mut self) {
         let cursor = self.filter_panel_cursor;
-        let platform_count = Self::PLATFORMS.len();
-        if cursor < platform_count {
-            let selected = Self::PLATFORMS[cursor];
-            if self.active_platform == Some(selected) {
-                self.active_platform = None;
-            } else {
-                self.active_platform = Some(selected);
+        if self.filter_panel_column == 0 {
+            // Platform column
+            if cursor < Self::PLATFORMS.len() {
+                let selected = Self::PLATFORMS[cursor];
+                if self.active_platform == Some(selected) {
+                    self.active_platform = None;
+                } else {
+                    self.active_platform = Some(selected);
+                }
             }
         } else {
-            // Genre toggle
-            let genre_idx = cursor - platform_count;
-            if let Some(genre) = self.available_genres.get(genre_idx).cloned() {
+            // Genre column
+            if let Some(genre) = self.available_genres.get(cursor).cloned() {
                 if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
                     self.active_genres.remove(pos);
                 } else {
@@ -1958,18 +1969,43 @@ impl RomBrowserApp {
         self.rebuild_filtered();
     }
 
-    /// Move the filter panel cursor up.
+    /// Move the filter panel cursor up within the current column.
     fn filter_panel_move_cursor_up(&mut self) {
         if self.filter_panel_cursor > 0 {
             self.filter_panel_cursor -= 1;
         }
     }
 
-    /// Move the filter panel cursor down.
+    /// Move the filter panel cursor down within the current column.
     fn filter_panel_move_cursor_down(&mut self) {
-        let max = self.filter_panel_item_count().saturating_sub(1);
+        let max = if self.filter_panel_column == 0 {
+            Self::PLATFORMS.len()
+        } else {
+            self.available_genres.len()
+        }
+        .saturating_sub(1);
         if self.filter_panel_cursor < max {
             self.filter_panel_cursor += 1;
+        }
+    }
+
+    /// Move the filter panel to the left column (Platform).
+    fn filter_panel_move_left(&mut self) {
+        if self.filter_panel_column > 0 {
+            self.filter_panel_column = 0;
+            self.filter_panel_cursor = self
+                .filter_panel_cursor
+                .min(Self::PLATFORMS.len().saturating_sub(1));
+        }
+    }
+
+    /// Move the filter panel to the right column (Genre).
+    fn filter_panel_move_right(&mut self) {
+        if self.filter_panel_column == 0 && !self.available_genres.is_empty() {
+            self.filter_panel_column = 1;
+            self.filter_panel_cursor = self
+                .filter_panel_cursor
+                .min(self.available_genres.len().saturating_sub(1));
         }
     }
 
@@ -2244,6 +2280,8 @@ impl RomBrowserApp {
                 BrowserAction::Back => self.close_filter_panel(),
                 BrowserAction::Up => self.filter_panel_move_cursor_up(),
                 BrowserAction::Down => self.filter_panel_move_cursor_down(),
+                BrowserAction::Left => self.filter_panel_move_left(),
+                BrowserAction::Right => self.filter_panel_move_right(),
                 BrowserAction::Confirm => self.filter_panel_confirm(),
                 _ => {}
             }
@@ -2484,6 +2522,12 @@ impl ApplicationHandler for RomBrowserApp {
                         Key::Named(NamedKey::ArrowDown) => {
                             self.filter_panel_move_cursor_down();
                         }
+                        Key::Named(NamedKey::ArrowLeft) => {
+                            self.filter_panel_move_left();
+                        }
+                        Key::Named(NamedKey::ArrowRight) => {
+                            self.filter_panel_move_right();
+                        }
                         Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
                             self.filter_panel_confirm();
                         }
@@ -2684,6 +2728,7 @@ mod tests {
             filter_panel_active: false,
             filter_panel_anim: 0.0,
             filter_panel_cursor: 0,
+            filter_panel_column: 0,
             active_platform: None,
             favorites: Favorites::load(&fav_path),
             show_favorites_only: false,
@@ -3007,6 +3052,7 @@ mod tests {
         app.open_filter_panel();
         assert!(app.filter_panel_active);
         assert_eq!(app.filter_panel_cursor, 0);
+        assert_eq!(app.filter_panel_column, 0);
     }
 
     #[test]
@@ -3044,18 +3090,27 @@ mod tests {
     }
 
     #[test]
-    fn filter_panel_cursor_wraps_within_items() {
+    fn filter_panel_cursor_bounded_within_column() {
         let mut app = test_browser(vec![make_entry("Zelda")]);
         app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
         app.filter_panel_active = true;
+
+        // Platform column has 3 items (NES, GB, GBC)
+        app.filter_panel_column = 0;
         app.filter_panel_cursor = 0;
+        app.filter_panel_move_cursor_down();
+        app.filter_panel_move_cursor_down();
+        assert_eq!(app.filter_panel_cursor, 2); // last platform
+        app.filter_panel_move_cursor_down();
+        assert_eq!(app.filter_panel_cursor, 2); // bounded
 
-        let total = app.filter_panel_item_count();
-        // 3 platforms + 2 genres = 5
-        assert_eq!(total, 5);
-
-        app.filter_panel_cursor = 4;
-        assert!(app.filter_panel_cursor < total);
+        // Genre column has 2 items
+        app.filter_panel_column = 1;
+        app.filter_panel_cursor = 0;
+        app.filter_panel_move_cursor_down();
+        assert_eq!(app.filter_panel_cursor, 1);
+        app.filter_panel_move_cursor_down();
+        assert_eq!(app.filter_panel_cursor, 1); // bounded
     }
 
     #[test]
@@ -3067,6 +3122,7 @@ mod tests {
 
         let mut app = test_browser(vec![nes, gb]);
         app.filter_panel_active = true;
+        app.filter_panel_column = 0;
         assert_eq!(app.active_platform, None);
 
         // Cursor 0 = NES platform
@@ -3106,8 +3162,9 @@ mod tests {
         app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
         app.filter_panel_active = true;
 
-        // Cursor 3 = first genre ("Action"), after the 3 platform items
-        app.filter_panel_cursor = 3;
+        // Column 1 = Genre, cursor 0 = first genre ("Action")
+        app.filter_panel_column = 1;
+        app.filter_panel_cursor = 0;
         app.filter_panel_confirm();
         assert!(app.active_genres.contains(&"Action".to_string()));
         assert_eq!(app.filtered_indices.len(), 1);
@@ -3123,6 +3180,7 @@ mod tests {
         let mut app = test_browser(vec![make_entry("Zelda")]);
         app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
         app.filter_panel_active = true;
+        app.filter_panel_column = 0;
         app.filter_panel_cursor = 0;
 
         app.filter_panel_move_cursor_down();
@@ -3139,9 +3197,37 @@ mod tests {
         app.filter_panel_move_cursor_up();
         assert_eq!(app.filter_panel_cursor, 0);
 
-        // Should not go above max
-        app.filter_panel_cursor = 4; // last item
+        // Should not go above max (2 for platforms)
+        app.filter_panel_cursor = 2;
         app.filter_panel_move_cursor_down();
-        assert_eq!(app.filter_panel_cursor, 4);
+        assert_eq!(app.filter_panel_cursor, 2);
+    }
+
+    #[test]
+    fn filter_panel_left_right_switches_column() {
+        let mut app = test_browser(vec![make_entry("Zelda")]);
+        app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
+        app.filter_panel_active = true;
+        app.filter_panel_column = 0;
+        app.filter_panel_cursor = 1;
+
+        // Move right to genre column
+        app.filter_panel_move_right();
+        assert_eq!(app.filter_panel_column, 1);
+        assert_eq!(app.filter_panel_cursor, 1); // preserved
+
+        // Move left back to platform column
+        app.filter_panel_move_left();
+        assert_eq!(app.filter_panel_column, 0);
+        assert_eq!(app.filter_panel_cursor, 1); // preserved
+
+        // Can't go left from platform column
+        app.filter_panel_move_left();
+        assert_eq!(app.filter_panel_column, 0);
+
+        // Can't go right from genre column
+        app.filter_panel_column = 1;
+        app.filter_panel_move_right();
+        assert_eq!(app.filter_panel_column, 1);
     }
 }
