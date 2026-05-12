@@ -527,9 +527,19 @@ impl RomBrowserApp {
             visuals.faint_bg_color = egui::Color32::from_rgb(20, 20, 30);
             // Remove all widget/panel borders for a clean look.
             visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
-            visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-            visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-            visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+            visuals.widgets.inactive.bg_stroke =
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 75));
+            visuals.widgets.inactive.fg_stroke =
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 180, 195));
+            visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, theme::SELECTION_COLOR);
+            visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, theme::SELECTION_COLOR);
+            visuals.widgets.active.fg_stroke = egui::Stroke::new(2.0, theme::SELECTION_COLOR);
+            visuals.selection.bg_fill = theme::SELECTION_COLOR;
+            visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+            // Rounded corners on widgets.
+            visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);
+            visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
+            visuals.widgets.active.corner_radius = egui::CornerRadius::same(4);
             ui.ctx().set_visuals(visuals);
             ui.ctx().global_style_mut(|s| {
                 s.text_styles.insert(
@@ -1299,7 +1309,7 @@ impl RomBrowserApp {
         let panel_rect =
             egui::Rect::from_min_size(egui::pos2(panel_x, 0.0), egui::vec2(panel_w, display_h));
         let panel_painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
+            egui::Order::Middle,
             egui::Id::new("filter_panel_bg"),
         ));
         // Shadow.
@@ -1325,14 +1335,19 @@ impl RomBrowserApp {
             panel_bg,
         );
 
-        // Use an Area for the panel content (unconstrained position for off-screen sliding).
+        // Content area: clips to panel bounds so text doesn't overflow.
+        let content_rect = egui::Rect::from_min_size(
+            egui::pos2(panel_x + 24.0, 32.0),
+            egui::vec2(panel_w - 48.0, display_h - 64.0),
+        );
         egui::Area::new(egui::Id::new("filter_panel_area"))
             .order(egui::Order::Foreground)
-            .fixed_pos(egui::pos2(panel_x + 24.0, 32.0))
+            .fixed_pos(content_rect.min)
             .constrain(false)
             .show(ctx, |ui| {
-                ui.set_width(panel_w - 48.0);
-                ui.set_height(display_h - 64.0);
+                ui.set_width(content_rect.width());
+                ui.set_height(content_rect.height());
+                ui.set_clip_rect(panel_rect);
 
                 // Title.
                 ui.add_space(8.0);
