@@ -457,7 +457,7 @@ impl RomBrowserApp {
 
         // Animate filter panel slide: lerp towards target.
         let anim_target = if self.filter_panel_active { 1.0 } else { 0.0 };
-        let anim_speed = 16.0; // speed factor for lerp (fast slide)
+        let anim_speed = 32.0; // speed factor for lerp (fast slide)
         let dt = self.gl.as_ref().map_or(0.016, |gl| gl.delta_time());
         self.filter_panel_anim +=
             (anim_target - self.filter_panel_anim) * (anim_speed * dt).min(1.0);
@@ -1354,7 +1354,7 @@ impl RomBrowserApp {
                 ui.label(
                     egui::RichText::new("Filters")
                         .color(theme::HEADER_TEXT)
-                        .size(22.0)
+                        .size(27.0)
                         .strong(),
                 );
                 ui.add_space(12.0);
@@ -1385,13 +1385,13 @@ impl RomBrowserApp {
                             .horizontal(|ui| {
                                 if is_cursor {
                                     ui.label(
-                                        egui::RichText::new("▸").color(accent).size(16.0).strong(),
+                                        egui::RichText::new("▸").color(accent).size(21.0).strong(),
                                     );
                                 } else {
                                     ui.add_space(14.0);
                                 }
                                 let _ = ui
-                                    .radio(is_active, egui::RichText::new(plat.label()).size(15.0));
+                                    .radio(is_active, egui::RichText::new(plat.label()).size(20.0));
                             })
                             .response
                             .rect;
@@ -1419,12 +1419,12 @@ impl RomBrowserApp {
                             .horizontal(|ui| {
                                 if is_cursor {
                                     ui.label(
-                                        egui::RichText::new("▸").color(accent).size(16.0).strong(),
+                                        egui::RichText::new("▸").color(accent).size(21.0).strong(),
                                     );
                                 } else {
                                     ui.add_space(14.0);
                                 }
-                                ui.checkbox(&mut checked, egui::RichText::new(genre).size(15.0));
+                                ui.checkbox(&mut checked, egui::RichText::new(genre).size(20.0));
                             })
                             .response
                             .rect;
@@ -1445,7 +1445,7 @@ impl RomBrowserApp {
                     ui.label(
                         egui::RichText::new("ESC to close  ·  ↑↓ navigate  ·  Enter toggle")
                             .color(theme::DIM_TEXT)
-                            .size(12.0),
+                            .size(17.0),
                     );
                 });
             });
@@ -1454,14 +1454,14 @@ impl RomBrowserApp {
     /// Render a styled section header label with a subtle background pill.
     fn render_filter_section_header(ui: &mut egui::Ui, text: &str, bg: egui::Color32) {
         let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::hover());
         ui.painter()
             .rect_filled(rect, egui::CornerRadius::same(6), bg);
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
             text,
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(16.0),
             theme::DIM_TEXT,
         );
     }
