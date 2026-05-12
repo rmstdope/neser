@@ -135,6 +135,10 @@ pub struct RomBrowserApp {
     detail_view_active: bool,
     /// Currently selected screenshot index in the detail view.
     detail_screenshot_index: usize,
+    /// Timer for auto-scrolling screenshots (seconds since last advance).
+    detail_scroll_timer: f64,
+    /// Whether auto-scroll is going forward (true) or backward (false).
+    detail_scroll_forward: bool,
     /// Persistent favorites manager.
     favorites: Favorites,
     /// When true, show only favorited ROMs.
@@ -211,6 +215,8 @@ impl RomBrowserApp {
             genre_cursor: 0,
             detail_view_active: false,
             detail_screenshot_index: 0,
+            detail_scroll_timer: 0.0,
+            detail_scroll_forward: true,
             favorites: Favorites::load(&favorites_path),
             show_favorites_only: false,
             catalog_state: CatalogState::Idle,
@@ -432,6 +438,9 @@ impl RomBrowserApp {
         let active_genres = self.active_genres.clone();
         let genre_cursor = self.genre_cursor;
         let detail_view_active = self.detail_view_active;
+        if detail_view_active {
+            self.advance_screenshot_auto_scroll(dt as f64);
+        }
         let detail_screenshot_index = self.detail_screenshot_index;
         let show_favorites_only = self.show_favorites_only;
         let selected_entry: Option<RomEntry> = self
@@ -1609,11 +1618,45 @@ impl RomBrowserApp {
             .unwrap_or(0)
     }
 
+    /// Advance the auto-scroll carousel for screenshots in the detail view.
+    /// Pauses longer at the first and last screenshot, then reverses direction.
+    fn advance_screenshot_auto_scroll(&mut self, dt: f64) {
+        let count = self.detail_screenshot_count();
+        if count <= 1 {
+            return;
+        }
+        self.detail_scroll_timer += dt;
+        let pause =
+            if self.detail_screenshot_index == 0 || self.detail_screenshot_index == count - 1 {
+                2.0
+            } else {
+                1.5
+            };
+        if self.detail_scroll_timer >= pause {
+            self.detail_scroll_timer = 0.0;
+            if self.detail_scroll_forward {
+                if self.detail_screenshot_index + 1 < count {
+                    self.detail_screenshot_index += 1;
+                } else {
+                    self.detail_scroll_forward = false;
+                    self.detail_screenshot_index -= 1;
+                }
+            } else if self.detail_screenshot_index > 0 {
+                self.detail_screenshot_index -= 1;
+            } else {
+                self.detail_scroll_forward = true;
+                self.detail_screenshot_index += 1;
+            }
+        }
+    }
+
     /// Open the detail view for the currently selected entry.
     fn open_detail_view(&mut self) {
         if self.selected_entry().is_some() {
             self.detail_view_active = true;
             self.detail_screenshot_index = 0;
+            self.detail_scroll_timer = 0.0;
+            self.detail_scroll_forward = true;
         }
     }
 
@@ -1893,17 +1936,6 @@ impl RomBrowserApp {
                     }
                 }
                 BrowserAction::Favorite => self.toggle_favorite(),
-                BrowserAction::Up | BrowserAction::Left => {
-                    if self.detail_screenshot_index > 0 {
-                        self.detail_screenshot_index -= 1;
-                    }
-                }
-                BrowserAction::Down | BrowserAction::Right => {
-                    let count = self.detail_screenshot_count();
-                    if count > 0 && self.detail_screenshot_index + 1 < count {
-                        self.detail_screenshot_index += 1;
-                    }
-                }
                 _ => {}
             }
         } else {
@@ -2123,16 +2155,11 @@ impl ApplicationHandler for RomBrowserApp {
                                 event_loop.exit();
                             }
                         }
-                        Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowLeft) => {
-                            if self.detail_screenshot_index > 0 {
-                                self.detail_screenshot_index -= 1;
-                            }
-                        }
-                        Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowRight) => {
-                            let count = self.detail_screenshot_count();
-                            if count > 0 && self.detail_screenshot_index + 1 < count {
-                                self.detail_screenshot_index += 1;
-                            }
+                        Key::Named(NamedKey::ArrowUp)
+                        | Key::Named(NamedKey::ArrowLeft)
+                        | Key::Named(NamedKey::ArrowDown)
+                        | Key::Named(NamedKey::ArrowRight) => {
+                            // Screenshots auto-scroll; arrow keys are ignored.
                         }
                         _ => {}
                     }
@@ -2323,6 +2350,8 @@ mod tests {
             genre_cursor: 0,
             detail_view_active: false,
             detail_screenshot_index: 0,
+            detail_scroll_timer: 0.0,
+            detail_scroll_forward: true,
             favorites: Favorites::load(&fav_path),
             show_favorites_only: false,
             catalog_state: CatalogState::Ready,
@@ -2474,7 +2503,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_screenshot_navigation() {
+    fn detail_screenshot_auto_scroll() {
         let mut entry = make_entry("Zelda");
         entry.screenshot_paths = vec![
             PathBuf::from("s1.jpg"),
@@ -2485,26 +2514,33 @@ mod tests {
         app.open_detail_view();
         assert!(app.detail_view_active);
         assert_eq!(app.detail_screenshot_index, 0);
+        assert!(app.detail_scroll_forward);
 
-        // Navigate right.
-        app.detail_screenshot_index += 1;
+        // Not enough time yet — stays at 0.
+        app.advance_screenshot_auto_scroll(1.0);
+        assert_eq!(app.detail_screenshot_index, 0);
+
+        // Endpoint pause is 2.0s — advance past it.
+        app.advance_screenshot_auto_scroll(1.1);
         assert_eq!(app.detail_screenshot_index, 1);
-        app.detail_screenshot_index += 1;
+
+        // Mid-point pause is 1.5s.
+        app.advance_screenshot_auto_scroll(1.6);
         assert_eq!(app.detail_screenshot_index, 2);
 
-        // Should not go beyond count.
-        let count = app.detail_screenshot_count();
-        assert_eq!(count, 3);
-        if app.detail_screenshot_index + 1 < count {
-            app.detail_screenshot_index += 1;
-        }
-        assert_eq!(app.detail_screenshot_index, 2); // stays at last
-
-        // Navigate left.
-        app.detail_screenshot_index -= 1;
+        // At the last screenshot (endpoint), pause is 2.0s — reverses direction.
+        app.advance_screenshot_auto_scroll(2.1);
         assert_eq!(app.detail_screenshot_index, 1);
-        app.detail_screenshot_index -= 1;
+        assert!(!app.detail_scroll_forward);
+
+        // Continue backward.
+        app.advance_screenshot_auto_scroll(1.6);
         assert_eq!(app.detail_screenshot_index, 0);
+
+        // At the first screenshot again — reverses to forward.
+        app.advance_screenshot_auto_scroll(2.1);
+        assert_eq!(app.detail_screenshot_index, 1);
+        assert!(app.detail_scroll_forward);
     }
 
     #[test]
@@ -2514,11 +2550,13 @@ mod tests {
         let mut app = test_browser(vec![entry]);
         app.open_detail_view();
         app.detail_screenshot_index = 1;
+        app.detail_scroll_forward = false;
 
-        // Close and reopen — index should reset.
+        // Close and reopen — index and direction should reset.
         app.detail_view_active = false;
         app.open_detail_view();
         assert_eq!(app.detail_screenshot_index, 0);
+        assert!(app.detail_scroll_forward);
     }
 
     #[test]
