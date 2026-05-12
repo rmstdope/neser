@@ -415,6 +415,11 @@ pub fn enrich_catalog(
             entry.rating.clone_from(&cached.rating);
             entry.boxart_path.clone_from(&cached.boxart_path);
             entry.screenshot_paths.clone_from(&cached.screenshot_paths);
+            // Re-enrich entries that have metadata but are missing screenshots
+            // (likely from a prior enrichment before screenshot support was added).
+            if cached.metadata_game_id.is_some() && cached.screenshot_paths.is_empty() {
+                uncached_indices.push(i);
+            }
         } else {
             uncached_indices.push(i);
         }

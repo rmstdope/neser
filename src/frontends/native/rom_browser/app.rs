@@ -1247,7 +1247,7 @@ impl RomBrowserApp {
                     ui.label(
                         egui::RichText::new(&entry.display_name)
                             .color(theme::HEADER_TEXT)
-                            .size(26.0)
+                            .size(30.0)
                             .family(egui::FontFamily::Monospace),
                     );
                     ui.add_space(4.0);
@@ -1300,7 +1300,7 @@ impl RomBrowserApp {
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
                                     &entry.display_name,
-                                    egui::FontId::proportional(13.0),
+                                    egui::FontId::proportional(17.0),
                                     theme::DIM_TEXT,
                                 );
                             }
@@ -1308,7 +1308,7 @@ impl RomBrowserApp {
                             ui.add_space(12.0);
 
                             // Metadata below cover art.
-                            let meta_font = egui::FontId::proportional(13.0);
+                            let meta_font = egui::FontId::proportional(17.0);
                             if !entry.genres.is_empty() {
                                 ui.label(
                                     egui::RichText::new(format!(
@@ -1373,7 +1373,7 @@ impl RomBrowserApp {
                                 ui.label(
                                     egui::RichText::new("\u{2665} Favourite")
                                         .color(theme::FAVORITE_COLOR)
-                                        .size(14.0),
+                                        .size(18.0),
                                 );
                             }
                         });
@@ -1399,7 +1399,7 @@ impl RomBrowserApp {
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
                                     "No screenshots",
-                                    egui::FontId::proportional(14.0),
+                                    egui::FontId::proportional(18.0),
                                     theme::DIM_TEXT,
                                 );
                             } else {
@@ -1458,14 +1458,14 @@ impl RomBrowserApp {
                                         ui.label(
                                             egui::RichText::new(overview)
                                                 .color(theme::TEXT_COLOR)
-                                                .size(14.0),
+                                                .size(18.0),
                                         );
                                     });
                             } else {
                                 ui.label(
                                     egui::RichText::new("No description available.")
                                         .color(theme::DIM_TEXT)
-                                        .size(14.0),
+                                        .size(18.0),
                                 );
                             }
 
