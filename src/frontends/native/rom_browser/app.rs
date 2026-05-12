@@ -1285,8 +1285,8 @@ impl RomBrowserApp {
 
         let panel_w = 500.0_f32.min(display_w * 0.55);
         let panel_h = display_h * 0.6;
-        // Slide in from the left: at anim=0 the panel is fully off-screen.
-        let panel_x = -panel_w + (panel_w + 40.0) * anim;
+        // Slide in from the left: at anim=0 fully off-screen, at anim=1 left-aligned.
+        let panel_x = -panel_w + panel_w * anim;
         let panel_y = (display_h - panel_h) / 2.0;
 
         let platform_count = Self::PLATFORMS.len();
@@ -1323,7 +1323,6 @@ impl RomBrowserApp {
 
                     for (i, plat) in Self::PLATFORMS.iter().enumerate() {
                         let is_active = active_platform == Some(*plat);
-                        let marker = if is_active { "● " } else { "○ " };
                         let is_cursor = i == cursor;
                         let color = if is_cursor {
                             theme::SELECTION_COLOR
@@ -1333,6 +1332,7 @@ impl RomBrowserApp {
                             theme::TEXT_COLOR
                         };
                         let prefix = if is_cursor { "▸ " } else { "  " };
+                        let marker = if is_active { "\u{25CF} " } else { "\u{25CB} " };
                         let label = format!("{prefix}{marker}{}", plat.label());
                         cols[0].label(egui::RichText::new(&label).color(color).size(item_font));
                     }
@@ -1348,7 +1348,6 @@ impl RomBrowserApp {
                     for (i, genre) in available_genres.iter().enumerate() {
                         let item_idx = i + platform_count;
                         let is_active = active_genres.contains(genre);
-                        let marker = if is_active { "☑ " } else { "☐ " };
                         let is_cursor = item_idx == cursor;
                         let color = if is_cursor {
                             theme::SELECTION_COLOR
@@ -1358,7 +1357,7 @@ impl RomBrowserApp {
                             theme::TEXT_COLOR
                         };
                         let prefix = if is_cursor { "▸ " } else { "  " };
-                        let label = format!("{prefix}{marker}{genre}");
+                        let label = format!("{prefix}{genre}");
                         cols[1].label(egui::RichText::new(&label).color(color).size(item_font));
                     }
                 });
@@ -2296,6 +2295,22 @@ impl ApplicationHandler for RomBrowserApp {
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 use winit::keyboard::{Key, NamedKey};
 
+                // Ctrl+Q always quits regardless of active overlay.
+                let ctrl = self
+                    .modifiers
+                    .contains(winit::keyboard::ModifiersState::CONTROL)
+                    || self
+                        .modifiers
+                        .contains(winit::keyboard::ModifiersState::SUPER);
+                if let Key::Character(ref ch) = event.logical_key
+                    && (ch.as_str() == "q" || ch.as_str() == "Q")
+                    && ctrl
+                {
+                    self.result = BrowserResult::Closed;
+                    event_loop.exit();
+                    return;
+                }
+
                 if self.search_active {
                     // Search mode input handling.
                     match event.logical_key {
@@ -2394,12 +2409,6 @@ impl ApplicationHandler for RomBrowserApp {
                     }
                 } else {
                     // Normal browsing mode.
-                    let ctrl = self
-                        .modifiers
-                        .contains(winit::keyboard::ModifiersState::CONTROL)
-                        || self
-                            .modifiers
-                            .contains(winit::keyboard::ModifiersState::SUPER);
                     match event.logical_key {
                         Key::Named(NamedKey::Escape) => {
                             self.open_filter_panel();
@@ -2443,12 +2452,6 @@ impl ApplicationHandler for RomBrowserApp {
                                     ));
                                 }
                             }
-                        }
-                        Key::Character(ref ch)
-                            if (ch.as_str() == "q" || ch.as_str() == "Q") && ctrl =>
-                        {
-                            self.result = BrowserResult::Closed;
-                            event_loop.exit();
                         }
                         Key::Character(ref ch) if ch.as_str() == "g" && !ctrl => {
                             self.genre_filter_active = true;
