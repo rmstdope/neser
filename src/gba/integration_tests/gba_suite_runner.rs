@@ -454,8 +454,7 @@ pub struct ArmWrestlerResult {
 ///
 /// Returns one CRC per test page (8 total: 5 ARM + 3 THUMB).
 pub fn run_armwrestler() -> ArmWrestlerResult {
-    let rom_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(Suite::ArmWrestler.rom_path_str());
+    let rom_path = Suite::ArmWrestler.rom_path();
 
     let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {
         panic!("failed to read armwrestler ROM {}: {e}", rom_path.display());
@@ -534,32 +533,37 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
             2 => button_state = BTN_START,
             3 => button_state = 0,
             4 => {
-                page_crcs.push(gba.screen_crc32());
-                maybe_write_armwrestler_png(&gba, 0, *page_crcs.last().unwrap());
+                let crc = gba.screen_crc32();
+                page_crcs.push(crc);
+                maybe_write_armwrestler_png(&gba, 0, crc);
                 button_state = BTN_START;
             }
             5 => button_state = 0,
             6 => {
-                page_crcs.push(gba.screen_crc32());
-                maybe_write_armwrestler_png(&gba, 1, *page_crcs.last().unwrap());
+                let crc = gba.screen_crc32();
+                page_crcs.push(crc);
+                maybe_write_armwrestler_png(&gba, 1, crc);
                 button_state = BTN_START;
             }
             7 => button_state = 0,
             8 => {
-                page_crcs.push(gba.screen_crc32());
-                maybe_write_armwrestler_png(&gba, 2, *page_crcs.last().unwrap());
+                let crc = gba.screen_crc32();
+                page_crcs.push(crc);
+                maybe_write_armwrestler_png(&gba, 2, crc);
                 button_state = BTN_START;
             }
             9 => button_state = 0,
             10 => {
-                page_crcs.push(gba.screen_crc32());
-                maybe_write_armwrestler_png(&gba, 3, *page_crcs.last().unwrap());
+                let crc = gba.screen_crc32();
+                page_crcs.push(crc);
+                maybe_write_armwrestler_png(&gba, 3, crc);
                 button_state = BTN_START;
             }
             11 => button_state = 0,
             12 => {
-                page_crcs.push(gba.screen_crc32());
-                maybe_write_armwrestler_png(&gba, 4, *page_crcs.last().unwrap());
+                let crc = gba.screen_crc32();
+                page_crcs.push(crc);
+                maybe_write_armwrestler_png(&gba, 4, crc);
                 // Press START to return from Test4 to menu
                 button_state = BTN_START;
             }
@@ -576,20 +580,23 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
             21 => button_state = 0,
             // Frames 22-23: THUMB entry does an extra VSync before rendering _test0
             24 => {
-                page_crcs.push(gba.screen_crc32());
-                maybe_write_armwrestler_png(&gba, 5, *page_crcs.last().unwrap());
+                let crc = gba.screen_crc32();
+                page_crcs.push(crc);
+                maybe_write_armwrestler_png(&gba, 5, crc);
                 button_state = BTN_START;
             }
             25 => button_state = 0,
             26 => {
-                page_crcs.push(gba.screen_crc32());
-                maybe_write_armwrestler_png(&gba, 6, *page_crcs.last().unwrap());
+                let crc = gba.screen_crc32();
+                page_crcs.push(crc);
+                maybe_write_armwrestler_png(&gba, 6, crc);
                 button_state = BTN_START;
             }
             27 => button_state = 0,
             28 => {
-                page_crcs.push(gba.screen_crc32());
-                maybe_write_armwrestler_png(&gba, 7, *page_crcs.last().unwrap());
+                let crc = gba.screen_crc32();
+                page_crcs.push(crc);
+                maybe_write_armwrestler_png(&gba, 7, crc);
                 button_state = 0;
             }
             _ => {}
