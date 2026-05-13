@@ -148,7 +148,10 @@ impl Arm7tdmi {
             self.regs.r[15] = exec_pc.wrapping_add(4);
             let raw = self.prefetch_thumb[0];
             let outcome = thumb::execute(&mut self.regs, bus, raw);
-            if outcome.swi {
+            if outcome.undefined {
+                self.dispatch_undefined(exec_pc);
+                self.prefetch_valid = false;
+            } else if outcome.swi {
                 self.dispatch_swi(exec_pc);
                 self.prefetch_valid = false;
             } else if outcome.branched {
@@ -165,7 +168,10 @@ impl Arm7tdmi {
             self.regs.r[15] = exec_pc.wrapping_add(8);
             let raw = self.prefetch_arm[0];
             let outcome = arm::execute(&mut self.regs, bus, raw);
-            if outcome.swi {
+            if outcome.undefined {
+                self.dispatch_undefined(exec_pc);
+                self.prefetch_valid = false;
+            } else if outcome.swi {
                 self.dispatch_swi(exec_pc);
                 self.prefetch_valid = false;
             } else if outcome.branched {
@@ -194,6 +200,20 @@ impl Arm7tdmi {
         self.regs.cpsr |= FLAG_I;
         self.regs.cpsr &= !FLAG_T;
         self.regs.r[15] = ExceptionVector::SoftwareInterrupt as u32;
+        self.prefetch_valid = false;
+    }
+
+    /// Dispatch an undefined instruction exception: switch to Undefined mode,
+    /// save state and jump to the undefined vector (0x04).
+    fn dispatch_undefined(&mut self, instr_pc: u32) {
+        let return_addr = instr_pc.wrapping_add(self.instr_size());
+        let cpsr = self.regs.cpsr;
+        self.regs.switch_mode(CpuMode::Undefined);
+        self.regs.set_spsr(cpsr);
+        self.regs.r[14] = return_addr;
+        self.regs.cpsr |= FLAG_I;
+        self.regs.cpsr &= !FLAG_T;
+        self.regs.r[15] = ExceptionVector::Undefined as u32;
         self.prefetch_valid = false;
     }
 
@@ -489,5 +509,83 @@ mod tests {
         }
 
         assert_eq!(cpu.regs.r[4], 2);
+    }
+
+    #[test]
+    fn undefined_instruction_dispatch_arm() {
+        // Test that executing a CLZ instruction (ARMv5TE) causes the CPU to
+        // enter Undefined mode with correct state.
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !FLAG_I; // unmask IRQ
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = RamBus::new(0x200);
+        // CLZ R0, R1: cond(0xE) 0001 0110 1111 0000 1111 0001 0001
+        let clz: u32 = 0xE16F_0F11;
+        write_arm_word(&mut bus, 0x100, clz);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.regs.mode(),
+            CpuMode::Undefined,
+            "CPU should be in Undefined mode"
+        );
+        assert_eq!(cpu.regs.spsr(), cpsr_before, "SPSR_und should be old CPSR");
+        assert_eq!(
+            cpu.regs.r[14],
+            0x100 + 4,
+            "LR_und should be address after undefined instr"
+        );
+        assert!(
+            cpu.regs.i_flag(),
+            "IRQ must be masked after undefined dispatch"
+        );
+        assert_eq!(
+            cpu.regs.r[15],
+            ExceptionVector::Undefined as u32,
+            "PC should be at undefined vector (0x04)"
+        );
+    }
+
+    #[test]
+    fn undefined_instruction_dispatch_thumb() {
+        // Test that executing Thumb BLX (ARMv5TE) causes the CPU to enter
+        // Undefined mode with correct state.
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.set_thumb(true);
+        cpu.regs.cpsr &= !FLAG_I;
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = RamBus::new(0x200);
+        // Thumb BLX: 11101_00000000000 = 0xE800
+        let blx_thumb: u16 = 0xE800;
+        bus.write16(0x100, blx_thumb);
+        bus.write16(0x102, 0); // padding for prefetch
+        bus.write16(0x104, 0);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.regs.mode(),
+            CpuMode::Undefined,
+            "CPU should be in Undefined mode"
+        );
+        assert_eq!(cpu.regs.spsr(), cpsr_before, "SPSR_und should be old CPSR");
+        assert_eq!(
+            cpu.regs.r[14],
+            0x100 + 2,
+            "LR_und should be address after undefined Thumb instr"
+        );
+        assert!(
+            cpu.regs.i_flag(),
+            "IRQ must be masked after undefined dispatch"
+        );
+        assert!(!cpu.regs.thumb(), "T bit should be clear (ARM state)");
+        assert_eq!(cpu.regs.r[15], ExceptionVector::Undefined as u32);
     }
 }
