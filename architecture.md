@@ -237,7 +237,10 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/gb/cpu/sm83.rs` | `Sm83<B: GbBus>` — SM83/LR35902 CPU core. Full instruction set (primary + CB-prefixed), HALT bug, interrupt dispatch at five vectors. Each M-cycle increments an internal counter used by the console for bus ticking. |
 | `src/gb/cpu/opcode.rs` | Opcode metadata tables (BASE[256] and CB[256]) for debugging and tracing. |
 | `src/gb/ppu/mod.rs` | Module declarations and re-exports for the GB PPU. Re-exports `Ppu` so the public path remains `crate::gb::ppu::Ppu`. |
-| `src/gb/ppu/ppu.rs` | `Ppu` — DMG/CGB LCD controller. Owns VRAM/OAM, LCD/STAT timing state, screen buffer, CGB palette RAM/bank state, STAT/VBlank interrupt generation, and OAM corruption helpers. |
+| `src/gb/ppu/ppu.rs` | `Ppu` — DMG/CGB LCD controller. Owns VRAM/OAM, LCD/STAT timing state, screen buffer, CGB palette RAM/bank state, STAT/VBlank interrupt generation, OAM corruption helpers, and dispatches per-dot Pixel FIFO rendering for all GB modes. |
+| `src/gb/ppu/pixel_fifo.rs` | Dot-stepped DMG/CGB pixel renderer. Samples palette writes as pixels are emitted, schedules OBJ fetch stalls in the visible pixel stream, caches scanline sprite candidates, and writes completed pixels directly into the screen buffer. |
+| `src/gb/ppu/rendering.rs` | Shared DMG and CGB palette conversion helpers used by the Pixel FIFO renderer. |
+| `src/gb/ppu/sprites.rs` | GB/CGB sprite scan, pixel fetch, priority ordering, and Mode 3 OBJ penalty helpers. |
 | `src/gb/timer/timer.rs` | `Timer` — DIV/TIMA/TMA/TAC subsystem. `tick(m_cycles)` advances counters and sets `interrupt_pending` on TIMA overflow; caller (DmgBus) propagates this to IF. |
 | `src/gb/cartridge/cartridge.rs` | `GbCartridge` trait plus ROM loader surface. `load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError>` validates the header checksum and returns the appropriate MBC implementation. |
 | `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00). No banking; writes are silently ignored. |

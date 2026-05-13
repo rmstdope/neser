@@ -589,6 +589,11 @@ impl GbBus for DmgBus {
             }
             0xFF46 => self.do_oam_dma(val),
             0xFF50 => {
+                if self.boot_rom_active
+                    && matches!(self.model.boot_variant(), DmgBootVariant::Production)
+                {
+                    self.ppu.seed_boot_registered_mark_tile();
+                }
                 self.boot_rom_active = false;
             }
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,

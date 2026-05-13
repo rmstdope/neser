@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 /// Colour info for a single sprite pixel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpritePixel {
@@ -13,6 +15,22 @@ pub struct SpritePixel {
     pub bg_priority: bool,
 }
 
+/// One OBJ fetch stall in the visible pixel stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ObjPenaltyEvent {
+    pub x: u8,
+    pub dots: u16,
+}
+
+impl ObjPenaltyEvent {
+    fn new(screen_x: i16, dots: u16) -> Self {
+        Self {
+            x: screen_x.clamp(0, 159) as u8,
+            dots,
+        }
+    }
+}
+
 /// Collect up to 10 OAM entry indices for sprites visible on `scanline`.
 ///
 /// Sprites are returned in OAM order (lower index = higher priority).
@@ -22,8 +40,18 @@ pub struct SpritePixel {
 /// * `oam`      — Full 160-byte OAM array
 /// * `lcdc`     — Current LCDC value (bit 2 selects 8×8 vs 8×16)
 pub fn scan_oam_line(scanline: u8, oam: &[u8; 0xA0], lcdc: u8) -> Vec<usize> {
-    let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
     let mut result = Vec::new();
+    scan_oam_line_into(scanline, oam, lcdc, &mut result);
+    result
+}
+
+/// Collect up to 10 OAM entry indices into an existing buffer.
+///
+/// This is equivalent to [`scan_oam_line`] but lets per-dot renderers reuse
+/// allocation across scanlines.
+pub fn scan_oam_line_into(scanline: u8, oam: &[u8; 0xA0], lcdc: u8, result: &mut Vec<usize>) {
+    let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
+    result.clear();
     for i in 0..40usize {
         let oam_y = oam[i * 4];
         // OAM Y stores screen_y + 16; screen_y = oam_y.wrapping_sub(16).
@@ -37,7 +65,6 @@ pub fn scan_oam_line(scanline: u8, oam: &[u8; 0xA0], lcdc: u8) -> Vec<usize> {
             }
         }
     }
-    result
 }
 
 /// Fetch the highest-priority visible sprite pixel at screen position `x`.
@@ -80,10 +107,11 @@ pub fn fetch_sprite_pixel(
         let attrs = oam[i * 4 + 3];
 
         let screen_y = oam_y.wrapping_sub(16);
-        let screen_x = oam_x.wrapping_sub(8);
+        let screen_x = oam_x as i16 - 8;
 
         // Skip sprites that don't cover column x.
-        if x < screen_x as u32 || x >= screen_x as u32 + 8 {
+        let screen_x_offset = x as i16 - screen_x;
+        if !(0..8).contains(&screen_x_offset) {
             continue;
         }
 
@@ -97,7 +125,7 @@ pub fn fetch_sprite_pixel(
             row = (height as usize - 1) - row;
         }
 
-        let mut pixel_x = (x as u8).wrapping_sub(screen_x);
+        let mut pixel_x = screen_x_offset as u8;
         if x_flip {
             pixel_x = 7 - pixel_x;
         }
@@ -178,9 +206,10 @@ pub fn fetch_sprite_pixel_cgb(
         let attrs = oam[i * 4 + 3];
 
         let screen_y = oam_y.wrapping_sub(16);
-        let screen_x = oam_x.wrapping_sub(8);
+        let screen_x = oam_x as i16 - 8;
 
-        if x < screen_x as u32 || x >= screen_x as u32 + 8 {
+        let screen_x_offset = x as i16 - screen_x;
+        if !(0..8).contains(&screen_x_offset) {
             continue;
         }
 
@@ -196,7 +225,7 @@ pub fn fetch_sprite_pixel_cgb(
             row = (height as usize - 1) - row;
         }
 
-        let mut pixel_x = (x as u8).wrapping_sub(screen_x);
+        let mut pixel_x = screen_x_offset as u8;
         if x_flip {
             pixel_x = 7 - pixel_x;
         }
@@ -261,12 +290,29 @@ const MAX_TILE_WAIT: u16 = 5;
 ///
 /// Returns total penalty in dots (T-cycles).
 pub fn calculate_obj_penalty(sprite_indices: &[usize], oam: &[u8; 0xA0], scx: u8) -> u16 {
+    let mut events = Vec::new();
+    schedule_obj_penalties(sprite_indices, oam, scx, &mut events);
+    events.iter().map(|event| event.dots).sum()
+}
+
+/// Build per-pixel OBJ fetch stall events for the current scanline.
+///
+/// Each event's `x` is the first visible pixel coordinate delayed by that
+/// object's fetch. Off-left sprites are clamped to x=0; off-right sprites do
+/// not generate events.
+pub(super) fn schedule_obj_penalties(
+    sprite_indices: &[usize],
+    oam: &[u8; 0xA0],
+    scx: u8,
+    events: &mut Vec<ObjPenaltyEvent>,
+) {
+    events.clear();
     debug_assert!(
         sprite_indices.len() <= 10,
         "OAM scan is capped at 10 sprites per scanline"
     );
     if sprite_indices.is_empty() {
-        return 0;
+        return;
     }
 
     // Process sprites left-to-right (ascending OAM X, then OAM index).
@@ -276,7 +322,6 @@ pub fn calculate_obj_penalty(sprite_indices: &[usize], oam: &[u8; 0xA0], scx: u8
         .collect();
     sorted.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
 
-    let mut total_penalty: u16 = 0;
     // First sprite on a given BG tile pays the tile-wait; subsequent sprites share it.
     let mut seen_tiles: [i16; 10] = [i16::MIN; 10];
     let mut seen_count: usize = 0;
@@ -286,21 +331,31 @@ pub fn calculate_obj_penalty(sprite_indices: &[usize], oam: &[u8; 0xA0], scx: u8
             continue;
         }
 
-        let screen_x = oam_x as i16 - 8; // OAM X = screen_x + 8
-        let bg_x = screen_x + scx as i16;
+        let screen_x = sprite_screen_x(oam_x);
+        let bg_x = sprite_bg_x(oam_x, scx);
         let tile_id = bg_x.div_euclid(BG_TILE_WIDTH);
 
+        let mut event_dots = OBJ_FETCH_DOTS;
         if !seen_tiles[..seen_count].contains(&tile_id) {
-            total_penalty += tile_wait_penalty(oam_x, bg_x);
+            event_dots += tile_wait_penalty(oam_x, bg_x);
             if seen_count < seen_tiles.len() {
                 seen_tiles[seen_count] = tile_id;
                 seen_count += 1;
             }
         }
-        total_penalty += OBJ_FETCH_DOTS;
-    }
 
-    total_penalty
+        push_obj_penalty_event(events, ObjPenaltyEvent::new(screen_x, event_dots));
+    }
+}
+
+fn push_obj_penalty_event(events: &mut Vec<ObjPenaltyEvent>, event: ObjPenaltyEvent) {
+    if let Some(last) = events.last_mut()
+        && last.x == event.x
+    {
+        last.dots += event.dots;
+    } else {
+        events.push(event);
+    }
 }
 
 /// Tile-wait penalty for a sprite that is the first on its BG tile.
@@ -313,6 +368,14 @@ fn tile_wait_penalty(oam_x: u8, bg_x: i16) -> u16 {
     }
     let pos_in_tile = bg_x.rem_euclid(BG_TILE_WIDTH) as u16;
     MAX_TILE_WAIT.saturating_sub(pos_in_tile)
+}
+
+fn sprite_screen_x(oam_x: u8) -> i16 {
+    oam_x as i16 - 8
+}
+
+fn sprite_bg_x(oam_x: u8, scx: u8) -> i16 {
+    sprite_screen_x(oam_x) + scx as i16
 }
 
 #[cfg(test)]
@@ -575,6 +638,27 @@ mod tests {
         // OAM X=8 → screen_x=0, bg_x=0, pos_in_tile=0, right=7, wait=5, total=5+6=11
         let (oam, indices) = penalty_sprites(&[8]);
         assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 11);
+    }
+
+    #[test]
+    fn test_obj_penalty_event_is_placed_at_visible_sprite_x() {
+        // OAM X=9 → screen_x=1. The same 10-dot penalty applies, but it must
+        // stall pixel 1 rather than the start of the scanline.
+        let (oam, indices) = penalty_sprites(&[9]);
+        let mut events = Vec::new();
+        schedule_obj_penalties(&indices, &oam, 0, &mut events);
+        assert_eq!(events, vec![ObjPenaltyEvent { x: 1, dots: 10 }]);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 10);
+    }
+
+    #[test]
+    fn test_obj_penalty_event_clamps_off_left_sprite_to_x0() {
+        // OAM X=5 → screen_x=-3. The sprite is partly off-left, so its fetch
+        // stalls before the first visible pixel.
+        let (oam, indices) = penalty_sprites(&[5]);
+        let mut events = Vec::new();
+        schedule_obj_penalties(&indices, &oam, 0, &mut events);
+        assert_eq!(events, vec![ObjPenaltyEvent { x: 0, dots: 6 }]);
     }
 
     #[test]

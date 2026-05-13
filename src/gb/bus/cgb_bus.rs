@@ -206,8 +206,12 @@ impl CgbBus {
         };
 
         // Set OPRI based on cartridge type when skipping boot ROM.
+        bus.ppu.set_cgb_model(model);
         if skip_boot_rom && opri_value != 0 {
             bus.ppu.write_cgb_register(0xFF6C, opri_value);
+        }
+        if skip_boot_rom {
+            bus.ppu.seed_boot_registered_mark_tile();
         }
 
         // Apply DMG compatibility palette when skipping boot ROM for DMG-only games.
@@ -656,6 +660,7 @@ impl CgbBus {
     pub fn reset(&mut self) {
         let apu_rate = self.apu.sample_rate();
         self.ppu = Ppu::new_cgb();
+        self.ppu.set_cgb_model(self.model);
         self.ppu.write_register(0xFF40, 0x00);
         self.timer = Timer::new();
         self.joypad = Joypad::new();
@@ -685,6 +690,7 @@ impl CgbBus {
         // Reset KEY0 state: if boot ROM is active, unlock so boot ROM can write;
         // if skipping boot ROM, set appropriate value based on cartridge type.
         if self.skip_boot_rom {
+            self.ppu.seed_boot_registered_mark_tile();
             // Same logic as constructor: set KEY0/OPRI based on cartridge header
             let is_cgb = self.cart.is_cgb();
             if is_cgb {
@@ -768,6 +774,7 @@ impl CgbBus {
             ));
         }
         self.ppu = state.ppu.clone();
+        self.ppu.set_cgb_model(self.model);
         for (bank, bank_data) in self.wram.iter_mut().enumerate() {
             let offset = bank * 0x1000;
             bank_data.copy_from_slice(&state.wram[offset..offset + 0x1000]);
@@ -1010,6 +1017,7 @@ impl GbBus for CgbBus {
                 if self.boot_rom_active {
                     self.boot_rom_active = false;
                     self.key0_locked = true;
+                    self.ppu.seed_boot_registered_mark_tile();
 
                     // Apply DMG compatibility palettes for DMG-only games.
                     // KEY0 = $04 indicates DMG compatibility mode (bit 2 set).
