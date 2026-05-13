@@ -13,6 +13,7 @@ pub(crate) mod input;
 pub mod keyboard;
 mod mouse;
 mod render_target;
+pub mod rom_browser;
 mod shader_manager;
 mod sleep_inhibitor;
 

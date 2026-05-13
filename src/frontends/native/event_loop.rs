@@ -160,14 +160,20 @@ impl NativeEventLoop {
         }
     }
 
-    pub fn run(mut self) -> Result<(), String> {
+    pub fn run(self) -> Result<(), String> {
         if self.headless {
             return self.run_headless();
         }
-        let event_loop =
+        let mut event_loop =
             EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
+        self.run_with_event_loop(&mut event_loop)
+    }
+
+    /// Run with an externally-created event loop (used when transitioning from ROM browser).
+    pub fn run_with_event_loop(mut self, event_loop: &mut EventLoop<()>) -> Result<(), String> {
+        use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
         event_loop
-            .run_app(&mut self)
+            .run_app_on_demand(&mut self)
             .map_err(|e| format!("Event loop error: {e}"))?;
         // Propagate deferred autorun exit if set during the event loop.
         if let Some(exit_str) = self.autorun_exit.take() {

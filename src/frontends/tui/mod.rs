@@ -25,11 +25,13 @@ use terminal::TerminalHandle;
 pub fn run_tui(
     search_paths: &[String],
     rebuild_catalog: bool,
+    include_unofficial: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (entries, catalog_err) = match catalog::load_catalog(search_paths, rebuild_catalog) {
-        Ok(entries) => (entries, None),
-        Err(e) => (vec![], Some(e)),
-    };
+    let (entries, catalog_err) =
+        match catalog::load_catalog(search_paths, rebuild_catalog, include_unofficial) {
+            Ok(entries) => (entries, None),
+            Err(e) => (vec![], Some(e)),
+        };
 
     let mut terminal = TerminalHandle::new()?;
     let mut app = App::new(entries);

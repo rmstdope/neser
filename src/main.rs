@@ -181,7 +181,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "tui")]
     if app_context.borrow().config().frontend.tui_mode {
         let (search_paths, _, rebuild) = cartridge_catalog_startup_config(&app_context);
-        return frontends::tui::run_tui(&search_paths, rebuild);
+        let include_unofficial = app_context
+            .borrow()
+            .config()
+            .frontend
+            .include_unofficial_roms;
+        return frontends::tui::run_tui(&search_paths, rebuild, include_unofficial);
     }
 
     refresh_startup_cartridge_catalog(&app_context);
@@ -248,6 +253,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_native_frontend(
     app_context: Rc<RefCell<AppContext>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use frontends::native::rom_browser::{BrowserResult, RomBrowserApp};
+    use winit::event_loop::EventLoop;
+
+    let rom_path = app_context.borrow().config().frontend.rom_path.clone();
+
+    if let Some(rom_path) = rom_path {
+        // ROM path provided via CLI — go straight to emulation (no return to browser).
+        run_native_emulator(app_context, &rom_path, None)
+    } else {
+        // No ROM path — launch the ROM browser in a loop.
+        // After emulation ends, return to the browser for another selection.
+        let mut event_loop =
+            EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
+        let mut browser = RomBrowserApp::new(app_context.clone());
+        loop {
+            match browser.run(&mut event_loop)? {
+                BrowserResult::RomSelected(path) => {
+                    let rom_path = path.to_string_lossy().to_string();
+                    // Run the emulator; when it exits, loop back to the browser.
+                    if let Err(e) =
+                        run_native_emulator(app_context.clone(), &rom_path, Some(&mut event_loop))
+                    {
+                        crate::platform::debugging::log_info(format!("Emulator error: {e}"));
+                    }
+                }
+                BrowserResult::Closed => return Ok(()),
+            }
+        }
+    }
+}
+
+/// Load and run a ROM in the native emulator event loop.
+#[cfg(feature = "native")]
+fn run_native_emulator(
+    app_context: Rc<RefCell<AppContext>>,
+    rom_path: &str,
+    event_loop: Option<&mut winit::event_loop::EventLoop<()>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use frontends::native::{NativeAudio, NativeEventLoop};
     use platform::audio::EmulatorAudio;
 
@@ -287,50 +330,34 @@ fn run_native_frontend(
         Some(audio)
     };
 
-    // Load ROM
-    let default_rom_path = "roms/games/mappers/6/Air Fortress (J) [hFFE].nes";
-    let rom_path = app_context
-        .borrow()
-        .config()
-        .frontend
-        .rom_path
-        .clone()
-        .unwrap_or_else(|| default_rom_path.to_string());
-
-    let rom_bytes = match fs::read(&rom_path) {
+    let rom_bytes = match fs::read(rom_path) {
         Ok(bytes) => bytes,
         Err(err) => {
             app_context
                 .borrow_mut()
-                .add_toast(cartridge_load_toast_message(&rom_path, false));
+                .add_toast(cartridge_load_toast_message(rom_path, false));
             return Err(err.into());
         }
     };
 
-    let _rom_name = std::path::Path::new(&rom_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(&rom_path)
-        .to_string();
-
-    let console = match detect_system_type(&rom_path) {
+    let console = match detect_system_type(rom_path) {
         platform::emulator::SystemType::Nes => {
             let rom_db = nes::cartridge::load_rom_db();
             let cart = match nes::cartridge::Cartridge::load_from_file(
                 &rom_bytes,
-                &rom_path,
+                rom_path,
                 Some(&rom_db),
             ) {
                 Ok(cartridge) => {
                     app_context
                         .borrow_mut()
-                        .add_toast(cartridge_load_toast_message(&rom_path, true));
+                        .add_toast(cartridge_load_toast_message(rom_path, true));
                     cartridge
                 }
                 Err(err) => {
                     app_context
                         .borrow_mut()
-                        .add_toast(cartridge_load_toast_message(&rom_path, false));
+                        .add_toast(cartridge_load_toast_message(rom_path, false));
                     return Err(err.into());
                 }
             };
@@ -352,28 +379,28 @@ fn run_native_frontend(
         }
         platform::emulator::SystemType::GameBoy => {
             let mut console = platform::emulator::Console::new_gameboy(app_context.clone());
-            if let Err(err) = console.load_rom(&rom_bytes, &rom_path) {
+            if let Err(err) = console.load_rom(&rom_bytes, rom_path) {
                 app_context
                     .borrow_mut()
-                    .add_toast(cartridge_load_toast_message(&rom_path, false));
+                    .add_toast(cartridge_load_toast_message(rom_path, false));
                 return Err(err.into());
             }
             app_context
                 .borrow_mut()
-                .add_toast(cartridge_load_toast_message(&rom_path, true));
+                .add_toast(cartridge_load_toast_message(rom_path, true));
             console
         }
         platform::emulator::SystemType::Gba => {
             let mut console = platform::emulator::Console::new_gba(app_context.clone());
-            if let Err(err) = console.load_rom(&rom_bytes, &rom_path) {
+            if let Err(err) = console.load_rom(&rom_bytes, rom_path) {
                 app_context
                     .borrow_mut()
-                    .add_toast(cartridge_load_toast_message(&rom_path, false));
+                    .add_toast(cartridge_load_toast_message(rom_path, false));
                 return Err(err.into());
             }
             app_context
                 .borrow_mut()
-                .add_toast(cartridge_load_toast_message(&rom_path, true));
+                .add_toast(cartridge_load_toast_message(rom_path, true));
             console
         }
     };
@@ -386,14 +413,14 @@ fn run_native_frontend(
     console.reset(false);
 
     let tracing = app_context.borrow().config().frontend.tracing;
-    let mut event_loop =
+    let mut native_loop =
         NativeEventLoop::new(app_context.clone(), console, audio, tracing, headless);
 
     // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
     if autorun_mode != platform::autorun::AutorunMode::None {
-        event_loop.init_autorun(
+        native_loop.init_autorun(
             autorun_mode,
-            &rom_path,
+            rom_path,
             autorun_overwrite,
             autorun_extend,
             autorun_from_checkpoint,
@@ -401,7 +428,11 @@ fn run_native_frontend(
         )?;
     }
 
-    let run_result = event_loop.run();
+    let run_result = if let Some(el) = event_loop {
+        native_loop.run_with_event_loop(el)
+    } else {
+        native_loop.run()
+    };
 
     // Handle autorun exit codes
     if let Err(ref e) = run_result
