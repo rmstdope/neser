@@ -27,3 +27,15 @@ fuzzarm_any=0x9A78A7EB
 fuzzthumb_data_processing=0x9A78A7EB
 fuzzthumb_any=0x9A78A7EB
 fuzzarm_mixed=0x9A78A7EB
+
+# ArmWrestler (https://github.com/destoer/armwrestler-gba-fixed)
+# Pages 0–4: ARM tests (ALU, Barrel-Shift, Multiply, LDR/STR, LDM/STM)
+# Pages 5–7: THUMB tests (ALU, LDR/STR, LDM/STM)
+armwrestler_page0=0xAA081A57
+armwrestler_page1=0x7725D68D
+armwrestler_page2=0xF9C38336
+armwrestler_page3=0x76CED72B
+armwrestler_page4=0x6795E0F8
+armwrestler_page5=0xE215C2B0
+armwrestler_page6=0xA52234A7
+armwrestler_page7=0x562A5C65
