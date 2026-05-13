@@ -4,7 +4,7 @@ use serde_with::serde_as;
 use super::registers::Registers;
 use super::screen_buffer::ScreenBuffer;
 use super::timing::{PpuMode, Timing};
-use super::{pixel_fifo::PixelFifoRenderer, rendering, sprites};
+use super::{pixel_fifo::PixelFifoRenderer, sprites};
 use crate::gb::model::CgbModel;
 use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
@@ -222,41 +222,21 @@ impl Ppu {
         // At Mode 2→Mode 3 transition, extend Mode 3 with OBJ penalty.
         if events.mode_changed && self.timing.mode() == PpuMode::PixelTransfer {
             self.apply_obj_penalty();
-            if self.uses_pixel_fifo_renderer() {
-                self.pixel_fifo.begin_scanline(
-                    self.timing.ly(),
-                    self.timing.dot(),
-                    &self.oam,
-                    &self.registers,
-                );
-            }
+            self.pixel_fifo.begin_scanline(
+                self.timing.ly(),
+                self.timing.dot(),
+                &self.oam,
+                &self.registers,
+            );
         }
 
-        if self.uses_pixel_fifo_renderer()
-            && (self.timing.mode() == PpuMode::PixelTransfer || self.pixel_fifo.is_active())
-        {
+        if self.timing.mode() == PpuMode::PixelTransfer || self.pixel_fifo.is_active() {
             self.render_pixel_fifo_dot();
         }
 
-        // Render the current visible scanline when Mode 3→Mode 0 transition fires.
+        // Signal HBlank entry for HDMA when Mode 3→Mode 0 transition fires.
         if events.render_scanline {
             self.hblank_entered = true;
-            let scanline = self.timing.ly();
-            if !self.uses_pixel_fifo_renderer() {
-                rendering::render_scanline_cgb(
-                    scanline,
-                    &self.vram,
-                    &self.vram_bank1,
-                    &self.oam,
-                    &self.registers,
-                    &self.bg_palette_ram,
-                    &self.obj_palette_ram,
-                    &mut self.window_line,
-                    self.opri,
-                    self.dmg_compat,
-                    &mut self.screen_buffer,
-                );
-            }
         }
 
         // V-Blank interrupt (IF bit 0).
@@ -315,10 +295,6 @@ impl Ppu {
         let extra_dots =
             scx_penalty + window_penalty + (obj_penalty / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
         self.timing.set_mode3_extra_dots(extra_dots);
-    }
-
-    fn uses_pixel_fifo_renderer(&self) -> bool {
-        !self.cgb_mode || self.dmg_compat
     }
 
     fn render_pixel_fifo_dot(&mut self) {
@@ -960,6 +936,22 @@ mod tests {
         ppu.tick_dots(n);
     }
 
+    fn tick_until_fifo_can_emit_sprite_pixel(ppu: &mut Ppu) {
+        tick_dots(ppu, 120);
+        assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
+    }
+
+    fn set_cgb_palette_colour(
+        palette_ram: &mut [u8; 64],
+        palette: usize,
+        slot: usize,
+        rgb555: u16,
+    ) {
+        let base = palette * 8 + slot * 2;
+        palette_ram[base] = (rgb555 & 0x00FF) as u8;
+        palette_ram[base + 1] = (rgb555 >> 8) as u8;
+    }
+
     /// Number of dots in the first scanline after LCD enable (starts at dot 4).
     const FIRST_SCANLINE_DOTS: u32 = 452;
 
@@ -970,6 +962,92 @@ mod tests {
         tick_dots(ppu, FIRST_SCANLINE_DOTS + 4); // dot=4 on scan1 = Mode 2 start
         assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
         assert_eq!(ppu.timing.ly(), 1);
+    }
+
+    #[test]
+    fn test_native_cgb_bg_attrs_render_before_hblank() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.registers.lcdc = 0x91;
+        ppu.vram[0x1800] = 1;
+        ppu.vram_bank1[0x1800] = 0x0A; // palette 2, tile data bank 1
+        ppu.vram_bank1[0x0010] = 0x80; // tile 1, row 0: leftmost pixel colour 1
+        set_cgb_palette_colour(&mut ppu.bg_palette_ram, 2, 1, 0x7FFF);
+
+        tick_until_fifo_can_emit_sprite_pixel(&mut ppu);
+
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (255, 255, 255));
+    }
+
+    #[test]
+    fn test_native_cgb_window_overrides_bg_before_hblank() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.registers.lcdc = 0xF1; // LCD on, window on, window map $9C00
+        ppu.registers.wx = 7;
+        ppu.registers.wy = 0;
+        ppu.vram[0x1C00] = 1;
+        ppu.vram[0x0010] = 0x80; // window tile 1, row 0: colour 1
+        ppu.vram_bank1[0x1C00] = 0x03; // BG palette 3
+        set_cgb_palette_colour(&mut ppu.bg_palette_ram, 3, 1, 0x7FFF);
+
+        tick_until_fifo_can_emit_sprite_pixel(&mut ppu);
+
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (255, 255, 255));
+    }
+
+    #[test]
+    fn test_native_cgb_master_priority_off_obj_wins_before_hblank() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.registers.lcdc = 0x92; // LCD on, OBJ on, tile data $8000, master priority off
+        ppu.vram[0x1800] = 0;
+        ppu.vram[0x0000] = 0x80; // BG tile 0, row 0: colour 1
+        ppu.vram[0x0010] = 0x80; // OBJ tile 1, row 0: colour 1
+        ppu.vram_bank1[0x1800] = 0x80; // BG priority would win if master priority were on
+        ppu.oam[0] = 16;
+        ppu.oam[1] = 8;
+        ppu.oam[2] = 1;
+        ppu.oam[3] = 0;
+        set_cgb_palette_colour(&mut ppu.obj_palette_ram, 0, 1, 0x7FFF);
+
+        tick_until_fifo_can_emit_sprite_pixel(&mut ppu);
+
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (255, 255, 255));
+    }
+
+    #[test]
+    fn test_native_cgb_bg_priority_beats_obj_before_hblank() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.registers.lcdc = 0x93; // LCD on, OBJ on, tile data $8000, master priority on
+        ppu.vram[0x1800] = 0;
+        ppu.vram[0x0000] = 0x80; // BG tile 0, row 0: colour 1
+        ppu.vram[0x0010] = 0x80; // OBJ tile 1, row 0: colour 1
+        ppu.vram_bank1[0x1800] = 0x80;
+        ppu.oam[0] = 16;
+        ppu.oam[1] = 8;
+        ppu.oam[2] = 1;
+        ppu.oam[3] = 0;
+        set_cgb_palette_colour(&mut ppu.bg_palette_ram, 0, 1, 0x7FFF);
+
+        tick_until_fifo_can_emit_sprite_pixel(&mut ppu);
+
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (255, 255, 255));
+    }
+
+    #[test]
+    fn test_cgb_dmg_compat_obj_palette_bit4_renders_before_hblank() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.set_dmg_compat(true);
+        ppu.registers.lcdc = 0x92;
+        ppu.registers.obp1 = 0xE4;
+        ppu.vram[0x0010] = 0x80; // OBJ tile 1, row 0: colour 1
+        ppu.oam[0] = 16;
+        ppu.oam[1] = 8;
+        ppu.oam[2] = 1;
+        ppu.oam[3] = 0x10;
+        set_cgb_palette_colour(&mut ppu.obj_palette_ram, 1, 1, 0x7FFF);
+
+        tick_until_fifo_can_emit_sprite_pixel(&mut ppu);
+
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (255, 255, 255));
     }
 
     // ── VRAM bus-conflict blocking ─────────────────────────────────────────────
