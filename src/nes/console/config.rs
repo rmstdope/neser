@@ -514,15 +514,16 @@ impl NesConfig {
     /// Handles NES-specific config keys (nes_hardware, nes_controller_port1, etc.).
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         use crate::platform::config::parse_bool;
+        let key = key.replace('-', "_");
 
-        match key {
-            "nes-enable_4_score" => {
+        match key.as_str() {
+            "nes_enable_4_score" => {
                 if let Ok(b) = parse_bool(value) {
                     self.four_score_enabled = b;
                     self.four_score_enabled_explicit = true;
                 }
             }
-            "nes-pulse1" => {
+            "nes_pulse1" => {
                 if let Ok(b) = parse_bool(value) {
                     if b {
                         self.apu_channels.insert(ApuChannels::PULSE1);
@@ -531,7 +532,7 @@ impl NesConfig {
                     }
                 }
             }
-            "nes-pulse2" => {
+            "nes_pulse2" => {
                 if let Ok(b) = parse_bool(value) {
                     if b {
                         self.apu_channels.insert(ApuChannels::PULSE2);
@@ -540,7 +541,7 @@ impl NesConfig {
                     }
                 }
             }
-            "nes-triangle" => {
+            "nes_triangle" => {
                 if let Ok(b) = parse_bool(value) {
                     if b {
                         self.apu_channels.insert(ApuChannels::TRIANGLE);
@@ -549,7 +550,7 @@ impl NesConfig {
                     }
                 }
             }
-            "nes-noise" => {
+            "nes_noise" => {
                 if let Ok(b) = parse_bool(value) {
                     if b {
                         self.apu_channels.insert(ApuChannels::NOISE);
@@ -558,7 +559,7 @@ impl NesConfig {
                     }
                 }
             }
-            "nes-dmc" => {
+            "nes_dmc" => {
                 if let Ok(b) = parse_bool(value) {
                     if b {
                         self.apu_channels.insert(ApuChannels::DMC);
@@ -567,7 +568,7 @@ impl NesConfig {
                     }
                 }
             }
-            "nes-zapper_detection_size" => {
+            "nes_zapper_detection_size" => {
                 if let Ok(size) = value.parse::<u8>() {
                     self.zapper_detection_size = size;
                     if size > 10 {
@@ -587,7 +588,7 @@ impl NesConfig {
                     );
                 }
             }
-            "nes-oam_dram_decay" | "nes-oam_dram_decay_enabled" => {
+            "nes_oam_dram_decay" | "nes_oam_dram_decay_enabled" => {
                 if let Ok(b) = parse_bool(value) {
                     self.oam_dram_decay_enabled = b;
                 } else {
@@ -598,12 +599,12 @@ impl NesConfig {
                     );
                 }
             }
-            "nes-horizontal_overscan" => {
+            "nes_horizontal_overscan" => {
                 if let Ok(v) = value.parse::<u8>() {
                     self.horizontal_overscan = v.min(8);
                 }
             }
-            "nes-vertical_overscan" => {
+            "nes_vertical_overscan" => {
                 if let Ok(v) = value.parse::<u8>() {
                     self.vertical_overscan = v.min(16);
                 }
@@ -1056,29 +1057,33 @@ impl Config {
     }
 
     /// Apply a single config file key-value pair.
+    ///
+    /// Keys are normalized: dashes are treated as underscores, so both
+    /// `nes-hardware` and `nes_hardware` are accepted.
     fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let key = key.replace('-', "_");
         // Delegate to sub-configs first
-        self.frontend.apply_config_value(key, value)?;
-        self.nes.apply_config_value(key, value)?;
+        self.frontend.apply_config_value(&key, value)?;
+        self.nes.apply_config_value(&key, value)?;
 
-        // Handle keys that need Config-level coordination or haven't been moved yet
-        match key {
-            "nes-hardware" => self.apply_hardware_value(value)?,
-            "nes-expansion_port" => self.apply_expansion_port_value(value)?,
-            "nes-vs_dip_switches" => {
+        // Handle keys that need Config-level coordination or haven't been moved yet.
+        match key.as_str() {
+            "nes_hardware" => self.apply_hardware_value(value)?,
+            "nes_expansion_port" => self.apply_expansion_port_value(value)?,
+            "nes_vs_dip_switches" => {
                 self.nes.vs_dip_switches = parse_hex_u8(value).map_err(|_| {
                     format!(
-                        "Invalid nes-vs_dip_switches value: '{}'. Expected hex (0x00-0xFF) or decimal (0-255)",
+                        "Invalid nes_vs_dip_switches value: '{}'. Expected hex (0x00-0xFF) or decimal (0-255)",
                         value
                     )
                 })?;
             }
-            "nes-vs_controllers_swapped" => {
+            "nes_vs_controllers_swapped" => {
                 if let Ok(b) = parse_bool(value) {
                     self.nes.vs_controllers_swapped = b;
                 }
             }
-            "nes-filter" => {
+            "nes_filter" => {
                 if !value.is_empty() {
                     self.frontend.shader_path = Some(Self::map_filter_name_for(
                         value,
@@ -1086,39 +1091,45 @@ impl Config {
                     )?);
                 }
             }
-            "gb-filter" => {
+            "gb_filter" => {
                 if !value.is_empty() {
                     self.frontend.shader_path =
                         Some(Self::map_filter_name_for(value, &["none", "dmg"])?);
                 }
             }
-            "gba-filter" => {
+            "gba_filter" => {
                 if !value.is_empty() {
                     self.frontend.shader_path =
                         Some(Self::map_filter_name_for(value, GBA_FILTER_NAMES)?);
                 }
             }
-            "nes-controller_port1" => {
+            "nes_controller_port1" => {
                 self.nes.controller_port1 =
-                    Self::parse_controller_arg("nes-controller_port1", value)?;
+                    Self::parse_controller_arg("nes_controller_port1", value)?;
                 self.nes.controller_port1_explicit = true;
             }
-            "nes-controller_port2" => {
+            "nes_controller_port2" => {
                 self.nes.controller_port2 =
-                    Self::parse_controller_arg("nes-controller_port2", value)?;
+                    Self::parse_controller_arg("nes_controller_port2", value)?;
                 self.nes.controller_port2_explicit = true;
             }
-            "gb-dmg-variant" => {
-                self.gb.apply_config_value("gb-dmg-variant", value)?;
+            "gb_dmg_variant" => {
+                self.gb.apply_config_value("gb_dmg_variant", value)?;
             }
-            "gb-hardware" => {
-                self.gb.apply_config_value("gb-hardware", value)?;
+            "gb_hardware" => {
+                self.gb.apply_config_value("gb_hardware", value)?;
             }
-            "gba-hardware" => {
-                self.gba.apply_config_value("gba-hardware", value)?;
+            "gb_cgb_variant" => {
+                self.gb.apply_config_value("gb_cgb_variant", value)?;
             }
-            "gba-bios-path" => {
-                self.gba.apply_config_value("gba-bios-path", value)?;
+            "gb_boot_animation" => {
+                self.gb.apply_config_value("gb_boot_animation", value)?;
+            }
+            "gba_hardware" => {
+                self.gba.apply_config_value("gba_hardware", value)?;
+            }
+            "gba_bios_path" => {
+                self.gba.apply_config_value("gba_bios_path", value)?;
             }
             _ => {} // Unknown keys are silently ignored (may have been handled by sub-configs)
         }
@@ -2375,7 +2386,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Invalid value 'unknown' for 'nes-controller_port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
+            "Invalid value 'unknown' for 'nes_controller_port1'. Valid options are: joypad, snes-controller, snes-mouse, zapper, arkanoid, power-pad"
         );
     }
 
@@ -2660,6 +2671,23 @@ nes-pulse1=false
         // Other values should remain default
         assert!(config.frontend.vsync_enabled);
         assert!(config.nes.apu_channels.contains(ApuChannels::PULSE2));
+    }
+
+    #[test]
+    fn test_config_file_accepts_dashes_as_underscores() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let content = "window-height=600\ntrace-cpu=2\n";
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+
+        let mut config = Config::default();
+        config.load_from_file(file.path()).unwrap();
+
+        assert_eq!(config.frontend.window_height, 600);
+        assert_eq!(config.frontend.tracing.cpu, 2);
+        assert!(config.frontend.tracing.enabled);
     }
 
     #[test]
@@ -5047,7 +5075,7 @@ nes-filter=invalid-shader
         let mut config = Config::with_defaults();
         let result = config.apply_config_value("gb-hardware", "dmg-a");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid gb-hardware value"));
+        assert!(result.unwrap_err().contains("Invalid gb_hardware value"));
     }
 
     #[test]

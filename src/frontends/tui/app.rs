@@ -315,6 +315,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::catalog::Platform;
 
     fn make_entries(names: &[&str]) -> Vec<RomEntry> {
         use std::path::PathBuf;
@@ -329,6 +330,16 @@ mod tests {
                 hardware: Some("NES NTSC".to_string()),
                 crc: Some("DEADBEEF".to_string()),
                 recording_duration: None,
+                metadata_game_id: None,
+                genres: Vec::new(),
+                overview: None,
+                release_date: None,
+                players: None,
+                rating: None,
+                boxart_path: None,
+                screenshot_paths: Vec::new(),
+                is_favorite: false,
+                platform: Platform::Nes,
             })
             .collect()
     }

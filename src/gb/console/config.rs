@@ -112,33 +112,34 @@ impl GbConfig {
     ///
     /// Accepts `gb-dmg-variant`, `gb-cgb-variant`, and `gb-hardware` keys.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
-        match key {
-            "gb-dmg-variant" => {
+        let key = key.replace('-', "_");
+        match key.as_str() {
+            "gb_dmg_variant" => {
                 self.dmg_variant = DmgModel::parse(value).ok_or_else(|| {
                     format!(
-                        "Invalid gb-dmg-variant value: '{value}'. Valid options are: {VALID_DMG_VARIANTS}",
+                        "Invalid gb_dmg_variant value: '{value}'. Valid options are: {VALID_DMG_VARIANTS}",
                     )
                 })?;
             }
-            "gb-cgb-variant" => {
+            "gb_cgb_variant" => {
                 self.cgb_variant = CgbModel::parse(value).ok_or_else(|| {
                     format!(
-                        "Invalid gb-cgb-variant value: '{value}'. Valid options are: {VALID_CGB_VARIANTS}",
+                        "Invalid gb_cgb_variant value: '{value}'. Valid options are: {VALID_CGB_VARIANTS}",
                     )
                 })?;
             }
-            "gb-hardware" => {
+            "gb_hardware" => {
                 self.hardware = Some(GbHardware::parse(value).ok_or_else(|| {
                     format!(
-                        "Invalid gb-hardware value: '{value}'. Valid options are: {VALID_HARDWARE_TARGETS}",
+                        "Invalid gb_hardware value: '{value}'. Valid options are: {VALID_HARDWARE_TARGETS}",
                     )
                 })?);
             }
-            "gb-boot-animation" => {
+            "gb_boot_animation" => {
                 self.boot_animation = crate::platform::config::parse_bool(value)
                     .map_err(|_| {
                         format!(
-                            "Invalid gb-boot-animation value: '{value}'. Valid options are: true, false",
+                            "Invalid gb_boot_animation value: '{value}'. Valid options are: true, false",
                         )
                     })?;
             }
@@ -241,7 +242,7 @@ mod tests {
         let result = config.apply_config_value("gb-hardware", "invalid");
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("Invalid gb-hardware value"));
+        assert!(err_msg.contains("Invalid gb_hardware value"));
         assert!(err_msg.contains("dmg, cgb, gba"));
     }
 
@@ -356,7 +357,7 @@ mod tests {
         let result = config.apply_config_value("gb-cgb-variant", "cgb-z");
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("Invalid gb-cgb-variant value"));
+        assert!(err_msg.contains("Invalid gb_cgb_variant value"));
         assert!(err_msg.contains("cgb-0"));
     }
 
@@ -427,6 +428,6 @@ mod tests {
         let result = config.apply_config_value("gb-boot-animation", "maybe");
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("Invalid gb-boot-animation value"));
+        assert!(err_msg.contains("Invalid gb_boot_animation value"));
     }
 }

@@ -111,8 +111,16 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | File | Description |
 | ------ | ------------- |
 | `src/platform/emulator.rs` | `Emulator` trait — defines the common interface (22 methods) for all emulated systems: `run_tick`, `is_ready_to_render`, `screen_snapshot`, `get_sample`, `set_button`, `save_state_bytes`/`load_state_bytes`, `reset`, etc. `Console` enum wraps `Box<Nes>` and `Box<GameBoy>`, delegating common methods through `as_core()`/`as_core_mut()`. System-specific features accessed via variant matching (`Console::Nes`). |
-| `src/platform/config.rs` | `FrontendConfig` struct — generic frontend settings (audio, video, autorun, debugger, window) shared across all emulated systems. |
+| `src/platform/config.rs` | `FrontendConfig` struct — generic frontend settings (audio, video, autorun, debugger, window, metadata paths) shared across all emulated systems. Includes `resolved_metadata_db_path()`, `resolved_image_cache_path()`, and `resolved_favorites_path()` helpers. |
 | `src/platform/app_context.rs` | `AppContext` — shared application state including configuration, ROM database, and toast notification manager. Wrapped in `Rc<RefCell<>>` for interior mutability. |
+| `src/platform/catalog/` | Shared ROM catalog module — discovers ROMs, parses headers, enriches entries with metadata and cover art. Used by both TUI and native graphical frontends. |
+| `src/platform/catalog/mod.rs` | `load_catalog()` builds sorted `Vec<RomEntry>` from disk scan; `enrich_catalog()` integrates metadata matching and cover art downloading. |
+| `src/platform/catalog/rom_entry.rs` | `RomEntry` struct — a discovered ROM enriched with iNES header data, ROM DB lookup results, TheGamesDB metadata (genres, overview, rating, etc.), cover art paths, and favorite status. |
+| `src/platform/catalog/favorites.rs` | `Favorites` struct — persistent favorites storage backed by `~/.neser/favorites.json`. Supports load, toggle, save, and contains operations. |
+| `src/platform/metadata/` | TheGamesDB metadata access via SQLite (`rusqlite`). |
+| `src/platform/metadata/db.rs` | `MetadataDb` — opens `metadata.db` and queries game metadata (title, overview, genres, release date, players, rating, image filenames). |
+| `src/platform/metadata/matcher.rs` | Fuzzy title matching using `strsim::jaro_winkler` to link ROM DB names to TheGamesDB entries. |
+| `src/platform/image_cache/` | Cover art download and caching system. Downloads front boxart and screenshots from TheGamesDB CDN into `~/.neser/image_cache/` using `reqwest`. |
 
 #### NES Emulation (`src/nes/`)
 
@@ -287,8 +295,12 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 | `src/frontends/native/gamepad.rs` | Gamepad input using gilrs — maps controller axes/buttons to NES joypads. |
 | `src/frontends/native/mouse.rs` | Mouse input — Zapper light gun, SNES mouse, and Arkanoid paddle coordinate mapping. |
 | `src/frontends/native/gl_wrapper.rs` | OpenGL context management for native windows. |
-| `src/frontends/native/gl_backend.rs` | OpenGL framebuffer, texture management, and imgui debugger UI. |
+| `src/frontends/native/gl_backend.rs` | OpenGL framebuffer, texture management, and debugger UI. |
 | `src/frontends/native/shader_manager.rs` | Shader pipeline using librashader — loads `.slangp` presets (CRT, NTSC, xBRZ). |
+| `src/frontends/native/rom_browser/` | Graphical ROM browser — a console-style launcher with cover art grid, search, genre filter, detail view, and favorites. |
+| `src/frontends/native/rom_browser/app.rs` | `RomBrowserApp` — winit `ApplicationHandler` implementing the browser state machine, grid rendering, overlay modes (search, genre filter, detail view), input handling, and favorites. |
+| `src/frontends/native/rom_browser/renderer.rs` | `BrowserGl` — egui_glow + egui_winit setup, texture loading from image files, and frame lifecycle management for the browser window. |
+| `src/frontends/native/rom_browser/theme.rs` | Visual theme constants — colours, spacing, layout calculations (`grid_layout`, `cell_height`, `sidebar_width`). |
 | `src/frontends/tui/` | Terminal UI ROM launcher using `ratatui` + `crossterm`. |
 | `src/frontends/tui/app.rs` | TUI application state and event loop. |
 | `src/frontends/tui/rom_list.rs` | Scrollable ROM list widget. |
@@ -448,6 +460,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 - **Mapper trait pattern**: All mappers implement the `Mapper` trait with a standard interface for PRG/CHR reads/writes, IRQ management, and state snapshots. Common banking logic is provided by `BaseMapper`.
 - **Deterministic testing**: RAM initialization modes and autorun recordings enable fully deterministic regression testing against reference CRC checksums.
 - **Save state serialization**: Uses JSON (via serde) with a versioned format. Mapper state is serialized as opaque byte vectors to keep the format flexible.
+- **ROM browser architecture**: The native frontend includes a console-style graphical ROM browser as the default landing screen. It uses the shared `platform/catalog` module for ROM discovery, `platform/metadata` for TheGamesDB fuzzy matching via `rusqlite` + `strsim`, and `platform/image_cache` for cover art downloading via `reqwest`. The browser renders a cover art grid with egui (`egui_glow` + `egui_winit`), supports real-time search, genre filtering, a detail view overlay, and persistent favorites. When launched without a ROM path, the browser opens first; selecting a ROM transitions to emulation mode via an application state machine.
 
 ## Testing Strategy
 
