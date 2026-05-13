@@ -22,6 +22,8 @@ pub struct PixelFifoRenderer {
     bgp_edge_x: u8,
     bgp_edge_value: u8,
     #[serde(default)]
+    fine_scroll_delay_dots: u16,
+    #[serde(default)]
     pending_obj_stall_dots: u16,
     #[serde(default)]
     obj_stall_events: Vec<sprites::ObjPenaltyEvent>,
@@ -42,6 +44,7 @@ impl PixelFifoRenderer {
             bgp_edge_active: false,
             bgp_edge_x: 0,
             bgp_edge_value: INITIAL_BGP,
+            fine_scroll_delay_dots: 0,
             pending_obj_stall_dots: 0,
             obj_stall_events: Vec::new(),
             next_obj_stall_event: 0,
@@ -63,6 +66,7 @@ impl PixelFifoRenderer {
         self.window_active = false;
         self.bgp_edge_active = false;
         self.bgp_edge_value = registers.bgp;
+        self.fine_scroll_delay_dots = u16::from(registers.scx & 0x07);
         self.pending_obj_stall_dots = 0;
         self.next_obj_stall_event = 0;
         if registers.lcdc & 0x02 != 0 {
@@ -100,7 +104,7 @@ impl PixelFifoRenderer {
         }
 
         let elapsed = dot.saturating_sub(self.mode3_start_dot);
-        if elapsed < FETCHER_STARTUP_DOTS {
+        if elapsed < FETCHER_STARTUP_DOTS + self.fine_scroll_delay_dots {
             return None;
         }
         self.queue_stall_events_for_next_pixel();

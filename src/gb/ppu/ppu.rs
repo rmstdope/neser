@@ -941,6 +941,12 @@ mod tests {
         assert_eq!(ppu.timing.mode(), PpuMode::PixelTransfer);
     }
 
+    fn tick_until_pixel_transfer_starts(ppu: &mut Ppu) {
+        while ppu.timing.mode() != PpuMode::PixelTransfer {
+            tick_dots(ppu, 1);
+        }
+    }
+
     fn set_cgb_palette_colour(
         palette_ram: &mut [u8; 64],
         palette: usize,
@@ -1047,6 +1053,30 @@ mod tests {
 
         tick_until_fifo_can_emit_sprite_pixel(&mut ppu);
 
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (255, 255, 255));
+    }
+
+    #[test]
+    fn test_scx_fine_scroll_delays_first_fifo_pixel() {
+        // Given: SCX fine scroll discards 7 pixels before the first visible pixel.
+        let mut ppu = Ppu::new();
+        ppu.registers.scx = 7;
+        ppu.registers.bgp = 0x00;
+        ppu.vram[0x1800] = 1;
+        ppu.vram[0x0010] = 0x01;
+
+        tick_until_pixel_transfer_starts(&mut ppu);
+
+        // When: the fixed fetcher startup has elapsed but SCX fine scroll has not.
+        tick_dots(&mut ppu, 16);
+
+        // Then: no visible pixel has been pushed to the LCD yet.
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (0, 0, 0));
+
+        // When: the SCX fine-scroll discard dots have elapsed too.
+        tick_dots(&mut ppu, 7);
+
+        // Then: the first visible pixel is pushed at the delayed dot.
         assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (255, 255, 255));
     }
 
