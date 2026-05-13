@@ -71,11 +71,16 @@ fn assert_suite_passes_with_crc(suite: Suite) {
     let suite_label = suite.label();
     let expected_crc32 = approved_crc_for_suite(suite);
     let result = run_suite(suite);
+    let ewram_info = result
+        .ewram_dump
+        .as_deref()
+        .map(|d| format!("\n{d}"))
+        .unwrap_or_default();
     assert!(
         result.passed,
-        "{suite_label} suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} fb_crc=0x{:08X} cycles={} exit={:?}",
+        "{suite_label} suite failed: index={} reg={} pc=0x{:08X} cpsr=0x{:08X} thumb={} opcode=0x{:08X} fb_crc=0x{:08X} cycles={} exit={:?}{ewram_info}",
         result.failing_index,
-        result.reg_name,
+        result.reg_name.unwrap_or("n/a"),
         result.pc,
         result.cpsr,
         result.thumb,
@@ -86,7 +91,7 @@ fn assert_suite_passes_with_crc(suite: Suite) {
     );
     assert_eq!(
         result.framebuffer_crc32, expected_crc32,
-        "{suite_label} suite framebuffer CRC mismatch: expected=0x{expected_crc32:08X} actual=0x{:08X}",
+        "{suite_label} suite framebuffer CRC mismatch: expected=0x{expected_crc32:08X} actual=0x{:08X}{ewram_info}",
         result.framebuffer_crc32
     );
 }
@@ -147,6 +152,31 @@ fn gba_suite_ppu_stripes_rom_passes() {
 }
 
 #[test]
+fn gba_fuzzarm_data_processing_passes() {
+    assert_suite_passes_with_crc(Suite::FuzzArmDataProcessing);
+}
+
+#[test]
+fn gba_fuzzarm_any_passes() {
+    assert_suite_passes_with_crc(Suite::FuzzArmAny);
+}
+
+#[test]
+fn gba_fuzzthumb_data_processing_passes() {
+    assert_suite_passes_with_crc(Suite::FuzzThumbDataProcessing);
+}
+
+#[test]
+fn gba_fuzzthumb_any_passes() {
+    assert_suite_passes_with_crc(Suite::FuzzThumbAny);
+}
+
+#[test]
+fn gba_fuzzarm_mixed_passes() {
+    assert_suite_passes_with_crc(Suite::FuzzArmMixed);
+}
+
+#[test]
 fn approvals_manifest_parses() {
     let approvals = load_approved_crcs();
     assert_eq!(approvals.get("arm"), Some(&0x12FD_AE0B));
@@ -158,6 +188,14 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("save_flash64"), Some(&0x12FD_AE0B));
     assert_eq!(approvals.get("save_flash128"), Some(&0x12FD_AE0B));
     assert_eq!(approvals.get("ppu_hello"), Some(&0x52F9_B8A4));
-    assert_eq!(approvals.get("ppu_shades"), Some(&0x9CD9_40F8));
+    assert_eq!(approvals.get("ppu_shades"), Some(&0x57EB_C4ED));
     assert_eq!(approvals.get("ppu_stripes"), Some(&0xFBAB_D04A));
+    assert_eq!(approvals.get("fuzzarm_data_processing"), Some(&0x9A78_A7EB));
+    assert_eq!(approvals.get("fuzzarm_any"), Some(&0x9A78_A7EB));
+    assert_eq!(
+        approvals.get("fuzzthumb_data_processing"),
+        Some(&0x9A78_A7EB)
+    );
+    assert_eq!(approvals.get("fuzzthumb_any"), Some(&0x9A78_A7EB));
+    assert_eq!(approvals.get("fuzzarm_mixed"), Some(&0x9A78_A7EB));
 }

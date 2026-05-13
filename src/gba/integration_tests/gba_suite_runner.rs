@@ -8,6 +8,7 @@ const MAX_CYCLES: u64 = 120_000_000;
 const IDLE_PROBE_STABLE_PC_THRESHOLD: u32 = 1;
 // The suite ends in `idle: b idle` (ARM `b .`, opcode 0xEAFFFFFE).
 const ARM_BRANCH_SELF_OPCODE: u32 = 0xEAFF_FFFE;
+const THUMB_BRANCH_SELF_OPCODE: u16 = 0xE7FE;
 const BIOS_RESET_STUB_LDR_PC_PLUS_24: u32 = 0xE59F_F018;
 const BIOS_SWI_STUB_MOVS_PC_LR: u32 = 0xE1B0_F00E;
 const CART_ENTRYPOINT: u32 = 0x0800_0000;
@@ -31,6 +32,11 @@ pub enum Suite {
     PpuHello,
     PpuShades,
     PpuStripes,
+    FuzzArmDataProcessing,
+    FuzzArmAny,
+    FuzzThumbDataProcessing,
+    FuzzThumbAny,
+    FuzzArmMixed,
 }
 
 impl Suite {
@@ -47,23 +53,37 @@ impl Suite {
             Self::PpuHello => "roms/gba/automated_tests/gba-tests/ppu/hello.gba",
             Self::PpuShades => "roms/gba/automated_tests/gba-tests/ppu/shades.gba",
             Self::PpuStripes => "roms/gba/automated_tests/gba-tests/ppu/stripes.gba",
+            Self::FuzzArmDataProcessing => {
+                "roms/gba/automated_tests/FuzzARM/ARM_DataProcessing.gba"
+            }
+            Self::FuzzArmAny => "roms/gba/automated_tests/FuzzARM/ARM_Any.gba",
+            Self::FuzzThumbDataProcessing => {
+                "roms/gba/automated_tests/FuzzARM/THUMB_DataProcessing.gba"
+            }
+            Self::FuzzThumbAny => "roms/gba/automated_tests/FuzzARM/THUMB_Any.gba",
+            Self::FuzzArmMixed => "roms/gba/automated_tests/FuzzARM/FuzzARM.gba",
         };
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel)
     }
 
-    fn result_register(self) -> (usize, &'static str) {
+    fn result_register(self) -> Option<(usize, &'static str)> {
         match self {
-            Self::Arm => (12, "r12"),
-            Self::Thumb => (7, "r7"),
-            Self::Nes => (12, "r12"),
-            Self::Memory => (12, "r12"),
-            Self::SaveNone => (12, "r12"),
-            Self::SaveSram => (12, "r12"),
-            Self::SaveFlash64 => (12, "r12"),
-            Self::SaveFlash128 => (12, "r12"),
-            Self::PpuHello => (12, "r12"),
-            Self::PpuShades => (12, "r12"),
-            Self::PpuStripes => (12, "r12"),
+            Self::Arm => Some((12, "r12")),
+            Self::Thumb => Some((7, "r7")),
+            Self::Nes => Some((12, "r12")),
+            Self::Memory => Some((12, "r12")),
+            Self::SaveNone => Some((12, "r12")),
+            Self::SaveSram => Some((12, "r12")),
+            Self::SaveFlash64 => Some((12, "r12")),
+            Self::SaveFlash128 => Some((12, "r12")),
+            Self::PpuHello => Some((12, "r12")),
+            Self::PpuShades => Some((12, "r12")),
+            Self::PpuStripes => Some((12, "r12")),
+            Self::FuzzArmDataProcessing
+            | Self::FuzzArmAny
+            | Self::FuzzThumbDataProcessing
+            | Self::FuzzThumbAny
+            | Self::FuzzArmMixed => None,
         }
     }
 
@@ -80,11 +100,27 @@ impl Suite {
             Self::PpuHello => "ppu_hello",
             Self::PpuShades => "ppu_shades",
             Self::PpuStripes => "ppu_stripes",
+            Self::FuzzArmDataProcessing => "fuzzarm_data_processing",
+            Self::FuzzArmAny => "fuzzarm_any",
+            Self::FuzzThumbDataProcessing => "fuzzthumb_data_processing",
+            Self::FuzzThumbAny => "fuzzthumb_any",
+            Self::FuzzArmMixed => "fuzzarm_mixed",
         }
     }
 
     pub(crate) fn label(self) -> &'static str {
         self.capture_stem()
+    }
+
+    pub(crate) fn is_fuzzarm(self) -> bool {
+        matches!(
+            self,
+            Self::FuzzArmDataProcessing
+                | Self::FuzzArmAny
+                | Self::FuzzThumbDataProcessing
+                | Self::FuzzThumbAny
+                | Self::FuzzArmMixed
+        )
     }
 }
 
@@ -96,7 +132,7 @@ pub enum ExitReason {
     CartStopped,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SuiteResult {
     pub passed: bool,
     pub failing_index: u32,
@@ -106,8 +142,9 @@ pub struct SuiteResult {
     pub thumb: bool,
     pub opcode_at_pc: u32,
     pub framebuffer_crc32: u32,
-    pub reg_name: &'static str,
+    pub reg_name: Option<&'static str>,
     pub exit_reason: ExitReason,
+    pub ewram_dump: Option<String>,
 }
 
 pub fn run_suite(suite: Suite) -> SuiteResult {
@@ -157,8 +194,15 @@ pub fn run_suite(suite: Suite) -> SuiteResult {
         }
 
         if stable_pc_count >= IDLE_PROBE_STABLE_PC_THRESHOLD {
-            let opcode = gba.bus_mut().peek32(pc);
-            if is_arm_branch_to_self(opcode, pc) {
+            let is_idle = if gba.cpu_thumb() {
+                let opcode = gba.bus_mut().peek16(pc);
+                is_thumb_branch_to_self(opcode)
+            } else {
+                let opcode = gba.bus_mut().peek32(pc);
+                is_arm_branch_to_self(opcode, pc)
+            };
+
+            if is_idle {
                 let reason = if is_bios_exception_vector(pc) {
                     ExitReason::ExceptionVectorTrap
                 } else {
@@ -186,8 +230,10 @@ fn result_from_register(
     pc: u32,
     exit_reason: ExitReason,
 ) -> SuiteResult {
-    let (reg_index, reg_name) = suite.result_register();
-    let failing_index = gba.cpu_reg(reg_index);
+    let (failing_index, reg_name) = match suite.result_register() {
+        Some((reg_index, name)) => (gba.cpu_reg(reg_index), Some(name)),
+        None => (0, None),
+    };
     let cpsr = gba.cpu_cpsr();
     let thumb = gba.cpu_thumb();
     let opcode_at_pc = if thumb {
@@ -197,6 +243,16 @@ fn result_from_register(
     };
     let framebuffer_crc32 = gba.screen_crc32();
     let passed = failing_index == 0 && exit_reason == ExitReason::IdleLoopDetected;
+
+    // Always collect eWRAM diagnostics for FuzzARM suites. A FuzzARM
+    // failure surfaces as a CRC mismatch (since result_register() is None,
+    // `passed` is true whenever idle is detected). Including the dump
+    // unconditionally ensures actionable diagnostics are always available.
+    let ewram_dump = if suite.is_fuzzarm() {
+        Some(dump_fuzzarm_ewram(gba))
+    } else {
+        None
+    };
 
     SuiteResult {
         passed,
@@ -209,6 +265,7 @@ fn result_from_register(
         framebuffer_crc32,
         reg_name,
         exit_reason,
+        ewram_dump,
     }
 }
 
@@ -217,22 +274,32 @@ fn settle_framebuffer_for_result(gba: &mut Gba, exit_reason: ExitReason) {
         return;
     }
 
-    // Consume any stale frame-ready state and then wait for one full frame.
-    if gba.is_ready_to_render() {
-        gba.clear_ready_to_render();
-    }
-
-    let mut settle_cycles = 0u64;
-    while settle_cycles < FRAME_SETTLE_MAX_CYCLES {
-        let tick_cycles = gba.run_tick_for_tests() as u64;
-        if tick_cycles == 0 {
-            return;
-        }
-        settle_cycles += tick_cycles;
-
+    // Wait for two frame-ready edges after idle detection:
+    //
+    // 1. The first completes whatever partial frame was in progress when the
+    //    idle loop was detected. If VRAM changed mid-frame (e.g. "End of
+    //    testing" was drawn after the PPU already rendered the text area),
+    //    this frame's scanlines may contain stale pixels.
+    //
+    // 2. The second is a complete frame rendered entirely from the current
+    //    (final) VRAM state, guaranteeing a clean capture.
+    for _ in 0..2 {
         if gba.is_ready_to_render() {
             gba.clear_ready_to_render();
-            return;
+        }
+
+        let mut settle_cycles = 0u64;
+        while settle_cycles < FRAME_SETTLE_MAX_CYCLES {
+            let tick_cycles = gba.run_tick_for_tests() as u64;
+            if tick_cycles == 0 {
+                return;
+            }
+            settle_cycles += tick_cycles;
+
+            if gba.is_ready_to_render() {
+                gba.clear_ready_to_render();
+                break;
+            }
         }
     }
 }
@@ -257,6 +324,59 @@ fn capture_output_path(suite: Suite, framebuffer_crc32: u32) -> PathBuf {
     PathBuf::from("target/gba_suite_checkpoints").join(file_name)
 }
 
+/// Parse FuzzARM eWRAM failure dump when a FuzzARM test fails.
+///
+/// FuzzARM dumps structured diagnostic data starting at eWRAM base (0x0200_0000):
+/// - 1 word: 'AAAA' (ARM) or 'TTTT' (THUMB)
+/// - 2 words: opcode description (12 ASCII chars padded with spaces)
+/// - 1 word: padding
+/// - 4 words: initial r0, r1, r2, CPSR
+/// - 4 words: gotten r3, r4, 0, CPSR
+/// - 4 words: expected r3, r4, 0, CPSR
+fn dump_fuzzarm_ewram(gba: &mut Gba) -> String {
+    const EWRAM_BASE: u32 = 0x0200_0000;
+
+    let mode_word = gba.bus_mut().peek32(EWRAM_BASE);
+    let mode = match &mode_word.to_le_bytes() {
+        b"AAAA" => "ARM",
+        b"TTTT" => "THUMB",
+        _ => return format!("(no valid FuzzARM dump; mode word=0x{mode_word:08X})"),
+    };
+
+    // Read opcode description (2 words = 8 bytes) + 1 word padding = 12 chars total
+    let op_word1 = gba.bus_mut().peek32(EWRAM_BASE + 4);
+    let op_word2 = gba.bus_mut().peek32(EWRAM_BASE + 8);
+    let op_word3 = gba.bus_mut().peek32(EWRAM_BASE + 12);
+    let mut opcode_bytes = Vec::with_capacity(12);
+    opcode_bytes.extend_from_slice(&op_word1.to_le_bytes());
+    opcode_bytes.extend_from_slice(&op_word2.to_le_bytes());
+    opcode_bytes.extend_from_slice(&op_word3.to_le_bytes());
+    let opcode_str = String::from_utf8_lossy(&opcode_bytes).trim().to_string();
+
+    // Initial values: r0, r1, r2, CPSR
+    let init_r0 = gba.bus_mut().peek32(EWRAM_BASE + 16);
+    let init_r1 = gba.bus_mut().peek32(EWRAM_BASE + 20);
+    let init_r2 = gba.bus_mut().peek32(EWRAM_BASE + 24);
+    let init_cpsr = gba.bus_mut().peek32(EWRAM_BASE + 28);
+
+    // Gotten values: r3, r4, 0, CPSR
+    let got_r3 = gba.bus_mut().peek32(EWRAM_BASE + 32);
+    let got_r4 = gba.bus_mut().peek32(EWRAM_BASE + 36);
+    let got_cpsr = gba.bus_mut().peek32(EWRAM_BASE + 44);
+
+    // Expected values: r3, r4, 0, CPSR
+    let exp_r3 = gba.bus_mut().peek32(EWRAM_BASE + 48);
+    let exp_r4 = gba.bus_mut().peek32(EWRAM_BASE + 52);
+    let exp_cpsr = gba.bus_mut().peek32(EWRAM_BASE + 60);
+
+    format!(
+        "FuzzARM {mode} failure: {opcode_str}\n\
+         Initial: r0=0x{init_r0:08X} r1=0x{init_r1:08X} r2=0x{init_r2:08X} CPSR=0x{init_cpsr:08X}\n\
+         Got:     r3=0x{got_r3:08X} r4=0x{got_r4:08X} CPSR=0x{got_cpsr:08X}\n\
+         Expected:r3=0x{exp_r3:08X} r4=0x{exp_r4:08X} CPSR=0x{exp_cpsr:08X}"
+    )
+}
+
 fn is_arm_branch_to_self(opcode: u32, pc: u32) -> bool {
     // Match unconditional ARM B (not BL) and compute branch target.
     if opcode >> 28 != 0xE {
@@ -276,6 +396,14 @@ fn is_arm_branch_to_self(opcode: u32, pc: u32) -> bool {
     target == pc
 }
 
+fn is_thumb_branch_to_self(opcode: u16) -> bool {
+    // THUMB unconditional branch B: 1110_0<11-bit signed offset>
+    // For b . (branch to self), PC = current + 4 + offset*2
+    // offset = -2 halfwords → 11-bit two's complement = 0x7FE
+    // Full opcode: 0xE7FE
+    opcode == THUMB_BRANCH_SELF_OPCODE
+}
+
 fn is_bios_exception_vector(pc: u32) -> bool {
     BIOS_EXCEPTION_VECTORS.contains(&pc)
 }
@@ -293,6 +421,23 @@ mod tests {
     #[test]
     fn arm_branch_to_self_rejects_bl() {
         assert!(!is_arm_branch_to_self(0xEBFF_FFFE, 0x0800_1000));
+    }
+
+    #[test]
+    fn thumb_branch_to_self_detects_idle_opcode() {
+        assert!(is_thumb_branch_to_self(THUMB_BRANCH_SELF_OPCODE));
+    }
+
+    #[test]
+    fn thumb_branch_to_self_rejects_forward_branch() {
+        // B +2 (skip one instruction) in THUMB: 0xE000
+        assert!(!is_thumb_branch_to_self(0xE000));
+    }
+
+    #[test]
+    fn thumb_branch_to_self_rejects_conditional_branch() {
+        // BEQ -4 is not unconditional, opcode starts with 0xD0xx
+        assert!(!is_thumb_branch_to_self(0xD0FE));
     }
 
     #[test]
@@ -348,5 +493,16 @@ mod tests {
         assert_eq!(Suite::PpuHello.capture_stem(), "ppu_hello");
         assert_eq!(Suite::PpuShades.capture_stem(), "ppu_shades");
         assert_eq!(Suite::PpuStripes.capture_stem(), "ppu_stripes");
+        assert_eq!(
+            Suite::FuzzArmDataProcessing.capture_stem(),
+            "fuzzarm_data_processing"
+        );
+        assert_eq!(Suite::FuzzArmAny.capture_stem(), "fuzzarm_any");
+        assert_eq!(
+            Suite::FuzzThumbDataProcessing.capture_stem(),
+            "fuzzthumb_data_processing"
+        );
+        assert_eq!(Suite::FuzzThumbAny.capture_stem(), "fuzzthumb_any");
+        assert_eq!(Suite::FuzzArmMixed.capture_stem(), "fuzzarm_mixed");
     }
 }
