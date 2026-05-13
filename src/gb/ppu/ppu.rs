@@ -85,6 +85,12 @@ pub struct Ppu {
 }
 
 impl Ppu {
+    const BOOT_REGISTERED_MARK_TILE_ADDR: usize = 0x0190;
+    const BOOT_REGISTERED_MARK_TILE: [u8; 16] = [
+        0x3C, 0x00, 0x42, 0x00, 0xB9, 0x00, 0xA5, 0x00, 0xB9, 0x00, 0xA5, 0x00, 0x42, 0x00, 0x3C,
+        0x00,
+    ];
+
     pub fn new() -> Self {
         Self {
             vram: [0u8; 0x2000],
@@ -117,6 +123,16 @@ impl Ppu {
             cgb_mode: true,
             ..Self::new()
         }
+    }
+
+    /// Seed the post-boot registered-mark tile at $8190.
+    ///
+    /// The DMG and CGB boot ROMs leave this tile in VRAM next to the decoded
+    /// cartridge logo; monochrome DMG-0 is the documented exception.
+    pub(crate) fn seed_boot_registered_mark_tile(&mut self) {
+        let start = Self::BOOT_REGISTERED_MARK_TILE_ADDR;
+        let end = start + Self::BOOT_REGISTERED_MARK_TILE.len();
+        self.vram[start..end].copy_from_slice(&Self::BOOT_REGISTERED_MARK_TILE);
     }
 
     /// Enable DMG compatibility mode for CGB running a DMG-only game.

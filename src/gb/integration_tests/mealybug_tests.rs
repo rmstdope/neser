@@ -135,11 +135,14 @@ fn test_m3_bgp_change_dmg_b() {
     assert_mealybug_crc("m3_bgp_change_dmg_b", crc, EXPECTED_CRC);
 }
 
-mealybug_ignored_dmg_b!(
-    test_m3_bgp_change_sprites_dmg_b,
-    "m3_bgp_change_sprites",
-    "2348"
-);
+#[test]
+fn test_m3_bgp_change_sprites_dmg_b() {
+    let bytes = read_rom_from_zip("m3_bgp_change_sprites.gb");
+    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_sprites_dmg_b");
+    const EXPECTED_CRC: u32 = 0x7E8E_86BC;
+    assert_mealybug_crc("m3_bgp_change_sprites_dmg_b", crc, EXPECTED_CRC);
+}
 mealybug_ignored_dmg_b!(
     test_m3_lcdc_bg_en_change_dmg_b,
     "m3_lcdc_bg_en_change",
@@ -239,11 +242,14 @@ fn test_m3_bgp_change_cgb_c() {
     assert_mealybug_crc("m3_bgp_change_cgb_c", crc, EXPECTED_CRC);
 }
 
-mealybug_ignored_cgb_c!(
-    test_m3_bgp_change_sprites_cgb_c,
-    "m3_bgp_change_sprites",
-    "2348"
-);
+#[test]
+fn test_m3_bgp_change_sprites_cgb_c() {
+    let bytes = read_rom_from_zip("m3_bgp_change_sprites.gb");
+    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_sprites_cgb_c");
+    const EXPECTED_CRC: u32 = 0x4F83_5D92;
+    assert_mealybug_crc("m3_bgp_change_sprites_cgb_c", crc, EXPECTED_CRC);
+}
 mealybug_ignored_cgb_c!(
     test_m3_lcdc_bg_en_change_cgb_c,
     "m3_lcdc_bg_en_change",
@@ -374,11 +380,14 @@ fn test_m3_bgp_change_cgb_d() {
     assert_mealybug_crc("m3_bgp_change_cgb_d", crc, EXPECTED_CRC);
 }
 
-mealybug_ignored_cgb_d!(
-    test_m3_bgp_change_sprites_cgb_d,
-    "m3_bgp_change_sprites",
-    "2348"
-);
+#[test]
+fn test_m3_bgp_change_sprites_cgb_d() {
+    let bytes = read_rom_from_zip("m3_bgp_change_sprites.gb");
+    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_sprites_cgb_d");
+    const EXPECTED_CRC: u32 = 0x09D9_587E;
+    assert_mealybug_crc("m3_bgp_change_sprites_cgb_d", crc, EXPECTED_CRC);
+}
 mealybug_ignored_cgb_d!(
     test_m3_lcdc_bg_en_change_cgb_d,
     "m3_lcdc_bg_en_change",

@@ -22,6 +22,12 @@ pub struct PixelFifoRenderer {
     bgp_edge_x: u8,
     bgp_edge_value: u8,
     #[serde(default)]
+    pending_obj_stall_dots: u16,
+    #[serde(default)]
+    obj_stall_events: Vec<sprites::ObjPenaltyEvent>,
+    #[serde(default)]
+    next_obj_stall_event: usize,
+    #[serde(default)]
     sprite_indices: Vec<usize>,
 }
 
@@ -36,6 +42,9 @@ impl PixelFifoRenderer {
             bgp_edge_active: false,
             bgp_edge_x: 0,
             bgp_edge_value: INITIAL_BGP,
+            pending_obj_stall_dots: 0,
+            obj_stall_events: Vec::new(),
+            next_obj_stall_event: 0,
             sprite_indices: Vec::new(),
         }
     }
@@ -54,10 +63,19 @@ impl PixelFifoRenderer {
         self.window_active = false;
         self.bgp_edge_active = false;
         self.bgp_edge_value = registers.bgp;
+        self.pending_obj_stall_dots = 0;
+        self.next_obj_stall_event = 0;
         if registers.lcdc & 0x02 != 0 {
             sprites::scan_oam_line_into(scanline, oam, registers.lcdc, &mut self.sprite_indices);
+            sprites::schedule_obj_penalties(
+                &self.sprite_indices,
+                oam,
+                registers.scx,
+                &mut self.obj_stall_events,
+            );
         } else {
             self.sprite_indices.clear();
+            self.obj_stall_events.clear();
         }
     }
 
@@ -83,6 +101,11 @@ impl PixelFifoRenderer {
 
         let elapsed = dot.saturating_sub(self.mode3_start_dot);
         if elapsed < FETCHER_STARTUP_DOTS {
+            return None;
+        }
+        self.queue_stall_events_for_next_pixel();
+        if self.pending_obj_stall_dots > 0 {
+            self.pending_obj_stall_dots -= 1;
             return None;
         }
 
@@ -142,7 +165,9 @@ impl PixelFifoRenderer {
 
         self.bgp_edge_active = true;
         self.bgp_edge_x = self.next_x;
-        self.bgp_edge_value = if self.next_x == 0 {
+        // If an OBJ fetch is delaying this pixel, the BGP write lands before
+        // the pixel is pushed to LCD, so the delayed pixel sees the new value.
+        self.bgp_edge_value = if self.next_x == 0 || self.is_waiting_on_obj_fetch() {
             new
         } else if cgb_mode && dmg_compat {
             match cgb_model {
@@ -356,6 +381,25 @@ impl PixelFifoRenderer {
         if self.bgp_edge_active && self.bgp_edge_x == self.next_x {
             self.bgp_edge_active = false;
         }
+    }
+
+    fn queue_stall_events_for_next_pixel(&mut self) {
+        while self.next_obj_stall_event < self.obj_stall_events.len() {
+            let event = self.obj_stall_events[self.next_obj_stall_event];
+            if event.x > self.next_x {
+                break;
+            }
+            self.pending_obj_stall_dots += event.dots;
+            self.next_obj_stall_event += 1;
+        }
+    }
+
+    fn is_waiting_on_obj_fetch(&self) -> bool {
+        self.pending_obj_stall_dots > 0
+            || self
+                .obj_stall_events
+                .get(self.next_obj_stall_event)
+                .is_some_and(|event| event.x <= self.next_x)
     }
 }
 
