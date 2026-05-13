@@ -6,6 +6,25 @@
 //!
 //! ROMs are located at:
 //! `roms/gb/automated_tests/mts-20240926-1737-443f6e1/`
+//!
+//! # Excluded ROMs
+//!
+//! The following ROMs are intentionally excluded because they target GB
+//! hardware variants not supported by the GB core (SGB, MGB, AGB/AGS):
+//!
+//! ## SGB / SGB2 (Super Game Boy)
+//! - `acceptance/boot_div-S.gb`
+//! - `acceptance/boot_div2-S.gb`
+//! - `acceptance/boot_hwio-S.gb`
+//! - `acceptance/boot_regs-sgb.gb`
+//! - `acceptance/boot_regs-sgb2.gb`
+//!
+//! ## MGB (Game Boy Pocket)
+//! - `acceptance/boot_regs-mgb.gb`
+//!
+//! ## AGB / AGS (Game Boy Advance)
+//! - `misc/boot_div-A.gb`
+//! - `misc/boot_regs-A.gb`
 
 use super::helpers::{
     MooneyeResult, detect_mooneye_result_with_limit, load_gb_rom, run_and_detect_cgb,
@@ -248,18 +267,6 @@ fn test_mooneye_acceptance_boot_div_dmgabcmgb() {
 }
 
 #[test]
-#[ignore = "SGB-only test — not applicable to DMG emulation"]
-fn test_mooneye_acceptance_boot_div_s() {
-    assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_div-S.gb"));
-}
-
-#[test]
-#[ignore = "SGB-only test — not applicable to DMG emulation"]
-fn test_mooneye_acceptance_boot_div2_s() {
-    assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_div2-S.gb"));
-}
-
-#[test]
 fn test_mooneye_acceptance_boot_hwio_dmg0() {
     assert_mooneye_pass_dmg0!(&format!("{BASE}/acceptance/boot_hwio-dmg0.gb"));
 }
@@ -270,12 +277,6 @@ fn test_mooneye_acceptance_boot_hwio_dmgabcmgb() {
 }
 
 #[test]
-#[ignore = "SGB-only test — not applicable to DMG emulation"]
-fn test_mooneye_acceptance_boot_hwio_s() {
-    assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_hwio-S.gb"));
-}
-
-#[test]
 fn test_mooneye_acceptance_boot_regs_dmg0() {
     assert_mooneye_pass_dmg0!(&format!("{BASE}/acceptance/boot_regs-dmg0.gb"));
 }
@@ -283,24 +284,6 @@ fn test_mooneye_acceptance_boot_regs_dmg0() {
 #[test]
 fn test_mooneye_acceptance_boot_regs_dmgabc() {
     assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_regs-dmgABC.gb"));
-}
-
-#[test]
-#[ignore = "MGB (Game Boy Pocket) hardware — not applicable to DMG emulation"]
-fn test_mooneye_acceptance_boot_regs_mgb() {
-    assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_regs-mgb.gb"));
-}
-
-#[test]
-#[ignore = "SGB-only test — not applicable to DMG emulation"]
-fn test_mooneye_acceptance_boot_regs_sgb() {
-    assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_regs-sgb.gb"));
-}
-
-#[test]
-#[ignore = "SGB2-only test — not applicable to DMG emulation"]
-fn test_mooneye_acceptance_boot_regs_sgb2() {
-    assert_mooneye_pass!(&format!("{BASE}/acceptance/boot_regs-sgb2.gb"));
 }
 
 #[test]
@@ -759,18 +742,12 @@ fn test_mooneye_emulator_only_mbc5_rom_8mb() {
 // ============================================================================
 
 #[test]
-#[ignore = "CGB-only test — requires APU/palette register initialization (issue #2238 follow-up)"]
+#[ignore = "CGB I/O register read-back values not yet correct (issue #2366)"]
 fn test_mooneye_misc_bits_unused_hwio_c() {
     assert_mooneye_pass_cgb!(
         &format!("{BASE}/misc/bits/unused_hwio-C.gb"),
         CgbModel::CgbE
     );
-}
-
-#[test]
-#[ignore = "AGB/AGS-only test — Game Boy Advance hardware not emulated"]
-fn test_mooneye_misc_boot_div_a() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/boot_div-A.gb"));
 }
 
 #[test]
@@ -784,15 +761,9 @@ fn test_mooneye_misc_boot_div_cgbabcde() {
 }
 
 #[test]
-#[ignore = "CGB-only test — requires APU/palette register initialization (issue #2238 follow-up)"]
+#[ignore = "CGB hardware I/O register state at boot not yet correct (issue #2366)"]
 fn test_mooneye_misc_boot_hwio_c() {
     assert_mooneye_pass_cgb!(&format!("{BASE}/misc/boot_hwio-C.gb"), CgbModel::CgbE);
-}
-
-#[test]
-#[ignore = "AGB/AGS-only test — Game Boy Advance hardware not emulated"]
-fn test_mooneye_misc_boot_regs_a() {
-    assert_mooneye_pass!(&format!("{BASE}/misc/boot_regs-A.gb"));
 }
 
 #[test]
@@ -801,7 +772,7 @@ fn test_mooneye_misc_boot_regs_cgb() {
 }
 
 #[test]
-#[ignore = "CGB-only test — requires PPU STAT interrupt timing (issue #2238 follow-up)"]
+#[ignore = "CGB PPU VBlank STAT interrupt timing not yet correct (issue #2366)"]
 fn test_mooneye_misc_ppu_vblank_stat_intr_c() {
     assert_mooneye_pass_cgb!(
         &format!("{BASE}/misc/ppu/vblank_stat_intr-C.gb"),
