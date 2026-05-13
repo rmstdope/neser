@@ -150,10 +150,8 @@ impl Arm7tdmi {
             let outcome = thumb::execute(&mut self.regs, bus, raw);
             if outcome.undefined {
                 self.dispatch_undefined(exec_pc);
-                self.prefetch_valid = false;
             } else if outcome.swi {
                 self.dispatch_swi(exec_pc);
-                self.prefetch_valid = false;
             } else if outcome.branched {
                 self.prefetch_valid = false;
             } else if !outcome.branched {
@@ -170,10 +168,8 @@ impl Arm7tdmi {
             let outcome = arm::execute(&mut self.regs, bus, raw);
             if outcome.undefined {
                 self.dispatch_undefined(exec_pc);
-                self.prefetch_valid = false;
             } else if outcome.swi {
                 self.dispatch_swi(exec_pc);
-                self.prefetch_valid = false;
             } else if outcome.branched {
                 self.prefetch_valid = false;
             } else if !outcome.branched {

@@ -72,7 +72,7 @@ impl ExecOutcome {
     }
     pub(super) fn undefined() -> Self {
         Self {
-            cycles: 1,
+            cycles: 3,
             branched: true,
             undefined: true,
             swi: false,
