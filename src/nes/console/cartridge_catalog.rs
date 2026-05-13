@@ -95,13 +95,10 @@ fn read_dir_if_exists(path: &Path) -> io::Result<Option<fs::ReadDir>> {
 }
 
 fn is_rom_file(path: &Path) -> bool {
+    // This catalog is NES-only (used by the in-emulator cartridge switch dialog).
     path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| {
-            ext.eq_ignore_ascii_case("nes")
-                || ext.eq_ignore_ascii_case("gb")
-                || ext.eq_ignore_ascii_case("gbc")
-        })
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("nes"))
 }
 
 fn read_catalog_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
@@ -293,19 +290,17 @@ mod tests {
     }
 
     #[test]
-    fn is_rom_file_accepts_gb_and_gbc_extensions() {
-        assert!(is_rom_file(Path::new("game.gb")));
-        assert!(is_rom_file(Path::new("game.GB")));
-        assert!(is_rom_file(Path::new("game.gbc")));
-        assert!(is_rom_file(Path::new("game.GBC")));
+    fn is_rom_file_accepts_only_nes_extensions() {
         assert!(is_rom_file(Path::new("game.nes")));
         assert!(is_rom_file(Path::new("game.NES")));
+        assert!(!is_rom_file(Path::new("game.gb")));
+        assert!(!is_rom_file(Path::new("game.gbc")));
         assert!(!is_rom_file(Path::new("game.txt")));
         assert!(!is_rom_file(Path::new("game.zip")));
     }
 
     #[test]
-    fn scan_discovers_gb_files() {
+    fn scan_discovers_only_nes_files() {
         let temp = tempdir().expect("tempdir");
         let root = temp.path().join("roms");
         write_file(&root.join("nes_game.nes"));
@@ -317,9 +312,7 @@ mod tests {
         let options = CartridgeCatalogOptions::new(vec![root], catalog_path);
 
         let entries = refresh_cartridge_catalog(&options).expect("refresh should succeed");
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 1);
         assert!(entries.iter().any(|p| p.ends_with("nes_game.nes")));
-        assert!(entries.iter().any(|p| p.ends_with("gb_game.gb")));
-        assert!(entries.iter().any(|p| p.ends_with("gbc_game.gbc")));
     }
 }

@@ -85,7 +85,7 @@ pub fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
     let platform = platform_from_path(path);
 
     // GB/GBC ROMs don't use iNES format — create a basic entry.
-    if platform == Platform::Gb {
+    if platform == Platform::Gb || platform == Platform::Gbc {
         return build_gb_rom_entry(path);
     }
 

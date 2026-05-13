@@ -179,6 +179,8 @@ pub struct RomBrowserApp {
     texture_result_rx: mpsc::Receiver<(i64, u32, u32, Vec<u8>)>,
     /// Game IDs that have been requested but not yet received.
     texture_pending: Vec<i64>,
+    /// Fast lookup from game_id to boxart path (built when catalog is set).
+    boxart_by_game_id: std::collections::HashMap<i64, PathBuf>,
 }
 
 impl RomBrowserApp {
@@ -265,6 +267,7 @@ impl RomBrowserApp {
             texture_request_tx: request_tx,
             texture_result_rx: result_rx,
             texture_pending: Vec::new(),
+            boxart_by_game_id: std::collections::HashMap::new(),
         }
     }
 
@@ -285,6 +288,15 @@ impl RomBrowserApp {
         self.available_genres = genres;
 
         self.catalog = catalog;
+
+        // Build fast game_id→boxart_path lookup.
+        self.boxart_by_game_id.clear();
+        for entry in &self.catalog {
+            if let (Some(gid), Some(path)) = (entry.metadata_game_id, &entry.boxart_path) {
+                self.boxart_by_game_id.insert(gid, path.clone());
+            }
+        }
+
         self.rebuild_filtered();
     }
 
@@ -779,11 +791,7 @@ impl RomBrowserApp {
                 );
                 ui.add_space(4.0);
                 let max_chars = (bar_w / 8.0) as usize;
-                let title = if p.game_title.len() > max_chars && max_chars > 3 {
-                    format!("{}...", &p.game_title[..max_chars - 3])
-                } else {
-                    p.game_title.clone()
-                };
+                let title = Self::truncate_label(&p.game_title, max_chars);
                 ui.label(
                     egui::RichText::new(&title)
                         .color(theme::DIM_TEXT)
@@ -892,11 +900,7 @@ impl RomBrowserApp {
                 } else {
                     painter.rect_filled(cover_rect, rounding, theme::PLACEHOLDER_BG);
                     let max_chars = (cover_w / 8.0) as usize;
-                    let short = if entry.display_name.len() > max_chars && max_chars > 3 {
-                        format!("{}...", &entry.display_name[..max_chars - 3])
-                    } else {
-                        entry.display_name.clone()
-                    };
+                    let short = Self::truncate_label(&entry.display_name, max_chars);
                     painter.text(
                         cover_rect.center(),
                         egui::Align2::CENTER_CENTER,
@@ -908,11 +912,7 @@ impl RomBrowserApp {
             } else {
                 painter.rect_filled(cover_rect, rounding, theme::PLACEHOLDER_BG);
                 let max_chars = (cover_w / 8.0) as usize;
-                let short = if entry.display_name.len() > max_chars && max_chars > 3 {
-                    format!("{}...", &entry.display_name[..max_chars - 3])
-                } else {
-                    entry.display_name.clone()
-                };
+                let short = Self::truncate_label(&entry.display_name, max_chars);
                 painter.text(
                     cover_rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -2098,14 +2098,13 @@ impl RomBrowserApp {
             if gl.get_texture(&key).is_some() || self.texture_pending.contains(&game_id) {
                 continue;
             }
-            if let Some(path) = self
-                .catalog
-                .iter()
-                .find(|e| e.metadata_game_id == Some(game_id))
-                .and_then(|e| e.boxart_path.as_ref())
+            if let Some(path) = self.boxart_by_game_id.get(&game_id)
                 && path.exists()
+                && self
+                    .texture_request_tx
+                    .send((game_id, path.clone()))
+                    .is_ok()
             {
-                let _ = self.texture_request_tx.send((game_id, path.clone()));
                 self.texture_pending.push(game_id);
                 requests_sent += 1;
             }
@@ -3134,6 +3133,7 @@ mod tests {
                 rx
             },
             texture_pending: Vec::new(),
+            boxart_by_game_id: std::collections::HashMap::new(),
         };
         app.set_catalog(entries);
         app
