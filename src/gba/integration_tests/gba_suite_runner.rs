@@ -418,32 +418,41 @@ fn is_bios_exception_vector(pc: u32) -> bool {
 // --- ArmWrestler-specific runner ---
 //
 // The armwrestler ROM presents a menu and requires button input to navigate
-// through test pages. This runner injects START presses at frame boundaries
-// to advance through all 5 ARM test pages (Test0–Test4), capturing the
-// framebuffer CRC after each test renders.
+// through test pages. This runner injects button presses at frame boundaries
+// to advance through all test pages, capturing the framebuffer CRC after each.
 //
-// Menu structure: 3 ARM groups (ALU, LDR/STR, LDM/STM) accessible via menu
-// items. From the first menu item, pressing START enters Test0. Subsequent
-// START presses advance: Test0→Test1→Test2→Test3→Test4→menu.
+// Menu structure (6 groups):
+//   Item 0: ARM ALU      → Test0, START chains: Test0→Test1→Test2→Test3→Test4→menu
+//   Item 1: ARM LDR/STR  → Test2 (subset of above chain)
+//   Item 2: ARM LDM/STM  → Test4 (subset of above chain)
+//   Item 3: THUMB ALU    → _test0, START chains: _test0→_test1→_test2→menu
+//   Item 4: THUMB LDR/STR→ _test1 (subset of above chain)
+//   Item 5: THUMB LDM/STM→ _test2 (subset of above chain)
+//
+// We enter via ARM ALU (item 0) to cover all 5 ARM pages, return to menu,
+// navigate DOWN×3 to THUMB ALU (item 3), then cover all 3 THUMB pages.
 
-/// Number of ARM test pages in armwrestler (Test0 through Test4).
-pub const ARMWRESTLER_ARM_TEST_COUNT: usize = 5;
+/// Total test pages: 5 ARM (Test0–Test4) + 3 THUMB (_test0–_test2).
+pub const ARMWRESTLER_TEST_PAGE_COUNT: usize = 8;
 
 /// Button bitmask for Start (NES-convention bit 3).
 const BTN_START: u8 = 0x08;
+/// Button bitmask for Down (NES-convention bit 5).
+const BTN_DOWN: u8 = 0x20;
 
-/// Result of running the armwrestler ROM through all ARM test pages.
+/// Result of running the armwrestler ROM through all test pages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArmWrestlerResult {
     /// CRC32 of the framebuffer after each test page renders.
+    /// Indices 0–4: ARM pages, indices 5–7: THUMB pages.
     pub page_crcs: Vec<u32>,
     /// Total cycles consumed.
     pub cycles: u64,
 }
 
-/// Run armwrestler-gba-fixed.gba, navigating through all ARM test pages.
+/// Run armwrestler-gba-fixed.gba, navigating through all ARM and THUMB test pages.
 ///
-/// Returns one CRC per test page (5 total for the ARM tests).
+/// Returns one CRC per test page (8 total: 5 ARM + 3 THUMB).
 pub fn run_armwrestler() -> ArmWrestlerResult {
     let rom_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(Suite::ArmWrestler.rom_path_str());
@@ -471,29 +480,41 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
 
     // Run frame-by-frame, injecting button presses to navigate tests.
     //
-    // Schedule (frame = VBlank count):
-    //   Frame 2: press START (selects first menu item → enters Test0)
-    //   Frame 4: capture Test0 CRC, press START (advance to Test1)
-    //   Frame 6: capture Test1 CRC, press START (advance to Test2)
-    //   Frame 8: capture Test2 CRC, press START (advance to Test3)
-    //   Frame 10: capture Test3 CRC, press START (advance to Test4)
-    //   Frame 12: capture Test4 CRC → done
+    // Button held for exactly 1 frame, released the next. The ROM's
+    // edge-detection (XOR with previous state) requires a clean release
+    // between successive presses.
     //
-    // Button held for exactly 1 frame, released the next. This gives the
-    // ROM's edge-detection (XOR with previous state) a clean transition.
+    // Frame schedule:
+    //   ARM tests (enter from menu item 0, chain Test0–Test4):
+    //     Frame 2: START (menu → Test0)
+    //     Frame 4: capture[0], START (→ Test1)
+    //     Frame 6: capture[1], START (→ Test2)
+    //     Frame 8: capture[2], START (→ Test3)
+    //     Frame 10: capture[3], START (→ Test4)
+    //     Frame 12: capture[4], START (→ menu, TESTNUM wraps)
+    //   Navigate to THUMB ALU (menu item 3 via DOWN×3):
+    //     Frame 14: DOWN (CURSEL 0→1)
+    //     Frame 16: DOWN (CURSEL 1→2)
+    //     Frame 18: DOWN (CURSEL 2→3)
+    //   THUMB tests (enter from menu item 3, chain _test0–_test2):
+    //     Frame 20: START (menu → _tmbmain → _test0 init)
+    //     Frame 22-23: wait (THUMB entry does extra VSync before rendering)
+    //     Frame 24: capture[5], START (→ _test1)
+    //     Frame 26: capture[6], START (→ _test2)
+    //     Frame 28: capture[7] → done
 
     let mut frame_count: u32 = 0;
     let mut cycles: u64 = 0;
     let mut page_crcs: Vec<u32> = Vec::new();
     let mut button_state: u8 = 0;
-    let max_frames: u32 = 30;
+    let max_frames: u32 = 35;
 
     // Advance to first VBlank (frame 0 is the initial partial frame)
     run_until_frame_ready(&mut gba, &mut cycles);
     gba.clear_ready_to_render();
     frame_count += 1;
 
-    while frame_count < max_frames && page_crcs.len() < ARMWRESTLER_ARM_TEST_COUNT {
+    while frame_count < max_frames && page_crcs.len() < ARMWRESTLER_TEST_PAGE_COUNT {
         // Apply button state for this frame
         gba.set_joypad_button_states(0, button_state);
 
@@ -502,55 +523,67 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
         gba.clear_ready_to_render();
         frame_count += 1;
 
-        // Frame-based schedule:
-        // - Press START on frames 2, 4, 6, 8, 10 (odd-indexed in the sequence)
-        // - Capture CRC on frames 4, 6, 8, 10, 12 (after test has rendered)
-        // - Release START on frames 3, 5, 7, 9, 11
         match frame_count {
-            2 => {
-                // Press START to enter Test0 from menu
-                button_state = BTN_START;
-            }
-            3 => {
-                // Release START (edge detection needs release before next press)
-                button_state = 0;
-            }
+            // --- ARM test chain (pages 0–4) ---
+            2 => button_state = BTN_START,
+            3 => button_state = 0,
             4 => {
-                // Test0 is now rendered; capture CRC and press START for next
                 page_crcs.push(gba.screen_crc32());
                 maybe_write_armwrestler_png(&gba, 0, *page_crcs.last().unwrap());
                 button_state = BTN_START;
             }
-            5 => {
-                button_state = 0;
-            }
+            5 => button_state = 0,
             6 => {
                 page_crcs.push(gba.screen_crc32());
                 maybe_write_armwrestler_png(&gba, 1, *page_crcs.last().unwrap());
                 button_state = BTN_START;
             }
-            7 => {
-                button_state = 0;
-            }
+            7 => button_state = 0,
             8 => {
                 page_crcs.push(gba.screen_crc32());
                 maybe_write_armwrestler_png(&gba, 2, *page_crcs.last().unwrap());
                 button_state = BTN_START;
             }
-            9 => {
-                button_state = 0;
-            }
+            9 => button_state = 0,
             10 => {
                 page_crcs.push(gba.screen_crc32());
                 maybe_write_armwrestler_png(&gba, 3, *page_crcs.last().unwrap());
                 button_state = BTN_START;
             }
-            11 => {
-                button_state = 0;
-            }
+            11 => button_state = 0,
             12 => {
                 page_crcs.push(gba.screen_crc32());
                 maybe_write_armwrestler_png(&gba, 4, *page_crcs.last().unwrap());
+                // Press START to return from Test4 to menu
+                button_state = BTN_START;
+            }
+            13 => button_state = 0,
+            // --- Navigate menu DOWN×3 to THUMB ALU (item 3) ---
+            14 => button_state = BTN_DOWN,
+            15 => button_state = 0,
+            16 => button_state = BTN_DOWN,
+            17 => button_state = 0,
+            18 => button_state = BTN_DOWN,
+            19 => button_state = 0,
+            // --- Enter THUMB tests ---
+            20 => button_state = BTN_START,
+            21 => button_state = 0,
+            // Frames 22-23: THUMB entry does an extra VSync before rendering _test0
+            24 => {
+                page_crcs.push(gba.screen_crc32());
+                maybe_write_armwrestler_png(&gba, 5, *page_crcs.last().unwrap());
+                button_state = BTN_START;
+            }
+            25 => button_state = 0,
+            26 => {
+                page_crcs.push(gba.screen_crc32());
+                maybe_write_armwrestler_png(&gba, 6, *page_crcs.last().unwrap());
+                button_state = BTN_START;
+            }
+            27 => button_state = 0,
+            28 => {
+                page_crcs.push(gba.screen_crc32());
+                maybe_write_armwrestler_png(&gba, 7, *page_crcs.last().unwrap());
                 button_state = 0;
             }
             _ => {}

@@ -1,4 +1,4 @@
-use super::gba_suite_runner::{ARMWRESTLER_ARM_TEST_COUNT, Suite, run_armwrestler, run_suite};
+use super::gba_suite_runner::{ARMWRESTLER_TEST_PAGE_COUNT, Suite, run_armwrestler, run_suite};
 use std::collections::HashMap;
 
 const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.txt";
@@ -182,9 +182,9 @@ fn gba_suite_armwrestler_passes() {
     let result = run_armwrestler();
     assert_eq!(
         result.page_crcs.len(),
-        ARMWRESTLER_ARM_TEST_COUNT,
+        ARMWRESTLER_TEST_PAGE_COUNT,
         "expected {} test page CRCs but got {}",
-        ARMWRESTLER_ARM_TEST_COUNT,
+        ARMWRESTLER_TEST_PAGE_COUNT,
         result.page_crcs.len()
     );
     for (i, &crc) in result.page_crcs.iter().enumerate() {
@@ -229,4 +229,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("armwrestler_page2"), Some(&0xF9C3_8336));
     assert_eq!(approvals.get("armwrestler_page3"), Some(&0x76CE_D72B));
     assert_eq!(approvals.get("armwrestler_page4"), Some(&0x6795_E0F8));
+    assert_eq!(approvals.get("armwrestler_page5"), Some(&0xE215_C2B0));
+    assert_eq!(approvals.get("armwrestler_page6"), Some(&0xA522_34A7));
+    assert_eq!(approvals.get("armwrestler_page7"), Some(&0x562A_5C65));
 }
