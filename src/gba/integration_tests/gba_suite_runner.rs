@@ -244,7 +244,11 @@ fn result_from_register(
     let framebuffer_crc32 = gba.screen_crc32();
     let passed = failing_index == 0 && exit_reason == ExitReason::IdleLoopDetected;
 
-    let ewram_dump = if !passed && suite.is_fuzzarm() {
+    // Always collect eWRAM diagnostics for FuzzARM suites. A FuzzARM
+    // failure surfaces as a CRC mismatch (since result_register() is None,
+    // `passed` is true whenever idle is detected). Including the dump
+    // unconditionally ensures actionable diagnostics are always available.
+    let ewram_dump = if suite.is_fuzzarm() {
         Some(dump_fuzzarm_ewram(gba))
     } else {
         None

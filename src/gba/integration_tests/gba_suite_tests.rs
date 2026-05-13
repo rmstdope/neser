@@ -91,7 +91,7 @@ fn assert_suite_passes_with_crc(suite: Suite) {
     );
     assert_eq!(
         result.framebuffer_crc32, expected_crc32,
-        "{suite_label} suite framebuffer CRC mismatch: expected=0x{expected_crc32:08X} actual=0x{:08X}",
+        "{suite_label} suite framebuffer CRC mismatch: expected=0x{expected_crc32:08X} actual=0x{:08X}{ewram_info}",
         result.framebuffer_crc32
     );
 }
