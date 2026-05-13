@@ -519,6 +519,14 @@ impl Ppu {
                 self.cgb_model,
             );
         }
+        if addr == 0xFF40 {
+            self.pixel_fifo.record_lcdc_write(
+                self.registers.lcdc,
+                val,
+                self.cgb_mode,
+                self.dmg_compat,
+            );
+        }
         let was_enabled = self.registers.lcd_enabled();
         self.registers.write(addr, val);
         let now_enabled = self.registers.lcd_enabled();
@@ -567,8 +575,10 @@ impl Ppu {
             // BCPS: bit 6 always reads as 1 (unused bit pulled high).
             0xFF68 => Some(self.bcps | 0x40),
             0xFF69 => {
-                // BCPD: blocked during Mode 3 when LCD is on (returns 0xFF).
-                if self.registers.lcd_enabled() && self.timing.is_palette_blocked() {
+                if self.dmg_compat {
+                    Some(0xFF)
+                } else if self.registers.lcd_enabled() && self.timing.is_palette_blocked() {
+                    // BCPD: blocked during Mode 3 when LCD is on (returns 0xFF).
                     Some(0xFF)
                 } else {
                     Some(self.bg_palette_ram[(self.bcps & 0x3F) as usize])
@@ -577,8 +587,10 @@ impl Ppu {
             // OCPS: bit 6 always reads as 1 (unused bit pulled high).
             0xFF6A => Some(self.ocps | 0x40),
             0xFF6B => {
-                // OCPD: blocked during Mode 3 when LCD is on (returns 0xFF).
-                if self.registers.lcd_enabled() && self.timing.is_palette_blocked() {
+                if self.dmg_compat {
+                    Some(0xFF)
+                } else if self.registers.lcd_enabled() && self.timing.is_palette_blocked() {
+                    // OCPD: blocked during Mode 3 when LCD is on (returns 0xFF).
                     Some(0xFF)
                 } else {
                     Some(self.obj_palette_ram[(self.ocps & 0x3F) as usize])
@@ -608,19 +620,20 @@ impl Ppu {
                 true
             }
             0xFF69 => {
-                // BCPD: write blocked during Mode 3 when LCD is on, but auto-increment still happens.
+                // BCPD is CGB-mode-only. In DMG compatibility mode after boot, the data port
+                // is locked, so writes neither update palette RAM nor auto-increment BCPS.
                 let index = (self.bcps & 0x3F) as usize;
                 let addr = self.bcps & 0x3F;
                 let blocked =
                     self.registers.lcd_enabled() && self.timing.is_palette_write_blocked();
-                if !blocked {
+                if !blocked && !self.dmg_compat {
                     self.bg_palette_ram[index] = val;
                     trace_ppu!(3; "bcpd write addr={:02X} data={:02X}", addr, val);
                 } else {
                     trace_ppu!(3; "bcpd write blocked addr={:02X} data={:02X}", addr, val);
                 }
-                // Auto-increment address after write if bit 7 is set (even when blocked).
-                if self.bcps & 0x80 != 0 {
+                // Auto-increment address after write if bit 7 is set (even when Mode 3-blocked).
+                if !self.dmg_compat && self.bcps & 0x80 != 0 {
                     self.bcps = 0x80 | ((self.bcps + 1) & 0x3F);
                     trace_ppu!(3; "bcps auto-increment addr={:02X}", self.bcps & 0x3F);
                 }
@@ -633,19 +646,20 @@ impl Ppu {
                 true
             }
             0xFF6B => {
-                // OCPD: write blocked during Mode 3 when LCD is on, but auto-increment still happens.
+                // OCPD is CGB-mode-only. In DMG compatibility mode after boot, the data port
+                // is locked, so writes neither update palette RAM nor auto-increment OCPS.
                 let index = (self.ocps & 0x3F) as usize;
                 let addr = self.ocps & 0x3F;
                 let blocked =
                     self.registers.lcd_enabled() && self.timing.is_palette_write_blocked();
-                if !blocked {
+                if !blocked && !self.dmg_compat {
                     self.obj_palette_ram[index] = val;
                     trace_ppu!(3; "ocpd write addr={:02X} data={:02X}", addr, val);
                 } else {
                     trace_ppu!(3; "ocpd write blocked addr={:02X} data={:02X}", addr, val);
                 }
-                // Auto-increment (even when blocked).
-                if self.ocps & 0x80 != 0 {
+                // Auto-increment address after write if bit 7 is set (even when Mode 3-blocked).
+                if !self.dmg_compat && self.ocps & 0x80 != 0 {
                     self.ocps = 0x80 | ((self.ocps + 1) & 0x3F);
                     trace_ppu!(3; "ocps auto-increment addr={:02X}", self.ocps & 0x3F);
                 }
@@ -2872,6 +2886,26 @@ mod tests {
             Some(0xC5),
             "OCPS auto-increment must happen even when write is blocked"
         );
+    }
+
+    #[test]
+    fn test_cgb_dmg_compat_palette_data_ports_are_locked_after_boot() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.bg_palette_ram[0] = 0x12;
+        ppu.obj_palette_ram[0] = 0x34;
+        ppu.set_dmg_compat(true);
+
+        ppu.write_cgb_register(0xFF68, 0x80);
+        ppu.write_cgb_register(0xFF69, 0xAB);
+        ppu.write_cgb_register(0xFF6A, 0x80);
+        ppu.write_cgb_register(0xFF6B, 0xCD);
+
+        assert_eq!(ppu.bg_palette_ram[0], 0x12);
+        assert_eq!(ppu.obj_palette_ram[0], 0x34);
+        assert_eq!(ppu.read_cgb_register(0xFF68), Some(0xC0));
+        assert_eq!(ppu.read_cgb_register(0xFF69), Some(0xFF));
+        assert_eq!(ppu.read_cgb_register(0xFF6A), Some(0xC0));
+        assert_eq!(ppu.read_cgb_register(0xFF6B), Some(0xFF));
     }
 
     #[test]
