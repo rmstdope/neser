@@ -510,7 +510,10 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
     let max_frames: u32 = 35;
 
     // Advance to first VBlank (frame 0 is the initial partial frame)
-    run_until_frame_ready(&mut gba, &mut cycles);
+    assert!(
+        run_until_frame_ready(&mut gba, &mut cycles),
+        "armwrestler: CPU halted or timed out before first frame"
+    );
     gba.clear_ready_to_render();
     frame_count += 1;
 
@@ -519,7 +522,10 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
         gba.set_joypad_button_states(0, button_state);
 
         // Run to next VBlank
-        run_until_frame_ready(&mut gba, &mut cycles);
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "armwrestler: CPU halted or timed out at frame {frame_count}"
+        );
         gba.clear_ready_to_render();
         frame_count += 1;
 
@@ -593,20 +599,25 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
     ArmWrestlerResult { page_crcs, cycles }
 }
 
-fn run_until_frame_ready(gba: &mut Gba, cycles: &mut u64) {
+/// Advance emulation until the next VBlank (frame-ready edge).
+///
+/// Returns `true` if a fresh frame was produced, `false` if the CPU halted
+/// (`tick == 0`) or the cycle budget was exhausted without a frame-ready edge.
+fn run_until_frame_ready(gba: &mut Gba, cycles: &mut u64) -> bool {
     let max_cycle_budget = GBA_CYCLES_PER_FRAME * 2;
     let mut spent: u64 = 0;
     while spent < max_cycle_budget {
         let tick = gba.run_tick_for_tests() as u64;
         if tick == 0 {
-            return;
+            return false;
         }
         *cycles += tick;
         spent += tick;
         if gba.is_ready_to_render() {
-            return;
+            return true;
         }
     }
+    false
 }
 
 fn maybe_write_armwrestler_png(gba: &Gba, page_index: usize, crc: u32) {
