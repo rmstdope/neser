@@ -52,12 +52,13 @@ The ROM browser scans configured search paths for NES ROMs and displays them in 
 **Keyboard shortcuts:**
 - Arrow keys / D-pad: Navigate the grid
 - Enter: Open detail view for selected ROM (launch from detail view)
-- Tab / Ctrl+F: Toggle search overlay (type to filter in real-time)
+- Tab: Toggle search overlay (type to filter in real-time)
 - Escape: Open filter panel (platform, players, genre)
 - `g`: Open genre filter overlay
 - `d`: Open detail view for selected ROM
 - `f`: Toggle favorite on selected ROM
 - `F`: Toggle favorites-only filter
+- Ctrl+F: Toggle fullscreen
 - Ctrl+Q: Quit browser
 
 **Setup for cover art:**

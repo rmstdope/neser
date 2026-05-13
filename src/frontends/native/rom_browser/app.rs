@@ -205,12 +205,20 @@ impl RomBrowserApp {
             .name("texture-decoder".into())
             .spawn(move || {
                 while let Ok((game_id, path)) = request_rx.recv() {
-                    if let Ok(img) = image::open(&path) {
-                        let rgba = img.into_rgba8();
-                        let (w, h) = rgba.dimensions();
-                        let pixels = rgba.into_raw();
-                        if result_tx.send((game_id, w, h, pixels)).is_err() {
-                            break;
+                    match image::open(&path) {
+                        Ok(img) => {
+                            let rgba = img.into_rgba8();
+                            let (w, h) = rgba.dimensions();
+                            let pixels = rgba.into_raw();
+                            if result_tx.send((game_id, w, h, pixels)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            // Send a zero-size result so the pending entry is cleared.
+                            if result_tx.send((game_id, 0, 0, Vec::new())).is_err() {
+                                break;
+                            }
                         }
                     }
                 }
@@ -2042,8 +2050,10 @@ impl RomBrowserApp {
         if !decoded.is_empty() {
             if let Some(ref mut gl) = self.gl {
                 for (game_id, w, h, pixels) in &decoded {
-                    let key = TextureKey::CoverArt(*game_id);
-                    gl.load_texture_from_rgba(key, *w, *h, pixels);
+                    if *w > 0 && *h > 0 {
+                        let key = TextureKey::CoverArt(*game_id);
+                        gl.load_texture_from_rgba(key, *w, *h, pixels);
+                    }
                 }
             }
             for (game_id, _, _, _) in &decoded {

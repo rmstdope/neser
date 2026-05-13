@@ -86,7 +86,7 @@ pub fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
 
     // GB/GBC ROMs don't use iNES format — create a basic entry.
     if platform == Platform::Gb || platform == Platform::Gbc {
-        return build_gb_rom_entry(path);
+        return build_gb_rom_entry(path, platform);
     }
 
     let bytes = match std::fs::read(path) {
@@ -138,8 +138,8 @@ pub fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
     }
 }
 
-fn build_gb_rom_entry(path: &Path) -> RomEntry {
-    stub_entry(path, Platform::Gb)
+fn build_gb_rom_entry(path: &Path, platform: Platform) -> RomEntry {
+    stub_entry(path, platform)
 }
 
 fn unreadable_entry(path: &Path) -> RomEntry {
@@ -765,6 +765,16 @@ mod tests {
 
         let entry = build_rom_entry(tmp.path(), &db);
         assert_eq!(entry.platform, Platform::Gb);
+    }
+
+    #[test]
+    fn test_build_rom_entry_gbc_file_has_gbc_platform() {
+        let tmp = NamedTempFile::with_suffix(".gbc").unwrap();
+        std::fs::write(tmp.path(), [0u8; 256]).unwrap();
+        let db = RomDb::from_csv_content("");
+
+        let entry = build_rom_entry(tmp.path(), &db);
+        assert_eq!(entry.platform, Platform::Gbc);
     }
 
     #[cfg(feature = "native")]
