@@ -4,7 +4,8 @@ use serde_with::serde_as;
 use super::registers::Registers;
 use super::screen_buffer::ScreenBuffer;
 use super::timing::{PpuMode, Timing};
-use super::{rendering, sprites};
+use super::{pixel_fifo::PixelFifoRenderer, rendering, sprites};
+use crate::gb::model::CgbModel;
 use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
 
@@ -30,6 +31,8 @@ pub struct Ppu {
     timing: Timing,
     registers: Registers,
     screen_buffer: ScreenBuffer,
+    #[serde(default)]
+    pixel_fifo: PixelFifoRenderer,
     /// Pending interrupt bits for IF register (bit 0 = VBlank, bit 1 = STAT).
     pending_interrupts: u8,
     /// Internal window-line counter (increments each scanline where window is drawn).
@@ -73,6 +76,12 @@ pub struct Ppu {
     /// to CGB OBJ palette 0/1 instead of using CGB OAM attribute bits 0-2.
     #[serde(default)]
     pub dmg_compat: bool,
+    /// Selected CGB hardware revision for model-specific DMG-compat rendering quirks.
+    ///
+    /// Older save-states deserialize this as the default revision; `CgbBus`
+    /// re-applies its configured model immediately after restoring the PPU.
+    #[serde(default)]
+    cgb_model: CgbModel,
 }
 
 impl Ppu {
@@ -83,6 +92,7 @@ impl Ppu {
             timing: Timing::new(),
             registers: Registers::new(),
             screen_buffer: ScreenBuffer::new(),
+            pixel_fifo: PixelFifoRenderer::new(),
             pending_interrupts: 0,
             window_line: 0,
             prev_stat_irq_line: false,
@@ -97,6 +107,7 @@ impl Ppu {
             opri: false,
             hblank_entered: false,
             dmg_compat: false,
+            cgb_model: CgbModel::default(),
         }
     }
 
@@ -113,6 +124,11 @@ impl Ppu {
     /// This affects sprite palette selection in the CGB renderer.
     pub fn set_dmg_compat(&mut self, enabled: bool) {
         self.dmg_compat = enabled;
+    }
+
+    /// Select the CGB hardware revision used by model-specific PPU behavior.
+    pub fn set_cgb_model(&mut self, model: CgbModel) {
+        self.cgb_model = model;
     }
 
     // ── Dot-level tick ────────────────────────────────────────────────────────
@@ -190,13 +206,27 @@ impl Ppu {
         // At Mode 2→Mode 3 transition, extend Mode 3 with OBJ penalty.
         if events.mode_changed && self.timing.mode() == PpuMode::PixelTransfer {
             self.apply_obj_penalty();
+            if self.uses_pixel_fifo_renderer() {
+                self.pixel_fifo.begin_scanline(
+                    self.timing.ly(),
+                    self.timing.dot(),
+                    &self.oam,
+                    &self.registers,
+                );
+            }
+        }
+
+        if self.uses_pixel_fifo_renderer()
+            && (self.timing.mode() == PpuMode::PixelTransfer || self.pixel_fifo.is_active())
+        {
+            self.render_pixel_fifo_dot();
         }
 
         // Render the current visible scanline when Mode 3→Mode 0 transition fires.
         if events.render_scanline {
             self.hblank_entered = true;
             let scanline = self.timing.ly();
-            if self.cgb_mode {
+            if !self.uses_pixel_fifo_renderer() {
                 rendering::render_scanline_cgb(
                     scanline,
                     &self.vram,
@@ -208,15 +238,6 @@ impl Ppu {
                     &mut self.window_line,
                     self.opri,
                     self.dmg_compat,
-                    &mut self.screen_buffer,
-                );
-            } else {
-                rendering::render_scanline(
-                    scanline,
-                    &self.vram,
-                    &self.oam,
-                    &self.registers,
-                    &mut self.window_line,
                     &mut self.screen_buffer,
                 );
             }
@@ -278,6 +299,30 @@ impl Ppu {
         let extra_dots =
             scx_penalty + window_penalty + (obj_penalty / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
         self.timing.set_mode3_extra_dots(extra_dots);
+    }
+
+    fn uses_pixel_fifo_renderer(&self) -> bool {
+        !self.cgb_mode || self.dmg_compat
+    }
+
+    fn render_pixel_fifo_dot(&mut self) {
+        let completed_window_active = self.pixel_fifo.tick(
+            self.timing.dot(),
+            &self.vram,
+            &self.vram_bank1,
+            &self.oam,
+            &self.registers,
+            &self.bg_palette_ram,
+            &self.obj_palette_ram,
+            self.window_line,
+            self.cgb_mode,
+            self.opri,
+            self.dmg_compat,
+            &mut self.screen_buffer,
+        );
+        if completed_window_active.unwrap_or(false) {
+            self.window_line = self.window_line.wrapping_add(1);
+        }
     }
 
     fn window_penalty(&self, scanline: u8) -> u16 {
@@ -473,6 +518,15 @@ impl Ppu {
         if addr == 0xFF41 && !self.cgb_mode && self.registers.lcd_enabled() {
             self.handle_stat_write_spurious_irq();
         }
+        if addr == 0xFF47 {
+            self.pixel_fifo.record_bgp_write(
+                self.registers.bgp,
+                val,
+                self.cgb_mode,
+                self.dmg_compat,
+                self.cgb_model,
+            );
+        }
         let was_enabled = self.registers.lcd_enabled();
         self.registers.write(addr, val);
         let now_enabled = self.registers.lcd_enabled();
@@ -485,6 +539,7 @@ impl Ppu {
                 self.timing.set_frame_ready();
             }
             self.window_line = 0;
+            self.pixel_fifo = PixelFifoRenderer::new();
             // Initialise prev_stat_irq_line to the LYC source state that was active
             // while the LCD was off (based on the frozen LYC=LY bit).
             // This prevents a spurious STAT interrupt when LCD re-enables while
@@ -500,6 +555,7 @@ impl Ppu {
             self.update_stat_irq();
         } else if was_enabled && !now_enabled {
             trace_ppu!(1; "lcdc disable y={} dot={} lcdc={:02X}", self.timing.ly(), self.timing.dot(), val);
+            self.pixel_fifo = PixelFifoRenderer::new();
         }
         // LCD 1→0: lyc_eq_ly_frozen is intentionally NOT cleared here —
         // hardware retains the last LYC=LY state when the LCD is powered off.

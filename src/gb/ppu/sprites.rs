@@ -22,8 +22,18 @@ pub struct SpritePixel {
 /// * `oam`      — Full 160-byte OAM array
 /// * `lcdc`     — Current LCDC value (bit 2 selects 8×8 vs 8×16)
 pub fn scan_oam_line(scanline: u8, oam: &[u8; 0xA0], lcdc: u8) -> Vec<usize> {
-    let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
     let mut result = Vec::new();
+    scan_oam_line_into(scanline, oam, lcdc, &mut result);
+    result
+}
+
+/// Collect up to 10 OAM entry indices into an existing buffer.
+///
+/// This is equivalent to [`scan_oam_line`] but lets per-dot renderers reuse
+/// allocation across scanlines.
+pub fn scan_oam_line_into(scanline: u8, oam: &[u8; 0xA0], lcdc: u8, result: &mut Vec<usize>) {
+    let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
+    result.clear();
     for i in 0..40usize {
         let oam_y = oam[i * 4];
         // OAM Y stores screen_y + 16; screen_y = oam_y.wrapping_sub(16).
@@ -37,7 +47,6 @@ pub fn scan_oam_line(scanline: u8, oam: &[u8; 0xA0], lcdc: u8) -> Vec<usize> {
             }
         }
     }
-    result
 }
 
 /// Fetch the highest-priority visible sprite pixel at screen position `x`.

@@ -206,6 +206,7 @@ impl CgbBus {
         };
 
         // Set OPRI based on cartridge type when skipping boot ROM.
+        bus.ppu.set_cgb_model(model);
         if skip_boot_rom && opri_value != 0 {
             bus.ppu.write_cgb_register(0xFF6C, opri_value);
         }
@@ -656,6 +657,7 @@ impl CgbBus {
     pub fn reset(&mut self) {
         let apu_rate = self.apu.sample_rate();
         self.ppu = Ppu::new_cgb();
+        self.ppu.set_cgb_model(self.model);
         self.ppu.write_register(0xFF40, 0x00);
         self.timer = Timer::new();
         self.joypad = Joypad::new();
@@ -768,6 +770,7 @@ impl CgbBus {
             ));
         }
         self.ppu = state.ppu.clone();
+        self.ppu.set_cgb_model(self.model);
         for (bank, bank_data) in self.wram.iter_mut().enumerate() {
             let offset = bank * 0x1000;
             bank_data.copy_from_slice(&state.wram[offset..offset + 0x1000]);

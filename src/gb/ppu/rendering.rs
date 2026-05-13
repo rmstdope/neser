@@ -13,9 +13,17 @@ const DMG_GREY: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
 ///
 /// `palette_reg` — raw BGP / OBP0 / OBP1 value
 /// `colour_index` — 2-bit index (0–3)
-pub fn palette_lookup(palette_reg: u8, colour_index: u8) -> u8 {
-    let shade = (palette_reg >> (colour_index * 2)) & 0x03;
+pub(crate) fn dmg_palette_index(palette_reg: u8, colour_index: u8) -> u8 {
+    (palette_reg >> (colour_index * 2)) & 0x03
+}
+
+pub(crate) fn dmg_grey(shade: u8) -> u8 {
     DMG_GREY[shade as usize]
+}
+
+pub fn palette_lookup(palette_reg: u8, colour_index: u8) -> u8 {
+    let shade = dmg_palette_index(palette_reg, colour_index);
+    dmg_grey(shade)
 }
 
 /// Render one full scanline (0–143) into `screen_buffer`.
@@ -126,7 +134,11 @@ fn cgb_5bit_to_8bit(c5: u8) -> u8 {
 /// `colour_index` — Color slot within the palette (0–3; 0 is transparent for OBJ).
 ///
 /// Returns `(r8, g8, b8)` with 8-bit components.
-fn cgb_palette_lookup(palette_ram: &[u8; 64], palette_num: u8, colour_index: u8) -> (u8, u8, u8) {
+pub(crate) fn cgb_palette_lookup(
+    palette_ram: &[u8; 64],
+    palette_num: u8,
+    colour_index: u8,
+) -> (u8, u8, u8) {
     let base = (palette_num as usize) * 8 + (colour_index as usize) * 2;
     let lo = palette_ram[base];
     let hi = palette_ram[base + 1];

@@ -103,6 +103,13 @@ macro_rules! mealybug_ignored_cgb_d {
     };
 }
 
+fn assert_mealybug_crc(capture_name: &str, crc: u32, expected_crc: u32) {
+    assert_eq!(
+        crc, expected_crc,
+        "{capture_name} CRC mismatch: got {crc:#010X}, expected {expected_crc:#010X}"
+    );
+}
+
 // ============================================================================
 // DMG-B tests (reference: expected/DMG-blob/)
 // ============================================================================
@@ -119,7 +126,15 @@ fn test_m2_win_en_toggle_dmg_b() {
     );
 }
 
-mealybug_ignored_dmg_b!(test_m3_bgp_change_dmg_b, "m3_bgp_change", "2348");
+#[test]
+fn test_m3_bgp_change_dmg_b() {
+    let bytes = read_rom_from_zip("m3_bgp_change.gb");
+    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_dmg_b");
+    const EXPECTED_CRC: u32 = 0x2BA6_1257;
+    assert_mealybug_crc("m3_bgp_change_dmg_b", crc, EXPECTED_CRC);
+}
+
 mealybug_ignored_dmg_b!(
     test_m3_bgp_change_sprites_dmg_b,
     "m3_bgp_change_sprites",
@@ -214,7 +229,16 @@ fn test_m2_win_en_toggle_cgb_c() {
         "m2_win_en_toggle CGB-C CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
     );
 }
-mealybug_ignored_cgb_c!(test_m3_bgp_change_cgb_c, "m3_bgp_change", "2348");
+
+#[test]
+fn test_m3_bgp_change_cgb_c() {
+    let bytes = read_rom_from_zip("m3_bgp_change.gb");
+    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_cgb_c");
+    const EXPECTED_CRC: u32 = 0x1A14_901B;
+    assert_mealybug_crc("m3_bgp_change_cgb_c", crc, EXPECTED_CRC);
+}
+
 mealybug_ignored_cgb_c!(
     test_m3_bgp_change_sprites_cgb_c,
     "m3_bgp_change_sprites",
@@ -340,7 +364,16 @@ fn test_m2_win_en_toggle_cgb_d() {
         "m2_win_en_toggle CGB-D CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
     );
 }
-mealybug_ignored_cgb_d!(test_m3_bgp_change_cgb_d, "m3_bgp_change", "2348");
+
+#[test]
+fn test_m3_bgp_change_cgb_d() {
+    let bytes = read_rom_from_zip("m3_bgp_change.gb");
+    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_cgb_d");
+    const EXPECTED_CRC: u32 = 0xEAF2_256B;
+    assert_mealybug_crc("m3_bgp_change_cgb_d", crc, EXPECTED_CRC);
+}
+
 mealybug_ignored_cgb_d!(
     test_m3_bgp_change_sprites_cgb_d,
     "m3_bgp_change_sprites",
