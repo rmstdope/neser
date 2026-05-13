@@ -8,3 +8,6 @@
 [submodule "roms/gb/automated_tests/mealybug-tearoom-tests"]
 	path = roms/gb/automated_tests/mealybug-tearoom-tests
 	url = https://github.com/mattcurrie/mealybug-tearoom-tests
+[submodule "roms/gba/automated_tests/FuzzARM"]
+	path = roms/gba/automated_tests/FuzzARM
+	url = https://github.com/DenSinH/FuzzARM.git
