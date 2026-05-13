@@ -83,6 +83,7 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
                     cycles: 1,
                     branched: false,
                     swi: false,
+                    undefined: false,
                 }
             }
         }
@@ -102,11 +103,15 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
             } else if instr & 0xF600 == 0xB400 {
                 // Format 14: PUSH/POP
                 exec_format14(regs, bus, instr)
+            } else if instr & 0xFF00 == 0xBE00 {
+                // BKPT (ARMv5TE): undefined on ARMv4T.
+                ExecOutcome::undefined()
             } else {
                 ExecOutcome {
                     cycles: 1,
                     branched: false,
                     swi: false,
+                    undefined: false,
                 }
             }
         }
@@ -116,12 +121,15 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
         0b11010 | 0b11011 => exec_format16(regs, instr),
         // Format 18 (uncond branch): 11100
         0b11100 => exec_format18(regs, instr),
+        // BLX (ARMv5TE Thumb): 11101_xxxxxxxxxxx — undefined on ARMv4T.
+        0b11101 => ExecOutcome::undefined(),
         // Format 19: 1111x — Long branch with link
         0b11110 | 0b11111 => exec_format19(regs, instr),
         _ => ExecOutcome {
             cycles: 1,
             branched: false,
             swi: false,
+            undefined: false,
         },
     }
 }
@@ -176,6 +184,7 @@ fn exec_format1(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 1,
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -207,6 +216,7 @@ fn exec_format2(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 1,
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -248,6 +258,7 @@ fn exec_format3(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 1,
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -393,6 +404,7 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 1,
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -418,6 +430,7 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
                     cycles: 3,
                     branched: true,
                     swi: false,
+                    undefined: false,
                 };
             }
         }
@@ -435,6 +448,7 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
                     cycles: 3,
                     branched: true,
                     swi: false,
+                    undefined: false,
                 };
             }
         }
@@ -451,6 +465,7 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
                 cycles: 3,
                 branched: true,
                 swi: false,
+                undefined: false,
             };
         }
         _ => unreachable!(),
@@ -459,6 +474,7 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 1,
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -477,6 +493,7 @@ fn exec_format6<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         cycles: 3,
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -515,6 +532,7 @@ fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         cycles: if l { 3 } else { 2 },
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -542,6 +560,7 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
             cycles: 2,
             branched: false,
             swi: false,
+            undefined: false,
         };
     }
 
@@ -570,6 +589,7 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         cycles: 3,
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -608,6 +628,7 @@ fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         cycles: if l { 3 } else { 2 },
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -637,6 +658,7 @@ fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         cycles: if l { 3 } else { 2 },
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -663,6 +685,7 @@ fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         cycles: if l { 3 } else { 2 },
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -685,6 +708,7 @@ fn exec_format12(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 1,
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -705,6 +729,7 @@ fn exec_format13(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 1,
         branched: false,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -758,6 +783,7 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         cycles: 3,
         branched,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -828,6 +854,7 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         },
         branched,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -843,6 +870,7 @@ fn exec_format16(regs: &mut Registers, instr: u16) -> ExecOutcome {
             cycles: 3,
             branched: true,
             swi: true,
+            undefined: false,
         };
     }
     if !condition_met(regs.cpsr, cond) {
@@ -850,6 +878,7 @@ fn exec_format16(regs: &mut Registers, instr: u16) -> ExecOutcome {
             cycles: 1,
             branched: false,
             swi: false,
+            undefined: false,
         };
     }
     let offset = ((instr & 0xFF) as i8) as i32 * 2;
@@ -858,6 +887,7 @@ fn exec_format16(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 3,
         branched: true,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -874,6 +904,7 @@ fn exec_format18(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 3,
         branched: true,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -899,6 +930,7 @@ fn exec_format19(regs: &mut Registers, instr: u16) -> ExecOutcome {
             cycles: 1,
             branched: false,
             swi: false,
+            undefined: false,
         };
     }
 
@@ -911,6 +943,7 @@ fn exec_format19(regs: &mut Registers, instr: u16) -> ExecOutcome {
         cycles: 4,
         branched: true,
         swi: false,
+        undefined: false,
     }
 }
 
@@ -1456,5 +1489,49 @@ mod tests {
         // LR = (PC - 2) | 1 = 0x1000 | 1 (next instruction address with Thumb bit)
         assert_eq!(regs.r[14] & !1, 0x1000);
         assert!(outcome.branched);
+    }
+
+    // -----------------------------------------------------------------------
+    // ARMv5TE undefined instruction tests (Thumb)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn thumb_blx_triggers_undefined() {
+        // BLX (Thumb, v5TE): 11101_xxxxxxxxxxx (top5 = 0b11101)
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr: u16 = 0b11101_00000000000; // BLX offset=0
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            outcome.undefined,
+            "Thumb BLX should trigger undefined on ARMv4T, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn thumb_bkpt_triggers_undefined() {
+        // BKPT (Thumb, v5TE): 1011_1110_xxxxxxxx = 0xBExx
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr: u16 = 0xBE00; // BKPT #0
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            outcome.undefined,
+            "Thumb BKPT should trigger undefined on ARMv4T, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn thumb_valid_unconditional_branch_still_works() {
+        // Format 18: 11100_xxxxxxxxxxx (top5 = 0b11100) - should NOT be undefined
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[15] = 0x100;
+        let instr: u16 = 0b11100_00000000100; // B #8 (offset=4, <<1 = 8)
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            !outcome.undefined,
+            "Unconditional B should NOT trigger undefined, got: {outcome:?}"
+        );
     }
 }

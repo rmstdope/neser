@@ -41,6 +41,8 @@ pub struct ExecOutcome {
     pub branched: bool,
     /// `true` if the instruction triggered a software interrupt (SWI).
     pub swi: bool,
+    /// `true` if the instruction is undefined (triggers undefined exception).
+    pub undefined: bool,
 }
 
 impl ExecOutcome {
@@ -49,6 +51,7 @@ impl ExecOutcome {
             cycles: c,
             branched: false,
             swi: false,
+            undefined: false,
         }
     }
     fn branch(c: u8) -> Self {
@@ -56,6 +59,7 @@ impl ExecOutcome {
             cycles: c,
             branched: true,
             swi: false,
+            undefined: false,
         }
     }
     fn swi(c: u8) -> Self {
@@ -63,6 +67,15 @@ impl ExecOutcome {
             cycles: c,
             branched: true,
             swi: true,
+            undefined: false,
+        }
+    }
+    pub(super) fn undefined() -> Self {
+        Self {
+            cycles: 3,
+            branched: true,
+            undefined: true,
+            swi: false,
         }
     }
 }
@@ -115,6 +128,13 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOut
             // bits[7:4] = 1011 (STRH/LDRH), 1101 (LDRSB), 1111 (LDRSH)
             if (instr & 0x0E00_0090) == 0x0000_0090 && (instr & 0x60) != 0 {
                 return execute_halfword_transfer(regs, bus, instr);
+            }
+            // ARMv4T undefined-instruction guard: opcodes 0x8–0xB (TST/TEQ/CMP/CMN)
+            // with S=0 encode MRS/MSR/BX/SWP (already handled above). Anything
+            // else in this space is undefined on ARMv4T (CLZ, QADD/QSUB, DSP
+            // multiplies, BLX register, BKPT in ARMv5TE).
+            if (instr & 0x0190_0000) == 0x0100_0000 {
+                return ExecOutcome::undefined();
             }
             // Data-processing immediate / register
             execute_data_processing(regs, instr)
@@ -755,16 +775,18 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
         regs.r[rd] = value;
         result_branch = rd == 15;
     } else {
-        // Store: only STRH (SH=01) is valid for stores
-        if sh == 0b01 {
-            let value = regs.r[rd] as u16;
-            let store_addr = if is_cart_sram_region(addr) {
-                addr
-            } else {
-                addr & !1
-            };
-            bus.write16(store_addr, value);
+        // Store: only STRH (SH=01) is valid in ARMv4T.
+        // SH=10 (LDRD) and SH=11 (STRD) are ARMv5TE-exclusive and undefined.
+        if sh != 0b01 {
+            return ExecOutcome::undefined();
         }
+        let value = regs.r[rd] as u16;
+        let store_addr = if is_cart_sram_region(addr) {
+            addr
+        } else {
+            addr & !1
+        };
+        bus.write16(store_addr, value);
         result_branch = false;
     }
 
@@ -1984,5 +2006,223 @@ mod tests {
 
         assert_eq!(regs.r[3], 64_u32.rotate_right(8));
         assert_eq!(bus.read32(0x40), 32);
+    }
+
+    // -----------------------------------------------------------------------
+    // ARMv5TE undefined instruction tests
+    // -----------------------------------------------------------------------
+
+    /// Encode CLZ: cond 0001 0110 1111 Rd 1111 0001 Rm
+    fn arm_clz(cond: u8, rd: u8, rm: u8) -> u32 {
+        ((cond as u32) << 28)
+            | (0b0001_0110 << 20)
+            | (0xF << 16)
+            | ((rd as u32 & 0xF) << 12)
+            | (0xF << 8)
+            | (0b0001 << 4)
+            | (rm as u32 & 0xF)
+    }
+
+    /// Encode QADD: cond 0001 0000 Rn Rd 0000 0101 Rm
+    fn arm_qadd(cond: u8, rn: u8, rd: u8, rm: u8) -> u32 {
+        ((cond as u32) << 28)
+            | (0b0001_0000 << 20)
+            | ((rn as u32 & 0xF) << 16)
+            | ((rd as u32 & 0xF) << 12)
+            | (0b0000_0101 << 4)
+            | (rm as u32 & 0xF)
+    }
+
+    /// Encode BLX register (ARMv5TE): cond 0001 0010 1111 1111 1111 0011 Rm
+    fn arm_blx_reg(cond: u8, rm: u8) -> u32 {
+        ((cond as u32) << 28) | (0x012F_FF30) | (rm as u32 & 0xF)
+    }
+
+    /// Encode LDRD: cond 000P U I W 0 Rn Rd offset_hi 1101 offset_lo
+    /// Simplified: immediate offset=0, pre-indexed, up, no writeback.
+    fn arm_ldrd(cond: u8, rn: u8, rd: u8) -> u32 {
+        ((cond as u32) << 28)
+            | (1 << 24)       // P=1 (pre)
+            | (1 << 23)       // U=1 (up)
+            | (1 << 22)       // I=1 (immediate offset)
+            // bit[21]=0 (W=0), bit[20]=0 (L=0 for LDRD encoding)
+            | ((rn as u32 & 0xF) << 16)
+            | ((rd as u32 & 0xF) << 12)
+            | (0b1101 << 4) // SH=10, bits[7:4]=1101
+    }
+
+    /// Encode STRD: cond 000P U I W 0 Rn Rd offset_hi 1111 offset_lo
+    fn arm_strd(cond: u8, rn: u8, rd: u8) -> u32 {
+        ((cond as u32) << 28)
+            | (1 << 24)       // P=1 (pre)
+            | (1 << 23)       // U=1 (up)
+            | (1 << 22)       // I=1 (immediate offset)
+            | ((rn as u32 & 0xF) << 16)
+            | ((rd as u32 & 0xF) << 12)
+            | (0b1111 << 4) // SH=11, bits[7:4]=1111
+    }
+
+    /// Encode SMLABB: cond 0001 0000 Rd Rn Rs 1000 Rm
+    fn arm_smlabb(cond: u8, rd: u8, rn: u8, rs: u8, rm: u8) -> u32 {
+        ((cond as u32) << 28)
+            | (0b0001_0000 << 20)
+            | ((rd as u32 & 0xF) << 16)
+            | ((rn as u32 & 0xF) << 12)
+            | ((rs as u32 & 0xF) << 8)
+            | (0b1000 << 4)
+            | (rm as u32 & 0xF)
+    }
+
+    /// Encode BKPT: cond 0001 0010 imm12 0111 imm4
+    fn arm_bkpt(cond: u8) -> u32 {
+        ((cond as u32) << 28) | (0b0001_0010 << 20) | (0b0111 << 4)
+    }
+
+    #[test]
+    fn arm_clz_triggers_undefined() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_clz(0xE, 0, 1); // CLZ R0, R1
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            outcome.undefined,
+            "CLZ should trigger undefined on ARMv4T, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_qadd_triggers_undefined() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_qadd(0xE, 1, 0, 2); // QADD R0, R2, R1
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            outcome.undefined,
+            "QADD should trigger undefined on ARMv4T, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_blx_register_triggers_undefined() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_blx_reg(0xE, 0); // BLX R0
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            outcome.undefined,
+            "BLX (register) should trigger undefined on ARMv4T, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_ldrd_triggers_undefined() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 0x40; // base address
+        let instr = arm_ldrd(0xE, 1, 0); // LDRD R0, [R1]
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            outcome.undefined,
+            "LDRD should trigger undefined on ARMv4T, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_strd_triggers_undefined() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 0x40;
+        let instr = arm_strd(0xE, 1, 0); // STRD R0, [R1]
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            outcome.undefined,
+            "STRD should trigger undefined on ARMv4T, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_smlabb_triggers_undefined() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_smlabb(0xE, 0, 1, 2, 3); // SMLABB R0, R3, R2, R1
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            outcome.undefined,
+            "SMLABB should trigger undefined on ARMv4T, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_bkpt_triggers_undefined() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_bkpt(0xE); // BKPT
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            outcome.undefined,
+            "BKPT should trigger undefined on ARMv4T, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_valid_mrs_still_works() {
+        // MRS R0, CPSR: cond 0001 0000 1111 Rd 0000 0000 0000
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr: u32 = 0xE10F_0000; // MRS R0, CPSR
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            !outcome.undefined,
+            "MRS should NOT trigger undefined, got: {outcome:?}"
+        );
+        assert_eq!(regs.r[0], regs.cpsr);
+    }
+
+    #[test]
+    fn arm_valid_bx_still_works() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x100;
+        let instr: u32 = 0xE12F_FF10; // BX R0
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            !outcome.undefined,
+            "BX should NOT trigger undefined, got: {outcome:?}"
+        );
+        assert_eq!(regs.r[15], 0x100);
+    }
+
+    #[test]
+    fn arm_valid_swp_still_works() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 0x40;
+        regs.r[2] = 42;
+        bus.write32(0x40, 99);
+        let instr = arm_swap(0xE, false, 1, 0, 2); // SWP R0, R2, [R1]
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            !outcome.undefined,
+            "SWP should NOT trigger undefined, got: {outcome:?}"
+        );
+        assert_eq!(regs.r[0], 99);
+        assert_eq!(bus.read32(0x40), 42);
+    }
+
+    #[test]
+    fn arm_valid_strh_still_works() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x1234;
+        regs.r[1] = 0x40;
+        // STRH R0, [R1]: cond 000 1 1 1 0 0 Rn Rd 0000 1011 0000
+        // P=1, U=1, I=1, W=0, L=0, SH=01
+        let instr: u32 = 0xE1C1_00B0; // STRH R0, [R1]
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(
+            !outcome.undefined,
+            "STRH should NOT trigger undefined, got: {outcome:?}"
+        );
+        assert_eq!(bus.read16(0x40), 0x1234);
     }
 }
