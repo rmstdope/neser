@@ -11,3 +11,6 @@
 [submodule "roms/gba/automated_tests/FuzzARM"]
 	path = roms/gba/automated_tests/FuzzARM
 	url = https://github.com/DenSinH/FuzzARM.git
+[submodule "roms/gba/automated_tests/armwrestler"]
+	path = roms/gba/automated_tests/armwrestler
+	url = https://github.com/destoer/armwrestler-gba-fixed.git

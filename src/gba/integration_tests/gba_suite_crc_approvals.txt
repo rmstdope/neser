@@ -27,3 +27,11 @@ fuzzarm_any=0x9A78A7EB
 fuzzthumb_data_processing=0x9A78A7EB
 fuzzthumb_any=0x9A78A7EB
 fuzzarm_mixed=0x9A78A7EB
+
+# ArmWrestler (https://github.com/destoer/armwrestler-gba-fixed)
+# Each page corresponds to one test screen (Test0 through Test4).
+armwrestler_page0=0xAA081A57
+armwrestler_page1=0x7725D68D
+armwrestler_page2=0xF9C38336
+armwrestler_page3=0x76CED72B
+armwrestler_page4=0x6795E0F8

@@ -1,4 +1,4 @@
-use super::gba_suite_runner::{Suite, run_suite};
+use super::gba_suite_runner::{ARMWRESTLER_ARM_TEST_COUNT, Suite, run_armwrestler, run_suite};
 use std::collections::HashMap;
 
 const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.txt";
@@ -177,6 +177,32 @@ fn gba_fuzzarm_mixed_passes() {
 }
 
 #[test]
+fn gba_suite_armwrestler_passes() {
+    let approvals = load_approved_crcs();
+    let result = run_armwrestler();
+    assert_eq!(
+        result.page_crcs.len(),
+        ARMWRESTLER_ARM_TEST_COUNT,
+        "expected {} test page CRCs but got {}",
+        ARMWRESTLER_ARM_TEST_COUNT,
+        result.page_crcs.len()
+    );
+    for (i, &crc) in result.page_crcs.iter().enumerate() {
+        let key = format!("armwrestler_page{i}");
+        let expected = approvals.get(&key).unwrap_or_else(|| {
+            panic!(
+                "missing approved CRC for '{}' in {}. Run with NESER_CAPTURE_SCREEN=1 and add {}=0x{:08X}",
+                key, APPROVALS_FILE, key, crc
+            )
+        });
+        assert_eq!(
+            crc, *expected,
+            "armwrestler page {i} CRC mismatch: expected=0x{expected:08X} actual=0x{crc:08X}"
+        );
+    }
+}
+
+#[test]
 fn approvals_manifest_parses() {
     let approvals = load_approved_crcs();
     assert_eq!(approvals.get("arm"), Some(&0x12FD_AE0B));
@@ -198,4 +224,9 @@ fn approvals_manifest_parses() {
     );
     assert_eq!(approvals.get("fuzzthumb_any"), Some(&0x9A78_A7EB));
     assert_eq!(approvals.get("fuzzarm_mixed"), Some(&0x9A78_A7EB));
+    assert_eq!(approvals.get("armwrestler_page0"), Some(&0xAA08_1A57));
+    assert_eq!(approvals.get("armwrestler_page1"), Some(&0x7725_D68D));
+    assert_eq!(approvals.get("armwrestler_page2"), Some(&0xF9C3_8336));
+    assert_eq!(approvals.get("armwrestler_page3"), Some(&0x76CE_D72B));
+    assert_eq!(approvals.get("armwrestler_page4"), Some(&0x6795_E0F8));
 }

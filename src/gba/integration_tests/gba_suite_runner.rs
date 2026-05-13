@@ -37,11 +37,12 @@ pub enum Suite {
     FuzzThumbDataProcessing,
     FuzzThumbAny,
     FuzzArmMixed,
+    ArmWrestler,
 }
 
 impl Suite {
-    fn rom_path(self) -> PathBuf {
-        let rel = match self {
+    fn rom_path_str(self) -> &'static str {
+        match self {
             Self::Arm => "roms/gba/automated_tests/gba-tests/arm/arm.gba",
             Self::Thumb => "roms/gba/automated_tests/gba-tests/thumb/thumb.gba",
             Self::Nes => "roms/gba/automated_tests/gba-tests/nes/nes.gba",
@@ -62,8 +63,12 @@ impl Suite {
             }
             Self::FuzzThumbAny => "roms/gba/automated_tests/FuzzARM/THUMB_Any.gba",
             Self::FuzzArmMixed => "roms/gba/automated_tests/FuzzARM/FuzzARM.gba",
-        };
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel)
+            Self::ArmWrestler => "roms/gba/automated_tests/armwrestler/armwrestler-gba-fixed.gba",
+        }
+    }
+
+    fn rom_path(self) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(self.rom_path_str())
     }
 
     fn result_register(self) -> Option<(usize, &'static str)> {
@@ -83,7 +88,8 @@ impl Suite {
             | Self::FuzzArmAny
             | Self::FuzzThumbDataProcessing
             | Self::FuzzThumbAny
-            | Self::FuzzArmMixed => None,
+            | Self::FuzzArmMixed
+            | Self::ArmWrestler => None,
         }
     }
 
@@ -105,6 +111,7 @@ impl Suite {
             Self::FuzzThumbDataProcessing => "fuzzthumb_data_processing",
             Self::FuzzThumbAny => "fuzzthumb_any",
             Self::FuzzArmMixed => "fuzzarm_mixed",
+            Self::ArmWrestler => "armwrestler",
         }
     }
 
@@ -408,6 +415,182 @@ fn is_bios_exception_vector(pc: u32) -> bool {
     BIOS_EXCEPTION_VECTORS.contains(&pc)
 }
 
+// --- ArmWrestler-specific runner ---
+//
+// The armwrestler ROM presents a menu and requires button input to navigate
+// through test pages. This runner injects START presses at frame boundaries
+// to advance through all 5 ARM test pages (Test0–Test4), capturing the
+// framebuffer CRC after each test renders.
+//
+// Menu structure: 3 ARM groups (ALU, LDR/STR, LDM/STM) accessible via menu
+// items. From the first menu item, pressing START enters Test0. Subsequent
+// START presses advance: Test0→Test1→Test2→Test3→Test4→menu.
+
+/// Number of ARM test pages in armwrestler (Test0 through Test4).
+pub const ARMWRESTLER_ARM_TEST_COUNT: usize = 5;
+
+/// Button bitmask for Start (NES-convention bit 3).
+const BTN_START: u8 = 0x08;
+
+/// Result of running the armwrestler ROM through all ARM test pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArmWrestlerResult {
+    /// CRC32 of the framebuffer after each test page renders.
+    pub page_crcs: Vec<u32>,
+    /// Total cycles consumed.
+    pub cycles: u64,
+}
+
+/// Run armwrestler-gba-fixed.gba, navigating through all ARM test pages.
+///
+/// Returns one CRC per test page (5 total for the ARM tests).
+pub fn run_armwrestler() -> ArmWrestlerResult {
+    let rom_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(Suite::ArmWrestler.rom_path_str());
+
+    let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {
+        panic!("failed to read armwrestler ROM {}: {e}", rom_path.display());
+    });
+
+    let mut gba = Gba::new(AppContext::default());
+    let mut bios = vec![0u8; BIOS_SIZE];
+    bios[0..4].copy_from_slice(&BIOS_RESET_STUB_LDR_PC_PLUS_24.to_le_bytes());
+    bios[BIOS_RESET_LITERAL_ADDR..BIOS_RESET_LITERAL_ADDR + 4]
+        .copy_from_slice(&CART_ENTRYPOINT.to_le_bytes());
+    bios[0x08..0x0C].copy_from_slice(&BIOS_SWI_STUB_MOVS_PC_LR.to_le_bytes());
+    for &vector in &BIOS_EXCEPTION_VECTORS {
+        let i = vector as usize;
+        bios[i..i + 4].copy_from_slice(&ARM_BRANCH_SELF_OPCODE.to_le_bytes());
+    }
+    gba.bus_mut().load_bios(&bios);
+    gba.load_rom(&rom, rom_path.to_str().unwrap_or("armwrestler"))
+        .unwrap_or_else(|e| {
+            panic!("failed to load armwrestler ROM {}: {e}", rom_path.display());
+        });
+    gba.init_test_stack_pointers();
+
+    // Run frame-by-frame, injecting button presses to navigate tests.
+    //
+    // Schedule (frame = VBlank count):
+    //   Frame 2: press START (selects first menu item → enters Test0)
+    //   Frame 4: capture Test0 CRC, press START (advance to Test1)
+    //   Frame 6: capture Test1 CRC, press START (advance to Test2)
+    //   Frame 8: capture Test2 CRC, press START (advance to Test3)
+    //   Frame 10: capture Test3 CRC, press START (advance to Test4)
+    //   Frame 12: capture Test4 CRC → done
+    //
+    // Button held for exactly 1 frame, released the next. This gives the
+    // ROM's edge-detection (XOR with previous state) a clean transition.
+
+    let mut frame_count: u32 = 0;
+    let mut cycles: u64 = 0;
+    let mut page_crcs: Vec<u32> = Vec::new();
+    let mut button_state: u8 = 0;
+    let max_frames: u32 = 30;
+
+    // Advance to first VBlank (frame 0 is the initial partial frame)
+    run_until_frame_ready(&mut gba, &mut cycles);
+    gba.clear_ready_to_render();
+    frame_count += 1;
+
+    while frame_count < max_frames && page_crcs.len() < ARMWRESTLER_ARM_TEST_COUNT {
+        // Apply button state for this frame
+        gba.set_joypad_button_states(0, button_state);
+
+        // Run to next VBlank
+        run_until_frame_ready(&mut gba, &mut cycles);
+        gba.clear_ready_to_render();
+        frame_count += 1;
+
+        // Frame-based schedule:
+        // - Press START on frames 2, 4, 6, 8, 10 (odd-indexed in the sequence)
+        // - Capture CRC on frames 4, 6, 8, 10, 12 (after test has rendered)
+        // - Release START on frames 3, 5, 7, 9, 11
+        match frame_count {
+            2 => {
+                // Press START to enter Test0 from menu
+                button_state = BTN_START;
+            }
+            3 => {
+                // Release START (edge detection needs release before next press)
+                button_state = 0;
+            }
+            4 => {
+                // Test0 is now rendered; capture CRC and press START for next
+                page_crcs.push(gba.screen_crc32());
+                maybe_write_armwrestler_png(&gba, 0, *page_crcs.last().unwrap());
+                button_state = BTN_START;
+            }
+            5 => {
+                button_state = 0;
+            }
+            6 => {
+                page_crcs.push(gba.screen_crc32());
+                maybe_write_armwrestler_png(&gba, 1, *page_crcs.last().unwrap());
+                button_state = BTN_START;
+            }
+            7 => {
+                button_state = 0;
+            }
+            8 => {
+                page_crcs.push(gba.screen_crc32());
+                maybe_write_armwrestler_png(&gba, 2, *page_crcs.last().unwrap());
+                button_state = BTN_START;
+            }
+            9 => {
+                button_state = 0;
+            }
+            10 => {
+                page_crcs.push(gba.screen_crc32());
+                maybe_write_armwrestler_png(&gba, 3, *page_crcs.last().unwrap());
+                button_state = BTN_START;
+            }
+            11 => {
+                button_state = 0;
+            }
+            12 => {
+                page_crcs.push(gba.screen_crc32());
+                maybe_write_armwrestler_png(&gba, 4, *page_crcs.last().unwrap());
+                button_state = 0;
+            }
+            _ => {}
+        }
+    }
+
+    ArmWrestlerResult { page_crcs, cycles }
+}
+
+fn run_until_frame_ready(gba: &mut Gba, cycles: &mut u64) {
+    let max_cycle_budget = GBA_CYCLES_PER_FRAME * 2;
+    let mut spent: u64 = 0;
+    while spent < max_cycle_budget {
+        let tick = gba.run_tick_for_tests() as u64;
+        if tick == 0 {
+            return;
+        }
+        *cycles += tick;
+        spent += tick;
+        if gba.is_ready_to_render() {
+            return;
+        }
+    }
+}
+
+fn maybe_write_armwrestler_png(gba: &Gba, page_index: usize, crc: u32) {
+    if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
+        return;
+    }
+
+    let file_name = format!("armwrestler_page{page_index}_crc_{crc:08X}.png");
+    let path = PathBuf::from("target/gba_suite_checkpoints").join(file_name);
+    let rgb = gba.screen_snapshot();
+    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    println!(
+        "[armwrestler-capture] saved {} (page={page_index}, crc=0x{crc:08X})",
+        path.display()
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,5 +687,6 @@ mod tests {
         );
         assert_eq!(Suite::FuzzThumbAny.capture_stem(), "fuzzthumb_any");
         assert_eq!(Suite::FuzzArmMixed.capture_stem(), "fuzzarm_mixed");
+        assert_eq!(Suite::ArmWrestler.capture_stem(), "armwrestler");
     }
 }
