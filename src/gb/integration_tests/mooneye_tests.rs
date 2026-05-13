@@ -9,8 +9,8 @@
 //!
 //! # Excluded ROMs
 //!
-//! The following ROMs are intentionally excluded because they target hardware
-//! platforms that are not emulated by this project:
+//! The following ROMs are intentionally excluded because they target GB
+//! hardware variants not supported by the GB core (SGB, MGB, AGB/AGS):
 //!
 //! ## SGB / SGB2 (Super Game Boy)
 //! - `acceptance/boot_div-S.gb`
