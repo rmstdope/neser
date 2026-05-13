@@ -270,22 +270,32 @@ fn settle_framebuffer_for_result(gba: &mut Gba, exit_reason: ExitReason) {
         return;
     }
 
-    // Consume any stale frame-ready state and then wait for one full frame.
-    if gba.is_ready_to_render() {
-        gba.clear_ready_to_render();
-    }
-
-    let mut settle_cycles = 0u64;
-    while settle_cycles < FRAME_SETTLE_MAX_CYCLES {
-        let tick_cycles = gba.run_tick_for_tests() as u64;
-        if tick_cycles == 0 {
-            return;
-        }
-        settle_cycles += tick_cycles;
-
+    // Wait for two frame-ready edges after idle detection:
+    //
+    // 1. The first completes whatever partial frame was in progress when the
+    //    idle loop was detected. If VRAM changed mid-frame (e.g. "End of
+    //    testing" was drawn after the PPU already rendered the text area),
+    //    this frame's scanlines may contain stale pixels.
+    //
+    // 2. The second is a complete frame rendered entirely from the current
+    //    (final) VRAM state, guaranteeing a clean capture.
+    for _ in 0..2 {
         if gba.is_ready_to_render() {
             gba.clear_ready_to_render();
-            return;
+        }
+
+        let mut settle_cycles = 0u64;
+        while settle_cycles < FRAME_SETTLE_MAX_CYCLES {
+            let tick_cycles = gba.run_tick_for_tests() as u64;
+            if tick_cycles == 0 {
+                return;
+            }
+            settle_cycles += tick_cycles;
+
+            if gba.is_ready_to_render() {
+                gba.clear_ready_to_render();
+                break;
+            }
         }
     }
 }

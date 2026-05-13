@@ -188,14 +188,14 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("save_flash64"), Some(&0x12FD_AE0B));
     assert_eq!(approvals.get("save_flash128"), Some(&0x12FD_AE0B));
     assert_eq!(approvals.get("ppu_hello"), Some(&0x52F9_B8A4));
-    assert_eq!(approvals.get("ppu_shades"), Some(&0x9CD9_40F8));
+    assert_eq!(approvals.get("ppu_shades"), Some(&0x57EB_C4ED));
     assert_eq!(approvals.get("ppu_stripes"), Some(&0xFBAB_D04A));
-    assert_eq!(approvals.get("fuzzarm_data_processing"), Some(&0x827E_22B6));
+    assert_eq!(approvals.get("fuzzarm_data_processing"), Some(&0x9A78_A7EB));
     assert_eq!(approvals.get("fuzzarm_any"), Some(&0x9A78_A7EB));
     assert_eq!(
         approvals.get("fuzzthumb_data_processing"),
-        Some(&0xEBE0_3CC7)
+        Some(&0x9A78_A7EB)
     );
-    assert_eq!(approvals.get("fuzzthumb_any"), Some(&0x1348_8E26));
-    assert_eq!(approvals.get("fuzzarm_mixed"), Some(&0x9407_FAAF));
+    assert_eq!(approvals.get("fuzzthumb_any"), Some(&0x9A78_A7EB));
+    assert_eq!(approvals.get("fuzzarm_mixed"), Some(&0x9A78_A7EB));
 }
