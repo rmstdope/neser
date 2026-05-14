@@ -4,7 +4,7 @@ use serde_with::serde_as;
 use super::registers::Registers;
 use super::screen_buffer::ScreenBuffer;
 use super::timing::{PpuMode, Timing};
-use super::{pixel_fifo::PixelFifoRenderer, sprites};
+use super::{obj_fifo::ObjFetchModel, pixel_fifo::PixelFifoRenderer, sprites};
 use crate::gb::model::CgbModel;
 use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
@@ -227,6 +227,8 @@ impl Ppu {
                 self.timing.dot(),
                 &self.oam,
                 &self.registers,
+                self.cgb_mode,
+                self.dmg_compat,
             );
         }
 
@@ -275,14 +277,19 @@ impl Ppu {
     /// SCX penalty: raw SCX mod 8 dots (unquantized), applied on all visible scanlines.
     /// Window penalty: fixed 6 dots when the current scanline actually begins drawing window pixels.
     /// OBJ penalty: dot-accurate, then floor-quantised to M-cycle boundaries (÷4×4).
-    ///   DMG only applies the OBJ penalty when sprites are enabled (LCDC bit 1).
+    ///   DMG applies it only when LCDC.1 is set; CGB DMG-compat fetches OBJs
+    ///   regardless of LCDC.1, matching the production FIFO's fetch policy.
     /// Combined: `extra_dots = scx_raw + window + floor(obj / 4) * 4`.
     fn apply_obj_penalty(&mut self) {
         let scanline = self.timing.ly();
         let scx_penalty = (self.registers.scx & 0x07) as u16;
         let window_penalty = self.window_penalty(scanline);
-        let sprites_enabled = self.registers.lcdc & 0x02 != 0;
-        let (obj_penalty, _sprite_count) = if sprites_enabled {
+        let fetches_objects_when_lcdc_obj_enable_is_clear =
+            ObjFetchModel::for_dmg_render_path(self.cgb_mode, self.dmg_compat)
+                .is_some_and(ObjFetchModel::ignores_lcdc_obj_enable);
+        let sprites_fetched =
+            fetches_objects_when_lcdc_obj_enable_is_clear || self.registers.lcdc & 0x02 != 0;
+        let (obj_penalty, _sprite_count) = if sprites_fetched {
             let sprite_indices = sprites::scan_oam_line(scanline, &self.oam, self.registers.lcdc);
             let count = sprite_indices.len();
             let penalty =
@@ -2394,6 +2401,38 @@ mod tests {
             ppu.timing.mode(),
             PpuMode::HBlank,
             "an off-screen window must not delay HBlank start"
+        );
+    }
+
+    #[test]
+    fn test_cgb_dmg_compat_obj_penalty_applies_when_lcdc_obj_enable_is_clear() {
+        // Given: CGB DMG-compat starts Mode 3 with LCDC.1 clear, but has an
+        // object selected by OAM scan. The production FIFO still performs the
+        // object fetch, so Mode 3 timing must include the same OBJ penalty.
+        let mut ppu = Ppu::new_cgb();
+        ppu.set_dmg_compat(true);
+        ppu.write_register(0xFF40, 0x91); // LCD on, BG on, sprites disabled.
+        ppu.oam[0] = 17; // visible on scanline 1
+        ppu.oam[1] = 8; // screen x = 0
+        ppu.oam[2] = 1;
+        ppu.oam[3] = 0;
+        advance_to_mode_2(&mut ppu);
+
+        // When: advance to the no-penalty HBlank boundary.
+        tick_dots(&mut ppu, 252);
+
+        // Then: the quantized OBJ fetch penalty keeps Mode 3 active.
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::PixelTransfer,
+            "CGB DMG-compat OBJ fetch timing must delay HBlank even when LCDC.1 is clear"
+        );
+
+        tick_dots(&mut ppu, 8);
+        assert_eq!(
+            ppu.timing.mode(),
+            PpuMode::HBlank,
+            "HBlank should begin once the quantized OBJ penalty elapses"
         );
     }
 

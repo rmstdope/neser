@@ -44,34 +44,41 @@ Use this skill whenever you need details about any part of Game Boy or Game Boy 
 - This gap is not stated in Pan Docs but is required for cycle-accurate Mooneye tests (e.g., `intr_2_mode0_timing_sprites`) to pass. Without quantization, STAT mode reads by the CPU will be off by one M-cycle.
 - When SameBoy confirms a penalty formula but your integration test still fails, check whether you need to apply this quantization before hooking the penalty into the timing engine.
 
-6. Account for scan-type M-cycle asymmetry when fixing LCD-enable or first-scanline timing.
+6. When researching PPU FIFO/LCDC timing, identify byte/address sampling points before tuning.
+
+- For mid-scanline LCDC changes, Pan Docs often documents the high-level effect but not the exact sub-fetch sampling point.
+- After reading Pan Docs, inspect SameBoy's display/object-fetch path for where addresses and tile bytes are computed, especially whether low and high tile-data bytes recompute their address independently.
+- Treat those sampling points as implementation evidence to guide tests and hypotheses before trying emulator-specific thresholds.
+- For OBJ fetches that begin before x=0, separately consider whether the fetch already sampled tile bytes before the first visible pixel even though its stall affects visible pixels.
+
+7. Account for scan-type M-cycle asymmetry when fixing LCD-enable or first-scanline timing.
 
 - After LCD enable, scan 0 starts at **dot 4** (not dot 0). Regular scans (scan 2+) start at dot 0.
 - This shifts the M-cycle grid by one: on scan 0, dot 452 = **M111**; on regular scans, dot 452 = **M112**.
 - Any PPU event tied to a specific dot (early LY increment, Mode 2 STAT source, Mode 0 STAT source) fires at a **different M-cycle** on scan 0/1 vs. scan 2+. A fix that is correct for regular scans will be off by one M-cycle on the first two scans, breaking `lcdon_timing-GS`.
 - When implementing dot-based timing fixes, verify the M-cycle position independently for scan 0 and for regular scans, and gate the fix with `!first_scanline_after_enable && !second_scanline_after_enable` if the behavior must only apply to scan 2+.
 
-7. If specification coverage is missing or incomplete, inspect SameBoy carefully.
+8. If specification coverage is missing or incomplete, inspect SameBoy carefully.
 
 - Prefer `LIJI32/SameBoy` and focus on `Core/`.
 - Use SameBoy only after checking Pan Docs and its source.
 - Treat SameBoy as implementation evidence, not as equal authority with a written hardware specification.
 - If SameBoy appears to make a choice where the specification is unclear, say that explicitly instead of presenting it as confirmed hardware fact.
 
-8. When sources disagree or remain ambiguous, report that directly.
+9. When sources disagree or remain ambiguous, report that directly.
 
 - Name the conflicting sources.
 - State which source is more authoritative for the question at hand and why.
 - Do not merge conflicting claims into a guessed answer.
 
-9. Produce a detailed, source-backed answer.
+10. Produce a detailed, source-backed answer.
 
 - Start with a high-level explanation of the hardware behavior.
 - Then cover precise details such as registers, bit meanings, address ranges, timing, ordering, side effects, open bus behavior, edge cases, and model differences.
 - Clearly label what is confirmed by specification, what is supported only by emulator implementation, and what is still unknown.
 - Cite the exact Pan Docs pages or SameBoy files you used.
 
-10. Never guess.
+11. Never guess.
 
 - If no authoritative information is available, say so plainly.
 - If the available information is partial, answer only the supported part and identify the gaps.
