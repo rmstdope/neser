@@ -595,8 +595,19 @@ impl PixelFifoRenderer {
             .lcdc_tile_data_edge
             .has_latched_range(current_fetch_start, current_fetch_end)
         {
-            self.lcdc_tile_data_edge
-                .record_write(self.next_x, current_fetch_end, previous, new);
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            let next_fetch_start = current_fetch_start.saturating_add(8);
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
         }
     }
 
@@ -1381,6 +1392,34 @@ mod tests {
         assert_eq!(
             next_tile_colour, 3,
             "the following fetch should retain the TILE_SEL sample from the earlier write until its bitplanes are latched"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn record_lcdc_write_mid_visible_tile_updates_following_bg_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 1;
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x91;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(2, &vram, &oam, &registers, 0);
+        let (next_tile_colour, _, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 0,
+            "a TILE_SEL write after the visible tile has started output must not alter the rest of that tile"
+        );
+        assert_eq!(
+            next_tile_colour, 3,
+            "the following BG fetch should sample the new TILE_SEL value"
         );
         assert!(!is_sprite);
     }
