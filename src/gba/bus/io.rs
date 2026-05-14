@@ -80,6 +80,53 @@ impl IoRegisters {
         (off + 1 < IO_SIZE).then_some(off)
     }
 
+    /// Read a raw halfword from the backing store (no masking).
+    fn backing_u16(&self, addr: u32) -> u16 {
+        Self::idx(addr)
+            .map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]]))
+            .unwrap_or(0)
+    }
+
+    /// Returns `true` when the current SIO mode is UART (RCNT bit 15 = 0
+    /// AND SIOCNT bits 12-13 = 11).
+    fn is_uart_mode(&self) -> bool {
+        self.backing_u16(0x0400_0134) & 0x8000 == 0
+            && (self.backing_u16(0x0400_0128) >> 12) & 3 == 3
+    }
+
+    /// Returns `true` when the current SIO mode is Normal 32-bit
+    /// (RCNT bit 15 = 0 AND SIOCNT bits 12-13 = 01).
+    fn is_normal32_mode(&self) -> bool {
+        self.backing_u16(0x0400_0134) & 0x8000 == 0
+            && (self.backing_u16(0x0400_0128) >> 12) & 3 == 1
+    }
+
+    /// Compute the RCNT read mask based on the current SIO mode.
+    ///
+    /// All modes clear bits 9-13. Pin-state bits 0-3 vary:
+    /// - Normal 8/32: bits 1,3 forced low (SD, SO idle low).
+    /// - JOY Bus: bits 0,1 forced low (SC, SD idle low).
+    /// - Multi / UART / GPIO: all pin bits pass through.
+    fn rcnt_read_mask(&self) -> u16 {
+        let rcnt = self.backing_u16(0x0400_0134);
+        let base_mask: u16 = 0xC1FF; // bits 14-15 + bits 0-8; clears 9-13
+        let pin_mask: u16 = if rcnt & 0x8000 != 0 {
+            // GPIO (bit 14=0) or JOY Bus (bit 14=1).
+            if rcnt & 0x4000 != 0 {
+                !0x0003 // JOY Bus: clear bits 0-1
+            } else {
+                0xFFFF // GPIO: all pins pass through
+            }
+        } else {
+            let siocnt = self.backing_u16(0x0400_0128);
+            match (siocnt >> 12) & 3 {
+                0 | 1 => !0x000A, // Normal 8/32: clear bits 1,3
+                _ => 0xFFFF,      // Multi / UART: all pins pass through
+            }
+        };
+        base_mask & pin_mask
+    }
+
     /// Try to read a halfword from the I/O register space.
     ///
     /// Returns `None` for write-only registers and addresses outside the
@@ -138,10 +185,43 @@ impl IoRegisters {
             0x0400_00B0..=0x0400_00DF => dma.try_read16(addr),
             // Invalid addresses post-DMA → open-bus.
             0x0400_00E0..=0x0400_00FF => None,
+            // --- SIO / JOY Bus registers ---
+            // SIODATA32_L/H (SIOMULTI0/1): R/W in Normal-32 mode, 0 otherwise.
+            0x0400_0120 | 0x0400_0122 => {
+                if self.is_normal32_mode() {
+                    self.read_backing(addr, 0xFFFF)
+                } else {
+                    Some(0)
+                }
+            }
+            // SIOMULTI2/3: receive-only buffers, always 0 (disconnected).
+            0x0400_0124 | 0x0400_0126 => Some(0),
+            // SIOCNT: mode-dependent read mask.
+            0x0400_0128 => {
+                let mask = if self.is_uart_mode() { 0x7FAF } else { 0x7F8F };
+                self.read_backing(addr, mask)
+            }
+            // SIOMLT_SEND / SIODATA8: backing in most modes, 0 in UART.
+            0x0400_012A => {
+                if self.is_uart_mode() {
+                    Some(0)
+                } else {
+                    self.read_backing(addr, 0xFFFF)
+                }
+            }
+            // RCNT: mode-dependent read mask (bits 9-13 always clear,
+            // pin bits 0-3 vary by mode).
+            0x0400_0134 => self.read_backing(addr, self.rcnt_read_mask()),
             // Invalid system-area addresses → read as zero (not open-bus).
             0x0400_0136 | 0x0400_0142 | 0x0400_015A | 0x0400_0206 | 0x0400_020A | 0x0400_0302 => {
                 Some(0)
             }
+            // JOYCNT: R/W with mask 0x0047.
+            0x0400_0140 => self.read_backing(addr, 0x0047),
+            // JOY_RECV / JOY_TRANS: always 0 (disconnected, no JOY Bus peer).
+            0x0400_0150..=0x0400_0156 => Some(0),
+            // JOYSTAT: always 0 (disconnected).
+            0x0400_0158 => Some(0),
             _ => Self::idx(addr).map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]])),
         }
     }
@@ -286,6 +366,16 @@ impl IoRegisters {
             0x0400_010E => timers.write_cnt_h(3, value),
             0x0400_00B0..=0x0400_00DF => {
                 dma.write16(addr, value);
+            }
+            // JOYCNT: bits 0-2 are write-1-to-clear flags, bit 6 is R/W.
+            0x0400_0140 => {
+                if let Some(i) = Self::idx(addr) {
+                    let cur = u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]]);
+                    let new_val = (cur & !(value & 0x07)) | (value & 0x40);
+                    let b = new_val.to_le_bytes();
+                    self.bytes[i] = b[0];
+                    self.bytes[i + 1] = b[1];
+                }
             }
             _ => {
                 if let Some(i) = Self::idx(addr) {
@@ -1185,6 +1275,216 @@ mod tests {
                 io.try_read16(addr, &ic, &t, &d, &p, &k),
                 Some(0),
                 "{name} at {addr:#010X} should return Some(0)"
+            );
+        }
+    }
+
+    /// Helper to set SIO mode via RCNT + SIOCNT writes.
+    #[allow(clippy::too_many_arguments)]
+    fn set_sio_mode(
+        io: &mut IoRegisters,
+        ic: &mut InterruptController,
+        t: &mut Timers,
+        d: &mut DmaController,
+        p: &mut Ppu,
+        k: &mut Keypad,
+        siocnt: u16,
+        rcnt: u16,
+    ) {
+        io.write16(0x0400_0134, rcnt, ic, t, d, p, k);
+        io.write16(0x0400_0128, siocnt, ic, t, d, p, k);
+    }
+
+    /// SIOMULTI2 (0x124) and SIOMULTI3 (0x126) are receive-only buffers
+    /// for multi-player mode. They always read as 0 when disconnected,
+    /// regardless of what was written to them.
+    #[test]
+    fn siomulti2_3_always_read_zero() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        for addr in [0x0400_0124, 0x0400_0126] {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                Some(0),
+                "SIOMULTI at {addr:#010X} should always read 0"
+            );
+        }
+    }
+
+    /// SIODATA32_L/H (0x120/0x122) are R/W only in Normal 32-bit mode.
+    /// In all other modes, they behave as receive buffers returning 0.
+    #[test]
+    fn siodata32_mode_dependent_read() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Normal 32-bit mode: SIODATA32 is R/W.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x1000, 0);
+        io.write16(0x0400_0120, 0xBEEF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0120, &ic, &t, &d, &p, &k),
+            Some(0xBEEF),
+            "SIODATA32_L in N32 mode should read back written value"
+        );
+
+        // Multi-player mode: reads as 0.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x2000, 0);
+        io.write16(0x0400_0120, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0120, &ic, &t, &d, &p, &k),
+            Some(0),
+            "SIODATA32_L in Multi mode should read 0"
+        );
+    }
+
+    /// SIOCNT (0x128) read mask: non-UART modes mask = 0x7F8F,
+    /// UART mode mask = 0x7FAF.
+    #[test]
+    fn siocnt_read_mask_mode_dependent() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Multi-player mode: write 0xEFFF, expect 0x6F8F.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x2000, 0);
+        io.write16(0x0400_0128, 0xEFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0128, &ic, &t, &d, &p, &k),
+            Some(0x6F8F),
+            "SIOCNT in Multi mode should apply mask 0x7F8F"
+        );
+
+        // UART mode: write 0xFFFF, expect 0x7FAF.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x3000, 0);
+        io.write16(0x0400_0128, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0128, &ic, &t, &d, &p, &k),
+            Some(0x7FAF),
+            "SIOCNT in UART mode should apply mask 0x7FAF"
+        );
+    }
+
+    /// SIOMLT_SEND / SIODATA8 (0x12A) reads back the written value in
+    /// most modes, but returns 0 in UART mode.
+    #[test]
+    fn siomlt_send_uart_reads_zero() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Multi mode: read back written value.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x2000, 0);
+        io.write16(0x0400_012A, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_012A, &ic, &t, &d, &p, &k),
+            Some(0xFFFF),
+            "SIOMLT_SEND in Multi mode should read back written value"
+        );
+
+        // UART mode: reads as 0.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x3000, 0);
+        io.write16(0x0400_012A, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_012A, &ic, &t, &d, &p, &k),
+            Some(0),
+            "SIODATA8 in UART mode should read 0"
+        );
+    }
+
+    /// RCNT (0x134) read mask varies by SIO mode. All modes clear bits
+    /// 9-13. Pin state bits 0-3 differ: Normal modes force bits 1,3 = 0;
+    /// JOY Bus forces bits 0,1 = 0.
+    #[test]
+    fn rcnt_mode_dependent_read_mask() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Multi-player: write 0x3FFF, expect 0x01FF.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x2000, 0);
+        io.write16(0x0400_0134, 0x3FFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0134, &ic, &t, &d, &p, &k),
+            Some(0x01FF),
+            "RCNT in Multi mode"
+        );
+
+        // Normal 8-bit: write 0x3FFF, expect 0x01F5.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x0000, 0);
+        io.write16(0x0400_0134, 0x3FFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0134, &ic, &t, &d, &p, &k),
+            Some(0x01F5),
+            "RCNT in Normal 8-bit mode"
+        );
+
+        // JOY Bus: write 0xFFFF, expect 0xC1FC.
+        io.write16(0x0400_0134, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        // RCNT=0xFFFF has bits 15-14 = 11 → JOY Bus mode.
+        assert_eq!(
+            io.try_read16(0x0400_0134, &ic, &t, &d, &p, &k),
+            Some(0xC1FC),
+            "RCNT in JOY Bus mode"
+        );
+    }
+
+    /// JOYCNT (0x140) is R/W with mask 0x0047. Bits 0-2 are
+    /// write-1-to-clear flags, bit 6 is a normal R/W bit.
+    /// Writing 0xFFFF to a zeroed JOYCNT results in 0x0040
+    /// (bits 0-2 cleared by W1C, bit 6 set).
+    #[test]
+    fn joycnt_read_mask_and_w1c() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write16(0x0400_0140, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0140, &ic, &t, &d, &p, &k),
+            Some(0x0040),
+            "JOYCNT after writing 0xFFFF should be 0x0040"
+        );
+    }
+
+    /// JOY_RECV (0x150-0x152) and JOY_TRANS (0x154-0x156) always read
+    /// as 0 when disconnected.
+    #[test]
+    fn joy_recv_trans_always_read_zero() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        for addr in [0x0400_0150, 0x0400_0152, 0x0400_0154, 0x0400_0156] {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                Some(0),
+                "JOY register at {addr:#010X} should read 0"
             );
         }
     }

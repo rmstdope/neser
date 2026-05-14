@@ -277,7 +277,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("mgba_multiply_long"), Some(&0x6996_55AB));
     assert_eq!(approvals.get("mgba_bios_math"), Some(&0x3C1B_28DE));
     assert_eq!(approvals.get("mgba_dma"), Some(&0x076F_C108));
-    assert_eq!(approvals.get("mgba_sio_read"), Some(&0x94A5_E99A));
+    assert_eq!(approvals.get("mgba_sio_read"), Some(&0xF5D9_8687));
     assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));
     assert_eq!(approvals.get("mgba_misc_edge"), Some(&0xFF97_4835));
     assert_eq!(approvals.get("mgba_video"), Some(&0xAB7E_C249));
