@@ -31,6 +31,19 @@ pub enum ExceptionVector {
     Fiq = 0x1C,
 }
 
+/// Result of a high-level SWI emulation attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HleSwiResult {
+    /// SWI not handled — fall through to normal BIOS dispatch.
+    NotHandled,
+    /// SWI handled — advance PC past the SWI instruction.
+    Handled,
+    /// SWI handled but PC should stay at the SWI instruction so it
+    /// re-executes after the next IRQ handler returns (used for
+    /// IntrWait/VBlankIntrWait looping).
+    HandledRepeatSwi,
+}
+
 /// ARM7TDMI CPU core.
 pub struct Arm7tdmi {
     /// Register file.
@@ -51,9 +64,16 @@ pub struct Arm7tdmi {
     /// CPU is halted (e.g. via SWI Halt/VBlankIntrWait). While halted the
     /// CPU consumes idle cycles until an enabled interrupt wakes it.
     halted: bool,
-    /// When true, known SWI calls (Halt, VBlankIntrWait) are handled via
-    /// high-level emulation instead of dispatching to the BIOS vector.
+    /// When true, known SWI calls are handled via high-level emulation
+    /// instead of dispatching to the BIOS vector.
     hle_swi: bool,
+    /// IntrWait/VBlankIntrWait interrupt mask. `Some(mask)` while the CPU
+    /// is looping, waiting for specific interrupt flags in BIOS_IF
+    /// (0x03007FF8). `None` when not inside an IntrWait loop.
+    /// The SWI re-executes after each IRQ handler returns; when the
+    /// requested flags appear in BIOS_IF, they are cleared and this is
+    /// reset to `None`, allowing PC to advance past the SWI.
+    intr_wait_mask: Option<u16>,
     /// Debug counter: number of times dispatch_irq has been called.
     #[cfg(test)]
     irq_dispatch_count: u64,
@@ -87,6 +107,7 @@ impl Arm7tdmi {
             prefetch_thumb: [0; 3],
             halted: false,
             hle_swi: false,
+            intr_wait_mask: None,
             #[cfg(test)]
             irq_dispatch_count: 0,
             #[cfg(test)]
@@ -201,11 +222,20 @@ impl Arm7tdmi {
             let raw = self.prefetch_thumb[0];
             let mut outcome = thumb::execute(&mut self.regs, bus, raw);
             // Try HLE before normal SWI dispatch.
-            if outcome.swi && self.try_hle_swi(bus) {
-                outcome.swi = false;
-                // HLE handled the SWI inline — it did NOT branch anywhere,
-                // so clear branched so PC advances normally (exec_pc + 2).
-                outcome.branched = false;
+            if outcome.swi {
+                match self.try_hle_swi(bus) {
+                    HleSwiResult::Handled => {
+                        outcome.swi = false;
+                        outcome.branched = false;
+                    }
+                    HleSwiResult::HandledRepeatSwi => {
+                        outcome.swi = false;
+                        outcome.branched = true;
+                        self.regs.r[15] = exec_pc;
+                        self.prefetch_valid = false;
+                    }
+                    HleSwiResult::NotHandled => {}
+                }
             }
             if outcome.undefined {
                 self.dispatch_undefined(exec_pc);
@@ -226,11 +256,20 @@ impl Arm7tdmi {
             let raw = self.prefetch_arm[0];
             let mut outcome = arm::execute(&mut self.regs, bus, raw);
             // Try HLE before normal SWI dispatch.
-            if outcome.swi && self.try_hle_swi(bus) {
-                outcome.swi = false;
-                // HLE handled the SWI inline — it did NOT branch anywhere,
-                // so clear branched so PC advances normally (exec_pc + 4).
-                outcome.branched = false;
+            if outcome.swi {
+                match self.try_hle_swi(bus) {
+                    HleSwiResult::Handled => {
+                        outcome.swi = false;
+                        outcome.branched = false;
+                    }
+                    HleSwiResult::HandledRepeatSwi => {
+                        outcome.swi = false;
+                        outcome.branched = true;
+                        self.regs.r[15] = exec_pc;
+                        self.prefetch_valid = false;
+                    }
+                    HleSwiResult::NotHandled => {}
+                }
             }
             if outcome.undefined {
                 self.dispatch_undefined(exec_pc);
@@ -324,16 +363,26 @@ impl Arm7tdmi {
         self.fiq_pending = false;
     }
 
-    /// Try to handle a SWI via high-level emulation. Returns `true` if the
-    /// SWI was handled (caller should skip normal BIOS dispatch).
+    /// BIOS_IF address in IWRAM where the BIOS IRQ dispatcher records
+    /// which interrupts have fired (used by IntrWait/VBlankIntrWait).
+    const BIOS_IF_ADDR: u32 = 0x0300_7FF8;
+
+    /// Try to handle a SWI via high-level emulation.
     ///
-    /// Reads the SWI number from the prefetched instruction. Currently
-    /// handles Halt (0x02), VBlankIntrWait (0x05), Div (0x06), DivArm
-    /// (0x07), Sqrt (0x08), ArcTan (0x09), ArcTan2 (0x0A), CpuSet
-    /// (0x0B), and CpuFastSet (0x0C).
-    fn try_hle_swi<B: Bus>(&mut self, bus: &mut B) -> bool {
+    /// Returns [`HleSwiResult`] to tell the caller whether and how the
+    /// SWI was handled:
+    /// - `Handled`: advance PC past the SWI (normal one-shot HLE).
+    /// - `HandledRepeatSwi`: keep PC at the SWI so it re-executes after
+    ///   the next IRQ handler returns (IntrWait/VBlankIntrWait loop).
+    /// - `NotHandled`: fall through to normal BIOS dispatch.
+    ///
+    /// Currently handles Halt (0x02), IntrWait (0x04),
+    /// VBlankIntrWait (0x05), Div (0x06), DivArm (0x07), Sqrt (0x08),
+    /// ArcTan (0x09), ArcTan2 (0x0A), CpuSet (0x0B), and
+    /// CpuFastSet (0x0C).
+    fn try_hle_swi<B: Bus>(&mut self, bus: &mut B) -> HleSwiResult {
         if !self.hle_swi {
-            return false;
+            return HleSwiResult::NotHandled;
         }
 
         // Extract SWI number from the prefetched instruction (still in slot 0).
@@ -349,57 +398,51 @@ impl Arm7tdmi {
             0x02 => {
                 // Halt: halt CPU until any enabled interrupt fires.
                 self.halted = true;
-                true
+                HleSwiResult::Handled
+            }
+            0x04 => {
+                // IntrWait(r0=discard_old, r1=flag_mask):
+                self.hle_intr_wait(bus, self.regs.r[0], self.regs.r[1] as u16)
             }
             0x05 => {
-                // VBlankIntrWait ≡ IntrWait(1, VBLANK):
-                // 1. Set IME = 1
-                bus.write16(0x0400_0208, 1);
-                // 2. Clear VBlank bit in IntrCheck (BIOS_IF at 0x03007FF8)
-                let intr_check = bus.read16(0x0300_7FF8);
-                bus.write16(0x0300_7FF8, intr_check & !1);
-                // 3. Halt CPU — will wake on next enabled interrupt.
-                //    TODO: The real BIOS loops until VBlank specifically fires;
-                //    this simplified version wakes on ANY interrupt and returns.
-                //    A timer/keypad IRQ could cause premature return.
-                self.halted = true;
-                true
+                // VBlankIntrWait ≡ IntrWait(1, 0x0001):
+                self.hle_intr_wait(bus, 1, 0x0001)
             }
             0x0B => {
                 // CpuSet: memory copy/fill using 16-bit or 32-bit units.
                 self.hle_cpu_set(bus);
-                true
+                HleSwiResult::Handled
             }
             0x0C => {
                 // CpuFastSet: memory copy/fill using 32-bit units, count
                 // rounded up to a multiple of 8.
                 self.hle_cpu_fast_set(bus);
-                true
+                HleSwiResult::Handled
             }
             0x06 => {
                 // Div: signed integer division.
                 self.hle_div();
-                true
+                HleSwiResult::Handled
             }
             0x07 => {
                 // DivArm: same as Div but with swapped arguments.
                 self.hle_div_arm();
-                true
+                HleSwiResult::Handled
             }
             0x08 => {
                 // Sqrt: integer square root.
                 self.hle_sqrt();
-                true
+                HleSwiResult::Handled
             }
             0x09 => {
                 // ArcTan: fixed-point arctangent.
                 self.hle_arctan();
-                true
+                HleSwiResult::Handled
             }
             0x0A => {
                 // ArcTan2: fixed-point atan2.
                 self.hle_arctan2();
-                true
+                HleSwiResult::Handled
             }
             _ => {
                 #[cfg(test)]
@@ -408,8 +451,51 @@ impl Arm7tdmi {
                         self.unhandled_swis.push(swi_number);
                     }
                 }
-                false
+                HleSwiResult::NotHandled
             }
+        }
+    }
+
+    /// HLE implementation of IntrWait / VBlankIntrWait.
+    ///
+    /// On first entry (`intr_wait_mask` is `None`):
+    /// 1. If `discard_old != 0`: clear requested flags from BIOS_IF.
+    /// 2. Set IME = 1 and halt the CPU.
+    /// 3. Return `HandledRepeatSwi` so PC stays at the SWI instruction.
+    ///
+    /// On re-entry after an IRQ handler returns (`intr_wait_mask` is `Some`):
+    /// - If any requested flags are set in BIOS_IF: clear them, reset
+    ///   the mask to `None`, and return `Handled` to advance PC.
+    /// - Otherwise: re-halt and return `HandledRepeatSwi`.
+    fn hle_intr_wait<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        discard_old: u32,
+        flag_mask: u16,
+    ) -> HleSwiResult {
+        if let Some(mask) = self.intr_wait_mask {
+            // Re-entry: check if the desired interrupt(s) fired.
+            let bios_if = bus.read16(Self::BIOS_IF_ADDR);
+            if bios_if & mask != 0 {
+                // Acknowledged — clear the matched flags and resume.
+                bus.write16(Self::BIOS_IF_ADDR, bios_if & !mask);
+                self.intr_wait_mask = None;
+                HleSwiResult::Handled
+            } else {
+                // Not yet — re-halt and wait for the next IRQ.
+                self.halted = true;
+                HleSwiResult::HandledRepeatSwi
+            }
+        } else {
+            // First entry: set up the wait.
+            self.intr_wait_mask = Some(flag_mask);
+            if discard_old != 0 {
+                let bios_if = bus.read16(Self::BIOS_IF_ADDR);
+                bus.write16(Self::BIOS_IF_ADDR, bios_if & !flag_mask);
+            }
+            bus.write16(0x0400_0208, 1); // IME = 1
+            self.halted = true;
+            HleSwiResult::HandledRepeatSwi
         }
     }
 
@@ -1181,5 +1267,165 @@ mod tests {
         assert_eq!(cpu.regs.r[0], 0x8000, "ArcTan2(neg,0) angle");
         assert_eq!(cpu.regs.r[1], 0, "ArcTan2(neg,0) r1");
         assert_eq!(cpu.regs.r[3], 0x170, "ArcTan2(neg,0) r3");
+    }
+
+    // --- VBlankIntrWait / IntrWait HLE looping tests ---
+    //
+    // BIOS_IF at 0x03007FF8 wraps to offset 0xFF8 in a 0x1000-byte RamBus.
+    // IME at 0x04000208 wraps to offset 0x208.
+
+    const BIOS_IF_ADDR: u32 = 0x0300_7FF8;
+
+    /// After VBlankIntrWait HLE, the CPU should be halted and PC should
+    /// remain at the SWI instruction (not advance past it), so the SWI
+    /// will re-execute after an IRQ handler returns.
+    #[test]
+    fn hle_vblank_intr_wait_halts_and_keeps_pc_at_swi() {
+        let (mut cpu, mut bus) = hle_setup();
+        // Place ARM SWI 0x05 (VBlankIntrWait) at address 0x00.
+        write_arm_word(&mut bus, 0x0, 0xEF05_0000);
+        cpu.step(&mut bus);
+        assert!(cpu.is_halted(), "CPU should be halted after VBlankIntrWait");
+        assert_eq!(
+            cpu.regs.r[15], 0x00,
+            "PC should stay at SWI instruction, not advance"
+        );
+    }
+
+    /// When VBlankIntrWait is re-entered after a non-VBlank IRQ,
+    /// the CPU should re-halt because VBlank hasn't fired yet.
+    #[test]
+    fn hle_vblank_intr_wait_rehalts_on_non_vblank_irq() {
+        let (mut cpu, mut bus) = hle_setup();
+        write_arm_word(&mut bus, 0x0, 0xEF05_0000);
+
+        // First call: enters wait state.
+        cpu.step(&mut bus);
+        assert!(cpu.is_halted());
+
+        // Simulate IRQ handler return: set a non-VBlank flag in BIOS_IF
+        // (bit 3 = Timer 0), un-halt, and set PC back to SWI address.
+        bus.write16(BIOS_IF_ADDR, 0x0008); // Timer 0 flag
+        cpu.halted = false;
+        cpu.regs.r[15] = 0x00;
+        cpu.prefetch_valid = false;
+
+        // Re-execute the SWI — should see no VBlank bit and re-halt.
+        cpu.step(&mut bus);
+        assert!(
+            cpu.is_halted(),
+            "CPU should re-halt — VBlank bit is not in BIOS_IF"
+        );
+        assert_eq!(
+            cpu.regs.r[15], 0x00,
+            "PC should remain at SWI for next re-entry"
+        );
+    }
+
+    /// When VBlankIntrWait is re-entered after VBlank fires (bit 0 set
+    /// in BIOS_IF), the CPU should clear the VBlank bit and advance PC.
+    #[test]
+    fn hle_vblank_intr_wait_advances_on_vblank() {
+        let (mut cpu, mut bus) = hle_setup();
+        write_arm_word(&mut bus, 0x0, 0xEF05_0000);
+
+        // First call: enters wait state.
+        cpu.step(&mut bus);
+        assert!(cpu.is_halted());
+
+        // Simulate IRQ handler return: set VBlank flag in BIOS_IF.
+        bus.write16(BIOS_IF_ADDR, 0x0001); // VBlank
+        cpu.halted = false;
+        cpu.regs.r[15] = 0x00;
+        cpu.prefetch_valid = false;
+
+        // Re-execute SWI — should see VBlank, clear it, and advance.
+        cpu.step(&mut bus);
+        assert!(
+            !cpu.is_halted(),
+            "CPU should NOT be halted after VBlank acknowledged"
+        );
+        assert_eq!(
+            cpu.regs.r[15], 0x04,
+            "PC should have advanced past the SWI instruction"
+        );
+        assert_eq!(
+            bus.read16(BIOS_IF_ADDR),
+            0,
+            "VBlank bit should be cleared from BIOS_IF"
+        );
+    }
+
+    /// IntrWait (SWI 0x04) with r0=1, r1=0x08 (Timer 0) should loop until
+    /// Timer 0 fires. A VBlank interrupt should not satisfy the wait.
+    #[test]
+    fn hle_intr_wait_loops_until_requested_irq() {
+        let (mut cpu, mut bus) = hle_setup();
+        write_arm_word(&mut bus, 0x0, 0xEF04_0000); // SWI 0x04 (IntrWait)
+        cpu.regs.r[0] = 1; // discard_old = true
+        cpu.regs.r[1] = 0x0008; // wait for Timer 0 (bit 3)
+
+        // First call: enters wait state.
+        cpu.step(&mut bus);
+        assert!(cpu.is_halted(), "CPU should be halted after IntrWait");
+
+        // Simulate VBlank IRQ (wrong interrupt for this wait).
+        bus.write16(BIOS_IF_ADDR, 0x0001); // VBlank
+        cpu.halted = false;
+        cpu.regs.r[15] = 0x00;
+        cpu.prefetch_valid = false;
+
+        cpu.step(&mut bus);
+        assert!(
+            cpu.is_halted(),
+            "CPU should re-halt — VBlank is not the requested interrupt"
+        );
+
+        // Now simulate Timer 0 IRQ (correct interrupt).
+        bus.write16(BIOS_IF_ADDR, 0x0009); // VBlank + Timer 0
+        cpu.halted = false;
+        cpu.regs.r[15] = 0x00;
+        cpu.prefetch_valid = false;
+
+        cpu.step(&mut bus);
+        assert!(
+            !cpu.is_halted(),
+            "CPU should advance — Timer 0 was in BIOS_IF"
+        );
+        assert_eq!(
+            bus.read16(BIOS_IF_ADDR) & 0x0008,
+            0,
+            "Timer 0 bit should be cleared from BIOS_IF"
+        );
+    }
+
+    /// IntrWait with r0=0 (don't discard) should NOT clear existing BIOS_IF
+    /// flags on entry. If the requested flag is already set, it should
+    /// still wait (halt first), then return on re-entry.
+    #[test]
+    fn hle_intr_wait_no_discard_preserves_existing_flags() {
+        let (mut cpu, mut bus) = hle_setup();
+        write_arm_word(&mut bus, 0x0, 0xEF04_0000); // SWI 0x04
+        cpu.regs.r[0] = 0; // discard_old = false
+        cpu.regs.r[1] = 0x0001; // wait for VBlank
+
+        // Pre-set VBlank in BIOS_IF.
+        bus.write16(BIOS_IF_ADDR, 0x0001);
+
+        // First call: should NOT clear the pre-existing VBlank flag.
+        cpu.step(&mut bus);
+        assert!(cpu.is_halted(), "CPU should halt on first IntrWait call");
+
+        // Simulate handler return with VBlank still in BIOS_IF.
+        cpu.halted = false;
+        cpu.regs.r[15] = 0x00;
+        cpu.prefetch_valid = false;
+
+        // Re-entry: VBlank is set → should advance.
+        cpu.step(&mut bus);
+        assert!(
+            !cpu.is_halted(),
+            "CPU should advance — VBlank was already in BIOS_IF"
+        );
     }
 }
