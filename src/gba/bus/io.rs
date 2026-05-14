@@ -41,7 +41,6 @@ pub const REG_TM0CNT_H: u32 = 0x0400_0102;
 
 /// Address of `REG_DISPCNT` (PPU display control).
 pub const REG_DISPCNT: u32 = 0x0400_0000;
-const REG_BG0_SCROLL_END: u32 = ppu::REG_BG0VOFS + 1;
 
 /// I/O register backing store.
 ///
@@ -83,9 +82,9 @@ impl IoRegisters {
 
     /// Try to read a halfword from the I/O register space.
     ///
-    /// Returns `None` for addresses outside the 1 KB I/O window so the bus
-    /// can supply the correct open-bus value instead of treating the read
-    /// as a handled register access returning zero.
+    /// Returns `None` for write-only registers and addresses outside the
+    /// 1 KB I/O window so the bus can supply the correct open-bus value.
+    /// Readable registers with unused bits apply read masks per GBATek.
     pub fn try_read16(
         &self,
         addr: u32,
@@ -99,7 +98,7 @@ impl IoRegisters {
             REG_IE => Some(ic.ie),
             REG_IF => Some(ic.if_flags),
             REG_IME => Some(ic.read_ime()),
-            // PPU display registers.
+            // PPU display registers (readable).
             ppu::REG_DISPCNT => Some(ppu.read_dispcnt()),
             ppu::REG_BG0CNT => Some(ppu.read_bg_cnt(0)),
             ppu::REG_BG1CNT => Some(ppu.read_bg_cnt(1)),
@@ -107,6 +106,21 @@ impl IoRegisters {
             ppu::REG_BG3CNT => Some(ppu.read_bg_cnt(3)),
             ppu::REG_DISPSTAT => Some(ppu.read_dispstat()),
             ppu::REG_VCOUNT => Some(ppu.read_vcount()),
+            // PPU write-only registers → open-bus.
+            0x0400_0010..=0x0400_001E => None, // BG scroll offsets
+            0x0400_0020..=0x0400_003E => None, // BG affine params
+            0x0400_0040..=0x0400_0046 => None, // Window H/V coords
+            0x0400_004C => None,               // MOSAIC
+            0x0400_0054 => None,               // BLDY
+            // PPU readable registers with masks.
+            0x0400_0048 => self.read_backing(addr, 0x3F3F), // WININ
+            0x0400_004A => self.read_backing(addr, 0x3F3F), // WINOUT
+            0x0400_0050 => self.read_backing(addr, 0x3FFF), // BLDCNT
+            0x0400_0052 => self.read_backing(addr, 0x1F1F), // BLDALPHA
+            // Invalid addresses in PPU/blend range → open-bus.
+            0x0400_004E | 0x0400_0056..=0x0400_005E => None,
+            // Invalid addresses after sound FIFO (not in APU intercept range).
+            0x0400_00A8..=0x0400_00AF => None,
             // Keypad.
             REG_KEYINPUT => Some(keypad.read_keyinput()),
             REG_KEYCNT => Some(keypad.read_keycnt()),
@@ -120,10 +134,21 @@ impl IoRegisters {
             0x0400_010A => Some(timers.read_cnt_h(2)),
             0x0400_010C => Some(timers.read_cnt_l(3)),
             0x0400_010E => Some(timers.read_cnt_h(3)),
-            // DMA: 0x0400_00B0..=0x0400_00DF — write-only regs read 0.
+            // DMA registers.
             0x0400_00B0..=0x0400_00DF => dma.try_read16(addr),
+            // Invalid addresses post-DMA → open-bus.
+            0x0400_00E0..=0x0400_00FF => None,
+            // Invalid system-area addresses → read as zero (not open-bus).
+            0x0400_0136 | 0x0400_0142 | 0x0400_015A | 0x0400_0206 | 0x0400_020A | 0x0400_0302 => {
+                Some(0)
+            }
             _ => Self::idx(addr).map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]])),
         }
+    }
+
+    /// Read a halfword from the backing store with a mask applied.
+    fn read_backing(&self, addr: u32, mask: u16) -> Option<u16> {
+        Self::idx(addr).map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]]) & mask)
     }
 
     /// Try to read a word from the I/O register space (two halfwords).
@@ -334,25 +359,27 @@ impl IoRegisters {
             ppu.write_affine(aligned, merged);
             return;
         }
-        // BG0 scroll registers are write-only as well. Merge byte writes
-        // against live PPU state instead of io.read16() (which returns
-        // backing-store/open-bus for these addresses).
-        if (ppu::REG_BG0HOFS..=REG_BG0_SCROLL_END).contains(&addr) {
+        // BG scroll registers (0x10..0x1E) are write-only. Merge byte
+        // writes against the PPU's live scroll state instead of io.read16()
+        // (which returns open-bus zero for these addresses).
+        if (ppu::REG_BG0HOFS..=ppu::REG_BG3VOFS + 1).contains(&addr) {
             let aligned = addr & !1;
-            let current = match aligned {
-                ppu::REG_BG0HOFS => ppu.read_bg0_hofs(),
-                ppu::REG_BG0VOFS => ppu.read_bg0_vofs(),
-                _ => unreachable!("unexpected BG0 scroll register address: {aligned:#010X}"),
+            let bg = ((aligned - ppu::REG_BG0HOFS) / 4) as usize;
+            let is_vofs = (aligned - ppu::REG_BG0HOFS) % 4 == 2;
+            let current = if is_vofs {
+                ppu.read_bg_vofs(bg)
+            } else {
+                ppu.read_bg_hofs(bg)
             };
             let merged = if addr & 1 == 0 {
                 (current & 0xFF00) | value as u16
             } else {
                 (current & 0x00FF) | ((value as u16) << 8)
             };
-            match aligned {
-                ppu::REG_BG0HOFS => ppu.write_bg0_hofs(merged),
-                ppu::REG_BG0VOFS => ppu.write_bg0_vofs(merged),
-                _ => unreachable!("unexpected BG0 scroll register address: {aligned:#010X}"),
+            if is_vofs {
+                ppu.write_bg_vofs(bg, merged);
+            } else {
+                ppu.write_bg_hofs(bg, merged);
             }
             return;
         }
@@ -379,10 +406,10 @@ mod tests {
         let mut d = DmaController::new();
         let mut p = Ppu::new();
         let mut k = Keypad::new();
-        // 0x40 is REG_SOUNDCNT_H; not specially handled here — should just
+        // WAITCNT (0x204) is not specially handled — should just
         // round-trip through the backing store.
-        io.write16(0x0400_0040, 0xBEEF, &mut ic, &mut t, &mut d, &mut p, &mut k);
-        assert_eq!(io.read16(0x0400_0040, &ic, &t, &d, &p, &k), 0xBEEF);
+        io.write16(0x0400_0204, 0xBEEF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(io.read16(0x0400_0204, &ic, &t, &d, &p, &k), 0xBEEF);
     }
 
     #[test]
@@ -1010,5 +1037,155 @@ mod tests {
         );
 
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    // ---------------------------------------------------------------
+    // I/O read-back tests (per GBATek I/O map & mgba-emu/suite io-read)
+    // ---------------------------------------------------------------
+
+    /// Write-only PPU registers (BG scroll offsets, affine params, window
+    /// coords, MOSAIC, BLDY) must return `None` from `try_read16` so the
+    /// bus can substitute the open-bus value.
+    #[test]
+    fn write_only_ppu_registers_return_none() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let write_only_addrs: &[(u32, &str)] = &[
+            // BG scroll offsets (0x10..0x1E)
+            (0x0400_0010, "BG0HOFS"),
+            (0x0400_0012, "BG0VOFS"),
+            (0x0400_0014, "BG1HOFS"),
+            (0x0400_0016, "BG1VOFS"),
+            (0x0400_0018, "BG2HOFS"),
+            (0x0400_001A, "BG2VOFS"),
+            (0x0400_001C, "BG3HOFS"),
+            (0x0400_001E, "BG3VOFS"),
+            // BG affine params (0x20..0x3E)
+            (ppu::REG_BG2PA, "BG2PA"),
+            (ppu::REG_BG2PB, "BG2PB"),
+            (ppu::REG_BG2X_L, "BG2X_LO"),
+            (ppu::REG_BG2Y_H, "BG2Y_HI"),
+            (ppu::REG_BG3PA, "BG3PA"),
+            (ppu::REG_BG3Y_L, "BG3Y_LO"),
+            // Window coordinates (0x40..0x46)
+            (0x0400_0040, "WIN0H"),
+            (0x0400_0042, "WIN1H"),
+            (0x0400_0044, "WIN0V"),
+            (0x0400_0046, "WIN1V"),
+            // MOSAIC
+            (0x0400_004C, "MOSAIC"),
+            // BLDY (write-only)
+            (0x0400_0054, "BLDY"),
+        ];
+
+        for &(addr, name) in write_only_addrs {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                None,
+                "{name} at {addr:#010X} should return None (write-only)"
+            );
+        }
+    }
+
+    /// Readable PPU registers with masks: WININ, WINOUT, BLDCNT, BLDALPHA.
+    /// After writing 0xFFFF, reads must return the value with unused bits
+    /// masked out.
+    #[test]
+    fn readable_ppu_registers_apply_read_masks() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let masked_regs: &[(u32, u16, &str)] = &[
+            (0x0400_0048, 0x3F3F, "WININ"),
+            (0x0400_004A, 0x3F3F, "WINOUT"),
+            (0x0400_0050, 0x3FFF, "BLDCNT"),
+            (0x0400_0052, 0x1F1F, "BLDALPHA"),
+        ];
+
+        for &(addr, expected, name) in masked_regs {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                Some(expected),
+                "{name} at {addr:#010X} should read back {expected:#06X}"
+            );
+        }
+    }
+
+    /// Invalid addresses in the PPU range (0x4E, 0x56-0x5E) and post-DMA
+    /// range (0xA8-0xAE, 0xE0-0xFE) must return `None` (open-bus).
+    #[test]
+    fn invalid_io_addresses_return_none() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let invalid_addrs: &[(u32, &str)] = &[
+            (0x0400_004E, "INVALID (4E)"),
+            (0x0400_0056, "INVALID (56)"),
+            (0x0400_0058, "INVALID (58)"),
+            (0x0400_005A, "INVALID (5A)"),
+            (0x0400_005C, "INVALID (5C)"),
+            (0x0400_005E, "INVALID (5E)"),
+            (0x0400_00A8, "INVALID (A8)"),
+            (0x0400_00AA, "INVALID (AA)"),
+            (0x0400_00AC, "INVALID (AC)"),
+            (0x0400_00AE, "INVALID (AE)"),
+            (0x0400_00E0, "INVALID (E0)"),
+            (0x0400_00F0, "INVALID (F0)"),
+            (0x0400_00FE, "INVALID (FE)"),
+        ];
+
+        for &(addr, name) in invalid_addrs {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                None,
+                "{name} at {addr:#010X} should return None (open-bus)"
+            );
+        }
+    }
+
+    /// Invalid system-area addresses (0x136, 0x142, 0x15A, 0x206, 0x20A,
+    /// 0x302) read as zero on real hardware — not open-bus.
+    #[test]
+    fn invalid_system_addresses_return_zero() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let system_addrs: &[(u32, &str)] = &[
+            (0x0400_0136, "INVALID (136)"),
+            (0x0400_0142, "INVALID (142)"),
+            (0x0400_015A, "INVALID (15A)"),
+            (0x0400_0206, "INVALID (206)"),
+            (0x0400_020A, "INVALID (20A)"),
+            (0x0400_0302, "INVALID (302)"),
+        ];
+
+        for &(addr, name) in system_addrs {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                Some(0),
+                "{name} at {addr:#010X} should return Some(0)"
+            );
+        }
     }
 }

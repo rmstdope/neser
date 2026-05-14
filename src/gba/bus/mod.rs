@@ -1056,9 +1056,9 @@ mod tests {
         // REG_DISPCNT (0x04000000)
         bus.write16(0x0400_0000, 0x1234);
         assert_eq!(bus.read16(0x0400_0000), 0x1234);
-        // A random unimplemented register stretching the dispatch.
-        bus.write16(0x0400_0050, 0xBEEF);
-        assert_eq!(bus.read16(0x0400_0050), 0xBEEF);
+        // WAITCNT (0x04000204) — unimplemented, round-trips via backing store.
+        bus.write16(0x0400_0204, 0xBEEF);
+        assert_eq!(bus.read16(0x0400_0204), 0xBEEF);
     }
 
     #[test]
