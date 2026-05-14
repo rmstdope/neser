@@ -10,12 +10,29 @@ use crate::gb::model::CgbModel;
 
 const FETCHER_STARTUP_DOTS: u16 = 16;
 const INITIAL_BGP: u8 = 0xFC;
+const LCDC_BG_WINDOW_ENABLE: u8 = 0x01;
+const LCDC_BG_MAP: u8 = 0x08;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LcdcBgEnableEdgeTiming {
     CurrentPixelUsesNew,
     CurrentPixelUsesPrevious,
     HoldPreviousForOneExtraPixel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LcdcBgMapFetchDelay {
+    NextBgFetch,
+    OneBgFetchLater,
+}
+
+impl LcdcBgMapFetchDelay {
+    fn pixels(self) -> u8 {
+        match self {
+            Self::NextBgFetch => 8,
+            Self::OneBgFetchLater => 16,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -34,7 +51,7 @@ impl LcdcBgEnableEdge {
         new_lcdc: u8,
         timing: LcdcBgEnableEdgeTiming,
     ) {
-        if previous_lcdc & 0x01 == new_lcdc & 0x01 {
+        if previous_lcdc & LCDC_BG_WINDOW_ENABLE == new_lcdc & LCDC_BG_WINDOW_ENABLE {
             return;
         }
 
@@ -46,9 +63,11 @@ impl LcdcBgEnableEdge {
             | LcdcBgEnableEdgeTiming::CurrentPixelUsesPrevious => next_x,
         };
         self.enabled = match timing {
-            LcdcBgEnableEdgeTiming::CurrentPixelUsesNew => new_lcdc & 0x01 != 0,
+            LcdcBgEnableEdgeTiming::CurrentPixelUsesNew => new_lcdc & LCDC_BG_WINDOW_ENABLE != 0,
             LcdcBgEnableEdgeTiming::CurrentPixelUsesPrevious
-            | LcdcBgEnableEdgeTiming::HoldPreviousForOneExtraPixel => previous_lcdc & 0x01 != 0,
+            | LcdcBgEnableEdgeTiming::HoldPreviousForOneExtraPixel => {
+                previous_lcdc & LCDC_BG_WINDOW_ENABLE != 0
+            }
         };
     }
 
@@ -56,7 +75,7 @@ impl LcdcBgEnableEdge {
         if self.active && u32::from(self.start_x) <= x && x <= u32::from(self.end_x) {
             self.enabled
         } else {
-            current_lcdc & 0x01 != 0
+            current_lcdc & LCDC_BG_WINDOW_ENABLE != 0
         }
     }
 
@@ -64,6 +83,68 @@ impl LcdcBgEnableEdge {
         if self.active && self.end_x == next_x {
             self.active = false;
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct LcdcBgMapEdgeRange {
+    start_x: u8,
+    end_x: u8,
+    bg_map_bit: u8,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct LcdcBgMapEdge {
+    ranges: Vec<LcdcBgMapEdgeRange>,
+}
+
+impl LcdcBgMapEdge {
+    fn bg_tile_boundary_at_or_after(next_x: u8, scx: u8) -> u8 {
+        let bg_phase = scx.wrapping_add(next_x) & 0x07;
+        let pixels_until_boundary = if bg_phase == 0 { 0 } else { 8 - bg_phase };
+        next_x.saturating_add(pixels_until_boundary)
+    }
+
+    fn record_write(&mut self, start_x: u8, end_x: u8, previous_lcdc: u8, new_lcdc: u8) {
+        if previous_lcdc & LCDC_BG_MAP == new_lcdc & LCDC_BG_MAP || start_x > end_x {
+            return;
+        }
+
+        self.ranges.push(LcdcBgMapEdgeRange {
+            start_x,
+            end_x,
+            bg_map_bit: previous_lcdc & LCDC_BG_MAP,
+        });
+    }
+
+    fn record_delayed_write(
+        &mut self,
+        next_x: u8,
+        scx: u8,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        fetch_delay: LcdcBgMapFetchDelay,
+    ) {
+        let next_fetch_tile_start =
+            Self::bg_tile_boundary_at_or_after(next_x, scx).saturating_add(fetch_delay.pixels());
+        let end_x = next_fetch_tile_start.saturating_sub(1);
+        self.record_write(next_x, end_x, previous_lcdc, new_lcdc);
+    }
+
+    fn lcdc_for_bg_fetch(&self, x: u32, current_lcdc: u8) -> u8 {
+        if let Some(range) = self
+            .ranges
+            .iter()
+            .find(|range| u32::from(range.start_x) <= x && x <= u32::from(range.end_x))
+        {
+            (current_lcdc & !LCDC_BG_MAP) | range.bg_map_bit
+        } else {
+            current_lcdc
+        }
+    }
+
+    fn clear_consumed(&mut self, next_x: u8) {
+        self.ranges.retain(|range| range.end_x != next_x);
     }
 }
 
@@ -88,7 +169,11 @@ pub struct PixelFifoRenderer {
     #[serde(default)]
     sprite_indices: Vec<usize>,
     #[serde(default)]
+    leftmost_obj_oam_x: Option<u8>,
+    #[serde(default)]
     lcdc_bg_enable_edge: LcdcBgEnableEdge,
+    #[serde(default)]
+    lcdc_bg_map_edge: LcdcBgMapEdge,
 }
 
 impl PixelFifoRenderer {
@@ -107,7 +192,9 @@ impl PixelFifoRenderer {
             obj_stall_events: Vec::new(),
             next_obj_stall_event: 0,
             sprite_indices: Vec::new(),
+            leftmost_obj_oam_x: None,
             lcdc_bg_enable_edge: LcdcBgEnableEdge::default(),
+            lcdc_bg_map_edge: LcdcBgMapEdge::default(),
         }
     }
 
@@ -126,6 +213,7 @@ impl PixelFifoRenderer {
         self.bgp_edge_active = false;
         self.bgp_edge_value = registers.bgp;
         self.lcdc_bg_enable_edge = LcdcBgEnableEdge::default();
+        self.lcdc_bg_map_edge = LcdcBgMapEdge::default();
         self.fine_scroll_delay_dots = u16::from(registers.scx & 0x07);
         self.pending_obj_stall_dots = 0;
         self.next_obj_stall_event = 0;
@@ -137,9 +225,15 @@ impl PixelFifoRenderer {
                 registers.scx,
                 &mut self.obj_stall_events,
             );
+            self.leftmost_obj_oam_x = self
+                .sprite_indices
+                .iter()
+                .map(|&index| oam[index * 4 + 1])
+                .min();
         } else {
             self.sprite_indices.clear();
             self.obj_stall_events.clear();
+            self.leftmost_obj_oam_x = None;
         }
     }
 
@@ -203,6 +297,7 @@ impl PixelFifoRenderer {
         }
         self.clear_consumed_bgp_edge();
         self.lcdc_bg_enable_edge.clear_consumed(self.next_x);
+        self.lcdc_bg_map_edge.clear_consumed(self.next_x);
         self.next_x = self.next_x.saturating_add(1);
         if self.next_x as u32 >= ScreenBuffer::WIDTH {
             self.active = false;
@@ -244,12 +339,35 @@ impl PixelFifoRenderer {
         };
     }
 
-    pub fn record_lcdc_write(&mut self, previous: u8, new: u8, cgb_mode: bool, dmg_compat: bool) {
+    pub fn record_lcdc_write(
+        &mut self,
+        previous: u8,
+        new: u8,
+        scx: u8,
+        cgb_mode: bool,
+        dmg_compat: bool,
+    ) {
         if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
             return;
         }
 
         let waiting_on_obj_fetch = self.is_waiting_on_obj_fetch();
+        if !cgb_mode || dmg_compat {
+            let fetch_delay = self.lcdc_bg_map_fetch_delay(
+                previous,
+                new,
+                cgb_mode,
+                dmg_compat,
+                waiting_on_obj_fetch,
+            );
+            self.lcdc_bg_map_edge.record_delayed_write(
+                self.next_x,
+                scx,
+                previous,
+                new,
+                fetch_delay,
+            );
+        }
         let timing = if cgb_mode && dmg_compat {
             if waiting_on_obj_fetch && self.next_x == 0 && self.pending_obj_stall_dots == 1 {
                 LcdcBgEnableEdgeTiming::CurrentPixelUsesPrevious
@@ -265,6 +383,77 @@ impl PixelFifoRenderer {
         };
         self.lcdc_bg_enable_edge
             .record_write(self.next_x, previous, new, timing);
+    }
+
+    fn lcdc_bg_map_fetch_delay(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        cgb_mode: bool,
+        dmg_compat: bool,
+        waiting_on_obj_fetch: bool,
+    ) -> LcdcBgMapFetchDelay {
+        if self.should_delay_lcdc_bg_map_by_extra_fetch(
+            previous_lcdc,
+            new_lcdc,
+            cgb_mode,
+            dmg_compat,
+            waiting_on_obj_fetch,
+        ) {
+            LcdcBgMapFetchDelay::OneBgFetchLater
+        } else {
+            LcdcBgMapFetchDelay::NextBgFetch
+        }
+    }
+
+    fn should_delay_lcdc_bg_map_by_extra_fetch(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        cgb_mode: bool,
+        dmg_compat: bool,
+        waiting_on_obj_fetch: bool,
+    ) -> bool {
+        let bg_map_turning_on = previous_lcdc & LCDC_BG_MAP == 0 && new_lcdc & LCDC_BG_MAP != 0;
+        let bg_map_turning_off = previous_lcdc & LCDC_BG_MAP != 0 && new_lcdc & LCDC_BG_MAP == 0;
+        let visible_left_edge_obj = self.leftmost_obj_oam_x == Some(8);
+        let cgb_dmg_compat = cgb_mode && dmg_compat;
+
+        // Mealybug's DMG-compat references show these edge phases keep the previous
+        // BG map latched through one additional 8-pixel fetch.
+        (bg_map_turning_on
+            && (visible_left_edge_obj
+                || self.cgb_dmg_compat_delays_bg_map_start(cgb_dmg_compat, waiting_on_obj_fetch)))
+            || (bg_map_turning_off
+                && self.cgb_dmg_compat_delays_bg_map_restore(cgb_dmg_compat, waiting_on_obj_fetch))
+    }
+
+    fn cgb_dmg_compat_delays_bg_map_start(
+        &self,
+        cgb_dmg_compat: bool,
+        waiting_on_obj_fetch: bool,
+    ) -> bool {
+        if !cgb_dmg_compat {
+            return false;
+        }
+
+        let off_left_edge_obj = self.leftmost_obj_oam_x == Some(0);
+        (self.next_x == 0 && !off_left_edge_obj)
+            || self.is_cgb_dmg_compat_no_obj_tile_phase(waiting_on_obj_fetch)
+    }
+
+    fn cgb_dmg_compat_delays_bg_map_restore(
+        &self,
+        cgb_dmg_compat: bool,
+        waiting_on_obj_fetch: bool,
+    ) -> bool {
+        cgb_dmg_compat
+            && ((matches!(self.next_x, 7 | 8) && !waiting_on_obj_fetch)
+                || self.is_cgb_dmg_compat_no_obj_tile_phase(waiting_on_obj_fetch))
+    }
+
+    fn is_cgb_dmg_compat_no_obj_tile_phase(&self, waiting_on_obj_fetch: bool) -> bool {
+        !waiting_on_obj_fetch && matches!(self.next_x & 0x07, 0 | 7)
     }
 
     fn render_dmg_pixel(
@@ -410,6 +599,7 @@ impl PixelFifoRenderer {
         window_line: u8,
     ) -> (u8, bool, u8) {
         let lcdc = registers.lcdc;
+        let bg_fetch_lcdc = self.lcdc_bg_map_edge.lcdc_for_bg_fetch(x, lcdc);
         let bg_window_enabled = self
             .lcdc_bg_enable_edge
             .bg_window_enabled_for_pixel(x, lcdc);
@@ -417,7 +607,14 @@ impl PixelFifoRenderer {
         let win_enabled = lcdc & 0x20 != 0;
 
         let bg_idx = if bg_window_enabled {
-            background::fetch_bg_pixel(x, self.scanline, vram, lcdc, registers.scx, registers.scy)
+            background::fetch_bg_pixel(
+                x,
+                self.scanline,
+                vram,
+                bg_fetch_lcdc,
+                registers.scx,
+                registers.scy,
+            )
         } else {
             0
         };
@@ -501,7 +698,10 @@ impl Default for PixelFifoRenderer {
 
 #[cfg(test)]
 mod tests {
-    use super::{LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, PixelFifoRenderer};
+    use super::{
+        LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
+        PixelFifoRenderer,
+    };
 
     #[test]
     fn lcdc_bg_enable_edge_defaults_to_current_lcdc_bit() {
@@ -511,6 +711,90 @@ mod tests {
         // When/Then: the helper follows the live LCDC bit 0 value.
         assert!(edge.bg_window_enabled_for_pixel(12, 0x93));
         assert!(!edge.bg_window_enabled_for_pixel(12, 0x92));
+    }
+
+    #[test]
+    fn lcdc_bg_map_edge_defaults_to_current_lcdc_bit_3() {
+        let edge = LcdcBgMapEdge::default();
+
+        assert_eq!(edge.lcdc_for_bg_fetch(8, 0x83) & 0x08, 0x00);
+        assert_eq!(edge.lcdc_for_bg_fetch(8, 0x8B) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn lcdc_bg_map_edge_holds_previous_map_through_recorded_range() {
+        let mut edge = LcdcBgMapEdge::default();
+        edge.record_write(8, 15, 0x83, 0x8B);
+
+        assert_eq!(edge.lcdc_for_bg_fetch(8, 0x8B) & 0x08, 0x00);
+        assert_eq!(edge.lcdc_for_bg_fetch(15, 0x8B) & 0x08, 0x00);
+        assert_eq!(edge.lcdc_for_bg_fetch(16, 0x8B) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn lcdc_bg_map_edge_replaces_only_bg_map_bit() {
+        let mut edge = LcdcBgMapEdge::default();
+        edge.record_write(8, 15, 0x83, 0x8B);
+
+        assert_eq!(edge.lcdc_for_bg_fetch(8, 0xDB), 0xD3);
+    }
+
+    #[test]
+    fn lcdc_bg_map_edge_preserves_older_overlap_until_tile_latch_expires() {
+        let mut edge = LcdcBgMapEdge::default();
+        edge.record_write(0, 7, 0x83, 0x8B);
+        edge.record_write(6, 15, 0x8B, 0x83);
+
+        assert_eq!(edge.lcdc_for_bg_fetch(6, 0x83) & 0x08, 0x00);
+        assert_eq!(edge.lcdc_for_bg_fetch(8, 0x83) & 0x08, 0x08);
+        assert_eq!(edge.lcdc_for_bg_fetch(16, 0x83) & 0x08, 0x00);
+    }
+
+    #[test]
+    fn lcdc_bg_map_edge_uses_scx_fine_scroll_for_tile_latch_boundary() {
+        let mut edge = LcdcBgMapEdge::default();
+        edge.record_delayed_write(0, 7, 0x83, 0x8B, LcdcBgMapFetchDelay::NextBgFetch);
+
+        assert_eq!(LcdcBgMapEdge::bg_tile_boundary_at_or_after(0, 7), 1);
+        assert_eq!(edge.lcdc_for_bg_fetch(8, 0x8B) & 0x08, 0x00);
+        assert_eq!(edge.lcdc_for_bg_fetch(9, 0x8B) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn record_lcdc_write_delays_visible_left_edge_obj_bg_map_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.next_x = 0;
+        renderer.leftmost_obj_oam_x = Some(8);
+
+        renderer.record_lcdc_write(0x83, 0x8B, 0, false, false);
+
+        assert_eq!(
+            renderer.lcdc_bg_map_edge.lcdc_for_bg_fetch(8, 0x8B) & 0x08,
+            0x00
+        );
+        assert_eq!(
+            renderer.lcdc_bg_map_edge.lcdc_for_bg_fetch(16, 0x8B) & 0x08,
+            0x08
+        );
+    }
+
+    #[test]
+    fn record_lcdc_write_delays_cgb_dmg_compat_tile_phase_bg_map_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.next_x = 15;
+
+        renderer.record_lcdc_write(0xD3, 0xDB, 0, true, true);
+
+        assert_eq!(
+            renderer.lcdc_bg_map_edge.lcdc_for_bg_fetch(24, 0xDB) & 0x08,
+            0x00
+        );
+        assert_eq!(
+            renderer.lcdc_bg_map_edge.lcdc_for_bg_fetch(32, 0xDB) & 0x08,
+            0x08
+        );
     }
 
     #[test]
@@ -576,7 +860,7 @@ mod tests {
         renderer.next_x = 0;
         renderer.pending_obj_stall_dots = 1;
 
-        renderer.record_lcdc_write(0x93, 0x92, true, true);
+        renderer.record_lcdc_write(0x93, 0x92, 0, true, true);
 
         assert!(
             renderer
@@ -597,7 +881,7 @@ mod tests {
         renderer.next_x = 0;
         renderer.pending_obj_stall_dots = 2;
 
-        renderer.record_lcdc_write(0x93, 0x92, true, true);
+        renderer.record_lcdc_write(0x93, 0x92, 0, true, true);
 
         assert!(
             !renderer
