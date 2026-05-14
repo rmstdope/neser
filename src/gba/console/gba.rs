@@ -169,6 +169,12 @@ impl Gba {
         self.cpu.regs.switch_mode(saved_mode);
     }
 
+    /// Enable or disable high-level emulation of known SWI calls on the CPU.
+    #[cfg(test)]
+    pub(crate) fn set_hle_swi(&mut self, enabled: bool) {
+        self.cpu.set_hle_swi(enabled);
+    }
+
     #[cfg(test)]
     pub(crate) fn run_tick_for_tests(&mut self) -> u8 {
         if !self.bus.has_cart() {

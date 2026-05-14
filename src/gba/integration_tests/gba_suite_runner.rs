@@ -15,7 +15,7 @@ const CART_ENTRYPOINT: u32 = 0x0800_0000;
 const BIOS_RESET_LITERAL_ADDR: usize = 0x20;
 const BIOS_EXCEPTION_VECTORS: [u32; 5] = [0x04, 0x0C, 0x10, 0x18, 0x1C];
 // GBA nominal timing: 280_896 cycles per frame (~59.73 Hz).
-const GBA_CYCLES_PER_FRAME: u64 = 280_896;
+pub(crate) const GBA_CYCLES_PER_FRAME: u64 = 280_896;
 // Allow up to two frames while waiting for a fresh frame-ready edge after idle-loop detection.
 const FRAME_SETTLE_MAX_CYCLES: u64 = GBA_CYCLES_PER_FRAME * 2;
 
@@ -38,6 +38,7 @@ pub enum Suite {
     FuzzThumbAny,
     FuzzArmMixed,
     ArmWrestler,
+    Mgba,
 }
 
 impl Suite {
@@ -64,6 +65,7 @@ impl Suite {
             Self::FuzzThumbAny => "roms/gba/automated_tests/FuzzARM/THUMB_Any.gba",
             Self::FuzzArmMixed => "roms/gba/automated_tests/FuzzARM/FuzzARM.gba",
             Self::ArmWrestler => "roms/gba/automated_tests/armwrestler/armwrestler-gba-fixed.gba",
+            Self::Mgba => "roms/gba/automated_tests/mgba-emu-suite/suite.gba",
         }
     }
 
@@ -89,7 +91,8 @@ impl Suite {
             | Self::FuzzThumbDataProcessing
             | Self::FuzzThumbAny
             | Self::FuzzArmMixed
-            | Self::ArmWrestler => None,
+            | Self::ArmWrestler
+            | Self::Mgba => None,
         }
     }
 
@@ -112,6 +115,7 @@ impl Suite {
             Self::FuzzThumbAny => "fuzzthumb_any",
             Self::FuzzArmMixed => "fuzzarm_mixed",
             Self::ArmWrestler => "armwrestler",
+            Self::Mgba => "mgba_suite",
         }
     }
 
@@ -435,6 +439,10 @@ fn is_bios_exception_vector(pc: u32) -> bool {
 /// Total test pages: 5 ARM (Test0–Test4) + 3 THUMB (_test0–_test2).
 pub const ARMWRESTLER_TEST_PAGE_COUNT: usize = 8;
 
+/// Button bitmask for A (NES-convention bit 0).
+const BTN_A: u8 = 0x01;
+/// Button bitmask for B (NES-convention bit 1).
+const BTN_B: u8 = 0x02;
 /// Button bitmask for Start (NES-convention bit 3).
 const BTN_START: u8 = 0x08;
 /// Button bitmask for Down (NES-convention bit 5).
@@ -627,6 +635,297 @@ fn run_until_frame_ready(gba: &mut Gba, cycles: &mut u64) -> bool {
     false
 }
 
+// --- mgba-emu/suite runner ---
+//
+// The mgba-emu test suite is a single interactive ROM with 14 sub-suites
+// navigated via menu (UP/DOWN to select, A to enter, B to go back).
+// This runner boots the ROM, enters each sub-suite sequentially, waits
+// for results to stabilise, captures the framebuffer CRC, and returns.
+//
+// Sub-suite order (menu index 0–13):
+//   0: Memory, 1: I/O read, 2: Timing, 3: Timers, 4: Timer IRQ,
+//   5: Shifter, 6: Carry, 7: Multiply long, 8: BIOS math, 9: DMA,
+//   10: SIO read, 11: SIO timing, 12: Misc. edge cases, 13: Video
+
+/// Total number of sub-suites in the mgba-emu test suite.
+pub const MGBA_SUITE_COUNT: usize = 14;
+
+/// CRC approval keys for each mgba sub-suite, in menu order.
+pub const MGBA_SUITE_KEYS: [&str; MGBA_SUITE_COUNT] = [
+    "mgba_memory",
+    "mgba_io_read",
+    "mgba_timing",
+    "mgba_timers",
+    "mgba_timer_irq",
+    "mgba_shifter",
+    "mgba_carry",
+    "mgba_multiply_long",
+    "mgba_bios_math",
+    "mgba_dma",
+    "mgba_sio_read",
+    "mgba_sio_timing",
+    "mgba_misc_edge",
+    "mgba_video",
+];
+
+/// Result of running all mgba-emu sub-suites sequentially.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MgbaSuiteResult {
+    /// CRC32 of the framebuffer after each sub-suite completes (14 entries).
+    pub suite_crcs: Vec<u32>,
+    /// Total cycles consumed.
+    pub cycles: u64,
+}
+
+/// Build an enhanced stub BIOS for the mgba-emu test suite.
+///
+/// The mgba suite (via libgba) uses VBlankIntrWait (SWI 0x05) and relies on
+/// the BIOS IRQ dispatcher at vector 0x18 to call the user-installed handler
+/// at `[0x03FFFFFC]`. This stub provides:
+///
+/// - **Reset vector (0x00)**: jump to cartridge entrypoint 0x0800_0000.
+/// - **SWI vector (0x08)**: `MOVS PC, LR` (fallback for non-HLE SWIs).
+/// - **IRQ vector (0x18)**: ARM code that saves context, calls user handler
+///   at `[0x03FFFFFC]`, restores context, and returns via `SUBS PC, LR, #4`.
+/// - All other exception vectors: branch-to-self trap.
+///
+/// HLE SWI handling (VBlankIntrWait, Halt) is done in the CPU core when
+/// `set_hle_swi(true)` is called — the BIOS SWI vector is only reached for
+/// unrecognised SWI numbers.
+pub fn build_mgba_stub_bios() -> Vec<u8> {
+    let mut bios = vec![0u8; BIOS_SIZE];
+
+    // Reset vector: LDR PC, [PC, #24] → loads literal at 0x20 = 0x0800_0000
+    bios[0x00..0x04].copy_from_slice(&BIOS_RESET_STUB_LDR_PC_PLUS_24.to_le_bytes());
+    bios[BIOS_RESET_LITERAL_ADDR..BIOS_RESET_LITERAL_ADDR + 4]
+        .copy_from_slice(&CART_ENTRYPOINT.to_le_bytes());
+
+    // SWI vector: MOVS PC, LR (fallback return for unhandled SWIs)
+    bios[0x08..0x0C].copy_from_slice(&BIOS_SWI_STUB_MOVS_PC_LR.to_le_bytes());
+
+    // Unused exception vectors: branch-to-self (trap)
+    for &vector in &[0x04u32, 0x0C, 0x10, 0x1C] {
+        let i = vector as usize;
+        bios[i..i + 4].copy_from_slice(&ARM_BRANCH_SELF_OPCODE.to_le_bytes());
+    }
+
+    // IRQ vector (0x18): branch to IRQ handler body at 0x80.
+    // ARM branch encoding: target = PC + 8 + (offset * 4)
+    //   offset = (0x80 - (0x18 + 8)) / 4 = 0x60 / 4 = 24 = 0x18
+    let irq_branch: u32 = 0xEA00_0018; // B 0x80
+    bios[0x18..0x1C].copy_from_slice(&irq_branch.to_le_bytes());
+
+    // IRQ handler body at 0x80:
+    //   0x80: STMFD SP!, {r0-r3, r12, lr}   ; save caller-saved regs
+    //   0x84: MOV r0, #0x04000000            ; I/O base
+    //   0x88: ADD lr, pc, #0                 ; LR = 0x90 (return addr for user handler)
+    //   0x8C: LDR pc, [r0, #-4]             ; jump to [0x03FFFFFC] (user handler)
+    //   0x90: LDMFD SP!, {r0-r3, r12, lr}   ; restore regs
+    //   0x94: SUBS pc, lr, #4               ; return from IRQ
+    let irq_handler: [u32; 6] = [
+        0xE92D_500F, // STMFD SP!, {r0-r3, r12, lr}
+        0xE3A0_0301, // MOV r0, #0x04000000
+        0xE28F_E000, // ADD lr, pc, #0
+        0xE510_F004, // LDR pc, [r0, #-4]
+        0xE8BD_500F, // LDMFD SP!, {r0-r3, r12, lr}
+        0xE25E_F004, // SUBS pc, lr, #4
+    ];
+    for (i, &word) in irq_handler.iter().enumerate() {
+        let addr = 0x80 + i * 4;
+        bios[addr..addr + 4].copy_from_slice(&word.to_le_bytes());
+    }
+
+    bios
+}
+
+/// Boot the mgba-emu test suite ROM with the enhanced stub BIOS.
+///
+/// Returns a `Gba` instance ready to run, positioned at the cartridge
+/// entrypoint with stack pointers initialised. HLE SWI is enabled so
+/// VBlankIntrWait and Halt are handled in Rust.
+pub fn boot_mgba_suite() -> (Gba, Vec<u8>) {
+    let rom_path = Suite::Mgba.rom_path();
+    let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {
+        panic!("failed to read mgba suite ROM {}: {e}", rom_path.display());
+    });
+
+    let mut gba = Gba::new(AppContext::default());
+    let bios = build_mgba_stub_bios();
+    gba.bus_mut().load_bios(&bios);
+    gba.load_rom(&rom, rom_path.to_str().unwrap_or("mgba-emu-suite"))
+        .unwrap_or_else(|e| {
+            panic!("failed to load mgba suite ROM {}: {e}", rom_path.display());
+        });
+    gba.init_test_stack_pointers();
+    gba.set_hle_swi(true);
+
+    (gba, rom)
+}
+
+/// Run the mgba-emu test suite ROM through all 14 sub-suites.
+///
+/// Navigation protocol:
+/// - Boot → 10 frames to render menu (cursor starts at index 0)
+/// - For each sub-suite i (0..14):
+///   - Press DOWN once to advance cursor (except suite 0)
+///   - Press A to enter
+///   - Wait for suite to finish: detect screen CRC change from initial state,
+///     then wait for long stability (suite idle loop renders same frame)
+///   - Capture CRC
+///   - Press B to return to menu (retry if B doesn't register)
+///   - Wait for menu to re-render
+pub fn run_mgba_suite() -> MgbaSuiteResult {
+    let (mut gba, _rom) = boot_mgba_suite();
+
+    let mut cycles: u64 = 0;
+    let mut suite_crcs: Vec<u32> = Vec::with_capacity(MGBA_SUITE_COUNT);
+
+    // Boot: let the menu render.
+    for _ in 0..10 {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "mgba suite: timed out during initial boot"
+        );
+        gba.clear_ready_to_render();
+    }
+
+    #[allow(clippy::needless_range_loop)]
+    for suite_idx in 0..MGBA_SUITE_COUNT {
+        // Navigate: cursor stays at previous position, press DOWN once.
+        if suite_idx > 0 {
+            press_button(&mut gba, &mut cycles, BTN_DOWN);
+        }
+
+        // Capture menu CRC before entering (for exit verification).
+        let menu_crc = gba.screen_crc32();
+
+        // Press A to enter the sub-suite.
+        press_button(&mut gba, &mut cycles, BTN_A);
+
+        // Wait for the sub-suite to finish running its tests.
+        //
+        // Strategy: capture the CRC of the first frame after entering (the
+        // "initial" screen, often "Testing..."). Then wait for the screen to
+        // CHANGE from that initial state (indicating tests are producing output).
+        // Once a change is seen, wait for STABLE_FRAMES consecutive identical
+        // frames — this means the suite has finished and entered its idle loop.
+        // If the screen never changes, timeout at MAX_SUITE_FRAMES and capture
+        // the initial screen (suite is stuck or produces no visible output).
+        const STABLE_FRAMES: u32 = 30;
+        const MAX_SUITE_FRAMES: u32 = 2000;
+
+        // Get the initial frame CRC (the "entering suite" screen).
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "mgba suite '{}': timed out getting initial frame",
+            MGBA_SUITE_KEYS[suite_idx]
+        );
+        gba.clear_ready_to_render();
+        let initial_crc = gba.screen_crc32();
+
+        let mut prev_crc: u32 = initial_crc;
+        let mut stable_count: u32 = 1;
+        let mut saw_change_from_initial = false;
+
+        for frame in 1..MAX_SUITE_FRAMES {
+            assert!(
+                run_until_frame_ready(&mut gba, &mut cycles),
+                "mgba suite '{}': timed out at frame {frame}",
+                MGBA_SUITE_KEYS[suite_idx]
+            );
+            gba.clear_ready_to_render();
+
+            let crc = gba.screen_crc32();
+
+            if !saw_change_from_initial {
+                // Still showing the initial screen — wait for it to change.
+                if crc != initial_crc {
+                    saw_change_from_initial = true;
+                    prev_crc = crc;
+                    stable_count = 1;
+                }
+            } else {
+                // We've left the initial screen; now wait for stability.
+                if crc == prev_crc {
+                    stable_count += 1;
+                    if stable_count >= STABLE_FRAMES {
+                        break;
+                    }
+                } else {
+                    prev_crc = crc;
+                    stable_count = 1;
+                }
+            }
+        }
+
+        let crc = gba.screen_crc32();
+        maybe_write_mgba_png(&gba, suite_idx, crc);
+        suite_crcs.push(crc);
+
+        // Press B to return to the menu. Retry if the suite hasn't finished
+        // yet (B only works in the idle loop after all tests complete).
+        // Verify return by checking if the screen matches the menu CRC.
+        const MAX_B_RETRIES: u32 = 20;
+        for attempt in 0..MAX_B_RETRIES {
+            press_button(&mut gba, &mut cycles, BTN_B);
+
+            // Give a few frames for the menu to re-render.
+            for _ in 0..5 {
+                assert!(
+                    run_until_frame_ready(&mut gba, &mut cycles),
+                    "mgba suite: timed out returning to menu after '{}' (attempt {attempt})",
+                    MGBA_SUITE_KEYS[suite_idx]
+                );
+                gba.clear_ready_to_render();
+            }
+
+            // Check if we're back at the menu (screen matches the menu CRC
+            // we captured before entering this suite).
+            let current_crc = gba.screen_crc32();
+            if current_crc == menu_crc {
+                break;
+            }
+        }
+    }
+
+    MgbaSuiteResult { suite_crcs, cycles }
+}
+
+/// Press a button for 1 frame, then release for 1 frame (edge detection).
+fn press_button(gba: &mut Gba, cycles: &mut u64, button: u8) {
+    // Hold for 1 frame
+    gba.set_joypad_button_states(1, button);
+    assert!(
+        run_until_frame_ready(gba, cycles),
+        "mgba suite: timed out during button press (0x{button:02X})"
+    );
+    gba.clear_ready_to_render();
+
+    // Release for 1 frame
+    gba.set_joypad_button_states(1, 0);
+    assert!(
+        run_until_frame_ready(gba, cycles),
+        "mgba suite: timed out during button release"
+    );
+    gba.clear_ready_to_render();
+}
+
+fn maybe_write_mgba_png(gba: &Gba, suite_index: usize, crc: u32) {
+    if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
+        return;
+    }
+
+    let key = MGBA_SUITE_KEYS[suite_index];
+    let file_name = format!("{key}_crc_{crc:08X}.png");
+    let path = PathBuf::from("target/gba_suite_checkpoints").join(file_name);
+    let rgb = gba.screen_snapshot();
+    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    println!(
+        "[mgba-suite-capture] saved {} (suite={key}, crc=0x{crc:08X})",
+        path.display()
+    );
+}
+
 fn maybe_write_armwrestler_png(gba: &Gba, page_index: usize, crc: u32) {
     if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
         return;
@@ -739,5 +1038,6 @@ mod tests {
         assert_eq!(Suite::FuzzThumbAny.capture_stem(), "fuzzthumb_any");
         assert_eq!(Suite::FuzzArmMixed.capture_stem(), "fuzzarm_mixed");
         assert_eq!(Suite::ArmWrestler.capture_stem(), "armwrestler");
+        assert_eq!(Suite::Mgba.capture_stem(), "mgba_suite");
     }
 }

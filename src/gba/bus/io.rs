@@ -101,7 +101,10 @@ impl IoRegisters {
             REG_IME => Some(ic.read_ime()),
             // PPU display registers.
             ppu::REG_DISPCNT => Some(ppu.read_dispcnt()),
-            ppu::REG_BG0CNT => Some(ppu.read_bg0cnt()),
+            ppu::REG_BG0CNT => Some(ppu.read_bg_cnt(0)),
+            ppu::REG_BG1CNT => Some(ppu.read_bg_cnt(1)),
+            ppu::REG_BG2CNT => Some(ppu.read_bg_cnt(2)),
+            ppu::REG_BG3CNT => Some(ppu.read_bg_cnt(3)),
             ppu::REG_DISPSTAT => Some(ppu.read_dispstat()),
             ppu::REG_VCOUNT => Some(ppu.read_vcount()),
             // Keypad.
@@ -226,11 +229,20 @@ impl IoRegisters {
             REG_IME => ic.write_ime(value),
             // PPU display registers.
             ppu::REG_DISPCNT => ppu.write_dispcnt(value),
-            ppu::REG_BG0CNT => ppu.write_bg0cnt(value),
+            ppu::REG_BG0CNT => ppu.write_bg_cnt(0, value),
+            ppu::REG_BG1CNT => ppu.write_bg_cnt(1, value),
+            ppu::REG_BG2CNT => ppu.write_bg_cnt(2, value),
+            ppu::REG_BG3CNT => ppu.write_bg_cnt(3, value),
             ppu::REG_DISPSTAT => ppu.write_dispstat(value, ic),
             ppu::REG_VCOUNT => { /* VCOUNT is read-only */ }
-            ppu::REG_BG0HOFS => ppu.write_bg0_hofs(value),
-            ppu::REG_BG0VOFS => ppu.write_bg0_vofs(value),
+            ppu::REG_BG0HOFS => ppu.write_bg_hofs(0, value),
+            ppu::REG_BG0VOFS => ppu.write_bg_vofs(0, value),
+            ppu::REG_BG1HOFS => ppu.write_bg_hofs(1, value),
+            ppu::REG_BG1VOFS => ppu.write_bg_vofs(1, value),
+            ppu::REG_BG2HOFS => ppu.write_bg_hofs(2, value),
+            ppu::REG_BG2VOFS => ppu.write_bg_vofs(2, value),
+            ppu::REG_BG3HOFS => ppu.write_bg_hofs(3, value),
+            ppu::REG_BG3VOFS => ppu.write_bg_vofs(3, value),
             // PPU affine BG2/BG3 registers (write-only, reads fall
             // through to the I/O backing store / open-bus).
             0x0400_0020..=0x0400_003E => {
