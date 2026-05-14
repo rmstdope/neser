@@ -258,8 +258,7 @@ impl<B: GbBus> Sm83<B> {
     fn write(&mut self, addr: u16, val: u8) {
         self.last_write_addr = Some(addr);
         self.cycles += 1;
-        self.bus.tick(1);
-        self.bus.write(addr, val);
+        self.bus.write_cpu_m_cycle(addr, val);
         trace_cpu!(2; "      write ${:04X} = ${:02X}", addr, val);
     }
 
@@ -1323,6 +1322,59 @@ mod tests {
 
     fn cpu_with(program: &[u8]) -> Sm83<TestBus> {
         Sm83::new(TestBus::new(program))
+    }
+
+    struct WritePhaseSpyBus {
+        mem: [u8; 0x10000],
+        dot: u64,
+        write_dot_mod4: Option<u8>,
+    }
+
+    impl WritePhaseSpyBus {
+        fn new(program: &[u8]) -> Self {
+            let mut mem = [0u8; 0x10000];
+            mem[..program.len()].copy_from_slice(program);
+            Self {
+                mem,
+                dot: 0,
+                write_dot_mod4: None,
+            }
+        }
+    }
+
+    impl GbBus for WritePhaseSpyBus {
+        fn read(&mut self, addr: u16) -> u8 {
+            self.mem[addr as usize]
+        }
+
+        fn write(&mut self, addr: u16, val: u8) {
+            self.write_dot_mod4 = Some((self.dot % 4) as u8);
+            self.mem[addr as usize] = val;
+        }
+
+        fn tick(&mut self, m_cycles: u8) {
+            self.dot += u64::from(m_cycles) * 4;
+        }
+
+        fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
+            self.dot += 3;
+            self.write(addr, val);
+            self.dot += 1;
+        }
+    }
+
+    #[test]
+    fn test_cpu_writes_reach_bus_at_t3_of_m_cycle() {
+        let mut cpu = Sm83::new(WritePhaseSpyBus::new(&[0xE0, 0x40]));
+        cpu.regs.a = 0x91;
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.bus.write_dot_mod4,
+            Some(3),
+            "SM83 writes should reach the bus at T3 of the write M-cycle"
+        );
     }
 
     // -----------------------------------------------------------------------
