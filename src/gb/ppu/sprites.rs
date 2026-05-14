@@ -120,7 +120,10 @@ pub fn fetch_sprite_pixel(
         let palette = (attrs >> 4) & 1;
         let bg_priority = attrs & 0x80 != 0;
 
-        let mut row = (scanline - screen_y) as usize;
+        let mut row = match scanline.checked_sub(screen_y) {
+            Some(row) if row < height => row as usize,
+            _ => continue,
+        };
         if y_flip {
             row = (height as usize - 1) - row;
         }
@@ -220,7 +223,10 @@ pub fn fetch_sprite_pixel_cgb(
         let tile_vram_bank = (attrs >> 3) & 0x01;
         let bg_priority = attrs & 0x80 != 0;
 
-        let mut row = (scanline - screen_y) as usize;
+        let mut row = match scanline.checked_sub(screen_y) {
+            Some(row) if row < height => row as usize,
+            _ => continue,
+        };
         if y_flip {
             row = (height as usize - 1) - row;
         }
@@ -464,6 +470,21 @@ mod tests {
         assert!(scan_oam_line(15, &oam, lcdc).contains(&0));
         // And NOT on scanline 16
         assert!(!scan_oam_line(16, &oam, lcdc).contains(&0));
+    }
+
+    #[test]
+    fn dmg_y_flipped_sprite_selected_as_8x16_does_not_panic_if_lcdc_changes_to_8x8() {
+        let oam = oam_with_sprite_at(16, 8, 0, 0x40);
+        let vram = blank_vram();
+        let indices = scan_oam_line(15, &oam, 0x06);
+
+        let result =
+            std::panic::catch_unwind(|| fetch_sprite_pixel(0, 15, &indices, &oam, &vram, 0x02));
+
+        assert!(
+            result.is_ok(),
+            "fetching a Mode-2-selected 8x16 sprite must tolerate live LCDC.2 changing to 8x8"
+        );
     }
 
     #[test]
@@ -765,6 +786,23 @@ mod tests {
         let result = fetch_sprite_pixel_cgb(0, 0, &indices, &oam, &vram, &bank1, lcdc, false);
         assert!(result.is_some());
         assert_eq!(result.unwrap().cgb_palette, 5);
+    }
+
+    #[test]
+    fn cgb_y_flipped_sprite_selected_as_8x16_does_not_panic_if_lcdc_changes_to_8x8() {
+        let oam = oam_with_sprite_at(16, 8, 0, 0x40);
+        let vram = blank_vram();
+        let bank1 = blank_vram();
+        let indices = scan_oam_line(15, &oam, 0x06);
+
+        let result = std::panic::catch_unwind(|| {
+            fetch_sprite_pixel_cgb(0, 15, &indices, &oam, &vram, &bank1, 0x02, true)
+        });
+
+        assert!(
+            result.is_ok(),
+            "CGB DMG-compat sprite fetch must tolerate live LCDC.2 changing after OAM scan"
+        );
     }
 
     #[test]
