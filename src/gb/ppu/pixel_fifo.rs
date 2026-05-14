@@ -496,13 +496,28 @@ impl PixelFifoRenderer {
         cgb_mode: bool,
         dmg_compat: bool,
     ) {
+        self.record_lcdc_write_with_window(previous, new, scx, cgb_mode, dmg_compat, 166, 144);
+    }
+
+    pub fn record_lcdc_write_with_window(
+        &mut self,
+        previous: u8,
+        new: u8,
+        scx: u8,
+        cgb_mode: bool,
+        dmg_compat: bool,
+        wx: u8,
+        wy: u8,
+    ) {
         if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
             return;
         }
 
         let waiting_on_obj_fetch = self.is_waiting_on_obj_fetch();
+        let window_fetch_active =
+            previous & 0x20 != 0 && self.scanline >= wy && self.next_x == wx.saturating_sub(7);
         self.record_lcdc_obj_size_write(previous, new, cgb_mode, dmg_compat);
-        self.record_lcdc_tile_data_write(previous, new, scx);
+        self.record_lcdc_tile_data_write(previous, new, scx, window_fetch_active);
         if let Some(model) = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat) {
             self.record_lcdc_obj_enable_write(model, previous, new);
         }
@@ -539,7 +554,13 @@ impl PixelFifoRenderer {
             .record_write(self.next_x, previous, new, timing);
     }
 
-    fn record_lcdc_tile_data_write(&mut self, previous: u8, new: u8, scx: u8) {
+    fn record_lcdc_tile_data_write(
+        &mut self,
+        previous: u8,
+        new: u8,
+        scx: u8,
+        window_fetch_active: bool,
+    ) {
         if previous & LCDC_TILE_DATA == new & LCDC_TILE_DATA {
             return;
         }
@@ -548,19 +569,28 @@ impl PixelFifoRenderer {
         let current_fetch_start = self.next_x.saturating_sub(bg_phase);
         let current_fetch_end = current_fetch_start.saturating_add(7);
         if self.next_x == current_fetch_start {
-            self.lcdc_tile_data_edge.record_write(
-                current_fetch_start,
-                current_fetch_end,
-                previous,
-                previous,
-            );
-            let next_fetch_start = current_fetch_start.saturating_add(8);
-            self.lcdc_tile_data_edge.record_write(
-                next_fetch_start,
-                next_fetch_start.saturating_add(7),
-                new,
-                new,
-            );
+            if window_fetch_active {
+                self.lcdc_tile_data_edge.record_write(
+                    current_fetch_start,
+                    current_fetch_end,
+                    new,
+                    new,
+                );
+            } else {
+                self.lcdc_tile_data_edge.record_write(
+                    current_fetch_start,
+                    current_fetch_end,
+                    previous,
+                    previous,
+                );
+                let next_fetch_start = current_fetch_start.saturating_add(8);
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    new,
+                    new,
+                );
+            }
         } else if !self
             .lcdc_tile_data_edge
             .has_latched_range(current_fetch_start, current_fetch_end)
@@ -1267,6 +1297,60 @@ mod tests {
         assert_eq!(
             next_tile_colour, 3,
             "the next BG fetch should sample the new TILE_SEL value for both bitplanes"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn record_lcdc_write_at_left_window_boundary_updates_current_window_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xB1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (colour_index, is_sprite, _) = renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            colour_index, 3,
+            "a TILE_SEL write at WX=7 should apply to the first window tile fetch, not a preceding BG tile"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn record_lcdc_write_after_window_boundary_updates_following_window_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 8;
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xB1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+        let (next_tile_colour, _, _) = renderer.dmg_pixel_layers(16, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 0,
+            "after the window has started, a boundary write must not alter the already-latched window tile"
+        );
+        assert_eq!(
+            next_tile_colour, 3,
+            "the following window fetch should sample the new TILE_SEL value"
         );
         assert!(!is_sprite);
     }
