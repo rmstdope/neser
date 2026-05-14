@@ -328,10 +328,9 @@ impl Arm7tdmi {
     /// SWI was handled (caller should skip normal BIOS dispatch).
     ///
     /// Reads the SWI number from the prefetched instruction. Currently
-    /// handles:
-    /// - **0x02 (Halt)**: halt CPU until any enabled interrupt.
-    /// - **0x05 (VBlankIntrWait)**: set IME=1, clear VBlank in IntrCheck
-    ///   at 0x03007FF8, halt CPU.
+    /// handles Halt (0x02), VBlankIntrWait (0x05), Div (0x06), DivArm
+    /// (0x07), Sqrt (0x08), ArcTan (0x09), ArcTan2 (0x0A), CpuSet
+    /// (0x0B), and CpuFastSet (0x0C).
     fn try_hle_swi<B: Bus>(&mut self, bus: &mut B) -> bool {
         if !self.hle_swi {
             return false;
