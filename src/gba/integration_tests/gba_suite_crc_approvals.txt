@@ -39,3 +39,21 @@ armwrestler_page4=0x6795E0F8
 armwrestler_page5=0xE215C2B0
 armwrestler_page6=0xA52234A7
 armwrestler_page7=0x562A5C65
+
+# mgba-emu/suite (https://github.com/mgba-emu/suite)
+# 14 sub-suites. Suites 0–4 produce blank output (crash on unimplemented
+# timing/memory features). Suites 5–13 produce test result screens.
+mgba_memory=0x4E6792C8
+mgba_io_read=0x4E6792C8
+mgba_timing=0x4E6792C8
+mgba_timers=0x4E6792C8
+mgba_timer_irq=0x4E6792C8
+mgba_shifter=0x8D16F173
+mgba_carry=0xBA1B38CD
+mgba_multiply_long=0x85D5F631
+mgba_bios_math=0xB7BC1D6B
+mgba_dma=0xF4BD32F2
+mgba_sio_read=0xD3F4B2DE
+mgba_sio_timing=0xCA915C6E
+mgba_misc_edge=0xF8F8B734
+mgba_video=0xBB6153F4

@@ -439,6 +439,10 @@ fn is_bios_exception_vector(pc: u32) -> bool {
 /// Total test pages: 5 ARM (Test0–Test4) + 3 THUMB (_test0–_test2).
 pub const ARMWRESTLER_TEST_PAGE_COUNT: usize = 8;
 
+/// Button bitmask for A (NES-convention bit 0).
+const BTN_A: u8 = 0x01;
+/// Button bitmask for B (NES-convention bit 1).
+const BTN_B: u8 = 0x02;
 /// Button bitmask for Start (NES-convention bit 3).
 const BTN_START: u8 = 0x08;
 /// Button bitmask for Down (NES-convention bit 5).
@@ -759,15 +763,132 @@ pub fn boot_mgba_suite() -> (Gba, Vec<u8>) {
 }
 
 /// Run the mgba-emu test suite ROM through all 14 sub-suites.
+///
+/// Navigation protocol:
+/// - Boot → 10 frames to render menu (cursor starts at index 0)
+/// - For each sub-suite i (0..14):
+///   - Press DOWN (i times from index 0) to select
+///   - Press A to enter
+///   - Run frames until screen stabilises (same CRC for 4 consecutive frames)
+///   - Capture CRC
+///   - Press B to return to menu
+///   - Wait 3 frames for menu to re-render
 pub fn run_mgba_suite() -> MgbaSuiteResult {
-    let rom_path = Suite::Mgba.rom_path();
-    assert!(
-        rom_path.exists(),
-        "mgba suite ROM not found at {}",
-        rom_path.display()
-    );
+    let (mut gba, _rom) = boot_mgba_suite();
 
-    todo!("mgba suite runner not yet implemented")
+    let mut cycles: u64 = 0;
+    let mut suite_crcs: Vec<u32> = Vec::with_capacity(MGBA_SUITE_COUNT);
+
+    // Boot: let the menu render.
+    for _ in 0..10 {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "mgba suite: timed out during initial boot"
+        );
+        gba.clear_ready_to_render();
+    }
+
+    for suite_idx in 0..MGBA_SUITE_COUNT {
+        // Navigate: press DOWN `suite_idx` times from top (cursor resets
+        // each time we press B to return to menu... actually no — the cursor
+        // stays where it was). Since we navigate sequentially, we only need
+        // 1 DOWN press to move from current position to the next item (except
+        // for suite 0 which is already selected).
+        if suite_idx > 0 {
+            press_button(&mut gba, &mut cycles, BTN_DOWN);
+        }
+
+        // Press A to enter the sub-suite.
+        press_button(&mut gba, &mut cycles, BTN_A);
+
+        // Wait for results to stabilise: run frames until the CRC stays the
+        // same for STABLE_FRAMES consecutive frames (the sub-suite has finished
+        // rendering its results). Timeout after MAX_SUITE_FRAMES.
+        const STABLE_FRAMES: u32 = 4;
+        const MAX_SUITE_FRAMES: u32 = 600;
+
+        let mut prev_crc: u32 = 0;
+        let mut stable_count: u32 = 0;
+        for frame in 0..MAX_SUITE_FRAMES {
+            assert!(
+                run_until_frame_ready(&mut gba, &mut cycles),
+                "mgba suite '{}': timed out at frame {frame}",
+                MGBA_SUITE_KEYS[suite_idx]
+            );
+            gba.clear_ready_to_render();
+
+            let crc = gba.screen_crc32();
+            if crc == prev_crc {
+                stable_count += 1;
+                if stable_count >= STABLE_FRAMES {
+                    break;
+                }
+            } else {
+                prev_crc = crc;
+                stable_count = 1;
+            }
+        }
+
+        assert!(
+            stable_count >= STABLE_FRAMES,
+            "mgba suite '{}': screen did not stabilise within {MAX_SUITE_FRAMES} frames",
+            MGBA_SUITE_KEYS[suite_idx]
+        );
+
+        let crc = gba.screen_crc32();
+        maybe_write_mgba_png(&gba, suite_idx, crc);
+        suite_crcs.push(crc);
+
+        // Press B to return to the menu.
+        press_button(&mut gba, &mut cycles, BTN_B);
+
+        // Wait a few frames for the menu to re-render.
+        for _ in 0..3 {
+            assert!(
+                run_until_frame_ready(&mut gba, &mut cycles),
+                "mgba suite: timed out returning to menu after '{}'",
+                MGBA_SUITE_KEYS[suite_idx]
+            );
+            gba.clear_ready_to_render();
+        }
+    }
+
+    MgbaSuiteResult { suite_crcs, cycles }
+}
+
+/// Press a button for 1 frame, then release for 1 frame (edge detection).
+fn press_button(gba: &mut Gba, cycles: &mut u64, button: u8) {
+    // Hold for 1 frame
+    gba.set_joypad_button_states(1, button);
+    assert!(
+        run_until_frame_ready(gba, cycles),
+        "mgba suite: timed out during button press (0x{button:02X})"
+    );
+    gba.clear_ready_to_render();
+
+    // Release for 1 frame
+    gba.set_joypad_button_states(1, 0);
+    assert!(
+        run_until_frame_ready(gba, cycles),
+        "mgba suite: timed out during button release"
+    );
+    gba.clear_ready_to_render();
+}
+
+fn maybe_write_mgba_png(gba: &Gba, suite_index: usize, crc: u32) {
+    if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
+        return;
+    }
+
+    let key = MGBA_SUITE_KEYS[suite_index];
+    let file_name = format!("{key}_crc_{crc:08X}.png");
+    let path = PathBuf::from("target/gba_suite_checkpoints").join(file_name);
+    let rgb = gba.screen_snapshot();
+    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    println!(
+        "[mgba-suite-capture] saved {} (suite={key}, crc=0x{crc:08X})",
+        path.display()
+    );
 }
 
 fn maybe_write_armwrestler_png(gba: &Gba, page_index: usize, crc: u32) {
