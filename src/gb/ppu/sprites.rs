@@ -86,8 +86,20 @@ pub fn fetch_sprite_pixel(
     vram: &[u8; 0x2000],
     lcdc: u8,
 ) -> Option<SpritePixel> {
-    let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
+    fetch_sprite_pixel_with_lcdc_samples(x, scanline, sprite_indices, oam, vram, lcdc, lcdc)
+}
 
+/// Fetch the highest-priority visible DMG sprite pixel with independently sampled
+/// LCDC values for the low and high tile-data bytes.
+pub(super) fn fetch_sprite_pixel_with_lcdc_samples(
+    x: u32,
+    scanline: u8,
+    sprite_indices: &[usize],
+    oam: &[u8; 0xA0],
+    vram: &[u8; 0x2000],
+    low_lcdc: u8,
+    high_lcdc: u8,
+) -> Option<SpritePixel> {
     // DMG drawing priority: lower OAM X wins; equal X breaks ties by lower OAM index.
     // https://gbdev.io/pandocs/OAM.html#drawing-priority
     // `scan_oam_line` caps sprites at 10, so a fixed stack buffer avoids heap allocation
@@ -120,34 +132,15 @@ pub fn fetch_sprite_pixel(
         let palette = (attrs >> 4) & 1;
         let bg_priority = attrs & 0x80 != 0;
 
-        let mut row = match scanline.checked_sub(screen_y) {
-            Some(row) if row < height => row as usize,
-            _ => continue,
-        };
-        if y_flip {
-            row = (height as usize - 1) - row;
-        }
-
         let mut pixel_x = screen_x_offset as u8;
         if x_flip {
             pixel_x = 7 - pixel_x;
         }
 
-        // For 8×16, select upper or lower tile (bit 0 forced).
-        let tile_index = if height == 16 {
-            if row < 8 {
-                (tile_num & 0xFE) as usize
-            } else {
-                row -= 8;
-                (tile_num | 0x01) as usize
-            }
-        } else {
-            tile_num as usize
-        };
-
-        let tile_addr = tile_index * 16;
-        let low = vram[tile_addr + row * 2];
-        let high = vram[tile_addr + row * 2 + 1];
+        let low_addr = sprite_tile_row_addr(scanline, screen_y, tile_num, y_flip, low_lcdc);
+        let high_addr = sprite_tile_row_addr(scanline, screen_y, tile_num, y_flip, high_lcdc);
+        let low = vram[low_addr];
+        let high = vram[high_addr + 1];
         let bit = 7 - pixel_x;
         let colour_index = ((high >> bit) & 1) << 1 | ((low >> bit) & 1);
 
@@ -163,6 +156,29 @@ pub fn fetch_sprite_pixel(
         });
     }
     None
+}
+
+fn sprite_tile_row_addr(scanline: u8, screen_y: u8, tile_num: u8, y_flip: bool, lcdc: u8) -> usize {
+    let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
+    let row_mask = height - 1;
+    let mut row = scanline.wrapping_sub(screen_y) & row_mask;
+    if y_flip {
+        row ^= row_mask;
+    }
+
+    let tile_index = if height == 16 {
+        let base_tile = tile_num & 0xFE;
+        if row < 8 {
+            base_tile
+        } else {
+            row -= 8;
+            base_tile | 0x01
+        }
+    } else {
+        tile_num
+    };
+
+    tile_index as usize * 16 + row as usize * 2
 }
 
 /// Fetch the highest-priority visible sprite pixel in CGB mode at screen position `x`.

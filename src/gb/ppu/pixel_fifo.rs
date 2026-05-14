@@ -17,6 +17,10 @@ const LCDC_BG_MAP: u8 = 0x08;
 const OBJ_PIXELS_PER_FETCH: u8 = 8;
 const CGB_DMG_COMPAT_OBJ_ENABLE_EDGE_PIXELS: u8 = 2;
 const DMG_OBJ_FETCH_ABORT_COMPLETES_WHEN_DOTS_REMAINING: u16 = 2;
+const DMG_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 4;
+const CGB_DMG_COMPAT_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 6;
+const DMG_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 1;
+const CGB_DMG_COMPAT_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LcdcBgEnableEdgeTiming {
@@ -188,11 +192,21 @@ impl LcdcObjEnableEdge {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct ObjFetchLcdcRange {
+    start_x: u8,
+    end_x: u8,
+    low_lcdc: u8,
+    high_lcdc: u8,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PixelFifoRenderer {
     active: bool,
     scanline: u8,
     mode3_start_dot: u16,
+    #[serde(default)]
+    scanline_start_lcdc: u8,
     next_x: u8,
     window_active: bool,
     bgp_edge_active: bool,
@@ -210,6 +224,10 @@ pub struct PixelFifoRenderer {
     active_obj_stall_x: Option<u8>,
     #[serde(default)]
     canceled_obj_fetch_ranges: Vec<(u8, u8)>,
+    #[serde(default)]
+    obj_fetch_lcdc_ranges: Vec<ObjFetchLcdcRange>,
+    #[serde(default)]
+    active_obj_fetch_lcdc_range: Option<usize>,
     #[serde(default)]
     obj_fetch_ignores_lcdc: bool,
     #[serde(default)]
@@ -230,6 +248,7 @@ impl PixelFifoRenderer {
             active: false,
             scanline: 0,
             mode3_start_dot: 0,
+            scanline_start_lcdc: 0,
             next_x: 0,
             window_active: false,
             bgp_edge_active: false,
@@ -241,6 +260,8 @@ impl PixelFifoRenderer {
             next_obj_stall_event: 0,
             active_obj_stall_x: None,
             canceled_obj_fetch_ranges: Vec::new(),
+            obj_fetch_lcdc_ranges: Vec::new(),
+            active_obj_fetch_lcdc_range: None,
             obj_fetch_ignores_lcdc: false,
             sprite_indices: Vec::new(),
             leftmost_obj_oam_x: None,
@@ -262,6 +283,7 @@ impl PixelFifoRenderer {
         self.active = true;
         self.scanline = scanline;
         self.mode3_start_dot = mode3_start_dot;
+        self.scanline_start_lcdc = registers.lcdc;
         self.next_x = 0;
         self.window_active = false;
         self.bgp_edge_active = false;
@@ -274,6 +296,8 @@ impl PixelFifoRenderer {
         self.next_obj_stall_event = 0;
         self.active_obj_stall_x = None;
         self.canceled_obj_fetch_ranges.clear();
+        self.obj_fetch_lcdc_ranges.clear();
+        self.active_obj_fetch_lcdc_range = None;
         self.obj_fetch_ignores_lcdc = matches!(
             ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat),
             Some(ObjFetchModel::CgbDmgCompat)
@@ -322,11 +346,12 @@ impl PixelFifoRenderer {
         if elapsed < FETCHER_STARTUP_DOTS + self.fine_scroll_delay_dots {
             return None;
         }
-        self.queue_stall_events_for_next_pixel();
+        self.queue_stall_events_for_next_pixel(registers.lcdc);
         if self.pending_obj_stall_dots > 0 {
             self.pending_obj_stall_dots -= 1;
             if self.pending_obj_stall_dots == 0 {
                 self.active_obj_stall_x = None;
+                self.active_obj_fetch_lcdc_range = None;
             }
             return None;
         }
@@ -363,6 +388,7 @@ impl PixelFifoRenderer {
         self.lcdc_bg_enable_edge.clear_consumed(self.next_x);
         self.lcdc_obj_enable_edge.clear_consumed(self.next_x);
         self.lcdc_bg_map_edge.clear_consumed(self.next_x);
+        self.clear_consumed_obj_fetch_lcdc_ranges();
         self.next_x = self.next_x.saturating_add(1);
         if self.next_x as u32 >= ScreenBuffer::WIDTH {
             self.active = false;
@@ -417,6 +443,7 @@ impl PixelFifoRenderer {
         }
 
         let waiting_on_obj_fetch = self.is_waiting_on_obj_fetch();
+        self.record_lcdc_obj_size_write(previous, new, cgb_mode, dmg_compat);
         if let Some(model) = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat) {
             self.record_lcdc_obj_enable_write(model, previous, new);
         }
@@ -494,6 +521,47 @@ impl PixelFifoRenderer {
     fn cancel_obj_fetch_at(&mut self, x: u8) {
         self.canceled_obj_fetch_ranges
             .push((x, x.saturating_add(OBJ_PIXELS_PER_FETCH - 1)));
+    }
+
+    fn record_lcdc_obj_size_write(
+        &mut self,
+        previous: u8,
+        new: u8,
+        cgb_mode: bool,
+        dmg_compat: bool,
+    ) {
+        if previous & 0x04 == new & 0x04 {
+            return;
+        }
+
+        let Some(range_index) = self.active_obj_fetch_lcdc_range else {
+            return;
+        };
+        let leftmost_obj_starts_before_screen = self.leftmost_obj_starts_before_screen();
+        let Some(range) = self.obj_fetch_lcdc_ranges.get_mut(range_index) else {
+            return;
+        };
+        // The first off-left OBJ fetch is sampled before visible Mode 3 writes.
+        if range.start_x == 0 && leftmost_obj_starts_before_screen {
+            return;
+        }
+
+        let high_byte_threshold = if cgb_mode && dmg_compat {
+            CGB_DMG_COMPAT_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING
+        } else {
+            DMG_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING
+        };
+        if self.pending_obj_stall_dots >= high_byte_threshold {
+            range.high_lcdc = new;
+        }
+        let low_byte_threshold = if cgb_mode && dmg_compat {
+            CGB_DMG_COMPAT_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING
+        } else {
+            DMG_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING
+        };
+        if self.pending_obj_stall_dots >= low_byte_threshold {
+            range.low_lcdc = new;
+        }
     }
 
     fn lcdc_bg_map_fetch_delay(
@@ -751,7 +819,16 @@ impl PixelFifoRenderer {
         };
 
         let sprite_px = if obj_enabled && !self.is_obj_fetch_canceled_for_pixel(x) {
-            sprites::fetch_sprite_pixel(x, self.scanline, &self.sprite_indices, oam, vram, lcdc)
+            let (low_lcdc, high_lcdc) = self.obj_fetch_lcdc_for_pixel(x, lcdc);
+            sprites::fetch_sprite_pixel_with_lcdc_samples(
+                x,
+                self.scanline,
+                &self.sprite_indices,
+                oam,
+                vram,
+                low_lcdc,
+                high_lcdc,
+            )
         } else {
             None
         };
@@ -787,12 +864,21 @@ impl PixelFifoRenderer {
             .any(|&(start, end)| u32::from(start) <= x && x <= u32::from(end))
     }
 
+    fn obj_fetch_lcdc_for_pixel(&self, x: u32, current_lcdc: u8) -> (u8, u8) {
+        self.obj_fetch_lcdc_ranges
+            .iter()
+            .find(|range| u32::from(range.start_x) <= x && x <= u32::from(range.end_x))
+            .map_or((current_lcdc, current_lcdc), |range| {
+                (range.low_lcdc, range.high_lcdc)
+            })
+    }
+
     fn obj_enabled_for_pixel(&self, lcdc: u8) -> bool {
         self.lcdc_obj_enable_edge
             .obj_enabled_for_pixel(self.next_x.into(), lcdc)
     }
 
-    fn queue_stall_events_for_next_pixel(&mut self) {
+    fn queue_stall_events_for_next_pixel(&mut self, lcdc: u8) {
         while self.next_obj_stall_event < self.obj_stall_events.len() {
             let event = self.obj_stall_events[self.next_obj_stall_event];
             if event.x > self.next_x {
@@ -800,10 +886,34 @@ impl PixelFifoRenderer {
             }
             if self.pending_obj_stall_dots == 0 {
                 self.active_obj_stall_x = Some(event.x);
+                self.start_obj_fetch_lcdc_range(event.x, lcdc);
             }
             self.pending_obj_stall_dots += event.dots;
             self.next_obj_stall_event += 1;
         }
+    }
+
+    fn start_obj_fetch_lcdc_range(&mut self, x: u8, lcdc: u8) {
+        let range_index = self.obj_fetch_lcdc_ranges.len();
+        // Off-left OBJ fetches have already selected tile bytes before the first
+        // visible pixel, even though their stall still delays x=0.
+        let sampled_lcdc = if x == 0 && self.leftmost_obj_starts_before_screen() {
+            self.scanline_start_lcdc
+        } else {
+            lcdc
+        };
+        self.obj_fetch_lcdc_ranges.push(ObjFetchLcdcRange {
+            start_x: x,
+            end_x: x.saturating_add(OBJ_PIXELS_PER_FETCH - 1),
+            low_lcdc: sampled_lcdc,
+            high_lcdc: sampled_lcdc,
+        });
+        self.active_obj_fetch_lcdc_range = Some(range_index);
+    }
+
+    fn clear_consumed_obj_fetch_lcdc_ranges(&mut self) {
+        self.obj_fetch_lcdc_ranges
+            .retain(|range| range.end_x != self.next_x);
     }
 
     fn is_waiting_on_obj_fetch(&self) -> bool {
@@ -812,6 +922,10 @@ impl PixelFifoRenderer {
                 .obj_stall_events
                 .get(self.next_obj_stall_event)
                 .is_some_and(|event| event.x <= self.next_x)
+    }
+
+    fn leftmost_obj_starts_before_screen(&self) -> bool {
+        self.leftmost_obj_oam_x.is_some_and(|oam_x| oam_x < 8)
     }
 }
 
