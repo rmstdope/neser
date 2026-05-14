@@ -111,6 +111,10 @@ pub struct GbaBus {
     pub keypad: Keypad,
     /// Last value driven on the bus (used to model open-bus reads).
     last_bus_value: u32,
+    /// DMA internal data latch — separate from the CPU's open-bus register.
+    /// Updated only by DMA reads; DMA writes to restricted regions return
+    /// this value instead of the CPU's `last_bus_value`.
+    dma_latch: u32,
     /// Whether the BIOS is locked. After the boot ROM finishes executing,
     /// BIOS reads from outside the BIOS region return open-bus instead of
     /// the BIOS contents.
@@ -158,6 +162,7 @@ impl GbaBus {
             apu: Apu::new(),
             keypad: Keypad::new(),
             last_bus_value: 0,
+            dma_latch: 0,
             bios_locked: false,
             bios_image_loaded: false,
         }
@@ -335,6 +340,7 @@ impl GbaBus {
             sram: self.sram.clone(),
             bios_locked: self.bios_locked,
             last_bus_value: self.last_bus_value,
+            dma_latch: self.dma_latch,
         }
     }
 
@@ -372,6 +378,7 @@ impl GbaBus {
         }
         self.bios_locked = state.bios_locked;
         self.last_bus_value = state.last_bus_value;
+        self.dma_latch = state.dma_latch;
         Ok(())
     }
 
@@ -804,16 +811,32 @@ impl Bus for GbaBus {
 /// CPU stores.
 impl dma::DmaBus for GbaBus {
     fn dma_read16(&mut self, addr: u32) -> u16 {
-        <Self as Bus>::read16(self, addr)
+        // Swap in the DMA latch so open-bus reads return the DMA's own
+        // latched value rather than the CPU's last_bus_value.
+        let saved = self.last_bus_value;
+        self.last_bus_value = self.dma_latch;
+        let val = <Self as Bus>::read16(self, addr);
+        self.dma_latch = self.last_bus_value;
+        self.last_bus_value = saved;
+        val
     }
     fn dma_write16(&mut self, addr: u32, value: u16) {
+        let saved = self.last_bus_value;
         <Self as Bus>::write16(self, addr, value);
+        self.last_bus_value = saved;
     }
     fn dma_read32(&mut self, addr: u32) -> u32 {
-        <Self as Bus>::read32(self, addr)
+        let saved = self.last_bus_value;
+        self.last_bus_value = self.dma_latch;
+        let val = <Self as Bus>::read32(self, addr);
+        self.dma_latch = self.last_bus_value;
+        self.last_bus_value = saved;
+        val
     }
     fn dma_write32(&mut self, addr: u32, value: u32) {
+        let saved = self.last_bus_value;
         <Self as Bus>::write32(self, addr, value);
+        self.last_bus_value = saved;
     }
     fn dma_raise_irq(&mut self, sources: u16) {
         self.ic.raise(sources);
@@ -1267,5 +1290,97 @@ mod tests {
         bus.write16(0x0600_FFE0, 0xBB66);
         bus.write8(0x0600_FFE0, 0xD8);
         assert_eq!(bus.read16(0x0600_FFE0), 0xD8D8);
+    }
+
+    #[test]
+    fn dma_read32_uses_dma_latch_not_cpu_bus_value() {
+        // The DMA controller has its own internal data latch, separate from
+        // the CPU's open-bus value. When DMA reads from a restricted region
+        // (e.g. locked BIOS), it returns the DMA latch — not the CPU's
+        // last_bus_value.
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+        bus.lock_bios();
+
+        // Write known data to IWRAM.
+        bus.write32(0x0300_0000, 0xCAFE_BABE);
+
+        // DMA reads IWRAM → primes the DMA latch.
+        let val = bus.dma_read32(0x0300_0000);
+        assert_eq!(val, 0xCAFE_BABE);
+
+        // CPU reads from EWRAM → changes last_bus_value but NOT DMA latch.
+        bus.write32(0x0200_0000, 0xDEAD_BEEF);
+        let _ = bus.read32(0x0200_0000);
+
+        // DMA reads locked BIOS → should get DMA latch (0xCAFE_BABE),
+        // not the CPU's last_bus_value (0xDEAD_BEEF).
+        let bios_val = bus.dma_read32(0x0000_0000);
+        assert_eq!(bios_val, 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn dma_read16_uses_dma_latch_halfword() {
+        // 16-bit DMA reads should update only half the DMA latch, matching
+        // the halfword alignment within the 32-bit latch register.
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+        bus.lock_bios();
+
+        // Prime DMA latch via two 16-bit reads from IWRAM.
+        bus.write32(0x0300_0000, 0xAAAA_BBBB);
+        let _ = bus.dma_read16(0x0300_0000); // low half → 0xBBBB
+        let _ = bus.dma_read16(0x0300_0002); // high half → 0xAAAA
+        // DMA latch is now 0xAAAA_BBBB.
+
+        // CPU activity changes last_bus_value.
+        bus.write32(0x0200_0000, 0x1111_2222);
+        let _ = bus.read32(0x0200_0000);
+
+        // DMA reads locked BIOS at aligned addr → returns DMA latch low half.
+        let bios_lo = bus.dma_read16(0x0000_0000);
+        assert_eq!(bios_lo, 0xBBBB);
+    }
+
+    #[test]
+    fn dma_read_does_not_corrupt_cpu_last_bus_value() {
+        // DMA reads must not change the CPU's open-bus value.
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+
+        // Pre-populate IWRAM before setting the CPU sentinel.
+        bus.write32(0x0300_0000, 0xBEEF_CAFE);
+
+        // Set CPU's last_bus_value to a known sentinel.
+        bus.write32(0x0200_0000, 0x5555_6666);
+        let _ = bus.read32(0x0200_0000);
+
+        // DMA reads from IWRAM — must not disturb CPU bus value.
+        let _ = bus.dma_read32(0x0300_0000);
+
+        // CPU's open-bus should still return the sentinel, not the DMA value.
+        // Read from a region that returns open-bus (locked BIOS).
+        bus.lock_bios();
+        let cpu_open = bus.read32(0x0000_0000);
+        assert_eq!(cpu_open, 0x5555_6666);
+    }
+
+    #[test]
+    fn dma_write_does_not_corrupt_cpu_last_bus_value() {
+        // DMA writes must not change the CPU's open-bus value.
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+
+        // Set CPU's last_bus_value to a known sentinel.
+        bus.write32(0x0200_0000, 0xAAAA_BBBB);
+        let _ = bus.read32(0x0200_0000);
+
+        // DMA writes to EWRAM — must not disturb CPU bus value.
+        bus.dma_write32(0x0200_1000, 0xDEAD_BEEF);
+
+        // CPU's open-bus should still return the sentinel.
+        bus.lock_bios();
+        let cpu_open = bus.read32(0x0000_0000);
+        assert_eq!(cpu_open, 0xAAAA_BBBB);
     }
 }

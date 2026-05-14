@@ -43,11 +43,11 @@ armwrestler_page7=0x562A5C65
 # mgba-emu/suite (https://github.com/mgba-emu/suite)
 # 14 sub-suites exercising memory, I/O, timing, shifter, carry, multiply,
 # BIOS math, DMA, SIO, misc edge cases, and video.
-# Scores (passing/total): Memory 1331/1552, I/O read 31/130, Timing 249/2020,
+# Scores (passing/total): Memory 1379/1552, I/O read 31/130, Timing 249/2020,
 # Timers 257/936, Timer IRQ 0/90, Shifter 140/140, Carry 93/93,
 # Multiply long 72/72, BIOS math 287/615, DMA 895/1256, SIO read 7/90,
 # SIO timing 0/4, Misc. edge 4/12, Video (sub-menu only).
-mgba_memory=0x9338115D
+mgba_memory=0x22984983
 mgba_io_read=0xB73C0C86
 mgba_timing=0x697DA0C7
 mgba_timers=0xBC59F692

@@ -50,6 +50,9 @@ pub struct BusMemoryState {
     pub bios_locked: bool,
     /// Last value driven on the bus (used to model open-bus reads).
     pub last_bus_value: u32,
+    /// DMA internal data latch (separate from CPU open-bus).
+    #[serde(default)]
+    pub dma_latch: u32,
 }
 
 /// Complete Game Boy Advance emulator state snapshot.
