@@ -448,16 +448,11 @@ impl GbaBus {
     }
 
     /// Map the cartridge ROM with mirroring across the three wait-state
-    /// regions. The ROM is intentionally mirrored within its 32 MB window
-    /// (the cart bus repeats the inserted image), so this only returns
-    /// `None` when no cartridge is inserted at all — in which case callers
-    /// substitute the GBATek "no-cart" open-bus pattern.
+    /// regions. Returns `None` when no cartridge is inserted or when the
+    /// offset falls beyond the ROM image — callers substitute the GBATek
+    /// "no-cart" open-bus pattern (addr >> 1).
     fn rom_byte(&self, offset: usize) -> Option<u8> {
-        if self.rom.is_empty() {
-            return None;
-        }
-        // ROM is mirrored within its 32 MB window.
-        Some(self.rom[offset % self.rom.len()])
+        self.rom.get(offset).copied()
     }
 
     /// Read a 16-bit little-endian halfword from cart ROM, respecting
@@ -781,11 +776,17 @@ impl Bus for GbaBus {
                 self.pram[off + 1] = value;
             }
             0x6 => {
-                // Byte writes to VRAM duplicate; ignored for OBJ region in
-                // bitmap modes — modelling the simple case here.
-                let off = vram_offset(addr) & !1;
-                self.vram[off] = value;
-                self.vram[off + 1] = value;
+                // Byte writes to BG VRAM duplicate the byte to a halfword.
+                // Byte writes to OBJ VRAM (offset >= 0x10000) are ignored.
+                // TODO: In bitmap modes 3/5, the BG/OBJ boundary is 0x14000
+                // rather than 0x10000. This threshold is correct for tile modes
+                // (0-2) and mode 4, but needs DISPCNT check for full accuracy.
+                let off = vram_offset(addr);
+                if off < 0x10000 {
+                    let aligned = off & !1;
+                    self.vram[aligned] = value;
+                    self.vram[aligned + 1] = value;
+                }
             }
             0x7 => { /* OAM ignores byte writes */ }
             0x8..=0xD => {}
@@ -1202,5 +1203,69 @@ mod tests {
         let mut bus = GbaBus::new();
         bus.write16(crate::gba::input::REG_KEYINPUT, 0x0000);
         assert_eq!(bus.read16(crate::gba::input::REG_KEYINPUT), 0x03FF);
+    }
+
+    // ---------------------------------------------------------------
+    // ROM out-of-bounds reads return addr>>1 pattern (open bus)
+    // Per GBATek: when reading beyond ROM size, the cartridge bus
+    // returns the halfword address / 2 (i.e., addr >> 1).
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn rom_oob_read16_returns_addr_shr1() {
+        let mut bus = GbaBus::new();
+        // Load a small 256-byte ROM.
+        bus.load_rom(&[0u8; 256]);
+        // Address 0x0924_68AC is well beyond 256 bytes.
+        let v = bus.read16(0x0924_68AC);
+        // Expected: (0x092468AC >> 1) & 0xFFFF = 0x3456
+        assert_eq!(v, 0x3456);
+    }
+
+    #[test]
+    fn rom_oob_read32_returns_addr_shr1_pattern() {
+        let mut bus = GbaBus::new();
+        bus.load_rom(&[0u8; 256]);
+        let v = bus.read32(0x0924_68AC);
+        // Low halfword: (0x092468AC >> 1) & 0xFFFF = 0x3456
+        // High halfword: (0x092468AE >> 1) & 0xFFFF = 0x3457
+        assert_eq!(v, 0x3457_3456);
+    }
+
+    #[test]
+    fn rom_oob_read8_returns_addr_shr1_byte() {
+        let mut bus = GbaBus::new();
+        bus.load_rom(&[0u8; 256]);
+        // 0x092468AC >> 1 = 0x049234D6 → halfword 0x3456
+        // byte 0 (even) = 0x56, byte 1 (odd) = 0x34
+        assert_eq!(bus.read8(0x0924_68AC), 0x56);
+        assert_eq!(bus.read8(0x0924_68AD), 0x34);
+    }
+
+    // ---------------------------------------------------------------
+    // VRAM OBJ region byte writes must be ignored
+    // Per GBATek: byte writes to OBJ tile VRAM (offset >= 0x10000
+    // in modes 0-2, >= 0x14000 in modes 3-5) are ignored.
+    // The mgba suite tests non-bitmap mode (modes 0-2).
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn vram_obj_byte_write_is_ignored() {
+        let mut bus = GbaBus::new();
+        // Write initial data to OBJ VRAM (0x06010000+).
+        bus.write16(0x0601_0000, 0xBB66);
+        // Byte write to OBJ VRAM should be ignored.
+        bus.write8(0x0601_0000, 0xD8);
+        // Original data should be unchanged.
+        assert_eq!(bus.read16(0x0601_0000), 0xBB66);
+    }
+
+    #[test]
+    fn vram_bg_byte_write_still_duplicates() {
+        let mut bus = GbaBus::new();
+        // BG VRAM (< 0x06010000) byte writes should still duplicate.
+        bus.write16(0x0600_FFE0, 0xBB66);
+        bus.write8(0x0600_FFE0, 0xD8);
+        assert_eq!(bus.read16(0x0600_FFE0), 0xD8D8);
     }
 }

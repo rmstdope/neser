@@ -366,6 +366,17 @@ impl Arm7tdmi {
                 self.halted = true;
                 true
             }
+            0x0B => {
+                // CpuSet: memory copy/fill using 16-bit or 32-bit units.
+                self.hle_cpu_set(bus);
+                true
+            }
+            0x0C => {
+                // CpuFastSet: memory copy/fill using 32-bit units, count
+                // rounded up to a multiple of 8.
+                self.hle_cpu_fast_set(bus);
+                true
+            }
             _ => {
                 #[cfg(test)]
                 {
@@ -375,6 +386,77 @@ impl Arm7tdmi {
                 }
                 false
             }
+        }
+    }
+
+    /// HLE implementation of SWI 0x0B — CpuSet.
+    ///
+    /// r0 = source address, r1 = destination address,
+    /// r2 = count + flags (bit 26: 0=16-bit, 1=32-bit; bit 24: 0=copy, 1=fill).
+    fn hle_cpu_set<B: Bus>(&mut self, bus: &mut B) {
+        let src = self.regs.r[0];
+        let dst = self.regs.r[1];
+        let ctrl = self.regs.r[2];
+        let count = ctrl & 0x001F_FFFF;
+        let word_mode = ctrl & (1 << 26) != 0;
+        let fill_mode = ctrl & (1 << 24) != 0;
+
+        if word_mode {
+            let src_aligned = src & !3;
+            let dst_aligned = dst & !3;
+            let fill_val = if fill_mode {
+                bus.read32(src_aligned)
+            } else {
+                0
+            };
+            for i in 0..count {
+                let val = if fill_mode {
+                    fill_val
+                } else {
+                    bus.read32(src_aligned.wrapping_add(i * 4))
+                };
+                bus.write32(dst_aligned.wrapping_add(i * 4), val);
+            }
+        } else {
+            let src_aligned = src & !1;
+            let dst_aligned = dst & !1;
+            let fill_val = if fill_mode {
+                bus.read16(src_aligned)
+            } else {
+                0
+            };
+            for i in 0..count {
+                let val = if fill_mode {
+                    fill_val
+                } else {
+                    bus.read16(src_aligned.wrapping_add(i * 2))
+                };
+                bus.write16(dst_aligned.wrapping_add(i * 2), val);
+            }
+        }
+    }
+
+    /// HLE implementation of SWI 0x0C — CpuFastSet.
+    ///
+    /// r0 = source address, r1 = destination address,
+    /// r2 = count + flags (bit 24: 0=copy, 1=fill).
+    /// Always 32-bit transfers; count is rounded up to a multiple of 8.
+    fn hle_cpu_fast_set<B: Bus>(&mut self, bus: &mut B) {
+        let src = self.regs.r[0] & !3;
+        let dst = self.regs.r[1] & !3;
+        let ctrl = self.regs.r[2];
+        let raw_count = ctrl & 0x001F_FFFF;
+        let count = (raw_count + 7) & !7; // round up to multiple of 8
+        let fill_mode = ctrl & (1 << 24) != 0;
+
+        let fill_val = if fill_mode { bus.read32(src) } else { 0 };
+        for i in 0..count {
+            let val = if fill_mode {
+                fill_val
+            } else {
+                bus.read32(src.wrapping_add(i * 4))
+            };
+            bus.write32(dst.wrapping_add(i * 4), val);
         }
     }
 }
@@ -712,5 +794,134 @@ mod tests {
         );
         assert!(!cpu.regs.thumb(), "T bit should be clear (ARM state)");
         assert_eq!(cpu.regs.r[15], ExceptionVector::Undefined as u32);
+    }
+
+    // ---------------------------------------------------------------
+    // CpuSet (SWI 0x0B) and CpuFastSet (SWI 0x0C) HLE tests
+    // ---------------------------------------------------------------
+
+    /// Helper: create a CPU + bus for HLE SWI tests.
+    /// Returns CPU at PC=0 in ARM mode with hle_swi=true and a 4KB RamBus.
+    fn hle_setup() -> (Arm7tdmi, RamBus) {
+        let mut cpu = Arm7tdmi::new();
+        cpu.hle_swi = true;
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.r[15] = 0x0;
+        let bus = RamBus::new(0x1000);
+        (cpu, bus)
+    }
+
+    #[test]
+    fn hle_cpu_set_copies_halfwords() {
+        // CpuSet(src=0x100, dst=0x200, count=4 | size=16bit | copy mode)
+        // Should copy 4 halfwords (8 bytes) from 0x100 to 0x200.
+        let (mut cpu, mut bus) = hle_setup();
+
+        // Write source data at 0x100.
+        bus.write16(0x100, 0xCAFE);
+        bus.write16(0x102, 0xBABE);
+        bus.write16(0x104, 0xDEAD);
+        bus.write16(0x106, 0xBEEF);
+
+        // SWI 0x0B (CpuSet): ARM encoding 0xEF0B0000
+        write_arm_word(&mut bus, 0x0, 0xEF0B_0000);
+
+        cpu.regs.r[0] = 0x100; // source
+        cpu.regs.r[1] = 0x200; // destination
+        cpu.regs.r[2] = 4; // count=4, bit24=0 (16-bit), bit25=0 (copy)
+        cpu.step(&mut bus);
+
+        assert_eq!(bus.read16(0x200), 0xCAFE);
+        assert_eq!(bus.read16(0x202), 0xBABE);
+        assert_eq!(bus.read16(0x204), 0xDEAD);
+        assert_eq!(bus.read16(0x206), 0xBEEF);
+    }
+
+    #[test]
+    fn hle_cpu_set_copies_words() {
+        // CpuSet with bit26=1 (32-bit copy)
+        let (mut cpu, mut bus) = hle_setup();
+
+        bus.write32(0x100, 0xDEAD_BEEF);
+        bus.write32(0x104, 0xCAFE_BABE);
+
+        write_arm_word(&mut bus, 0x0, 0xEF0B_0000);
+
+        cpu.regs.r[0] = 0x100;
+        cpu.regs.r[1] = 0x200;
+        cpu.regs.r[2] = 2 | (1 << 26); // count=2, bit26=1 (32-bit), copy
+        cpu.step(&mut bus);
+
+        assert_eq!(bus.read32(0x200), 0xDEAD_BEEF);
+        assert_eq!(bus.read32(0x204), 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn hle_cpu_set_fill_mode_replicates_first_value() {
+        // CpuSet with bit24=1 (fill), bit26=1 (32-bit): copies first source value repeatedly.
+        let (mut cpu, mut bus) = hle_setup();
+
+        bus.write32(0x100, 0xA5A5_A5A5);
+
+        write_arm_word(&mut bus, 0x0, 0xEF0B_0000);
+
+        cpu.regs.r[0] = 0x100;
+        cpu.regs.r[1] = 0x200;
+        // count=4, bit26=1 (32-bit), bit24=1 (fill)
+        cpu.regs.r[2] = 4 | (1 << 26) | (1 << 24);
+        cpu.step(&mut bus);
+
+        assert_eq!(bus.read32(0x200), 0xA5A5_A5A5);
+        assert_eq!(bus.read32(0x204), 0xA5A5_A5A5);
+        assert_eq!(bus.read32(0x208), 0xA5A5_A5A5);
+        assert_eq!(bus.read32(0x20C), 0xA5A5_A5A5);
+    }
+
+    #[test]
+    fn hle_cpu_fast_set_copies_words() {
+        // CpuFastSet (SWI 0x0C): always 32-bit, count rounded to multiple of 8.
+        let (mut cpu, mut bus) = hle_setup();
+
+        for i in 0u32..8 {
+            bus.write32(0x100 + i * 4, 0x1000_0000 + i);
+        }
+
+        write_arm_word(&mut bus, 0x0, 0xEF0C_0000);
+
+        cpu.regs.r[0] = 0x100;
+        cpu.regs.r[1] = 0x200;
+        cpu.regs.r[2] = 8; // count=8, bit24=0 (copy)
+        cpu.step(&mut bus);
+
+        for i in 0u32..8 {
+            assert_eq!(
+                bus.read32(0x200 + i * 4),
+                0x1000_0000 + i,
+                "CpuFastSet word {i} mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn hle_cpu_fast_set_fill_mode() {
+        // CpuFastSet fill: replicate first source word, count rounded to 8.
+        let (mut cpu, mut bus) = hle_setup();
+
+        bus.write32(0x100, 0xBEEF_CAFE);
+
+        write_arm_word(&mut bus, 0x0, 0xEF0C_0000);
+
+        cpu.regs.r[0] = 0x100;
+        cpu.regs.r[1] = 0x200;
+        cpu.regs.r[2] = 3 | (1 << 24); // count=3, fill. Rounds up to 8.
+        cpu.step(&mut bus);
+
+        for i in 0u32..8 {
+            assert_eq!(
+                bus.read32(0x200 + i * 4),
+                0xBEEF_CAFE,
+                "CpuFastSet fill word {i} mismatch"
+            );
+        }
     }
 }

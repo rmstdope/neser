@@ -267,7 +267,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("armwrestler_page7"), Some(&0x562A_5C65));
 
     // mgba-emu/suite keys
-    assert_eq!(approvals.get("mgba_memory"), Some(&0xFF66_E63B));
+    assert_eq!(approvals.get("mgba_memory"), Some(&0x9338_115D));
     assert_eq!(approvals.get("mgba_io_read"), Some(&0xB73C_0C86));
     assert_eq!(approvals.get("mgba_timing"), Some(&0x697D_A0C7));
     assert_eq!(approvals.get("mgba_timers"), Some(&0xBC59_F692));
@@ -276,7 +276,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("mgba_carry"), Some(&0xFD9E_45E6));
     assert_eq!(approvals.get("mgba_multiply_long"), Some(&0x6996_55AB));
     assert_eq!(approvals.get("mgba_bios_math"), Some(&0xE1DC_7B2D));
-    assert_eq!(approvals.get("mgba_dma"), Some(&0x076F_C108));
+    assert_eq!(approvals.get("mgba_dma"), Some(&0x0D8D_9433));
     assert_eq!(approvals.get("mgba_sio_read"), Some(&0x5BE0_B36B));
     assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));
     assert_eq!(approvals.get("mgba_misc_edge"), Some(&0xFF97_4835));
