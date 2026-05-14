@@ -473,6 +473,13 @@ impl Arm7tdmi {
         discard_old: u32,
         flag_mask: u16,
     ) -> HleSwiResult {
+        // mask=0 can never match any interrupt — return immediately to avoid
+        // an infinite halt loop. The real BIOS would hang; we treat it as a
+        // no-op for robustness.
+        if flag_mask == 0 && self.intr_wait_mask.is_none() {
+            return HleSwiResult::Handled;
+        }
+
         if let Some(mask) = self.intr_wait_mask {
             // Re-entry: check if the desired interrupt(s) fired.
             let bios_if = bus.read16(Self::BIOS_IF_ADDR);
@@ -1427,5 +1434,24 @@ mod tests {
             !cpu.is_halted(),
             "CPU should advance — VBlank was already in BIOS_IF"
         );
+    }
+
+    /// IntrWait with flag_mask=0 should return immediately (Handled) rather
+    /// than looping forever, since `bios_if & 0` can never be true.
+    #[test]
+    fn hle_intr_wait_mask_zero_returns_immediately() {
+        let (mut cpu, mut bus) = hle_setup();
+        write_arm_word(&mut bus, 0x0, 0xEF04_0000); // SWI 0x04
+        cpu.regs.r[0] = 1; // discard_old = true
+        cpu.regs.r[1] = 0; // mask = 0 (invalid)
+
+        cpu.step(&mut bus);
+        // Should NOT halt — returns immediately as a no-op.
+        assert!(
+            !cpu.is_halted(),
+            "IntrWait with mask=0 should not halt the CPU"
+        );
+        // PC should advance past the SWI (exec_pc + 4 for ARM).
+        assert_eq!(cpu.regs.r[15], 0x04, "PC should advance past the SWI");
     }
 }
