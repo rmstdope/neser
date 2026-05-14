@@ -41,7 +41,6 @@ pub const REG_TM0CNT_H: u32 = 0x0400_0102;
 
 /// Address of `REG_DISPCNT` (PPU display control).
 pub const REG_DISPCNT: u32 = 0x0400_0000;
-const REG_BG0_SCROLL_END: u32 = ppu::REG_BG0VOFS + 1;
 
 /// I/O register backing store.
 ///
@@ -81,11 +80,58 @@ impl IoRegisters {
         (off + 1 < IO_SIZE).then_some(off)
     }
 
+    /// Read a raw halfword from the backing store (no masking).
+    fn backing_u16(&self, addr: u32) -> u16 {
+        Self::idx(addr)
+            .map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]]))
+            .unwrap_or(0)
+    }
+
+    /// Returns `true` when the current SIO mode is UART (RCNT bit 15 = 0
+    /// AND SIOCNT bits 12-13 = 11).
+    fn is_uart_mode(&self) -> bool {
+        self.backing_u16(0x0400_0134) & 0x8000 == 0
+            && (self.backing_u16(0x0400_0128) >> 12) & 3 == 3
+    }
+
+    /// Returns `true` when the current SIO mode is Normal 32-bit
+    /// (RCNT bit 15 = 0 AND SIOCNT bits 12-13 = 01).
+    fn is_normal32_mode(&self) -> bool {
+        self.backing_u16(0x0400_0134) & 0x8000 == 0
+            && (self.backing_u16(0x0400_0128) >> 12) & 3 == 1
+    }
+
+    /// Compute the RCNT read mask based on the current SIO mode.
+    ///
+    /// All modes clear bits 9-13. Pin-state bits 0-3 vary:
+    /// - Normal 8/32: bits 1,3 forced low (SD, SO idle low).
+    /// - JOY Bus: bits 0,1 forced low (SC, SD idle low).
+    /// - Multi / UART / GPIO: all pin bits pass through.
+    fn rcnt_read_mask(&self) -> u16 {
+        let rcnt = self.backing_u16(0x0400_0134);
+        let base_mask: u16 = 0xC1FF; // bits 14-15 + bits 0-8; clears 9-13
+        let pin_mask: u16 = if rcnt & 0x8000 != 0 {
+            // GPIO (bit 14=0) or JOY Bus (bit 14=1).
+            if rcnt & 0x4000 != 0 {
+                !0x0003 // JOY Bus: clear bits 0-1
+            } else {
+                0xFFFF // GPIO: all pins pass through
+            }
+        } else {
+            let siocnt = self.backing_u16(0x0400_0128);
+            match (siocnt >> 12) & 3 {
+                0 | 1 => !0x000A, // Normal 8/32: clear bits 1,3
+                _ => 0xFFFF,      // Multi / UART: all pins pass through
+            }
+        };
+        base_mask & pin_mask
+    }
+
     /// Try to read a halfword from the I/O register space.
     ///
-    /// Returns `None` for addresses outside the 1 KB I/O window so the bus
-    /// can supply the correct open-bus value instead of treating the read
-    /// as a handled register access returning zero.
+    /// Returns `None` for write-only registers and addresses outside the
+    /// 1 KB I/O window so the bus can supply the correct open-bus value.
+    /// Readable registers with unused bits apply read masks per GBATek.
     pub fn try_read16(
         &self,
         addr: u32,
@@ -99,7 +145,7 @@ impl IoRegisters {
             REG_IE => Some(ic.ie),
             REG_IF => Some(ic.if_flags),
             REG_IME => Some(ic.read_ime()),
-            // PPU display registers.
+            // PPU display registers (readable).
             ppu::REG_DISPCNT => Some(ppu.read_dispcnt()),
             ppu::REG_BG0CNT => Some(ppu.read_bg_cnt(0)),
             ppu::REG_BG1CNT => Some(ppu.read_bg_cnt(1)),
@@ -107,6 +153,21 @@ impl IoRegisters {
             ppu::REG_BG3CNT => Some(ppu.read_bg_cnt(3)),
             ppu::REG_DISPSTAT => Some(ppu.read_dispstat()),
             ppu::REG_VCOUNT => Some(ppu.read_vcount()),
+            // PPU write-only registers → open-bus.
+            0x0400_0010..=0x0400_001E => None, // BG scroll offsets
+            0x0400_0020..=0x0400_003E => None, // BG affine params
+            0x0400_0040..=0x0400_0046 => None, // Window H/V coords
+            0x0400_004C => None,               // MOSAIC
+            0x0400_0054 => None,               // BLDY
+            // PPU readable registers with masks.
+            0x0400_0048 => self.read_backing(addr, 0x3F3F), // WININ
+            0x0400_004A => self.read_backing(addr, 0x3F3F), // WINOUT
+            0x0400_0050 => self.read_backing(addr, 0x3FFF), // BLDCNT
+            0x0400_0052 => self.read_backing(addr, 0x1F1F), // BLDALPHA
+            // Invalid addresses in PPU/blend range → open-bus.
+            0x0400_004E | 0x0400_0056..=0x0400_005E => None,
+            // Invalid addresses after sound FIFO (not in APU intercept range).
+            0x0400_00A8..=0x0400_00AF => None,
             // Keypad.
             REG_KEYINPUT => Some(keypad.read_keyinput()),
             REG_KEYCNT => Some(keypad.read_keycnt()),
@@ -120,10 +181,54 @@ impl IoRegisters {
             0x0400_010A => Some(timers.read_cnt_h(2)),
             0x0400_010C => Some(timers.read_cnt_l(3)),
             0x0400_010E => Some(timers.read_cnt_h(3)),
-            // DMA: 0x0400_00B0..=0x0400_00DF — write-only regs read 0.
+            // DMA registers.
             0x0400_00B0..=0x0400_00DF => dma.try_read16(addr),
+            // Invalid addresses post-DMA → open-bus.
+            0x0400_00E0..=0x0400_00FF => None,
+            // --- SIO / JOY Bus registers ---
+            // SIODATA32_L/H (SIOMULTI0/1): R/W in Normal-32 mode, 0 otherwise.
+            0x0400_0120 | 0x0400_0122 => {
+                if self.is_normal32_mode() {
+                    self.read_backing(addr, 0xFFFF)
+                } else {
+                    Some(0)
+                }
+            }
+            // SIOMULTI2/3: receive-only buffers, always 0 (disconnected).
+            0x0400_0124 | 0x0400_0126 => Some(0),
+            // SIOCNT: mode-dependent read mask.
+            0x0400_0128 => {
+                let mask = if self.is_uart_mode() { 0x7FAF } else { 0x7F8F };
+                self.read_backing(addr, mask)
+            }
+            // SIOMLT_SEND / SIODATA8: backing in most modes, 0 in UART.
+            0x0400_012A => {
+                if self.is_uart_mode() {
+                    Some(0)
+                } else {
+                    self.read_backing(addr, 0xFFFF)
+                }
+            }
+            // RCNT: mode-dependent read mask (bits 9-13 always clear,
+            // pin bits 0-3 vary by mode).
+            0x0400_0134 => self.read_backing(addr, self.rcnt_read_mask()),
+            // Invalid system-area addresses → read as zero (not open-bus).
+            0x0400_0136 | 0x0400_0142 | 0x0400_015A | 0x0400_0206 | 0x0400_020A | 0x0400_0302 => {
+                Some(0)
+            }
+            // JOYCNT: R/W with mask 0x0047.
+            0x0400_0140 => self.read_backing(addr, 0x0047),
+            // JOY_RECV / JOY_TRANS: always 0 (disconnected, no JOY Bus peer).
+            0x0400_0150..=0x0400_0156 => Some(0),
+            // JOYSTAT: always 0 (disconnected).
+            0x0400_0158 => Some(0),
             _ => Self::idx(addr).map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]])),
         }
+    }
+
+    /// Read a halfword from the backing store with a mask applied.
+    fn read_backing(&self, addr: u32, mask: u16) -> Option<u16> {
+        Self::idx(addr).map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]]) & mask)
     }
 
     /// Try to read a word from the I/O register space (two halfwords).
@@ -262,6 +367,16 @@ impl IoRegisters {
             0x0400_00B0..=0x0400_00DF => {
                 dma.write16(addr, value);
             }
+            // JOYCNT: bits 0-2 are write-1-to-clear flags, bit 6 is R/W.
+            0x0400_0140 => {
+                if let Some(i) = Self::idx(addr) {
+                    let cur = u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]]);
+                    let new_val = (cur & !(value & 0x07)) | (value & 0x40);
+                    let b = new_val.to_le_bytes();
+                    self.bytes[i] = b[0];
+                    self.bytes[i + 1] = b[1];
+                }
+            }
             _ => {
                 if let Some(i) = Self::idx(addr) {
                     let b = value.to_le_bytes();
@@ -334,25 +449,27 @@ impl IoRegisters {
             ppu.write_affine(aligned, merged);
             return;
         }
-        // BG0 scroll registers are write-only as well. Merge byte writes
-        // against live PPU state instead of io.read16() (which returns
-        // backing-store/open-bus for these addresses).
-        if (ppu::REG_BG0HOFS..=REG_BG0_SCROLL_END).contains(&addr) {
+        // BG scroll registers (0x10..0x1E) are write-only. Merge byte
+        // writes against the PPU's live scroll state instead of io.read16()
+        // (which returns open-bus zero for these addresses).
+        if (ppu::REG_BG0HOFS..=ppu::REG_BG3VOFS + 1).contains(&addr) {
             let aligned = addr & !1;
-            let current = match aligned {
-                ppu::REG_BG0HOFS => ppu.read_bg0_hofs(),
-                ppu::REG_BG0VOFS => ppu.read_bg0_vofs(),
-                _ => unreachable!("unexpected BG0 scroll register address: {aligned:#010X}"),
+            let bg = ((aligned - ppu::REG_BG0HOFS) / 4) as usize;
+            let is_vofs = (aligned - ppu::REG_BG0HOFS) % 4 == 2;
+            let current = if is_vofs {
+                ppu.read_bg_vofs(bg)
+            } else {
+                ppu.read_bg_hofs(bg)
             };
             let merged = if addr & 1 == 0 {
                 (current & 0xFF00) | value as u16
             } else {
                 (current & 0x00FF) | ((value as u16) << 8)
             };
-            match aligned {
-                ppu::REG_BG0HOFS => ppu.write_bg0_hofs(merged),
-                ppu::REG_BG0VOFS => ppu.write_bg0_vofs(merged),
-                _ => unreachable!("unexpected BG0 scroll register address: {aligned:#010X}"),
+            if is_vofs {
+                ppu.write_bg_vofs(bg, merged);
+            } else {
+                ppu.write_bg_hofs(bg, merged);
             }
             return;
         }
@@ -379,10 +496,10 @@ mod tests {
         let mut d = DmaController::new();
         let mut p = Ppu::new();
         let mut k = Keypad::new();
-        // 0x40 is REG_SOUNDCNT_H; not specially handled here — should just
+        // WAITCNT (0x204) is not specially handled — should just
         // round-trip through the backing store.
-        io.write16(0x0400_0040, 0xBEEF, &mut ic, &mut t, &mut d, &mut p, &mut k);
-        assert_eq!(io.read16(0x0400_0040, &ic, &t, &d, &p, &k), 0xBEEF);
+        io.write16(0x0400_0204, 0xBEEF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(io.read16(0x0400_0204, &ic, &t, &d, &p, &k), 0xBEEF);
     }
 
     #[test]
@@ -1010,5 +1127,365 @@ mod tests {
         );
 
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    // ---------------------------------------------------------------
+    // I/O read-back tests (per GBATek I/O map & mgba-emu/suite io-read)
+    // ---------------------------------------------------------------
+
+    /// Write-only PPU registers (BG scroll offsets, affine params, window
+    /// coords, MOSAIC, BLDY) must return `None` from `try_read16` so the
+    /// bus can substitute the open-bus value.
+    #[test]
+    fn write_only_ppu_registers_return_none() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let write_only_addrs: &[(u32, &str)] = &[
+            // BG scroll offsets (0x10..0x1E)
+            (0x0400_0010, "BG0HOFS"),
+            (0x0400_0012, "BG0VOFS"),
+            (0x0400_0014, "BG1HOFS"),
+            (0x0400_0016, "BG1VOFS"),
+            (0x0400_0018, "BG2HOFS"),
+            (0x0400_001A, "BG2VOFS"),
+            (0x0400_001C, "BG3HOFS"),
+            (0x0400_001E, "BG3VOFS"),
+            // BG affine params (0x20..0x3E)
+            (ppu::REG_BG2PA, "BG2PA"),
+            (ppu::REG_BG2PB, "BG2PB"),
+            (ppu::REG_BG2X_L, "BG2X_LO"),
+            (ppu::REG_BG2Y_H, "BG2Y_HI"),
+            (ppu::REG_BG3PA, "BG3PA"),
+            (ppu::REG_BG3Y_L, "BG3Y_LO"),
+            // Window coordinates (0x40..0x46)
+            (0x0400_0040, "WIN0H"),
+            (0x0400_0042, "WIN1H"),
+            (0x0400_0044, "WIN0V"),
+            (0x0400_0046, "WIN1V"),
+            // MOSAIC
+            (0x0400_004C, "MOSAIC"),
+            // BLDY (write-only)
+            (0x0400_0054, "BLDY"),
+        ];
+
+        for &(addr, name) in write_only_addrs {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                None,
+                "{name} at {addr:#010X} should return None (write-only)"
+            );
+        }
+    }
+
+    /// Readable PPU registers with masks: WININ, WINOUT, BLDCNT, BLDALPHA.
+    /// After writing 0xFFFF, reads must return the value with unused bits
+    /// masked out.
+    #[test]
+    fn readable_ppu_registers_apply_read_masks() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let masked_regs: &[(u32, u16, &str)] = &[
+            (0x0400_0048, 0x3F3F, "WININ"),
+            (0x0400_004A, 0x3F3F, "WINOUT"),
+            (0x0400_0050, 0x3FFF, "BLDCNT"),
+            (0x0400_0052, 0x1F1F, "BLDALPHA"),
+        ];
+
+        for &(addr, expected, name) in masked_regs {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                Some(expected),
+                "{name} at {addr:#010X} should read back {expected:#06X}"
+            );
+        }
+    }
+
+    /// Invalid addresses in the PPU range (0x4E, 0x56-0x5E) and post-DMA
+    /// range (0xA8-0xAE, 0xE0-0xFE) must return `None` (open-bus).
+    #[test]
+    fn invalid_io_addresses_return_none() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let invalid_addrs: &[(u32, &str)] = &[
+            (0x0400_004E, "INVALID (4E)"),
+            (0x0400_0056, "INVALID (56)"),
+            (0x0400_0058, "INVALID (58)"),
+            (0x0400_005A, "INVALID (5A)"),
+            (0x0400_005C, "INVALID (5C)"),
+            (0x0400_005E, "INVALID (5E)"),
+            (0x0400_00A8, "INVALID (A8)"),
+            (0x0400_00AA, "INVALID (AA)"),
+            (0x0400_00AC, "INVALID (AC)"),
+            (0x0400_00AE, "INVALID (AE)"),
+            (0x0400_00E0, "INVALID (E0)"),
+            (0x0400_00F0, "INVALID (F0)"),
+            (0x0400_00FE, "INVALID (FE)"),
+        ];
+
+        for &(addr, name) in invalid_addrs {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                None,
+                "{name} at {addr:#010X} should return None (open-bus)"
+            );
+        }
+    }
+
+    /// Invalid system-area addresses (0x136, 0x142, 0x15A, 0x206, 0x20A,
+    /// 0x302) read as zero on real hardware — not open-bus.
+    #[test]
+    fn invalid_system_addresses_return_zero() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        let system_addrs: &[(u32, &str)] = &[
+            (0x0400_0136, "INVALID (136)"),
+            (0x0400_0142, "INVALID (142)"),
+            (0x0400_015A, "INVALID (15A)"),
+            (0x0400_0206, "INVALID (206)"),
+            (0x0400_020A, "INVALID (20A)"),
+            (0x0400_0302, "INVALID (302)"),
+        ];
+
+        for &(addr, name) in system_addrs {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                Some(0),
+                "{name} at {addr:#010X} should return Some(0)"
+            );
+        }
+    }
+
+    /// Helper to set SIO mode via RCNT + SIOCNT writes.
+    #[allow(clippy::too_many_arguments)]
+    fn set_sio_mode(
+        io: &mut IoRegisters,
+        ic: &mut InterruptController,
+        t: &mut Timers,
+        d: &mut DmaController,
+        p: &mut Ppu,
+        k: &mut Keypad,
+        siocnt: u16,
+        rcnt: u16,
+    ) {
+        io.write16(0x0400_0134, rcnt, ic, t, d, p, k);
+        io.write16(0x0400_0128, siocnt, ic, t, d, p, k);
+    }
+
+    /// SIOMULTI2 (0x124) and SIOMULTI3 (0x126) are receive-only buffers
+    /// for multi-player mode. They always read as 0 when disconnected,
+    /// regardless of what was written to them.
+    #[test]
+    fn siomulti2_3_always_read_zero() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        for addr in [0x0400_0124, 0x0400_0126] {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                Some(0),
+                "SIOMULTI at {addr:#010X} should always read 0"
+            );
+        }
+    }
+
+    /// SIODATA32_L/H (0x120/0x122) are R/W only in Normal 32-bit mode.
+    /// In all other modes, they behave as receive buffers returning 0.
+    #[test]
+    fn siodata32_mode_dependent_read() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Normal 32-bit mode: SIODATA32 is R/W.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x1000, 0);
+        io.write16(0x0400_0120, 0xBEEF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0120, &ic, &t, &d, &p, &k),
+            Some(0xBEEF),
+            "SIODATA32_L in N32 mode should read back written value"
+        );
+
+        // Multi-player mode: reads as 0.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x2000, 0);
+        io.write16(0x0400_0120, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0120, &ic, &t, &d, &p, &k),
+            Some(0),
+            "SIODATA32_L in Multi mode should read 0"
+        );
+    }
+
+    /// SIOCNT (0x128) read mask: non-UART modes mask = 0x7F8F,
+    /// UART mode mask = 0x7FAF.
+    #[test]
+    fn siocnt_read_mask_mode_dependent() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Multi-player mode: write 0xEFFF, expect 0x6F8F.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x2000, 0);
+        io.write16(0x0400_0128, 0xEFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0128, &ic, &t, &d, &p, &k),
+            Some(0x6F8F),
+            "SIOCNT in Multi mode should apply mask 0x7F8F"
+        );
+
+        // UART mode: write 0xFFFF, expect 0x7FAF.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x3000, 0);
+        io.write16(0x0400_0128, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0128, &ic, &t, &d, &p, &k),
+            Some(0x7FAF),
+            "SIOCNT in UART mode should apply mask 0x7FAF"
+        );
+    }
+
+    /// SIOMLT_SEND / SIODATA8 (0x12A) reads back the written value in
+    /// most modes, but returns 0 in UART mode.
+    #[test]
+    fn siomlt_send_uart_reads_zero() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Multi mode: read back written value.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x2000, 0);
+        io.write16(0x0400_012A, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_012A, &ic, &t, &d, &p, &k),
+            Some(0xFFFF),
+            "SIOMLT_SEND in Multi mode should read back written value"
+        );
+
+        // UART mode: reads as 0.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x3000, 0);
+        io.write16(0x0400_012A, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_012A, &ic, &t, &d, &p, &k),
+            Some(0),
+            "SIODATA8 in UART mode should read 0"
+        );
+    }
+
+    /// RCNT (0x134) read mask varies by SIO mode. All modes clear bits
+    /// 9-13. Pin state bits 0-3 differ: Normal modes force bits 1,3 = 0;
+    /// JOY Bus forces bits 0,1 = 0.
+    #[test]
+    fn rcnt_mode_dependent_read_mask() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Multi-player: write 0x3FFF, expect 0x01FF.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x2000, 0);
+        io.write16(0x0400_0134, 0x3FFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0134, &ic, &t, &d, &p, &k),
+            Some(0x01FF),
+            "RCNT in Multi mode"
+        );
+
+        // Normal 8-bit: write 0x3FFF, expect 0x01F5.
+        set_sio_mode(&mut io, &mut ic, &mut t, &mut d, &mut p, &mut k, 0x0000, 0);
+        io.write16(0x0400_0134, 0x3FFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0134, &ic, &t, &d, &p, &k),
+            Some(0x01F5),
+            "RCNT in Normal 8-bit mode"
+        );
+
+        // JOY Bus: write 0xFFFF, expect 0xC1FC.
+        io.write16(0x0400_0134, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        // RCNT=0xFFFF has bits 15-14 = 11 → JOY Bus mode.
+        assert_eq!(
+            io.try_read16(0x0400_0134, &ic, &t, &d, &p, &k),
+            Some(0xC1FC),
+            "RCNT in JOY Bus mode"
+        );
+    }
+
+    /// JOYCNT (0x140) is R/W with mask 0x0047. Bits 0-2 are
+    /// write-1-to-clear flags, bit 6 is a normal R/W bit.
+    /// Writing 0xFFFF to a zeroed JOYCNT results in 0x0040
+    /// (bits 0-2 cleared by W1C, bit 6 set).
+    #[test]
+    fn joycnt_read_mask_and_w1c() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write16(0x0400_0140, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(
+            io.try_read16(0x0400_0140, &ic, &t, &d, &p, &k),
+            Some(0x0040),
+            "JOYCNT after writing 0xFFFF should be 0x0040"
+        );
+    }
+
+    /// JOY_RECV (0x150-0x152) and JOY_TRANS (0x154-0x156) always read
+    /// as 0 when disconnected.
+    #[test]
+    fn joy_recv_trans_always_read_zero() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        for addr in [0x0400_0150, 0x0400_0152, 0x0400_0154, 0x0400_0156] {
+            io.write16(addr, 0xFFFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+            assert_eq!(
+                io.try_read16(addr, &ic, &t, &d, &p, &k),
+                Some(0),
+                "JOY register at {addr:#010X} should read 0"
+            );
+        }
     }
 }

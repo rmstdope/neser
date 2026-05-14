@@ -111,6 +111,10 @@ pub struct GbaBus {
     pub keypad: Keypad,
     /// Last value driven on the bus (used to model open-bus reads).
     last_bus_value: u32,
+    /// DMA internal data latch — separate from the CPU's open-bus register.
+    /// Updated only by DMA reads; DMA writes to restricted regions return
+    /// this value instead of the CPU's `last_bus_value`.
+    dma_latch: u32,
     /// Whether the BIOS is locked. After the boot ROM finishes executing,
     /// BIOS reads from outside the BIOS region return open-bus instead of
     /// the BIOS contents.
@@ -158,6 +162,7 @@ impl GbaBus {
             apu: Apu::new(),
             keypad: Keypad::new(),
             last_bus_value: 0,
+            dma_latch: 0,
             bios_locked: false,
             bios_image_loaded: false,
         }
@@ -335,6 +340,7 @@ impl GbaBus {
             sram: self.sram.clone(),
             bios_locked: self.bios_locked,
             last_bus_value: self.last_bus_value,
+            dma_latch: self.dma_latch,
         }
     }
 
@@ -372,6 +378,7 @@ impl GbaBus {
         }
         self.bios_locked = state.bios_locked;
         self.last_bus_value = state.last_bus_value;
+        self.dma_latch = state.dma_latch;
         Ok(())
     }
 
@@ -448,16 +455,11 @@ impl GbaBus {
     }
 
     /// Map the cartridge ROM with mirroring across the three wait-state
-    /// regions. The ROM is intentionally mirrored within its 32 MB window
-    /// (the cart bus repeats the inserted image), so this only returns
-    /// `None` when no cartridge is inserted at all — in which case callers
-    /// substitute the GBATek "no-cart" open-bus pattern.
+    /// regions. Returns `None` when no cartridge is inserted or when the
+    /// offset falls beyond the ROM image — callers substitute the GBATek
+    /// "no-cart" open-bus pattern (addr >> 1).
     fn rom_byte(&self, offset: usize) -> Option<u8> {
-        if self.rom.is_empty() {
-            return None;
-        }
-        // ROM is mirrored within its 32 MB window.
-        Some(self.rom[offset % self.rom.len()])
+        self.rom.get(offset).copied()
     }
 
     /// Read a 16-bit little-endian halfword from cart ROM, respecting
@@ -781,11 +783,17 @@ impl Bus for GbaBus {
                 self.pram[off + 1] = value;
             }
             0x6 => {
-                // Byte writes to VRAM duplicate; ignored for OBJ region in
-                // bitmap modes — modelling the simple case here.
-                let off = vram_offset(addr) & !1;
-                self.vram[off] = value;
-                self.vram[off + 1] = value;
+                // Byte writes to BG VRAM duplicate the byte to a halfword.
+                // Byte writes to OBJ VRAM (offset >= 0x10000) are ignored.
+                // TODO: In bitmap modes 3/5, the BG/OBJ boundary is 0x14000
+                // rather than 0x10000. This threshold is correct for tile modes
+                // (0-2) and mode 4, but needs DISPCNT check for full accuracy.
+                let off = vram_offset(addr);
+                if off < 0x10000 {
+                    let aligned = off & !1;
+                    self.vram[aligned] = value;
+                    self.vram[aligned + 1] = value;
+                }
             }
             0x7 => { /* OAM ignores byte writes */ }
             0x8..=0xD => {}
@@ -803,16 +811,32 @@ impl Bus for GbaBus {
 /// CPU stores.
 impl dma::DmaBus for GbaBus {
     fn dma_read16(&mut self, addr: u32) -> u16 {
-        <Self as Bus>::read16(self, addr)
+        // Swap in the DMA latch so open-bus reads return the DMA's own
+        // latched value rather than the CPU's last_bus_value.
+        let saved = self.last_bus_value;
+        self.last_bus_value = self.dma_latch;
+        let val = <Self as Bus>::read16(self, addr);
+        self.dma_latch = self.last_bus_value;
+        self.last_bus_value = saved;
+        val
     }
     fn dma_write16(&mut self, addr: u32, value: u16) {
+        let saved = self.last_bus_value;
         <Self as Bus>::write16(self, addr, value);
+        self.last_bus_value = saved;
     }
     fn dma_read32(&mut self, addr: u32) -> u32 {
-        <Self as Bus>::read32(self, addr)
+        let saved = self.last_bus_value;
+        self.last_bus_value = self.dma_latch;
+        let val = <Self as Bus>::read32(self, addr);
+        self.dma_latch = self.last_bus_value;
+        self.last_bus_value = saved;
+        val
     }
     fn dma_write32(&mut self, addr: u32, value: u32) {
+        let saved = self.last_bus_value;
         <Self as Bus>::write32(self, addr, value);
+        self.last_bus_value = saved;
     }
     fn dma_raise_irq(&mut self, sources: u16) {
         self.ic.raise(sources);
@@ -1032,9 +1056,9 @@ mod tests {
         // REG_DISPCNT (0x04000000)
         bus.write16(0x0400_0000, 0x1234);
         assert_eq!(bus.read16(0x0400_0000), 0x1234);
-        // A random unimplemented register stretching the dispatch.
-        bus.write16(0x0400_0050, 0xBEEF);
-        assert_eq!(bus.read16(0x0400_0050), 0xBEEF);
+        // WAITCNT (0x04000204) — unimplemented, round-trips via backing store.
+        bus.write16(0x0400_0204, 0xBEEF);
+        assert_eq!(bus.read16(0x0400_0204), 0xBEEF);
     }
 
     #[test]
@@ -1202,5 +1226,161 @@ mod tests {
         let mut bus = GbaBus::new();
         bus.write16(crate::gba::input::REG_KEYINPUT, 0x0000);
         assert_eq!(bus.read16(crate::gba::input::REG_KEYINPUT), 0x03FF);
+    }
+
+    // ---------------------------------------------------------------
+    // ROM out-of-bounds reads return addr>>1 pattern (open bus)
+    // Per GBATek: when reading beyond ROM size, the cartridge bus
+    // returns the halfword address / 2 (i.e., addr >> 1).
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn rom_oob_read16_returns_addr_shr1() {
+        let mut bus = GbaBus::new();
+        // Load a small 256-byte ROM.
+        bus.load_rom(&[0u8; 256]);
+        // Address 0x0924_68AC is well beyond 256 bytes.
+        let v = bus.read16(0x0924_68AC);
+        // Expected: (0x092468AC >> 1) & 0xFFFF = 0x3456
+        assert_eq!(v, 0x3456);
+    }
+
+    #[test]
+    fn rom_oob_read32_returns_addr_shr1_pattern() {
+        let mut bus = GbaBus::new();
+        bus.load_rom(&[0u8; 256]);
+        let v = bus.read32(0x0924_68AC);
+        // Low halfword: (0x092468AC >> 1) & 0xFFFF = 0x3456
+        // High halfword: (0x092468AE >> 1) & 0xFFFF = 0x3457
+        assert_eq!(v, 0x3457_3456);
+    }
+
+    #[test]
+    fn rom_oob_read8_returns_addr_shr1_byte() {
+        let mut bus = GbaBus::new();
+        bus.load_rom(&[0u8; 256]);
+        // 0x092468AC >> 1 = 0x049234D6 → halfword 0x3456
+        // byte 0 (even) = 0x56, byte 1 (odd) = 0x34
+        assert_eq!(bus.read8(0x0924_68AC), 0x56);
+        assert_eq!(bus.read8(0x0924_68AD), 0x34);
+    }
+
+    // ---------------------------------------------------------------
+    // VRAM OBJ region byte writes must be ignored
+    // Per GBATek: byte writes to OBJ tile VRAM (offset >= 0x10000
+    // in modes 0-2, >= 0x14000 in modes 3-5) are ignored.
+    // The mgba suite tests non-bitmap mode (modes 0-2).
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn vram_obj_byte_write_is_ignored() {
+        let mut bus = GbaBus::new();
+        // Write initial data to OBJ VRAM (0x06010000+).
+        bus.write16(0x0601_0000, 0xBB66);
+        // Byte write to OBJ VRAM should be ignored.
+        bus.write8(0x0601_0000, 0xD8);
+        // Original data should be unchanged.
+        assert_eq!(bus.read16(0x0601_0000), 0xBB66);
+    }
+
+    #[test]
+    fn vram_bg_byte_write_still_duplicates() {
+        let mut bus = GbaBus::new();
+        // BG VRAM (< 0x06010000) byte writes should still duplicate.
+        bus.write16(0x0600_FFE0, 0xBB66);
+        bus.write8(0x0600_FFE0, 0xD8);
+        assert_eq!(bus.read16(0x0600_FFE0), 0xD8D8);
+    }
+
+    #[test]
+    fn dma_read32_uses_dma_latch_not_cpu_bus_value() {
+        // The DMA controller has its own internal data latch, separate from
+        // the CPU's open-bus value. When DMA reads from a restricted region
+        // (e.g. locked BIOS), it returns the DMA latch — not the CPU's
+        // last_bus_value.
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+        bus.lock_bios();
+
+        // Write known data to IWRAM.
+        bus.write32(0x0300_0000, 0xCAFE_BABE);
+
+        // DMA reads IWRAM → primes the DMA latch.
+        let val = bus.dma_read32(0x0300_0000);
+        assert_eq!(val, 0xCAFE_BABE);
+
+        // CPU reads from EWRAM → changes last_bus_value but NOT DMA latch.
+        bus.write32(0x0200_0000, 0xDEAD_BEEF);
+        let _ = bus.read32(0x0200_0000);
+
+        // DMA reads locked BIOS → should get DMA latch (0xCAFE_BABE),
+        // not the CPU's last_bus_value (0xDEAD_BEEF).
+        let bios_val = bus.dma_read32(0x0000_0000);
+        assert_eq!(bios_val, 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn dma_read16_uses_dma_latch_halfword() {
+        // 16-bit DMA reads should update only half the DMA latch, matching
+        // the halfword alignment within the 32-bit latch register.
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+        bus.lock_bios();
+
+        // Prime DMA latch via two 16-bit reads from IWRAM.
+        bus.write32(0x0300_0000, 0xAAAA_BBBB);
+        let _ = bus.dma_read16(0x0300_0000); // low half → 0xBBBB
+        let _ = bus.dma_read16(0x0300_0002); // high half → 0xAAAA
+        // DMA latch is now 0xAAAA_BBBB.
+
+        // CPU activity changes last_bus_value.
+        bus.write32(0x0200_0000, 0x1111_2222);
+        let _ = bus.read32(0x0200_0000);
+
+        // DMA reads locked BIOS at aligned addr → returns DMA latch low half.
+        let bios_lo = bus.dma_read16(0x0000_0000);
+        assert_eq!(bios_lo, 0xBBBB);
+    }
+
+    #[test]
+    fn dma_read_does_not_corrupt_cpu_last_bus_value() {
+        // DMA reads must not change the CPU's open-bus value.
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+
+        // Pre-populate IWRAM before setting the CPU sentinel.
+        bus.write32(0x0300_0000, 0xBEEF_CAFE);
+
+        // Set CPU's last_bus_value to a known sentinel.
+        bus.write32(0x0200_0000, 0x5555_6666);
+        let _ = bus.read32(0x0200_0000);
+
+        // DMA reads from IWRAM — must not disturb CPU bus value.
+        let _ = bus.dma_read32(0x0300_0000);
+
+        // CPU's open-bus should still return the sentinel, not the DMA value.
+        // Read from a region that returns open-bus (locked BIOS).
+        bus.lock_bios();
+        let cpu_open = bus.read32(0x0000_0000);
+        assert_eq!(cpu_open, 0x5555_6666);
+    }
+
+    #[test]
+    fn dma_write_does_not_corrupt_cpu_last_bus_value() {
+        // DMA writes must not change the CPU's open-bus value.
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+
+        // Set CPU's last_bus_value to a known sentinel.
+        bus.write32(0x0200_0000, 0xAAAA_BBBB);
+        let _ = bus.read32(0x0200_0000);
+
+        // DMA writes to EWRAM — must not disturb CPU bus value.
+        bus.dma_write32(0x0200_1000, 0xDEAD_BEEF);
+
+        // CPU's open-bus should still return the sentinel.
+        bus.lock_bios();
+        let cpu_open = bus.read32(0x0000_0000);
+        assert_eq!(cpu_open, 0xAAAA_BBBB);
     }
 }

@@ -227,17 +227,23 @@ impl DmaController {
     }
 
     /// Read register at `addr` (within `0x0400_00B0..0x0400_00DF`).
-    /// Writes-only registers (SAD, DAD, CNT_L) read as `0` per GBATek.
+    ///
+    /// Per GBATek, SAD and DAD are write-only and return open-bus (None).
+    /// CNT_L is write-only but reads as zero. CNT_HI is readable with a
+    /// mask: bits 0-4 always zero, bit 11 only on channel 3 (Game Pak DRQ).
     pub fn try_read16(&self, addr: u32) -> Option<u16> {
         let (chan, off) = decode_addr(addr)?;
         match off {
-            // SAD is write-only.
-            0 | 2 => Some(0),
-            // DAD is write-only.
-            4 | 6 => Some(0),
-            // CNT_L is write-only.
+            // SAD is write-only → open-bus.
+            0 | 2 => None,
+            // DAD is write-only → open-bus.
+            4 | 6 => None,
+            // CNT_L is write-only but reads as zero.
             8 => Some(0),
-            10 => Some(self.channels[chan].cnt_h),
+            10 => {
+                let mask = if chan == 3 { 0xFFE0 } else { 0xF7E0 };
+                Some(self.channels[chan].cnt_h & mask)
+            }
             _ => None,
         }
     }
@@ -1131,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn write_only_registers_read_zero() {
+    fn write_only_sad_dad_return_none_cnt_l_returns_zero() {
         let mut d = DmaController::new();
         write_dma_setup(
             &mut d,
@@ -1141,13 +1147,33 @@ mod tests {
             0x1234,
             cnt_h(false, false, 0, true, false, 0, 0),
         );
-        // SAD/DAD/CNT_L are write-only; reads return 0.
-        assert_eq!(d.try_read16(0x0400_00B0), Some(0));
-        assert_eq!(d.try_read16(0x0400_00B2), Some(0));
-        assert_eq!(d.try_read16(0x0400_00B4), Some(0));
-        assert_eq!(d.try_read16(0x0400_00B6), Some(0));
-        assert_eq!(d.try_read16(0x0400_00B8), Some(0));
+        // SAD/DAD are write-only → return None (open-bus on real hardware).
+        assert_eq!(d.try_read16(0x0400_00B0), None, "DMA0 SAD_LO");
+        assert_eq!(d.try_read16(0x0400_00B2), None, "DMA0 SAD_HI");
+        assert_eq!(d.try_read16(0x0400_00B4), None, "DMA0 DAD_LO");
+        assert_eq!(d.try_read16(0x0400_00B6), None, "DMA0 DAD_HI");
+        // CNT_L is write-only but reads as zero (not open-bus).
+        assert_eq!(d.try_read16(0x0400_00B8), Some(0), "DMA0 CNT_LO");
         // CNT_H reads back.
         assert!(d.try_read16(0x0400_00BA).unwrap() & 0x8000 == 0);
+    }
+
+    /// DMA CNT_HI has a read mask: bits 0-4 are not readable (always 0),
+    /// and bit 11 (Game Pak DRQ) is only available on channel 3.
+    /// CH0-2: mask 0xF7E0, CH3: mask 0xFFE0.
+    #[test]
+    fn dma_cnt_hi_applies_read_mask() {
+        let mut d = DmaController::new();
+        // Write 0xFFFF to all four channels' CNT_HI.
+        for ch in 0..4u32 {
+            let addr = 0x0400_00BA + ch * 12;
+            d.write16(addr, 0xFFFF);
+        }
+        // CH0-2: bits 0-4 and bit 11 masked out → 0xF7E0.
+        assert_eq!(d.try_read16(0x0400_00BA), Some(0xF7E0), "DMA0 CNT_HI");
+        assert_eq!(d.try_read16(0x0400_00C6), Some(0xF7E0), "DMA1 CNT_HI");
+        assert_eq!(d.try_read16(0x0400_00D2), Some(0xF7E0), "DMA2 CNT_HI");
+        // CH3: only bits 0-4 masked → 0xFFE0.
+        assert_eq!(d.try_read16(0x0400_00DE), Some(0xFFE0), "DMA3 CNT_HI");
     }
 }

@@ -328,10 +328,9 @@ impl Arm7tdmi {
     /// SWI was handled (caller should skip normal BIOS dispatch).
     ///
     /// Reads the SWI number from the prefetched instruction. Currently
-    /// handles:
-    /// - **0x02 (Halt)**: halt CPU until any enabled interrupt.
-    /// - **0x05 (VBlankIntrWait)**: set IME=1, clear VBlank in IntrCheck
-    ///   at 0x03007FF8, halt CPU.
+    /// handles Halt (0x02), VBlankIntrWait (0x05), Div (0x06), DivArm
+    /// (0x07), Sqrt (0x08), ArcTan (0x09), ArcTan2 (0x0A), CpuSet
+    /// (0x0B), and CpuFastSet (0x0C).
     fn try_hle_swi<B: Bus>(&mut self, bus: &mut B) -> bool {
         if !self.hle_swi {
             return false;
@@ -366,6 +365,42 @@ impl Arm7tdmi {
                 self.halted = true;
                 true
             }
+            0x0B => {
+                // CpuSet: memory copy/fill using 16-bit or 32-bit units.
+                self.hle_cpu_set(bus);
+                true
+            }
+            0x0C => {
+                // CpuFastSet: memory copy/fill using 32-bit units, count
+                // rounded up to a multiple of 8.
+                self.hle_cpu_fast_set(bus);
+                true
+            }
+            0x06 => {
+                // Div: signed integer division.
+                self.hle_div();
+                true
+            }
+            0x07 => {
+                // DivArm: same as Div but with swapped arguments.
+                self.hle_div_arm();
+                true
+            }
+            0x08 => {
+                // Sqrt: integer square root.
+                self.hle_sqrt();
+                true
+            }
+            0x09 => {
+                // ArcTan: fixed-point arctangent.
+                self.hle_arctan();
+                true
+            }
+            0x0A => {
+                // ArcTan2: fixed-point atan2.
+                self.hle_arctan2();
+                true
+            }
             _ => {
                 #[cfg(test)]
                 {
@@ -376,6 +411,203 @@ impl Arm7tdmi {
                 false
             }
         }
+    }
+
+    /// HLE implementation of SWI 0x0B — CpuSet.
+    ///
+    /// r0 = source address, r1 = destination address,
+    /// r2 = count + flags (bit 26: 0=16-bit, 1=32-bit; bit 24: 0=copy, 1=fill).
+    fn hle_cpu_set<B: Bus>(&mut self, bus: &mut B) {
+        let src = self.regs.r[0];
+        let dst = self.regs.r[1];
+        let ctrl = self.regs.r[2];
+        let count = ctrl & 0x001F_FFFF;
+        let word_mode = ctrl & (1 << 26) != 0;
+        let fill_mode = ctrl & (1 << 24) != 0;
+
+        if word_mode {
+            let src_aligned = src & !3;
+            let dst_aligned = dst & !3;
+            let fill_val = if fill_mode {
+                bus.read32(src_aligned)
+            } else {
+                0
+            };
+            for i in 0..count {
+                let val = if fill_mode {
+                    fill_val
+                } else {
+                    bus.read32(src_aligned.wrapping_add(i * 4))
+                };
+                bus.write32(dst_aligned.wrapping_add(i * 4), val);
+            }
+        } else {
+            let src_aligned = src & !1;
+            let dst_aligned = dst & !1;
+            let fill_val = if fill_mode {
+                bus.read16(src_aligned)
+            } else {
+                0
+            };
+            for i in 0..count {
+                let val = if fill_mode {
+                    fill_val
+                } else {
+                    bus.read16(src_aligned.wrapping_add(i * 2))
+                };
+                bus.write16(dst_aligned.wrapping_add(i * 2), val);
+            }
+        }
+    }
+
+    /// HLE implementation of SWI 0x0C — CpuFastSet.
+    ///
+    /// r0 = source address, r1 = destination address,
+    /// r2 = count + flags (bit 24: 0=copy, 1=fill).
+    /// Always 32-bit transfers; count is rounded up to a multiple of 8.
+    fn hle_cpu_fast_set<B: Bus>(&mut self, bus: &mut B) {
+        let src = self.regs.r[0] & !3;
+        let dst = self.regs.r[1] & !3;
+        let ctrl = self.regs.r[2];
+        let raw_count = ctrl & 0x001F_FFFF;
+        let count = (raw_count + 7) & !7; // round up to multiple of 8
+        let fill_mode = ctrl & (1 << 24) != 0;
+
+        let fill_val = if fill_mode { bus.read32(src) } else { 0 };
+        for i in 0..count {
+            let val = if fill_mode {
+                fill_val
+            } else {
+                bus.read32(src.wrapping_add(i * 4))
+            };
+            bus.write32(dst.wrapping_add(i * 4), val);
+        }
+    }
+
+    /// HLE implementation of SWI 0x06 — Div.
+    ///
+    /// r0 = numerator, r1 = denominator →
+    /// r0 = quotient, r1 = remainder, r3 = abs(quotient).
+    fn hle_div(&mut self) {
+        let num = self.regs.r[0] as i32;
+        let denom = self.regs.r[1] as i32;
+
+        if denom == 0 {
+            // GBA BIOS div-by-zero behavior: return sign(num) as quotient.
+            self.regs.r[0] = if num < 0 { (-1i32) as u32 } else { 1 };
+            self.regs.r[1] = num as u32;
+            self.regs.r[3] = 1;
+        } else if denom == -1 && num == i32::MIN {
+            // Overflow: INT_MIN / -1 can't be represented.
+            self.regs.r[0] = i32::MIN as u32;
+            self.regs.r[1] = 0;
+            self.regs.r[3] = i32::MIN as u32;
+        } else {
+            let quot = num / denom;
+            let rem = num % denom;
+            self.regs.r[0] = quot as u32;
+            self.regs.r[1] = rem as u32;
+            self.regs.r[3] = quot.unsigned_abs();
+        }
+    }
+
+    /// HLE implementation of SWI 0x07 — DivArm.
+    ///
+    /// Same as Div but r0 = denominator, r1 = numerator (swapped).
+    fn hle_div_arm(&mut self) {
+        self.regs.r.swap(0, 1);
+        self.hle_div();
+    }
+
+    /// HLE implementation of SWI 0x08 — Sqrt.
+    ///
+    /// r0 = unsigned 32-bit value → r0 = integer square root.
+    fn hle_sqrt(&mut self) {
+        let x = self.regs.r[0];
+        self.regs.r[0] = (x as f64).sqrt() as u32;
+    }
+
+    /// HLE implementation of SWI 0x09 — ArcTan.
+    ///
+    /// r0 = tan (signed fixed-point 1.14) → r0 = angle, r1 = intermediate a,
+    /// r3 = accumulated coefficient b.
+    ///
+    /// Uses the same Taylor-series coefficients as the real GBA BIOS.
+    fn hle_arctan(&mut self) {
+        let i = self.regs.r[0] as i32;
+        let a = (i.wrapping_mul(i) >> 14).wrapping_neg();
+        let mut b = ((0xA9_i32).wrapping_mul(a) >> 14).wrapping_add(0x390);
+        b = (b.wrapping_mul(a) >> 14).wrapping_add(0x91C);
+        b = (b.wrapping_mul(a) >> 14).wrapping_add(0xFB6);
+        b = (b.wrapping_mul(a) >> 14).wrapping_add(0x16AA);
+        b = (b.wrapping_mul(a) >> 14).wrapping_add(0x2081);
+        b = (b.wrapping_mul(a) >> 14).wrapping_add(0x3651);
+        b = (b.wrapping_mul(a) >> 14).wrapping_add(0xA2F9);
+        self.regs.r[0] = (i.wrapping_mul(b) >> 16) as u32;
+        self.regs.r[1] = a as u32;
+        self.regs.r[3] = b as u32;
+    }
+
+    /// HLE implementation of SWI 0x0A — ArcTan2.
+    ///
+    /// r0 = x, r1 = y → r0 = angle in [0, 0xFFFF] (full circle).
+    /// Sets r3 = 0x170 to match the real BIOS's register clobber.
+    fn hle_arctan2(&mut self) {
+        let x = self.regs.r[0] as i32;
+        let y = self.regs.r[1] as i32;
+
+        if y == 0 {
+            self.regs.r[0] = if x >= 0 { 0 } else { 0x8000 };
+            self.regs.r[3] = 0x170;
+            return;
+        }
+        if x == 0 {
+            self.regs.r[0] = if y >= 0 { 0x4000 } else { 0xC000 };
+            self.regs.r[3] = 0x170;
+            return;
+        }
+
+        if y >= 0 {
+            if x >= 0 {
+                if x >= y {
+                    self.regs.r[0] = ((y as i64) << 14).wrapping_div(x as i64) as i32 as u32;
+                    self.hle_arctan();
+                } else {
+                    self.regs.r[0] = ((x as i64) << 14).wrapping_div(y as i64) as i32 as u32;
+                    self.hle_arctan();
+                    self.regs.r[0] = 0x4000_u32.wrapping_sub(self.regs.r[0]);
+                }
+            } else if (-x) >= y {
+                self.regs.r[0] = ((y as i64) << 14).wrapping_div(x as i64) as i32 as u32;
+                self.hle_arctan();
+                self.regs.r[0] = self.regs.r[0].wrapping_add(0x8000);
+            } else {
+                self.regs.r[0] = ((x as i64) << 14).wrapping_div(y as i64) as i32 as u32;
+                self.hle_arctan();
+                self.regs.r[0] = 0x4000_u32.wrapping_sub(self.regs.r[0]);
+            }
+        } else if x <= 0 {
+            if (-x) > (-y) {
+                self.regs.r[0] = ((y as i64) << 14).wrapping_div(x as i64) as i32 as u32;
+                self.hle_arctan();
+                self.regs.r[0] = self.regs.r[0].wrapping_add(0x8000);
+            } else {
+                self.regs.r[0] = ((x as i64) << 14).wrapping_div(y as i64) as i32 as u32;
+                self.hle_arctan();
+                self.regs.r[0] = 0xC000_u32.wrapping_sub(self.regs.r[0]);
+            }
+        } else if x >= (-y) {
+            self.regs.r[0] = ((y as i64) << 14).wrapping_div(x as i64) as i32 as u32;
+            self.hle_arctan();
+            self.regs.r[0] = self.regs.r[0].wrapping_add(0x10000);
+        } else {
+            self.regs.r[0] = ((x as i64) << 14).wrapping_div(y as i64) as i32 as u32;
+            self.hle_arctan();
+            self.regs.r[0] = 0xC000_u32.wrapping_sub(self.regs.r[0]);
+        }
+
+        self.regs.r[0] &= 0xFFFF;
+        self.regs.r[3] = 0x170;
     }
 }
 
@@ -712,5 +944,242 @@ mod tests {
         );
         assert!(!cpu.regs.thumb(), "T bit should be clear (ARM state)");
         assert_eq!(cpu.regs.r[15], ExceptionVector::Undefined as u32);
+    }
+
+    // ---------------------------------------------------------------
+    // CpuSet (SWI 0x0B) and CpuFastSet (SWI 0x0C) HLE tests
+    // ---------------------------------------------------------------
+
+    /// Helper: create a CPU + bus for HLE SWI tests.
+    /// Returns CPU at PC=0 in ARM mode with hle_swi=true and a 4KB RamBus.
+    fn hle_setup() -> (Arm7tdmi, RamBus) {
+        let mut cpu = Arm7tdmi::new();
+        cpu.hle_swi = true;
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.r[15] = 0x0;
+        let bus = RamBus::new(0x1000);
+        (cpu, bus)
+    }
+
+    #[test]
+    fn hle_cpu_set_copies_halfwords() {
+        // CpuSet(src=0x100, dst=0x200, count=4 | size=16bit | copy mode)
+        // Should copy 4 halfwords (8 bytes) from 0x100 to 0x200.
+        let (mut cpu, mut bus) = hle_setup();
+
+        // Write source data at 0x100.
+        bus.write16(0x100, 0xCAFE);
+        bus.write16(0x102, 0xBABE);
+        bus.write16(0x104, 0xDEAD);
+        bus.write16(0x106, 0xBEEF);
+
+        // SWI 0x0B (CpuSet): ARM encoding 0xEF0B0000
+        write_arm_word(&mut bus, 0x0, 0xEF0B_0000);
+
+        cpu.regs.r[0] = 0x100; // source
+        cpu.regs.r[1] = 0x200; // destination
+        cpu.regs.r[2] = 4; // count=4, bit24=0 (16-bit), bit25=0 (copy)
+        cpu.step(&mut bus);
+
+        assert_eq!(bus.read16(0x200), 0xCAFE);
+        assert_eq!(bus.read16(0x202), 0xBABE);
+        assert_eq!(bus.read16(0x204), 0xDEAD);
+        assert_eq!(bus.read16(0x206), 0xBEEF);
+    }
+
+    #[test]
+    fn hle_cpu_set_copies_words() {
+        // CpuSet with bit26=1 (32-bit copy)
+        let (mut cpu, mut bus) = hle_setup();
+
+        bus.write32(0x100, 0xDEAD_BEEF);
+        bus.write32(0x104, 0xCAFE_BABE);
+
+        write_arm_word(&mut bus, 0x0, 0xEF0B_0000);
+
+        cpu.regs.r[0] = 0x100;
+        cpu.regs.r[1] = 0x200;
+        cpu.regs.r[2] = 2 | (1 << 26); // count=2, bit26=1 (32-bit), copy
+        cpu.step(&mut bus);
+
+        assert_eq!(bus.read32(0x200), 0xDEAD_BEEF);
+        assert_eq!(bus.read32(0x204), 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn hle_cpu_set_fill_mode_replicates_first_value() {
+        // CpuSet with bit24=1 (fill), bit26=1 (32-bit): copies first source value repeatedly.
+        let (mut cpu, mut bus) = hle_setup();
+
+        bus.write32(0x100, 0xA5A5_A5A5);
+
+        write_arm_word(&mut bus, 0x0, 0xEF0B_0000);
+
+        cpu.regs.r[0] = 0x100;
+        cpu.regs.r[1] = 0x200;
+        // count=4, bit26=1 (32-bit), bit24=1 (fill)
+        cpu.regs.r[2] = 4 | (1 << 26) | (1 << 24);
+        cpu.step(&mut bus);
+
+        assert_eq!(bus.read32(0x200), 0xA5A5_A5A5);
+        assert_eq!(bus.read32(0x204), 0xA5A5_A5A5);
+        assert_eq!(bus.read32(0x208), 0xA5A5_A5A5);
+        assert_eq!(bus.read32(0x20C), 0xA5A5_A5A5);
+    }
+
+    #[test]
+    fn hle_cpu_fast_set_copies_words() {
+        // CpuFastSet (SWI 0x0C): always 32-bit, count rounded to multiple of 8.
+        let (mut cpu, mut bus) = hle_setup();
+
+        for i in 0u32..8 {
+            bus.write32(0x100 + i * 4, 0x1000_0000 + i);
+        }
+
+        write_arm_word(&mut bus, 0x0, 0xEF0C_0000);
+
+        cpu.regs.r[0] = 0x100;
+        cpu.regs.r[1] = 0x200;
+        cpu.regs.r[2] = 8; // count=8, bit24=0 (copy)
+        cpu.step(&mut bus);
+
+        for i in 0u32..8 {
+            assert_eq!(
+                bus.read32(0x200 + i * 4),
+                0x1000_0000 + i,
+                "CpuFastSet word {i} mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn hle_cpu_fast_set_fill_mode() {
+        // CpuFastSet fill: replicate first source word, count rounded to 8.
+        let (mut cpu, mut bus) = hle_setup();
+
+        bus.write32(0x100, 0xBEEF_CAFE);
+
+        write_arm_word(&mut bus, 0x0, 0xEF0C_0000);
+
+        cpu.regs.r[0] = 0x100;
+        cpu.regs.r[1] = 0x200;
+        cpu.regs.r[2] = 3 | (1 << 24); // count=3, fill. Rounds up to 8.
+        cpu.step(&mut bus);
+
+        for i in 0u32..8 {
+            assert_eq!(
+                bus.read32(0x200 + i * 4),
+                0xBEEF_CAFE,
+                "CpuFastSet fill word {i} mismatch"
+            );
+        }
+    }
+
+    // ── BIOS Math HLE tests ──────────────────────────────────────────
+
+    /// Helper: execute an ARM SWI instruction with input registers and return
+    /// the CPU state. SWI number is embedded in the instruction encoding.
+    fn run_hle_swi(swi_num: u8, r0: u32, r1: u32) -> Arm7tdmi {
+        let (mut cpu, mut bus) = hle_setup();
+        // ARM SWI encoding: 0xEF000000 | (swi_num << 16)
+        let instr = 0xEF00_0000 | ((swi_num as u32) << 16);
+        write_arm_word(&mut bus, 0x0, instr);
+        cpu.regs.r[0] = r0;
+        cpu.regs.r[1] = r1;
+        cpu.regs.r[3] = 0; // clear r3 to detect if it's set
+        cpu.step(&mut bus);
+        cpu
+    }
+
+    #[test]
+    fn hle_div_basic() {
+        // Div(7, 3) → r0=2, r1=1, r3=2
+        let cpu = run_hle_swi(0x06, 7, 3);
+        assert_eq!(cpu.regs.r[0], 2, "quotient");
+        assert_eq!(cpu.regs.r[1], 1, "remainder");
+        assert_eq!(cpu.regs.r[3], 2, "abs(quotient)");
+    }
+
+    #[test]
+    fn hle_div_negative_numerator() {
+        // Div(-7, 3) → r0=-2 (0xFFFFFFFE), r1=-1 (0xFFFFFFFF), r3=2
+        let cpu = run_hle_swi(0x06, (-7i32) as u32, 3);
+        assert_eq!(cpu.regs.r[0] as i32, -2, "quotient");
+        assert_eq!(cpu.regs.r[1] as i32, -1, "remainder");
+        assert_eq!(cpu.regs.r[3], 2, "abs(quotient)");
+    }
+
+    #[test]
+    fn hle_div_by_zero() {
+        // Div(1, 0) → r0=1, r1=1, r3=1 (per GBA BIOS behavior)
+        let cpu = run_hle_swi(0x06, 1, 0);
+        assert_eq!(cpu.regs.r[0], 1, "quotient for div-by-zero");
+        assert_eq!(cpu.regs.r[1], 1, "remainder for div-by-zero");
+        assert_eq!(cpu.regs.r[3], 1, "abs for div-by-zero");
+    }
+
+    #[test]
+    fn hle_div_zero_by_zero() {
+        // Div(0, 0) → r0=1, r1=0, r3=1
+        let cpu = run_hle_swi(0x06, 0, 0);
+        assert_eq!(cpu.regs.r[0], 1, "quotient 0/0");
+        assert_eq!(cpu.regs.r[1], 0, "remainder 0/0");
+        assert_eq!(cpu.regs.r[3], 1, "abs 0/0");
+    }
+
+    #[test]
+    fn hle_div_int_min_by_neg_one() {
+        // Div(INT_MIN, -1) → r0=INT_MIN, r1=0, r3=INT_MIN (overflow)
+        let cpu = run_hle_swi(0x06, 0x8000_0000, 0xFFFF_FFFF);
+        assert_eq!(cpu.regs.r[0], 0x8000_0000, "quotient INT_MIN/-1");
+        assert_eq!(cpu.regs.r[1], 0, "remainder INT_MIN/-1");
+        assert_eq!(cpu.regs.r[3], 0x8000_0000, "abs INT_MIN/-1 (overflow)");
+    }
+
+    #[test]
+    fn hle_arctan_zero() {
+        // ArcTan(0) → r0=0, r1=0, r3=0xA2F9
+        // (from mgba-emu/suite: i=0, a=0, b=0xA2F9, result=0)
+        let cpu = run_hle_swi(0x09, 0, 0);
+        assert_eq!(cpu.regs.r[0], 0, "ArcTan(0) result");
+        assert_eq!(cpu.regs.r[1] as i32, 0, "ArcTan(0) intermediate a");
+        assert_eq!(cpu.regs.r[3], 0xA2F9, "ArcTan(0) coefficient b");
+    }
+
+    #[test]
+    fn hle_arctan_quarter() {
+        // ArcTan(0x4000) → r0=0x2000, r1=0xFFFFC000, r3=0x8000
+        // (from mgba-emu/suite expected values)
+        let cpu = run_hle_swi(0x09, 0x4000, 0);
+        assert_eq!(cpu.regs.r[0], 0x2000, "ArcTan(0x4000) result");
+        assert_eq!(cpu.regs.r[1], 0xFFFFC000, "ArcTan(0x4000) intermediate a");
+        assert_eq!(cpu.regs.r[3], 0x8000, "ArcTan(0x4000) coefficient b");
+    }
+
+    #[test]
+    fn hle_arctan2_zero_zero() {
+        // ArcTan2(0, 0) → r0=0, r1=0, r3=0x170
+        let cpu = run_hle_swi(0x0A, 0, 0);
+        assert_eq!(cpu.regs.r[0], 0, "ArcTan2(0,0) angle");
+        assert_eq!(cpu.regs.r[1], 0, "ArcTan2(0,0) r1");
+        assert_eq!(cpu.regs.r[3], 0x170, "ArcTan2(0,0) r3 clobber");
+    }
+
+    #[test]
+    fn hle_arctan2_equal_positive() {
+        // ArcTan2(0x4000, 0x4000) → r0=0x2000, r1=0xFFFFC000, r3=0x170
+        let cpu = run_hle_swi(0x0A, 0x4000, 0x4000);
+        assert_eq!(cpu.regs.r[0], 0x2000, "ArcTan2(0x4000,0x4000) angle");
+        assert_eq!(cpu.regs.r[1], 0xFFFFC000, "ArcTan2(0x4000,0x4000) r1");
+        assert_eq!(cpu.regs.r[3], 0x170, "ArcTan2(0x4000,0x4000) r3");
+    }
+
+    #[test]
+    fn hle_arctan2_negative_x_zero_y() {
+        // ArcTan2(0xFFFF0000, 0) → r0=0x8000, r1=0, r3=0x170
+        let cpu = run_hle_swi(0x0A, 0xFFFF0000, 0);
+        assert_eq!(cpu.regs.r[0], 0x8000, "ArcTan2(neg,0) angle");
+        assert_eq!(cpu.regs.r[1], 0, "ArcTan2(neg,0) r1");
+        assert_eq!(cpu.regs.r[3], 0x170, "ArcTan2(neg,0) r3");
     }
 }

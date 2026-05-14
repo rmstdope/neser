@@ -549,24 +549,24 @@ fn execute_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
     let rs_val = regs.r[rs];
 
     let product = rm_val.wrapping_mul(rs_val);
-    let result = if acc {
-        product.wrapping_add(regs.r[rn])
-    } else {
-        product
-    };
+    let accum_val = if acc { regs.r[rn] } else { 0 };
+    let result = product.wrapping_add(accum_val);
 
     regs.r[rd] = result;
+
+    let (cycles, full) = multiply_cycles_and_full(rs_val, true);
 
     if s_bit {
         let n = result & 0x8000_0000 != 0;
         let z = result == 0;
-        // C and V flags are UNPREDICTABLE after MUL/MLA per ARM spec; preserve them.
-        regs.set_nzcv(n, z, regs.c_flag(), regs.v_flag());
+        let c = if full {
+            multiply_carry_simple(rs_val)
+        } else {
+            multiply_carry_lo(rm_val, rs_val, accum_val)
+        };
+        regs.set_nzcv(n, z, c, regs.v_flag());
     }
 
-    // Cycle count: 1S + mI where mI depends on Rs magnitude (early termination).
-    // Uses cycle-accurate timing based on Rs byte positions containing all 0s or all 1s.
-    let cycles = multiply_cycles(rs_val);
     ExecOutcome::cycles(cycles)
 }
 
@@ -592,8 +592,14 @@ fn execute_long_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
         rm_val as u64 * rs_val as u64
     };
 
+    let (accum_lo, accum_hi) = if acc {
+        (regs.r[rd_lo], regs.r[rd_hi])
+    } else {
+        (0, 0)
+    };
+
     let result = if acc {
-        let existing = ((regs.r[rd_hi] as u64) << 32) | (regs.r[rd_lo] as u64);
+        let existing = ((accum_hi as u64) << 32) | (accum_lo as u64);
         product.wrapping_add(existing)
     } else {
         product
@@ -602,36 +608,168 @@ fn execute_long_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
     regs.r[rd_lo] = result as u32;
     regs.r[rd_hi] = (result >> 32) as u32;
 
+    let (cycles, full) = long_multiply_cycles(rs_val, signed);
+
     if s_bit {
         let n = (result >> 63) & 1 != 0;
         let z = result == 0;
-        // C and V flags are UNPREDICTABLE; preserve them.
-        regs.set_nzcv(n, z, regs.c_flag(), regs.v_flag());
+        let c = if full {
+            multiply_carry_hi(rm_val, rs_val, accum_hi, signed)
+        } else {
+            multiply_carry_lo(rm_val, rs_val, accum_lo)
+        };
+        regs.set_nzcv(n, z, c, regs.v_flag());
     }
 
-    // Long multiply takes slightly more cycles than short multiply.
-    let cycles = long_multiply_cycles(rs_val);
     ExecOutcome::cycles(cycles)
 }
 
 /// Compute multiply internal cycles based on Rs magnitude (early termination).
 /// Per GBATek, cycles = 1S + mI where mI = 1..4 depending on Rs[31:8].
-fn multiply_cycles(rs: u32) -> u8 {
-    // Check how many leading bytes are all 0s or all 1s (sign extension).
-    if rs & 0xFFFF_FF00 == 0 || rs & 0xFFFF_FF00 == 0xFFFF_FF00 {
-        2 // 1S + 1I
-    } else if rs & 0xFFFF_0000 == 0 || rs & 0xFFFF_0000 == 0xFFFF_0000 {
-        3 // 1S + 2I
-    } else if rs & 0xFF00_0000 == 0 || rs & 0xFF00_0000 == 0xFF00_0000 {
-        4 // 1S + 3I
+/// Also returns whether the multiplier used all 4 cycles (no early termination),
+/// which determines how the C flag is computed.
+pub(crate) fn multiply_cycles_and_full(rs: u32, signed: bool) -> (u8, bool) {
+    if signed {
+        if rs & 0xFFFF_FF00 == 0 || rs & 0xFFFF_FF00 == 0xFFFF_FF00 {
+            (2, false)
+        } else if rs & 0xFFFF_0000 == 0 || rs & 0xFFFF_0000 == 0xFFFF_0000 {
+            (3, false)
+        } else if rs & 0xFF00_0000 == 0 || rs & 0xFF00_0000 == 0xFF00_0000 {
+            (4, false)
+        } else {
+            (5, true) // full 4 internal cycles, no early termination
+        }
+    } else if rs & 0xFFFF_FF00 == 0 {
+        (2, false)
+    } else if rs & 0xFFFF_0000 == 0 {
+        (3, false)
+    } else if rs & 0xFF00_0000 == 0 {
+        (4, false)
     } else {
-        5 // 1S + 4I
+        (5, true)
     }
 }
 
 /// Long multiply cycles: similar to multiply but +1 for 64-bit result.
-fn long_multiply_cycles(rs: u32) -> u8 {
-    multiply_cycles(rs) + 1
+fn long_multiply_cycles(rs: u32, signed: bool) -> (u8, bool) {
+    let (cycles, full) = multiply_cycles_and_full(rs, signed);
+    (cycles + 1, full)
+}
+
+// ---------------------------------------------------------------------------
+// ARM7TDMI Booth multiplier carry flag computation
+// ---------------------------------------------------------------------------
+//
+// The ARM spec says the C flag after multiply is "unpredictable", but real
+// ARM7TDMI hardware produces deterministic values from the internal Booth
+// carry-save adder. The C flag is the carry-out from the final Booth
+// iteration, which depends on the operand values and whether the multiplier
+// terminated early.
+//
+// Algorithm based on analysis of ARM7TDMI Booth multiplier internals.
+// Reference: zaydlang & calc84maniac's research, verified against
+// NanoBoyAdvance (GPL-3.0) and mgba-emu/suite hardware test data.
+
+/// C flag for regular MUL/MLA when the Booth multiplier ran all 4 cycles.
+/// The carry comes from the final injected Booth carry bit; the last addend
+/// is negative only when the upper 2 bits of the multiplier are 0b10.
+pub(crate) fn multiply_carry_simple(multiplier: u32) -> bool {
+    (multiplier >> 30) == 2
+}
+
+/// C flag from the low partial result, used when the Booth multiplier
+/// terminated early (for both MUL and long multiply).
+///
+/// Simulates the carry-save adder processing Rs in Booth-encoded pairs,
+/// tracking the carry bit through the iterations.
+pub(crate) fn multiply_carry_lo(multiplicand: u32, multiplier: u32, accum: u32) -> bool {
+    // Set low bit to cause negation to invert upper bits.
+    // This bit can't propagate to the carry output.
+    let multiplicand = multiplicand | 1;
+
+    // First Booth iteration: factor is sign-extension of bit 0
+    let booth: i32 = ((multiplier as i32) << 31) >> 31;
+    let carry = multiplicand.wrapping_mul(booth as u32);
+    let sum = carry.wrapping_add(accum);
+
+    let mut current_booth = booth;
+    let mut current_carry = carry;
+    let mut current_sum = sum;
+    let mut current_accum = accum;
+
+    let mut shift: i32 = 29;
+    loop {
+        // Process 8 multiplier bits using 4 Booth iterations
+        for _ in 0..4 {
+            let next_booth: i32 = ((multiplier as i32) << shift) >> shift;
+            let factor = next_booth.wrapping_sub(current_booth);
+            current_booth = next_booth;
+            let addend = multiplicand.wrapping_mul(factor as u32);
+            current_accum ^= current_carry ^ addend;
+            current_sum = current_sum.wrapping_add(addend);
+            current_carry = current_sum.wrapping_sub(current_accum);
+            shift -= 2;
+        }
+        if current_booth == multiplier as i32 {
+            break;
+        }
+    }
+
+    (current_carry >> 31) != 0
+}
+
+/// C flag from the high partial result for long multiply when all 4 Booth
+/// cycles were used. Handles both signed and unsigned variants.
+///
+/// Only the last 3 Booth iterations matter for the bit-63 carry. The inputs
+/// are scaled down so that the upper bits of the 64-bit addends fit in 32 bits.
+fn multiply_carry_hi(multiplicand: u32, multiplier: u32, accum_hi: u32, signed: bool) -> bool {
+    // Scale inputs: only last 3 Booth iterations (6 bits of multiplier) matter.
+    let (md, mp) = if signed {
+        (
+            (multiplicand as i32 >> 6) as u32,
+            (multiplier as i32 >> 26) as u32,
+        )
+    } else {
+        (multiplicand >> 6, multiplier >> 26)
+    };
+    let md = md | 1; // Set low bit for negation handling
+
+    // Pre-populate magic bit 61 for carry
+    let carry = (!accum_hi) & 0x2000_0000;
+    // Pre-populate magic bits 63-60 for accum (with carry magic pre-added)
+    let accum = accum_hi.wrapping_sub(0x0800_0000);
+
+    // Get Booth factors for last 3 iterations
+    let booth0: i32 = ((mp as i32) << 27) >> 27;
+    let booth1: i32 = ((mp as i32) << 29) >> 29;
+    let booth2: i32 = ((mp as i32) << 31) >> 31;
+    let factor0 = (mp as i32).wrapping_sub(booth0) as u32;
+    let factor1 = booth0.wrapping_sub(booth1) as u32;
+    let factor2 = booth1.wrapping_sub(booth2) as u32;
+
+    // Get scaled value of 3rd-last Booth addend
+    let addend2 = md.wrapping_mul(factor2);
+    // Finalize bits 61-60 of accum magic using its sign
+    let accum = accum.wrapping_sub(addend2 & 0x1000_0000);
+
+    // Get scaled value of 2nd-last Booth addend
+    let addend1 = md.wrapping_mul(factor1);
+    // Finalize bits 63-62 of accum magic using its sign
+    let accum = accum.wrapping_sub(addend1 & 0x4000_0000);
+
+    // Get carry from carry-save add in bit 61 and propagate to bit 62
+    let sum = accum.wrapping_add(addend1 & 0x2000_0000);
+    // Subtract carry magic to get actual accum magic
+    let accum = accum.wrapping_sub(carry);
+
+    // Get scaled value of last Booth addend
+    let addend0 = md.wrapping_mul(factor0);
+    // Add to bit 62 and propagate carry
+    let sum = sum.wrapping_add(addend0 & 0x4000_0000);
+
+    // Cancel out accum magic bit 63 to get carry bit 63
+    ((sum ^ accum) >> 31) != 0
 }
 
 // ---------------------------------------------------------------------------
@@ -1460,6 +1598,115 @@ mod tests {
         execute(&mut regs, &mut bus, instr);
         assert!(regs.n_flag());
         assert!(!regs.z_flag());
+    }
+
+    // -------------------------------------------------------------------------
+    // Multiply C flag (ARM7TDMI Booth carry) Tests
+    // -------------------------------------------------------------------------
+    // The ARM spec says C/V are "unpredictable" after multiply, but real
+    // ARM7TDMI hardware produces deterministic C values from the internal
+    // Booth multiplier carry-save adder. These tests verify that behavior
+    // using known input/output pairs from mgba-emu/suite's multiply-long.c.
+    //
+    // Test format: flags are cleared to 0 before each multiply (matching
+    // mgba suite's `msr cpsr_f, #0`), then we check the C flag after.
+
+    /// Helper: execute SMULLS with cleared flags, return (result_lo, result_hi, c_flag).
+    fn smulls_with_cleared_flags(rm: u32, rs: u32) -> (u32, u32, bool) {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = rm;
+        regs.r[1] = rs;
+        // Clear all flags to 0
+        regs.set_nzcv(false, false, false, false);
+        // SMULLS R2, R3, R0, R1
+        let instr = arm_long_mul(0xE, true, false, true, 3, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        (regs.r[2], regs.r[3], regs.c_flag())
+    }
+
+    /// Helper: execute UMULLS with cleared flags, return (result_lo, result_hi, c_flag).
+    fn umulls_with_cleared_flags(rm: u32, rs: u32) -> (u32, u32, bool) {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = rm;
+        regs.r[1] = rs;
+        regs.set_nzcv(false, false, false, false);
+        // UMULLS R2, R3, R0, R1
+        let instr = arm_long_mul(0xE, false, false, true, 3, 2, 1, 0);
+        execute(&mut regs, &mut bus, instr);
+        (regs.r[2], regs.r[3], regs.c_flag())
+    }
+
+    #[test]
+    fn smulls_c_flag_zero_times_0x80000000() {
+        // SMULLS: 0 * 0x80000000 → result=0, expected C=1
+        // (mgba suite test case #25)
+        let (lo, hi, c) = smulls_with_cleared_flags(0x0000_0000, 0x8000_0000);
+        assert_eq!(lo, 0);
+        assert_eq!(hi, 0);
+        assert!(c, "SMULLS 0 * 0x80000000: C should be 1");
+    }
+
+    #[test]
+    fn smulls_c_flag_neg1_times_0x7fffffff() {
+        // SMULLS: -1 * 0x7FFFFFFF → result=0xFFFFFFFF_80000001, expected C=1
+        // (mgba suite test case #21)
+        let (lo, hi, c) = smulls_with_cleared_flags(0xFFFF_FFFF, 0x7FFF_FFFF);
+        assert_eq!(lo, 0x8000_0001);
+        assert_eq!(hi, 0xFFFF_FFFF);
+        assert!(c, "SMULLS -1 * 0x7FFFFFFF: C should be 1");
+    }
+
+    #[test]
+    fn smulls_c_flag_1_times_1_no_carry() {
+        // SMULLS: 1 * 1 → result=1, expected C=0
+        // (mgba suite test case #7)
+        let (lo, hi, c) = smulls_with_cleared_flags(0x0000_0001, 0x0000_0001);
+        assert_eq!(lo, 1);
+        assert_eq!(hi, 0);
+        assert!(!c, "SMULLS 1 * 1: C should be 0");
+    }
+
+    #[test]
+    fn umulls_c_flag_neg1_times_neg1() {
+        // UMULLS: 0xFFFFFFFF * 0xFFFFFFFF → 0xFFFFFFFE_00000001, expected C=1
+        // (mgba suite test case #15)
+        let (lo, hi, c) = umulls_with_cleared_flags(0xFFFF_FFFF, 0xFFFF_FFFF);
+        assert_eq!(lo, 0x0000_0001);
+        assert_eq!(hi, 0xFFFF_FFFE);
+        assert!(c, "UMULLS 0xFFFFFFFF * 0xFFFFFFFF: C should be 1");
+    }
+
+    #[test]
+    fn umulls_c_flag_0x80000000_times_0x80000000() {
+        // UMULLS: 0x80000000 * 0x80000000 → 0x40000000_00000000, expected C=1
+        // (mgba suite test case #29)
+        let (lo, hi, c) = umulls_with_cleared_flags(0x8000_0000, 0x8000_0000);
+        assert_eq!(lo, 0x0000_0000);
+        assert_eq!(hi, 0x4000_0000);
+        assert!(c, "UMULLS 0x80000000 * 0x80000000: C should be 1");
+    }
+
+    #[test]
+    fn umulls_c_flag_1_times_1_no_carry() {
+        // UMULLS: 1 * 1 → result=1, expected C=0
+        let (lo, hi, c) = umulls_with_cleared_flags(0x0000_0001, 0x0000_0001);
+        assert_eq!(lo, 1);
+        assert_eq!(hi, 0);
+        assert!(!c, "UMULLS 1 * 1: C should be 0");
+    }
+
+    #[test]
+    fn umulls_c_flag_asymmetric_operand_order() {
+        // UMULLS: operand order matters for C flag on ARM7TDMI
+        // 0x7FFFFFFF * 0x80000000: C=0 (rm=0x7F, rs=0x80)
+        let (_, _, c1) = umulls_with_cleared_flags(0x7FFF_FFFF, 0x8000_0000);
+        assert!(!c1, "UMULLS 0x7FFFFFFF * 0x80000000: C should be 0");
+
+        // 0x80000000 * 0x7FFFFFFF: C=1 (rm=0x80, rs=0x7F)
+        let (_, _, c2) = umulls_with_cleared_flags(0x8000_0000, 0x7FFF_FFFF);
+        assert!(c2, "UMULLS 0x80000000 * 0x7FFFFFFF: C should be 1");
     }
 
     // -------------------------------------------------------------------------

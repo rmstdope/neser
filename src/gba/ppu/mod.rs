@@ -280,8 +280,11 @@ impl Ppu {
     }
 
     /// Read `BGnCNT` for background layer `n` (0–3).
+    ///
+    /// Per GBATek, bit 13 is not used for BG0/BG1 and reads as zero.
     pub fn read_bg_cnt(&self, n: usize) -> u16 {
-        self.bg_cnt[n]
+        let mask = if n <= 1 { 0xDFFF } else { 0xFFFF };
+        self.bg_cnt[n] & mask
     }
 
     /// Write `BGnCNT` for background layer `n` (0–3).
@@ -411,9 +414,19 @@ impl Ppu {
         self.bg_scroll[n].0 = value & 0x01FF;
     }
 
+    /// Read `BGnHOFS` for background layer `n` (0–3).
+    pub fn read_bg_hofs(&self, n: usize) -> u16 {
+        self.bg_scroll[n].0
+    }
+
     /// Write `BGnVOFS` for background layer `n` (0–3).
     pub fn write_bg_vofs(&mut self, n: usize, value: u16) {
         self.bg_scroll[n].1 = value & 0x01FF;
+    }
+
+    /// Read `BGnVOFS` for background layer `n` (0–3).
+    pub fn read_bg_vofs(&self, n: usize) -> u16 {
+        self.bg_scroll[n].1
     }
 
     /// True after a completed frame, until [`Self::clear_frame_ready`].
@@ -1617,5 +1630,23 @@ mod tests {
 
         // Equal priority: BG0 (lower number) wins → red.
         assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    /// Per GBATek, BGnCNT bit 13 is not used (zero) for BG0 and BG1.
+    /// Reads of BG0CNT/BG1CNT must mask bit 13 out; BG2/BG3 are unmasked.
+    #[test]
+    fn bg0_bg1_cnt_mask_bit_13_on_read() {
+        let mut ppu = Ppu::new();
+        // Write all bits set.
+        ppu.write_bg_cnt(0, 0xFFFF);
+        ppu.write_bg_cnt(1, 0xFFFF);
+        ppu.write_bg_cnt(2, 0xFFFF);
+        ppu.write_bg_cnt(3, 0xFFFF);
+        // BG0 and BG1: bit 13 must be masked out → 0xDFFF.
+        assert_eq!(ppu.read_bg_cnt(0), 0xDFFF, "BG0CNT should mask bit 13");
+        assert_eq!(ppu.read_bg_cnt(1), 0xDFFF, "BG1CNT should mask bit 13");
+        // BG2 and BG3: all bits readable.
+        assert_eq!(ppu.read_bg_cnt(2), 0xFFFF, "BG2CNT should be unmasked");
+        assert_eq!(ppu.read_bg_cnt(3), 0xFFFF, "BG3CNT should be unmasked");
     }
 }
