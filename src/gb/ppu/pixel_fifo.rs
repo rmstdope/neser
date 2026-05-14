@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::background;
+use super::bg_fifo::{self, DmgLayer, DmgPixelFetch};
 use super::obj_fifo::ObjFetchModel;
 use super::registers::Registers;
 use super::rendering::{self, cgb_palette_lookup, dmg_palette_index};
@@ -785,27 +786,43 @@ impl PixelFifoRenderer {
         let win_enabled = lcdc & 0x20 != 0;
 
         let bg_idx = if bg_window_enabled {
-            background::fetch_bg_pixel(
-                x,
-                self.scanline,
+            bg_fifo::fetch_dmg_pixel(
                 vram,
-                bg_fetch_lcdc,
-                registers.scx,
-                registers.scy,
+                DmgPixelFetch {
+                    layer: DmgLayer::Background,
+                    x,
+                    scanline: self.scanline,
+                    scx: registers.scx,
+                    scy: registers.scy,
+                    wx: registers.wx,
+                    wy: registers.wy,
+                    window_line,
+                    map_lcdc: bg_fetch_lcdc,
+                    low_lcdc: bg_fetch_lcdc,
+                    high_lcdc: bg_fetch_lcdc,
+                },
             )
+            .unwrap_or(0)
         } else {
             0
         };
 
         let bw_idx = if bg_window_enabled && win_enabled {
-            match window::fetch_window_pixel(
-                x,
-                self.scanline,
+            match bg_fifo::fetch_dmg_pixel(
                 vram,
-                lcdc,
-                registers.wx,
-                registers.wy,
-                window_line,
+                DmgPixelFetch {
+                    layer: DmgLayer::Window,
+                    x,
+                    scanline: self.scanline,
+                    scx: registers.scx,
+                    scy: registers.scy,
+                    wx: registers.wx,
+                    wy: registers.wy,
+                    window_line,
+                    map_lcdc: lcdc,
+                    low_lcdc: lcdc,
+                    high_lcdc: lcdc,
+                },
             ) {
                 Some(idx) => {
                     self.window_active = true;
