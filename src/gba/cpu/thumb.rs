@@ -388,9 +388,15 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
         0xC => (a | b, regs.c_flag(), regs.v_flag(), true), // ORR
         0xD => {
             // MUL: Rd = Rd * Rs
+            // C flag is computed by the ARM7TDMI Booth multiplier
             let result = a.wrapping_mul(b);
-            // C and V flags are destroyed (set to meaningless values) per ARM spec
-            (result, regs.c_flag(), regs.v_flag(), true)
+            let (_, full) = super::arm::multiply_cycles_and_full(b, true);
+            let c = if full {
+                super::arm::multiply_carry_simple(b)
+            } else {
+                super::arm::multiply_carry_lo(a, b, 0)
+            };
+            (result, c, regs.v_flag(), true)
         }
         0xE => (a & !b, regs.c_flag(), regs.v_flag(), true), // BIC
         0xF => (!b, regs.c_flag(), regs.v_flag(), true),     // MVN
