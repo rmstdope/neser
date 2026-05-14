@@ -199,6 +199,14 @@ impl LcdcTileDataEdge {
             })
     }
 
+    fn has_latched_range(&self, start_x: u8, end_x: u8) -> bool {
+        self.ranges.iter().any(|range| {
+            range.start_x == start_x
+                && range.end_x == end_x
+                && range.low_lcdc & LCDC_TILE_DATA == range.high_lcdc & LCDC_TILE_DATA
+        })
+    }
+
     fn clear_consumed(&mut self, next_x: u8) {
         self.ranges.retain(|range| range.end_x != next_x);
     }
@@ -539,13 +547,27 @@ impl PixelFifoRenderer {
         let bg_phase = scx.wrapping_add(self.next_x) & 0x07;
         let current_fetch_start = self.next_x.saturating_sub(bg_phase);
         let current_fetch_end = current_fetch_start.saturating_add(7);
-        let (start_x, low_lcdc, high_lcdc) = if self.next_x == current_fetch_start {
-            (current_fetch_start, previous, previous)
-        } else {
-            (self.next_x, previous, new)
-        };
-        self.lcdc_tile_data_edge
-            .record_write(start_x, current_fetch_end, low_lcdc, high_lcdc);
+        if self.next_x == current_fetch_start {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            let next_fetch_start = current_fetch_start.saturating_add(8);
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
+        } else if !self
+            .lcdc_tile_data_edge
+            .has_latched_range(current_fetch_start, current_fetch_end)
+        {
+            self.lcdc_tile_data_edge
+                .record_write(self.next_x, current_fetch_end, previous, new);
+        }
     }
 
     fn record_lcdc_obj_enable_write(&mut self, model: ObjFetchModel, previous: u8, new: u8) {
@@ -1250,6 +1272,36 @@ mod tests {
     }
 
     #[test]
+    fn paired_lcdc_writes_while_visible_tile_is_latched_update_following_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        renderer.next_x = 5;
+        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(5, &vram, &oam, &registers, 0);
+        let (next_tile_colour, _, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 0,
+            "later TILE_SEL writes during output of an already-latched tile must not alter that visible tile"
+        );
+        assert_eq!(
+            next_tile_colour, 3,
+            "the following fetch should retain the TILE_SEL sample from the earlier write until its bitplanes are latched"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
     fn record_lcdc_write_mid_tile_does_not_bleed_tile_data_samples_into_next_tile() {
         let mut renderer = PixelFifoRenderer::new();
         renderer.active = true;
@@ -1276,14 +1328,11 @@ mod tests {
     }
 
     #[test]
-    fn record_lcdc_write_uses_latest_tile_data_samples_for_overlapping_tile_ranges() {
+    fn recorded_tile_data_samples_use_latest_overlapping_range() {
         let mut renderer = PixelFifoRenderer::new();
-        renderer.active = true;
         renderer.scanline = 0;
-        renderer.next_x = 0;
-        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
-        renderer.next_x = 3;
-        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        renderer.lcdc_tile_data_edge.record_write(0, 7, 0x81, 0x91);
+        renderer.lcdc_tile_data_edge.record_write(3, 7, 0x91, 0x81);
         let mut registers = Registers::new();
         registers.lcdc = 0x81;
         registers.bgp = 0xE4;
@@ -1299,7 +1348,7 @@ mod tests {
 
         assert_eq!(
             colour_index, 2,
-            "overlapping tile-data ranges should use the most recent LCDC write"
+            "overlapping tile-data ranges should use the most recent recorded sample"
         );
         assert!(!is_sprite);
     }
