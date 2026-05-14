@@ -583,6 +583,25 @@ impl PixelFifoRenderer {
                     new,
                     new,
                 );
+            } else if self.should_delay_lcdc_tile_data_by_extra_fetch(previous, new) {
+                self.lcdc_tile_data_edge.record_write(
+                    current_fetch_start,
+                    current_fetch_end,
+                    previous,
+                    previous,
+                );
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    previous,
+                    previous,
+                );
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start.saturating_add(8),
+                    next_fetch_start.saturating_add(15),
+                    new,
+                    new,
+                );
             } else {
                 self.lcdc_tile_data_edge.record_write(
                     current_fetch_start,
@@ -616,6 +635,13 @@ impl PixelFifoRenderer {
             }
             self.record_next_lcdc_tile_data_write(next_fetch_start, bg_phase, previous, new);
         }
+    }
+
+    fn should_delay_lcdc_tile_data_by_extra_fetch(&self, previous_lcdc: u8, new_lcdc: u8) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        let visible_left_edge_obj = self.leftmost_obj_oam_x == Some(8);
+        tile_data_turning_on && visible_left_edge_obj && self.next_x == 0
     }
 
     fn record_next_lcdc_tile_data_write(
@@ -1254,6 +1280,34 @@ mod tests {
             renderer.lcdc_bg_map_edge.lcdc_for_bg_fetch(16, 0x8B) & 0x08,
             0x08
         );
+    }
+
+    #[test]
+    fn visible_left_edge_obj_delays_tile_select_following_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.leftmost_obj_oam_x = Some(8);
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        renderer.next_x = 5;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (next_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            next_tile_colour, 0,
+            "a visible-left-edge OBJ fetch should keep the following BG tile on the previous TILE_SEL sample"
+        );
+        assert!(!is_sprite);
     }
 
     #[test]
