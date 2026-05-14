@@ -48,6 +48,18 @@ pub struct Arm7tdmi {
     prefetch_arm: [u32; 3],
     /// Three-entry Thumb prefetch buffer: [current, next, next-next].
     prefetch_thumb: [u16; 3],
+    /// CPU is halted (e.g. via SWI Halt/VBlankIntrWait). While halted the
+    /// CPU consumes idle cycles until an enabled interrupt wakes it.
+    halted: bool,
+    /// When true, known SWI calls (Halt, VBlankIntrWait) are handled via
+    /// high-level emulation instead of dispatching to the BIOS vector.
+    hle_swi: bool,
+    /// Debug counter: number of times dispatch_irq has been called.
+    #[cfg(test)]
+    irq_dispatch_count: u64,
+    /// Debug: tracks unhandled SWI numbers seen when HLE is active.
+    #[cfg(test)]
+    pub unhandled_swis: Vec<u8>,
 }
 
 impl Default for Arm7tdmi {
@@ -73,6 +85,12 @@ impl Arm7tdmi {
             prefetch_valid: false,
             prefetch_arm: [0; 3],
             prefetch_thumb: [0; 3],
+            halted: false,
+            hle_swi: false,
+            #[cfg(test)]
+            irq_dispatch_count: 0,
+            #[cfg(test)]
+            unhandled_swis: Vec::new(),
         }
     }
 
@@ -117,6 +135,31 @@ impl Arm7tdmi {
         self.fiq_pending = false;
     }
 
+    /// Put the CPU into halt state. While halted the CPU idles (consuming
+    /// 1 cycle per step) until an enabled interrupt wakes it.
+    pub fn halt(&mut self) {
+        self.halted = true;
+    }
+
+    /// Returns true if the CPU is currently in halt state.
+    #[cfg(test)]
+    pub fn is_halted(&self) -> bool {
+        self.halted
+    }
+
+    /// Enable or disable high-level emulation of known SWI calls.
+    /// When enabled, SWI 0x02 (Halt) and SWI 0x05 (VBlankIntrWait)
+    /// are handled in Rust rather than dispatching to the BIOS vector.
+    pub fn set_hle_swi(&mut self, enabled: bool) {
+        self.hle_swi = enabled;
+    }
+
+    /// Debug: how many times dispatch_irq has been called.
+    #[cfg(test)]
+    pub fn irq_dispatch_count(&self) -> u64 {
+        self.irq_dispatch_count
+    }
+
     /// Return the size of the instruction currently pointed to by R15.
     fn instr_size(&self) -> u32 {
         if self.thumb() { 2 } else { 4 }
@@ -129,13 +172,22 @@ impl Arm7tdmi {
     /// ARM7TDMI three-stage pipeline.
     pub fn step<B: Bus>(&mut self, bus: &mut B) -> u32 {
         // Service pending interrupts first (FIQ has higher priority).
+        // An interrupt also wakes the CPU from halt state.
         if self.fiq_pending && !self.regs.f_flag() {
+            self.halted = false;
             self.dispatch_fiq();
             return 3;
         }
         if self.irq_pending && !self.regs.i_flag() {
+            self.halted = false;
             self.dispatch_irq();
             return 3;
+        }
+
+        // While halted, idle for 1 cycle without executing instructions.
+        if self.halted {
+            self.cycles = self.cycles.wrapping_add(1);
+            return 1;
         }
 
         if !self.prefetch_valid {
@@ -147,7 +199,14 @@ impl Arm7tdmi {
             // PC during Thumb execution should read as exec_pc + 4.
             self.regs.r[15] = exec_pc.wrapping_add(4);
             let raw = self.prefetch_thumb[0];
-            let outcome = thumb::execute(&mut self.regs, bus, raw);
+            let mut outcome = thumb::execute(&mut self.regs, bus, raw);
+            // Try HLE before normal SWI dispatch.
+            if outcome.swi && self.try_hle_swi(bus) {
+                outcome.swi = false;
+                // HLE handled the SWI inline — it did NOT branch anywhere,
+                // so clear branched so PC advances normally (exec_pc + 2).
+                outcome.branched = false;
+            }
             if outcome.undefined {
                 self.dispatch_undefined(exec_pc);
             } else if outcome.swi {
@@ -165,7 +224,14 @@ impl Arm7tdmi {
             // PC during ARM execution should read as exec_pc + 8.
             self.regs.r[15] = exec_pc.wrapping_add(8);
             let raw = self.prefetch_arm[0];
-            let outcome = arm::execute(&mut self.regs, bus, raw);
+            let mut outcome = arm::execute(&mut self.regs, bus, raw);
+            // Try HLE before normal SWI dispatch.
+            if outcome.swi && self.try_hle_swi(bus) {
+                outcome.swi = false;
+                // HLE handled the SWI inline — it did NOT branch anywhere,
+                // so clear branched so PC advances normally (exec_pc + 4).
+                outcome.branched = false;
+            }
             if outcome.undefined {
                 self.dispatch_undefined(exec_pc);
             } else if outcome.swi {
@@ -215,10 +281,17 @@ impl Arm7tdmi {
 
     /// Dispatch an IRQ: switch to IRQ mode, save state and jump to 0x18.
     fn dispatch_irq(&mut self) {
-        // Return address: PC of the instruction after the one that would have
-        // executed. For our pipeline model, R15 is the address of the next
-        // instruction to fetch, so `LR_irq = PC + 4` matches GBATek.
-        let next_pc = self.regs.r[15].wrapping_add(self.instr_size());
+        #[cfg(test)]
+        {
+            self.irq_dispatch_count += 1;
+        }
+        // Return address per ARM7TDMI spec and GBATek:
+        //   LR_irq = address_of_next_instruction + 4
+        // In our pipeline model R15 holds the address of the next instruction
+        // to execute, so LR_irq = R15 + 4 regardless of ARM/THUMB state.
+        // (Return via `SUBS PC, LR, #4` restores PC to the interrupted
+        // instruction.)
+        let next_pc = self.regs.r[15].wrapping_add(4);
         let cpsr = self.regs.cpsr;
         self.regs.switch_mode(CpuMode::Irq);
         self.regs.set_spsr(cpsr);
@@ -235,7 +308,9 @@ impl Arm7tdmi {
 
     /// Dispatch an FIQ: switch to FIQ mode, mask both IRQ and FIQ, jump to 0x1C.
     fn dispatch_fiq(&mut self) {
-        let next_pc = self.regs.r[15].wrapping_add(self.instr_size());
+        // Same return-address rule as IRQ: LR_fiq = R15 + 4 regardless of
+        // ARM/THUMB state. Return via `SUBS PC, LR, #4`.
+        let next_pc = self.regs.r[15].wrapping_add(4);
         let cpsr = self.regs.cpsr;
         self.regs.switch_mode(CpuMode::Fiq);
         self.regs.set_spsr(cpsr);
@@ -247,6 +322,57 @@ impl Arm7tdmi {
         self.cycles = self.cycles.wrapping_add(3);
         // Latched-edge semantics: clear pending on dispatch.
         self.fiq_pending = false;
+    }
+
+    /// Try to handle a SWI via high-level emulation. Returns `true` if the
+    /// SWI was handled (caller should skip normal BIOS dispatch).
+    ///
+    /// Reads the SWI number from the prefetched instruction. Currently
+    /// handles:
+    /// - **0x02 (Halt)**: halt CPU until any enabled interrupt.
+    /// - **0x05 (VBlankIntrWait)**: set IME=1, clear VBlank in IntrCheck
+    ///   at 0x03007FF8, halt CPU.
+    fn try_hle_swi<B: Bus>(&mut self, bus: &mut B) -> bool {
+        if !self.hle_swi {
+            return false;
+        }
+
+        // Extract SWI number from the prefetched instruction (still in slot 0).
+        let swi_number = if self.thumb() {
+            // THUMB SWI: comment byte in bits 7:0
+            (self.prefetch_thumb[0] & 0xFF) as u8
+        } else {
+            // ARM SWI: GBA convention uses bits 23:16 for the SWI number
+            ((self.prefetch_arm[0] >> 16) & 0xFF) as u8
+        };
+
+        match swi_number {
+            0x02 => {
+                // Halt: halt CPU until any enabled interrupt fires.
+                self.halted = true;
+                true
+            }
+            0x05 => {
+                // VBlankIntrWait ≡ IntrWait(1, VBLANK):
+                // 1. Set IME = 1
+                bus.write16(0x0400_0208, 1);
+                // 2. Clear VBlank bit in IntrCheck (BIOS_IF at 0x03007FF8)
+                let intr_check = bus.read16(0x0300_7FF8);
+                bus.write16(0x0300_7FF8, intr_check & !1);
+                // 3. Halt CPU — will wake on next enabled interrupt
+                self.halted = true;
+                true
+            }
+            _ => {
+                #[cfg(test)]
+                {
+                    if !self.unhandled_swis.contains(&swi_number) {
+                        self.unhandled_swis.push(swi_number);
+                    }
+                }
+                false
+            }
+        }
     }
 }
 

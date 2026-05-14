@@ -15,7 +15,7 @@ const CART_ENTRYPOINT: u32 = 0x0800_0000;
 const BIOS_RESET_LITERAL_ADDR: usize = 0x20;
 const BIOS_EXCEPTION_VECTORS: [u32; 5] = [0x04, 0x0C, 0x10, 0x18, 0x1C];
 // GBA nominal timing: 280_896 cycles per frame (~59.73 Hz).
-const GBA_CYCLES_PER_FRAME: u64 = 280_896;
+pub(crate) const GBA_CYCLES_PER_FRAME: u64 = 280_896;
 // Allow up to two frames while waiting for a fresh frame-ready edge after idle-loop detection.
 const FRAME_SETTLE_MAX_CYCLES: u64 = GBA_CYCLES_PER_FRAME * 2;
 
@@ -671,6 +671,91 @@ pub struct MgbaSuiteResult {
     pub suite_crcs: Vec<u32>,
     /// Total cycles consumed.
     pub cycles: u64,
+}
+
+/// Build an enhanced stub BIOS for the mgba-emu test suite.
+///
+/// The mgba suite (via libgba) uses VBlankIntrWait (SWI 0x05) and relies on
+/// the BIOS IRQ dispatcher at vector 0x18 to call the user-installed handler
+/// at `[0x03FFFFFC]`. This stub provides:
+///
+/// - **Reset vector (0x00)**: jump to cartridge entrypoint 0x0800_0000.
+/// - **SWI vector (0x08)**: `MOVS PC, LR` (fallback for non-HLE SWIs).
+/// - **IRQ vector (0x18)**: ARM code that saves context, calls user handler
+///   at `[0x03FFFFFC]`, restores context, and returns via `SUBS PC, LR, #4`.
+/// - All other exception vectors: branch-to-self trap.
+///
+/// HLE SWI handling (VBlankIntrWait, Halt) is done in the CPU core when
+/// `set_hle_swi(true)` is called — the BIOS SWI vector is only reached for
+/// unrecognised SWI numbers.
+pub fn build_mgba_stub_bios() -> Vec<u8> {
+    let mut bios = vec![0u8; BIOS_SIZE];
+
+    // Reset vector: LDR PC, [PC, #24] → loads literal at 0x20 = 0x0800_0000
+    bios[0x00..0x04].copy_from_slice(&BIOS_RESET_STUB_LDR_PC_PLUS_24.to_le_bytes());
+    bios[BIOS_RESET_LITERAL_ADDR..BIOS_RESET_LITERAL_ADDR + 4]
+        .copy_from_slice(&CART_ENTRYPOINT.to_le_bytes());
+
+    // SWI vector: MOVS PC, LR (fallback return for unhandled SWIs)
+    bios[0x08..0x0C].copy_from_slice(&BIOS_SWI_STUB_MOVS_PC_LR.to_le_bytes());
+
+    // Unused exception vectors: branch-to-self (trap)
+    for &vector in &[0x04u32, 0x0C, 0x10, 0x1C] {
+        let i = vector as usize;
+        bios[i..i + 4].copy_from_slice(&ARM_BRANCH_SELF_OPCODE.to_le_bytes());
+    }
+
+    // IRQ vector (0x18): branch to IRQ handler body at 0x80.
+    // ARM branch encoding: target = PC + 8 + (offset * 4)
+    //   offset = (0x80 - (0x18 + 8)) / 4 = 0x60 / 4 = 24 = 0x18
+    let irq_branch: u32 = 0xEA00_0018; // B 0x80
+    bios[0x18..0x1C].copy_from_slice(&irq_branch.to_le_bytes());
+
+    // IRQ handler body at 0x80:
+    //   0x80: STMFD SP!, {r0-r3, r12, lr}   ; save caller-saved regs
+    //   0x84: MOV r0, #0x04000000            ; I/O base
+    //   0x88: ADD lr, pc, #0                 ; LR = 0x90 (return addr for user handler)
+    //   0x8C: LDR pc, [r0, #-4]             ; jump to [0x03FFFFFC] (user handler)
+    //   0x90: LDMFD SP!, {r0-r3, r12, lr}   ; restore regs
+    //   0x94: SUBS pc, lr, #4               ; return from IRQ
+    let irq_handler: [u32; 6] = [
+        0xE92D_500F, // STMFD SP!, {r0-r3, r12, lr}
+        0xE3A0_0301, // MOV r0, #0x04000000
+        0xE28F_E000, // ADD lr, pc, #0
+        0xE510_F004, // LDR pc, [r0, #-4]
+        0xE8BD_500F, // LDMFD SP!, {r0-r3, r12, lr}
+        0xE25E_F004, // SUBS pc, lr, #4
+    ];
+    for (i, &word) in irq_handler.iter().enumerate() {
+        let addr = 0x80 + i * 4;
+        bios[addr..addr + 4].copy_from_slice(&word.to_le_bytes());
+    }
+
+    bios
+}
+
+/// Boot the mgba-emu test suite ROM with the enhanced stub BIOS.
+///
+/// Returns a `Gba` instance ready to run, positioned at the cartridge
+/// entrypoint with stack pointers initialised. HLE SWI is enabled so
+/// VBlankIntrWait and Halt are handled in Rust.
+pub fn boot_mgba_suite() -> (Gba, Vec<u8>) {
+    let rom_path = Suite::Mgba.rom_path();
+    let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {
+        panic!("failed to read mgba suite ROM {}: {e}", rom_path.display());
+    });
+
+    let mut gba = Gba::new(AppContext::default());
+    let bios = build_mgba_stub_bios();
+    gba.bus_mut().load_bios(&bios);
+    gba.load_rom(&rom, rom_path.to_str().unwrap_or("mgba-emu-suite"))
+        .unwrap_or_else(|e| {
+            panic!("failed to load mgba suite ROM {}: {e}", rom_path.display());
+        });
+    gba.init_test_stack_pointers();
+    gba.set_hle_swi(true);
+
+    (gba, rom)
 }
 
 /// Run the mgba-emu test suite ROM through all 14 sub-suites.

@@ -15,7 +15,8 @@
 //!   the I/O unit.
 //! * V-Blank / H-Blank flag transitions, V-Counter match flag, and the
 //!   three associated IRQ sources (`VBLANK`, `HBLANK`, `VCOUNT`).
-//! * Mode 0 tile background rendering (BG0 with 4bpp text background).
+//! * Mode 0 tile background rendering (BG0–BG3 with 4bpp text backgrounds,
+//!   priority compositing across all enabled layers).
 //! * Mode 2 stub — renders backdrop only (affine tile rendering deferred).
 //! * Mode 3 background rendering (240×160 15-bit BGR555 direct bitmap
 //!   from VRAM) when `BG2` is enabled.
@@ -118,10 +119,19 @@ pub mod dispstat {
 /// I/O register addresses owned by the PPU.
 pub const REG_DISPCNT: u32 = 0x0400_0000;
 pub const REG_BG0CNT: u32 = 0x0400_0008;
+pub const REG_BG1CNT: u32 = 0x0400_000A;
+pub const REG_BG2CNT: u32 = 0x0400_000C;
+pub const REG_BG3CNT: u32 = 0x0400_000E;
 pub const REG_DISPSTAT: u32 = 0x0400_0004;
 pub const REG_VCOUNT: u32 = 0x0400_0006;
 pub const REG_BG0HOFS: u32 = 0x0400_0010;
 pub const REG_BG0VOFS: u32 = 0x0400_0012;
+pub const REG_BG1HOFS: u32 = 0x0400_0014;
+pub const REG_BG1VOFS: u32 = 0x0400_0016;
+pub const REG_BG2HOFS: u32 = 0x0400_0018;
+pub const REG_BG2VOFS: u32 = 0x0400_001A;
+pub const REG_BG3HOFS: u32 = 0x0400_001C;
+pub const REG_BG3VOFS: u32 = 0x0400_001E;
 
 // Affine background register file (BG2 and BG3). All eight registers
 // per background are write-only; reads are handled by the bus's
@@ -179,8 +189,8 @@ pub struct Ppu {
     /// The low 3 bits (V-Blank/H-Blank/V-Count flags) are status owned
     /// by the PPU; software writes to them are ignored.
     dispstat: u16,
-    /// `BG0CNT` (0x0400_0008) — BG0 control.
-    bg0cnt: u16,
+    /// `BGnCNT` (0x0400_0008..0x0400_000E) — BG0–BG3 control registers.
+    bg_cnt: [u16; 4],
     /// Current scanline (`VCOUNT`, 0x0400_0006). Wraps at
     /// [`SCANLINES_PER_FRAME`].
     vcount: u16,
@@ -196,8 +206,8 @@ pub struct Ppu {
     /// Index `0` is BG2, index `1` is BG3. Consumed by the (future)
     /// affine renderer; the registers are write-only on the bus side.
     bg_affine: [BgAffine; 2],
-    /// BG0 horizontal and vertical scroll offsets (low 9 bits are valid).
-    bg0_scroll: (u16, u16),
+    /// BG0–BG3 horizontal and vertical scroll offsets (low 9 bits are valid).
+    bg_scroll: [(u16, u16); 4],
 }
 
 impl Default for Ppu {
@@ -216,13 +226,13 @@ impl Ppu {
         let mut ppu = Self {
             dispcnt: 0,
             dispstat: 0,
-            bg0cnt: 0,
+            bg_cnt: [0; 4],
             vcount: 0,
             line_cycle: 0,
             framebuffer: vec![0; FRAMEBUFFER_BYTES],
             frame_ready: false,
             bg_affine: [BgAffine::default(); 2],
-            bg0_scroll: (0, 0),
+            bg_scroll: [(0, 0); 4],
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -249,7 +259,7 @@ impl Ppu {
 
     /// Read `BG0CNT`.
     pub fn read_bg0cnt(&self) -> u16 {
-        self.bg0cnt
+        self.bg_cnt[0]
     }
 
     /// Write `DISPSTAT`. Only the IRQ enables (bits 3..5) and V-Count
@@ -266,7 +276,17 @@ impl Ppu {
 
     /// Write `BG0CNT`.
     pub fn write_bg0cnt(&mut self, value: u16) {
-        self.bg0cnt = value;
+        self.bg_cnt[0] = value;
+    }
+
+    /// Read `BGnCNT` for background layer `n` (0–3).
+    pub fn read_bg_cnt(&self, n: usize) -> u16 {
+        self.bg_cnt[n]
+    }
+
+    /// Write `BGnCNT` for background layer `n` (0–3).
+    pub fn write_bg_cnt(&mut self, n: usize, value: u16) {
+        self.bg_cnt[n] = value;
     }
 
     /// Read `VCOUNT`.
@@ -368,22 +388,32 @@ impl Ppu {
 
     /// Write BG0HOFS (0x0400_0010). Only the low 9 bits are significant.
     pub fn write_bg0_hofs(&mut self, value: u16) {
-        self.bg0_scroll.0 = value & 0x01FF;
+        self.bg_scroll[0].0 = value & 0x01FF;
     }
 
     /// Read BG0HOFS (0x0400_0010).
     pub fn read_bg0_hofs(&self) -> u16 {
-        self.bg0_scroll.0
+        self.bg_scroll[0].0
     }
 
     /// Write BG0VOFS (0x0400_0012). Only the low 9 bits are significant.
     pub fn write_bg0_vofs(&mut self, value: u16) {
-        self.bg0_scroll.1 = value & 0x01FF;
+        self.bg_scroll[0].1 = value & 0x01FF;
     }
 
     /// Read BG0VOFS (0x0400_0012).
     pub fn read_bg0_vofs(&self) -> u16 {
-        self.bg0_scroll.1
+        self.bg_scroll[0].1
+    }
+
+    /// Write `BGnHOFS` for background layer `n` (0–3).
+    pub fn write_bg_hofs(&mut self, n: usize, value: u16) {
+        self.bg_scroll[n].0 = value & 0x01FF;
+    }
+
+    /// Write `BGnVOFS` for background layer `n` (0–3).
+    pub fn write_bg_vofs(&mut self, n: usize, value: u16) {
+        self.bg_scroll[n].1 = value & 0x01FF;
     }
 
     /// True after a completed frame, until [`Self::clear_frame_ready`].
@@ -520,21 +550,75 @@ impl Ppu {
         }
     }
 
-    /// Mode 0 (initial increment): render BG0 as 4bpp text background
-    /// using BG0CNT-selected charblock/screenblock and scroll/size state.
+    /// Mode 0: render enabled text-mode BG layers (BG0–BG3) with priority
+    /// compositing. Lower BGCNT priority value = on top; at equal priority,
+    /// lower BG number wins.
     fn render_mode0_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
-        if !self.bg0_enabled() {
+        // Collect enabled text-mode BGs.
+        let bg_enables = [
+            self.dispcnt & dispcnt::BG0_ENABLE != 0,
+            self.dispcnt & dispcnt::BG1_ENABLE != 0,
+            self.dispcnt & dispcnt::BG2_ENABLE != 0,
+            self.dispcnt & dispcnt::BG3_ENABLE != 0,
+        ];
+
+        if !bg_enables.iter().any(|&e| e) {
             self.render_backdrop_scanline(y, pram);
             return;
         }
 
+        // Build render order: paint from lowest visual priority (behind) to
+        // highest (on top). Higher BGCNT priority value = behind; at equal
+        // priority, higher BG number = behind. So sort descending by
+        // (priority, bg_number).
+        let mut layers: [(u16, usize); 4] = [(0, 0); 4];
+        let mut count = 0;
+        for (i, &enabled) in bg_enables.iter().enumerate() {
+            if enabled {
+                layers[count] = (self.bg_cnt[i] & 3, i);
+                count += 1;
+            }
+        }
+        // Sort: higher priority value first (behind), then higher bg number.
+        layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+        // Fill with backdrop first.
+        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        let backdrop = self.backdrop_bgr555(pram);
+        let (br, bg, bb) = color::bgr555_to_rgb888(backdrop);
+        for x in 0..(SCREEN_WIDTH as usize) {
+            let dst = row_start + x * BYTES_PER_PIXEL;
+            self.framebuffer[dst] = br;
+            self.framebuffer[dst + 1] = bg;
+            self.framebuffer[dst + 2] = bb;
+        }
+
+        // Render each BG layer from behind to front; non-transparent pixels
+        // overwrite whatever was painted below.
+        for &(_, bg_idx) in &layers[..count] {
+            self.render_text_bg_layer(bg_idx, y, vram, pram, row_start, backdrop);
+        }
+    }
+
+    /// Render a single 4bpp text-mode BG layer onto the framebuffer row
+    /// at `row_start`. Transparent pixels (palette index 0) are skipped.
+    fn render_text_bg_layer(
+        &mut self,
+        bg_idx: usize,
+        y: u32,
+        vram: &[u8],
+        pram: &[u8],
+        row_start: usize,
+        backdrop: u16,
+    ) {
+        let bgcnt = self.bg_cnt[bg_idx];
+
         assert!(
-            self.bg0cnt & (1 << 7) == 0,
-            "unimplemented GBA Mode 0 BG0 8bpp rendering requested via BG0CNT bit 7"
+            bgcnt & (1 << 7) == 0,
+            "unimplemented GBA Mode 0 BG{bg_idx} 8bpp rendering requested via BGCNT bit 7"
         );
 
-        let backdrop = self.backdrop_bgr555(pram);
-        let bg_size = (self.bg0cnt >> 14) & 0x0003;
+        let bg_size = (bgcnt >> 14) & 0x0003;
         let (width_tiles, height_tiles) = match bg_size {
             0 => (32usize, 32usize),
             1 => (64usize, 32usize),
@@ -543,13 +627,13 @@ impl Ppu {
         };
         let width_mask = width_tiles * 8 - 1;
         let height_mask = height_tiles * 8 - 1;
-        let screenblock_base = (((self.bg0cnt >> 8) & 0x001F) as usize) * 0x800;
-        let charblock_base = (((self.bg0cnt >> 2) & 0x0003) as usize) * 16 * 1024;
-        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
-        let screen_y = ((y as usize) + self.bg0_scroll.1 as usize) & height_mask;
+        let screenblock_base = (((bgcnt >> 8) & 0x001F) as usize) * 0x800;
+        let charblock_base = (((bgcnt >> 2) & 0x0003) as usize) * 16 * 1024;
+        let (hofs, vofs) = self.bg_scroll[bg_idx];
+        let screen_y = ((y as usize) + vofs as usize) & height_mask;
 
         for x in 0..(SCREEN_WIDTH as usize) {
-            let screen_x = (x + self.bg0_scroll.0 as usize) & width_mask;
+            let screen_x = (x + hofs as usize) & width_mask;
             let tile_x = screen_x >> 3;
             let tile_y = screen_y >> 3;
             let screenblock_x = tile_x >> 5;
@@ -593,9 +677,12 @@ impl Ppu {
                 })
                 .unwrap_or(0) as usize;
 
-            let bgr555 = if palette_index == 0 {
-                backdrop
-            } else {
+            // Palette index 0 is transparent — skip (keep whatever is below).
+            if palette_index == 0 {
+                continue;
+            }
+
+            let bgr555 = {
                 let pram_index = (palette_bank * 16 + palette_index) * 2;
                 if pram_index + 1 < pram.len() {
                     u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])

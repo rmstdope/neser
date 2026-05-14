@@ -151,6 +151,11 @@ impl Gba {
     }
 
     #[cfg(test)]
+    pub(crate) fn cpu_halted(&self) -> bool {
+        self.cpu.is_halted()
+    }
+
+    #[cfg(test)]
     pub(crate) fn init_test_stack_pointers(&mut self) {
         use crate::gba::cpu::registers::CpuMode;
 
@@ -167,6 +172,24 @@ impl Gba {
         self.cpu.regs.r[13] = 0x0300_7F00;
 
         self.cpu.regs.switch_mode(saved_mode);
+    }
+
+    /// Enable or disable high-level emulation of known SWI calls on the CPU.
+    #[cfg(test)]
+    pub(crate) fn set_hle_swi(&mut self, enabled: bool) {
+        self.cpu.set_hle_swi(enabled);
+    }
+
+    /// Debug: count of IRQ dispatch calls.
+    #[cfg(test)]
+    pub(crate) fn irq_dispatch_count(&self) -> u64 {
+        self.cpu.irq_dispatch_count()
+    }
+
+    /// Debug: list of unhandled SWI numbers.
+    #[cfg(test)]
+    pub(crate) fn unhandled_swis(&self) -> &[u8] {
+        &self.cpu.unhandled_swis
     }
 
     #[cfg(test)]
