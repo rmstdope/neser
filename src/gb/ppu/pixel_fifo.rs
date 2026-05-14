@@ -298,10 +298,8 @@ impl PixelFifoRenderer {
         self.canceled_obj_fetch_ranges.clear();
         self.obj_fetch_lcdc_ranges.clear();
         self.active_obj_fetch_lcdc_range = None;
-        self.obj_fetch_ignores_lcdc = matches!(
-            ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat),
-            Some(ObjFetchModel::CgbDmgCompat)
-        );
+        self.obj_fetch_ignores_lcdc = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat)
+            .is_some_and(ObjFetchModel::ignores_lcdc_obj_enable);
         if self.obj_fetch_ignores_lcdc || registers.lcdc & LCDC_OBJ_ENABLE != 0 {
             sprites::scan_oam_line_into(scanline, oam, registers.lcdc, &mut self.sprite_indices);
             sprites::schedule_obj_penalties(
@@ -937,10 +935,52 @@ impl Default for PixelFifoRenderer {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{registers::Registers, screen_buffer::ScreenBuffer};
     use super::{
         LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
         PixelFifoRenderer,
     };
+
+    fn oam_with_sprite_at(oam_y: u8, oam_x: u8, tile: u8, attrs: u8) -> [u8; 0xA0] {
+        let mut oam = [0u8; 0xA0];
+        oam[0] = oam_y;
+        oam[1] = oam_x;
+        oam[2] = tile;
+        oam[3] = attrs;
+        oam
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn tick_renderer(
+        renderer: &mut PixelFifoRenderer,
+        dot: u16,
+        vram: &[u8; 0x2000],
+        oam: &[u8; 0xA0],
+        registers: &Registers,
+        cgb_mode: bool,
+        dmg_compat: bool,
+        screen_buffer: &mut ScreenBuffer,
+    ) {
+        let vram_bank1 = [0u8; 0x2000];
+        let bg_palette_ram = [0u8; 64];
+        let mut obj_palette_ram = [0u8; 64];
+        obj_palette_ram[2] = 0xFF;
+        obj_palette_ram[3] = 0x7F;
+        renderer.tick(
+            dot,
+            vram,
+            &vram_bank1,
+            oam,
+            registers,
+            &bg_palette_ram,
+            &obj_palette_ram,
+            0,
+            cgb_mode,
+            false,
+            dmg_compat,
+            screen_buffer,
+        );
+    }
 
     #[test]
     fn lcdc_bg_enable_edge_defaults_to_current_lcdc_bit() {
@@ -1126,6 +1166,101 @@ mod tests {
             !renderer
                 .lcdc_bg_enable_edge
                 .bg_window_enabled_for_pixel(0, 0x93)
+        );
+    }
+
+    #[test]
+    fn cgb_dmg_compat_fifo_stalls_for_sprite_even_when_lcdc_obj_enable_is_clear() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0x91;
+        registers.obp0 = 0xE4;
+        let oam = oam_with_sprite_at(16, 8, 1, 0);
+        let mut vram = [0u8; 0x2000];
+        vram[0x0010] = 0x80;
+        let mut screen_buffer = ScreenBuffer::new();
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, true);
+        tick_renderer(
+            &mut renderer,
+            96,
+            &vram,
+            &oam,
+            &registers,
+            true,
+            true,
+            &mut screen_buffer,
+        );
+
+        assert_eq!(
+            renderer.next_x, 0,
+            "CGB DMG-compat object fetches should delay the production FIFO even when LCDC.1 is clear"
+        );
+
+        renderer.record_lcdc_write(0x91, 0x93, registers.scx, true, true);
+        registers.lcdc = 0x93;
+        for dot in 97..112 {
+            tick_renderer(
+                &mut renderer,
+                dot,
+                &vram,
+                &oam,
+                &registers,
+                true,
+                true,
+                &mut screen_buffer,
+            );
+        }
+
+        assert_eq!(
+            screen_buffer.get_pixel(0, 0),
+            (255, 255, 255),
+            "CGB DMG-compat should fetch the sprite while LCDC.1 is clear and render it if LCDC.1 is enabled before the pixel is mixed"
+        );
+    }
+
+    #[test]
+    fn dmg_fifo_suppresses_sprite_pixels_when_lcdc_obj_enable_turns_off_mid_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0x93;
+        registers.bgp = 0xE4;
+        registers.obp0 = 0xE4;
+        let oam = oam_with_sprite_at(16, 8, 1, 0);
+        let mut vram = [0u8; 0x2000];
+        vram[0x0010] = 0x80;
+        let mut screen_buffer = ScreenBuffer::new();
+
+        renderer.begin_scanline(0, 80, &oam, &registers, false, false);
+        tick_renderer(
+            &mut renderer,
+            96,
+            &vram,
+            &oam,
+            &registers,
+            false,
+            false,
+            &mut screen_buffer,
+        );
+        renderer.record_lcdc_write(0x93, 0x91, registers.scx, false, false);
+        registers.lcdc = 0x91;
+        for dot in 97..112 {
+            tick_renderer(
+                &mut renderer,
+                dot,
+                &vram,
+                &oam,
+                &registers,
+                false,
+                false,
+                &mut screen_buffer,
+            );
+        }
+
+        assert_eq!(
+            screen_buffer.get_pixel(0, 0),
+            (255, 255, 255),
+            "DMG object fetch cancellation should suppress the fetched sprite pixel in the production FIFO"
         );
     }
 }

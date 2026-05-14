@@ -239,9 +239,13 @@ pub fn fetch_sprite_pixel_cgb(
         let tile_vram_bank = (attrs >> 3) & 0x01;
         let bg_priority = attrs & 0x80 != 0;
 
-        let mut row = match scanline.checked_sub(screen_y) {
-            Some(row) if row < height => row as usize,
-            _ => continue,
+        let mut row = if dmg_priority_mode {
+            match scanline.checked_sub(screen_y) {
+                Some(row) if row < height => row as usize,
+                _ => continue,
+            }
+        } else {
+            (scanline.wrapping_sub(screen_y) & (height - 1)) as usize
         };
         if y_flip {
             row = (height as usize - 1) - row;
@@ -818,6 +822,23 @@ mod tests {
         assert!(
             result.is_ok(),
             "CGB DMG-compat sprite fetch must tolerate live LCDC.2 changing after OAM scan"
+        );
+    }
+
+    #[test]
+    fn native_cgb_sprite_fetch_keeps_live_lcdc_row_wrapping_when_lcdc_changes_to_8x8() {
+        let oam = oam_with_sprite_at(16, 8, 0, 0x40);
+        let mut vram = blank_vram();
+        vram[0x0000] = 0x80;
+        let bank1 = blank_vram();
+        let indices = scan_oam_line(15, &oam, 0x06);
+
+        let result = fetch_sprite_pixel_cgb(0, 15, &indices, &oam, &vram, &bank1, 0x02, false);
+
+        assert_eq!(
+            result.map(|pixel| pixel.colour_index),
+            Some(1),
+            "native CGB sprite fetch should keep the pre-existing live-LCDC row wrapping behavior"
         );
     }
 
