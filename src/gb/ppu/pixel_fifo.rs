@@ -174,7 +174,7 @@ struct LcdcTileDataEdge {
 
 impl LcdcTileDataEdge {
     fn record_write(&mut self, start_x: u8, end_x: u8, low_lcdc: u8, high_lcdc: u8) {
-        if start_x > end_x || low_lcdc & LCDC_TILE_DATA == high_lcdc & LCDC_TILE_DATA {
+        if start_x > end_x {
             return;
         }
 
@@ -539,8 +539,13 @@ impl PixelFifoRenderer {
         let bg_phase = scx.wrapping_add(self.next_x) & 0x07;
         let current_fetch_start = self.next_x.saturating_sub(bg_phase);
         let current_fetch_end = current_fetch_start.saturating_add(7);
+        let (start_x, low_lcdc, high_lcdc) = if self.next_x == current_fetch_start {
+            (current_fetch_start, previous, previous)
+        } else {
+            (self.next_x, previous, new)
+        };
         self.lcdc_tile_data_edge
-            .record_write(self.next_x, current_fetch_end, previous, new);
+            .record_write(start_x, current_fetch_end, low_lcdc, high_lcdc);
     }
 
     fn record_lcdc_obj_enable_write(&mut self, model: ObjFetchModel, previous: u8, new: u8) {
@@ -1044,6 +1049,15 @@ mod tests {
         vram
     }
 
+    fn vram_with_blank_signed_and_solid_unsigned_tiles() -> [u8; 0x2000] {
+        let mut vram = [0u8; 0x2000];
+        vram[0x1800] = 0x00;
+        vram[0x1801] = 0x00;
+        vram[0x0000] = 0xFF;
+        vram[0x0001] = 0xFF;
+        vram
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn tick_renderer(
         renderer: &mut PixelFifoRenderer,
@@ -1208,7 +1222,7 @@ mod tests {
     }
 
     #[test]
-    fn record_lcdc_write_mixes_bg_tile_data_samples_for_current_fetch() {
+    fn record_lcdc_write_after_visible_bg_tile_latch_updates_next_fetch() {
         let mut renderer = PixelFifoRenderer::new();
         renderer.active = true;
         renderer.scanline = 0;
@@ -1217,12 +1231,21 @@ mod tests {
         let mut registers = Registers::new();
         registers.lcdc = 0x91;
         registers.bgp = 0xE4;
-        let vram = vram_with_mixed_bg_tile_select_sources();
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
         let oam = [0u8; 0xA0];
 
-        let (colour_index, is_sprite, _) = renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+        let (next_tile_colour, _, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
 
-        assert_eq!(colour_index, 3);
+        assert_eq!(
+            current_tile_colour, 0,
+            "a TILE_SEL write after the visible tile has been latched must not alter that tile"
+        );
+        assert_eq!(
+            next_tile_colour, 3,
+            "the next BG fetch should sample the new TILE_SEL value for both bitplanes"
+        );
         assert!(!is_sprite);
     }
 
