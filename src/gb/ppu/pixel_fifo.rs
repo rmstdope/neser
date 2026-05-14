@@ -207,6 +207,12 @@ impl LcdcTileDataEdge {
         })
     }
 
+    fn has_range(&self, start_x: u8, end_x: u8) -> bool {
+        self.ranges
+            .iter()
+            .any(|range| range.start_x == start_x && range.end_x == end_x)
+    }
+
     fn clear_consumed(&mut self, next_x: u8) {
         self.ranges.retain(|range| range.end_x != next_x);
     }
@@ -568,6 +574,7 @@ impl PixelFifoRenderer {
         let bg_phase = scx.wrapping_add(self.next_x) & 0x07;
         let current_fetch_start = self.next_x.saturating_sub(bg_phase);
         let current_fetch_end = current_fetch_start.saturating_add(7);
+        let next_fetch_start = current_fetch_start.saturating_add(8);
         if self.next_x == current_fetch_start {
             if window_fetch_active {
                 self.lcdc_tile_data_edge.record_write(
@@ -583,7 +590,6 @@ impl PixelFifoRenderer {
                     previous,
                     previous,
                 );
-                let next_fetch_start = current_fetch_start.saturating_add(8);
                 self.lcdc_tile_data_edge.record_write(
                     next_fetch_start,
                     next_fetch_start.saturating_add(7),
@@ -591,24 +597,45 @@ impl PixelFifoRenderer {
                     new,
                 );
             }
-        } else if !self
+        } else if self
             .lcdc_tile_data_edge
             .has_latched_range(current_fetch_start, current_fetch_end)
         {
-            self.lcdc_tile_data_edge.record_write(
-                current_fetch_start,
-                current_fetch_end,
-                previous,
-                previous,
-            );
-            let next_fetch_start = current_fetch_start.saturating_add(8);
-            self.lcdc_tile_data_edge.record_write(
-                next_fetch_start,
-                next_fetch_start.saturating_add(7),
-                new,
-                new,
-            );
+            return;
+        } else {
+            if !self
+                .lcdc_tile_data_edge
+                .has_range(current_fetch_start, current_fetch_end)
+            {
+                self.lcdc_tile_data_edge.record_write(
+                    current_fetch_start,
+                    current_fetch_end,
+                    previous,
+                    previous,
+                );
+            }
+            self.record_next_lcdc_tile_data_write(next_fetch_start, bg_phase, previous, new);
         }
+    }
+
+    fn record_next_lcdc_tile_data_write(
+        &mut self,
+        next_fetch_start: u8,
+        bg_phase: u8,
+        previous: u8,
+        new: u8,
+    ) {
+        let (low_lcdc, high_lcdc) = if bg_phase <= 1 {
+            (new, new)
+        } else {
+            (previous, new)
+        };
+        self.lcdc_tile_data_edge.record_write(
+            next_fetch_start,
+            next_fetch_start.saturating_add(7),
+            low_lcdc,
+            high_lcdc,
+        );
     }
 
     fn record_lcdc_obj_enable_write(&mut self, model: ObjFetchModel, previous: u8, new: u8) {
@@ -1420,6 +1447,42 @@ mod tests {
         assert_eq!(
             next_tile_colour, 3,
             "the following BG fetch should sample the new TILE_SEL value"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn paired_lcdc_writes_late_in_visible_tile_mix_following_fetches() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 2;
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        renderer.next_x = 10;
+        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(3, &vram, &oam, &registers, 0);
+        let (next_tile_colour, _, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+        let (following_tile_colour, _, _) =
+            renderer.dmg_pixel_layers(16, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 0,
+            "late TILE_SEL writes must not alter the rest of the visible tile"
+        );
+        assert_eq!(
+            next_tile_colour, 2,
+            "the following fetch should keep the previous low byte and sample the new high byte"
+        );
+        assert_eq!(
+            following_tile_colour, 1,
+            "the restore write should let the next fetch keep the new low byte and sample the previous high byte"
         );
         assert!(!is_sprite);
     }
