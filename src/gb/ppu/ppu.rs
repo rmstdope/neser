@@ -284,20 +284,15 @@ impl Ppu {
         let scanline = self.timing.ly();
         let scx_penalty = (self.registers.scx & 0x07) as u16;
         let window_penalty = self.window_penalty(scanline);
-        let fetches_objects_when_lcdc_obj_enable_is_clear =
-            ObjFetchModel::for_dmg_render_path(self.cgb_mode, self.dmg_compat)
-                .is_some_and(ObjFetchModel::ignores_lcdc_obj_enable);
-        let sprites_fetched =
-            fetches_objects_when_lcdc_obj_enable_is_clear || self.registers.lcdc & 0x02 != 0;
-        let (obj_penalty, _sprite_count) = if sprites_fetched {
+        let sprites_fetched = ObjFetchModel::for_dmg_render_path(self.cgb_mode, self.dmg_compat)
+            .is_some_and(ObjFetchModel::ignores_lcdc_obj_enable)
+            || self.registers.lcdc & 0x02 != 0;
+        let obj_penalty = if sprites_fetched {
             let sprite_indices = sprites::scan_oam_line(scanline, &self.oam, self.registers.lcdc);
-            let count = sprite_indices.len();
-            let penalty =
-                sprites::calculate_obj_penalty(&sprite_indices, &self.oam, self.registers.scx);
-            trace_ppu!(2; "scanline sprites y={} count={}", scanline, count);
-            (penalty, count)
+            trace_ppu!(2; "scanline sprites y={} count={}", scanline, sprite_indices.len());
+            sprites::calculate_obj_penalty(&sprite_indices, &self.oam, self.registers.scx)
         } else {
-            (0, 0)
+            0
         };
         let extra_dots =
             scx_penalty + window_penalty + (obj_penalty / DOTS_PER_M_CYCLE) * DOTS_PER_M_CYCLE;
