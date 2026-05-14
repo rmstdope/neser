@@ -1,3 +1,4 @@
+#[cfg(test)]
 const LCDC_OBJ_ENABLE: u8 = 0x02;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +18,7 @@ impl ObjFetchModel {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn object_fetch_allowed(self, lcdc: u8) -> bool {
         match self {
             Self::Dmg => lcdc & LCDC_OBJ_ENABLE != 0,
@@ -25,12 +27,14 @@ impl ObjFetchModel {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Default, Clone)]
 pub(super) struct ObjFetcher {
     fetch_active: bool,
     fetch_canceled: bool,
 }
 
+#[cfg(test)]
 impl ObjFetcher {
     pub(super) fn begin_fetch(&mut self) {
         self.fetch_active = true;
