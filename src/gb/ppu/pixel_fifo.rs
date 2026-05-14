@@ -99,6 +99,12 @@ struct LcdcBgMapEdge {
 }
 
 impl LcdcBgMapEdge {
+    fn bg_tile_boundary_at_or_after(next_x: u8, scx: u8) -> u8 {
+        let bg_phase = scx.wrapping_add(next_x) & 0x07;
+        let pixels_until_boundary = if bg_phase == 0 { 0 } else { 8 - bg_phase };
+        next_x.saturating_add(pixels_until_boundary)
+    }
+
     fn record_write(&mut self, start_x: u8, end_x: u8, previous_lcdc: u8, new_lcdc: u8) {
         if previous_lcdc & LCDC_BG_MAP == new_lcdc & LCDC_BG_MAP || start_x > end_x {
             return;
@@ -114,13 +120,13 @@ impl LcdcBgMapEdge {
     fn record_delayed_write(
         &mut self,
         next_x: u8,
+        scx: u8,
         previous_lcdc: u8,
         new_lcdc: u8,
         fetch_delay: LcdcBgMapFetchDelay,
     ) {
-        let next_fetch_tile_start = next_x
-            .next_multiple_of(8)
-            .saturating_add(fetch_delay.pixels());
+        let next_fetch_tile_start =
+            Self::bg_tile_boundary_at_or_after(next_x, scx).saturating_add(fetch_delay.pixels());
         let end_x = next_fetch_tile_start.saturating_sub(1);
         self.record_write(next_x, end_x, previous_lcdc, new_lcdc);
     }
@@ -333,7 +339,14 @@ impl PixelFifoRenderer {
         };
     }
 
-    pub fn record_lcdc_write(&mut self, previous: u8, new: u8, cgb_mode: bool, dmg_compat: bool) {
+    pub fn record_lcdc_write(
+        &mut self,
+        previous: u8,
+        new: u8,
+        scx: u8,
+        cgb_mode: bool,
+        dmg_compat: bool,
+    ) {
         if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
             return;
         }
@@ -347,8 +360,13 @@ impl PixelFifoRenderer {
                 dmg_compat,
                 waiting_on_obj_fetch,
             );
-            self.lcdc_bg_map_edge
-                .record_delayed_write(self.next_x, previous, new, fetch_delay);
+            self.lcdc_bg_map_edge.record_delayed_write(
+                self.next_x,
+                scx,
+                previous,
+                new,
+                fetch_delay,
+            );
         }
         let timing = if cgb_mode && dmg_compat {
             if waiting_on_obj_fetch && self.next_x == 0 && self.pending_obj_stall_dots == 1 {
@@ -680,7 +698,10 @@ impl Default for PixelFifoRenderer {
 
 #[cfg(test)]
 mod tests {
-    use super::{LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, PixelFifoRenderer};
+    use super::{
+        LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
+        PixelFifoRenderer,
+    };
 
     #[test]
     fn lcdc_bg_enable_edge_defaults_to_current_lcdc_bit() {
@@ -730,13 +751,23 @@ mod tests {
     }
 
     #[test]
+    fn lcdc_bg_map_edge_uses_scx_fine_scroll_for_tile_latch_boundary() {
+        let mut edge = LcdcBgMapEdge::default();
+        edge.record_delayed_write(0, 7, 0x83, 0x8B, LcdcBgMapFetchDelay::NextBgFetch);
+
+        assert_eq!(LcdcBgMapEdge::bg_tile_boundary_at_or_after(0, 7), 1);
+        assert_eq!(edge.lcdc_for_bg_fetch(8, 0x8B) & 0x08, 0x00);
+        assert_eq!(edge.lcdc_for_bg_fetch(9, 0x8B) & 0x08, 0x08);
+    }
+
+    #[test]
     fn record_lcdc_write_delays_visible_left_edge_obj_bg_map_fetch() {
         let mut renderer = PixelFifoRenderer::new();
         renderer.active = true;
         renderer.next_x = 0;
         renderer.leftmost_obj_oam_x = Some(8);
 
-        renderer.record_lcdc_write(0x83, 0x8B, false, false);
+        renderer.record_lcdc_write(0x83, 0x8B, 0, false, false);
 
         assert_eq!(
             renderer.lcdc_bg_map_edge.lcdc_for_bg_fetch(8, 0x8B) & 0x08,
@@ -754,7 +785,7 @@ mod tests {
         renderer.active = true;
         renderer.next_x = 15;
 
-        renderer.record_lcdc_write(0xD3, 0xDB, true, true);
+        renderer.record_lcdc_write(0xD3, 0xDB, 0, true, true);
 
         assert_eq!(
             renderer.lcdc_bg_map_edge.lcdc_for_bg_fetch(24, 0xDB) & 0x08,
@@ -829,7 +860,7 @@ mod tests {
         renderer.next_x = 0;
         renderer.pending_obj_stall_dots = 1;
 
-        renderer.record_lcdc_write(0x93, 0x92, true, true);
+        renderer.record_lcdc_write(0x93, 0x92, 0, true, true);
 
         assert!(
             renderer
@@ -850,7 +881,7 @@ mod tests {
         renderer.next_x = 0;
         renderer.pending_obj_stall_dots = 2;
 
-        renderer.record_lcdc_write(0x93, 0x92, true, true);
+        renderer.record_lcdc_write(0x93, 0x92, 0, true, true);
 
         assert!(
             !renderer

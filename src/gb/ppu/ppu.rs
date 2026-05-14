@@ -523,6 +523,7 @@ impl Ppu {
             self.pixel_fifo.record_lcdc_write(
                 self.registers.lcdc,
                 val,
+                self.registers.scx,
                 self.cgb_mode,
                 self.dmg_compat,
             );
