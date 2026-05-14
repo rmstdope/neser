@@ -38,6 +38,7 @@ pub enum Suite {
     FuzzThumbAny,
     FuzzArmMixed,
     ArmWrestler,
+    Mgba,
 }
 
 impl Suite {
@@ -64,6 +65,7 @@ impl Suite {
             Self::FuzzThumbAny => "roms/gba/automated_tests/FuzzARM/THUMB_Any.gba",
             Self::FuzzArmMixed => "roms/gba/automated_tests/FuzzARM/FuzzARM.gba",
             Self::ArmWrestler => "roms/gba/automated_tests/armwrestler/armwrestler-gba-fixed.gba",
+            Self::Mgba => "roms/gba/automated_tests/mgba-emu-suite/suite.gba",
         }
     }
 
@@ -89,7 +91,8 @@ impl Suite {
             | Self::FuzzThumbDataProcessing
             | Self::FuzzThumbAny
             | Self::FuzzArmMixed
-            | Self::ArmWrestler => None,
+            | Self::ArmWrestler
+            | Self::Mgba => None,
         }
     }
 
@@ -112,6 +115,7 @@ impl Suite {
             Self::FuzzThumbAny => "fuzzthumb_any",
             Self::FuzzArmMixed => "fuzzarm_mixed",
             Self::ArmWrestler => "armwrestler",
+            Self::Mgba => "mgba_suite",
         }
     }
 
@@ -627,6 +631,60 @@ fn run_until_frame_ready(gba: &mut Gba, cycles: &mut u64) -> bool {
     false
 }
 
+// --- mgba-emu/suite runner ---
+//
+// The mgba-emu test suite is a single interactive ROM with 14 sub-suites
+// navigated via menu (UP/DOWN to select, A to enter, B to go back).
+// This runner boots the ROM, enters each sub-suite sequentially, waits
+// for results to stabilise, captures the framebuffer CRC, and returns.
+//
+// Sub-suite order (menu index 0–13):
+//   0: Memory, 1: I/O read, 2: Timing, 3: Timers, 4: Timer IRQ,
+//   5: Shifter, 6: Carry, 7: Multiply long, 8: BIOS math, 9: DMA,
+//   10: SIO read, 11: SIO timing, 12: Misc. edge cases, 13: Video
+
+/// Total number of sub-suites in the mgba-emu test suite.
+pub const MGBA_SUITE_COUNT: usize = 14;
+
+/// CRC approval keys for each mgba sub-suite, in menu order.
+pub const MGBA_SUITE_KEYS: [&str; MGBA_SUITE_COUNT] = [
+    "mgba_memory",
+    "mgba_io_read",
+    "mgba_timing",
+    "mgba_timers",
+    "mgba_timer_irq",
+    "mgba_shifter",
+    "mgba_carry",
+    "mgba_multiply_long",
+    "mgba_bios_math",
+    "mgba_dma",
+    "mgba_sio_read",
+    "mgba_sio_timing",
+    "mgba_misc_edge",
+    "mgba_video",
+];
+
+/// Result of running all mgba-emu sub-suites sequentially.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MgbaSuiteResult {
+    /// CRC32 of the framebuffer after each sub-suite completes (14 entries).
+    pub suite_crcs: Vec<u32>,
+    /// Total cycles consumed.
+    pub cycles: u64,
+}
+
+/// Run the mgba-emu test suite ROM through all 14 sub-suites.
+pub fn run_mgba_suite() -> MgbaSuiteResult {
+    let rom_path = Suite::Mgba.rom_path();
+    assert!(
+        rom_path.exists(),
+        "mgba suite ROM not found at {}",
+        rom_path.display()
+    );
+
+    todo!("mgba suite runner not yet implemented")
+}
+
 fn maybe_write_armwrestler_png(gba: &Gba, page_index: usize, crc: u32) {
     if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
         return;
@@ -739,5 +797,6 @@ mod tests {
         assert_eq!(Suite::FuzzThumbAny.capture_stem(), "fuzzthumb_any");
         assert_eq!(Suite::FuzzArmMixed.capture_stem(), "fuzzarm_mixed");
         assert_eq!(Suite::ArmWrestler.capture_stem(), "armwrestler");
+        assert_eq!(Suite::Mgba.capture_stem(), "mgba_suite");
     }
 }

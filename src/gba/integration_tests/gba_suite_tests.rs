@@ -1,4 +1,7 @@
-use super::gba_suite_runner::{ARMWRESTLER_TEST_PAGE_COUNT, Suite, run_armwrestler, run_suite};
+use super::gba_suite_runner::{
+    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, run_armwrestler,
+    run_mgba_suite, run_suite,
+};
 use std::collections::HashMap;
 
 const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.txt";
@@ -198,6 +201,33 @@ fn gba_suite_armwrestler_passes() {
         assert_eq!(
             crc, *expected,
             "armwrestler page {i} CRC mismatch: expected=0x{expected:08X} actual=0x{crc:08X}"
+        );
+    }
+}
+
+#[test]
+fn gba_mgba_suite_passes() {
+    let approvals = load_approved_crcs();
+    let result = run_mgba_suite();
+    assert_eq!(
+        result.suite_crcs.len(),
+        MGBA_SUITE_COUNT,
+        "expected {} sub-suite CRCs but got {}",
+        MGBA_SUITE_COUNT,
+        result.suite_crcs.len()
+    );
+    for (i, &crc) in result.suite_crcs.iter().enumerate() {
+        let key = MGBA_SUITE_KEYS[i];
+        let expected = approvals.get(key).unwrap_or_else(|| {
+            panic!(
+                "missing approved CRC for '{}' in {}. Run with NESER_CAPTURE_SCREEN=1 and add {}=0x{:08X}",
+                key, APPROVALS_FILE, key, crc
+            )
+        });
+        assert_eq!(
+            crc, *expected,
+            "mgba sub-suite '{}' CRC mismatch: expected=0x{expected:08X} actual=0x{crc:08X}",
+            key
         );
     }
 }
