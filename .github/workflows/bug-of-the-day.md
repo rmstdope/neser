@@ -33,7 +33,7 @@ tools:
   github:
     toolsets: [default]
 
-timeout-minutes: 180
+timeout-minutes: 600
 strict: true
 ---
 

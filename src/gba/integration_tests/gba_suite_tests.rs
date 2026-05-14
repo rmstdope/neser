@@ -1,4 +1,9 @@
-use super::gba_suite_runner::{ARMWRESTLER_TEST_PAGE_COUNT, Suite, run_armwrestler, run_suite};
+use super::gba_suite_runner::{
+    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, boot_mgba_suite,
+    run_armwrestler, run_mgba_suite, run_suite,
+};
+use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
+use crate::platform::emulator::Emulator;
 use std::collections::HashMap;
 
 const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.txt";
@@ -203,6 +208,34 @@ fn gba_suite_armwrestler_passes() {
 }
 
 #[test]
+#[ignore] // Not all sub-suite ROM tests pass yet — see issue tracking.
+fn gba_mgba_suite_passes() {
+    let approvals = load_approved_crcs();
+    let result = run_mgba_suite();
+    assert_eq!(
+        result.suite_crcs.len(),
+        MGBA_SUITE_COUNT,
+        "expected {} sub-suite CRCs but got {}",
+        MGBA_SUITE_COUNT,
+        result.suite_crcs.len()
+    );
+    for (i, &crc) in result.suite_crcs.iter().enumerate() {
+        let key = MGBA_SUITE_KEYS[i];
+        let expected = approvals.get(key).unwrap_or_else(|| {
+            panic!(
+                "missing approved CRC for '{}' in {}. Run with NESER_CAPTURE_SCREEN=1 and add {}=0x{:08X}",
+                key, APPROVALS_FILE, key, crc
+            )
+        });
+        assert_eq!(
+            crc, *expected,
+            "mgba sub-suite '{}' CRC mismatch: expected=0x{expected:08X} actual=0x{crc:08X}",
+            key
+        );
+    }
+}
+
+#[test]
 fn approvals_manifest_parses() {
     let approvals = load_approved_crcs();
     assert_eq!(approvals.get("arm"), Some(&0x12FD_AE0B));
@@ -232,4 +265,85 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("armwrestler_page5"), Some(&0xE215_C2B0));
     assert_eq!(approvals.get("armwrestler_page6"), Some(&0xA522_34A7));
     assert_eq!(approvals.get("armwrestler_page7"), Some(&0x562A_5C65));
+
+    // mgba-emu/suite keys
+    assert_eq!(approvals.get("mgba_memory"), Some(&0xFF66_E63B));
+    assert_eq!(approvals.get("mgba_io_read"), Some(&0xB73C_0C86));
+    assert_eq!(approvals.get("mgba_timing"), Some(&0x17B5_F199));
+    assert_eq!(approvals.get("mgba_timers"), Some(&0xBC59_F692));
+    assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xD1FF_FC47));
+    assert_eq!(approvals.get("mgba_shifter"), Some(&0x8B4A_12AA));
+    assert_eq!(approvals.get("mgba_carry"), Some(&0xFD9E_45E6));
+    assert_eq!(approvals.get("mgba_multiply_long"), Some(&0x66B4_CAEA));
+    assert_eq!(approvals.get("mgba_bios_math"), Some(&0xE1DC_7B2D));
+    assert_eq!(approvals.get("mgba_dma"), Some(&0x076F_C108));
+    assert_eq!(approvals.get("mgba_sio_read"), Some(&0x5BE0_B36B));
+    assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));
+    assert_eq!(approvals.get("mgba_misc_edge"), Some(&0xFF97_4835));
+    assert_eq!(approvals.get("mgba_video"), Some(&0xAB7E_C249));
+}
+
+/// Verify that the mgba-emu test suite ROM boots to its main menu and
+/// responds to button input (DOWN moves the menu cursor).
+///
+/// The ROM's main loop relies on VBlankIntrWait (SWI 0x05) and the BIOS IRQ
+/// dispatcher to pace itself and process input each frame. Without a working
+/// enhanced BIOS, the CPU will either:
+/// - Get trapped at the IRQ vector (0x18) when the first VBlank fires, or
+/// - Race through the loop without proper frame-sync, ignoring input.
+///
+/// This test boots the ROM, waits for the menu, presses DOWN, and asserts
+/// the screen changes (proving the ROM processed the input).
+#[test]
+fn mgba_suite_boots_to_menu() {
+    let (mut gba, _rom) = boot_mgba_suite();
+
+    let max_frames = 60;
+    let mut cycles: u64 = 0;
+
+    // Run 10 frames to let the menu render and stabilise.
+    for _ in 0..10 {
+        advance_one_frame(&mut gba, &mut cycles);
+    }
+    let menu_crc = gba.screen_crc32();
+
+    // Press DOWN and hold for multiple frames.
+    gba.set_joypad_button_states(1, 0x20); // DOWN = bit 5
+
+    // Run frames with DOWN held until the screen changes.
+    let mut crc_changed = false;
+    for _ in 0..max_frames {
+        advance_one_frame(&mut gba, &mut cycles);
+        if gba.screen_crc32() != menu_crc {
+            crc_changed = true;
+            break;
+        }
+    }
+    gba.set_joypad_button_states(1, 0x00);
+
+    assert!(
+        crc_changed,
+        "mgba suite menu did not respond to DOWN button after {max_frames} frames ({cycles} cycles). \
+         The enhanced stub BIOS likely lacks IRQ dispatch or VBlankIntrWait support, \
+         so the ROM cannot process input. CPU PC=0x{:08X}",
+        gba.cpu_pc()
+    );
+}
+
+/// Advance exactly one frame (until frame-ready edge).
+/// Panics if the CPU halts or the budget is exhausted.
+fn advance_one_frame(gba: &mut crate::gba::Gba, cycles: &mut u64) {
+    let budget = GBA_CYCLES_PER_FRAME * 2;
+    let mut spent: u64 = 0;
+    while spent < budget {
+        let tick = gba.run_tick_for_tests() as u64;
+        assert!(tick > 0, "CPU halted at PC=0x{:08X}", gba.cpu_pc());
+        *cycles += tick;
+        spent += tick;
+        if gba.is_ready_to_render() {
+            gba.clear_ready_to_render();
+            return;
+        }
+    }
+    panic!("no frame produced within cycle budget");
 }
