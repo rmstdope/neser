@@ -15,6 +15,7 @@ const INITIAL_BGP: u8 = 0xFC;
 const LCDC_BG_WINDOW_ENABLE: u8 = 0x01;
 const LCDC_OBJ_ENABLE: u8 = 0x02;
 const LCDC_BG_MAP: u8 = 0x08;
+const LCDC_TILE_DATA: u8 = 0x10;
 const OBJ_PIXELS_PER_FETCH: u8 = 8;
 const CGB_DMG_COMPAT_OBJ_ENABLE_EDGE_PIXELS: u8 = 2;
 const DMG_OBJ_FETCH_ABORT_COMPLETES_WHEN_DOTS_REMAINING: u16 = 2;
@@ -158,6 +159,51 @@ impl LcdcBgMapEdge {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct LcdcTileDataRange {
+    start_x: u8,
+    end_x: u8,
+    low_lcdc: u8,
+    high_lcdc: u8,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct LcdcTileDataEdge {
+    ranges: Vec<LcdcTileDataRange>,
+}
+
+impl LcdcTileDataEdge {
+    fn record_write(&mut self, start_x: u8, end_x: u8, low_lcdc: u8, high_lcdc: u8) {
+        if start_x > end_x || low_lcdc & LCDC_TILE_DATA == high_lcdc & LCDC_TILE_DATA {
+            return;
+        }
+
+        self.ranges.push(LcdcTileDataRange {
+            start_x,
+            end_x,
+            low_lcdc,
+            high_lcdc,
+        });
+    }
+
+    fn lcdc_for_tile_data(&self, x: u32, current_lcdc: u8) -> (u8, u8) {
+        self.ranges
+            .iter()
+            .rev()
+            .find(|range| u32::from(range.start_x) <= x && x <= u32::from(range.end_x))
+            .map_or((current_lcdc, current_lcdc), |range| {
+                (
+                    (current_lcdc & !LCDC_TILE_DATA) | (range.low_lcdc & LCDC_TILE_DATA),
+                    (current_lcdc & !LCDC_TILE_DATA) | (range.high_lcdc & LCDC_TILE_DATA),
+                )
+            })
+    }
+
+    fn clear_consumed(&mut self, next_x: u8) {
+        self.ranges.retain(|range| range.end_x != next_x);
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct LcdcObjEnableEdge {
     active: bool,
@@ -240,6 +286,8 @@ pub struct PixelFifoRenderer {
     #[serde(default)]
     lcdc_bg_map_edge: LcdcBgMapEdge,
     #[serde(default)]
+    lcdc_tile_data_edge: LcdcTileDataEdge,
+    #[serde(default)]
     lcdc_obj_enable_edge: LcdcObjEnableEdge,
 }
 
@@ -268,6 +316,7 @@ impl PixelFifoRenderer {
             leftmost_obj_oam_x: None,
             lcdc_bg_enable_edge: LcdcBgEnableEdge::default(),
             lcdc_bg_map_edge: LcdcBgMapEdge::default(),
+            lcdc_tile_data_edge: LcdcTileDataEdge::default(),
             lcdc_obj_enable_edge: LcdcObjEnableEdge::default(),
         }
     }
@@ -291,6 +340,7 @@ impl PixelFifoRenderer {
         self.bgp_edge_value = registers.bgp;
         self.lcdc_bg_enable_edge = LcdcBgEnableEdge::default();
         self.lcdc_bg_map_edge = LcdcBgMapEdge::default();
+        self.lcdc_tile_data_edge = LcdcTileDataEdge::default();
         self.lcdc_obj_enable_edge = LcdcObjEnableEdge::default();
         self.fine_scroll_delay_dots = u16::from(registers.scx & 0x07);
         self.pending_obj_stall_dots = 0;
@@ -387,6 +437,7 @@ impl PixelFifoRenderer {
         self.lcdc_bg_enable_edge.clear_consumed(self.next_x);
         self.lcdc_obj_enable_edge.clear_consumed(self.next_x);
         self.lcdc_bg_map_edge.clear_consumed(self.next_x);
+        self.lcdc_tile_data_edge.clear_consumed(self.next_x);
         self.clear_consumed_obj_fetch_lcdc_ranges();
         self.next_x = self.next_x.saturating_add(1);
         if self.next_x as u32 >= ScreenBuffer::WIDTH {
@@ -443,6 +494,7 @@ impl PixelFifoRenderer {
 
         let waiting_on_obj_fetch = self.is_waiting_on_obj_fetch();
         self.record_lcdc_obj_size_write(previous, new, cgb_mode, dmg_compat);
+        self.record_lcdc_tile_data_write(previous, new, scx);
         if let Some(model) = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat) {
             self.record_lcdc_obj_enable_write(model, previous, new);
         }
@@ -477,6 +529,18 @@ impl PixelFifoRenderer {
         };
         self.lcdc_bg_enable_edge
             .record_write(self.next_x, previous, new, timing);
+    }
+
+    fn record_lcdc_tile_data_write(&mut self, previous: u8, new: u8, scx: u8) {
+        if previous & LCDC_TILE_DATA == new & LCDC_TILE_DATA {
+            return;
+        }
+
+        let bg_phase = scx.wrapping_add(self.next_x) & 0x07;
+        let current_fetch_start = self.next_x.saturating_sub(bg_phase);
+        let current_fetch_end = current_fetch_start.saturating_add(7);
+        self.lcdc_tile_data_edge
+            .record_write(self.next_x, current_fetch_end, previous, new);
     }
 
     fn record_lcdc_obj_enable_write(&mut self, model: ObjFetchModel, previous: u8, new: u8) {
@@ -786,6 +850,9 @@ impl PixelFifoRenderer {
         let win_enabled = lcdc & 0x20 != 0;
 
         let bg_idx = if bg_window_enabled {
+            let (low_lcdc, high_lcdc) = self
+                .lcdc_tile_data_edge
+                .lcdc_for_tile_data(x, bg_fetch_lcdc);
             bg_fifo::fetch_dmg_pixel(
                 vram,
                 DmgPixelFetch {
@@ -798,8 +865,8 @@ impl PixelFifoRenderer {
                     wy: registers.wy,
                     window_line,
                     map_lcdc: bg_fetch_lcdc,
-                    low_lcdc: bg_fetch_lcdc,
-                    high_lcdc: bg_fetch_lcdc,
+                    low_lcdc,
+                    high_lcdc,
                 },
             )
             .unwrap_or(0)
@@ -808,6 +875,7 @@ impl PixelFifoRenderer {
         };
 
         let bw_idx = if bg_window_enabled && win_enabled {
+            let (low_lcdc, high_lcdc) = self.lcdc_tile_data_edge.lcdc_for_tile_data(x, lcdc);
             match bg_fifo::fetch_dmg_pixel(
                 vram,
                 DmgPixelFetch {
@@ -820,8 +888,8 @@ impl PixelFifoRenderer {
                     wy: registers.wy,
                     window_line,
                     map_lcdc: lcdc,
-                    low_lcdc: lcdc,
-                    high_lcdc: lcdc,
+                    low_lcdc,
+                    high_lcdc,
                 },
             ) {
                 Some(idx) => {
@@ -968,6 +1036,14 @@ mod tests {
         oam
     }
 
+    fn vram_with_mixed_bg_tile_select_sources() -> [u8; 0x2000] {
+        let mut vram = [0u8; 0x2000];
+        vram[0x1800] = 0x01;
+        vram[0x1010] = 0x80;
+        vram[0x0011] = 0x80;
+        vram
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn tick_renderer(
         renderer: &mut PixelFifoRenderer,
@@ -1092,6 +1168,117 @@ mod tests {
             renderer.lcdc_bg_map_edge.lcdc_for_bg_fetch(32, 0xDB) & 0x08,
             0x08
         );
+    }
+
+    #[test]
+    fn recorded_tile_data_samples_mix_bg_low_and_high_bitplanes() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.scanline = 0;
+        renderer.lcdc_tile_data_edge.record_write(0, 7, 0x81, 0x91);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x91;
+        registers.bgp = 0xE4;
+        let vram = vram_with_mixed_bg_tile_select_sources();
+        let oam = [0u8; 0xA0];
+
+        let (colour_index, is_sprite, _) = renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+
+        assert_eq!(colour_index, 3);
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn recorded_tile_data_samples_mix_window_low_and_high_bitplanes() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.lcdc_tile_data_edge.record_write(0, 7, 0xA1, 0xB1);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xB1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_mixed_bg_tile_select_sources();
+        let oam = [0u8; 0xA0];
+
+        let (colour_index, is_sprite, _) = renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+
+        assert_eq!(colour_index, 3);
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn record_lcdc_write_mixes_bg_tile_data_samples_for_current_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x91;
+        registers.bgp = 0xE4;
+        let vram = vram_with_mixed_bg_tile_select_sources();
+        let oam = [0u8; 0xA0];
+
+        let (colour_index, is_sprite, _) = renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+
+        assert_eq!(colour_index, 3);
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn record_lcdc_write_mid_tile_does_not_bleed_tile_data_samples_into_next_tile() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 1;
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x91;
+        registers.bgp = 0xE4;
+        let mut vram = vram_with_mixed_bg_tile_select_sources();
+        vram[0x1801] = 0x02;
+        vram[0x1020] = 0x80;
+        vram[0x0020] = 0x00;
+        vram[0x0021] = 0x80;
+        let oam = [0u8; 0xA0];
+
+        let (colour_index, is_sprite, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            colour_index, 2,
+            "the next tile should use the current TILE_SEL for both bitplanes"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn record_lcdc_write_uses_latest_tile_data_samples_for_overlapping_tile_ranges() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        renderer.next_x = 3;
+        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.bgp = 0xE4;
+        let mut vram = [0u8; 0x2000];
+        vram[0x1800] = 0x01;
+        vram[0x1010] = 0x04;
+        vram[0x1011] = 0x04;
+        vram[0x0010] = 0x00;
+        vram[0x0011] = 0x04;
+        let oam = [0u8; 0xA0];
+
+        let (colour_index, is_sprite, _) = renderer.dmg_pixel_layers(5, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            colour_index, 2,
+            "overlapping tile-data ranges should use the most recent LCDC write"
+        );
+        assert!(!is_sprite);
     }
 
     #[test]
