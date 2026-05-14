@@ -41,19 +41,23 @@ armwrestler_page6=0xA52234A7
 armwrestler_page7=0x562A5C65
 
 # mgba-emu/suite (https://github.com/mgba-emu/suite)
-# 14 sub-suites. Suites 0–4 produce blank output (crash on unimplemented
-# timing/memory features). Suites 5–13 produce test result screens.
-mgba_memory=0x4E6792C8
-mgba_io_read=0x4E6792C8
-mgba_timing=0x4E6792C8
-mgba_timers=0x4E6792C8
-mgba_timer_irq=0x4E6792C8
-mgba_shifter=0x8D16F173
-mgba_carry=0xBA1B38CD
-mgba_multiply_long=0x85D5F631
-mgba_bios_math=0xB7BC1D6B
-mgba_dma=0xF4BD32F2
-mgba_sio_read=0xD3F4B2DE
-mgba_sio_timing=0xCA915C6E
-mgba_misc_edge=0xF8F8B734
-mgba_video=0xBB6153F4
+# 14 sub-suites exercising memory, I/O, timing, shifter, carry, multiply,
+# BIOS math, DMA, SIO, misc edge cases, and video.
+# Scores (passing/total): Memory 1075/1552, I/O read 31/130, Timing 224/2020,
+# Timers 257/936, Timer IRQ 0/90, Shifter 140/140, Carry 93/93,
+# Multiply long 52/72, BIOS math 287/615, DMA 891/1256, SIO read 7/90,
+# SIO timing 0/4, Misc. edge 4/12, Video (sub-menu only).
+mgba_memory=0xFF66E63B
+mgba_io_read=0xB73C0C86
+mgba_timing=0x17B5F199
+mgba_timers=0xBC59F692
+mgba_timer_irq=0xD1FFFC47
+mgba_shifter=0x8B4A12AA
+mgba_carry=0xFD9E45E6
+mgba_multiply_long=0x66B4CAEA
+mgba_bios_math=0xE1DC7B2D
+mgba_dma=0x076FC108
+mgba_sio_read=0x5BE0B36B
+mgba_sio_timing=0xD95ACB03
+mgba_misc_edge=0xFF974835
+mgba_video=0xAB7EC249

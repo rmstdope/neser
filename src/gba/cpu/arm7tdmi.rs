@@ -359,7 +359,10 @@ impl Arm7tdmi {
                 // 2. Clear VBlank bit in IntrCheck (BIOS_IF at 0x03007FF8)
                 let intr_check = bus.read16(0x0300_7FF8);
                 bus.write16(0x0300_7FF8, intr_check & !1);
-                // 3. Halt CPU — will wake on next enabled interrupt
+                // 3. Halt CPU — will wake on next enabled interrupt.
+                //    TODO: The real BIOS loops until VBlank specifically fires;
+                //    this simplified version wakes on ANY interrupt and returns.
+                //    A timer/keypad IRQ could cause premature return.
                 self.halted = true;
                 true
             }

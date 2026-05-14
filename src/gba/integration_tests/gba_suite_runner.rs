@@ -767,12 +767,13 @@ pub fn boot_mgba_suite() -> (Gba, Vec<u8>) {
 /// Navigation protocol:
 /// - Boot → 10 frames to render menu (cursor starts at index 0)
 /// - For each sub-suite i (0..14):
-///   - Press DOWN (i times from index 0) to select
+///   - Press DOWN once to advance cursor (except suite 0)
 ///   - Press A to enter
-///   - Run frames until screen stabilises (same CRC for 4 consecutive frames)
+///   - Wait for suite to finish: detect screen CRC change from initial state,
+///     then wait for long stability (suite idle loop renders same frame)
 ///   - Capture CRC
-///   - Press B to return to menu
-///   - Wait 3 frames for menu to re-render
+///   - Press B to return to menu (retry if B doesn't register)
+///   - Wait for menu to re-render
 pub fn run_mgba_suite() -> MgbaSuiteResult {
     let (mut gba, _rom) = boot_mgba_suite();
 
@@ -788,28 +789,45 @@ pub fn run_mgba_suite() -> MgbaSuiteResult {
         gba.clear_ready_to_render();
     }
 
+    #[allow(clippy::needless_range_loop)]
     for suite_idx in 0..MGBA_SUITE_COUNT {
-        // Navigate: press DOWN `suite_idx` times from top (cursor resets
-        // each time we press B to return to menu... actually no — the cursor
-        // stays where it was). Since we navigate sequentially, we only need
-        // 1 DOWN press to move from current position to the next item (except
-        // for suite 0 which is already selected).
+        // Navigate: cursor stays at previous position, press DOWN once.
         if suite_idx > 0 {
             press_button(&mut gba, &mut cycles, BTN_DOWN);
         }
 
+        // Capture menu CRC before entering (for exit verification).
+        let menu_crc = gba.screen_crc32();
+
         // Press A to enter the sub-suite.
         press_button(&mut gba, &mut cycles, BTN_A);
 
-        // Wait for results to stabilise: run frames until the CRC stays the
-        // same for STABLE_FRAMES consecutive frames (the sub-suite has finished
-        // rendering its results). Timeout after MAX_SUITE_FRAMES.
-        const STABLE_FRAMES: u32 = 4;
-        const MAX_SUITE_FRAMES: u32 = 600;
+        // Wait for the sub-suite to finish running its tests.
+        //
+        // Strategy: capture the CRC of the first frame after entering (the
+        // "initial" screen, often "Testing..."). Then wait for the screen to
+        // CHANGE from that initial state (indicating tests are producing output).
+        // Once a change is seen, wait for STABLE_FRAMES consecutive identical
+        // frames — this means the suite has finished and entered its idle loop.
+        // If the screen never changes, timeout at MAX_SUITE_FRAMES and capture
+        // the initial screen (suite is stuck or produces no visible output).
+        const STABLE_FRAMES: u32 = 30;
+        const MAX_SUITE_FRAMES: u32 = 2000;
 
-        let mut prev_crc: u32 = 0;
-        let mut stable_count: u32 = 0;
-        for frame in 0..MAX_SUITE_FRAMES {
+        // Get the initial frame CRC (the "entering suite" screen).
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "mgba suite '{}': timed out getting initial frame",
+            MGBA_SUITE_KEYS[suite_idx]
+        );
+        gba.clear_ready_to_render();
+        let initial_crc = gba.screen_crc32();
+
+        let mut prev_crc: u32 = initial_crc;
+        let mut stable_count: u32 = 1;
+        let mut saw_change_from_initial = false;
+
+        for frame in 1..MAX_SUITE_FRAMES {
             assert!(
                 run_until_frame_ready(&mut gba, &mut cycles),
                 "mgba suite '{}': timed out at frame {frame}",
@@ -818,38 +836,55 @@ pub fn run_mgba_suite() -> MgbaSuiteResult {
             gba.clear_ready_to_render();
 
             let crc = gba.screen_crc32();
-            if crc == prev_crc {
-                stable_count += 1;
-                if stable_count >= STABLE_FRAMES {
-                    break;
+
+            if !saw_change_from_initial {
+                // Still showing the initial screen — wait for it to change.
+                if crc != initial_crc {
+                    saw_change_from_initial = true;
+                    prev_crc = crc;
+                    stable_count = 1;
                 }
             } else {
-                prev_crc = crc;
-                stable_count = 1;
+                // We've left the initial screen; now wait for stability.
+                if crc == prev_crc {
+                    stable_count += 1;
+                    if stable_count >= STABLE_FRAMES {
+                        break;
+                    }
+                } else {
+                    prev_crc = crc;
+                    stable_count = 1;
+                }
             }
         }
-
-        assert!(
-            stable_count >= STABLE_FRAMES,
-            "mgba suite '{}': screen did not stabilise within {MAX_SUITE_FRAMES} frames",
-            MGBA_SUITE_KEYS[suite_idx]
-        );
 
         let crc = gba.screen_crc32();
         maybe_write_mgba_png(&gba, suite_idx, crc);
         suite_crcs.push(crc);
 
-        // Press B to return to the menu.
-        press_button(&mut gba, &mut cycles, BTN_B);
+        // Press B to return to the menu. Retry if the suite hasn't finished
+        // yet (B only works in the idle loop after all tests complete).
+        // Verify return by checking if the screen matches the menu CRC.
+        const MAX_B_RETRIES: u32 = 20;
+        for attempt in 0..MAX_B_RETRIES {
+            press_button(&mut gba, &mut cycles, BTN_B);
 
-        // Wait a few frames for the menu to re-render.
-        for _ in 0..3 {
-            assert!(
-                run_until_frame_ready(&mut gba, &mut cycles),
-                "mgba suite: timed out returning to menu after '{}'",
-                MGBA_SUITE_KEYS[suite_idx]
-            );
-            gba.clear_ready_to_render();
+            // Give a few frames for the menu to re-render.
+            for _ in 0..5 {
+                assert!(
+                    run_until_frame_ready(&mut gba, &mut cycles),
+                    "mgba suite: timed out returning to menu after '{}' (attempt {attempt})",
+                    MGBA_SUITE_KEYS[suite_idx]
+                );
+                gba.clear_ready_to_render();
+            }
+
+            // Check if we're back at the menu (screen matches the menu CRC
+            // we captured before entering this suite).
+            let current_crc = gba.screen_crc32();
+            if current_crc == menu_crc {
+                break;
+            }
         }
     }
 

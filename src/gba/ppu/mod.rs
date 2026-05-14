@@ -1456,4 +1456,166 @@ mod tests {
         // First pixel should be from frame 1, which is green (RGB888: 0, 255, 0).
         assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
     }
+
+    #[test]
+    fn mode0_bg1_renders_independently_of_bg0() {
+        // BG1 enabled (not BG0). BG1 uses charblock 1, screenblock 8.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 0, BG1 enabled only.
+        ppu.write_dispcnt(dispcnt::BG1_ENABLE);
+        // BG1CNT: priority 0, charblock 1, screenblock 8.
+        ppu.write_bg_cnt(1, (1 << 2) | (8 << 8));
+
+        // BG palette entry 2 = pure green (BGR555 0x03E0).
+        pram[4] = 0xE0;
+        pram[5] = 0x03;
+
+        // Charblock 1 (offset 0x4000), tile 1, row 0: pixel0=2.
+        vram[0x4000 + 32] = 0x02;
+
+        // Screenblock 8 (offset 0x4000), map entry (0,0): tile 1.
+        vram[0x4000] = 0x01;
+        vram[0x4001] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // First pixel = green from BG1.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode0_bg_priority_higher_priority_layer_on_top() {
+        // BG0 (priority 1) and BG1 (priority 0). BG1 should be on top.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 0, BG0 + BG1 enabled.
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::BG1_ENABLE);
+        // BG0: priority 1, charblock 0, screenblock 0.
+        ppu.write_bg_cnt(0, 1);
+        // BG1: priority 0, charblock 1, screenblock 8.
+        ppu.write_bg_cnt(1, (1 << 2) | (8 << 8));
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+        // BG palette entry 2 = green.
+        pram[4] = 0xE0;
+        pram[5] = 0x03;
+
+        // BG0 tile 1 at charblock 0: pixel0 = palette index 1 (red).
+        vram[32] = 0x01;
+        // BG0 screenblock 0, entry (0,0): tile 1.
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x00;
+
+        // BG1 tile 1 at charblock 1: pixel0 = palette index 2 (green).
+        vram[0x4000 + 32] = 0x02;
+        // BG1 screenblock 8, entry (0,0): tile 1.
+        vram[0x4000] = 0x01;
+        vram[0x4001] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // BG1 has lower priority number = on top, so pixel should be green.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode0_bg_transparent_pixel_shows_layer_below() {
+        // BG0 (priority 0, on top) has transparent pixel, BG1 (priority 1) has red.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 0, BG0 + BG1 enabled.
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::BG1_ENABLE);
+        // BG0: priority 0 (on top), charblock 0, screenblock 0.
+        ppu.write_bg_cnt(0, 0);
+        // BG1: priority 1, charblock 1, screenblock 8.
+        ppu.write_bg_cnt(1, 1 | (1 << 2) | (8 << 8));
+
+        // BG palette entry 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // BG0: tile 1 pixel0 = 0 (transparent).
+        vram[32] = 0x00;
+        // BG0 screenblock 0: tile 1.
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x00;
+
+        // BG1: tile 1 pixel0 = palette index 1 (red).
+        vram[0x4000 + 32] = 0x01;
+        // BG1 screenblock 8: tile 1.
+        vram[0x4000] = 0x01;
+        vram[0x4001] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // BG0 is transparent → BG1's red shows through.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_equal_priority_lower_bg_number_wins() {
+        // BG0 and BG1 both at priority 0. BG0 should be on top (lower number).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::BG1_ENABLE);
+        // Both at priority 0.
+        ppu.write_bg_cnt(0, 0);
+        ppu.write_bg_cnt(1, (1 << 2) | (8 << 8));
+
+        // BG palette entry 1 = red, entry 2 = blue.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+        pram[4] = 0x00;
+        pram[5] = 0x7C;
+
+        // BG0: tile 1, pixel0 = 1 (red).
+        vram[32] = 0x01;
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x00;
+
+        // BG1: tile 1, pixel0 = 2 (blue).
+        vram[0x4000 + 32] = 0x02;
+        vram[0x4000] = 0x01;
+        vram[0x4001] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // Equal priority: BG0 (lower number) wins → red.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
 }
