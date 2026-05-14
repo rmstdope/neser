@@ -544,20 +544,21 @@ impl PixelFifoRenderer {
             return;
         }
 
-        let high_byte_threshold = if cgb_mode && dmg_compat {
-            CGB_DMG_COMPAT_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING
+        let (low_threshold, high_threshold) = if cgb_mode && dmg_compat {
+            (
+                CGB_DMG_COMPAT_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING,
+                CGB_DMG_COMPAT_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING,
+            )
         } else {
-            DMG_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING
+            (
+                DMG_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING,
+                DMG_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING,
+            )
         };
-        if self.pending_obj_stall_dots >= high_byte_threshold {
+        if self.pending_obj_stall_dots >= high_threshold {
             range.high_lcdc = new;
         }
-        let low_byte_threshold = if cgb_mode && dmg_compat {
-            CGB_DMG_COMPAT_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING
-        } else {
-            DMG_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING
-        };
-        if self.pending_obj_stall_dots >= low_byte_threshold {
+        if self.pending_obj_stall_dots >= low_threshold {
             range.low_lcdc = new;
         }
     }
