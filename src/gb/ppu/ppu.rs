@@ -227,6 +227,8 @@ impl Ppu {
                 self.timing.dot(),
                 &self.oam,
                 &self.registers,
+                self.cgb_mode,
+                self.dmg_compat,
             );
         }
 

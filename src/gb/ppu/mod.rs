@@ -1,4 +1,5 @@
 pub mod background;
+mod obj_fifo;
 mod pixel_fifo;
 #[allow(clippy::module_inception)]
 mod ppu;
