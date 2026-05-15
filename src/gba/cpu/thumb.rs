@@ -26,6 +26,7 @@ use super::bus::Bus;
 #[cfg(test)]
 use super::registers::{FLAG_C, FLAG_N, FLAG_V, FLAG_Z};
 use super::registers::{Registers, condition_met};
+use crate::gba::bus::WidthClass;
 
 fn is_cart_sram_region(addr: u32) -> bool {
     matches!((addr >> 24) & 0xF, 0xE | 0xF)
@@ -451,7 +452,8 @@ fn exec_format6<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     let pc = regs.r[15] & !0x2;
     let addr = pc.wrapping_add(imm << 2);
     regs.r[rd] = bus.read32(addr);
-    ExecOutcome::sni(1, 1, 1)
+    // LDR: 1S(code) + 1N(data) + 1I
+    ExecOutcome::data_access(1, 0, 1, 0, 1, addr, WidthClass::Word)
 }
 
 // ---------------------------------------------------------------------------
@@ -486,9 +488,19 @@ fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         }
     }
     if l {
-        ExecOutcome::sni(1, 1, 1)
+        let width = if b {
+            WidthClass::HalfwordOrByte
+        } else {
+            WidthClass::Word
+        };
+        ExecOutcome::data_access(1, 0, 1, 0, 1, addr, width)
     } else {
-        ExecOutcome::sni(0, 2, 0)
+        let width = if b {
+            WidthClass::HalfwordOrByte
+        } else {
+            WidthClass::Word
+        };
+        ExecOutcome::data_access(0, 1, 0, 0, 1, addr, width)
     }
 }
 
@@ -510,9 +522,9 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     // S=1, H=0: LDSB (load signed byte)
     // S=1, H=1: LDSH (load signed halfword)
     if !s && !h {
-        // STRH
+        // STRH: 1N(code) + 1N(data)
         bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
-        return ExecOutcome::sni(0, 2, 0);
+        return ExecOutcome::data_access(0, 1, 0, 0, 1, addr, WidthClass::HalfwordOrByte);
     }
 
     regs.r[rd] = match (s, h) {
@@ -536,7 +548,8 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         }
         _ => unreachable!(),
     };
-    ExecOutcome::sni(1, 1, 1)
+    // Load: 1S(code) + 1N(data) + 1I
+    ExecOutcome::data_access(1, 0, 1, 0, 1, addr, WidthClass::HalfwordOrByte)
 }
 
 // ---------------------------------------------------------------------------
@@ -571,9 +584,19 @@ fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
     if l {
-        ExecOutcome::sni(1, 1, 1)
+        let width = if b {
+            WidthClass::HalfwordOrByte
+        } else {
+            WidthClass::Word
+        };
+        ExecOutcome::data_access(1, 0, 1, 0, 1, addr, width)
     } else {
-        ExecOutcome::sni(0, 2, 0)
+        let width = if b {
+            WidthClass::HalfwordOrByte
+        } else {
+            WidthClass::Word
+        };
+        ExecOutcome::data_access(0, 1, 0, 0, 1, addr, width)
     }
 }
 
@@ -600,9 +623,11 @@ fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
     }
     if l {
-        ExecOutcome::sni(1, 1, 1)
+        // LDRH: 1S(code) + 1N(data) + 1I
+        ExecOutcome::data_access(1, 0, 1, 0, 1, addr, WidthClass::HalfwordOrByte)
     } else {
-        ExecOutcome::sni(0, 2, 0)
+        // STRH: 1N(code) + 1N(data)
+        ExecOutcome::data_access(0, 1, 0, 0, 1, addr, WidthClass::HalfwordOrByte)
     }
 }
 
@@ -626,9 +651,11 @@ fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
     if l {
-        ExecOutcome::sni(1, 1, 1)
+        // LDR: 1S(code) + 1N(data) + 1I
+        ExecOutcome::data_access(1, 0, 1, 0, 1, addr, WidthClass::Word)
     } else {
-        ExecOutcome::sni(0, 2, 0)
+        // STR: 1N(code) + 1N(data)
+        ExecOutcome::data_access(0, 1, 0, 0, 1, addr, WidthClass::Word)
     }
 }
 
@@ -678,9 +705,11 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     let count = reg_list.count_ones() + if extra { 1 } else { 0 };
     let mut branched = false;
 
+    let data_addr;
     if !load {
         // PUSH: SP decremented first, then write low → high regs at low → high addresses.
         let mut sp = regs.r[13].wrapping_sub(count * 4);
+        data_addr = sp;
         regs.r[13] = sp;
         for i in 0..8 {
             if reg_list & (1 << i) != 0 {
@@ -695,6 +724,7 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     } else {
         // POP: read low → high regs from low → high addresses, then update SP.
         let mut sp = regs.r[13];
+        data_addr = sp;
         for i in 0..8 {
             if reg_list & (1 << i) != 0 {
                 regs.r[i] = bus.read32(sp & !0x3);
@@ -714,14 +744,22 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
 
     let n = count as u8;
     if branched {
-        // POP {PC}: (n+1)S + 2N + 1I
-        ExecOutcome::branch_sni(n + 1, 2, 1)
+        // POP {PC}: 2S(code) + 1N(data) + (n-1)S(data) + 1I
+        ExecOutcome::branch_data_access(
+            2,
+            0,
+            1,
+            n.saturating_sub(1),
+            1,
+            data_addr,
+            WidthClass::Word,
+        )
     } else if load {
-        // POP: nS + 1N + 1I
-        ExecOutcome::sni(n, 1, 1)
+        // POP: 1S(code) + 1N(data) + (n-1)S(data) + 1I
+        ExecOutcome::data_access(1, 0, 1, n.saturating_sub(1), 1, data_addr, WidthClass::Word)
     } else {
-        // PUSH: (n-1)S + 2N
-        ExecOutcome::sni(n.saturating_sub(1), 2, 0)
+        // PUSH: 1N(code) + 1N(data) + (n-1)S(data)
+        ExecOutcome::data_access(0, 1, 0, n.saturating_sub(1), 1, data_addr, WidthClass::Word)
     }
 }
 
@@ -786,14 +824,14 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
 
     let n = count as u8;
     if branched {
-        // LDMIA with PC: (n+1)S + 2N + 1I
-        ExecOutcome::branch_sni(n + 1, 2, 1)
+        // LDMIA with PC: 2S(code) + 1N(data) + (n-1)S(data) + 1I
+        ExecOutcome::branch_data_access(2, 0, 1, n.saturating_sub(1), 1, base, WidthClass::Word)
     } else if l {
-        // LDMIA: nS + 1N + 1I
-        ExecOutcome::sni(n, 1, 1)
+        // LDMIA: 1S(code) + 1N(data) + (n-1)S(data) + 1I
+        ExecOutcome::data_access(1, 0, 1, n.saturating_sub(1), 1, base, WidthClass::Word)
     } else {
-        // STMIA: (n-1)S + 2N
-        ExecOutcome::sni(n.saturating_sub(1), 2, 0)
+        // STMIA: 1N(code) + 1N(data) + (n-1)S(data)
+        ExecOutcome::data_access(0, 1, 0, n.saturating_sub(1), 1, base, WidthClass::Word)
     }
 }
 
@@ -1472,9 +1510,13 @@ mod tests {
         // LDR R0, [PC, #0]
         let instr: u16 = 0x4800; // 01001_000_00000000
         let outcome = execute(&mut regs, &mut bus, instr);
-        assert_eq!(outcome.seq, 1, "PC-relative LDR should be 1S");
-        assert_eq!(outcome.nonseq, 1, "PC-relative LDR should have 1N");
+        assert_eq!(outcome.seq, 1, "PC-relative LDR should be 1S(code)");
+        assert_eq!(
+            outcome.data_nonseq, 1,
+            "PC-relative LDR should have 1N(data)"
+        );
         assert_eq!(outcome.internal, 1, "PC-relative LDR should have 1I");
+        assert_eq!(outcome.total_flat_cycles(), 3);
     }
 
     /// Thumb unconditional branch: 2S + 1N per GBATek.
