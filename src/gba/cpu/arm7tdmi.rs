@@ -244,7 +244,7 @@ impl Arm7tdmi {
                 self.dispatch_swi(exec_pc);
             } else if outcome.branched {
                 self.prefetch_valid = false;
-            } else if !outcome.branched {
+            } else {
                 self.regs.r[15] = exec_pc.wrapping_add(2);
                 self.prefetch_thumb[0] = self.prefetch_thumb[1];
                 self.prefetch_thumb[1] = self.prefetch_thumb[2];
@@ -281,7 +281,7 @@ impl Arm7tdmi {
                 self.dispatch_swi(exec_pc);
             } else if outcome.branched {
                 self.prefetch_valid = false;
-            } else if !outcome.branched {
+            } else {
                 self.regs.r[15] = exec_pc.wrapping_add(4);
                 self.prefetch_arm[0] = self.prefetch_arm[1];
                 self.prefetch_arm[1] = self.prefetch_arm[2];
