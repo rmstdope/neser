@@ -655,7 +655,7 @@ impl PixelFifoRenderer {
 
     fn left_edge_obj_tile_data_delay_start_x(&self) -> Option<u8> {
         self.leftmost_obj_oam_x
-            .filter(|&oam_x| matches!(oam_x, 8 | 9))
+            .filter(|&oam_x| (8..=10).contains(&oam_x))
             .map(|oam_x| oam_x - 8)
     }
 
@@ -1400,6 +1400,34 @@ mod tests {
         assert_eq!(
             next_tile_colour, 0,
             "an OBJ fetch starting one pixel in should keep the following BG tile on the previous TILE_SEL sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn near_left_edge_obj_delays_tile_select_even_after_low_byte_phase() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 2;
+        renderer.pending_obj_stall_dots = 10;
+        renderer.leftmost_obj_oam_x = Some(10);
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        renderer.next_x = 5;
+        renderer.pending_obj_stall_dots = 7;
+        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (next_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            next_tile_colour, 0,
+            "an OBJ fetch starting two pixels in should keep both bitplanes of the following BG tile on the previous TILE_SEL sample"
         );
         assert!(!is_sprite);
     }
