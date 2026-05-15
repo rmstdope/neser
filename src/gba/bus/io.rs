@@ -1129,6 +1129,94 @@ mod tests {
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
     }
 
+    /// Byte writes to BG1-BG3 HOFS/VOFS must merge correctly against the
+    /// PPU's live scroll state (not the I/O backing store which is zero
+    /// for these write-only registers). Regression test for #2383.
+    #[test]
+    fn bg1_hofs_byte_writes_merge_correctly() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Write low byte = 0xAB, then high byte = 0x01 to BG1HOFS.
+        io.write8(0x0400_0014, 0xAB, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write8(0x0400_0015, 0x01, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(p.read_bg_hofs(1), 0x01AB);
+    }
+
+    #[test]
+    fn bg1_vofs_byte_writes_merge_correctly() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write8(0x0400_0016, 0xCD, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write8(0x0400_0017, 0x01, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(p.read_bg_vofs(1), 0x01CD);
+    }
+
+    #[test]
+    fn bg2_hofs_byte_writes_merge_correctly() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write8(0x0400_0018, 0x42, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write8(0x0400_0019, 0x01, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(p.read_bg_hofs(2), 0x0142);
+    }
+
+    #[test]
+    fn bg2_vofs_byte_writes_merge_correctly() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write8(0x0400_001A, 0x77, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write8(0x0400_001B, 0x00, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(p.read_bg_vofs(2), 0x0077);
+    }
+
+    #[test]
+    fn bg3_hofs_byte_writes_merge_correctly() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write8(0x0400_001C, 0xFF, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write8(0x0400_001D, 0x01, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(p.read_bg_hofs(3), 0x01FF);
+    }
+
+    #[test]
+    fn bg3_vofs_byte_writes_merge_correctly() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write8(0x0400_001E, 0x10, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        io.write8(0x0400_001F, 0x01, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(p.read_bg_vofs(3), 0x0110);
+    }
+
     // ---------------------------------------------------------------
     // I/O read-back tests (per GBATek I/O map & mgba-emu/suite io-read)
     // ---------------------------------------------------------------
