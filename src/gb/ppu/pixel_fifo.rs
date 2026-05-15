@@ -579,7 +579,21 @@ impl PixelFifoRenderer {
             self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
         }
 
-        if self.next_x == current_fetch_start {
+        if !window_fetch_active && self.should_delay_lcdc_tile_data_by_extra_fetch(previous, new) {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                previous,
+                previous,
+            );
+            self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
+        } else if self.next_x == current_fetch_start {
             if window_fetch_active {
                 self.lcdc_tile_data_edge.record_write(
                     current_fetch_start,
@@ -587,20 +601,6 @@ impl PixelFifoRenderer {
                     new,
                     new,
                 );
-            } else if self.should_delay_lcdc_tile_data_by_extra_fetch(previous, new) {
-                self.lcdc_tile_data_edge.record_write(
-                    current_fetch_start,
-                    current_fetch_end,
-                    previous,
-                    previous,
-                );
-                self.lcdc_tile_data_edge.record_write(
-                    next_fetch_start,
-                    next_fetch_start.saturating_add(7),
-                    previous,
-                    previous,
-                );
-                self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
             } else {
                 self.lcdc_tile_data_edge.record_write(
                     current_fetch_start,
@@ -639,15 +639,24 @@ impl PixelFifoRenderer {
     fn should_delay_lcdc_tile_data_by_extra_fetch(&self, previous_lcdc: u8, new_lcdc: u8) -> bool {
         let tile_data_turning_on =
             previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
-        let visible_left_edge_obj = self.leftmost_obj_oam_x == Some(8);
-        tile_data_turning_on && visible_left_edge_obj && self.next_x == 0
+        tile_data_turning_on
+            && self
+                .left_edge_obj_tile_data_delay_start_x()
+                .is_some_and(|start_x| self.next_x == start_x)
     }
 
     fn should_cancel_delayed_lcdc_tile_data_fetch(&self, previous_lcdc: u8, new_lcdc: u8) -> bool {
         let tile_data_turning_off =
             previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
-        let visible_left_edge_obj = self.leftmost_obj_oam_x == Some(8);
-        tile_data_turning_off && visible_left_edge_obj && self.next_x < 8
+        tile_data_turning_off
+            && self.left_edge_obj_tile_data_delay_start_x().is_some()
+            && self.next_x < 8
+    }
+
+    fn left_edge_obj_tile_data_delay_start_x(&self) -> Option<u8> {
+        self.leftmost_obj_oam_x
+            .filter(|&oam_x| matches!(oam_x, 8 | 9))
+            .map(|oam_x| oam_x - 8)
     }
 
     fn record_visible_left_edge_delayed_lcdc_tile_data_fetch(&mut self, lcdc: u8) {
@@ -1363,6 +1372,34 @@ mod tests {
         assert_eq!(
             delayed_fetch_colour, 0,
             "restoring TILE_SEL before the delayed fetch starts should keep that fetch on the previous sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn near_left_edge_obj_delays_tile_select_following_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 1;
+        renderer.pending_obj_stall_dots = 10;
+        renderer.leftmost_obj_oam_x = Some(9);
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        renderer.next_x = 5;
+        renderer.pending_obj_stall_dots = 6;
+        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (next_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            next_tile_colour, 0,
+            "an OBJ fetch starting one pixel in should keep the following BG tile on the previous TILE_SEL sample"
         );
         assert!(!is_sprite);
     }
