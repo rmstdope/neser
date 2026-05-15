@@ -648,6 +648,19 @@ impl PixelFifoRenderer {
                 new,
                 new,
             );
+        } else if self.should_set_lcdc_tile_data_after_window_low_byte(previous, new, bg_phase) {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                new,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
         } else if self.next_x == current_fetch_start {
             if window_fetch_active {
                 self.lcdc_tile_data_edge.record_write(
@@ -773,6 +786,17 @@ impl PixelFifoRenderer {
         let tile_data_turning_on =
             previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
         tile_data_turning_on && self.window_active && bg_phase == 1 && self.next_x == bg_phase
+    }
+
+    fn should_set_lcdc_tile_data_after_window_low_byte(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on && self.window_active && bg_phase == 2 && self.next_x == bg_phase
     }
 
     fn left_edge_obj_tile_data_delay_start_x(&self) -> Option<u8> {
@@ -1944,6 +1968,38 @@ mod tests {
         assert_eq!(
             following_tile_colour, 3,
             "the following window fetch should also use the new TILE_SEL sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn window_tile_select_set_two_pixels_after_boundary_mixes_current_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.next_x = 2;
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xB1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+        let (following_tile_colour, _, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 2,
+            "a window TILE_SEL set two pixels after the boundary should keep the previous low byte and sample the new high byte"
+        );
+        assert_eq!(
+            following_tile_colour, 3,
+            "the following window fetch should use the new TILE_SEL sample"
         );
         assert!(!is_sprite);
     }
