@@ -253,6 +253,8 @@ impl Arm7tdmi {
             outcome.resolve_cycles(
                 bus.s_cycles(exec_pc, WidthClass::HalfwordOrByte),
                 bus.n_cycles(exec_pc, WidthClass::HalfwordOrByte),
+                bus.s_cycles(outcome.data_addr, outcome.data_width),
+                bus.n_cycles(outcome.data_addr, outcome.data_width),
             )
         } else {
             // PC during ARM execution should read as exec_pc + 8.
@@ -290,6 +292,8 @@ impl Arm7tdmi {
             outcome.resolve_cycles(
                 bus.s_cycles(exec_pc, WidthClass::Word),
                 bus.n_cycles(exec_pc, WidthClass::Word),
+                bus.s_cycles(outcome.data_addr, outcome.data_width),
+                bus.n_cycles(outcome.data_addr, outcome.data_width),
             )
         };
 

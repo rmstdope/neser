@@ -24,6 +24,7 @@
 use super::bus::Bus;
 use super::registers::CpuMode;
 use super::registers::{FLAG_T, Registers, condition_met};
+use crate::gba::bus::WidthClass;
 
 fn is_cart_sram_region(addr: u32) -> bool {
     matches!((addr >> 24) & 0xF, 0xE | 0xF)
@@ -35,12 +36,20 @@ use super::registers::{FLAG_C, FLAG_N, FLAG_V, FLAG_Z};
 /// Outcome of executing one ARM instruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecOutcome {
-    /// Number of sequential (S) memory access cycles.
+    /// Number of sequential (S) code-fetch cycles (resolved at PC address).
     pub seq: u8,
-    /// Number of non-sequential (N) memory access cycles.
+    /// Number of non-sequential (N) code-fetch cycles (resolved at PC address).
     pub nonseq: u8,
     /// Number of internal (I) CPU-only cycles.
     pub internal: u8,
+    /// Number of sequential (S) data-access cycles (resolved at data_addr).
+    pub data_seq: u8,
+    /// Number of non-sequential (N) data-access cycles (resolved at data_addr).
+    pub data_nonseq: u8,
+    /// Address of the data access (used for resolving data cycle timing).
+    pub data_addr: u32,
+    /// Width of the data access.
+    pub data_width: WidthClass,
     /// `true` if PC was modified by the instruction (pipeline must refill).
     pub branched: bool,
     /// `true` if the instruction triggered a software interrupt (SWI).
@@ -50,23 +59,77 @@ pub struct ExecOutcome {
 }
 
 impl ExecOutcome {
-    /// Non-branching instruction with explicit S/N/I cycle counts.
+    /// Non-branching instruction with explicit S/N/I cycle counts (no data access).
     pub(super) fn sni(seq: u8, nonseq: u8, internal: u8) -> Self {
         Self {
             seq,
             nonseq,
             internal,
+            data_seq: 0,
+            data_nonseq: 0,
+            data_addr: 0,
+            data_width: WidthClass::Word,
             branched: false,
             swi: false,
             undefined: false,
         }
     }
-    /// Branching instruction with explicit S/N/I cycle counts.
+    /// Non-branching data-access instruction with separate code and data cycles.
+    pub(super) fn data_access(
+        code_seq: u8,
+        code_nonseq: u8,
+        internal: u8,
+        data_seq: u8,
+        data_nonseq: u8,
+        data_addr: u32,
+        data_width: WidthClass,
+    ) -> Self {
+        Self {
+            seq: code_seq,
+            nonseq: code_nonseq,
+            internal,
+            data_seq,
+            data_nonseq,
+            data_addr,
+            data_width,
+            branched: false,
+            swi: false,
+            undefined: false,
+        }
+    }
+    /// Branching data-access instruction with separate code and data cycles.
+    pub(super) fn branch_data_access(
+        code_seq: u8,
+        code_nonseq: u8,
+        internal: u8,
+        data_seq: u8,
+        data_nonseq: u8,
+        data_addr: u32,
+        data_width: WidthClass,
+    ) -> Self {
+        Self {
+            seq: code_seq,
+            nonseq: code_nonseq,
+            internal,
+            data_seq,
+            data_nonseq,
+            data_addr,
+            data_width,
+            branched: true,
+            swi: false,
+            undefined: false,
+        }
+    }
+    /// Branching instruction with explicit S/N/I cycle counts (no data access).
     pub(super) fn branch_sni(seq: u8, nonseq: u8, internal: u8) -> Self {
         Self {
             seq,
             nonseq,
             internal,
+            data_seq: 0,
+            data_nonseq: 0,
+            data_addr: 0,
+            data_width: WidthClass::Word,
             branched: true,
             swi: false,
             undefined: false,
@@ -78,6 +141,10 @@ impl ExecOutcome {
             seq,
             nonseq,
             internal,
+            data_seq: 0,
+            data_nonseq: 0,
+            data_addr: 0,
+            data_width: WidthClass::Word,
             branched: true,
             swi: true,
             undefined: false,
@@ -89,6 +156,10 @@ impl ExecOutcome {
             seq: 2,
             nonseq: 1,
             internal: 0,
+            data_seq: 0,
+            data_nonseq: 0,
+            data_addr: 0,
+            data_width: WidthClass::Word,
             branched: true,
             undefined: true,
             swi: false,
@@ -97,16 +168,27 @@ impl ExecOutcome {
 
     /// Resolve S/N/I cycle counts to a concrete total using bus timing.
     ///
-    /// `s_cost` is the sequential access cost and `n_cost` is the
-    /// non-sequential access cost. Internal cycles always cost 1.
-    pub fn resolve_cycles(&self, s_cost: u32, n_cost: u32) -> u32 {
-        (self.seq as u32) * s_cost + (self.nonseq as u32) * n_cost + (self.internal as u32)
+    /// Code cycles use `s_cost`/`n_cost` (resolved at PC).
+    /// Data cycles use `data_s_cost`/`data_n_cost` (resolved at data address).
+    /// Internal cycles always cost 1.
+    pub fn resolve_cycles(
+        &self,
+        s_cost: u32,
+        n_cost: u32,
+        data_s_cost: u32,
+        data_n_cost: u32,
+    ) -> u32 {
+        (self.seq as u32) * s_cost
+            + (self.nonseq as u32) * n_cost
+            + (self.data_seq as u32) * data_s_cost
+            + (self.data_nonseq as u32) * data_n_cost
+            + (self.internal as u32)
     }
 
-    /// Total flat cycles (seq + nonseq + internal) — convenience for
+    /// Total flat cycles (all seq + nonseq + internal) — convenience for
     /// unit-test buses where all access costs are 1.
     pub fn total_flat_cycles(&self) -> u8 {
-        self.seq + self.nonseq + self.internal
+        self.seq + self.nonseq + self.data_seq + self.data_nonseq + self.internal
     }
 }
 
@@ -561,11 +643,29 @@ fn execute_single_data_transfer<B: Bus>(
     }
 
     if result_branch {
-        ExecOutcome::branch_sni(2, 2, 1) // LDR PC: 2S + 2N + 1I
+        // LDR PC: 2S(code) + 1N(data) + 1I
+        let width = if b_byte {
+            WidthClass::HalfwordOrByte
+        } else {
+            WidthClass::Word
+        };
+        ExecOutcome::branch_data_access(2, 0, 1, 0, 1, addr, width)
     } else if l {
-        ExecOutcome::sni(1, 1, 1) // LDR: 1S + 1N + 1I
+        // LDR: 1S(code) + 1N(data) + 1I
+        let width = if b_byte {
+            WidthClass::HalfwordOrByte
+        } else {
+            WidthClass::Word
+        };
+        ExecOutcome::data_access(1, 0, 1, 0, 1, addr, width)
     } else {
-        ExecOutcome::sni(0, 2, 0) // STR: 2N
+        // STR: 1N(code) + 1N(data)
+        let width = if b_byte {
+            WidthClass::HalfwordOrByte
+        } else {
+            WidthClass::Word
+        };
+        ExecOutcome::data_access(0, 1, 0, 0, 1, addr, width)
     }
 }
 
@@ -973,11 +1073,14 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
     }
 
     if result_branch {
-        ExecOutcome::branch_sni(2, 2, 1) // LDRH PC: 2S + 2N + 1I
+        // LDRH PC: 2S(code) + 1N(data) + 1I
+        ExecOutcome::branch_data_access(2, 0, 1, 0, 1, addr, WidthClass::HalfwordOrByte)
     } else if l {
-        ExecOutcome::sni(1, 1, 1) // LDRH/LDRSB/LDRSH: 1S + 1N + 1I
+        // LDRH/LDRSB/LDRSH: 1S(code) + 1N(data) + 1I
+        ExecOutcome::data_access(1, 0, 1, 0, 1, addr, WidthClass::HalfwordOrByte)
     } else {
-        ExecOutcome::sni(0, 2, 0) // STRH: 2N
+        // STRH: 1N(code) + 1N(data)
+        ExecOutcome::data_access(0, 1, 0, 0, 1, addr, WidthClass::HalfwordOrByte)
     }
 }
 
@@ -1080,20 +1183,42 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
     }
 
     // Cycle timing per GBATek:
-    // LDM: nS + 1N + 1I (+ 1S + 1N if PC loaded for pipeline refill)
-    // STM: (n-1)S + 2N
+    // LDM: 1S(code) + 1N(data) + (n-1)S(data) + 1I
+    // STM: 1N(code) + 1N(data) + (n-1)S(data)
+    // LDM with PC: 2S(code) + 1N(data) + (n-1)S(data) + 1I
     if branch_occurred {
-        // LDM with PC: (n+1)S + 2N + 1I
         let n = reg_count as u8;
-        ExecOutcome::branch_sni(n + 1, 2, 1)
+        ExecOutcome::branch_data_access(
+            2,
+            0,
+            1,
+            n.saturating_sub(1),
+            1,
+            start_addr,
+            WidthClass::Word,
+        )
     } else if l {
-        // LDM: nS + 1N + 1I
         let n = reg_count as u8;
-        ExecOutcome::sni(n, 1, 1)
+        ExecOutcome::data_access(
+            1,
+            0,
+            1,
+            n.saturating_sub(1),
+            1,
+            start_addr,
+            WidthClass::Word,
+        )
     } else {
-        // STM: (n-1)S + 2N
         let n = reg_count as u8;
-        ExecOutcome::sni(n.saturating_sub(1), 2, 0)
+        ExecOutcome::data_access(
+            0,
+            1,
+            0,
+            n.saturating_sub(1),
+            1,
+            start_addr,
+            WidthClass::Word,
+        )
     }
 }
 
@@ -1124,8 +1249,13 @@ fn execute_swap<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOu
         regs.r[rd] = old_val;
     }
 
-    // Cycle timing: 1S + 2N + 1I
-    ExecOutcome::sni(1, 2, 1)
+    // Cycle timing: 1S(code) + 2N(data) + 1I
+    let width = if b_byte {
+        WidthClass::HalfwordOrByte
+    } else {
+        WidthClass::Word
+    };
+    ExecOutcome::data_access(1, 0, 1, 0, 2, addr, width)
 }
 
 #[cfg(test)]
@@ -2565,9 +2695,11 @@ mod tests {
         // LDR R0, [R1] (immediate offset 0)
         let instr = 0xE591_0000;
         let outcome = execute(&mut regs, &mut bus, instr);
-        assert_eq!(outcome.seq, 1, "LDR should be 1S");
-        assert_eq!(outcome.nonseq, 1, "LDR should have 1N");
+        assert_eq!(outcome.seq, 1, "LDR should be 1S(code)");
+        assert_eq!(outcome.nonseq, 0, "LDR should have 0N(code)");
+        assert_eq!(outcome.data_nonseq, 1, "LDR should have 1N(data)");
         assert_eq!(outcome.internal, 1, "LDR should have 1I");
+        assert_eq!(outcome.total_flat_cycles(), 3);
     }
 
     /// ARM STR: 2N per GBATek.
@@ -2580,9 +2712,11 @@ mod tests {
         // STR R0, [R1]
         let instr = 0xE581_0000;
         let outcome = execute(&mut regs, &mut bus, instr);
-        assert_eq!(outcome.seq, 0, "STR should be 0S");
-        assert_eq!(outcome.nonseq, 2, "STR should have 2N");
+        assert_eq!(outcome.seq, 0, "STR should be 0S(code)");
+        assert_eq!(outcome.nonseq, 1, "STR should have 1N(code)");
+        assert_eq!(outcome.data_nonseq, 1, "STR should have 1N(data)");
         assert_eq!(outcome.internal, 0, "STR should have 0I");
+        assert_eq!(outcome.total_flat_cycles(), 2);
     }
 
     /// ARM SWP: 1S + 2N + 1I per GBATek.
@@ -2595,9 +2729,11 @@ mod tests {
         bus.write32(0x40, 0xCAFE);
         let instr = arm_swap(0xE, false, 0, 2, 1);
         let outcome = execute(&mut regs, &mut bus, instr);
-        assert_eq!(outcome.seq, 1, "SWP should be 1S");
-        assert_eq!(outcome.nonseq, 2, "SWP should have 2N");
+        assert_eq!(outcome.seq, 1, "SWP should be 1S(code)");
+        assert_eq!(outcome.nonseq, 0, "SWP should have 0N(code)");
+        assert_eq!(outcome.data_nonseq, 2, "SWP should have 2N(data)");
         assert_eq!(outcome.internal, 1, "SWP should have 1I");
+        assert_eq!(outcome.total_flat_cycles(), 4);
     }
 
     /// ARM MUL (simple, Rs=1 → early termination 1 cycle): 1S + 1I per GBATek.
