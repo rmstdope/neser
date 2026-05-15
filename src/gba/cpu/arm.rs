@@ -35,8 +35,12 @@ use super::registers::{FLAG_C, FLAG_N, FLAG_V, FLAG_Z};
 /// Outcome of executing one ARM instruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecOutcome {
-    /// Number of cycles consumed.
-    pub cycles: u8,
+    /// Number of sequential (S) memory access cycles.
+    pub seq: u8,
+    /// Number of non-sequential (N) memory access cycles.
+    pub nonseq: u8,
+    /// Number of internal (I) CPU-only cycles.
+    pub internal: u8,
     /// `true` if PC was modified by the instruction (pipeline must refill).
     pub branched: bool,
     /// `true` if the instruction triggered a software interrupt (SWI).
@@ -46,37 +50,63 @@ pub struct ExecOutcome {
 }
 
 impl ExecOutcome {
-    fn cycles(c: u8) -> Self {
+    /// Non-branching instruction with explicit S/N/I cycle counts.
+    fn sni(seq: u8, nonseq: u8, internal: u8) -> Self {
         Self {
-            cycles: c,
+            seq,
+            nonseq,
+            internal,
             branched: false,
             swi: false,
             undefined: false,
         }
     }
-    fn branch(c: u8) -> Self {
+    /// Branching instruction with explicit S/N/I cycle counts.
+    fn branch_sni(seq: u8, nonseq: u8, internal: u8) -> Self {
         Self {
-            cycles: c,
+            seq,
+            nonseq,
+            internal,
             branched: true,
             swi: false,
             undefined: false,
         }
     }
-    fn swi(c: u8) -> Self {
+    /// SWI instruction with explicit S/N/I cycle counts.
+    fn swi_sni(seq: u8, nonseq: u8, internal: u8) -> Self {
         Self {
-            cycles: c,
+            seq,
+            nonseq,
+            internal,
             branched: true,
             swi: true,
             undefined: false,
         }
     }
     pub(super) fn undefined() -> Self {
+        // Undefined exception: 2S + 1N (pipeline flush + vector fetch)
         Self {
-            cycles: 3,
+            seq: 2,
+            nonseq: 1,
+            internal: 0,
             branched: true,
             undefined: true,
             swi: false,
         }
+    }
+
+    /// Resolve S/N/I cycle counts to a concrete total using bus timing.
+    ///
+    /// `s_cost` is the sequential access cost and `n_cost` is the
+    /// non-sequential access cost. Internal cycles always cost 1.
+    pub fn resolve_cycles(&self, s_cost: u32, n_cost: u32) -> u32 {
+        (self.seq as u32) * s_cost + (self.nonseq as u32) * n_cost + (self.internal as u32)
+    }
+
+    /// Total flat cycles (seq + nonseq + internal) — convenience for
+    /// unit-test buses where all access costs are 1.
+    pub fn total_flat_cycles(&self) -> u8 {
+        self.seq + self.nonseq + self.internal
     }
 }
 
@@ -84,7 +114,7 @@ impl ExecOutcome {
 pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOutcome {
     let cond = (instr >> 28) as u8;
     if !condition_met(regs.cpsr, cond) {
-        return ExecOutcome::cycles(1);
+        return ExecOutcome::sni(1, 0, 0); // 1S: condition failed
     }
 
     // Decode the major instruction class. The encoding hierarchy mostly
@@ -151,11 +181,11 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOut
         0b111 => {
             // SWI is encoded as 1111_xxxx_xxxx_xxxx_xxxx_xxxx_xxxx
             if (instr >> 24) & 0xF == 0xF {
-                return ExecOutcome::swi(3);
+                return ExecOutcome::swi_sni(2, 1, 0); // 2S + 1N
             }
-            ExecOutcome::cycles(1)
+            ExecOutcome::sni(1, 0, 0) // 1S: coprocessor (treated as NOP)
         }
-        _ => ExecOutcome::cycles(1),
+        _ => ExecOutcome::sni(1, 0, 0), // 1S: unrecognized
     }
 }
 
@@ -178,7 +208,7 @@ fn execute_branch(regs: &mut Registers, instr: u32) -> ExecOutcome {
     }
 
     regs.r[15] = regs.r[15].wrapping_add(offset as u32);
-    ExecOutcome::branch(3)
+    ExecOutcome::branch_sni(2, 1, 0) // 2S + 1N
 }
 
 fn execute_bx(regs: &mut Registers, instr: u32) -> ExecOutcome {
@@ -191,7 +221,7 @@ fn execute_bx(regs: &mut Registers, instr: u32) -> ExecOutcome {
         regs.cpsr &= !FLAG_T;
         regs.r[15] = target & !0x3;
     }
-    ExecOutcome::branch(3)
+    ExecOutcome::branch_sni(2, 1, 0) // 2S + 1N
 }
 
 // ---------------------------------------------------------------------------
@@ -324,9 +354,15 @@ fn execute_data_processing(regs: &mut Registers, instr: u32) -> ExecOutcome {
     }
 
     if branched {
-        ExecOutcome::branch(2)
+        if reg_shift_by_register {
+            ExecOutcome::branch_sni(2, 1, 1) // 2S + 1N + 1I: PC written + reg shift
+        } else {
+            ExecOutcome::branch_sni(2, 1, 0) // 2S + 1N: PC written
+        }
+    } else if reg_shift_by_register {
+        ExecOutcome::sni(1, 0, 1) // 1S + 1I: register-specified shift
     } else {
-        ExecOutcome::cycles(1)
+        ExecOutcome::sni(1, 0, 0) // 1S
     }
 }
 
@@ -525,11 +561,11 @@ fn execute_single_data_transfer<B: Bus>(
     }
 
     if result_branch {
-        ExecOutcome::branch(3)
+        ExecOutcome::branch_sni(2, 2, 1) // LDR PC: 2S + 2N + 1I
     } else if l {
-        ExecOutcome::cycles(3)
+        ExecOutcome::sni(1, 1, 1) // LDR: 1S + 1N + 1I
     } else {
-        ExecOutcome::cycles(2)
+        ExecOutcome::sni(0, 2, 0) // STR: 2N
     }
 }
 
@@ -567,7 +603,7 @@ fn execute_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
         regs.set_nzcv(n, z, c, regs.v_flag());
     }
 
-    ExecOutcome::cycles(cycles)
+    ExecOutcome::sni(1, 0, cycles - 1) // MUL/MLA: 1S + mI
 }
 
 // ---------------------------------------------------------------------------
@@ -621,7 +657,10 @@ fn execute_long_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
         regs.set_nzcv(n, z, c, regs.v_flag());
     }
 
-    ExecOutcome::cycles(cycles)
+    // GBATek: UMULL/SMULL = 1S+(m+1)I, UMLAL/SMLAL = 1S+(m+2)I
+    // long_multiply_cycles returns m+2, so: non-acc = (m+2)-1 = m+1, acc = m+2
+    let internal = if acc { cycles } else { cycles - 1 };
+    ExecOutcome::sni(1, 0, internal)
 }
 
 /// Compute multiply internal cycles based on Rs magnitude (early termination).
@@ -784,7 +823,7 @@ fn execute_mrs(regs: &mut Registers, instr: u32) -> ExecOutcome {
     let value = if spsr { regs.spsr() } else { regs.cpsr };
     regs.r[rd] = value;
 
-    ExecOutcome::cycles(1)
+    ExecOutcome::sni(1, 0, 0) // MRS: 1S
 }
 
 /// MSR (register): Move register to PSR with field mask.
@@ -795,7 +834,7 @@ fn execute_msr_reg(regs: &mut Registers, instr: u32) -> ExecOutcome {
     let value = regs.r[rm];
 
     apply_msr(regs, value, mask, spsr);
-    ExecOutcome::cycles(1)
+    ExecOutcome::sni(1, 0, 0) // MSR reg: 1S
 }
 
 /// MSR (immediate): Move rotated immediate to PSR with field mask.
@@ -807,7 +846,7 @@ fn execute_msr_imm(regs: &mut Registers, instr: u32) -> ExecOutcome {
     let value = imm8.rotate_right(rotate);
 
     apply_msr(regs, value, mask, spsr);
-    ExecOutcome::cycles(1)
+    ExecOutcome::sni(1, 0, 0) // MSR imm: 1S
 }
 
 /// Apply MSR value to CPSR or SPSR with field mask.
@@ -934,11 +973,11 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
     }
 
     if result_branch {
-        ExecOutcome::branch(3)
+        ExecOutcome::branch_sni(2, 2, 1) // LDRH PC: 2S + 2N + 1I
     } else if l {
-        ExecOutcome::cycles(3) // 1S + 1N + 1I
+        ExecOutcome::sni(1, 1, 1) // LDRH/LDRSB/LDRSH: 1S + 1N + 1I
     } else {
-        ExecOutcome::cycles(2) // 2N
+        ExecOutcome::sni(0, 2, 0) // STRH: 2N
     }
 }
 
@@ -1041,22 +1080,20 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
     }
 
     // Cycle timing per GBATek:
-    // LDM: nS + 1N + 1I (+ 1S + 1N if PC loaded)
+    // LDM: nS + 1N + 1I (+ 1S + 1N if PC loaded for pipeline refill)
     // STM: (n-1)S + 2N
-    let cycles = if l {
-        if branch_occurred {
-            (reg_count + 2) as u8 + 2 // extra for PC
-        } else {
-            (reg_count + 2) as u8
-        }
-    } else {
-        (reg_count + 1) as u8
-    };
-
     if branch_occurred {
-        ExecOutcome::branch(cycles)
+        // LDM with PC: (n+1)S + 2N + 1I
+        let n = reg_count as u8;
+        ExecOutcome::branch_sni(n + 1, 2, 1)
+    } else if l {
+        // LDM: nS + 1N + 1I
+        let n = reg_count as u8;
+        ExecOutcome::sni(n, 1, 1)
     } else {
-        ExecOutcome::cycles(cycles)
+        // STM: (n-1)S + 2N
+        let n = reg_count as u8;
+        ExecOutcome::sni(n.saturating_sub(1), 2, 0)
     }
 }
 
@@ -1088,7 +1125,7 @@ fn execute_swap<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOu
     }
 
     // Cycle timing: 1S + 2N + 1I
-    ExecOutcome::cycles(4)
+    ExecOutcome::sni(1, 2, 1)
 }
 
 #[cfg(test)]
@@ -2147,7 +2184,7 @@ mod tests {
         let stmia = arm_block_transfer(0xE, false, true, false, true, false, 0, 0);
         let outcome = execute(&mut regs, &mut bus, stmia);
         // Should complete without crashing; base unchanged since no registers transferred
-        assert!(outcome.cycles > 0);
+        assert!(outcome.total_flat_cycles() > 0);
     }
 
     #[test]
@@ -2471,5 +2508,145 @@ mod tests {
             "STRH should NOT trigger undefined, got: {outcome:?}"
         );
         assert_eq!(bus.read16(0x40), 0x1234);
+    }
+
+    // -------------------------------------------------------------------------
+    // S/N/I cycle decomposition tests (GBATek ARM7TDMI timing)
+    // -------------------------------------------------------------------------
+
+    /// ARM data-processing (register): 1S per GBATek.
+    #[test]
+    fn arm_data_processing_sni_is_1s() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        // MOV R0, #42 (immediate data processing, no register shift)
+        let instr = 0xE3A0_002A; // MOV R0, #42
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 1, "data-processing should be 1S");
+        assert_eq!(outcome.nonseq, 0, "data-processing should have 0N");
+        assert_eq!(outcome.internal, 0, "data-processing should have 0I");
+    }
+
+    /// ARM branch: 2S + 1N per GBATek.
+    #[test]
+    fn arm_branch_sni_is_2s_1n() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x1000);
+        regs.r[15] = 0x100;
+        // B #0 (branch to PC+8, offset=0)
+        let instr = 0xEA00_0000;
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 2, "branch should be 2S");
+        assert_eq!(outcome.nonseq, 1, "branch should have 1N");
+        assert_eq!(outcome.internal, 0, "branch should have 0I");
+    }
+
+    /// ARM BX: 2S + 1N per GBATek.
+    #[test]
+    fn arm_bx_sni_is_2s_1n() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x1000);
+        regs.r[0] = 0x200;
+        // BX R0
+        let instr = 0xE12F_FF10;
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 2, "BX should be 2S");
+        assert_eq!(outcome.nonseq, 1, "BX should have 1N");
+        assert_eq!(outcome.internal, 0, "BX should have 0I");
+    }
+
+    /// ARM LDR: 1S + 1N + 1I per GBATek.
+    #[test]
+    fn arm_ldr_sni_is_1s_1n_1i() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 0x40;
+        bus.write32(0x40, 0x1234);
+        // LDR R0, [R1] (immediate offset 0)
+        let instr = 0xE591_0000;
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 1, "LDR should be 1S");
+        assert_eq!(outcome.nonseq, 1, "LDR should have 1N");
+        assert_eq!(outcome.internal, 1, "LDR should have 1I");
+    }
+
+    /// ARM STR: 2N per GBATek.
+    #[test]
+    fn arm_str_sni_is_2n() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0xDEAD;
+        regs.r[1] = 0x40;
+        // STR R0, [R1]
+        let instr = 0xE581_0000;
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 0, "STR should be 0S");
+        assert_eq!(outcome.nonseq, 2, "STR should have 2N");
+        assert_eq!(outcome.internal, 0, "STR should have 0I");
+    }
+
+    /// ARM SWP: 1S + 2N + 1I per GBATek.
+    #[test]
+    fn arm_swp_sni_is_1s_2n_1i() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        regs.r[1] = 0xBEEF;
+        bus.write32(0x40, 0xCAFE);
+        let instr = arm_swap(0xE, false, 0, 2, 1);
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 1, "SWP should be 1S");
+        assert_eq!(outcome.nonseq, 2, "SWP should have 2N");
+        assert_eq!(outcome.internal, 1, "SWP should have 1I");
+    }
+
+    /// ARM MUL (simple, Rs=1 → early termination 1 cycle): 1S + 1I per GBATek.
+    #[test]
+    fn arm_mul_sni_has_seq_and_internal() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 5; // Rm
+        regs.r[1] = 1; // Rs (small → early termination, m=1)
+        // MUL R0, R0, R1: cond=E, bits[27:22]=000000, A=0, S=0, Rd=0, Rn=0, Rs=1, 1001, Rm=0
+        let instr = 0xE000_2190; // MUL R0, R0, R1
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 1, "MUL should have 1S");
+        assert!(outcome.internal >= 1, "MUL should have at least 1I");
+        assert_eq!(outcome.nonseq, 0, "MUL should have 0N");
+    }
+
+    /// UMLAL/SMLAL (accumulate) gets +1I vs UMULL/SMULL per GBATek.
+    #[test]
+    fn arm_long_mul_accumulate_has_extra_internal() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 5; // Rm
+        regs.r[1] = 1; // Rs (small → early termination)
+        regs.r[2] = 0;
+        regs.r[3] = 0;
+        // UMULL R2, R3, R0, R1 (no accumulate)
+        let umull = arm_long_mul(0xE, false, false, false, 3, 2, 1, 0);
+        let outcome_umull = execute(&mut regs, &mut bus, umull);
+        // UMLAL R2, R3, R0, R1 (accumulate)
+        let umlal = arm_long_mul(0xE, false, true, false, 3, 2, 1, 0);
+        let outcome_umlal = execute(&mut regs, &mut bus, umlal);
+        assert_eq!(
+            outcome_umlal.internal,
+            outcome_umull.internal + 1,
+            "UMLAL should have +1I vs UMULL"
+        );
+    }
+
+    /// ARM condition-false (skipped): 1S per GBATek.
+    #[test]
+    fn arm_condition_false_sni_is_1s() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        // EQ = 0000, requires Z=1. With default Z=0, this instruction is skipped.
+        let instr = 0x03A0_002A; // MOVEQ R0, #42
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 1, "skipped instruction should be 1S");
+        assert_eq!(outcome.nonseq, 0, "skipped instruction should have 0N");
+        assert_eq!(outcome.internal, 0, "skipped instruction should have 0I");
     }
 }
