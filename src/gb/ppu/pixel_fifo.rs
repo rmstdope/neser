@@ -751,7 +751,7 @@ impl PixelFifoRenderer {
             previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
         tile_data_turning_off
             && self.window_active
-            && bg_phase == 2
+            && (2..=3).contains(&bg_phase)
             && self.next_x == OBJ_PIXELS_PER_FETCH.saturating_add(bg_phase)
     }
 
@@ -1990,6 +1990,40 @@ mod tests {
         assert_eq!(
             current_tile_colour, 3,
             "a window TILE_SEL restore two pixels after the boundary should not alter the current fetch"
+        );
+        assert_eq!(
+            following_tile_colour, 0,
+            "the following window fetch should use the restored TILE_SEL sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn window_restore_three_pixels_after_boundary_keeps_current_fetch_latched() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.next_x = 3;
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        renderer.next_x = 11;
+        renderer.record_lcdc_write_with_window(0xB1, 0xA1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+        let (following_tile_colour, _, _) =
+            renderer.dmg_pixel_layers(16, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 3,
+            "a window TILE_SEL restore three pixels after the boundary should not alter the current fetch"
         );
         assert_eq!(
             following_tile_colour, 0,
