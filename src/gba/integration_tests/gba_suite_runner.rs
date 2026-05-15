@@ -1,5 +1,5 @@
-use crate::gba::bus::memory::BIOS_SIZE;
 use crate::gba::Gba;
+use crate::gba::bus::memory::BIOS_SIZE;
 use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use std::path::PathBuf;

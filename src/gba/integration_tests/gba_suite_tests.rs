@@ -1,6 +1,6 @@
 use super::gba_suite_runner::{
-    boot_mgba_suite, run_armwrestler, run_mgba_suite, run_suite, Suite,
-    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS,
+    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, boot_mgba_suite,
+    run_armwrestler, run_mgba_suite, run_suite,
 };
 use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
 use crate::platform::emulator::Emulator;

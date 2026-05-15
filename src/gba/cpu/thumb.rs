@@ -485,7 +485,11 @@ fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
             bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
         }
     }
-    if l { ExecOutcome::sni(1, 1, 1) } else { ExecOutcome::sni(0, 2, 0) }
+    if l {
+        ExecOutcome::sni(1, 1, 1)
+    } else {
+        ExecOutcome::sni(0, 2, 0)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -566,7 +570,11 @@ fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     } else {
         bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
-    if l { ExecOutcome::sni(1, 1, 1) } else { ExecOutcome::sni(0, 2, 0) }
+    if l {
+        ExecOutcome::sni(1, 1, 1)
+    } else {
+        ExecOutcome::sni(0, 2, 0)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -591,7 +599,11 @@ fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     } else {
         bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
     }
-    if l { ExecOutcome::sni(1, 1, 1) } else { ExecOutcome::sni(0, 2, 0) }
+    if l {
+        ExecOutcome::sni(1, 1, 1)
+    } else {
+        ExecOutcome::sni(0, 2, 0)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -613,7 +625,11 @@ fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     } else {
         bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
-    if l { ExecOutcome::sni(1, 1, 1) } else { ExecOutcome::sni(0, 2, 0) }
+    if l {
+        ExecOutcome::sni(1, 1, 1)
+    } else {
+        ExecOutcome::sni(0, 2, 0)
+    }
 }
 
 // ---------------------------------------------------------------------------
