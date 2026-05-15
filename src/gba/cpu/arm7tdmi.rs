@@ -18,6 +18,7 @@ use super::arm;
 use super::bus::Bus;
 use super::registers::{CpuMode, FLAG_F, FLAG_I, FLAG_T, Registers};
 use super::thumb;
+use crate::gba::bus::WidthClass;
 
 /// Address of each ARM exception vector in the BIOS region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,7 +250,10 @@ impl Arm7tdmi {
                 self.prefetch_thumb[1] = self.prefetch_thumb[2];
                 self.prefetch_thumb[2] = bus.read16(exec_pc.wrapping_add(6));
             }
-            outcome.resolve_cycles(bus.s_cycles(exec_pc), bus.n_cycles(exec_pc))
+            outcome.resolve_cycles(
+                bus.s_cycles(exec_pc, WidthClass::HalfwordOrByte),
+                bus.n_cycles(exec_pc, WidthClass::HalfwordOrByte),
+            )
         } else {
             // PC during ARM execution should read as exec_pc + 8.
             self.regs.r[15] = exec_pc.wrapping_add(8);
@@ -283,7 +287,10 @@ impl Arm7tdmi {
                 self.prefetch_arm[1] = self.prefetch_arm[2];
                 self.prefetch_arm[2] = bus.read32(exec_pc.wrapping_add(12));
             }
-            outcome.resolve_cycles(bus.s_cycles(exec_pc), bus.n_cycles(exec_pc))
+            outcome.resolve_cycles(
+                bus.s_cycles(exec_pc, WidthClass::Word),
+                bus.n_cycles(exec_pc, WidthClass::Word),
+            )
         };
 
         self.cycles = self.cycles.wrapping_add(cycles as u64);
@@ -1496,10 +1503,10 @@ mod tests {
         fn write8(&mut self, addr: u32, value: u8) {
             self.inner.write8(addr, value);
         }
-        fn n_cycles(&self, _addr: u32) -> u32 {
+        fn n_cycles(&self, _addr: u32, _width: WidthClass) -> u32 {
             self.n_cost
         }
-        fn s_cycles(&self, _addr: u32) -> u32 {
+        fn s_cycles(&self, _addr: u32, _width: WidthClass) -> u32 {
             self.s_cost
         }
     }
@@ -1530,6 +1537,79 @@ mod tests {
         assert_eq!(
             slow_cycles, 3,
             "MOV (1S) with SlowBus (s_cycles=3) should resolve to 3 cycles"
+        );
+    }
+
+    /// Bus that returns different costs for 16-bit vs 32-bit access.
+    struct WidthAwareBus {
+        inner: RamBus,
+    }
+
+    impl WidthAwareBus {
+        fn new() -> Self {
+            Self {
+                inner: RamBus::new(0x1000),
+            }
+        }
+    }
+
+    impl Bus for WidthAwareBus {
+        fn read32(&mut self, addr: u32) -> u32 {
+            self.inner.read32(addr)
+        }
+        fn read16(&mut self, addr: u32) -> u16 {
+            self.inner.read16(addr)
+        }
+        fn read8(&mut self, addr: u32) -> u8 {
+            self.inner.read8(addr)
+        }
+        fn write32(&mut self, addr: u32, value: u32) {
+            self.inner.write32(addr, value);
+        }
+        fn write16(&mut self, addr: u32, value: u16) {
+            self.inner.write16(addr, value);
+        }
+        fn write8(&mut self, addr: u32, value: u8) {
+            self.inner.write8(addr, value);
+        }
+        fn n_cycles(&self, _addr: u32, width: WidthClass) -> u32 {
+            match width {
+                WidthClass::HalfwordOrByte => 2,
+                WidthClass::Word => 5,
+            }
+        }
+        fn s_cycles(&self, _addr: u32, width: WidthClass) -> u32 {
+            match width {
+                WidthClass::HalfwordOrByte => 1,
+                WidthClass::Word => 3,
+            }
+        }
+    }
+
+    /// ARM step (32-bit fetch) should use Word width; Thumb step should use HalfwordOrByte.
+    #[test]
+    fn step_arm_uses_word_width_thumb_uses_halfword() {
+        // ARM MOV R0, #42 → 1S, resolved with Word s_cycles = 3
+        let mov_arm: u32 = 0xE3A0_002A;
+        let mut cpu = Arm7tdmi::new();
+        let mut bus = WidthAwareBus::new();
+        bus.inner.write_word(0x00, mov_arm);
+        cpu.regs.r[15] = 0x00;
+        cpu.prefetch_valid = false;
+        let arm_cycles = cpu.step(&mut bus);
+        assert_eq!(arm_cycles, 3, "ARM MOV (1S) should use Word s_cycles=3");
+
+        // Thumb MOV R0, #42 → 1S, resolved with HalfwordOrByte s_cycles = 1
+        let mov_thumb: u16 = 0x202A; // MOV R0, #42
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.set_thumb(true); // Thumb mode
+        bus.inner.write_halfword(0x00, mov_thumb);
+        cpu.regs.r[15] = 0x00;
+        cpu.prefetch_valid = false;
+        let thumb_cycles = cpu.step(&mut bus);
+        assert_eq!(
+            thumb_cycles, 1,
+            "Thumb MOV (1S) should use HalfwordOrByte s_cycles=1"
         );
     }
 }

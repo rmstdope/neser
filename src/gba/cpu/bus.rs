@@ -8,6 +8,8 @@
 //! The default [`RamBus`] implementation provides a flat little-endian RAM
 //! window that is convenient for unit tests of the instruction set.
 
+use crate::gba::bus::WidthClass;
+
 /// Abstraction over the memory bus seen by the CPU.
 pub trait Bus {
     /// Read a 32-bit word. The address is automatically aligned to a 4-byte
@@ -29,11 +31,11 @@ pub trait Bus {
     /// Write a single byte.
     fn write8(&mut self, addr: u32, value: u8);
 
-    /// Non-sequential access cycle cost for the given address.
-    fn n_cycles(&self, addr: u32) -> u32;
+    /// Non-sequential access cycle cost for the given address and width.
+    fn n_cycles(&self, addr: u32, width: WidthClass) -> u32;
 
-    /// Sequential access cycle cost for the given address.
-    fn s_cycles(&self, addr: u32) -> u32;
+    /// Sequential access cycle cost for the given address and width.
+    fn s_cycles(&self, addr: u32, width: WidthClass) -> u32;
 }
 
 /// Flat, little-endian RAM-only bus used in unit tests and as a stub for the
@@ -122,11 +124,11 @@ impl Bus for RamBus {
         self.bytes[i] = value;
     }
 
-    fn n_cycles(&self, _addr: u32) -> u32 {
+    fn n_cycles(&self, _addr: u32, _width: WidthClass) -> u32 {
         1
     }
 
-    fn s_cycles(&self, _addr: u32) -> u32 {
+    fn s_cycles(&self, _addr: u32, _width: WidthClass) -> u32 {
         1
     }
 }
@@ -173,14 +175,14 @@ mod tests {
     #[test]
     fn ram_bus_n_cycles_returns_1() {
         let bus = RamBus::new(0x100);
-        assert_eq!(bus.n_cycles(0x0000_0000), 1);
-        assert_eq!(bus.n_cycles(0x0800_0000), 1);
+        assert_eq!(bus.n_cycles(0x0000_0000, WidthClass::HalfwordOrByte), 1);
+        assert_eq!(bus.n_cycles(0x0800_0000, WidthClass::Word), 1);
     }
 
     #[test]
     fn ram_bus_s_cycles_returns_1() {
         let bus = RamBus::new(0x100);
-        assert_eq!(bus.s_cycles(0x0000_0000), 1);
-        assert_eq!(bus.s_cycles(0x0800_0000), 1);
+        assert_eq!(bus.s_cycles(0x0000_0000, WidthClass::HalfwordOrByte), 1);
+        assert_eq!(bus.s_cycles(0x0800_0000, WidthClass::Word), 1);
     }
 }
