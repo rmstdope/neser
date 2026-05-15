@@ -675,7 +675,7 @@ impl PixelFifoRenderer {
 
     fn left_edge_obj_tile_data_delay_start_x(&self) -> Option<u8> {
         self.leftmost_obj_oam_x
-            .filter(|&oam_x| (8..=13).contains(&oam_x))
+            .filter(|&oam_x| (8..=14).contains(&oam_x))
             .map(|oam_x| oam_x - 8)
     }
 
@@ -1568,6 +1568,40 @@ mod tests {
         assert_eq!(
             current_fetch_colour, 0,
             "a restore two pixels after the delayed BG boundary should update the in-progress fetch to the restored TILE_SEL sample"
+        );
+        assert_eq!(
+            following_fetch_colour, 1,
+            "the following fetch should keep the delayed low-byte TILE_SEL sample and use the restored high-byte sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn near_left_edge_obj_restore_three_pixels_after_boundary_updates_current_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 6;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.leftmost_obj_oam_x = Some(14);
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        renderer.next_x = 11;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_fetch_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(12, &vram, &oam, &registers, 0);
+        let (following_fetch_colour, _, _) =
+            renderer.dmg_pixel_layers(16, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_fetch_colour, 0,
+            "a restore three pixels after the delayed BG boundary should update the in-progress fetch to the restored TILE_SEL sample"
         );
         assert_eq!(
             following_fetch_colour, 1,
