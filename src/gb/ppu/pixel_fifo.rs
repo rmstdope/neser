@@ -580,6 +580,17 @@ impl PixelFifoRenderer {
         }
 
         if !window_fetch_active
+            && self.should_restore_lcdc_tile_data_at_obj_stalled_boundary(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge
+                .record_write(current_fetch_start, current_fetch_end, new, new);
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                previous,
+                previous,
+            );
+        } else if !window_fetch_active
             && self.should_restore_lcdc_tile_data_in_delayed_fetch(previous, new)
         {
             self.lcdc_tile_data_edge
@@ -671,6 +682,22 @@ impl PixelFifoRenderer {
         tile_data_turning_off
             && self.left_edge_obj_tile_data_delay_start_x().is_some()
             && (OBJ_PIXELS_PER_FETCH..OBJ_PIXELS_PER_FETCH * 2).contains(&self.next_x)
+    }
+
+    fn should_restore_lcdc_tile_data_at_obj_stalled_boundary(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && !self.window_active
+            && bg_phase == 0
+            && self.leftmost_obj_oam_x == Some(OBJ_PIXELS_PER_FETCH * 2)
+            && self.next_x == OBJ_PIXELS_PER_FETCH
+            && self.pending_obj_stall_dots > 0
     }
 
     fn left_edge_obj_tile_data_delay_start_x(&self) -> Option<u8> {
@@ -1640,6 +1667,39 @@ mod tests {
         assert_eq!(
             following_fetch_colour, 1,
             "the following fetch should keep the delayed low-byte TILE_SEL sample and use the restored high-byte sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn on_screen_obj_restore_at_stalled_boundary_preserves_following_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 8;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.leftmost_obj_oam_x = Some(16);
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        renderer.pending_obj_stall_dots = 3;
+        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_fetch_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+        let (following_fetch_colour, _, _) =
+            renderer.dmg_pixel_layers(16, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_fetch_colour, 0,
+            "a restore at an OBJ-stalled BG boundary should update the in-progress fetch to the restored TILE_SEL sample"
+        );
+        assert_eq!(
+            following_fetch_colour, 3,
+            "the following fetch should keep the TILE_SEL sample latched before the OBJ stall"
         );
         assert!(!is_sprite);
     }
