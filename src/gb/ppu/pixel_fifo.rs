@@ -584,12 +584,7 @@ impl PixelFifoRenderer {
         {
             self.lcdc_tile_data_edge
                 .record_write(current_fetch_start, current_fetch_end, new, new);
-            self.lcdc_tile_data_edge.record_write(
-                next_fetch_start,
-                next_fetch_start.saturating_add(7),
-                new,
-                new,
-            );
+            self.record_next_lcdc_tile_data_write(next_fetch_start, bg_phase, previous, new);
         } else if !window_fetch_active
             && self.should_delay_lcdc_tile_data_by_extra_fetch(previous, new)
         {
@@ -1567,10 +1562,16 @@ mod tests {
 
         let (current_fetch_colour, is_sprite, _) =
             renderer.dmg_pixel_layers(11, &vram, &oam, &registers, 0);
+        let (following_fetch_colour, _, _) =
+            renderer.dmg_pixel_layers(16, &vram, &oam, &registers, 0);
 
         assert_eq!(
             current_fetch_colour, 0,
             "a restore two pixels after the delayed BG boundary should update the in-progress fetch to the restored TILE_SEL sample"
+        );
+        assert_eq!(
+            following_fetch_colour, 1,
+            "the following fetch should keep the delayed low-byte TILE_SEL sample and use the restored high-byte sample"
         );
         assert!(!is_sprite);
     }
