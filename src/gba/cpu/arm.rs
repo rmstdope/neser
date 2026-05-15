@@ -657,7 +657,8 @@ fn execute_long_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
         regs.set_nzcv(n, z, c, regs.v_flag());
     }
 
-    // Long multiply: UMULL/SMULL = 1S + mI; UMLAL/SMLAL = 1S + (m+1)I
+    // GBATek: UMULL/SMULL = 1S+(m+1)I, UMLAL/SMLAL = 1S+(m+2)I
+    // long_multiply_cycles returns m+2, so: non-acc = (m+2)-1 = m+1, acc = m+2
     let internal = if acc { cycles } else { cycles - 1 };
     ExecOutcome::sni(1, 0, internal)
 }
@@ -2606,8 +2607,8 @@ mod tests {
         let mut bus = RamBus::new(0x100);
         regs.r[0] = 5; // Rm
         regs.r[1] = 1; // Rs (small → early termination, m=1)
-        // MUL R2, R0, R1: cond 0000 00 0 0 Rd Rs 1001 Rm
-        let instr = 0xE000_2190; // MUL R2, R0, R1
+        // MUL R0, R0, R1: cond=E, bits[27:22]=000000, A=0, S=0, Rd=0, Rn=0, Rs=1, 1001, Rm=0
+        let instr = 0xE000_2190; // MUL R0, R0, R1
         let outcome = execute(&mut regs, &mut bus, instr);
         assert_eq!(outcome.seq, 1, "MUL should have 1S");
         assert!(outcome.internal >= 1, "MUL should have at least 1I");

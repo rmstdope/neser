@@ -1055,7 +1055,7 @@ fn exec_format19(regs: &mut Registers, instr: u16) -> ExecOutcome {
     regs.r[14] = old_pc | 1; // Set bit 0 to indicate return to Thumb
     regs.r[15] = target & !1;
     ExecOutcome {
-        seq: 3,
+        seq: 2,
         nonseq: 1,
         internal: 0,
         branched: true,
