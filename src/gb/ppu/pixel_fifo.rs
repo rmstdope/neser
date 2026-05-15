@@ -575,6 +575,10 @@ impl PixelFifoRenderer {
         let current_fetch_start = self.next_x.saturating_sub(bg_phase);
         let current_fetch_end = current_fetch_start.saturating_add(7);
         let next_fetch_start = current_fetch_start.saturating_add(8);
+        if self.should_cancel_delayed_lcdc_tile_data_fetch(previous, new) {
+            self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
+        }
+
         if self.next_x == current_fetch_start {
             if window_fetch_active {
                 self.lcdc_tile_data_edge.record_write(
@@ -596,12 +600,7 @@ impl PixelFifoRenderer {
                     previous,
                     previous,
                 );
-                self.lcdc_tile_data_edge.record_write(
-                    next_fetch_start.saturating_add(8),
-                    next_fetch_start.saturating_add(15),
-                    new,
-                    new,
-                );
+                self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
             } else {
                 self.lcdc_tile_data_edge.record_write(
                     current_fetch_start,
@@ -642,6 +641,23 @@ impl PixelFifoRenderer {
             previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
         let visible_left_edge_obj = self.leftmost_obj_oam_x == Some(8);
         tile_data_turning_on && visible_left_edge_obj && self.next_x == 0
+    }
+
+    fn should_cancel_delayed_lcdc_tile_data_fetch(&self, previous_lcdc: u8, new_lcdc: u8) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        let visible_left_edge_obj = self.leftmost_obj_oam_x == Some(8);
+        tile_data_turning_off && visible_left_edge_obj && self.next_x < 8
+    }
+
+    fn record_visible_left_edge_delayed_lcdc_tile_data_fetch(&mut self, lcdc: u8) {
+        let delayed_fetch_start = OBJ_PIXELS_PER_FETCH * 2;
+        self.lcdc_tile_data_edge.record_write(
+            delayed_fetch_start,
+            delayed_fetch_start.saturating_add(OBJ_PIXELS_PER_FETCH - 1),
+            lcdc,
+            lcdc,
+        );
     }
 
     fn record_next_lcdc_tile_data_write(
@@ -1306,6 +1322,47 @@ mod tests {
         assert_eq!(
             next_tile_colour, 0,
             "a visible-left-edge OBJ fetch should keep the following BG tile on the previous TILE_SEL sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn visible_left_edge_obj_restore_cancels_delayed_tile_select_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.leftmost_obj_oam_x = Some(8);
+        let scx = 3;
+        renderer.record_lcdc_write(0x81, 0x91, scx, false, false);
+        renderer.next_x = 5;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.record_lcdc_write(0x91, 0x81, scx, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.scx = scx;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_fetch_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(5, &vram, &oam, &registers, 0);
+        let (next_fetch_colour, _, _) = renderer.dmg_pixel_layers(13, &vram, &oam, &registers, 0);
+        let (delayed_fetch_colour, _, _) =
+            renderer.dmg_pixel_layers(21, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_fetch_colour, 3,
+            "a restore at the SCX-shifted boundary should still let that fetch use the previous TILE_SEL sample"
+        );
+        assert_eq!(
+            next_fetch_colour, 0,
+            "the fetch after the restore should use the restored TILE_SEL sample"
+        );
+        assert_eq!(
+            delayed_fetch_colour, 0,
+            "restoring TILE_SEL before the delayed fetch starts should keep that fetch on the previous sample"
         );
         assert!(!is_sprite);
     }
