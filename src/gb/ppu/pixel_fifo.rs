@@ -612,6 +612,19 @@ impl PixelFifoRenderer {
                 previous,
             );
             self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
+        } else if self.should_restore_lcdc_tile_data_at_window_boundary(previous, new, bg_phase) {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                new,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
         } else if self.next_x == current_fetch_start {
             if window_fetch_active {
                 self.lcdc_tile_data_edge.record_write(
@@ -698,6 +711,20 @@ impl PixelFifoRenderer {
             && self.leftmost_obj_oam_x == Some(OBJ_PIXELS_PER_FETCH * 2)
             && self.next_x == OBJ_PIXELS_PER_FETCH
             && self.pending_obj_stall_dots > 0
+    }
+
+    fn should_restore_lcdc_tile_data_at_window_boundary(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && self.window_active
+            && bg_phase == 0
+            && self.next_x == OBJ_PIXELS_PER_FETCH
     }
 
     fn left_edge_obj_tile_data_delay_start_x(&self) -> Option<u8> {
@@ -1837,6 +1864,40 @@ mod tests {
         assert_eq!(
             next_tile_colour, 3,
             "the following window fetch should sample the new TILE_SEL value"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn window_restore_at_tile_boundary_mixes_current_fetch_bitplanes() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        renderer.window_active = true;
+        renderer.next_x = 8;
+        renderer.record_lcdc_write_with_window(0xB1, 0xA1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+        let (following_tile_colour, _, _) =
+            renderer.dmg_pixel_layers(16, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 1,
+            "a window TILE_SEL restore at the tile boundary should keep the previous low byte and sample the restored high byte"
+        );
+        assert_eq!(
+            following_tile_colour, 0,
+            "the following window fetch should use the restored TILE_SEL sample"
         );
         assert!(!is_sprite);
     }
