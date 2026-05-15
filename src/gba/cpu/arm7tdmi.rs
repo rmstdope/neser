@@ -1529,7 +1529,7 @@ mod tests {
         let slow_cycles = cpu.step(&mut slow_bus);
         assert_eq!(
             slow_cycles, 3,
-            "MOV with SlowBus (S=3) should cost 3, but step() doesn't use bus timing yet"
+            "MOV (1S) with SlowBus (s_cycles=3) should resolve to 3 cycles"
         );
     }
 }
