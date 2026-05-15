@@ -580,7 +580,7 @@ impl PixelFifoRenderer {
         }
 
         if !window_fetch_active
-            && self.should_restore_lcdc_tile_data_at_delayed_boundary(previous, new)
+            && self.should_restore_lcdc_tile_data_in_delayed_fetch(previous, new)
         {
             self.lcdc_tile_data_edge
                 .record_write(current_fetch_start, current_fetch_end, new, new);
@@ -666,7 +666,7 @@ impl PixelFifoRenderer {
             && self.next_x < 8
     }
 
-    fn should_restore_lcdc_tile_data_at_delayed_boundary(
+    fn should_restore_lcdc_tile_data_in_delayed_fetch(
         &self,
         previous_lcdc: u8,
         new_lcdc: u8,
@@ -675,12 +675,12 @@ impl PixelFifoRenderer {
             previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
         tile_data_turning_off
             && self.left_edge_obj_tile_data_delay_start_x().is_some()
-            && self.next_x == OBJ_PIXELS_PER_FETCH
+            && (OBJ_PIXELS_PER_FETCH..OBJ_PIXELS_PER_FETCH * 2).contains(&self.next_x)
     }
 
     fn left_edge_obj_tile_data_delay_start_x(&self) -> Option<u8> {
         self.leftmost_obj_oam_x
-            .filter(|&oam_x| (8..=11).contains(&oam_x))
+            .filter(|&oam_x| (8..=12).contains(&oam_x))
             .map(|oam_x| oam_x - 8)
     }
 
@@ -1515,6 +1515,34 @@ mod tests {
         assert_eq!(
             delayed_fetch_colour, 0,
             "the delayed following fetch should also stay on the restored TILE_SEL sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn near_left_edge_obj_restore_after_boundary_updates_current_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 4;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.leftmost_obj_oam_x = Some(12);
+        renderer.record_lcdc_write(0x81, 0x91, 0, false, false);
+        renderer.next_x = 9;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.record_lcdc_write(0x91, 0x81, 0, false, false);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x81;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_fetch_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(10, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_fetch_colour, 0,
+            "a restore after the delayed BG boundary should update the in-progress fetch to the restored TILE_SEL sample"
         );
         assert!(!is_sprite);
     }
