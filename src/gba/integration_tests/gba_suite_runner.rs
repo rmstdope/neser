@@ -1,5 +1,5 @@
-use crate::gba::Gba;
 use crate::gba::bus::memory::BIOS_SIZE;
+use crate::gba::Gba;
 use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use std::path::PathBuf;
@@ -434,10 +434,11 @@ fn is_bios_exception_vector(pc: u32) -> bool {
 //   Item 5: THUMB LDM/STM→ _test2 (subset of above chain)
 //
 // We enter via ARM ALU (item 0) to cover all 5 ARM pages, return to menu,
-// navigate DOWN×3 to THUMB ALU (item 3), then cover all 3 THUMB pages.
+// verify DOWN reaches all menu items, navigate back to THUMB ALU (item 3),
+// then cover all 3 THUMB pages.
 
-/// Total test pages validated. THUMB pages temporarily skipped (#2397).
-pub const ARMWRESTLER_TEST_PAGE_COUNT: usize = 5;
+/// Total test pages validated.
+pub const ARMWRESTLER_TEST_PAGE_COUNT: usize = 8;
 
 /// Button bitmask for A (NES-convention bit 0).
 const BTN_A: u8 = 0x01;
@@ -445,6 +446,8 @@ const BTN_A: u8 = 0x01;
 const BTN_B: u8 = 0x02;
 /// Button bitmask for Start (NES-convention bit 3).
 const BTN_START: u8 = 0x08;
+/// Button bitmask for Up (NES-convention bit 4).
+const BTN_UP: u8 = 0x10;
 /// Button bitmask for Down (NES-convention bit 5).
 const BTN_DOWN: u8 = 0x20;
 
@@ -452,18 +455,15 @@ const BTN_DOWN: u8 = 0x20;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArmWrestlerResult {
     /// CRC32 of the framebuffer after each test page renders.
-    /// Currently indices 0–4 (ARM pages only). THUMB pages temporarily
-    /// skipped due to a menu navigation timing issue with N16=4 (#2397).
+    /// Indices 0–4 are ARM pages; indices 5–7 are THUMB pages.
     pub page_crcs: Vec<u32>,
     /// Total cycles consumed.
     pub cycles: u64,
 }
 
-/// Run armwrestler-gba-fixed.gba, navigating through the ARM test pages.
+/// Run armwrestler-gba-fixed.gba, navigating through all ARM and THUMB test pages.
 ///
-/// Returns one CRC per test page (5 ARM pages).
-/// THUMB pages are temporarily skipped due to a menu navigation timing
-/// issue (#2397).
+/// Returns one CRC per test page (5 ARM pages, then 3 THUMB pages).
 pub fn run_armwrestler() -> ArmWrestlerResult {
     let rom_path = Suite::ArmWrestler.rom_path();
 
@@ -490,14 +490,8 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
 
     // Run frame-by-frame, injecting button presses to navigate tests.
     //
-    // Button held for exactly 1 frame, released the next. The ROM's
-    // edge-detection (XOR with previous state) requires a clean release
-    // between successive presses.
-    //
-    // Instead of hard-coding frame numbers (fragile under timing changes),
-    // we use a "wait until screen CRC changes" approach: press a button,
-    // then keep running frames until the screen content changes from
-    // what it was before the press.
+    // The ROM's edge-detection (XOR with previous state) requires a clean
+    // release between successive presses.
 
     let mut cycles: u64 = 0;
     let mut page_crcs: Vec<u32> = Vec::new();
@@ -535,41 +529,29 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
         gba.clear_ready_to_render();
     }
 
-    // Helper: press a button and wait for screen to stabilize at a new value.
-    // With the mGBA-aligned ROM timing, the armwrestler ROM's input polling
-    // is timing-sensitive. We use a retry mechanism: press for 1 frame, wait
-    // up to 30 frames for change; if no change, retry the press.
+    // Helper: press a button across two render edges (the runner starts at
+    // VBlank, while the ROM samples input after its own VSync routine),
+    // release, then allow several VBlanks for menu erasing/redrawing before
+    // taking the framebuffer CRC.
     let press_and_wait = |gba: &mut Gba, cycles: &mut u64, button: u8, prev_crc: u32| -> u32 {
         for _attempt in 0..3 {
-            // Press button for 1 frame
             gba.set_joypad_button_states(0, button);
-            assert!(run_until_frame_ready(gba, cycles), "halted during press");
-            gba.clear_ready_to_render();
-            // Release
+            for _ in 0..2 {
+                assert!(run_until_frame_ready(gba, cycles), "halted during press");
+                gba.clear_ready_to_render();
+            }
             gba.set_joypad_button_states(0, 0);
-            // Wait for stable new screen
-            let mut last_crc = 0u32;
-            let mut stable_count = 0u32;
-            for _ in 0..30 {
+            for _ in 0..8 {
                 assert!(
                     run_until_frame_ready(gba, cycles),
-                    "halted waiting for stable"
+                    "halted waiting for redraw"
                 );
                 gba.clear_ready_to_render();
-                let crc = gba.screen_crc32();
-                if crc != prev_crc {
-                    if crc == last_crc {
-                        stable_count += 1;
-                        if stable_count >= 3 {
-                            return crc;
-                        }
-                    } else {
-                        stable_count = 1;
-                        last_crc = crc;
-                    }
-                }
             }
-            // CRC didn't change — retry
+            let crc = gba.screen_crc32();
+            if crc != prev_crc {
+                return crc;
+            }
         }
         gba.screen_crc32()
     };
@@ -579,7 +561,8 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
     // Armwrestler shows a title/splash that looks identical to the interactive menu.
     // Press START once to transition from title→menu (visual doesn't change), then
     // the next START enters the selected test.
-    // Use 1-frame hold to avoid the faster-timing ROM double-counting the press.
+    // Use a 1-frame hold here to avoid dismissing the title and entering the
+    // first test with one long START press.
     gba.set_joypad_button_states(0, BTN_START);
     assert!(
         run_until_frame_ready(&mut gba, &mut cycles),
@@ -608,13 +591,33 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
         maybe_write_armwrestler_png(&gba, page_idx, current_crc);
     }
 
-    // NOTE: THUMB test navigation is currently broken due to a pre-existing
-    // emulation timing issue exposed by correct WAITCNT defaults (N16=4).
-    // The armwrestler ROM's menu cursor cannot advance past item 2 with the
-    // correct access timing. Tracked in #2397.
-    // For now, only the 5 ARM pages are validated.
+    // Return to the menu, verify DOWN can reach every menu item, navigate
+    // back to THUMB ALU, then cover all 3 THUMB pages.
+    current_crc = press_and_wait(&mut gba, &mut cycles, BTN_START, current_crc);
+    assert_eq!(armwrestler_cursor(&mut gba), 0);
+    for expected in 1..=5 {
+        current_crc = press_and_wait(&mut gba, &mut cycles, BTN_DOWN, current_crc);
+        assert_eq!(armwrestler_cursor(&mut gba), expected);
+    }
+    for expected in (3..=4).rev() {
+        current_crc = press_and_wait(&mut gba, &mut cycles, BTN_UP, current_crc);
+        assert_eq!(armwrestler_cursor(&mut gba), expected);
+    }
+    current_crc = press_and_wait(&mut gba, &mut cycles, BTN_START, current_crc);
+    page_crcs.push(current_crc);
+    maybe_write_armwrestler_png(&gba, 5, current_crc);
+
+    for page_idx in 6..8 {
+        current_crc = press_and_wait(&mut gba, &mut cycles, BTN_START, current_crc);
+        page_crcs.push(current_crc);
+        maybe_write_armwrestler_png(&gba, page_idx, current_crc);
+    }
 
     ArmWrestlerResult { page_crcs, cycles }
+}
+
+fn armwrestler_cursor(gba: &mut Gba) -> u8 {
+    (gba.bus_mut().peek32(0x0300_0010) & 0xFF) as u8
 }
 
 /// Advance emulation until the next VBlank (frame-ready edge).

@@ -1,6 +1,6 @@
 use super::gba_suite_runner::{
-    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, boot_mgba_suite,
-    run_armwrestler, run_mgba_suite, run_suite,
+    boot_mgba_suite, run_armwrestler, run_mgba_suite, run_suite, Suite,
+    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS,
 };
 use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
 use crate::platform::emulator::Emulator;
@@ -262,8 +262,9 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("armwrestler_page2"), Some(&0xF9C3_8336));
     assert_eq!(approvals.get("armwrestler_page3"), Some(&0x76CE_D72B));
     assert_eq!(approvals.get("armwrestler_page4"), Some(&0x6795_E0F8));
-    // NOTE: THUMB pages (5-7) temporarily removed — the armwrestler ROM's
-    // menu cursor cannot advance past item 2 with correct N16=4 timing (#2397).
+    assert_eq!(approvals.get("armwrestler_page5"), Some(&0xE215_C2B0));
+    assert_eq!(approvals.get("armwrestler_page6"), Some(&0xA522_34A7));
+    assert_eq!(approvals.get("armwrestler_page7"), Some(&0x562A_5C65));
 
     // mgba-emu/suite keys
     assert_eq!(approvals.get("mgba_memory"), Some(&0x2298_4983));
