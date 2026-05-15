@@ -534,7 +534,7 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
 
     // Helper: press a button and wait for screen to stabilize at a new value.
     // Holds button for 2 frames (to ensure the ROM's VSync polling catches it),
-    // then waits for a CRC different from prev_crc that stays the same for 2 consecutive frames.
+    // then waits for a CRC different from prev_crc that stays the same for 3 consecutive frames.
     let press_and_wait = |gba: &mut Gba, cycles: &mut u64, button: u8, prev_crc: u32| -> u32 {
         // Hold button for 2 frames (ensures ROM's VBlank-based input poll catches it)
         gba.set_joypad_button_states(0, button);

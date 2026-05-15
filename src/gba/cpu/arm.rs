@@ -657,7 +657,9 @@ fn execute_long_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
         regs.set_nzcv(n, z, c, regs.v_flag());
     }
 
-    ExecOutcome::sni(1, 0, cycles - 1) // Long multiply: 1S + mI
+    // Long multiply: UMULL/SMULL = 1S + mI; UMLAL/SMLAL = 1S + (m+1)I
+    let internal = if acc { cycles } else { cycles - 1 };
+    ExecOutcome::sni(1, 0, internal)
 }
 
 /// Compute multiply internal cycles based on Rs magnitude (early termination).
@@ -2610,6 +2612,28 @@ mod tests {
         assert_eq!(outcome.seq, 1, "MUL should have 1S");
         assert!(outcome.internal >= 1, "MUL should have at least 1I");
         assert_eq!(outcome.nonseq, 0, "MUL should have 0N");
+    }
+
+    /// UMLAL/SMLAL (accumulate) gets +1I vs UMULL/SMULL per GBATek.
+    #[test]
+    fn arm_long_mul_accumulate_has_extra_internal() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 5; // Rm
+        regs.r[1] = 1; // Rs (small → early termination)
+        regs.r[2] = 0;
+        regs.r[3] = 0;
+        // UMULL R2, R3, R0, R1 (no accumulate)
+        let umull = arm_long_mul(0xE, false, false, false, 3, 2, 1, 0);
+        let outcome_umull = execute(&mut regs, &mut bus, umull);
+        // UMLAL R2, R3, R0, R1 (accumulate)
+        let umlal = arm_long_mul(0xE, false, true, false, 3, 2, 1, 0);
+        let outcome_umlal = execute(&mut regs, &mut bus, umlal);
+        assert_eq!(
+            outcome_umlal.internal,
+            outcome_umull.internal + 1,
+            "UMLAL should have +1I vs UMULL"
+        );
     }
 
     /// ARM condition-false (skipped): 1S per GBATek.
