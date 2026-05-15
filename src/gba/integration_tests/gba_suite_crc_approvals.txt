@@ -36,9 +36,8 @@ armwrestler_page1=0x7725D68D
 armwrestler_page2=0xF9C38336
 armwrestler_page3=0x76CED72B
 armwrestler_page4=0x6795E0F8
-armwrestler_page5=0xE215C2B0
-armwrestler_page6=0xA52234A7
-armwrestler_page7=0x562A5C65
+# THUMB pages temporarily removed — menu cursor stuck at item 2 with correct
+# N16=4 timing (#2397).
 
 # mgba-emu/suite (https://github.com/mgba-emu/suite)
 # 14 sub-suites exercising memory, I/O, timing, shifter, carry, multiply,

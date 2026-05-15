@@ -36,25 +36,135 @@ use memory::{
     read_le_u16, read_le_u32, write_le_u16, write_le_u32,
 };
 
-/// Wait-state stub values returned by [`GbaBus::n_cycles`] /
-/// [`GbaBus::s_cycles`] for each region/access width. Values are GBATek
-/// defaults (post-reset `WAITCNT` = 0).
-pub mod wait_states {
-    /// Sequential / non-sequential cycle counts indexed by `WidthClass`.
-    /// Order: 8/16-bit, 32-bit.
-    pub const BIOS: [u32; 2] = [1, 1];
-    pub const EWRAM_N: [u32; 2] = [3, 6];
-    pub const EWRAM_S: [u32; 2] = [3, 6];
-    pub const IWRAM: [u32; 2] = [1, 1];
-    pub const IO: [u32; 2] = [1, 1];
-    pub const PRAM: [u32; 2] = [1, 2];
-    pub const VRAM: [u32; 2] = [1, 2];
-    pub const OAM: [u32; 2] = [1, 1];
-    /// Cart ROM (Wait State 0) — halfword N=5, S=3 cycles; word N=8, S=6
-    /// cycles for the post-reset `WAITCNT` timing stub values used here.
-    pub const ROM_N: [u32; 2] = [5, 8];
-    pub const ROM_S: [u32; 2] = [3, 6];
-    pub const SRAM: [u32; 2] = [5, 5];
+/// Pre-computed wait-state cycle counts for each memory region.
+///
+/// Each region stores `[N16, N32, S16, S32]` — non-sequential and sequential
+/// access times for 16-bit and 32-bit widths. Updated when WAITCNT is written.
+///
+/// Values match mGBA/GBATek conventions (no +1 adjustment).
+#[derive(Debug, Clone)]
+pub struct Waitstates {
+    /// Per-region cycle lookup: indexed by `(addr >> 24) & 0xF`, then by
+    /// `[N16, N32, S16, S32]`.
+    regions: [[u32; 4]; 16],
+    /// Raw WAITCNT register value (writable bits 0-14).
+    pub waitcnt: u16,
+    /// Whether the prefetch buffer is enabled (bit 14 of WAITCNT).
+    pub prefetch_enabled: bool,
+}
+
+/// Indices into the per-region `[N16, N32, S16, S32]` array.
+const N16: usize = 0;
+const N32: usize = 1;
+const S16: usize = 2;
+const S32: usize = 3;
+
+/// LUT for SRAM and ROM non-sequential wait states (2-bit index → cycles).
+const WAIT_N_LUT: [u32; 4] = [4, 3, 2, 8];
+
+/// LUT for ROM WS0 sequential access (1-bit index → cycles).
+const WAIT_S0_LUT: [u32; 2] = [2, 1];
+/// LUT for ROM WS1 sequential access (1-bit index → cycles).
+const WAIT_S1_LUT: [u32; 2] = [4, 1];
+/// LUT for ROM WS2 sequential access (1-bit index → cycles).
+const WAIT_S2_LUT: [u32; 2] = [8, 1];
+
+impl Default for Waitstates {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Waitstates {
+    /// Create with power-on defaults (WAITCNT = 0x0000).
+    pub fn new() -> Self {
+        let mut ws = Self {
+            regions: [[1; 4]; 16],
+            waitcnt: 0,
+            prefetch_enabled: false,
+        };
+        ws.recalculate(0);
+        ws
+    }
+
+    /// Recalculate all region timings from a new WAITCNT value.
+    pub fn recalculate(&mut self, waitcnt: u16) {
+        self.waitcnt = waitcnt & 0x5FFF; // mask unused bits 13, 15
+        self.prefetch_enabled = waitcnt & (1 << 14) != 0;
+
+        // Fixed regions (not affected by WAITCNT)
+        let bios = [1, 1, 1, 1];
+        let ewram = [3, 6, 3, 6];
+        let iwram = [1, 1, 1, 1];
+        let io = [1, 1, 1, 1];
+        let pram = [1, 2, 1, 2];
+        let vram = [1, 2, 1, 2];
+        let oam = [1, 1, 1, 1];
+
+        self.regions[0x0] = bios;
+        self.regions[0x1] = bios; // mirror / unused
+        self.regions[0x2] = ewram;
+        self.regions[0x3] = iwram;
+        self.regions[0x4] = io;
+        self.regions[0x5] = pram;
+        self.regions[0x6] = vram;
+        self.regions[0x7] = oam;
+
+        // SRAM wait (bits 0-1)
+        let sram_n16 = WAIT_N_LUT[(waitcnt & 0x3) as usize];
+        // SRAM is always non-sequential (8-bit bus), 32-bit = 2×N16 + 1
+        let sram_n32 = 2 * sram_n16 + 1;
+        let sram = [sram_n16, sram_n32, sram_n16, sram_n32];
+        self.regions[0xE] = sram;
+        self.regions[0xF] = sram;
+
+        // WS0 (bits 2-4): regions 0x8, 0x9
+        let ws0_n16 = WAIT_N_LUT[((waitcnt >> 2) & 0x3) as usize];
+        let ws0_s16 = WAIT_S0_LUT[((waitcnt >> 4) & 0x1) as usize];
+        let ws0_n32 = ws0_n16 + 1 + ws0_s16;
+        let ws0_s32 = 2 * ws0_s16 + 1;
+        let ws0 = [ws0_n16, ws0_n32, ws0_s16, ws0_s32];
+        self.regions[0x8] = ws0;
+        self.regions[0x9] = ws0;
+
+        // WS1 (bits 5-7): regions 0xA, 0xB
+        let ws1_n16 = WAIT_N_LUT[((waitcnt >> 5) & 0x3) as usize];
+        let ws1_s16 = WAIT_S1_LUT[((waitcnt >> 7) & 0x1) as usize];
+        let ws1_n32 = ws1_n16 + 1 + ws1_s16;
+        let ws1_s32 = 2 * ws1_s16 + 1;
+        let ws1 = [ws1_n16, ws1_n32, ws1_s16, ws1_s32];
+        self.regions[0xA] = ws1;
+        self.regions[0xB] = ws1;
+
+        // WS2 (bits 8-10): regions 0xC, 0xD
+        let ws2_n16 = WAIT_N_LUT[((waitcnt >> 8) & 0x3) as usize];
+        let ws2_s16 = WAIT_S2_LUT[((waitcnt >> 10) & 0x1) as usize];
+        let ws2_n32 = ws2_n16 + 1 + ws2_s16;
+        let ws2_s32 = 2 * ws2_s16 + 1;
+        let ws2 = [ws2_n16, ws2_n32, ws2_s16, ws2_s32];
+        self.regions[0xC] = ws2;
+        self.regions[0xD] = ws2;
+    }
+
+    /// Non-sequential cycle count for a given address and width.
+    #[inline]
+    pub fn n_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+        let region = ((addr >> 24) & 0xF) as usize;
+        match width {
+            WidthClass::HalfwordOrByte => self.regions[region][N16],
+            WidthClass::Word => self.regions[region][N32],
+        }
+    }
+
+    /// Sequential cycle count for a given address and width.
+    #[inline]
+    pub fn s_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+        let region = ((addr >> 24) & 0xF) as usize;
+        match width {
+            WidthClass::HalfwordOrByte => self.regions[region][S16],
+            WidthClass::Word => self.regions[region][S32],
+        }
+    }
 }
 
 /// Access width for [`GbaBus::n_cycles`] / [`GbaBus::s_cycles`] cycle stubs.
@@ -64,15 +174,6 @@ pub enum WidthClass {
     HalfwordOrByte,
     /// 32-bit access (counts as two halfword accesses on 16-bit buses).
     Word,
-}
-
-impl WidthClass {
-    fn idx(self) -> usize {
-        match self {
-            WidthClass::HalfwordOrByte => 0,
-            WidthClass::Word => 1,
-        }
-    }
 }
 
 /// GBA memory bus.
@@ -121,6 +222,8 @@ pub struct GbaBus {
     bios_locked: bool,
     /// Whether a full BIOS image has been loaded into the bus.
     bios_image_loaded: bool,
+    /// Dynamic wait-state timing, recalculated on WAITCNT writes.
+    waitstates: Waitstates,
 }
 
 impl Default for GbaBus {
@@ -165,6 +268,7 @@ impl GbaBus {
             dma_latch: 0,
             bios_locked: false,
             bios_image_loaded: false,
+            waitstates: Waitstates::new(),
         }
     }
 
@@ -384,29 +488,12 @@ impl GbaBus {
 
     /// Return non-sequential access cycle count for `addr` and access width.
     pub fn n_cycles_width(&self, addr: u32, width: WidthClass) -> u32 {
-        let i = width.idx();
-        match (addr >> 24) & 0xF {
-            0x0 => wait_states::BIOS[i],
-            0x2 => wait_states::EWRAM_N[i],
-            0x3 => wait_states::IWRAM[i],
-            0x4 => wait_states::IO[i],
-            0x5 => wait_states::PRAM[i],
-            0x6 => wait_states::VRAM[i],
-            0x7 => wait_states::OAM[i],
-            0x8..=0xD => wait_states::ROM_N[i],
-            0xE | 0xF => wait_states::SRAM[i],
-            _ => 1,
-        }
+        self.waitstates.n_cycles(addr, width)
     }
 
     /// Return sequential access cycle count for `addr` and access width.
     pub fn s_cycles_width(&self, addr: u32, width: WidthClass) -> u32 {
-        let i = width.idx();
-        match (addr >> 24) & 0xF {
-            0x2 => wait_states::EWRAM_S[i],
-            0x8..=0xD => wait_states::ROM_S[i],
-            _ => self.n_cycles_width(addr, width),
-        }
+        self.waitstates.s_cycles(addr, width)
     }
 
     /// Look up the BIOS contents at `addr` honouring the BIOS lock.
@@ -574,7 +661,8 @@ impl Bus for GbaBus {
                 if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
                     self.apu.read16(aligned)
                 } else {
-                    self.io
+                    let raw = self
+                        .io
                         .try_read16(
                             aligned,
                             &self.ic,
@@ -583,7 +671,13 @@ impl Bus for GbaBus {
                             &self.ppu,
                             &self.keypad,
                         )
-                        .unwrap_or_else(|| self.open_bus_halfword(aligned))
+                        .unwrap_or_else(|| self.open_bus_halfword(aligned));
+                    // WAITCNT: bits 13, 15 are unused and read as 0.
+                    if aligned == 0x0400_0204 {
+                        raw & 0x5FFF
+                    } else {
+                        raw
+                    }
                 }
             }
             0x5 => read_le_u16(&self.pram, aligned as usize),
@@ -685,6 +779,10 @@ impl Bus for GbaBus {
                         &mut self.ppu,
                         &mut self.keypad,
                     );
+                    // WAITCNT is at 0x0400_0204; a 32-bit write spans 0x204-0x207.
+                    if aligned == 0x0400_0204 {
+                        self.waitstates.recalculate(value as u16);
+                    }
                 }
             }
             0x5 => write_le_u32(&mut self.pram, aligned as usize, value),
@@ -730,6 +828,9 @@ impl Bus for GbaBus {
                         &mut self.ppu,
                         &mut self.keypad,
                     );
+                    if aligned == 0x0400_0204 {
+                        self.waitstates.recalculate(value);
+                    }
                 }
             }
             0x5 => write_le_u16(&mut self.pram, aligned as usize, value),
@@ -805,12 +906,12 @@ impl Bus for GbaBus {
         }
     }
 
-    fn n_cycles(&self, addr: u32) -> u32 {
-        self.n_cycles_width(addr, WidthClass::HalfwordOrByte)
+    fn n_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+        self.n_cycles_width(addr, width)
     }
 
-    fn s_cycles(&self, addr: u32) -> u32 {
-        self.s_cycles_width(addr, WidthClass::HalfwordOrByte)
+    fn s_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+        self.s_cycles_width(addr, width)
     }
 }
 
@@ -1002,13 +1103,14 @@ mod tests {
             3
         );
         assert_eq!(bus.n_cycles_width(0x0200_0000, WidthClass::Word), 6);
+        // ROM WS0: N16=4, S16=2 (mGBA/GBATek convention)
         assert_eq!(
             bus.n_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
-            5
+            4
         );
         assert_eq!(
             bus.s_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
-            3
+            2
         );
     }
 
@@ -1076,9 +1178,9 @@ mod tests {
         // REG_DISPCNT (0x04000000)
         bus.write16(0x0400_0000, 0x1234);
         assert_eq!(bus.read16(0x0400_0000), 0x1234);
-        // WAITCNT (0x04000204) — unimplemented, round-trips via backing store.
+        // WAITCNT (0x04000204) — unused bits 13, 15 read as 0.
         bus.write16(0x0400_0204, 0xBEEF);
-        assert_eq!(bus.read16(0x0400_0204), 0xBEEF);
+        assert_eq!(bus.read16(0x0400_0204), 0xBEEF & 0x5FFF);
     }
 
     #[test]
@@ -1402,5 +1504,130 @@ mod tests {
         bus.lock_bios();
         let cpu_open = bus.read32(0x0000_0000);
         assert_eq!(cpu_open, 0xAAAA_BBBB);
+    }
+
+    // =========================================================================
+    // WAITCNT + Dynamic Bus Timing Tests (#2394)
+    // =========================================================================
+
+    #[test]
+    fn waitcnt_default_rom_ws0_n16_is_4() {
+        let bus = GbaBus::new();
+        // ROM WS0 region (0x0800_0000): default N16 = 4 per GBATek/mGBA
+        assert_eq!(
+            bus.n_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
+            4
+        );
+    }
+
+    #[test]
+    fn waitcnt_default_rom_ws0_s16_is_2() {
+        let bus = GbaBus::new();
+        // ROM WS0 region: default S16 = 2
+        assert_eq!(
+            bus.s_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
+            2
+        );
+    }
+
+    #[test]
+    fn waitcnt_default_rom_ws0_n32_is_7() {
+        let bus = GbaBus::new();
+        // ROM WS0: N32 = N16 + 1 + S16 = 4 + 1 + 2 = 7
+        assert_eq!(bus.n_cycles_width(0x0800_0000, WidthClass::Word), 7);
+    }
+
+    #[test]
+    fn waitcnt_default_rom_ws0_s32_is_5() {
+        let bus = GbaBus::new();
+        // ROM WS0: S32 = 2×S16 + 1 = 2×2 + 1 = 5
+        assert_eq!(bus.s_cycles_width(0x0800_0000, WidthClass::Word), 5);
+    }
+
+    #[test]
+    fn waitcnt_default_rom_ws1_n16_is_4() {
+        let bus = GbaBus::new();
+        // ROM WS1 region (0x0A00_0000): default N16 = 4
+        assert_eq!(
+            bus.n_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
+            4
+        );
+    }
+
+    #[test]
+    fn waitcnt_default_rom_ws1_s16_is_4() {
+        let bus = GbaBus::new();
+        // ROM WS1: default S16 = 4 (different from WS0!)
+        assert_eq!(
+            bus.s_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
+            4
+        );
+    }
+
+    #[test]
+    fn waitcnt_default_rom_ws2_s16_is_8() {
+        let bus = GbaBus::new();
+        // ROM WS2 (0x0C00_0000): default S16 = 8
+        assert_eq!(
+            bus.s_cycles_width(0x0C00_0000, WidthClass::HalfwordOrByte),
+            8
+        );
+    }
+
+    #[test]
+    fn waitcnt_default_sram_n16_is_4() {
+        let bus = GbaBus::new();
+        // SRAM region (0x0E00_0000): default = 4
+        assert_eq!(
+            bus.n_cycles_width(0x0E00_0000, WidthClass::HalfwordOrByte),
+            4
+        );
+    }
+
+    #[test]
+    fn waitcnt_write_changes_rom_ws0_timing() {
+        let mut bus = GbaBus::new();
+        // Write WAITCNT: bits 2-3 = 0b10 → WS0 N = 2, bit 4 = 1 → WS0 S = 1
+        let waitcnt: u16 = 0b00_0000_0001_1000; // WS0 N=2(idx 2), WS0 S=1(idx 1)
+        bus.write16(0x0400_0204, waitcnt);
+        assert_eq!(
+            bus.n_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
+            2
+        );
+        assert_eq!(
+            bus.s_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
+            1
+        );
+    }
+
+    #[test]
+    fn waitcnt_read_back_returns_written_value() {
+        let mut bus = GbaBus::new();
+        // WAITCNT is readable — write a value and read it back.
+        // Bits 13 and 15 are unused and should read as 0.
+        bus.write16(0x0400_0204, 0xEF1F); // set bits 13, 15 (unused) + valid bits
+        let readback = bus.read16(0x0400_0204);
+        // Verify unused bits 13 and 15 are cleared on read
+        assert_eq!(readback & (1 << 13), 0, "bit 13 should read as 0");
+        assert_eq!(readback & (1 << 15), 0, "bit 15 should read as 0");
+        // Verify writable bits are preserved (mask 0x5FFF = bits 0-12, 14)
+        assert_eq!(readback, 0xEF1F & 0x5FFF);
+    }
+
+    #[test]
+    fn waitcnt_ws1_ws2_independent_from_ws0() {
+        let mut bus = GbaBus::new();
+        // Set WS0 to fastest (N=2, S=1) but leave WS1/WS2 at defaults
+        let waitcnt: u16 = 0b00_0000_0001_1000;
+        bus.write16(0x0400_0204, waitcnt);
+        // WS1 should still be at defaults (N=4, S=4)
+        assert_eq!(
+            bus.n_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
+            4
+        );
+        assert_eq!(
+            bus.s_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
+            4
+        );
     }
 }
