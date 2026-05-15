@@ -368,6 +368,26 @@ impl GbaBus {
         );
         self.handle_ppu_events(events);
         self.run_pending_dma();
+        self.step_dma_stalls();
+    }
+
+    fn step_dma_stalls(&mut self) {
+        loop {
+            let cycles = self.take_dma_stall_cycles();
+            if cycles == 0 {
+                break;
+            }
+            self.timers.step(cycles, &mut self.ic);
+            self.apu.tick(cycles);
+            let events = self.ppu.step(
+                cycles,
+                &mut self.ic,
+                self.vram.as_slice(),
+                self.pram.as_slice(),
+            );
+            self.handle_ppu_events(events);
+            self.run_pending_dma();
+        }
     }
 
     /// Propagate PPU V-Blank / H-Blank edges to DMA-mode hooks. Each
@@ -1221,6 +1241,25 @@ mod tests {
         assert!(bus.ic.irq_line());
         // Enable bit is cleared after one-shot completion.
         assert_eq!(bus.read16(0x0400_00BA) & 0x8000, 0);
+    }
+
+    #[test]
+    fn bus_step_advances_peripherals_during_dma_stalls() {
+        let mut bus = GbaBus::new();
+        for i in 0..4 {
+            bus.write32(0x0200_0000 + i * 4, 0xAABB_0000 + i);
+        }
+        bus.write32(0x0400_00B0, 0x0200_0000);
+        bus.write32(0x0400_00B4, 0x0200_1000);
+        bus.write16(0x0400_00B8, 4);
+        bus.write16(0x0400_00BA, 0x8000 | 0x0400);
+
+        bus.write16(0x0400_0100, 0);
+        bus.write16(0x0400_0102, 0x80);
+        bus.step(1);
+
+        assert_eq!(bus.read16(0x0400_0100), 9);
+        assert_eq!(bus.take_dma_stall_cycles(), 0);
     }
 
     #[test]
