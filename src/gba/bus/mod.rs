@@ -223,7 +223,7 @@ pub struct GbaBus {
     /// Whether a full BIOS image has been loaded into the bus.
     bios_image_loaded: bool,
     /// Dynamic wait-state timing, recalculated on WAITCNT writes.
-    pub waitstates: Waitstates,
+    waitstates: Waitstates,
 }
 
 impl Default for GbaBus {
@@ -661,7 +661,8 @@ impl Bus for GbaBus {
                 if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
                     self.apu.read16(aligned)
                 } else {
-                    self.io
+                    let raw = self
+                        .io
                         .try_read16(
                             aligned,
                             &self.ic,
@@ -670,7 +671,13 @@ impl Bus for GbaBus {
                             &self.ppu,
                             &self.keypad,
                         )
-                        .unwrap_or_else(|| self.open_bus_halfword(aligned))
+                        .unwrap_or_else(|| self.open_bus_halfword(aligned));
+                    // WAITCNT: bits 13, 15 are unused and read as 0.
+                    if aligned == 0x0400_0204 {
+                        raw & 0x5FFF
+                    } else {
+                        raw
+                    }
                 }
             }
             0x5 => read_le_u16(&self.pram, aligned as usize),
@@ -772,6 +779,10 @@ impl Bus for GbaBus {
                         &mut self.ppu,
                         &mut self.keypad,
                     );
+                    // WAITCNT is at 0x0400_0204; a 32-bit write spans 0x204-0x207.
+                    if aligned == 0x0400_0204 {
+                        self.waitstates.recalculate(value as u16);
+                    }
                 }
             }
             0x5 => write_le_u32(&mut self.pram, aligned as usize, value),
@@ -1167,9 +1178,9 @@ mod tests {
         // REG_DISPCNT (0x04000000)
         bus.write16(0x0400_0000, 0x1234);
         assert_eq!(bus.read16(0x0400_0000), 0x1234);
-        // WAITCNT (0x04000204) — unimplemented, round-trips via backing store.
+        // WAITCNT (0x04000204) — unused bits 13, 15 read as 0.
         bus.write16(0x0400_0204, 0xBEEF);
-        assert_eq!(bus.read16(0x0400_0204), 0xBEEF);
+        assert_eq!(bus.read16(0x0400_0204), 0xBEEF & 0x5FFF);
     }
 
     #[test]
@@ -1496,7 +1507,7 @@ mod tests {
     }
 
     // =========================================================================
-    // WAITCNT + Dynamic Bus Timing Tests (RED phase for #2394)
+    // WAITCNT + Dynamic Bus Timing Tests (#2394)
     // =========================================================================
 
     #[test]
@@ -1593,11 +1604,14 @@ mod tests {
     fn waitcnt_read_back_returns_written_value() {
         let mut bus = GbaBus::new();
         // WAITCNT is readable — write a value and read it back.
-        // Bits 13, 15 are unused and should read as 0.
-        bus.write16(0x0400_0204, 0x4F1F); // bits 14=prefetch, rest = various
+        // Bits 13 and 15 are unused and should read as 0.
+        bus.write16(0x0400_0204, 0xEF1F); // set bits 13, 15 (unused) + valid bits
         let readback = bus.read16(0x0400_0204);
-        // Mask writable bits (0-12, 14) = 0x5FFF
-        assert_eq!(readback & 0x5FFF, 0x4F1F & 0x5FFF);
+        // Verify unused bits 13 and 15 are cleared on read
+        assert_eq!(readback & (1 << 13), 0, "bit 13 should read as 0");
+        assert_eq!(readback & (1 << 15), 0, "bit 15 should read as 0");
+        // Verify writable bits are preserved (mask 0x5FFF = bits 0-12, 14)
+        assert_eq!(readback, 0xEF1F & 0x5FFF);
     }
 
     #[test]

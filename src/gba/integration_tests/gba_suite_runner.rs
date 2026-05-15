@@ -436,7 +436,7 @@ fn is_bios_exception_vector(pc: u32) -> bool {
 // We enter via ARM ALU (item 0) to cover all 5 ARM pages, return to menu,
 // navigate DOWN×3 to THUMB ALU (item 3), then cover all 3 THUMB pages.
 
-/// Total test pages: 5 ARM (Test0–Test4) + 3 THUMB (_test0–_test2).
+/// Total test pages validated. THUMB pages temporarily skipped (#2397).
 pub const ARMWRESTLER_TEST_PAGE_COUNT: usize = 5;
 
 /// Button bitmask for A (NES-convention bit 0).
@@ -452,8 +452,8 @@ const BTN_DOWN: u8 = 0x20;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArmWrestlerResult {
     /// CRC32 of the framebuffer after each test page renders.
-    /// Currently indices 0–4 (ARM pages only). THUMB pages are temporarily
-    /// skipped due to a menu navigation timing issue with N16=4.
+    /// Currently indices 0–4 (ARM pages only). THUMB pages temporarily
+    /// skipped due to a menu navigation timing issue with N16=4 (#2397).
     pub page_crcs: Vec<u32>,
     /// Total cycles consumed.
     pub cycles: u64,
@@ -462,7 +462,8 @@ pub struct ArmWrestlerResult {
 /// Run armwrestler-gba-fixed.gba, navigating through the ARM test pages.
 ///
 /// Returns one CRC per test page (5 ARM pages).
-/// THUMB pages are temporarily skipped due to a menu navigation timing issue.
+/// THUMB pages are temporarily skipped due to a menu navigation timing
+/// issue (#2397).
 pub fn run_armwrestler() -> ArmWrestlerResult {
     let rom_path = Suite::ArmWrestler.rom_path();
 
@@ -610,8 +611,7 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
     // NOTE: THUMB test navigation is currently broken due to a pre-existing
     // emulation timing issue exposed by correct WAITCNT defaults (N16=4).
     // The armwrestler ROM's menu cursor cannot advance past item 2 with the
-    // correct access timing. This will be fixed in a follow-up issue once
-    // PPU/timer timing is more accurate.
+    // correct access timing. Tracked in #2397.
     // For now, only the 5 ARM pages are validated.
 
     ArmWrestlerResult { page_crcs, cycles }

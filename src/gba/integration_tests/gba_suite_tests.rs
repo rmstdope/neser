@@ -263,8 +263,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("armwrestler_page3"), Some(&0x76CE_D72B));
     assert_eq!(approvals.get("armwrestler_page4"), Some(&0x6795_E0F8));
     // NOTE: THUMB pages (5-7) temporarily removed — the armwrestler ROM's
-    // menu cursor cannot advance past item 2 with correct N16=4 timing.
-    // See follow-up issue for fix.
+    // menu cursor cannot advance past item 2 with correct N16=4 timing (#2397).
 
     // mgba-emu/suite keys
     assert_eq!(approvals.get("mgba_memory"), Some(&0x2298_4983));
