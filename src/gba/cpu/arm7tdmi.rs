@@ -249,7 +249,7 @@ impl Arm7tdmi {
                 self.prefetch_thumb[1] = self.prefetch_thumb[2];
                 self.prefetch_thumb[2] = bus.read16(exec_pc.wrapping_add(6));
             }
-            outcome.cycles as u32
+            outcome.resolve_cycles(bus.s_cycles(exec_pc), bus.n_cycles(exec_pc))
         } else {
             // PC during ARM execution should read as exec_pc + 8.
             self.regs.r[15] = exec_pc.wrapping_add(8);
@@ -283,7 +283,7 @@ impl Arm7tdmi {
                 self.prefetch_arm[1] = self.prefetch_arm[2];
                 self.prefetch_arm[2] = bus.read32(exec_pc.wrapping_add(12));
             }
-            outcome.cycles as u32
+            outcome.resolve_cycles(bus.s_cycles(exec_pc), bus.n_cycles(exec_pc))
         };
 
         self.cycles = self.cycles.wrapping_add(cycles as u64);
@@ -1453,5 +1453,83 @@ mod tests {
         );
         // PC should advance past the SWI (exec_pc + 4 for ARM).
         assert_eq!(cpu.regs.r[15], 0x04, "PC should advance past the SWI");
+    }
+
+    // -----------------------------------------------------------------------
+    // step() cycle resolution via Bus timing
+    // -----------------------------------------------------------------------
+
+    /// A custom bus with configurable access costs, used to verify that
+    /// step() resolves S/N/I counts through the bus timing methods.
+    struct SlowBus {
+        inner: RamBus,
+        s_cost: u32,
+        n_cost: u32,
+    }
+
+    impl SlowBus {
+        fn new(s_cost: u32, n_cost: u32) -> Self {
+            Self {
+                inner: RamBus::new(0x1000),
+                s_cost,
+                n_cost,
+            }
+        }
+    }
+
+    impl Bus for SlowBus {
+        fn read32(&mut self, addr: u32) -> u32 {
+            self.inner.read32(addr)
+        }
+        fn read16(&mut self, addr: u32) -> u16 {
+            self.inner.read16(addr)
+        }
+        fn read8(&mut self, addr: u32) -> u8 {
+            self.inner.read8(addr)
+        }
+        fn write32(&mut self, addr: u32, value: u32) {
+            self.inner.write32(addr, value);
+        }
+        fn write16(&mut self, addr: u32, value: u16) {
+            self.inner.write16(addr, value);
+        }
+        fn write8(&mut self, addr: u32, value: u8) {
+            self.inner.write8(addr, value);
+        }
+        fn n_cycles(&self, _addr: u32) -> u32 {
+            self.n_cost
+        }
+        fn s_cycles(&self, _addr: u32) -> u32 {
+            self.s_cost
+        }
+    }
+
+    /// With a RamBus (all costs = 1), a MOV immediate (1S) should cost 1 cycle.
+    /// With a SlowBus (S=3, N=5), the same MOV should cost 3 cycles.
+    #[test]
+    fn step_resolves_sni_via_bus_timing() {
+        // MOV R0, #42 in ARM (data processing, 1S)
+        let mov_instr: u32 = 0xE3A0_002A;
+
+        // Fast bus: S=1, N=1 → total = 1*1 = 1
+        let mut cpu = Arm7tdmi::new();
+        let mut fast_bus = RamBus::new(0x1000);
+        fast_bus.write_word(0x00, mov_instr);
+        cpu.regs.r[15] = 0x00;
+        cpu.prefetch_valid = false;
+        let fast_cycles = cpu.step(&mut fast_bus);
+        assert_eq!(fast_cycles, 1, "MOV with RamBus (S=1) should cost 1");
+
+        // Slow bus: S=3, N=5 → total = 1*3 = 3
+        let mut cpu = Arm7tdmi::new();
+        let mut slow_bus = SlowBus::new(3, 5);
+        slow_bus.inner.write_word(0x00, mov_instr);
+        cpu.regs.r[15] = 0x00;
+        cpu.prefetch_valid = false;
+        let slow_cycles = cpu.step(&mut slow_bus);
+        assert_eq!(
+            slow_cycles, 3,
+            "MOV with SlowBus (S=3) should cost 3, but step() doesn't use bus timing yet"
+        );
     }
 }

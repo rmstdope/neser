@@ -383,7 +383,7 @@ impl GbaBus {
     }
 
     /// Return non-sequential access cycle count for `addr` and access width.
-    pub fn n_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+    pub fn n_cycles_width(&self, addr: u32, width: WidthClass) -> u32 {
         let i = width.idx();
         match (addr >> 24) & 0xF {
             0x0 => wait_states::BIOS[i],
@@ -400,12 +400,12 @@ impl GbaBus {
     }
 
     /// Return sequential access cycle count for `addr` and access width.
-    pub fn s_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+    pub fn s_cycles_width(&self, addr: u32, width: WidthClass) -> u32 {
         let i = width.idx();
         match (addr >> 24) & 0xF {
             0x2 => wait_states::EWRAM_S[i],
             0x8..=0xD => wait_states::ROM_S[i],
-            _ => self.n_cycles(addr, width),
+            _ => self.n_cycles_width(addr, width),
         }
     }
 
@@ -804,6 +804,14 @@ impl Bus for GbaBus {
             self.run_pending_dma();
         }
     }
+
+    fn n_cycles(&self, addr: u32) -> u32 {
+        self.n_cycles_width(addr, WidthClass::HalfwordOrByte)
+    }
+
+    fn s_cycles(&self, addr: u32) -> u32 {
+        self.s_cycles_width(addr, WidthClass::HalfwordOrByte)
+    }
 }
 
 /// DMA transfers use the bus' standard read/write paths so that DMA
@@ -983,13 +991,25 @@ mod tests {
     }
 
     #[test]
-    fn n_and_s_cycles_match_gbatek_defaults() {
+    fn n_and_s_cycles_width_match_gbatek_defaults() {
         let bus = GbaBus::new();
-        assert_eq!(bus.n_cycles(0x0300_0000, WidthClass::HalfwordOrByte), 1);
-        assert_eq!(bus.n_cycles(0x0200_0000, WidthClass::HalfwordOrByte), 3);
-        assert_eq!(bus.n_cycles(0x0200_0000, WidthClass::Word), 6);
-        assert_eq!(bus.n_cycles(0x0800_0000, WidthClass::HalfwordOrByte), 5);
-        assert_eq!(bus.s_cycles(0x0800_0000, WidthClass::HalfwordOrByte), 3);
+        assert_eq!(
+            bus.n_cycles_width(0x0300_0000, WidthClass::HalfwordOrByte),
+            1
+        );
+        assert_eq!(
+            bus.n_cycles_width(0x0200_0000, WidthClass::HalfwordOrByte),
+            3
+        );
+        assert_eq!(bus.n_cycles_width(0x0200_0000, WidthClass::Word), 6);
+        assert_eq!(
+            bus.n_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
+            5
+        );
+        assert_eq!(
+            bus.s_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
+            3
+        );
     }
 
     #[test]

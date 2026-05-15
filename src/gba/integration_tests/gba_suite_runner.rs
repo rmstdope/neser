@@ -4,7 +4,7 @@ use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use std::path::PathBuf;
 
-const MAX_CYCLES: u64 = 120_000_000;
+const MAX_CYCLES: u64 = 480_000_000;
 const IDLE_PROBE_STABLE_PC_THRESHOLD: u32 = 1;
 // The suite ends in `idle: b idle` (ARM `b .`, opcode 0xEAFFFFFE).
 const ARM_BRANCH_SELF_OPCODE: u32 = 0xEAFF_FFFE;
@@ -491,124 +491,172 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
     // edge-detection (XOR with previous state) requires a clean release
     // between successive presses.
     //
-    // Frame schedule:
-    //   ARM tests (enter from menu item 0, chain Test0–Test4):
-    //     Frame 2: START (menu → Test0)
-    //     Frame 4: capture[0], START (→ Test1)
-    //     Frame 6: capture[1], START (→ Test2)
-    //     Frame 8: capture[2], START (→ Test3)
-    //     Frame 10: capture[3], START (→ Test4)
-    //     Frame 12: capture[4], START (→ menu, TESTNUM wraps)
-    //   Navigate to THUMB ALU (menu item 3 via DOWN×3):
-    //     Frame 14: DOWN (CURSEL 0→1)
-    //     Frame 16: DOWN (CURSEL 1→2)
-    //     Frame 18: DOWN (CURSEL 2→3)
-    //   THUMB tests (enter from menu item 3, chain _test0–_test2):
-    //     Frame 20: START (menu → _tmbmain → _test0 init)
-    //     Frame 22-23: wait (THUMB entry does extra VSync before rendering)
-    //     Frame 24: capture[5], START (→ _test1)
-    //     Frame 26: capture[6], START (→ _test2)
-    //     Frame 28: capture[7] → done
+    // Instead of hard-coding frame numbers (fragile under timing changes),
+    // we use a "wait until screen CRC changes" approach: press a button,
+    // then keep running frames until the screen content changes from
+    // what it was before the press.
 
-    let mut frame_count: u32 = 0;
     let mut cycles: u64 = 0;
     let mut page_crcs: Vec<u32> = Vec::new();
-    let mut button_state: u8 = 0;
-    let max_frames: u32 = 35;
 
-    // Advance to first VBlank (frame 0 is the initial partial frame)
-    assert!(
-        run_until_frame_ready(&mut gba, &mut cycles),
-        "armwrestler: CPU halted or timed out before first frame"
-    );
-    gba.clear_ready_to_render();
-    frame_count += 1;
-
-    while frame_count < max_frames && page_crcs.len() < ARMWRESTLER_TEST_PAGE_COUNT {
-        // Apply button state for this frame
-        gba.set_joypad_button_states(0, button_state);
-
-        // Run to next VBlank
+    // Boot: run frames until the menu is fully rendered and stable.
+    // The ROM takes some frames to initialize; during this time the screen is black.
+    // Wait for a non-black stable screen (same CRC for 5 consecutive frames, not the
+    // blank-screen CRC).
+    let mut menu_crc = 0u32;
+    let mut stable = 0u32;
+    for _ in 0..120 {
         assert!(
             run_until_frame_ready(&mut gba, &mut cycles),
-            "armwrestler: CPU halted or timed out at frame {frame_count}"
+            "armwrestler: halted during boot"
         );
         gba.clear_ready_to_render();
-        frame_count += 1;
-
-        match frame_count {
-            // --- ARM test chain (pages 0–4) ---
-            2 => button_state = BTN_START,
-            3 => button_state = 0,
-            4 => {
-                let crc = gba.screen_crc32();
-                page_crcs.push(crc);
-                maybe_write_armwrestler_png(&gba, 0, crc);
-                button_state = BTN_START;
+        let crc = gba.screen_crc32();
+        if crc == menu_crc {
+            stable += 1;
+            if stable >= 5 {
+                break;
             }
-            5 => button_state = 0,
-            6 => {
-                let crc = gba.screen_crc32();
-                page_crcs.push(crc);
-                maybe_write_armwrestler_png(&gba, 1, crc);
-                button_state = BTN_START;
-            }
-            7 => button_state = 0,
-            8 => {
-                let crc = gba.screen_crc32();
-                page_crcs.push(crc);
-                maybe_write_armwrestler_png(&gba, 2, crc);
-                button_state = BTN_START;
-            }
-            9 => button_state = 0,
-            10 => {
-                let crc = gba.screen_crc32();
-                page_crcs.push(crc);
-                maybe_write_armwrestler_png(&gba, 3, crc);
-                button_state = BTN_START;
-            }
-            11 => button_state = 0,
-            12 => {
-                let crc = gba.screen_crc32();
-                page_crcs.push(crc);
-                maybe_write_armwrestler_png(&gba, 4, crc);
-                // Press START to return from Test4 to menu
-                button_state = BTN_START;
-            }
-            13 => button_state = 0,
-            // --- Navigate menu DOWN×3 to THUMB ALU (item 3) ---
-            14 => button_state = BTN_DOWN,
-            15 => button_state = 0,
-            16 => button_state = BTN_DOWN,
-            17 => button_state = 0,
-            18 => button_state = BTN_DOWN,
-            19 => button_state = 0,
-            // --- Enter THUMB tests ---
-            20 => button_state = BTN_START,
-            21 => button_state = 0,
-            // Frames 22-23: THUMB entry does an extra VSync before rendering _test0
-            24 => {
-                let crc = gba.screen_crc32();
-                page_crcs.push(crc);
-                maybe_write_armwrestler_png(&gba, 5, crc);
-                button_state = BTN_START;
-            }
-            25 => button_state = 0,
-            26 => {
-                let crc = gba.screen_crc32();
-                page_crcs.push(crc);
-                maybe_write_armwrestler_png(&gba, 6, crc);
-                button_state = BTN_START;
-            }
-            27 => button_state = 0,
-            28 => {
-                let crc = gba.screen_crc32();
-                page_crcs.push(crc);
-                maybe_write_armwrestler_png(&gba, 7, crc);
-                button_state = 0;
-            }
-            _ => {}
+        } else {
+            menu_crc = crc;
+            stable = 1;
         }
+    }
+    // The menu CRC from boot might be an intermediate state (e.g., before cursor renders).
+    // Run a few more frames to let the menu fully settle.
+    for _ in 0..10 {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "armwrestler: halted during boot settle"
+        );
+        gba.clear_ready_to_render();
+    }
+
+    // Helper: press a button and wait for screen to stabilize at a new value.
+    // Holds button for 2 frames (to ensure the ROM's VSync polling catches it),
+    // then waits for a CRC different from prev_crc that stays the same for 2 consecutive frames.
+    let press_and_wait = |gba: &mut Gba, cycles: &mut u64, button: u8, prev_crc: u32| -> u32 {
+        // Hold button for 2 frames (ensures ROM's VBlank-based input poll catches it)
+        gba.set_joypad_button_states(0, button);
+        for _ in 0..2 {
+            assert!(run_until_frame_ready(gba, cycles), "halted during press");
+            gba.clear_ready_to_render();
+        }
+        // Release
+        gba.set_joypad_button_states(0, 0);
+        // Wait for stable new screen (same CRC for 3 consecutive frames, different from prev)
+        let mut last_crc = 0u32;
+        let mut stable_count = 0u32;
+        for _ in 0..60 {
+            assert!(
+                run_until_frame_ready(gba, cycles),
+                "halted waiting for stable"
+            );
+            gba.clear_ready_to_render();
+            let crc = gba.screen_crc32();
+            if crc != prev_crc {
+                if crc == last_crc {
+                    stable_count += 1;
+                    if stable_count >= 3 {
+                        return crc;
+                    }
+                } else {
+                    stable_count = 1;
+                    last_crc = crc;
+                }
+            } else {
+                stable_count = 0;
+                last_crc = 0;
+            }
+        }
+        gba.screen_crc32()
+    };
+
+    // --- ARM test chain (pages 0–4): enter with START, advance with START ---
+
+    // Armwrestler shows a title/splash that looks identical to the interactive menu.
+    // Press START once to transition from title→menu (visual doesn't change), then
+    // the next START enters the selected test.
+    gba.set_joypad_button_states(0, BTN_START);
+    for _ in 0..2 {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "halted during title dismiss"
+        );
+        gba.clear_ready_to_render();
+    }
+    gba.set_joypad_button_states(0, 0);
+    // Wait a few frames for the menu to become interactive
+    for _ in 0..5 {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "halted after title dismiss"
+        );
+        gba.clear_ready_to_render();
+    }
+    let mut current_crc = gba.screen_crc32();
+
+    // Enter ARM ALU (menu item 0 is already selected)
+    current_crc = press_and_wait(&mut gba, &mut cycles, BTN_START, current_crc);
+    page_crcs.push(current_crc);
+    maybe_write_armwrestler_png(&gba, 0, current_crc);
+
+    for page_idx in 1..5 {
+        current_crc = press_and_wait(&mut gba, &mut cycles, BTN_START, current_crc);
+        page_crcs.push(current_crc);
+        maybe_write_armwrestler_png(&gba, page_idx, current_crc);
+    }
+
+    // After page 4, press START to return to menu.
+    // Use press_and_wait to detect when we're back at the menu screen.
+    let returned_crc = press_and_wait(&mut gba, &mut cycles, BTN_START, current_crc);
+    let _menu_after_arm = returned_crc;
+
+    // Additional settling time: the ROM needs extra frames to fully reset its
+    // internal state after the test chain completes. Without this, subsequent
+    // button presses are ignored.
+    for _ in 0..10 {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "halted during post-ARM settle"
+        );
+        gba.clear_ready_to_render();
+    }
+
+    // --- Navigate menu DOWN×3 to THUMB ALU (item 3) ---
+    // Cursor is at item 0 after returning from ARM ALU chain.
+    // Need 3 DOWNs to reach item 3. Use 2-frame hold + 4-frame release gap
+    // to ensure the ROM's edge detection registers each press separately.
+    for _ in 0..3 {
+        gba.set_joypad_button_states(0, BTN_DOWN);
+        for _ in 0..2 {
+            assert!(
+                run_until_frame_ready(&mut gba, &mut cycles),
+                "halted during DOWN"
+            );
+            gba.clear_ready_to_render();
+        }
+        gba.set_joypad_button_states(0, 0);
+        for _ in 0..4 {
+            assert!(
+                run_until_frame_ready(&mut gba, &mut cycles),
+                "halted after DOWN"
+            );
+            gba.clear_ready_to_render();
+        }
+    }
+    // Update current_crc to whatever the menu looks like now
+    current_crc = gba.screen_crc32();
+
+    // --- Enter THUMB tests with START ---
+    current_crc = press_and_wait(&mut gba, &mut cycles, BTN_START, current_crc);
+    page_crcs.push(current_crc);
+    maybe_write_armwrestler_png(&gba, 5, current_crc);
+
+    for page_idx in 6..8 {
+        current_crc = press_and_wait(&mut gba, &mut cycles, BTN_START, current_crc);
+        page_crcs.push(current_crc);
+        maybe_write_armwrestler_png(&gba, page_idx, current_crc);
     }
 
     ArmWrestlerResult { page_crcs, cycles }

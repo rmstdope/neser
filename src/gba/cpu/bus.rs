@@ -28,6 +28,12 @@ pub trait Bus {
 
     /// Write a single byte.
     fn write8(&mut self, addr: u32, value: u8);
+
+    /// Non-sequential access cycle cost for the given address.
+    fn n_cycles(&self, addr: u32) -> u32;
+
+    /// Sequential access cycle cost for the given address.
+    fn s_cycles(&self, addr: u32) -> u32;
 }
 
 /// Flat, little-endian RAM-only bus used in unit tests and as a stub for the
@@ -115,6 +121,14 @@ impl Bus for RamBus {
         let i = self.idx(addr);
         self.bytes[i] = value;
     }
+
+    fn n_cycles(&self, _addr: u32) -> u32 {
+        1
+    }
+
+    fn s_cycles(&self, _addr: u32) -> u32 {
+        1
+    }
 }
 
 #[cfg(test)]
@@ -154,5 +168,19 @@ mod tests {
     #[should_panic(expected = "RamBus size must be greater than zero")]
     fn ram_bus_rejects_zero_size() {
         let _ = RamBus::new(0);
+    }
+
+    #[test]
+    fn ram_bus_n_cycles_returns_1() {
+        let bus = RamBus::new(0x100);
+        assert_eq!(bus.n_cycles(0x0000_0000), 1);
+        assert_eq!(bus.n_cycles(0x0800_0000), 1);
+    }
+
+    #[test]
+    fn ram_bus_s_cycles_returns_1() {
+        let bus = RamBus::new(0x100);
+        assert_eq!(bus.s_cycles(0x0000_0000), 1);
+        assert_eq!(bus.s_cycles(0x0800_0000), 1);
     }
 }

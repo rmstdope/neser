@@ -80,7 +80,9 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
                 exec_format8(regs, bus, instr)
             } else {
                 ExecOutcome {
-                    cycles: 1,
+                    seq: 1,
+                    nonseq: 0,
+                    internal: 0,
                     branched: false,
                     swi: false,
                     undefined: false,
@@ -108,7 +110,9 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
                 ExecOutcome::undefined()
             } else {
                 ExecOutcome {
-                    cycles: 1,
+                    seq: 1,
+                    nonseq: 0,
+                    internal: 0,
                     branched: false,
                     swi: false,
                     undefined: false,
@@ -126,7 +130,9 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
         // Format 19: 1111x — Long branch with link
         0b11110 | 0b11111 => exec_format19(regs, instr),
         _ => ExecOutcome {
-            cycles: 1,
+            seq: 1,
+            nonseq: 0,
+            internal: 0,
             branched: false,
             swi: false,
             undefined: false,
@@ -181,7 +187,9 @@ fn exec_format1(regs: &mut Registers, instr: u16) -> ExecOutcome {
     regs.r[rd] = result;
     regs.set_nzcv(result & 0x8000_0000 != 0, result == 0, carry, regs.v_flag());
     ExecOutcome {
-        cycles: 1,
+        seq: 1,
+        nonseq: 0,
+        internal: 0,
         branched: false,
         swi: false,
         undefined: false,
@@ -213,7 +221,9 @@ fn exec_format2(regs: &mut Registers, instr: u16) -> ExecOutcome {
     regs.r[rd] = result;
     regs.set_nzcv(result & 0x8000_0000 != 0, result == 0, carry, overflow);
     ExecOutcome {
-        cycles: 1,
+        seq: 1,
+        nonseq: 0,
+        internal: 0,
         branched: false,
         swi: false,
         undefined: false,
@@ -255,7 +265,9 @@ fn exec_format3(regs: &mut Registers, instr: u16) -> ExecOutcome {
         _ => unreachable!(),
     }
     ExecOutcome {
-        cycles: 1,
+        seq: 1,
+        nonseq: 0,
+        internal: 0,
         branched: false,
         swi: false,
         undefined: false,
@@ -406,8 +418,21 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
         regs.r[rd] = result;
     }
     regs.set_nzcv(result & 0x8000_0000 != 0, result == 0, carry, overflow);
+
+    // GBATek: 1S+1I for shift-by-register (opcodes 2-4,7),
+    //         1S+mI for MUL (opcode 0xD), else 1S.
+    let internal = match op {
+        0x2 | 0x3 | 0x4 | 0x7 => 1, // register shifts: +1I
+        0xD => {
+            let (cycles, _) = super::arm::multiply_cycles_and_full(b, true);
+            cycles - 1 // subtract the 1S already counted
+        }
+        _ => 0,
+    };
     ExecOutcome {
-        cycles: 1,
+        seq: 1,
+        nonseq: 0,
+        internal,
         branched: false,
         swi: false,
         undefined: false,
@@ -433,7 +458,9 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
             if rd == 15 {
                 regs.r[15] &= !1;
                 return ExecOutcome {
-                    cycles: 3,
+                    seq: 2,
+                    nonseq: 1,
+                    internal: 0,
                     branched: true,
                     swi: false,
                     undefined: false,
@@ -451,7 +478,9 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
             if rd == 15 {
                 regs.r[15] &= !1;
                 return ExecOutcome {
-                    cycles: 3,
+                    seq: 2,
+                    nonseq: 1,
+                    internal: 0,
                     branched: true,
                     swi: false,
                     undefined: false,
@@ -468,7 +497,9 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
                 regs.set_thumb(false);
             }
             return ExecOutcome {
-                cycles: 3,
+                seq: 2,
+                nonseq: 1,
+                internal: 0,
                 branched: true,
                 swi: false,
                 undefined: false,
@@ -477,7 +508,9 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
         _ => unreachable!(),
     }
     ExecOutcome {
-        cycles: 1,
+        seq: 1,
+        nonseq: 0,
+        internal: 0,
         branched: false,
         swi: false,
         undefined: false,
@@ -496,7 +529,9 @@ fn exec_format6<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     let addr = pc.wrapping_add(imm << 2);
     regs.r[rd] = bus.read32(addr);
     ExecOutcome {
-        cycles: 3,
+        seq: 1,
+        nonseq: 1,
+        internal: 1,
         branched: false,
         swi: false,
         undefined: false,
@@ -535,7 +570,9 @@ fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         }
     }
     ExecOutcome {
-        cycles: if l { 3 } else { 2 },
+        seq: if l { 1 } else { 0 },
+        nonseq: if l { 1 } else { 2 },
+        internal: if l { 1 } else { 0 },
         branched: false,
         swi: false,
         undefined: false,
@@ -563,7 +600,9 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         // STRH
         bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
         return ExecOutcome {
-            cycles: 2,
+            seq: 0,
+            nonseq: 2,
+            internal: 0,
             branched: false,
             swi: false,
             undefined: false,
@@ -592,7 +631,9 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         _ => unreachable!(),
     };
     ExecOutcome {
-        cycles: 3,
+        seq: 1,
+        nonseq: 1,
+        internal: 1,
         branched: false,
         swi: false,
         undefined: false,
@@ -631,7 +672,9 @@ fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
     ExecOutcome {
-        cycles: if l { 3 } else { 2 },
+        seq: if l { 1 } else { 0 },
+        nonseq: if l { 1 } else { 2 },
+        internal: if l { 1 } else { 0 },
         branched: false,
         swi: false,
         undefined: false,
@@ -661,7 +704,9 @@ fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
     }
     ExecOutcome {
-        cycles: if l { 3 } else { 2 },
+        seq: if l { 1 } else { 0 },
+        nonseq: if l { 1 } else { 2 },
+        internal: if l { 1 } else { 0 },
         branched: false,
         swi: false,
         undefined: false,
@@ -688,7 +733,9 @@ fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
     ExecOutcome {
-        cycles: if l { 3 } else { 2 },
+        seq: if l { 1 } else { 0 },
+        nonseq: if l { 1 } else { 2 },
+        internal: if l { 1 } else { 0 },
         branched: false,
         swi: false,
         undefined: false,
@@ -711,7 +758,9 @@ fn exec_format12(regs: &mut Registers, instr: u16) -> ExecOutcome {
     };
     regs.r[rd] = base.wrapping_add(offset);
     ExecOutcome {
-        cycles: 1,
+        seq: 1,
+        nonseq: 0,
+        internal: 0,
         branched: false,
         swi: false,
         undefined: false,
@@ -732,7 +781,9 @@ fn exec_format13(regs: &mut Registers, instr: u16) -> ExecOutcome {
         regs.r[13] = regs.r[13].wrapping_add(offset);
     }
     ExecOutcome {
-        cycles: 1,
+        seq: 1,
+        nonseq: 0,
+        internal: 0,
         branched: false,
         swi: false,
         undefined: false,
@@ -785,11 +836,37 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         regs.r[13] = sp;
     }
 
-    ExecOutcome {
-        cycles: 3,
-        branched,
-        swi: false,
-        undefined: false,
+    let n = count as u8;
+    if branched {
+        // POP {PC}: (n+1)S + 2N + 1I
+        ExecOutcome {
+            seq: n + 1,
+            nonseq: 2,
+            internal: 1,
+            branched: true,
+            swi: false,
+            undefined: false,
+        }
+    } else if load {
+        // POP: nS + 1N + 1I
+        ExecOutcome {
+            seq: n,
+            nonseq: 1,
+            internal: 1,
+            branched: false,
+            swi: false,
+            undefined: false,
+        }
+    } else {
+        // PUSH: (n-1)S + 2N
+        ExecOutcome {
+            seq: n.saturating_sub(1),
+            nonseq: 2,
+            internal: 0,
+            branched: false,
+            swi: false,
+            undefined: false,
+        }
     }
 }
 
@@ -852,15 +929,37 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     // Writeback uses original base, not potentially modified regs.r[rb]
     regs.r[rb] = base.wrapping_add(count * 4);
 
-    ExecOutcome {
-        cycles: if l {
-            (count + 2) as u8
-        } else {
-            (count + 1) as u8
-        },
-        branched,
-        swi: false,
-        undefined: false,
+    let n = count as u8;
+    if branched {
+        // LDMIA with PC: (n+1)S + 2N + 1I
+        ExecOutcome {
+            seq: n + 1,
+            nonseq: 2,
+            internal: 1,
+            branched: true,
+            swi: false,
+            undefined: false,
+        }
+    } else if l {
+        // LDMIA: nS + 1N + 1I
+        ExecOutcome {
+            seq: n,
+            nonseq: 1,
+            internal: 1,
+            branched: false,
+            swi: false,
+            undefined: false,
+        }
+    } else {
+        // STMIA: (n-1)S + 2N
+        ExecOutcome {
+            seq: n.saturating_sub(1),
+            nonseq: 2,
+            internal: 0,
+            branched: false,
+            swi: false,
+            undefined: false,
+        }
     }
 }
 
@@ -871,9 +970,11 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
 fn exec_format16(regs: &mut Registers, instr: u16) -> ExecOutcome {
     let cond = ((instr >> 8) & 0xF) as u8;
     if cond == 0xF {
-        // SWI in Thumb is encoded here (1101_1111_xxxxxxxx).
+        // SWI in Thumb: 2S + 1N
         return ExecOutcome {
-            cycles: 3,
+            seq: 2,
+            nonseq: 1,
+            internal: 0,
             branched: true,
             swi: true,
             undefined: false,
@@ -881,7 +982,9 @@ fn exec_format16(regs: &mut Registers, instr: u16) -> ExecOutcome {
     }
     if !condition_met(regs.cpsr, cond) {
         return ExecOutcome {
-            cycles: 1,
+            seq: 1,
+            nonseq: 0,
+            internal: 0,
             branched: false,
             swi: false,
             undefined: false,
@@ -890,7 +993,9 @@ fn exec_format16(regs: &mut Registers, instr: u16) -> ExecOutcome {
     let offset = ((instr & 0xFF) as i8) as i32 * 2;
     regs.r[15] = (regs.r[15] as i32).wrapping_add(offset) as u32;
     ExecOutcome {
-        cycles: 3,
+        seq: 2,
+        nonseq: 1,
+        internal: 0,
         branched: true,
         swi: false,
         undefined: false,
@@ -907,7 +1012,9 @@ fn exec_format18(regs: &mut Registers, instr: u16) -> ExecOutcome {
     let signed = ((offset11 << 21) >> 21) << 1;
     regs.r[15] = (regs.r[15] as i32).wrapping_add(signed) as u32;
     ExecOutcome {
-        cycles: 3,
+        seq: 2,
+        nonseq: 1,
+        internal: 0,
         branched: true,
         swi: false,
         undefined: false,
@@ -933,7 +1040,9 @@ fn exec_format19(regs: &mut Registers, instr: u16) -> ExecOutcome {
         let offset = ((sign_ext | offset11) << 12) as i32;
         regs.r[14] = (regs.r[15] as i32).wrapping_add(offset) as u32;
         return ExecOutcome {
-            cycles: 1,
+            seq: 1,
+            nonseq: 0,
+            internal: 0,
             branched: false,
             swi: false,
             undefined: false,
@@ -946,7 +1055,9 @@ fn exec_format19(regs: &mut Registers, instr: u16) -> ExecOutcome {
     regs.r[14] = old_pc | 1; // Set bit 0 to indicate return to Thumb
     regs.r[15] = target & !1;
     ExecOutcome {
-        cycles: 4,
+        seq: 3,
+        nonseq: 1,
+        internal: 0,
         branched: true,
         swi: false,
         undefined: false,
@@ -1539,5 +1650,52 @@ mod tests {
             !outcome.undefined,
             "Unconditional B should NOT trigger undefined, got: {outcome:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // S/N/I cycle decomposition tests (GBATek Thumb timing)
+    // -----------------------------------------------------------------------
+
+    /// Thumb Format 1 (shift immediate): 1S per GBATek.
+    #[test]
+    fn thumb_format1_sni_is_1s() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0xFF;
+        // LSL R1, R0, #2
+        let instr: u16 = 0x0081; // 00000_00010_000_001
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 1, "Thumb shift should be 1S");
+        assert_eq!(outcome.nonseq, 0);
+        assert_eq!(outcome.internal, 0);
+    }
+
+    /// Thumb Format 6 (PC-relative load): 1S + 1N + 1I per GBATek.
+    #[test]
+    fn thumb_pc_relative_load_sni_is_1s_1n_1i() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        regs.r[15] = 0x100;
+        bus.write32(0x100, 0xDEAD_BEEF);
+        // LDR R0, [PC, #0]
+        let instr: u16 = 0x4800; // 01001_000_00000000
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 1, "PC-relative LDR should be 1S");
+        assert_eq!(outcome.nonseq, 1, "PC-relative LDR should have 1N");
+        assert_eq!(outcome.internal, 1, "PC-relative LDR should have 1I");
+    }
+
+    /// Thumb unconditional branch: 2S + 1N per GBATek.
+    #[test]
+    fn thumb_unconditional_branch_sni_is_2s_1n() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        regs.r[15] = 0x100;
+        // B #8 (offset=4, <<1 = 8)
+        let instr: u16 = 0b11100_00000000100;
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert_eq!(outcome.seq, 2, "Thumb branch should be 2S");
+        assert_eq!(outcome.nonseq, 1, "Thumb branch should have 1N");
+        assert_eq!(outcome.internal, 0);
     }
 }
