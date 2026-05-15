@@ -51,7 +51,7 @@ pub struct ExecOutcome {
 
 impl ExecOutcome {
     /// Non-branching instruction with explicit S/N/I cycle counts.
-    fn sni(seq: u8, nonseq: u8, internal: u8) -> Self {
+    pub(super) fn sni(seq: u8, nonseq: u8, internal: u8) -> Self {
         Self {
             seq,
             nonseq,
@@ -62,7 +62,7 @@ impl ExecOutcome {
         }
     }
     /// Branching instruction with explicit S/N/I cycle counts.
-    fn branch_sni(seq: u8, nonseq: u8, internal: u8) -> Self {
+    pub(super) fn branch_sni(seq: u8, nonseq: u8, internal: u8) -> Self {
         Self {
             seq,
             nonseq,
@@ -73,7 +73,7 @@ impl ExecOutcome {
         }
     }
     /// SWI instruction with explicit S/N/I cycle counts.
-    fn swi_sni(seq: u8, nonseq: u8, internal: u8) -> Self {
+    pub(super) fn swi_sni(seq: u8, nonseq: u8, internal: u8) -> Self {
         Self {
             seq,
             nonseq,

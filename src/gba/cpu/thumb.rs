@@ -79,14 +79,7 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
                 // Format 8: Sign-extended load/store (bit 9 = 1)
                 exec_format8(regs, bus, instr)
             } else {
-                ExecOutcome {
-                    seq: 1,
-                    nonseq: 0,
-                    internal: 0,
-                    branched: false,
-                    swi: false,
-                    undefined: false,
-                }
+                ExecOutcome::sni(1, 0, 0)
             }
         }
         // Format 9: 011xx — Immediate offset load/store
@@ -109,14 +102,7 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
                 // BKPT (ARMv5TE): undefined on ARMv4T.
                 ExecOutcome::undefined()
             } else {
-                ExecOutcome {
-                    seq: 1,
-                    nonseq: 0,
-                    internal: 0,
-                    branched: false,
-                    swi: false,
-                    undefined: false,
-                }
+                ExecOutcome::sni(1, 0, 0)
             }
         }
         // Format 15: 1100x — Multiple load/store
@@ -129,14 +115,7 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOut
         0b11101 => ExecOutcome::undefined(),
         // Format 19: 1111x — Long branch with link
         0b11110 | 0b11111 => exec_format19(regs, instr),
-        _ => ExecOutcome {
-            seq: 1,
-            nonseq: 0,
-            internal: 0,
-            branched: false,
-            swi: false,
-            undefined: false,
-        },
+        _ => ExecOutcome::sni(1, 0, 0),
     }
 }
 
@@ -186,14 +165,7 @@ fn exec_format1(regs: &mut Registers, instr: u16) -> ExecOutcome {
 
     regs.r[rd] = result;
     regs.set_nzcv(result & 0x8000_0000 != 0, result == 0, carry, regs.v_flag());
-    ExecOutcome {
-        seq: 1,
-        nonseq: 0,
-        internal: 0,
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::sni(1, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -220,14 +192,7 @@ fn exec_format2(regs: &mut Registers, instr: u16) -> ExecOutcome {
     };
     regs.r[rd] = result;
     regs.set_nzcv(result & 0x8000_0000 != 0, result == 0, carry, overflow);
-    ExecOutcome {
-        seq: 1,
-        nonseq: 0,
-        internal: 0,
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::sni(1, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -264,14 +229,7 @@ fn exec_format3(regs: &mut Registers, instr: u16) -> ExecOutcome {
         }
         _ => unreachable!(),
     }
-    ExecOutcome {
-        seq: 1,
-        nonseq: 0,
-        internal: 0,
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::sni(1, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -429,14 +387,7 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
         }
         _ => 0,
     };
-    ExecOutcome {
-        seq: 1,
-        nonseq: 0,
-        internal,
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::sni(1, 0, internal)
 }
 
 // ---------------------------------------------------------------------------
@@ -457,14 +408,7 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
             regs.r[rd] = regs.r[rd].wrapping_add(src_value);
             if rd == 15 {
                 regs.r[15] &= !1;
-                return ExecOutcome {
-                    seq: 2,
-                    nonseq: 1,
-                    internal: 0,
-                    branched: true,
-                    swi: false,
-                    undefined: false,
-                };
+                return ExecOutcome::branch_sni(2, 1, 0);
             }
         }
         0b01 => {
@@ -477,14 +421,7 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
             regs.r[rd] = src_value;
             if rd == 15 {
                 regs.r[15] &= !1;
-                return ExecOutcome {
-                    seq: 2,
-                    nonseq: 1,
-                    internal: 0,
-                    branched: true,
-                    swi: false,
-                    undefined: false,
-                };
+                return ExecOutcome::branch_sni(2, 1, 0);
             }
         }
         0b11 => {
@@ -496,25 +433,11 @@ fn exec_format5(regs: &mut Registers, instr: u16) -> ExecOutcome {
                 regs.r[15] = src_value & !0x3;
                 regs.set_thumb(false);
             }
-            return ExecOutcome {
-                seq: 2,
-                nonseq: 1,
-                internal: 0,
-                branched: true,
-                swi: false,
-                undefined: false,
-            };
+            return ExecOutcome::branch_sni(2, 1, 0);
         }
         _ => unreachable!(),
     }
-    ExecOutcome {
-        seq: 1,
-        nonseq: 0,
-        internal: 0,
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::sni(1, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -528,14 +451,7 @@ fn exec_format6<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     let pc = regs.r[15] & !0x2;
     let addr = pc.wrapping_add(imm << 2);
     regs.r[rd] = bus.read32(addr);
-    ExecOutcome {
-        seq: 1,
-        nonseq: 1,
-        internal: 1,
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::sni(1, 1, 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -569,14 +485,7 @@ fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
             bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
         }
     }
-    ExecOutcome {
-        seq: if l { 1 } else { 0 },
-        nonseq: if l { 1 } else { 2 },
-        internal: if l { 1 } else { 0 },
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    if l { ExecOutcome::sni(1, 1, 1) } else { ExecOutcome::sni(0, 2, 0) }
 }
 
 // ---------------------------------------------------------------------------
@@ -599,14 +508,7 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     if !s && !h {
         // STRH
         bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
-        return ExecOutcome {
-            seq: 0,
-            nonseq: 2,
-            internal: 0,
-            branched: false,
-            swi: false,
-            undefined: false,
-        };
+        return ExecOutcome::sni(0, 2, 0);
     }
 
     regs.r[rd] = match (s, h) {
@@ -630,14 +532,7 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         }
         _ => unreachable!(),
     };
-    ExecOutcome {
-        seq: 1,
-        nonseq: 1,
-        internal: 1,
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::sni(1, 1, 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -671,14 +566,7 @@ fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     } else {
         bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
-    ExecOutcome {
-        seq: if l { 1 } else { 0 },
-        nonseq: if l { 1 } else { 2 },
-        internal: if l { 1 } else { 0 },
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    if l { ExecOutcome::sni(1, 1, 1) } else { ExecOutcome::sni(0, 2, 0) }
 }
 
 // ---------------------------------------------------------------------------
@@ -703,14 +591,7 @@ fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     } else {
         bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
     }
-    ExecOutcome {
-        seq: if l { 1 } else { 0 },
-        nonseq: if l { 1 } else { 2 },
-        internal: if l { 1 } else { 0 },
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    if l { ExecOutcome::sni(1, 1, 1) } else { ExecOutcome::sni(0, 2, 0) }
 }
 
 // ---------------------------------------------------------------------------
@@ -732,14 +613,7 @@ fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     } else {
         bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
     }
-    ExecOutcome {
-        seq: if l { 1 } else { 0 },
-        nonseq: if l { 1 } else { 2 },
-        internal: if l { 1 } else { 0 },
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    if l { ExecOutcome::sni(1, 1, 1) } else { ExecOutcome::sni(0, 2, 0) }
 }
 
 // ---------------------------------------------------------------------------
@@ -757,14 +631,7 @@ fn exec_format12(regs: &mut Registers, instr: u16) -> ExecOutcome {
         regs.r[15] & !0x2 // PC with bit 1 forced to 0
     };
     regs.r[rd] = base.wrapping_add(offset);
-    ExecOutcome {
-        seq: 1,
-        nonseq: 0,
-        internal: 0,
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::sni(1, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -780,14 +647,7 @@ fn exec_format13(regs: &mut Registers, instr: u16) -> ExecOutcome {
     } else {
         regs.r[13] = regs.r[13].wrapping_add(offset);
     }
-    ExecOutcome {
-        seq: 1,
-        nonseq: 0,
-        internal: 0,
-        branched: false,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::sni(1, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -839,34 +699,13 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     let n = count as u8;
     if branched {
         // POP {PC}: (n+1)S + 2N + 1I
-        ExecOutcome {
-            seq: n + 1,
-            nonseq: 2,
-            internal: 1,
-            branched: true,
-            swi: false,
-            undefined: false,
-        }
+        ExecOutcome::branch_sni(n + 1, 2, 1)
     } else if load {
         // POP: nS + 1N + 1I
-        ExecOutcome {
-            seq: n,
-            nonseq: 1,
-            internal: 1,
-            branched: false,
-            swi: false,
-            undefined: false,
-        }
+        ExecOutcome::sni(n, 1, 1)
     } else {
         // PUSH: (n-1)S + 2N
-        ExecOutcome {
-            seq: n.saturating_sub(1),
-            nonseq: 2,
-            internal: 0,
-            branched: false,
-            swi: false,
-            undefined: false,
-        }
+        ExecOutcome::sni(n.saturating_sub(1), 2, 0)
     }
 }
 
@@ -932,34 +771,13 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     let n = count as u8;
     if branched {
         // LDMIA with PC: (n+1)S + 2N + 1I
-        ExecOutcome {
-            seq: n + 1,
-            nonseq: 2,
-            internal: 1,
-            branched: true,
-            swi: false,
-            undefined: false,
-        }
+        ExecOutcome::branch_sni(n + 1, 2, 1)
     } else if l {
         // LDMIA: nS + 1N + 1I
-        ExecOutcome {
-            seq: n,
-            nonseq: 1,
-            internal: 1,
-            branched: false,
-            swi: false,
-            undefined: false,
-        }
+        ExecOutcome::sni(n, 1, 1)
     } else {
         // STMIA: (n-1)S + 2N
-        ExecOutcome {
-            seq: n.saturating_sub(1),
-            nonseq: 2,
-            internal: 0,
-            branched: false,
-            swi: false,
-            undefined: false,
-        }
+        ExecOutcome::sni(n.saturating_sub(1), 2, 0)
     }
 }
 
@@ -971,35 +789,14 @@ fn exec_format16(regs: &mut Registers, instr: u16) -> ExecOutcome {
     let cond = ((instr >> 8) & 0xF) as u8;
     if cond == 0xF {
         // SWI in Thumb: 2S + 1N
-        return ExecOutcome {
-            seq: 2,
-            nonseq: 1,
-            internal: 0,
-            branched: true,
-            swi: true,
-            undefined: false,
-        };
+        return ExecOutcome::swi_sni(2, 1, 0);
     }
     if !condition_met(regs.cpsr, cond) {
-        return ExecOutcome {
-            seq: 1,
-            nonseq: 0,
-            internal: 0,
-            branched: false,
-            swi: false,
-            undefined: false,
-        };
+        return ExecOutcome::sni(1, 0, 0);
     }
     let offset = ((instr & 0xFF) as i8) as i32 * 2;
     regs.r[15] = (regs.r[15] as i32).wrapping_add(offset) as u32;
-    ExecOutcome {
-        seq: 2,
-        nonseq: 1,
-        internal: 0,
-        branched: true,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::branch_sni(2, 1, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1011,14 +808,7 @@ fn exec_format18(regs: &mut Registers, instr: u16) -> ExecOutcome {
     // Sign extend 11 bits then shift left 1.
     let signed = ((offset11 << 21) >> 21) << 1;
     regs.r[15] = (regs.r[15] as i32).wrapping_add(signed) as u32;
-    ExecOutcome {
-        seq: 2,
-        nonseq: 1,
-        internal: 0,
-        branched: true,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::branch_sni(2, 1, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,14 +829,7 @@ fn exec_format19(regs: &mut Registers, instr: u16) -> ExecOutcome {
         };
         let offset = ((sign_ext | offset11) << 12) as i32;
         regs.r[14] = (regs.r[15] as i32).wrapping_add(offset) as u32;
-        return ExecOutcome {
-            seq: 1,
-            nonseq: 0,
-            internal: 0,
-            branched: false,
-            swi: false,
-            undefined: false,
-        };
+        return ExecOutcome::sni(1, 0, 0);
     }
 
     // Second instruction (H=1): PC = LR + (offset << 1); LR = old_PC | 1
@@ -1054,14 +837,7 @@ fn exec_format19(regs: &mut Registers, instr: u16) -> ExecOutcome {
     let target = regs.r[14].wrapping_add(offset11 << 1);
     regs.r[14] = old_pc | 1; // Set bit 0 to indicate return to Thumb
     regs.r[15] = target & !1;
-    ExecOutcome {
-        seq: 2,
-        nonseq: 1,
-        internal: 0,
-        branched: true,
-        swi: false,
-        undefined: false,
-    }
+    ExecOutcome::branch_sni(2, 1, 0)
 }
 
 // ---------------------------------------------------------------------------
