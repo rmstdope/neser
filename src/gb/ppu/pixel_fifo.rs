@@ -883,11 +883,17 @@ impl PixelFifoRenderer {
     ) -> bool {
         let tile_data_turning_off =
             previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        let stalled_boundary_phase = self
+            .leftmost_obj_oam_x
+            .filter(|&oam_x| {
+                (OBJ_PIXELS_PER_FETCH * 2..=OBJ_PIXELS_PER_FETCH * 2 + 1).contains(&oam_x)
+            })
+            .map(|oam_x| oam_x - OBJ_PIXELS_PER_FETCH * 2);
         tile_data_turning_off
             && self.window_active
-            && self.leftmost_obj_oam_x == Some(OBJ_PIXELS_PER_FETCH * 2)
-            && self.next_x == OBJ_PIXELS_PER_FETCH
-            && bg_phase == 0
+            && stalled_boundary_phase.is_some_and(|phase| {
+                self.next_x == OBJ_PIXELS_PER_FETCH.saturating_add(phase) && bg_phase == phase
+            })
             && self.pending_obj_stall_dots > 0
     }
 
@@ -2527,6 +2533,43 @@ mod tests {
         assert_eq!(
             current_fetch_colour, 2,
             "a stalled on-screen OBJ restore should leave the current window fetch with the restored low byte and delayed high byte"
+        );
+        assert_eq!(
+            following_fetch_colour, 1,
+            "the following window fetch should keep the delayed low byte and restored high byte"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn on_screen_obj_window_restore_after_stalled_boundary_mixes_current_and_following_fetches() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.next_x = 8;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.leftmost_obj_oam_x = Some(17);
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        renderer.next_x = 9;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.record_lcdc_write_with_window(0xB1, 0xA1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_fetch_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+        let (following_fetch_colour, _, _) =
+            renderer.dmg_pixel_layers(16, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_fetch_colour, 2,
+            "an on-screen OBJ restore after the stalled boundary should leave the current window fetch with the restored low byte and delayed high byte"
         );
         assert_eq!(
             following_fetch_colour, 1,
