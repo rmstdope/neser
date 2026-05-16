@@ -818,7 +818,7 @@ impl PixelFifoRenderer {
             previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
         let near_left_restore_phase = self
             .leftmost_obj_oam_x
-            .filter(|&oam_x| (OBJ_PIXELS_PER_FETCH..=OBJ_PIXELS_PER_FETCH + 1).contains(&oam_x))
+            .filter(|&oam_x| (OBJ_PIXELS_PER_FETCH..=OBJ_PIXELS_PER_FETCH + 2).contains(&oam_x))
             .map(|oam_x| oam_x - 3);
         tile_data_turning_off
             && self.window_active
@@ -2225,6 +2225,37 @@ mod tests {
         assert_eq!(
             following_tile_colour, 2,
             "a near-left-edge OBJ stall should leave the following window fetch with the restored low byte and delayed high byte"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn near_left_edge_obj_window_restore_after_low_byte_mixes_following_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.next_x = 2;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.leftmost_obj_oam_x = Some(10);
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        renderer.next_x = 7;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.record_lcdc_write_with_window(0xB1, 0xA1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (following_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            following_tile_colour, 2,
+            "a near-left-edge OBJ restore after the low-byte phase should leave the following window fetch with the restored low byte and delayed high byte"
         );
         assert!(!is_sprite);
     }
