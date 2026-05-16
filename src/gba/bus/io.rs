@@ -81,7 +81,7 @@ impl IoRegisters {
     }
 
     /// Read a raw halfword from the backing store (no masking).
-    fn backing_u16(&self, addr: u32) -> u16 {
+    pub fn backing_u16(&self, addr: u32) -> u16 {
         Self::idx(addr)
             .map(|i| u16::from_le_bytes([self.bytes[i], self.bytes[i + 1]]))
             .unwrap_or(0)
@@ -196,7 +196,8 @@ impl IoRegisters {
             }
             // SIOMULTI2/3: receive-only buffers, always 0 (disconnected).
             0x0400_0124 | 0x0400_0126 => Some(0),
-            // SIOCNT: mode-dependent read mask.
+            // SIOCNT: read is intercepted at bus level via Sio::read_siocnt().
+            // This path is only reached from io.rs unit tests (not bus reads).
             0x0400_0128 => {
                 let mask = if self.is_uart_mode() { 0x7FAF } else { 0x7F8F };
                 self.read_backing(addr, mask)
