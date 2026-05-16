@@ -626,6 +626,20 @@ impl PixelFifoRenderer {
             self.lcdc_tile_data_edge
                 .record_write(current_fetch_start, current_fetch_end, new, new);
             self.record_next_lcdc_tile_data_write(next_fetch_start, bg_phase, previous, new);
+        } else if self.should_set_lcdc_tile_data_at_window_obj_late_stall(previous, new, bg_phase) {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                previous,
+                new,
+            );
+            self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
         } else if !window_fetch_active
             && self.should_delay_lcdc_tile_data_by_extra_fetch(previous, new)
         {
@@ -836,6 +850,22 @@ impl PixelFifoRenderer {
         let tile_data_turning_on =
             previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
         tile_data_turning_on && self.window_active && bg_phase == 2 && self.next_x == bg_phase
+    }
+
+    fn should_set_lcdc_tile_data_at_window_obj_late_stall(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.window_active
+            && self.leftmost_obj_oam_x == Some(OBJ_PIXELS_PER_FETCH + 7)
+            && self.next_x == OBJ_PIXELS_PER_FETCH - 1
+            && bg_phase == OBJ_PIXELS_PER_FETCH - 1
+            && self.pending_obj_stall_dots > 0
     }
 
     fn should_restore_lcdc_tile_data_after_window_left_edge_obj(
@@ -2501,6 +2531,34 @@ mod tests {
         assert_eq!(
             following_fetch_colour, 0,
             "the following window fetch should use the restored TILE_SEL sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn near_left_edge_obj_window_set_at_late_stall_mixes_current_fetch_first_pixel() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.next_x = 7;
+        renderer.pending_obj_stall_dots = 5;
+        renderer.leftmost_obj_oam_x = Some(15);
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xB1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_fetch_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_fetch_colour, 2,
+            "a late near-left-edge OBJ TILE_SEL set should leave the first current-window pixel with the previous low byte and new high byte"
         );
         assert!(!is_sprite);
     }
