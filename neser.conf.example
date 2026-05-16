@@ -332,8 +332,10 @@ nes-vertical_overscan=8
 # Default: agb
 #gba-hardware=agb
 
-# Path to an external GBA BIOS image.
-# This file is required to run GBA ROMs.
-# File must be exactly 16384 bytes.
-# If omitted, NESER also tries: ~/.neser/gba_bios.bin
+# Path to an external GBA BIOS image (optional).
+# NESER includes a built-in open-source BIOS that is used by default.
+# Set this option to override with a proprietary BIOS dump (must be
+# exactly 16384 bytes). If this path does not exist or is omitted,
+# NESER also tries: ~/.neser/gba_bios.bin, then falls back to the
+# built-in open-source BIOS.
 #gba-bios-path=/absolute/path/to/gba_bios.bin

@@ -250,14 +250,19 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 
 #### Game Boy Advance Emulation (`src/gba/`)
 
-All Game Boy Advance hardware lives under `src/gba/`. The module currently provides the ARM7TDMI CPU core, the system memory bus / I/O register foundation, the cartridge loader (header parsing + auto-detected SRAM/EEPROM/Flash save backends), the PPU foundation (display register dispatch, scanline timing, V/H-Blank IRQs, and Mode 3 bitmap rendering), and the keypad / key-interrupt subsystem (`KEYINPUT` / `KEYCNT`); subsequent phases will add the remaining display modes, sprite (OBJ) rendering and the APU.
+All Game Boy Advance hardware lives under `src/gba/`. The module currently provides the ARM7TDMI CPU core, the system memory bus / I/O register foundation, the cartridge loader (header parsing + auto-detected SRAM/EEPROM/Flash save backends), the PPU foundation (display register dispatch, scanline timing, V/H-Blank IRQs, and Mode 3 bitmap rendering), the keypad / key-interrupt subsystem (`KEYINPUT` / `KEYCNT`), and a built-in open-source BIOS (`src/gba/bios/`) that eliminates the need for proprietary BIOS dumps; subsequent phases will add the remaining display modes, sprite (OBJ) rendering and the APU.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
-| `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper), the `cpu`, `input` and `ppu` sub-modules, `GbaBus`, `Ppu`, `Keypad`, and `GbaCartridge` / `SaveType` / `load_cartridge`. Includes `#[cfg(test)]` GBA integration test modules under `src/gba/integration_tests/`. |
-| `src/gba/console/gba.rs` | `Gba` — platform-facing GBA wrapper implementing the `Emulator` trait. Owns ARM7TDMI + bus, executes per-instruction ticks, handles IRQ line dispatch, frame-ready signaling, and ROM loading guarded by BIOS presence. |
+| `src/gba/mod.rs` | Game Boy Advance module root. Re-exports `Gba` (platform-facing wrapper), the `cpu`, `input`, `ppu` and `bios` sub-modules, `GbaBus`, `Ppu`, `Keypad`, and `GbaCartridge` / `SaveType` / `load_cartridge`. Includes `#[cfg(test)]` GBA integration test modules under `src/gba/integration_tests/`. |
+| `src/gba/bios/mod.rs` | Open-source BIOS module. Embeds the pre-built 16KB binary via `include_bytes!` and exports `EMBEDDED_BIOS`. Contains unit tests for BIOS functional correctness (div, sqrt, checksum, boot). |
+| `src/gba/bios/bios.s` | ARM assembly source for the open-source GBA BIOS. Implements exception vectors, IRQ dispatcher, SWI dispatch (Div, Sqrt, Halt, IntrWait, SoftReset, etc.), and boot sequence. |
+| `src/gba/bios/bios.ld` | Linker script producing exactly 16384 bytes flat binary at base address 0x00000000. |
+| `src/gba/bios/Makefile` | Build instructions for the BIOS binary using `arm-none-eabi-as`/`arm-none-eabi-ld`/`arm-none-eabi-objcopy`. |
+| `src/gba/bios/bios.bin` | Pre-built 16KB BIOS binary, committed to the repo for CI/users without the ARM toolchain. |
+| `src/gba/console/gba.rs` | `Gba` — platform-facing GBA wrapper implementing the `Emulator` trait. Owns ARM7TDMI + bus, executes per-instruction ticks, handles IRQ line dispatch, frame-ready signaling, and ROM loading. Falls back to the built-in BIOS when no external BIOS is available. |
 | `src/gba/integration_tests/mod.rs` | GBA integration test module root. Includes gba-suite runner and test definitions. |
-| `src/gba/integration_tests/gba_suite_runner.rs` | Headless harness for jsmolka `gba-tests` ARM/Thumb/Memory ROMs. Loads ROM assets from `roms/gba/automated_tests/gba-tests`, injects a synthetic BIOS for CI-safe execution, runs until idle-loop detection/timeout, and reports pass/fail from suite registers (ARM `R12`, Thumb `R7`, Memory `R12`). |
+| `src/gba/integration_tests/gba_suite_runner.rs` | Headless harness for jsmolka `gba-tests` ARM/Thumb/Memory ROMs. Loads ROM assets from `roms/gba/automated_tests/gba-tests`, uses the built-in open-source BIOS for CI-safe execution, runs until idle-loop detection/timeout, and reports pass/fail from suite registers (ARM `R12`, Thumb `R7`, Memory `R12`). |
 | `src/gba/integration_tests/gba_suite_tests.rs` | Three ROM-level integration tests (`arm.gba`, `thumb.gba`, `memory.gba`) with failure diagnostics (index/register/PC/cycles/exit reason). |
 | `src/gba/cpu/mod.rs` | Module root for the ARM7TDMI core. Re-exports `Arm7tdmi`, `Bus`, `RamBus`, `Registers`, `CpuMode`, etc. |
 | `src/gba/cpu/registers.rs` | `Registers` — ARM7TDMI register file with R0–R15, CPSR, and per-mode banked SPSR/SP/LR (and FIQ-banked R8–R12). Includes `CpuMode` (USR/FIQ/IRQ/SVC/ABT/UND/SYS) and `condition_met` for the 16 ARM condition codes. |
