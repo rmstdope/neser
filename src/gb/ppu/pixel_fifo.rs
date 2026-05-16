@@ -655,6 +655,15 @@ impl PixelFifoRenderer {
                 new,
                 new,
             );
+        } else if self
+            .should_set_lcdc_tile_data_after_off_left_window_obj_boundary(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                previous,
+            );
         } else if !window_fetch_active
             && self.should_delay_lcdc_tile_data_by_extra_fetch(previous, new)
         {
@@ -897,6 +906,21 @@ impl PixelFifoRenderer {
             && self.next_x == OBJ_PIXELS_PER_FETCH
             && bg_phase == 0
             && self.pending_obj_stall_dots == 0
+    }
+
+    fn should_set_lcdc_tile_data_after_off_left_window_obj_boundary(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.window_active
+            && self.leftmost_obj_oam_x == Some(OBJ_PIXELS_PER_FETCH / 2)
+            && self.next_x == 1
+            && bg_phase == 1
     }
 
     fn should_restore_lcdc_tile_data_after_window_left_edge_obj(
@@ -1534,6 +1558,36 @@ mod tests {
             dmg_compat,
             screen_buffer,
         );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn tick_dmg_until_next_x(
+        renderer: &mut PixelFifoRenderer,
+        dot: &mut u16,
+        target_next_x: u8,
+        vram: &[u8; 0x2000],
+        oam: &[u8; 0xA0],
+        registers: &Registers,
+        screen_buffer: &mut ScreenBuffer,
+    ) {
+        let deadline = dot.saturating_add(256);
+        while renderer.next_x < target_next_x {
+            tick_renderer(
+                renderer,
+                *dot,
+                vram,
+                oam,
+                registers,
+                false,
+                false,
+                screen_buffer,
+            );
+            *dot = dot.saturating_add(1);
+            assert!(
+                *dot < deadline,
+                "renderer did not reach next_x={target_next_x}"
+            );
+        }
     }
 
     #[test]
@@ -2328,6 +2382,66 @@ mod tests {
             "a visible-left-edge OBJ stall should leave the following window fetch with the restored low byte and delayed high byte"
         );
         assert!(!is_sprite);
+    }
+
+    #[test]
+    fn off_left_obj_window_restore_after_boundary_mixes_first_following_pixel() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA3;
+        registers.bgp = 0xE4;
+        registers.obp0 = 0xFF;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = oam_with_sprite_at(16, 4, 0, 0);
+        let mut screen_buffer = ScreenBuffer::new();
+        let mut dot = 80;
+
+        renderer.begin_scanline(0, 80, &oam, &registers, false, false);
+        tick_dmg_until_next_x(
+            &mut renderer,
+            &mut dot,
+            1,
+            &vram,
+            &oam,
+            &registers,
+            &mut screen_buffer,
+        );
+        renderer.record_lcdc_write_with_window(
+            0xA3,
+            0xB3,
+            registers.scx,
+            false,
+            false,
+            registers.wx,
+            registers.wy,
+        );
+        registers.lcdc = 0xB3;
+        tick_dmg_until_next_x(
+            &mut renderer,
+            &mut dot,
+            9,
+            &vram,
+            &oam,
+            &registers,
+            &mut screen_buffer,
+        );
+        renderer.record_lcdc_write_with_window(
+            0xB3,
+            0xA3,
+            registers.scx,
+            false,
+            false,
+            registers.wx,
+            registers.wy,
+        );
+
+        assert_eq!(
+            screen_buffer.get_pixel(8, 0),
+            (170, 170, 170),
+            "the first following window pixel should mix the set low byte with the restored high byte"
+        );
     }
 
     #[test]
