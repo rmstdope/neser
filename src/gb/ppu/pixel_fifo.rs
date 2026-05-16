@@ -579,7 +579,22 @@ impl PixelFifoRenderer {
             self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
         }
 
-        if !window_fetch_active
+        if self
+            .should_restore_lcdc_tile_data_at_window_obj_delayed_boundary(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                new,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
+        } else if !window_fetch_active
             && self.should_restore_lcdc_tile_data_at_obj_stalled_boundary(previous, new, bg_phase)
         {
             self.lcdc_tile_data_edge
@@ -824,6 +839,21 @@ impl PixelFifoRenderer {
             && self.window_active
             && near_left_restore_phase
                 .is_some_and(|phase| self.next_x == phase && bg_phase == phase)
+    }
+
+    fn should_restore_lcdc_tile_data_at_window_obj_delayed_boundary(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && self.window_active
+            && self.leftmost_obj_oam_x == Some(OBJ_PIXELS_PER_FETCH + 3)
+            && self.next_x == OBJ_PIXELS_PER_FETCH
+            && bg_phase == 0
     }
 
     fn left_edge_obj_tile_data_delay_start_x(&self) -> Option<u8> {
@@ -2256,6 +2286,37 @@ mod tests {
         assert_eq!(
             following_tile_colour, 2,
             "a near-left-edge OBJ restore after the low-byte phase should leave the following window fetch with the restored low byte and delayed high byte"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn near_left_edge_obj_window_restore_at_delayed_boundary_mixes_current_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.next_x = 3;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.leftmost_obj_oam_x = Some(11);
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        renderer.next_x = 8;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.record_lcdc_write_with_window(0xB1, 0xA1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_fetch_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(9, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_fetch_colour, 2,
+            "a near-left-edge OBJ restore at the delayed window boundary should leave the current window fetch with the restored low byte and delayed high byte"
         );
         assert!(!is_sprite);
     }
