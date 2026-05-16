@@ -367,12 +367,9 @@ fn gba_mgba_video_comparison() {
     println!("| # | Test                        | Actual CRC | Expected CRC | Match |");
     println!("|---|-----------------------------|-----------:|-------------:|:-----:|");
 
-    let mut pass_count = 0;
+    let pass_count = result.tests.iter().filter(|t| t.matches).count();
     for (i, test) in result.tests.iter().enumerate() {
         let status = if test.matches { "✓" } else { "✗" };
-        if test.matches {
-            pass_count += 1;
-        }
         println!(
             "| {} | {:<27} | 0x{:08X} | 0x{:08X}   | {}    |",
             i + 1,

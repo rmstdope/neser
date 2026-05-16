@@ -158,15 +158,12 @@ pub struct SuiteResult {
     pub ewram_dump: Option<String>,
 }
 
-pub fn run_suite(suite: Suite) -> SuiteResult {
-    let rom_path = suite.rom_path();
-    let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {
-        panic!("failed to read suite ROM {}: {e}", rom_path.display());
-    });
-
-    let mut gba = Gba::new(AppContext::default());
+/// Build the minimal stub BIOS used for simple test ROMs (gba-tests, FuzzARM, armwrestler).
+///
+/// Provides reset and SWI stubs, traps all other exception vectors with branch-to-self.
+fn build_simple_stub_bios() -> Vec<u8> {
     let mut bios = vec![0u8; BIOS_SIZE];
-    bios[0..4].copy_from_slice(&BIOS_RESET_STUB_LDR_PC_PLUS_24.to_le_bytes());
+    bios[0x00..0x04].copy_from_slice(&BIOS_RESET_STUB_LDR_PC_PLUS_24.to_le_bytes());
     bios[BIOS_RESET_LITERAL_ADDR..BIOS_RESET_LITERAL_ADDR + 4]
         .copy_from_slice(&CART_ENTRYPOINT.to_le_bytes());
     bios[0x08..0x0C].copy_from_slice(&BIOS_SWI_STUB_MOVS_PC_LR.to_le_bytes());
@@ -174,7 +171,17 @@ pub fn run_suite(suite: Suite) -> SuiteResult {
         let i = vector as usize;
         bios[i..i + 4].copy_from_slice(&ARM_BRANCH_SELF_OPCODE.to_le_bytes());
     }
-    gba.bus_mut().load_bios(&bios);
+    bios
+}
+
+pub fn run_suite(suite: Suite) -> SuiteResult {
+    let rom_path = suite.rom_path();
+    let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {
+        panic!("failed to read suite ROM {}: {e}", rom_path.display());
+    });
+
+    let mut gba = Gba::new(AppContext::default());
+    gba.bus_mut().load_bios(&build_simple_stub_bios());
     gba.load_rom(&rom, rom_path.to_str().unwrap_or("gba-suite-rom"))
         .unwrap_or_else(|e| {
             panic!("failed to load suite ROM {}: {e}", rom_path.display());
@@ -472,16 +479,7 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
     });
 
     let mut gba = Gba::new(AppContext::default());
-    let mut bios = vec![0u8; BIOS_SIZE];
-    bios[0..4].copy_from_slice(&BIOS_RESET_STUB_LDR_PC_PLUS_24.to_le_bytes());
-    bios[BIOS_RESET_LITERAL_ADDR..BIOS_RESET_LITERAL_ADDR + 4]
-        .copy_from_slice(&CART_ENTRYPOINT.to_le_bytes());
-    bios[0x08..0x0C].copy_from_slice(&BIOS_SWI_STUB_MOVS_PC_LR.to_le_bytes());
-    for &vector in &BIOS_EXCEPTION_VECTORS {
-        let i = vector as usize;
-        bios[i..i + 4].copy_from_slice(&ARM_BRANCH_SELF_OPCODE.to_le_bytes());
-    }
-    gba.bus_mut().load_bios(&bios);
+    gba.bus_mut().load_bios(&build_simple_stub_bios());
     gba.load_rom(&rom, rom_path.to_str().unwrap_or("armwrestler"))
         .unwrap_or_else(|e| {
             panic!("failed to load armwrestler ROM {}: {e}", rom_path.display());
