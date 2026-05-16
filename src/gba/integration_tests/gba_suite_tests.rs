@@ -383,4 +383,17 @@ fn gba_mgba_video_comparison() {
     }
     println!("\nTotal: {pass_count}/7 tests match");
     println!("Total cycles: {}", result.cycles);
+
+    // Assert known-passing tests to catch regressions.
+    let expected_passing = [0, 1, 2, 6]; // Basic Mode 3, Basic Mode 4, Degenerate OBJ transforms, Window offscreen reset
+    for &idx in &expected_passing {
+        assert!(
+            result.tests[idx].matches,
+            "regression: '{}' (test {}) should match but actual=0x{:08X} expected=0x{:08X}",
+            VIDEO_TEST_NAMES[idx],
+            idx + 1,
+            result.tests[idx].actual_crc,
+            result.tests[idx].expected_crc,
+        );
+    }
 }

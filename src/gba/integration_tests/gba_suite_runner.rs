@@ -1036,6 +1036,7 @@ pub fn run_mgba_video_tests() -> MgbaVideoResult {
 
         // Press B to return to the video sub-menu (with verification).
         const MAX_B_RETRIES: u32 = 20;
+        let mut returned = false;
         for attempt in 0..MAX_B_RETRIES {
             press_button(&mut gba, &mut cycles, BTN_B);
 
@@ -1049,15 +1050,23 @@ pub fn run_mgba_video_tests() -> MgbaVideoResult {
             }
 
             if gba.screen_crc32() == menu_crc {
+                returned = true;
                 break;
             }
         }
+        assert!(
+            returned,
+            "video: failed to return to sub-menu after test {test_idx} ({test_name}) after {MAX_B_RETRIES} retries"
+        );
     }
 
     MgbaVideoResult { tests, cycles }
 }
 
 /// Wait for the screen to change from its initial state, then stabilise.
+/// If the screen is already at its final state (no change observed), that is
+/// acceptable — `press_button` already advanced frames before this is called.
+/// Panics if a change was detected but the screen never stabilised.
 fn wait_for_stability(gba: &mut Gba, cycles: &mut u64, label: &str) {
     const STABLE_FRAMES: u32 = 10;
     const MAX_FRAMES: u32 = 300;
@@ -1086,6 +1095,12 @@ fn wait_for_stability(gba: &mut Gba, cycles: &mut u64, label: &str) {
                 saw_change = true;
                 prev_crc = crc;
                 stable_count = 1;
+            } else {
+                // Screen unchanged — count towards stability from initial state.
+                stable_count += 1;
+                if stable_count >= STABLE_FRAMES {
+                    return;
+                }
             }
         } else if crc == prev_crc {
             stable_count += 1;
@@ -1097,7 +1112,11 @@ fn wait_for_stability(gba: &mut Gba, cycles: &mut u64, label: &str) {
             stable_count = 1;
         }
     }
-    // If we never saw a change, that's OK — some tests render instantly.
+
+    assert!(
+        !saw_change,
+        "video '{label}': screen changed but never stabilised within {MAX_FRAMES} frames"
+    );
 }
 
 fn maybe_write_video_png(gba: &Gba, test_index: usize, view: &str, crc: u32) {
