@@ -851,7 +851,7 @@ impl PixelFifoRenderer {
             previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
         let delayed_boundary_phase = self
             .leftmost_obj_oam_x
-            .filter(|&oam_x| (OBJ_PIXELS_PER_FETCH + 3..=OBJ_PIXELS_PER_FETCH + 4).contains(&oam_x))
+            .filter(|&oam_x| (OBJ_PIXELS_PER_FETCH + 3..=OBJ_PIXELS_PER_FETCH + 5).contains(&oam_x))
             .map(|oam_x| oam_x - (OBJ_PIXELS_PER_FETCH + 3));
         tile_data_turning_off
             && self.window_active
@@ -2352,6 +2352,44 @@ mod tests {
         assert_eq!(
             current_fetch_colour, 2,
             "a near-left-edge OBJ restore after the delayed window boundary should leave the current window fetch with the restored low byte and delayed high byte"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn near_left_edge_obj_window_restore_later_after_boundary_updates_current_and_following_fetches()
+     {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.next_x = 5;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.leftmost_obj_oam_x = Some(13);
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        renderer.next_x = 10;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.record_lcdc_write_with_window(0xB1, 0xA1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (current_fetch_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(11, &vram, &oam, &registers, 0);
+        let (following_fetch_colour, _, _) =
+            renderer.dmg_pixel_layers(16, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_fetch_colour, 2,
+            "a near-left-edge OBJ restore later after the delayed window boundary should leave the current window fetch with the restored low byte and delayed high byte"
+        );
+        assert_eq!(
+            following_fetch_colour, 0,
+            "the following window fetch should use the restored TILE_SEL sample"
         );
         assert!(!is_sprite);
     }
