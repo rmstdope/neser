@@ -661,6 +661,15 @@ impl PixelFifoRenderer {
                 new,
                 new,
             );
+        } else if self
+            .should_restore_lcdc_tile_data_after_window_left_edge_obj(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                previous,
+            );
         } else if self.next_x == current_fetch_start {
             if window_fetch_active {
                 self.lcdc_tile_data_edge.record_write(
@@ -797,6 +806,21 @@ impl PixelFifoRenderer {
         let tile_data_turning_on =
             previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
         tile_data_turning_on && self.window_active && bg_phase == 2 && self.next_x == bg_phase
+    }
+
+    fn should_restore_lcdc_tile_data_after_window_left_edge_obj(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && self.window_active
+            && bg_phase == 5
+            && self.leftmost_obj_oam_x == Some(OBJ_PIXELS_PER_FETCH)
+            && self.next_x == 5
     }
 
     fn left_edge_obj_tile_data_delay_start_x(&self) -> Option<u8> {
@@ -2136,6 +2160,37 @@ mod tests {
         assert_eq!(
             following_tile_colour, 0,
             "the following window fetch should use the restored TILE_SEL sample"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn visible_left_edge_obj_window_restore_mixes_following_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.leftmost_obj_oam_x = Some(8);
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 0, false, false, 7, 0);
+        renderer.window_active = true;
+        renderer.next_x = 5;
+        renderer.pending_obj_stall_dots = 0;
+        renderer.record_lcdc_write_with_window(0xB1, 0xA1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA1;
+        registers.bgp = 0xE4;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (following_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            following_tile_colour, 2,
+            "a visible-left-edge OBJ stall should leave the following window fetch with the restored low byte and delayed high byte"
         );
         assert!(!is_sprite);
     }
