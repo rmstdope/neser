@@ -929,6 +929,196 @@ fn maybe_write_mgba_png(gba: &Gba, suite_index: usize, crc: u32) {
     );
 }
 
+// --- Video sub-suite comparison runner ---
+
+/// Button bitmask for Right (NES-convention bit 7).
+const BTN_RIGHT: u8 = 0x80;
+
+/// Names of the 7 video sub-tests in the mgba-emu/suite Video sub-menu.
+pub const VIDEO_TEST_NAMES: [&str; 7] = [
+    "Basic Mode 3",
+    "Basic Mode 4",
+    "Degenerate OBJ transforms",
+    "Layer toggle",
+    "Layer toggle 2",
+    "OAM Update Delay",
+    "Window offscreen reset",
+];
+
+/// Result of a single video test comparison.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoTestResult {
+    /// CRC32 of the "actual" (rendered by emulator) framebuffer.
+    pub actual_crc: u32,
+    /// CRC32 of the "expected" (reference) framebuffer.
+    pub expected_crc: u32,
+    /// Whether the actual matches the expected.
+    pub matches: bool,
+}
+
+/// Result of running the video comparison across all 7 tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MgbaVideoResult {
+    /// Per-test comparison results.
+    pub tests: Vec<VideoTestResult>,
+    /// Total cycles consumed.
+    pub cycles: u64,
+}
+
+/// Run the mgba-emu/suite Video sub-suite, navigating into each of the 7
+/// video tests and capturing both "actual" and "expected" framebuffers.
+///
+/// Navigation protocol:
+/// - Boot → menu → navigate to Video (index 13) → A to enter video sub-menu
+/// - For each video test i (0..7):
+///   - Press DOWN to advance (except test 0)
+///   - Press A to enter the test → shows "actual" rendering
+///   - Wait for stability → capture actual CRC
+///   - Press RIGHT → shows "expected" rendering
+///   - Wait for stability → capture expected CRC
+///   - Press B to return to video sub-menu
+pub fn run_mgba_video_tests() -> MgbaVideoResult {
+    let (mut gba, _rom) = boot_mgba_suite();
+    let mut cycles: u64 = 0;
+
+    // Boot: let the menu render.
+    for _ in 0..10 {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "video: timed out during initial boot"
+        );
+        gba.clear_ready_to_render();
+    }
+
+    // Navigate to Video (index 13) in the main menu.
+    for _ in 0..13 {
+        press_button(&mut gba, &mut cycles, BTN_DOWN);
+    }
+
+    // Press A to enter the Video sub-menu.
+    press_button(&mut gba, &mut cycles, BTN_A);
+
+    // Wait for the video sub-menu to render and stabilise.
+    wait_for_stability(&mut gba, &mut cycles, "video sub-menu");
+
+    let mut tests: Vec<VideoTestResult> = Vec::with_capacity(7);
+
+    for (test_idx, test_name) in VIDEO_TEST_NAMES.iter().enumerate() {
+        // Navigate to this test in the video sub-menu.
+        if test_idx > 0 {
+            press_button(&mut gba, &mut cycles, BTN_DOWN);
+        }
+
+        // Capture the menu CRC with cursor at this position (for B-return verification).
+        let menu_crc = gba.screen_crc32();
+
+        // Press A to enter the test — shows "actual" rendering.
+        press_button(&mut gba, &mut cycles, BTN_A);
+
+        // Wait for the actual rendering to stabilise.
+        wait_for_stability(&mut gba, &mut cycles, test_name);
+        let actual_crc = gba.screen_crc32();
+        maybe_write_video_png(&gba, test_idx, "actual", actual_crc);
+
+        // Press RIGHT to show the "expected" reference rendering.
+        press_button(&mut gba, &mut cycles, BTN_RIGHT);
+
+        // Wait for the expected rendering to stabilise.
+        wait_for_stability(&mut gba, &mut cycles, test_name);
+        let expected_crc = gba.screen_crc32();
+        maybe_write_video_png(&gba, test_idx, "expected", expected_crc);
+
+        tests.push(VideoTestResult {
+            actual_crc,
+            expected_crc,
+            matches: actual_crc == expected_crc,
+        });
+
+        // Press B to return to the video sub-menu (with verification).
+        const MAX_B_RETRIES: u32 = 20;
+        for attempt in 0..MAX_B_RETRIES {
+            press_button(&mut gba, &mut cycles, BTN_B);
+
+            for _ in 0..5 {
+                assert!(
+                    run_until_frame_ready(&mut gba, &mut cycles),
+                    "video: timed out returning to sub-menu after test {} (attempt {attempt})",
+                    test_idx
+                );
+                gba.clear_ready_to_render();
+            }
+
+            if gba.screen_crc32() == menu_crc {
+                break;
+            }
+        }
+    }
+
+    MgbaVideoResult { tests, cycles }
+}
+
+/// Wait for the screen to change from its initial state, then stabilise.
+fn wait_for_stability(gba: &mut Gba, cycles: &mut u64, label: &str) {
+    const STABLE_FRAMES: u32 = 10;
+    const MAX_FRAMES: u32 = 300;
+
+    assert!(
+        run_until_frame_ready(gba, cycles),
+        "video '{label}': timed out getting initial frame"
+    );
+    gba.clear_ready_to_render();
+    let initial_crc = gba.screen_crc32();
+
+    let mut prev_crc = initial_crc;
+    let mut stable_count: u32 = 1;
+    let mut saw_change = false;
+
+    for frame in 1..MAX_FRAMES {
+        assert!(
+            run_until_frame_ready(gba, cycles),
+            "video '{label}': timed out at frame {frame}"
+        );
+        gba.clear_ready_to_render();
+        let crc = gba.screen_crc32();
+
+        if !saw_change {
+            if crc != initial_crc {
+                saw_change = true;
+                prev_crc = crc;
+                stable_count = 1;
+            }
+        } else if crc == prev_crc {
+            stable_count += 1;
+            if stable_count >= STABLE_FRAMES {
+                return;
+            }
+        } else {
+            prev_crc = crc;
+            stable_count = 1;
+        }
+    }
+    // If we never saw a change, that's OK — some tests render instantly.
+}
+
+fn maybe_write_video_png(gba: &Gba, test_index: usize, view: &str, crc: u32) {
+    if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
+        return;
+    }
+
+    let name = VIDEO_TEST_NAMES[test_index]
+        .to_lowercase()
+        .replace(' ', "_");
+    let file_name = format!("video_{name}_{view}_crc_{crc:08X}.png");
+    let path = PathBuf::from("target/gba_suite_checkpoints").join(file_name);
+    let rgb = gba.screen_snapshot();
+    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    println!(
+        "[video-capture] saved {} (test={}, view={view}, crc=0x{crc:08X})",
+        path.display(),
+        VIDEO_TEST_NAMES[test_index]
+    );
+}
+
 fn maybe_write_armwrestler_png(gba: &Gba, page_index: usize, crc: u32) {
     if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
         return;

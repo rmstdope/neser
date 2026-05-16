@@ -1,6 +1,6 @@
 use super::gba_suite_runner::{
-    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, boot_mgba_suite,
-    run_armwrestler, run_mgba_suite, run_suite,
+    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, VIDEO_TEST_NAMES,
+    boot_mgba_suite, run_armwrestler, run_mgba_suite, run_mgba_video_tests, run_suite,
 };
 use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
 use crate::platform::emulator::Emulator;
@@ -345,4 +345,42 @@ fn advance_one_frame(gba: &mut crate::gba::Gba, cycles: &mut u64) {
         }
     }
     panic!("no frame produced within cycle budget");
+}
+
+/// Run the mgba-emu/suite Video sub-tests and compare actual vs expected
+/// framebuffers. Reports which of the 7 video tests produce correct output.
+///
+/// Set `NESER_CAPTURE_SCREEN=1` to save PNG screenshots for visual inspection.
+#[test]
+#[ignore] // Investigation test — run manually to check video correctness.
+fn gba_mgba_video_comparison() {
+    let result = run_mgba_video_tests();
+    assert_eq!(
+        result.tests.len(),
+        7,
+        "expected 7 video test results, got {}",
+        result.tests.len()
+    );
+
+    println!("\n=== mgba-emu/suite Video Comparison Results ===\n");
+    println!("| # | Test                        | Actual CRC | Expected CRC | Match |");
+    println!("|---|-----------------------------|-----------:|-------------:|:-----:|");
+
+    let mut pass_count = 0;
+    for (i, test) in result.tests.iter().enumerate() {
+        let status = if test.matches { "✓" } else { "✗" };
+        if test.matches {
+            pass_count += 1;
+        }
+        println!(
+            "| {} | {:<27} | 0x{:08X} | 0x{:08X}   | {}    |",
+            i + 1,
+            VIDEO_TEST_NAMES[i],
+            test.actual_crc,
+            test.expected_crc,
+            status
+        );
+    }
+    println!("\nTotal: {pass_count}/7 tests match");
+    println!("Total cycles: {}", result.cycles);
 }
