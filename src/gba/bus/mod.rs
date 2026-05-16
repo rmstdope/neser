@@ -14,6 +14,7 @@ pub mod dma;
 pub mod interrupt;
 pub mod io;
 pub mod memory;
+pub mod sio;
 pub mod timer;
 
 use crate::gba::apu::Apu;
@@ -204,6 +205,8 @@ pub struct GbaBus {
     pub timers: Timers,
     /// DMA controller (DMA0-DMA3).
     pub dma: DmaController,
+    /// Serial I/O controller.
+    pub sio: sio::Sio,
     /// Picture Processing Unit (PPU).
     pub ppu: Ppu,
     /// Audio Processing Unit (APU).
@@ -261,6 +264,7 @@ impl GbaBus {
             ic: InterruptController::new(),
             timers: Timers::new(),
             dma: DmaController::new(),
+            sio: sio::Sio::new(),
             ppu: Ppu::new(),
             apu: Apu::new(),
             keypad: Keypad::new(),
@@ -359,6 +363,7 @@ impl GbaBus {
     /// V-Blank/H-Blank edges are propagated to the DMA controller.
     pub fn step(&mut self, cycles: u32) {
         self.timers.step(cycles, &mut self.ic);
+        self.sio.step(cycles, &mut self.ic);
         self.apu.tick(cycles);
         let events = self.ppu.step(
             cycles,
@@ -660,6 +665,8 @@ impl Bus for GbaBus {
             0x4 => {
                 if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
                     self.apu.read16(aligned)
+                } else if aligned == 0x0400_0128 {
+                    self.sio.read_siocnt()
                 } else {
                     let raw = self
                         .io
@@ -783,6 +790,14 @@ impl Bus for GbaBus {
                     if aligned == 0x0400_0204 {
                         self.waitstates.recalculate(value as u16);
                     }
+                    // SIOCNT is at 0x0400_0128 (low halfword of a 32-bit write).
+                    if aligned == 0x0400_0128 {
+                        self.sio.write_siocnt(value as u16);
+                    }
+                    // RCNT is at 0x0400_0134 (low halfword of a 32-bit write).
+                    if aligned == 0x0400_0134 {
+                        self.sio.write_rcnt(value as u16);
+                    }
                 }
             }
             0x5 => write_le_u32(&mut self.pram, aligned as usize, value),
@@ -831,6 +846,12 @@ impl Bus for GbaBus {
                     if aligned == 0x0400_0204 {
                         self.waitstates.recalculate(value);
                     }
+                    if aligned == 0x0400_0128 {
+                        self.sio.write_siocnt(value);
+                    }
+                    if aligned == 0x0400_0134 {
+                        self.sio.write_rcnt(value);
+                    }
                 }
             }
             0x5 => write_le_u16(&mut self.pram, aligned as usize, value),
@@ -875,6 +896,17 @@ impl Bus for GbaBus {
                         &mut self.ppu,
                         &mut self.keypad,
                     );
+                    // Byte writes to SIOCNT/RCNT must update the Sio module.
+                    // Merge the written byte into the current register value.
+                    let aligned = addr & !1;
+                    if aligned == 0x0400_0128 {
+                        let merged = self.io.backing_u16(0x0400_0128);
+                        self.sio.write_siocnt(merged);
+                    }
+                    if aligned == 0x0400_0134 {
+                        let merged = self.io.backing_u16(0x0400_0134);
+                        self.sio.write_rcnt(merged);
+                    }
                 }
             }
             0x5 => {
