@@ -99,21 +99,43 @@ impl Gba {
             .map(PathBuf::from)
             .or_else(default_gba_bios_path);
 
+        let mut using_embedded_bios = false;
         let bios_load_error = if let Some(path) = bios_path {
             match load_bios_image(&path) {
                 Ok(bytes) => {
                     bus.load_bios(&bytes);
                     None
                 }
-                Err(err) => Some(err),
+                Err(e) => {
+                    if path.exists() {
+                        // File exists but is invalid (wrong size, unreadable, etc.)
+                        // — report the error so the user can fix their config.
+                        Some(e)
+                    } else {
+                        // File not found — fall back to embedded BIOS silently.
+                        bus.load_bios(crate::gba::bios::EMBEDDED_BIOS);
+                        using_embedded_bios = true;
+                        None
+                    }
+                }
             }
         } else {
-            Some("GBA BIOS is required but no BIOS path is available".to_string())
+            // No BIOS path configured — use embedded BIOS
+            bus.load_bios(crate::gba::bios::EMBEDDED_BIOS);
+            using_embedded_bios = true;
+            None
         };
+
+        let mut cpu = Arm7tdmi::new();
+        // Disable HLE when using the embedded open-source BIOS: the BIOS
+        // handles all SWI calls natively so HLE is not needed.
+        if using_embedded_bios {
+            cpu.set_hle_swi(false);
+        }
 
         Self {
             app_context,
-            cpu: Arm7tdmi::new(),
+            cpu,
             bus,
             bios_load_error,
         }
@@ -437,16 +459,16 @@ mod tests {
     }
 
     #[test]
-    fn test_load_rom_fails_when_bios_is_missing() {
+    fn test_load_rom_succeeds_when_external_bios_is_missing() {
+        // With the embedded BIOS fallback, ROM loading should always succeed
+        // even when the configured external BIOS path is invalid.
         let mut gba = make_gba_without_bios();
         let rom = make_minimal_valid_gba_rom();
 
         let result = gba.load_rom(&rom, "test.gba");
-        assert!(result.is_err(), "GBA ROM loading should require BIOS");
-        let err = result.unwrap_err();
         assert!(
-            err.to_lowercase().contains("bios"),
-            "error should mention BIOS, got: {err}"
+            result.is_ok(),
+            "ROM loading should succeed with embedded BIOS fallback"
         );
     }
 
@@ -653,5 +675,25 @@ mod tests {
         gba.set_button(0, 8, true);
         gba.set_button(0, 9, true);
         gba.set_button(0, 250, true);
+    }
+
+    #[test]
+    fn test_embedded_bios_used_when_no_external_bios_configured() {
+        // A Gba instance with no valid bios_path should fall back to the
+        // embedded open-source BIOS and successfully load a ROM.
+        let mut config = Config::default();
+        // Point to a non-existent BIOS file so external loading fails
+        let tmp = std::env::temp_dir().join("neser_nonexistent_bios_test.bin");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_minimal_valid_gba_rom();
+        let result = gba.load_rom(&rom, "test.gba");
+        assert!(
+            result.is_ok(),
+            "ROM loading should succeed with embedded BIOS as fallback, got: {:?}",
+            result.err()
+        );
+        assert!(gba.bus().has_bios_image());
     }
 }

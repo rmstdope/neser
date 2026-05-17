@@ -5,6 +5,7 @@
 //! in subsequent phases.
 
 pub mod apu;
+pub mod bios;
 pub mod bus;
 pub mod cartridge;
 pub mod console;

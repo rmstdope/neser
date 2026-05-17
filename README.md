@@ -142,13 +142,15 @@ Options:
   --gb-filter <name>    Specify Game Boy shader filter (dmg|none)
   --gba-filter <name>   Specify Game Boy Advance shader filter (none|gba-lcd|agb001|nso-gba-color|sp101-color|gba-lcd-grid)
   --gba-bios-path <path>
-                         Path to external GBA BIOS file (required for GBA ROMs)
+                         Path to external GBA BIOS file (optional; overrides built-in BIOS)
   --config <path>       Specify config file path (overrides default locations)
   --window-height <N>   Window height in pixels, windowed mode only (e.g., 720)
 ```
 
-For GBA ROMs, provide a 16384-byte BIOS file via `--gba-bios-path` or config key
-`gba-bios-path`. If unset, NESER also checks `~/.neser/gba_bios.bin`.
+NESER includes a built-in open-source GBA BIOS, so no external BIOS file is needed
+to run GBA ROMs. To use a proprietary BIOS dump instead, provide a 16384-byte BIOS
+file via `--gba-bios-path` or config key `gba-bios-path`. If unset, NESER also
+checks `~/.neser/gba_bios.bin` before falling back to the built-in BIOS.
 
 ### GBA Automated CPU Suite Tests
 
