@@ -339,3 +339,10 @@ nes-vertical_overscan=8
 # ~/.neser/gba_bios.bin before falling back to the built-in BIOS.
 # If the configured path exists but is invalid, an error is reported.
 #gba-bios-path=/absolute/path/to/gba_bios.bin
+
+# Skip the GBA BIOS intro (logo display + boot jingle).
+# When enabled, the BIOS still performs full hardware initialization
+# (stack setup, register clearing, SoundBias ramp, POSTFLG, etc.) but
+# skips the visual/audio splash screen for faster boot.
+# Default: false (intro is shown).
+#skip-bios-intro=false

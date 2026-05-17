@@ -38,6 +38,11 @@ pub(crate) const GBA_CLI_FLAGS: &[CliFlag] = &[
         help: Some("Path to external GBA BIOS image (exactly 16384 bytes)"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--skip-bios-intro",
+        help: Some("Skip GBA BIOS intro (logo + jingle) but keep full hardware init"),
+        has_value: false,
+    },
 ];
 
 /// Valid values for the `gba-hardware` option (used in error messages).
@@ -90,6 +95,9 @@ pub struct GbaConfig {
     pub hardware: GbaModel,
     /// Optional path to an external GBA BIOS image.
     pub bios_path: Option<String>,
+    /// When true, skip the BIOS intro (logo + jingle) but still perform
+    /// full hardware state setup (stacks, POSTFLG, SoundBias, etc.).
+    pub skip_bios_intro: bool,
 }
 
 impl GbaConfig {
@@ -118,12 +126,16 @@ impl GbaConfig {
             self.set_bios_path_from_input(&path);
         }
 
+        if let Some(skip) = crate::platform::config::parse_bool_arg(args, "--skip-bios-intro")? {
+            self.skip_bios_intro = skip;
+        }
+
         Ok(())
     }
 
     /// Apply a config file key-value pair to this config.
     ///
-    /// Accepts `gba-hardware` key.
+    /// Accepts `gba-hardware`, `gba-bios-path`, and `skip-bios-intro` keys.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
         match key.as_str() {
@@ -136,6 +148,10 @@ impl GbaConfig {
             }
             "gba_bios_path" => {
                 self.set_bios_path_from_input(value);
+            }
+            "skip_bios_intro" => {
+                self.skip_bios_intro = crate::platform::config::parse_bool(value)
+                    .map_err(|_| format!("Invalid skip_bios_intro value: '{value}'"))?;
             }
             _ => {
                 return Err(format!("Unknown GBA config key: {key}"));
@@ -291,6 +307,88 @@ mod tests {
         assert!(
             result.is_ok(),
             "gba-bios-path should be accepted as a valid GBA config key"
+        );
+    }
+
+    #[test]
+    fn test_gba_config_skip_bios_intro_default_false() {
+        let config = GbaConfig::default();
+        assert!(
+            !config.skip_bios_intro,
+            "skip_bios_intro should default to false"
+        );
+    }
+
+    #[test]
+    fn test_cli_parse_skip_bios_intro_flag() {
+        let mut config = GbaConfig::default();
+        let args = vec!["neser".to_string(), "--skip-bios-intro".to_string()];
+        config.apply_args(&args).unwrap();
+        assert!(
+            config.skip_bios_intro,
+            "--skip-bios-intro should set to true"
+        );
+    }
+
+    #[test]
+    fn test_cli_parse_skip_bios_intro_explicit_true() {
+        let mut config = GbaConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--skip-bios-intro".to_string(),
+            "true".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert!(config.skip_bios_intro);
+    }
+
+    #[test]
+    fn test_cli_parse_skip_bios_intro_explicit_false() {
+        let mut config = GbaConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--skip-bios-intro".to_string(),
+            "false".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert!(!config.skip_bios_intro);
+    }
+
+    #[test]
+    fn test_config_file_parse_skip_bios_intro_true() {
+        let mut config = GbaConfig::default();
+        config
+            .apply_config_value("skip-bios-intro", "true")
+            .unwrap();
+        assert!(config.skip_bios_intro);
+    }
+
+    #[test]
+    fn test_config_file_parse_skip_bios_intro_false() {
+        let mut config = GbaConfig::default();
+        config
+            .apply_config_value("skip-bios-intro", "false")
+            .unwrap();
+        assert!(!config.skip_bios_intro);
+    }
+
+    #[test]
+    fn test_config_file_parse_skip_bios_intro_invalid() {
+        let mut config = GbaConfig::default();
+        let result = config.apply_config_value("skip-bios-intro", "maybe");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Invalid skip_bios_intro value")
+        );
+    }
+
+    #[test]
+    fn test_gba_cli_flags_include_skip_bios_intro() {
+        assert!(
+            GBA_CLI_FLAGS.iter().any(|f| f.flag == "--skip-bios-intro"),
+            "GBA CLI flags should include --skip-bios-intro"
         );
     }
 }

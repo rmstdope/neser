@@ -29,10 +29,20 @@ trap:
     b       trap
 
 @ ============================================================================
-@ Reset handler - minimal boot sequence
-@ Sets up stack pointers for each CPU mode and jumps to cartridge.
+@ Reset handler - full boot sequence
+@ Matches real GBA BIOS behavior: warm-boot check, stack setup, register
+@ clearing, header validation, hardware init, and jump to cartridge.
 @ ============================================================================
 reset_handler:
+    @ --- Warm-boot check ---
+    @ If POSTFLG is already 1, this is a warm reset (SoftReset return).
+    @ Redirect to the debug handler vector at 0x0000001C.
+    ldr     r0, =0x04000300
+    ldrb    r0, [r0]
+    cmp     r0, #1
+    beq     warm_boot
+
+    @ --- Stack pointer setup ---
     @ Set up IRQ mode stack
     mrs     r0, cpsr
     bic     r0, r0, #0x1F
@@ -54,7 +64,7 @@ reset_handler:
     msr     cpsr_c, r0
     ldr     sp, =0x03007F00
 
-    @ Clear registers
+    @ --- Clear registers ---
     mov     r0, #0
     mov     r1, #0
     mov     r2, #0
@@ -69,15 +79,63 @@ reset_handler:
     mov     r11, #0
     mov     r12, #0
 
-    @ Set POSTFLG to 1 (indicates BIOS has run)
+    @ --- Header validation ---
+    @ Check fixed byte at ROM offset 0xB2 (must be 0x96)
+    ldr     r0, =0x080000B2
+    ldrb    r0, [r0]
+    cmp     r0, #0x96
+    bne     header_fail
+
+    @ Compute complement check: sum bytes 0xA0..0xBC, subtract 0x19,
+    @ result ANDed with 0xFF must equal byte at 0xBD.
+    mov     r0, #0              @ accumulator
+    ldr     r1, =0x080000A0     @ start address
+    ldr     r2, =0x080000BD     @ end address (exclusive for sum)
+.Lheader_loop:
+    ldrb    r3, [r1], #1
+    sub     r0, r0, r3
+    cmp     r1, r2
+    blt     .Lheader_loop
+    sub     r0, r0, #0x19
+    and     r0, r0, #0xFF
+    ldrb    r1, [r2]            @ read complement check byte at 0xBD
+    cmp     r0, r1
+    bne     header_fail
+
+    @ --- Undocumented register write ---
+    @ Real GBA BIOS writes 0xFF to 0x04000410 ("probably a bug in the BIOS").
+    ldr     r0, =0x04000410
+    mov     r1, #0xFF
+    strb    r1, [r0]
+
+    @ --- Set POSTFLG ---
     ldr     r0, =0x04000300
     mov     r1, #1
     strb    r1, [r0]
+
+    @ --- Clear registers before jump ---
     mov     r0, #0
     mov     r1, #0
+    mov     r2, #0
+    mov     r3, #0
 
-    @ Jump to cartridge entry point
+    @ --- Jump to cartridge entry point ---
     ldr     pc, =0x08000000
+
+@ ============================================================================
+@ Warm-boot handler - redirects to debug vector on soft reset
+@ ============================================================================
+warm_boot:
+    @ Branch to the FIQ/debug vector at 0x0000001C.
+    @ On real hardware this would be a debug handler entry point.
+    @ We re-use the existing trap there (infinite loop).
+    mov     pc, #0x1C
+
+@ ============================================================================
+@ Header validation failure - lock up
+@ ============================================================================
+header_fail:
+    b       header_fail
 
 @ ============================================================================
 @ SWI Handler

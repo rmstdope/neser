@@ -1625,4 +1625,141 @@ mod tests {
             );
         }
     }
+
+    // ---------------------------------------------------------------
+    // Boot sequence tests (Phase 1: Config + Skip Infrastructure)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_boot_writes_undocumented_0x04000410() {
+        // The real GBA BIOS writes 0xFF to the undocumented register at
+        // 0x04000410 during boot. Our BIOS should do the same.
+        let code = &[ARM_IDLE];
+        let mut gba = boot_with_embedded_bios(code);
+        run_until_idle(&mut gba, 100_000);
+
+        let val = gba.bus_mut().read8(0x04000410);
+        assert_eq!(
+            val, 0xFF,
+            "BIOS should write 0xFF to undocumented 0x04000410"
+        );
+    }
+
+    #[test]
+    fn bios_boot_ramps_soundbias_to_0x200() {
+        // The real GBA BIOS ramps SOUNDBIAS from 0x000 to 0x200 during boot
+        // using SWI 0x19. After boot, SOUNDBIAS should be 0x200.
+        let code = &[ARM_IDLE];
+        let mut gba = boot_with_embedded_bios(code);
+        run_until_idle(&mut gba, 100_000);
+
+        let soundbias = gba.bus_mut().read16(0x04000088);
+        assert_eq!(
+            soundbias & 0x3FF,
+            0x200,
+            "SOUNDBIAS should be 0x200 after boot"
+        );
+    }
+
+    #[test]
+    fn bios_boot_with_invalid_header_locks_up() {
+        // When the cartridge header has an invalid complement check,
+        // the BIOS should lock up (never reach 0x08000000).
+        let mut rom = make_test_rom(&[ARM_IDLE]);
+        // Corrupt the complement check byte
+        rom[COMPLEMENT_CHECK_OFFSET] = rom[COMPLEMENT_CHECK_OFFSET].wrapping_add(1);
+
+        let mut config = Config::default();
+        let tmp = std::env::temp_dir().join("neser_bios_test_nonexistent");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+        gba.load_rom(&rom, "bad-header.gba")
+            .expect("ROM should still load");
+
+        // Run for a while — BIOS should NOT reach cartridge entry point
+        let mut cycles = 0u64;
+        while cycles < 50_000 {
+            let tick = gba.run_tick_for_tests() as u64;
+            if tick == 0 {
+                break;
+            }
+            cycles += tick;
+        }
+        assert!(
+            gba.cpu_pc() < 0x0800_0000,
+            "BIOS should lock up with invalid header, but PC reached {:#010X}",
+            gba.cpu_pc()
+        );
+    }
+
+    #[test]
+    fn bios_boot_with_invalid_fixed_byte_locks_up() {
+        // When the fixed byte at 0xB2 is not 0x96, BIOS should lock up.
+        let mut rom = make_test_rom(&[ARM_IDLE]);
+        rom[FIXED_BYTE_OFFSET] = 0x00; // Should be 0x96
+        // Recompute complement check with the bad fixed byte
+        rom[COMPLEMENT_CHECK_OFFSET] = compute_complement_check(&rom);
+
+        let mut config = Config::default();
+        let tmp = std::env::temp_dir().join("neser_bios_test_nonexistent");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+        gba.load_rom(&rom, "bad-fixed-byte.gba")
+            .expect("ROM should still load");
+
+        let mut cycles = 0u64;
+        while cycles < 50_000 {
+            let tick = gba.run_tick_for_tests() as u64;
+            if tick == 0 {
+                break;
+            }
+            cycles += tick;
+        }
+        assert!(
+            gba.cpu_pc() < 0x0800_0000,
+            "BIOS should lock up with invalid fixed byte, but PC reached {:#010X}",
+            gba.cpu_pc()
+        );
+    }
+
+    #[test]
+    fn bios_warm_boot_redirects_to_debug_vector() {
+        // When POSTFLG is already 1 on reset, the BIOS should branch to
+        // the debug handler vector at 0x0000001C instead of doing full boot.
+        let code = &[ARM_IDLE];
+        let mut config = Config::default();
+        let tmp = std::env::temp_dir().join("neser_bios_test_nonexistent");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_test_rom(code);
+        gba.load_rom(&rom, "warm-boot.gba")
+            .expect("ROM should load");
+
+        // Set POSTFLG to 1 before boot starts (simulating warm boot)
+        gba.bus_mut().write8(0x04000300, 1);
+
+        // Run a few cycles — should end up at the FIQ/debug vector handler
+        let mut cycles = 0u64;
+        while cycles < 1_000 {
+            let pc = gba.cpu_pc();
+            // If we reach cartridge, something went wrong (should redirect)
+            if pc >= 0x0800_0000 {
+                break;
+            }
+            let tick = gba.run_tick_for_tests() as u64;
+            if tick == 0 {
+                break;
+            }
+            cycles += tick;
+        }
+
+        // Should NOT have reached cartridge — should be stuck at debug vector
+        // (which is currently a trap/infinite loop at 0x1C)
+        let pc = gba.cpu_pc();
+        assert!(
+            pc < 0x0800_0000,
+            "Warm boot should redirect to debug vector, not cartridge. PC={pc:#010X}"
+        );
+    }
 }
