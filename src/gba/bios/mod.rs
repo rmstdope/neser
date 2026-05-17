@@ -93,8 +93,10 @@ mod tests {
     /// instance ready to run from the cartridge entry point.
     fn boot_with_embedded_bios(arm_code: &[u32]) -> Gba {
         let mut config = Config::default();
-        // Point to a non-existent path so Gba::new() uses the embedded BIOS fallback
-        config.gba.bios_path = Some("/__neser_missing_gba_bios.bin".to_string());
+        // Use a guaranteed-nonexistent path so Gba::new() falls back to
+        // the embedded BIOS.
+        let tmp = std::env::temp_dir().join("neser_bios_test_nonexistent");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
         let mut gba = Gba::new(AppContext::new_with_config(config));
 
         // HLE is already disabled by Gba::new() when using embedded BIOS,
@@ -169,6 +171,11 @@ mod tests {
         0xE3E0_0000 | (rd << 12) | (imm8 & 0xFF)
     }
 
+    /// Encode `MOV Rd, #imm8 ROR (rot*2)` (ARM, unconditional).
+    const fn arm_mov_imm_rot(rd: u32, imm8: u32, rot: u32) -> u32 {
+        0xE3A0_0000 | (rd << 12) | ((rot & 0xF) << 8) | (imm8 & 0xFF)
+    }
+
     // ---------------------------------------------------------------
     // SWI 0x06: Div tests
     // ---------------------------------------------------------------
@@ -226,6 +233,29 @@ mod tests {
         assert_eq!(gba.cpu_reg(0), 2, "quotient of 10/5");
         assert_eq!(gba.cpu_reg(1), 0, "remainder of 10/5");
         assert_eq!(gba.cpu_reg(3), 2, "abs(quotient) of 10/5");
+    }
+
+    #[test]
+    fn bios_div_large_dividend_does_not_hang() {
+        // 0x80000000 / 1 = 0x80000000 (tests overflow guard in shift loop)
+        // MOV r0, #0x80 ROR 2 = 0x80000000 (as signed: -2147483648)
+        let code = &[
+            arm_mov_imm_rot(0, 0x02, 1), // r0 = 0x80000000
+            arm_mov_imm(1, 1),           // r1 = 1
+            arm_swi(0x06),               // SWI Div
+            ARM_IDLE,
+        ];
+
+        let mut gba = boot_with_embedded_bios(code);
+        run_until_idle(&mut gba, 500_000);
+
+        // -2147483648 / 1 = quotient -2147483648, remainder 0
+        assert_eq!(
+            gba.cpu_reg(0) as i32,
+            -2_147_483_648i32,
+            "quotient of 0x80000000/1"
+        );
+        assert_eq!(gba.cpu_reg(1), 0, "remainder of 0x80000000/1");
     }
 
     // ---------------------------------------------------------------

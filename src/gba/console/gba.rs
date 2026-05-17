@@ -106,11 +106,17 @@ impl Gba {
                     bus.load_bios(&bytes);
                     None
                 }
-                Err(_) => {
-                    // External BIOS not available — fall back to embedded BIOS
-                    bus.load_bios(crate::gba::bios::EMBEDDED_BIOS);
-                    using_embedded_bios = true;
-                    None
+                Err(e) => {
+                    if path.exists() {
+                        // File exists but is invalid (wrong size, unreadable, etc.)
+                        // — report the error so the user can fix their config.
+                        Some(e)
+                    } else {
+                        // File not found — fall back to embedded BIOS silently.
+                        bus.load_bios(crate::gba::bios::EMBEDDED_BIOS);
+                        using_embedded_bios = true;
+                        None
+                    }
                 }
             }
         } else {
@@ -677,7 +683,8 @@ mod tests {
         // embedded open-source BIOS and successfully load a ROM.
         let mut config = Config::default();
         // Point to a non-existent BIOS file so external loading fails
-        config.gba.bios_path = Some("/tmp/__neser_nonexistent_bios.bin".to_string());
+        let tmp = std::env::temp_dir().join("neser_nonexistent_bios_test.bin");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
         let mut gba = Gba::new(AppContext::new_with_config(config));
 
         let rom = make_minimal_valid_gba_rom();

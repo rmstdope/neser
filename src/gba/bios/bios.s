@@ -87,11 +87,15 @@ reset_handler:
 swi_handler:
     stmfd   sp!, {r11, r12, lr}
     @ Read the SWI instruction to get the comment field.
-    @ LR points to instruction after SWI, so SWI is at LR-4.
-    ldr     r12, [lr, #-4]
-    @ Extract SWI number: bits 23:16 for ARM mode
-    mov     r12, r12, lsr #16
-    and     r12, r12, #0xFF
+    @ LR points to instruction after SWI, so SWI is at LR-4 (ARM) or LR-2 (Thumb).
+    @ Check SPSR.T (bit 5) to determine the originating instruction set.
+    mrs     r12, spsr
+    tst     r12, #0x20          @ T bit set → Thumb origin
+    ldrneh  r12, [lr, #-2]      @ Thumb: load 16-bit SWI instruction
+    andne   r12, r12, #0xFF     @ Thumb: SWI number in bits 7:0
+    ldreq   r12, [lr, #-4]      @ ARM: load 32-bit SWI instruction
+    moveq   r12, r12, lsr #16   @ ARM: SWI number in bits 23:16
+    andeq   r12, r12, #0xFF
 
     @ Dispatch table
     cmp     r12, #0x00
@@ -370,11 +374,15 @@ swi_div:
     mov     r3, #1              @ bit position
 
     @ Find highest bit where divisor <= dividend
+    @ Guard: stop if divisor MSB is set (shifting would overflow to 0)
 .div_shift:
     cmp     r1, r0
-    movls   r1, r1, lsl #1
-    movls   r3, r3, lsl #1
-    bls     .div_shift
+    bhi     .div_loop           @ divisor > dividend, done shifting
+    tst     r1, #0x80000000     @ would next shift overflow?
+    bne     .div_loop
+    mov     r1, r1, lsl #1
+    mov     r3, r3, lsl #1
+    b       .div_shift
 
     @ Subtract and accumulate quotient
 .div_loop:
@@ -448,9 +456,12 @@ swi_div_arm:
 
 .divarm_shift:
     cmp     r1, r0
-    movls   r1, r1, lsl #1
-    movls   r3, r3, lsl #1
-    bls     .divarm_shift
+    bhi     .divarm_loop
+    tst     r1, #0x80000000
+    bne     .divarm_loop
+    mov     r1, r1, lsl #1
+    mov     r3, r3, lsl #1
+    b       .divarm_shift
 
 .divarm_loop:
     cmp     r3, #0
