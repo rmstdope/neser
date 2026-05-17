@@ -163,6 +163,8 @@ impl CgbBus {
             hram: [0u8; 0x7F],
             timer: Timer::new(),
             joypad: Joypad::new(),
+            // This is always a CGB bus, even when a DMG-only cartridge runs in
+            // CGB DMG-compatibility mode.
             apu: Apu::new(true),
             // IF = $E1 at CGB boot ROM exit (VBlank flag set).
             // IF stores only lower 5 bits; upper bits read as 1 via read mask.
