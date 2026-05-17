@@ -58,3 +58,43 @@ Each entry captures what went well, what to improve, and which skills were used.
 ### Navigator feedback
 
 No feedback provided.
+
+---
+
+## 2026-05-17 - PR #2414: Improve GB LCDC TILE_SEL timing
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2414
+**Linked issues:** #2353, #2412
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `test-driven-development` | Kept each timing slice anchored to focused tests and RED/GREEN/REFACTOR gates. |
+| Skill | `gb-hardware-research` | Guided Game Boy PPU/LCDC timing investigation against Pan Docs and hardware-oriented behavior. |
+| Skill | `rust-developer` | Guided Rust implementation and validation work. |
+| Skill | `rust-code-refactoring` | Supported small cleanup steps after functional fixes. |
+| Skill | `github-issue-designer` | Structured follow-up issue #2412 with explicit remaining scope and acceptance criteria. |
+| Skill | `github-administration` | Supported issue creation, PR creation, branch push, and CI verification through `gh`. |
+| Skill | `self-learning-skills` | Captured required issue-creation feedback; navigator had no additional feedback. |
+| Agent | `code-review` | Reviewed the branch before PR creation; a post-rebase review attempt timed out, so local checks and CI were used as final validation. |
+| Agent | `Iteration Retrospective Gatherer` | Produced this retrospective content after PR creation. |
+| Instructions | Repository workflow instructions | Enforced small increments, issue linkage, review-first PR workflow, and required pre-PR checks. |
+
+### What went well
+
+- The TDD slices kept a difficult hardware-timing problem manageable: each OBJ/window TILE_SEL case added a focused pixel FIFO test before the production timing adjustment.
+- The follow-up issue split was useful: #2353 delivered the DMG non-window CRC and several DMG window slices, while #2412 explicitly preserves the remaining DMG OAM X=8 and CGB/CGB-D work.
+- The GitHub administration workflow caught a stale base before PR creation; rebasing onto `origin/main` before opening the PR avoided carrying avoidable merge churn into review.
+- Full local checks plus PR CI provided a strong handoff after the branch was rebased and force-pushed.
+
+### What to improve
+
+- The TILE_SEL work had many narrow timing commits. For similar PPU timing issues, create an explicit timing matrix early: BG/window, low/high byte, visible/off-left OBJ, delayed/stalled fetch, and model variant.
+- A broad OAM X=4 OBJ penalty change regressed accepted mealybug and Mooneye timing before it was narrowed back. Future timing work should isolate global scheduler changes from local LCDC sampling fixes unless a test proves the scheduler itself is wrong.
+- The retrospective agent could generate the entry but could not write the file directly. Keep the manual append step in mind when the agent reports that limitation.
+
+### Navigator feedback
+
+No additional feedback.
