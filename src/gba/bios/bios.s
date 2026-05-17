@@ -565,7 +565,7 @@ swi_arctan:
 .arctan_horner_step:
     @ r3 = (r3 * r1) >> 14, where r1 = a
     smull   r0, r2, r3, r1     @ r0:r2 = b * a (64-bit)
-    mov     r3, r0, asr #14
+    mov     r3, r0, lsr #14
     orr     r3, r3, r2, lsl #18
     bx      lr
 
@@ -1148,7 +1148,7 @@ swi_bit_unpack:
 @ Returns: r0 = quotient (signed)
 @ ============================================================================
 .affine_divide:
-    stmfd   sp!, {r4-r5, lr}
+    stmfd   sp!, {r4, lr}
     mov     r4, #0              @ sign flag
     cmp     r0, #0
     rsblt   r0, r0, #0
@@ -1186,7 +1186,7 @@ swi_bit_unpack:
 .affdiv_done:
     cmp     r4, #0
     rsbne   r0, r0, #0
-    ldmfd   sp!, {r4-r5, lr}
+    ldmfd   sp!, {r4, lr}
     bx      lr
 
 .pool

@@ -730,14 +730,11 @@ mod tests {
     #[test]
     fn bios_bit_unpack_1bpp_to_4bpp() {
         // BitUnPack: expand 1bpp data to 4bpp with offset=1
-        // Source: 1 byte = 0b10110001 (bits: 1,0,0,0,1,1,0,1 from LSB)
-        // Expected 4bpp output: each bit becomes 4 bits
-        //   bit0=1 → 0+1=1, bit1=0 → 0, bit2=0 → 0, bit3=0 → 0,
-        //   bit4=1 → 0+1=1, bit5=1 → 0+1=1, bit6=0 → 0, bit7=1 → 0+1=1
-        // Packed into 32-bit words (8 nibbles per word):
-        //   word0 = 0x0000_0001 | (0 << 4) | (0 << 8) | (0 << 12) |
-        //           (1 << 16) | (1 << 20) | (0 << 24) | (1 << 28)
-        //         = 0xD0110001
+        // Source: 1 byte = 0b1011_0001 (0xB1)
+        // Bits from LSB: bit0=1, bit1=0, bit2=0, bit3=0, bit4=1, bit5=1, bit6=0, bit7=1
+        // Each bit expands to a 4-bit nibble; offset=1 is added to non-zero source values:
+        //   bit=1 → 1+1=2, bit=0 → 0
+        // Nibbles packed LSB-first: 2,0,0,0,2,2,0,2 → 0x2022_0002
         let src_addr: u32 = 0x0200_0100;
         let dst_addr: u32 = 0x0200_0200;
         let info_addr: u32 = 0x0200_0300;
@@ -767,14 +764,7 @@ mod tests {
             boot_and_setup_memory(&code, &[(src_addr, &src_data), (info_addr, &info_data)]);
         run_until_idle(&mut gba, 500_000);
 
-        // 8 bits × 4bpp = 32 bits = 1 word
-        // Input bits (LSB first): 1,0,0,0,1,1,0,1
-        // Output nibbles: 2,0,0,0,2,2,0,2 (1+offset=2 for set bits, 0 for unset)
-        // Wait - offset is added to non-zero units. bit=1 → 1+1=2, bit=0 → 0
         let result = gba.bus_mut().read32(dst_addr);
-        // 0xD1 = 0b1101_0001, nibbles packed LSB-first into 32-bit word
-        // bit0=1→2, bit1=0→0, bit2=0→0, bit3=0→0,
-        // bit4=1→2, bit5=1→2, bit6=0→0, bit7=1→2
         assert_eq!(result, 0x2022_0002, "BitUnPack 1bpp→4bpp with offset=1");
     }
 }
