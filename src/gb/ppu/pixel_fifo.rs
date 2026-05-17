@@ -23,6 +23,8 @@ const DMG_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 4;
 const CGB_DMG_COMPAT_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 6;
 const DMG_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 1;
 const CGB_DMG_COMPAT_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 3;
+const OFF_LEFT_WINDOW_DELAYED_OBJ_X: u8 = OBJ_PIXELS_PER_FETCH - 3;
+const OFF_LEFT_WINDOW_EXTRA_STALL_DOTS: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LcdcBgEnableEdgeTiming {
@@ -378,10 +380,29 @@ impl PixelFifoRenderer {
                 .iter()
                 .map(|&index| oam[index * 4 + 1])
                 .min();
+            self.extend_off_left_window_obj_stall(registers);
         } else {
             self.sprite_indices.clear();
             self.obj_stall_events.clear();
             self.leftmost_obj_oam_x = None;
+        }
+    }
+
+    fn extend_off_left_window_obj_stall(&mut self, registers: &Registers) {
+        let window_starts_at_left_edge =
+            registers.lcdc & 0x20 != 0 && self.scanline >= registers.wy && registers.wx <= 7;
+        if !window_starts_at_left_edge
+            || self.leftmost_obj_oam_x != Some(OFF_LEFT_WINDOW_DELAYED_OBJ_X)
+        {
+            return;
+        }
+
+        if let Some(event) = self
+            .obj_stall_events
+            .first_mut()
+            .filter(|event| event.x == 0)
+        {
+            event.dots = event.dots.saturating_add(OFF_LEFT_WINDOW_EXTRA_STALL_DOTS);
         }
     }
 
@@ -626,6 +647,15 @@ impl PixelFifoRenderer {
             self.lcdc_tile_data_edge
                 .record_write(current_fetch_start, current_fetch_end, new, new);
             self.record_next_lcdc_tile_data_write(next_fetch_start, bg_phase, previous, new);
+        } else if window_fetch_active
+            && self.should_set_lcdc_tile_data_at_off_left_window_start(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                new,
+            );
         } else if self
             .should_set_lcdc_tile_data_in_delayed_window_obj_fetch(previous, new, bg_phase)
         {
@@ -921,6 +951,20 @@ impl PixelFifoRenderer {
             && self.next_x == OBJ_PIXELS_PER_FETCH
             && bg_phase == 0
             && self.pending_obj_stall_dots == 0
+    }
+
+    fn should_set_lcdc_tile_data_at_off_left_window_start(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.leftmost_obj_oam_x == Some(OFF_LEFT_WINDOW_DELAYED_OBJ_X)
+            && self.next_x == 0
+            && bg_phase == 0
     }
 
     fn should_set_lcdc_tile_data_in_delayed_window_obj_fetch(
@@ -2474,6 +2518,79 @@ mod tests {
             screen_buffer.get_pixel(8, 0),
             (170, 170, 170),
             "the first following window pixel should mix the set low byte with the restored high byte"
+        );
+    }
+
+    #[test]
+    fn off_left_obj_window_set_delays_first_visible_pixels() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA3;
+        registers.bgp = 0xE4;
+        registers.obp0 = 0xFF;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = oam_with_sprite_at(16, 5, 1, 0);
+        let mut screen_buffer = ScreenBuffer::new();
+        let mut dot: u16 = 80;
+
+        renderer.begin_scanline(0, 80, &oam, &registers, false, false);
+        while dot < 104 {
+            tick_renderer(
+                &mut renderer,
+                dot,
+                &vram,
+                &oam,
+                &registers,
+                false,
+                false,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+        }
+        renderer.record_lcdc_write_with_window(
+            0xA3,
+            0xB3,
+            registers.scx,
+            false,
+            false,
+            registers.wx,
+            registers.wy,
+        );
+        registers.lcdc = 0xB3;
+        while dot < 112 {
+            tick_renderer(
+                &mut renderer,
+                dot,
+                &vram,
+                &oam,
+                &registers,
+                false,
+                false,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+        }
+        renderer.record_lcdc_write_with_window(
+            0xB3,
+            0xA3,
+            registers.scx,
+            false,
+            false,
+            registers.wx,
+            registers.wy,
+        );
+
+        assert_eq!(
+            screen_buffer.get_pixel(0, 0),
+            (85, 85, 85),
+            "the first visible window pixel should wait long enough to mix the previous low byte with the set high byte"
+        );
+        assert_eq!(
+            screen_buffer.get_pixel(1, 0),
+            (85, 85, 85),
+            "the second visible window pixel should wait long enough to keep the set high byte"
         );
     }
 
