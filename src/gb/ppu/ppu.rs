@@ -249,7 +249,8 @@ impl Ppu {
         // On DMG, the Mode 2 STAT source fires simultaneously with VBlank at line 144.
         // Fire Mode 2 STAT directly (edge-triggered) without changing mode_for_irq,
         // which would cause spurious fires during VBlank if Mode2IE stays enabled.
-        if events.vblank_start
+        if !self.cgb_mode
+            && events.vblank_start
             && (self.registers.stat_irq_enables & 0x20 != 0)
             && !self.prev_stat_irq_line
         {
@@ -373,6 +374,12 @@ impl Ppu {
         let mode = self.timing.mode();
         (en & 0x40 != 0 && self.lyc_eq_ly_frozen)
             || (mode_for_irq == 2 && en & 0x20 != 0)
+            // CGB fires the LY144 Mode 2 STAT source at scanline 143 dot 452,
+            // one M-cycle before VBlank; DMG fires this source with VBlank.
+            || (self.cgb_mode
+                && self.timing.scanline() == 143
+                && self.timing.dot() == 452
+                && en & 0x20 != 0)
             || (!suppress_mode_irqs && en & 0x10 != 0 && mode == PpuMode::VBlank)
             || (mode_for_irq == 0 && en & 0x08 != 0)
     }
@@ -669,6 +676,9 @@ impl Ppu {
                 true
             }
             0xFF6C => {
+                if self.dmg_compat {
+                    return true;
+                }
                 self.opri = val & 0x01 != 0;
                 true
             }
@@ -1198,6 +1208,30 @@ mod tests {
         // Then: no second VBlank interrupt
         let flags2 = ppu.take_pending_interrupts();
         assert_eq!(flags2 & 0x01, 0x00);
+    }
+
+    #[test]
+    fn test_cgb_mode2_stat_interrupt_fires_one_m_cycle_before_vblank() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_register(0xFF41, 0x20);
+
+        while !(ppu.ly() == 143 && ppu.dot() == 448) {
+            ppu.tick_dots(4);
+            let _ = ppu.take_pending_interrupts();
+        }
+
+        ppu.tick_dots(4);
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(
+            flags & 0x02,
+            0x02,
+            "CGB Mode 2 STAT source should fire at LY143 dot 452"
+        );
+        assert_eq!(flags & 0x01, 0x00, "VBlank should not fire yet");
+
+        ppu.tick_dots(4);
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(flags & 0x01, 0x01, "VBlank should fire one M-cycle later");
     }
 
     // ── STAT interrupt ─────────────────────────────────────────────────────────

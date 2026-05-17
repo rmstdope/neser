@@ -440,6 +440,10 @@ impl Timing {
         self.ly
     }
 
+    pub fn scanline(&self) -> u8 {
+        self.scanline
+    }
+
     pub fn dot(&self) -> u16 {
         self.dot
     }

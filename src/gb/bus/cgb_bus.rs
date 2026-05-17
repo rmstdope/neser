@@ -71,6 +71,8 @@ pub struct CgbBus {
     dma_oam_blocked: bool,
     /// Serial control register (SC / $FF02). Bit 7 = transfer start, cleared by hardware.
     sc: u8,
+    /// Serial data register (SB / $FF01).
+    sb: u8,
     /// CGB VRAM DMA (HDMA/GDMA) state for registers $FF51–$FF55.
     hdma: HdmaState,
     /// Number of M-cycles the CPU should be halted due to active HDMA transfer.
@@ -161,7 +163,9 @@ impl CgbBus {
             hram: [0u8; 0x7F],
             timer: Timer::new(),
             joypad: Joypad::new(),
-            apu: Apu::new(is_cgb),
+            // This is always a CGB bus, even when a DMG-only cartridge runs in
+            // CGB DMG-compatibility mode.
+            apu: Apu::new(true),
             // IF = $E1 at CGB boot ROM exit (VBlank flag set).
             // IF stores only lower 5 bits; upper bits read as 1 via read mask.
             // Store internal value $01 (VBlank set), readback produces $E1.
@@ -173,6 +177,7 @@ impl CgbBus {
             dma_position: 0,
             dma_oam_blocked: false,
             sc: 0,
+            sb: 0,
             hdma: HdmaState::new(),
             hdma_halt_cycles: 0,
             svbk: 0,
@@ -207,6 +212,10 @@ impl CgbBus {
 
         // Set OPRI based on cartridge type when skipping boot ROM.
         bus.ppu.set_cgb_model(model);
+        // Propagate the CGB hardware revision before seeding skip-boot APU
+        // state (NR52 and channel registers), since channel triggers can observe
+        // model-specific timing such as CH1 restart_hold.
+        bus.apu.set_cgb_model(model);
         if skip_boot_rom && opri_value != 0 {
             bus.ppu.write_cgb_register(0xFF6C, opri_value);
         }
@@ -227,6 +236,15 @@ impl CgbBus {
                 .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
             // Enable DMG-compat mode for correct OBJ palette selection during rendering.
             bus.ppu.set_dmg_compat(true);
+        }
+        if skip_boot_rom {
+            bus.joypad.write(0x30);
+            bus.apu.write_nr52_with_div_state(0x80, false);
+            bus.apu.write_register(0xFF11, 0x80);
+            bus.apu.write_register(0xFF12, 0xF3);
+            bus.apu.write_register(0xFF14, 0x80);
+            bus.apu.write_register(0xFF24, 0x77);
+            bus.apu.write_register(0xFF25, 0xF3);
         }
 
         // Initialize PPU to CGB post-boot state.
@@ -294,11 +312,6 @@ impl CgbBus {
             }
         };
         bus.timer.set_div_counter(initial_div_counter);
-
-        // Propagate the CGB hardware revision to the APU so model-specific
-        // sweep/timing quirks (e.g. CH1 restart_hold) match the selected
-        // hardware. Default `Apu::new` assumes `CgbE`.
-        bus.apu.set_cgb_model(model);
 
         bus
     }
@@ -664,7 +677,7 @@ impl CgbBus {
         self.ppu.write_register(0xFF40, 0x00);
         self.timer = Timer::new();
         self.joypad = Joypad::new();
-        self.apu = Apu::new(self.cart.is_cgb());
+        self.apu = Apu::new(true);
         self.apu.set_sample_rate(apu_rate);
         self.apu.set_cgb_model(self.model);
         self.wram = [[0u8; 0x1000]; 8];
@@ -676,6 +689,7 @@ impl CgbBus {
         self.dma_position = 0;
         self.dma_oam_blocked = false;
         self.hdma = HdmaState::new();
+        self.sb = 0;
         self.svbk = 0;
         self.key1 = 0;
         self.apu_tick_accumulator = 0;
@@ -690,6 +704,13 @@ impl CgbBus {
         // Reset KEY0 state: if boot ROM is active, unlock so boot ROM can write;
         // if skipping boot ROM, set appropriate value based on cartridge type.
         if self.skip_boot_rom {
+            self.joypad.write(0x30);
+            self.apu.write_nr52_with_div_state(0x80, false);
+            self.apu.write_register(0xFF11, 0x80);
+            self.apu.write_register(0xFF12, 0xF3);
+            self.apu.write_register(0xFF14, 0x80);
+            self.apu.write_register(0xFF24, 0x77);
+            self.apu.write_register(0xFF25, 0xF3);
             self.ppu.seed_boot_registered_mark_tile();
             // Same logic as constructor: set KEY0/OPRI based on cartridge header
             let is_cgb = self.cart.is_cgb();
@@ -860,40 +881,45 @@ impl GbBus for CgbBus {
             }
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.joypad.read(),
-            0xFF01 => 0xFF,           // SB — stub
+            0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
+            0xFF03 => 0xFF,           // unused I/O
             0xFF04..=0xFF07 => self.timer.read(addr),
+            0xFF08..=0xFF0E => 0xFF, // unused I/O range
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
             0xFF46 => self.dma_source,
             // CGB KEY1 — speed switch register
+            0xFF4D if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
             // CGB KEY0 — CPU mode select register (upper nibble reads as 1)
+            0xFF4C if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4C => self.key0 | 0xF0,
+            0xFF4E => 0xFF,
             // CGB HDMA registers
+            0xFF51..=0xFF55 if self.ppu.dmg_compat => 0xFF,
             0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
+            0xFF50 => 0xFF,
+            0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => 0xFF, // Unused/reserved CGB I/O ranges
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
             // CGB undocumented registers ($FF72-$FF75) — Pan Docs "CGB Registers".
             // $FF72-$FF73: fully R/W, initial value $00.
             0xFF72 => self.ff72,
             0xFF73 => self.ff73,
-            // $FF74: fully R/W in CGB mode, initial value $00.
+            0xFF74 if self.ppu.dmg_compat => 0xFF,
             0xFF74 => self.ff74,
             // $FF75: bits 4-6 R/W, other bits read as 1.
             0xFF75 => self.ff75 | 0x8F,
             // CGB PCM registers
             0xFF76 => self.apu.read_pcm12(),
             0xFF77 => self.apu.read_pcm34(),
+            0xFF70 if self.ppu.dmg_compat => 0xFF,
             0xFF70 => self.svbk | 0xF8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
-            _ => {
-                println!("CGB bus: unhandled read at ${:04X}", addr);
-                0xFF
-            }
         }
     }
 
@@ -917,12 +943,14 @@ impl GbBus for CgbBus {
             }
             0xFEA0..=0xFEFF => {}
             0xFF00 => self.joypad.write(val),
-            0xFF01 => {} // SB — stub
+            0xFF01 => self.sb = val,
             0xFF02 => {
                 // SC: Serial Control. Writing bit 7=1 starts transfer.
                 // For stub implementation, immediately clear bit 7 to signal completion.
                 self.sc = val & 0x7F;
             }
+            0xFF03 => {}          // unused I/O
+            0xFF08..=0xFF0E => {} // unused I/O range
             0xFF04..=0xFF07 => {
                 let div_apu_edge = self.timer.write(addr, val);
                 // If a DIV-APU falling edge occurred (DIV write with bit 4/5 HIGH),
@@ -965,14 +993,18 @@ impl GbBus for CgbBus {
             }
             0xFF46 => self.do_oam_dma(val),
             // CGB KEY1 — only bit 0 (arm) is writable; bit 7 (current speed) is read-only
+            0xFF4D if self.ppu.dmg_compat && self.skip_boot_rom => {}
             0xFF4D => self.key1 = (self.key1 & 0x80) | (val & 0x01),
             // CGB KEY0 — CPU mode select, locked after boot ROM unmaps
+            0xFF4C if self.ppu.dmg_compat && self.skip_boot_rom => {}
             0xFF4C => {
                 if !self.key0_locked {
                     self.key0 = val;
                 }
             }
+            0xFF4E => {}
             // CGB HDMA registers
+            0xFF51..=0xFF55 if self.ppu.dmg_compat => {}
             0xFF51 => self.hdma.write_source_high(val),
             0xFF52 => self.hdma.write_source_low(val),
             0xFF53 => self.hdma.write_dest_high(val),
@@ -1051,17 +1083,17 @@ impl GbBus for CgbBus {
             // CGB undocumented registers ($FF72-$FF75) — Pan Docs "CGB Registers".
             0xFF72 => self.ff72 = val,
             0xFF73 => self.ff73 = val,
+            0xFF74 if self.ppu.dmg_compat => {}
             0xFF74 => self.ff74 = val,
             // $FF75: only bits 4-6 are writable.
             0xFF75 => self.ff75 = val & 0x70,
             // CGB PCM registers (read-only; ignore writes)
             0xFF76 | 0xFF77 => {}
+            0xFF70 if self.ppu.dmg_compat => {}
             0xFF70 => self.svbk = val & 0x07,
+            0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => {}
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie_reg = val,
-            _ => {
-                println!("CGB bus: unhandled write at ${:04X} = ${:02X}", addr, val);
-            }
         }
     }
 
@@ -1112,37 +1144,43 @@ impl GbBus for CgbBus {
             }
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.joypad.read(),
-            0xFF01 => 0xFF,           // SB — stub
+            0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
+            0xFF03 => 0xFF,           // unused I/O
             0xFF04..=0xFF07 => self.timer.read(addr),
+            0xFF08..=0xFF0E => 0xFF, // unused I/O range
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
             0xFF46 => self.dma_source,
             // CGB KEY1 — speed switch register (debugger)
+            0xFF4D if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
             // CGB KEY0 — CPU mode select register (debugger)
+            0xFF4C if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4C => self.key0 | 0xF0,
+            0xFF4E => 0xFF,
             // CGB HDMA registers
+            0xFF51..=0xFF55 if self.ppu.dmg_compat => 0xFF,
             0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
+            0xFF50 => 0xFF,
+            0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => 0xFF,
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
             // CGB undocumented registers ($FF72-$FF75).
             0xFF72 => self.ff72,
             0xFF73 => self.ff73,
+            0xFF74 if self.ppu.dmg_compat => 0xFF,
             0xFF74 => self.ff74,
             0xFF75 => self.ff75 | 0x8F,
             // CGB PCM registers
             0xFF76 => self.apu.read_pcm12(),
             0xFF77 => self.apu.read_pcm34(),
+            0xFF70 if self.ppu.dmg_compat => 0xFF,
             0xFF70 => self.svbk | 0xF8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
-            _ => {
-                println!("CGB bus: unhandled debugger read at ${:04X}", addr);
-                0xFF
-            }
         }
     }
 }
@@ -1158,6 +1196,21 @@ mod tests {
     fn cgb_rom_only_cart() -> Box<dyn GbCartridge> {
         let mut rom = vec![0u8; 0x8000];
         rom[0x0143] = 0x80; // CGB compatible
+        rom[0x0147] = 0x00; // ROM only
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x00; // no RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        load_cartridge(&rom).expect("valid ROM")
+    }
+
+    /// Build a minimal DMG-only ROM cartridge, as used by Mooneye `*-C` tests
+    /// when they run on CGB hardware in DMG compatibility mode.
+    fn dmg_only_rom_cart() -> Box<dyn GbCartridge> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0143] = 0x00; // DMG-only cartridge
         rom[0x0147] = 0x00; // ROM only
         rom[0x0148] = 0x00; // 32 KB
         rom[0x0149] = 0x00; // no RAM
@@ -1199,9 +1252,212 @@ mod tests {
         CgbBus::new(cgb_rom_only_cart(), CgbModel::default(), true)
     }
 
+    fn make_dmg_compat_bus_post_boot() -> CgbBus {
+        CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbE, true)
+    }
+
     /// Enable LCD (needed for PPU to tick and reach HBlank).
     fn enable_lcd(bus: &mut CgbBus) {
         bus.write(0xFF40, 0x91); // LCD on, BG enabled
+    }
+
+    #[test]
+    fn test_dmg_compat_post_boot_hwio_matches_mooneye_cgb_expectations() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+
+        let expected: &[(u16, u8)] = &[
+            (0xFF00, 0xFF),
+            (0xFF01, 0x00),
+            (0xFF02, 0x7E),
+            (0xFF04, 0x26),
+            (0xFF05, 0x00),
+            (0xFF06, 0x00),
+            (0xFF07, 0xF8),
+            (0xFF08, 0xFF),
+            (0xFF0F, 0xE1),
+            (0xFF10, 0x80),
+            (0xFF11, 0xBF),
+            (0xFF12, 0xF3),
+            (0xFF13, 0xFF),
+            (0xFF14, 0xBF),
+            (0xFF15, 0xFF),
+            (0xFF16, 0x3F),
+            (0xFF17, 0x00),
+            (0xFF18, 0xFF),
+            (0xFF19, 0xBF),
+            (0xFF1A, 0x7F),
+            (0xFF1B, 0xFF),
+            (0xFF1C, 0x9F),
+            (0xFF1D, 0xFF),
+            (0xFF1E, 0xBF),
+            (0xFF1F, 0xFF),
+            (0xFF20, 0xFF),
+            (0xFF21, 0x00),
+            (0xFF22, 0x00),
+            (0xFF23, 0xBF),
+            (0xFF24, 0x77),
+            (0xFF25, 0xF3),
+            (0xFF26, 0xF1),
+            (0xFF27, 0xFF),
+            (0xFF42, 0x00),
+            (0xFF43, 0x00),
+            (0xFF45, 0x00),
+            (0xFF46, 0x00),
+            (0xFF47, 0xFC),
+            (0xFF4A, 0x00),
+            (0xFF4B, 0x00),
+            (0xFF4C, 0xFF),
+            (0xFF4D, 0xFF),
+            (0xFF4E, 0xFF),
+            (0xFF4F, 0xFE),
+            (0xFF50, 0xFF),
+            (0xFF68, 0xC8),
+            (0xFF69, 0xFF),
+            (0xFF6A, 0xD0),
+            (0xFF6B, 0xFF),
+            (0xFF70, 0xFF),
+            (0xFF72, 0x00),
+            (0xFF73, 0x00),
+            (0xFF74, 0xFF),
+            (0xFF75, 0x8F),
+            (0xFF76, 0x00),
+            (0xFF77, 0x00),
+            (0xFFFF, 0x00),
+        ];
+
+        for &(addr, value) in expected {
+            assert_eq!(bus.read(addr), value, "read ${addr:04X}");
+        }
+    }
+
+    #[test]
+    fn test_dmg_compat_unused_hwio_reads_as_ff_or_documented_masked_value() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+
+        for addr in [
+            0xFF03, 0xFF08, 0xFF09, 0xFF0A, 0xFF0B, 0xFF0C, 0xFF0D, 0xFF0E, 0xFF15, 0xFF1F, 0xFF27,
+            0xFF28, 0xFF29, 0xFF4C, 0xFF4D, 0xFF4E, 0xFF50, 0xFF51, 0xFF52, 0xFF53, 0xFF54, 0xFF55,
+            0xFF56, 0xFF57, 0xFF58, 0xFF59, 0xFF5A, 0xFF5B, 0xFF5C, 0xFF5D, 0xFF5E, 0xFF5F, 0xFF60,
+            0xFF61, 0xFF62, 0xFF63, 0xFF64, 0xFF65, 0xFF66, 0xFF67, 0xFF69, 0xFF6B, 0xFF6C, 0xFF6D,
+            0xFF6E, 0xFF6F, 0xFF70, 0xFF71, 0xFF74, 0xFF78, 0xFF79, 0xFF7A, 0xFF7B, 0xFF7C, 0xFF7D,
+            0xFF7E, 0xFF7F,
+        ] {
+            bus.write(addr, 0x00);
+            assert_eq!(bus.read(addr), 0xFF, "read ${addr:04X} after write 00");
+            bus.write(addr, 0xFF);
+            assert_eq!(bus.read(addr), 0xFF, "read ${addr:04X} after write FF");
+        }
+
+        for (addr, mask, expected) in [
+            (0xFF4F, 0xFE, 0xFE),
+            (0xFF68, 0x40, 0x40),
+            (0xFF6A, 0x40, 0x40),
+            (0xFF75, 0xFF, 0x8F),
+            (0xFF76, 0xFF, 0x00),
+            (0xFF77, 0xFF, 0x00),
+        ] {
+            bus.write(addr, 0x00);
+            assert_eq!(bus.read(addr) & mask, expected & mask, "read ${addr:04X}");
+        }
+    }
+
+    #[test]
+    fn test_dmg_compat_unused_hwio_mooneye_bit_masks() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+
+        for (addr, mask, write, expected) in [
+            (0xFF00, 0xC0, 0xFF, 0xC0),
+            (0xFF00, 0xC0, 0x3F, 0xC0),
+            (0xFF02, 0x7E, 0x7E, 0x7E),
+            (0xFF02, 0x7E, 0x00, 0x7E),
+            (0xFF07, 0xF8, 0xF8, 0xF8),
+            (0xFF07, 0xF8, 0x00, 0xF8),
+            (0xFF0F, 0xE0, 0xE0, 0xE0),
+            (0xFF0F, 0xE0, 0x00, 0xE0),
+            (0xFF41, 0x80, 0x80, 0x80),
+            (0xFF41, 0x80, 0x00, 0x80),
+            (0xFF10, 0x80, 0x00, 0x80),
+            (0xFF10, 0x80, 0x80, 0x80),
+            (0xFF1A, 0x7F, 0x00, 0x7F),
+            (0xFF1A, 0x7F, 0x7F, 0x7F),
+            (0xFF1C, 0x9F, 0x00, 0x9F),
+            (0xFF1C, 0x9F, 0x9F, 0x9F),
+            (0xFF20, 0xC0, 0x00, 0xC0),
+            (0xFF20, 0xC0, 0xC0, 0xC0),
+            (0xFF23, 0x3F, 0x00, 0x3F),
+            (0xFF23, 0x3F, 0x3F, 0x3F),
+            (0xFF26, 0x70, 0x80, 0x70),
+            (0xFF26, 0x70, 0xF0, 0x70),
+            (0xFFFF, 0xE0, 0x00, 0x00),
+            (0xFFFF, 0xE0, 0xE0, 0xE0),
+            (0xFF4F, 0xFE, 0x00, 0xFE),
+            (0xFF4F, 0xFE, 0xFE, 0xFE),
+            (0xFF68, 0x40, 0x00, 0x40),
+            (0xFF68, 0x40, 0x40, 0x40),
+            (0xFF6A, 0x40, 0x00, 0x40),
+            (0xFF6A, 0x40, 0x40, 0x40),
+            (0xFF72, 0xFF, 0x00, 0x00),
+            (0xFF72, 0xFF, 0xFF, 0xFF),
+            (0xFF73, 0xFF, 0x00, 0x00),
+            (0xFF73, 0xFF, 0xFF, 0xFF),
+            (0xFF75, 0xFF, 0x00, 0x8F),
+            (0xFF75, 0xFF, 0xFF, 0xFF),
+            (0xFF76, 0xFF, 0x00, 0x00),
+            (0xFF76, 0xFF, 0xFF, 0x00),
+            (0xFF77, 0xFF, 0x00, 0x00),
+            (0xFF77, 0xFF, 0xFF, 0x00),
+        ] {
+            bus.write(addr, write);
+            assert_eq!(
+                bus.read(addr) & mask,
+                expected & mask,
+                "addr ${addr:04X} write ${write:02X}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_serial_data_register_reads_back_written_value() {
+        let mut cgb_bus = make_bus_post_boot();
+        cgb_bus.write(0xFF01, 0x5A);
+        assert_eq!(cgb_bus.read(0xFF01), 0x5A);
+        assert_eq!(cgb_bus.read_for_debugger(0xFF01), 0x5A);
+
+        let mut dmg_compat_bus = make_dmg_compat_bus_post_boot();
+        dmg_compat_bus.write(0xFF01, 0xA5);
+        assert_eq!(dmg_compat_bus.read(0xFF01), 0xA5);
+        assert_eq!(dmg_compat_bus.read_for_debugger(0xFF01), 0xA5);
+    }
+
+    #[test]
+    fn test_ff74_is_fixed_ff_only_in_dmg_compat_mode() {
+        let mut dmg_compat_bus = make_dmg_compat_bus_post_boot();
+        dmg_compat_bus.write(0xFF74, 0x00);
+        assert_eq!(dmg_compat_bus.read(0xFF74), 0xFF);
+        dmg_compat_bus.write(0xFF74, 0x55);
+        assert_eq!(dmg_compat_bus.read(0xFF74), 0xFF);
+
+        let mut cgb_bus = make_bus_post_boot();
+        cgb_bus.write(0xFF74, 0x00);
+        assert_eq!(cgb_bus.read(0xFF74), 0x00);
+        cgb_bus.write(0xFF74, 0x55);
+        assert_eq!(cgb_bus.read(0xFF74), 0x55);
+    }
+
+    #[test]
+    fn test_debugger_read_mirrors_dmg_compat_hwio_masks() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+
+        for addr in [
+            0xFF4C, 0xFF4D, 0xFF51, 0xFF52, 0xFF53, 0xFF54, 0xFF55, 0xFF70, 0xFF74,
+        ] {
+            bus.write(addr, 0x00);
+            assert_eq!(
+                bus.read_for_debugger(addr),
+                bus.read(addr),
+                "debugger read ${addr:04X}"
+            );
+        }
     }
 
     // ── HDMA register read/write through bus ─────────────────────────────────
