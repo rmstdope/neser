@@ -24,8 +24,8 @@
 //! | 0x0B  | CpuSet            | Full   |
 //! | 0x0C  | CpuFastSet        | Full   |
 //! | 0x0D  | BiosChecksum      | Full   |
-//! | 0x0E  | BgAffinitySet     | Full   |
-//! | 0x0F  | ObjAffinitySet    | Full   |
+//! | 0x0E  | BgAffineSet       | Full   |
+//! | 0x0F  | ObjAffineSet      | Full   |
 //! | 0x10  | BitUnPack          | Full   |
 //! | 0x11  | LZ77UnCompWram    | Full   |
 //! | 0x12  | LZ77UnCompVram    | Full   |
@@ -1478,7 +1478,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[test]
-    fn bios_midi_key2freq_middle_c() {
+    fn bios_midi_key2freq_a4() {
         // MidiKey2Freq(wa, mk=69, fp=0) where wa->freq = 7040 Hz
         // Key 69 = A4 standard pitch
         // freq = 7040 / 2^((180-69-0/256)/12) = 7040 / 2^(111/12)

@@ -1657,7 +1657,11 @@ swi_sound_bias:
 
     ldr     r3, =0x04000088     @ SOUNDBIAS address
     ldrh    r4, [r3]            @ current SOUNDBIAS value
-    bic     r4, r4, #0xFC00     @ isolate bias level (bits 0-9)
+    @ Isolate upper bits (10-15) by clearing bits 0-9
+    @ Use two-step mask: clear with 0xFF, then clear bit 8-9
+    mov     r5, r4, lsr #10     @ shift upper bits down
+    mov     r5, r5, lsl #10     @ r5 = preserved upper bits
+    sub     r4, r4, r5          @ r4 = current bias level (bits 0-9)
 
 .sb_loop:
     cmp     r4, r2
@@ -1668,7 +1672,8 @@ swi_sound_bias:
 .sb_dec:
     sub     r4, r4, #1          @ step down
 .sb_write:
-    strh    r4, [r3]            @ write new SOUNDBIAS
+    orr     r0, r4, r5          @ merge bias level with preserved upper bits
+    strh    r0, [r3]            @ write new SOUNDBIAS
     @ Small delay between steps
     mov     r5, #0x10
 .sb_delay:
