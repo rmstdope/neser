@@ -99,7 +99,6 @@ impl Gba {
             .map(PathBuf::from)
             .or_else(default_gba_bios_path);
 
-        let mut using_embedded_bios = false;
         let bios_load_error = if let Some(path) = bios_path {
             match load_bios_image(&path) {
                 Ok(bytes) => {
@@ -114,7 +113,6 @@ impl Gba {
                     } else {
                         // File not found — fall back to embedded BIOS silently.
                         bus.load_bios(crate::gba::bios::EMBEDDED_BIOS);
-                        using_embedded_bios = true;
                         None
                     }
                 }
@@ -122,16 +120,10 @@ impl Gba {
         } else {
             // No BIOS path configured — use embedded BIOS
             bus.load_bios(crate::gba::bios::EMBEDDED_BIOS);
-            using_embedded_bios = true;
             None
         };
 
-        let mut cpu = Arm7tdmi::new();
-        // Disable HLE when using the embedded open-source BIOS: the BIOS
-        // handles all SWI calls natively so HLE is not needed.
-        if using_embedded_bios {
-            cpu.set_hle_swi(false);
-        }
+        let cpu = Arm7tdmi::new();
 
         Self {
             app_context,
@@ -170,31 +162,6 @@ impl Gba {
     #[cfg(test)]
     pub(crate) fn cpu_thumb(&self) -> bool {
         self.cpu.regs.thumb()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn init_test_stack_pointers(&mut self) {
-        use crate::gba::cpu::registers::CpuMode;
-
-        let saved_mode = self.cpu.regs.mode();
-
-        // Provide deterministic stack pointers for the modes used by suite ROMs.
-        self.cpu.regs.switch_mode(CpuMode::Supervisor);
-        self.cpu.regs.r[13] = 0x0300_7FE0;
-
-        self.cpu.regs.switch_mode(CpuMode::Irq);
-        self.cpu.regs.r[13] = 0x0300_7FA0;
-
-        self.cpu.regs.switch_mode(CpuMode::System);
-        self.cpu.regs.r[13] = 0x0300_7F00;
-
-        self.cpu.regs.switch_mode(saved_mode);
-    }
-
-    /// Enable or disable high-level emulation of known SWI calls on the CPU.
-    #[cfg(test)]
-    pub(crate) fn set_hle_swi(&mut self, enabled: bool) {
-        self.cpu.set_hle_swi(enabled);
     }
 
     #[cfg(test)]

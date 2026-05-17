@@ -1,7 +1,7 @@
 @ Open-source GBA BIOS replacement
 @ MIT License - Copyright (c) 2025 Henrik Kurelid
 @
-@ Implements: Reset, IRQ dispatch, SWI 0x00-0x08, 0x0D
+@ Implements: Reset, IRQ dispatch, SWI 0x00-0x10
 @ Reference: GBATek BIOS Functions (https://problemkaputt.de/gbatek.htm#biosfunctions)
 
 .arm
@@ -116,8 +116,22 @@ swi_handler:
     beq     swi_div_arm
     cmp     r12, #0x08
     beq     swi_sqrt
+    cmp     r12, #0x09
+    beq     swi_arctan
+    cmp     r12, #0x0A
+    beq     swi_arctan2
+    cmp     r12, #0x0B
+    beq     swi_cpu_set
+    cmp     r12, #0x0C
+    beq     swi_cpu_fast_set
     cmp     r12, #0x0D
     beq     swi_bios_checksum
+    cmp     r12, #0x0E
+    beq     swi_bg_affine_set
+    cmp     r12, #0x0F
+    beq     swi_obj_affine_set
+    cmp     r12, #0x10
+    beq     swi_bit_unpack
 
     @ Unknown SWI: just return
     ldmfd   sp!, {r11, r12, lr}
@@ -295,10 +309,20 @@ swi_intr_wait:
     strh    r2, [r5]
 
 .intr_wait_loop:
+    @ Enable IRQs so they can fire while we wait
+    mrs     r0, cpsr
+    bic     r0, r0, #0x80       @ Clear I bit (enable IRQ)
+    msr     cpsr_c, r0
+
     @ Halt CPU until next interrupt
     mov     r0, #0x04000000
     mov     r1, #0
     strb    r1, [r0, #0x301]
+
+    @ Disable IRQs while we check BIOS IF
+    mrs     r0, cpsr
+    orr     r0, r0, #0x80       @ Set I bit (disable IRQ)
+    msr     cpsr_c, r0
 
     @ Check if our desired interrupt(s) have fired
     ldrh    r2, [r5]
@@ -330,9 +354,20 @@ swi_vblank_intr_wait:
     strh    r2, [r5]
 
 .vblank_wait_loop:
+    @ Enable IRQs so they can fire while we wait
+    mrs     r0, cpsr
+    bic     r0, r0, #0x80
+    msr     cpsr_c, r0
+
+    @ Halt CPU
     mov     r0, #0x04000000
     mov     r1, #0
     strb    r1, [r0, #0x301]
+
+    @ Disable IRQs while checking BIOS IF
+    mrs     r0, cpsr
+    orr     r0, r0, #0x80
+    msr     cpsr_c, r0
 
     ldrh    r2, [r5]
     tst     r2, r4
@@ -430,72 +465,11 @@ swi_div:
 @ Returns: r0 = quotient, r1 = remainder, r3 = abs(quotient)
 @ ============================================================================
 swi_div_arm:
-    @ Swap r0 and r1, then fall through to div
+    @ Swap r0 and r1, then fall through to Div
     mov     r12, r0
     mov     r0, r1
     mov     r1, r12
-    stmfd   sp!, {r4, r5}
-
-    @ Save original numerator sign in r5 (r0 after swap = original r1 = numerator)
-    mov     r5, r0
-
-    mov     r4, #0              @ sign flag
-    cmp     r0, #0
-    rsblt   r0, r0, #0
-    eorlt   r4, r4, #1
-
-    cmp     r1, #0
-    rsblt   r1, r1, #0
-    eorlt   r4, r4, #1
-
-    cmp     r1, #0
-    beq     .divarm_by_zero
-
-    mov     r2, #0
-    mov     r3, #1
-
-.divarm_shift:
-    cmp     r1, r0
-    bhi     .divarm_loop
-    tst     r1, #0x80000000
-    bne     .divarm_loop
-    mov     r1, r1, lsl #1
-    mov     r3, r3, lsl #1
-    b       .divarm_shift
-
-.divarm_loop:
-    cmp     r3, #0
-    beq     .divarm_done
-    cmp     r0, r1
-    subcs   r0, r0, r1
-    addcs   r2, r2, r3
-    mov     r1, r1, lsr #1
-    mov     r3, r3, lsr #1
-    b       .divarm_loop
-
-.divarm_done:
-    mov     r1, r0
-    mov     r0, r2
-    mov     r3, r0
-
-    cmp     r4, #0
-    rsbne   r0, r0, #0
-
-    @ Apply sign to remainder (same sign as original numerator)
-    cmp     r5, #0
-    rsblt   r1, r1, #0
-
-    ldmfd   sp!, {r4, r5}
-    ldmfd   sp!, {r11, r12, lr}
-    movs    pc, lr
-
-.divarm_by_zero:
-    mov     r0, #0
-    mov     r1, #0
-    mov     r3, #0
-    ldmfd   sp!, {r4, r5}
-    ldmfd   sp!, {r11, r12, lr}
-    movs    pc, lr
+    b       swi_div
 
 @ ============================================================================
 @ SWI 0x08: Sqrt
@@ -537,6 +511,725 @@ swi_bios_checksum:
     ldr     r0, =0x4E455345    @ "NESE" - our open-source BIOS identifier
     ldmfd   sp!, {r11, r12, lr}
     movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x09: ArcTan
+@ r0 = tan (signed, s1.14 fixed-point)
+@ Returns: r0 = angle, r1 = -(tan^2 >> 14), r3 = polynomial result
+@ Uses Horner's method with 8 coefficients from the real GBA BIOS.
+@ ============================================================================
+swi_arctan:
+    stmfd   sp!, {r4, lr}
+
+    @ a = -(r0 * r0) >> 14
+    mov     r4, r0              @ r4 = original input (i)
+    smull   r1, r3, r0, r0     @ r1:r3 = i * i (64-bit signed)
+    mov     r1, r1, lsr #14
+    orr     r1, r1, r3, lsl #18
+    rsb     r1, r1, #0          @ r1 = a = -(i*i >> 14)
+
+    @ Horner's evaluation: b = (((...)*a >> 14) + coeff) for each coefficient
+    @ Coefficients (from innermost): 0xA9, 0x390, 0x91C, 0xFB6, 0x16AA, 0x2081, 0x3651, 0xA2F9
+    ldr     r3, =0x00A9         @ b = 0xA9
+    bl      .arctan_horner_step @ b = (b * a >> 14) + 0x390
+    ldr     r0, =0x0390
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x091C
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x0FB6
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x16AA
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x2081
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x3651
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0xA2F9
+    add     r3, r3, r0
+
+    @ result = (i * b) >> 16
+    smull   r0, r2, r4, r3     @ r0:r2 = i * b
+    mov     r0, r0, lsr #16
+    orr     r0, r0, r2, lsl #16
+
+    ldmfd   sp!, {r4, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+.arctan_horner_step:
+    @ r3 = (r3 * r1) >> 14, where r1 = a
+    smull   r0, r2, r3, r1     @ r0:r2 = b * a (64-bit)
+    mov     r3, r0, asr #14
+    orr     r3, r3, r2, lsl #18
+    bx      lr
+
+@ ============================================================================
+@ SWI 0x0A: ArcTan2
+@ r0 = X (signed s1.14), r1 = Y (signed s1.14)
+@ Returns: r0 = angle (0x0000-0xFFFF, full circle), r3 = 0x170
+@ ============================================================================
+swi_arctan2:
+    stmfd   sp!, {r4-r7, lr}
+
+    mov     r4, r0              @ r4 = X
+    mov     r5, r1              @ r5 = Y
+
+    @ Handle Y == 0
+    cmp     r5, #0
+    bne     .at2_check_x_zero
+    cmp     r4, #0
+    movge   r0, #0              @ X >= 0: angle = 0
+    ldrlt   r0, =0x8000         @ X < 0: angle = 0x8000 (180°)
+    b       .at2_done
+
+.at2_check_x_zero:
+    @ Handle X == 0
+    cmp     r4, #0
+    bne     .at2_quadrant
+    cmp     r5, #0
+    ldrge   r0, =0x4000         @ Y >= 0: angle = 0x4000 (90°)
+    ldrlt   r0, =0xC000         @ Y < 0: angle = 0xC000 (270°)
+    b       .at2_done
+
+.at2_quadrant:
+    @ Determine quadrant and compute ratio for ArcTan
+    @ Strategy: always pass |smaller/larger| to ArcTan (keeps ratio <= 1)
+    @ then adjust result based on quadrant and octant
+
+    @ Get absolute values
+    cmp     r4, #0
+    rsblt   r6, r4, #0          @ r6 = |X|
+    movge   r6, r4
+    cmp     r5, #0
+    rsblt   r7, r5, #0          @ r7 = |Y|
+    movge   r7, r5
+
+    @ Compute ratio: if |X| >= |Y|, ratio = (Y << 14) / X, else = (X << 14) / Y
+    cmp     r6, r7
+    bge     .at2_x_dominant
+
+    @ |Y| > |X|: ratio = X/Y (for octants 45-90)
+    mov     r0, r4, lsl #14     @ numerator = X << 14
+    mov     r1, r5              @ denominator = Y
+    bl      .at2_divide
+    @ r0 = (X << 14) / Y = ratio
+
+    @ Call internal arctan
+    bl      .at2_arctan_internal
+
+    @ Adjust: result = 0x4000 - arctan_result for Y>0, 0xC000 - arctan_result for Y<0
+    cmp     r5, #0
+    ldrge   r1, =0x4000
+    ldrlt   r1, =0xC000
+    sub     r0, r1, r0
+    b       .at2_done
+
+.at2_x_dominant:
+    @ |X| >= |Y|: ratio = (Y << 14) / X
+    mov     r0, r5, lsl #14
+    mov     r1, r4
+    bl      .at2_divide
+    bl      .at2_arctan_internal
+    @ r4 (X) and r5 (Y) preserved by both calls
+
+    cmp     r4, #0
+    bge     .at2_x_pos
+    ldr     r1, =0x8000
+    add     r0, r0, r1
+    b       .at2_done
+
+.at2_x_pos:
+    cmp     r5, #0
+    bge     .at2_done
+    ldr     r1, =0x10000
+    add     r0, r0, r1
+    b       .at2_done
+
+.at2_done:
+    @ Mask to 16-bit
+    mov     r0, r0, lsl #16
+    mov     r0, r0, lsr #16
+    ldr     r3, =0x170          @ r3 = 0x170 (matches real BIOS clobber)
+
+    ldmfd   sp!, {r4-r7, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ Internal signed division for ArcTan2: r0 = r0 / r1 (both signed)
+.at2_divide:
+    stmfd   sp!, {r4, lr}
+    mov     r4, #0              @ sign flag
+    cmp     r0, #0
+    rsblt   r0, r0, #0
+    eorlt   r4, r4, #1
+    cmp     r1, #0
+    rsblt   r1, r1, #0
+    eorlt   r4, r4, #1
+
+    cmp     r1, #0
+    moveq   r0, #0
+    beq     .at2_div_done
+
+    @ Unsigned division
+    mov     r2, #0              @ quotient
+    mov     r3, #1
+.at2_div_shift:
+    cmp     r1, r0
+    bhi     .at2_div_loop
+    tst     r1, #0x80000000
+    bne     .at2_div_loop
+    mov     r1, r1, lsl #1
+    mov     r3, r3, lsl #1
+    b       .at2_div_shift
+.at2_div_loop:
+    cmp     r3, #0
+    beq     .at2_div_end
+    cmp     r0, r1
+    subcs   r0, r0, r1
+    addcs   r2, r2, r3
+    mov     r1, r1, lsr #1
+    mov     r3, r3, lsr #1
+    b       .at2_div_loop
+.at2_div_end:
+    mov     r0, r2
+.at2_div_done:
+    cmp     r4, #0
+    rsbne   r0, r0, #0
+    ldmfd   sp!, {r4, lr}
+    bx      lr
+
+@ Internal ArcTan for ArcTan2 (same algorithm, uses r0 as input)
+.at2_arctan_internal:
+    stmfd   sp!, {r4, lr}
+    mov     r4, r0              @ save input
+
+    @ a = -(r0 * r0) >> 14
+    smull   r1, r3, r0, r0
+    mov     r1, r1, lsr #14
+    orr     r1, r1, r3, lsl #18
+    rsb     r1, r1, #0          @ r1 = a
+
+    ldr     r3, =0x00A9
+    bl      .arctan_horner_step
+    ldr     r0, =0x0390
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x091C
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x0FB6
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x16AA
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x2081
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0x3651
+    add     r3, r3, r0
+    bl      .arctan_horner_step
+    ldr     r0, =0xA2F9
+    add     r3, r3, r0
+
+    @ result = (input * b) >> 16
+    smull   r0, r2, r4, r3
+    mov     r0, r0, lsr #16
+    orr     r0, r0, r2, lsl #16
+
+    ldmfd   sp!, {r4, lr}
+    bx      lr
+
+@ ============================================================================
+@ SWI 0x0B: CpuSet
+@ r0 = source address, r1 = destination address
+@ r2 = count + flags: bits 0-20 = count, bit 24 = fill, bit 26 = 32-bit
+@ ============================================================================
+swi_cpu_set:
+    stmfd   sp!, {r4-r6, lr}
+
+    @ Extract count (bits 0-20)
+    bic     r3, r2, #0xFF000000
+    bic     r3, r3, #0x00E00000  @ r3 = count (bits 0-20)
+
+    @ Align source and dest
+    tst     r2, #(1 << 26)      @ 32-bit mode?
+    bicne   r0, r0, #3          @ yes: align to 4
+    bicne   r1, r1, #3
+    biceq   r0, r0, #1          @ no: align to 2
+    biceq   r1, r1, #1
+
+    @ Check fill mode (bit 24)
+    tst     r2, #(1 << 24)
+    bne     .cpuset_fill
+
+    @ Copy mode
+    tst     r2, #(1 << 26)
+    bne     .cpuset_copy32
+
+    @ 16-bit copy
+.cpuset_copy16:
+    cmp     r3, #0
+    beq     .cpuset_done
+    ldrh    r4, [r0], #2
+    strh    r4, [r1], #2
+    sub     r3, r3, #1
+    b       .cpuset_copy16
+
+    @ 32-bit copy
+.cpuset_copy32:
+    cmp     r3, #0
+    beq     .cpuset_done
+    ldr     r4, [r0], #4
+    str     r4, [r1], #4
+    sub     r3, r3, #1
+    b       .cpuset_copy32
+
+    @ Fill mode
+.cpuset_fill:
+    tst     r2, #(1 << 26)
+    bne     .cpuset_fill32
+
+    @ 16-bit fill
+    ldrh    r4, [r0]
+.cpuset_fill16:
+    cmp     r3, #0
+    beq     .cpuset_done
+    strh    r4, [r1], #2
+    sub     r3, r3, #1
+    b       .cpuset_fill16
+
+    @ 32-bit fill
+.cpuset_fill32:
+    ldr     r4, [r0]
+.cpuset_fill32_loop:
+    cmp     r3, #0
+    beq     .cpuset_done
+    str     r4, [r1], #4
+    sub     r3, r3, #1
+    b       .cpuset_fill32_loop
+
+.cpuset_done:
+    ldmfd   sp!, {r4-r6, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x0C: CpuFastSet
+@ r0 = source address, r1 = destination address
+@ r2 = count + flags: bits 0-20 = wordcount, bit 24 = fill
+@ Always 32-bit. Count rounded up to multiple of 8.
+@ ============================================================================
+swi_cpu_fast_set:
+    stmfd   sp!, {r4-r11, lr}
+
+    @ Align source and dest to 4 bytes
+    bic     r0, r0, #3
+    bic     r1, r1, #3
+
+    @ Extract count (bits 0-20) and round up to multiple of 8
+    bic     r3, r2, #0xFF000000
+    bic     r3, r3, #0x00E00000  @ r3 = raw count
+    add     r3, r3, #7
+    bic     r3, r3, #7          @ r3 = count rounded up to ×8
+
+    @ Check fill mode (bit 24)
+    tst     r2, #(1 << 24)
+    bne     .cpufastset_fill
+
+    @ Copy mode: 8 words at a time using LDMIA/STMIA
+.cpufastset_copy:
+    cmp     r3, #0
+    beq     .cpufastset_done
+    ldmia   r0!, {r4-r11}
+    stmia   r1!, {r4-r11}
+    sub     r3, r3, #8
+    b       .cpufastset_copy
+
+    @ Fill mode: read one word, replicate
+.cpufastset_fill:
+    ldr     r4, [r0]
+    mov     r5, r4
+    mov     r6, r4
+    mov     r7, r4
+    mov     r8, r4
+    mov     r9, r4
+    mov     r10, r4
+    mov     r11, r4
+.cpufastset_fill_loop:
+    cmp     r3, #0
+    beq     .cpufastset_done
+    stmia   r1!, {r4-r11}
+    sub     r3, r3, #8
+    b       .cpufastset_fill_loop
+
+.cpufastset_done:
+    ldmfd   sp!, {r4-r11, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x0E: BgAffineSet
+@ r0 = ptr to source data array (20 bytes per entry)
+@ r1 = ptr to dest data array (16 bytes per entry)
+@ r2 = number of calculations
+@ Source: {s32 cx, s32 cy, s16 disp_cx, s16 disp_cy, s16 scale_x, s16 scale_y, u16 angle, u16 pad}
+@ Dest:   {s16 pa, s16 pb, s16 pc, s16 pd, s32 x0, s32 y0}
+@ ============================================================================
+swi_bg_affine_set:
+    stmfd   sp!, {r4-r10, lr}
+
+.bgaff_loop:
+    subs    r2, r2, #1
+    blt     .bgaff_done
+
+    @ Save src, dst, remaining count
+    stmfd   sp!, {r0, r1, r2}
+
+    @ Load source struct (20 bytes total, advances r0 by 20)
+    ldr     r3, [r0], #4        @ cx (s32)
+    ldr     r4, [r0], #4        @ cy (s32)
+    ldrsh   r5, [r0], #2        @ disp_cx (s16)
+    ldrsh   r6, [r0], #2        @ disp_cy (s16)
+    ldrsh   r7, [r0], #2        @ scale_x (s16)
+    ldrsh   r8, [r0], #2        @ scale_y (s16)
+    ldrh    r9, [r0], #4        @ angle (u16), skip 2 pad bytes
+
+    @ Update src_ptr on stack for next iteration
+    str     r0, [sp, #0]
+
+    @ Save cx, cy, disp_cx, disp_cy, scale_x, scale_y
+    stmfd   sp!, {r3, r4, r5, r6, r7, r8}
+    @ Stack: [sp+0]=cx [sp+4]=cy [sp+8]=disp_cx [sp+12]=disp_cy
+    @        [sp+16]=scale_x [sp+20]=scale_y
+    @        [sp+24]=src [sp+28]=dst [sp+32]=count
+
+    @ Sin/cos lookup from upper 8 bits of angle
+    mov     r9, r9, lsr #8      @ index = angle >> 8
+    ldr     r0, =sine_lut
+    add     r3, r9, #64
+    and     r3, r3, #0xFF
+    mov     r3, r3, lsl #1      @ byte offset for cos
+    ldrsh   r10, [r0, r3]       @ r10 = cos (s1.14)
+    mov     r9, r9, lsl #1      @ byte offset for sin
+    ldrsh   r9, [r0, r9]        @ r9 = sin (s1.14)
+
+    @ Load scale values from stack
+    ldr     r5, [sp, #16]       @ scale_x
+    ldr     r6, [sp, #20]       @ scale_y
+
+    @ pa = (cos << 2) / scale_x  [s1.14 → s8.8: shift by 8-14+8 = 2]
+    mov     r0, r10, lsl #2
+    mov     r1, r5
+    bl      .affine_divide
+    mov     r7, r0              @ r7 = pa
+
+    @ pb = (-sin << 2) / scale_y
+    rsb     r0, r9, #0
+    mov     r0, r0, lsl #2
+    mov     r1, r6
+    bl      .affine_divide
+    mov     r8, r0              @ r8 = pb
+
+    @ pc = (sin << 2) / scale_x
+    mov     r0, r9, lsl #2
+    mov     r1, r5
+    bl      .affine_divide
+    mov     r5, r0              @ r5 = pc (scale_x no longer needed)
+
+    @ pd = (cos << 2) / scale_y
+    mov     r0, r10, lsl #2
+    mov     r1, r6
+    bl      .affine_divide
+    mov     r6, r0              @ r6 = pd (scale_y no longer needed)
+
+    @ Store pa, pb, pc, pd to dest (as s16 halfwords)
+    ldr     r1, [sp, #28]       @ dst ptr
+    strh    r7, [r1], #2        @ pa
+    strh    r8, [r1], #2        @ pb
+    strh    r5, [r1], #2        @ pc
+    strh    r6, [r1], #2        @ pd
+
+    @ Load cx, cy, disp_cx, disp_cy from stack
+    ldr     r0, [sp, #0]        @ cx
+    ldr     r2, [sp, #4]        @ cy
+    ldr     r3, [sp, #8]        @ disp_cx
+    ldr     r4, [sp, #12]       @ disp_cy
+
+    @ x0 = cx - pa*disp_cx - pb*disp_cy
+    smull   r9, r10, r7, r3     @ pa * disp_cx (64-bit)
+    sub     r0, r0, r9          @ cx - pa*disp_cx (low 32 bits suffice)
+    smull   r9, r10, r8, r4     @ pb * disp_cy
+    sub     r0, r0, r9          @ x0 = cx - pa*disp_cx - pb*disp_cy
+    str     r0, [r1], #4        @ store x0
+
+    @ y0 = cy - pc*disp_cx - pd*disp_cy
+    smull   r9, r10, r5, r3     @ pc * disp_cx
+    sub     r2, r2, r9
+    smull   r9, r10, r6, r4     @ pd * disp_cy
+    sub     r2, r2, r9          @ y0 = cy - pc*disp_cx - pd*disp_cy
+    str     r2, [r1]            @ store y0
+
+    @ Update dst ptr on stack (advanced by 16 bytes: 4*s16 + 2*s32)
+    add     r1, r1, #4          @ past y0
+    str     r1, [sp, #28]       @ update dst
+
+    @ Pop saved source values (discard) and iteration state
+    add     sp, sp, #24         @ discard cx/cy/disp_cx/disp_cy/scale_x/scale_y
+    ldmfd   sp!, {r0, r1, r2}   @ restore src, dst, count
+
+    b       .bgaff_loop
+
+.bgaff_done:
+    ldmfd   sp!, {r4-r10, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x0F: ObjAffineSet
+@ r0 = ptr to source data array (8 bytes per entry: s16 sx, s16 sy, u16 angle, u16 pad)
+@ r1 = ptr to dest (PA/PB/PC/PD as s16, with stride r3 between each)
+@ r2 = number of calculations
+@ r3 = stride (byte offset between consecutive PA/PB/PC/PD entries)
+@ ============================================================================
+swi_obj_affine_set:
+    stmfd   sp!, {r4-r10, lr}
+
+    mov     r10, r3             @ r10 = stride
+
+.objaff_loop:
+    subs    r2, r2, #1
+    blt     .objaff_done
+
+    stmfd   sp!, {r0, r1, r2}
+
+    @ Load source struct (8 bytes, advances r0)
+    ldrsh   r5, [r0], #2        @ scale_x (s16)
+    ldrsh   r6, [r0], #2        @ scale_y (s16)
+    ldrh    r7, [r0], #4        @ angle (u16), skip 2 pad bytes
+
+    @ Update src_ptr
+    str     r0, [sp, #0]
+
+    @ Sin/cos lookup
+    mov     r7, r7, lsr #8
+    ldr     r0, =sine_lut
+    add     r3, r7, #64
+    and     r3, r3, #0xFF
+    mov     r3, r3, lsl #1      @ byte offset for cos
+    ldrsh   r9, [r0, r3]        @ r9 = cos (s1.14)
+    mov     r7, r7, lsl #1      @ byte offset for sin
+    ldrsh   r8, [r0, r7]        @ r8 = sin (s1.14)
+
+    @ pa = (cos << 2) / scale_x  [s1.14 → s8.8: shift by 8-14+8 = 2]
+    mov     r0, r9, lsl #2
+    mov     r1, r5
+    bl      .affine_divide
+    mov     r7, r0              @ r7 = pa
+
+    @ pb = (-sin << 2) / scale_y
+    rsb     r0, r8, #0
+    mov     r0, r0, lsl #2
+    mov     r1, r6
+    bl      .affine_divide
+    mov     r4, r0              @ r4 = pb
+
+    @ pc = (sin << 2) / scale_x
+    mov     r0, r8, lsl #2
+    mov     r1, r5
+    bl      .affine_divide
+    mov     r5, r0              @ r5 = pc
+
+    @ pd = (cos << 2) / scale_y
+    mov     r0, r9, lsl #2
+    mov     r1, r6
+    bl      .affine_divide
+    mov     r6, r0              @ r6 = pd
+
+    @ Store PA, PB, PC, PD with stride
+    ldmfd   sp!, {r0, r1, r2}
+    strh    r7, [r1]            @ PA
+    add     r1, r1, r10
+    strh    r4, [r1]            @ PB
+    add     r1, r1, r10
+    strh    r5, [r1]            @ PC
+    add     r1, r1, r10
+    strh    r6, [r1]            @ PD
+    add     r1, r1, r10         @ advance past PD
+
+    b       .objaff_loop
+
+.objaff_done:
+    ldmfd   sp!, {r4-r10, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x10: BitUnPack
+@ r0 = source address
+@ r1 = destination address (word-aligned)
+@ r2 = pointer to info: {u16 src_len, u8 src_width, u8 dst_width, u32 data_offset}
+@ data_offset bit 31 = zero flag (add offset to zeros too)
+@ ============================================================================
+swi_bit_unpack:
+    stmfd   sp!, {r4-r10, lr}
+
+    @ Load info struct
+    ldrh    r3, [r2]            @ src_len (bytes)
+    ldrb    r4, [r2, #2]        @ src_width (1, 2, 4, or 8 bits)
+    ldrb    r5, [r2, #3]        @ dst_width (1, 2, 4, 8, 16, or 32 bits)
+    ldr     r6, [r2, #4]        @ data_offset (bit 31 = zero flag)
+
+    mov     r7, #0              @ output accumulator
+    mov     r8, #0              @ bits accumulated in output word
+    mov     r9, #1
+    mov     r9, r9, lsl r4
+    sub     r9, r9, #1          @ src_mask = (1 << src_width) - 1
+
+.bitunp_byte_loop:
+    cmp     r3, #0
+    beq     .bitunp_flush
+    sub     r3, r3, #1
+
+    ldrb    r10, [r0], #1       @ read source byte
+    mov     r2, #0              @ bits consumed from this byte
+
+.bitunp_bit_loop:
+    cmp     r2, #8
+    bge     .bitunp_byte_loop
+
+    @ Extract src_width bits
+    and     lr, r10, r9         @ value = byte & src_mask
+    mov     r10, r10, lsr r4    @ shift byte right by src_width
+    add     r2, r2, r4          @ bits consumed += src_width
+
+    @ Apply data offset
+    cmp     lr, #0
+    bne     .bitunp_nonzero
+    @ Zero value: add offset only if zero flag (bit 31) set
+    tst     r6, #0x80000000
+    beq     .bitunp_store       @ zero flag clear: store 0
+.bitunp_nonzero:
+    @ Non-zero (or zero with flag): add offset (bits 0-30)
+    bic     r14, r6, #0x80000000  @ clear zero flag bit
+    add     lr, lr, r14
+
+.bitunp_store:
+    @ Place value at current bit position in output word
+    orr     r7, r7, lr, lsl r8
+    add     r8, r8, r5          @ advance by dst_width bits
+
+    @ If we've filled 32 bits, write the word
+    cmp     r8, #32
+    blt     .bitunp_bit_loop
+    str     r7, [r1], #4        @ write output word
+    mov     r7, #0              @ reset accumulator
+    mov     r8, #0
+    b       .bitunp_bit_loop
+
+.bitunp_flush:
+    @ Write remaining partial word if any bits accumulated
+    cmp     r8, #0
+    strne   r7, [r1]
+
+    ldmfd   sp!, {r4-r10, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ Signed fixed-point division for affine functions
+@ r0 = numerator (signed), r1 = divisor (signed)
+@ Returns: r0 = quotient (signed)
+@ ============================================================================
+.affine_divide:
+    stmfd   sp!, {r4-r5, lr}
+    mov     r4, #0              @ sign flag
+    cmp     r0, #0
+    rsblt   r0, r0, #0
+    eorlt   r4, r4, #1
+    cmp     r1, #0
+    rsblt   r1, r1, #0
+    eorlt   r4, r4, #1
+
+    cmp     r1, #0
+    moveq   r0, #0
+    beq     .affdiv_done
+
+    @ Unsigned division
+    mov     r2, #0              @ quotient
+    mov     r3, #1
+.affdiv_shift:
+    cmp     r1, r0
+    bhi     .affdiv_loop
+    tst     r1, #0x80000000
+    bne     .affdiv_loop
+    mov     r1, r1, lsl #1
+    mov     r3, r3, lsl #1
+    b       .affdiv_shift
+.affdiv_loop:
+    cmp     r3, #0
+    beq     .affdiv_end
+    cmp     r0, r1
+    subcs   r0, r0, r1
+    addcs   r2, r2, r3
+    mov     r1, r1, lsr #1
+    mov     r3, r3, lsr #1
+    b       .affdiv_loop
+.affdiv_end:
+    mov     r0, r2
+.affdiv_done:
+    cmp     r4, #0
+    rsbne   r0, r0, #0
+    ldmfd   sp!, {r4-r5, lr}
+    bx      lr
+
+.pool
+
+@ ============================================================================
+@ 256-entry sine lookup table (s1.14 fixed-point)
+@ sin(i * 2π / 256) * 16384, for i = 0..255
+@ Used by BgAffineSet and ObjAffineSet
+@ ============================================================================
+.align 2
+sine_lut:
+    .short 0x0000, 0x0192, 0x0324, 0x04b5, 0x0646, 0x07d6, 0x0964, 0x0af1
+    .short 0x0c7c, 0x0e06, 0x0f8d, 0x1112, 0x1294, 0x1413, 0x1590, 0x1709
+    .short 0x187e, 0x19ef, 0x1b5d, 0x1cc6, 0x1e2b, 0x1f8c, 0x20e7, 0x223d
+    .short 0x238e, 0x24da, 0x2620, 0x2760, 0x289a, 0x29ce, 0x2afb, 0x2c21
+    .short 0x2d41, 0x2e5a, 0x2f6c, 0x3076, 0x3179, 0x3274, 0x3368, 0x3453
+    .short 0x3537, 0x3612, 0x36e5, 0x37b0, 0x3871, 0x392b, 0x39db, 0x3a82
+    .short 0x3b21, 0x3bb6, 0x3c42, 0x3cc5, 0x3d3f, 0x3daf, 0x3e15, 0x3e72
+    .short 0x3ec5, 0x3f0f, 0x3f4f, 0x3f85, 0x3fb1, 0x3fd4, 0x3fec, 0x3ffb
+    .short 0x4000, 0x3ffb, 0x3fec, 0x3fd4, 0x3fb1, 0x3f85, 0x3f4f, 0x3f0f
+    .short 0x3ec5, 0x3e72, 0x3e15, 0x3daf, 0x3d3f, 0x3cc5, 0x3c42, 0x3bb6
+    .short 0x3b21, 0x3a82, 0x39db, 0x392b, 0x3871, 0x37b0, 0x36e5, 0x3612
+    .short 0x3537, 0x3453, 0x3368, 0x3274, 0x3179, 0x3076, 0x2f6c, 0x2e5a
+    .short 0x2d41, 0x2c21, 0x2afb, 0x29ce, 0x289a, 0x2760, 0x2620, 0x24da
+    .short 0x238e, 0x223d, 0x20e7, 0x1f8c, 0x1e2b, 0x1cc6, 0x1b5d, 0x19ef
+    .short 0x187e, 0x1709, 0x1590, 0x1413, 0x1294, 0x1112, 0x0f8d, 0x0e06
+    .short 0x0c7c, 0x0af1, 0x0964, 0x07d6, 0x0646, 0x04b5, 0x0324, 0x0192
+    .short 0x0000, 0xfe6e, 0xfcdc, 0xfb4b, 0xf9ba, 0xf82a, 0xf69c, 0xf50f
+    .short 0xf384, 0xf1fa, 0xf073, 0xeeee, 0xed6c, 0xebed, 0xea70, 0xe8f7
+    .short 0xe782, 0xe611, 0xe4a3, 0xe33a, 0xe1d5, 0xe074, 0xdf19, 0xddc3
+    .short 0xdc72, 0xdb26, 0xd9e0, 0xd8a0, 0xd766, 0xd632, 0xd505, 0xd3df
+    .short 0xd2bf, 0xd1a6, 0xd094, 0xcf8a, 0xce87, 0xcd8c, 0xcc98, 0xcbad
+    .short 0xcac9, 0xc9ee, 0xc91b, 0xc850, 0xc78f, 0xc6d5, 0xc625, 0xc57e
+    .short 0xc4df, 0xc44a, 0xc3be, 0xc33b, 0xc2c1, 0xc251, 0xc1eb, 0xc18e
+    .short 0xc13b, 0xc0f1, 0xc0b1, 0xc07b, 0xc04f, 0xc02c, 0xc014, 0xc005
+    .short 0xc000, 0xc005, 0xc014, 0xc02c, 0xc04f, 0xc07b, 0xc0b1, 0xc0f1
+    .short 0xc13b, 0xc18e, 0xc1eb, 0xc251, 0xc2c1, 0xc33b, 0xc3be, 0xc44a
+    .short 0xc4df, 0xc57e, 0xc625, 0xc6d5, 0xc78f, 0xc850, 0xc91b, 0xc9ee
+    .short 0xcac9, 0xcbad, 0xcc98, 0xcd8c, 0xce87, 0xcf8a, 0xd094, 0xd1a6
+    .short 0xd2bf, 0xd3df, 0xd505, 0xd632, 0xd766, 0xd8a0, 0xd9e0, 0xdb26
+    .short 0xdc72, 0xddc3, 0xdf19, 0xe074, 0xe1d5, 0xe33a, 0xe4a3, 0xe611
+    .short 0xe782, 0xe8f7, 0xea70, 0xebed, 0xed6c, 0xeeee, 0xf073, 0xf1fa
+    .short 0xf384, 0xf50f, 0xf69c, 0xf82a, 0xf9ba, 0xfb4b, 0xfcdc, 0xfe6e
 
 @ ============================================================================
 @ IRQ Handler
