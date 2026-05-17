@@ -177,6 +177,9 @@ reset_handler:
     ldr     r7, =logo_data_end  @ end of logo data
     @ Logo data is stored as (row_offset_16, run_of_pixels) pairs
     @ Format: halfword offset from VRAM base, then bytes of pixel indices
+    @
+    @ GBA VRAM does not support byte writes (STRB duplicates the byte
+    @ to both bytes of the halfword).  Use read-modify-write with LDRH/STRH.
 .Llogo_copy:
     cmp     r6, r7
     bge     .Llogo_done
@@ -186,8 +189,16 @@ reset_handler:
 .Llogo_pixel:
     subs    r1, r1, #1
     blt     .Llogo_copy
-    mov     r3, #1              @ pixel value = palette entry 1
-    strb    r3, [r2], #1
+    @ Read-modify-write: set one byte of the halfword at [r2].
+    bic     r4, r2, #1          @ halfword-aligned address
+    ldrh    r3, [r4]            @ read existing halfword
+    tst     r2, #1              @ odd or even byte?
+    biceq   r3, r3, #0xFF      @ even: clear low byte
+    orreq   r3, r3, #1         @ even: set low byte = palette 1
+    bicne   r3, r3, #0xFF00    @ odd: clear high byte
+    orrne   r3, r3, #0x100     @ odd: set high byte = palette 1
+    strh    r3, [r4]            @ write back halfword
+    add     r2, r2, #1          @ advance to next pixel
     b       .Llogo_pixel
 .Llogo_done:
 

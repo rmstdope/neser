@@ -1883,6 +1883,55 @@ mod tests {
     }
 
     #[test]
+    fn bios_logo_vram_no_byte_write_bleed() {
+        // GBA VRAM ignores byte writes (STRB) and instead duplicates the byte
+        // into both bytes of the addressed halfword. The logo drawing must use
+        // halfword read-modify-write to avoid pixel bleed.
+        //
+        // The first RLE span is: offset=16630, count=3 (row 69, cols 70-72).
+        // With correct writes, VRAM[16633] (col 73) should be 0 (background).
+        // With buggy STRB, it would be 1 (bleed from the halfword duplication).
+        let mut config = Config::default();
+        let tmp = std::env::temp_dir().join("neser_bios_test_nonexistent");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_test_rom(&[ARM_IDLE]);
+        gba.load_rom(&rom, "vram-bleed-test.gba")
+            .expect("ROM should load");
+
+        // Run for ~1 second — logo is drawn early, well before fade starts.
+        let target_cycles: u64 = 16_780_000;
+        let mut cycles = 0u64;
+        while cycles < target_cycles {
+            let tick = gba.run_tick_for_tests() as u64;
+            if tick == 0 {
+                break;
+            }
+            cycles += tick;
+        }
+
+        // Check the first span: 3 pixels at VRAM offset 16630 (cols 70-72).
+        // Pixels 70, 71, 72 should be 1 (palette entry 1).
+        assert_eq!(
+            gba.bus().debug_read_vram(16630),
+            1,
+            "Pixel at span start (col 70) should be palette entry 1"
+        );
+        assert_eq!(
+            gba.bus().debug_read_vram(16632),
+            1,
+            "Pixel at span end (col 72) should be palette entry 1"
+        );
+        // The pixel AFTER the span must be 0 (background).
+        assert_eq!(
+            gba.bus().debug_read_vram(16633),
+            0,
+            "Pixel after span end (col 73) should be 0 — STRB bleed bug if not"
+        );
+    }
+
+    #[test]
     fn bios_full_boot_produces_visible_framebuffer() {
         // During the full boot, the BIOS sets up Mode 4 display and draws
         // the NESER logo. Verify the framebuffer contains non-black pixels.
