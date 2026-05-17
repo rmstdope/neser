@@ -96,10 +96,16 @@ impl Gba {
             cfg.config().gba.bios_path.clone()
         };
 
-        let bios_path = configured_bios_path
-            .filter(|p| p != "embedded")
-            .map(PathBuf::from)
-            .or_else(default_gba_bios_path);
+        // "embedded" is a sentinel value: skip the default-path fallback and
+        // use the built-in open-source BIOS unconditionally.
+        let use_embedded = configured_bios_path.as_deref() == Some("embedded");
+        let bios_path = if use_embedded {
+            None
+        } else {
+            configured_bios_path
+                .map(PathBuf::from)
+                .or_else(default_gba_bios_path)
+        };
 
         let bios_load_error = if let Some(path) = bios_path {
             match load_bios_image(&path) {
@@ -719,5 +725,25 @@ mod tests {
             "ROM loading should succeed with 'embedded' BIOS path"
         );
         assert!(gba.bus().has_bios_image());
+    }
+
+    #[test]
+    fn test_embedded_sentinel_loads_embedded_bios_bytes() {
+        // When bios_path is "embedded", the actual BIOS bytes loaded into
+        // memory must match our EMBEDDED_BIOS constant, even if a proprietary
+        // BIOS exists at the default path (~/.neser/gba_bios.bin).
+        let mut config = Config::default();
+        config.gba.bios_path = Some("embedded".to_string());
+        let gba = Gba::new(AppContext::new_with_config(config));
+
+        // Compare the first 16 bytes of the loaded BIOS against EMBEDDED_BIOS.
+        let embedded = crate::gba::bios::EMBEDDED_BIOS;
+        for (i, &expected) in embedded.iter().enumerate().take(16) {
+            assert_eq!(
+                gba.bus().debug_read_bios(i),
+                expected,
+                "BIOS byte at offset {i} should match EMBEDDED_BIOS when 'embedded' is configured"
+            );
+        }
     }
 }

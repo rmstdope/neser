@@ -1881,4 +1881,83 @@ mod tests {
             gba.cpu_pc()
         );
     }
+
+    #[test]
+    fn bios_full_boot_produces_visible_framebuffer() {
+        // During the full boot, the BIOS sets up Mode 4 display and draws
+        // the NESER logo. Verify the framebuffer contains non-black pixels.
+        let mut config = Config::default();
+        let tmp = std::env::temp_dir().join("neser_bios_test_nonexistent");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_test_rom(&[ARM_IDLE]);
+        gba.load_rom(&rom, "display-test.gba")
+            .expect("ROM should load");
+
+        // Run for ~2 seconds of GBA time (enough for logo to be drawn and
+        // at least one frame to be rendered, but before the fade finishes).
+        let target_cycles: u64 = 33_000_000;
+        let mut cycles = 0u64;
+        let mut any_non_black_frame = false;
+        while cycles < target_cycles {
+            let tick = gba.run_tick_for_tests() as u64;
+            if tick == 0 {
+                break;
+            }
+            cycles += tick;
+            if gba.is_ready_to_render() {
+                let fb = gba.screen_snapshot();
+                let has_non_black = fb
+                    .chunks_exact(3)
+                    .any(|px| px[0] != 0 || px[1] != 0 || px[2] != 0);
+                if has_non_black {
+                    any_non_black_frame = true;
+                    break;
+                }
+                gba.clear_ready_to_render();
+            }
+        }
+        assert!(
+            any_non_black_frame,
+            "Boot intro should produce visible (non-black) pixels in the framebuffer"
+        );
+    }
+
+    #[test]
+    fn bios_full_boot_produces_audio_samples() {
+        // During the full boot, the BIOS enables the APU and triggers
+        // CH1 notes. Verify that non-zero audio samples are produced.
+        let mut config = Config::default();
+        let tmp = std::env::temp_dir().join("neser_bios_test_nonexistent");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_test_rom(&[ARM_IDLE]);
+        gba.load_rom(&rom, "audio-test.gba")
+            .expect("ROM should load");
+
+        // Run for ~3 seconds of GBA time (jingle starts at frame 40 ≈ 670ms).
+        let target_cycles: u64 = 50_000_000;
+        let mut cycles = 0u64;
+        let mut any_non_zero_sample = false;
+        while cycles < target_cycles {
+            let tick = gba.run_tick_for_tests() as u64;
+            if tick == 0 {
+                break;
+            }
+            cycles += tick;
+            if gba.sample_ready()
+                && let Some(sample) = gba.get_sample()
+                && sample.abs() > 0.001
+            {
+                any_non_zero_sample = true;
+                break;
+            }
+        }
+        assert!(
+            any_non_zero_sample,
+            "Boot jingle should produce non-zero audio samples"
+        );
+    }
 }
