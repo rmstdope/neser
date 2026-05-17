@@ -147,6 +147,9 @@ mod tests {
     /// Create a GBA emulator with the embedded open-source BIOS loaded,
     /// HLE disabled, and the given test ROM inserted. Returns the Gba
     /// instance ready to run from the cartridge entry point.
+    ///
+    /// Sets the skip-intro flag at 0x03007FFC so the BIOS skips the
+    /// logo/jingle intro and boots quickly.
     fn boot_with_embedded_bios(arm_code: &[u32]) -> Gba {
         let mut config = Config::default();
         // Use a guaranteed-nonexistent path so Gba::new() falls back to
@@ -159,6 +162,10 @@ mod tests {
         let rom = make_test_rom(arm_code);
         gba.load_rom(&rom, "bios-test.gba")
             .expect("test ROM should load with embedded BIOS");
+
+        // Set skip-intro flag so the boot sequence skips the logo/jingle
+        // and reaches the cartridge entry point quickly.
+        gba.bus_mut().write8(0x03007FFC, 1);
 
         // Run the boot sequence (reset handler) until PC reaches cartridge
         // entry point at 0x08000000. The BIOS sets up stacks and jumps.
@@ -1760,6 +1767,118 @@ mod tests {
         assert!(
             pc < 0x0800_0000,
             "Warm boot should redirect to debug vector, not cartridge. PC={pc:#010X}"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Boot sequence tests (Phase 3-5: Full intro with logo + jingle)
+    // ---------------------------------------------------------------
+
+    /// Boot with the full intro enabled (no skip flag).
+    /// Runs until PC reaches 0x08000000 or cycle limit hit.
+    /// The cycle limit is high enough for ~5 seconds of GBA time.
+    fn boot_with_full_intro(arm_code: &[u32]) -> Option<Gba> {
+        let mut config = Config::default();
+        let tmp = std::env::temp_dir().join("neser_bios_test_nonexistent");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_test_rom(arm_code);
+        gba.load_rom(&rom, "bios-full-boot.gba")
+            .expect("test ROM should load");
+
+        // Do NOT set skip flag — let the full boot sequence run.
+        // Run for up to ~5 sec of GBA time (16.78MHz × 5 = ~84M cycles).
+        let max_cycles: u64 = 84_000_000;
+        let mut cycles = 0u64;
+        while cycles < max_cycles {
+            let pc = gba.cpu_pc();
+            if pc >= 0x0800_0000 {
+                return Some(gba);
+            }
+            let tick = gba.run_tick_for_tests() as u64;
+            if tick == 0 {
+                return None;
+            }
+            cycles += tick;
+        }
+        None
+    }
+
+    #[test]
+    fn bios_full_boot_reaches_cartridge() {
+        // The full boot (with intro) should eventually reach the cartridge
+        // entry point at 0x08000000 after displaying the logo and playing
+        // the jingle.
+        let gba = boot_with_full_intro(&[ARM_IDLE]);
+        assert!(
+            gba.is_some(),
+            "Full boot with intro should eventually reach cartridge"
+        );
+    }
+
+    #[test]
+    fn bios_full_boot_enables_apu() {
+        // After the full boot, the APU should be enabled (SOUNDCNT_X bit 7).
+        let mut gba = boot_with_full_intro(&[ARM_IDLE]).expect("Full boot should reach cartridge");
+        run_until_idle(&mut gba, 100_000);
+
+        let soundcnt_x = gba.bus_mut().read16(0x04000084);
+        assert_eq!(
+            soundcnt_x & 0x80,
+            0x80,
+            "APU should be enabled after full boot (SOUNDCNT_X bit 7)"
+        );
+    }
+
+    #[test]
+    fn bios_full_boot_sets_sound_routing() {
+        // After the full boot, SOUNDCNT_L should have channel routing set
+        // (the jingle configures CH1 output to both speakers).
+        let mut gba = boot_with_full_intro(&[ARM_IDLE]).expect("Full boot should reach cartridge");
+        run_until_idle(&mut gba, 100_000);
+
+        let soundcnt_l = gba.bus_mut().read16(0x04000080);
+        // Volume should be max (0x77 in low byte) and CH1 routed to both
+        // speakers (bits in high byte).
+        assert_ne!(
+            soundcnt_l, 0,
+            "SOUNDCNT_L should have routing configured after boot jingle"
+        );
+    }
+
+    #[test]
+    fn bios_skip_flag_bypasses_intro() {
+        // When the skip flag is set at 0x03007FFC, the BIOS should skip
+        // the intro and boot quickly (within 10K cycles as before).
+        let mut config = Config::default();
+        let tmp = std::env::temp_dir().join("neser_bios_test_nonexistent");
+        config.gba.bios_path = Some(tmp.to_string_lossy().into_owned());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_test_rom(&[ARM_IDLE]);
+        gba.load_rom(&rom, "skip-test.gba")
+            .expect("ROM should load");
+
+        // Set skip flag before boot
+        gba.bus_mut().write8(0x03007FFC, 1);
+
+        let mut cycles = 0u64;
+        while cycles < 10_000 {
+            let pc = gba.cpu_pc();
+            if pc >= 0x0800_0000 {
+                break;
+            }
+            let tick = gba.run_tick_for_tests() as u64;
+            if tick == 0 {
+                break;
+            }
+            cycles += tick;
+        }
+        assert!(
+            gba.cpu_pc() >= 0x0800_0000,
+            "Skip flag should bypass intro. PC={:#010X}",
+            gba.cpu_pc()
         );
     }
 }

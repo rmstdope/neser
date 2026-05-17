@@ -1,5 +1,6 @@
 use crate::gba::Gba;
 use crate::gba::bios::EMBEDDED_BIOS;
+use crate::gba::cpu::bus::Bus;
 use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use std::path::PathBuf;
@@ -161,6 +162,7 @@ pub fn run_suite(suite: Suite) -> SuiteResult {
 
     let mut gba = Gba::new(AppContext::default());
     gba.bus_mut().load_bios(EMBEDDED_BIOS);
+    gba.bus_mut().write8(0x03007FFC, 1); // Skip BIOS intro
     gba.load_rom(&rom, rom_path.to_str().unwrap_or("gba-suite-rom"))
         .unwrap_or_else(|e| {
             panic!("failed to load suite ROM {}: {e}", rom_path.display());
@@ -459,6 +461,7 @@ pub fn run_armwrestler() -> ArmWrestlerResult {
 
     let mut gba = Gba::new(AppContext::default());
     gba.bus_mut().load_bios(EMBEDDED_BIOS);
+    gba.bus_mut().write8(0x03007FFC, 1); // Skip BIOS intro
     gba.load_rom(&rom, rom_path.to_str().unwrap_or("armwrestler"))
         .unwrap_or_else(|e| {
             panic!("failed to load armwrestler ROM {}: {e}", rom_path.display());
@@ -671,6 +674,7 @@ pub fn boot_mgba_suite() -> (Gba, Vec<u8>) {
 
     let mut gba = Gba::new(AppContext::default());
     gba.bus_mut().load_bios(EMBEDDED_BIOS);
+    gba.bus_mut().write8(0x03007FFC, 1); // Skip BIOS intro
     gba.load_rom(&rom, rom_path.to_str().unwrap_or("mgba-emu-suite"))
         .unwrap_or_else(|e| {
             panic!("failed to load mgba suite ROM {}: {e}", rom_path.display());
