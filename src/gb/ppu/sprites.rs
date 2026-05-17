@@ -711,7 +711,7 @@ mod tests {
 
     #[test]
     fn test_obj_penalty_single_sprite_at_x4_is_7_dots() {
-        // OAM X=4 → screen_x=-4, bg_x=-4, pos_in_tile=4, right=3, wait=1, total=7
+        // OAM X=4 -> screen_x=-4, bg_x=-4, pos_in_tile=4, wait=1, total=7.
         let (oam, indices) = penalty_sprites(&[4]);
         assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 7);
     }

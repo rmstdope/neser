@@ -14,6 +14,17 @@ pub trait GbBus {
     /// `DmgBus` overrides this to tick the timer and propagate interrupts.
     fn tick(&mut self, _m_cycles: u8) {}
 
+    /// Perform one CPU write M-cycle.
+    ///
+    /// The default keeps the historical behavior: advance all peripherals for
+    /// one complete M-cycle, then perform the write. Full bus implementations
+    /// can override this when a device needs the write at its bus phase inside
+    /// the M-cycle.
+    fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
+        self.tick(1);
+        self.write(addr, val);
+    }
+
     /// Notify the bus that the CPU is about to fetch and execute a new instruction.
     ///
     /// Called BEFORE the M1 bus tick.  The default implementation is a no-op;

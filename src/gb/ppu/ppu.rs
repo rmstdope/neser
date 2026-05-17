@@ -529,12 +529,14 @@ impl Ppu {
             );
         }
         if addr == 0xFF40 {
-            self.pixel_fifo.record_lcdc_write(
+            self.pixel_fifo.record_lcdc_write_with_window(
                 self.registers.lcdc,
                 val,
                 self.registers.scx,
                 self.cgb_mode,
                 self.dmg_compat,
+                self.registers.wx,
+                self.registers.wy,
             );
         }
         let was_enabled = self.registers.lcd_enabled();

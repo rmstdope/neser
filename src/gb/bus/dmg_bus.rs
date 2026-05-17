@@ -4,7 +4,7 @@ use crate::gb::bus::GbBus;
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
-use crate::gb::ppu::Ppu;
+use crate::gb::ppu::{Ppu, timing::PpuMode};
 use crate::gb::timer::Timer;
 
 /// Full DMG memory bus.
@@ -94,6 +94,15 @@ pub struct DmgBus {
 }
 
 impl DmgBus {
+    fn needs_mode3_lcdc_write_phase(&self, addr: u16, val: u8) -> bool {
+        const LCDC_TILE_DATA: u8 = 0x10;
+
+        addr == 0xFF40
+            && self.ppu.is_lcd_enabled()
+            && self.ppu.mode() == PpuMode::PixelTransfer
+            && self.ppu.read_register(0xFF40) & LCDC_TILE_DATA != val & LCDC_TILE_DATA
+    }
+
     pub fn new(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
         // The boot ROM and initial div_counter depend on the hardware variant.
         // Production (DMG-A/B/C) scroll-animation ROM: div_counter = 5036.
@@ -228,6 +237,12 @@ impl DmgBus {
     /// The APU frame sequencer is clocked by DIV-APU falling edges from the
     /// timer (bit 12 of the 16-bit internal counter = DIV bit 4).
     pub fn tick(&mut self, m_cycles: u8) {
+        self.tick_before_ppu(m_cycles);
+        self.ppu.tick_dots(u32::from(m_cycles) * 4);
+        self.tick_after_ppu(m_cycles);
+    }
+
+    fn tick_before_ppu(&mut self, m_cycles: u8) {
         // Propagate PPU interrupts accumulated during the previous tick.
         self.if_reg |= self.ppu.take_pending_interrupts();
 
@@ -302,7 +317,9 @@ impl DmgBus {
                 }
             }
         }
-        self.ppu.tick_dots(u32::from(m_cycles) * 4);
+    }
+
+    fn tick_after_ppu(&mut self, m_cycles: u8) {
         // PPU interrupts are now buffered in ppu.pending_interrupts and
         // will be propagated to IF at the start of the NEXT tick() call.
         self.apu.tick(m_cycles);
@@ -608,6 +625,19 @@ impl GbBus for DmgBus {
         DmgBus::tick(self, m_cycles);
     }
 
+    fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
+        if self.needs_mode3_lcdc_write_phase(addr, val) {
+            self.tick_before_ppu(1);
+            self.ppu.tick_dots(3);
+            self.write(addr, val);
+            self.ppu.tick_dots(1);
+            self.tick_after_ppu(1);
+        } else {
+            self.tick(1);
+            self.write(addr, val);
+        }
+    }
+
     fn notify_idu_glitch(&mut self, addr: u16) {
         if matches!(addr, 0xFE00..=0xFEFF)
             && let Some(row) = self.ppu.current_oam_row()
@@ -831,6 +861,25 @@ mod tests {
             stat & 0x03,
             0x00,
             "STAT mode should be HBlank (0) on first scanline after LCD enable"
+        );
+    }
+
+    #[test]
+    fn test_lcdc_write_cpu_m_cycle_applies_ppu_write_at_t3_during_mode3() {
+        let mut bus = make_bus();
+        bus.write(0xFF40, 0x91);
+        while bus.ppu.dot() < 84 {
+            bus.tick(1);
+        }
+        assert_eq!(bus.ppu.mode(), PpuMode::PixelTransfer);
+
+        let write_cycle_start_dot = bus.ppu.dot();
+        bus.write_cpu_m_cycle(0xFF40, 0x00);
+
+        assert_eq!(
+            bus.ppu.dot(),
+            write_cycle_start_dot + 3,
+            "LCDC writes should disable the PPU at T3, before the last dot of the CPU write M-cycle"
         );
     }
 

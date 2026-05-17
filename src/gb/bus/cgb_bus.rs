@@ -126,6 +126,15 @@ pub struct CgbBus {
 }
 
 impl CgbBus {
+    fn needs_mode3_lcdc_write_phase(&self, addr: u16, val: u8) -> bool {
+        const LCDC_TILE_DATA: u8 = 0x10;
+
+        addr == 0xFF40
+            && self.ppu.is_lcd_enabled()
+            && self.ppu.mode() == PpuMode::PixelTransfer
+            && self.ppu.read_register(0xFF40) & LCDC_TILE_DATA != val & LCDC_TILE_DATA
+    }
+
     /// Create a new CGB bus.
     ///
     /// When `skip_boot_rom` is `false` (default hardware behavior), the boot ROM
@@ -451,6 +460,17 @@ impl CgbBus {
     /// timer (bit 12 of the 16-bit internal counter = DIV bit 4, or bit 13 in
     /// double-speed mode = DIV bit 5).
     pub fn tick(&mut self, m_cycles: u8) {
+        let double = self.tick_before_ppu(m_cycles);
+        let dots_per_mcycle = Self::dots_per_mcycle(double);
+        self.ppu.tick_dots(u32::from(m_cycles) * dots_per_mcycle);
+        self.tick_after_ppu(m_cycles, double);
+    }
+
+    fn dots_per_mcycle(double_speed: bool) -> u32 {
+        if double_speed { 2 } else { 4 }
+    }
+
+    fn tick_before_ppu(&mut self, m_cycles: u8) -> bool {
         self.if_reg |= self.ppu.take_pending_interrupts();
 
         let double = self.is_double_speed();
@@ -491,10 +511,10 @@ impl CgbBus {
                 }
             }
         }
+        double
+    }
 
-        let dots_per_mcycle: u32 = if double { 2 } else { 4 };
-        self.ppu.tick_dots(u32::from(m_cycles) * dots_per_mcycle);
-
+    fn tick_after_ppu(&mut self, m_cycles: u8, double: bool) {
         if double {
             // In double-speed mode the APU runs at normal speed (half the CPU M-cycle
             // rate). CH3 wave-position timing requires 1-APU-cycle-per-M-cycle
@@ -1101,6 +1121,22 @@ impl GbBus for CgbBus {
         CgbBus::tick(self, m_cycles);
     }
 
+    fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
+        if self.needs_mode3_lcdc_write_phase(addr, val) {
+            let double = self.tick_before_ppu(1);
+            let dots_per_mcycle = Self::dots_per_mcycle(double);
+            let dots_before_write = dots_per_mcycle.saturating_sub(1);
+            self.ppu.tick_dots(dots_before_write);
+            self.write(addr, val);
+            self.ppu
+                .tick_dots(dots_per_mcycle.saturating_sub(dots_before_write));
+            self.tick_after_ppu(1, double);
+        } else {
+            self.tick(1);
+            self.write(addr, val);
+        }
+    }
+
     fn try_speed_switch(&mut self) -> bool {
         CgbBus::try_speed_switch(self)
     }
@@ -1458,6 +1494,25 @@ mod tests {
                 "debugger read ${addr:04X}"
             );
         }
+    }
+
+    #[test]
+    fn test_lcdc_write_cpu_m_cycle_applies_ppu_write_at_t3_during_mode3() {
+        let mut bus = make_bus_post_boot();
+        enable_lcd(&mut bus);
+        while bus.ppu.dot() < 84 {
+            bus.tick(1);
+        }
+        assert_eq!(bus.ppu.mode(), PpuMode::PixelTransfer);
+
+        let write_cycle_start_dot = bus.ppu.dot();
+        bus.write_cpu_m_cycle(0xFF40, 0x00);
+
+        assert_eq!(
+            bus.ppu.dot(),
+            write_cycle_start_dot + 3,
+            "CGB LCDC writes should disable the PPU at T3, before the last dot of the CPU write M-cycle"
+        );
     }
 
     // ── HDMA register read/write through bus ─────────────────────────────────
