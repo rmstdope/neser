@@ -889,10 +889,10 @@ impl GbBus for CgbBus {
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
             0xFF46 => self.dma_source,
             // CGB KEY1 — speed switch register
-            0xFF4D if self.ppu.dmg_compat => 0xFF,
+            0xFF4D if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
             // CGB KEY0 — CPU mode select register (upper nibble reads as 1)
-            0xFF4C if self.ppu.dmg_compat => 0xFF,
+            0xFF4C if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4C => self.key0 | 0xF0,
             0xFF4E => 0xFF,
             // CGB HDMA registers
@@ -989,10 +989,10 @@ impl GbBus for CgbBus {
             }
             0xFF46 => self.do_oam_dma(val),
             // CGB KEY1 — only bit 0 (arm) is writable; bit 7 (current speed) is read-only
-            0xFF4D if self.ppu.dmg_compat => {}
+            0xFF4D if self.ppu.dmg_compat && self.skip_boot_rom => {}
             0xFF4D => self.key1 = (self.key1 & 0x80) | (val & 0x01),
             // CGB KEY0 — CPU mode select, locked after boot ROM unmaps
-            0xFF4C if self.ppu.dmg_compat => {}
+            0xFF4C if self.ppu.dmg_compat && self.skip_boot_rom => {}
             0xFF4C => {
                 if !self.key0_locked {
                     self.key0 = val;
