@@ -548,8 +548,13 @@ impl PixelFifoRenderer {
         let waiting_on_obj_fetch = self.is_waiting_on_obj_fetch();
         let window_fetch_active =
             previous & 0x20 != 0 && self.scanline >= wy && self.next_x == wx.saturating_sub(7);
+        let tile_data_fetch_phase = if window_fetch_active || self.window_active {
+            self.next_x.saturating_sub(wx.saturating_sub(7)) & 0x07
+        } else {
+            scx.wrapping_add(self.next_x) & 0x07
+        };
         self.record_lcdc_obj_size_write(previous, new, cgb_mode, dmg_compat);
-        self.record_lcdc_tile_data_write(previous, new, scx, window_fetch_active);
+        self.record_lcdc_tile_data_write(previous, new, tile_data_fetch_phase, window_fetch_active);
         if let Some(model) = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat) {
             self.record_lcdc_obj_enable_write(model, previous, new);
         }
@@ -590,14 +595,13 @@ impl PixelFifoRenderer {
         &mut self,
         previous: u8,
         new: u8,
-        scx: u8,
+        bg_phase: u8,
         window_fetch_active: bool,
     ) {
         if previous & LCDC_TILE_DATA == new & LCDC_TILE_DATA {
             return;
         }
 
-        let bg_phase = scx.wrapping_add(self.next_x) & 0x07;
         let current_fetch_start = self.next_x.saturating_sub(bg_phase);
         let current_fetch_end = current_fetch_start.saturating_add(7);
         let next_fetch_start = current_fetch_start.saturating_add(8);
@@ -2237,6 +2241,37 @@ mod tests {
         assert_eq!(
             colour_index, 3,
             "a TILE_SEL write at WX=7 should apply to the first window tile fetch, not a preceding BG tile"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn record_lcdc_write_at_scrolled_window_boundary_uses_window_phase() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 8;
+        renderer.lcdc_tile_data_edge.record_write(0, 7, 0xA1, 0xA1);
+        renderer.record_lcdc_write_with_window(0xA1, 0xB1, 7, false, false, 15, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xB1;
+        registers.scx = 7;
+        registers.bgp = 0xE4;
+        registers.wx = 15;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = [0u8; 0xA0];
+
+        let (bg_colour, is_sprite, _) = renderer.dmg_pixel_layers(7, &vram, &oam, &registers, 0);
+        let (window_colour, _, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            bg_colour, 0,
+            "window TILE_SEL sampling must not bleed into the preceding BG pixel"
+        );
+        assert_eq!(
+            window_colour, 3,
+            "a TILE_SEL write at a WX>7 window boundary should use window phase, not SCX-shifted BG phase"
         );
         assert!(!is_sprite);
     }
