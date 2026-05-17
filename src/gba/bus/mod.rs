@@ -231,6 +231,10 @@ pub struct GbaBus {
     /// during boot (value 0xFF). Stored separately because it falls outside
     /// the standard 1 KB I/O window.
     undoc_0x410: u8,
+    /// HALTCNT write pending — set when software writes 0x04000301 with
+    /// bit 7 clear (halt mode). The owning `Gba` polls this each tick and
+    /// calls `cpu.halt()`.
+    halt_requested: bool,
 }
 
 impl Default for GbaBus {
@@ -278,6 +282,7 @@ impl GbaBus {
             bios_image_loaded: false,
             waitstates: Waitstates::new(),
             undoc_0x410: 0,
+            halt_requested: false,
         }
     }
 
@@ -306,6 +311,16 @@ impl GbaBus {
     /// Whether the BIOS is currently locked from external reads.
     pub fn bios_locked(&self) -> bool {
         self.bios_locked
+    }
+
+    /// Whether a HALTCNT write has requested the CPU enter halt state.
+    pub fn halt_requested(&self) -> bool {
+        self.halt_requested
+    }
+
+    /// Consume the pending halt request (called after `cpu.halt()`).
+    pub fn clear_halt_request(&mut self) {
+        self.halt_requested = false;
     }
 
     /// Debug: read a byte from the BIOS region at the given offset (no side effects).
@@ -818,6 +833,14 @@ impl Bus for GbaBus {
                         self.apu.write16(aligned + 2, (value >> 16) as u16);
                     }
                 } else {
+                    // Intercept HALTCNT: write32 to 0x04000300 covers POSTFLG (byte 0),
+                    // HALTCNT (byte 1), and two unused bytes.
+                    if aligned == 0x0400_0300 {
+                        let haltcnt_byte = ((value >> 8) & 0xFF) as u8;
+                        if haltcnt_byte & 0x80 == 0 {
+                            self.halt_requested = true;
+                        }
+                    }
                     self.io.write32(
                         aligned,
                         value,
@@ -875,6 +898,14 @@ impl Bus for GbaBus {
                 if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
                     self.apu.write16(aligned, value);
                 } else {
+                    // Intercept HALTCNT: write16 to 0x04000300 covers POSTFLG (low byte)
+                    // and HALTCNT (high byte).
+                    if aligned == 0x0400_0300 {
+                        let haltcnt_byte = (value >> 8) as u8;
+                        if haltcnt_byte & 0x80 == 0 {
+                            self.halt_requested = true;
+                        }
+                    }
                     self.io.write16(
                         aligned,
                         value,
@@ -927,6 +958,11 @@ impl Bus for GbaBus {
             0x4 => {
                 if addr == 0x0400_0410 {
                     self.undoc_0x410 = value;
+                } else if addr == 0x0400_0301 {
+                    // HALTCNT — bit 7 clear = halt mode, bit 7 set = stop mode (deferred).
+                    if value & 0x80 == 0 {
+                        self.halt_requested = true;
+                    }
                 } else if (0x0400_0060..=0x0400_00A7).contains(&addr) {
                     self.apu.write8(addr, value);
                 } else {
@@ -1722,6 +1758,86 @@ mod tests {
         assert_eq!(
             bus.s_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
             4
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // HALTCNT register (0x04000301) — halt_requested flag
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn halt_requested_starts_false() {
+        let bus = GbaBus::new();
+        assert!(!bus.halt_requested());
+    }
+
+    #[test]
+    fn halt_requested_cleared_by_clear() {
+        let mut bus = GbaBus::new();
+        bus.write8(0x0400_0301, 0x00);
+        assert!(bus.halt_requested(), "write8 0x00 should request halt");
+        bus.clear_halt_request();
+        assert!(!bus.halt_requested(), "clear should reset the flag");
+    }
+
+    #[test]
+    fn haltcnt_write8_halt_mode_sets_flag() {
+        let mut bus = GbaBus::new();
+        bus.write8(0x0400_0301, 0x00);
+        assert!(bus.halt_requested(), "bit 7 clear → halt mode");
+    }
+
+    #[test]
+    fn haltcnt_write8_stop_mode_does_not_set_flag() {
+        let mut bus = GbaBus::new();
+        bus.write8(0x0400_0301, 0x80);
+        assert!(
+            !bus.halt_requested(),
+            "bit 7 set → stop mode, not supported yet"
+        );
+    }
+
+    #[test]
+    fn haltcnt_write16_halt_mode_sets_flag() {
+        let mut bus = GbaBus::new();
+        // Write16 to 0x04000300: high byte (HALTCNT) = 0x00 → halt mode.
+        bus.write16(0x0400_0300, 0x0001);
+        assert!(
+            bus.halt_requested(),
+            "write16 with high byte 0x00 → halt mode"
+        );
+    }
+
+    #[test]
+    fn haltcnt_write16_stop_mode_does_not_set_flag() {
+        let mut bus = GbaBus::new();
+        // High byte = 0x80 → stop mode.
+        bus.write16(0x0400_0300, 0x8001);
+        assert!(
+            !bus.halt_requested(),
+            "write16 with high byte 0x80 → stop mode"
+        );
+    }
+
+    #[test]
+    fn haltcnt_write32_halt_mode_sets_flag() {
+        let mut bus = GbaBus::new();
+        // write32 to 0x04000300: byte 1 (bits 8-15) = HALTCNT = 0x00 → halt mode.
+        bus.write32(0x0400_0300, 0x0000_0001);
+        assert!(
+            bus.halt_requested(),
+            "write32 with HALTCNT byte 0x00 → halt mode"
+        );
+    }
+
+    #[test]
+    fn haltcnt_write32_stop_mode_does_not_set_flag() {
+        let mut bus = GbaBus::new();
+        // write32 to 0x04000300: byte 1 (bits 8-15) = 0x80 → stop mode.
+        bus.write32(0x0400_0300, 0x0000_8001);
+        assert!(
+            !bus.halt_requested(),
+            "write32 with HALTCNT byte 0x80 → stop mode"
         );
     }
 }
