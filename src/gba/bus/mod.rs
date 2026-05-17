@@ -308,6 +308,18 @@ impl GbaBus {
         self.bios_locked
     }
 
+    /// Debug: read a byte from the BIOS region at the given offset (no side effects).
+    #[cfg(test)]
+    pub fn debug_read_bios(&self, offset: usize) -> u8 {
+        self.bios[offset % self.bios.len()]
+    }
+
+    /// Debug: read a byte from VRAM at the given offset (no side effects).
+    #[cfg(test)]
+    pub fn debug_read_vram(&self, offset: usize) -> u8 {
+        self.vram[offset % self.vram.len()]
+    }
+
     /// Load a cartridge ROM. Cap at [`ROM_MAX_SIZE`].
     pub fn load_rom(&mut self, data: &[u8]) {
         let n = data.len().min(ROM_MAX_SIZE);
