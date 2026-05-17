@@ -933,7 +933,7 @@ impl PixelFifoRenderer {
             previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
         let delayed_fetch_phase = self
             .leftmost_obj_oam_x
-            .filter(|&oam_x| (OBJ_PIXELS_PER_FETCH + 4..=OBJ_PIXELS_PER_FETCH + 5).contains(&oam_x))
+            .filter(|&oam_x| (OBJ_PIXELS_PER_FETCH + 4..=OBJ_PIXELS_PER_FETCH + 6).contains(&oam_x))
             .map(|oam_x| oam_x - OBJ_PIXELS_PER_FETCH);
         tile_data_turning_on
             && self.window_active
@@ -2631,6 +2631,87 @@ mod tests {
             screen_buffer.get_pixel(9, 0),
             (85, 85, 85),
             "the second later delayed window pixel should keep the set high byte"
+        );
+    }
+
+    #[test]
+    fn delayed_obj_window_set_after_high_phase_mixes_first_stalled_fetch_pixels() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA3;
+        registers.bgp = 0xE4;
+        registers.obp0 = 0xFF;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = oam_with_sprite_at(16, 14, 1, 0);
+        let mut screen_buffer = ScreenBuffer::new();
+        let mut dot: u16 = 80;
+
+        renderer.begin_scanline(0, 80, &oam, &registers, false, false);
+        let deadline = dot.saturating_add(256);
+        while !(renderer.next_x == 6 && renderer.pending_obj_stall_dots == 4) {
+            tick_renderer(
+                &mut renderer,
+                dot,
+                &vram,
+                &oam,
+                &registers,
+                false,
+                false,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+            assert!(dot < deadline, "renderer did not reach the OAM X=14 stall");
+        }
+        renderer.record_lcdc_write_with_window(
+            0xA3,
+            0xB3,
+            registers.scx,
+            false,
+            false,
+            registers.wx,
+            registers.wy,
+        );
+        registers.lcdc = 0xB3;
+
+        let deadline = dot.saturating_add(256);
+        while !(renderer.next_x == 10 && renderer.pending_obj_stall_dots == 0) {
+            tick_renderer(
+                &mut renderer,
+                dot,
+                &vram,
+                &oam,
+                &registers,
+                false,
+                false,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+            assert!(
+                dot < deadline,
+                "renderer did not reach the OAM X=14 restore point"
+            );
+        }
+        renderer.record_lcdc_write_with_window(
+            0xB3,
+            0xA3,
+            registers.scx,
+            false,
+            false,
+            registers.wx,
+            registers.wy,
+        );
+
+        assert_eq!(
+            screen_buffer.get_pixel(8, 0),
+            (85, 85, 85),
+            "the first high-phase delayed window pixel should mix the previous low byte with the set high byte"
+        );
+        assert_eq!(
+            screen_buffer.get_pixel(9, 0),
+            (85, 85, 85),
+            "the second high-phase delayed window pixel should keep the set high byte"
         );
     }
 
