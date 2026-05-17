@@ -2168,18 +2168,21 @@ logo_data:
     .hword 19564, 3
     .hword 19573, 3
     .hword 19594, 3
+    .hword 19600, 3
     .hword 19750, 3
     .hword 19759, 6
     .hword 19771, 3
     .hword 19804, 3
     .hword 19813, 3
     .hword 19834, 3
+    .hword 19840, 3
     .hword 19990, 3
     .hword 19999, 6
     .hword 20011, 3
     .hword 20044, 3
     .hword 20053, 3
     .hword 20074, 3
+    .hword 20080, 3
     .hword 20230, 3
     .hword 20242, 3
     .hword 20251, 3
@@ -2187,6 +2190,7 @@ logo_data:
     .hword 20284, 3
     .hword 20293, 3
     .hword 20314, 3
+    .hword 20323, 3
     .hword 20470, 3
     .hword 20482, 3
     .hword 20491, 3
@@ -2194,6 +2198,7 @@ logo_data:
     .hword 20524, 3
     .hword 20533, 3
     .hword 20554, 3
+    .hword 20563, 3
     .hword 20710, 3
     .hword 20722, 3
     .hword 20731, 3
@@ -2201,23 +2206,27 @@ logo_data:
     .hword 20764, 3
     .hword 20773, 3
     .hword 20794, 3
+    .hword 20803, 3
     .hword 20950, 3
     .hword 20962, 3
     .hword 20971, 15
     .hword 20995, 9
     .hword 21013, 15
     .hword 21034, 3
+    .hword 21046, 3
     .hword 21190, 3
     .hword 21202, 3
     .hword 21211, 15
     .hword 21235, 9
     .hword 21253, 15
     .hword 21274, 3
+    .hword 21286, 3
     .hword 21430, 3
     .hword 21442, 3
     .hword 21451, 15
     .hword 21475, 9
     .hword 21493, 15
     .hword 21514, 3
+    .hword 21526, 3
 logo_data_end:
 @ Total: 141 spans, 423 bytes
