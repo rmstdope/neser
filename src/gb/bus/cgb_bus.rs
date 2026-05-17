@@ -212,8 +212,9 @@ impl CgbBus {
 
         // Set OPRI based on cartridge type when skipping boot ROM.
         bus.ppu.set_cgb_model(model);
-        // Propagate the CGB hardware revision before any post-boot APU writes
-        // that can observe model-specific channel timing.
+        // Propagate the CGB hardware revision before the skip-boot NR52/channel
+        // register writes below, since channel triggers can observe
+        // model-specific timing such as CH1 restart_hold.
         bus.apu.set_cgb_model(model);
         if skip_boot_rom && opri_value != 0 {
             bus.ppu.write_cgb_register(0xFF6C, opri_value);
@@ -882,9 +883,9 @@ impl GbBus for CgbBus {
             0xFF00 => self.joypad.read(),
             0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
-            0xFF03 => 0xFF,           // unused I/O; $FF04-$FF07 are timer registers below.
-            0xFF08..=0xFF0E => 0xFF,  // unused I/O range
+            0xFF03 => 0xFF,           // unused I/O
             0xFF04..=0xFF07 => self.timer.read(addr),
+            0xFF08..=0xFF0E => 0xFF, // unused I/O range
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
@@ -1147,8 +1148,8 @@ impl GbBus for CgbBus {
             0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
             0xFF03 => 0xFF,           // unused I/O
-            0xFF08..=0xFF0E => 0xFF,  // unused I/O range
             0xFF04..=0xFF07 => self.timer.read(addr),
+            0xFF08..=0xFF0E => 0xFF, // unused I/O range
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
