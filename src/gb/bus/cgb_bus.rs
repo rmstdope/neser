@@ -882,7 +882,8 @@ impl GbBus for CgbBus {
             0xFF00 => self.joypad.read(),
             0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
-            0xFF03 | 0xFF08..=0xFF0E => 0xFF,
+            0xFF03 => 0xFF,           // unused I/O
+            0xFF08..=0xFF0E => 0xFF,  // unused I/O range
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
@@ -907,7 +908,8 @@ impl GbBus for CgbBus {
             // $FF72-$FF73: fully R/W, initial value $00.
             0xFF72 => self.ff72,
             0xFF73 => self.ff73,
-            0xFF74 => 0xFF,
+            0xFF74 if self.ppu.dmg_compat => 0xFF,
+            0xFF74 => self.ff74,
             // $FF75: bits 4-6 R/W, other bits read as 1.
             0xFF75 => self.ff75 | 0x8F,
             // CGB PCM registers
@@ -946,7 +948,8 @@ impl GbBus for CgbBus {
                 // For stub implementation, immediately clear bit 7 to signal completion.
                 self.sc = val & 0x7F;
             }
-            0xFF03 | 0xFF08..=0xFF0E => {}
+            0xFF03 => {}          // unused I/O
+            0xFF08..=0xFF0E => {} // unused I/O range
             0xFF04..=0xFF07 => {
                 let div_apu_edge = self.timer.write(addr, val);
                 // If a DIV-APU falling edge occurred (DIV write with bit 4/5 HIGH),
@@ -1079,7 +1082,8 @@ impl GbBus for CgbBus {
             // CGB undocumented registers ($FF72-$FF75) — Pan Docs "CGB Registers".
             0xFF72 => self.ff72 = val,
             0xFF73 => self.ff73 = val,
-            0xFF74 => {}
+            0xFF74 if self.ppu.dmg_compat => {}
+            0xFF74 => self.ff74 = val,
             // $FF75: only bits 4-6 are writable.
             0xFF75 => self.ff75 = val & 0x70,
             // CGB PCM registers (read-only; ignore writes)
@@ -1403,6 +1407,32 @@ mod tests {
                 "addr ${addr:04X} write ${write:02X}"
             );
         }
+    }
+
+    #[test]
+    fn test_serial_data_register_reads_back_written_value() {
+        let mut cgb_bus = make_bus_post_boot();
+        cgb_bus.write(0xFF01, 0x5A);
+        assert_eq!(cgb_bus.read(0xFF01), 0x5A);
+
+        let mut dmg_compat_bus = make_dmg_compat_bus_post_boot();
+        dmg_compat_bus.write(0xFF01, 0xA5);
+        assert_eq!(dmg_compat_bus.read(0xFF01), 0xA5);
+    }
+
+    #[test]
+    fn test_ff74_is_fixed_ff_only_in_dmg_compat_mode() {
+        let mut dmg_compat_bus = make_dmg_compat_bus_post_boot();
+        dmg_compat_bus.write(0xFF74, 0x00);
+        assert_eq!(dmg_compat_bus.read(0xFF74), 0xFF);
+        dmg_compat_bus.write(0xFF74, 0x55);
+        assert_eq!(dmg_compat_bus.read(0xFF74), 0xFF);
+
+        let mut cgb_bus = make_bus_post_boot();
+        cgb_bus.write(0xFF74, 0x00);
+        assert_eq!(cgb_bus.read(0xFF74), 0x00);
+        cgb_bus.write(0xFF74, 0x55);
+        assert_eq!(cgb_bus.read(0xFF74), 0x55);
     }
 
     // ── HDMA register read/write through bus ─────────────────────────────────

@@ -374,6 +374,8 @@ impl Ppu {
         let mode = self.timing.mode();
         (en & 0x40 != 0 && self.lyc_eq_ly_frozen)
             || (mode_for_irq == 2 && en & 0x20 != 0)
+            // CGB fires the LY144 Mode 2 STAT source at scanline 143 dot 452,
+            // one M-cycle before VBlank; DMG fires this source with VBlank.
             || (self.cgb_mode
                 && self.timing.scanline() == 143
                 && self.timing.dot() == 452
