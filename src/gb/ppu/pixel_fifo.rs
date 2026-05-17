@@ -1797,6 +1797,8 @@ impl PixelFifoRenderer {
 
     fn clear_consumed_window_edges(&mut self) {
         self.window_reset_edges.retain(|&x| x != self.next_x);
+        prune_consumed_window_enable_edges(&mut self.window_enable_edges, self.next_x);
+        prune_consumed_window_x_edges(&mut self.window_x_edges, self.next_x);
     }
 
     fn is_waiting_on_obj_fetch(&self) -> bool {
@@ -1830,12 +1832,39 @@ fn window_triggers_at_x(wx: u8, x: u8) -> bool {
     wx < 167 && x == window_visible_start_x(wx)
 }
 
+fn prune_consumed_window_enable_edges(edges: &mut Vec<WindowEnableEdge>, x: u8) {
+    let Some(latest_consumed_index) = edges.iter().rposition(|edge| edge.start_x <= x) else {
+        return;
+    };
+
+    let mut index = 0;
+    edges.retain(|edge| {
+        let keep = index == latest_consumed_index || edge.start_x > x;
+        index += 1;
+        keep
+    });
+}
+
+fn prune_consumed_window_x_edges(edges: &mut Vec<WindowXEdge>, x: u8) {
+    let Some(latest_consumed_index) = edges.iter().rposition(|edge| edge.start_x <= x) else {
+        return;
+    };
+
+    let mut index = 0;
+    edges.retain(|edge| {
+        let keep = index == latest_consumed_index || edge.start_x > x;
+        index += 1;
+        keep
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{registers::Registers, screen_buffer::ScreenBuffer};
     use super::{
         LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE, LcdcBgEnableEdge,
         LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay, PixelFifoRenderer,
+        WindowEnableEdge, WindowXEdge,
     };
 
     fn oam_with_sprite_at(oam_y: u8, oam_x: u8, tile: u8, attrs: u8) -> [u8; 0xA0] {
@@ -1936,6 +1965,58 @@ mod tests {
             activation_count,
             Some(1),
             "native CGB rendering should report one window activation so PPU window_line advances"
+        );
+    }
+
+    #[test]
+    fn clear_consumed_window_edges_keeps_latest_state_and_future_writes() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.next_x = 5;
+        renderer.window_enable_edges = vec![
+            WindowEnableEdge {
+                start_x: 8,
+                enabled: false,
+            },
+            WindowEnableEdge {
+                start_x: 2,
+                enabled: false,
+            },
+            WindowEnableEdge {
+                start_x: 5,
+                enabled: true,
+            },
+            WindowEnableEdge {
+                start_x: 10,
+                enabled: false,
+            },
+        ];
+        renderer.window_x_edges = vec![
+            WindowXEdge { start_x: 8, wx: 8 },
+            WindowXEdge { start_x: 2, wx: 2 },
+            WindowXEdge { start_x: 5, wx: 5 },
+            WindowXEdge {
+                start_x: 10,
+                wx: 10,
+            },
+        ];
+
+        renderer.clear_consumed_window_edges();
+
+        assert_eq!(
+            renderer
+                .window_enable_edges
+                .iter()
+                .map(|edge| (edge.start_x, edge.enabled))
+                .collect::<Vec<_>>(),
+            vec![(8, false), (5, true), (10, false)]
+        );
+        assert_eq!(
+            renderer
+                .window_x_edges
+                .iter()
+                .map(|edge| (edge.start_x, edge.wx))
+                .collect::<Vec<_>>(),
+            vec![(8, 8), (5, 5), (10, 10)]
         );
     }
 
