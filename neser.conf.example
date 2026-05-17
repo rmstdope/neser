@@ -338,7 +338,10 @@ nes-vertical_overscan=8
 # exactly 16384 bytes). If this path is omitted, NESER also tries
 # ~/.neser/gba_bios.bin before falling back to the built-in BIOS.
 # If the configured path exists but is invalid, an error is reported.
+# Use the special value "embedded" to force the built-in BIOS even when
+# an external BIOS file exists at the default path.
 #gba-bios-path=/absolute/path/to/gba_bios.bin
+#gba-bios-path=embedded
 
 # Skip the GBA BIOS intro (logo display + boot jingle).
 # When enabled, the BIOS still performs full hardware initialization
