@@ -742,7 +742,6 @@ fn test_mooneye_emulator_only_mbc5_rom_8mb() {
 // ============================================================================
 
 #[test]
-#[ignore = "CGB I/O register read-back values not yet correct (issue #2366)"]
 fn test_mooneye_misc_bits_unused_hwio_c() {
     assert_mooneye_pass_cgb!(
         &format!("{BASE}/misc/bits/unused_hwio-C.gb"),
@@ -761,7 +760,6 @@ fn test_mooneye_misc_boot_div_cgbabcde() {
 }
 
 #[test]
-#[ignore = "CGB hardware I/O register state at boot not yet correct (issue #2366)"]
 fn test_mooneye_misc_boot_hwio_c() {
     assert_mooneye_pass_cgb!(&format!("{BASE}/misc/boot_hwio-C.gb"), CgbModel::CgbE);
 }
@@ -772,7 +770,6 @@ fn test_mooneye_misc_boot_regs_cgb() {
 }
 
 #[test]
-#[ignore = "CGB PPU VBlank STAT interrupt timing not yet correct (issue #2366)"]
 fn test_mooneye_misc_ppu_vblank_stat_intr_c() {
     assert_mooneye_pass_cgb!(
         &format!("{BASE}/misc/ppu/vblank_stat_intr-C.gb"),
