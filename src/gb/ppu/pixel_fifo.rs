@@ -16,6 +16,7 @@ const LCDC_BG_WINDOW_ENABLE: u8 = 0x01;
 const LCDC_OBJ_ENABLE: u8 = 0x02;
 const LCDC_BG_MAP: u8 = 0x08;
 const LCDC_TILE_DATA: u8 = 0x10;
+const LCDC_WINDOW_ENABLE: u8 = 0x20;
 const OBJ_PIXELS_PER_FETCH: u8 = 8;
 const CGB_DMG_COMPAT_OBJ_ENABLE_EDGE_PIXELS: u8 = 2;
 const DMG_OBJ_FETCH_ABORT_COMPLETES_WHEN_DOTS_REMAINING: u16 = 2;
@@ -264,6 +265,18 @@ struct ObjFetchLcdcRange {
     high_lcdc: u8,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct WindowEnableEdge {
+    start_x: u8,
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct WindowXEdge {
+    start_x: u8,
+    wx: u8,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PixelFifoRenderer {
     active: bool,
@@ -271,8 +284,18 @@ pub struct PixelFifoRenderer {
     mode3_start_dot: u16,
     #[serde(default)]
     scanline_start_lcdc: u8,
+    #[serde(default)]
+    scanline_start_wx: u8,
     next_x: u8,
     window_active: bool,
+    #[serde(default)]
+    window_triggered: bool,
+    #[serde(default)]
+    window_fetch_wx: u8,
+    #[serde(default)]
+    window_fetch_line: u8,
+    #[serde(default)]
+    window_activation_count: u8,
     bgp_edge_active: bool,
     bgp_edge_x: u8,
     bgp_edge_value: u8,
@@ -306,6 +329,14 @@ pub struct PixelFifoRenderer {
     lcdc_tile_data_edge: LcdcTileDataEdge,
     #[serde(default)]
     lcdc_obj_enable_edge: LcdcObjEnableEdge,
+    #[serde(default)]
+    window_enable_edges: Vec<WindowEnableEdge>,
+    #[serde(default)]
+    window_reset_edges: Vec<u8>,
+    #[serde(default)]
+    window_x_edges: Vec<WindowXEdge>,
+    #[serde(default)]
+    bg_fetch_x_offset: u8,
 }
 
 impl PixelFifoRenderer {
@@ -315,8 +346,13 @@ impl PixelFifoRenderer {
             scanline: 0,
             mode3_start_dot: 0,
             scanline_start_lcdc: 0,
+            scanline_start_wx: 0,
             next_x: 0,
             window_active: false,
+            window_triggered: false,
+            window_fetch_wx: 7,
+            window_fetch_line: 0,
+            window_activation_count: 0,
             bgp_edge_active: false,
             bgp_edge_x: 0,
             bgp_edge_value: INITIAL_BGP,
@@ -335,6 +371,10 @@ impl PixelFifoRenderer {
             lcdc_bg_map_edge: LcdcBgMapEdge::default(),
             lcdc_tile_data_edge: LcdcTileDataEdge::default(),
             lcdc_obj_enable_edge: LcdcObjEnableEdge::default(),
+            window_enable_edges: Vec::new(),
+            window_reset_edges: Vec::new(),
+            window_x_edges: Vec::new(),
+            bg_fetch_x_offset: 0,
         }
     }
 
@@ -351,8 +391,13 @@ impl PixelFifoRenderer {
         self.scanline = scanline;
         self.mode3_start_dot = mode3_start_dot;
         self.scanline_start_lcdc = registers.lcdc;
+        self.scanline_start_wx = registers.wx;
         self.next_x = 0;
         self.window_active = false;
+        self.window_triggered = false;
+        self.window_fetch_wx = registers.wx;
+        self.window_fetch_line = 0;
+        self.window_activation_count = 0;
         self.bgp_edge_active = false;
         self.bgp_edge_value = registers.bgp;
         self.lcdc_bg_enable_edge = LcdcBgEnableEdge::default();
@@ -365,6 +410,10 @@ impl PixelFifoRenderer {
         self.active_obj_stall_x = None;
         self.canceled_obj_fetch_ranges.clear();
         self.obj_fetch_lcdc_ranges.clear();
+        self.window_enable_edges.clear();
+        self.window_reset_edges.clear();
+        self.window_x_edges.clear();
+        self.bg_fetch_x_offset = 0;
         self.active_obj_fetch_lcdc_range = None;
         self.obj_fetch_ignores_lcdc = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat)
             .is_some_and(ObjFetchModel::ignores_lcdc_obj_enable);
@@ -424,7 +473,7 @@ impl PixelFifoRenderer {
         opri_dmg_mode: bool,
         dmg_compat: bool,
         screen_buffer: &mut ScreenBuffer,
-    ) -> Option<bool> {
+    ) -> Option<u8> {
         if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
             return None;
         }
@@ -477,10 +526,11 @@ impl PixelFifoRenderer {
         self.lcdc_bg_map_edge.clear_consumed(self.next_x);
         self.lcdc_tile_data_edge.clear_consumed(self.next_x);
         self.clear_consumed_obj_fetch_lcdc_ranges();
+        self.clear_consumed_window_edges();
         self.next_x = self.next_x.saturating_add(1);
         if self.next_x as u32 >= ScreenBuffer::WIDTH {
             self.active = false;
-            Some(self.window_active)
+            Some(self.window_activation_count)
         } else {
             None
         }
@@ -546,8 +596,10 @@ impl PixelFifoRenderer {
         }
 
         let waiting_on_obj_fetch = self.is_waiting_on_obj_fetch();
-        let window_fetch_active =
-            previous & 0x20 != 0 && self.scanline >= wy && self.next_x == wx.saturating_sub(7);
+        self.record_lcdc_window_enable_write(previous, new);
+        let window_fetch_active = previous & LCDC_WINDOW_ENABLE != 0
+            && self.scanline >= wy
+            && self.next_x == wx.saturating_sub(7);
         let tile_data_fetch_phase = if window_fetch_active || self.window_active {
             self.next_x.saturating_sub(wx.saturating_sub(7)) & 0x07
         } else {
@@ -589,6 +641,59 @@ impl PixelFifoRenderer {
         };
         self.lcdc_bg_enable_edge
             .record_write(self.next_x, previous, new, timing);
+    }
+
+    pub fn record_wx_write(&mut self, wx: u8) {
+        if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
+            return;
+        }
+
+        self.window_x_edges.push(WindowXEdge {
+            start_x: self.next_x,
+            wx,
+        });
+    }
+
+    fn record_lcdc_window_enable_write(&mut self, previous: u8, new: u8) {
+        if previous & LCDC_WINDOW_ENABLE == new & LCDC_WINDOW_ENABLE {
+            return;
+        }
+
+        let enabled = new & LCDC_WINDOW_ENABLE != 0;
+        let start_x = if enabled {
+            self.next_x
+        } else {
+            self.next_window_fetch_boundary()
+        };
+        self.window_enable_edges
+            .push(WindowEnableEdge { start_x, enabled });
+        if !enabled {
+            self.window_reset_edges.push(start_x);
+        }
+    }
+
+    fn next_window_fetch_boundary(&self) -> u8 {
+        if !self.window_triggered {
+            return self.next_x;
+        }
+
+        let start_x = window_visible_start_x(self.window_fetch_wx);
+        if start_x == 0 && self.next_x != 0 && self.window_fetch_wx <= 7 {
+            return if self.window_fetch_wx <= 1 {
+                self.window_fetch_wx.saturating_add(9)
+            } else {
+                self.window_fetch_wx.saturating_add(1)
+            };
+        }
+
+        let phase = self.next_x.saturating_sub(start_x) & 0x07;
+        if phase == 0 {
+            self.next_x.saturating_add(8)
+        } else if phase == 7 {
+            self.next_x.saturating_add(9)
+        } else {
+            self.next_x.saturating_add(8 - phase)
+        }
     }
 
     fn record_lcdc_tile_data_write(
@@ -1330,7 +1435,7 @@ impl PixelFifoRenderer {
         screen_buffer: &mut ScreenBuffer,
     ) {
         let (colour_index, is_sprite, sprite_palette) =
-            self.dmg_pixel_layers(x, vram, oam, registers, window_line);
+            self.dmg_pixel_layers_with_options(x, vram, oam, registers, window_line, false);
         let (r, g, b) = if is_sprite {
             let palette_reg = if sprite_palette == 0 {
                 registers.obp0
@@ -1363,7 +1468,7 @@ impl PixelFifoRenderer {
     ) {
         let lcdc = registers.lcdc;
         let obj_enabled = lcdc & LCDC_OBJ_ENABLE != 0;
-        let win_enabled = lcdc & 0x20 != 0;
+        let win_enabled = lcdc & LCDC_WINDOW_ENABLE != 0;
         let master_priority = lcdc & 0x01 != 0;
 
         let bg_px = background::fetch_bg_pixel_cgb(
@@ -1387,12 +1492,20 @@ impl PixelFifoRenderer {
                 window_line,
             ) {
                 Some(win_px) => {
-                    self.window_active = true;
+                    if !self.window_triggered {
+                        self.window_triggered = true;
+                        self.window_active = true;
+                        self.window_fetch_wx = registers.wx;
+                        self.window_fetch_line =
+                            window_line.wrapping_add(self.window_activation_count);
+                        self.window_activation_count = self.window_activation_count.wrapping_add(1);
+                    }
                     win_px
                 }
                 None => bg_px,
             }
         } else {
+            self.window_triggered = false;
             bg_px
         };
 
@@ -1434,15 +1547,28 @@ impl PixelFifoRenderer {
         registers: &Registers,
         window_line: u8,
     ) -> (u8, bool, u8) {
+        self.dmg_pixel_layers_with_options(x, vram, oam, registers, window_line, true)
+    }
+
+    fn dmg_pixel_layers_with_options(
+        &mut self,
+        x: u32,
+        vram: &[u8; 0x2000],
+        oam: &[u8; 0xA0],
+        registers: &Registers,
+        window_line: u8,
+        dmg_window_glitch: bool,
+    ) -> (u8, bool, u8) {
         let lcdc = registers.lcdc;
         let bg_fetch_lcdc = self.lcdc_bg_map_edge.lcdc_for_bg_fetch(x, lcdc);
         let bg_window_enabled = self
             .lcdc_bg_enable_edge
             .bg_window_enabled_for_pixel(x, lcdc);
         let obj_enabled = self.obj_enabled_for_pixel(lcdc);
-        let win_enabled = lcdc & 0x20 != 0;
+        let window_fetch = self.window_fetch_for_pixel(x, registers, window_line);
 
         let bg_idx = if bg_window_enabled {
+            let bg_x = x.saturating_sub(u32::from(self.bg_fetch_x_offset));
             let (low_lcdc, high_lcdc) = self
                 .lcdc_tile_data_edge
                 .lcdc_for_tile_data(x, bg_fetch_lcdc);
@@ -1450,7 +1576,7 @@ impl PixelFifoRenderer {
                 vram,
                 DmgPixelFetch {
                     layer: DmgLayer::Background,
-                    x,
+                    x: bg_x,
                     scanline: self.scanline,
                     scx: registers.scx,
                     scy: registers.scy,
@@ -1467,33 +1593,33 @@ impl PixelFifoRenderer {
             0
         };
 
-        let bw_idx = if bg_window_enabled && win_enabled {
-            let (low_lcdc, high_lcdc) = self.lcdc_tile_data_edge.lcdc_for_tile_data(x, lcdc);
-            match bg_fifo::fetch_dmg_pixel(
-                vram,
-                DmgPixelFetch {
-                    layer: DmgLayer::Window,
-                    x,
-                    scanline: self.scanline,
-                    scx: registers.scx,
-                    scy: registers.scy,
-                    wx: registers.wx,
-                    wy: registers.wy,
-                    window_line,
-                    map_lcdc: lcdc,
-                    low_lcdc,
-                    high_lcdc,
-                },
-            ) {
-                Some(idx) => {
-                    self.window_active = true;
-                    idx
+        let bw_idx =
+            if let Some((window_wx, window_line)) = window_fetch.filter(|_| bg_window_enabled) {
+                let (low_lcdc, high_lcdc) = self.lcdc_tile_data_edge.lcdc_for_tile_data(x, lcdc);
+                match bg_fifo::fetch_dmg_pixel(
+                    vram,
+                    DmgPixelFetch {
+                        layer: DmgLayer::Window,
+                        x,
+                        scanline: self.scanline,
+                        scx: registers.scx,
+                        scy: registers.scy,
+                        wx: window_wx,
+                        wy: registers.wy,
+                        window_line,
+                        map_lcdc: lcdc | LCDC_WINDOW_ENABLE,
+                        low_lcdc,
+                        high_lcdc,
+                    },
+                ) {
+                    Some(idx) => idx,
+                    None => bg_idx,
                 }
-                None => bg_idx,
-            }
-        } else {
-            bg_idx
-        };
+            } else if dmg_window_glitch && self.dmg_disabled_window_color0_pixel(x, registers) {
+                0
+            } else {
+                bg_idx
+            };
 
         let sprite_px = if obj_enabled && !self.is_obj_fetch_canceled_for_pixel(x) {
             let (low_lcdc, high_lcdc) = self.obj_fetch_lcdc_for_pixel(x, lcdc);
@@ -1529,10 +1655,86 @@ impl PixelFifoRenderer {
         }
     }
 
+    fn dmg_disabled_window_color0_pixel(&self, x: u32, registers: &Registers) -> bool {
+        let x_u8 = x as u8;
+        let disabled_by_mid_scanline_edge = self
+            .window_enable_edges
+            .iter()
+            .any(|edge| !edge.enabled && u32::from(edge.start_x) <= x);
+        self.scanline >= registers.wy
+            && disabled_by_mid_scanline_edge
+            && !self.window_enabled_for_pixel(x, registers.lcdc)
+            && window_triggers_at_x(self.wx_for_pixel(x, registers.wx), x_u8)
+            && x_u8 & 0x07 == 0
+    }
+
     fn clear_consumed_bgp_edge(&mut self) {
         if self.bgp_edge_active && self.bgp_edge_x == self.next_x {
             self.bgp_edge_active = false;
         }
+    }
+
+    fn window_fetch_for_pixel(
+        &mut self,
+        x: u32,
+        registers: &Registers,
+        window_line: u8,
+    ) -> Option<(u8, u8)> {
+        let x_u8 = x as u8;
+        if self.window_reset_edges.contains(&x_u8) {
+            self.window_triggered = false;
+            self.bg_fetch_x_offset = u8::from(x_u8 != 0);
+        }
+
+        if self.scanline < registers.wy || !self.window_enabled_for_pixel(x, registers.lcdc) {
+            self.window_triggered = false;
+            return None;
+        }
+
+        if !self.window_triggered {
+            let wx = self.wx_for_pixel(x, registers.wx);
+            if !window_triggers_at_x(wx, x_u8) {
+                return None;
+            }
+
+            self.window_triggered = true;
+            self.window_active = true;
+            self.bg_fetch_x_offset = 0;
+            self.window_fetch_wx = wx;
+            self.window_fetch_line = window_line.wrapping_add(self.window_activation_count);
+            self.window_activation_count = self.window_activation_count.wrapping_add(1);
+        }
+
+        Some((self.window_fetch_wx, self.window_fetch_line))
+    }
+
+    fn window_enabled_for_pixel(&self, x: u32, current_lcdc: u8) -> bool {
+        let base_lcdc = if self.window_enable_edges.is_empty() {
+            current_lcdc
+        } else {
+            self.scanline_start_lcdc
+        };
+        let mut enabled = base_lcdc & LCDC_WINDOW_ENABLE != 0;
+        for edge in &self.window_enable_edges {
+            if u32::from(edge.start_x) <= x {
+                enabled = edge.enabled;
+            }
+        }
+        enabled
+    }
+
+    fn wx_for_pixel(&self, x: u32, current_wx: u8) -> u8 {
+        let mut wx = if self.window_x_edges.is_empty() {
+            current_wx
+        } else {
+            self.scanline_start_wx
+        };
+        for edge in &self.window_x_edges {
+            if u32::from(edge.start_x) <= x {
+                wx = edge.wx;
+            }
+        }
+        wx
     }
 
     fn is_obj_fetch_canceled_for_pixel(&self, x: u32) -> bool {
@@ -1593,6 +1795,12 @@ impl PixelFifoRenderer {
             .retain(|range| range.end_x != self.next_x);
     }
 
+    fn clear_consumed_window_edges(&mut self) {
+        self.window_reset_edges.retain(|&x| x != self.next_x);
+        prune_consumed_window_enable_edges(&mut self.window_enable_edges, self.next_x);
+        prune_consumed_window_x_edges(&mut self.window_x_edges, self.next_x);
+    }
+
     fn is_waiting_on_obj_fetch(&self) -> bool {
         self.pending_obj_stall_dots > 0
             || self
@@ -1616,12 +1824,47 @@ fn is_off_left_window_delayed_obj_x(oam_x: u8) -> bool {
     (OFF_LEFT_WINDOW_DELAYED_OBJ_X_START..=OFF_LEFT_WINDOW_DELAYED_OBJ_X_END).contains(&oam_x)
 }
 
+fn window_visible_start_x(wx: u8) -> u8 {
+    wx.saturating_sub(7)
+}
+
+fn window_triggers_at_x(wx: u8, x: u8) -> bool {
+    wx < 167 && x == window_visible_start_x(wx)
+}
+
+fn prune_consumed_window_enable_edges(edges: &mut Vec<WindowEnableEdge>, x: u8) {
+    let Some(latest_consumed_index) = edges.iter().rposition(|edge| edge.start_x <= x) else {
+        return;
+    };
+
+    let mut index = 0;
+    edges.retain(|edge| {
+        let keep = index == latest_consumed_index || edge.start_x > x;
+        index += 1;
+        keep
+    });
+}
+
+fn prune_consumed_window_x_edges(edges: &mut Vec<WindowXEdge>, x: u8) {
+    let Some(latest_consumed_index) = edges.iter().rposition(|edge| edge.start_x <= x) else {
+        return;
+    };
+
+    let mut index = 0;
+    edges.retain(|edge| {
+        let keep = index == latest_consumed_index || edge.start_x > x;
+        index += 1;
+        keep
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{registers::Registers, screen_buffer::ScreenBuffer};
     use super::{
-        LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
-        PixelFifoRenderer,
+        LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE, LcdcBgEnableEdge,
+        LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay, PixelFifoRenderer,
+        WindowEnableEdge, WindowXEdge,
     };
 
     fn oam_with_sprite_at(oam_y: u8, oam_x: u8, tile: u8, attrs: u8) -> [u8; 0xA0] {
@@ -1679,6 +1922,101 @@ mod tests {
             false,
             dmg_compat,
             screen_buffer,
+        );
+    }
+
+    #[test]
+    fn native_cgb_window_activation_reports_window_line_increment() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0x80 | LCDC_BG_WINDOW_ENABLE | LCDC_TILE_DATA | LCDC_WINDOW_ENABLE;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = [0u8; 0x2000];
+        let vram_bank1 = [0u8; 0x2000];
+        let oam = [0u8; 0xA0];
+        let bg_palette_ram = [0u8; 64];
+        let obj_palette_ram = [0u8; 64];
+        let mut screen_buffer = ScreenBuffer::new();
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, false);
+        let mut activation_count = None;
+        for dot in 80..400 {
+            if let Some(count) = renderer.tick(
+                dot,
+                &vram,
+                &vram_bank1,
+                &oam,
+                &registers,
+                &bg_palette_ram,
+                &obj_palette_ram,
+                0,
+                true,
+                false,
+                false,
+                &mut screen_buffer,
+            ) {
+                activation_count = Some(count);
+                break;
+            }
+        }
+
+        assert_eq!(
+            activation_count,
+            Some(1),
+            "native CGB rendering should report one window activation so PPU window_line advances"
+        );
+    }
+
+    #[test]
+    fn clear_consumed_window_edges_keeps_latest_state_and_future_writes() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.next_x = 5;
+        renderer.window_enable_edges = vec![
+            WindowEnableEdge {
+                start_x: 8,
+                enabled: false,
+            },
+            WindowEnableEdge {
+                start_x: 2,
+                enabled: false,
+            },
+            WindowEnableEdge {
+                start_x: 5,
+                enabled: true,
+            },
+            WindowEnableEdge {
+                start_x: 10,
+                enabled: false,
+            },
+        ];
+        renderer.window_x_edges = vec![
+            WindowXEdge { start_x: 8, wx: 8 },
+            WindowXEdge { start_x: 2, wx: 2 },
+            WindowXEdge { start_x: 5, wx: 5 },
+            WindowXEdge {
+                start_x: 10,
+                wx: 10,
+            },
+        ];
+
+        renderer.clear_consumed_window_edges();
+
+        assert_eq!(
+            renderer
+                .window_enable_edges
+                .iter()
+                .map(|edge| (edge.start_x, edge.enabled))
+                .collect::<Vec<_>>(),
+            vec![(8, false), (5, true), (10, false)]
+        );
+        assert_eq!(
+            renderer
+                .window_x_edges
+                .iter()
+                .map(|edge| (edge.start_x, edge.wx))
+                .collect::<Vec<_>>(),
+            vec![(8, 8), (5, 5), (10, 10)]
         );
     }
 

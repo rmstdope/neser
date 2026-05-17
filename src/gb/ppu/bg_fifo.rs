@@ -36,11 +36,12 @@ pub(super) fn fetch_dmg_pixel(vram: &[u8; 0x2000], fetch: DmgPixelFetch) -> Opti
             if fetch.map_lcdc & 0x20 == 0 || fetch.scanline < fetch.wy {
                 return None;
             }
-            let win_x_start = fetch.wx.saturating_sub(7);
-            if fetch.x < u32::from(win_x_start) {
+            let win_x_start = i16::from(fetch.wx) - 7;
+            let visible_win_x_start = win_x_start.max(0) as u32;
+            if fetch.x < visible_win_x_start {
                 return None;
             }
-            let win_x = (fetch.x as u8).wrapping_sub(win_x_start);
+            let win_x = ((fetch.x as i16) - win_x_start) as u8;
             let win_y = fetch.window_line;
             (
                 tile_map_base(fetch.map_lcdc, 0x40),

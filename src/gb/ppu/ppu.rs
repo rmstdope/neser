@@ -301,7 +301,7 @@ impl Ppu {
     }
 
     fn render_pixel_fifo_dot(&mut self) {
-        let completed_window_active = self.pixel_fifo.tick(
+        let completed_window_activations = self.pixel_fifo.tick(
             self.timing.dot(),
             &self.vram,
             &self.vram_bank1,
@@ -315,8 +315,8 @@ impl Ppu {
             self.dmg_compat,
             &mut self.screen_buffer,
         );
-        if completed_window_active.unwrap_or(false) {
-            self.window_line = self.window_line.wrapping_add(1);
+        if let Some(window_activations) = completed_window_activations {
+            self.window_line = self.window_line.wrapping_add(window_activations);
         }
     }
 
@@ -538,6 +538,9 @@ impl Ppu {
                 self.registers.wx,
                 self.registers.wy,
             );
+        }
+        if addr == 0xFF4B {
+            self.pixel_fifo.record_wx_write(val);
         }
         let was_enabled = self.registers.lcd_enabled();
         self.registers.write(addr, val);
