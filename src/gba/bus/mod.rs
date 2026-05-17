@@ -227,6 +227,10 @@ pub struct GbaBus {
     bios_image_loaded: bool,
     /// Dynamic wait-state timing, recalculated on WAITCNT writes.
     waitstates: Waitstates,
+    /// Undocumented register at 0x04000410, written by the real GBA BIOS
+    /// during boot (value 0xFF). Stored separately because it falls outside
+    /// the standard 1 KB I/O window.
+    undoc_0x410: u8,
 }
 
 impl Default for GbaBus {
@@ -273,6 +277,7 @@ impl GbaBus {
             bios_locked: false,
             bios_image_loaded: false,
             waitstates: Waitstates::new(),
+            undoc_0x410: 0,
         }
     }
 
@@ -740,25 +745,29 @@ impl Bus for GbaBus {
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE],
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE],
             0x4 => {
-                let aligned_hw = addr & !0x1;
-                if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
-                    let hw = self.apu.read16(aligned_hw);
-                    if addr & 1 == 0 {
-                        hw as u8
-                    } else {
-                        (hw >> 8) as u8
-                    }
+                if addr == 0x0400_0410 {
+                    self.undoc_0x410
                 } else {
-                    self.io
-                        .try_read8(
-                            addr,
-                            &self.ic,
-                            &self.timers,
-                            &self.dma,
-                            &self.ppu,
-                            &self.keypad,
-                        )
-                        .unwrap_or_else(|| self.open_bus_byte(addr))
+                    let aligned_hw = addr & !0x1;
+                    if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
+                        let hw = self.apu.read16(aligned_hw);
+                        if addr & 1 == 0 {
+                            hw as u8
+                        } else {
+                            (hw >> 8) as u8
+                        }
+                    } else {
+                        self.io
+                            .try_read8(
+                                addr,
+                                &self.ic,
+                                &self.timers,
+                                &self.dma,
+                                &self.ppu,
+                                &self.keypad,
+                            )
+                            .unwrap_or_else(|| self.open_bus_byte(addr))
+                    }
                 }
             }
             0x5 => self.pram[(addr as usize) % PRAM_SIZE],
@@ -904,7 +913,9 @@ impl Bus for GbaBus {
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE] = value,
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE] = value,
             0x4 => {
-                if (0x0400_0060..=0x0400_00A7).contains(&addr) {
+                if addr == 0x0400_0410 {
+                    self.undoc_0x410 = value;
+                } else if (0x0400_0060..=0x0400_00A7).contains(&addr) {
                     self.apu.write8(addr, value);
                 } else {
                     self.io.write8(

@@ -29,10 +29,20 @@ trap:
     b       trap
 
 @ ============================================================================
-@ Reset handler - minimal boot sequence
-@ Sets up stack pointers for each CPU mode and jumps to cartridge.
+@ Reset handler - full boot sequence
+@ Matches real GBA BIOS behavior: warm-boot check, stack setup, register
+@ clearing, header validation, hardware init, and jump to cartridge.
 @ ============================================================================
 reset_handler:
+    @ --- Warm-boot check ---
+    @ If POSTFLG is already 1, this is a warm reset (SoftReset return).
+    @ Redirect to the debug handler vector at 0x0000001C.
+    ldr     r0, =0x04000300
+    ldrb    r0, [r0]
+    cmp     r0, #1
+    beq     warm_boot
+
+    @ --- Stack pointer setup ---
     @ Set up IRQ mode stack
     mrs     r0, cpsr
     bic     r0, r0, #0x1F
@@ -54,7 +64,7 @@ reset_handler:
     msr     cpsr_c, r0
     ldr     sp, =0x03007F00
 
-    @ Clear registers
+    @ --- Clear registers ---
     mov     r0, #0
     mov     r1, #0
     mov     r2, #0
@@ -69,15 +79,234 @@ reset_handler:
     mov     r11, #0
     mov     r12, #0
 
-    @ Set POSTFLG to 1 (indicates BIOS has run)
+    @ --- Header validation ---
+    @ Check fixed byte at ROM offset 0xB2 (must be 0x96)
+    ldr     r0, =0x080000B2
+    ldrb    r0, [r0]
+    cmp     r0, #0x96
+    bne     header_fail
+
+    @ Compute complement check: sum bytes 0xA0..0xBC, subtract 0x19,
+    @ result ANDed with 0xFF must equal byte at 0xBD.
+    mov     r0, #0              @ accumulator
+    ldr     r1, =0x080000A0     @ start address
+    ldr     r2, =0x080000BD     @ end address (exclusive for sum)
+.Lheader_loop:
+    ldrb    r3, [r1], #1
+    sub     r0, r0, r3
+    cmp     r1, r2
+    blt     .Lheader_loop
+    sub     r0, r0, #0x19
+    and     r0, r0, #0xFF
+    ldrb    r1, [r2]            @ read complement check byte at 0xBD
+    cmp     r0, r1
+    bne     header_fail
+
+    @ --- Undocumented register write ---
+    @ Real GBA BIOS writes 0xFF to 0x04000410 ("probably a bug in the BIOS").
+    ldr     r0, =0x04000410
+    mov     r1, #0xFF
+    strb    r1, [r0]
+
+    @ --- Set POSTFLG ---
     ldr     r0, =0x04000300
     mov     r1, #1
     strb    r1, [r0]
+
+    @ --- Check skip-intro flag ---
+    @ If byte at 0x03007FFC is non-zero, skip the intro (logo + jingle).
+    @ This flag is set by the emulator when skip-bios-intro is configured.
+    ldr     r0, =0x03007FFC
+    ldrb    r0, [r0]
+    cmp     r0, #0
+    bne     boot_finish
+
+    @ ===================================================================
+    @ BOOT INTRO — Logo display + jingle + fade
+    @ ===================================================================
+
+    @ --- Enable APU ---
+    ldr     r4, =0x04000080     @ SOUNDCNT_L base
+    mov     r0, #0x80
+    strb    r0, [r4, #4]        @ SOUNDCNT_X (0x04000084) = 0x80 (APU on)
+
+    @ --- Configure Sound Channel 1 for jingle ---
+    @ SOUNDCNT_L = 0xF377 (max volume both speakers, CH1+2 to R, CH1-4 to L)
+    mov     r0, #0x77
+    strb    r0, [r4]            @ 0x04000080 low byte = 0x77
+    mov     r0, #0xF3
+    strb    r0, [r4, #1]        @ 0x04000081 high byte = 0xF3
+
+    @ SOUNDCNT_H = 0x0002 (PSG at 100% ratio)
+    ldr     r5, =0x04000082
+    mov     r0, #0x02
+    strh    r0, [r5]
+
+    @ SOUND1CNT_L = 0x0000 (no sweep)
+    ldr     r5, =0x04000060
+    mov     r0, #0
+    strh    r0, [r5]
+
+    @ SOUND1CNT_H = 0xF380 (vol 15, decay pace 3, duty 50%)
+    @ Low byte = 0x80, high byte = 0xF3
+    ldr     r5, =0x04000062
+    mov     r0, #0x80
+    strb    r0, [r5]
+    mov     r0, #0xF3
+    strb    r0, [r5, #1]
+
+    @ --- Set up Mode 4 display ---
+    @ DISPCNT = 0x0404 (Mode 4, BG2 enable)
+    ldr     r5, =0x04000000
+    ldr     r0, =0x0404
+    strh    r0, [r5]
+
+    @ --- Write logo palette ---
+    @ Palette entry 1 = white (0x7FFF) for logo text
+    ldr     r5, =0x05000002     @ Palette entry 1 (offset 2)
+    ldr     r0, =0x7FFF
+    strh    r0, [r5]
+    @ Palette entry 0 = black (background, already 0)
+
+    @ --- Draw "NESER" logo to VRAM ---
+    @ Mode 4 VRAM starts at 0x06000000, 240 bytes per scanline.
+    @ Draw centered text starting at approximately row 72, col 80.
+    @ Use a simple 5×7 pixel font, each letter 8px wide with 2px spacing.
+    ldr     r5, =0x06000000     @ VRAM base
+    ldr     r6, =logo_data      @ pointer to compressed logo bitmap
+    ldr     r7, =logo_data_end  @ end of logo data
+    @ Logo data is stored as (row_offset_16, run_of_pixels) pairs
+    @ Format: halfword offset from VRAM base, then bytes of pixel indices
+.Llogo_copy:
+    cmp     r6, r7
+    bge     .Llogo_done
+    ldrh    r0, [r6], #2        @ offset into VRAM
+    ldrb    r1, [r6], #1        @ count of pixels
+    add     r2, r5, r0          @ destination in VRAM
+.Llogo_pixel:
+    subs    r1, r1, #1
+    blt     .Llogo_copy
+    mov     r3, #1              @ pixel value = palette entry 1
+    strb    r3, [r2], #1
+    b       .Llogo_pixel
+.Llogo_done:
+
+    @ --- SoundBias ramp (SWI 0x19) ---
+    @ Ramp SOUNDBIAS from 0x000 to 0x200
+    mov     r0, #1              @ r0 != 0 means ramp up to 0x200
+    swi     0x190000            @ SWI 0x19
+
+    @ --- Wait loop: display logo for ~4 seconds ---
+    @ ~240 VBlanks at 59.7Hz ≈ 4.02 seconds
+    @ Poll VCOUNT (0x04000006) for scanline 160 (VBlank start)
+    mov     r8, #0              @ frame counter
+    ldr     r9, =240            @ target frame count
+    ldr     r10, =0x04000006    @ REG_VCOUNT
+.Lwait_loop:
+    @ Wait for VBlank (VCOUNT == 160)
+.Lwait_vblank:
+    ldrh    r0, [r10]
+    cmp     r0, #160
+    bne     .Lwait_vblank
+    @ Wait for VBlank to end (VCOUNT != 160) to avoid counting same frame twice
+.Lwait_vblank_end:
+    ldrh    r0, [r10]
+    cmp     r0, #160
+    beq     .Lwait_vblank_end
+
+    @ Play jingle notes at specific frames
+    @ Note 1 "ba" at frame 40: SOUND1CNT_X = 0x8783
+    cmp     r8, #40
+    bne     .Lno_note1
+    ldr     r5, =0x04000064     @ SOUND1CNT_X
+    ldr     r0, =0x8783         @ trigger + period for C6
+    strh    r0, [r5]
+.Lno_note1:
+    @ Note 2 "DING" at frame 44: SOUND1CNT_X = 0x87C1
+    cmp     r8, #44
+    bne     .Lno_note2
+    ldr     r5, =0x04000064     @ SOUND1CNT_X
+    ldr     r0, =0x87C1         @ trigger + period for C7
+    strh    r0, [r5]
+.Lno_note2:
+
+    add     r8, r8, #1
+    cmp     r8, r9
+    blt     .Lwait_loop
+
+    @ --- Fade to white ---
+    @ Gradually increase palette entry 0 (background) brightness over 16 frames.
+    @ Use GBA's 5-bit RGB: increment R, G, B by 2 each frame (16 steps × 2 = 31 = max).
+    mov     r8, #0              @ fade step
+    ldr     r5, =0x05000000     @ Palette entry 0
+.Lfade_loop:
+    @ Wait for next VBlank
+.Lfade_vblank:
+    ldrh    r0, [r10]
+    cmp     r0, #160
+    bne     .Lfade_vblank
+.Lfade_vblank_end2:
+    ldrh    r0, [r10]
+    cmp     r0, #160
+    beq     .Lfade_vblank_end2
+
+    @ Compute brightness: step * 2 for each R, G, B channel
+    add     r8, r8, #1
+    mov     r0, r8, lsl #1      @ r0 = step * 2 (0..31)
+    cmp     r0, #31
+    movgt   r0, #31             @ clamp to 31
+    @ Build RGB555: R | (G << 5) | (B << 10)
+    orr     r1, r0, r0, lsl #5
+    orr     r1, r1, r0, lsl #10
+    strh    r1, [r5]            @ Write to palette entry 0
+
+    cmp     r8, #16
+    blt     .Lfade_loop
+
+    @ --- Disable display before jumping to game ---
+    ldr     r5, =0x04000000
+    mov     r0, #0
+    strh    r0, [r5]            @ DISPCNT = 0 (forced blank / all off)
+
+    @ --- Clear VRAM logo region ---
+    @ Not strictly necessary but cleaner for the game's startup
+
+boot_finish:
+    @ --- Clear registers before jump ---
     mov     r0, #0
     mov     r1, #0
+    mov     r2, #0
+    mov     r3, #0
+    mov     r4, #0
+    mov     r5, #0
+    mov     r6, #0
+    mov     r7, #0
+    mov     r8, #0
+    mov     r9, #0
+    mov     r10, #0
+    mov     r11, #0
+    mov     r12, #0
 
-    @ Jump to cartridge entry point
+    @ --- Jump to cartridge entry point ---
     ldr     pc, =0x08000000
+
+@ ============================================================================
+@ Warm-boot handler - redirects to debug vector on soft reset
+@ ============================================================================
+warm_boot:
+    @ Branch to the FIQ/debug vector at 0x0000001C.
+    @ On real hardware this would be a debug handler entry point.
+    @ We re-use the existing trap there (infinite loop).
+    mov     pc, #0x1C
+
+@ ============================================================================
+@ Header validation failure - lock up
+@ ============================================================================
+header_fail:
+    b       header_fail
+
+@ Literal pool for the boot sequence (must be within 4KB of ldr= instructions)
+.pool
 
 @ ============================================================================
 @ SWI Handler
@@ -1828,3 +2057,297 @@ irq_handler:
 @ Literal pool
 @ ============================================================================
 .pool
+
+@ ============================================================================
+@ Logo bitmap data for "NESER" text (Mode 4, palette index 1)
+@ Format: repeated (halfword vram_offset, byte pixel_count) tuples.
+@ Each tuple draws pixel_count pixels of palette entry 1 starting at
+@ VRAM base + vram_offset. Generated from a 5x7 bitmap font at 3x scale.
+@ Text is centered on the 240x160 display.
+@ ============================================================================
+.align 2
+logo_data:
+    .hword 16630
+    .byte 3
+    .hword 16642
+    .byte 3
+    .hword 16651
+    .byte 15
+    .hword 16675
+    .byte 9
+    .hword 16693
+    .byte 15
+    .hword 16714
+    .byte 12
+    .hword 16870
+    .byte 3
+    .hword 16882
+    .byte 3
+    .hword 16891
+    .byte 15
+    .hword 16915
+    .byte 9
+    .hword 16933
+    .byte 15
+    .hword 16954
+    .byte 12
+    .hword 17110
+    .byte 3
+    .hword 17122
+    .byte 3
+    .hword 17131
+    .byte 15
+    .hword 17155
+    .byte 9
+    .hword 17173
+    .byte 15
+    .hword 17194
+    .byte 12
+    .hword 17350
+    .byte 3
+    .hword 17362
+    .byte 3
+    .hword 17371
+    .byte 3
+    .hword 17392
+    .byte 3
+    .hword 17404
+    .byte 3
+    .hword 17413
+    .byte 3
+    .hword 17434
+    .byte 3
+    .hword 17446
+    .byte 3
+    .hword 17590
+    .byte 3
+    .hword 17602
+    .byte 3
+    .hword 17611
+    .byte 3
+    .hword 17632
+    .byte 3
+    .hword 17644
+    .byte 3
+    .hword 17653
+    .byte 3
+    .hword 17674
+    .byte 3
+    .hword 17686
+    .byte 3
+    .hword 17830
+    .byte 3
+    .hword 17842
+    .byte 3
+    .hword 17851
+    .byte 3
+    .hword 17872
+    .byte 3
+    .hword 17884
+    .byte 3
+    .hword 17893
+    .byte 3
+    .hword 17914
+    .byte 3
+    .hword 17926
+    .byte 3
+    .hword 18070
+    .byte 6
+    .hword 18082
+    .byte 3
+    .hword 18091
+    .byte 3
+    .hword 18112
+    .byte 3
+    .hword 18133
+    .byte 3
+    .hword 18154
+    .byte 3
+    .hword 18166
+    .byte 3
+    .hword 18310
+    .byte 6
+    .hword 18322
+    .byte 3
+    .hword 18331
+    .byte 3
+    .hword 18352
+    .byte 3
+    .hword 18373
+    .byte 3
+    .hword 18394
+    .byte 3
+    .hword 18406
+    .byte 3
+    .hword 18550
+    .byte 6
+    .hword 18562
+    .byte 3
+    .hword 18571
+    .byte 3
+    .hword 18592
+    .byte 3
+    .hword 18613
+    .byte 3
+    .hword 18634
+    .byte 3
+    .hword 18646
+    .byte 3
+    .hword 18790
+    .byte 3
+    .hword 18796
+    .byte 3
+    .hword 18802
+    .byte 3
+    .hword 18811
+    .byte 12
+    .hword 18835
+    .byte 9
+    .hword 18853
+    .byte 12
+    .hword 18874
+    .byte 12
+    .hword 19030
+    .byte 3
+    .hword 19036
+    .byte 3
+    .hword 19042
+    .byte 3
+    .hword 19051
+    .byte 12
+    .hword 19075
+    .byte 9
+    .hword 19093
+    .byte 12
+    .hword 19114
+    .byte 12
+    .hword 19270
+    .byte 3
+    .hword 19276
+    .byte 3
+    .hword 19282
+    .byte 3
+    .hword 19291
+    .byte 12
+    .hword 19315
+    .byte 9
+    .hword 19333
+    .byte 12
+    .hword 19354
+    .byte 12
+    .hword 19510
+    .byte 3
+    .hword 19519
+    .byte 6
+    .hword 19531
+    .byte 3
+    .hword 19564
+    .byte 3
+    .hword 19573
+    .byte 3
+    .hword 19594
+    .byte 3
+    .hword 19750
+    .byte 3
+    .hword 19759
+    .byte 6
+    .hword 19771
+    .byte 3
+    .hword 19804
+    .byte 3
+    .hword 19813
+    .byte 3
+    .hword 19834
+    .byte 3
+    .hword 19990
+    .byte 3
+    .hword 19999
+    .byte 6
+    .hword 20011
+    .byte 3
+    .hword 20044
+    .byte 3
+    .hword 20053
+    .byte 3
+    .hword 20074
+    .byte 3
+    .hword 20230
+    .byte 3
+    .hword 20242
+    .byte 3
+    .hword 20251
+    .byte 3
+    .hword 20272
+    .byte 3
+    .hword 20284
+    .byte 3
+    .hword 20293
+    .byte 3
+    .hword 20314
+    .byte 3
+    .hword 20470
+    .byte 3
+    .hword 20482
+    .byte 3
+    .hword 20491
+    .byte 3
+    .hword 20512
+    .byte 3
+    .hword 20524
+    .byte 3
+    .hword 20533
+    .byte 3
+    .hword 20554
+    .byte 3
+    .hword 20710
+    .byte 3
+    .hword 20722
+    .byte 3
+    .hword 20731
+    .byte 3
+    .hword 20752
+    .byte 3
+    .hword 20764
+    .byte 3
+    .hword 20773
+    .byte 3
+    .hword 20794
+    .byte 3
+    .hword 20950
+    .byte 3
+    .hword 20962
+    .byte 3
+    .hword 20971
+    .byte 15
+    .hword 20995
+    .byte 9
+    .hword 21013
+    .byte 15
+    .hword 21034
+    .byte 3
+    .hword 21190
+    .byte 3
+    .hword 21202
+    .byte 3
+    .hword 21211
+    .byte 15
+    .hword 21235
+    .byte 9
+    .hword 21253
+    .byte 15
+    .hword 21274
+    .byte 3
+    .hword 21430
+    .byte 3
+    .hword 21442
+    .byte 3
+    .hword 21451
+    .byte 15
+    .hword 21475
+    .byte 9
+    .hword 21493
+    .byte 15
+    .hword 21514
+    .byte 3
+logo_data_end:
+@ Total: 141 spans, 423 bytes
