@@ -175,8 +175,8 @@ reset_handler:
     ldr     r5, =0x06000000     @ VRAM base
     ldr     r6, =logo_data      @ pointer to compressed logo bitmap
     ldr     r7, =logo_data_end  @ end of logo data
-    @ Logo data is stored as (row_offset_16, run_of_pixels) pairs
-    @ Format: halfword offset from VRAM base, then bytes of pixel indices
+    @ Logo data is stored as (offset_16, count_16) halfword pairs.
+    @ Each pair is 4 bytes, maintaining halfword alignment throughout.
     @
     @ GBA VRAM does not support byte writes (STRB duplicates the byte
     @ to both bytes of the halfword).  Use read-modify-write with LDRH/STRH.
@@ -184,7 +184,7 @@ reset_handler:
     cmp     r6, r7
     bge     .Llogo_done
     ldrh    r0, [r6], #2        @ offset into VRAM
-    ldrb    r1, [r6], #1        @ count of pixels
+    ldrh    r1, [r6], #2        @ count of pixels
     add     r2, r5, r0          @ destination in VRAM
 .Llogo_pixel:
     subs    r1, r1, #1
@@ -2071,294 +2071,153 @@ irq_handler:
 
 @ ============================================================================
 @ Logo bitmap data for "NESER" text (Mode 4, palette index 1)
-@ Format: repeated (halfword vram_offset, byte pixel_count) tuples.
-@ Each tuple draws pixel_count pixels of palette entry 1 starting at
+@ Format: repeated (halfword vram_offset, halfword pixel_count) pairs.
+@ Each pair draws pixel_count pixels of palette entry 1 starting at
 @ VRAM base + vram_offset. Generated from a 5x7 bitmap font at 3x scale.
 @ Text is centered on the 240x160 display.
 @ ============================================================================
 .align 2
 logo_data:
-    .hword 16630
-    .byte 3
-    .hword 16642
-    .byte 3
-    .hword 16651
-    .byte 15
-    .hword 16675
-    .byte 9
-    .hword 16693
-    .byte 15
-    .hword 16714
-    .byte 12
-    .hword 16870
-    .byte 3
-    .hword 16882
-    .byte 3
-    .hword 16891
-    .byte 15
-    .hword 16915
-    .byte 9
-    .hword 16933
-    .byte 15
-    .hword 16954
-    .byte 12
-    .hword 17110
-    .byte 3
-    .hword 17122
-    .byte 3
-    .hword 17131
-    .byte 15
-    .hword 17155
-    .byte 9
-    .hword 17173
-    .byte 15
-    .hword 17194
-    .byte 12
-    .hword 17350
-    .byte 3
-    .hword 17362
-    .byte 3
-    .hword 17371
-    .byte 3
-    .hword 17392
-    .byte 3
-    .hword 17404
-    .byte 3
-    .hword 17413
-    .byte 3
-    .hword 17434
-    .byte 3
-    .hword 17446
-    .byte 3
-    .hword 17590
-    .byte 3
-    .hword 17602
-    .byte 3
-    .hword 17611
-    .byte 3
-    .hword 17632
-    .byte 3
-    .hword 17644
-    .byte 3
-    .hword 17653
-    .byte 3
-    .hword 17674
-    .byte 3
-    .hword 17686
-    .byte 3
-    .hword 17830
-    .byte 3
-    .hword 17842
-    .byte 3
-    .hword 17851
-    .byte 3
-    .hword 17872
-    .byte 3
-    .hword 17884
-    .byte 3
-    .hword 17893
-    .byte 3
-    .hword 17914
-    .byte 3
-    .hword 17926
-    .byte 3
-    .hword 18070
-    .byte 6
-    .hword 18082
-    .byte 3
-    .hword 18091
-    .byte 3
-    .hword 18112
-    .byte 3
-    .hword 18133
-    .byte 3
-    .hword 18154
-    .byte 3
-    .hword 18166
-    .byte 3
-    .hword 18310
-    .byte 6
-    .hword 18322
-    .byte 3
-    .hword 18331
-    .byte 3
-    .hword 18352
-    .byte 3
-    .hword 18373
-    .byte 3
-    .hword 18394
-    .byte 3
-    .hword 18406
-    .byte 3
-    .hword 18550
-    .byte 6
-    .hword 18562
-    .byte 3
-    .hword 18571
-    .byte 3
-    .hword 18592
-    .byte 3
-    .hword 18613
-    .byte 3
-    .hword 18634
-    .byte 3
-    .hword 18646
-    .byte 3
-    .hword 18790
-    .byte 3
-    .hword 18796
-    .byte 3
-    .hword 18802
-    .byte 3
-    .hword 18811
-    .byte 12
-    .hword 18835
-    .byte 9
-    .hword 18853
-    .byte 12
-    .hword 18874
-    .byte 12
-    .hword 19030
-    .byte 3
-    .hword 19036
-    .byte 3
-    .hword 19042
-    .byte 3
-    .hword 19051
-    .byte 12
-    .hword 19075
-    .byte 9
-    .hword 19093
-    .byte 12
-    .hword 19114
-    .byte 12
-    .hword 19270
-    .byte 3
-    .hword 19276
-    .byte 3
-    .hword 19282
-    .byte 3
-    .hword 19291
-    .byte 12
-    .hword 19315
-    .byte 9
-    .hword 19333
-    .byte 12
-    .hword 19354
-    .byte 12
-    .hword 19510
-    .byte 3
-    .hword 19519
-    .byte 6
-    .hword 19531
-    .byte 3
-    .hword 19564
-    .byte 3
-    .hword 19573
-    .byte 3
-    .hword 19594
-    .byte 3
-    .hword 19750
-    .byte 3
-    .hword 19759
-    .byte 6
-    .hword 19771
-    .byte 3
-    .hword 19804
-    .byte 3
-    .hword 19813
-    .byte 3
-    .hword 19834
-    .byte 3
-    .hword 19990
-    .byte 3
-    .hword 19999
-    .byte 6
-    .hword 20011
-    .byte 3
-    .hword 20044
-    .byte 3
-    .hword 20053
-    .byte 3
-    .hword 20074
-    .byte 3
-    .hword 20230
-    .byte 3
-    .hword 20242
-    .byte 3
-    .hword 20251
-    .byte 3
-    .hword 20272
-    .byte 3
-    .hword 20284
-    .byte 3
-    .hword 20293
-    .byte 3
-    .hword 20314
-    .byte 3
-    .hword 20470
-    .byte 3
-    .hword 20482
-    .byte 3
-    .hword 20491
-    .byte 3
-    .hword 20512
-    .byte 3
-    .hword 20524
-    .byte 3
-    .hword 20533
-    .byte 3
-    .hword 20554
-    .byte 3
-    .hword 20710
-    .byte 3
-    .hword 20722
-    .byte 3
-    .hword 20731
-    .byte 3
-    .hword 20752
-    .byte 3
-    .hword 20764
-    .byte 3
-    .hword 20773
-    .byte 3
-    .hword 20794
-    .byte 3
-    .hword 20950
-    .byte 3
-    .hword 20962
-    .byte 3
-    .hword 20971
-    .byte 15
-    .hword 20995
-    .byte 9
-    .hword 21013
-    .byte 15
-    .hword 21034
-    .byte 3
-    .hword 21190
-    .byte 3
-    .hword 21202
-    .byte 3
-    .hword 21211
-    .byte 15
-    .hword 21235
-    .byte 9
-    .hword 21253
-    .byte 15
-    .hword 21274
-    .byte 3
-    .hword 21430
-    .byte 3
-    .hword 21442
-    .byte 3
-    .hword 21451
-    .byte 15
-    .hword 21475
-    .byte 9
-    .hword 21493
-    .byte 15
-    .hword 21514
-    .byte 3
+    .hword 16630, 3
+    .hword 16642, 3
+    .hword 16651, 15
+    .hword 16675, 9
+    .hword 16693, 15
+    .hword 16714, 12
+    .hword 16870, 3
+    .hword 16882, 3
+    .hword 16891, 15
+    .hword 16915, 9
+    .hword 16933, 15
+    .hword 16954, 12
+    .hword 17110, 3
+    .hword 17122, 3
+    .hword 17131, 15
+    .hword 17155, 9
+    .hword 17173, 15
+    .hword 17194, 12
+    .hword 17350, 3
+    .hword 17362, 3
+    .hword 17371, 3
+    .hword 17392, 3
+    .hword 17404, 3
+    .hword 17413, 3
+    .hword 17434, 3
+    .hword 17446, 3
+    .hword 17590, 3
+    .hword 17602, 3
+    .hword 17611, 3
+    .hword 17632, 3
+    .hword 17644, 3
+    .hword 17653, 3
+    .hword 17674, 3
+    .hword 17686, 3
+    .hword 17830, 3
+    .hword 17842, 3
+    .hword 17851, 3
+    .hword 17872, 3
+    .hword 17884, 3
+    .hword 17893, 3
+    .hword 17914, 3
+    .hword 17926, 3
+    .hword 18070, 6
+    .hword 18082, 3
+    .hword 18091, 3
+    .hword 18112, 3
+    .hword 18133, 3
+    .hword 18154, 3
+    .hword 18166, 3
+    .hword 18310, 6
+    .hword 18322, 3
+    .hword 18331, 3
+    .hword 18352, 3
+    .hword 18373, 3
+    .hword 18394, 3
+    .hword 18406, 3
+    .hword 18550, 6
+    .hword 18562, 3
+    .hword 18571, 3
+    .hword 18592, 3
+    .hword 18613, 3
+    .hword 18634, 3
+    .hword 18646, 3
+    .hword 18790, 3
+    .hword 18796, 3
+    .hword 18802, 3
+    .hword 18811, 12
+    .hword 18835, 9
+    .hword 18853, 12
+    .hword 18874, 12
+    .hword 19030, 3
+    .hword 19036, 3
+    .hword 19042, 3
+    .hword 19051, 12
+    .hword 19075, 9
+    .hword 19093, 12
+    .hword 19114, 12
+    .hword 19270, 3
+    .hword 19276, 3
+    .hword 19282, 3
+    .hword 19291, 12
+    .hword 19315, 9
+    .hword 19333, 12
+    .hword 19354, 12
+    .hword 19510, 3
+    .hword 19519, 6
+    .hword 19531, 3
+    .hword 19564, 3
+    .hword 19573, 3
+    .hword 19594, 3
+    .hword 19750, 3
+    .hword 19759, 6
+    .hword 19771, 3
+    .hword 19804, 3
+    .hword 19813, 3
+    .hword 19834, 3
+    .hword 19990, 3
+    .hword 19999, 6
+    .hword 20011, 3
+    .hword 20044, 3
+    .hword 20053, 3
+    .hword 20074, 3
+    .hword 20230, 3
+    .hword 20242, 3
+    .hword 20251, 3
+    .hword 20272, 3
+    .hword 20284, 3
+    .hword 20293, 3
+    .hword 20314, 3
+    .hword 20470, 3
+    .hword 20482, 3
+    .hword 20491, 3
+    .hword 20512, 3
+    .hword 20524, 3
+    .hword 20533, 3
+    .hword 20554, 3
+    .hword 20710, 3
+    .hword 20722, 3
+    .hword 20731, 3
+    .hword 20752, 3
+    .hword 20764, 3
+    .hword 20773, 3
+    .hword 20794, 3
+    .hword 20950, 3
+    .hword 20962, 3
+    .hword 20971, 15
+    .hword 20995, 9
+    .hword 21013, 15
+    .hword 21034, 3
+    .hword 21190, 3
+    .hword 21202, 3
+    .hword 21211, 15
+    .hword 21235, 9
+    .hword 21253, 15
+    .hword 21274, 3
+    .hword 21430, 3
+    .hword 21442, 3
+    .hword 21451, 15
+    .hword 21475, 9
+    .hword 21493, 15
+    .hword 21514, 3
 logo_data_end:
 @ Total: 141 spans, 423 bytes
