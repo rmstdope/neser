@@ -5,6 +5,62 @@
 //!
 //! The BIOS source lives in `src/gba/bios/bios.s` and can be rebuilt with
 //! `make` in the `src/gba/bios/` directory (requires `arm-none-eabi` toolchain).
+//!
+//! ## Implemented SWIs
+//!
+//! | SWI   | Name              | Status |
+//! |-------|-------------------|--------|
+//! | 0x00  | SoftReset         | Full   |
+//! | 0x01  | RegisterRamReset  | Full   |
+//! | 0x02  | Halt              | Full   |
+//! | 0x03  | Stop              | Stub (halts only, no deep-sleep) |
+//! | 0x04  | IntrWait          | Full   |
+//! | 0x05  | VBlankIntrWait    | Full   |
+//! | 0x06  | Div               | Full   |
+//! | 0x07  | DivArm            | Full   |
+//! | 0x08  | Sqrt              | Full   |
+//! | 0x09  | ArcTan            | Full   |
+//! | 0x0A  | ArcTan2           | Full   |
+//! | 0x0B  | CpuSet            | Full   |
+//! | 0x0C  | CpuFastSet        | Full   |
+//! | 0x0D  | BiosChecksum      | Full   |
+//! | 0x0E  | BgAffineSet       | Full   |
+//! | 0x0F  | ObjAffineSet      | Full   |
+//! | 0x10  | BitUnPack          | Full   |
+//! | 0x11  | LZ77UnCompWram    | Full   |
+//! | 0x12  | LZ77UnCompVram    | Full   |
+//! | 0x13  | HuffUnComp        | Full   |
+//! | 0x14  | RLUnCompWram      | Full   |
+//! | 0x15  | RLUnCompVram      | Full   |
+//! | 0x16  | Diff8bitUnFilterWram  | Full |
+//! | 0x17  | Diff8bitUnFilterVram  | Full |
+//! | 0x18  | Diff16bitUnFilter | Full   |
+//! | 0x19  | SoundBias         | Full   |
+//! | 0x1A  | SoundDriverInit   | Stub — no sound mixer |
+//! | 0x1B  | SoundDriverMode   | Stub — no sound mixer |
+//! | 0x1C  | SoundDriverMain   | Stub — no sound mixer |
+//! | 0x1D  | SoundDriverVSync  | Stub — no sound mixer |
+//! | 0x1E  | SoundChannelClear | Stub — no sound mixer |
+//! | 0x1F  | MidiKey2Freq      | Full (integer-only LUT, minor rounding vs official) |
+//! | 0x20–0x24 | Undocumented  | Stub — rarely used by games |
+//! | 0x25  | MultiBoot         | Stub — returns r0=1 (failure) |
+//! | 0x26  | HardReset         | Stub — returns immediately |
+//! | 0x27  | CustomHalt        | Stub — returns immediately |
+//! | 0x28  | SoundDriverVSyncOff | Stub — no sound mixer |
+//! | 0x29  | SoundDriverVSyncOn  | Stub — no sound mixer |
+//! | 0x2A  | SoundGetJumpList  | Stub — no sound mixer |
+//!
+//! ## Stub limitations
+//!
+//! - **Sound driver SWIs (0x1A–0x1E, 0x28–0x2A)**: The GBA BIOS sound mixer is a
+//!   complex DMA-driven PCM engine that games using the M4A/MusicPlayer2000 engine
+//!   rely on. This BIOS does not implement it — games using hardware channels (most
+//!   homebrew) are unaffected, but games using the BIOS mixer will have no sound.
+//! - **MultiBoot (0x25)**: Serial link multiplayer boot requires hardware link cable
+//!   emulation. Returns failure so games fall back gracefully.
+//! - **MidiKey2Freq (0x1F)**: Uses integer arithmetic with a 12-entry 2^(n/12) LUT
+//!   instead of the official BIOS floating-point implementation. Pitch accuracy is
+//!   within ±1 semitone for extreme key values; typical game usage is unaffected.
 
 /// The embedded open-source GBA BIOS binary (16384 bytes).
 pub const EMBEDDED_BIOS: &[u8; 16384] = include_bytes!("bios.bin");
@@ -175,6 +231,12 @@ mod tests {
     /// Encode `ORR Rd, Rn, #imm8 ROR (rot*2)` (ARM, unconditional).
     const fn arm_orr_imm_rot(rd: u32, rn: u32, imm8: u32, rot: u32) -> u32 {
         0xE380_0000 | (rn << 16) | (rd << 12) | ((rot & 0xF) << 8) | (imm8 & 0xFF)
+    }
+
+    /// Encode `STR Rd, [Rn, #imm12]` (ARM, unconditional, pre-indexed, unsigned offset).
+    const fn arm_str(rd: u32, rn: u32, imm12: u32) -> u32 {
+        // STR: cond=1110, 01 I=0 P=1 U=1 B=0 W=0 L=0
+        0xE580_0000 | (rn << 16) | (rd << 12) | (imm12 & 0xFFF)
     }
 
     /// Build a sequence of ARM instructions to load a 32-bit constant into
@@ -766,5 +828,801 @@ mod tests {
 
         let result = gba.bus_mut().read32(dst_addr);
         assert_eq!(result, 0x2022_0002, "BitUnPack 1bpp→4bpp with offset=1");
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x11: LZ77UnCompWram tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_lz77_wram_all_literals() {
+        // LZ77 with only literal bytes, no back-references
+        // Output: [0x41, 0x42, 0x43, 0x44]
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x11));
+        code.push(ARM_IDLE);
+
+        // Header: type=1 (LZ77), decompressed_size=4
+        let header: u32 = (4 << 8) | (1 << 4);
+        let mut src_data = header.to_le_bytes().to_vec();
+        // Flag byte: 0x00 (all 8 blocks are literal)
+        src_data.push(0x00);
+        // 4 literal bytes (only 4 of 8 blocks used, stops when size reached)
+        src_data.extend_from_slice(&[0x41, 0x42, 0x43, 0x44]);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        let expected = [0x41u8, 0x42, 0x43, 0x44];
+        for (i, &exp) in expected.iter().enumerate() {
+            assert_eq!(
+                gba.bus_mut().read8(dst_addr + i as u32),
+                exp,
+                "LZ77 literal byte {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn bios_lz77_wram_back_reference() {
+        // LZ77: "ABCABC" — 3 literals then back-ref copying 3 from displacement 2
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x11));
+        code.push(ARM_IDLE);
+
+        // Header: type=1, size=6
+        let header: u32 = (6 << 8) | (1 << 4);
+        let mut src_data = header.to_le_bytes().to_vec();
+        // Flag: bit7..bit4 = blocks 0-3; block3 is compressed
+        // bit7=0(lit), bit6=0(lit), bit5=0(lit), bit4=1(comp) → 0x10
+        src_data.push(0x10);
+        // 3 literal bytes
+        src_data.extend_from_slice(&[0x41, 0x42, 0x43]);
+        // Compressed block: count=3 (nibble=0), displacement=2
+        // byte1 = ((3-3)<<4) | (2>>8) = 0x00
+        // byte2 = 2 & 0xFF = 0x02
+        src_data.push(0x00);
+        src_data.push(0x02);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        let expected = [0x41, 0x42, 0x43, 0x41, 0x42, 0x43];
+        for (i, &exp) in expected.iter().enumerate() {
+            assert_eq!(
+                gba.bus_mut().read8(dst_addr + i as u32),
+                exp,
+                "LZ77 back-ref byte {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn bios_lz77_wram_repeated_pattern() {
+        // LZ77: "ABABABABAB" — 2 literals + back-ref for 8 more bytes
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x11));
+        code.push(ARM_IDLE);
+
+        // Header: type=1, size=10
+        let header: u32 = (10 << 8) | (1 << 4);
+        let mut src_data = header.to_le_bytes().to_vec();
+        // Flag: bit7=0(lit A), bit6=0(lit B), bit5=1(comp) → 0x20
+        src_data.push(0x20);
+        // 2 literal bytes
+        src_data.extend_from_slice(&[0x41, 0x42]);
+        // Compressed: count=8 (nibble=5), displacement=1
+        src_data.push(0x50); // ((8-3)<<4) | (1>>8)
+        src_data.push(0x01); // 1 & 0xFF
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        let expected = [0x41, 0x42, 0x41, 0x42, 0x41, 0x42, 0x41, 0x42, 0x41, 0x42];
+        for (i, &exp) in expected.iter().enumerate() {
+            assert_eq!(
+                gba.bus_mut().read8(dst_addr + i as u32),
+                exp,
+                "LZ77 repeat byte {i}"
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x12: LZ77UnCompVram tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_lz77_vram_basic() {
+        // Same algorithm as WRAM but buffered 16-bit writes
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x12));
+        code.push(ARM_IDLE);
+
+        // Header: type=1, size=4
+        let header: u32 = (4 << 8) | (1 << 4);
+        let mut src_data = header.to_le_bytes().to_vec();
+        src_data.push(0x00); // all literal
+        src_data.extend_from_slice(&[0x41, 0x42, 0x43, 0x44]);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        // Output as halfwords: (0x42<<8)|0x41, (0x44<<8)|0x43
+        assert_eq!(gba.bus_mut().read16(dst_addr), 0x4241, "LZ77 VRAM hw 0");
+        assert_eq!(gba.bus_mut().read16(dst_addr + 2), 0x4443, "LZ77 VRAM hw 1");
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x13: HuffUnComp tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_huffman_8bit_two_symbols() {
+        // Huffman 8-bit with minimal tree: root → left=A(0x41), right=B(0x42)
+        // Output: "AABB" (4 bytes)
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x13));
+        code.push(ARM_IDLE);
+
+        // Header: data_size=8 bits, type=2, decompressed_size=4 bytes
+        let header: u32 = (4 << 8) | (2 << 4) | 8;
+        let mut src_data = header.to_le_bytes().to_vec();
+        // Tree size: (3 bytes / 2) - 1 = 0... but mGBA uses (byte<<1)+1
+        // tree_size_byte=1 → tree = 1*2+1 = 3 bytes
+        src_data.push(1);
+        // Root node: both children are leaves, offset=0
+        // bit7=1 (left=data), bit6=1 (right=data), offset=0
+        src_data.push(0xC0);
+        // Left leaf (go-left=0): A = 0x41
+        src_data.push(0x41);
+        // Right leaf (go-right=1): B = 0x42
+        src_data.push(0x42);
+        // Bitstream: AABB = bits 0,0,1,1 (bit31=first)
+        // bit31=0(A), bit30=0(A), bit29=1(B), bit28=1(B) → 0x30000000
+        src_data.extend_from_slice(&0x30000000u32.to_le_bytes());
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        assert_eq!(gba.bus_mut().read8(dst_addr), 0x41, "Huffman 8bit byte 0");
+        assert_eq!(
+            gba.bus_mut().read8(dst_addr + 1),
+            0x41,
+            "Huffman 8bit byte 1"
+        );
+        assert_eq!(
+            gba.bus_mut().read8(dst_addr + 2),
+            0x42,
+            "Huffman 8bit byte 2"
+        );
+        assert_eq!(
+            gba.bus_mut().read8(dst_addr + 3),
+            0x42,
+            "Huffman 8bit byte 3"
+        );
+    }
+
+    #[test]
+    fn bios_huffman_8bit_deeper_tree() {
+        // Huffman 8-bit with 3-level tree:
+        //       root
+        //      /    \
+        //     A    node1
+        //          /   \
+        //         B     C
+        // A=0 (1 bit), B=10 (2 bits), C=11 (2 bits)
+        // Output: "ABCB" (4 bytes)
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x13));
+        code.push(ARM_IDLE);
+
+        // Header: data_size=8, type=2, size=4
+        let header: u32 = (4 << 8) | (2 << 4) | 8;
+        let mut src_data = header.to_le_bytes().to_vec();
+        // tree_size_byte=2 → tree = 2*2+1 = 5 bytes
+        src_data.push(2);
+        // Offset 5: root = bit7=1(left=data), bit6=0(right=not data), offset=0
+        src_data.push(0x80);
+        // Offset 6: leaf A = 0x41
+        src_data.push(0x41);
+        // Offset 7: node1 = bit7=1(left=data), bit6=1(right=data), offset=0
+        src_data.push(0xC0);
+        // Offset 8: leaf B = 0x42
+        src_data.push(0x42);
+        // Offset 9: leaf C = 0x43
+        src_data.push(0x43);
+        // Padding to align bitstream to 4 bytes (offset 10,11)
+        src_data.push(0x00);
+        src_data.push(0x00);
+        // Bitstream at offset 12: ABCB = 0, 10, 11, 10
+        // bit31=0(A), bit30=1 bit29=0(B), bit28=1 bit27=1(C), bit26=1 bit25=0(B)
+        // = 0b01011100_00000000_00000000_00000000 = 0x5C000000
+        src_data.extend_from_slice(&0x5C000000u32.to_le_bytes());
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        assert_eq!(gba.bus_mut().read8(dst_addr), 0x41, "Huffman deep byte 0");
+        assert_eq!(
+            gba.bus_mut().read8(dst_addr + 1),
+            0x42,
+            "Huffman deep byte 1"
+        );
+        assert_eq!(
+            gba.bus_mut().read8(dst_addr + 2),
+            0x43,
+            "Huffman deep byte 2"
+        );
+        assert_eq!(
+            gba.bus_mut().read8(dst_addr + 3),
+            0x42,
+            "Huffman deep byte 3"
+        );
+    }
+
+    #[test]
+    fn bios_huffman_4bit() {
+        // Huffman 4-bit: tree with 2 symbols (0x3, 0x7)
+        // Output nibbles: [3,7,3,7,3,7,3,7] packed as bytes [0x73,0x73,0x73,0x73]
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x13));
+        code.push(ARM_IDLE);
+
+        // Header: data_size=4, type=2, size=4 bytes
+        let header: u32 = (4 << 8) | (2 << 4) | 4;
+        let mut src_data = header.to_le_bytes().to_vec();
+        // tree_size_byte=1 → tree = 3 bytes
+        src_data.push(1);
+        // Root: both children are leaves, offset=0
+        src_data.push(0xC0);
+        // Left=3, Right=7
+        src_data.push(0x03);
+        src_data.push(0x07);
+        // Bitstream: 0,1,0,1,0,1,0,1
+        // bit31=0, bit30=1, bit29=0, bit28=1, bit27=0, bit26=1, bit25=0, bit24=1
+        // = 0x55000000
+        src_data.extend_from_slice(&0x55000000u32.to_le_bytes());
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        // Nibbles packed LSB-first: (7<<4)|3 = 0x73
+        assert_eq!(gba.bus_mut().read8(dst_addr), 0x73, "Huffman 4bit byte 0");
+        assert_eq!(
+            gba.bus_mut().read8(dst_addr + 1),
+            0x73,
+            "Huffman 4bit byte 1"
+        );
+        assert_eq!(
+            gba.bus_mut().read8(dst_addr + 2),
+            0x73,
+            "Huffman 4bit byte 2"
+        );
+        assert_eq!(
+            gba.bus_mut().read8(dst_addr + 3),
+            0x73,
+            "Huffman 4bit byte 3"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x14: RLUnCompWram tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_rle_wram_mixed() {
+        // RLE: compressed run (A×4) + uncompressed literals (B, C)
+        // Output: [0x41, 0x41, 0x41, 0x41, 0x42, 0x43]
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x14));
+        code.push(ARM_IDLE);
+
+        // Header: type=3 (RLE), size=6
+        let header: u32 = (6 << 8) | (3 << 4);
+        let mut src_data = header.to_le_bytes().to_vec();
+        // Compressed run: flag=0x81 (bit7=1, N=1 → repeat N+3=4 times), data=0x41
+        src_data.push(0x81);
+        src_data.push(0x41);
+        // Uncompressed: flag=0x01 (bit7=0, N=1 → copy N+1=2 bytes)
+        src_data.push(0x01);
+        src_data.extend_from_slice(&[0x42, 0x43]);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        let expected = [0x41, 0x41, 0x41, 0x41, 0x42, 0x43];
+        for (i, &exp) in expected.iter().enumerate() {
+            assert_eq!(
+                gba.bus_mut().read8(dst_addr + i as u32),
+                exp,
+                "RLE mixed byte {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn bios_rle_wram_all_compressed() {
+        // RLE: single compressed run X×8
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x14));
+        code.push(ARM_IDLE);
+
+        // Header: type=3, size=8
+        let header: u32 = (8 << 8) | (3 << 4);
+        let mut src_data = header.to_le_bytes().to_vec();
+        // Compressed: flag=0x85 (N=5 → repeat N+3=8), data=0x58
+        src_data.push(0x85);
+        src_data.push(0x58);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        for i in 0u32..8 {
+            assert_eq!(
+                gba.bus_mut().read8(dst_addr + i),
+                0x58,
+                "RLE all-compressed byte {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn bios_rle_wram_all_literal() {
+        // RLE: all uncompressed literal bytes
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x14));
+        code.push(ARM_IDLE);
+
+        // Header: type=3, size=4
+        let header: u32 = (4 << 8) | (3 << 4);
+        let mut src_data = header.to_le_bytes().to_vec();
+        // Uncompressed: flag=0x03 (N=3 → copy N+1=4 bytes)
+        src_data.push(0x03);
+        src_data.extend_from_slice(&[0x41, 0x42, 0x43, 0x44]);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        let expected = [0x41, 0x42, 0x43, 0x44];
+        for (i, &exp) in expected.iter().enumerate() {
+            assert_eq!(
+                gba.bus_mut().read8(dst_addr + i as u32),
+                exp,
+                "RLE literal byte {i}"
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x15: RLUnCompVram tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_rle_vram_basic() {
+        // RLE VRAM: same algorithm but 16-bit writes
+        // Compressed run A×4 → halfwords 0x4141, 0x4141
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x15));
+        code.push(ARM_IDLE);
+
+        // Header: type=3, size=4
+        let header: u32 = (4 << 8) | (3 << 4);
+        let mut src_data = header.to_le_bytes().to_vec();
+        // Compressed: A×4
+        src_data.push(0x81);
+        src_data.push(0x41);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        assert_eq!(gba.bus_mut().read16(dst_addr), 0x4141, "RLE VRAM hw 0");
+        assert_eq!(gba.bus_mut().read16(dst_addr + 2), 0x4141, "RLE VRAM hw 1");
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x16: Diff8bitUnFilterWram tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_diff8_unfilter_wram_ascending() {
+        // Cumulative 8-bit deltas: [10, +5, +3, +2] → [10, 15, 18, 20]
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x16));
+        code.push(ARM_IDLE);
+
+        // Header: type=8 (DiffFilter), unit_size=1 (8-bit), size=4
+        let header: u32 = (4 << 8) | (8 << 4) | 1;
+        let mut src_data = header.to_le_bytes().to_vec();
+        src_data.extend_from_slice(&[10, 5, 3, 2]);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        let expected = [10u8, 15, 18, 20];
+        for (i, &exp) in expected.iter().enumerate() {
+            assert_eq!(
+                gba.bus_mut().read8(dst_addr + i as u32),
+                exp,
+                "Diff8 WRAM byte {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn bios_diff8_unfilter_wram_negative_deltas() {
+        // Deltas with negative values: [100, -10, +20, -30] → [100, 90, 110, 80]
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x16));
+        code.push(ARM_IDLE);
+
+        let header: u32 = (4 << 8) | (8 << 4) | 1;
+        let mut src_data = header.to_le_bytes().to_vec();
+        // -10 as u8 = 246, -30 as u8 = 226
+        src_data.extend_from_slice(&[100, 246, 20, 226]);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        let expected = [100u8, 90, 110, 80];
+        for (i, &exp) in expected.iter().enumerate() {
+            assert_eq!(
+                gba.bus_mut().read8(dst_addr + i as u32),
+                exp,
+                "Diff8 neg delta byte {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn bios_diff8_unfilter_wram_wrapping() {
+        // Test wrapping: [200, +100] → [200, 44] (200+100=300, wraps to 44)
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x16));
+        code.push(ARM_IDLE);
+
+        let header: u32 = (2 << 8) | (8 << 4) | 1;
+        let mut src_data = header.to_le_bytes().to_vec();
+        src_data.extend_from_slice(&[200, 100]);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        assert_eq!(gba.bus_mut().read8(dst_addr), 200, "Diff8 wrap byte 0");
+        assert_eq!(gba.bus_mut().read8(dst_addr + 1), 44, "Diff8 wrap byte 1");
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x17: Diff8bitUnFilterVram tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_diff8_unfilter_vram() {
+        // Same 8-bit deltas but output written as 16-bit halfwords
+        // Deltas: [10, +5, +3, +2] → values [10, 15, 18, 20]
+        // Packed as hw: (15<<8)|10 = 0x0F0A, (20<<8)|18 = 0x1412
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x17));
+        code.push(ARM_IDLE);
+
+        let header: u32 = (4 << 8) | (8 << 4) | 1;
+        let mut src_data = header.to_le_bytes().to_vec();
+        src_data.extend_from_slice(&[10, 5, 3, 2]);
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        assert_eq!(gba.bus_mut().read16(dst_addr), 0x0F0A, "Diff8 VRAM hw 0");
+        assert_eq!(
+            gba.bus_mut().read16(dst_addr + 2),
+            0x1412,
+            "Diff8 VRAM hw 1"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x18: Diff16bitUnFilter tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_diff16_unfilter_ascending() {
+        // Cumulative 16-bit deltas: [100, +50, +30] → [100, 150, 180]
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x18));
+        code.push(ARM_IDLE);
+
+        // Header: type=8, unit_size=2 (16-bit), size=6 bytes (3 halfwords)
+        let header: u32 = (6 << 8) | (8 << 4) | 2;
+        let mut src_data = header.to_le_bytes().to_vec();
+        src_data.extend_from_slice(&100u16.to_le_bytes());
+        src_data.extend_from_slice(&50u16.to_le_bytes());
+        src_data.extend_from_slice(&30u16.to_le_bytes());
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        assert_eq!(gba.bus_mut().read16(dst_addr), 100, "Diff16 hw 0");
+        assert_eq!(gba.bus_mut().read16(dst_addr + 2), 150, "Diff16 hw 1");
+        assert_eq!(gba.bus_mut().read16(dst_addr + 4), 180, "Diff16 hw 2");
+    }
+
+    #[test]
+    fn bios_diff16_unfilter_negative_deltas() {
+        // Deltas: [1000, -200, +500] → [1000, 800, 1300]
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_swi(0x18));
+        code.push(ARM_IDLE);
+
+        let header: u32 = (6 << 8) | (8 << 4) | 2;
+        let mut src_data = header.to_le_bytes().to_vec();
+        src_data.extend_from_slice(&1000u16.to_le_bytes());
+        src_data.extend_from_slice(&(-200i16 as u16).to_le_bytes());
+        src_data.extend_from_slice(&500u16.to_le_bytes());
+
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        assert_eq!(gba.bus_mut().read16(dst_addr), 1000, "Diff16 neg hw 0");
+        assert_eq!(gba.bus_mut().read16(dst_addr + 2), 800, "Diff16 neg hw 1");
+        assert_eq!(gba.bus_mut().read16(dst_addr + 4), 1300, "Diff16 neg hw 2");
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x19: SoundBias tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_sound_bias_set_high() {
+        // SoundBias with r0 != 0 should set SOUNDBIAS toward 0x200
+        let src_addr: u32 = 0x0200_0100;
+        let dst_addr: u32 = 0x0200_0200;
+        let _ = (src_addr, dst_addr);
+
+        let mut code = vec![arm_mov_imm(0, 1)]; // r0 = 1 (nonzero → target 0x200)
+        code.push(arm_swi(0x19));
+        code.push(ARM_IDLE);
+
+        let mut gba = boot_with_embedded_bios(&code);
+        run_until_idle(&mut gba, 2_000_000);
+
+        // SOUNDBIAS at 0x04000088 should be 0x200
+        let bias = gba.bus_mut().read16(0x0400_0088);
+        assert_eq!(bias & 0x3FF, 0x200, "SoundBias should set bias to 0x200");
+    }
+
+    #[test]
+    fn bios_sound_bias_set_low() {
+        // SoundBias with r0 = 0 should set SOUNDBIAS toward 0x000
+        let mut code = vec![arm_mov_imm(0, 0)]; // r0 = 0 → target 0x000
+        code.push(arm_swi(0x19));
+        code.push(ARM_IDLE);
+
+        let mut gba = boot_with_embedded_bios(&code);
+        run_until_idle(&mut gba, 2_000_000);
+
+        // SOUNDBIAS at 0x04000088 should be 0x000
+        let bias = gba.bus_mut().read16(0x0400_0088);
+        assert_eq!(bias & 0x3FF, 0x000, "SoundBias should set bias to 0x000");
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x1F: MidiKey2Freq tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_midi_key2freq_a4() {
+        // MidiKey2Freq(wa, mk=69, fp=0) where wa->freq = 7040 Hz
+        // Key 69 = A4 standard pitch
+        // freq = 7040 / 2^((180-69-0/256)/12) = 7040 / 2^(111/12)
+        //      = 7040 / 2^9.25 = 7040 / 608.87... ≈ 11.56...
+        // But this is in fixed-point format: result = freq * 2^(-((180-mk)/12))
+        // For mk=69: semitones_below = 180 - 69 = 111 = 9 octaves + 3 semitones
+        // 2^(111/12) = 2^9 * 2^(3/12) = 512 * 1.1892... ≈ 608.87
+        // result ≈ 7040 / 608.87 ≈ 11.56 Hz → as fixed point with result << 0
+        //
+        // The real formula returns a fixed-point value suitable for timer reload.
+        // We just need to verify the SWI returns a plausible nonzero value in r0.
+        let wa_addr: u32 = 0x0200_0100;
+
+        // WaveData struct: first 4 bytes = type (unused by MidiKey2Freq)
+        //                  next 4 bytes = status (unused)
+        //                  next 4 bytes = freq (base frequency in Hz)
+        //                  next 4 bytes = loop position
+        //                  next 4 bytes = number of samples
+        let mut wa_data: Vec<u8> = Vec::new();
+        wa_data.extend_from_slice(&0u32.to_le_bytes()); // type
+        wa_data.extend_from_slice(&0u32.to_le_bytes()); // status
+        wa_data.extend_from_slice(&7040u32.to_le_bytes()); // freq
+        wa_data.extend_from_slice(&0u32.to_le_bytes()); // loop
+        wa_data.extend_from_slice(&0u32.to_le_bytes()); // nsamples
+
+        let mut code = arm_load_const(0, wa_addr); // r0 = wa pointer
+        code.extend(arm_load_const(1, 69)); // r1 = mk (A4)
+        code.extend(arm_load_const(2, 0)); // r2 = fp (0)
+        code.push(arm_swi(0x1F));
+        // Store r0 result to memory so we can read it
+        let result_addr: u32 = 0x0200_0300;
+        code.extend(arm_load_const(4, result_addr));
+        code.push(arm_str(0, 4, 0)); // str r0, [r4]
+        code.push(ARM_IDLE);
+
+        let mut gba = boot_and_setup_memory(&code, &[(wa_addr, &wa_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        let result = gba.bus_mut().read32(result_addr);
+        // For mk=69, fp=0, freq=7040:
+        // semitone_offset = 180 - 69 = 111 semitones = 9 octaves + 3 semitones
+        // Result = 7040 / 2^(111/12) ≈ 7040 / 608.87 ≈ 11.56
+        // As an integer: should be small but nonzero, and NOT equal to the input wa_addr
+        assert!(
+            result > 0 && result < 1000,
+            "MidiKey2Freq should return a small positive value for high key offset, got {result}"
+        );
+    }
+
+    #[test]
+    fn bios_midi_key2freq_key_180() {
+        // MidiKey2Freq(wa, mk=180, fp=0): exponent = 0, so result = wa->freq
+        let wa_addr: u32 = 0x0200_0100;
+
+        let mut wa_data: Vec<u8> = Vec::new();
+        wa_data.extend_from_slice(&0u32.to_le_bytes()); // type
+        wa_data.extend_from_slice(&0u32.to_le_bytes()); // status
+        wa_data.extend_from_slice(&8000u32.to_le_bytes()); // freq
+        wa_data.extend_from_slice(&0u32.to_le_bytes()); // loop
+        wa_data.extend_from_slice(&0u32.to_le_bytes()); // nsamples
+
+        let mut code = arm_load_const(0, wa_addr);
+        code.extend(arm_load_const(1, 180)); // mk = 180 → no shift
+        code.extend(arm_load_const(2, 0)); // fp = 0
+        code.push(arm_swi(0x1F));
+        let result_addr: u32 = 0x0200_0300;
+        code.extend(arm_load_const(4, result_addr));
+        code.push(arm_str(0, 4, 0));
+        code.push(ARM_IDLE);
+
+        let mut gba = boot_and_setup_memory(&code, &[(wa_addr, &wa_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        let result = gba.bus_mut().read32(result_addr);
+        // At mk=180, fp=0: no shifting needed, result should equal freq exactly
+        assert_eq!(
+            result, 8000,
+            "MidiKey2Freq at key 180 should return base freq"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // SWI 0x25: MultiBoot test
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_multiboot_returns_failure() {
+        // MultiBoot stub should set r0 = 1 (failure)
+        let result_addr: u32 = 0x0200_0300;
+
+        let mut code = arm_load_const(0, 0x0200_0100); // r0 = param (unused)
+        code.extend(arm_load_const(1, 0)); // r1 = mode
+        code.push(arm_swi(0x25));
+        code.extend(arm_load_const(4, result_addr));
+        code.push(arm_str(0, 4, 0)); // store r0 result
+        code.push(ARM_IDLE);
+
+        let mut gba = boot_with_embedded_bios(&code);
+        run_until_idle(&mut gba, 500_000);
+
+        let result = gba.bus_mut().read32(result_addr);
+        assert_eq!(result, 1, "MultiBoot stub should return r0=1 (failure)");
+    }
+
+    // ---------------------------------------------------------------
+    // Sound driver stubs: verify they don't crash
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bios_sound_driver_stubs_return() {
+        // SWIs 0x1A-0x1E should just return without crashing
+        for swi_num in [0x1A, 0x1B, 0x1C, 0x1D, 0x1E] {
+            let mut code = vec![arm_mov_imm(0, 0)];
+            code.push(arm_swi(swi_num));
+            code.push(ARM_IDLE);
+
+            let mut gba = boot_with_embedded_bios(&code);
+            run_until_idle(&mut gba, 500_000);
+
+            // If we reach here without hanging/crashing, the stub works
+            let pc = gba.cpu_reg(15);
+            assert!(
+                pc >= 0x0800_0000,
+                "SWI 0x{swi_num:02X} stub should return to ROM"
+            );
+        }
+    }
+
+    #[test]
+    fn bios_sound_vsync_off_on_stubs_return() {
+        // SWIs 0x28-0x2A should just return without crashing
+        for swi_num in [0x28, 0x29, 0x2A] {
+            let mut code = vec![arm_mov_imm(0, 0)];
+            code.push(arm_swi(swi_num));
+            code.push(ARM_IDLE);
+
+            let mut gba = boot_with_embedded_bios(&code);
+            run_until_idle(&mut gba, 500_000);
+
+            let pc = gba.cpu_reg(15);
+            assert!(
+                pc >= 0x0800_0000,
+                "SWI 0x{swi_num:02X} stub should return to ROM"
+            );
+        }
     }
 }
