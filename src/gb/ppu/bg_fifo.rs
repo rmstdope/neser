@@ -24,13 +24,8 @@ pub(super) fn fetch_dmg_pixel(vram: &[u8; 0x2000], fetch: DmgPixelFetch) -> Opti
         DmgLayer::Background => {
             let bg_x = fetch.scx.wrapping_add(fetch.x as u8);
             let bg_y = fetch.scy.wrapping_add(fetch.scanline);
-            let map_base = if fetch.map_lcdc & 0x08 != 0 {
-                0x1C00
-            } else {
-                0x1800
-            };
             (
-                map_base,
+                tile_map_base(fetch.map_lcdc, 0x08),
                 (bg_x / 8) as usize,
                 (bg_y / 8) as usize,
                 bg_x % 8,
@@ -47,13 +42,8 @@ pub(super) fn fetch_dmg_pixel(vram: &[u8; 0x2000], fetch: DmgPixelFetch) -> Opti
             }
             let win_x = (fetch.x as u8).wrapping_sub(win_x_start);
             let win_y = fetch.window_line;
-            let map_base = if fetch.map_lcdc & 0x40 != 0 {
-                0x1C00
-            } else {
-                0x1800
-            };
             (
-                map_base,
+                tile_map_base(fetch.map_lcdc, 0x40),
                 (win_x / 8) as usize,
                 (win_y / 8) as usize,
                 win_x % 8,
@@ -67,6 +57,10 @@ pub(super) fn fetch_dmg_pixel(vram: &[u8; 0x2000], fetch: DmgPixelFetch) -> Opti
     let high_addr = tile_data_addr(tile_index, pixel_y, fetch.high_lcdc) + 1;
     let bit = 7 - pixel_x;
     Some(((vram[high_addr] >> bit) & 1) << 1 | ((vram[low_addr] >> bit) & 1))
+}
+
+fn tile_map_base(lcdc: u8, bit: u8) -> usize {
+    if lcdc & bit != 0 { 0x1C00 } else { 0x1800 }
 }
 
 fn tile_data_addr(tile_index: u8, row: u8, lcdc: u8) -> usize {

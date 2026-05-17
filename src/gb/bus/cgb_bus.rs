@@ -1125,11 +1125,9 @@ impl GbBus for CgbBus {
         if self.needs_mode3_lcdc_write_phase(addr, val) {
             let double = self.tick_before_ppu(1);
             let dots_per_mcycle = Self::dots_per_mcycle(double);
-            let dots_before_write = dots_per_mcycle.saturating_sub(1);
-            self.ppu.tick_dots(dots_before_write);
+            self.ppu.tick_dots(dots_per_mcycle - 1);
             self.write(addr, val);
-            self.ppu
-                .tick_dots(dots_per_mcycle.saturating_sub(dots_before_write));
+            self.ppu.tick_dots(1);
             self.tick_after_ppu(1, double);
         } else {
             self.tick(1);
