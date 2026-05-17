@@ -23,7 +23,8 @@ const DMG_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 4;
 const CGB_DMG_COMPAT_OBJ_FETCH_LOW_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 6;
 const DMG_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 1;
 const CGB_DMG_COMPAT_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 3;
-const OFF_LEFT_WINDOW_DELAYED_OBJ_X: u8 = OBJ_PIXELS_PER_FETCH - 3;
+const OFF_LEFT_WINDOW_DELAYED_OBJ_X_START: u8 = OBJ_PIXELS_PER_FETCH - 3;
+const OFF_LEFT_WINDOW_DELAYED_OBJ_X_END: u8 = OBJ_PIXELS_PER_FETCH - 2;
 const OFF_LEFT_WINDOW_EXTRA_STALL_DOTS: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -392,7 +393,9 @@ impl PixelFifoRenderer {
         let window_starts_at_left_edge =
             registers.lcdc & 0x20 != 0 && self.scanline >= registers.wy && registers.wx <= 7;
         if !window_starts_at_left_edge
-            || self.leftmost_obj_oam_x != Some(OFF_LEFT_WINDOW_DELAYED_OBJ_X)
+            || !self
+                .leftmost_obj_oam_x
+                .is_some_and(is_off_left_window_delayed_obj_x)
         {
             return;
         }
@@ -910,7 +913,9 @@ impl PixelFifoRenderer {
             previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
         tile_data_turning_off
             && self.window_active
-            && self.leftmost_obj_oam_x == Some(OFF_LEFT_WINDOW_DELAYED_OBJ_X)
+            && self
+                .leftmost_obj_oam_x
+                .is_some_and(is_off_left_window_delayed_obj_x)
             && self.next_x == OBJ_PIXELS_PER_FETCH
             && bg_phase == 0
     }
@@ -992,7 +997,9 @@ impl PixelFifoRenderer {
         let tile_data_turning_on =
             previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
         tile_data_turning_on
-            && self.leftmost_obj_oam_x == Some(OFF_LEFT_WINDOW_DELAYED_OBJ_X)
+            && self
+                .leftmost_obj_oam_x
+                .is_some_and(is_off_left_window_delayed_obj_x)
             && self.next_x == 0
             && bg_phase == 0
     }
@@ -1599,6 +1606,10 @@ impl Default for PixelFifoRenderer {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn is_off_left_window_delayed_obj_x(oam_x: u8) -> bool {
+    (OFF_LEFT_WINDOW_DELAYED_OBJ_X_START..=OFF_LEFT_WINDOW_DELAYED_OBJ_X_END).contains(&oam_x)
 }
 
 #[cfg(test)]
@@ -2645,6 +2656,103 @@ mod tests {
             screen_buffer.get_pixel(8, 0),
             (170, 170, 170),
             "the first following window tile should remain on the set TILE_SEL sample after the restore at its boundary"
+        );
+    }
+
+    #[test]
+    fn later_off_left_obj_window_set_delays_first_visible_pixels() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA3;
+        registers.bgp = 0x6C;
+        registers.obp0 = 0xFF;
+        registers.wx = 7;
+        registers.wy = 0;
+        let vram = vram_with_blank_signed_and_solid_unsigned_tiles();
+        let oam = oam_with_sprite_at(16, 6, 1, 0);
+        let mut screen_buffer = ScreenBuffer::new();
+        let mut dot: u16 = 80;
+
+        renderer.begin_scanline(0, 80, &oam, &registers, false, false);
+        while dot < 104 {
+            tick_renderer(
+                &mut renderer,
+                dot,
+                &vram,
+                &oam,
+                &registers,
+                false,
+                false,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+        }
+        renderer.record_lcdc_write_with_window(
+            0xA3,
+            0xB3,
+            registers.scx,
+            false,
+            false,
+            registers.wx,
+            registers.wy,
+        );
+        registers.lcdc = 0xB3;
+        while dot < 112 {
+            tick_renderer(
+                &mut renderer,
+                dot,
+                &vram,
+                &oam,
+                &registers,
+                false,
+                false,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+        }
+        renderer.record_lcdc_write_with_window(
+            0xB3,
+            0xA3,
+            registers.scx,
+            false,
+            false,
+            registers.wx,
+            registers.wy,
+        );
+        registers.lcdc = 0xA3;
+        let deadline = dot.saturating_add(64);
+        while renderer.next_x <= 8 {
+            tick_renderer(
+                &mut renderer,
+                dot,
+                &vram,
+                &oam,
+                &registers,
+                false,
+                false,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+            assert!(
+                dot < deadline,
+                "renderer did not output the first following window tile pixel"
+            );
+        }
+
+        assert_eq!(
+            screen_buffer.get_pixel(0, 0),
+            (85, 85, 85),
+            "the first visible window pixel should wait through the later off-left OBJ stall"
+        );
+        assert_eq!(
+            screen_buffer.get_pixel(1, 0),
+            (85, 85, 85),
+            "the second visible window pixel should wait through the later off-left OBJ stall"
+        );
+        assert_eq!(
+            screen_buffer.get_pixel(8, 0),
+            (170, 170, 170),
+            "the following tile should stay on the set TILE_SEL sample after the restore"
         );
     }
 
