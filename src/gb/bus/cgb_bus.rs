@@ -212,8 +212,8 @@ impl CgbBus {
 
         // Set OPRI based on cartridge type when skipping boot ROM.
         bus.ppu.set_cgb_model(model);
-        // Propagate the CGB hardware revision before the skip-boot NR52/channel
-        // register writes below, since channel triggers can observe
+        // Propagate the CGB hardware revision before seeding skip-boot APU
+        // state (NR52 and channel registers), since channel triggers can observe
         // model-specific timing such as CH1 restart_hold.
         bus.apu.set_cgb_model(model);
         if skip_boot_rom && opri_value != 0 {
@@ -902,8 +902,7 @@ impl GbBus for CgbBus {
             0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
             0xFF50 => 0xFF,
-            // Unused/reserved CGB I/O ranges read back as $FF.
-            0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => 0xFF,
+            0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => 0xFF, // Unused/reserved CGB I/O ranges
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
             // CGB undocumented registers ($FF72-$FF75) — Pan Docs "CGB Registers".
