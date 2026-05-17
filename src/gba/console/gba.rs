@@ -14,6 +14,7 @@ use crate::gba::GbaBus;
 use crate::gba::cartridge::load_cartridge;
 use crate::gba::console::config::GBA_FILTER_NAMES;
 use crate::gba::cpu::Arm7tdmi;
+use crate::gba::cpu::bus::Bus;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gba::debugging::{disasm_arm, disasm_thumb};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
@@ -96,6 +97,7 @@ impl Gba {
         };
 
         let bios_path = configured_bios_path
+            .filter(|p| p != "embedded")
             .map(PathBuf::from)
             .or_else(default_gba_bios_path);
 
@@ -233,6 +235,16 @@ impl Emulator for Gba {
         let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
         let (rom, save) = cart.into_rom_and_save();
         self.bus.load_rom_with_save(&rom, save);
+
+        // Write skip-intro flag to IWRAM so the BIOS can read it during boot.
+        let skip_intro = {
+            let cfg = self.app_context.borrow();
+            cfg.config().gba.skip_bios_intro
+        };
+        if skip_intro {
+            self.bus.write8(0x03007FFC, 1);
+        }
+
         self.cpu.regs.r[15] = 0x0000_0000;
         Ok(())
     }
@@ -660,6 +672,51 @@ mod tests {
             result.is_ok(),
             "ROM loading should succeed with embedded BIOS as fallback, got: {:?}",
             result.err()
+        );
+        assert!(gba.bus().has_bios_image());
+    }
+
+    #[test]
+    fn test_skip_bios_intro_config_writes_iwram_flag() {
+        // When skip_bios_intro is true in config, load_rom should write 1
+        // to IWRAM address 0x03007FFC so the BIOS skips the intro.
+        let mut config = Config::default();
+        config.gba.skip_bios_intro = true;
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid ROM");
+
+        let flag = gba.bus_mut().read8(0x03007FFC);
+        assert_eq!(flag, 1, "skip flag should be set at 0x03007FFC");
+    }
+
+    #[test]
+    fn test_no_skip_bios_intro_leaves_iwram_flag_zero() {
+        // When skip_bios_intro is false (default), IWRAM 0x03007FFC stays 0.
+        let config = Config::default();
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid ROM");
+
+        let flag = gba.bus_mut().read8(0x03007FFC);
+        assert_eq!(flag, 0, "skip flag should NOT be set when config is false");
+    }
+
+    #[test]
+    fn test_bios_path_embedded_forces_embedded_bios() {
+        // Setting bios_path to "embedded" should use the embedded BIOS
+        // even if an external BIOS file exists at the default path.
+        let mut config = Config::default();
+        config.gba.bios_path = Some("embedded".to_string());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
+
+        let rom = make_minimal_valid_gba_rom();
+        let result = gba.load_rom(&rom, "test.gba");
+        assert!(
+            result.is_ok(),
+            "ROM loading should succeed with 'embedded' BIOS path"
         );
         assert!(gba.bus().has_bios_image());
     }
