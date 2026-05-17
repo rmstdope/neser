@@ -518,6 +518,7 @@ impl PixelFifoRenderer {
         };
     }
 
+    #[cfg(test)]
     pub fn record_lcdc_write(
         &mut self,
         previous: u8,
@@ -529,6 +530,7 @@ impl PixelFifoRenderer {
         self.record_lcdc_write_with_window(previous, new, scx, cgb_mode, dmg_compat, 166, 144);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_lcdc_write_with_window(
         &mut self,
         previous: u8,
@@ -823,12 +825,10 @@ impl PixelFifoRenderer {
                     new,
                 );
             }
-        } else if self
+        } else if !self
             .lcdc_tile_data_edge
             .has_latched_range(current_fetch_start, current_fetch_end)
         {
-            return;
-        } else {
             if !self
                 .lcdc_tile_data_edge
                 .has_range(current_fetch_start, current_fetch_end)

@@ -126,8 +126,13 @@ pub struct CgbBus {
 }
 
 impl CgbBus {
-    fn needs_mode3_lcdc_write_phase(&self, addr: u16) -> bool {
-        addr == 0xFF40 && self.ppu.is_lcd_enabled() && self.ppu.mode() == PpuMode::PixelTransfer
+    fn needs_mode3_lcdc_write_phase(&self, addr: u16, val: u8) -> bool {
+        const LCDC_TILE_DATA: u8 = 0x10;
+
+        addr == 0xFF40
+            && self.ppu.is_lcd_enabled()
+            && self.ppu.mode() == PpuMode::PixelTransfer
+            && self.ppu.read_register(0xFF40) & LCDC_TILE_DATA != val & LCDC_TILE_DATA
     }
 
     /// Create a new CGB bus.
@@ -1117,7 +1122,7 @@ impl GbBus for CgbBus {
     }
 
     fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
-        if self.needs_mode3_lcdc_write_phase(addr) {
+        if self.needs_mode3_lcdc_write_phase(addr, val) {
             let double = self.tick_before_ppu(1);
             let dots_per_mcycle = Self::dots_per_mcycle(double);
             let dots_before_write = dots_per_mcycle.saturating_sub(1);

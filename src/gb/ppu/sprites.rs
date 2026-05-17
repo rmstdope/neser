@@ -304,8 +304,6 @@ const OAM_X_OFFSCREEN: u8 = 168;
 /// Maximum tile-wait penalty when a sprite is the first on its BG tile.
 /// Per Pan Docs: tile_wait = max(MAX_TILE_WAIT − pos_in_tile, 0).
 const MAX_TILE_WAIT: u16 = 5;
-const OFF_LEFT_HALF_OBJ_X: u8 = 4;
-const OFF_LEFT_HALF_OBJ_WAIT: u16 = 2;
 
 /// Calculate Mode 3 OBJ penalty dots for the sprites on the current scanline.
 ///
@@ -393,9 +391,6 @@ fn push_obj_penalty_event(events: &mut Vec<ObjPenaltyEvent>, event: ObjPenaltyEv
 fn tile_wait_penalty(oam_x: u8, bg_x: i16) -> u16 {
     if oam_x == 0 {
         return MAX_TILE_WAIT;
-    }
-    if oam_x == OFF_LEFT_HALF_OBJ_X {
-        return OFF_LEFT_HALF_OBJ_WAIT;
     }
     let pos_in_tile = bg_x.rem_euclid(BG_TILE_WIDTH) as u16;
     MAX_TILE_WAIT.saturating_sub(pos_in_tile)
@@ -715,11 +710,10 @@ mod tests {
     }
 
     #[test]
-    fn test_obj_penalty_single_sprite_at_x4_is_8_dots() {
-        // OAM X=4 is partly off-left; the first visible pixel remains pending one dot longer
-        // than the plain tile-position formula would suggest.
+    fn test_obj_penalty_single_sprite_at_x4_is_7_dots() {
+        // OAM X=4 -> screen_x=-4, bg_x=-4, pos_in_tile=4, wait=1, total=7.
         let (oam, indices) = penalty_sprites(&[4]);
-        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 8);
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 7);
     }
 
     #[test]

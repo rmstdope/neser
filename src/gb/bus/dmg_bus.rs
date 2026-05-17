@@ -94,8 +94,13 @@ pub struct DmgBus {
 }
 
 impl DmgBus {
-    fn needs_mode3_lcdc_write_phase(&self, addr: u16) -> bool {
-        addr == 0xFF40 && self.ppu.is_lcd_enabled() && self.ppu.mode() == PpuMode::PixelTransfer
+    fn needs_mode3_lcdc_write_phase(&self, addr: u16, val: u8) -> bool {
+        const LCDC_TILE_DATA: u8 = 0x10;
+
+        addr == 0xFF40
+            && self.ppu.is_lcd_enabled()
+            && self.ppu.mode() == PpuMode::PixelTransfer
+            && self.ppu.read_register(0xFF40) & LCDC_TILE_DATA != val & LCDC_TILE_DATA
     }
 
     pub fn new(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
@@ -621,7 +626,7 @@ impl GbBus for DmgBus {
     }
 
     fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
-        if self.needs_mode3_lcdc_write_phase(addr) {
+        if self.needs_mode3_lcdc_write_phase(addr, val) {
             self.tick_before_ppu(1);
             self.ppu.tick_dots(3);
             self.write(addr, val);
