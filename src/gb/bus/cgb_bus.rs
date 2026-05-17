@@ -212,6 +212,9 @@ impl CgbBus {
 
         // Set OPRI based on cartridge type when skipping boot ROM.
         bus.ppu.set_cgb_model(model);
+        // Propagate the CGB hardware revision before any post-boot APU writes
+        // that can observe model-specific channel timing.
+        bus.apu.set_cgb_model(model);
         if skip_boot_rom && opri_value != 0 {
             bus.ppu.write_cgb_register(0xFF6C, opri_value);
         }
@@ -308,11 +311,6 @@ impl CgbBus {
             }
         };
         bus.timer.set_div_counter(initial_div_counter);
-
-        // Propagate the CGB hardware revision to the APU so model-specific
-        // sweep/timing quirks (e.g. CH1 restart_hold) match the selected
-        // hardware. Default `Apu::new` assumes `CgbE`.
-        bus.apu.set_cgb_model(model);
 
         bus
     }
@@ -1145,37 +1143,43 @@ impl GbBus for CgbBus {
             }
             0xFEA0..=0xFEFF => 0xFF,
             0xFF00 => self.joypad.read(),
-            0xFF01 => 0xFF,           // SB — stub
+            0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
+            0xFF03 => 0xFF,           // unused I/O
+            0xFF08..=0xFF0E => 0xFF,  // unused I/O range
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
             0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
             0xFF46 => self.dma_source,
             // CGB KEY1 — speed switch register (debugger)
+            0xFF4D if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
             // CGB KEY0 — CPU mode select register (debugger)
+            0xFF4C if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4C => self.key0 | 0xF0,
+            0xFF4E => 0xFF,
             // CGB HDMA registers
+            0xFF51..=0xFF55 if self.ppu.dmg_compat => 0xFF,
             0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
+            0xFF50 => 0xFF,
+            0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => 0xFF,
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
             // CGB undocumented registers ($FF72-$FF75).
             0xFF72 => self.ff72,
             0xFF73 => self.ff73,
+            0xFF74 if self.ppu.dmg_compat => 0xFF,
             0xFF74 => self.ff74,
             0xFF75 => self.ff75 | 0x8F,
             // CGB PCM registers
             0xFF76 => self.apu.read_pcm12(),
             0xFF77 => self.apu.read_pcm34(),
+            0xFF70 if self.ppu.dmg_compat => 0xFF,
             0xFF70 => self.svbk | 0xF8,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie_reg,
-            _ => {
-                println!("CGB bus: unhandled debugger read at ${:04X}", addr);
-                0xFF
-            }
         }
     }
 }
@@ -1416,10 +1420,12 @@ mod tests {
         let mut cgb_bus = make_bus_post_boot();
         cgb_bus.write(0xFF01, 0x5A);
         assert_eq!(cgb_bus.read(0xFF01), 0x5A);
+        assert_eq!(cgb_bus.read_for_debugger(0xFF01), 0x5A);
 
         let mut dmg_compat_bus = make_dmg_compat_bus_post_boot();
         dmg_compat_bus.write(0xFF01, 0xA5);
         assert_eq!(dmg_compat_bus.read(0xFF01), 0xA5);
+        assert_eq!(dmg_compat_bus.read_for_debugger(0xFF01), 0xA5);
     }
 
     #[test]
@@ -1435,6 +1441,22 @@ mod tests {
         assert_eq!(cgb_bus.read(0xFF74), 0x00);
         cgb_bus.write(0xFF74, 0x55);
         assert_eq!(cgb_bus.read(0xFF74), 0x55);
+    }
+
+    #[test]
+    fn test_debugger_read_mirrors_dmg_compat_hwio_masks() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+
+        for addr in [
+            0xFF4C, 0xFF4D, 0xFF51, 0xFF52, 0xFF53, 0xFF54, 0xFF55, 0xFF70, 0xFF74,
+        ] {
+            bus.write(addr, 0x00);
+            assert_eq!(
+                bus.read_for_debugger(addr),
+                bus.read(addr),
+                "debugger read ${addr:04X}"
+            );
+        }
     }
 
     // ── HDMA register read/write through bus ─────────────────────────────────
