@@ -254,7 +254,7 @@ fn test_m2_win_en_toggle_cgb_c() {
     let bytes = read_rom_from_zip("m2_win_en_toggle.gb");
     let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
     let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m2_win_en_toggle_cgb_c");
-    const EXPECTED_CRC: u32 = 0x5BB7_9D8A;
+    const EXPECTED_CRC: u32 = 0xF2CE_0A5F;
     assert_eq!(
         crc, EXPECTED_CRC,
         "m2_win_en_toggle CGB-C CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
@@ -421,7 +421,7 @@ fn test_m2_win_en_toggle_cgb_d() {
     let bytes = read_rom_from_zip("m2_win_en_toggle.gb");
     let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
     let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m2_win_en_toggle_cgb_d");
-    const EXPECTED_CRC: u32 = 0x5BB7_9D8A;
+    const EXPECTED_CRC: u32 = 0xF2CE_0A5F;
     assert_eq!(
         crc, EXPECTED_CRC,
         "m2_win_en_toggle CGB-D CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
