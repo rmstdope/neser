@@ -882,7 +882,7 @@ impl GbBus for CgbBus {
             0xFF00 => self.joypad.read(),
             0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
-            0xFF03 => 0xFF,           // unused I/O
+            0xFF03 => 0xFF,           // unused I/O; $FF04-$FF07 are timer registers below.
             0xFF08..=0xFF0E => 0xFF,  // unused I/O range
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.if_reg | 0xE0,
@@ -901,6 +901,7 @@ impl GbBus for CgbBus {
             0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
             0xFF50 => 0xFF,
+            // Unused/reserved CGB I/O ranges read back as $FF.
             0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => 0xFF,
             // CGB-specific registers
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
