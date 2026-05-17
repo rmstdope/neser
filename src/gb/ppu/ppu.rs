@@ -669,6 +669,9 @@ impl Ppu {
                 true
             }
             0xFF6C => {
+                if self.dmg_compat {
+                    return true;
+                }
                 self.opri = val & 0x01 != 0;
                 true
             }
