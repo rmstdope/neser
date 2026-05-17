@@ -324,7 +324,7 @@ fn mgba_suite_boots_to_menu() {
     assert!(
         crc_changed,
         "mgba suite menu did not respond to DOWN button after {max_frames} frames ({cycles} cycles). \
-         The enhanced stub BIOS likely lacks IRQ dispatch or VBlankIntrWait support, \
+         The BIOS IRQ dispatch or VBlankIntrWait may not be working correctly, \
          so the ROM cannot process input. CPU PC=0x{:08X}",
         gba.cpu_pc()
     );
