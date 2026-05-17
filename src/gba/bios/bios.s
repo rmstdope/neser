@@ -132,8 +132,43 @@ swi_handler:
     beq     swi_obj_affine_set
     cmp     r12, #0x10
     beq     swi_bit_unpack
+    cmp     r12, #0x11
+    beq     swi_lz77_wram
+    cmp     r12, #0x12
+    beq     swi_lz77_vram
+    cmp     r12, #0x13
+    beq     swi_huffman
+    cmp     r12, #0x14
+    beq     swi_rle_wram
+    cmp     r12, #0x15
+    beq     swi_rle_vram
+    cmp     r12, #0x16
+    beq     swi_diff8_wram
+    cmp     r12, #0x17
+    beq     swi_diff8_vram
+    cmp     r12, #0x18
+    beq     swi_diff16
+    cmp     r12, #0x19
+    beq     swi_sound_bias
+    cmp     r12, #0x1F
+    beq     swi_midi_key2freq
+    cmp     r12, #0x25
+    beq     swi_multiboot
 
-    @ Unknown SWI: just return
+    @ SWIs 0x1A-0x1E, 0x20-0x24, 0x26-0x2A: stubs (just return)
+    @ 0x1A: SoundDriverInit — no sound mixer implemented
+    @ 0x1B: SoundDriverMode — no sound mixer implemented
+    @ 0x1C: SoundDriverMain — no sound mixer implemented
+    @ 0x1D: SoundDriverVSync — no sound mixer implemented
+    @ 0x1E: SoundChannelClear — no sound mixer implemented
+    @ 0x20-0x24: Undocumented — rarely/never used by commercial games
+    @ 0x26: HardReset — would require full system reset, just returns
+    @ 0x27: CustomHalt — low-power halt modes not emulated
+    @ 0x28: SoundDriverVSyncOff — no sound mixer implemented
+    @ 0x29: SoundDriverVSyncOn — no sound mixer implemented
+    @ 0x2A: SoundGetJumpList — no sound mixer, returns no data
+
+    @ Unknown/stubbed SWI: just return
     ldmfd   sp!, {r11, r12, lr}
     movs    pc, lr
 
@@ -1189,6 +1224,381 @@ swi_bit_unpack:
     ldmfd   sp!, {r4, lr}
     bx      lr
 
+@ ============================================================================
+@ SWI 0x11: LZ77UnCompWram
+@ Decompresses LZ77-encoded data with byte writes (WRAM safe).
+@ r0 = source (32-bit aligned), r1 = destination
+@ Header[4:7]=1, Header[8:31]=decompressed size
+@ Flag byte per 8 blocks (MSB first): 0=literal, 1=compressed
+@ Compressed: 2 bytes → (count-3)<<12 | displacement, copy from dest-disp-1
+@ Reference: GBATek "SWI 11h"
+@ ============================================================================
+swi_lz77_wram:
+    stmfd   sp!, {r4-r7, lr}
+    ldr     r3, [r0], #4        @ header
+    mov     r3, r3, lsr #8      @ decompressed size
+    add     r3, r3, r1          @ r3 = dest end address
+    mov     r4, r1              @ r4 = dest write pointer
+.lz77w_flag:
+    cmp     r4, r3
+    bge     .lz77w_done
+    ldrb    r5, [r0], #1        @ flag byte
+    mov     r6, #0x80           @ bit mask (MSB = first block)
+.lz77w_block:
+    cmp     r6, #0
+    beq     .lz77w_flag
+    cmp     r4, r3
+    bge     .lz77w_done
+    tst     r5, r6
+    bne     .lz77w_comp
+    @ Literal byte
+    ldrb    r7, [r0], #1
+    strb    r7, [r4], #1
+    mov     r6, r6, lsr #1
+    b       .lz77w_block
+.lz77w_comp:
+    @ Compressed: 2-byte reference (count-3 in high nibble, 12-bit displacement)
+    ldrb    r7, [r0], #1        @ byte1
+    ldrb    r12, [r0], #1       @ byte2
+    orr     r12, r12, r7, lsl #8
+    mov     r7, r12, lsr #12
+    add     r7, r7, #3          @ count
+    bic     r12, r12, #0xF000
+    add     r12, r12, #1        @ displacement + 1
+.lz77w_copy:
+    cmp     r7, #0
+    ble     .lz77w_copy_end
+    cmp     r4, r3
+    bge     .lz77w_done
+    ldrb    r11, [r4, -r12]     @ read from dest - (disp+1)
+    strb    r11, [r4], #1
+    sub     r7, r7, #1
+    b       .lz77w_copy
+.lz77w_copy_end:
+    mov     r6, r6, lsr #1
+    b       .lz77w_block
+.lz77w_done:
+    ldmfd   sp!, {r4-r7, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x12: LZ77UnCompVram
+@ Same algorithm as 0x11 but buffers output for 16-bit writes (VRAM safe).
+@ r0 = source (32-bit aligned), r1 = destination
+@ ============================================================================
+swi_lz77_vram:
+    stmfd   sp!, {r4-r9, lr}
+    mov     r9, r1              @ r9 = dest write pointer (halfword)
+    ldr     r3, [r0], #4
+    mov     r3, r3, lsr #8      @ decompressed size
+    mov     r4, #0              @ logical byte count
+    mov     r8, #0              @ halfword buffer
+.lz77v_flag:
+    cmp     r4, r3
+    bge     .lz77v_done
+    ldrb    r5, [r0], #1
+    mov     r6, #0x80
+.lz77v_block:
+    cmp     r6, #0
+    beq     .lz77v_flag
+    cmp     r4, r3
+    bge     .lz77v_done
+    tst     r5, r6
+    bne     .lz77v_comp
+    @ Literal
+    ldrb    r7, [r0], #1
+    tst     r4, #1
+    moveq   r8, r7              @ even: store as low byte
+    orrne   r8, r8, r7, lsl #8  @ odd: combine as high byte
+    strneh  r8, [r9], #2        @ odd: write halfword
+    add     r4, r4, #1
+    mov     r6, r6, lsr #1
+    b       .lz77v_block
+.lz77v_comp:
+    ldrb    r7, [r0], #1
+    ldrb    r11, [r0], #1
+    orr     r11, r11, r7, lsl #8
+    mov     r7, r11, lsr #12
+    add     r7, r7, #3          @ count
+    bic     r11, r11, #0xF000
+    add     r11, r11, #1        @ disp+1 (stable through copy loop)
+.lz77v_copy:
+    cmp     r7, #0
+    ble     .lz77v_copy_end
+    cmp     r4, r3
+    bge     .lz77v_done
+    sub     r12, r4, r11        @ offset for back-ref
+    ldrb    r12, [r1, r12]      @ read from dest base
+    tst     r4, #1
+    moveq   r8, r12
+    orrne   r8, r8, r12, lsl #8
+    strneh  r8, [r9], #2
+    add     r4, r4, #1
+    sub     r7, r7, #1
+    b       .lz77v_copy
+.lz77v_copy_end:
+    mov     r6, r6, lsr #1
+    b       .lz77v_block
+.lz77v_done:
+    ldmfd   sp!, {r4-r9, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x13: HuffUnComp
+@ Huffman decompression. r0 = source (32-bit aligned), r1 = destination.
+@ Header[0:3] = bits per symbol (4 or 8)
+@ Tree stored as byte nodes, bitstream as 32-bit words (MSB first).
+@ Output accumulated into 32-bit words, written to destination.
+@ Reference: GBATek "SWI 13h"
+@ ============================================================================
+swi_huffman:
+    stmfd   sp!, {r4-r10, lr}
+    mov     r9, r1              @ r9 = dest write pointer
+    ldr     r3, [r0], #4        @ header
+    and     r4, r3, #0x0F       @ r4 = bits per symbol (4 or 8)
+    mov     r3, r3, lsr #8      @ r3 = decompressed size in bytes
+    ldrb    r1, [r0], #1        @ tree_size_byte
+    mov     r6, r0              @ r6 = tree root address
+    add     r0, r0, r1, lsl #1
+    add     r0, r0, #1          @ past tree table
+    add     r0, r0, #3
+    bic     r0, r0, #3          @ r0 = bitstream start (word-aligned)
+    mov     r7, #0              @ output word accumulator
+    mov     r8, #0              @ output bit shift
+    mov     r10, #0             @ bytes written
+    mov     r12, #0             @ bits remaining in current word
+.huff_next:
+    cmp     r10, r3
+    bge     .huff_flush
+    mov     r5, r6              @ r5 = current node (start at root)
+.huff_trav:
+    cmp     r12, #0
+    bne     .huff_have_bit
+    ldr     r11, [r0], #4       @ load next bitstream word
+    mov     r12, #32
+.huff_have_bit:
+    sub     r12, r12, #1
+    ldrb    r2, [r5]            @ current node byte
+    and     r1, r2, #0x3F       @ offset field
+    bic     r5, r5, #1          @ nodeAddr & ~1
+    add     r5, r5, r1, lsl #1  @ + offset*2
+    add     r5, r5, #2          @ r5 = child0 address
+    @ Extract direction from bitstream (MSB first)
+    movs    r11, r11, lsl #1    @ MSB → carry
+    bcc     .huff_left
+    @ Went right: child1 = child0 + 1
+    add     r5, r5, #1
+    tst     r2, #0x40           @ bit6: right child is leaf?
+    beq     .huff_trav           @ not leaf, continue traversal
+    b       .huff_leaf
+.huff_left:
+    tst     r2, #0x80           @ bit7: left child is leaf?
+    beq     .huff_trav
+.huff_leaf:
+    ldrb    r1, [r5]            @ read data from leaf node
+    orr     r7, r7, r1, lsl r8  @ accumulate into output word
+    add     r8, r8, r4          @ advance by bits_per_symbol
+    cmp     r8, #32
+    blt     .huff_next
+    @ Full word ready
+    str     r7, [r9], #4
+    add     r10, r10, #4
+    mov     r7, #0
+    mov     r8, #0
+    b       .huff_next
+.huff_flush:
+    cmp     r8, #0
+    strne   r7, [r9]            @ write partial word if any
+    ldmfd   sp!, {r4-r10, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x14: RLUnCompWram
+@ Run-length decompression with byte writes (WRAM safe).
+@ r0 = source (32-bit aligned), r1 = destination
+@ Header[4:7]=3, Header[8:31]=decompressed size
+@ Flag byte: bit7=compressed (repeat N+3), bit7=0 (copy N+1 literals)
+@ Reference: GBATek "SWI 14h"
+@ ============================================================================
+swi_rle_wram:
+    stmfd   sp!, {r4-r5, lr}
+    ldr     r3, [r0], #4
+    mov     r3, r3, lsr #8      @ decompressed size
+    add     r3, r3, r1          @ r3 = dest end
+    mov     r4, r1              @ r4 = dest write pointer
+.rlew_loop:
+    cmp     r4, r3
+    bge     .rlew_done
+    ldrb    r5, [r0], #1        @ flag byte
+    tst     r5, #0x80
+    bne     .rlew_comp
+    @ Uncompressed: copy N+1 literal bytes
+    and     r5, r5, #0x7F
+    add     r5, r5, #1
+.rlew_lit:
+    cmp     r4, r3
+    bge     .rlew_done
+    ldrb    r12, [r0], #1
+    strb    r12, [r4], #1
+    subs    r5, r5, #1
+    bgt     .rlew_lit
+    b       .rlew_loop
+.rlew_comp:
+    @ Compressed: repeat byte N+3 times
+    and     r5, r5, #0x7F
+    add     r5, r5, #3
+    ldrb    r12, [r0], #1
+.rlew_fill:
+    cmp     r4, r3
+    bge     .rlew_done
+    strb    r12, [r4], #1
+    subs    r5, r5, #1
+    bgt     .rlew_fill
+    b       .rlew_loop
+.rlew_done:
+    ldmfd   sp!, {r4-r5, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x15: RLUnCompVram
+@ Same as 0x14 but buffers output for 16-bit writes (VRAM safe).
+@ r0 = source (32-bit aligned), r1 = destination
+@ ============================================================================
+swi_rle_vram:
+    stmfd   sp!, {r4-r8, lr}
+    ldr     r3, [r0], #4
+    mov     r3, r3, lsr #8      @ decompressed size
+    mov     r4, #0              @ byte count
+    mov     r7, #0              @ halfword buffer
+    mov     r8, r1              @ dest write pointer
+.rlev_loop:
+    cmp     r4, r3
+    bge     .rlev_done
+    ldrb    r5, [r0], #1
+    tst     r5, #0x80
+    bne     .rlev_comp
+    and     r5, r5, #0x7F
+    add     r5, r5, #1
+.rlev_lit:
+    cmp     r4, r3
+    bge     .rlev_done
+    ldrb    r12, [r0], #1
+    tst     r4, #1
+    moveq   r7, r12
+    orrne   r7, r7, r12, lsl #8
+    strneh  r7, [r8], #2
+    add     r4, r4, #1
+    subs    r5, r5, #1
+    bgt     .rlev_lit
+    b       .rlev_loop
+.rlev_comp:
+    and     r5, r5, #0x7F
+    add     r5, r5, #3
+    ldrb    r12, [r0], #1
+.rlev_fill:
+    cmp     r4, r3
+    bge     .rlev_done
+    tst     r4, #1
+    moveq   r7, r12
+    orrne   r7, r7, r12, lsl #8
+    strneh  r7, [r8], #2
+    add     r4, r4, #1
+    subs    r5, r5, #1
+    bgt     .rlev_fill
+    b       .rlev_loop
+.rlev_done:
+    ldmfd   sp!, {r4-r8, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x16: Diff8bitUnFilterWram
+@ Cumulative 8-bit delta decoder with byte writes (WRAM safe).
+@ r0 = source (32-bit aligned), r1 = destination
+@ Header[0:3]=1, Header[4:7]=8, Header[8:31]=decompressed size
+@ First byte absolute, subsequent bytes are signed 8-bit deltas.
+@ Reference: GBATek "SWI 16h"
+@ ============================================================================
+swi_diff8_wram:
+    stmfd   sp!, {r4, lr}
+    ldr     r3, [r0], #4
+    mov     r3, r3, lsr #8      @ decompressed size
+    mov     r4, #0              @ running sum
+.diff8w_loop:
+    cmp     r3, #0
+    ble     .diff8w_done
+    ldrb    r12, [r0], #1
+    add     r4, r4, r12
+    and     r4, r4, #0xFF       @ wrap to 8 bits
+    strb    r4, [r1], #1
+    subs    r3, r3, #1
+    b       .diff8w_loop
+.diff8w_done:
+    ldmfd   sp!, {r4, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x17: Diff8bitUnFilterVram
+@ Same as 0x16 but buffers output for 16-bit writes (VRAM safe).
+@ r0 = source (32-bit aligned), r1 = destination
+@ ============================================================================
+swi_diff8_vram:
+    stmfd   sp!, {r4-r6, lr}
+    ldr     r3, [r0], #4
+    mov     r3, r3, lsr #8      @ decompressed size
+    mov     r4, #0              @ running sum
+    mov     r5, #0              @ halfword buffer
+    mov     r6, #0              @ byte count
+.diff8v_loop:
+    cmp     r6, r3
+    bge     .diff8v_done
+    ldrb    r12, [r0], #1
+    add     r4, r4, r12
+    and     r4, r4, #0xFF
+    tst     r6, #1
+    moveq   r5, r4              @ even: low byte
+    orrne   r5, r5, r4, lsl #8  @ odd: high byte
+    strneh  r5, [r1], #2        @ odd: write halfword
+    add     r6, r6, #1
+    b       .diff8v_loop
+.diff8v_done:
+    ldmfd   sp!, {r4-r6, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x18: Diff16bitUnFilter
+@ Cumulative 16-bit delta decoder with halfword writes.
+@ r0 = source (32-bit aligned), r1 = destination
+@ Header[0:3]=2, Header[4:7]=8, Header[8:31]=decompressed size
+@ First halfword absolute, subsequent halfwords are signed 16-bit deltas.
+@ Reference: GBATek "SWI 18h"
+@ ============================================================================
+swi_diff16:
+    stmfd   sp!, {r4, lr}
+    ldr     r3, [r0], #4
+    mov     r3, r3, lsr #8      @ decompressed size in bytes
+    mov     r4, #0              @ running sum
+.diff16_loop:
+    cmp     r3, #0
+    ble     .diff16_done
+    ldrh    r12, [r0], #2
+    add     r4, r4, r12
+    mov     r4, r4, lsl #16
+    mov     r4, r4, lsr #16     @ wrap to 16 bits
+    strh    r4, [r1], #2
+    sub     r3, r3, #2
+    b       .diff16_loop
+.diff16_done:
+    ldmfd   sp!, {r4, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
 .pool
 
 @ ============================================================================
@@ -1230,6 +1640,161 @@ sine_lut:
     .short 0xdc72, 0xddc3, 0xdf19, 0xe074, 0xe1d5, 0xe33a, 0xe4a3, 0xe611
     .short 0xe782, 0xe8f7, 0xea70, 0xebed, 0xed6c, 0xeeee, 0xf073, 0xf1fa
     .short 0xf384, 0xf50f, 0xf69c, 0xf82a, 0xf9ba, 0xfb4b, 0xfcdc, 0xfe6e
+
+@ ============================================================================
+@ SWI 0x19: SoundBias
+@ Steps SOUNDBIAS (0x04000088) toward target value with delay.
+@ r0 = 0 → target 0x000, r0 != 0 → target 0x200
+@ Steps bias level by 1 per iteration with delay loop to avoid pops.
+@ ============================================================================
+swi_sound_bias:
+    stmfd   sp!, {r0-r5, lr}
+
+    @ Determine target: r0==0 → 0x000, else 0x200
+    cmp     r0, #0
+    moveq   r2, #0              @ target = 0x000
+    movne   r2, #0x200          @ target = 0x200
+
+    ldr     r3, =0x04000088     @ SOUNDBIAS address
+    ldrh    r4, [r3]            @ current SOUNDBIAS value
+    bic     r4, r4, #0xFC00     @ isolate bias level (bits 0-9)
+
+.sb_loop:
+    cmp     r4, r2
+    beq     .sb_done
+    bgt     .sb_dec
+    add     r4, r4, #1          @ step up
+    b       .sb_write
+.sb_dec:
+    sub     r4, r4, #1          @ step down
+.sb_write:
+    strh    r4, [r3]            @ write new SOUNDBIAS
+    @ Small delay between steps
+    mov     r5, #0x10
+.sb_delay:
+    subs    r5, r5, #1
+    bne     .sb_delay
+    b       .sb_loop
+
+.sb_done:
+    ldmfd   sp!, {r0-r5, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ ============================================================================
+@ SWI 0x1F: MidiKey2Freq
+@ Converts MIDI key + fine-pitch to playback frequency.
+@ r0 = pointer to WaveData struct (freq at offset +8)
+@ r1 = MIDI key (mk), r2 = fine pitch (fp, 0-255)
+@ Returns r0 = freq / 2^((180 - mk - fp/256) / 12)
+@
+@ Integer-only implementation using a 12-entry LUT for 2^(n/12) scaled
+@ by 2^16. Minor pitch rounding compared to official BIOS floating-point.
+@ ============================================================================
+swi_midi_key2freq:
+    stmfd   sp!, {r1-r8, lr}
+
+    @ Load base frequency from WaveData struct (offset +8)
+    ldr     r3, [r0, #8]        @ r3 = wa->freq
+
+    @ Calculate total semitone offset: 180*256 - mk*256 - fp
+    @ This gives us the offset in 1/256th semitone units
+    mov     r4, #180
+    sub     r4, r4, r1           @ r4 = 180 - mk
+    mov     r4, r4, lsl #8      @ r4 = (180 - mk) * 256
+    sub     r4, r4, r2           @ r4 = (180 - mk) * 256 - fp
+
+    @ If offset <= 0, result = freq (no division needed)
+    cmp     r4, #0
+    ble     .mk2f_no_shift
+
+    @ Divide offset by (12*256=3072) to get whole octaves
+    @ r5 = whole octaves, r6 = remainder in 1/256th semitone units
+    mov     r5, #0              @ octave counter
+    ldr     r6, =3072           @ 12 * 256
+.mk2f_oct_loop:
+    cmp     r4, r6
+    blt     .mk2f_oct_done
+    sub     r4, r4, r6
+    add     r5, r5, #1
+    b       .mk2f_oct_loop
+.mk2f_oct_done:
+    @ r5 = whole octaves to shift down
+    @ r4 = remaining offset in 1/256th semitone units (0..3071)
+
+    @ Shift freq right by whole octaves
+    mov     r3, r3, lsr r5      @ r3 = freq >> octaves
+
+    @ For the fractional part, use LUT for 2^(n/12) scaled by 2^16
+    @ r4 = remaining 1/256th semitone units
+    @ Convert to semitone index: r4 / 256
+    mov     r7, r4, lsr #8      @ r7 = whole semitones (0..11)
+
+    @ Look up divisor from table: table[r7] is 2^(r7/12) * 65536
+    adr     r8, .mk2f_lut
+    ldr     r6, [r8, r7, lsl #2] @ r6 = lut[semitone]
+
+    @ result = (freq << 16) / lut_value
+    @ Since freq is already shifted down by octaves, freq<<16 should fit
+    mov     r4, r3, lsl #16     @ r4 = freq << 16
+
+    cmp     r6, #0
+    moveq   r0, r3              @ avoid division by zero
+    beq     .mk2f_done
+
+    @ Unsigned division: r4 / r6 → r0
+    mov     r0, #0
+    mov     r8, #1
+.mk2f_div_align:
+    cmp     r6, r4
+    bhs     .mk2f_div_loop
+    cmp     r6, #0x80000000
+    bhs     .mk2f_div_loop
+    mov     r6, r6, lsl #1
+    mov     r8, r8, lsl #1
+    b       .mk2f_div_align
+.mk2f_div_loop:
+    cmp     r4, r6
+    subhs   r4, r4, r6
+    addhs   r0, r0, r8
+    movs    r8, r8, lsr #1
+    movne   r6, r6, lsr #1
+    bne     .mk2f_div_loop
+
+    b       .mk2f_done
+
+.mk2f_no_shift:
+    mov     r0, r3              @ result = freq unchanged
+
+.mk2f_done:
+    ldmfd   sp!, {r1-r8, lr}
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
+
+@ 2^(n/12) * 65536 lookup table for n = 0..11
+.mk2f_lut:
+    .word   65536               @ 2^(0/12)  = 1.0000 * 65536
+    .word   69433               @ 2^(1/12)  = 1.0595 * 65536
+    .word   73562               @ 2^(2/12)  = 1.1225 * 65536
+    .word   77936               @ 2^(3/12)  = 1.1892 * 65536
+    .word   82570               @ 2^(4/12)  = 1.2599 * 65536
+    .word   87480               @ 2^(5/12)  = 1.3348 * 65536
+    .word   92682               @ 2^(6/12)  = 1.4142 * 65536
+    .word   98193               @ 2^(7/12)  = 1.4983 * 65536
+    .word   104032              @ 2^(8/12)  = 1.5874 * 65536
+    .word   110218              @ 2^(9/12)  = 1.6818 * 65536
+    .word   116772              @ 2^(10/12) = 1.7818 * 65536
+    .word   123715              @ 2^(11/12) = 1.8877 * 65536
+
+@ ============================================================================
+@ SWI 0x25: MultiBoot
+@ Multiplayer boot transfer — not supported in this BIOS.
+@ Returns r0 = 1 to indicate failure.
+@ ============================================================================
+swi_multiboot:
+    mov     r0, #1              @ return failure
+    ldmfd   sp!, {r11, r12, lr}
+    movs    pc, lr
 
 @ ============================================================================
 @ IRQ Handler
