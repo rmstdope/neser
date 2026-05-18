@@ -456,11 +456,8 @@ impl Channel3 {
         if period == 0 {
             return;
         }
-        let total_samples: u8 = if self.two_banks {
-            SAMPLES_PER_BANK * 2
-        } else {
-            SAMPLES_PER_BANK
-        };
+        // Use a bitmask to wrap wave_pos: single-bank → mask 0x1F (& 31), two-bank → 0x3F (& 63).
+        let pos_mask: u8 = if self.two_banks { 0x3F } else { 0x1F };
         let mut rem = cycles;
         while rem > 0 {
             if self.freq_timer == 0 {
@@ -470,14 +467,14 @@ impl Channel3 {
             self.freq_timer -= advance;
             rem -= advance;
             if self.freq_timer == 0 {
-                self.wave_pos = (self.wave_pos + 1) % total_samples;
+                self.wave_pos = (self.wave_pos + 1) & pos_mask;
                 // Samples 0..(SAMPLES_PER_BANK-1) come from bank_select; the rest from the other bank.
                 let bank = if self.wave_pos < SAMPLES_PER_BANK {
                     self.bank_select as usize
                 } else {
                     (self.bank_select as usize) ^ 1
                 };
-                let pos_in_bank = self.wave_pos % SAMPLES_PER_BANK;
+                let pos_in_bank = self.wave_pos & (SAMPLES_PER_BANK - 1);
                 let byte = self.wave_ram[bank][(pos_in_bank / 2) as usize];
                 self.current_sample = if pos_in_bank & 1 == 0 {
                     (byte >> 4) & 0x0F // high nibble
