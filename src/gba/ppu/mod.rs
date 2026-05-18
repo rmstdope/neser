@@ -1874,6 +1874,132 @@ mod tests {
     }
 
     #[test]
+    fn mode5_renders_160x128_bgr555_bitmap_from_vram() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 5, BG2 enabled, identity affine transform.
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Backdrop = blue. Pixel (0,0) = red with bit 15 set (ignored).
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        vram[0] = 0x1F;
+        vram[1] = 0x80;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode5_frame_select_uses_frame_1_at_0xa000() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 5, BG2 enabled, frame 1 selected, identity affine transform.
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE | dispcnt::FRAME_SELECT);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Frame 0 pixel (0,0) = red; frame 1 pixel (0,0) = green.
+        vram[0] = 0x1F;
+        vram[1] = 0x00;
+        vram[0xA000] = 0xE0;
+        vram[0xA001] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode5_outside_160x128_bitmap_is_transparent() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 5, BG2 enabled, identity affine transform.
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Backdrop = blue. Fill the valid source area with red.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        for y in 0..128usize {
+            for x in 0..160usize {
+                let off = (y * 160 + x) * 2;
+                vram[off] = 0x1F;
+                vram[off + 1] = 0x00;
+            }
+        }
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        let x_outside = 160usize * BYTES_PER_PIXEL;
+        let y_outside = (128usize * SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+        assert_eq!(&ppu.framebuffer()[x_outside..x_outside + 3], &[0, 0, 0xFF]);
+        assert_eq!(&ppu.framebuffer()[y_outside..y_outside + 3], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn mode5_uses_bg2_affine_reference_point() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 5, BG2 enabled, identity affine transform starting at source (1, 0).
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        ppu.write_affine(REG_BG2X_L, 0x0100);
+
+        // Source pixel (0,0) = red; source pixel (1,0) = green.
+        vram[0] = 0x1F;
+        vram[1] = 0x00;
+        vram[2] = 0xE0;
+        vram[3] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
     fn mode0_bg1_renders_independently_of_bg0() {
         // BG1 enabled (not BG0). BG1 uses charblock 1, screenblock 8.
         let mut ppu = Ppu::new();
