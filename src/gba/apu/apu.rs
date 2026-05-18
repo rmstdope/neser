@@ -589,8 +589,8 @@ impl Apu {
     /// Mix all channels into a stereo `(left, right)` pair in `[-1.0, 1.0]`.
     fn mix(&self) -> (f32, f32) {
         if !self.powered {
-            // PCM channels are still active even when SOUNDCNT_X power is off.
-            return self.mix_pcm_only();
+            // Per GBATek: "While Bit 7 is cleared, both PSG and FIFO sounds are disabled"
+            return (0.0, 0.0);
         }
 
         // ── DMG channels ─────────────────────────────────────────────────
@@ -657,46 +657,6 @@ impl Apu {
 
         let total_right = (dmg_right + a_right + b_right).clamp(-1.0, 1.0);
         let total_left = (dmg_left + a_left + b_left).clamp(-1.0, 1.0);
-
-        (total_left, total_right)
-    }
-
-    /// Mix only PCM channels (used when APU power is off).
-    fn mix_pcm_only(&self) -> (f32, f32) {
-        let pcm_a_vol = if self.soundcnt_h & 0x04 != 0 {
-            1.0
-        } else {
-            0.5
-        };
-        let pcm_b_vol = if self.soundcnt_h & 0x08 != 0 {
-            1.0
-        } else {
-            0.5
-        };
-
-        let a_right = if self.soundcnt_h & 0x0100 != 0 {
-            self.fifo_a.output() * pcm_a_vol
-        } else {
-            0.0
-        };
-        let a_left = if self.soundcnt_h & 0x0200 != 0 {
-            self.fifo_a.output() * pcm_a_vol
-        } else {
-            0.0
-        };
-        let b_right = if self.soundcnt_h & 0x1000 != 0 {
-            self.fifo_b.output() * pcm_b_vol
-        } else {
-            0.0
-        };
-        let b_left = if self.soundcnt_h & 0x2000 != 0 {
-            self.fifo_b.output() * pcm_b_vol
-        } else {
-            0.0
-        };
-
-        let total_right = (a_right + b_right).clamp(-1.0, 1.0);
-        let total_left = (a_left + b_left).clamp(-1.0, 1.0);
 
         (total_left, total_right)
     }
@@ -1576,6 +1536,51 @@ mod tests {
         assert_eq!(
             apu.ch3.current_sample, 0xA,
             "second sample from bank 0 (low nibble of 0x0A)"
+        );
+    }
+
+    // ── Master enable (SOUNDCNT_X bit 7) silence tests ───────────────────────
+
+    #[test]
+    fn test_fifo_a_silent_when_master_power_off() {
+        // Per GBATek: "While Bit 7 is cleared, both PSG and FIFO sounds are disabled"
+        let mut apu = Apu::new();
+        // Explicitly ensure master enable is off.
+        apu.write16(0x0400_0084, 0x0000);
+        assert!(!apu.powered);
+
+        // Configure SOUNDCNT_H so FIFO A is fully routed to both L+R at full vol.
+        apu.soundcnt_h = 0x0304; // bit 2 (A full vol) | bit 8 (A right) | bit 9 (A left)
+
+        apu.fifo_a.push(127);
+        apu.fifo_a.advance();
+
+        let (left, right) = apu.mix();
+        assert_eq!(left, 0.0, "FIFO A must be silent when master enable is off");
+        assert_eq!(
+            right, 0.0,
+            "FIFO A must be silent when master enable is off"
+        );
+    }
+
+    #[test]
+    fn test_fifo_b_silent_when_master_power_off() {
+        // Per GBATek: "While Bit 7 is cleared, both PSG and FIFO sounds are disabled"
+        let mut apu = Apu::new();
+        apu.write16(0x0400_0084, 0x0000);
+        assert!(!apu.powered);
+
+        // Configure SOUNDCNT_H so FIFO B is fully routed to both L+R at full vol.
+        apu.soundcnt_h = 0x3008; // bit 3 (B full vol) | bit 12 (B right) | bit 13 (B left)
+
+        apu.fifo_b.push(127);
+        apu.fifo_b.advance();
+
+        let (left, right) = apu.mix();
+        assert_eq!(left, 0.0, "FIFO B must be silent when master enable is off");
+        assert_eq!(
+            right, 0.0,
+            "FIFO B must be silent when master enable is off"
         );
     }
 
