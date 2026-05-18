@@ -160,10 +160,10 @@ impl IoRegisters {
             0x0400_004C => None,               // MOSAIC
             0x0400_0054 => None,               // BLDY
             // PPU readable registers with masks.
-            0x0400_0048 => Some(ppu.read_winin()),  // WININ
-            0x0400_004A => Some(ppu.read_winout()), // WINOUT
-            0x0400_0050 => self.read_backing(addr, 0x3FFF), // BLDCNT
-            0x0400_0052 => self.read_backing(addr, 0x1F1F), // BLDALPHA
+            0x0400_0048 => Some(ppu.read_winin()),    // WININ
+            0x0400_004A => Some(ppu.read_winout()),   // WINOUT
+            0x0400_0050 => Some(ppu.read_bldcnt()),   // BLDCNT
+            0x0400_0052 => Some(ppu.read_bldalpha()), // BLDALPHA
             // Invalid addresses in PPU/blend range → open-bus.
             0x0400_004E | 0x0400_0056..=0x0400_005E => None,
             // Invalid addresses after sound FIFO (not in APU intercept range).
@@ -361,6 +361,10 @@ impl IoRegisters {
             ppu::REG_WIN1V => ppu.write_win_v(1, value),
             ppu::REG_WININ => ppu.write_winin(value),
             ppu::REG_WINOUT => ppu.write_winout(value),
+            // PPU color special effect registers.
+            ppu::REG_BLDCNT => ppu.write_bldcnt(value),
+            ppu::REG_BLDALPHA => ppu.write_bldalpha(value),
+            ppu::REG_BLDY => ppu.write_bldy(value),
             // Keypad.
             REG_KEYINPUT => { /* KEYINPUT is read-only */ }
             REG_KEYCNT => keypad.write_keycnt(value, ic),

@@ -174,6 +174,14 @@ pub const REG_WIN1V: u32 = 0x0400_0046;
 pub const REG_WININ: u32 = 0x0400_0048;
 pub const REG_WINOUT: u32 = 0x0400_004A;
 
+// Color special effect registers.
+/// `BLDCNT` (0x0400_0050): color effect control (R/W).
+pub const REG_BLDCNT: u32 = 0x0400_0050;
+/// `BLDALPHA` (0x0400_0052): alpha blend coefficients (R/W).
+pub const REG_BLDALPHA: u32 = 0x0400_0052;
+/// `BLDY` (0x0400_0054): brightness coefficient (W only).
+pub const REG_BLDY: u32 = 0x0400_0054;
+
 /// Result of stepping the PPU — counts telling the bus how many DMA
 /// hooks (V-Blank / H-Blank) to fire after a step.
 ///
@@ -241,7 +249,69 @@ pub struct Ppu {
     /// `WINOUT` (0x0400_004A): layer enable for outside all windows (bits 0-5)
     /// and inside OBJ Window (bits 8-13).
     winout: u16,
+    /// `BLDCNT` (0x0400_0050): color special effect control.
+    /// Bits 0-5: 1st target selection (BG0-BG3, OBJ, Backdrop).
+    /// Bits 6-7: effect mode (0=None, 1=Alpha, 2=Brighten, 3=Darken).
+    /// Bits 8-13: 2nd target selection (BG0-BG3, OBJ, Backdrop).
+    bldcnt: u16,
+    /// `BLDALPHA` (0x0400_0052): alpha blend coefficients.
+    /// Bits 0-4: EVA (1st target, 0-16).
+    /// Bits 8-12: EVB (2nd target, 0-16).
+    bldalpha: u16,
+    /// `BLDY` (0x0400_0054, write-only): brightness coefficient.
+    /// Bits 0-4: EVY (0-16).
+    bldy: u8,
 }
+
+// ---- Color special effect helpers ----------------------------------------
+
+/// Apply alpha blending to two BGR555 colors using integer fixed-point math.
+///
+/// Per GBATek: `I = MIN(31, (I1 * EVA + I2 * EVB) >> 4)` per channel.
+/// `eva` and `evb` must already be clamped to `[0, 16]`.
+#[inline]
+fn alpha_blend_bgr555(c1: u16, c2: u16, eva: u8, evb: u8) -> u16 {
+    let eva = eva as u32;
+    let evb = evb as u32;
+    let r = ((c1 & 0x1F) as u32 * eva + (c2 & 0x1F) as u32 * evb) >> 4;
+    let g = (((c1 >> 5) & 0x1F) as u32 * eva + ((c2 >> 5) & 0x1F) as u32 * evb) >> 4;
+    let b = (((c1 >> 10) & 0x1F) as u32 * eva + ((c2 >> 10) & 0x1F) as u32 * evb) >> 4;
+    (r.min(31) | (g.min(31) << 5) | (b.min(31) << 10)) as u16
+}
+
+/// Apply brightness increase to a BGR555 color.
+///
+/// Per GBATek: `I = I1 + (31 - I1) * EVY / 16` per channel (EVY ∈ [0,16]).
+/// `evy` must already be clamped to `[0, 16]`.
+#[inline]
+fn brighten_bgr555(c: u16, evy: u8) -> u16 {
+    let evy = evy as u32;
+    let r = (c & 0x1F) as u32;
+    let g = ((c >> 5) & 0x1F) as u32;
+    let b = ((c >> 10) & 0x1F) as u32;
+    let r2 = r + (((31 - r) * evy) >> 4);
+    let g2 = g + (((31 - g) * evy) >> 4);
+    let b2 = b + (((31 - b) * evy) >> 4);
+    (r2 | (g2 << 5) | (b2 << 10)) as u16
+}
+
+/// Apply brightness decrease to a BGR555 color.
+///
+/// Per GBATek: `I = I1 - I1 * EVY / 16` per channel (EVY ∈ [0,16]).
+/// `evy` must already be clamped to `[0, 16]`.
+#[inline]
+fn darken_bgr555(c: u16, evy: u8) -> u16 {
+    let evy = evy as u32;
+    let r = (c & 0x1F) as u32;
+    let g = ((c >> 5) & 0x1F) as u32;
+    let b = ((c >> 10) & 0x1F) as u32;
+    let r2 = r - ((r * evy) >> 4);
+    let g2 = g - ((g * evy) >> 4);
+    let b2 = b - ((b * evy) >> 4);
+    (r2 | (g2 << 5) | (b2 << 10)) as u16
+}
+
+// --------------------------------------------------------------------------
 
 impl Default for Ppu {
     fn default() -> Self {
@@ -270,6 +340,9 @@ impl Ppu {
             win_v: [0; 2],
             winin: 0,
             winout: 0,
+            bldcnt: 0,
+            bldalpha: 0,
+            bldy: 0,
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -500,6 +573,33 @@ impl Ppu {
     /// Read `WINOUT`.
     pub fn read_winout(&self) -> u16 {
         self.winout
+    }
+
+    /// Write `BLDCNT` (0x0400_0050). Bits 14-15 are unused and discarded.
+    pub fn write_bldcnt(&mut self, value: u16) {
+        self.bldcnt = value & 0x3FFF;
+    }
+
+    /// Read `BLDCNT`.
+    pub fn read_bldcnt(&self) -> u16 {
+        self.bldcnt
+    }
+
+    /// Write `BLDALPHA` (0x0400_0052). Only bits 0-4 (EVA) and 8-12 (EVB)
+    /// are valid; other bits are discarded.
+    pub fn write_bldalpha(&mut self, value: u16) {
+        self.bldalpha = value & 0x1F1F;
+    }
+
+    /// Read `BLDALPHA`.
+    pub fn read_bldalpha(&self) -> u16 {
+        self.bldalpha
+    }
+
+    /// Write `BLDY` (0x0400_0054, write-only). Only bits 0-4 (EVY) are
+    /// significant; values 17-31 are treated as 16 at effect time.
+    pub fn write_bldy(&mut self, value: u16) {
+        self.bldy = (value & 0x1F) as u8;
     }
 
     /// True after a completed frame, until [`Self::clear_frame_ready`].
@@ -980,6 +1080,9 @@ impl Ppu {
     /// enabled BG (order does not matter — the function finds the highest-priority
     /// opaque layer per pixel by scanning all entries). The function evaluates
     /// window regions per-pixel and picks the highest-priority enabled+opaque layer.
+    ///
+    /// Color special effects (BLDCNT/BLDALPHA/BLDY) are applied after
+    /// compositing when the 1st/2nd target conditions are met.
     #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     fn composite_scanline(
         &mut self,
@@ -1014,6 +1117,14 @@ impl Ppu {
             & (dispcnt::WIN0_ENABLE | dispcnt::WIN1_ENABLE | dispcnt::OBJ_WIN_ENABLE)
             != 0;
 
+        // Pre-decode color effect parameters.
+        let bld_mode = (self.bldcnt >> 6) & 3;
+        let first_target = (self.bldcnt & 0x3F) as u8;
+        let second_target = ((self.bldcnt >> 8) & 0x3F) as u8;
+        let eva = ((self.bldalpha & 0x1F) as u8).min(16);
+        let evb = (((self.bldalpha >> 8) & 0x1F) as u8).min(16);
+        let evy = self.bldy.min(16);
+
         for x in 0..(SCREEN_WIDTH as usize) {
             // Determine layer enable mask for this pixel.
             let layer_mask = if any_window_active {
@@ -1023,44 +1134,115 @@ impl Ppu {
                 0x3F
             };
 
-            let mut final_color = backdrop;
+            // Bit 5 of layer_mask controls whether SFX apply to this pixel.
+            let sfx_enabled = (layer_mask >> 5) & 1 != 0;
 
-            // Build a priority-sorted merge of BG layers and OBJ.
-            // Walk BG layers front-to-back; also check OBJ at each priority level.
-            // OBJ wins over BG at same priority.
             let obj_px = obj_scanline.as_ref().map(|s| &s.pixels[x]);
             let obj_opaque = obj_px.is_some_and(|px| px.opaque);
-            let obj_prio = obj_px.map(|px| px.priority).unwrap_or(4);
 
-            // Check OBJ first at its priority level, then BGs.
-            // We need to find the highest-priority (lowest number) opaque+enabled pixel.
-            let mut best_prio: u8 = 5; // worse than any real priority
+            // Find the top-2 visible pixels using sort_key (lower = higher
+            // priority). Encoding: OBJ at prio p → key = p*10;
+            // BG bg_idx at prio p → key = p*10 + 5 + bg_idx (so OBJ beats
+            // BG at same priority, and lower BG index beats higher at same
+            // priority). Backdrop always sits at sort_key = 0xFFFF.
+            //
+            // top: highest-priority visible pixel.
+            // sec: second-highest-priority visible pixel (fallback = backdrop).
+            let mut top_sort: u16 = 0xFFFF; // start at backdrop priority
+            let mut top_layer: u8 = 5; // backdrop layer index
+            let mut top_color: u16 = backdrop;
+            let mut top_semi_t: bool = false;
 
-            // Check OBJ (layer mask bit 4 = OBJ enable).
-            if obj_opaque && (layer_mask & (1 << 4) != 0) && obj_prio < best_prio {
-                best_prio = obj_prio;
-                final_color = obj_px.unwrap().color;
+            let mut sec_sort: u16 = 0xFFFF; // backdrop as default second
+            let mut sec_layer: u8 = 5;
+            let mut sec_color: u16 = backdrop;
+
+            // Insert OBJ candidate.
+            if obj_opaque && (layer_mask & (1 << 4) != 0) {
+                let px = obj_px.unwrap();
+                let sk = (px.priority as u16) * 10;
+                // OBJ sort_key is always < 0xFFFF, so it always beats backdrop.
+                sec_sort = top_sort;
+                sec_layer = top_layer;
+                sec_color = top_color;
+                top_sort = sk;
+                top_layer = 4;
+                top_color = px.color;
+                top_semi_t = px.semi_transparent;
             }
 
-            // Check BG layers.
+            // Insert BG candidates.
             for &(bg_idx, bg_prio, ref buf) in bg_layers {
-                if bg_prio >= best_prio {
-                    continue; // can't beat current best
-                }
                 if layer_mask & (1 << bg_idx) == 0 {
                     continue; // disabled by window
                 }
                 if buf[x] == TRANSPARENT {
                     continue;
                 }
-                best_prio = bg_prio;
-                final_color = buf[x];
+                let sk = (bg_prio as u16) * 10 + 5 + (bg_idx as u16);
+                if sk < top_sort {
+                    sec_sort = top_sort;
+                    sec_layer = top_layer;
+                    sec_color = top_color;
+                    top_sort = sk;
+                    top_layer = bg_idx as u8;
+                    top_color = buf[x];
+                    top_semi_t = false;
+                } else if sk < sec_sort {
+                    sec_sort = sk;
+                    sec_layer = bg_idx as u8;
+                    sec_color = buf[x];
+                }
             }
 
-            // OBJ wins at same priority as BG (re-check after BGs).
-            if obj_opaque && (layer_mask & (1 << 4) != 0) && obj_prio <= best_prio {
-                final_color = obj_px.unwrap().color;
-            }
+            // Apply color special effects.
+            //
+            // Layer indices: 0-3 = BG0-BG3, 4 = OBJ, 5 = Backdrop.
+            // `first_target` bit k = layer k is a 1st target.
+            // `second_target` bit k = layer k is a 2nd target.
+            let final_color = if top_semi_t && sfx_enabled {
+                // Semi-transparent OBJ always alpha-blends regardless of
+                // BLDCNT mode, treated as 1st target.  2nd target selection
+                // still comes from BLDCNT bits 8-13.
+                if (second_target >> sec_layer) & 1 != 0 {
+                    alpha_blend_bgr555(top_color, sec_color, eva, evb)
+                } else {
+                    // No valid 2nd target below — display at normal intensity.
+                    top_color
+                }
+            } else if sfx_enabled {
+                match bld_mode {
+                    1 => {
+                        // Alpha blend: both 1st and 2nd targets must be selected.
+                        if (first_target >> top_layer) & 1 != 0
+                            && (second_target >> sec_layer) & 1 != 0
+                        {
+                            alpha_blend_bgr555(top_color, sec_color, eva, evb)
+                        } else {
+                            top_color
+                        }
+                    }
+                    2 => {
+                        // Brightness increase.
+                        if (first_target >> top_layer) & 1 != 0 {
+                            brighten_bgr555(top_color, evy)
+                        } else {
+                            top_color
+                        }
+                    }
+                    3 => {
+                        // Brightness decrease.
+                        if (first_target >> top_layer) & 1 != 0 {
+                            darken_bgr555(top_color, evy)
+                        } else {
+                            top_color
+                        }
+                    }
+                    _ => top_color, // mode 0 = no effect
+                }
+            } else {
+                top_color
+            };
 
             let dst = row_start + x * BYTES_PER_PIXEL;
             color::write_pixel(&mut self.framebuffer, dst, final_color);
@@ -2996,6 +3178,441 @@ mod tests {
             px60,
             &[0, 0, 0],
             "Pixel 60 outside OBJ window should show backdrop (BG3 disabled)"
+        );
+    }
+
+    // ---- BLDCNT / BLDALPHA / BLDY register tests ----------------------------
+
+    #[test]
+    fn bldcnt_write_masks_high_bits() {
+        let mut ppu = Ppu::new();
+        ppu.write_bldcnt(0xFFFF);
+        assert_eq!(
+            ppu.read_bldcnt(),
+            0x3FFF,
+            "BLDCNT: bits 14-15 must be discarded"
+        );
+    }
+
+    #[test]
+    fn bldcnt_initial_value_is_zero() {
+        let ppu = Ppu::new();
+        assert_eq!(ppu.read_bldcnt(), 0);
+    }
+
+    #[test]
+    fn bldalpha_write_masks_unused_bits() {
+        let mut ppu = Ppu::new();
+        ppu.write_bldalpha(0xFFFF);
+        assert_eq!(
+            ppu.read_bldalpha(),
+            0x1F1F,
+            "BLDALPHA: only bits 0-4 and 8-12 are valid"
+        );
+    }
+
+    #[test]
+    fn bldalpha_initial_value_is_zero() {
+        let ppu = Ppu::new();
+        assert_eq!(ppu.read_bldalpha(), 0);
+    }
+
+    #[test]
+    fn bldy_write_does_not_panic() {
+        // BLDY is write-only; we just verify writes are accepted without panic.
+        let mut ppu = Ppu::new();
+        ppu.write_bldy(0x10);
+        ppu.write_bldy(0xFF); // 0xFF masked to 0x1F internally
+    }
+
+    // ---- Color-effect rendering helpers -------------------------------------
+
+    fn run_one_frame(
+        ppu: &mut Ppu,
+        ic: &mut InterruptController,
+        vram: &[u8],
+        pram: &[u8],
+        oam: &[u8],
+    ) {
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            ic,
+            vram,
+            pram,
+            oam,
+        );
+    }
+
+    // ---- Brightness increase (mode 2) tests ---------------------------------
+
+    #[test]
+    fn brightness_increase_mode2_full_evy_makes_pixel_white() {
+        // BG0 pixel at (0,0) is blue.  With mode 2 (brighten), 1st target = BG0,
+        // and EVY = 16 (full), each channel is driven to max → white output.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+
+        // BG palette entry 1 = pure blue (BGR555 0x7C00).
+        pram[2] = 0x00;
+        pram[3] = 0x7C;
+        vram[32] = 0x11; // tile 1, pixel 0 = palette index 1
+        vram[0x0000] = 0x01; // screenblock 0 entry (0,0) = tile 1
+
+        // BLDCNT: effect mode = 2 (brighten, bits 6-7 = 10b), 1st target = BG0 (bit 0).
+        ppu.write_bldcnt((2 << 6) | 0x01);
+        // BLDY: EVY = 16 (full brightening).
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        // After full brightening all channels reach max (31) → white.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0xFF, 0xFF, 0xFF],
+            "Full brightness increase should output white"
+        );
+    }
+
+    #[test]
+    fn brightness_increase_no_effect_when_first_target_not_selected() {
+        // Same setup but 1st target does NOT include BG0 → no effect, blue remains.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+        pram[2] = 0x00;
+        pram[3] = 0x7C; // palette 1 = blue
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        // BLDCNT: mode=2 but 1st target bits 0-5 = 0 (nothing selected).
+        ppu.write_bldcnt(2 << 6);
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        let (r, g, b) = color::bgr555_to_rgb888(0x7C00);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "No effect when 1st target does not include the top pixel layer"
+        );
+    }
+
+    // ---- Brightness decrease (mode 3) tests ---------------------------------
+
+    #[test]
+    fn brightness_decrease_mode3_full_evy_makes_pixel_black() {
+        // BG0 pixel = white.  mode 3 (darken) with EVY=16 → each channel drops to 0.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+
+        // BG palette entry 1 = white (BGR555 0x7FFF).
+        pram[2] = 0xFF;
+        pram[3] = 0x7F;
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        // BLDCNT: mode=3 (bits 6-7 = 11b → 0xC0), 1st target = BG0 (bit 0).
+        ppu.write_bldcnt((3 << 6) | 0x01);
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0, 0],
+            "Full brightness decrease should output black"
+        );
+    }
+
+    // ---- Alpha blend (mode 1) tests -----------------------------------------
+
+    #[test]
+    fn alpha_blend_mode1_bg_over_backdrop() {
+        // BG0 (red) on top of backdrop (blue) with EVA=EVB=8 → 50/50 mix.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+
+        // Backdrop = pure blue (BGR555 0x7C00).
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        // BG palette entry 1 = pure red (BGR555 0x001F).
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+        vram[32] = 0x11; // tile 1, pixel 0 = index 1 (red)
+        vram[0x0000] = 0x01;
+
+        // BLDCNT: mode=1, 1st target = BG0 (bit 0), 2nd target = backdrop (bit 13).
+        ppu.write_bldcnt((1 << 6) | 0x01 | (1 << 13));
+        // BLDALPHA: EVA=8, EVB=8 (50% / 50%).
+        ppu.write_bldalpha(8 | (8 << 8));
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        let expected = alpha_blend_bgr555(0x001F, 0x7C00, 8, 8);
+        let (r, g, b) = color::bgr555_to_rgb888(expected);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "50/50 alpha blend of red BG0 over blue backdrop"
+        );
+    }
+
+    #[test]
+    fn alpha_blend_no_effect_when_second_target_not_selected() {
+        // BG0 (red) over backdrop (blue), mode=1, but 2nd target bits = 0.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+        pram[0] = 0x00;
+        pram[1] = 0x7C; // backdrop = blue
+        pram[2] = 0x1F;
+        pram[3] = 0x00; // palette 1 = red
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        // BLDCNT: mode=1, 1st target = BG0, 2nd target = none.
+        ppu.write_bldcnt((1 << 6) | 0x01);
+        ppu.write_bldalpha(8 | (8 << 8));
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        // No blend → BG0 red shows as-is.
+        let (r, g, b) = color::bgr555_to_rgb888(0x001F);
+        assert_eq!(&ppu.framebuffer()[0..3], &[r, g, b]);
+    }
+
+    #[test]
+    fn no_effect_when_bldcnt_mode_is_zero() {
+        // Mode 0 = no effect even if 1st target includes all layers.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+        pram[2] = 0x00;
+        pram[3] = 0x7C; // palette 1 = blue
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        // BLDCNT: mode=0, 1st target = all.
+        ppu.write_bldcnt(0x003F);
+        ppu.write_bldy(16); // would darken if mode were 3
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        // Mode 0 → no effect, pixel stays blue.
+        let (r, g, b) = color::bgr555_to_rgb888(0x7C00);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "Mode 0 must not apply any color effect"
+        );
+    }
+
+    // ---- Semi-transparent OBJ tests -----------------------------------------
+
+    /// Set up a semi-transparent OBJ (gfx_mode=1) in OAM.
+    fn setup_semi_transparent_obj_in_oam(
+        oam: &mut [u8],
+        obj_idx: usize,
+        x: u16,
+        y: u8,
+        tile: u16,
+        priority: u8,
+    ) {
+        let base = obj_idx * 8;
+        // attr0: obj_mode=0 (normal), gfx_mode=1 (semi-transparent, bits 10-11 = 01 → 0x0400).
+        let attr0 = y as u16 | 0x0400;
+        let attr1 = x & 0x1FF;
+        let attr2 = (tile & 0x3FF) | ((priority as u16 & 3) << 10);
+        oam[base] = attr0 as u8;
+        oam[base + 1] = (attr0 >> 8) as u8;
+        oam[base + 2] = attr1 as u8;
+        oam[base + 3] = (attr1 >> 8) as u8;
+        oam[base + 4] = attr2 as u8;
+        oam[base + 5] = (attr2 >> 8) as u8;
+    }
+
+    #[test]
+    fn semi_transparent_obj_alpha_blends_with_bg_below() {
+        // Semi-transparent OBJ (red) on top of BG0 (blue) with EVA=EVB=8.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        // BG0: priority 1 (below OBJ priority 0).
+        ppu.write_bg_cnt(0, 1);
+
+        // BG palette entry 1 = blue (BGR555 0x7C00).
+        pram[2] = 0x00;
+        pram[3] = 0x7C;
+        vram[32] = 0x11; // tile 1, pixel 0 = index 1
+        vram[0x0000] = 0x01;
+
+        // OBJ tile 1 at OBJ VRAM base.
+        let obj_tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11;
+        }
+        // OBJ palette entry 1 = red (BGR555 0x001F).
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        // Semi-transparent OBJ at (0,0), priority 0.
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 0);
+
+        // BLDCNT: 2nd target = BG0 (bit 8).  Mode bits irrelevant for semi-t OBJ.
+        ppu.write_bldcnt(1 << 8);
+        // BLDALPHA: EVA=8 (OBJ), EVB=8 (BG0), 50%/50%.
+        ppu.write_bldalpha(8 | (8 << 8));
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &oam);
+
+        let expected = alpha_blend_bgr555(0x001F, 0x7C00, 8, 8);
+        let (r, g, b) = color::bgr555_to_rgb888(expected);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "Semi-transparent OBJ should alpha blend with BG below"
+        );
+    }
+
+    #[test]
+    fn semi_transparent_obj_shows_normal_when_no_second_target() {
+        // Semi-transparent OBJ on top of BG0, but BG0 is not selected as 2nd target.
+        // OBJ should display at normal (full) intensity.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+        ppu.write_bg_cnt(0, 1); // BG0 priority 1
+
+        pram[2] = 0x00;
+        pram[3] = 0x7C; // palette 1 = blue
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        let obj_tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11;
+        }
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00; // OBJ palette 1 = red
+
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 0);
+
+        // BLDCNT: 2nd target = 0 (nothing selected).
+        ppu.write_bldcnt(0);
+        ppu.write_bldalpha(8 | (8 << 8));
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &oam);
+
+        // No valid 2nd target → OBJ at normal intensity (red).
+        let (r, g, b) = color::bgr555_to_rgb888(0x001F);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "Semi-transparent OBJ with no 2nd target should display at normal intensity"
+        );
+    }
+
+    // ---- Window SFX bit tests -----------------------------------------------
+
+    #[test]
+    fn window_sfx_bit_zero_disables_color_effects() {
+        // Window 0 covers the whole screen with SFX bit = 0.
+        // Even though BLDCNT mode=2 and EVY=16, no effect should apply.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::WIN0_ENABLE);
+
+        // BG palette entry 1 = blue.
+        pram[2] = 0x00;
+        pram[3] = 0x7C;
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        // WIN0 covers the entire visible area.
+        ppu.write_win_h(0, 240);
+        ppu.write_win_v(0, 160);
+        // WININ: BG0 enabled (bit 0 = 1), SFX disabled (bit 5 = 0) → 0x0001.
+        ppu.write_winin(0x0001);
+
+        // BLDCNT: mode=2, 1st target = BG0 (full brightening would give white).
+        ppu.write_bldcnt((2 << 6) | 0x01);
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        // SFX disabled by window → pixel stays blue.
+        let (r, g, b) = color::bgr555_to_rgb888(0x7C00);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "Window SFX bit=0 should disable color effects"
+        );
+    }
+
+    #[test]
+    fn window_sfx_bit_one_enables_color_effects() {
+        // Window 0 with SFX bit = 1 → brightness increase should apply.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::WIN0_ENABLE);
+
+        pram[2] = 0x00;
+        pram[3] = 0x7C; // palette 1 = blue
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        ppu.write_win_h(0, 240);
+        ppu.write_win_v(0, 160);
+        // WININ: BG0 enabled (bit 0 = 1) AND SFX enabled (bit 5 = 1) → 0x0021.
+        ppu.write_winin(0x0021);
+
+        ppu.write_bldcnt((2 << 6) | 0x01);
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        // SFX enabled → blue becomes white.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0xFF, 0xFF, 0xFF],
+            "Window SFX bit=1 should enable color effects"
         );
     }
 }
