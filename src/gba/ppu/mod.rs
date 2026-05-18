@@ -1040,7 +1040,8 @@ impl Ppu {
         }
 
         let mapping_1d = self.dispcnt & dispcnt::OBJ_MAPPING_1D != 0;
-        let obj_scanline = obj::render_obj_scanline(y, oam, vram, pram, mapping_1d);
+        let bitmap_mode = self.mode() >= 3;
+        let obj_scanline = obj::render_obj_scanline(y, oam, vram, pram, mapping_1d, bitmap_mode);
 
         for x in 0..(SCREEN_WIDTH as usize) {
             let px = &obj_scanline.pixels[x];
@@ -1049,6 +1050,9 @@ impl Ppu {
                 color::write_pixel(&mut self.framebuffer, dst, px.color);
             }
         }
+
+        // TODO: Wire obj_scanline.obj_window into the PPU window system
+        // once full windowing (WIN0/WIN1/WINOBJ) is implemented.
     }
 
     /// Backdrop fill — uses palette entry 0 from PRAM. Used for modes
@@ -2434,6 +2438,181 @@ mod tests {
             &ppu.framebuffer()[0..3],
             &[0, 0xFF, 0],
             "Mode 1: BG2 affine (priority 0) on top of BG0 text (priority 1)"
+        );
+    }
+
+    /// Helper to set up a visible OBJ in OAM at position (x, y) with given tile
+    /// and priority. Uses 4bpp, shape=0 size=0 (8x8), 1D mapping.
+    fn setup_obj_in_oam(oam: &mut [u8], obj_idx: usize, x: u16, y: u8, tile: u16, priority: u8) {
+        let base = obj_idx * 8;
+        let attr0 = y as u16; // normal mode, 4bpp, shape=0
+        let attr1 = x & 0x1FF; // size=0 (8x8)
+        let attr2 = (tile & 0x3FF) | ((priority as u16 & 3) << 10);
+        oam[base] = attr0 as u8;
+        oam[base + 1] = (attr0 >> 8) as u8;
+        oam[base + 2] = attr1 as u8;
+        oam[base + 3] = (attr1 >> 8) as u8;
+        oam[base + 4] = attr2 as u8;
+        oam[base + 5] = (attr2 >> 8) as u8;
+    }
+
+    #[test]
+    fn obj_renders_when_enabled_in_mode0() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+        let mut oam = make_oam();
+
+        // Enable mode 0 + OBJ + 1D mapping.
+        ppu.write_dispcnt(dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        // Place OBJ 0 at (100, 0), tile 1, priority 0.
+        setup_obj_in_oam(&mut oam, 0, 100, 0, 1, 0);
+
+        // Fill OBJ tile 1 in VRAM (4bpp at OBJ base 0x10000).
+        let tile_base = 0x1_0000 + 32;
+        let mut vram = vram;
+        for byte in &mut vram[tile_base..tile_base + 32] {
+            *byte = 0x11; // palette index 1 in both nibbles
+        }
+
+        // Set OBJ palette color 1 (at PRAM offset 0x200 + 1*2).
+        let mut pram = pram;
+        pram[0x202] = 0x1F; // red (BGR555: 0x001F)
+        pram[0x203] = 0x00;
+
+        // Step one full frame.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // Check pixel at (100, 0) — should be red.
+        let dst = 100 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0xFF, 0, 0],
+            "OBJ should render red pixel at x=100"
+        );
+    }
+
+    #[test]
+    fn obj_disabled_does_not_render() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        // Enable mode 0 with 1D mapping but NO OBJ_ENABLE.
+        ppu.write_dispcnt(dispcnt::OBJ_MAPPING_1D);
+
+        setup_obj_in_oam(&mut oam, 0, 100, 0, 1, 0);
+        let tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[tile_base..tile_base + 32] {
+            *byte = 0x11;
+        }
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // Pixel at (100, 0) should be backdrop (black = 0,0,0).
+        let dst = 100 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0, 0, 0],
+            "OBJ should not render when OBJ_ENABLE is off"
+        );
+    }
+
+    #[test]
+    fn obj_priority_compositing_with_bg() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        // Mode 0, enable BG0 + OBJ + 1D mapping.
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        // BG0: charblock 0, screenblock 8, priority 1.
+        // BGCNT: priority=1, charblock=0, screenblock=8
+        let bgcnt = 1 | (8 << 8); // prio=1, screenblock=8
+        ppu.write_bg_cnt(0, bgcnt);
+
+        // Fill BG0 tile 1 (charblock 0) with palette index 2 (green).
+        let tile_base = 32; // tile 1
+        for byte in &mut vram[tile_base..tile_base + 32] {
+            *byte = 0x22;
+        }
+        // Screenblock 8 (offset 0x4000): set first tile map entry to tile 1.
+        let sb_base = 8 * 0x800;
+        vram[sb_base] = 1; // tile_id = 1
+        vram[sb_base + 1] = 0; // no flip, palette bank 0
+
+        // Set BG palette color 2 at PRAM offset 2*2=4.
+        pram[4] = 0xE0; // green (BGR555: 0x03E0)
+        pram[5] = 0x03;
+
+        // OBJ at (0, 0), tile 1, priority 0 (higher than BG0's priority 1).
+        setup_obj_in_oam(&mut oam, 0, 0, 0, 1, 0);
+        let obj_tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11; // palette index 1
+        }
+        pram[0x202] = 0x1F; // red (BGR555: 0x001F)
+        pram[0x203] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // OBJ prio 0 should be on top of BG0 prio 1 → red pixel.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0xFF, 0, 0],
+            "OBJ priority 0 should draw on top of BG priority 1"
+        );
+
+        // Now test OBJ with lower priority than BG.
+        let mut ppu2 = Ppu::new();
+        ppu2.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+        // BG0 at priority 0, same charblock/screenblock.
+        let bgcnt2 = 8 << 8; // prio=0, screenblock=8
+        ppu2.write_bg_cnt(0, bgcnt2);
+
+        // OBJ at priority 2 (lower than BG0 priority 0).
+        setup_obj_in_oam(&mut oam, 0, 0, 0, 1, 2);
+
+        ppu2.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // BG0 prio 0 should be on top of OBJ prio 2 → green pixel.
+        assert_eq!(
+            &ppu2.framebuffer()[0..3],
+            &[0, 0xFF, 0],
+            "BG priority 0 should be on top of OBJ priority 2"
         );
     }
 }
