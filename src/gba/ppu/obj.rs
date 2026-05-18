@@ -20,6 +20,9 @@ const SCREEN_WIDTH: usize = 240;
 /// Number of OBJ entries in OAM.
 const OBJ_COUNT: usize = 128;
 
+/// VRAM base offset for OBJ tiles (charblock 4 = 0x10000).
+const OBJ_VRAM_BASE: usize = 0x1_0000;
+
 /// A single pixel in the OBJ scanline buffer.
 #[derive(Clone, Copy, Default)]
 pub struct ObjPixel {
@@ -87,7 +90,6 @@ fn fetch_obj_pixel(
     is_8bpp: bool,
     obj_mapping_1d: bool,
     vram: &[u8],
-    obj_vram_base: usize,
 ) -> usize {
     let tile_col = pixel_col / 8;
     let tile_row = pixel_row / 8;
@@ -104,10 +106,10 @@ fn fetch_obj_pixel(
     };
 
     if is_8bpp {
-        let addr = obj_vram_base + tile_offset * 32 + pixel_y * 8 + pixel_x;
+        let addr = OBJ_VRAM_BASE + tile_offset * 32 + pixel_y * 8 + pixel_x;
         vram.get(addr).copied().unwrap_or(0) as usize
     } else {
-        let addr = obj_vram_base + tile_offset * 32 + pixel_y * 4 + pixel_x / 2;
+        let addr = OBJ_VRAM_BASE + tile_offset * 32 + pixel_y * 4 + pixel_x / 2;
         let byte = vram.get(addr).copied().unwrap_or(0);
         if pixel_x & 1 == 0 {
             (byte & 0x0F) as usize
@@ -135,7 +137,7 @@ fn read_affine_params(oam: &[u8], group: usize) -> (i16, i16, i16, i16) {
 ///
 /// - `y`: current scanline (0..160)
 /// - `oam`: 1KB OAM data
-/// - `vram`: 96KB VRAM (OBJ tiles at offset `obj_vram_base`)
+/// - `vram`: 96KB VRAM (OBJ tiles at `OBJ_VRAM_BASE` = 0x10000)
 /// - `pram`: 1KB palette RAM (OBJ palette at offset 0x200)
 /// - `obj_mapping_1d`: true if DISPCNT bit 6 is set (1D tile mapping)
 /// - `bitmap_mode`: true for modes 3-5 (OBJ tile IDs 0-511 are not displayed)
@@ -149,7 +151,6 @@ pub fn render_obj_scanline(
     mosaic: u16,
 ) -> ObjScanline {
     let mut result = ObjScanline::default();
-    let obj_vram_base = 0x1_0000;
     let obj_mosaic_h = super::mosaic_size(mosaic, 8);
     let obj_mosaic_v = super::mosaic_size(mosaic, 12);
 
@@ -289,7 +290,6 @@ pub fn render_obj_scanline(
                     is_8bpp,
                     obj_mapping_1d,
                     vram,
-                    obj_vram_base,
                 );
 
                 if palette_index == 0 {
@@ -367,7 +367,6 @@ pub fn render_obj_scanline(
                     is_8bpp,
                     obj_mapping_1d,
                     vram,
-                    obj_vram_base,
                 );
 
                 if palette_index == 0 {
@@ -1108,7 +1107,7 @@ mod tests {
         // col 3 is odd → high nibble
         vram[addr] = 0x50; // low nibble=0, high nibble=5
 
-        let idx = fetch_obj_pixel(0, 8, 3, 2, false, true, &vram, OBJ_VRAM_BASE);
+        let idx = fetch_obj_pixel(0, 8, 3, 2, false, true, &vram);
         assert_eq!(idx, 5);
     }
 
@@ -1119,7 +1118,7 @@ mod tests {
         let addr = OBJ_VRAM_BASE + 3 * 8 + 5;
         vram[addr] = 42;
 
-        let idx = fetch_obj_pixel(0, 8, 5, 3, true, true, &vram, OBJ_VRAM_BASE);
+        let idx = fetch_obj_pixel(0, 8, 5, 3, true, true, &vram);
         assert_eq!(idx, 42);
     }
 }
