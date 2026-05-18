@@ -1153,8 +1153,10 @@ impl Ppu {
     }
 
     /// Check if pixel (x, y) is inside window `n` (0 or 1).
-    /// Handles wrap-around: if X1 > X2, the window spans the full width.
-    /// Similarly if Y1 > Y2, the window spans the full height.
+    ///
+    /// Per GBATek 'LCD I/O Window Feature':
+    /// - If X2 > 240 or X1 > X2: treat as X2=240 (window extends to right screen edge).
+    /// - If Y2 > 160 or Y1 > Y2: treat as Y2=160 (window extends to bottom screen edge).
     fn pixel_in_window(&self, n: usize, x: u32, y: u32) -> bool {
         let h = self.win_h[n];
         let v = self.win_v[n];
@@ -1163,16 +1165,10 @@ impl Ppu {
         let y1 = (v >> 8) as u32;
         let y2 = (v & 0xFF) as u32;
 
-        let in_x = if x1 <= x2 {
-            x >= x1 && x < x2
-        } else {
-            x >= x1 || x < x2
-        };
-        let in_y = if y1 <= y2 {
-            y >= y1 && y < y2
-        } else {
-            y >= y1 || y < y2
-        };
+        let effective_x2 = if x2 > 240 || x1 > x2 { 240 } else { x2 };
+        let effective_y2 = if y2 > 160 || y1 > y2 { 160 } else { y2 };
+        let in_x = x >= x1 && x < effective_x2;
+        let in_y = y >= y1 && y < effective_y2;
         in_x && in_y
     }
 
@@ -3041,15 +3037,51 @@ mod tests {
     }
 
     #[test]
-    fn pixel_in_window_wrap_around_x() {
+    fn pixel_in_window_clamp_x1_gt_x2() {
         let mut ppu = Ppu::new();
-        // X1=200, X2=50 → wraps: pixels 200..240 and 0..50 are inside.
+        // X1=200, X2=50 → X1 > X2, per spec clamp X2 to 240.
+        // Window covers 200..240 only (no wrap).
         ppu.write_win_h(0, (200 << 8) | 50);
         ppu.write_win_v(0, 160); // full height (Y1=0, Y2=160)
 
-        assert!(ppu.pixel_in_window(0, 210, 80));
-        assert!(ppu.pixel_in_window(0, 30, 80));
-        assert!(!ppu.pixel_in_window(0, 100, 80));
+        assert!(ppu.pixel_in_window(0, 210, 80)); // 200 <= 210 < 240
+        assert!(!ppu.pixel_in_window(0, 30, 80)); // 30 < 200, clamped (no wrap)
+        assert!(!ppu.pixel_in_window(0, 100, 80)); // 100 < 200
+    }
+
+    #[test]
+    fn pixel_in_window_clamp_x2_out_of_range() {
+        let mut ppu = Ppu::new();
+        // X1=10, X2=250 → X2 > 240, per spec clamp X2 to 240.
+        ppu.write_win_h(0, (10 << 8) | 250);
+        ppu.write_win_v(0, 160); // full height
+        assert!(ppu.pixel_in_window(0, 10, 80)); // left edge
+        assert!(ppu.pixel_in_window(0, 239, 80)); // last pixel before clamped X2=240
+        assert!(!ppu.pixel_in_window(0, 5, 80)); // left of window
+    }
+
+    #[test]
+    fn pixel_in_window_clamp_y1_gt_y2() {
+        let mut ppu = Ppu::new();
+        // Y1=120, Y2=50 → Y1 > Y2, per spec clamp Y2 to 160.
+        // Window covers Y 120..160 only (no wrap).
+        ppu.write_win_h(0, 240); // full width (X1=0, X2=240)
+        ppu.write_win_v(0, (120 << 8) | 50);
+
+        assert!(ppu.pixel_in_window(0, 100, 130)); // 120 <= 130 < 160
+        assert!(!ppu.pixel_in_window(0, 100, 30)); // 30 < 120, clamped (no wrap)
+        assert!(!ppu.pixel_in_window(0, 100, 60)); // 60 < 120
+    }
+
+    #[test]
+    fn pixel_in_window_clamp_y2_out_of_range() {
+        let mut ppu = Ppu::new();
+        // Y1=10, Y2=200 → Y2 > 160, per spec clamp Y2 to 160.
+        ppu.write_win_h(0, 240); // full width
+        ppu.write_win_v(0, (10 << 8) | 200);
+        assert!(ppu.pixel_in_window(0, 100, 10)); // top edge
+        assert!(ppu.pixel_in_window(0, 100, 159)); // last pixel before clamped Y2=160
+        assert!(!ppu.pixel_in_window(0, 100, 5)); // above window
     }
 
     #[test]
