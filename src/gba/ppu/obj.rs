@@ -433,7 +433,7 @@ mod tests {
     /// Helper: create an OAM with all 128 OBJs set to mode=2 (hidden/disabled).
     fn make_hidden_oam() -> Vec<u8> {
         let mut oam = vec![0u8; 1024];
-        for i in 0..128usize {
+        for i in 0..OBJ_COUNT {
             // attr0 high byte bits 0-1 = 0b10 = mode 2 (object disabled).
             oam[i * 8 + 1] = 0x02;
         }
