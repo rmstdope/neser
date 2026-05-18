@@ -1050,7 +1050,7 @@ impl Ppu {
         for (i, &bg_idx) in bg_indices.iter().enumerate() {
             if bg_enables[i] {
                 let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
-                    self.render_affine_bg_layer(bg_idx, affine_indices[i], vram, pram, &mut buf);
+                self.render_affine_bg_layer(bg_idx, affine_indices[i], vram, pram, &mut buf);
                 let prio = (self.bg_cnt[bg_idx] & 3) as u8;
                 layers.push((bg_idx, prio, buf));
             }
@@ -2904,13 +2904,7 @@ mod tests {
         vram[tile_base + 8] = 3;
         vram[tile_base + 9] = 4;
 
-        ppu.step(
-            CYCLES_PER_SCANLINE * 2,
-            &mut ic,
-            &vram,
-            &pram,
-            &make_oam(),
-        );
+        ppu.step(CYCLES_PER_SCANLINE * 2, &mut ic, &vram, &pram, &make_oam());
 
         let row1 = SCREEN_WIDTH as usize * BYTES_PER_PIXEL;
         assert_eq!(&ppu.framebuffer()[row1..row1 + 3], &[0xFF, 0, 0]);
