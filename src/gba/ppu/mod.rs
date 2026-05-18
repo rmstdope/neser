@@ -319,6 +319,25 @@ impl Default for Ppu {
     }
 }
 
+// ---- Compositing priority sort-key constants --------------------------------
+
+/// Spacing between priority levels in the compositing sort-key.
+///
+/// OBJ at hardware priority `p` gets sort_key `p * SORT_KEY_PRIORITY_SPACING`.
+/// BG bg_idx at priority `p` gets sort_key `p * SORT_KEY_PRIORITY_SPACING +
+/// SORT_KEY_BG_OFFSET + bg_idx`.
+///
+/// This ensures OBJ always beats all BGs at the same hardware priority level
+/// (since SORT_KEY_BG_OFFSET > 0), lower BG index beats higher BG index at
+/// equal priority, and lower priority number means higher draw order.
+const SORT_KEY_PRIORITY_SPACING: u16 = 10;
+
+/// Base offset added to BG sort-keys so that BG always loses to OBJ at the
+/// same hardware priority level.
+const SORT_KEY_BG_OFFSET: u16 = 5;
+
+// --------------------------------------------------------------------------
+
 impl Ppu {
     /// Create a new PPU with all registers zero, scanline 0, and a
     /// blank black framebuffer. The V-Counter match flag is set
@@ -1160,7 +1179,7 @@ impl Ppu {
             // Insert OBJ candidate.
             if obj_opaque && (layer_mask & (1 << 4) != 0) {
                 let px = obj_px.unwrap();
-                let sk = (px.priority as u16) * 10;
+                let sk = (px.priority as u16) * SORT_KEY_PRIORITY_SPACING;
                 // OBJ sort_key is always < 0xFFFF, so it always beats backdrop.
                 sec_sort = top_sort;
                 sec_layer = top_layer;
@@ -1179,7 +1198,9 @@ impl Ppu {
                 if buf[x] == TRANSPARENT {
                     continue;
                 }
-                let sk = (bg_prio as u16) * 10 + 5 + (bg_idx as u16);
+                let sk = (bg_prio as u16) * SORT_KEY_PRIORITY_SPACING
+                    + SORT_KEY_BG_OFFSET
+                    + (bg_idx as u16);
                 if sk < top_sort {
                     sec_sort = top_sort;
                     sec_layer = top_layer;
