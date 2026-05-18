@@ -150,8 +150,8 @@ pub fn render_obj_scanline(
 ) -> ObjScanline {
     let mut result = ObjScanline::default();
     let obj_vram_base = if bitmap_mode { 0x1_4000 } else { 0x1_0000 };
-    let obj_mosaic_h = (((mosaic >> 8) & 0x000F) + 1) as u32;
-    let obj_mosaic_v = (((mosaic >> 12) & 0x000F) + 1) as u32;
+    let obj_mosaic_h = super::mosaic_size(mosaic, 8);
+    let obj_mosaic_v = super::mosaic_size(mosaic, 12);
 
     // Process OBJs in order 0..127. Lower number = higher priority at same
     // priority level, so first writer wins for each pixel.

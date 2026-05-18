@@ -35,8 +35,8 @@
 //!
 //! Out of scope (deferred to follow-up sub-issues):
 //!
-//! * Additional display timing and hardware edge cases beyond the
-//!   currently implemented render paths.
+//! * Cycle-exact display edge cases such as mid-scanline register changes,
+//!   prohibited-mode quirks, and other hardware timing details.
 //!
 //! References:
 //! * GBATek "LCD I/O Display Control": <https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol>
@@ -349,6 +349,11 @@ const SORT_KEY_PRIORITY_SPACING: u16 = 10;
 const SORT_KEY_BG_OFFSET: u16 = 5;
 
 // --------------------------------------------------------------------------
+
+#[inline]
+fn mosaic_size(mosaic: u16, shift: u32) -> u32 {
+    (((mosaic >> shift) & 0x000F) + 1) as u32
+}
 
 impl Ppu {
     /// Create a new PPU with all registers zero, scanline 0, and a
@@ -977,6 +982,9 @@ impl Ppu {
         } else {
             0
         };
+        // `internal_x/y` point at the current scanline. For vertical mosaic,
+        // sample from the block's top scanline instead, so rewind by the
+        // affine per-line deltas PB/PD for the current offset within the block.
         let line_anchor_x = aff
             .internal_x
             .wrapping_sub(pb.wrapping_mul(mosaic_y_offset as i32));
@@ -1100,9 +1108,21 @@ impl Ppu {
 
         if self.bg2_enabled() {
             let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
-            let line_byte_offset = (y as usize) * (SCREEN_WIDTH as usize) * 2;
+            let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
+            let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
+            let sample_y = if mosaic_enabled {
+                (y as usize) - ((y as usize) % mosaic_v)
+            } else {
+                y as usize
+            };
+            let line_byte_offset = sample_y * (SCREEN_WIDTH as usize) * 2;
             for x in 0..(SCREEN_WIDTH as usize) {
-                let src = line_byte_offset + x * 2;
+                let sample_x = if mosaic_enabled {
+                    x - (x % mosaic_h)
+                } else {
+                    x
+                };
+                let src = line_byte_offset + sample_x * 2;
                 // Mask bit 15 so valid pixels never collide with TRANSPARENT sentinel
                 buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
             }
@@ -1131,10 +1151,22 @@ impl Ppu {
                 0x0000usize
             };
 
-            let line_byte_offset = frame_base + (y as usize) * (SCREEN_WIDTH as usize);
+            let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
+            let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
+            let sample_y = if mosaic_enabled {
+                (y as usize) - ((y as usize) % mosaic_v)
+            } else {
+                y as usize
+            };
+            let line_byte_offset = frame_base + sample_y * (SCREEN_WIDTH as usize);
 
             for x in 0..(SCREEN_WIDTH as usize) {
-                let src = line_byte_offset + x;
+                let sample_x = if mosaic_enabled {
+                    x - (x % mosaic_h)
+                } else {
+                    x
+                };
+                let src = line_byte_offset + sample_x;
                 let pal_index = if src < vram.len() { vram[src] } else { 0 };
 
                 // Per GBATek, palette index 0 in Mode 4 is transparent.
@@ -1180,16 +1212,34 @@ impl Ppu {
             };
             let aff = self.bg_affine[0];
             let pa = aff.pa as i32;
+            let pb = aff.pb as i32;
             let pc = aff.pc as i32;
-            let mut tex_x = aff.internal_x;
-            let mut tex_y = aff.internal_y;
+            let pd = aff.pd as i32;
+            let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
+            let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
+            let mosaic_y_offset = if mosaic_enabled {
+                (y as usize) % mosaic_v
+            } else {
+                0
+            };
+            // `internal_x/y` point at the current scanline. For vertical mosaic,
+            // sample from the block's top scanline instead, so rewind by the
+            // affine per-line deltas PB/PD for the current offset within the block.
+            let line_anchor_x = aff
+                .internal_x
+                .wrapping_sub(pb.wrapping_mul(mosaic_y_offset as i32));
+            let line_anchor_y = aff
+                .internal_y
+                .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
 
             for x in 0..(SCREEN_WIDTH as usize) {
-                let sample_x = tex_x;
-                let sample_y = tex_y;
-
-                tex_x = tex_x.wrapping_add(pa);
-                tex_y = tex_y.wrapping_add(pc);
+                let sample_screen_x = if mosaic_enabled {
+                    x - (x % mosaic_h)
+                } else {
+                    x
+                };
+                let sample_x = line_anchor_x.wrapping_add(pa.wrapping_mul(sample_screen_x as i32));
+                let sample_y = line_anchor_y.wrapping_add(pc.wrapping_mul(sample_screen_x as i32));
 
                 if sample_x < 0 || sample_y < 0 {
                     continue;
@@ -1478,8 +1528,8 @@ impl Ppu {
 
     fn bg_mosaic_size(&self) -> (usize, usize) {
         (
-            ((self.mosaic & 0x000F) + 1) as usize,
-            (((self.mosaic >> 4) & 0x000F) + 1) as usize,
+            mosaic_size(self.mosaic, 0) as usize,
+            mosaic_size(self.mosaic, 4) as usize,
         )
     }
 }
@@ -1825,6 +1875,33 @@ mod tests {
         // And the last pixel of scanline 0 too.
         let last = ((SCREEN_WIDTH as usize) - 1) * BYTES_PER_PIXEL;
         assert_eq!(&fb[last..last + 3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode3_bg_mosaic_repeats_upper_left_anchor_pixel() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_bg_cnt(2, 1 << 6);
+        ppu.write_mosaic(0x0011);
+
+        vram[0..2].copy_from_slice(&0x001Fu16.to_le_bytes());
+        vram[2..4].copy_from_slice(&0x03E0u16.to_le_bytes());
+        let row1 = SCREEN_WIDTH as usize * 2;
+        vram[row1..row1 + 2].copy_from_slice(&0x7C00u16.to_le_bytes());
+        vram[row1 + 2..row1 + 4].copy_from_slice(&0x7FFFu16.to_le_bytes());
+
+        ppu.step(CYCLES_PER_SCANLINE * 2, &mut ic, &vram, &pram, &make_oam());
+
+        let fb_row1 = SCREEN_WIDTH as usize * BYTES_PER_PIXEL;
+        assert_eq!(&ppu.framebuffer()[fb_row1..fb_row1 + 3], &[0xFF, 0, 0]);
+        assert_eq!(
+            &ppu.framebuffer()[fb_row1 + BYTES_PER_PIXEL..fb_row1 + BYTES_PER_PIXEL + 3],
+            &[0xFF, 0, 0]
+        );
     }
 
     #[test]
