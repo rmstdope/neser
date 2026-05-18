@@ -1013,6 +1013,10 @@ impl Apu {
 
     /// Write a 16-bit APU register by absolute GBA I/O address.
     pub fn write16(&mut self, addr: u32, val: u16) {
+        if !self.powered && (0x0400_0060..=0x0400_0081).contains(&addr) {
+            return;
+        }
+
         match addr {
             0x0400_0060 => self.ch1.write_cnt_l(val),
             0x0400_0062 => self.ch1.write_cnt_h(val),
@@ -1060,6 +1064,10 @@ impl Apu {
     /// for every register that contains write-only fields, avoiding spurious
     /// reads through `read16`.
     pub fn write8(&mut self, addr: u32, val: u8) {
+        if !self.powered && (0x0400_0060..=0x0400_0081).contains(&addr) {
+            return;
+        }
+
         match addr {
             // SOUND1CNT_L: both bytes are fully read/write — RMW is safe.
             0x0400_0060 | 0x0400_0061 => {
@@ -2019,6 +2027,64 @@ mod tests {
         assert!(!apu.ch1.active);
     }
 
+    #[test]
+    fn test_psg_write16_ignored_when_powered_off() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0060, 0x0077);
+        apu.write16(0x0400_0080, 0xABCD);
+        assert_ne!(apu.read16(0x0400_0060), 0);
+        assert_ne!(apu.read16(0x0400_0080), 0);
+
+        apu.write16(0x0400_0084, 0x0000); // power off clears PSG regs
+        assert_eq!(apu.read16(0x0400_0060), 0);
+        assert_eq!(apu.read16(0x0400_0080), 0);
+
+        apu.write16(0x0400_0060, 0x0066);
+        apu.write16(0x0400_0080, 0x1234);
+        assert_eq!(apu.read16(0x0400_0060), 0);
+        assert_eq!(apu.read16(0x0400_0080), 0);
+    }
+
+    #[test]
+    fn test_psg_write8_ignored_when_powered_off() {
+        let mut apu = powered_apu();
+        apu.write8(0x0400_0060, 0x55);
+        apu.write8(0x0400_0080, 0x34);
+        apu.write8(0x0400_0081, 0x12);
+        assert_ne!(apu.read16(0x0400_0060), 0);
+        assert_ne!(apu.read16(0x0400_0080), 0);
+
+        apu.write16(0x0400_0084, 0x0000); // power off clears PSG regs
+        assert_eq!(apu.read16(0x0400_0060), 0);
+        assert_eq!(apu.read16(0x0400_0080), 0);
+
+        apu.write8(0x0400_0060, 0x66);
+        apu.write8(0x0400_0080, 0x78);
+        apu.write8(0x0400_0081, 0x56);
+        assert_eq!(apu.read16(0x0400_0060), 0);
+        assert_eq!(apu.read16(0x0400_0080), 0);
+    }
+
+    #[test]
+    fn test_soundcnt_h_and_soundbias_stay_writable_when_powered_off() {
+        let mut apu = Apu::new();
+        assert!(!apu.powered);
+
+        apu.write16(0x0400_0082, 0x030F);
+        apu.write16(0x0400_0088, 0xC3FE);
+
+        assert_eq!(apu.read16(0x0400_0082), 0x030F);
+        assert_eq!(apu.read16(0x0400_0088), 0xC3FE);
+
+        apu.write8(0x0400_0082, 0xAA);
+        apu.write8(0x0400_0083, 0x55);
+        apu.write8(0x0400_0088, 0x34);
+        apu.write8(0x0400_0089, 0x12);
+
+        assert_eq!(apu.read16(0x0400_0082), 0x55AA);
+        assert_eq!(apu.read16(0x0400_0088), 0x0234);
+    }
+
     // ── Register round-trip tests ────────────────────────────────────────────
 
     #[test]
@@ -2032,7 +2098,7 @@ mod tests {
 
     #[test]
     fn test_soundcnt_l_round_trips() {
-        let mut apu = Apu::new();
+        let mut apu = powered_apu();
         apu.write16(0x0400_0080, 0xABCD);
         assert_eq!(apu.read16(0x0400_0080), 0xABCD);
     }
@@ -2120,7 +2186,7 @@ mod tests {
 
     #[test]
     fn test_write8_soundcnt_l_preserves_other_byte() {
-        let mut apu = Apu::new();
+        let mut apu = powered_apu();
         apu.write16(0x0400_0080, 0x1234);
         // Overwrite only the low byte.
         apu.write8(0x0400_0080, 0x56);
@@ -2298,7 +2364,7 @@ mod tests {
 
     #[test]
     fn test_ch3_wave_ram_writes_to_other_bank() {
-        let mut apu = Apu::new();
+        let mut apu = powered_apu();
         // bank_select=0 (default): other bank = 1
         apu.write8(0x0400_0090, 0xAB);
         assert_eq!(
