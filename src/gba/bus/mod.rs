@@ -436,8 +436,8 @@ impl GbaBus {
         let fifo_a_timer = ((soundcnt_h >> 10) & 1) as usize;
         let fifo_b_timer = ((soundcnt_h >> 14) & 1) as usize;
 
-        for timer in 0..=1 {
-            for _ in 0..overflows[timer] {
+        for (timer, overflow_count) in overflows.iter().copied().enumerate().take(2) {
+            for _ in 0..overflow_count {
                 if fifo_a_timer == timer {
                     self.apu.fifo_a.advance();
                     if self.apu.fifo_a.len() <= 16 {
