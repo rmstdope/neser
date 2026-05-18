@@ -402,6 +402,7 @@ impl GbaBus {
             &mut self.ic,
             self.vram.as_slice(),
             self.pram.as_slice(),
+            self.oam.as_slice(),
         );
         self.handle_ppu_events(events);
         self.run_pending_dma();
@@ -421,6 +422,7 @@ impl GbaBus {
                 &mut self.ic,
                 self.vram.as_slice(),
                 self.pram.as_slice(),
+                self.oam.as_slice(),
             );
             self.handle_ppu_events(events);
             self.run_pending_dma();
