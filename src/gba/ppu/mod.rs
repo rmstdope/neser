@@ -15,8 +15,8 @@
 //!   the I/O unit.
 //! * V-Blank / H-Blank flag transitions, V-Counter match flag, and the
 //!   three associated IRQ sources (`VBLANK`, `HBLANK`, `VCOUNT`).
-//! * Mode 0 tile background rendering (BG0–BG3 with 4bpp text backgrounds,
-//!   priority compositing across all enabled layers).
+//! * Mode 0 tile background rendering (BG0–BG3 with 4bpp/8bpp text
+//!   backgrounds, priority compositing across all enabled layers).
 //! * Mode 1 mixed background rendering (BG0/BG1 regular text plus BG2 affine).
 //! * Mode 2 stub — renders backdrop only (affine tile rendering deferred).
 //! * Mode 3 background rendering (240×160 15-bit BGR555 direct bitmap
@@ -435,42 +435,38 @@ impl Ppu {
         true
     }
 
-    /// Write BG0HOFS (0x0400_0010). Only the low 9 bits are significant.
-    pub fn write_bg0_hofs(&mut self, value: u16) {
-        self.bg_scroll[0].0 = value & 0x01FF;
-    }
-
-    /// Read BG0HOFS (0x0400_0010).
-    pub fn read_bg0_hofs(&self) -> u16 {
-        self.bg_scroll[0].0
-    }
-
-    /// Write BG0VOFS (0x0400_0012). Only the low 9 bits are significant.
-    pub fn write_bg0_vofs(&mut self, value: u16) {
-        self.bg_scroll[0].1 = value & 0x01FF;
-    }
-
-    /// Read BG0VOFS (0x0400_0012).
-    pub fn read_bg0_vofs(&self) -> u16 {
-        self.bg_scroll[0].1
-    }
-
     /// Write `BGnHOFS` for background layer `n` (0–3).
+    ///
+    /// BG scroll registers are write-only per GBATek. Only the low 9 bits
+    /// are significant; the remaining bits are discarded.
     pub fn write_bg_hofs(&mut self, n: usize, value: u16) {
         self.bg_scroll[n].0 = value & 0x01FF;
     }
 
-    /// Read `BGnHOFS` for background layer `n` (0–3).
+    /// Return the internal HOFS scroll value for layer `n`.
+    ///
+    /// **Not for CPU reads.** BG scroll registers are write-only on hardware;
+    /// CPU reads must return open-bus (handled by the I/O layer returning
+    /// `None` from `try_read16`). This accessor exists solely for byte-write
+    /// merging in `IoRegisters::write8`.
     pub fn read_bg_hofs(&self, n: usize) -> u16 {
         self.bg_scroll[n].0
     }
 
     /// Write `BGnVOFS` for background layer `n` (0–3).
+    ///
+    /// BG scroll registers are write-only per GBATek. Only the low 9 bits
+    /// are significant; the remaining bits are discarded.
     pub fn write_bg_vofs(&mut self, n: usize, value: u16) {
         self.bg_scroll[n].1 = value & 0x01FF;
     }
 
-    /// Read `BGnVOFS` for background layer `n` (0–3).
+    /// Return the internal VOFS scroll value for layer `n`.
+    ///
+    /// **Not for CPU reads.** BG scroll registers are write-only on hardware;
+    /// CPU reads must return open-bus (handled by the I/O layer returning
+    /// `None` from `try_read16`). This accessor exists solely for byte-write
+    /// merging in `IoRegisters::write8`.
     pub fn read_bg_vofs(&self, n: usize) -> u16 {
         self.bg_scroll[n].1
     }
@@ -689,7 +685,7 @@ impl Ppu {
         self.composite_scanline(y, pram, vram, oam, &layers);
     }
 
-    /// Render a single 4bpp text-mode BG layer into a color buffer.
+    /// Render a single text-mode BG layer into a color buffer.
     /// Transparent pixels are marked with [`TRANSPARENT`]. The buffer
     /// is filled for the full 240 pixels of the scanline.
     #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
@@ -702,11 +698,7 @@ impl Ppu {
         buf: &mut [u16; SCREEN_WIDTH as usize],
     ) {
         let bgcnt = self.bg_cnt[bg_idx];
-
-        assert!(
-            bgcnt & (1 << 7) == 0,
-            "unimplemented GBA Mode 0 BG{bg_idx} 8bpp rendering requested via BGCNT bit 7"
-        );
+        let is_8bpp = bgcnt & (1 << 7) != 0;
 
         let bg_size = (bgcnt >> 14) & 0x0003;
         let (width_tiles, height_tiles) = match bg_size {
@@ -743,7 +735,6 @@ impl Ppu {
             let tile_id = (entry & 0x03FF) as usize;
             let hflip = (entry & (1 << 10)) != 0;
             let vflip = (entry & (1 << 11)) != 0;
-            let palette_bank = ((entry >> 12) & 0x000F) as usize;
             let pixel_x = if hflip {
                 7 - (screen_x & 7)
             } else {
@@ -754,25 +745,33 @@ impl Ppu {
             } else {
                 screen_y & 7
             };
-            let tile_addr = charblock_base + tile_id * 32 + pixel_y * 4 + (pixel_x >> 1);
-
-            let palette_index = vram
-                .get(tile_addr)
-                .map(|byte| {
-                    if pixel_x & 1 == 0 {
-                        byte & 0x0F
-                    } else {
-                        byte >> 4
-                    }
-                })
-                .unwrap_or(0) as usize;
+            let palette_index = if is_8bpp {
+                let tile_addr = charblock_base + tile_id * 64 + pixel_y * 8 + pixel_x;
+                vram.get(tile_addr).copied().unwrap_or(0) as usize
+            } else {
+                let tile_addr = charblock_base + tile_id * 32 + pixel_y * 4 + (pixel_x >> 1);
+                vram.get(tile_addr)
+                    .map(|byte| {
+                        if pixel_x & 1 == 0 {
+                            byte & 0x0F
+                        } else {
+                            byte >> 4
+                        }
+                    })
+                    .unwrap_or(0) as usize
+            };
 
             if palette_index == 0 {
                 buf[x] = TRANSPARENT;
                 continue;
             }
 
-            let pram_index = (palette_bank * 16 + palette_index) * 2;
+            let pram_index = if is_8bpp {
+                palette_index * 2
+            } else {
+                let palette_bank = ((entry >> 12) & 0x000F) as usize;
+                (palette_bank * 16 + palette_index) * 2
+            };
             buf[x] = if pram_index + 1 < pram.len() {
                 u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]]) & 0x7FFF
             } else {
@@ -1711,16 +1710,26 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unimplemented GBA Mode 0 BG0 8bpp rendering")]
-    fn mode0_bg0_8bpp_panics_until_implemented() {
+    fn mode0_bg0_8bpp_renders_direct_palette_index_and_ignores_palette_bank() {
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
-        let vram = make_vram();
-        let pram = make_pram();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
 
         // Mode 0 + BG0 enabled, and BG0CNT bit 7 (8bpp) set.
         ppu.write_dispcnt(dispcnt::BG0_ENABLE);
         ppu.write_bg0cnt(1 << 7);
+
+        // BG palette entry 33 = pure red.
+        pram[33 * 2] = 0x1F;
+        pram[33 * 2 + 1] = 0x00;
+
+        // Charblock 0, 8bpp tile 1, row 0, pixel 0 uses direct palette index 33.
+        vram[64] = 33;
+
+        // Map entry: tile 1 and palette bank 15. Palette bank bits are unused in 8bpp.
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0xF0;
 
         ppu.step(
             CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
@@ -1729,6 +1738,97 @@ mod tests {
             &pram,
             &make_oam(),
         );
+
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode0_bg0_8bpp_palette_index_zero_is_transparent() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+        ppu.write_bg0cnt(1 << 7);
+
+        // Backdrop/palette entry 0 = pure blue. A transparent BG pixel should reveal it.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+
+        // Map entry tile 1; tile data remains 0 at pixel (0,0).
+        vram[0x0000] = 0x01;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn mode0_bg0_8bpp_hflip_and_vflip_mirror_tile_pixels() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+        ppu.write_bg0cnt(1 << 7);
+
+        // BG palette entry 5 = pure red.
+        pram[5 * 2] = 0x1F;
+        pram[5 * 2 + 1] = 0x00;
+
+        // 8bpp tile 1, source pixel (7,7) uses palette index 5.
+        vram[64 + 7 * 8 + 7] = 5;
+
+        // Map entry: tile 1 + horizontal and vertical flip.
+        vram[0x0000] = 0x01;
+        vram[0x0001] = 0x0C;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode1_bg1_8bpp_renders_text_layer() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(1 | dispcnt::BG1_ENABLE);
+        ppu.write_bg_cnt(1, 1 << 7);
+
+        // BG palette entry 7 = pure red.
+        pram[7 * 2] = 0x1F;
+        pram[7 * 2 + 1] = 0x00;
+
+        // 8bpp tile 1, row 0, pixel 0 uses direct palette index 7.
+        vram[64] = 7;
+        vram[0x0000] = 0x01;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
     }
 
     #[test]

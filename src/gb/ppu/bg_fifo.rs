@@ -1,3 +1,17 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum DmgTileByteOverride {
+    #[default]
+    None,
+    TileIndex,
+    TileIndexAndCache {
+        lcdc: u8,
+    },
+    CachedData,
+    Data(u8),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DmgLayer {
     Background,
@@ -17,9 +31,26 @@ pub(super) struct DmgPixelFetch {
     pub map_lcdc: u8,
     pub low_lcdc: u8,
     pub high_lcdc: u8,
+    pub low_override: DmgTileByteOverride,
+    pub high_override: DmgTileByteOverride,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DmgFetchedPixel {
+    pub colour_index: u8,
+    pub low_cache_data: Option<u8>,
+    pub high_cache_data: Option<u8>,
+}
+
+#[cfg(test)]
 pub(super) fn fetch_dmg_pixel(vram: &[u8; 0x2000], fetch: DmgPixelFetch) -> Option<u8> {
+    fetch_dmg_pixel_with_data(vram, fetch).map(|pixel| pixel.colour_index)
+}
+
+pub(super) fn fetch_dmg_pixel_with_data(
+    vram: &[u8; 0x2000],
+    fetch: DmgPixelFetch,
+) -> Option<DmgFetchedPixel> {
     let (map_base, tile_x, tile_y, pixel_x, pixel_y) = match fetch.layer {
         DmgLayer::Background => {
             let bg_x = fetch.scx.wrapping_add(fetch.x as u8);
@@ -56,8 +87,56 @@ pub(super) fn fetch_dmg_pixel(vram: &[u8; 0x2000], fetch: DmgPixelFetch) -> Opti
     let tile_index = vram[map_base + tile_y * 32 + tile_x];
     let low_addr = tile_data_addr(tile_index, pixel_y, fetch.low_lcdc);
     let high_addr = tile_data_addr(tile_index, pixel_y, fetch.high_lcdc) + 1;
+    let low_cache_data = fetch
+        .low_override
+        .cache_lcdc()
+        .map(|lcdc| vram[tile_data_addr(tile_index, pixel_y, lcdc)]);
+    let high_cache_data = fetch
+        .high_override
+        .cache_lcdc()
+        .map(|lcdc| vram[tile_data_addr(tile_index, pixel_y, lcdc) + 1]);
+    let low_data = resolve_tile_byte_override(vram, tile_index, low_addr, fetch.low_override);
+    let high_data = resolve_tile_byte_override(vram, tile_index, high_addr, fetch.high_override);
     let bit = 7 - pixel_x;
-    Some(((vram[high_addr] >> bit) & 1) << 1 | ((vram[low_addr] >> bit) & 1))
+    Some(DmgFetchedPixel {
+        colour_index: ((high_data >> bit) & 1) << 1 | ((low_data >> bit) & 1),
+        low_cache_data,
+        high_cache_data,
+    })
+}
+
+impl DmgTileByteOverride {
+    fn cache_lcdc(self) -> Option<u8> {
+        match self {
+            DmgTileByteOverride::TileIndexAndCache { lcdc } => Some(lcdc),
+            DmgTileByteOverride::None
+            | DmgTileByteOverride::TileIndex
+            | DmgTileByteOverride::CachedData
+            | DmgTileByteOverride::Data(_) => None,
+        }
+    }
+}
+
+fn resolve_tile_byte_override(
+    vram: &[u8; 0x2000],
+    tile_index: u8,
+    addr: usize,
+    override_mode: DmgTileByteOverride,
+) -> u8 {
+    match override_mode {
+        DmgTileByteOverride::None => vram[addr],
+        DmgTileByteOverride::TileIndex | DmgTileByteOverride::TileIndexAndCache { .. } => {
+            tile_index
+        }
+        DmgTileByteOverride::CachedData => {
+            debug_assert!(
+                false,
+                "cached TILE_SEL data should be resolved before fetching"
+            );
+            vram[addr]
+        }
+        DmgTileByteOverride::Data(data) => data,
+    }
 }
 
 fn tile_map_base(lcdc: u8, bit: u8) -> usize {
@@ -109,6 +188,8 @@ mod tests {
                 map_lcdc: 0x81,
                 low_lcdc: 0x81,
                 high_lcdc: 0x91,
+                low_override: DmgTileByteOverride::None,
+                high_override: DmgTileByteOverride::None,
             },
         );
 
@@ -137,6 +218,8 @@ mod tests {
                 map_lcdc: 0xA1,
                 low_lcdc: 0xA1,
                 high_lcdc: 0xB1,
+                low_override: DmgTileByteOverride::None,
+                high_override: DmgTileByteOverride::None,
             },
         );
 
