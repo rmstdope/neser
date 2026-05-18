@@ -3736,23 +3736,20 @@ mod tests {
         );
     }
 
-    // ---- BLDY byte-write correctness ----------------------------------------
+    // ---- BLDY accessor correctness ------------------------------------------
 
     #[test]
-    fn bldy_high_byte_write_does_not_clobber_evy() {
-        // Verifies that the write8 merge path for BLDY uses the live PPU state
-        // (not the open-bus backing store) so that a high-byte write to
-        // 0x0400_0055 does not zero out the EVY coefficient.
+    fn bldy_read_bldy_returns_live_evy() {
+        // read_bldy() returns the current EVY value stored in the PPU, which
+        // is used by IoRegisters::write8 to merge byte writes to 0x0400_0055
+        // against live state rather than open-bus zero.
         let mut ppu = Ppu::new();
-        // Write EVY=15 to low byte.
-        ppu.write_bldy(15);
-        // Now simulate a high-byte write (addr & 1 == 1) by merging manually.
-        // The value in the high byte is irrelevant for EVY, but the merge must
-        // preserve the existing low byte.
-        let current = ppu.read_bldy();
-        let merged = (current & 0x00FF) | (0xAB_u16 << 8); // high byte junk
-        ppu.write_bldy(merged);
-        // EVY must still be 15 (low byte preserved, high byte discarded by mask).
-        assert_eq!(ppu.read_bldy(), 15, "EVY should survive a high-byte write");
+        ppu.write_bldy(12);
+        assert_eq!(ppu.read_bldy(), 12, "read_bldy should return the live EVY");
+        // write_bldy clamps to 5 bits; read_bldy must reflect the clamped value.
+        ppu.write_bldy(0x1F); // max
+        assert_eq!(ppu.read_bldy(), 0x1F);
+        ppu.write_bldy(0xFF); // clamped to 0x1F
+        assert_eq!(ppu.read_bldy(), 0x1F);
     }
 }
