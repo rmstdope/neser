@@ -1020,8 +1020,8 @@ impl Ppu {
                     continue;
                 }
 
-                let px = (sample_x as u32 >> 8) as usize;
-                let py = (sample_y as u32 >> 8) as usize;
+                let px = (sample_x >> 8) as usize;
+                let py = (sample_y >> 8) as usize;
                 if px >= MODE5_WIDTH || py >= MODE5_HEIGHT {
                     continue;
                 }
