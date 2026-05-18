@@ -35,9 +35,8 @@
 //!
 //! Out of scope (deferred to follow-up sub-issues):
 //!
-//! * Mode 2 full affine tile background rendering for BG2/BG3.
-//! * Affine OBJ rendering.
-//! * Window masks, alpha blending, brightness effects.
+//! * Additional display timing and hardware edge cases beyond the
+//!   currently implemented render paths.
 //!
 //! References:
 //! * GBATek "LCD I/O Display Control": <https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol>
@@ -863,8 +862,8 @@ impl Ppu {
         let charblock_base = (((bgcnt >> 2) & 0x0003) as usize) * 16 * 1024;
         let (hofs, vofs) = self.bg_scroll[bg_idx];
         let sample_y = if mosaic_enabled {
-            let y = y as usize;
-            y - (y % mosaic_v)
+            let screen_y = y as usize;
+            screen_y - (screen_y % mosaic_v)
         } else {
             y as usize
         };
