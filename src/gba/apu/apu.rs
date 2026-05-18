@@ -1,10 +1,10 @@
 //! GBA APU — dual-source audio: 4 DMG-legacy channels + 2 PCM FIFO channels.
 
-use super::channel1::Channel1;
-use super::channel2::Channel2;
-use super::channel3::Channel3;
-use super::channel4::Channel4;
-use super::fifo::FifoChannel;
+pub use super::channel1::Channel1;
+pub use super::channel2::Channel2;
+pub use super::channel3::Channel3;
+pub use super::channel4::Channel4;
+pub use super::fifo::FifoChannel;
 
 // ── Timing constants ──────────────────────────────────────────────────────────
 
