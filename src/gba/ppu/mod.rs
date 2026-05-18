@@ -1269,7 +1269,7 @@ impl Ppu {
             let mut top_sort: u16 = 0xFFFF; // start at backdrop priority
             let mut top_layer: u8 = 5; // backdrop layer index
             let mut top_color: u16 = backdrop;
-            let mut top_semi_transparent: bool = false;
+            let mut top_semi_transparent = false;
 
             let mut sec_sort: u16 = 0xFFFF; // backdrop as default second
             let mut sec_layer: u8 = 5;
