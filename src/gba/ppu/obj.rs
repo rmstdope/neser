@@ -224,12 +224,17 @@ pub fn render_obj_scanline(
 
         // Per GBATek "LCD OBJ - Overview": count cycles for every non-hidden OBJ
         // with a valid shape, even if it doesn't intersect the current scanline.
-        // Normal OBJ: bound_width cycles; affine OBJ: 10 + bound_width×2 cycles.
+        // Cycle cost formula (GBATek):
+        //   - Normal OBJ:       n×1 cycles  (n = bound_width)
+        //   - Rotation/Scaling: 10 + n×2 cycles (n = bound_width, including double-size)
         let cycle_cost = if is_affine {
             10 + bound_width * 2
         } else {
             bound_width
         };
+        // OBJs are processed in priority order (0 first, 127 last). Once the
+        // cycle budget is exhausted, all remaining OBJs are dropped — they are
+        // simply not rendered for this scanline.
         if cycles_used + cycle_cost > cycle_budget {
             break;
         }
