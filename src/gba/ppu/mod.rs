@@ -1021,11 +1021,7 @@ impl Ppu {
                 }
 
                 let src = frame_base + ((py as usize) * MODE5_WIDTH + (px as usize)) * 2;
-                // Keep the renderer robust for shortened test buffers; real GBA VRAM
-                // contains both complete 40KB Mode 5 frames.
-                if src + 1 < vram.len() {
-                    buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
-                }
+                buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
             }
             let prio = (self.bg_cnt[2] & 3) as u8;
             layers.push((2, prio, buf));
@@ -2005,9 +2001,9 @@ mod tests {
         // Backdrop = blue. Fill the valid source area with red.
         pram[0] = 0x00;
         pram[1] = 0x7C;
-        for y in 0..128usize {
-            for x in 0..160usize {
-                let off = (y * 160 + x) * 2;
+        for y in 0..MODE5_HEIGHT {
+            for x in 0..MODE5_WIDTH {
+                let off = (y * MODE5_WIDTH + x) * 2;
                 vram[off] = 0x1F;
                 vram[off + 1] = 0x00;
             }
