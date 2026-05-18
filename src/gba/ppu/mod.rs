@@ -2472,12 +2472,11 @@ mod tests {
         // VRAM[0] = palette index 0 → should be transparent in Mode 4.
         vram[0] = 0;
 
-        // Place OBJ 0 at (0,0), tile 1, priority 1 (lower priority than BG2's 0).
-        setup_obj_in_oam(&mut oam, 0, 0, 0, 1, 1);
+        // Place OBJ 0 at (0,0), tile 512 (first valid OBJ tile in bitmap modes), priority 1.
+        setup_obj_in_oam(&mut oam, 0, 0, 0, 512, 1);
 
-        // In bitmap modes (mode >= 3) OBJ VRAM starts at 0x14000.
-        // Tile 1 (4bpp, 1D): 0x14000 + 1 * 32.
-        let obj_tile_base = 0x1_4000 + 32;
+        // Tile 512 at correct base (0x10000 + 512*32 = 0x14000).
+        let obj_tile_base = 0x1_0000 + 512 * 32;
         for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
             *byte = 0x11; // palette index 1 in both nibbles
         }

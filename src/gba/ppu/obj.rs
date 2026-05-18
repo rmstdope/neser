@@ -138,7 +138,7 @@ fn read_affine_params(oam: &[u8], group: usize) -> (i16, i16, i16, i16) {
 /// - `vram`: 96KB VRAM (OBJ tiles at offset `obj_vram_base`)
 /// - `pram`: 1KB palette RAM (OBJ palette at offset 0x200)
 /// - `obj_mapping_1d`: true if DISPCNT bit 6 is set (1D tile mapping)
-/// - `bitmap_mode`: true for modes 3-5 (OBJ tiles start at 0x14000 instead of 0x10000)
+/// - `bitmap_mode`: true for modes 3-5 (OBJ tile IDs 0-511 are invisible; only 512-1023 valid)
 pub fn render_obj_scanline(
     y: u32,
     oam: &[u8],
@@ -149,7 +149,7 @@ pub fn render_obj_scanline(
     mosaic: u16,
 ) -> ObjScanline {
     let mut result = ObjScanline::default();
-    let obj_vram_base = if bitmap_mode { 0x1_4000 } else { 0x1_0000 };
+    let obj_vram_base = 0x1_0000_usize;
     let obj_mosaic_h = super::mosaic_size(mosaic, 8);
     let obj_mosaic_v = super::mosaic_size(mosaic, 12);
 
@@ -223,6 +223,12 @@ pub fn render_obj_scanline(
 
         // Tile index (attr2 bits 0-9).
         let tile_id = (attr2 & 0x03FF) as usize;
+
+        // In bitmap modes (3-5), tile IDs 0-511 map to the framebuffer area; they are invisible.
+        if bitmap_mode && tile_id < 512 {
+            continue;
+        }
+
         // Priority (attr2 bits 10-11).
         let priority = ((attr2 >> 10) & 3) as u8;
         // Palette bank (attr2 bits 12-15), used in 4bpp mode.
@@ -422,6 +428,16 @@ mod tests {
 
     fn make_pram() -> Vec<u8> {
         vec![0u8; 1024]
+    }
+
+    /// Helper: create an OAM with all 128 OBJs set to mode=2 (hidden/disabled).
+    fn make_hidden_oam() -> Vec<u8> {
+        let mut oam = vec![0u8; 1024];
+        for i in 0..128usize {
+            // attr0 high byte bits 0-1 = 0b10 = mode 2 (object disabled).
+            oam[i * 8 + 1] = 0x02;
+        }
+        oam
     }
 
     /// Helper: write an OBJ_ATTR entry into OAM.
@@ -1071,5 +1087,96 @@ mod tests {
 
         let idx = fetch_obj_pixel(0, 8, 5, 3, true, true, &vram, OBJ_VRAM_BASE);
         assert_eq!(idx, 42);
+    }
+
+    #[test]
+    fn bitmap_mode_hides_obj_with_tile_id_0() {
+        // In bitmap modes (3-5), tile IDs 0-511 overlap the framebuffer and must be invisible.
+        // Data is placed at the address the BUGGY code reads (base=0x14000 + tile_id*32),
+        // so the test FAILS with the buggy shifted base and PASSES only with the correct skip.
+        let mut oam = make_hidden_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // OBJ at (0,0), 8x8, 4bpp, tile_id=0 (should be invisible in bitmap mode).
+        write_obj(&mut oam, 0, 0u16, 0u16, 0u16);
+
+        // With buggy base=0x14000, tile_id=0 reads from 0x14000 — put data there.
+        vram[0x1_4000] = 0x11; // palette index 1 in both nibbles
+        set_obj_color(&mut pram, 1, 0x001F);
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true, 0);
+        assert!(
+            result.pixels.iter().all(|p| !p.opaque),
+            "tile_id=0 should be invisible in bitmap mode"
+        );
+    }
+
+    #[test]
+    fn bitmap_mode_hides_obj_with_tile_id_511() {
+        // Tile 511 is still within the hidden range (0-511 inclusive).
+        // Data is placed at the address the buggy code reads (0x14000 + 511*32).
+        let mut oam = make_hidden_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        write_obj(&mut oam, 0, 0u16, 0u16, 511u16); // tile_id=511
+
+        let buggy_addr = 0x1_4000 + 511 * 32;
+        vram[buggy_addr] = 0x11;
+        set_obj_color(&mut pram, 1, 0x001F);
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true, 0);
+        assert!(
+            result.pixels.iter().all(|p| !p.opaque),
+            "tile_id=511 should be invisible in bitmap mode"
+        );
+    }
+
+    #[test]
+    fn bitmap_mode_renders_obj_with_tile_id_512() {
+        // Tile 512 is the first valid OBJ tile in bitmap modes; it must be visible.
+        // Data is at the CORRECT location (base=0x10000 + 512*32 = 0x14000).
+        // The buggy code (base=0x14000 + 512*32 = 0x18000) reads out of bounds → transparent.
+        let mut oam = make_hidden_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        write_obj(&mut oam, 0, 0u16, 0u16, 512u16); // tile_id=512
+
+        // Correct location: OBJ_VRAM_BASE + 512*32 = 0x10000 + 0x4000 = 0x14000.
+        let tile_base = OBJ_VRAM_BASE + 512 * 32;
+        let nibble = 1u8 | (1u8 << 4);
+        for i in 0..32 {
+            vram[tile_base + i] = nibble;
+        }
+        set_obj_color(&mut pram, 1, 0x001F);
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true, 0);
+        assert!(
+            result.pixels[0].opaque,
+            "tile_id=512 should be visible in bitmap mode"
+        );
+        assert_eq!(result.pixels[0].color, 0x001F);
+    }
+
+    #[test]
+    fn non_bitmap_mode_renders_obj_with_tile_id_0() {
+        // In non-bitmap modes, tile_id=0 should render normally.
+        let mut oam = make_hidden_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        write_obj(&mut oam, 0, 0u16, 0u16, 0u16); // tile_id=0
+
+        fill_4bpp_tile(&mut vram, 0, 1);
+        set_obj_color(&mut pram, 1, 0x001F);
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        assert!(
+            result.pixels[0].opaque,
+            "tile_id=0 should be visible in non-bitmap mode"
+        );
+        assert_eq!(result.pixels[0].color, 0x001F);
     }
 }
