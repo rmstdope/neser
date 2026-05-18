@@ -426,42 +426,38 @@ impl Ppu {
         true
     }
 
-    /// Write BG0HOFS (0x0400_0010). Only the low 9 bits are significant.
-    pub fn write_bg0_hofs(&mut self, value: u16) {
-        self.bg_scroll[0].0 = value & 0x01FF;
-    }
-
-    /// Read BG0HOFS (0x0400_0010).
-    pub fn read_bg0_hofs(&self) -> u16 {
-        self.bg_scroll[0].0
-    }
-
-    /// Write BG0VOFS (0x0400_0012). Only the low 9 bits are significant.
-    pub fn write_bg0_vofs(&mut self, value: u16) {
-        self.bg_scroll[0].1 = value & 0x01FF;
-    }
-
-    /// Read BG0VOFS (0x0400_0012).
-    pub fn read_bg0_vofs(&self) -> u16 {
-        self.bg_scroll[0].1
-    }
-
     /// Write `BGnHOFS` for background layer `n` (0–3).
+    ///
+    /// BG scroll registers are write-only per GBATek. Only the low 9 bits
+    /// are significant; the remaining bits are discarded.
     pub fn write_bg_hofs(&mut self, n: usize, value: u16) {
         self.bg_scroll[n].0 = value & 0x01FF;
     }
 
-    /// Read `BGnHOFS` for background layer `n` (0–3).
+    /// Return the internal HOFS scroll value for layer `n`.
+    ///
+    /// **Not for CPU reads.** BG scroll registers are write-only on hardware;
+    /// CPU reads must return open-bus (handled by the I/O layer returning
+    /// `None` from `try_read16`). This accessor exists solely for byte-write
+    /// merging in `IoRegisters::write8`.
     pub fn read_bg_hofs(&self, n: usize) -> u16 {
         self.bg_scroll[n].0
     }
 
     /// Write `BGnVOFS` for background layer `n` (0–3).
+    ///
+    /// BG scroll registers are write-only per GBATek. Only the low 9 bits
+    /// are significant; the remaining bits are discarded.
     pub fn write_bg_vofs(&mut self, n: usize, value: u16) {
         self.bg_scroll[n].1 = value & 0x01FF;
     }
 
-    /// Read `BGnVOFS` for background layer `n` (0–3).
+    /// Return the internal VOFS scroll value for layer `n`.
+    ///
+    /// **Not for CPU reads.** BG scroll registers are write-only on hardware;
+    /// CPU reads must return open-bus (handled by the I/O layer returning
+    /// `None` from `try_read16`). This accessor exists solely for byte-write
+    /// merging in `IoRegisters::write8`.
     pub fn read_bg_vofs(&self, n: usize) -> u16 {
         self.bg_scroll[n].1
     }

@@ -1918,4 +1918,57 @@ mod tests {
 
         assert_eq!(bus.apu.fifo_b.current, 42, "FIFO B should have advanced");
     }
+
+    // ---------------------------------------------------------------
+    // BG scroll registers (0x04000010–0x0400001E) are write-only.
+    // Per GBATek I/O map, CPU reads should return open-bus, not the
+    // last-written scroll value.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn bg_scroll_registers_are_write_only_return_open_bus() {
+        let mut bus = GbaBus::new();
+
+        // Write non-zero values to all eight BG scroll registers.
+        bus.write16(0x0400_0010, 0x0055); // BG0HOFS
+        bus.write16(0x0400_0012, 0x00AA); // BG0VOFS
+        bus.write16(0x0400_0014, 0x0055); // BG1HOFS
+        bus.write16(0x0400_0016, 0x00AA); // BG1VOFS
+        bus.write16(0x0400_0018, 0x0055); // BG2HOFS
+        bus.write16(0x0400_001A, 0x00AA); // BG2VOFS
+        bus.write16(0x0400_001C, 0x0055); // BG3HOFS
+        bus.write16(0x0400_001E, 0x00AA); // BG3VOFS
+
+        let addrs: &[(u32, &str)] = &[
+            (0x0400_0010, "BG0HOFS"),
+            (0x0400_0012, "BG0VOFS"),
+            (0x0400_0014, "BG1HOFS"),
+            (0x0400_0016, "BG1VOFS"),
+            (0x0400_0018, "BG2HOFS"),
+            (0x0400_001A, "BG2VOFS"),
+            (0x0400_001C, "BG3HOFS"),
+            (0x0400_001E, "BG3VOFS"),
+        ];
+
+        // Re-establish a clearly different open-bus sentinel before reading.
+        // Reads of write-only scroll registers must return this open-bus
+        // value (via last_bus_value), not the scroll values we wrote.
+        bus.write32(0x0200_0000, 0x1234_5678);
+        let _ = bus.read32(0x0200_0000); // last_bus_value = 0x1234_5678
+
+        for &(addr, name) in addrs {
+            let val = bus.read16(addr);
+            // The open-bus halfword returned is either 0x1234 or 0x5678
+            // depending on the aligned half — both differ from the scroll
+            // values we wrote (0x0055 and 0x00AA).
+            assert_ne!(
+                val, 0x0055,
+                "{name} at {addr:#010X}: read returned scroll value, expected open-bus"
+            );
+            assert_ne!(
+                val, 0x00AA,
+                "{name} at {addr:#010X}: read returned scroll value, expected open-bus"
+            );
+        }
+    }
 }
