@@ -817,8 +817,9 @@ impl Apu {
     /// Consume and return the pending audio sample as a mono downmix.
     ///
     /// Returns `(left + right) / 2` clamped to `[-1.0, 1.0]`, or `None` if no
-    /// sample is pending.  Prefer [`take_stereo_sample`](Apu::take_stereo_sample)
-    /// for true stereo output.
+    /// sample is pending.  The clamp guards against the sum of two values near
+    /// ±1.0 slightly exceeding the range before halving.
+    /// Prefer [`take_stereo_sample`](Apu::take_stereo_sample) for true stereo output.
     pub fn take_sample(&mut self) -> Option<f32> {
         self.pending_sample
             .take()

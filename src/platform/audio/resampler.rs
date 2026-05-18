@@ -69,6 +69,8 @@ impl AudioResampler {
     ///
     /// Uses linear interpolation between consecutive input frames,
     /// advancing through the input stream at the current resampling rate.
+    /// The left (`[0]`) and right (`[1]`) channels are interpolated independently
+    /// with the same phase, preserving stereo spatial information.
     pub fn render_next<F>(&mut self, pop_sample: &mut F) -> Option<[f32; 2]>
     where
         F: FnMut() -> Option<[f32; 2]>,
