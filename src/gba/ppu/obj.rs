@@ -239,7 +239,7 @@ pub fn render_obj_scanline(
 
             // Pre-compute the row offset from center.
             let sample_rel_y = if mosaic_enabled {
-                rel_y - (rel_y % obj_mosaic_v)
+                super::mosaic_anchor(rel_y, obj_mosaic_v)
             } else {
                 rel_y
             };
@@ -254,7 +254,7 @@ pub fn render_obj_scanline(
 
                 // Offset from bounding box center.
                 let sample_bx = if mosaic_enabled {
-                    bx - (bx % obj_mosaic_h)
+                    super::mosaic_anchor(bx, obj_mosaic_h)
                 } else {
                     bx
                 };
@@ -328,7 +328,7 @@ pub fn render_obj_scanline(
             let v_flip = (attr1 >> 13) & 1 != 0;
 
             let sample_rel_y = if mosaic_enabled {
-                rel_y - (rel_y % obj_mosaic_v)
+                super::mosaic_anchor(rel_y, obj_mosaic_v)
             } else {
                 rel_y
             };
@@ -346,7 +346,7 @@ pub fn render_obj_scanline(
                 let sx = screen_x as usize;
 
                 let sample_col = if mosaic_enabled {
-                    sprite_col - (sprite_col % obj_mosaic_h)
+                    super::mosaic_anchor(sprite_col, obj_mosaic_h)
                 } else {
                     sprite_col
                 };

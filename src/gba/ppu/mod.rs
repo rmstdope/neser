@@ -29,8 +29,10 @@
 //! * Backdrop fill from the first palette entry for unimplemented
 //!   display modes (modes 6, 7) and bitmap modes when BG2 is disabled.
 //!   Modes 6-7 are "prohibited" per GBATek but are handled gracefully.
-//! * Regular (non-affine) OBJ rendering, OAM attribute decoding, and
-//!   OBJ Window mask generation.
+//! * OBJ rendering (regular and affine), OAM attribute decoding, and OBJ
+//!   Window mask generation.
+//! * Window masks, alpha blending / brightness effects, and MOSAIC for
+//!   BG/OBJ render paths.
 //! * Forced-blank outputs solid white (per GBATek).
 //!
 //! Out of scope (deferred to follow-up sub-issues):
@@ -357,6 +359,11 @@ const SORT_KEY_BG_OFFSET: u16 = 5;
 #[inline]
 fn mosaic_size(mosaic: u16, shift: u32) -> u32 {
     (((mosaic >> shift) & 0x000F) + 1) as u32
+}
+
+fn mosaic_anchor(value: u32, block_size: u32) -> u32 {
+    debug_assert!(block_size > 0);
+    value - (value % block_size)
 }
 
 impl Ppu {
@@ -871,8 +878,7 @@ impl Ppu {
         let charblock_base = (((bgcnt >> 2) & 0x0003) as usize) * 16 * 1024;
         let (hofs, vofs) = self.bg_scroll[bg_idx];
         let sample_y = if mosaic_enabled {
-            let screen_y = y as usize;
-            screen_y - (screen_y % mosaic_v)
+            mosaic_anchor(y, mosaic_v as u32) as usize
         } else {
             y as usize
         };
@@ -880,7 +886,7 @@ impl Ppu {
 
         for x in 0..(SCREEN_WIDTH as usize) {
             let sample_x = if mosaic_enabled {
-                x - (x % mosaic_h)
+                mosaic_anchor(x as u32, mosaic_h as u32) as usize
             } else {
                 x
             };
@@ -982,7 +988,8 @@ impl Ppu {
         let pd = aff.pd as i32;
 
         let mosaic_y_offset = if mosaic_enabled {
-            (self.vcount as usize) % mosaic_v
+            let y = self.vcount as u32;
+            (y - mosaic_anchor(y, mosaic_v as u32)) as usize
         } else {
             0
         };
@@ -998,7 +1005,7 @@ impl Ppu {
 
         for x in 0..(SCREEN_WIDTH as usize) {
             let sample_x = if mosaic_enabled {
-                x - (x % mosaic_h)
+                mosaic_anchor(x as u32, mosaic_h as u32) as usize
             } else {
                 x
             };
@@ -1115,14 +1122,14 @@ impl Ppu {
             let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
             let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
             let sample_y = if mosaic_enabled {
-                (y as usize) - ((y as usize) % mosaic_v)
+                mosaic_anchor(y, mosaic_v as u32) as usize
             } else {
                 y as usize
             };
             let line_byte_offset = sample_y * (SCREEN_WIDTH as usize) * 2;
             for x in 0..(SCREEN_WIDTH as usize) {
                 let sample_x = if mosaic_enabled {
-                    x - (x % mosaic_h)
+                    mosaic_anchor(x as u32, mosaic_h as u32) as usize
                 } else {
                     x
                 };
@@ -1158,7 +1165,7 @@ impl Ppu {
             let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
             let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
             let sample_y = if mosaic_enabled {
-                (y as usize) - ((y as usize) % mosaic_v)
+                mosaic_anchor(y, mosaic_v as u32) as usize
             } else {
                 y as usize
             };
@@ -1166,7 +1173,7 @@ impl Ppu {
 
             for x in 0..(SCREEN_WIDTH as usize) {
                 let sample_x = if mosaic_enabled {
-                    x - (x % mosaic_h)
+                    mosaic_anchor(x as u32, mosaic_h as u32) as usize
                 } else {
                     x
                 };
@@ -1222,7 +1229,7 @@ impl Ppu {
             let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
             let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
             let mosaic_y_offset = if mosaic_enabled {
-                (y as usize) % mosaic_v
+                (y - mosaic_anchor(y, mosaic_v as u32)) as usize
             } else {
                 0
             };
@@ -1238,7 +1245,7 @@ impl Ppu {
 
             for x in 0..(SCREEN_WIDTH as usize) {
                 let sample_screen_x = if mosaic_enabled {
-                    x - (x % mosaic_h)
+                    mosaic_anchor(x as u32, mosaic_h as u32) as usize
                 } else {
                     x
                 };
