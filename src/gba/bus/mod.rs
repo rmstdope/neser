@@ -1929,10 +1929,6 @@ mod tests {
     fn bg_scroll_registers_are_write_only_return_open_bus() {
         let mut bus = GbaBus::new();
 
-        // Establish a known open-bus sentinel via EWRAM.
-        bus.write32(0x0200_0000, 0xDEAD_BEEF);
-        let _ = bus.read32(0x0200_0000);
-
         // Write non-zero values to all eight BG scroll registers.
         bus.write16(0x0400_0010, 0x0055); // BG0HOFS
         bus.write16(0x0400_0012, 0x00AA); // BG0VOFS
@@ -1943,10 +1939,6 @@ mod tests {
         bus.write16(0x0400_001C, 0x0055); // BG3HOFS
         bus.write16(0x0400_001E, 0x00AA); // BG3VOFS
 
-        // Reads must return the open-bus value, not the written scroll values.
-        // After a write, last_bus_value reflects the write data, so reads of
-        // write-only registers return the open-bus word corresponding to that.
-        // The key assertion is that they do NOT return 0x0055 or 0x00AA.
         let addrs: &[(u32, &str)] = &[
             (0x0400_0010, "BG0HOFS"),
             (0x0400_0012, "BG0VOFS"),
@@ -1957,23 +1949,18 @@ mod tests {
             (0x0400_001C, "BG3HOFS"),
             (0x0400_001E, "BG3VOFS"),
         ];
-        // After last write16(0x0400_001E, 0x00AA), last_bus_value = 0x????_00AA
-        // (only the matching half is updated). The bus16 read of a write-only
-        // register calls open_bus_halfword which returns the appropriate half
-        // of last_bus_value. Verify that it never returns the *scroll* values
-        // 0x0055 or 0x00AA at the matching addresses, but rather open-bus.
-        //
-        // Simplest check: scroll registers must not be readable at all via the
-        // normal read path.  We re-establish a clearly different open-bus value
-        // and confirm reads at each address return that, not 0x0055/0x00AA.
+
+        // Re-establish a clearly different open-bus sentinel before reading.
+        // Reads of write-only scroll registers must return this open-bus
+        // value (via last_bus_value), not the scroll values we wrote.
         bus.write32(0x0200_0000, 0x1234_5678);
         let _ = bus.read32(0x0200_0000); // last_bus_value = 0x1234_5678
 
         for &(addr, name) in addrs {
             let val = bus.read16(addr);
-            // The open-bus halfword returned depends on the aligned offset within
-            // the 32-bit last_bus_value word. Both possible halves differ from
-            // the scroll values we wrote.
+            // The open-bus halfword returned is either 0x1234 or 0x5678
+            // depending on the aligned half — both differ from the scroll
+            // values we wrote (0x0055 and 0x00AA).
             assert_ne!(
                 val, 0x0055,
                 "{name} at {addr:#010X}: read returned scroll value, expected open-bus"
