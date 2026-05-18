@@ -2423,6 +2423,53 @@ mod tests {
     }
 
     #[test]
+    fn mode4_bg_mosaic_repeats_anchor_and_keeps_index_0_transparent() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(4 | dispcnt::BG2_ENABLE);
+        ppu.write_bg_cnt(2, 1 << 6);
+        ppu.write_mosaic(0x0011);
+
+        // Backdrop = blue.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        // Palette index 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+
+        // Row 0: [1, 0, 0, 1]
+        vram[0] = 1;
+        vram[1] = 0;
+        vram[2] = 0;
+        vram[3] = 1;
+        // Row 1 intentionally differs to verify vertical anchoring from row 0.
+        vram[SCREEN_WIDTH as usize] = 0;
+        vram[SCREEN_WIDTH as usize + 1] = 1;
+        vram[SCREEN_WIDTH as usize + 2] = 1;
+        vram[SCREEN_WIDTH as usize + 3] = 1;
+
+        ppu.step(CYCLES_PER_SCANLINE * 3, &mut ic, &vram, &pram, &make_oam());
+
+        let row1 = SCREEN_WIDTH as usize * BYTES_PER_PIXEL;
+        assert_eq!(&ppu.framebuffer()[row1..row1 + 3], &[0xFF, 0, 0]);
+        assert_eq!(
+            &ppu.framebuffer()[row1 + BYTES_PER_PIXEL..row1 + BYTES_PER_PIXEL + 3],
+            &[0xFF, 0, 0]
+        );
+        assert_eq!(
+            &ppu.framebuffer()[row1 + BYTES_PER_PIXEL * 2..row1 + BYTES_PER_PIXEL * 2 + 3],
+            &[0, 0, 0xFF]
+        );
+        assert_eq!(
+            &ppu.framebuffer()[row1 + BYTES_PER_PIXEL * 3..row1 + BYTES_PER_PIXEL * 3 + 3],
+            &[0, 0, 0xFF]
+        );
+    }
+
+    #[test]
     fn mode4_with_bg2_disabled_renders_backdrop() {
         // When BG2 is disabled, mode 4 should just render the backdrop.
         let mut ppu = Ppu::new();
@@ -2605,6 +2652,53 @@ mod tests {
         );
 
         assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode5_bg_mosaic_anchors_horizontally_and_vertically_with_affine() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE);
+        ppu.write_bg_cnt(2, 1 << 6);
+        ppu.write_mosaic(0x0011);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Row 0 source pixels: x=2 red, x=3 green, x=4 blue.
+        let row0_col2 = 2 * 2;
+        vram[row0_col2..row0_col2 + 2].copy_from_slice(&0x001Fu16.to_le_bytes());
+        let row0_col3 = 3 * 2;
+        vram[row0_col3..row0_col3 + 2].copy_from_slice(&0x03E0u16.to_le_bytes());
+        let row0_col4 = 4 * 2;
+        vram[row0_col4..row0_col4 + 2].copy_from_slice(&0x7C00u16.to_le_bytes());
+
+        // Row 1 differs, so vertical mosaic anchoring is observable.
+        let row1_base = MODE5_WIDTH * 2;
+        let row1_col2 = row1_base + 2 * 2;
+        vram[row1_col2..row1_col2 + 2].copy_from_slice(&0x7FFFu16.to_le_bytes());
+
+        ppu.step(CYCLES_PER_SCANLINE * 3, &mut ic, &vram, &pram, &make_oam());
+
+        let fb_row1 = SCREEN_WIDTH as usize * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[fb_row1 + 2 * BYTES_PER_PIXEL..fb_row1 + 2 * BYTES_PER_PIXEL + 3],
+            &[0xFF, 0, 0]
+        );
+        assert_eq!(
+            &ppu.framebuffer()[fb_row1 + 3 * BYTES_PER_PIXEL..fb_row1 + 3 * BYTES_PER_PIXEL + 3],
+            &[0xFF, 0, 0]
+        );
+        assert_eq!(
+            &ppu.framebuffer()[fb_row1 + 4 * BYTES_PER_PIXEL..fb_row1 + 4 * BYTES_PER_PIXEL + 3],
+            &[0, 0, 0xFF]
+        );
+        assert_eq!(
+            &ppu.framebuffer()[fb_row1 + 5 * BYTES_PER_PIXEL..fb_row1 + 5 * BYTES_PER_PIXEL + 3],
+            &[0, 0, 0xFF]
+        );
     }
 
     #[test]

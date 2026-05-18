@@ -1021,6 +1021,35 @@ mod tests {
     }
 
     #[test]
+    fn affine_obj_mosaic_anchors_are_applied_before_affine_transform() {
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // 8x8 affine OBJ at (0,0), mosaic enabled.
+        write_obj(&mut oam, 0, 0x1100, 0, 0);
+        // Shear in X from Y so vertical anchoring affects transformed X.
+        write_affine_params(&mut oam, 0, 0x0100, 0x0100, 0x0000, 0x0100);
+
+        // Row 0: x=2 -> idx1, x=3 -> idx2, x=4 -> idx3.
+        vram[OBJ_VRAM_BASE + 1] = 0x21;
+        vram[OBJ_VRAM_BASE + 2] = 0x03;
+        // Row 1 differs to ensure vertical anchoring is observable.
+        vram[OBJ_VRAM_BASE + 4 + 1] = 0x54;
+
+        set_obj_color(&mut pram, 1, 0x001F);
+        set_obj_color(&mut pram, 2, 0x03E0);
+        set_obj_color(&mut pram, 3, 0x7C00);
+        set_obj_color(&mut pram, 4, 0x7FFF);
+        set_obj_color(&mut pram, 5, 0x03FF);
+
+        let result = render_obj_scanline(1, &oam, &vram, &pram, true, false, 0x1100);
+
+        assert_eq!(result.pixels[6].color, 0x001F);
+        assert_eq!(result.pixels[7].color, 0x001F);
+    }
+
+    #[test]
     fn fetch_obj_pixel_4bpp_returns_correct_index() {
         let mut vram = make_vram();
         // Tile 0: set pixel (3,2) to palette index 5.

@@ -1827,4 +1827,58 @@ mod tests {
             "EVY must not be cleared by a high-byte write to BLDY+1"
         );
     }
+
+    #[test]
+    fn mosaic_halfword_write_routes_to_live_ppu_state() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write16(
+            ppu::REG_MOSAIC,
+            0xABCD,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        assert_eq!(p.read_mosaic(), 0xABCD);
+        assert_eq!(io.try_read16(ppu::REG_MOSAIC, &ic, &t, &d, &p, &k), None);
+    }
+
+    #[test]
+    fn mosaic_byte_writes_merge_into_live_ppu_state() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write8(
+            ppu::REG_MOSAIC,
+            0x34,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_MOSAIC + 1,
+            0x12,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        assert_eq!(p.read_mosaic(), 0x1234);
+    }
 }
