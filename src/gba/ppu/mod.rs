@@ -1269,7 +1269,7 @@ impl Ppu {
             let mut top_sort: u16 = 0xFFFF; // start at backdrop priority
             let mut top_layer: u8 = 5; // backdrop layer index
             let mut top_color: u16 = backdrop;
-            let mut top_semi_t: bool = false;
+            let mut top_semi_transparent: bool = false;
 
             let mut sec_sort: u16 = 0xFFFF; // backdrop as default second
             let mut sec_layer: u8 = 5;
@@ -1286,7 +1286,7 @@ impl Ppu {
                 top_sort = sk;
                 top_layer = 4;
                 top_color = px.color;
-                top_semi_t = px.semi_transparent;
+                top_semi_transparent = px.semi_transparent;
             }
 
             // Insert BG candidates.
@@ -1307,7 +1307,7 @@ impl Ppu {
                     top_sort = sk;
                     top_layer = bg_idx as u8;
                     top_color = buf[x];
-                    top_semi_t = false;
+                    top_semi_transparent = false;
                 } else if sk < sec_sort {
                     sec_sort = sk;
                     sec_layer = bg_idx as u8;
@@ -1320,7 +1320,7 @@ impl Ppu {
             // Layer indices: 0-3 = BG0-BG3, 4 = OBJ, 5 = Backdrop.
             // `first_target` bit k = layer k is a 1st target.
             // `second_target` bit k = layer k is a 2nd target.
-            let final_color = if top_semi_t && sfx_enabled {
+            let final_color = if top_semi_transparent && sfx_enabled {
                 // Semi-transparent OBJ always alpha-blends regardless of
                 // BLDCNT mode, treated as 1st target.  2nd target selection
                 // still comes from BLDCNT bits 8-13.
