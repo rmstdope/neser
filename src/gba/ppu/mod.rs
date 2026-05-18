@@ -1010,17 +1010,23 @@ impl Ppu {
             let mut tex_y = aff.internal_y;
 
             for x in 0..(SCREEN_WIDTH as usize) {
-                let px = tex_x >> 8;
-                let py = tex_y >> 8;
+                let sample_x = tex_x;
+                let sample_y = tex_y;
 
                 tex_x = tex_x.wrapping_add(pa);
                 tex_y = tex_y.wrapping_add(pc);
 
-                if px < 0 || py < 0 || px >= MODE5_WIDTH as i32 || py >= MODE5_HEIGHT as i32 {
+                if sample_x < 0 || sample_y < 0 {
                     continue;
                 }
 
-                let src = frame_base + ((py as usize) * MODE5_WIDTH + (px as usize)) * 2;
+                let px = (sample_x as u32 >> 8) as usize;
+                let py = (sample_y as u32 >> 8) as usize;
+                if px >= MODE5_WIDTH || py >= MODE5_HEIGHT {
+                    continue;
+                }
+
+                let src = frame_base + (py * MODE5_WIDTH + px) * 2;
                 buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
             }
             let prio = (self.bg_cnt[2] & 3) as u8;
