@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::background;
-use super::bg_fifo::{self, DmgLayer, DmgPixelFetch};
+use super::bg_fifo::{self, DmgLayer, DmgPixelFetch, DmgTileByteOverride};
 use super::obj_fifo::ObjFetchModel;
 use super::registers::Registers;
 use super::rendering::{self, cgb_palette_lookup, dmg_palette_index};
@@ -223,6 +223,10 @@ struct LcdcTileDataRange {
     end_x: u8,
     low_lcdc: u8,
     high_lcdc: u8,
+    #[serde(default)]
+    low_override: DmgTileByteOverride,
+    #[serde(default)]
+    high_override: DmgTileByteOverride,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -232,6 +236,25 @@ struct LcdcTileDataEdge {
 
 impl LcdcTileDataEdge {
     fn record_write(&mut self, start_x: u8, end_x: u8, low_lcdc: u8, high_lcdc: u8) {
+        self.record_write_with_overrides(
+            start_x,
+            end_x,
+            low_lcdc,
+            high_lcdc,
+            DmgTileByteOverride::None,
+            DmgTileByteOverride::None,
+        );
+    }
+
+    fn record_write_with_overrides(
+        &mut self,
+        start_x: u8,
+        end_x: u8,
+        low_lcdc: u8,
+        high_lcdc: u8,
+        low_override: DmgTileByteOverride,
+        high_override: DmgTileByteOverride,
+    ) {
         if start_x > end_x {
             return;
         }
@@ -241,20 +264,36 @@ impl LcdcTileDataEdge {
             end_x,
             low_lcdc,
             high_lcdc,
+            low_override,
+            high_override,
         });
     }
 
-    fn lcdc_for_tile_data(&self, x: u32, current_lcdc: u8) -> (u8, u8) {
+    fn lcdc_for_tile_data(
+        &self,
+        x: u32,
+        current_lcdc: u8,
+    ) -> (u8, u8, DmgTileByteOverride, DmgTileByteOverride) {
         self.ranges
             .iter()
             .rev()
             .find(|range| u32::from(range.start_x) <= x && x <= u32::from(range.end_x))
-            .map_or((current_lcdc, current_lcdc), |range| {
+            .map_or(
                 (
-                    (current_lcdc & !LCDC_TILE_DATA) | (range.low_lcdc & LCDC_TILE_DATA),
-                    (current_lcdc & !LCDC_TILE_DATA) | (range.high_lcdc & LCDC_TILE_DATA),
-                )
-            })
+                    current_lcdc,
+                    current_lcdc,
+                    DmgTileByteOverride::None,
+                    DmgTileByteOverride::None,
+                ),
+                |range| {
+                    (
+                        (current_lcdc & !LCDC_TILE_DATA) | (range.low_lcdc & LCDC_TILE_DATA),
+                        (current_lcdc & !LCDC_TILE_DATA) | (range.high_lcdc & LCDC_TILE_DATA),
+                        range.low_override,
+                        range.high_override,
+                    )
+                },
+            )
     }
 
     fn has_latched_range(&self, start_x: u8, end_x: u8) -> bool {
@@ -269,6 +308,19 @@ impl LcdcTileDataEdge {
         self.ranges
             .iter()
             .any(|range| range.start_x == start_x && range.end_x == end_x)
+    }
+
+    fn tile_select_bits_for_range(&self, start_x: u8, end_x: u8) -> Option<(u8, u8)> {
+        self.ranges
+            .iter()
+            .rev()
+            .find(|range| range.start_x == start_x && range.end_x == end_x)
+            .map(|range| {
+                (
+                    range.low_lcdc & LCDC_TILE_DATA,
+                    range.high_lcdc & LCDC_TILE_DATA,
+                )
+            })
     }
 
     fn clear_consumed(&mut self, next_x: u8) {
@@ -393,6 +445,8 @@ pub struct PixelFifoRenderer {
     window_x_edges: Vec<WindowXEdge>,
     #[serde(default)]
     bg_fetch_x_offset: u8,
+    #[serde(default)]
+    cgb_dmg_tile_sel_glitch_data: Option<u8>,
 }
 
 impl PixelFifoRenderer {
@@ -432,6 +486,7 @@ impl PixelFifoRenderer {
             window_reset_edges: Vec::new(),
             window_x_edges: Vec::new(),
             bg_fetch_x_offset: 0,
+            cgb_dmg_tile_sel_glitch_data: None,
         }
     }
 
@@ -472,6 +527,7 @@ impl PixelFifoRenderer {
         self.window_reset_edges.clear();
         self.window_x_edges.clear();
         self.bg_fetch_x_offset = 0;
+        self.cgb_dmg_tile_sel_glitch_data = None;
         self.active_obj_fetch_lcdc_range = None;
         self.obj_fetch_ignores_lcdc = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat)
             .is_some_and(ObjFetchModel::ignores_lcdc_obj_enable);
@@ -666,7 +722,14 @@ impl PixelFifoRenderer {
             scx.wrapping_add(self.next_x) & 0x07
         };
         self.record_lcdc_obj_size_write(previous, new, cgb_mode, dmg_compat);
-        self.record_lcdc_tile_data_write(previous, new, tile_data_fetch_phase, window_fetch_active);
+        self.record_lcdc_tile_data_write(
+            previous,
+            new,
+            tile_data_fetch_phase,
+            window_fetch_active,
+            cgb_mode && dmg_compat,
+            waiting_on_obj_fetch,
+        );
         if let Some(model) = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat) {
             self.record_lcdc_obj_enable_write(model, previous, new);
         }
@@ -844,6 +907,8 @@ impl PixelFifoRenderer {
         new: u8,
         bg_phase: u8,
         window_fetch_active: bool,
+        cgb_dmg_compat: bool,
+        waiting_on_obj_fetch: bool,
     ) {
         if previous & LCDC_TILE_DATA == new & LCDC_TILE_DATA {
             return;
@@ -856,8 +921,37 @@ impl PixelFifoRenderer {
             self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
         }
 
-        if self
-            .should_restore_lcdc_tile_data_at_window_obj_delayed_boundary(previous, new, bg_phase)
+        if cgb_dmg_compat && !window_fetch_active {
+            let handled = if previous & LCDC_TILE_DATA == 0 && new & LCDC_TILE_DATA != 0 {
+                self.record_cgb_dmg_compat_tile_select_rising_edge(
+                    current_fetch_start,
+                    current_fetch_end,
+                    next_fetch_start,
+                    previous,
+                    new,
+                    bg_phase,
+                    waiting_on_obj_fetch,
+                )
+            } else {
+                self.record_cgb_dmg_compat_tile_select_falling_edge(
+                    current_fetch_start,
+                    current_fetch_end,
+                    next_fetch_start,
+                    previous,
+                    new,
+                    bg_phase,
+                    waiting_on_obj_fetch,
+                )
+            };
+            if handled {
+                return;
+            }
+        }
+
+        if !cgb_dmg_compat
+            && self.should_restore_lcdc_tile_data_at_window_obj_delayed_boundary(
+                previous, new, bg_phase,
+            )
         {
             self.lcdc_tile_data_edge.record_write(
                 current_fetch_start,
@@ -871,8 +965,10 @@ impl PixelFifoRenderer {
                 new,
                 new,
             );
-        } else if self
-            .should_restore_lcdc_tile_data_at_window_obj_stalled_boundary(previous, new, bg_phase)
+        } else if !cgb_dmg_compat
+            && self.should_restore_lcdc_tile_data_at_window_obj_stalled_boundary(
+                previous, new, bg_phase,
+            )
         {
             self.lcdc_tile_data_edge.record_write(
                 current_fetch_start,
@@ -897,14 +993,63 @@ impl PixelFifoRenderer {
                 previous,
                 previous,
             );
-        } else if !window_fetch_active
+        } else if !(window_fetch_active || cgb_dmg_compat && self.window_active)
             && self.should_restore_lcdc_tile_data_in_delayed_fetch(previous, new)
         {
             self.lcdc_tile_data_edge
                 .record_write(current_fetch_start, current_fetch_end, new, new);
             self.record_next_lcdc_tile_data_write(next_fetch_start, bg_phase, previous, new);
-        } else if window_fetch_active
-            && self.should_set_lcdc_tile_data_at_off_left_window_start(previous, new, bg_phase)
+        } else if cgb_dmg_compat
+            && self.should_set_cgb_dmg_compat_phase4_window_tile_data(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write_with_overrides(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+                DmgTileByteOverride::CachedData,
+                DmgTileByteOverride::None,
+            );
+        } else if cgb_dmg_compat
+            && self.should_set_cgb_dmg_compat_phase6_window_tile_data(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write_with_overrides(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                previous,
+                new,
+                DmgTileByteOverride::None,
+                DmgTileByteOverride::CachedData,
+            );
+        } else if cgb_dmg_compat
+            && self.should_set_cgb_dmg_compat_later_window_tile_data(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
+        } else if cgb_dmg_compat
+            && self.should_set_cgb_dmg_compat_tile_data_at_early_window_obj(previous, new, bg_phase)
         {
             self.lcdc_tile_data_edge.record_write(
                 current_fetch_start,
@@ -912,8 +1057,87 @@ impl PixelFifoRenderer {
                 previous,
                 new,
             );
-        } else if self
-            .should_set_lcdc_tile_data_in_delayed_window_obj_fetch(previous, new, bg_phase)
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
+        } else if cgb_dmg_compat
+            && self
+                .should_set_cgb_dmg_compat_tile_data_after_window_start_obj(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
+        } else if cgb_dmg_compat
+            && self.should_set_cgb_dmg_compat_tile_data_at_visible_window_obj_x8(
+                previous, new, bg_phase,
+            )
+        {
+            let high_override = if self.scanline & 0x07 == 0 {
+                DmgTileByteOverride::Data(0xFF)
+            } else {
+                DmgTileByteOverride::CachedData
+            };
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write_with_overrides(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                previous,
+                new,
+                DmgTileByteOverride::None,
+                high_override,
+            );
+        } else if cgb_dmg_compat
+            && self.should_set_cgb_dmg_compat_tile_data_at_late_visible_window_obj(
+                previous, new, bg_phase,
+            )
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                previous,
+            );
+        } else if cgb_dmg_compat
+            && self.should_ignore_cgb_dmg_compat_visible_window_obj_set(previous, new)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                previous,
+                previous,
+            );
+        } else if window_fetch_active
+            && !cgb_dmg_compat
+            && self.should_set_lcdc_tile_data_at_visible_window_obj_x8(previous, new, bg_phase)
         {
             self.lcdc_tile_data_edge.record_write(
                 current_fetch_start,
@@ -927,7 +1151,34 @@ impl PixelFifoRenderer {
                 previous,
                 new,
             );
-        } else if self.should_set_lcdc_tile_data_at_window_obj_late_stall(previous, new, bg_phase) {
+        } else if window_fetch_active
+            && !cgb_dmg_compat
+            && self.should_set_lcdc_tile_data_at_off_left_window_start(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                new,
+            );
+        } else if !cgb_dmg_compat
+            && self.should_set_lcdc_tile_data_in_delayed_window_obj_fetch(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                previous,
+                new,
+            );
+        } else if !cgb_dmg_compat
+            && self.should_set_lcdc_tile_data_at_window_obj_late_stall(previous, new, bg_phase)
+        {
             self.lcdc_tile_data_edge.record_write(
                 current_fetch_start,
                 current_fetch_end,
@@ -941,8 +1192,9 @@ impl PixelFifoRenderer {
                 new,
             );
             self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
-        } else if self
-            .should_set_lcdc_tile_data_at_window_obj_stalled_boundary(previous, new, bg_phase)
+        } else if !cgb_dmg_compat
+            && self
+                .should_set_lcdc_tile_data_at_window_obj_stalled_boundary(previous, new, bg_phase)
         {
             self.lcdc_tile_data_edge.record_write(
                 current_fetch_start,
@@ -956,8 +1208,10 @@ impl PixelFifoRenderer {
                 new,
                 new,
             );
-        } else if self
-            .should_set_lcdc_tile_data_after_off_left_window_obj_boundary(previous, new, bg_phase)
+        } else if !cgb_dmg_compat
+            && self.should_set_lcdc_tile_data_after_off_left_window_obj_boundary(
+                previous, new, bg_phase,
+            )
         {
             self.lcdc_tile_data_edge.record_write(
                 next_fetch_start,
@@ -965,7 +1219,7 @@ impl PixelFifoRenderer {
                 new,
                 previous,
             );
-        } else if !window_fetch_active
+        } else if !(window_fetch_active || cgb_dmg_compat && self.window_active)
             && self.should_delay_lcdc_tile_data_by_extra_fetch(previous, new)
         {
             self.lcdc_tile_data_edge.record_write(
@@ -981,6 +1235,70 @@ impl PixelFifoRenderer {
                 previous,
             );
             self.record_visible_left_edge_delayed_lcdc_tile_data_fetch(new);
+        } else if cgb_dmg_compat
+            && self.should_restore_cgb_dmg_compat_phase4_window_tile_data(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write_with_overrides(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+                DmgTileByteOverride::TileIndexAndCache { lcdc: previous },
+                DmgTileByteOverride::None,
+            );
+        } else if cgb_dmg_compat
+            && self.should_restore_cgb_dmg_compat_phase6_window_tile_data(previous, new, bg_phase)
+        {
+            self.lcdc_tile_data_edge.record_write_with_overrides(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                previous,
+                new,
+                DmgTileByteOverride::None,
+                DmgTileByteOverride::TileIndexAndCache { lcdc: previous },
+            );
+        } else if cgb_dmg_compat
+            && (self.should_restore_cgb_dmg_compat_later_window_tile_data(previous, new, bg_phase)
+                || self.should_restore_cgb_dmg_compat_tile_data_after_early_window_obj(
+                    previous, new, bg_phase,
+                ))
+        {
+            self.lcdc_tile_data_edge.record_write(
+                current_fetch_start,
+                current_fetch_end,
+                previous,
+                previous,
+            );
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
+        } else if cgb_dmg_compat
+            && self.should_restore_cgb_dmg_compat_tile_data_at_late_visible_window_obj(
+                previous, new, bg_phase,
+            )
+        {
+            self.lcdc_tile_data_edge
+                .record_write(current_fetch_start, current_fetch_end, new, new);
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                previous,
+                new,
+            );
+        } else if cgb_dmg_compat
+            && self.should_ignore_cgb_dmg_compat_visible_window_obj_restore(previous, new)
+        {
+            self.lcdc_tile_data_edge
+                .record_write(current_fetch_start, current_fetch_end, new, new);
+            self.lcdc_tile_data_edge.record_write(
+                next_fetch_start,
+                next_fetch_start.saturating_add(7),
+                new,
+                new,
+            );
         } else if self
             .should_restore_lcdc_tile_data_at_off_left_window_boundary(previous, new, bg_phase)
         {
@@ -1045,8 +1363,9 @@ impl PixelFifoRenderer {
                 new,
                 new,
             );
-        } else if self
-            .should_restore_lcdc_tile_data_after_window_left_edge_obj(previous, new, bg_phase)
+        } else if !cgb_dmg_compat
+            && self
+                .should_restore_lcdc_tile_data_after_window_left_edge_obj(previous, new, bg_phase)
         {
             self.lcdc_tile_data_edge.record_write(
                 next_fetch_start,
@@ -1095,6 +1414,288 @@ impl PixelFifoRenderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn record_cgb_dmg_compat_tile_select_falling_edge(
+        &mut self,
+        current_fetch_start: u8,
+        current_fetch_end: u8,
+        next_fetch_start: u8,
+        previous: u8,
+        new: u8,
+        bg_phase: u8,
+        waiting_on_obj_fetch: bool,
+    ) -> bool {
+        if self.window_active {
+            if bg_phase == 7 && self.leftmost_obj_starts_before_screen() {
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    previous,
+                    new,
+                );
+                return true;
+            }
+            return false;
+        }
+
+        let previous_tile_select = previous & LCDC_TILE_DATA;
+        let new_tile_select = new & LCDC_TILE_DATA;
+        let current_bits = self
+            .lcdc_tile_data_edge
+            .tile_select_bits_for_range(current_fetch_start, current_fetch_end);
+        let current_sampled_previous =
+            current_bits == Some((previous_tile_select, previous_tile_select));
+        let current_sampled_new = current_bits == Some((new_tile_select, new_tile_select));
+        let current_sampled_new_low_previous_high =
+            current_bits == Some((new_tile_select, previous_tile_select));
+
+        match (waiting_on_obj_fetch, bg_phase) {
+            (false, 0) if current_sampled_previous => {
+                if current_fetch_start == 8 {
+                    self.lcdc_tile_data_edge.record_write_with_overrides(
+                        current_fetch_start,
+                        current_fetch_end,
+                        new,
+                        previous,
+                        DmgTileByteOverride::TileIndexAndCache { lcdc: previous },
+                        DmgTileByteOverride::None,
+                    );
+                }
+                self.lcdc_tile_data_edge.record_write_with_overrides(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    new,
+                    new,
+                    DmgTileByteOverride::TileIndexAndCache { lcdc: previous },
+                    DmgTileByteOverride::None,
+                );
+                true
+            }
+            (false, 0) if current_sampled_new => {
+                if self.leftmost_obj_oam_x == Some(3) {
+                    self.lcdc_tile_data_edge.record_write(
+                        current_fetch_start,
+                        current_fetch_end,
+                        new,
+                        previous,
+                    );
+                }
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    new,
+                    new,
+                );
+                true
+            }
+            (false, 0) if current_sampled_new_low_previous_high => {
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    new,
+                    new,
+                );
+                true
+            }
+            (false, 1) if current_sampled_previous => {
+                self.lcdc_tile_data_edge.record_write(
+                    current_fetch_start,
+                    current_fetch_end,
+                    new,
+                    previous,
+                );
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    previous,
+                    new,
+                );
+                true
+            }
+            (false, 1) if current_sampled_new => {
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    previous,
+                    new,
+                );
+                true
+            }
+            (false, 1) if current_sampled_new_low_previous_high => {
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    previous,
+                    new,
+                );
+                true
+            }
+            (false, 2) => {
+                self.lcdc_tile_data_edge.record_write_with_overrides(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    previous,
+                    new,
+                    DmgTileByteOverride::None,
+                    DmgTileByteOverride::TileIndexAndCache { lcdc: previous },
+                );
+                true
+            }
+            (true, 0) if current_sampled_new => {
+                let (low_lcdc, high_lcdc) = if self.scanline & 0x07 == 0 {
+                    (previous, previous)
+                } else {
+                    (new, previous)
+                };
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    low_lcdc,
+                    high_lcdc,
+                );
+                true
+            }
+            (true, 1) if current_sampled_new => {
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    new,
+                    previous,
+                );
+                true
+            }
+            (false, 3..=7) => {
+                if self.window_active && bg_phase == 7 {
+                    self.lcdc_tile_data_edge.record_write(
+                        next_fetch_start,
+                        next_fetch_start.saturating_add(7),
+                        previous,
+                        new,
+                    );
+                    return true;
+                }
+                let next_lcdc = if self.window_active
+                    || self.leftmost_obj_oam_x.is_some_and(|oam_x| oam_x >= 8)
+                {
+                    new
+                } else {
+                    previous
+                };
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    next_lcdc,
+                    next_lcdc,
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_cgb_dmg_compat_tile_select_rising_edge(
+        &mut self,
+        current_fetch_start: u8,
+        current_fetch_end: u8,
+        next_fetch_start: u8,
+        previous: u8,
+        new: u8,
+        bg_phase: u8,
+        waiting_on_obj_fetch: bool,
+    ) -> bool {
+        if self.window_active {
+            return false;
+        }
+
+        if waiting_on_obj_fetch {
+            return false;
+        }
+
+        match bg_phase {
+            0 => {
+                self.lcdc_tile_data_edge.record_write(
+                    current_fetch_start,
+                    current_fetch_end,
+                    previous,
+                    previous,
+                );
+                self.lcdc_tile_data_edge.record_write_with_overrides(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    new,
+                    new,
+                    DmgTileByteOverride::CachedData,
+                    DmgTileByteOverride::None,
+                );
+                true
+            }
+            1 => {
+                let next_low_lcdc = if self.leftmost_obj_oam_x.is_some_and(|oam_x| oam_x >= 4) {
+                    previous
+                } else {
+                    new
+                };
+                self.lcdc_tile_data_edge.record_write(
+                    current_fetch_start,
+                    current_fetch_end,
+                    previous,
+                    previous,
+                );
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    next_low_lcdc,
+                    new,
+                );
+                true
+            }
+            2 => {
+                let next_lcdc = if current_fetch_start == 0 {
+                    previous
+                } else {
+                    new
+                };
+                let high_override = if next_lcdc & LCDC_TILE_DATA != previous & LCDC_TILE_DATA {
+                    DmgTileByteOverride::CachedData
+                } else {
+                    DmgTileByteOverride::None
+                };
+                self.lcdc_tile_data_edge.record_write(
+                    current_fetch_start,
+                    current_fetch_end,
+                    previous,
+                    previous,
+                );
+                self.lcdc_tile_data_edge.record_write_with_overrides(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    previous,
+                    next_lcdc,
+                    DmgTileByteOverride::None,
+                    high_override,
+                );
+                true
+            }
+            3..=7 => {
+                self.lcdc_tile_data_edge.record_write(
+                    current_fetch_start,
+                    current_fetch_end,
+                    previous,
+                    previous,
+                );
+                self.lcdc_tile_data_edge.record_write(
+                    next_fetch_start,
+                    next_fetch_start.saturating_add(7),
+                    previous,
+                    previous,
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn should_delay_lcdc_tile_data_by_extra_fetch(&self, previous_lcdc: u8, new_lcdc: u8) -> bool {
         let tile_data_turning_on =
             previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
@@ -1122,6 +1723,100 @@ impl PixelFifoRenderer {
         tile_data_turning_off
             && self.left_edge_obj_tile_data_delay_start_x().is_some()
             && (OBJ_PIXELS_PER_FETCH..OBJ_PIXELS_PER_FETCH * 2).contains(&self.next_x)
+    }
+
+    fn should_set_cgb_dmg_compat_later_window_tile_data(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.window_active
+            && self
+                .leftmost_obj_oam_x
+                .is_some_and(|oam_x| oam_x == 1 || (oam_x == 5 && bg_phase <= 4))
+            && self.next_x.saturating_sub(bg_phase) >= OBJ_PIXELS_PER_FETCH
+            && (2..=7).contains(&bg_phase)
+    }
+
+    fn should_set_cgb_dmg_compat_phase4_window_tile_data(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.window_active
+            && self.leftmost_obj_oam_x == Some(5)
+            && self.next_x.saturating_sub(bg_phase) >= OBJ_PIXELS_PER_FETCH
+            && bg_phase == 4
+    }
+
+    fn should_set_cgb_dmg_compat_phase6_window_tile_data(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.window_active
+            && self.leftmost_obj_oam_x == Some(5)
+            && self.next_x.saturating_sub(bg_phase) >= OBJ_PIXELS_PER_FETCH
+            && bg_phase == 6
+    }
+
+    fn should_restore_cgb_dmg_compat_later_window_tile_data(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && self.window_active
+            && self
+                .leftmost_obj_oam_x
+                .is_some_and(|oam_x| oam_x == 1 || (oam_x == 5 && bg_phase <= 4))
+            && self.next_x.saturating_sub(bg_phase) >= OBJ_PIXELS_PER_FETCH
+            && (2..=7).contains(&bg_phase)
+    }
+
+    fn should_restore_cgb_dmg_compat_phase4_window_tile_data(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && self.window_active
+            && self.leftmost_obj_oam_x == Some(5)
+            && self.next_x.saturating_sub(bg_phase) >= OBJ_PIXELS_PER_FETCH
+            && bg_phase == 4
+    }
+
+    fn should_restore_cgb_dmg_compat_phase6_window_tile_data(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && self.window_active
+            && self.leftmost_obj_oam_x == Some(5)
+            && self.next_x.saturating_sub(bg_phase) >= OBJ_PIXELS_PER_FETCH
+            && bg_phase == 6
     }
 
     fn should_restore_lcdc_tile_data_at_obj_stalled_boundary(
@@ -1169,6 +1864,52 @@ impl PixelFifoRenderer {
                 .is_some_and(is_off_left_window_delayed_obj_x)
             && self.next_x == OBJ_PIXELS_PER_FETCH
             && bg_phase == 0
+    }
+
+    fn should_restore_cgb_dmg_compat_tile_data_after_early_window_obj(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && self.window_active
+            && self.leftmost_obj_oam_x == Some(4)
+            && self.next_x == OBJ_PIXELS_PER_FETCH + 1
+            && bg_phase == 1
+    }
+
+    fn should_restore_cgb_dmg_compat_tile_data_at_late_visible_window_obj(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && self.window_active
+            && self
+                .leftmost_obj_oam_x
+                .is_some_and(|oam_x| (16..=17).contains(&oam_x))
+            && (OBJ_PIXELS_PER_FETCH..=OBJ_PIXELS_PER_FETCH + 1).contains(&self.next_x)
+            && bg_phase <= 1
+    }
+
+    fn should_ignore_cgb_dmg_compat_visible_window_obj_restore(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+    ) -> bool {
+        let tile_data_turning_off =
+            previous_lcdc & LCDC_TILE_DATA != 0 && new_lcdc & LCDC_TILE_DATA == 0;
+        tile_data_turning_off
+            && self.window_active
+            && self
+                .leftmost_obj_oam_x
+                .is_some_and(|oam_x| (9..=15).contains(&oam_x))
     }
 
     fn should_restore_lcdc_tile_data_after_window_low_byte(
@@ -1221,6 +1962,99 @@ impl PixelFifoRenderer {
             && self.next_x == OBJ_PIXELS_PER_FETCH - 1
             && bg_phase == OBJ_PIXELS_PER_FETCH - 1
             && self.pending_obj_stall_dots > 0
+    }
+
+    fn should_set_cgb_dmg_compat_tile_data_at_early_window_obj(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        let early_window_obj_phase = self
+            .leftmost_obj_oam_x
+            .filter(|&oam_x| (3..=4).contains(&oam_x))
+            .map(|oam_x| oam_x - 3);
+        tile_data_turning_on
+            && (self.window_active || self.next_x == 0)
+            && early_window_obj_phase.is_some_and(|phase| self.next_x == phase && bg_phase == phase)
+    }
+
+    fn should_set_cgb_dmg_compat_tile_data_after_window_start_obj(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.next_x == 0
+            && bg_phase == 0
+            && self
+                .leftmost_obj_oam_x
+                .is_some_and(|oam_x| (5..=7).contains(&oam_x))
+    }
+
+    fn should_set_cgb_dmg_compat_tile_data_at_visible_window_obj_x8(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.leftmost_obj_oam_x == Some(OBJ_PIXELS_PER_FETCH)
+            && self.next_x == 0
+            && bg_phase == 0
+    }
+
+    fn should_set_lcdc_tile_data_at_visible_window_obj_x8(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.leftmost_obj_oam_x == Some(OBJ_PIXELS_PER_FETCH)
+            && self.next_x == 0
+            && bg_phase == 0
+            && self.pending_obj_stall_dots > 0
+    }
+
+    fn should_set_cgb_dmg_compat_tile_data_at_late_visible_window_obj(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+        bg_phase: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.window_active
+            && self
+                .leftmost_obj_oam_x
+                .is_some_and(|oam_x| (16..=17).contains(&oam_x))
+            && self.next_x == OBJ_PIXELS_PER_FETCH
+            && bg_phase == 0
+    }
+
+    fn should_ignore_cgb_dmg_compat_visible_window_obj_set(
+        &self,
+        previous_lcdc: u8,
+        new_lcdc: u8,
+    ) -> bool {
+        let tile_data_turning_on =
+            previous_lcdc & LCDC_TILE_DATA == 0 && new_lcdc & LCDC_TILE_DATA != 0;
+        tile_data_turning_on
+            && self.window_active
+            && self
+                .leftmost_obj_oam_x
+                .is_some_and(|oam_x| (9..=15).contains(&oam_x))
     }
 
     fn should_set_lcdc_tile_data_at_window_obj_stalled_boundary(
@@ -1693,6 +2527,115 @@ impl PixelFifoRenderer {
         self.dmg_pixel_layers_with_options(x, vram, oam, registers, window_line, true)
     }
 
+    fn resolve_cgb_dmg_tile_sel_overrides(
+        &mut self,
+        low_override: DmgTileByteOverride,
+        high_override: DmgTileByteOverride,
+        oam: &[u8; 0xA0],
+        vram: &[u8; 0x2000],
+        registers: &Registers,
+    ) -> (DmgTileByteOverride, DmgTileByteOverride) {
+        if !matches!(low_override, DmgTileByteOverride::CachedData)
+            && !matches!(high_override, DmgTileByteOverride::CachedData)
+        {
+            return (low_override, high_override);
+        }
+
+        let cached_data = self.cgb_dmg_tile_sel_glitch_data(oam, vram, registers);
+        (
+            Self::resolve_cgb_dmg_tile_sel_override(low_override, cached_data),
+            Self::resolve_cgb_dmg_tile_sel_override(high_override, cached_data),
+        )
+    }
+
+    fn resolve_cgb_dmg_tile_sel_override(
+        override_mode: DmgTileByteOverride,
+        cached_data: u8,
+    ) -> DmgTileByteOverride {
+        match override_mode {
+            DmgTileByteOverride::CachedData => DmgTileByteOverride::Data(cached_data),
+            DmgTileByteOverride::None
+            | DmgTileByteOverride::TileIndex
+            | DmgTileByteOverride::TileIndexAndCache { .. }
+            | DmgTileByteOverride::Data(_) => override_mode,
+        }
+    }
+
+    fn cgb_dmg_tile_sel_glitch_data(
+        &mut self,
+        oam: &[u8; 0xA0],
+        vram: &[u8; 0x2000],
+        registers: &Registers,
+    ) -> u8 {
+        if let Some(data) = self.cgb_dmg_tile_sel_glitch_data {
+            return data;
+        }
+
+        let data = self
+            .initial_cgb_dmg_tile_sel_glitch_data(oam, vram, registers)
+            .unwrap_or(0);
+        self.cgb_dmg_tile_sel_glitch_data = Some(data);
+        data
+    }
+
+    fn initial_cgb_dmg_tile_sel_glitch_data(
+        &self,
+        oam: &[u8; 0xA0],
+        vram: &[u8; 0x2000],
+        registers: &Registers,
+    ) -> Option<u8> {
+        self.sprite_indices
+            .iter()
+            .copied()
+            .filter(|&index| oam[index * 4 + 1] <= 16)
+            .max_by_key(|&index| (oam[index * 4 + 1], index))
+            .map(|index| {
+                sprites::sprite_tile_row_high_byte(self.scanline, index, oam, vram, registers.lcdc)
+            })
+    }
+
+    fn update_cgb_dmg_tile_sel_glitch_data(&mut self, pixel: bg_fifo::DmgFetchedPixel) {
+        if let Some(data) = pixel.low_cache_data {
+            self.cgb_dmg_tile_sel_glitch_data = Some(data);
+        }
+        if let Some(data) = pixel.high_cache_data {
+            self.cgb_dmg_tile_sel_glitch_data = Some(data);
+        }
+    }
+
+    fn window_first_pixel_tile_select_toggle_changes_colour(
+        &self,
+        current_colour: u8,
+        x: u32,
+        vram: &[u8; 0x2000],
+        registers: &Registers,
+    ) -> bool {
+        if x != 0 || !self.window_active || self.leftmost_obj_oam_x != Some(4) {
+            return false;
+        }
+
+        let toggled_lcdc = registers.lcdc ^ LCDC_TILE_DATA;
+        bg_fifo::fetch_dmg_pixel_with_data(
+            vram,
+            DmgPixelFetch {
+                layer: DmgLayer::Window,
+                x,
+                scanline: self.scanline,
+                scx: registers.scx,
+                scy: registers.scy,
+                wx: self.window_fetch_wx,
+                wy: registers.wy,
+                window_line: self.window_fetch_line,
+                map_lcdc: registers.lcdc | LCDC_WINDOW_ENABLE,
+                low_lcdc: toggled_lcdc,
+                high_lcdc: toggled_lcdc,
+                low_override: DmgTileByteOverride::None,
+                high_override: DmgTileByteOverride::None,
+            },
+        )
+        .is_some_and(|pixel| pixel.colour_index != current_colour)
+    }
+
     fn dmg_pixel_layers_with_options(
         &mut self,
         x: u32,
@@ -1712,10 +2655,17 @@ impl PixelFifoRenderer {
 
         let bg_idx = if bg_window_enabled {
             let bg_x = x.saturating_sub(u32::from(self.bg_fetch_x_offset));
-            let (low_lcdc, high_lcdc) = self
+            let (low_lcdc, high_lcdc, low_override, high_override) = self
                 .lcdc_tile_data_edge
                 .lcdc_for_tile_data(x, bg_fetch_lcdc);
-            bg_fifo::fetch_dmg_pixel(
+            let (low_override, high_override) = self.resolve_cgb_dmg_tile_sel_overrides(
+                low_override,
+                high_override,
+                oam,
+                vram,
+                registers,
+            );
+            match bg_fifo::fetch_dmg_pixel_with_data(
                 vram,
                 DmgPixelFetch {
                     layer: DmgLayer::Background,
@@ -1729,18 +2679,38 @@ impl PixelFifoRenderer {
                     map_lcdc: bg_fetch_lcdc,
                     low_lcdc,
                     high_lcdc,
+                    low_override,
+                    high_override,
                 },
-            )
-            .unwrap_or(0)
+            ) {
+                Some(pixel) => {
+                    self.update_cgb_dmg_tile_sel_glitch_data(pixel);
+                    pixel.colour_index
+                }
+                None => 0,
+            }
         } else {
             0
         };
 
-        let bw_idx =
+        let mut window_tile_select_latched = false;
+        let mut bw_idx =
             if let Some((window_wx, window_line)) = window_fetch.filter(|_| bg_window_enabled) {
-                let (low_lcdc, high_lcdc) = self.lcdc_tile_data_edge.lcdc_for_tile_data(x, lcdc);
+                let (low_lcdc, high_lcdc, low_override, high_override) =
+                    self.lcdc_tile_data_edge.lcdc_for_tile_data(x, lcdc);
+                window_tile_select_latched = low_lcdc & LCDC_TILE_DATA != lcdc & LCDC_TILE_DATA
+                    || high_lcdc & LCDC_TILE_DATA != lcdc & LCDC_TILE_DATA
+                    || low_override != DmgTileByteOverride::None
+                    || high_override != DmgTileByteOverride::None;
+                let (low_override, high_override) = self.resolve_cgb_dmg_tile_sel_overrides(
+                    low_override,
+                    high_override,
+                    oam,
+                    vram,
+                    registers,
+                );
                 let window_map_lcdc = self.lcdc_window_map_edge.lcdc_for_window_fetch(x, lcdc);
-                match bg_fifo::fetch_dmg_pixel(
+                match bg_fifo::fetch_dmg_pixel_with_data(
                     vram,
                     DmgPixelFetch {
                         layer: DmgLayer::Window,
@@ -1754,9 +2724,14 @@ impl PixelFifoRenderer {
                         map_lcdc: window_map_lcdc | LCDC_WINDOW_ENABLE,
                         low_lcdc,
                         high_lcdc,
+                        low_override,
+                        high_override,
                     },
                 ) {
-                    Some(idx) => idx,
+                    Some(pixel) => {
+                        self.update_cgb_dmg_tile_sel_glitch_data(pixel);
+                        pixel.colour_index
+                    }
                     None => bg_idx,
                 }
             } else if dmg_window_glitch && self.dmg_disabled_window_color0_pixel(x, registers) {
@@ -1779,6 +2754,18 @@ impl PixelFifoRenderer {
         } else {
             None
         };
+
+        let tile_select_first_pixel_glitch = window_tile_select_latched
+            || self
+                .window_first_pixel_tile_select_toggle_changes_colour(bw_idx, x, vram, registers);
+        if sprite_px.is_none()
+            && tile_select_first_pixel_glitch
+            && x == 0
+            && self.window_active
+            && self.leftmost_obj_oam_x == Some(4)
+        {
+            bw_idx = if dmg_window_glitch { 3 } else { 2 };
+        }
 
         if let Some(sp) = sprite_px {
             if sp.bg_priority && bw_idx != 0 {
@@ -2342,6 +3329,58 @@ mod tests {
 
         assert_eq!(current_tile_colour, 0);
         assert_eq!(next_tile_colour, 3);
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn window_obj_x4_first_pixel_uses_window_map_without_tile_select_latch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.leftmost_obj_oam_x = Some(4);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xB1;
+        registers.wx = 7;
+        registers.wy = 0;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_9800_window_and_solid_9c00_window();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 0,
+            "the TILE_SEL-only first-pixel quirk must not override plain window-map fetches"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn window_obj_x4_first_pixel_uses_tile_select_glitch_when_alternate_data_is_visible() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.leftmost_obj_oam_x = Some(4);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xA1;
+        registers.wx = 7;
+        registers.wy = 0;
+        registers.bgp = 0xE4;
+        let mut vram = vram_with_blank_9800_window_and_solid_9c00_window();
+        vram[0x0000] = 0xFF;
+        vram[0x0001] = 0xFF;
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 3,
+            "the OAM X=4 first-pixel quirk applies only to TILE_SEL writes"
+        );
         assert!(!is_sprite);
     }
 
@@ -4218,6 +5257,140 @@ mod tests {
             "the next tile should use the current TILE_SEL for both bitplanes"
         );
         assert!(!is_sprite);
+    }
+
+    #[test]
+    fn cgb_dmg_compat_tile_select_set_keeps_normal_bg_fetch_phase() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 1;
+        renderer.record_lcdc_write(0x81, 0x91, 0, true, true);
+        let mut registers = Registers::new();
+        registers.lcdc = 0x91;
+        registers.bgp = 0xE4;
+        let mut vram = vram_with_mixed_bg_tile_select_sources();
+        vram[0x1801] = 0x02;
+        vram[0x1020] = 0x80;
+        vram[0x0020] = 0x00;
+        vram[0x0021] = 0x80;
+        let oam = [0u8; 0xA0];
+
+        let (colour_index, is_sprite, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            colour_index, 2,
+            "CGB DMG-compat TILE_SEL set should not use the falling-edge glitch phase"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn cgb_dmg_compat_tile_select_set_phase0_uses_cached_low_byte() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.next_x = 8;
+
+        renderer.record_lcdc_write(0x81, 0x91, 0, true, true);
+
+        assert_eq!(
+            renderer.lcdc_tile_data_edge.lcdc_for_tile_data(16, 0x91),
+            (
+                0x91,
+                0x91,
+                super::DmgTileByteOverride::CachedData,
+                super::DmgTileByteOverride::None
+            ),
+            "CGB DMG-compat TILE_SEL set in phase 0 should substitute cached data for the next low byte"
+        );
+    }
+
+    #[test]
+    fn cgb_dmg_compat_tile_select_set_phase2_uses_cached_high_byte() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.next_x = 10;
+
+        renderer.record_lcdc_write(0x81, 0x91, 0, true, true);
+
+        assert_eq!(
+            renderer.lcdc_tile_data_edge.lcdc_for_tile_data(16, 0x91),
+            (
+                0x81,
+                0x91,
+                super::DmgTileByteOverride::None,
+                super::DmgTileByteOverride::CachedData
+            ),
+            "CGB DMG-compat TILE_SEL set in phase 2 should keep the previous low byte and substitute cached data for the high byte"
+        );
+    }
+
+    #[test]
+    fn cgb_dmg_compat_tile_select_set_phase2_at_left_edge_delays_following_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.next_x = 2;
+
+        renderer.record_lcdc_write(0x81, 0x91, 0, true, true);
+
+        assert_eq!(
+            renderer.lcdc_tile_data_edge.lcdc_for_tile_data(8, 0x91),
+            (
+                0x81,
+                0x81,
+                super::DmgTileByteOverride::None,
+                super::DmgTileByteOverride::None
+            ),
+            "the first visible CGB DMG-compat fetch should not sample a phase-2 set until the later fetch"
+        );
+    }
+
+    #[test]
+    fn cgb_dmg_compat_tile_select_restore_phase2_keeps_cached_current_fetch_mix() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.next_x = 10;
+        renderer.record_lcdc_write(0x81, 0x91, 0, true, true);
+        renderer.next_x = 18;
+
+        renderer.record_lcdc_write(0x91, 0x81, 0, true, true);
+
+        assert_eq!(
+            renderer.lcdc_tile_data_edge.lcdc_for_tile_data(16, 0x81),
+            (
+                0x81,
+                0x91,
+                super::DmgTileByteOverride::None,
+                super::DmgTileByteOverride::CachedData
+            ),
+            "the falling-edge glitch in phase 2 must not drop the cached high-byte sample from the already-sampled fetch"
+        );
+    }
+
+    #[test]
+    fn cgb_dmg_compat_tile_select_restore_during_obj_stall_keeps_previous_fetch_on_tile_row_start()
+    {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.next_x = 8;
+        renderer.pending_obj_stall_dots = 3;
+        renderer.lcdc_tile_data_edge.record_write(8, 15, 0x81, 0x81);
+        renderer
+            .lcdc_tile_data_edge
+            .record_write(16, 23, 0x91, 0x91);
+
+        renderer.record_lcdc_write(0x91, 0x81, 0, true, true);
+
+        assert_eq!(
+            renderer.lcdc_tile_data_edge.lcdc_for_tile_data(16, 0x81),
+            (
+                0x91,
+                0x91,
+                super::DmgTileByteOverride::None,
+                super::DmgTileByteOverride::None
+            ),
+            "a restore during the OBJ stall at the tile row start should keep the following fetch on the previous TILE_SEL sample"
+        );
     }
 
     #[test]
