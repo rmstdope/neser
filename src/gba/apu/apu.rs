@@ -441,7 +441,7 @@ impl Channel3 {
         }
         // Bit 15 of SOUND3CNT_H: force 75% volume regardless of output_level.
         if self.force_volume {
-            return (self.current_sample as f32 * 3.0 / 4.0) / 15.0;
+            return ((self.current_sample as u16 * 3) / 4) as f32 / 15.0;
         }
         let shift: u8 = match self.output_level {
             1 => 0, // 100 %
@@ -1128,8 +1128,10 @@ impl Apu {
                 self.ch3.write_cnt_h(current_hi | val as u16);
             }
             0x0400_0073 => {
-                let current_lo = self.read16(0x0400_0072) & 0x00FF;
-                self.ch3.write_cnt_h(current_lo | ((val as u16) << 8));
+                // High byte contains output level + force-volume and must not clobber
+                // the write-only length value in low byte.
+                self.ch3.output_level = (val >> 5) & 0x03;
+                self.ch3.force_volume = (val & 0x80) != 0;
             }
             // SOUND3CNT_X: frequency/trigger
             0x0400_0074 => {
@@ -1693,18 +1695,18 @@ mod tests {
 
     #[test]
     fn test_ch3_force_volume_output_is_75_percent() {
-        // RED: when force_volume is set, output() must return 75% of the sample.
-        // Sample = 8 → expected = 8 * 3/4 / 15 = 6.0 / 15.0 = 0.4
+        // RED: when force_volume is set, output() must return (sample*3)/4 with truncation.
+        // Sample = 1 -> (1*3)/4 = 0, expected output = 0.
         let ch3 = Channel3 {
             dac_on: true,
             active: true,
             force_volume: true,
-            current_sample: 8,
+            current_sample: 1,
             output_level: 0, // would normally mute — force_volume overrides
             ..Channel3::default()
         };
         let got = ch3.output();
-        let expected = (8.0_f32 * 3.0 / 4.0) / 15.0;
+        let expected = ((1_u16 * 3) / 4) as f32 / 15.0;
         assert!(
             (got - expected).abs() < 1e-5,
             "force_volume output mismatch: expected {expected}, got {got}"
@@ -1725,11 +1727,27 @@ mod tests {
             ..Channel3::default()
         };
         let got = ch3.output();
-        let expected = (12.0_f32 * 3.0 / 4.0) / 15.0;
+        let expected = ((12_u16 * 3) / 4) as f32 / 15.0;
         assert!(
             (got - expected).abs() < 1e-5,
             "force_volume should override output_level: expected {expected}, got {got}"
         );
+    }
+
+    #[test]
+    fn test_write8_sound3cnt_h_high_byte_does_not_clobber_length() {
+        let mut apu = powered_apu();
+        apu.write8(0x0400_0072, 0x20); // length = 32 -> counter = 224
+        let before = apu.ch3.length_counter;
+
+        apu.write8(0x0400_0073, 0xC0); // force_volume=1, output_level=2
+
+        assert_eq!(
+            apu.ch3.length_counter, before,
+            "high-byte write must not change SOUND3CNT_H length counter"
+        );
+        assert_eq!(apu.ch3.output_level, 2);
+        assert!(apu.ch3.force_volume);
     }
 
     #[test]
