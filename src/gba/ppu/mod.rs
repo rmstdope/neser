@@ -794,7 +794,7 @@ impl Ppu {
             let bgr555 = if pram_index + 1 < pram.len() {
                 u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])
             } else {
-                0
+                self.backdrop_bgr555(pram)
             };
 
             let dst = row_start + x * BYTES_PER_PIXEL;
@@ -2046,7 +2046,7 @@ mod tests {
         ppu.write_affine(REG_BG2PD, 0x0100);
         ppu.write_affine(REG_BG2X_L, 0xC800);
 
-        // Fill entire map with tile 1 and color it green.
+        // Place tile 1 at map position (0,0) with green color.
         let green = 0x03E0u16;
         setup_affine_tile(&mut vram, &mut pram, 8, 0, 0, 0, green);
 
@@ -2090,10 +2090,10 @@ mod tests {
 
         // Identity affine, offset by 128 pixels (= full map width).
         // Should wrap back to position 0.
+        // 128 pixels in 8.8 fixed = 128 << 8 = 0x8000.
         ppu.write_affine(REG_BG2PA, 0x0100);
         ppu.write_affine(REG_BG2PD, 0x0100);
-        ppu.write_affine(REG_BG2X_L, 0x0000); // X low = 0
-        ppu.write_affine(REG_BG2X_H, 0x0080); // X = 128 << 8 = 0x8000
+        ppu.write_affine(REG_BG2X_L, 0x8000); // X = 128 in 8.8 fixed
 
         // Place tile at map (0,0) with green.
         let green = 0x03E0u16;
