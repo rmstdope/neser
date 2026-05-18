@@ -394,7 +394,8 @@ impl GbaBus {
     /// cycles. Any pending IRQs are routed into [`Self::ic`]. PPU
     /// V-Blank/H-Blank edges are propagated to the DMA controller.
     pub fn step(&mut self, cycles: u32) {
-        self.timers.step(cycles, &mut self.ic);
+        let overflow_mask = self.timers.step(cycles, &mut self.ic);
+        self.handle_timer_overflow_fifo(overflow_mask);
         self.sio.step(cycles, &mut self.ic);
         self.apu.tick(cycles);
         let events = self.ppu.step(
@@ -415,7 +416,8 @@ impl GbaBus {
             if cycles == 0 {
                 break;
             }
-            self.timers.step(cycles, &mut self.ic);
+            let overflow_mask = self.timers.step(cycles, &mut self.ic);
+            self.handle_timer_overflow_fifo(overflow_mask);
             self.apu.tick(cycles);
             let events = self.ppu.step(
                 cycles,
@@ -439,6 +441,35 @@ impl GbaBus {
         }
         for _ in 0..events.hblank_starts {
             self.notify_hblank();
+        }
+    }
+
+    /// When a timer overflows, advance the corresponding FIFO sample and
+    /// request DMA replenishment if the FIFO is running low.
+    ///
+    /// Per GBATek: SOUNDCNT_H bit 10 selects the timer for FIFO A (0=TM0, 1=TM1),
+    /// and bit 14 selects the timer for FIFO B.
+    fn handle_timer_overflow_fifo(&mut self, overflow_mask: u8) {
+        if overflow_mask == 0 {
+            return;
+        }
+
+        let soundcnt_h = self.apu.soundcnt_h;
+        let fifo_a_timer = if soundcnt_h & 0x0400 != 0 { 1 } else { 0 };
+        let fifo_b_timer = if soundcnt_h & 0x4000 != 0 { 1 } else { 0 };
+
+        if overflow_mask & (1 << fifo_a_timer) != 0 {
+            self.apu.fifo_a.advance();
+            if self.apu.fifo_a.len() <= 16 {
+                self.dma.notify_fifo(0);
+            }
+        }
+
+        if overflow_mask & (1 << fifo_b_timer) != 0 {
+            self.apu.fifo_b.advance();
+            if self.apu.fifo_b.len() <= 16 {
+                self.dma.notify_fifo(1);
+            }
         }
     }
 
@@ -1841,5 +1872,50 @@ mod tests {
             !bus.halt_requested(),
             "write32 with HALTCNT byte 0x80 → stop mode"
         );
+    }
+
+    #[test]
+    fn timer_overflow_advances_fifo_a_and_triggers_dma() {
+        // Configure FIFO A to use Timer 0 (SOUNDCNT_H bit 10 = 0).
+        let mut bus = GbaBus::new();
+
+        // Push some samples into FIFO A.
+        bus.apu.fifo_a.push(10);
+        bus.apu.fifo_a.push(20);
+        bus.apu.fifo_a.push(30);
+        assert_eq!(bus.apu.fifo_a.current, 0); // not yet advanced
+
+        // SOUNDCNT_H: FIFO A uses timer 0 (bit 10 = 0), enable A right (bit 8).
+        bus.apu.soundcnt_h = 0x0100;
+
+        // Set Timer 0 reload to 0xFFFF and enable (overflows after 1 tick at prescaler=1).
+        bus.timers.write_cnt_l(0, 0xFFFF);
+        bus.timers.write_cnt_h(0, 0x0080); // enable, prescaler=1
+
+        // Step 1 cycle — should overflow TM0 and advance FIFO A.
+        bus.step(1);
+
+        assert_eq!(bus.apu.fifo_a.current, 10, "FIFO A should have advanced");
+    }
+
+    #[test]
+    fn timer1_overflow_advances_fifo_b_when_configured() {
+        // Configure FIFO B to use Timer 1 (SOUNDCNT_H bit 14 = 1).
+        let mut bus = GbaBus::new();
+
+        bus.apu.fifo_b.push(42);
+        bus.apu.fifo_b.push(43);
+        assert_eq!(bus.apu.fifo_b.current, 0);
+
+        // SOUNDCNT_H: FIFO B uses timer 1 (bit 14 = 1), enable B right (bit 12).
+        bus.apu.soundcnt_h = 0x5000; // bit 14 + bit 12
+
+        // Enable Timer 1 to overflow immediately.
+        bus.timers.write_cnt_l(1, 0xFFFF);
+        bus.timers.write_cnt_h(1, 0x0080);
+
+        bus.step(1);
+
+        assert_eq!(bus.apu.fifo_b.current, 42, "FIFO B should have advanced");
     }
 }

@@ -861,11 +861,6 @@ impl Apu {
             if self.sample_acc >= self.cycles_per_sample {
                 self.sample_acc -= self.cycles_per_sample;
                 if self.pending_sample.is_none() {
-                    // Advance PCM FIFOs once per output sample.
-                    // NOTE: Full DMA/timer-driven FIFO advance will be wired
-                    // in Phase 4 (DMA controller integration).
-                    self.fifo_a.advance();
-                    self.fifo_b.advance();
                     self.pending_sample = Some(self.mix());
                 }
             }
