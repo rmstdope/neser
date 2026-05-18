@@ -1,0 +1,214 @@
+// ── CH3 — Wave ────────────────────────────────────────────────────────────────
+
+/// Number of 4-bit samples per wave RAM bank.
+pub(super) const SAMPLES_PER_BANK: u8 = 32;
+
+/// Channel 3: wave playback (32 × 4-bit samples, or 64 × 4-bit samples in two-bank mode).
+#[derive(Debug, Clone, Default)]
+pub struct Channel3 {
+    pub dac_on: bool,
+    /// Bit 5 of SOUND3CNT_L: 0 = one bank (32 samples), 1 = two banks (64 samples).
+    pub two_banks: bool,
+    /// Bit 6 of SOUND3CNT_L: selects which bank (0 or 1) is played back.
+    /// The OTHER bank is accessible via Wave RAM register reads/writes.
+    pub bank_select: bool,
+    pub length_counter: u16,
+    pub output_level: u8, // 0=mute, 1=100%, 2=50%, 3=25%
+    /// Bit 15 of SOUND3CNT_H: when true, forces 75% volume regardless of output_level.
+    pub force_volume: bool,
+    pub freq: u16,
+    pub length_en: bool,
+
+    pub active: bool,
+    pub wave_pos: u8, // 0-31 (single bank) or 0-63 (two banks)
+    pub freq_timer: u32,
+    /// Wave RAM: 2 banks × 16 bytes = 32 bytes total (64 × 4-bit samples).
+    pub wave_ram: [[u8; 16]; 2],
+    /// Current 4-bit output nibble.
+    pub current_sample: u8,
+}
+
+impl Channel3 {
+    pub fn output(&self) -> f32 {
+        if !self.active || !self.dac_on {
+            return 0.0;
+        }
+        // Bit 15 of SOUND3CNT_H: force 75% volume regardless of output_level.
+        if self.force_volume {
+            return ((self.current_sample as u16 * 3) / 4) as f32 / 15.0;
+        }
+        let shift: u8 = match self.output_level {
+            1 => 0, // 100 %
+            2 => 1, // 50 %
+            3 => 2, // 25 %
+            _ => return 0.0,
+        };
+        (self.current_sample >> shift) as f32 / 15.0
+    }
+
+    /// Advance channel by `cycles` GBA cycles.
+    /// Each wave_pos step takes (2048 − freq) × 8 GBA cycles.
+    pub fn tick(&mut self, cycles: u32) {
+        if !self.active {
+            return;
+        }
+        let period = (2048_u32.wrapping_sub(self.freq as u32)) * 8;
+        if period == 0 {
+            return;
+        }
+        // Use a bitmask to wrap wave_pos: single-bank → mask 0x1F (& 31), two-bank → 0x3F (& 63).
+        let pos_mask: u8 = if self.two_banks { 0x3F } else { 0x1F };
+        let mut rem = cycles;
+        while rem > 0 {
+            if self.freq_timer == 0 {
+                self.freq_timer = period;
+            }
+            let advance = rem.min(self.freq_timer);
+            self.freq_timer -= advance;
+            rem -= advance;
+            if self.freq_timer == 0 {
+                self.wave_pos = (self.wave_pos + 1) & pos_mask;
+                // Samples 0..(SAMPLES_PER_BANK-1) come from bank_select; the rest from the other bank.
+                let bank = if self.wave_pos < SAMPLES_PER_BANK {
+                    self.bank_select as usize
+                } else {
+                    (self.bank_select as usize) ^ 1
+                };
+                let pos_in_bank = self.wave_pos & (SAMPLES_PER_BANK - 1);
+                let byte = self.wave_ram[bank][(pos_in_bank / 2) as usize];
+                self.current_sample = if pos_in_bank & 1 == 0 {
+                    (byte >> 4) & 0x0F // high nibble
+                } else {
+                    byte & 0x0F // low nibble
+                };
+                self.freq_timer = period;
+            }
+        }
+    }
+
+    pub fn clock_length(&mut self) {
+        if !self.length_en || self.length_counter == 0 {
+            return;
+        }
+        self.length_counter -= 1;
+        if self.length_counter == 0 {
+            self.active = false;
+        }
+    }
+
+    fn trigger(&mut self) {
+        self.active = self.dac_on;
+        if self.length_counter == 0 {
+            self.length_counter = 256;
+        }
+        let period = (2048_u32.wrapping_sub(self.freq as u32)) * 8;
+        self.freq_timer = period;
+        self.wave_pos = 0;
+        // Read first sample from the playing bank (position 0 = high nibble of byte 0).
+        let bank = self.bank_select as usize;
+        self.current_sample = (self.wave_ram[bank][0] >> 4) & 0x0F;
+    }
+
+    // ── Register writes ───────────────────────────────────────────────────
+
+    /// SOUND3CNT_L: wave RAM dimension (bit 5), bank select (bit 6), DAC enable (bit 7).
+    pub fn write_cnt_l(&mut self, val: u16) {
+        self.two_banks = (val & 0x0020) != 0;
+        self.bank_select = (val & 0x0040) != 0;
+        self.dac_on = (val & 0x0080) != 0;
+        if !self.dac_on {
+            self.active = false;
+        }
+    }
+
+    /// SOUND3CNT_H: sound length (bits 7-0), output level (bits 14-13), force volume (bit 15).
+    pub fn write_cnt_h(&mut self, val: u16) {
+        // Lower byte = sound length (0-255, counter = 256 - length)
+        self.length_counter = 256 - (val & 0x00FF);
+        // Bits 14-13: output level
+        self.output_level = ((val >> 13) & 0x03) as u8;
+        // Bit 15: force 75% volume regardless of output_level
+        self.force_volume = (val & 0x8000) != 0;
+    }
+
+    /// SOUND3CNT_X: frequency and trigger.
+    pub fn write_cnt_x(&mut self, val: u16) {
+        self.freq = val & 0x7FF;
+        self.length_en = (val & 0x4000) != 0;
+        if val & 0x8000 != 0 {
+            self.trigger();
+        }
+    }
+
+    /// Write one byte to wave RAM (address offset 0x00–0x0F from wave RAM base).
+    /// Always accesses the bank NOT currently selected for playback.
+    pub fn write_wave_ram(&mut self, offset: usize, val: u8) {
+        let other_bank = (self.bank_select as usize) ^ 1;
+        if offset < 16 {
+            self.wave_ram[other_bank][offset] = val;
+        }
+    }
+
+    /// Read one byte from wave RAM.
+    /// Always accesses the bank NOT currently selected for playback.
+    pub fn read_wave_ram(&self, offset: usize) -> u8 {
+        let other_bank = (self.bank_select as usize) ^ 1;
+        if offset < 16 {
+            self.wave_ram[other_bank][offset]
+        } else {
+            0xFF
+        }
+    }
+
+    pub fn power_off(&mut self) {
+        let wave_ram = self.wave_ram;
+        *self = Self::default();
+        self.wave_ram = wave_ram; // both wave RAM banks survive power-off
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ch3_force_volume_output_is_75_percent() {
+        // RED: when force_volume is set, output() must return (sample*3)/4 with truncation.
+        // Sample = 1 -> (1*3)/4 = 0, expected output = 0.
+        let ch3 = Channel3 {
+            dac_on: true,
+            active: true,
+            force_volume: true,
+            current_sample: 1,
+            output_level: 0, // would normally mute — force_volume overrides
+            ..Channel3::default()
+        };
+        let got = ch3.output();
+        let expected = (3_u16 / 4) as f32 / 15.0;
+        assert!(
+            (got - expected).abs() < 1e-5,
+            "force_volume output mismatch: expected {expected}, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch3_force_volume_overrides_output_level() {
+        // When force_volume is set and output_level=3 (25%), output should be 75%, not 25%.
+        // Sample = 12 → force 75%: 12 * 3/4 = 9; expected = 9/15 = 0.6
+        // Normal 25%: 12 >> 2 = 3; 3/15 = 0.2
+        let ch3 = Channel3 {
+            dac_on: true,
+            active: true,
+            force_volume: true,
+            current_sample: 12,
+            output_level: 3, // 25% — should be overridden
+            ..Channel3::default()
+        };
+        let got = ch3.output();
+        let expected = ((12_u16 * 3) / 4) as f32 / 15.0;
+        assert!(
+            (got - expected).abs() < 1e-5,
+            "force_volume should override output_level: expected {expected}, got {got}"
+        );
+    }
+}
