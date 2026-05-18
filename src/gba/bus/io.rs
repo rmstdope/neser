@@ -147,6 +147,7 @@ impl IoRegisters {
             REG_IME => Some(ic.read_ime()),
             // PPU display registers (readable).
             ppu::REG_DISPCNT => Some(ppu.read_dispcnt()),
+            ppu::REG_GREEN_SWAP => Some(ppu.read_green_swap()),
             ppu::REG_BG0CNT => Some(ppu.read_bg_cnt(0)),
             ppu::REG_BG1CNT => Some(ppu.read_bg_cnt(1)),
             ppu::REG_BG2CNT => Some(ppu.read_bg_cnt(2)),
@@ -335,6 +336,7 @@ impl IoRegisters {
             REG_IME => ic.write_ime(value),
             // PPU display registers.
             ppu::REG_DISPCNT => ppu.write_dispcnt(value),
+            ppu::REG_GREEN_SWAP => ppu.write_green_swap(value),
             ppu::REG_BG0CNT => ppu.write_bg_cnt(0, value),
             ppu::REG_BG1CNT => ppu.write_bg_cnt(1, value),
             ppu::REG_BG2CNT => ppu.write_bg_cnt(2, value),
@@ -1762,5 +1764,26 @@ mod tests {
             &mut k,
         );
         assert_eq!(p.read_win_v(1), 0xA000);
+    }
+
+    #[test]
+    fn green_swap_dispatches_to_ppu() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+        io.write16(
+            ppu::REG_GREEN_SWAP,
+            1,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_green_swap(), 1);
+        assert_eq!(io.read16(ppu::REG_GREEN_SWAP, &ic, &t, &d, &p, &k), 1);
     }
 }
