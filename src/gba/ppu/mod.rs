@@ -56,6 +56,10 @@ pub const BYTES_PER_PIXEL: usize = 3;
 pub const FRAMEBUFFER_BYTES: usize =
     (SCREEN_WIDTH as usize) * (SCREEN_HEIGHT as usize) * BYTES_PER_PIXEL;
 
+/// Marker value for a transparent pixel in per-layer color buffers.
+/// Valid BGR555 colors use bits 0-14 only, so bit 15 set means "no pixel".
+const TRANSPARENT: u16 = 0x8000;
+
 /// CPU cycles per scanline (308 dots × 4 cycles/dot).
 pub const CYCLES_PER_SCANLINE: u32 = 1232;
 /// Cycle within a scanline at which the H-Blank flag becomes set.
@@ -93,6 +97,12 @@ pub mod dispcnt {
     pub const OBJ_ENABLE: u16 = 1 << 12;
     /// OBJ character VRAM mapping: 1 = 1D, 0 = 2D (DISPCNT[6]).
     pub const OBJ_MAPPING_1D: u16 = 1 << 6;
+    /// Display Window 0 (DISPCNT[13]).
+    pub const WIN0_ENABLE: u16 = 1 << 13;
+    /// Display Window 1 (DISPCNT[14]).
+    pub const WIN1_ENABLE: u16 = 1 << 14;
+    /// Display OBJ Window (DISPCNT[15]).
+    pub const OBJ_WIN_ENABLE: u16 = 1 << 15;
 }
 
 /// `DISPSTAT` bit masks used by the PPU.
@@ -156,6 +166,14 @@ pub const REG_BG3X_H: u32 = 0x0400_003A;
 pub const REG_BG3Y_L: u32 = 0x0400_003C;
 pub const REG_BG3Y_H: u32 = 0x0400_003E;
 
+// Window registers (write-only for H/V coords, read/write for IN/OUT).
+pub const REG_WIN0H: u32 = 0x0400_0040;
+pub const REG_WIN1H: u32 = 0x0400_0042;
+pub const REG_WIN0V: u32 = 0x0400_0044;
+pub const REG_WIN1V: u32 = 0x0400_0046;
+pub const REG_WININ: u32 = 0x0400_0048;
+pub const REG_WINOUT: u32 = 0x0400_004A;
+
 /// Result of stepping the PPU — counts telling the bus how many DMA
 /// hooks (V-Blank / H-Blank) to fire after a step.
 ///
@@ -211,6 +229,18 @@ pub struct Ppu {
     bg_affine: [BgAffine; 2],
     /// BG0–BG3 horizontal and vertical scroll offsets (low 9 bits are valid).
     bg_scroll: [(u16, u16); 4],
+    /// Window horizontal boundaries: `[WIN0H, WIN1H]`.
+    /// Each register: bits 8-15 = X1 (left), bits 0-7 = X2 (right).
+    win_h: [u16; 2],
+    /// Window vertical boundaries: `[WIN0V, WIN1V]`.
+    /// Each register: bits 8-15 = Y1 (top), bits 0-7 = Y2 (bottom).
+    win_v: [u16; 2],
+    /// `WININ` (0x0400_0048): layer enable for inside Window 0 (bits 0-5)
+    /// and Window 1 (bits 8-13).
+    winin: u16,
+    /// `WINOUT` (0x0400_004A): layer enable for outside all windows (bits 0-5)
+    /// and inside OBJ Window (bits 8-13).
+    winout: u16,
 }
 
 impl Default for Ppu {
@@ -236,6 +266,10 @@ impl Ppu {
             frame_ready: false,
             bg_affine: [BgAffine::default(); 2],
             bg_scroll: [(0, 0); 4],
+            win_h: [0; 2],
+            win_v: [0; 2],
+            winin: 0,
+            winout: 0,
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -432,6 +466,46 @@ impl Ppu {
         self.bg_scroll[n].1
     }
 
+    /// Write `WINnH` (n=0 or 1). Sets horizontal window boundaries.
+    pub fn write_win_h(&mut self, n: usize, value: u16) {
+        self.win_h[n] = value;
+    }
+
+    /// Read `WINnH` (n=0 or 1). Used for byte-write merging.
+    pub fn read_win_h(&self, n: usize) -> u16 {
+        self.win_h[n]
+    }
+
+    /// Write `WINnV` (n=0 or 1). Sets vertical window boundaries.
+    pub fn write_win_v(&mut self, n: usize, value: u16) {
+        self.win_v[n] = value;
+    }
+
+    /// Read `WINnV` (n=0 or 1). Used for byte-write merging.
+    pub fn read_win_v(&self, n: usize) -> u16 {
+        self.win_v[n]
+    }
+
+    /// Write `WININ` (0x0400_0048). Only bits 0-5 and 8-13 are valid.
+    pub fn write_winin(&mut self, value: u16) {
+        self.winin = value & 0x3F3F;
+    }
+
+    /// Read `WININ`.
+    pub fn read_winin(&self) -> u16 {
+        self.winin
+    }
+
+    /// Write `WINOUT` (0x0400_004A). Only bits 0-5 and 8-13 are valid.
+    pub fn write_winout(&mut self, value: u16) {
+        self.winout = value & 0x3F3F;
+    }
+
+    /// Read `WINOUT`.
+    pub fn read_winout(&self) -> u16 {
+        self.winout
+    }
+
     /// True after a completed frame, until [`Self::clear_frame_ready`].
     pub fn frame_ready(&self) -> bool {
         self.frame_ready
@@ -576,10 +650,8 @@ impl Ppu {
     }
 
     /// Mode 0: render enabled text-mode BG layers (BG0–BG3) with priority
-    /// compositing. Lower BGCNT priority value = on top; at equal priority,
-    /// lower BG number wins.
+    /// compositing and window support.
     fn render_mode0_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
-        // Collect enabled text-mode BGs.
         let bg_enables = [
             self.dispcnt & dispcnt::BG0_ENABLE != 0,
             self.dispcnt & dispcnt::BG1_ENABLE != 0,
@@ -587,70 +659,37 @@ impl Ppu {
             self.dispcnt & dispcnt::BG3_ENABLE != 0,
         ];
 
-        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
-        let backdrop = self.backdrop_bgr555(pram);
-
-        // Fill with backdrop first.
-        let (br, bg, bb) = color::bgr555_to_rgb888(backdrop);
-        for x in 0..(SCREEN_WIDTH as usize) {
-            let dst = row_start + x * BYTES_PER_PIXEL;
-            self.framebuffer[dst] = br;
-            self.framebuffer[dst + 1] = bg;
-            self.framebuffer[dst + 2] = bb;
-        }
-
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            self.render_backdrop_scanline(y, pram);
             return;
         }
 
-        // Track per-pixel priority for OBJ compositing (4 = backdrop/no BG).
-        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
-
-        if bg_enables.iter().any(|&e| e) {
-            // Build render order: paint from lowest visual priority (behind) to
-            // highest (on top). Higher BGCNT priority value = behind; at equal
-            // priority, higher BG number = behind.
-            let mut layers: [(u16, usize); 4] = [(0, 0); 4];
-            let mut count = 0;
-            for (i, &enabled) in bg_enables.iter().enumerate() {
-                if enabled {
-                    layers[count] = (self.bg_cnt[i] & 3, i);
-                    count += 1;
-                }
-            }
-            layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-
-            for &(prio, bg_idx) in &layers[..count] {
-                self.render_text_bg_layer_with_priority(
-                    bg_idx,
-                    y,
-                    vram,
-                    pram,
-                    row_start,
-                    backdrop,
-                    prio as u8,
-                    &mut pixel_priority,
-                );
+        // Collect enabled BG layers sorted front-to-back (lowest priority first,
+        // lowest BG number breaks ties).
+        let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
+        for (i, &enabled) in bg_enables.iter().enumerate() {
+            if enabled {
+                let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
+                self.render_text_bg_layer(i, y, vram, pram, &mut buf);
+                let prio = (self.bg_cnt[i] & 3) as u8;
+                layers.push((i, prio, buf));
             }
         }
 
-        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
+        self.composite_scanline(y, pram, vram, oam, &layers);
     }
 
-    /// Render a single 4bpp text-mode BG layer onto the framebuffer row
-    /// at `row_start`. Transparent pixels (palette index 0) are skipped.
-    /// Updates `pixel_priority` for each opaque pixel written.
+    /// Render a single 4bpp text-mode BG layer into a color buffer.
+    /// Transparent pixels are marked with [`TRANSPARENT`]. The buffer
+    /// is filled for the full 240 pixels of the scanline.
     #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
-    fn render_text_bg_layer_with_priority(
-        &mut self,
+    fn render_text_bg_layer(
+        &self,
         bg_idx: usize,
         y: u32,
         vram: &[u8],
         pram: &[u8],
-        row_start: usize,
-        backdrop: u16,
-        bg_prio: u8,
-        pixel_priority: &mut [u8; SCREEN_WIDTH as usize],
+        buf: &mut [u16; SCREEN_WIDTH as usize],
     ) {
         let bgcnt = self.bg_cnt[bg_idx];
 
@@ -718,41 +757,32 @@ impl Ppu {
                 })
                 .unwrap_or(0) as usize;
 
-            // Palette index 0 is transparent — skip (keep whatever is below).
             if palette_index == 0 {
+                buf[x] = TRANSPARENT;
                 continue;
             }
 
-            let bgr555 = {
-                let pram_index = (palette_bank * 16 + palette_index) * 2;
-                if pram_index + 1 < pram.len() {
-                    u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])
-                } else {
-                    backdrop
-                }
+            let pram_index = (palette_bank * 16 + palette_index) * 2;
+            buf[x] = if pram_index + 1 < pram.len() {
+                u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])
+            } else {
+                TRANSPARENT
             };
-
-            let dst = row_start + x * BYTES_PER_PIXEL;
-            color::write_pixel(&mut self.framebuffer, dst, bgr555);
-            pixel_priority[x] = bg_prio;
         }
     }
 
-    /// Render a single 8bpp affine tile background layer onto the framebuffer
-    /// row at `row_start`. Uses the internal reference points and affine
-    /// parameters for the per-pixel texture coordinate calculation.
+    /// Render a single 8bpp affine tile background layer into a color buffer.
+    /// Transparent pixels are marked with [`TRANSPARENT`].
     ///
     /// `affine_idx` is 0 for BG2, 1 for BG3.
     #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     fn render_affine_bg_layer(
-        &mut self,
+        &self,
         bg_idx: usize,
         affine_idx: usize,
         vram: &[u8],
         pram: &[u8],
-        row_start: usize,
-        bg_prio: u8,
-        pixel_priority: &mut [u8; SCREEN_WIDTH as usize],
+        buf: &mut [u16; SCREEN_WIDTH as usize],
     ) {
         let bgcnt = self.bg_cnt[bg_idx];
         let aff = self.bg_affine[affine_idx];
@@ -769,20 +799,16 @@ impl Ppu {
         let pa = aff.pa as i32;
         let pc = aff.pc as i32;
 
-        // Start from internal reference points (already positioned for this
-        // scanline via VBlank latch + per-scanline PB/PD increments).
         let mut tex_x = aff.internal_x;
         let mut tex_y = aff.internal_y;
 
         for x in 0..(SCREEN_WIDTH as usize) {
-            // Convert from 8.8 fixed-point to integer pixel coordinates.
             let px = tex_x >> 8;
             let py = tex_y >> 8;
 
             tex_x = tex_x.wrapping_add(pa);
             tex_y = tex_y.wrapping_add(pc);
 
-            // Bounds check.
             let (fx, fy) = if wrapping {
                 (
                     (px as u32) & (map_pixels - 1),
@@ -790,7 +816,8 @@ impl Ppu {
                 )
             } else {
                 if px < 0 || py < 0 || px >= map_pixels as i32 || py >= map_pixels as i32 {
-                    continue; // transparent — keep whatever is below
+                    buf[x] = TRANSPARENT;
+                    continue;
                 }
                 (px as u32, py as u32)
             };
@@ -800,30 +827,23 @@ impl Ppu {
             let pixel_x = (fx & 7) as usize;
             let pixel_y = (fy & 7) as usize;
 
-            // Affine map: 1-byte entries, linear layout.
             let map_off = screenblock_base + tile_y * (tiles_wide as usize) + tile_x;
             let tile_id = *vram.get(map_off).unwrap_or(&0) as usize;
 
-            // 8bpp tile: 64 bytes per tile, 1 byte per pixel.
             let tile_addr = charblock_base + tile_id * 64 + pixel_y * 8 + pixel_x;
             let palette_index = *vram.get(tile_addr).unwrap_or(&0) as usize;
 
-            // Palette index 0 is transparent.
             if palette_index == 0 {
+                buf[x] = TRANSPARENT;
                 continue;
             }
 
-            // 256-color palette: single palette, 2 bytes per entry.
             let pram_index = palette_index * 2;
-            let bgr555 = if pram_index + 1 < pram.len() {
+            buf[x] = if pram_index + 1 < pram.len() {
                 u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])
             } else {
-                self.backdrop_bgr555(pram)
+                TRANSPARENT
             };
-
-            let dst = row_start + x * BYTES_PER_PIXEL;
-            color::write_pixel(&mut self.framebuffer, dst, bgr555);
-            pixel_priority[x] = bg_prio;
         }
     }
 
@@ -834,48 +854,24 @@ impl Ppu {
             self.dispcnt & dispcnt::BG3_ENABLE != 0,
         ];
 
-        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
-        let backdrop = self.backdrop_bgr555(pram);
-        let (br, bg, bb) = color::bgr555_to_rgb888(backdrop);
-        for sx in 0..(SCREEN_WIDTH as usize) {
-            let dst = row_start + sx * BYTES_PER_PIXEL;
-            self.framebuffer[dst] = br;
-            self.framebuffer[dst + 1] = bg;
-            self.framebuffer[dst + 2] = bb;
-        }
-
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            self.render_backdrop_scanline(y, pram);
             return;
         }
 
-        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
-
-        if bg_enables.iter().any(|&e| e) {
-            let mut layers: [(u16, usize, usize); 2] = [(0, 0, 0); 2];
-            let mut count = 0;
-            let bg_indices = [2usize, 3usize];
-            for (i, &bg_idx) in bg_indices.iter().enumerate() {
-                if bg_enables[i] {
-                    layers[count] = (self.bg_cnt[bg_idx] & 3, bg_idx, i);
-                    count += 1;
-                }
-            }
-            layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-
-            for &(prio, bg_idx, affine_idx) in &layers[..count] {
-                self.render_affine_bg_layer(
-                    bg_idx,
-                    affine_idx,
-                    vram,
-                    pram,
-                    row_start,
-                    prio as u8,
-                    &mut pixel_priority,
-                );
+        let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
+        let bg_indices = [2usize, 3usize];
+        let affine_indices = [0usize, 1usize];
+        for (i, &bg_idx) in bg_indices.iter().enumerate() {
+            if bg_enables[i] {
+                let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
+                self.render_affine_bg_layer(bg_idx, affine_indices[i], vram, pram, &mut buf);
+                let prio = (self.bg_cnt[bg_idx] & 3) as u8;
+                layers.push((bg_idx, prio, buf));
             }
         }
 
-        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
+        self.composite_scanline(y, pram, vram, oam, &layers);
     }
 
     /// Mode 1: BG0/BG1 regular text + BG2 affine.
@@ -886,106 +882,64 @@ impl Ppu {
             self.dispcnt & dispcnt::BG2_ENABLE != 0,
         ];
 
-        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
-        let backdrop = self.backdrop_bgr555(pram);
-        let (br, bg, bb) = color::bgr555_to_rgb888(backdrop);
-        for sx in 0..(SCREEN_WIDTH as usize) {
-            let dst = row_start + sx * BYTES_PER_PIXEL;
-            self.framebuffer[dst] = br;
-            self.framebuffer[dst + 1] = bg;
-            self.framebuffer[dst + 2] = bb;
-        }
-
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            self.render_backdrop_scanline(y, pram);
             return;
         }
 
-        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
-
-        if bg_enables.iter().any(|&e| e) {
-            let mut layers: [(u16, usize, bool); 3] = [(0, 0, false); 3];
-            let mut count = 0;
-            for (i, &bg_idx) in [0usize, 1, 2].iter().enumerate() {
-                if bg_enables[i] {
-                    layers[count] = (self.bg_cnt[bg_idx] & 3, bg_idx, bg_idx == 2);
-                    count += 1;
-                }
-            }
-            layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-
-            for &(prio, bg_idx, is_affine) in &layers[..count] {
-                if is_affine {
-                    self.render_affine_bg_layer(
-                        bg_idx,
-                        0,
-                        vram,
-                        pram,
-                        row_start,
-                        prio as u8,
-                        &mut pixel_priority,
-                    );
+        let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
+        for (i, &bg_idx) in [0usize, 1, 2].iter().enumerate() {
+            if bg_enables[i] {
+                let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
+                if bg_idx == 2 {
+                    self.render_affine_bg_layer(bg_idx, 0, vram, pram, &mut buf);
                 } else {
-                    self.render_text_bg_layer_with_priority(
-                        bg_idx,
-                        y,
-                        vram,
-                        pram,
-                        row_start,
-                        backdrop,
-                        prio as u8,
-                        &mut pixel_priority,
-                    );
+                    self.render_text_bg_layer(bg_idx, y, vram, pram, &mut buf);
                 }
+                let prio = (self.bg_cnt[bg_idx] & 3) as u8;
+                layers.push((bg_idx, prio, buf));
             }
         }
 
-        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
+        self.composite_scanline(y, pram, vram, oam, &layers);
     }
 
-    /// Mode 3: 240×160 direct 15-bit bitmap starting at the base of
-    /// VRAM. Each pixel is a 16-bit BGR555 value. When BG2 is disabled,
-    /// the scanline is filled with the backdrop color (palette entry 0
-    /// in PRAM) per GBATek — every pixel is "no BG/OBJ pixel drawn", so
-    /// the backdrop shows through.
+    /// Mode 3: 240×160 direct 15-bit bitmap. Each pixel is a 16-bit BGR555 value.
     #[allow(clippy::needless_range_loop)]
     fn render_mode3_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
-        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
-        let bg2_prio = (self.bg_cnt[2] & 3) as u8;
-        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
+        if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+
+        let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
 
         if self.bg2_enabled() {
+            let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
             let line_byte_offset = (y as usize) * (SCREEN_WIDTH as usize) * 2;
             for x in 0..(SCREEN_WIDTH as usize) {
                 let src = line_byte_offset + x * 2;
-                let bgr555 = u16::from_le_bytes([vram[src], vram[src + 1]]);
-                let dst = row_start + x * BYTES_PER_PIXEL;
-                color::write_pixel(&mut self.framebuffer, dst, bgr555);
-                pixel_priority[x] = bg2_prio;
+                buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]);
             }
-        } else {
-            self.render_backdrop_scanline(y, pram);
+            let prio = (self.bg_cnt[2] & 3) as u8;
+            layers.push((2, prio, buf));
         }
 
-        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
+        self.composite_scanline(y, pram, vram, oam, &layers);
     }
 
-    /// Mode 4: 240×160 8-bit paletted bitmap. Each byte in VRAM is a
-    /// palette index (0-255) that selects a BGR555 color from PRAM.
-    /// Palette index 0 displays palette entry 0 (which is also the
-    /// backdrop color).
-    ///
-    /// Two frames are available:
-    /// - Frame 0: 0x06000000 - 0x060095FF (38,400 bytes)
-    /// - Frame 1: 0x0600A000 - 0x060135FF (38,400 bytes)
-    ///
-    /// DISPCNT bit 4 selects the displayed frame.
+    /// Mode 4: 240×160 8-bit paletted bitmap. Two frames available.
     #[allow(clippy::needless_range_loop)]
     fn render_mode4_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
-        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
-        let bg2_prio = (self.bg_cnt[2] & 3) as u8;
-        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
+        if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+
+        let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
 
         if self.bg2_enabled() {
+            let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
             let backdrop = self.backdrop_bgr555(pram);
             let frame_base = if self.frame_select() {
                 0xA000usize
@@ -999,7 +953,9 @@ impl Ppu {
                 let src = line_byte_offset + x;
                 let pal_index = if src < vram.len() { vram[src] } else { 0 };
 
-                let bgr555 = if pal_index == 0 {
+                // In bitmap modes, palette index 0 is still rendered as palette[0]
+                // (not transparent). All pixels are opaque.
+                buf[x] = if pal_index == 0 {
                     backdrop
                 } else {
                     let pal_offset = (pal_index as usize) * 2;
@@ -1009,50 +965,150 @@ impl Ppu {
                         backdrop
                     }
                 };
-
-                let dst = row_start + x * BYTES_PER_PIXEL;
-                color::write_pixel(&mut self.framebuffer, dst, bgr555);
-                // All bitmap pixels have BG2's priority.
-                pixel_priority[x] = bg2_prio;
             }
-        } else {
-            self.render_backdrop_scanline(y, pram);
+            let prio = (self.bg_cnt[2] & 3) as u8;
+            layers.push((2, prio, buf));
         }
 
-        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
+        self.composite_scanline(y, pram, vram, oam, &layers);
     }
 
-    /// Overlay OBJ pixels on top of the BG-composited framebuffer row.
-    /// An OBJ pixel with priority P draws on top of any BG pixel with
-    /// priority >= P (lower number = higher priority; OBJ wins at same level).
-    #[allow(clippy::needless_range_loop)]
-    fn overlay_obj_pixels(
+    /// Composite BG layers and OBJ into the framebuffer for one scanline.
+    ///
+    /// `bg_layers` contains `(bg_index, priority, color_buffer)` for each
+    /// enabled BG, sorted front-to-back (lowest priority number first, then
+    /// lowest BG index). The function evaluates window regions per-pixel and
+    /// picks the highest-priority enabled+opaque layer.
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+    fn composite_scanline(
         &mut self,
         y: u32,
-        vram: &[u8],
         pram: &[u8],
+        vram: &[u8],
         oam: &[u8],
-        row_start: usize,
-        pixel_priority: &[u8; SCREEN_WIDTH as usize],
+        bg_layers: &[(usize, u8, [u16; SCREEN_WIDTH as usize])],
     ) {
-        if self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            return;
-        }
+        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        let backdrop = self.backdrop_bgr555(pram);
 
-        let mapping_1d = self.dispcnt & dispcnt::OBJ_MAPPING_1D != 0;
-        let bitmap_mode = self.mode() >= 3;
-        let obj_scanline = obj::render_obj_scanline(y, oam, vram, pram, mapping_1d, bitmap_mode);
+        // Render OBJ scanline (if enabled).
+        let obj_enabled = self.dispcnt & dispcnt::OBJ_ENABLE != 0;
+        let obj_scanline = if obj_enabled {
+            let mapping_1d = self.dispcnt & dispcnt::OBJ_MAPPING_1D != 0;
+            let bitmap_mode = self.mode() >= 3;
+            Some(obj::render_obj_scanline(
+                y,
+                oam,
+                vram,
+                pram,
+                mapping_1d,
+                bitmap_mode,
+            ))
+        } else {
+            None
+        };
+
+        // Determine if any window is active.
+        let any_window_active = self.dispcnt
+            & (dispcnt::WIN0_ENABLE | dispcnt::WIN1_ENABLE | dispcnt::OBJ_WIN_ENABLE)
+            != 0;
 
         for x in 0..(SCREEN_WIDTH as usize) {
-            let px = &obj_scanline.pixels[x];
-            if px.opaque && px.priority <= pixel_priority[x] {
-                let dst = row_start + x * BYTES_PER_PIXEL;
-                color::write_pixel(&mut self.framebuffer, dst, px.color);
-            }
-        }
+            // Determine layer enable mask for this pixel.
+            let layer_mask = if any_window_active {
+                self.window_layer_mask(x as u32, y, obj_scanline.as_ref())
+            } else {
+                // No windows active → all layers visible.
+                0x3F
+            };
 
-        // TODO: Wire obj_scanline.obj_window into the PPU window system
-        // once full windowing (WIN0/WIN1/WINOBJ) is implemented.
+            let mut final_color = backdrop;
+
+            // Build a priority-sorted merge of BG layers and OBJ.
+            // Walk BG layers front-to-back; also check OBJ at each priority level.
+            // OBJ wins over BG at same priority.
+            let obj_px = obj_scanline.as_ref().map(|s| &s.pixels[x]);
+            let obj_opaque = obj_px.is_some_and(|px| px.opaque);
+            let obj_prio = obj_px.map(|px| px.priority).unwrap_or(4);
+
+            // Check OBJ first at its priority level, then BGs.
+            // We need to find the highest-priority (lowest number) opaque+enabled pixel.
+            let mut best_prio: u8 = 5; // worse than any real priority
+
+            // Check OBJ (layer mask bit 4 = OBJ enable).
+            if obj_opaque && (layer_mask & (1 << 4) != 0) && obj_prio < best_prio {
+                best_prio = obj_prio;
+                final_color = obj_px.unwrap().color;
+            }
+
+            // Check BG layers.
+            for &(bg_idx, bg_prio, ref buf) in bg_layers {
+                if bg_prio >= best_prio {
+                    continue; // can't beat current best
+                }
+                if layer_mask & (1 << bg_idx) == 0 {
+                    continue; // disabled by window
+                }
+                if buf[x] == TRANSPARENT {
+                    continue;
+                }
+                best_prio = bg_prio;
+                final_color = buf[x];
+            }
+
+            // OBJ wins at same priority as BG (re-check after BGs).
+            if obj_opaque && (layer_mask & (1 << 4) != 0) && obj_prio <= best_prio {
+                final_color = obj_px.unwrap().color;
+            }
+
+            let dst = row_start + x * BYTES_PER_PIXEL;
+            color::write_pixel(&mut self.framebuffer, dst, final_color);
+        }
+    }
+
+    /// Determine the window layer-enable mask for pixel (x, y).
+    /// Returns a 6-bit mask: bits 0-3 = BG0-BG3, bit 4 = OBJ, bit 5 = SFX.
+    fn window_layer_mask(&self, x: u32, y: u32, obj_scanline: Option<&obj::ObjScanline>) -> u8 {
+        // Window 0 (highest priority).
+        if self.dispcnt & dispcnt::WIN0_ENABLE != 0 && self.pixel_in_window(0, x, y) {
+            return (self.winin & 0x3F) as u8;
+        }
+        // Window 1.
+        if self.dispcnt & dispcnt::WIN1_ENABLE != 0 && self.pixel_in_window(1, x, y) {
+            return ((self.winin >> 8) & 0x3F) as u8;
+        }
+        // OBJ Window.
+        if self.dispcnt & dispcnt::OBJ_WIN_ENABLE != 0
+            && obj_scanline.is_some_and(|s| s.obj_window[x as usize])
+        {
+            return ((self.winout >> 8) & 0x3F) as u8;
+        }
+        // Outside all windows.
+        (self.winout & 0x3F) as u8
+    }
+
+    /// Check if pixel (x, y) is inside window `n` (0 or 1).
+    /// Handles wrap-around: if X1 > X2, the window spans the full width.
+    /// Similarly if Y1 > Y2, the window spans the full height.
+    fn pixel_in_window(&self, n: usize, x: u32, y: u32) -> bool {
+        let h = self.win_h[n];
+        let v = self.win_v[n];
+        let x1 = (h >> 8) as u32;
+        let x2 = (h & 0xFF) as u32;
+        let y1 = (v >> 8) as u32;
+        let y2 = (v & 0xFF) as u32;
+
+        let in_x = if x1 <= x2 {
+            x >= x1 && x < x2
+        } else {
+            x >= x1 || x < x2
+        };
+        let in_y = if y1 <= y2 {
+            y >= y1 && y < y2
+        } else {
+            y >= y1 || y < y2
+        };
+        in_x && in_y
     }
 
     /// Backdrop fill — uses palette entry 0 from PRAM. Used for modes
@@ -2613,6 +2669,231 @@ mod tests {
             &ppu2.framebuffer()[0..3],
             &[0, 0xFF, 0],
             "BG priority 0 should be on top of OBJ priority 2"
+        );
+    }
+
+    // ─── Window register tests ───────────────────────────────────────────
+
+    #[test]
+    fn window_registers_default_to_zero() {
+        let ppu = Ppu::new();
+        assert_eq!(ppu.read_winin(), 0);
+        assert_eq!(ppu.read_winout(), 0);
+    }
+
+    #[test]
+    fn write_winin_masks_invalid_bits() {
+        let mut ppu = Ppu::new();
+        ppu.write_winin(0xFFFF);
+        assert_eq!(ppu.read_winin(), 0x3F3F);
+    }
+
+    #[test]
+    fn write_winout_masks_invalid_bits() {
+        let mut ppu = Ppu::new();
+        ppu.write_winout(0xFFFF);
+        assert_eq!(ppu.read_winout(), 0x3F3F);
+    }
+
+    #[test]
+    fn write_win_h_stores_value() {
+        let mut ppu = Ppu::new();
+        ppu.write_win_h(0, 0x1080); // X1=16, X2=128
+        ppu.write_win_h(1, 0x20F0); // X1=32, X2=240
+        assert_eq!(ppu.read_win_h(0), 0x1080);
+        assert_eq!(ppu.read_win_h(1), 0x20F0);
+    }
+
+    #[test]
+    fn write_win_v_stores_value() {
+        let mut ppu = Ppu::new();
+        ppu.write_win_v(0, 0x1060); // Y1=16, Y2=96
+        ppu.write_win_v(1, 0x00A0); // Y1=0, Y2=160
+        assert_eq!(ppu.read_win_v(0), 0x1060);
+        assert_eq!(ppu.read_win_v(1), 0x00A0);
+    }
+
+    #[test]
+    fn dispcnt_window_enable_bits() {
+        let mut ppu = Ppu::new();
+        ppu.write_dispcnt(dispcnt::WIN0_ENABLE | dispcnt::WIN1_ENABLE | dispcnt::OBJ_WIN_ENABLE);
+        assert!(ppu.dispcnt & dispcnt::WIN0_ENABLE != 0);
+        assert!(ppu.dispcnt & dispcnt::WIN1_ENABLE != 0);
+        assert!(ppu.dispcnt & dispcnt::OBJ_WIN_ENABLE != 0);
+    }
+
+    // ─── Window classification tests ─────────────────────────────────────
+
+    #[test]
+    fn window_classify_outside_when_no_windows_active() {
+        let mut ppu = Ppu::new();
+        // DISPCNT with no window bits → all layers visible (mask 0x3F).
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE);
+        // When no windows are enabled, composite_scanline uses 0x3F directly.
+        // Test pixel_in_window helper won't matter but let's check it doesn't panic.
+        assert!(!ppu.pixel_in_window(0, 100, 80));
+    }
+
+    #[test]
+    fn pixel_in_window_basic_rect() {
+        let mut ppu = Ppu::new();
+        // Win0: X1=10, X2=50, Y1=20, Y2=100.
+        ppu.write_win_h(0, (10 << 8) | 50);
+        ppu.write_win_v(0, (20 << 8) | 100);
+
+        assert!(ppu.pixel_in_window(0, 10, 20)); // top-left inside
+        assert!(ppu.pixel_in_window(0, 49, 99)); // bottom-right edge inside
+        assert!(!ppu.pixel_in_window(0, 50, 50)); // X2 is exclusive
+        assert!(!ppu.pixel_in_window(0, 25, 100)); // Y2 is exclusive
+        assert!(!ppu.pixel_in_window(0, 5, 50)); // left of window
+    }
+
+    #[test]
+    fn pixel_in_window_wrap_around_x() {
+        let mut ppu = Ppu::new();
+        // X1=200, X2=50 → wraps: pixels 200..240 and 0..50 are inside.
+        ppu.write_win_h(0, (200 << 8) | 50);
+        ppu.write_win_v(0, 160); // full height (Y1=0, Y2=160)
+
+        assert!(ppu.pixel_in_window(0, 210, 80));
+        assert!(ppu.pixel_in_window(0, 30, 80));
+        assert!(!ppu.pixel_in_window(0, 100, 80));
+    }
+
+    #[test]
+    fn window_layer_mask_win0_takes_priority() {
+        let mut ppu = Ppu::new();
+        ppu.write_dispcnt(dispcnt::WIN0_ENABLE | dispcnt::WIN1_ENABLE | dispcnt::BG0_ENABLE);
+        // Win0: full screen. Win1: full screen.
+        ppu.write_win_h(0, 240); // X1=0, X2=240
+        ppu.write_win_v(0, 160); // Y1=0, Y2=160
+        ppu.write_win_h(1, 240); // X1=0, X2=240
+        ppu.write_win_v(1, 160); // Y1=0, Y2=160
+        // Win0 enables BG0 only (0x01). Win1 enables BG1 only (0x02).
+        ppu.write_winin(0x0201); // low byte = Win0, high byte = Win1
+        // Pixel should use Win0's mask (0x01) since it has priority.
+        let mask = ppu.window_layer_mask(100, 80, None);
+        assert_eq!(mask, 0x01);
+    }
+
+    #[test]
+    fn window_layer_mask_outside_when_not_in_any_window() {
+        let mut ppu = Ppu::new();
+        ppu.write_dispcnt(dispcnt::WIN0_ENABLE | dispcnt::BG0_ENABLE);
+        // Win0 is a small rect: X=10..50, Y=10..50.
+        ppu.write_win_h(0, (10 << 8) | 50);
+        ppu.write_win_v(0, (10 << 8) | 50);
+        ppu.write_winin(0x003F); // inside Win0: all enabled
+        ppu.write_winout(0x0001); // outside: only BG0
+        // Pixel at (100, 80) is outside Win0.
+        let mask = ppu.window_layer_mask(100, 80, None);
+        assert_eq!(mask, 0x01);
+    }
+
+    #[test]
+    fn window_obj_window_uses_winout_high_byte() {
+        let mut ppu = Ppu::new();
+        ppu.write_dispcnt(dispcnt::OBJ_WIN_ENABLE | dispcnt::OBJ_ENABLE);
+        ppu.write_winout(0x3F00); // Outside=0x00, OBJ Window=0x3F
+        // Create a fake OBJ scanline with obj_window set at pixel 50.
+        let mut obj_scanline = obj::ObjScanline::default();
+        obj_scanline.obj_window[50] = true;
+
+        // Pixel 50 is inside OBJ window.
+        let mask = ppu.window_layer_mask(50, 0, Some(&obj_scanline));
+        assert_eq!(mask, 0x3F);
+
+        // Pixel 51 is outside all windows.
+        let mask = ppu.window_layer_mask(51, 0, Some(&obj_scanline));
+        assert_eq!(mask, 0x00);
+    }
+
+    #[test]
+    fn composite_bios_like_obj_window_reveals_bg3() {
+        // Simulate the BIOS boot: DISPCNT=0x9842 (OBJ_WIN + OBJ + BG3 + Mode 2 + 1D mapping)
+        // WINOUT=0x3F27: Outside = 0x27 (BG0+BG1+BG2+OBJ, no BG3)
+        //                OBJ Win = 0x3F (all enabled including BG3)
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        // DISPCNT: Mode 2 + BG3 + OBJ + OBJ_WIN_ENABLE + 1D OBJ mapping.
+        ppu.write_dispcnt(
+            0x0002
+                | dispcnt::BG3_ENABLE
+                | dispcnt::OBJ_ENABLE
+                | dispcnt::OBJ_WIN_ENABLE
+                | dispcnt::OBJ_MAPPING_1D,
+        );
+        ppu.write_winout(0x3F27);
+
+        // BG3 palette: index 1 = green (BGR555 = 0x03E0).
+        pram[2] = 0xE0;
+        pram[3] = 0x03;
+
+        // BG3: screenblock 16, charblock 0, size 0 (16x16 tiles).
+        ppu.write_bg_cnt(3, 16 << 8);
+        let sb_base = 16 * 0x800;
+        vram[sb_base] = 1; // tile index 1 at map (0,0)
+        // Tile 1 at charblock 0: 8bpp affine, 64 bytes/tile.
+        for byte in &mut vram[64..128] {
+            *byte = 1; // palette index 1
+        }
+
+        // BG3 affine: identity transform.
+        ppu.write_affine(0x0400_0030, 0x0100); // PA = 1.0
+        ppu.write_affine(0x0400_0036, 0x0100); // PD = 1.0
+
+        // OBJ at position (0,0) in OBJ Window mode (mode 2), 8x8.
+        let attr0: u16 = 2 << 10; // y=0, mode=2, shape=square
+        let attr1: u16 = 0; // x=0, size=0 → 8x8
+        let attr2: u16 = 1; // tile 1
+        oam[0] = attr0 as u8;
+        oam[1] = (attr0 >> 8) as u8;
+        oam[2] = attr1 as u8;
+        oam[3] = (attr1 >> 8) as u8;
+        oam[4] = attr2 as u8;
+        oam[5] = (attr2 >> 8) as u8;
+
+        // OBJ tile 1 data (4bpp, 1D): at VRAM 0x10000 + 1*32 = 0x10020.
+        for byte in &mut vram[0x10020..0x10040] {
+            *byte = 0x11; // palette index 1 for both nibbles
+        }
+        // OBJ palette at pram[0x200+].
+        pram[0x200 + 2] = 0x1F;
+        pram[0x200 + 3] = 0x00;
+
+        // Run one full frame to latch affine reference points at VBlank.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // Now at scanline 0, step one scanline to render it fresh.
+        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &vram, &pram, &oam);
+
+        let fb = ppu.framebuffer();
+        // Pixel at x=4 (inside OBJ window, inside BG3 tile) should show green.
+        let px4 = &fb[4 * 3..4 * 3 + 3];
+        let green_rgb = color::bgr555_to_rgb888(0x03E0);
+        assert_eq!(
+            px4,
+            &[green_rgb.0, green_rgb.1, green_rgb.2],
+            "Pixel 4 inside OBJ window should show BG3 (green)"
+        );
+
+        // Pixel at x=60 (outside OBJ window) should show backdrop (black)
+        // because outside mask 0x27 has BG3 disabled (bit 3 = 0).
+        let px60 = &fb[60 * 3..60 * 3 + 3];
+        assert_eq!(
+            px60,
+            &[0, 0, 0],
+            "Pixel 60 outside OBJ window should show backdrop (BG3 disabled)"
         );
     }
 }
