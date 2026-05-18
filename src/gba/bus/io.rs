@@ -483,10 +483,11 @@ impl IoRegisters {
         }
         // Window H/V registers (0x40..0x46) are write-only. Merge byte
         // writes against the PPU's live window state.
+        // Layout: WIN0H=0x40, WIN1H=0x42, WIN0V=0x44, WIN1V=0x46
         if (ppu::REG_WIN0H..=ppu::REG_WIN1V + 1).contains(&addr) {
             let aligned = addr & !1;
-            let idx = ((aligned - ppu::REG_WIN0H) / 4) as usize; // 0 or 1
-            let is_v = (aligned - ppu::REG_WIN0H) % 4 >= 2;
+            let is_v = aligned >= ppu::REG_WIN0V;
+            let idx = ((aligned >> 1) & 1) as usize; // 0 or 1
             let current = if is_v {
                 ppu.read_win_v(idx)
             } else {
@@ -1667,5 +1668,99 @@ mod tests {
             &mut k,
         );
         assert_eq!(p.read_win_h(0), 0x1080);
+    }
+
+    #[test]
+    fn window_byte_writes_route_correctly() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Byte write to WIN0H (0x0400_0040): low byte then high byte
+        io.write8(
+            ppu::REG_WIN0H,
+            0xAB,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_WIN0H + 1,
+            0xCD,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_win_h(0), 0xCDAB);
+
+        // Byte write to WIN1H (0x0400_0042)
+        io.write8(
+            ppu::REG_WIN1H,
+            0x10,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_WIN1H + 1,
+            0x80,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_win_h(1), 0x8010);
+
+        // Byte write to WIN0V (0x0400_0044)
+        io.write8(
+            ppu::REG_WIN0V,
+            0x20,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_WIN0V + 1,
+            0xA0,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_win_v(0), 0xA020);
+
+        // Byte write to WIN1V (0x0400_0046)
+        io.write8(
+            ppu::REG_WIN1V,
+            0x00,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_WIN1V + 1,
+            0xA0,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_win_v(1), 0xA000);
     }
 }

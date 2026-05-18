@@ -764,7 +764,7 @@ impl Ppu {
 
             let pram_index = (palette_bank * 16 + palette_index) * 2;
             buf[x] = if pram_index + 1 < pram.len() {
-                u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])
+                u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]]) & 0x7FFF
             } else {
                 TRANSPARENT
             };
@@ -840,7 +840,7 @@ impl Ppu {
 
             let pram_index = palette_index * 2;
             buf[x] = if pram_index + 1 < pram.len() {
-                u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])
+                u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]]) & 0x7FFF
             } else {
                 TRANSPARENT
             };
@@ -919,7 +919,8 @@ impl Ppu {
             let line_byte_offset = (y as usize) * (SCREEN_WIDTH as usize) * 2;
             for x in 0..(SCREEN_WIDTH as usize) {
                 let src = line_byte_offset + x * 2;
-                buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]);
+                // Mask bit 15 so valid pixels never collide with TRANSPARENT sentinel
+                buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
             }
             let prio = (self.bg_cnt[2] & 3) as u8;
             layers.push((2, prio, buf));
@@ -954,15 +955,16 @@ impl Ppu {
                 let pal_index = if src < vram.len() { vram[src] } else { 0 };
 
                 // In bitmap modes, palette index 0 is still rendered as palette[0]
-                // (not transparent). All pixels are opaque.
+                // (not transparent). All pixels are opaque. Mask bit 15 to avoid
+                // collision with TRANSPARENT sentinel.
                 buf[x] = if pal_index == 0 {
-                    backdrop
+                    backdrop & 0x7FFF
                 } else {
                     let pal_offset = (pal_index as usize) * 2;
                     if pal_offset + 1 < pram.len() {
-                        u16::from_le_bytes([pram[pal_offset], pram[pal_offset + 1]])
+                        u16::from_le_bytes([pram[pal_offset], pram[pal_offset + 1]]) & 0x7FFF
                     } else {
-                        backdrop
+                        backdrop & 0x7FFF
                     }
                 };
             }
@@ -976,9 +978,9 @@ impl Ppu {
     /// Composite BG layers and OBJ into the framebuffer for one scanline.
     ///
     /// `bg_layers` contains `(bg_index, priority, color_buffer)` for each
-    /// enabled BG, sorted front-to-back (lowest priority number first, then
-    /// lowest BG index). The function evaluates window regions per-pixel and
-    /// picks the highest-priority enabled+opaque layer.
+    /// enabled BG (order does not matter — the function finds the highest-priority
+    /// opaque layer per pixel by scanning all entries). The function evaluates
+    /// window regions per-pixel and picks the highest-priority enabled+opaque layer.
     #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     fn composite_scanline(
         &mut self,
