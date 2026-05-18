@@ -950,7 +950,6 @@ impl Ppu {
 
         if self.bg2_enabled() {
             let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
-            let backdrop = self.backdrop_bgr555(pram);
             let frame_base = if self.frame_select() {
                 0xA000usize
             } else {
@@ -963,17 +962,16 @@ impl Ppu {
                 let src = line_byte_offset + x;
                 let pal_index = if src < vram.len() { vram[src] } else { 0 };
 
-                // In bitmap modes, palette index 0 is still rendered as palette[0]
-                // (not transparent). All pixels are opaque. Mask bit 15 to avoid
-                // collision with TRANSPARENT sentinel.
+                // Per GBATek, palette index 0 in Mode 4 is transparent.
+                // OBJs (or the backdrop) can show through at these positions.
                 buf[x] = if pal_index == 0 {
-                    backdrop & 0x7FFF
+                    TRANSPARENT
                 } else {
                     let pal_offset = (pal_index as usize) * 2;
                     if pal_offset + 1 < pram.len() {
                         u16::from_le_bytes([pram[pal_offset], pram[pal_offset + 1]]) & 0x7FFF
                     } else {
-                        backdrop & 0x7FFF
+                        TRANSPARENT
                     }
                 };
             }
@@ -1946,7 +1944,8 @@ mod tests {
 
     #[test]
     fn mode4_palette_index_0_shows_backdrop() {
-        // Palette index 0 displays palette entry 0 (the backdrop color).
+        // Palette index 0 is transparent in Mode 4; the compositing logic
+        // falls back to the backdrop color, so the result is still the backdrop.
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let mut vram = make_vram();
@@ -1959,7 +1958,7 @@ mod tests {
         pram[0] = 0x00;
         pram[1] = 0x7C;
 
-        // VRAM[0] = palette index 0 (displays backdrop color).
+        // VRAM[0] = palette index 0 (transparent → backdrop shows).
         vram[0] = 0;
 
         ppu.step(
@@ -1972,6 +1971,58 @@ mod tests {
 
         // First pixel should be backdrop blue (RGB888: 0, 0, 255).
         assert_eq!(&ppu.framebuffer()[0..3], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn mode4_palette_index_0_transparent_allows_obj_through() {
+        // In Mode 4, palette index 0 must be TRANSPARENT (per GBATek), so OBJs
+        // can show through the bitmap at those positions.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        // Mode 4 + BG2 enabled (priority 0) + OBJ enabled + 1D OBJ mapping.
+        ppu.write_dispcnt(4 | dispcnt::BG2_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        // Backdrop = blue (BGR555 0x7C00); used if neither BG2 nor OBJ covers pixel.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+
+        // VRAM[0] = palette index 0 → should be transparent in Mode 4.
+        vram[0] = 0;
+
+        // Place OBJ 0 at (0,0), tile 1, priority 1 (lower priority than BG2's 0).
+        setup_obj_in_oam(&mut oam, 0, 0, 0, 1, 1);
+
+        // In bitmap modes (mode >= 3) OBJ VRAM starts at 0x14000.
+        // Tile 1 (4bpp, 1D): 0x14000 + 1 * 32.
+        let obj_tile_base = 0x1_4000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11; // palette index 1 in both nibbles
+        }
+
+        // OBJ palette color 1 = red (BGR555: 0x001F).
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // BG2 pixel at (0,0) is palette index 0 → transparent.
+        // OBJ at (0,0) with priority 1 is lower than BG2's priority 0, but BG2
+        // is transparent here, so OBJ should show through → red.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0xFF, 0, 0],
+            "OBJ should show through Mode 4 palette index 0 (transparent) pixel"
+        );
     }
 
     #[test]
