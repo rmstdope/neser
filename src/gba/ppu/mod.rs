@@ -474,6 +474,11 @@ impl Ppu {
                     // updated framebuffer (sprite/affine state will use
                     // this hook in later increments).
                     self.render_scanline(self.vcount as u32, vram, pram);
+                    // Increment affine internal reference points after each
+                    // visible scanline (ref_x += PB, ref_y += PD).
+                    for aff in &mut self.bg_affine {
+                        aff.increment_reference_points();
+                    }
                     events.hblank_starts = events.hblank_starts.saturating_add(1);
                 }
                 if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0 {
@@ -507,6 +512,10 @@ impl Ppu {
             events.vblank_starts = events.vblank_starts.saturating_add(1);
             events.frames_completed = events.frames_completed.saturating_add(1);
             self.frame_ready = true;
+            // Latch affine internal reference points at VBlank start.
+            for aff in &mut self.bg_affine {
+                aff.latch_reference_points();
+            }
             if self.dispstat & dispstat::VBLANK_IRQ_ENABLE != 0 {
                 ic.raise(irq_bits::VBLANK);
             }
@@ -554,9 +563,8 @@ impl Ppu {
         }
         match self.mode() {
             0 => self.render_mode0_scanline(y, vram, pram),
-            // Mode 2: affine tile backgrounds (BG2/BG3 only). Currently renders
-            // backdrop only; full affine tile rendering is deferred.
-            2 => self.render_backdrop_scanline(y, pram),
+            1 => self.render_mode1_scanline(y, vram, pram),
+            2 => self.render_mode2_scanline(y, vram, pram),
             3 => self.render_mode3_scanline(y, vram, pram),
             4 => self.render_mode4_scanline(y, vram, pram),
             _ => self.render_backdrop_scanline(y, pram),
@@ -706,6 +714,179 @@ impl Ppu {
 
             let dst = row_start + x * BYTES_PER_PIXEL;
             color::write_pixel(&mut self.framebuffer, dst, bgr555);
+        }
+    }
+
+    /// Render a single 8bpp affine tile background layer onto the framebuffer
+    /// row at `row_start`. Uses the internal reference points and affine
+    /// parameters for the per-pixel texture coordinate calculation.
+    ///
+    /// `affine_idx` is 0 for BG2, 1 for BG3.
+    fn render_affine_bg_layer(
+        &mut self,
+        bg_idx: usize,
+        affine_idx: usize,
+        vram: &[u8],
+        pram: &[u8],
+        row_start: usize,
+    ) {
+        let bgcnt = self.bg_cnt[bg_idx];
+        let aff = self.bg_affine[affine_idx];
+
+        // Affine map sizes: 16x16, 32x32, 64x64, 128x128 tiles.
+        let size_shift = ((bgcnt >> 14) & 3) as u32;
+        let tiles_wide = 16u32 << size_shift;
+        let map_pixels = tiles_wide * 8;
+
+        let wrapping = (bgcnt & (1 << 13)) != 0;
+        let screenblock_base = (((bgcnt >> 8) & 0x001F) as usize) * 0x800;
+        let charblock_base = (((bgcnt >> 2) & 0x0003) as usize) * 16 * 1024;
+
+        let pa = aff.pa as i32;
+        let pc = aff.pc as i32;
+
+        // Start from internal reference points (already positioned for this
+        // scanline via VBlank latch + per-scanline PB/PD increments).
+        let mut tex_x = aff.internal_x;
+        let mut tex_y = aff.internal_y;
+
+        for x in 0..(SCREEN_WIDTH as usize) {
+            // Convert from 8.8 fixed-point to integer pixel coordinates.
+            let px = tex_x >> 8;
+            let py = tex_y >> 8;
+
+            tex_x = tex_x.wrapping_add(pa);
+            tex_y = tex_y.wrapping_add(pc);
+
+            // Bounds check.
+            let (fx, fy) = if wrapping {
+                (
+                    (px as u32) & (map_pixels - 1),
+                    (py as u32) & (map_pixels - 1),
+                )
+            } else {
+                if px < 0 || py < 0 || px >= map_pixels as i32 || py >= map_pixels as i32 {
+                    continue; // transparent — keep whatever is below
+                }
+                (px as u32, py as u32)
+            };
+
+            let tile_x = (fx >> 3) as usize;
+            let tile_y = (fy >> 3) as usize;
+            let pixel_x = (fx & 7) as usize;
+            let pixel_y = (fy & 7) as usize;
+
+            // Affine map: 1-byte entries, linear layout.
+            let map_off = screenblock_base + tile_y * (tiles_wide as usize) + tile_x;
+            let tile_id = *vram.get(map_off).unwrap_or(&0) as usize;
+
+            // 8bpp tile: 64 bytes per tile, 1 byte per pixel.
+            let tile_addr = charblock_base + tile_id * 64 + pixel_y * 8 + pixel_x;
+            let palette_index = *vram.get(tile_addr).unwrap_or(&0) as usize;
+
+            // Palette index 0 is transparent.
+            if palette_index == 0 {
+                continue;
+            }
+
+            // 256-color palette: single palette, 2 bytes per entry.
+            let pram_index = palette_index * 2;
+            let bgr555 = if pram_index + 1 < pram.len() {
+                u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]])
+            } else {
+                self.backdrop_bgr555(pram)
+            };
+
+            let dst = row_start + x * BYTES_PER_PIXEL;
+            color::write_pixel(&mut self.framebuffer, dst, bgr555);
+        }
+    }
+
+    /// Mode 2: affine tile backgrounds (BG2 and BG3 only).
+    fn render_mode2_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
+        let bg_enables = [
+            self.dispcnt & dispcnt::BG2_ENABLE != 0,
+            self.dispcnt & dispcnt::BG3_ENABLE != 0,
+        ];
+
+        if !bg_enables.iter().any(|&e| e) {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+
+        // Build render order: paint from lowest visual priority (behind) to
+        // highest (on top). BG2 = affine_idx 0, BG3 = affine_idx 1.
+        let mut layers: [(u16, usize, usize); 2] = [(0, 0, 0); 2];
+        let mut count = 0;
+        let bg_indices = [2usize, 3usize];
+        for (i, &bg_idx) in bg_indices.iter().enumerate() {
+            if bg_enables[i] {
+                layers[count] = (self.bg_cnt[bg_idx] & 3, bg_idx, i);
+                count += 1;
+            }
+        }
+        // Sort: higher priority value first (behind), then higher bg number.
+        layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+        // Fill with backdrop first.
+        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        let backdrop = self.backdrop_bgr555(pram);
+        let (br, bg, bb) = color::bgr555_to_rgb888(backdrop);
+        for sx in 0..(SCREEN_WIDTH as usize) {
+            let dst = row_start + sx * BYTES_PER_PIXEL;
+            self.framebuffer[dst] = br;
+            self.framebuffer[dst + 1] = bg;
+            self.framebuffer[dst + 2] = bb;
+        }
+
+        for &(_, bg_idx, affine_idx) in &layers[..count] {
+            self.render_affine_bg_layer(bg_idx, affine_idx, vram, pram, row_start);
+        }
+    }
+
+    /// Mode 1: BG0/BG1 regular text + BG2 affine.
+    fn render_mode1_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
+        let bg_enables = [
+            self.dispcnt & dispcnt::BG0_ENABLE != 0,
+            self.dispcnt & dispcnt::BG1_ENABLE != 0,
+            self.dispcnt & dispcnt::BG2_ENABLE != 0,
+        ];
+
+        if !bg_enables.iter().any(|&e| e) {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+
+        // Mix regular and affine BGs. Build a unified priority list.
+        // Each entry: (priority, bg_idx, is_affine).
+        let mut layers: [(u16, usize, bool); 3] = [(0, 0, false); 3];
+        let mut count = 0;
+        for (i, &bg_idx) in [0usize, 1, 2].iter().enumerate() {
+            if bg_enables[i] {
+                layers[count] = (self.bg_cnt[bg_idx] & 3, bg_idx, bg_idx == 2);
+                count += 1;
+            }
+        }
+        layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+        // Fill backdrop.
+        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        let backdrop = self.backdrop_bgr555(pram);
+        let (br, bg, bb) = color::bgr555_to_rgb888(backdrop);
+        for sx in 0..(SCREEN_WIDTH as usize) {
+            let dst = row_start + sx * BYTES_PER_PIXEL;
+            self.framebuffer[dst] = br;
+            self.framebuffer[dst + 1] = bg;
+            self.framebuffer[dst + 2] = bb;
+        }
+
+        for &(_, bg_idx, is_affine) in &layers[..count] {
+            if is_affine {
+                // BG2 → affine_idx 0
+                self.render_affine_bg_layer(bg_idx, 0, vram, pram, row_start);
+            } else {
+                self.render_text_bg_layer(bg_idx, y, vram, pram, row_start, backdrop);
+            }
         }
     }
 
@@ -1648,5 +1829,439 @@ mod tests {
         // BG2 and BG3: all bits readable.
         assert_eq!(ppu.read_bg_cnt(2), 0xFFFF, "BG2CNT should be unmasked");
         assert_eq!(ppu.read_bg_cnt(3), 0xFFFF, "BG3CNT should be unmasked");
+    }
+
+    // ---- Affine internal reference point tests ----
+
+    #[test]
+    fn affine_internal_ref_latches_at_vblank() {
+        // Internal reference points should be copied from register values
+        // at VBlank (scanline entering 160).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+
+        // Set BG2 reference point X=0x1000 (in 8.8 fixed), Y=0x2000.
+        ppu.write_affine(REG_BG2X_L, 0x1000);
+        ppu.write_affine(REG_BG2Y_L, 0x2000);
+
+        // Run one full frame to trigger VBlank latch.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // Internal refs should have been latched from the register values.
+        let aff = ppu.bg_affine(0).unwrap();
+        assert_eq!(aff.internal_x, 0x1000, "internal_x should latch from x");
+        assert_eq!(aff.internal_y, 0x2000, "internal_y should latch from y");
+    }
+
+    #[test]
+    fn affine_internal_ref_increments_per_scanline() {
+        // After each visible scanline, internal refs are incremented by PB/PD.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+
+        // BG2: PA=0x0100 (1.0), PB=0x0010 (1/16), PC=0, PD=0x0020 (1/8).
+        // X=0, Y=0.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PB, 0x0010);
+        ppu.write_affine(REG_BG2PC, 0x0000);
+        ppu.write_affine(REG_BG2PD, 0x0020);
+
+        // Run one full frame so VBlank latches internal refs (to 0,0),
+        // then run 10 visible scanlines of the next frame.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+        // Run 10 scanlines (each increments internal refs by PB/PD).
+        ppu.step(CYCLES_PER_SCANLINE * 10, &mut ic, &vram, &pram);
+
+        let aff = ppu.bg_affine(0).unwrap();
+        // After 10 scanlines: internal_x += PB*10 = 0x0010*10 = 0x00A0
+        assert_eq!(
+            aff.internal_x, 0x00A0,
+            "internal_x should increment by PB per scanline"
+        );
+        // internal_y += PD*10 = 0x0020*10 = 0x0140
+        assert_eq!(
+            aff.internal_y, 0x0140,
+            "internal_y should increment by PD per scanline"
+        );
+    }
+
+    // ---- Mode 2 affine tile rendering tests ----
+
+    /// Helper: set up a minimal affine tile background in VRAM.
+    /// Places a single non-zero tile (tile 1) at the given map position
+    /// in a 256x256 (32x32 tiles) affine map.
+    ///
+    /// - `screenblock`: screen base block number (0-31)
+    /// - `charblock`: char base block number (0-3)
+    /// - `map_x`, `map_y`: tile position in the map (0-31)
+    /// - `pram`: palette RAM — sets color 1 to the given BGR555 value
+    fn setup_affine_tile(
+        vram: &mut [u8],
+        pram: &mut [u8],
+        screenblock: usize,
+        charblock: usize,
+        map_x: usize,
+        map_y: usize,
+        color_bgr555: u16,
+    ) {
+        // Affine map: 1-byte entries, linear layout, 32x32 for size 1.
+        let map_base = screenblock * 0x800;
+        let map_entry = map_base + map_y * 32 + map_x;
+        vram[map_entry] = 1; // tile index 1
+
+        // Tile 1 in charblock: 8x8 8bpp = 64 bytes per tile.
+        let tile_base = charblock * 16 * 1024 + 64;
+        // Fill all 64 pixels with palette index 1.
+        for i in 0..64 {
+            vram[tile_base + i] = 1;
+        }
+
+        // Set palette color 1.
+        let bytes = color_bgr555.to_le_bytes();
+        pram[2] = bytes[0]; // palette[1] low byte
+        pram[3] = bytes[1]; // palette[1] high byte
+    }
+
+    #[test]
+    fn mode2_affine_identity_renders_tile() {
+        // Mode 2, BG2 enabled, identity affine transform (PA=1.0, PD=1.0),
+        // reference points at (0,0). Should render tile at map position (0,0).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 2 + BG2 enable.
+        ppu.write_dispcnt(2 | dispcnt::BG2_ENABLE);
+
+        // BG2CNT: charblock 0, screenblock 8, size 1 (256x256), no wrap.
+        ppu.write_bg_cnt(2, (8 << 8) | (1 << 14));
+
+        // Identity affine: PA=0x0100 (1.0), PD=0x0100 (1.0), PB=PC=0.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Place tile 1 at map (0,0) with green color.
+        let green = 0x03E0u16; // BGR555 pure green
+        setup_affine_tile(&mut vram, &mut pram, 8, 0, 0, 0, green);
+
+        // Backdrop = black.
+        pram[0] = 0;
+        pram[1] = 0;
+
+        // Run one full frame + first scanline of next frame.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME + CYCLES_PER_SCANLINE,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // Pixel (0,0) should be green (from tile 1 at map 0,0).
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0xFF, 0],
+            "pixel (0,0) should be green from affine tile"
+        );
+    }
+
+    #[test]
+    fn mode2_affine_palette_index_0_is_transparent() {
+        // A tile with palette index 0 should be transparent (show backdrop).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 2 + BG2 enable.
+        ppu.write_dispcnt(2 | dispcnt::BG2_ENABLE);
+
+        // BG2CNT: charblock 0, screenblock 8, size 1 (256x256).
+        ppu.write_bg_cnt(2, (8 << 8) | (1 << 14));
+
+        // Identity affine.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Map entry at (0,0) points to tile 1, but tile 1 is all zeros
+        // (palette index 0 = transparent).
+        let map_base = 8 * 0x800;
+        vram[map_base] = 1;
+        // tile 1 data is already all zeros.
+
+        // Backdrop = red.
+        let red_bgr = 0x001Fu16; // BGR555 red
+        pram[0] = red_bgr as u8;
+        pram[1] = (red_bgr >> 8) as u8;
+
+        // Run full frame + scanline.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME + CYCLES_PER_SCANLINE,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // Should show backdrop (red), not tile color.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0xFF, 0, 0],
+            "transparent tile should show backdrop"
+        );
+    }
+
+    #[test]
+    fn mode2_affine_out_of_bounds_is_transparent_when_no_wrap() {
+        // When wrapping is disabled (BGCNT bit 13 = 0), pixels outside
+        // the map bounds should be transparent (show backdrop).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 2 + BG2 enable.
+        ppu.write_dispcnt(2 | dispcnt::BG2_ENABLE);
+
+        // BG2CNT: charblock 0, screenblock 8, size 0 (128x128 = 16x16 tiles),
+        // NO wrapping.
+        ppu.write_bg_cnt(2, 8 << 8);
+
+        // Identity affine, but offset to render outside the 128x128 map.
+        // dx = 200 pixels = 200 << 8 in fixed 8.8 = 0xC800.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        ppu.write_affine(REG_BG2X_L, 0xC800);
+
+        // Place tile 1 at map position (0,0) with green color.
+        let green = 0x03E0u16;
+        setup_affine_tile(&mut vram, &mut pram, 8, 0, 0, 0, green);
+
+        // Backdrop = blue.
+        let blue_bgr = 0x7C00u16;
+        pram[0] = blue_bgr as u8;
+        pram[1] = (blue_bgr >> 8) as u8;
+
+        // Run full frame + scanline.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME + CYCLES_PER_SCANLINE,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // Pixel (0,0) maps to texture (200, 0) which is outside 128x128.
+        // Should show backdrop (blue).
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0, 0xFF],
+            "out-of-bounds should show backdrop when no wrap"
+        );
+    }
+
+    #[test]
+    fn mode2_affine_wrapping_wraps_coordinates() {
+        // When wrapping is enabled (BGCNT bit 13 = 1), out-of-bounds
+        // coordinates should wrap around the map.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 2 + BG2 enable.
+        ppu.write_dispcnt(2 | dispcnt::BG2_ENABLE);
+
+        // BG2CNT: charblock 0, screenblock 8, size 0 (128x128),
+        // WITH wrapping (bit 13 = 1).
+        ppu.write_bg_cnt(2, (8 << 8) | (1 << 13));
+
+        // Identity affine, offset by 128 pixels (= full map width).
+        // Should wrap back to position 0.
+        // 128 pixels in 8.8 fixed = 128 << 8 = 0x8000.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        ppu.write_affine(REG_BG2X_L, 0x8000); // X = 128 in 8.8 fixed
+
+        // Place tile at map (0,0) with green.
+        let green = 0x03E0u16;
+        setup_affine_tile(&mut vram, &mut pram, 8, 0, 0, 0, green);
+
+        // Backdrop = black.
+        pram[0] = 0;
+        pram[1] = 0;
+
+        // Run full frame + scanline.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME + CYCLES_PER_SCANLINE,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // Texture x = 128 wraps to 0 in a 128-pixel map → should see tile.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0xFF, 0],
+            "wrapping should show tile at wrapped position"
+        );
+    }
+
+    #[test]
+    fn mode2_affine_bg2_bg3_priority_compositing() {
+        // Two affine BGs with different priorities: higher priority (lower
+        // BGCNT value) should appear on top.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 2 + BG2 + BG3 enable.
+        ppu.write_dispcnt(2 | dispcnt::BG2_ENABLE | dispcnt::BG3_ENABLE);
+
+        // BG2: priority 1, charblock 0, screenblock 8, size 1 (256x256).
+        ppu.write_bg_cnt(2, 1 | (8 << 8) | (1 << 14));
+        // BG3: priority 0 (higher visual priority), charblock 0, screenblock 16, size 1.
+        ppu.write_bg_cnt(3, (16 << 8) | (1 << 14));
+
+        // Identity affine for both.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        ppu.write_affine(REG_BG3PA, 0x0100);
+        ppu.write_affine(REG_BG3PD, 0x0100);
+
+        // BG2 tile at (0,0): red.
+        let red = 0x001Fu16;
+        let map2_base = 8 * 0x800;
+        vram[map2_base] = 1; // tile 1
+        let tile1_base = 64; // charblock 0 + tile 1 (64 bytes per 8bpp tile)
+        for i in 0..64 {
+            vram[tile1_base + i] = 1;
+        }
+        pram[2] = red as u8;
+        pram[3] = (red >> 8) as u8;
+
+        // BG3 tile at (0,0): green (using tile 2 and palette index 2).
+        let green = 0x03E0u16;
+        let map3_base = 16 * 0x800;
+        vram[map3_base] = 2; // tile 2
+        let tile2_base = 128; // charblock 0 + tile 2 (64 bytes per 8bpp tile)
+        for i in 0..64 {
+            vram[tile2_base + i] = 2;
+        }
+        pram[4] = green as u8;
+        pram[5] = (green >> 8) as u8;
+
+        // Backdrop = black.
+        pram[0] = 0;
+        pram[1] = 0;
+
+        // Run full frame + scanline.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME + CYCLES_PER_SCANLINE,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // BG3 has priority 0 (on top), BG2 has priority 1 (behind).
+        // Pixel should be green (BG3 on top).
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0xFF, 0],
+            "BG3 (priority 0) should be on top of BG2 (priority 1)"
+        );
+    }
+
+    #[test]
+    fn mode1_mixes_regular_and_affine_bgs() {
+        // Mode 1: BG0/BG1 regular text + BG2 affine.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 1 + BG0 + BG2 enable.
+        ppu.write_dispcnt(1 | dispcnt::BG0_ENABLE | dispcnt::BG2_ENABLE);
+
+        // BG0: priority 1, 4bpp text mode. Charblock 0, screenblock 4.
+        ppu.write_bg_cnt(0, 1 | (4 << 8));
+        // BG2: priority 0 (on top), affine. Charblock 2, screenblock 8, size 1.
+        ppu.write_bg_cnt(2, (1 << 7) | (2 << 2) | (8 << 8) | (1 << 14));
+
+        // Identity affine for BG2.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Set up BG2 affine tile at (0,0): green.
+        let green = 0x03E0u16;
+        let map_base = 8 * 0x800;
+        vram[map_base] = 1; // tile 1
+        let charblock2_base = 2 * 16 * 1024;
+        let tile1_base = charblock2_base + 64;
+        for i in 0..64 {
+            vram[tile1_base + i] = 1;
+        }
+        pram[2] = green as u8;
+        pram[3] = (green >> 8) as u8;
+
+        // Set up BG0 text tile at (0,0): red (4bpp, palette bank 0).
+        // Screenblock 4, tile 1.
+        let red = 0x001Fu16;
+        let sb4_base = 4 * 0x800;
+        // Map entry: tile 1, no flip, palette bank 0.
+        vram[sb4_base] = 1;
+        vram[sb4_base + 1] = 0;
+        // Tile 1 in charblock 0 (4bpp: 32 bytes per tile).
+        let text_tile_base = 32; // charblock 0 + tile 1 (32 bytes per 4bpp tile)
+        // Fill with palette index 1 (4bpp: two pixels per byte, both index 1).
+        for i in 0..32 {
+            vram[text_tile_base + i] = 0x11;
+        }
+        // Palette bank 0, color 1 = red.
+        pram[2] = red as u8;
+        pram[3] = (red >> 8) as u8;
+
+        // Wait — BG0 and BG2 share palette. BG2 uses 256-color mode.
+        // Palette[1] = red (set above). BG2 tile uses palette index 1 → red.
+        // Let's use palette index 2 for BG2 instead.
+        for i in 0..64 {
+            vram[tile1_base + i] = 2; // palette index 2
+        }
+        pram[4] = green as u8;
+        pram[5] = (green >> 8) as u8;
+
+        // Backdrop = blue.
+        let blue = 0x7C00u16;
+        pram[0] = blue as u8;
+        pram[1] = (blue >> 8) as u8;
+
+        // Run full frame + scanline.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME + CYCLES_PER_SCANLINE,
+            &mut ic,
+            &vram,
+            &pram,
+        );
+
+        // BG2 (priority 0, affine) should be on top of BG0 (priority 1, text).
+        // Pixel should be green.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0xFF, 0],
+            "Mode 1: BG2 affine (priority 0) on top of BG0 text (priority 1)"
+        );
     }
 }
