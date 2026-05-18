@@ -157,7 +157,7 @@ impl IoRegisters {
             0x0400_0010..=0x0400_001E => None, // BG scroll offsets
             0x0400_0020..=0x0400_003E => None, // BG affine params
             0x0400_0040..=0x0400_0046 => None, // Window H/V coords
-            0x0400_004C => None,               // MOSAIC
+            ppu::REG_MOSAIC => None,           // MOSAIC
             0x0400_0054 => None,               // BLDY
             // PPU readable registers with masks.
             0x0400_0048 => Some(ppu.read_winin()),    // WININ
@@ -361,6 +361,7 @@ impl IoRegisters {
             ppu::REG_WIN1V => ppu.write_win_v(1, value),
             ppu::REG_WININ => ppu.write_winin(value),
             ppu::REG_WINOUT => ppu.write_winout(value),
+            ppu::REG_MOSAIC => ppu.write_mosaic(value),
             // PPU color special effect registers.
             ppu::REG_BLDCNT => ppu.write_bldcnt(value),
             ppu::REG_BLDALPHA => ppu.write_bldalpha(value),
@@ -507,6 +508,18 @@ impl IoRegisters {
             } else {
                 ppu.write_win_h(idx, merged);
             }
+            return;
+        }
+        // MOSAIC (0x0400_004C..=0x0400_004D) is write-only. Merge byte writes
+        // against the PPU's live value.
+        if (ppu::REG_MOSAIC..=ppu::REG_MOSAIC + 1).contains(&addr) {
+            let current = ppu.read_mosaic();
+            let merged = if addr & 1 == 0 {
+                (current & 0xFF00) | value as u16
+            } else {
+                (current & 0x00FF) | ((value as u16) << 8)
+            };
+            ppu.write_mosaic(merged);
             return;
         }
         // BLDY (0x0400_0054..=0x0400_0055) is write-only. The high byte is

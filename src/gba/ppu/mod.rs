@@ -37,7 +37,7 @@
 //!
 //! * Mode 2 full affine tile background rendering for BG2/BG3.
 //! * Affine OBJ rendering.
-//! * Window masks, alpha blending, mosaic, brightness effects.
+//! * Window masks, alpha blending, brightness effects.
 //!
 //! References:
 //! * GBATek "LCD I/O Display Control": <https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol>
@@ -182,6 +182,8 @@ pub const REG_WIN0V: u32 = 0x0400_0044;
 pub const REG_WIN1V: u32 = 0x0400_0046;
 pub const REG_WININ: u32 = 0x0400_0048;
 pub const REG_WINOUT: u32 = 0x0400_004A;
+/// `MOSAIC` (0x0400_004C): BG/OBJ mosaic sizes (write-only).
+pub const REG_MOSAIC: u32 = 0x0400_004C;
 
 // Color special effect registers.
 /// `BLDCNT` (0x0400_0050): color effect control (R/W).
@@ -270,6 +272,8 @@ pub struct Ppu {
     /// `BLDY` (0x0400_0054, write-only): brightness coefficient.
     /// Bits 0-4: EVY (0-16).
     bldy: u8,
+    /// `MOSAIC` (0x0400_004C, write-only): BG/OBJ mosaic block sizes.
+    mosaic: u16,
 }
 
 // ---- Color special effect helpers ----------------------------------------
@@ -371,6 +375,7 @@ impl Ppu {
             bldcnt: 0,
             bldalpha: 0,
             bldy: 0,
+            mosaic: 0,
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -640,6 +645,20 @@ impl Ppu {
         self.bldy as u16
     }
 
+    /// Write `MOSAIC` (0x0400_004C). All 16 bits are significant.
+    pub fn write_mosaic(&mut self, value: u16) {
+        self.mosaic = value;
+    }
+
+    /// Read the raw MOSAIC backing value as a halfword.
+    ///
+    /// **Not for CPU reads.** MOSAIC is write-only on hardware; CPU reads return
+    /// open-bus (handled by the I/O layer returning `None` from `try_read16`).
+    /// This accessor exists for byte-write merging and rendering.
+    pub fn read_mosaic(&self) -> u16 {
+        self.mosaic
+    }
+
     /// True after a completed frame, until [`Self::clear_frame_ready`].
     pub fn frame_ready(&self) -> bool {
         self.frame_ready
@@ -828,6 +847,8 @@ impl Ppu {
     ) {
         let bgcnt = self.bg_cnt[bg_idx];
         let is_8bpp = bgcnt & (1 << 7) != 0;
+        let mosaic_enabled = bgcnt & (1 << 6) != 0;
+        let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
 
         let bg_size = (bgcnt >> 14) & 0x0003;
         let (width_tiles, height_tiles) = match bg_size {
@@ -841,10 +862,21 @@ impl Ppu {
         let screenblock_base = (((bgcnt >> 8) & 0x001F) as usize) * 0x800;
         let charblock_base = (((bgcnt >> 2) & 0x0003) as usize) * 16 * 1024;
         let (hofs, vofs) = self.bg_scroll[bg_idx];
-        let screen_y = ((y as usize) + vofs as usize) & height_mask;
+        let sample_y = if mosaic_enabled {
+            let y = y as usize;
+            y - (y % mosaic_v)
+        } else {
+            y as usize
+        };
+        let screen_y = (sample_y + vofs as usize) & height_mask;
 
         for x in 0..(SCREEN_WIDTH as usize) {
-            let screen_x = (x + hofs as usize) & width_mask;
+            let sample_x = if mosaic_enabled {
+                x - (x % mosaic_h)
+            } else {
+                x
+            };
+            let screen_x = (sample_x + hofs as usize) & width_mask;
             let tile_x = screen_x >> 3;
             let tile_y = screen_y >> 3;
             let screenblock_x = tile_x >> 5;
@@ -924,6 +956,8 @@ impl Ppu {
     ) {
         let bgcnt = self.bg_cnt[bg_idx];
         let aff = self.bg_affine[affine_idx];
+        let mosaic_enabled = bgcnt & (1 << 6) != 0;
+        let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
 
         // Affine map sizes: 16x16, 32x32, 64x64, 128x128 tiles.
         let size_shift = ((bgcnt >> 14) & 3) as u32;
@@ -935,17 +969,30 @@ impl Ppu {
         let charblock_base = (((bgcnt >> 2) & 0x0003) as usize) * 16 * 1024;
 
         let pa = aff.pa as i32;
+        let pb = aff.pb as i32;
         let pc = aff.pc as i32;
+        let pd = aff.pd as i32;
 
-        let mut tex_x = aff.internal_x;
-        let mut tex_y = aff.internal_y;
+        let mosaic_y_offset = if mosaic_enabled {
+            (self.vcount as usize) % mosaic_v
+        } else {
+            0
+        };
+        let line_anchor_x = aff
+            .internal_x
+            .wrapping_sub(pb.wrapping_mul(mosaic_y_offset as i32));
+        let line_anchor_y = aff
+            .internal_y
+            .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
 
         for x in 0..(SCREEN_WIDTH as usize) {
-            let px = tex_x >> 8;
-            let py = tex_y >> 8;
-
-            tex_x = tex_x.wrapping_add(pa);
-            tex_y = tex_y.wrapping_add(pc);
+            let sample_x = if mosaic_enabled {
+                x - (x % mosaic_h)
+            } else {
+                x
+            };
+            let px = line_anchor_x.wrapping_add(pa.wrapping_mul(sample_x as i32)) >> 8;
+            let py = line_anchor_y.wrapping_add(pc.wrapping_mul(sample_x as i32)) >> 8;
 
             let (fx, fy) = if wrapping {
                 (
@@ -1003,7 +1050,7 @@ impl Ppu {
         for (i, &bg_idx) in bg_indices.iter().enumerate() {
             if bg_enables[i] {
                 let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
-                self.render_affine_bg_layer(bg_idx, affine_indices[i], vram, pram, &mut buf);
+                    self.render_affine_bg_layer(bg_idx, affine_indices[i], vram, pram, &mut buf);
                 let prio = (self.bg_cnt[bg_idx] & 3) as u8;
                 layers.push((bg_idx, prio, buf));
             }
@@ -1198,6 +1245,7 @@ impl Ppu {
                 pram,
                 mapping_1d,
                 bitmap_mode,
+                self.mosaic,
             ))
         } else {
             None
@@ -1427,6 +1475,13 @@ impl Ppu {
         } else {
             0
         }
+    }
+
+    fn bg_mosaic_size(&self) -> (usize, usize) {
+        (
+            ((self.mosaic & 0x000F) + 1) as usize,
+            (((self.mosaic >> 4) & 0x000F) + 1) as usize,
+        )
     }
 }
 
@@ -2613,6 +2668,40 @@ mod tests {
         assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
     }
 
+    #[test]
+    fn text_bg_mosaic_repeats_upper_left_anchor_pixel() {
+        let mut ppu = Ppu::new();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
+
+        // BG0CNT: mosaic enabled, charblock 0, screenblock 0.
+        ppu.write_bg_cnt(0, 1 << 6);
+        // BG mosaic H/V sizes are both 2 pixels.
+        ppu.write_mosaic(0x0011);
+
+        // Palette entries 1..4 are distinct colors.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+        pram[4] = 0xE0;
+        pram[5] = 0x03;
+        pram[6] = 0x00;
+        pram[7] = 0x7C;
+        pram[8] = 0xFF;
+        pram[9] = 0x7F;
+
+        // Screen entry (0,0) -> tile 1.
+        vram[0] = 1;
+        // Tile 1: row 0 pixels 0/1 = palette 1/2, row 1 pixels 0/1 = 3/4.
+        vram[32] = 0x21;
+        vram[32 + 4] = 0x43;
+
+        ppu.render_text_bg_layer(0, 1, &vram, &pram, &mut buf);
+
+        assert_eq!(buf[0], 0x001F);
+        assert_eq!(buf[1], 0x001F);
+    }
+
     /// Per GBATek, BGnCNT bit 13 is not used (zero) for BG0 and BG1.
     /// Reads of BG0CNT/BG1CNT must mask bit 13 out; BG2/BG3 are unmasked.
     #[test]
@@ -2779,6 +2868,55 @@ mod tests {
             &ppu.framebuffer()[0..3],
             &[0, 0xFF, 0],
             "pixel (0,0) should be green from affine tile"
+        );
+    }
+
+    #[test]
+    fn affine_bg_mosaic_repeats_upper_left_anchor_pixel() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(2 | dispcnt::BG2_ENABLE);
+        ppu.write_bg_cnt(2, (1 << 6) | (8 << 8) | (1 << 14));
+        ppu.write_mosaic(0x0011);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Affine map entry (0,0) -> tile 1.
+        vram[8 * 0x800] = 1;
+
+        // Palette entries 1..4 are distinct colors.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+        pram[4] = 0xE0;
+        pram[5] = 0x03;
+        pram[6] = 0x00;
+        pram[7] = 0x7C;
+        pram[8] = 0xFF;
+        pram[9] = 0x7F;
+
+        // Tile 1: row 0 pixels 0/1 = palette 1/2, row 1 pixels 0/1 = 3/4.
+        let tile_base = 64;
+        vram[tile_base] = 1;
+        vram[tile_base + 1] = 2;
+        vram[tile_base + 8] = 3;
+        vram[tile_base + 9] = 4;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * 2,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        let row1 = SCREEN_WIDTH as usize * BYTES_PER_PIXEL;
+        assert_eq!(&ppu.framebuffer()[row1..row1 + 3], &[0xFF, 0, 0]);
+        assert_eq!(
+            &ppu.framebuffer()[row1 + BYTES_PER_PIXEL..row1 + BYTES_PER_PIXEL + 3],
+            &[0xFF, 0, 0]
         );
     }
 
