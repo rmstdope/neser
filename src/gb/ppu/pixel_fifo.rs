@@ -17,6 +17,7 @@ const LCDC_OBJ_ENABLE: u8 = 0x02;
 const LCDC_BG_MAP: u8 = 0x08;
 const LCDC_TILE_DATA: u8 = 0x10;
 const LCDC_WINDOW_ENABLE: u8 = 0x20;
+const LCDC_WINDOW_MAP: u8 = 0x40;
 const OBJ_PIXELS_PER_FETCH: u8 = 8;
 const CGB_DMG_COMPAT_OBJ_ENABLE_EDGE_PIXELS: u8 = 2;
 const DMG_OBJ_FETCH_ABORT_COMPLETES_WHEN_DOTS_REMAINING: u16 = 2;
@@ -27,6 +28,9 @@ const CGB_DMG_COMPAT_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 3;
 const OFF_LEFT_WINDOW_DELAYED_OBJ_X_START: u8 = OBJ_PIXELS_PER_FETCH - 3;
 const OFF_LEFT_WINDOW_DELAYED_OBJ_X_END: u8 = OBJ_PIXELS_PER_FETCH - 1;
 const OFF_LEFT_WINDOW_EXTRA_STALL_DOTS: u16 = 2;
+const STEADY_WINDOW_MAP_FETCH_DELAY_X: u8 = OBJ_PIXELS_PER_FETCH * 2;
+const LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X: u8 = OBJ_PIXELS_PER_FETCH * 2 + 5;
+const LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X: u8 = OBJ_PIXELS_PER_FETCH * 3 + 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LcdcBgEnableEdgeTiming {
@@ -153,6 +157,56 @@ impl LcdcBgMapEdge {
             .find(|range| u32::from(range.start_x) <= x && x <= u32::from(range.end_x))
         {
             (current_lcdc & !LCDC_BG_MAP) | range.bg_map_bit
+        } else {
+            current_lcdc
+        }
+    }
+
+    fn clear_consumed(&mut self, next_x: u8) {
+        self.ranges.retain(|range| range.end_x != next_x);
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct LcdcWindowMapEdgeRange {
+    start_x: u8,
+    end_x: u8,
+    window_map_bit: u8,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct LcdcWindowMapEdge {
+    ranges: Vec<LcdcWindowMapEdgeRange>,
+}
+
+impl LcdcWindowMapEdge {
+    fn window_tile_boundary_at_or_after(next_x: u8, wx: u8) -> u8 {
+        let win_x_start = i16::from(wx) - 7;
+        let window_x = i16::from(next_x) - win_x_start;
+        let phase = window_x.rem_euclid(8) as u8;
+        let pixels_until_boundary = if phase == 0 { 0 } else { 8 - phase };
+        next_x.saturating_add(pixels_until_boundary)
+    }
+
+    fn record_write(&mut self, start_x: u8, end_x: u8, previous_lcdc: u8, new_lcdc: u8) {
+        if previous_lcdc & LCDC_WINDOW_MAP == new_lcdc & LCDC_WINDOW_MAP || start_x > end_x {
+            return;
+        }
+
+        self.ranges.push(LcdcWindowMapEdgeRange {
+            start_x,
+            end_x,
+            window_map_bit: previous_lcdc & LCDC_WINDOW_MAP,
+        });
+    }
+
+    fn lcdc_for_window_fetch(&self, x: u32, current_lcdc: u8) -> u8 {
+        if let Some(range) = self
+            .ranges
+            .iter()
+            .find(|range| u32::from(range.start_x) <= x && x <= u32::from(range.end_x))
+        {
+            (current_lcdc & !LCDC_WINDOW_MAP) | range.window_map_bit
         } else {
             current_lcdc
         }
@@ -326,6 +380,8 @@ pub struct PixelFifoRenderer {
     #[serde(default)]
     lcdc_bg_map_edge: LcdcBgMapEdge,
     #[serde(default)]
+    lcdc_window_map_edge: LcdcWindowMapEdge,
+    #[serde(default)]
     lcdc_tile_data_edge: LcdcTileDataEdge,
     #[serde(default)]
     lcdc_obj_enable_edge: LcdcObjEnableEdge,
@@ -369,6 +425,7 @@ impl PixelFifoRenderer {
             leftmost_obj_oam_x: None,
             lcdc_bg_enable_edge: LcdcBgEnableEdge::default(),
             lcdc_bg_map_edge: LcdcBgMapEdge::default(),
+            lcdc_window_map_edge: LcdcWindowMapEdge::default(),
             lcdc_tile_data_edge: LcdcTileDataEdge::default(),
             lcdc_obj_enable_edge: LcdcObjEnableEdge::default(),
             window_enable_edges: Vec::new(),
@@ -402,6 +459,7 @@ impl PixelFifoRenderer {
         self.bgp_edge_value = registers.bgp;
         self.lcdc_bg_enable_edge = LcdcBgEnableEdge::default();
         self.lcdc_bg_map_edge = LcdcBgMapEdge::default();
+        self.lcdc_window_map_edge = LcdcWindowMapEdge::default();
         self.lcdc_tile_data_edge = LcdcTileDataEdge::default();
         self.lcdc_obj_enable_edge = LcdcObjEnableEdge::default();
         self.fine_scroll_delay_dots = u16::from(registers.scx & 0x07);
@@ -524,6 +582,7 @@ impl PixelFifoRenderer {
         self.lcdc_bg_enable_edge.clear_consumed(self.next_x);
         self.lcdc_obj_enable_edge.clear_consumed(self.next_x);
         self.lcdc_bg_map_edge.clear_consumed(self.next_x);
+        self.lcdc_window_map_edge.clear_consumed(self.next_x);
         self.lcdc_tile_data_edge.clear_consumed(self.next_x);
         self.clear_consumed_obj_fetch_lcdc_ranges();
         self.clear_consumed_window_edges();
@@ -600,6 +659,7 @@ impl PixelFifoRenderer {
         let window_fetch_active = previous & LCDC_WINDOW_ENABLE != 0
             && self.scanline >= wy
             && self.next_x == wx.saturating_sub(7);
+        self.record_lcdc_window_map_write(previous, new, wx, window_fetch_active, cgb_mode);
         let tile_data_fetch_phase = if window_fetch_active || self.window_active {
             self.next_x.saturating_sub(wx.saturating_sub(7)) & 0x07
         } else {
@@ -670,6 +730,88 @@ impl PixelFifoRenderer {
         if !enabled {
             self.window_reset_edges.push(start_x);
         }
+    }
+
+    fn record_lcdc_window_map_write(
+        &mut self,
+        previous: u8,
+        new: u8,
+        wx: u8,
+        window_fetch_active: bool,
+        cgb_mode: bool,
+    ) {
+        if !window_fetch_active && !self.window_active {
+            return;
+        }
+
+        if previous & LCDC_WINDOW_MAP == new & LCDC_WINDOW_MAP {
+            return;
+        }
+
+        let boundary = LcdcWindowMapEdge::window_tile_boundary_at_or_after(self.next_x, wx);
+        let mut start_x = self.next_x;
+        let mut end_x = boundary.saturating_sub(1);
+        let turning_on = previous & LCDC_WINDOW_MAP == 0 && new & LCDC_WINDOW_MAP != 0;
+        let turning_off = previous & LCDC_WINDOW_MAP != 0 && new & LCDC_WINDOW_MAP == 0;
+        let left_obj = self.leftmost_obj_oam_x;
+        let delayed_by_left_edge_obj = left_obj.is_some_and(|oam_x| oam_x != 0);
+        let delayed_by_visible_left_edge_obj = left_obj.is_some_and(|oam_x| oam_x >= 8);
+
+        if turning_on && boundary == self.next_x {
+            let delay_current_tile = delayed_by_visible_left_edge_obj
+                || (cgb_mode && left_obj.is_some_and(|oam_x| (1..=2).contains(&oam_x)));
+            if window_fetch_active && delay_current_tile {
+                end_x = if delayed_by_visible_left_edge_obj {
+                    OBJ_PIXELS_PER_FETCH * 2 - 1
+                } else {
+                    self.next_x.saturating_add(OBJ_PIXELS_PER_FETCH - 1)
+                };
+            } else {
+                return;
+            }
+        }
+        if turning_on && delayed_by_visible_left_edge_obj && self.next_x < OBJ_PIXELS_PER_FETCH {
+            end_x = OBJ_PIXELS_PER_FETCH * 2 - 1;
+        }
+        if self.should_delay_steady_window_map_fetch(left_obj, turning_on, turning_off) {
+            end_x = boundary.saturating_add(OBJ_PIXELS_PER_FETCH - 1);
+        }
+
+        let delay_restore_to_next_tile = if cgb_mode {
+            left_obj.is_some_and(|oam_x| oam_x <= 2)
+        } else {
+            left_obj.is_some_and(|oam_x| (1..=2).contains(&oam_x))
+        };
+        if turning_off
+            && delay_restore_to_next_tile
+            && boundary <= OBJ_PIXELS_PER_FETCH
+            && self.next_x <= OBJ_PIXELS_PER_FETCH
+        {
+            end_x = OBJ_PIXELS_PER_FETCH * 2 - 1;
+            if cgb_mode && delayed_by_left_edge_obj {
+                start_x = OBJ_PIXELS_PER_FETCH;
+            }
+        }
+        if turning_off && left_obj.is_some_and(|oam_x| oam_x >= OBJ_PIXELS_PER_FETCH * 2) {
+            start_x = OBJ_PIXELS_PER_FETCH * 2;
+            end_x = start_x.saturating_add(OBJ_PIXELS_PER_FETCH - 1);
+        }
+        self.lcdc_window_map_edge
+            .record_write(start_x, end_x, previous, new);
+    }
+
+    fn should_delay_steady_window_map_fetch(
+        &self,
+        left_obj: Option<u8>,
+        turning_on: bool,
+        turning_off: bool,
+    ) -> bool {
+        if left_obj == Some(1) {
+            return (turning_on && self.next_x >= LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X)
+                || (turning_off && self.next_x >= LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X);
+        }
+
+        self.next_x >= STEADY_WINDOW_MAP_FETCH_DELAY_X
     }
 
     fn next_window_fetch_boundary(&self) -> u8 {
@@ -1481,12 +1623,13 @@ impl PixelFifoRenderer {
             registers.scy,
         );
         let bw_px = if win_enabled {
+            let window_lcdc = self.lcdc_window_map_edge.lcdc_for_window_fetch(x, lcdc);
             match window::fetch_window_pixel_cgb(
                 x,
                 self.scanline,
                 vram,
                 vram_bank1,
-                lcdc,
+                window_lcdc,
                 registers.wx,
                 registers.wy,
                 window_line,
@@ -1596,6 +1739,7 @@ impl PixelFifoRenderer {
         let bw_idx =
             if let Some((window_wx, window_line)) = window_fetch.filter(|_| bg_window_enabled) {
                 let (low_lcdc, high_lcdc) = self.lcdc_tile_data_edge.lcdc_for_tile_data(x, lcdc);
+                let window_map_lcdc = self.lcdc_window_map_edge.lcdc_for_window_fetch(x, lcdc);
                 match bg_fifo::fetch_dmg_pixel(
                     vram,
                     DmgPixelFetch {
@@ -1607,7 +1751,7 @@ impl PixelFifoRenderer {
                         wx: window_wx,
                         wy: registers.wy,
                         window_line,
-                        map_lcdc: lcdc | LCDC_WINDOW_ENABLE,
+                        map_lcdc: window_map_lcdc | LCDC_WINDOW_ENABLE,
                         low_lcdc,
                         high_lcdc,
                     },
@@ -1862,9 +2006,10 @@ fn prune_consumed_window_x_edges(edges: &mut Vec<WindowXEdge>, x: u8) {
 mod tests {
     use super::super::{registers::Registers, screen_buffer::ScreenBuffer};
     use super::{
-        LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE, LcdcBgEnableEdge,
-        LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay, PixelFifoRenderer,
-        WindowEnableEdge, WindowXEdge,
+        LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE,
+        LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X, LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X,
+        LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
+        PixelFifoRenderer, WindowEnableEdge, WindowXEdge,
     };
 
     fn oam_with_sprite_at(oam_y: u8, oam_x: u8, tile: u8, attrs: u8) -> [u8; 0xA0] {
@@ -1890,6 +2035,17 @@ mod tests {
         vram[0x1801] = 0x00;
         vram[0x0000] = 0xFF;
         vram[0x0001] = 0xFF;
+        vram
+    }
+
+    fn vram_with_blank_9800_window_and_solid_9c00_window() -> [u8; 0x2000] {
+        let mut vram = [0u8; 0x2000];
+        vram[0x1800] = 0x00;
+        for tile in &mut vram[0x1C00..0x1C20] {
+            *tile = 0x01;
+        }
+        vram[0x0010] = 0xFF;
+        vram[0x0011] = 0xFF;
         vram
     }
 
@@ -2105,6 +2261,121 @@ mod tests {
         assert_eq!(LcdcBgMapEdge::bg_tile_boundary_at_or_after(0, 7), 1);
         assert_eq!(edge.lcdc_for_bg_fetch(8, 0x8B) & 0x08, 0x00);
         assert_eq!(edge.lcdc_for_bg_fetch(9, 0x8B) & 0x08, 0x08);
+    }
+
+    #[test]
+    fn window_map_write_after_tile_boundary_keeps_current_window_tile_on_previous_map() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 1;
+        renderer.window_active = true;
+        renderer.window_triggered = true;
+        renderer.window_fetch_wx = 7;
+        renderer.record_lcdc_write_with_window(0xB1, 0xF1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xF1;
+        registers.wx = 7;
+        registers.wy = 0;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_9800_window_and_solid_9c00_window();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(1, &vram, &oam, &registers, 0);
+        let (next_tile_colour, _, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(
+            current_tile_colour, 0,
+            "the window tile already selected when LCDC.6 changes should stay on the previous map"
+        );
+        assert_eq!(
+            next_tile_colour, 3,
+            "the following window tile fetch should use the new map"
+        );
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn window_map_write_at_tile_boundary_uses_new_map_without_left_edge_obj_delay() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.record_lcdc_write_with_window(0xB1, 0xF1, 0, false, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xF1;
+        registers.wx = 7;
+        registers.wy = 0;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_9800_window_and_solid_9c00_window();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+        let (next_tile_colour, _, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(current_tile_colour, 3);
+        assert_eq!(next_tile_colour, 3);
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn window_map_write_at_tile_boundary_with_left_edge_obj_delay_keeps_current_tile() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.next_x = 0;
+        renderer.leftmost_obj_oam_x = Some(1);
+        renderer.record_lcdc_write_with_window(0xB1, 0xF1, 0, true, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xF1;
+        registers.wx = 7;
+        registers.wy = 0;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_9800_window_and_solid_9c00_window();
+        let oam = [0u8; 0xA0];
+
+        let (current_tile_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(0, &vram, &oam, &registers, 0);
+        let (next_tile_colour, _, _) = renderer.dmg_pixel_layers(8, &vram, &oam, &registers, 0);
+
+        assert_eq!(current_tile_colour, 0);
+        assert_eq!(next_tile_colour, 3);
+        assert!(!is_sprite);
+    }
+
+    #[test]
+    fn steady_window_map_writes_apply_one_fetch_after_next_tile_boundary() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.window_triggered = true;
+        renderer.window_fetch_wx = 7;
+        renderer.next_x = LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X;
+        renderer.record_lcdc_write_with_window(0xB1, 0xF1, 0, true, false, 7, 0);
+        renderer.next_x = LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X;
+        renderer.record_lcdc_write_with_window(0xF1, 0xB1, 0, true, false, 7, 0);
+        let mut registers = Registers::new();
+        registers.lcdc = 0xB1;
+        registers.wx = 7;
+        registers.wy = 0;
+        registers.bgp = 0xE4;
+        let vram = vram_with_blank_9800_window_and_solid_9c00_window();
+        let oam = [0u8; 0xA0];
+
+        let (tile_after_set_colour, is_sprite, _) =
+            renderer.dmg_pixel_layers(24, &vram, &oam, &registers, 0);
+        let (tile_after_restore_colour, _, _) =
+            renderer.dmg_pixel_layers(32, &vram, &oam, &registers, 0);
+        let (live_restored_colour, _, _) =
+            renderer.dmg_pixel_layers(40, &vram, &oam, &registers, 0);
+
+        assert_eq!(tile_after_set_colour, 0);
+        assert_eq!(tile_after_restore_colour, 3);
+        assert_eq!(live_restored_colour, 0);
+        assert!(!is_sprite);
     }
 
     #[test]

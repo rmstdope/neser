@@ -98,3 +98,43 @@ No feedback provided.
 ### Navigator feedback
 
 No additional feedback.
+
+---
+
+## 2026-05-18 - PR #2428: Fix GB LCDC window-map timing
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2428
+**Linked issues:** #2355
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `github-administration` | Supported issue, branch, and PR workflow handling. |
+| Skill | `github-issue-designer` | Supported issue-focused framing and traceability. |
+| Skill | `test-driven-development` | Guided enabling failing CRC tests before implementation and validating the fix. |
+| Skill | `rust-developer` | Supported Rust implementation and local validation. |
+| Skill | `gb-hardware-research` | Guided Game Boy LCDC/window-map timing investigation. |
+| Skill | `rust-code-refactoring` | Supported focused cleanup around the PPU FIFO change. |
+| Skill | `clean-coder` | Encouraged a narrow, maintainable implementation. |
+| Agent | `code-review` | Provided review-oriented feedback before finalizing the PR. |
+| Agent | `Iteration Retrospective Gatherer` | Produced the retrospective content after PR creation. |
+| Instructions | Repository workflow instructions | Applied repository workflow expectations including TDD, validation, and PR discipline. |
+
+### What went well
+
+- The workflow paired `gb-hardware-research` with `test-driven-development`, using the five mealybug LCDC window-map CRC tests as concrete regression targets before finalizing the timing fix.
+- The implementation stayed localized to `src/gb/ppu/pixel_fifo.rs`, which indicates the Rust/refactoring/clean-code guidance helped avoid a broad PPU rewrite.
+- Focused unit coverage was added alongside the CRC tests, giving both targeted behavior checks and higher-level hardware-test confidence.
+- The `code-review` agent was used as an explicit second-pass AI customization before the PR was considered complete.
+
+### What to improve
+
+- Several customizations used for the work package were not discoverable in the workspace paths inspected by the retrospective agent, so the retrospective had to rely on the user-provided list. Capture active customization names during the work package so the final retrospective can verify them without reconstruction.
+- For timing-sensitive hardware fixes, explicitly record the key sampling-point rationale when the fix is made. That would make later retrospectives more precise about which research insight drove the implementation.
+- When many skills are active, summarize each skill's concrete contribution before PR creation. This would make it easier to distinguish which customization materially affected the outcome versus which was only nominally selected.
+
+### Navigator feedback
+
+No additional feedback.
