@@ -12,6 +12,5 @@ pub use resampler::AudioResampler;
 // AudioConsumer and AudioStats are used by the audio callback; AudioProducer by the emulation loop.
 #[allow(unused_imports)]
 pub use types::{
-    AudioConsumer, AudioProducer, AudioStats, normalize_nes_sample,
-    queue_stereo_sample_to_producer,
+    AudioConsumer, AudioProducer, AudioStats, normalize_nes_sample, queue_stereo_sample_to_producer,
 };

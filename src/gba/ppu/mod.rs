@@ -107,6 +107,9 @@ pub mod dispcnt {
     pub const OBJ_ENABLE: u16 = 1 << 12;
     /// OBJ character VRAM mapping: 1 = 1D, 0 = 2D (DISPCNT[6]).
     pub const OBJ_MAPPING_1D: u16 = 1 << 6;
+    /// H-Blank Interval Free (DISPCNT[5]) — allows OAM access during H-Blank but
+    /// reduces available OBJ rendering cycles from 1210 to 954 per scanline.
+    pub const HBLANK_INTERVAL_FREE: u16 = 1 << 5;
     /// Display Window 0 (DISPCNT[13]).
     pub const WIN0_ENABLE: u16 = 1 << 13;
     /// Display Window 1 (DISPCNT[14]).
@@ -1334,6 +1337,11 @@ impl Ppu {
         let obj_scanline = if obj_enabled {
             let mapping_1d = self.dispcnt & dispcnt::OBJ_MAPPING_1D != 0;
             let bitmap_mode = self.mode() >= 3;
+            let cycle_budget = if self.dispcnt & dispcnt::HBLANK_INTERVAL_FREE != 0 {
+                obj::OBJ_CYCLE_BUDGET_HBLANK_FREE
+            } else {
+                obj::OBJ_CYCLE_BUDGET_NORMAL
+            };
             Some(obj::render_obj_scanline(
                 y,
                 oam,
@@ -1342,6 +1350,7 @@ impl Ppu {
                 mapping_1d,
                 bitmap_mode,
                 self.mosaic,
+                cycle_budget,
             ))
         } else {
             None

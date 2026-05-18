@@ -2033,7 +2033,10 @@ mod tests {
         assert!(apu.sample_ready(), "sample should be ready");
         let stereo = apu.take_stereo_sample();
         assert!(stereo.is_some(), "take_stereo_sample() must return Some");
-        assert!(!apu.sample_ready(), "sample should be consumed after take_stereo_sample");
+        assert!(
+            !apu.sample_ready(),
+            "sample should be consumed after take_stereo_sample"
+        );
     }
 
     #[test]
