@@ -61,7 +61,9 @@ pub const FRAMEBUFFER_BYTES: usize =
 /// Marker value for a transparent pixel in per-layer color buffers.
 /// Valid BGR555 colors use bits 0-14 only, so bit 15 set means "no pixel".
 const TRANSPARENT: u16 = 0x8000;
+/// Mode 5 bitmap width in pixels.
 const MODE5_WIDTH: usize = 160;
+/// Mode 5 bitmap height in pixels.
 const MODE5_HEIGHT: usize = 128;
 
 /// CPU cycles per scanline (308 dots × 4 cycles/dot).
@@ -981,6 +983,10 @@ impl Ppu {
     }
 
     /// Mode 5: 160×128 direct 15-bit bitmap. Two frames available.
+    ///
+    /// BG2 affine parameters select source coordinates. Pixels outside the
+    /// 160×128 source bitmap remain transparent so the backdrop or lower
+    /// priority layers show through.
     #[allow(clippy::needless_range_loop)]
     fn render_mode5_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
@@ -1015,6 +1021,8 @@ impl Ppu {
                 }
 
                 let src = frame_base + ((py as usize) * MODE5_WIDTH + (px as usize)) * 2;
+                // Keep the renderer robust for shortened test buffers; real GBA VRAM
+                // contains both complete 40KB Mode 5 frames.
                 if src + 1 < vram.len() {
                     buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
                 }
