@@ -350,6 +350,10 @@ const SORT_KEY_BG_OFFSET: u16 = 5;
 
 // --------------------------------------------------------------------------
 
+/// Extract a 4-bit MOSAIC size field and return its effective pixel size.
+///
+/// `shift` selects BG H (0), BG V (4), OBJ H (8), or OBJ V (12). Hardware
+/// stores each size as `effective_size - 1`, so this returns `field + 1`.
 #[inline]
 fn mosaic_size(mosaic: u16, shift: u32) -> u32 {
     (((mosaic >> shift) & 0x000F) + 1) as u32
@@ -1526,6 +1530,10 @@ impl Ppu {
         }
     }
 
+    /// Return the BG mosaic `(horizontal_size, vertical_size)` from MOSAIC.
+    ///
+    /// BG horizontal size comes from bits 0-3 and BG vertical size comes from
+    /// bits 4-7; both fields store `effective_size - 1`.
     fn bg_mosaic_size(&self) -> (usize, usize) {
         (
             mosaic_size(self.mosaic, 0) as usize,
