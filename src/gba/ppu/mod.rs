@@ -1237,8 +1237,8 @@ impl Ppu {
 
         // Pre-decode color effect parameters.
         let bld_mode = (self.bldcnt >> 6) & 3;
-        let first_target = (self.bldcnt & 0x3F) as u8;
-        let second_target = ((self.bldcnt >> 8) & 0x3F) as u8;
+        let first_target_mask = (self.bldcnt & 0x3F) as u8;
+        let second_target_mask = ((self.bldcnt >> 8) & 0x3F) as u8;
         let eva = ((self.bldalpha & 0x1F) as u8).min(16);
         let evb = (((self.bldalpha >> 8) & 0x1F) as u8).min(16);
         let evy = self.bldy.min(16);
@@ -1278,12 +1278,12 @@ impl Ppu {
             // Insert OBJ candidate.
             if obj_opaque && (layer_mask & (1 << 4) != 0) {
                 let px = obj_px.unwrap();
-                let sk = (px.priority as u16) * SORT_KEY_PRIORITY_SPACING;
+                let sort_key = (px.priority as u16) * SORT_KEY_PRIORITY_SPACING;
                 // OBJ sort_key is always < 0xFFFF, so it always beats backdrop.
                 sec_sort = top_sort;
                 sec_layer = top_layer;
                 sec_color = top_color;
-                top_sort = sk;
+                top_sort = sort_key;
                 top_layer = 4;
                 top_color = px.color;
                 top_semi_transparent = px.semi_transparent;
@@ -1297,19 +1297,19 @@ impl Ppu {
                 if buf[x] == TRANSPARENT {
                     continue;
                 }
-                let sk = (bg_prio as u16) * SORT_KEY_PRIORITY_SPACING
+                let sort_key = (bg_prio as u16) * SORT_KEY_PRIORITY_SPACING
                     + SORT_KEY_BG_OFFSET
                     + (bg_idx as u16);
-                if sk < top_sort {
+                if sort_key < top_sort {
                     sec_sort = top_sort;
                     sec_layer = top_layer;
                     sec_color = top_color;
-                    top_sort = sk;
+                    top_sort = sort_key;
                     top_layer = bg_idx as u8;
                     top_color = buf[x];
                     top_semi_transparent = false;
-                } else if sk < sec_sort {
-                    sec_sort = sk;
+                } else if sort_key < sec_sort {
+                    sec_sort = sort_key;
                     sec_layer = bg_idx as u8;
                     sec_color = buf[x];
                 }
@@ -1318,13 +1318,13 @@ impl Ppu {
             // Apply color special effects.
             //
             // Layer indices: 0-3 = BG0-BG3, 4 = OBJ, 5 = Backdrop.
-            // `first_target` bit k = layer k is a 1st target.
-            // `second_target` bit k = layer k is a 2nd target.
+            // `first_target_mask` bit k = layer k is a 1st target.
+            // `second_target_mask` bit k = layer k is a 2nd target.
             let final_color = if top_semi_transparent && sfx_enabled {
                 // Semi-transparent OBJ always alpha-blends regardless of
                 // BLDCNT mode, treated as 1st target.  2nd target selection
                 // still comes from BLDCNT bits 8-13.
-                if (second_target >> sec_layer) & 1 != 0 {
+                if (second_target_mask >> sec_layer) & 1 != 0 {
                     alpha_blend_bgr555(top_color, sec_color, eva, evb)
                 } else {
                     // No valid 2nd target below — display at normal intensity.
@@ -1334,8 +1334,8 @@ impl Ppu {
                 match bld_mode {
                     1 => {
                         // Alpha blend: both 1st and 2nd targets must be selected.
-                        if (first_target >> top_layer) & 1 != 0
-                            && (second_target >> sec_layer) & 1 != 0
+                        if (first_target_mask >> top_layer) & 1 != 0
+                            && (second_target_mask >> sec_layer) & 1 != 0
                         {
                             alpha_blend_bgr555(top_color, sec_color, eva, evb)
                         } else {
@@ -1344,7 +1344,7 @@ impl Ppu {
                     }
                     2 => {
                         // Brightness increase.
-                        if (first_target >> top_layer) & 1 != 0 {
+                        if (first_target_mask >> top_layer) & 1 != 0 {
                             brighten_bgr555(top_color, evy)
                         } else {
                             top_color
@@ -1352,7 +1352,7 @@ impl Ppu {
                     }
                     3 => {
                         // Brightness decrease.
-                        if (first_target >> top_layer) & 1 != 0 {
+                        if (first_target_mask >> top_layer) & 1 != 0 {
                             darken_bgr555(top_color, evy)
                         } else {
                             top_color
