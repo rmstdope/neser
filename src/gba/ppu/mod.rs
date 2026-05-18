@@ -1901,14 +1901,23 @@ mod tests {
         let row1 = SCREEN_WIDTH as usize * 2;
         vram[row1..row1 + 2].copy_from_slice(&0x7C00u16.to_le_bytes());
         vram[row1 + 2..row1 + 4].copy_from_slice(&0x7FFFu16.to_le_bytes());
+        let row2 = SCREEN_WIDTH as usize * 2 * 2;
+        vram[row2..row2 + 2].copy_from_slice(&0x03E0u16.to_le_bytes());
+        vram[row2 + 2..row2 + 4].copy_from_slice(&0x7C00u16.to_le_bytes());
 
-        ppu.step(CYCLES_PER_SCANLINE * 2, &mut ic, &vram, &pram, &make_oam());
+        ppu.step(CYCLES_PER_SCANLINE * 3, &mut ic, &vram, &pram, &make_oam());
 
         let fb_row1 = SCREEN_WIDTH as usize * BYTES_PER_PIXEL;
         assert_eq!(&ppu.framebuffer()[fb_row1..fb_row1 + 3], &[0xFF, 0, 0]);
         assert_eq!(
             &ppu.framebuffer()[fb_row1 + BYTES_PER_PIXEL..fb_row1 + BYTES_PER_PIXEL + 3],
             &[0xFF, 0, 0]
+        );
+        let fb_row2 = fb_row1 * 2;
+        assert_eq!(&ppu.framebuffer()[fb_row2..fb_row2 + 3], &[0, 0xFF, 0]);
+        assert_eq!(
+            &ppu.framebuffer()[fb_row2 + BYTES_PER_PIXEL..fb_row2 + BYTES_PER_PIXEL + 3],
+            &[0, 0xFF, 0]
         );
     }
 
@@ -2981,20 +2990,29 @@ mod tests {
         pram[8] = 0xFF;
         pram[9] = 0x7F;
 
-        // Tile 1: row 0 pixels 0/1 = palette 1/2, row 1 pixels 0/1 = 3/4.
+        // Tile 1 rows have distinct first pixels so row 2 verifies the next
+        // vertical mosaic block uses a new anchor.
         let tile_base = 64;
         vram[tile_base] = 1;
         vram[tile_base + 1] = 2;
         vram[tile_base + 8] = 3;
         vram[tile_base + 9] = 4;
+        vram[tile_base + 16] = 2;
+        vram[tile_base + 17] = 3;
 
-        ppu.step(CYCLES_PER_SCANLINE * 2, &mut ic, &vram, &pram, &make_oam());
+        ppu.step(CYCLES_PER_SCANLINE * 3, &mut ic, &vram, &pram, &make_oam());
 
         let row1 = SCREEN_WIDTH as usize * BYTES_PER_PIXEL;
         assert_eq!(&ppu.framebuffer()[row1..row1 + 3], &[0xFF, 0, 0]);
         assert_eq!(
             &ppu.framebuffer()[row1 + BYTES_PER_PIXEL..row1 + BYTES_PER_PIXEL + 3],
             &[0xFF, 0, 0]
+        );
+        let row2 = row1 * 2;
+        assert_eq!(&ppu.framebuffer()[row2..row2 + 3], &[0, 0xFF, 0]);
+        assert_eq!(
+            &ppu.framebuffer()[row2 + BYTES_PER_PIXEL..row2 + BYTES_PER_PIXEL + 3],
+            &[0, 0xFF, 0]
         );
     }
 
