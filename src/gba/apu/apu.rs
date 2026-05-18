@@ -576,7 +576,8 @@ impl Default for Channel4 {
             length_en: false,
             active: false,
             dac_on: false,
-            lfsr: 0x7FFF,
+            // GBATek: 15-bit mode initial value is 0x4000.
+            lfsr: 0x4000,
             freq_timer: 0,
             volume: 0,
             env_timer: 0,
@@ -626,12 +627,15 @@ impl Channel4 {
     }
 
     /// Clock the LFSR (exposed for testing).
+    ///
+    /// Implements the GBATek Galois LFSR form:
+    ///   15-bit: X = X SHR 1; IF carry THEN X = X XOR 6000h
+    ///   7-bit:  X = X SHR 1; IF carry THEN X = X XOR 0060h
     pub fn clock_lfsr(&mut self) {
-        let xor = (self.lfsr & 0x01) ^ ((self.lfsr >> 1) & 0x01);
+        let carry = self.lfsr & 1;
         self.lfsr >>= 1;
-        self.lfsr |= xor << 14;
-        if self.lfsr_7bit {
-            self.lfsr = (self.lfsr & !(1 << 6)) | (xor << 6);
+        if carry != 0 {
+            self.lfsr ^= if self.lfsr_7bit { 0x0060 } else { 0x6000 };
         }
     }
 
@@ -670,7 +674,8 @@ impl Channel4 {
         self.freq_timer = self.freq_period();
         self.volume = self.init_volume;
         self.env_timer = self.env_period;
-        self.lfsr = 0x7FFF;
+        // GBATek: 15-bit mode initial value 0x4000; 7-bit mode initial value 0x0040.
+        self.lfsr = if self.lfsr_7bit { 0x0040 } else { 0x4000 };
     }
 
     // ── Register writes ───────────────────────────────────────────────────
@@ -1607,7 +1612,81 @@ mod tests {
         }
     }
 
-    // ── CH4 noise test (issue test vector) ──────────────────────────────────
+    // ── CH4 noise tests (GBATek specification) ──────────────────────────────
+
+    // Per GBATek (gbatek-gba-sound-channel-4-noise.htm):
+    //   15-bit mode initial LFSR: X = 0x4000
+    //   7-bit mode  initial LFSR: X = 0x0040
+    //   Algorithm (Galois form):
+    //     X = X SHR 1; IF carry THEN X = X XOR 6000h (15-bit) or X XOR 0060h (7-bit)
+
+    #[test]
+    fn test_ch4_15bit_trigger_initial_lfsr_is_4000() {
+        // RED: After trigger in 15-bit mode, LFSR must be 0x4000 per GBATek.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000); // volume=15
+        apu.write16(0x0400_007C, 0x8000); // 15-bit mode (bit3=0), trigger
+        assert_eq!(
+            apu.ch4.lfsr, 0x4000,
+            "GBATek: 15-bit LFSR initial value should be 0x4000"
+        );
+    }
+
+    #[test]
+    fn test_ch4_7bit_trigger_initial_lfsr_is_40() {
+        // RED: After trigger in 7-bit mode, LFSR must be 0x0040 per GBATek.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000); // volume=15
+        apu.write16(0x0400_007C, 0x8008); // 7-bit mode (bit3=1), trigger
+        assert_eq!(
+            apu.ch4.lfsr, 0x0040,
+            "GBATek: 7-bit LFSR initial value should be 0x0040"
+        );
+    }
+
+    #[test]
+    fn test_ch4_lfsr_galois_no_carry_step() {
+        // RED: Galois clock step when carry=0: only right shift, no XOR.
+        // Starting from 0x2000 (bit 13 set, bit 0 = 0 → carry = 0).
+        let mut ch4 = Channel4 {
+            lfsr: 0x2000,
+            ..Channel4::default()
+        };
+        ch4.clock_lfsr();
+        assert_eq!(ch4.lfsr, 0x1000, "Carry=0: should just shift right");
+    }
+
+    #[test]
+    fn test_ch4_lfsr_galois_carry_15bit() {
+        // RED: Galois clock step with carry=1 in 15-bit mode.
+        // State 0x0001: carry=1, shift → 0x0000, XOR 0x6000 → 0x6000.
+        let mut ch4 = Channel4 {
+            lfsr: 0x0001,
+            lfsr_7bit: false,
+            ..Channel4::default()
+        };
+        ch4.clock_lfsr();
+        assert_eq!(
+            ch4.lfsr, 0x6000,
+            "15-bit carry=1: 0x0001 >> 1 = 0x0000, XOR 0x6000 = 0x6000"
+        );
+    }
+
+    #[test]
+    fn test_ch4_lfsr_galois_carry_7bit() {
+        // RED: Galois clock step with carry=1 in 7-bit mode.
+        // State 0x0001: carry=1, shift → 0x0000, XOR 0x0060 → 0x0060.
+        let mut ch4 = Channel4 {
+            lfsr: 0x0001,
+            lfsr_7bit: true,
+            ..Channel4::default()
+        };
+        ch4.clock_lfsr();
+        assert_eq!(
+            ch4.lfsr, 0x0060,
+            "7-bit carry=1: 0x0001 >> 1 = 0x0000, XOR 0x0060 = 0x0060"
+        );
+    }
 
     #[test]
     fn test_ch4_lfsr_sequence_15bit() {
@@ -1618,16 +1697,18 @@ mod tests {
         // SOUND4CNT_H: divisor=0 (r=0), shift=0, 15-bit mode (bit 3=0), trigger
         apu.write16(0x0400_007C, 0x8000);
 
-        // After trigger, LFSR is 0x7FFF.
-        assert_eq!(apu.ch4.lfsr, 0x7FFF);
+        // After trigger, LFSR is 0x4000 per GBATek.
+        assert_eq!(apu.ch4.lfsr, 0x4000);
 
-        // Compute expected LFSR sequence manually.
-        // clock_lfsr: xor = (lfsr & 1) ^ ((lfsr >> 1) & 1); lfsr >>= 1; lfsr |= xor << 14
-        let mut lfsr = 0x7FFF_u16;
+        // Compute expected LFSR sequence using GBATek Galois form.
+        // clock_lfsr: carry = lfsr & 1; lfsr >>= 1; if carry { lfsr ^= 0x6000 }
+        let mut lfsr = 0x4000_u16;
         fn clock(lfsr: &mut u16) {
-            let xor = (*lfsr & 1) ^ ((*lfsr >> 1) & 1);
+            let carry = *lfsr & 1;
             *lfsr >>= 1;
-            *lfsr |= xor << 14;
+            if carry != 0 {
+                *lfsr ^= 0x6000;
+            }
         }
 
         // Clock LFSR 8 times, verify sequence matches channel.
@@ -1647,17 +1728,18 @@ mod tests {
         let mut ch4 = Channel4 {
             dac_on: true,
             lfsr_7bit: true,
-            lfsr: 0x7FFF,
+            lfsr: 0x0040,
             ..Channel4::default()
         };
 
-        // Clock 7-bit LFSR manually and verify.
-        let mut lfsr = 0x7FFF_u16;
+        // Clock 7-bit LFSR manually using GBATek Galois form and verify.
+        let mut lfsr = 0x0040_u16;
         fn clock_7bit(lfsr: &mut u16) {
-            let xor = (*lfsr & 1) ^ ((*lfsr >> 1) & 1);
+            let carry = *lfsr & 1;
             *lfsr >>= 1;
-            *lfsr |= xor << 14;
-            *lfsr = (*lfsr & !(1 << 6)) | (xor << 6);
+            if carry != 0 {
+                *lfsr ^= 0x0060;
+            }
         }
 
         for _ in 0..16 {
@@ -1669,6 +1751,40 @@ mod tests {
                 ch4.lfsr
             );
         }
+    }
+
+    #[test]
+    fn test_ch4_lfsr_15bit_maximal_length() {
+        // Verify the 15-bit Galois LFSR has maximum period of 32767 (= 2^15 - 1).
+        let mut lfsr = 0x4000_u16;
+        for _ in 0..32767 {
+            let carry = lfsr & 1;
+            lfsr >>= 1;
+            if carry != 0 {
+                lfsr ^= 0x6000;
+            }
+        }
+        assert_eq!(
+            lfsr, 0x4000,
+            "15-bit LFSR should return to 0x4000 after 32767 steps"
+        );
+    }
+
+    #[test]
+    fn test_ch4_lfsr_7bit_maximal_length() {
+        // Verify the 7-bit Galois LFSR has maximum period of 127 (= 2^7 - 1).
+        let mut lfsr = 0x0040_u16;
+        for _ in 0..127 {
+            let carry = lfsr & 1;
+            lfsr >>= 1;
+            if carry != 0 {
+                lfsr ^= 0x0060;
+            }
+        }
+        assert_eq!(
+            lfsr, 0x0040,
+            "7-bit LFSR should return to 0x0040 after 127 steps"
+        );
     }
 
     // ── sample_ready / get_sample / set_sample_rate ──────────────────────────
