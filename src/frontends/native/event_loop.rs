@@ -239,8 +239,8 @@ impl NativeEventLoop {
                     let _ = gba.run_tick();
                     if let Some(ref mut audio) = *audio_cell.borrow_mut() {
                         while gba.sample_ready() {
-                            if let Some(sample) = gba.get_sample() {
-                                audio.queue_sample(sample);
+                            if let Some((left, right)) = gba.get_stereo_sample() {
+                                audio.queue_stereo_sample(left, right);
                             }
                         }
                     }

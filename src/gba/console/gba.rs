@@ -323,6 +323,10 @@ impl Emulator for Gba {
         self.bus.apu.take_sample()
     }
 
+    fn get_stereo_sample(&mut self) -> Option<(f32, f32)> {
+        self.bus.apu.take_stereo_sample()
+    }
+
     fn set_audio_sample_rate(&mut self, rate: f32) {
         self.bus.apu.set_sample_rate(rate);
     }

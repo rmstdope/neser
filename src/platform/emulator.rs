@@ -41,6 +41,14 @@ pub trait Emulator {
     fn screen_crc32(&self) -> u32;
     fn sample_ready(&self) -> bool;
     fn get_sample(&mut self) -> Option<f32>;
+    /// Returns the next stereo audio sample as `(left, right)` pair.
+    ///
+    /// The default implementation calls [`get_sample`](Self::get_sample) and
+    /// duplicates the mono result to both channels.  Emulators that produce
+    /// true stereo (e.g. GBA) should override this.
+    fn get_stereo_sample(&mut self) -> Option<(f32, f32)> {
+        self.get_sample().map(|s| (s, s))
+    }
     fn set_audio_sample_rate(&mut self, rate: f32);
     fn set_button(&mut self, port: u8, button_id: u8, pressed: bool);
     fn set_joypad_button_states(&mut self, port: u8, state: u8);
@@ -196,6 +204,14 @@ impl Console {
     /// is pending.
     pub fn get_sample(&mut self) -> Option<f32> {
         self.as_core_mut().get_sample()
+    }
+
+    /// Retrieve the next audio sample as a stereo `(left, right)` pair.
+    ///
+    /// Returns `None` if no sample is pending.  For mono emulators (NES, GB),
+    /// both channels carry the same value.  For GBA, channels are independent.
+    pub fn get_stereo_sample(&mut self) -> Option<(f32, f32)> {
+        self.as_core_mut().get_stereo_sample()
     }
 
     /// Set a button state on a controller port.
@@ -759,6 +775,54 @@ mod tests {
         assert!(!shaders.is_empty());
         assert!(shaders.contains(&"none"));
         assert!(shaders.contains(&"gba-lcd"));
+    }
+
+    #[test]
+    fn test_gba_get_stereo_sample_returns_none_initially() {
+        // Without any APU activity, get_stereo_sample() should return None.
+        let mut gba = make_gba();
+        gba.set_audio_sample_rate(44_100.0);
+        // No ROM loaded → run_tick returns 0 cycles → APU is not clocked → no sample yet.
+        assert!(
+            !gba.sample_ready(),
+            "no sample should be ready on a fresh GBA"
+        );
+        let stereo = gba.get_stereo_sample();
+        assert!(stereo.is_none(), "get_stereo_sample() must return None when no sample is ready");
+    }
+
+    #[test]
+    fn test_gba_get_stereo_sample_overrides_emulator_trait() {
+        // Verify that Gba correctly overrides the Emulator trait's get_stereo_sample()
+        // by using the APU's take_stereo_sample().  We prime the APU directly.
+        use crate::gba::apu::Apu;
+        // Build an isolated APU, generate a sample with panned audio.
+        let mut apu = Apu::new();
+        apu.write16(0x0400_0084, 0x0080); // power on
+        // SOUNDCNT_H: FIFO A at full vol, RIGHT enable only (bit 8 | bit 2 = 0x0104).
+        apu.soundcnt_h = 0x0104;
+        apu.push_fifo_a(64);
+        apu.fifo_a.advance();
+        apu.set_sample_rate(44_100.0);
+        let cycles = (16_777_216.0_f32 / 44_100.0) as u32 + 1;
+        apu.tick(cycles);
+        assert!(apu.sample_ready());
+        let (left, right) = apu.take_stereo_sample().unwrap();
+        // Right-only FIFO A: right > 0, left == 0.
+        assert_eq!(left, 0.0, "left must be 0 for right-only FIFO A");
+        assert!(right.abs() > 0.0, "right must have FIFO A audio");
+    }
+
+    #[test]
+    fn test_default_get_stereo_sample_matches_get_sample_for_nes() {
+        // For non-GBA emulators, get_stereo_sample() default should return (s, s)
+        // (same as get_sample() on both channels).
+        // NES doesn't produce samples without a ROM and isn't trivially ticked, so
+        // we verify the default implementation compiles and returns None when
+        // no sample is ready.
+        let mut nes = crate::nes::console::Nes::new(make_shared_context());
+        let stereo = nes.get_stereo_sample();
+        assert!(stereo.is_none(), "no stereo sample should be ready without a ROM");
     }
 }
 

@@ -3,11 +3,11 @@ use ringbuf::traits::{Producer, Split};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Producer half of the audio ring buffer.
-pub type AudioProducer = <HeapRb<f32> as Split>::Prod;
+pub type AudioProducer = <HeapRb<[f32; 2]> as Split>::Prod;
 
 /// Consumer half of the audio ring buffer; used by the audio callback.
 #[allow(dead_code)]
-pub type AudioConsumer = <HeapRb<f32> as Split>::Cons;
+pub type AudioConsumer = <HeapRb<[f32; 2]> as Split>::Cons;
 
 /// Atomic counters for tracking audio pipeline health.
 #[derive(Default)]
@@ -17,25 +17,39 @@ pub struct AudioStats {
     pub underrun_samples: AtomicU64,
 }
 
-/// Pushes a sample into the ring buffer, blocking if full.
+/// Pushes a mono sample into the ring buffer as a stereo `[left, right]` pair,
+/// blocking if full.
 ///
+/// The mono sample is duplicated to both channels: `[sample, sample]`.
 /// Provides backpressure instead of dropping samples.
-/// Dropped samples create discontinuities that can manifest as audible clicks.
 pub fn queue_sample_to_producer(
     producer: &mut AudioProducer,
     sample: f32,
     _stats: &AudioStats,
     fill_level: &AtomicUsize,
 ) {
-    let mut pending = sample;
+    queue_stereo_sample_to_producer(producer, [sample, sample], _stats, fill_level);
+}
+
+/// Pushes a stereo `[left, right]` frame into the ring buffer, blocking if full.
+///
+/// Provides backpressure instead of dropping samples.
+/// Dropped samples create discontinuities that can manifest as audible clicks.
+pub fn queue_stereo_sample_to_producer(
+    producer: &mut AudioProducer,
+    frame: [f32; 2],
+    _stats: &AudioStats,
+    fill_level: &AtomicUsize,
+) {
+    let mut pending = frame;
     loop {
         match producer.try_push(pending) {
             Ok(()) => {
                 fill_level.fetch_add(1, Ordering::Relaxed);
                 return;
             }
-            Err(sample) => {
-                pending = sample;
+            Err(frame) => {
+                pending = frame;
                 std::thread::yield_now();
             }
         }
@@ -77,7 +91,7 @@ mod tests {
     #[test]
     fn test_queue_sample_does_not_drop_when_buffer_full() {
         let stats = Arc::new(AudioStats::default());
-        let ring_buffer = HeapRb::<f32>::new(1);
+        let ring_buffer = HeapRb::<[f32; 2]>::new(1);
         let (mut producer, mut consumer) = ring_buffer.split();
         let fill_level = Arc::new(AtomicUsize::new(0));
 
@@ -85,7 +99,7 @@ mod tests {
 
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let barrier_consumer = Arc::clone(&barrier);
-        let (result_tx, result_rx) = std::sync::mpsc::channel::<(f32, f32)>();
+        let (result_tx, result_rx) = std::sync::mpsc::channel::<([f32; 2], [f32; 2])>();
         let (producer_ready_tx, producer_ready_rx) = std::sync::mpsc::channel::<()>();
 
         let fill_level_consumer = Arc::clone(&fill_level);
@@ -142,8 +156,9 @@ mod tests {
         let (first, second) = result_rx
             .recv_timeout(Duration::from_millis(200))
             .expect("expected samples");
-        assert_eq!(first, 0.1);
-        assert_eq!(second, 0.2);
+        // queue_sample pushes [s, s] stereo pairs; both channels equal the input.
+        assert_eq!(first, [0.1, 0.1]);
+        assert_eq!(second, [0.2, 0.2]);
 
         let dropped = stats.dropped_samples.load(Ordering::Relaxed);
         assert_eq!(dropped, 0, "no samples should be dropped");
