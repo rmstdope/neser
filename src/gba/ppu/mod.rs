@@ -2,8 +2,8 @@
 //!
 //! Implements the GBA LCD controller timing and a small subset of the
 //! display modes. This module is the foundation for subsequent rendering
-//! work — additional display modes (1, 5), tile background layers, and
-//! sprite (OBJ) rendering will be added in follow-up sub-issues of
+//! work — additional tile background layers and sprite (OBJ) rendering
+//! will be added in follow-up sub-issues of
 //! rmstdope/neser#2207.
 //!
 //! What is implemented here:
@@ -22,14 +22,16 @@
 //!   from VRAM) when `BG2` is enabled.
 //! * Mode 4 background rendering (240×160 8-bit paletted bitmap from
 //!   VRAM) with dual-frame support via DISPCNT bit 4.
+//! * Mode 5 background rendering (160×128 15-bit BGR555 direct bitmap
+//!   from VRAM) with dual-frame support via DISPCNT bit 4 and BG2 affine
+//!   positioning/scaling.
 //! * Backdrop fill from the first palette entry for unimplemented
-//!   display modes (modes 1, 5, 6, 7) and Mode 3/4 when BG2 is disabled.
+//!   display modes (modes 6, 7) and bitmap modes when BG2 is disabled.
 //!   Modes 6-7 are "prohibited" per GBATek but are handled gracefully.
 //! * Forced-blank outputs solid white (per GBATek).
 //!
 //! Out of scope (deferred to follow-up sub-issues):
 //!
-//! * Mode 1 mixed affine mode, Mode 5 (160×128 15-bit) rendering.
 //! * Mode 2 full affine tile background rendering for BG2/BG3.
 //! * Sprite (OBJ) rendering and OAM attribute decoding.
 //! * Window masks, alpha blending, mosaic, brightness effects.
@@ -59,6 +61,8 @@ pub const FRAMEBUFFER_BYTES: usize =
 /// Marker value for a transparent pixel in per-layer color buffers.
 /// Valid BGR555 colors use bits 0-14 only, so bit 15 set means "no pixel".
 const TRANSPARENT: u16 = 0x8000;
+const MODE5_WIDTH: usize = 160;
+const MODE5_HEIGHT: usize = 128;
 
 /// CPU cycles per scanline (308 dots × 4 cycles/dot).
 pub const CYCLES_PER_SCANLINE: u32 = 1232;
@@ -645,6 +649,7 @@ impl Ppu {
             2 => self.render_mode2_scanline(y, vram, pram, oam),
             3 => self.render_mode3_scanline(y, vram, pram, oam),
             4 => self.render_mode4_scanline(y, vram, pram, oam),
+            5 => self.render_mode5_scanline(y, vram, pram, oam),
             _ => self.render_backdrop_scanline(y, pram),
         }
     }
@@ -967,6 +972,52 @@ impl Ppu {
                         backdrop & 0x7FFF
                     }
                 };
+            }
+            let prio = (self.bg_cnt[2] & 3) as u8;
+            layers.push((2, prio, buf));
+        }
+
+        self.composite_scanline(y, pram, vram, oam, &layers);
+    }
+
+    /// Mode 5: 160×128 direct 15-bit bitmap. Two frames available.
+    #[allow(clippy::needless_range_loop)]
+    fn render_mode5_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
+        if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+
+        let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
+
+        if self.bg2_enabled() {
+            let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
+            let frame_base = if self.frame_select() {
+                0xA000usize
+            } else {
+                0x0000usize
+            };
+            let aff = self.bg_affine[0];
+            let pa = aff.pa as i32;
+            let pc = aff.pc as i32;
+            let mut tex_x = aff.internal_x;
+            let mut tex_y = aff.internal_y;
+
+            for x in 0..(SCREEN_WIDTH as usize) {
+                let px = tex_x >> 8;
+                let py = tex_y >> 8;
+
+                tex_x = tex_x.wrapping_add(pa);
+                tex_y = tex_y.wrapping_add(pc);
+
+                if px < 0 || py < 0 || px >= MODE5_WIDTH as i32 || py >= MODE5_HEIGHT as i32 {
+                    continue;
+                }
+
+                let src = frame_base + ((py as usize) * MODE5_WIDTH + (px as usize)) * 2;
+                if src + 1 < vram.len() {
+                    buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
+                }
             }
             let prio = (self.bg_cnt[2] & 3) as u8;
             layers.push((2, prio, buf));
