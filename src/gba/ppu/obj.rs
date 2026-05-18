@@ -138,7 +138,7 @@ fn read_affine_params(oam: &[u8], group: usize) -> (i16, i16, i16, i16) {
 /// - `vram`: 96KB VRAM (OBJ tiles at offset `obj_vram_base`)
 /// - `pram`: 1KB palette RAM (OBJ palette at offset 0x200)
 /// - `obj_mapping_1d`: true if DISPCNT bit 6 is set (1D tile mapping)
-/// - `bitmap_mode`: true for modes 3-5 (OBJ tiles start at 0x14000 instead of 0x10000)
+/// - `bitmap_mode`: true for modes 3-5 (OBJ tile IDs 0-511 are not displayed)
 pub fn render_obj_scanline(
     y: u32,
     oam: &[u8],
@@ -148,7 +148,7 @@ pub fn render_obj_scanline(
     bitmap_mode: bool,
 ) -> ObjScanline {
     let mut result = ObjScanline::default();
-    let obj_vram_base = if bitmap_mode { 0x1_4000 } else { 0x1_0000 };
+    let obj_vram_base = 0x1_0000;
 
     // Process OBJs in order 0..127. Lower number = higher priority at same
     // priority level, so first writer wins for each pixel.
@@ -219,6 +219,9 @@ pub fn render_obj_scanline(
 
         // Tile index (attr2 bits 0-9).
         let tile_id = (attr2 & 0x03FF) as usize;
+        if bitmap_mode && tile_id < 512 {
+            continue;
+        }
         // Priority (attr2 bits 10-11).
         let priority = ((attr2 >> 10) & 3) as u8;
         // Palette bank (attr2 bits 12-15), used in 4bpp mode.
@@ -516,6 +519,50 @@ mod tests {
             assert!(result.pixels[x].opaque, "pixel {x} should be opaque");
             assert_eq!(result.pixels[x].color, 0x7C00, "pixel {x} should be blue");
         }
+    }
+
+    #[test]
+    fn bitmap_mode_ignores_obj_tile_ids_below_512() {
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        for i in 0..OBJ_COUNT {
+            write_obj(&mut oam, i, 2 << 8, 0, 0);
+        }
+
+        // OBJ 0: 8x8 at (0,0), 4bpp, tile 0.
+        write_obj(&mut oam, 0, 0, 0, 0);
+        // Fill tile 512. A broken implementation that remaps OBJ base to 0x14000
+        // would incorrectly display this data when tile 0 is requested in bitmap mode.
+        fill_4bpp_tile(&mut vram, 512, 1);
+        set_obj_color(&mut pram, 1, 0x001F);
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true);
+        assert!(
+            !result.pixels[0].opaque,
+            "tile IDs 0-511 must be invisible in bitmap modes"
+        );
+    }
+
+    #[test]
+    fn bitmap_mode_renders_obj_tile_id_512() {
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        for i in 0..OBJ_COUNT {
+            write_obj(&mut oam, i, 2 << 8, 0, 0);
+        }
+
+        // OBJ 0: 8x8 at (0,0), 4bpp, tile 512.
+        write_obj(&mut oam, 0, 0, 0, 512);
+        fill_4bpp_tile(&mut vram, 512, 2);
+        set_obj_color(&mut pram, 2, 0x03E0);
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true);
+        assert!(result.pixels[0].opaque, "tile 512 should be visible in bitmap modes");
+        assert_eq!(result.pixels[0].color, 0x03E0);
     }
 
     #[test]
