@@ -761,7 +761,7 @@ pub struct Apu {
     // ── Sample generation ────────────────────────────────────────────────
     sample_acc: f32,
     cycles_per_sample: f32,
-    pending_sample: Option<f32>,
+    pending_sample: Option<(f32, f32)>,
 }
 
 impl Default for Apu {
@@ -814,8 +814,21 @@ impl Apu {
         self.pending_sample.is_some()
     }
 
-    /// Consume and return the pending audio sample.
+    /// Consume and return the pending audio sample as a mono downmix.
+    ///
+    /// Returns `(left + right) / 2` clamped to `[-1.0, 1.0]`, or `None` if no
+    /// sample is pending.  Prefer [`take_stereo_sample`](Apu::take_stereo_sample)
+    /// for true stereo output.
     pub fn take_sample(&mut self) -> Option<f32> {
+        self.pending_sample
+            .take()
+            .map(|(l, r)| ((l + r) / 2.0).clamp(-1.0, 1.0))
+    }
+
+    /// Consume and return the pending audio sample as a stereo `(left, right)` pair.
+    ///
+    /// Returns `None` if no sample is pending.
+    pub fn take_stereo_sample(&mut self) -> Option<(f32, f32)> {
         self.pending_sample.take()
     }
 
@@ -1239,8 +1252,8 @@ impl Apu {
         self.fs_step = (self.fs_step + 1) & 7;
     }
 
-    /// Mix all channels into a mono f32 sample in `[-1.0, 1.0]`.
-    fn mix(&self) -> f32 {
+    /// Mix all channels into a stereo `(left, right)` pair in `[-1.0, 1.0]`.
+    fn mix(&self) -> (f32, f32) {
         if !self.powered {
             // PCM channels are still active even when SOUNDCNT_X power is off.
             return self.mix_pcm_only();
@@ -1311,11 +1324,11 @@ impl Apu {
         let total_right = (dmg_right + a_right + b_right).clamp(-1.0, 1.0);
         let total_left = (dmg_left + a_left + b_left).clamp(-1.0, 1.0);
 
-        ((total_right + total_left) / 2.0).clamp(-1.0, 1.0)
+        (total_left, total_right)
     }
 
     /// Mix only PCM channels (used when APU power is off).
-    fn mix_pcm_only(&self) -> f32 {
+    fn mix_pcm_only(&self) -> (f32, f32) {
         let pcm_a_vol = if self.soundcnt_h & 0x04 != 0 {
             1.0
         } else {
@@ -1351,7 +1364,7 @@ impl Apu {
         let total_right = (a_right + b_right).clamp(-1.0, 1.0);
         let total_left = (a_left + b_left).clamp(-1.0, 1.0);
 
-        ((total_right + total_left) / 2.0).clamp(-1.0, 1.0)
+        (total_left, total_right)
     }
 
     /// Mix DMG channel samples through a 4-bit enable mask.
@@ -1446,12 +1459,17 @@ mod tests {
         for &expected_pcm in &pcm_samples {
             // Advance FIFO to consume the next sample, then mix.
             apu.fifo_a.advance();
-            let mixed = apu.mix();
+            let (left, right) = apu.mix();
 
-            let expected = expected_pcm as f32 / 128.0; // full-volume, both L+R, averaged
+            // Both L and R are enabled at equal volume, so they should be equal.
+            let expected = expected_pcm as f32 / 128.0; // full-volume, both L+R equal
             assert!(
-                (mixed - expected).abs() < 1e-5,
-                "PCM A sample {expected_pcm}: expected {expected:.4}, got {mixed:.4}"
+                (left - expected).abs() < 1e-5,
+                "PCM A left, sample {expected_pcm}: expected {expected:.4}, got {left:.4}"
+            );
+            assert!(
+                (right - expected).abs() < 1e-5,
+                "PCM A right, sample {expected_pcm}: expected {expected:.4}, got {right:.4}"
             );
         }
     }
@@ -1857,5 +1875,128 @@ mod tests {
         // Overwrite only the high byte.
         apu.write8(0x0400_0081, 0x78);
         assert_eq!(apu.soundcnt_l, 0x7856, "low byte should be preserved");
+    }
+
+    // ── Stereo output tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_take_stereo_sample_returns_pair() {
+        // take_stereo_sample() must return Some((left, right)) after enough ticks.
+        let mut apu = Apu::new();
+        apu.set_sample_rate(44_100.0);
+        let cycles = (GBA_CLOCK_HZ / 44_100.0) as u32 + 1;
+        apu.tick(cycles);
+        assert!(apu.sample_ready(), "sample should be ready");
+        let stereo = apu.take_stereo_sample();
+        assert!(stereo.is_some(), "take_stereo_sample() must return Some");
+        assert!(!apu.sample_ready(), "sample should be consumed after take_stereo_sample");
+    }
+
+    #[test]
+    fn test_stereo_mix_ch1_left_only() {
+        // When CH1 is enabled on LEFT only (NR51 bit 4), right channel must be 0.
+        let mut apu = powered_apu();
+        // NR50 (low byte) = 0x77 (full L+R vol), NR51 (high byte) = 0x10 (CH1 LEFT only).
+        apu.write16(0x0400_0080, 0x1077);
+        // SOUNDCNT_H: DMG at 100% (bits 1-0 = 2)
+        apu.soundcnt_h = 0x0002;
+        // Trigger CH1 with duty=50%, volume=15, freq=800.
+        apu.write16(0x0400_0062, 0xF080);
+        apu.write16(0x0400_0064, 0x8320);
+
+        let (left, right) = apu.mix();
+        assert_eq!(right, 0.0, "right must be 0 when CH1 is left-only");
+        assert!(left.abs() > 0.0, "left must carry CH1 audio");
+    }
+
+    #[test]
+    fn test_stereo_mix_ch1_right_only() {
+        // When CH1 is enabled on RIGHT only (NR51 bit 0), left channel must be 0.
+        let mut apu = powered_apu();
+        // NR50 = 0x77, NR51 = 0x01 (CH1 RIGHT only).
+        apu.write16(0x0400_0080, 0x0177);
+        apu.soundcnt_h = 0x0002;
+        apu.write16(0x0400_0062, 0xF080);
+        apu.write16(0x0400_0064, 0x8320);
+
+        let (left, right) = apu.mix();
+        assert_eq!(left, 0.0, "left must be 0 when CH1 is right-only");
+        assert!(right.abs() > 0.0, "right must carry CH1 audio");
+    }
+
+    #[test]
+    fn test_stereo_pcm_a_left_only() {
+        // SOUNDCNT_H bit 9: DMA Sound A LEFT enable, bit 8 disabled → right must be 0.
+        let mut apu = powered_apu();
+        // bit 9 (A left) | bit 2 (A full vol) = 0x0204
+        apu.soundcnt_h = 0x0204;
+        apu.fifo_a.push(64);
+        apu.fifo_a.advance();
+
+        let (left, right) = apu.mix();
+        assert!(left.abs() > 0.0, "left must carry PCM A audio");
+        assert_eq!(right, 0.0, "right must be 0 when PCM A right is disabled");
+    }
+
+    #[test]
+    fn test_stereo_pcm_a_right_only() {
+        // SOUNDCNT_H bit 8: DMA Sound A RIGHT enable, bit 9 disabled → left must be 0.
+        let mut apu = powered_apu();
+        // bit 8 (A right) | bit 2 (A full vol) = 0x0104
+        apu.soundcnt_h = 0x0104;
+        apu.fifo_a.push(64);
+        apu.fifo_a.advance();
+
+        let (left, right) = apu.mix();
+        assert_eq!(left, 0.0, "left must be 0 when PCM A left is disabled");
+        assert!(right.abs() > 0.0, "right must carry PCM A audio");
+    }
+
+    #[test]
+    fn test_stereo_pcm_b_left_only() {
+        // SOUNDCNT_H bit 13: DMA Sound B LEFT enable, bit 12 disabled → right must be 0.
+        let mut apu = powered_apu();
+        // bit 13 (B left) | bit 3 (B full vol) = 0x2008
+        apu.soundcnt_h = 0x2008;
+        apu.fifo_b.push(64);
+        apu.fifo_b.advance();
+
+        let (left, right) = apu.mix();
+        assert!(left.abs() > 0.0, "left must carry PCM B audio");
+        assert_eq!(right, 0.0, "right must be 0 when PCM B right is disabled");
+    }
+
+    #[test]
+    fn test_stereo_pcm_b_right_only() {
+        // SOUNDCNT_H bit 12: DMA Sound B RIGHT enable, bit 13 disabled → left must be 0.
+        let mut apu = powered_apu();
+        // bit 12 (B right) | bit 3 (B full vol) = 0x1008
+        apu.soundcnt_h = 0x1008;
+        apu.fifo_b.push(64);
+        apu.fifo_b.advance();
+
+        let (left, right) = apu.mix();
+        assert_eq!(left, 0.0, "left must be 0 when PCM B left is disabled");
+        assert!(right.abs() > 0.0, "right must carry PCM B audio");
+    }
+
+    #[test]
+    fn test_take_sample_returns_mono_downmix() {
+        // take_sample() must still return Some(f32) as mono downmix for backward compat.
+        let mut apu = powered_apu();
+        apu.set_sample_rate(44_100.0);
+        // PCM A at full vol, both L and R at equal level.
+        apu.soundcnt_h = 0x0304; // A right | A left | A full vol
+        apu.fifo_a.push(64);
+        apu.fifo_a.advance();
+        let cycles = (GBA_CLOCK_HZ / 44_100.0) as u32 + 1;
+        apu.tick(cycles);
+        let mono = apu.take_sample();
+        assert!(mono.is_some(), "take_sample() must return Some(f32)");
+        let s = mono.unwrap();
+        assert!(
+            (-1.0..=1.0).contains(&s),
+            "mono sample must be in [-1.0, 1.0], got {s}"
+        );
     }
 }

@@ -3,12 +3,15 @@
 /// Adjusts playback rate by ±0.5% based on ring buffer fill level
 /// to maintain sync between the emulator's sample production rate
 /// and the audio device's consumption rate.
+///
+/// Each sample is a stereo `[left, right]` pair.  Mono audio sources push
+/// `[s, s]` so the same interpolation logic applies uniformly.
 pub struct AudioResampler {
     phase: f32,
     rate: f32,
     target_fill: usize,
-    current: f32,
-    next: f32,
+    current: [f32; 2],
+    next: [f32; 2],
     has_current: bool,
     has_next: bool,
 }
@@ -21,8 +24,8 @@ impl AudioResampler {
             phase: 0.0,
             rate: 1.0,
             target_fill,
-            current: 0.0,
-            next: 0.0,
+            current: [0.0; 2],
+            next: [0.0; 2],
             has_current: false,
             has_next: false,
         }
@@ -56,19 +59,19 @@ impl AudioResampler {
     pub fn reset(&mut self) {
         self.phase = 0.0;
         self.rate = 1.0;
-        self.current = 0.0;
-        self.next = 0.0;
+        self.current = [0.0; 2];
+        self.next = [0.0; 2];
         self.has_current = false;
         self.has_next = false;
     }
 
-    /// Renders the next interpolated output sample.
+    /// Renders the next interpolated stereo output frame.
     ///
-    /// Uses linear interpolation between consecutive input samples,
+    /// Uses linear interpolation between consecutive input frames,
     /// advancing through the input stream at the current resampling rate.
-    pub fn render_next<F>(&mut self, pop_sample: &mut F) -> Option<f32>
+    pub fn render_next<F>(&mut self, pop_sample: &mut F) -> Option<[f32; 2]>
     where
-        F: FnMut() -> Option<f32>,
+        F: FnMut() -> Option<[f32; 2]>,
     {
         if !self.has_current {
             self.current = pop_sample()?;
@@ -83,7 +86,9 @@ impl AudioResampler {
             self.has_next = true;
         }
 
-        let sample = self.current + (self.next - self.current) * self.phase;
+        let l = self.current[0] + (self.next[0] - self.current[0]) * self.phase;
+        let r = self.current[1] + (self.next[1] - self.current[1]) * self.phase;
+        let sample = [l, r];
         self.phase += self.rate;
 
         while self.phase >= 1.0 {
@@ -125,7 +130,12 @@ mod tests {
         let mut resampler = AudioResampler::new(4);
         resampler.set_rate_for_test(1.0);
 
-        let mut samples = VecDeque::from([0.0, 1.0, 0.0, 1.0]);
+        let mut samples = VecDeque::from([
+            [0.0_f32, 0.0_f32],
+            [1.0, 1.0],
+            [0.0, 0.0],
+            [1.0, 1.0],
+        ]);
         let mut pop_sample = || samples.pop_front();
 
         let first = resampler
@@ -138,9 +148,36 @@ mod tests {
             .render_next(&mut pop_sample)
             .expect("third sample");
 
-        assert!((first - 0.0).abs() < 0.00001);
-        assert!((second - 1.0).abs() < 0.00001);
-        assert!((third - 0.0).abs() < 0.00001);
+        assert!((first[0] - 0.0).abs() < 0.00001);
+        assert!((first[1] - 0.0).abs() < 0.00001);
+        assert!((second[0] - 1.0).abs() < 0.00001);
+        assert!((second[1] - 1.0).abs() < 0.00001);
+        assert!((third[0] - 0.0).abs() < 0.00001);
+        assert!((third[1] - 0.0).abs() < 0.00001);
+    }
+
+    #[test]
+    fn test_resampler_interpolates_stereo_channels_independently() {
+        // Left channel: 0.0 → 1.0; Right channel: 1.0 → 0.0.
+        // At phase 0.5 (half way between frames): L ≈ 0.5, R ≈ 0.5.
+        let mut resampler = AudioResampler::new(4);
+        resampler.set_rate_for_test(0.5); // advance half a sample per call
+
+        let mut samples = VecDeque::from([
+            [0.0_f32, 1.0_f32],
+            [1.0, 0.0],
+        ]);
+        let mut pop_sample = || samples.pop_front();
+
+        let first = resampler.render_next(&mut pop_sample).expect("first");
+        // phase was 0.0 → outputs current = [0.0, 1.0]
+        assert!((first[0] - 0.0).abs() < 0.00001, "L at phase 0: {}", first[0]);
+        assert!((first[1] - 1.0).abs() < 0.00001, "R at phase 0: {}", first[1]);
+
+        let second = resampler.render_next(&mut pop_sample).expect("second");
+        // phase is now 0.5 → lerp between [0.0, 1.0] and [1.0, 0.0]
+        assert!((second[0] - 0.5).abs() < 0.00001, "L at phase 0.5: {}", second[0]);
+        assert!((second[1] - 0.5).abs() < 0.00001, "R at phase 0.5: {}", second[1]);
     }
 
     #[test]
@@ -149,7 +186,7 @@ mod tests {
         resampler.set_rate_for_test(1.0);
 
         // Prime the resampler with samples so has_current/has_next are set
-        let mut samples = VecDeque::from([0.5_f32, 0.8]);
+        let mut samples = VecDeque::from([[0.5_f32, 0.5_f32], [0.8, 0.8]]);
         resampler.render_next(&mut || samples.pop_front());
 
         // After reset, the resampler should behave as if newly created:

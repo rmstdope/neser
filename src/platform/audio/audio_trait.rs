@@ -4,7 +4,7 @@
 /// to provide a common interface for audio playback.
 #[allow(dead_code)]
 pub trait EmulatorAudio {
-    /// Send an audio sample to the audio output.
+    /// Send a mono audio sample to the audio output.
     ///
     /// Sends a sample to the audio callback for playback.
     /// If the buffer is full, this will block until the audio callback consumes samples.
@@ -18,6 +18,16 @@ pub trait EmulatorAudio {
     /// # Arguments
     /// * `sample` - Bipolar PCM audio sample in the range `-1.0` to `1.0`
     fn queue_sample(&mut self, sample: f32);
+
+    /// Send a stereo `(left, right)` audio sample pair to the audio output.
+    ///
+    /// Both channels must be bipolar PCM in `[-1.0, 1.0]`.
+    /// The default implementation averages left and right and delegates to
+    /// [`queue_sample`](Self::queue_sample).  Backends that support true stereo
+    /// (e.g. `NativeAudio`) override this.
+    fn queue_stereo_sample(&mut self, left: f32, right: f32) {
+        self.queue_sample((left + right) / 2.0);
+    }
 
     /// Start audio playback.
     fn resume(&self);

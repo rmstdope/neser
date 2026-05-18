@@ -1,4 +1,6 @@
-use crate::platform::audio::types::{AudioConsumer, AudioStats, queue_sample_to_producer};
+use crate::platform::audio::types::{
+    AudioConsumer, AudioStats, queue_sample_to_producer, queue_stereo_sample_to_producer,
+};
 use crate::platform::audio::{AudioProducer, AudioResampler, EmulatorAudio};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, SampleFormat, SampleRate, SizedSample, StreamConfig};
@@ -83,7 +85,7 @@ impl NativeAudio {
             ));
         }
 
-        let ring_buffer = HeapRb::<f32>::new(Self::BUFFER_SIZE);
+        let ring_buffer = HeapRb::<[f32; 2]>::new(Self::BUFFER_SIZE);
         let (producer, consumer) = ring_buffer.split();
         let shared = StreamSharedState::new();
 
@@ -187,8 +189,9 @@ impl NativeAudio {
 
     /// Builds a typed cpal output stream for the given sample type.
     ///
-    /// Converts the mono f32 NES audio signal to the device's sample format `T`
-    /// and duplicates each mono sample to all output channels (handles stereo).
+    /// Converts the stereo `[f32; 2]` audio frames to the device's sample format `T`.
+    /// For stereo devices, channel 0 receives left and channel 1 receives right.
+    /// For mono devices, both channels are averaged.  Extra channels (>2) receive left.
     fn build_typed_stream<T: SizedSample + FromSample<f32>>(
         device: &cpal::Device,
         config: &StreamConfig,
@@ -217,7 +220,7 @@ impl NativeAudio {
                     resampler.update_rate(fill);
 
                     // `data` is interleaved: [L, R, L, R, ...] for stereo.
-                    // We generate one mono sample and duplicate it to all channels.
+                    // Each ring-buffer entry is a `[f32; 2]` stereo frame [L, R].
                     for frame in data.chunks_mut(channels as usize) {
                         // Drain stale pre-pause samples silently before playing
                         // fresh emulation audio.  When drain_stale > 0, pop one
@@ -252,23 +255,33 @@ impl NativeAudio {
                             s
                         });
 
-                        let sample: T = match raw {
-                            Some(s) => {
+                        match raw {
+                            Some([l, r]) => {
                                 stats.received_samples.fetch_add(1, Ordering::Relaxed);
                                 // Ring buffer holds bipolar PCM in [-1.0, 1.0].
                                 // System-specific normalization (e.g. NES ÷ 1.177) is
                                 // applied by the caller before queue_sample(), so only
                                 // volume scaling is needed here.
-                                T::from_sample((s * vol).clamp(-1.0, 1.0))
+                                let l_out = T::from_sample((l * vol).clamp(-1.0, 1.0));
+                                let r_out = T::from_sample((r * vol).clamp(-1.0, 1.0));
+                                for (i, ch) in frame.iter_mut().enumerate() {
+                                    *ch = if channels == 1 {
+                                        // Mono device: average L and R.
+                                        T::from_sample(((l + r) / 2.0 * vol).clamp(-1.0, 1.0))
+                                    } else if i == 0 {
+                                        l_out
+                                    } else if i == 1 {
+                                        r_out
+                                    } else {
+                                        // >2 channels: fill with left.
+                                        l_out
+                                    };
+                                }
                             }
                             None => {
                                 stats.underrun_samples.fetch_add(1, Ordering::Relaxed);
-                                T::EQUILIBRIUM
+                                frame.fill(T::EQUILIBRIUM);
                             }
-                        };
-
-                        for ch in frame.iter_mut() {
-                            *ch = sample;
                         }
                     }
                 },
@@ -304,7 +317,7 @@ impl NativeAudio {
     /// without requiring audio hardware.
     #[cfg(test)]
     fn new_without_stream(sample_rate: i32) -> Self {
-        let ring_buffer = HeapRb::<f32>::new(Self::BUFFER_SIZE);
+        let ring_buffer = HeapRb::<[f32; 2]>::new(Self::BUFFER_SIZE);
         let (producer, _consumer) = ring_buffer.split();
         let shared = StreamSharedState::new();
         Self {
@@ -335,6 +348,19 @@ impl EmulatorAudio for NativeAudio {
         );
     }
 
+    fn queue_stereo_sample(&mut self, left: f32, right: f32) {
+        // Drop silently when paused.
+        if self.paused.load(Ordering::Relaxed) {
+            return;
+        }
+        queue_stereo_sample_to_producer(
+            &mut self.sample_producer,
+            [left, right],
+            &self.stats,
+            &self.fill_level,
+        );
+    }
+
     fn resume(&self) {
         self.paused.store(false, Ordering::Relaxed);
     }
@@ -359,9 +385,9 @@ impl EmulatorAudio for NativeAudio {
 
     fn prime_startup(&mut self, samples: usize) {
         for _ in 0..samples {
-            queue_sample_to_producer(
+            queue_stereo_sample_to_producer(
                 &mut self.sample_producer,
-                0.0,
+                [0.0, 0.0],
                 &self.stats,
                 &self.fill_level,
             );
@@ -526,6 +552,61 @@ mod tests {
             audio.drain_stale_count(),
             10,
             "pause() must snapshot fill_level into drain_stale so stale samples are discarded on resume"
+        );
+    }
+
+    #[test]
+    fn test_queue_stereo_sample_increments_buffered_count() {
+        // queue_stereo_sample() must push one frame into the ring buffer
+        // (stereo pair counts as a single "sample" from fill_level's perspective).
+        let mut audio = NativeAudio::new_without_stream(44100);
+        audio.resume();
+
+        audio.queue_stereo_sample(0.5, -0.3);
+        assert_eq!(
+            audio.buffered_samples(),
+            1,
+            "one stereo frame must register as 1 in buffered_samples()"
+        );
+
+        audio.queue_stereo_sample(0.2, 0.8);
+        assert_eq!(
+            audio.buffered_samples(),
+            2,
+            "two stereo frames must register as 2 in buffered_samples()"
+        );
+    }
+
+    #[test]
+    fn test_queue_stereo_sample_does_not_push_when_paused() {
+        // Like queue_sample, queue_stereo_sample must be silent while paused.
+        let mut audio = NativeAudio::new_without_stream(44100);
+        assert!(audio.is_paused());
+
+        audio.queue_stereo_sample(0.5, -0.5);
+
+        assert_eq!(
+            audio.buffered_samples(),
+            0,
+            "queue_stereo_sample while paused must not push into the ring buffer"
+        );
+    }
+
+    #[test]
+    fn test_queue_sample_and_queue_stereo_sample_count_together() {
+        // Both queue_sample and queue_stereo_sample contribute to the same
+        // fill_level counter, and the counts must be consistent.
+        let mut audio = NativeAudio::new_without_stream(44100);
+        audio.resume();
+
+        audio.queue_sample(0.5);
+        audio.queue_stereo_sample(0.3, -0.3);
+        audio.queue_sample(0.1);
+
+        assert_eq!(
+            audio.buffered_samples(),
+            3,
+            "3 frames (mix of mono and stereo) must register as 3 buffered samples"
         );
     }
 }
