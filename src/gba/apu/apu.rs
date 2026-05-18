@@ -861,11 +861,6 @@ impl Apu {
             if self.sample_acc >= self.cycles_per_sample {
                 self.sample_acc -= self.cycles_per_sample;
                 if self.pending_sample.is_none() {
-                    // Advance PCM FIFOs once per output sample.
-                    // NOTE: Full DMA/timer-driven FIFO advance will be wired
-                    // in Phase 4 (DMA controller integration).
-                    self.fifo_a.advance();
-                    self.fifo_b.advance();
                     self.pending_sample = Some(self.mix());
                 }
             }
@@ -1409,6 +1404,18 @@ mod tests {
             FIFO_CAPACITY,
             "FIFO should cap at {FIFO_CAPACITY}"
         );
+    }
+
+    #[test]
+    fn tick_does_not_advance_pcm_fifo_without_timer_overflow() {
+        let mut apu = powered_apu();
+        apu.push_fifo_a(42);
+
+        let cycles = (GBA_CLOCK_HZ / 44_100.0) as u32 + 1;
+        apu.tick(cycles);
+
+        assert_eq!(apu.fifo_a.current, 0);
+        assert_eq!(apu.fifo_a.len(), 1);
     }
 
     #[test]

@@ -394,7 +394,8 @@ impl GbaBus {
     /// cycles. Any pending IRQs are routed into [`Self::ic`]. PPU
     /// V-Blank/H-Blank edges are propagated to the DMA controller.
     pub fn step(&mut self, cycles: u32) {
-        self.timers.step(cycles, &mut self.ic);
+        let timer_overflows = self.timers.step(cycles, &mut self.ic);
+        self.handle_timer_overflows(timer_overflows);
         self.sio.step(cycles, &mut self.ic);
         self.apu.tick(cycles);
         let events = self.ppu.step(
@@ -415,7 +416,8 @@ impl GbaBus {
             if cycles == 0 {
                 break;
             }
-            self.timers.step(cycles, &mut self.ic);
+            let timer_overflows = self.timers.step(cycles, &mut self.ic);
+            self.handle_timer_overflows(timer_overflows);
             self.apu.tick(cycles);
             let events = self.ppu.step(
                 cycles,
@@ -426,6 +428,29 @@ impl GbaBus {
             );
             self.handle_ppu_events(events);
             self.run_pending_dma();
+        }
+    }
+
+    fn handle_timer_overflows(&mut self, overflows: [u32; 4]) {
+        let soundcnt_h = self.apu.soundcnt_h;
+        let fifo_a_timer = ((soundcnt_h >> 10) & 1) as usize;
+        let fifo_b_timer = ((soundcnt_h >> 14) & 1) as usize;
+
+        for timer in 0..=1 {
+            for _ in 0..overflows[timer] {
+                if fifo_a_timer == timer {
+                    self.apu.fifo_a.advance();
+                    if self.apu.fifo_a.len() <= 16 {
+                        self.dma.notify_fifo(0);
+                    }
+                }
+                if fifo_b_timer == timer {
+                    self.apu.fifo_b.advance();
+                    if self.apu.fifo_b.len() <= 16 {
+                        self.dma.notify_fifo(1);
+                    }
+                }
+            }
         }
     }
 
@@ -1636,6 +1661,50 @@ mod tests {
         bus.lock_bios();
         let cpu_open = bus.read32(0x0000_0000);
         assert_eq!(cpu_open, 0xAAAA_BBBB);
+    }
+
+    fn setup_fifo_dma(bus: &mut GbaBus, channel: usize, source: u32) {
+        let base = 0x0400_00B0 + (channel as u32) * 12;
+        bus.dma.write16(base, source as u16);
+        bus.dma.write16(base + 2, (source >> 16) as u16);
+        bus.dma.write16(base + 8, 16);
+        bus.dma.write16(base + 10, 0xB600);
+    }
+
+    #[test]
+    fn timer0_overflow_advances_fifo_a_and_triggers_dma_when_selected() {
+        let mut bus = GbaBus::new();
+        bus.apu.soundcnt_h = 0x0000; // FIFO A uses timer 0 when bit 10 is clear.
+        bus.write32(0x0200_0000, 0x0403_0201);
+        setup_fifo_dma(&mut bus, 1, 0x0200_0000);
+
+        bus.timers.write_cnt_l(0, 0xFFE0);
+        bus.timers.write_cnt_h(0, 0x0080);
+
+        bus.step(32);
+        assert_eq!(bus.apu.fifo_a.len(), 16);
+        assert_eq!(bus.apu.fifo_a.current, 0);
+
+        bus.step(24);
+        assert_eq!(bus.apu.fifo_a.current, 1);
+    }
+
+    #[test]
+    fn timer1_overflow_triggers_fifo_b_dma_when_selected() {
+        let mut bus = GbaBus::new();
+        bus.apu.soundcnt_h = 0x4000; // FIFO B uses timer 1 when bit 14 is set.
+        bus.write32(0x0200_0010, 0x0807_0605);
+        setup_fifo_dma(&mut bus, 2, 0x0200_0010);
+
+        bus.timers.write_cnt_l(0, 0xFFE0);
+        bus.timers.write_cnt_h(0, 0x0080);
+        bus.step(32);
+        assert!(bus.apu.fifo_b.is_empty());
+
+        bus.timers.write_cnt_l(1, 0xFFE0);
+        bus.timers.write_cnt_h(1, 0x0080);
+        bus.step(32);
+        assert_eq!(bus.apu.fifo_b.len(), 16);
     }
 
     // =========================================================================

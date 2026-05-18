@@ -104,8 +104,8 @@ impl Timers {
     }
 
     /// Advance all timers by `cycles` CPU cycles. Any overflows are routed to
-    /// the supplied [`InterruptController`].
-    pub fn step(&mut self, cycles: u32, ic: &mut InterruptController) {
+    /// the supplied [`InterruptController`]. Returns per-timer overflow counts.
+    pub fn step(&mut self, cycles: u32, ic: &mut InterruptController) -> [u32; 4] {
         // Track per-timer overflow counts so cascade can chain through TM1..TM3.
         let mut overflows = [0u32; 4];
         for (i, t) in self.channels.iter_mut().enumerate() {
@@ -143,6 +143,7 @@ impl Timers {
                 ic.raise(TIMER_IRQ_BITS[i]);
             }
         }
+        overflows
     }
 }
 
