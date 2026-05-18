@@ -160,8 +160,8 @@ impl IoRegisters {
             0x0400_004C => None,               // MOSAIC
             0x0400_0054 => None,               // BLDY
             // PPU readable registers with masks.
-            0x0400_0048 => self.read_backing(addr, 0x3F3F), // WININ
-            0x0400_004A => self.read_backing(addr, 0x3F3F), // WINOUT
+            0x0400_0048 => Some(ppu.read_winin()),  // WININ
+            0x0400_004A => Some(ppu.read_winout()), // WINOUT
             0x0400_0050 => self.read_backing(addr, 0x3FFF), // BLDCNT
             0x0400_0052 => self.read_backing(addr, 0x1F1F), // BLDALPHA
             // Invalid addresses in PPU/blend range → open-bus.
@@ -354,6 +354,13 @@ impl IoRegisters {
             0x0400_0020..=0x0400_003E => {
                 ppu.write_affine(addr, value);
             }
+            // PPU window registers.
+            ppu::REG_WIN0H => ppu.write_win_h(0, value),
+            ppu::REG_WIN1H => ppu.write_win_h(1, value),
+            ppu::REG_WIN0V => ppu.write_win_v(0, value),
+            ppu::REG_WIN1V => ppu.write_win_v(1, value),
+            ppu::REG_WININ => ppu.write_winin(value),
+            ppu::REG_WINOUT => ppu.write_winout(value),
             // Keypad.
             REG_KEYINPUT => { /* KEYINPUT is read-only */ }
             REG_KEYCNT => keypad.write_keycnt(value, ic),
@@ -471,6 +478,30 @@ impl IoRegisters {
                 ppu.write_bg_vofs(bg, merged);
             } else {
                 ppu.write_bg_hofs(bg, merged);
+            }
+            return;
+        }
+        // Window H/V registers (0x40..0x46) are write-only. Merge byte
+        // writes against the PPU's live window state.
+        // Layout: WIN0H=0x40, WIN1H=0x42, WIN0V=0x44, WIN1V=0x46
+        if (ppu::REG_WIN0H..=ppu::REG_WIN1V + 1).contains(&addr) {
+            let aligned = addr & !1;
+            let is_v = aligned >= ppu::REG_WIN0V;
+            let idx = ((aligned >> 1) & 1) as usize; // 0 or 1
+            let current = if is_v {
+                ppu.read_win_v(idx)
+            } else {
+                ppu.read_win_h(idx)
+            };
+            let merged = if addr & 1 == 0 {
+                (current & 0xFF00) | value as u16
+            } else {
+                (current & 0x00FF) | ((value as u16) << 8)
+            };
+            if is_v {
+                ppu.write_win_v(idx, merged);
+            } else {
+                ppu.write_win_h(idx, merged);
             }
             return;
         }
@@ -1583,5 +1614,153 @@ mod tests {
                 "JOY register at {addr:#010X} should read 0"
             );
         }
+    }
+
+    #[test]
+    fn winin_winout_routed_to_ppu() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Write WININ with all bits set — only 0x3F3F should stick.
+        io.write16(
+            ppu::REG_WININ,
+            0xFFFF,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_winin(), 0x3F3F);
+        assert_eq!(
+            io.try_read16(ppu::REG_WININ, &ic, &t, &d, &p, &k),
+            Some(0x3F3F)
+        );
+
+        // Write WINOUT.
+        io.write16(
+            ppu::REG_WINOUT,
+            0x3F27,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_winout(), 0x3F27);
+        assert_eq!(
+            io.try_read16(ppu::REG_WINOUT, &ic, &t, &d, &p, &k),
+            Some(0x3F27)
+        );
+
+        // Write WIN0H (write-only, routed to PPU).
+        io.write16(
+            ppu::REG_WIN0H,
+            0x1080,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_win_h(0), 0x1080);
+    }
+
+    #[test]
+    fn window_byte_writes_route_correctly() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Byte write to WIN0H (0x0400_0040): low byte then high byte
+        io.write8(
+            ppu::REG_WIN0H,
+            0xAB,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_WIN0H + 1,
+            0xCD,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_win_h(0), 0xCDAB);
+
+        // Byte write to WIN1H (0x0400_0042)
+        io.write8(
+            ppu::REG_WIN1H,
+            0x10,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_WIN1H + 1,
+            0x80,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_win_h(1), 0x8010);
+
+        // Byte write to WIN0V (0x0400_0044)
+        io.write8(
+            ppu::REG_WIN0V,
+            0x20,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_WIN0V + 1,
+            0xA0,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_win_v(0), 0xA020);
+
+        // Byte write to WIN1V (0x0400_0046)
+        io.write8(
+            ppu::REG_WIN1V,
+            0x00,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_WIN1V + 1,
+            0xA0,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(p.read_win_v(1), 0xA000);
     }
 }
