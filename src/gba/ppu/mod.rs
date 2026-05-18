@@ -760,12 +760,12 @@ impl Ppu {
                 continue;
             }
 
-            let palette_bank = if is_8bpp {
-                0
+            let pram_index = if is_8bpp {
+                palette_index * 2
             } else {
-                ((entry >> 12) & 0x000F) as usize
+                let palette_bank = ((entry >> 12) & 0x000F) as usize;
+                (palette_bank * 16 + palette_index) * 2
             };
-            let pram_index = (palette_bank * 16 + palette_index) * 2;
             buf[x] = if pram_index + 1 < pram.len() {
                 u16::from_le_bytes([pram[pram_index], pram[pram_index + 1]]) & 0x7FFF
             } else {
@@ -1692,7 +1692,7 @@ mod tests {
         ppu.write_dispcnt(dispcnt::BG0_ENABLE);
         ppu.write_bg0cnt(1 << 7);
 
-        // Backdrop = pure blue. A transparent BG pixel should reveal it.
+        // Backdrop/palette entry 0 = pure blue. A transparent BG pixel should reveal it.
         pram[0] = 0x00;
         pram[1] = 0x7C;
 
