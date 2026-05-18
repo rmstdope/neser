@@ -1966,6 +1966,14 @@ mod tests {
 
         assert_eq!(apu.read16(0x0400_0082), 0x030F);
         assert_eq!(apu.read16(0x0400_0088), 0xC3FE);
+
+        apu.write8(0x0400_0082, 0xAA);
+        apu.write8(0x0400_0083, 0x55);
+        apu.write8(0x0400_0088, 0x34);
+        apu.write8(0x0400_0089, 0x12);
+
+        assert_eq!(apu.read16(0x0400_0082), 0x55AA);
+        assert_eq!(apu.read16(0x0400_0088), 0x0234);
     }
 
     // ── Register round-trip tests ────────────────────────────────────────────
