@@ -107,6 +107,9 @@ pub mod dispcnt {
     pub const OBJ_ENABLE: u16 = 1 << 12;
     /// OBJ character VRAM mapping: 1 = 1D, 0 = 2D (DISPCNT[6]).
     pub const OBJ_MAPPING_1D: u16 = 1 << 6;
+    /// H-Blank Interval Free (DISPCNT[5]) — allows OAM access during H-Blank but
+    /// reduces available OBJ rendering cycles from 1210 to 954 per scanline.
+    pub const HBLANK_INTERVAL_FREE: u16 = 1 << 5;
     /// Display Window 0 (DISPCNT[13]).
     pub const WIN0_ENABLE: u16 = 1 << 13;
     /// Display Window 1 (DISPCNT[14]).
@@ -1334,6 +1337,11 @@ impl Ppu {
         let obj_scanline = if obj_enabled {
             let mapping_1d = self.dispcnt & dispcnt::OBJ_MAPPING_1D != 0;
             let bitmap_mode = self.mode() >= 3;
+            let cycle_budget = if self.dispcnt & dispcnt::HBLANK_INTERVAL_FREE != 0 {
+                obj::OBJ_CYCLE_BUDGET_HBLANK_FREE
+            } else {
+                obj::OBJ_CYCLE_BUDGET_NORMAL
+            };
             Some(obj::render_obj_scanline(
                 y,
                 oam,
@@ -1342,6 +1350,7 @@ impl Ppu {
                 mapping_1d,
                 bitmap_mode,
                 self.mosaic,
+                cycle_budget,
             ))
         } else {
             None
@@ -3587,6 +3596,75 @@ mod tests {
             &ppu.framebuffer()[dst..dst + 3],
             &[0, 0, 0],
             "OBJ should not render when OBJ_ENABLE is off"
+        );
+    }
+
+    #[test]
+    fn hblank_interval_free_uses_reduced_obj_cycle_budget() {
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        // OBJ 0..13 are 64x64 and off scanline 0: each consumes 64 cycles (14*64=896).
+        for obj_idx in 0..14 {
+            setup_obj_in_oam(&mut oam, obj_idx, 0, 100, 0, 0);
+            let base = obj_idx * 8;
+            let attr1 = (oam[base + 2] as u16) | ((oam[base + 3] as u16) << 8) | (3 << 14);
+            oam[base + 2] = attr1 as u8;
+            oam[base + 3] = (attr1 >> 8) as u8;
+        }
+
+        // OBJ 14 is the first visible 64x64 OBJ on scanline 0 (cost 64 cycles).
+        // Total would be 960 cycles: fits normal budget (1210), exceeds hblank-free (954).
+        setup_obj_in_oam(&mut oam, 14, 100, 0, 1, 0);
+        let base = 14 * 8;
+        let attr1 = (oam[base + 2] as u16) | ((oam[base + 3] as u16) << 8) | (3 << 14);
+        oam[base + 2] = attr1 as u8;
+        oam[base + 3] = (attr1 >> 8) as u8;
+
+        // Fill OBJ tile 1 with palette index 1 and set OBJ palette color 1 to red.
+        let tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[tile_base..tile_base + 32] {
+            *byte = 0x11;
+        }
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        let mut ppu_normal = Ppu::new();
+        let mut ppu_hblank_free = Ppu::new();
+        let mut ic_normal = make_ic();
+        let mut ic_hblank_free = make_ic();
+
+        ppu_normal.write_dispcnt(dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+        ppu_hblank_free.write_dispcnt(
+            dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D | dispcnt::HBLANK_INTERVAL_FREE,
+        );
+
+        ppu_normal.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic_normal,
+            &vram,
+            &pram,
+            &oam,
+        );
+        ppu_hblank_free.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic_hblank_free,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        let dst = 100 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu_normal.framebuffer()[dst..dst + 3],
+            &[0xFF, 0, 0],
+            "OBJ should render with normal cycle budget"
+        );
+        assert_eq!(
+            &ppu_hblank_free.framebuffer()[dst..dst + 3],
+            &[0, 0, 0],
+            "OBJ should be dropped with hblank-free reduced cycle budget"
         );
     }
 

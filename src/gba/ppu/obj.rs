@@ -133,6 +133,16 @@ fn read_affine_params(oam: &[u8], group: usize) -> (i16, i16, i16, i16) {
     (pa, pb, pc, pd)
 }
 
+/// OBJ rendering cycle budget per scanline when DISPCNT bit 5 (H-Blank Interval Free) = 0.
+///
+/// 304×4 − 6 = 1210 cycles (GBATek "LCD OBJ - Overview").
+pub const OBJ_CYCLE_BUDGET_NORMAL: u32 = 1210;
+
+/// OBJ rendering cycle budget per scanline when DISPCNT bit 5 (H-Blank Interval Free) = 1.
+///
+/// 240×4 − 6 = 954 cycles (GBATek "LCD OBJ - Overview").
+pub const OBJ_CYCLE_BUDGET_HBLANK_FREE: u32 = 954;
+
 /// Render all OBJs for a single scanline.
 ///
 /// - `y`: current scanline (0..160)
@@ -141,6 +151,9 @@ fn read_affine_params(oam: &[u8], group: usize) -> (i16, i16, i16, i16) {
 /// - `pram`: 1KB palette RAM (OBJ palette at offset 0x200)
 /// - `obj_mapping_1d`: true if DISPCNT bit 6 is set (1D tile mapping)
 /// - `bitmap_mode`: true for modes 3-5 (OBJ tile IDs 0-511 are not displayed)
+/// - `cycle_budget`: maximum rendering cycles available; use [`OBJ_CYCLE_BUDGET_NORMAL`] or
+///   [`OBJ_CYCLE_BUDGET_HBLANK_FREE`] based on DISPCNT bit 5
+#[allow(clippy::too_many_arguments)]
 pub fn render_obj_scanline(
     y: u32,
     oam: &[u8],
@@ -149,10 +162,12 @@ pub fn render_obj_scanline(
     obj_mapping_1d: bool,
     bitmap_mode: bool,
     mosaic: u16,
+    cycle_budget: u32,
 ) -> ObjScanline {
     let mut result = ObjScanline::default();
     let obj_mosaic_h = super::mosaic_size(mosaic, 8);
     let obj_mosaic_v = super::mosaic_size(mosaic, 12);
+    let mut cycles_used: u32 = 0;
 
     // Process OBJs in order 0..127. Lower number = higher priority at same
     // priority level, so first writer wins for each pixel.
@@ -207,6 +222,24 @@ pub fn render_obj_scanline(
         } else {
             (obj_width, obj_height)
         };
+
+        // Per GBATek "LCD OBJ - Overview": count cycles for every non-hidden OBJ
+        // with a valid shape, even if it doesn't intersect the current scanline.
+        // Cycle cost formula (GBATek):
+        //   - Normal OBJ:       n×1 cycles  (n = bound_width)
+        //   - Rotation/Scaling: 10 + n×2 cycles (n = bound_width, including double-size)
+        let cycle_cost = if is_affine {
+            10 + bound_width * 2
+        } else {
+            bound_width
+        };
+        // OBJs are processed in priority order (0 first, 127 last). Once the
+        // cycle budget is exhausted, all remaining OBJs are dropped — they are
+        // simply not rendered for this scanline.
+        if cycles_used + cycle_cost > cycle_budget {
+            break;
+        }
+        cycles_used += cycle_cost;
 
         // Y coordinate (attr0 bits 0-7), wraps at 256.
         let obj_y = (attr0 & 0xFF) as u32;
@@ -463,7 +496,7 @@ mod tests {
         let oam = make_oam();
         let vram = make_vram();
         let pram = make_pram();
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
         assert!(result.pixels.iter().all(|p| !p.opaque));
         assert!(result.obj_window.iter().all(|&w| !w));
     }
@@ -483,7 +516,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 1);
         set_obj_color(&mut pram, 1, 0x001F); // red
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
         assert!(!result.pixels[100].opaque, "hidden OBJ should not render");
     }
 
@@ -505,7 +538,7 @@ mod tests {
         set_obj_color(&mut pram, 3, 0x03E0);
 
         // Render scanline 5 (first row of sprite).
-        let result = render_obj_scanline(5, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(5, &oam, &vram, &pram, true, false, 0, u32::MAX);
 
         // Pixels 10-17 should be green.
         for x in 10..18 {
@@ -536,7 +569,7 @@ mod tests {
         // Set OBJ palette color 5 = blue.
         set_obj_color(&mut pram, 5, 0x7C00);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
 
         for x in 0..8 {
             assert!(result.pixels[x].opaque, "pixel {x} should be opaque");
@@ -561,7 +594,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 512, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true, 0, u32::MAX);
         assert!(
             !result.pixels[0].opaque,
             "tile IDs 0-511 must be invisible in bitmap modes"
@@ -583,7 +616,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 512, 2);
         set_obj_color(&mut pram, 2, 0x03E0);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true, 0, u32::MAX);
         assert!(
             result.pixels[0].opaque,
             "tile 512 should be visible in bitmap modes"
@@ -621,7 +654,7 @@ mod tests {
         set_obj_color(&mut pram, 1, 0x001F); // red
         set_obj_color(&mut pram, 2, 0x03E0); // green
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
 
         // With h-flip, right side (index 2, green) appears on left.
         // Pixel 0-3 should be green (was right side), 4-7 should be red (was left side).
@@ -658,14 +691,14 @@ mod tests {
         set_obj_color(&mut pram, 2, 0x03E0); // green
 
         // With v-flip, row 7 (index 2) becomes the top row (scanline 0).
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
         assert_eq!(
             result.pixels[0].color, 0x03E0,
             "v-flip: scanline 0 should show row 7 data (green)"
         );
 
         // Scanline 7 should show original row 0 (index 1, red).
-        let result7 = render_obj_scanline(7, &oam, &vram, &pram, true, false, 0);
+        let result7 = render_obj_scanline(7, &oam, &vram, &pram, true, false, 0, u32::MAX);
         assert_eq!(
             result7.pixels[0].color, 0x001F,
             "v-flip: scanline 7 should show row 0 data (red)"
@@ -694,7 +727,7 @@ mod tests {
         vram[OBJ_VRAM_BASE + 4] = 0x43;
 
         // OBJ mosaic H/V sizes are both 2 pixels.
-        let result = render_obj_scanline(1, &oam, &vram, &pram, true, false, 0x1100);
+        let result = render_obj_scanline(1, &oam, &vram, &pram, true, false, 0x1100, u32::MAX);
 
         assert_eq!(result.pixels[0].color, 0x001F);
         assert_eq!(result.pixels[1].color, 0x001F);
@@ -717,7 +750,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 2);
         set_obj_color(&mut pram, 2, 0x03E0); // green
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
         // OBJ 0 wins (lower index).
         assert_eq!(
             result.pixels[0].color, 0x001F,
@@ -740,7 +773,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 2);
         set_obj_color(&mut pram, 2, 0x03E0);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
         // OBJ 0 is transparent, so OBJ 1 should show through.
         assert_eq!(
             result.pixels[0].color, 0x03E0,
@@ -762,7 +795,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
 
         // OBJ Window should not produce visible pixels at x=100.
         assert!(
@@ -791,7 +824,7 @@ mod tests {
         set_obj_color(&mut pram, 3, 0x7C00); // blue
 
         // Scanline 8 = second tile row.
-        let result = render_obj_scanline(8, &oam, &vram, &pram, false, false, 0);
+        let result = render_obj_scanline(8, &oam, &vram, &pram, false, false, 0, u32::MAX);
         assert!(
             result.pixels[0].opaque,
             "2D mapping should find tile at stride 32"
@@ -816,7 +849,7 @@ mod tests {
         set_obj_color(&mut pram, 4, 0x03E0); // green
 
         // Scanline 8 = second tile row.
-        let result = render_obj_scanline(8, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(8, &oam, &vram, &pram, true, false, 0, u32::MAX);
         assert!(
             result.pixels[0].opaque,
             "1D mapping should find tile at width stride"
@@ -837,7 +870,7 @@ mod tests {
         set_obj_color(&mut pram, 1, 0x001F);
 
         // Scanline 0: relative Y = (0 - 252) & 0xFF = 4. 4 < 8, so visible.
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
         assert!(
             result.pixels[0].opaque,
             "sprite at Y=252 should wrap to scanline 0"
@@ -863,7 +896,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
 
         // X=-4: pixels at screen 0,1,2,3 should be visible (sprite cols 4,5,6,7).
         assert!(
@@ -887,7 +920,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 0, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
         assert_eq!(result.pixels[0].priority, 2);
     }
 
@@ -907,7 +940,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 0, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
         // First 8 pixels should be opaque (tile 0).
         assert!(result.pixels[0].opaque);
         assert!(result.pixels[7].opaque);
@@ -951,7 +984,7 @@ mod tests {
 
         // Regular sprite: 8x8 at (10, 0), obj_mode=0
         write_obj(&mut oam, 0, 0x0000, 10, 0);
-        let regular = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let regular = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
 
         // Affine sprite: 8x8 at (10, 0), obj_mode=1, rotation group 0, identity matrix
         let mut oam2 = make_oam();
@@ -960,7 +993,7 @@ mod tests {
         write_obj(&mut oam2, 0, 0x0100, 10, 0);
         write_affine_params(&mut oam2, 0, 0x0100, 0, 0, 0x0100); // identity
 
-        let affine = render_obj_scanline(0, &oam2, &vram, &pram, true, false, 0);
+        let affine = render_obj_scanline(0, &oam2, &vram, &pram, true, false, 0, u32::MAX);
 
         // Both should render opaque pixels at x=10..17
         for x in 10..18 {
@@ -994,7 +1027,7 @@ mod tests {
         write_affine_params(&mut oam, 0, 0x0080, 0, 0, 0x0080);
 
         // Double-size 8x8 gives bounding box 16x16. At scanline 0:
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
 
         // With 2× scaling and double-size bounding box (16×16), the 8×8 texture
         // should be stretched to cover roughly 16 pixels horizontally.
@@ -1026,7 +1059,7 @@ mod tests {
         write_obj(&mut oam, 0, 0x0900, 0, 0);
         write_affine_params(&mut oam, 0, 0x0100, 0, 0, 0x0100);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, u32::MAX);
 
         // OBJ Window mask should be set for the sprite area.
         assert!(result.obj_window[0]);
@@ -1052,12 +1085,12 @@ mod tests {
         write_affine_params(&mut oam, 0, 0x0100, 0, 0, 0x0100); // identity
 
         // Scanline 12 is within 16-tall bounding box but outside original 8-tall.
-        let result = render_obj_scanline(12, &oam, &vram, &pram, true, false, 0);
+        let result = render_obj_scanline(12, &oam, &vram, &pram, true, false, 0, u32::MAX);
 
         // With identity transform on double-size, the texture (8×8) is centered
         // in the 16×16 box. Row 12 maps to texture row 12-4=8 which is OOB → transparent.
         // But rows 4..11 should be visible. Let's test row 6:
-        let result6 = render_obj_scanline(6, &oam, &vram, &pram, true, false, 0);
+        let result6 = render_obj_scanline(6, &oam, &vram, &pram, true, false, 0, u32::MAX);
         let opaque_count: usize = (0..16).filter(|&x| result6.pixels[x].opaque).count();
         assert!(opaque_count > 0, "Should have opaque pixels at scanline 6");
 
@@ -1092,7 +1125,7 @@ mod tests {
         set_obj_color(&mut pram, 4, 0x7FFF);
         set_obj_color(&mut pram, 5, 0x03FF);
 
-        let result = render_obj_scanline(1, &oam, &vram, &pram, true, false, 0x1100);
+        let result = render_obj_scanline(1, &oam, &vram, &pram, true, false, 0x1100, u32::MAX);
 
         assert_eq!(result.pixels[6].color, 0x001F);
         assert_eq!(result.pixels[7].color, 0x001F);
@@ -1120,5 +1153,108 @@ mod tests {
 
         let idx = fetch_obj_pixel(0, 8, 5, 3, true, true, &vram);
         assert_eq!(idx, 42);
+    }
+
+    // --- Cycle budget tests (TDD RED phase) ---
+
+    #[test]
+    fn cycle_budget_stops_rendering_when_exhausted() {
+        // OBJ 0: 8x8 at (0, 0) — costs 8 cycles; OBJ 1: 8x8 at (10, 0) — costs 8
+        // cycles. Budget of 10 allows OBJ 0 (total 8) but not OBJ 1 (would be 16).
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        write_obj(&mut oam, 0, 0, 0, 0); // 8x8 at (x=0, y=0)
+        write_obj(&mut oam, 1, 0, 10, 1); // 8x8 at (x=10, y=0)
+        fill_4bpp_tile(&mut vram, 0, 1);
+        fill_4bpp_tile(&mut vram, 1, 2);
+        set_obj_color(&mut pram, 1, 0x001F); // red
+        set_obj_color(&mut pram, 2, 0x03E0); // green
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, 10);
+
+        // OBJ 0 should be rendered (8 cycles ≤ budget of 10).
+        assert!(result.pixels[0].opaque, "OBJ 0 should render within budget");
+        // OBJ 1 should NOT be rendered (8+8=16 > 10).
+        assert!(
+            !result.pixels[10].opaque,
+            "OBJ 1 should be skipped after budget exhausted"
+        );
+    }
+
+    #[test]
+    fn cycle_budget_counts_off_scanline_obj() {
+        // OBJ 0: 8x8 at y=100 (off scanline 0) — still costs 8 cycles.
+        // OBJ 1: 8x8 at y=0 (on scanline 0) — costs 8 cycles.
+        // Budget of 10: OBJ 0 consumes 8 cycles (no pixels), OBJ 1 can't fit (16 > 10).
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        write_obj(&mut oam, 0, 100, 0, 0); // 8x8 at (x=0, y=100) — off scanline 0
+        write_obj(&mut oam, 1, 0, 10, 1); // 8x8 at (x=10, y=0) — on scanline 0
+        fill_4bpp_tile(&mut vram, 0, 1);
+        fill_4bpp_tile(&mut vram, 1, 2);
+        set_obj_color(&mut pram, 1, 0x001F);
+        set_obj_color(&mut pram, 2, 0x03E0);
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, 10);
+
+        // OBJ 1 should NOT render; its budget was consumed by off-scanline OBJ 0.
+        assert!(
+            !result.pixels[10].opaque,
+            "OBJ 1 should not render: budget consumed by off-scanline OBJ 0"
+        );
+    }
+
+    #[test]
+    fn cycle_budget_affine_cost_is_10_plus_2n() {
+        // Affine 8x8 OBJ costs 10 + 8*2 = 26 cycles.
+        // With budget=25 it should NOT render; with budget=26 it should.
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        write_obj(&mut oam, 0, 0x0100, 0, 0); // attr0 obj_mode=1 (affine), y=0
+        write_affine_params(&mut oam, 0, 0x0100, 0, 0, 0x0100); // identity
+        fill_4bpp_tile(&mut vram, 0, 1);
+        set_obj_color(&mut pram, 1, 0x001F);
+
+        // Budget too small by 1: should not render.
+        let result_no = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, 25);
+        assert!(
+            !result_no.pixels[0].opaque,
+            "Affine OBJ should not render with budget=25 (cost=26)"
+        );
+
+        // Budget exactly matching: should render.
+        let result_yes = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, 26);
+        assert!(
+            result_yes.pixels[0].opaque,
+            "Affine OBJ should render with budget=26 (cost=26)"
+        );
+    }
+
+    #[test]
+    fn cycle_budget_hidden_obj_does_not_consume_cycles() {
+        // OBJ 0: hidden (mode=2) — should NOT consume cycles.
+        // OBJ 1: 8x8 at (0, 0) — costs 8 cycles.
+        // Budget=8: OBJ 0 doesn't consume, OBJ 1 renders.
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        write_obj(&mut oam, 0, 2 << 8, 0, 0); // hidden (obj_mode=2)
+        write_obj(&mut oam, 1, 0, 0, 1); // 8x8 at (x=0, y=0)
+        fill_4bpp_tile(&mut vram, 1, 1);
+        set_obj_color(&mut pram, 1, 0x001F);
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, 8);
+
+        assert!(
+            result.pixels[0].opaque,
+            "OBJ 1 should render: hidden OBJ 0 did not consume cycles"
+        );
     }
 }
