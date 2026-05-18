@@ -819,6 +819,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &[0u8; 1024],
         );
 
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
@@ -868,6 +869,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &[0u8; 1024],
         );
 
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
@@ -920,6 +922,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &[0u8; 1024],
         );
 
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
@@ -972,6 +975,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &[0u8; 1024],
         );
 
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
@@ -1025,6 +1029,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &[0u8; 1024],
         );
 
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
@@ -1075,6 +1080,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &[0u8; 1024],
         );
 
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);
@@ -1125,6 +1131,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &[0u8; 1024],
         );
 
         assert_eq!(&p.framebuffer()[0..3], &[0xFF, 0, 0]);

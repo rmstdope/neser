@@ -41,6 +41,7 @@
 
 pub mod affine;
 pub mod color;
+pub mod obj;
 
 use self::affine::BgAffine;
 use super::bus::interrupt::{InterruptController, bits as irq_bits};
@@ -90,6 +91,8 @@ pub mod dispcnt {
     pub const BG3_ENABLE: u16 = 1 << 11;
     /// Display OBJ (DISPCNT[12]).
     pub const OBJ_ENABLE: u16 = 1 << 12;
+    /// OBJ character VRAM mapping: 1 = 1D, 0 = 2D (DISPCNT[6]).
+    pub const OBJ_MAPPING_1D: u16 = 1 << 6;
 }
 
 /// `DISPSTAT` bit masks used by the PPU.
@@ -458,6 +461,7 @@ impl Ppu {
         ic: &mut InterruptController,
         vram: &[u8],
         pram: &[u8],
+        oam: &[u8],
     ) -> PpuStepEvents {
         let mut events = PpuStepEvents::default();
         let mut remaining = cycles;
@@ -473,7 +477,7 @@ impl Ppu {
                     // signalling H-Blank so DMA HBlank transfers see the
                     // updated framebuffer (sprite/affine state will use
                     // this hook in later increments).
-                    self.render_scanline(self.vcount as u32, vram, pram);
+                    self.render_scanline(self.vcount as u32, vram, pram, oam);
                     // Increment affine internal reference points after each
                     // visible scanline (ref_x += PB, ref_y += PD).
                     for aff in &mut self.bg_affine {
@@ -551,7 +555,7 @@ impl Ppu {
     }
 
     /// Render scanline `y` (0..160) into the framebuffer.
-    fn render_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
+    fn render_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if self.forced_blank() {
             // Forced blank → output white per GBATek.
             let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
@@ -562,11 +566,11 @@ impl Ppu {
             return;
         }
         match self.mode() {
-            0 => self.render_mode0_scanline(y, vram, pram),
-            1 => self.render_mode1_scanline(y, vram, pram),
-            2 => self.render_mode2_scanline(y, vram, pram),
-            3 => self.render_mode3_scanline(y, vram, pram),
-            4 => self.render_mode4_scanline(y, vram, pram),
+            0 => self.render_mode0_scanline(y, vram, pram, oam),
+            1 => self.render_mode1_scanline(y, vram, pram, oam),
+            2 => self.render_mode2_scanline(y, vram, pram, oam),
+            3 => self.render_mode3_scanline(y, vram, pram, oam),
+            4 => self.render_mode4_scanline(y, vram, pram, oam),
             _ => self.render_backdrop_scanline(y, pram),
         }
     }
@@ -574,7 +578,7 @@ impl Ppu {
     /// Mode 0: render enabled text-mode BG layers (BG0–BG3) with priority
     /// compositing. Lower BGCNT priority value = on top; at equal priority,
     /// lower BG number wins.
-    fn render_mode0_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
+    fn render_mode0_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         // Collect enabled text-mode BGs.
         let bg_enables = [
             self.dispcnt & dispcnt::BG0_ENABLE != 0,
@@ -583,29 +587,10 @@ impl Ppu {
             self.dispcnt & dispcnt::BG3_ENABLE != 0,
         ];
 
-        if !bg_enables.iter().any(|&e| e) {
-            self.render_backdrop_scanline(y, pram);
-            return;
-        }
-
-        // Build render order: paint from lowest visual priority (behind) to
-        // highest (on top). Higher BGCNT priority value = behind; at equal
-        // priority, higher BG number = behind. So sort descending by
-        // (priority, bg_number).
-        let mut layers: [(u16, usize); 4] = [(0, 0); 4];
-        let mut count = 0;
-        for (i, &enabled) in bg_enables.iter().enumerate() {
-            if enabled {
-                layers[count] = (self.bg_cnt[i] & 3, i);
-                count += 1;
-            }
-        }
-        // Sort: higher priority value first (behind), then higher bg number.
-        layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-
-        // Fill with backdrop first.
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
         let backdrop = self.backdrop_bgr555(pram);
+
+        // Fill with backdrop first.
         let (br, bg, bb) = color::bgr555_to_rgb888(backdrop);
         for x in 0..(SCREEN_WIDTH as usize) {
             let dst = row_start + x * BYTES_PER_PIXEL;
@@ -614,16 +599,49 @@ impl Ppu {
             self.framebuffer[dst + 2] = bb;
         }
 
-        // Render each BG layer from behind to front; non-transparent pixels
-        // overwrite whatever was painted below.
-        for &(_, bg_idx) in &layers[..count] {
-            self.render_text_bg_layer(bg_idx, y, vram, pram, row_start, backdrop);
+        if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            return;
         }
+
+        // Track per-pixel priority for OBJ compositing (4 = backdrop/no BG).
+        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
+
+        if bg_enables.iter().any(|&e| e) {
+            // Build render order: paint from lowest visual priority (behind) to
+            // highest (on top). Higher BGCNT priority value = behind; at equal
+            // priority, higher BG number = behind.
+            let mut layers: [(u16, usize); 4] = [(0, 0); 4];
+            let mut count = 0;
+            for (i, &enabled) in bg_enables.iter().enumerate() {
+                if enabled {
+                    layers[count] = (self.bg_cnt[i] & 3, i);
+                    count += 1;
+                }
+            }
+            layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+            for &(prio, bg_idx) in &layers[..count] {
+                self.render_text_bg_layer_with_priority(
+                    bg_idx,
+                    y,
+                    vram,
+                    pram,
+                    row_start,
+                    backdrop,
+                    prio as u8,
+                    &mut pixel_priority,
+                );
+            }
+        }
+
+        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
     }
 
     /// Render a single 4bpp text-mode BG layer onto the framebuffer row
     /// at `row_start`. Transparent pixels (palette index 0) are skipped.
-    fn render_text_bg_layer(
+    /// Updates `pixel_priority` for each opaque pixel written.
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+    fn render_text_bg_layer_with_priority(
         &mut self,
         bg_idx: usize,
         y: u32,
@@ -631,6 +649,8 @@ impl Ppu {
         pram: &[u8],
         row_start: usize,
         backdrop: u16,
+        bg_prio: u8,
+        pixel_priority: &mut [u8; SCREEN_WIDTH as usize],
     ) {
         let bgcnt = self.bg_cnt[bg_idx];
 
@@ -714,6 +734,7 @@ impl Ppu {
 
             let dst = row_start + x * BYTES_PER_PIXEL;
             color::write_pixel(&mut self.framebuffer, dst, bgr555);
+            pixel_priority[x] = bg_prio;
         }
     }
 
@@ -722,6 +743,7 @@ impl Ppu {
     /// parameters for the per-pixel texture coordinate calculation.
     ///
     /// `affine_idx` is 0 for BG2, 1 for BG3.
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     fn render_affine_bg_layer(
         &mut self,
         bg_idx: usize,
@@ -729,6 +751,8 @@ impl Ppu {
         vram: &[u8],
         pram: &[u8],
         row_start: usize,
+        bg_prio: u8,
+        pixel_priority: &mut [u8; SCREEN_WIDTH as usize],
     ) {
         let bgcnt = self.bg_cnt[bg_idx];
         let aff = self.bg_affine[affine_idx];
@@ -799,36 +823,17 @@ impl Ppu {
 
             let dst = row_start + x * BYTES_PER_PIXEL;
             color::write_pixel(&mut self.framebuffer, dst, bgr555);
+            pixel_priority[x] = bg_prio;
         }
     }
 
     /// Mode 2: affine tile backgrounds (BG2 and BG3 only).
-    fn render_mode2_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
+    fn render_mode2_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         let bg_enables = [
             self.dispcnt & dispcnt::BG2_ENABLE != 0,
             self.dispcnt & dispcnt::BG3_ENABLE != 0,
         ];
 
-        if !bg_enables.iter().any(|&e| e) {
-            self.render_backdrop_scanline(y, pram);
-            return;
-        }
-
-        // Build render order: paint from lowest visual priority (behind) to
-        // highest (on top). BG2 = affine_idx 0, BG3 = affine_idx 1.
-        let mut layers: [(u16, usize, usize); 2] = [(0, 0, 0); 2];
-        let mut count = 0;
-        let bg_indices = [2usize, 3usize];
-        for (i, &bg_idx) in bg_indices.iter().enumerate() {
-            if bg_enables[i] {
-                layers[count] = (self.bg_cnt[bg_idx] & 3, bg_idx, i);
-                count += 1;
-            }
-        }
-        // Sort: higher priority value first (behind), then higher bg number.
-        layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-
-        // Fill with backdrop first.
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
         let backdrop = self.backdrop_bgr555(pram);
         let (br, bg, bb) = color::bgr555_to_rgb888(backdrop);
@@ -839,37 +844,48 @@ impl Ppu {
             self.framebuffer[dst + 2] = bb;
         }
 
-        for &(_, bg_idx, affine_idx) in &layers[..count] {
-            self.render_affine_bg_layer(bg_idx, affine_idx, vram, pram, row_start);
+        if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            return;
         }
+
+        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
+
+        if bg_enables.iter().any(|&e| e) {
+            let mut layers: [(u16, usize, usize); 2] = [(0, 0, 0); 2];
+            let mut count = 0;
+            let bg_indices = [2usize, 3usize];
+            for (i, &bg_idx) in bg_indices.iter().enumerate() {
+                if bg_enables[i] {
+                    layers[count] = (self.bg_cnt[bg_idx] & 3, bg_idx, i);
+                    count += 1;
+                }
+            }
+            layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+            for &(prio, bg_idx, affine_idx) in &layers[..count] {
+                self.render_affine_bg_layer(
+                    bg_idx,
+                    affine_idx,
+                    vram,
+                    pram,
+                    row_start,
+                    prio as u8,
+                    &mut pixel_priority,
+                );
+            }
+        }
+
+        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
     }
 
     /// Mode 1: BG0/BG1 regular text + BG2 affine.
-    fn render_mode1_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
+    fn render_mode1_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         let bg_enables = [
             self.dispcnt & dispcnt::BG0_ENABLE != 0,
             self.dispcnt & dispcnt::BG1_ENABLE != 0,
             self.dispcnt & dispcnt::BG2_ENABLE != 0,
         ];
 
-        if !bg_enables.iter().any(|&e| e) {
-            self.render_backdrop_scanline(y, pram);
-            return;
-        }
-
-        // Mix regular and affine BGs. Build a unified priority list.
-        // Each entry: (priority, bg_idx, is_affine).
-        let mut layers: [(u16, usize, bool); 3] = [(0, 0, false); 3];
-        let mut count = 0;
-        for (i, &bg_idx) in [0usize, 1, 2].iter().enumerate() {
-            if bg_enables[i] {
-                layers[count] = (self.bg_cnt[bg_idx] & 3, bg_idx, bg_idx == 2);
-                count += 1;
-            }
-        }
-        layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-
-        // Fill backdrop.
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
         let backdrop = self.backdrop_bgr555(pram);
         let (br, bg, bb) = color::bgr555_to_rgb888(backdrop);
@@ -880,14 +896,50 @@ impl Ppu {
             self.framebuffer[dst + 2] = bb;
         }
 
-        for &(_, bg_idx, is_affine) in &layers[..count] {
-            if is_affine {
-                // BG2 → affine_idx 0
-                self.render_affine_bg_layer(bg_idx, 0, vram, pram, row_start);
-            } else {
-                self.render_text_bg_layer(bg_idx, y, vram, pram, row_start, backdrop);
+        if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            return;
+        }
+
+        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
+
+        if bg_enables.iter().any(|&e| e) {
+            let mut layers: [(u16, usize, bool); 3] = [(0, 0, false); 3];
+            let mut count = 0;
+            for (i, &bg_idx) in [0usize, 1, 2].iter().enumerate() {
+                if bg_enables[i] {
+                    layers[count] = (self.bg_cnt[bg_idx] & 3, bg_idx, bg_idx == 2);
+                    count += 1;
+                }
+            }
+            layers[..count].sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+            for &(prio, bg_idx, is_affine) in &layers[..count] {
+                if is_affine {
+                    self.render_affine_bg_layer(
+                        bg_idx,
+                        0,
+                        vram,
+                        pram,
+                        row_start,
+                        prio as u8,
+                        &mut pixel_priority,
+                    );
+                } else {
+                    self.render_text_bg_layer_with_priority(
+                        bg_idx,
+                        y,
+                        vram,
+                        pram,
+                        row_start,
+                        backdrop,
+                        prio as u8,
+                        &mut pixel_priority,
+                    );
+                }
             }
         }
+
+        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
     }
 
     /// Mode 3: 240×160 direct 15-bit bitmap starting at the base of
@@ -895,20 +947,26 @@ impl Ppu {
     /// the scanline is filled with the backdrop color (palette entry 0
     /// in PRAM) per GBATek — every pixel is "no BG/OBJ pixel drawn", so
     /// the backdrop shows through.
-    fn render_mode3_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
-        if !self.bg2_enabled() {
+    #[allow(clippy::needless_range_loop)]
+    fn render_mode3_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
+        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        let bg2_prio = (self.bg_cnt[2] & 3) as u8;
+        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
+
+        if self.bg2_enabled() {
+            let line_byte_offset = (y as usize) * (SCREEN_WIDTH as usize) * 2;
+            for x in 0..(SCREEN_WIDTH as usize) {
+                let src = line_byte_offset + x * 2;
+                let bgr555 = u16::from_le_bytes([vram[src], vram[src + 1]]);
+                let dst = row_start + x * BYTES_PER_PIXEL;
+                color::write_pixel(&mut self.framebuffer, dst, bgr555);
+                pixel_priority[x] = bg2_prio;
+            }
+        } else {
             self.render_backdrop_scanline(y, pram);
-            return;
         }
-        let line_byte_offset = (y as usize) * (SCREEN_WIDTH as usize) * 2;
-        for x in 0..(SCREEN_WIDTH as usize) {
-            let src = line_byte_offset + x * 2;
-            // VRAM is at least 96 KB; mode 3 uses the first 240*160*2 =
-            // 76 800 bytes which always fits.
-            let bgr555 = u16::from_le_bytes([vram[src], vram[src + 1]]);
-            let dst = ((y as usize) * (SCREEN_WIDTH as usize) + x) * BYTES_PER_PIXEL;
-            color::write_pixel(&mut self.framebuffer, dst, bgr555);
-        }
+
+        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
     }
 
     /// Mode 4: 240×160 8-bit paletted bitmap. Each byte in VRAM is a
@@ -921,44 +979,80 @@ impl Ppu {
     /// - Frame 1: 0x0600A000 - 0x060135FF (38,400 bytes)
     ///
     /// DISPCNT bit 4 selects the displayed frame.
-    fn render_mode4_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8]) {
-        if !self.bg2_enabled() {
+    #[allow(clippy::needless_range_loop)]
+    fn render_mode4_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
+        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        let bg2_prio = (self.bg_cnt[2] & 3) as u8;
+        let mut pixel_priority = [4u8; SCREEN_WIDTH as usize];
+
+        if self.bg2_enabled() {
+            let backdrop = self.backdrop_bgr555(pram);
+            let frame_base = if self.frame_select() {
+                0xA000usize
+            } else {
+                0x0000usize
+            };
+
+            let line_byte_offset = frame_base + (y as usize) * (SCREEN_WIDTH as usize);
+
+            for x in 0..(SCREEN_WIDTH as usize) {
+                let src = line_byte_offset + x;
+                let pal_index = if src < vram.len() { vram[src] } else { 0 };
+
+                let bgr555 = if pal_index == 0 {
+                    backdrop
+                } else {
+                    let pal_offset = (pal_index as usize) * 2;
+                    if pal_offset + 1 < pram.len() {
+                        u16::from_le_bytes([pram[pal_offset], pram[pal_offset + 1]])
+                    } else {
+                        backdrop
+                    }
+                };
+
+                let dst = row_start + x * BYTES_PER_PIXEL;
+                color::write_pixel(&mut self.framebuffer, dst, bgr555);
+                // All bitmap pixels have BG2's priority.
+                pixel_priority[x] = bg2_prio;
+            }
+        } else {
             self.render_backdrop_scanline(y, pram);
+        }
+
+        self.overlay_obj_pixels(y, vram, pram, oam, row_start, &pixel_priority);
+    }
+
+    /// Overlay OBJ pixels on top of the BG-composited framebuffer row.
+    /// An OBJ pixel with priority P draws on top of any BG pixel with
+    /// priority >= P (lower number = higher priority; OBJ wins at same level).
+    #[allow(clippy::needless_range_loop)]
+    fn overlay_obj_pixels(
+        &mut self,
+        y: u32,
+        vram: &[u8],
+        pram: &[u8],
+        oam: &[u8],
+        row_start: usize,
+        pixel_priority: &[u8; SCREEN_WIDTH as usize],
+    ) {
+        if self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
             return;
         }
 
-        let backdrop = self.backdrop_bgr555(pram);
-
-        // Frame base address: Frame 0 at 0x0000, Frame 1 at 0xA000
-        let frame_base = if self.frame_select() {
-            0xA000usize
-        } else {
-            0x0000usize
-        };
-
-        let line_byte_offset = frame_base + (y as usize) * (SCREEN_WIDTH as usize);
-        let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        let mapping_1d = self.dispcnt & dispcnt::OBJ_MAPPING_1D != 0;
+        let bitmap_mode = self.mode() >= 3;
+        let obj_scanline = obj::render_obj_scanline(y, oam, vram, pram, mapping_1d, bitmap_mode);
 
         for x in 0..(SCREEN_WIDTH as usize) {
-            let src = line_byte_offset + x;
-            let pal_index = if src < vram.len() { vram[src] } else { 0 };
-
-            // Palette index 0 uses palette entry 0 (the backdrop color)
-            let bgr555 = if pal_index == 0 {
-                backdrop
-            } else {
-                // Each palette entry is 2 bytes (BGR555) in PRAM
-                let pal_offset = (pal_index as usize) * 2;
-                if pal_offset + 1 < pram.len() {
-                    u16::from_le_bytes([pram[pal_offset], pram[pal_offset + 1]])
-                } else {
-                    backdrop
-                }
-            };
-
-            let dst = row_start + x * BYTES_PER_PIXEL;
-            color::write_pixel(&mut self.framebuffer, dst, bgr555);
+            let px = &obj_scanline.pixels[x];
+            if px.opaque && px.priority <= pixel_priority[x] {
+                let dst = row_start + x * BYTES_PER_PIXEL;
+                color::write_pixel(&mut self.framebuffer, dst, px.color);
+            }
         }
+
+        // TODO: Wire obj_scanline.obj_window into the PPU window system
+        // once full windowing (WIN0/WIN1/WINOBJ) is implemented.
     }
 
     /// Backdrop fill — uses palette entry 0 from PRAM. Used for modes
@@ -1003,6 +1097,19 @@ mod tests {
         vec![0; 1024]
     }
 
+    fn make_oam() -> Vec<u8> {
+        // All OBJs hidden (obj_mode=2 in attr0 bits 8-9) to avoid ghost sprites.
+        let mut oam = vec![0u8; 1024];
+        for i in 0..128 {
+            let offset = i * 8;
+            // attr0: set bits 8-9 to 0b10 (hidden mode)
+            let attr0 = 0x0200u16;
+            oam[offset] = attr0 as u8;
+            oam[offset + 1] = (attr0 >> 8) as u8;
+        }
+        oam
+    }
+
     #[test]
     fn new_ppu_has_zeroed_state_and_blank_framebuffer() {
         let ppu = Ppu::new();
@@ -1037,7 +1144,7 @@ mod tests {
     fn step_advances_line_cycle_within_scanline() {
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
-        ppu.step(500, &mut ic, &make_vram(), &make_pram());
+        ppu.step(500, &mut ic, &make_vram(), &make_pram(), &make_oam());
         assert_eq!(ppu.read_vcount(), 0);
         // No H-Blank yet at cycle 500.
         assert_eq!(ppu.read_dispstat() & dispstat::HBLANK_FLAG, 0);
@@ -1047,9 +1154,15 @@ mod tests {
     fn hblank_flag_sets_at_cycle_1006() {
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
-        ppu.step(HBLANK_START_CYCLE - 1, &mut ic, &make_vram(), &make_pram());
+        ppu.step(
+            HBLANK_START_CYCLE - 1,
+            &mut ic,
+            &make_vram(),
+            &make_pram(),
+            &make_oam(),
+        );
         assert_eq!(ppu.read_dispstat() & dispstat::HBLANK_FLAG, 0);
-        ppu.step(1, &mut ic, &make_vram(), &make_pram());
+        ppu.step(1, &mut ic, &make_vram(), &make_pram(), &make_oam());
         assert_ne!(ppu.read_dispstat() & dispstat::HBLANK_FLAG, 0);
     }
 
@@ -1057,7 +1170,13 @@ mod tests {
     fn hblank_flag_clears_when_scanline_advances() {
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
-        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &make_vram(), &make_pram());
+        ppu.step(
+            CYCLES_PER_SCANLINE,
+            &mut ic,
+            &make_vram(),
+            &make_pram(),
+            &make_oam(),
+        );
         assert_eq!(ppu.read_vcount(), 1);
         // After crossing the scanline boundary the H-Blank flag is gone.
         assert_eq!(ppu.read_dispstat() & dispstat::HBLANK_FLAG, 0);
@@ -1068,12 +1187,24 @@ mod tests {
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         // Without H-Blank IRQ enable bit, no IRQ should be raised.
-        ppu.step(HBLANK_START_CYCLE, &mut ic, &make_vram(), &make_pram());
+        ppu.step(
+            HBLANK_START_CYCLE,
+            &mut ic,
+            &make_vram(),
+            &make_pram(),
+            &make_oam(),
+        );
         assert_eq!(ic.if_flags & irq_bits::HBLANK, 0);
 
         // Enable + advance to next H-Blank → IRQ flagged.
         ppu.write_dispstat(dispstat::HBLANK_IRQ_ENABLE, &mut ic);
-        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &make_vram(), &make_pram());
+        ppu.step(
+            CYCLES_PER_SCANLINE,
+            &mut ic,
+            &make_vram(),
+            &make_pram(),
+            &make_oam(),
+        );
         assert_ne!(ic.if_flags & irq_bits::HBLANK, 0);
     }
 
@@ -1085,10 +1216,10 @@ mod tests {
         let pram = make_pram();
         // Step up to the *start* of scanline 160 (V-Blank).
         let cycles = CYCLES_PER_SCANLINE * VISIBLE_SCANLINES;
-        ppu.step(cycles, &mut ic, &vram, &pram);
+        ppu.step(cycles, &mut ic, &vram, &pram, &make_oam());
         assert_eq!(ppu.read_vcount(), 160);
         // Step through H-Blank of scanline 160 — no visible H-Blank.
-        let events = ppu.step(HBLANK_START_CYCLE, &mut ic, &vram, &pram);
+        let events = ppu.step(HBLANK_START_CYCLE, &mut ic, &vram, &pram, &make_oam());
         assert_eq!(events.hblank_starts, 0);
     }
 
@@ -1106,6 +1237,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
         assert_eq!(events.hblank_starts, VISIBLE_SCANLINES);
         assert_eq!(events.vblank_starts, 1);
@@ -1123,6 +1255,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
         assert_eq!(events.vblank_starts, 2);
         assert_eq!(events.frames_completed, 2);
@@ -1136,7 +1269,7 @@ mod tests {
         let vram = make_vram();
         let pram = make_pram();
         let cycles = CYCLES_PER_SCANLINE * VISIBLE_SCANLINES;
-        let events = ppu.step(cycles, &mut ic, &vram, &pram);
+        let events = ppu.step(cycles, &mut ic, &vram, &pram, &make_oam());
         assert_eq!(ppu.read_vcount(), 160);
         assert_ne!(ppu.read_dispstat() & dispstat::VBLANK_FLAG, 0);
         assert_eq!(events.vblank_starts, 1);
@@ -1150,7 +1283,7 @@ mod tests {
         let mut ic = make_ic();
         ppu.write_dispstat(dispstat::VBLANK_IRQ_ENABLE, &mut ic);
         let cycles = CYCLES_PER_SCANLINE * VISIBLE_SCANLINES;
-        ppu.step(cycles, &mut ic, &make_vram(), &make_pram());
+        ppu.step(cycles, &mut ic, &make_vram(), &make_pram(), &make_oam());
         assert_ne!(ic.if_flags & irq_bits::VBLANK, 0);
     }
 
@@ -1162,7 +1295,7 @@ mod tests {
         let pram = make_pram();
         // Advance to the start of the final scanline (227).
         let cycles = CYCLES_PER_SCANLINE * (VBLANK_LAST_SCANLINE + 1);
-        ppu.step(cycles, &mut ic, &vram, &pram);
+        ppu.step(cycles, &mut ic, &vram, &pram, &make_oam());
         assert_eq!(ppu.read_vcount() as u32, VBLANK_LAST_SCANLINE + 1);
         assert_eq!(ppu.read_dispstat() & dispstat::VBLANK_FLAG, 0);
     }
@@ -1174,7 +1307,7 @@ mod tests {
         let vram = make_vram();
         let pram = make_pram();
         let total = CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME;
-        ppu.step(total, &mut ic, &vram, &pram);
+        ppu.step(total, &mut ic, &vram, &pram, &make_oam());
         assert_eq!(ppu.read_vcount(), 0);
         assert!(ppu.frame_ready());
         ppu.clear_frame_ready();
@@ -1210,7 +1343,13 @@ mod tests {
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         // Step to scanline 7.
-        ppu.step(CYCLES_PER_SCANLINE * 7, &mut ic, &make_vram(), &make_pram());
+        ppu.step(
+            CYCLES_PER_SCANLINE * 7,
+            &mut ic,
+            &make_vram(),
+            &make_pram(),
+            &make_oam(),
+        );
         assert_eq!(ppu.read_vcount(), 7);
         // Initial match flag is low (VCOUNT=7, LYC=0). Now enable VCount
         // IRQ and write LYC=7 — IRQ must fire on the rising edge of
@@ -1228,12 +1367,24 @@ mod tests {
         // LYC = 5, enable V-Count IRQ.
         ppu.write_dispstat(dispstat::VCOUNT_IRQ_ENABLE | (5 << 8), &mut ic);
         // Step to scanline 5.
-        ppu.step(CYCLES_PER_SCANLINE * 5, &mut ic, &make_vram(), &make_pram());
+        ppu.step(
+            CYCLES_PER_SCANLINE * 5,
+            &mut ic,
+            &make_vram(),
+            &make_pram(),
+            &make_oam(),
+        );
         assert_eq!(ppu.read_vcount(), 5);
         assert_ne!(ppu.read_dispstat() & dispstat::VCOUNT_FLAG, 0);
         assert_ne!(ic.if_flags & irq_bits::VCOUNT, 0);
         // Advance one more line — flag clears.
-        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &make_vram(), &make_pram());
+        ppu.step(
+            CYCLES_PER_SCANLINE,
+            &mut ic,
+            &make_vram(),
+            &make_pram(),
+            &make_oam(),
+        );
         assert_eq!(ppu.read_vcount(), 6);
         assert_eq!(ppu.read_dispstat() & dispstat::VCOUNT_FLAG, 0);
     }
@@ -1258,6 +1409,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
         // Sample first pixel of scanline 0 — should be pure red.
         let fb = ppu.framebuffer();
@@ -1291,6 +1443,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
         assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
     }
@@ -1308,6 +1461,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
         // Every pixel should be white.
         assert!(ppu.framebuffer().iter().all(|&b| b == 0xFF));
@@ -1329,6 +1483,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
         assert_eq!(&ppu.framebuffer()[0..3], &[0, 0, 0xFF]);
     }
@@ -1361,6 +1516,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // Assert: top-left output pixel should come from tile data, not backdrop.
@@ -1393,6 +1549,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // With H-flip set, source pixel 7 appears at output x=0.
@@ -1424,6 +1581,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // With V-flip set, source row 7 appears at output y=0.
@@ -1447,6 +1605,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
     }
 
@@ -1530,6 +1689,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // First pixel should be green (RGB888: 0, 255, 0).
@@ -1559,6 +1719,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // First pixel should be red (RGB888: 255, 0, 0).
@@ -1588,6 +1749,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // First pixel should be backdrop blue (RGB888: 0, 0, 255).
@@ -1614,6 +1776,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // First pixel should be green (RGB888: 0, 255, 0).
@@ -1645,6 +1808,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // First pixel should be from frame 1, which is green (RGB888: 0, 255, 0).
@@ -1680,6 +1844,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // First pixel = green from BG1.
@@ -1725,6 +1890,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // BG1 has lower priority number = on top, so pixel should be green.
@@ -1767,6 +1933,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // BG0 is transparent → BG1's red shows through.
@@ -1807,6 +1974,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // Equal priority: BG0 (lower number) wins → red.
@@ -1852,6 +2020,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // Internal refs should have been latched from the register values.
@@ -1882,9 +2051,10 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
         // Run 10 scanlines (each increments internal refs by PB/PD).
-        ppu.step(CYCLES_PER_SCANLINE * 10, &mut ic, &vram, &pram);
+        ppu.step(CYCLES_PER_SCANLINE * 10, &mut ic, &vram, &pram, &make_oam());
 
         let aff = ppu.bg_affine(0).unwrap();
         // After 10 scanlines: internal_x += PB*10 = 0x0010*10 = 0x00A0
@@ -1969,6 +2139,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // Pixel (0,0) should be green (from tile 1 at map 0,0).
@@ -2014,6 +2185,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // Should show backdrop (red), not tile color.
@@ -2061,6 +2233,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // Pixel (0,0) maps to texture (200, 0) which is outside 128x128.
@@ -2109,6 +2282,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // Texture x = 128 wraps to 0 in a 128-pixel map → should see tile.
@@ -2174,6 +2348,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // BG3 has priority 0 (on top), BG2 has priority 1 (behind).
@@ -2254,6 +2429,7 @@ mod tests {
             &mut ic,
             &vram,
             &pram,
+            &make_oam(),
         );
 
         // BG2 (priority 0, affine) should be on top of BG0 (priority 1, text).
@@ -2262,6 +2438,181 @@ mod tests {
             &ppu.framebuffer()[0..3],
             &[0, 0xFF, 0],
             "Mode 1: BG2 affine (priority 0) on top of BG0 text (priority 1)"
+        );
+    }
+
+    /// Helper to set up a visible OBJ in OAM at position (x, y) with given tile
+    /// and priority. Uses 4bpp, shape=0 size=0 (8x8), 1D mapping.
+    fn setup_obj_in_oam(oam: &mut [u8], obj_idx: usize, x: u16, y: u8, tile: u16, priority: u8) {
+        let base = obj_idx * 8;
+        let attr0 = y as u16; // normal mode, 4bpp, shape=0
+        let attr1 = x & 0x1FF; // size=0 (8x8)
+        let attr2 = (tile & 0x3FF) | ((priority as u16 & 3) << 10);
+        oam[base] = attr0 as u8;
+        oam[base + 1] = (attr0 >> 8) as u8;
+        oam[base + 2] = attr1 as u8;
+        oam[base + 3] = (attr1 >> 8) as u8;
+        oam[base + 4] = attr2 as u8;
+        oam[base + 5] = (attr2 >> 8) as u8;
+    }
+
+    #[test]
+    fn obj_renders_when_enabled_in_mode0() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+        let mut oam = make_oam();
+
+        // Enable mode 0 + OBJ + 1D mapping.
+        ppu.write_dispcnt(dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        // Place OBJ 0 at (100, 0), tile 1, priority 0.
+        setup_obj_in_oam(&mut oam, 0, 100, 0, 1, 0);
+
+        // Fill OBJ tile 1 in VRAM (4bpp at OBJ base 0x10000).
+        let tile_base = 0x1_0000 + 32;
+        let mut vram = vram;
+        for byte in &mut vram[tile_base..tile_base + 32] {
+            *byte = 0x11; // palette index 1 in both nibbles
+        }
+
+        // Set OBJ palette color 1 (at PRAM offset 0x200 + 1*2).
+        let mut pram = pram;
+        pram[0x202] = 0x1F; // red (BGR555: 0x001F)
+        pram[0x203] = 0x00;
+
+        // Step one full frame.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // Check pixel at (100, 0) — should be red.
+        let dst = 100 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0xFF, 0, 0],
+            "OBJ should render red pixel at x=100"
+        );
+    }
+
+    #[test]
+    fn obj_disabled_does_not_render() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        // Enable mode 0 with 1D mapping but NO OBJ_ENABLE.
+        ppu.write_dispcnt(dispcnt::OBJ_MAPPING_1D);
+
+        setup_obj_in_oam(&mut oam, 0, 100, 0, 1, 0);
+        let tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[tile_base..tile_base + 32] {
+            *byte = 0x11;
+        }
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // Pixel at (100, 0) should be backdrop (black = 0,0,0).
+        let dst = 100 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0, 0, 0],
+            "OBJ should not render when OBJ_ENABLE is off"
+        );
+    }
+
+    #[test]
+    fn obj_priority_compositing_with_bg() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        // Mode 0, enable BG0 + OBJ + 1D mapping.
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        // BG0: charblock 0, screenblock 8, priority 1.
+        // BGCNT: priority=1, charblock=0, screenblock=8
+        let bgcnt = 1 | (8 << 8); // prio=1, screenblock=8
+        ppu.write_bg_cnt(0, bgcnt);
+
+        // Fill BG0 tile 1 (charblock 0) with palette index 2 (green).
+        let tile_base = 32; // tile 1
+        for byte in &mut vram[tile_base..tile_base + 32] {
+            *byte = 0x22;
+        }
+        // Screenblock 8 (offset 0x4000): set first tile map entry to tile 1.
+        let sb_base = 8 * 0x800;
+        vram[sb_base] = 1; // tile_id = 1
+        vram[sb_base + 1] = 0; // no flip, palette bank 0
+
+        // Set BG palette color 2 at PRAM offset 2*2=4.
+        pram[4] = 0xE0; // green (BGR555: 0x03E0)
+        pram[5] = 0x03;
+
+        // OBJ at (0, 0), tile 1, priority 0 (higher than BG0's priority 1).
+        setup_obj_in_oam(&mut oam, 0, 0, 0, 1, 0);
+        let obj_tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11; // palette index 1
+        }
+        pram[0x202] = 0x1F; // red (BGR555: 0x001F)
+        pram[0x203] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // OBJ prio 0 should be on top of BG0 prio 1 → red pixel.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0xFF, 0, 0],
+            "OBJ priority 0 should draw on top of BG priority 1"
+        );
+
+        // Now test OBJ with lower priority than BG.
+        let mut ppu2 = Ppu::new();
+        ppu2.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+        // BG0 at priority 0, same charblock/screenblock.
+        let bgcnt2 = 8 << 8; // prio=0, screenblock=8
+        ppu2.write_bg_cnt(0, bgcnt2);
+
+        // OBJ at priority 2 (lower than BG0 priority 0).
+        setup_obj_in_oam(&mut oam, 0, 0, 0, 1, 2);
+
+        ppu2.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        // BG0 prio 0 should be on top of OBJ prio 2 → green pixel.
+        assert_eq!(
+            &ppu2.framebuffer()[0..3],
+            &[0, 0xFF, 0],
+            "BG priority 0 should be on top of OBJ priority 2"
         );
     }
 }
