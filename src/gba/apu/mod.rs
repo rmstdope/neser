@@ -19,6 +19,12 @@
 //!
 //! Frame Sequencer: 512 Hz → one step every 32 768 GBA cycles.
 
+pub mod channel1;
+pub mod channel2;
+pub mod channel3;
+pub mod channel4;
+pub mod fifo;
+
 #[allow(clippy::module_inception)]
 pub mod apu;
 pub use apu::Apu;

@@ -1,0 +1,202 @@
+use super::apu::DUTY_TABLE;
+
+// ── CH1 — Pulse + Sweep ───────────────────────────────────────────────────────
+
+/// Channel 1: pulse wave with frequency sweep.
+#[derive(Debug, Clone, Default)]
+pub struct Channel1 {
+    // Sweep (SOUND1CNT_L)
+    pub sweep_period: u8,
+    pub sweep_negate: bool,
+    pub sweep_shift: u8,
+
+    // Tone (SOUND1CNT_H)
+    pub duty: u8,
+    pub length_counter: u16,
+    pub init_volume: u8,
+    pub env_add: bool,
+    pub env_period: u8,
+
+    // Frequency + control (SOUND1CNT_X)
+    pub freq: u16,
+    pub length_en: bool,
+
+    // Internal state
+    pub active: bool,
+    pub dac_on: bool,
+    pub duty_pos: u8,
+    pub freq_timer: u32,
+    pub volume: u8,
+    pub env_timer: u8,
+    pub sweep_timer: u8,
+    /// Shadow copy of frequency used by sweep.
+    pub sweep_shadow: u16,
+    pub sweep_enabled: bool,
+}
+
+impl Channel1 {
+    /// Analogue output in `[0.0, 1.0]`; 0 when inactive.
+    pub fn output(&self) -> f32 {
+        if !self.active || !self.dac_on {
+            return 0.0;
+        }
+        let bit = DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
+        if bit == 1 {
+            self.volume as f32 / 15.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Advance channel by `cycles` GBA cycles (frequency timer only).
+    pub fn tick(&mut self, cycles: u32) {
+        if !self.active {
+            return;
+        }
+        let period = (2048_u32.wrapping_sub(self.freq as u32)) * 16;
+        if period == 0 {
+            return;
+        }
+        let mut rem = cycles;
+        while rem > 0 {
+            if self.freq_timer == 0 {
+                self.freq_timer = period;
+            }
+            let advance = rem.min(self.freq_timer);
+            self.freq_timer -= advance;
+            rem -= advance;
+            if self.freq_timer == 0 {
+                self.duty_pos = (self.duty_pos + 1) & 7;
+                self.freq_timer = period;
+            }
+        }
+    }
+
+    /// Clock the length counter (FS steps 0, 2, 4, 6).
+    pub fn clock_length(&mut self) {
+        if !self.length_en || self.length_counter == 0 {
+            return;
+        }
+        self.length_counter -= 1;
+        if self.length_counter == 0 {
+            self.active = false;
+        }
+    }
+
+    /// Clock the volume envelope (FS step 7).
+    pub fn clock_envelope(&mut self) {
+        if self.env_period == 0 {
+            return;
+        }
+        if self.env_timer > 0 {
+            self.env_timer -= 1;
+        }
+        if self.env_timer == 0 {
+            self.env_timer = self.env_period;
+            if self.env_add && self.volume < 15 {
+                self.volume += 1;
+            } else if !self.env_add && self.volume > 0 {
+                self.volume -= 1;
+            }
+        }
+    }
+
+    /// Clock the frequency sweep (FS steps 2 and 6).
+    pub fn clock_sweep(&mut self) {
+        if self.sweep_timer > 0 {
+            self.sweep_timer -= 1;
+        }
+        if self.sweep_timer == 0 {
+            self.sweep_timer = if self.sweep_period > 0 {
+                self.sweep_period
+            } else {
+                8
+            };
+            if self.sweep_enabled && self.sweep_period > 0 {
+                let new_freq = self.calc_sweep();
+                if new_freq > 2047 {
+                    self.active = false;
+                } else if self.sweep_shift > 0 {
+                    self.sweep_shadow = new_freq;
+                    self.freq = new_freq;
+                    // Overflow check with new shadow.
+                    if self.calc_sweep() > 2047 {
+                        self.active = false;
+                    }
+                }
+            }
+        }
+    }
+
+    fn calc_sweep(&self) -> u16 {
+        if self.sweep_negate {
+            self.sweep_shadow
+                .wrapping_sub(self.sweep_shadow >> self.sweep_shift)
+        } else {
+            self.sweep_shadow
+                .wrapping_add(self.sweep_shadow >> self.sweep_shift)
+        }
+    }
+
+    /// Trigger (write 1 to reset/trigger bit).
+    pub fn trigger(&mut self) {
+        self.active = self.dac_on;
+        if self.length_counter == 0 {
+            self.length_counter = 64;
+        }
+        let period = (2048_u32.wrapping_sub(self.freq as u32)) * 16;
+        self.freq_timer = period;
+        self.volume = self.init_volume;
+        self.env_timer = self.env_period;
+        // Sweep initialisation.
+        self.sweep_shadow = self.freq;
+        self.sweep_timer = if self.sweep_period > 0 {
+            self.sweep_period
+        } else {
+            8
+        };
+        self.sweep_enabled = self.sweep_period > 0 || self.sweep_shift > 0;
+        // Overflow check on trigger.
+        if self.sweep_enabled && self.sweep_shift > 0 && self.calc_sweep() > 2047 {
+            self.active = false;
+        }
+    }
+
+    // ── Register writes ───────────────────────────────────────────────────
+
+    /// SOUND1CNT_L: sweep register (bits 6-4 period, bit 3 negate, bits 2-0 shift).
+    pub fn write_cnt_l(&mut self, val: u16) {
+        self.sweep_shift = (val & 0x07) as u8;
+        self.sweep_negate = (val & 0x08) != 0;
+        self.sweep_period = ((val >> 4) & 0x07) as u8;
+    }
+
+    /// SOUND1CNT_H: tone / envelope (bits 5-0 length, 7-6 duty, 10-8 env period,
+    /// 11 env add, 15-12 init volume).
+    pub fn write_cnt_h(&mut self, val: u16) {
+        self.length_counter = 64 - (val & 0x3F);
+        self.duty = ((val >> 6) & 0x03) as u8;
+        self.env_period = ((val >> 8) & 0x07) as u8;
+        self.env_add = (val & 0x0800) != 0;
+        self.init_volume = ((val >> 12) & 0x0F) as u8;
+        self.dac_on = (val & 0xF800) != 0;
+        if !self.dac_on {
+            self.active = false;
+        }
+    }
+
+    /// SOUND1CNT_X: frequency and control (bits 10-0 freq, 14 length-enable,
+    /// 15 trigger/reset — write-only).
+    pub fn write_cnt_x(&mut self, val: u16) {
+        self.freq = val & 0x7FF;
+        self.length_en = (val & 0x4000) != 0;
+        if val & 0x8000 != 0 {
+            self.trigger();
+        }
+    }
+
+    /// Power-off reset.
+    pub fn power_off(&mut self) {
+        *self = Self::default();
+    }
+}
