@@ -140,6 +140,8 @@ pub mod dispstat {
 
 /// I/O register addresses owned by the PPU.
 pub const REG_DISPCNT: u32 = 0x0400_0000;
+/// Green Swap (0x0400_0002, R/W). Bit 0: swap green between adjacent pixel pairs.
+pub const REG_GREEN_SWAP: u32 = 0x0400_0002;
 pub const REG_BG0CNT: u32 = 0x0400_0008;
 pub const REG_BG1CNT: u32 = 0x0400_000A;
 pub const REG_BG2CNT: u32 = 0x0400_000C;
@@ -258,6 +260,9 @@ pub struct Ppu {
     /// `WINOUT` (0x0400_004A): layer enable for outside all windows (bits 0-5)
     /// and inside OBJ Window (bits 8-13).
     winout: u16,
+    /// Green Swap (0x0400_0002, bit 0). When set, swaps the green channel
+    /// between each pair of adjacent pixels (even/odd x) in the final output.
+    green_swap: bool,
     /// `BLDCNT` (0x0400_0050): color special effect control.
     /// Bits 0-5: 1st target selection (BG0-BG3, OBJ, Backdrop).
     /// Bits 6-7: effect mode (0=None, 1=Alpha, 2=Brighten, 3=Darken).
@@ -368,6 +373,7 @@ impl Ppu {
             win_v: [0; 2],
             winin: 0,
             winout: 0,
+            green_swap: false,
             bldcnt: 0,
             bldalpha: 0,
             bldy: 0,
@@ -387,6 +393,17 @@ impl Ppu {
     /// Write `DISPCNT`.
     pub fn write_dispcnt(&mut self, value: u16) {
         self.dispcnt = value;
+    }
+
+    /// Read Green Swap register (0x0400_0002). Returns bit 0 only.
+    pub fn read_green_swap(&self) -> u16 {
+        self.green_swap as u16
+    }
+
+    /// Write Green Swap register (0x0400_0002). Only bit 0 is used;
+    /// bits 1–15 are ignored per GBATek.
+    pub fn write_green_swap(&mut self, value: u16) {
+        self.green_swap = value & 1 != 0;
     }
 
     /// Read `DISPSTAT` — returns the live status bits OR'd with the
@@ -781,6 +798,16 @@ impl Ppu {
             4 => self.render_mode4_scanline(y, vram, pram, oam),
             5 => self.render_mode5_scanline(y, vram, pram, oam),
             _ => self.render_backdrop_scanline(y, pram),
+        }
+        // Green Swap (0x0400_0002): exchange the green channel between
+        // each pair of adjacent pixels in the composited scanline output.
+        if self.green_swap {
+            let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+            for x in (0..SCREEN_WIDTH as usize).step_by(2) {
+                let i0 = row_start + x * BYTES_PER_PIXEL + 1;
+                let i1 = row_start + (x + 1) * BYTES_PER_PIXEL + 1;
+                self.framebuffer.swap(i0, i1);
+            }
         }
     }
 
@@ -1210,8 +1237,8 @@ impl Ppu {
 
         // Pre-decode color effect parameters.
         let bld_mode = (self.bldcnt >> 6) & 3;
-        let first_target = (self.bldcnt & 0x3F) as u8;
-        let second_target = ((self.bldcnt >> 8) & 0x3F) as u8;
+        let first_target_mask = (self.bldcnt & 0x3F) as u8;
+        let second_target_mask = ((self.bldcnt >> 8) & 0x3F) as u8;
         let eva = ((self.bldalpha & 0x1F) as u8).min(16);
         let evb = (((self.bldalpha >> 8) & 0x1F) as u8).min(16);
         let evy = self.bldy.min(16);
@@ -1242,7 +1269,7 @@ impl Ppu {
             let mut top_sort: u16 = 0xFFFF; // start at backdrop priority
             let mut top_layer: u8 = 5; // backdrop layer index
             let mut top_color: u16 = backdrop;
-            let mut top_semi_t: bool = false;
+            let mut top_semi_transparent = false;
 
             let mut sec_sort: u16 = 0xFFFF; // backdrop as default second
             let mut sec_layer: u8 = 5;
@@ -1251,15 +1278,15 @@ impl Ppu {
             // Insert OBJ candidate.
             if obj_opaque && (layer_mask & (1 << 4) != 0) {
                 let px = obj_px.unwrap();
-                let sk = (px.priority as u16) * SORT_KEY_PRIORITY_SPACING;
+                let sort_key = (px.priority as u16) * SORT_KEY_PRIORITY_SPACING;
                 // OBJ sort_key is always < 0xFFFF, so it always beats backdrop.
                 sec_sort = top_sort;
                 sec_layer = top_layer;
                 sec_color = top_color;
-                top_sort = sk;
+                top_sort = sort_key;
                 top_layer = 4;
                 top_color = px.color;
-                top_semi_t = px.semi_transparent;
+                top_semi_transparent = px.semi_transparent;
             }
 
             // Insert BG candidates.
@@ -1270,19 +1297,19 @@ impl Ppu {
                 if buf[x] == TRANSPARENT {
                     continue;
                 }
-                let sk = (bg_prio as u16) * SORT_KEY_PRIORITY_SPACING
+                let sort_key = (bg_prio as u16) * SORT_KEY_PRIORITY_SPACING
                     + SORT_KEY_BG_OFFSET
                     + (bg_idx as u16);
-                if sk < top_sort {
+                if sort_key < top_sort {
                     sec_sort = top_sort;
                     sec_layer = top_layer;
                     sec_color = top_color;
-                    top_sort = sk;
+                    top_sort = sort_key;
                     top_layer = bg_idx as u8;
                     top_color = buf[x];
-                    top_semi_t = false;
-                } else if sk < sec_sort {
-                    sec_sort = sk;
+                    top_semi_transparent = false;
+                } else if sort_key < sec_sort {
+                    sec_sort = sort_key;
                     sec_layer = bg_idx as u8;
                     sec_color = buf[x];
                 }
@@ -1291,13 +1318,13 @@ impl Ppu {
             // Apply color special effects.
             //
             // Layer indices: 0-3 = BG0-BG3, 4 = OBJ, 5 = Backdrop.
-            // `first_target` bit k = layer k is a 1st target.
-            // `second_target` bit k = layer k is a 2nd target.
-            let final_color = if top_semi_t && sfx_enabled {
+            // `first_target_mask` bit k = layer k is a 1st target.
+            // `second_target_mask` bit k = layer k is a 2nd target.
+            let final_color = if top_semi_transparent && sfx_enabled {
                 // Semi-transparent OBJ always alpha-blends regardless of
                 // BLDCNT mode, treated as 1st target.  2nd target selection
                 // still comes from BLDCNT bits 8-13.
-                if (second_target >> sec_layer) & 1 != 0 {
+                if (second_target_mask >> sec_layer) & 1 != 0 {
                     alpha_blend_bgr555(top_color, sec_color, eva, evb)
                 } else {
                     // No valid 2nd target below — display at normal intensity.
@@ -1307,8 +1334,8 @@ impl Ppu {
                 match bld_mode {
                     1 => {
                         // Alpha blend: both 1st and 2nd targets must be selected.
-                        if (first_target >> top_layer) & 1 != 0
-                            && (second_target >> sec_layer) & 1 != 0
+                        if (first_target_mask >> top_layer) & 1 != 0
+                            && (second_target_mask >> sec_layer) & 1 != 0
                         {
                             alpha_blend_bgr555(top_color, sec_color, eva, evb)
                         } else {
@@ -1317,7 +1344,7 @@ impl Ppu {
                     }
                     2 => {
                         // Brightness increase.
-                        if (first_target >> top_layer) & 1 != 0 {
+                        if (first_target_mask >> top_layer) & 1 != 0 {
                             brighten_bgr555(top_color, evy)
                         } else {
                             top_color
@@ -1325,7 +1352,7 @@ impl Ppu {
                     }
                     3 => {
                         // Brightness decrease.
-                        if (first_target >> top_layer) & 1 != 0 {
+                        if (first_target_mask >> top_layer) & 1 != 0 {
                             darken_bgr555(top_color, evy)
                         } else {
                             top_color
@@ -1460,6 +1487,25 @@ mod tests {
             oam[offset + 1] = (attr0 >> 8) as u8;
         }
         oam
+    }
+
+    /// Step through one full frame (to latch state) then render scanline 0.
+    /// Mutates `ppu` in place so scanline 0 is freshly rendered in the framebuffer.
+    fn step_and_render_scanline0(
+        ppu: &mut Ppu,
+        ic: &mut InterruptController,
+        vram: &[u8],
+        pram: &[u8],
+        oam: &[u8],
+    ) {
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            ic,
+            vram,
+            pram,
+            oam,
+        );
+        ppu.step(CYCLES_PER_SCANLINE, ic, vram, pram, oam);
     }
 
     #[test]
@@ -3509,6 +3555,109 @@ mod tests {
         );
     }
 
+    // ── Green Swap (0x0400_0002) ──────────────────────────────────────────────
+
+    #[test]
+    fn green_swap_defaults_to_off() {
+        let ppu = Ppu::new();
+        assert_eq!(ppu.read_green_swap(), 0);
+    }
+
+    #[test]
+    fn green_swap_register_round_trips() {
+        let mut ppu = Ppu::new();
+        ppu.write_green_swap(1);
+        assert_eq!(ppu.read_green_swap(), 1);
+        ppu.write_green_swap(0);
+        assert_eq!(ppu.read_green_swap(), 0);
+    }
+
+    #[test]
+    fn green_swap_only_bit0_is_stored() {
+        let mut ppu = Ppu::new();
+        // Writing any value with bit 0 set should return 1.
+        ppu.write_green_swap(0xFFFF);
+        assert_eq!(ppu.read_green_swap(), 1);
+        // Writing a value with bit 0 clear should return 0.
+        ppu.write_green_swap(0xFFFE);
+        assert_eq!(ppu.read_green_swap(), 0);
+    }
+
+    #[test]
+    fn green_swap_swaps_green_channel_between_adjacent_pixels() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram(); // backdrop = black
+        let oam = make_oam();
+
+        // Mode 3 (direct color bitmap), BG2 enabled.
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        // Enable green swap.
+        ppu.write_green_swap(1);
+
+        // Pixel 0 (even): R=1, G=4, B=0 → BGR555 = (4<<5)|1 = 0x0081
+        let color_a: u16 = (4u16 << 5) | 1;
+        // Pixel 1 (odd):  R=2, G=8, B=0 → BGR555 = (8<<5)|2 = 0x0102
+        let color_b: u16 = (8u16 << 5) | 2;
+        vram[0] = color_a as u8;
+        vram[1] = (color_a >> 8) as u8;
+        vram[2] = color_b as u8;
+        vram[3] = (color_b >> 8) as u8;
+
+        step_and_render_scanline0(&mut ppu, &mut ic, &vram, &pram, &oam);
+
+        let fb = ppu.framebuffer();
+        let (r_a, g_a, b_a) = color::bgr555_to_rgb888(color_a);
+        let (r_b, g_b, b_b) = color::bgr555_to_rgb888(color_b);
+
+        // After green swap pixel 0 keeps R/B from color_a but gets G from pixel 1.
+        assert_eq!(fb[0], r_a, "pixel 0 R unchanged");
+        assert_eq!(fb[1], g_b, "pixel 0 G swapped from pixel 1");
+        assert_eq!(fb[2], b_a, "pixel 0 B unchanged");
+
+        // After green swap pixel 1 keeps R/B from color_b but gets G from pixel 0.
+        assert_eq!(fb[3], r_b, "pixel 1 R unchanged");
+        assert_eq!(fb[4], g_a, "pixel 1 G swapped from pixel 0");
+        assert_eq!(fb[5], b_b, "pixel 1 B unchanged");
+    }
+
+    #[test]
+    fn green_swap_disabled_leaves_pixels_unchanged() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+        let oam = make_oam();
+
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        // Green swap disabled (default).
+
+        let color_a: u16 = (4u16 << 5) | 1;
+        let color_b: u16 = (8u16 << 5) | 2;
+        vram[0] = color_a as u8;
+        vram[1] = (color_a >> 8) as u8;
+        vram[2] = color_b as u8;
+        vram[3] = (color_b >> 8) as u8;
+
+        step_and_render_scanline0(&mut ppu, &mut ic, &vram, &pram, &oam);
+
+        let fb = ppu.framebuffer();
+        let (r_a, g_a, b_a) = color::bgr555_to_rgb888(color_a);
+        let (r_b, g_b, b_b) = color::bgr555_to_rgb888(color_b);
+
+        // No swap: pixels retain their own channels.
+        assert_eq!(
+            &fb[0..3],
+            &[r_a, g_a, b_a],
+            "pixel 0 unchanged without swap"
+        );
+        assert_eq!(
+            &fb[3..6],
+            &[r_b, g_b, b_b],
+            "pixel 1 unchanged without swap"
+        );
+    }
     // ---- BLDCNT / BLDALPHA / BLDY register tests ----------------------------
 
     #[test]
