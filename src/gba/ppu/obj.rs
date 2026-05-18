@@ -73,6 +73,63 @@ fn obj_size(shape: u8, size: u8) -> (u32, u32) {
     }
 }
 
+/// Fetch the palette index for a single pixel within an OBJ sprite.
+///
+/// Given a pixel coordinate (`pixel_col`, `pixel_row`) in sprite-local space,
+/// looks up the tile data considering mapping mode and color depth.
+/// Returns the palette index (0 = transparent).
+fn fetch_obj_pixel(
+    tile_id: usize,
+    obj_width: u32,
+    pixel_col: u32,
+    pixel_row: u32,
+    is_8bpp: bool,
+    obj_mapping_1d: bool,
+    vram: &[u8],
+    obj_vram_base: usize,
+) -> usize {
+    let tile_col = pixel_col / 8;
+    let tile_row = pixel_row / 8;
+    let pixel_x = (pixel_col % 8) as usize;
+    let pixel_y = (pixel_row % 8) as usize;
+
+    let col_stride: u32 = if is_8bpp { 2 } else { 1 };
+    let tile_offset = if obj_mapping_1d {
+        let width_in_tiles = obj_width / 8;
+        let row_stride = width_in_tiles * col_stride;
+        tile_id + (tile_row * row_stride + tile_col * col_stride) as usize
+    } else {
+        tile_id + (tile_row as usize) * 32 + (tile_col * col_stride) as usize
+    };
+
+    if is_8bpp {
+        let addr = obj_vram_base + tile_offset * 32 + pixel_y * 8 + pixel_x;
+        vram.get(addr).copied().unwrap_or(0) as usize
+    } else {
+        let addr = obj_vram_base + tile_offset * 32 + pixel_y * 4 + pixel_x / 2;
+        let byte = vram.get(addr).copied().unwrap_or(0);
+        if pixel_x & 1 == 0 {
+            (byte & 0x0F) as usize
+        } else {
+            (byte >> 4) as usize
+        }
+    }
+}
+
+/// Read affine parameters (PA, PB, PC, PD) for a rotation group from OAM.
+///
+/// The 32 rotation groups are interleaved in OAM: for group `g`, the parameters
+/// are at byte offsets g*32+6 (PA), g*32+14 (PB), g*32+22 (PC), g*32+30 (PD).
+/// Each parameter is a signed 16-bit value in 8.8 fixed-point.
+fn read_affine_params(oam: &[u8], group: usize) -> (i16, i16, i16, i16) {
+    let base = group * 32;
+    let pa = i16::from_le_bytes([oam[base + 6], oam[base + 7]]);
+    let pb = i16::from_le_bytes([oam[base + 14], oam[base + 15]]);
+    let pc = i16::from_le_bytes([oam[base + 22], oam[base + 23]]);
+    let pd = i16::from_le_bytes([oam[base + 30], oam[base + 31]]);
+    (pa, pb, pc, pd)
+}
+
 /// Render all OBJs for a single scanline.
 ///
 /// - `y`: current scanline (0..160)
@@ -112,11 +169,8 @@ pub fn render_obj_scanline(
             continue;
         }
 
-        // Mode 1 = affine — skip for now (not implemented in this increment).
-        // Mode 3 = affine double-size — skip.
-        if obj_mode == 1 || obj_mode == 3 {
-            continue;
-        }
+        let is_affine = obj_mode == 1 || obj_mode == 3;
+        let is_double_size = obj_mode == 3;
 
         // GFX mode (attr0 bits 10-11).
         let gfx_mode = (attr0 >> 10) & 3;
@@ -141,6 +195,13 @@ pub fn render_obj_scanline(
             continue;
         }
 
+        // Bounding box: double-size affine uses 2× dimensions for rendering area.
+        let (bound_width, bound_height) = if is_double_size {
+            (obj_width * 2, obj_height * 2)
+        } else {
+            (obj_width, obj_height)
+        };
+
         // Y coordinate (attr0 bits 0-7), wraps at 256.
         let obj_y = (attr0 & 0xFF) as u32;
         // X coordinate (attr1 bits 0-8), sign-extended 9 bits.
@@ -149,15 +210,11 @@ pub fn render_obj_scanline(
             if raw >= 256 { raw - 512 } else { raw }
         };
 
-        // Check if this scanline intersects the sprite (wrapping Y at 256).
+        // Check if this scanline intersects the sprite bounding box (wrapping Y at 256).
         let rel_y = y.wrapping_sub(obj_y) & 0xFF;
-        if rel_y >= obj_height {
+        if rel_y >= bound_height {
             continue;
         }
-
-        // Flip flags (non-affine only).
-        let h_flip = (attr1 >> 12) & 1 != 0;
-        let v_flip = (attr1 >> 13) & 1 != 0;
 
         // Tile index (attr2 bits 0-9).
         let tile_id = (attr2 & 0x03FF) as usize;
@@ -166,98 +223,157 @@ pub fn render_obj_scanline(
         // Palette bank (attr2 bits 12-15), used in 4bpp mode.
         let palette_bank = ((attr2 >> 12) & 0xF) as usize;
 
-        // Apply vertical flip to the row within the sprite.
-        let sprite_row = if v_flip {
-            obj_height - 1 - rel_y
-        } else {
-            rel_y
-        };
+        if is_affine {
+            // Affine OBJ: read rotation/scaling parameters and transform pixels.
+            let affine_group = ((attr1 >> 9) & 0x1F) as usize;
+            let (pa, pb, pc, pd) = read_affine_params(oam, affine_group);
 
-        // Render each pixel of this sprite on the current scanline.
-        for sprite_col in 0..obj_width {
-            let screen_x = obj_x + sprite_col as i32;
-            if screen_x < 0 || screen_x >= SCREEN_WIDTH as i32 {
-                continue;
-            }
-            let sx = screen_x as usize;
+            // Center of bounding box in pixels (half-width, half-height).
+            let cx = bound_width as i32 / 2;
+            let cy = bound_height as i32 / 2;
 
-            // Apply horizontal flip.
-            let pixel_col = if h_flip {
-                obj_width - 1 - sprite_col
-            } else {
-                sprite_col
-            };
+            // Pre-compute the row offset from center.
+            let iry = rel_y as i32 - cy;
 
-            // Calculate tile and pixel within tile.
-            let tile_col = pixel_col / 8;
-            let tile_row = sprite_row / 8;
-            let pixel_x = (pixel_col % 8) as usize;
-            let pixel_y = (sprite_row % 8) as usize;
-
-            // Calculate tile offset based on mapping mode.
-            let col_stride = if is_8bpp { 2 } else { 1 }; // 8bpp tiles occupy 2 s-tile slots
-            let tile_offset = if obj_mapping_1d {
-                // 1D: tiles are consecutive. Row stride = width_in_tiles * col_stride.
-                let width_in_tiles = obj_width / 8;
-                let row_stride = width_in_tiles * col_stride;
-                tile_id + (tile_row * row_stride + tile_col * col_stride) as usize
-            } else {
-                // 2D: tiles laid out in a 32-s-tile wide virtual bitmap.
-                // Row stride is always 32 s-tiles regardless of bpp.
-                tile_id + (tile_row as usize) * 32 + (tile_col * col_stride) as usize
-            };
-
-            // Get palette index from tile data.
-            let palette_index = if is_8bpp {
-                // 8bpp: 64 bytes per tile, 1 byte per pixel.
-                let addr = obj_vram_base + tile_offset * 32 + pixel_y * 8 + pixel_x;
-                vram.get(addr).copied().unwrap_or(0) as usize
-            } else {
-                // 4bpp: 32 bytes per tile, 4 bits per pixel.
-                let addr = obj_vram_base + tile_offset * 32 + pixel_y * 4 + pixel_x / 2;
-                let byte = vram.get(addr).copied().unwrap_or(0);
-                if pixel_x & 1 == 0 {
-                    (byte & 0x0F) as usize
-                } else {
-                    (byte >> 4) as usize
+            for bx in 0..bound_width {
+                let screen_x = obj_x + bx as i32;
+                if screen_x < 0 || screen_x >= SCREEN_WIDTH as i32 {
+                    continue;
                 }
-            };
+                let sx = screen_x as usize;
 
-            // Palette index 0 is transparent.
-            if palette_index == 0 {
-                continue;
+                // Offset from bounding box center.
+                let irx = bx as i32 - cx;
+
+                // Apply affine transform: map screen pixel to texture space.
+                // Result is in 8.8 fixed-point, add half-sprite-size to center.
+                let tex_x = (pa as i32 * irx + pb as i32 * iry) + ((obj_width as i32 / 2) << 8);
+                let tex_y = (pc as i32 * irx + pd as i32 * iry) + ((obj_height as i32 / 2) << 8);
+
+                // Check bounds in texture space (fixed-point).
+                if tex_x < 0
+                    || tex_y < 0
+                    || tex_x >= (obj_width as i32) << 8
+                    || tex_y >= (obj_height as i32) << 8
+                {
+                    continue;
+                }
+
+                // Convert from 8.8 fixed-point to integer pixel coordinates.
+                let pixel_col = (tex_x >> 8) as u32;
+                let pixel_row = (tex_y >> 8) as u32;
+
+                let palette_index = fetch_obj_pixel(
+                    tile_id,
+                    obj_width,
+                    pixel_col,
+                    pixel_row,
+                    is_8bpp,
+                    obj_mapping_1d,
+                    vram,
+                    obj_vram_base,
+                );
+
+                if palette_index == 0 {
+                    continue;
+                }
+
+                if is_obj_window {
+                    result.obj_window[sx] = true;
+                    continue;
+                }
+
+                if result.pixels[sx].opaque {
+                    continue;
+                }
+
+                let pram_offset = if is_8bpp {
+                    0x200 + palette_index * 2
+                } else {
+                    0x200 + (palette_bank * 16 + palette_index) * 2
+                };
+
+                let bgr555 = if pram_offset + 1 < pram.len() {
+                    u16::from_le_bytes([pram[pram_offset], pram[pram_offset + 1]])
+                } else {
+                    0
+                };
+
+                result.pixels[sx] = ObjPixel {
+                    color: bgr555,
+                    opaque: true,
+                    priority,
+                    semi_transparent: is_semi_transparent,
+                };
             }
+        } else {
+            // Regular (non-affine) OBJ rendering.
+            // Flip flags (non-affine only; for affine, bits 12-13 are rotation group).
+            let h_flip = (attr1 >> 12) & 1 != 0;
+            let v_flip = (attr1 >> 13) & 1 != 0;
 
-            // For OBJ Window mode, just set the mask bit.
-            if is_obj_window {
-                result.obj_window[sx] = true;
-                continue;
-            }
-
-            // First OBJ to write a pixel wins (lower OBJ number = higher priority).
-            if result.pixels[sx].opaque {
-                continue;
-            }
-
-            // Look up color from OBJ palette (starts at PRAM offset 0x200).
-            let pram_offset = if is_8bpp {
-                0x200 + palette_index * 2
+            let sprite_row = if v_flip {
+                obj_height - 1 - rel_y
             } else {
-                0x200 + (palette_bank * 16 + palette_index) * 2
+                rel_y
             };
 
-            let bgr555 = if pram_offset + 1 < pram.len() {
-                u16::from_le_bytes([pram[pram_offset], pram[pram_offset + 1]])
-            } else {
-                0
-            };
+            for sprite_col in 0..obj_width {
+                let screen_x = obj_x + sprite_col as i32;
+                if screen_x < 0 || screen_x >= SCREEN_WIDTH as i32 {
+                    continue;
+                }
+                let sx = screen_x as usize;
 
-            result.pixels[sx] = ObjPixel {
-                color: bgr555,
-                opaque: true,
-                priority,
-                semi_transparent: is_semi_transparent,
-            };
+                let pixel_col = if h_flip {
+                    obj_width - 1 - sprite_col
+                } else {
+                    sprite_col
+                };
+
+                let palette_index = fetch_obj_pixel(
+                    tile_id,
+                    obj_width,
+                    pixel_col,
+                    sprite_row,
+                    is_8bpp,
+                    obj_mapping_1d,
+                    vram,
+                    obj_vram_base,
+                );
+
+                if palette_index == 0 {
+                    continue;
+                }
+
+                if is_obj_window {
+                    result.obj_window[sx] = true;
+                    continue;
+                }
+
+                if result.pixels[sx].opaque {
+                    continue;
+                }
+
+                let pram_offset = if is_8bpp {
+                    0x200 + palette_index * 2
+                } else {
+                    0x200 + (palette_bank * 16 + palette_index) * 2
+                };
+
+                let bgr555 = if pram_offset + 1 < pram.len() {
+                    u16::from_le_bytes([pram[pram_offset], pram[pram_offset + 1]])
+                } else {
+                    0
+                };
+
+                result.pixels[sx] = ObjPixel {
+                    color: bgr555,
+                    opaque: true,
+                    priority,
+                    semi_transparent: is_semi_transparent,
+                };
+            }
         }
     }
 
@@ -692,5 +808,185 @@ mod tests {
         // First 8 pixels should be opaque (tile 0).
         assert!(result.pixels[0].opaque);
         assert!(result.pixels[7].opaque);
+    }
+
+    /// Helper: write affine parameters for a rotation group into OAM.
+    fn write_affine_params(oam: &mut [u8], group: usize, pa: i16, pb: i16, pc: i16, pd: i16) {
+        let base = group * 32;
+        oam[base + 6..base + 8].copy_from_slice(&pa.to_le_bytes());
+        oam[base + 14..base + 16].copy_from_slice(&pb.to_le_bytes());
+        oam[base + 22..base + 24].copy_from_slice(&pc.to_le_bytes());
+        oam[base + 30..base + 32].copy_from_slice(&pd.to_le_bytes());
+    }
+
+    #[test]
+    fn read_affine_params_extracts_from_oam() {
+        let mut oam = make_oam();
+        // Group 2: PA=0x0100 (1.0), PB=0xFF00 (-1.0), PC=0x0080 (0.5), PD=0x0200 (2.0)
+        write_affine_params(&mut oam, 2, 0x0100, -0x0100, 0x0080, 0x0200);
+        let (pa, pb, pc, pd) = super::read_affine_params(&oam, 2);
+        assert_eq!(pa, 0x0100);
+        assert_eq!(pb, -0x0100);
+        assert_eq!(pc, 0x0080);
+        assert_eq!(pd, 0x0200);
+    }
+
+    #[test]
+    fn affine_identity_renders_same_as_regular() {
+        // An affine sprite with identity matrix should produce the same output
+        // as a regular sprite at the same position.
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Set palette color 1 to a known value at OBJ palette offset.
+        pram[0x200 + 2] = 0x1F; // blue=31
+        pram[0x200 + 3] = 0x00;
+
+        // Fill tile 0 with palette index 1.
+        fill_4bpp_tile(&mut vram, 0, 1);
+
+        // Regular sprite: 8x8 at (10, 0), obj_mode=0
+        write_obj(&mut oam, 0, 0x0000, 10, 0);
+        let regular = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+
+        // Affine sprite: 8x8 at (10, 0), obj_mode=1, rotation group 0, identity matrix
+        let mut oam2 = make_oam();
+        // attr0: obj_mode=1 (bits 8-9 = 01), y=0
+        // attr1: rotation group 0 (bits 9-13), x=10
+        write_obj(&mut oam2, 0, 0x0100, 10, 0);
+        write_affine_params(&mut oam2, 0, 0x0100, 0, 0, 0x0100); // identity
+
+        let affine = render_obj_scanline(0, &oam2, &vram, &pram, true, false);
+
+        // Both should render opaque pixels at x=10..17
+        for x in 10..18 {
+            assert_eq!(
+                regular.pixels[x].opaque, affine.pixels[x].opaque,
+                "mismatch at x={x}"
+            );
+            if regular.pixels[x].opaque {
+                assert_eq!(regular.pixels[x].color, affine.pixels[x].color);
+            }
+        }
+    }
+
+    #[test]
+    fn affine_2x_scale_renders_larger() {
+        // A 2× scale (PA=PD=0x0080 = 0.5 in 8.8) makes the sprite appear
+        // twice as large on screen (inverse of scale factor).
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        pram[0x200 + 2] = 0x1F;
+        pram[0x200 + 3] = 0x00;
+        fill_4bpp_tile(&mut vram, 0, 1);
+
+        // 8x8 affine sprite with double-size (obj_mode=3) at (0,0), group 0.
+        // attr0: obj_mode=3 (bits 8-9 = 11), y=0 → 0x0300
+        // attr1: group 0 (bits 9-13 = 0), x=0 → 0x0000
+        write_obj(&mut oam, 0, 0x0300, 0, 0);
+        // Scale 0.5 means the texture is sampled at half rate → 2× zoom.
+        write_affine_params(&mut oam, 0, 0x0080, 0, 0, 0x0080);
+
+        // Double-size 8x8 gives bounding box 16x16. At scanline 0:
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+
+        // With 2× scaling and double-size bounding box (16×16), the 8×8 texture
+        // should be stretched to cover roughly 16 pixels horizontally.
+        // Pixels at x=0..15 should be mostly opaque (texture maps to center).
+        let opaque_count: usize = (0..16).filter(|&x| result.pixels[x].opaque).count();
+        assert!(
+            opaque_count >= 14,
+            "Expected most of 16 pixels opaque, got {opaque_count}"
+        );
+    }
+
+    #[test]
+    fn affine_obj_window_sets_mask() {
+        // An affine sprite in OBJ Window gfx mode should set the obj_window mask.
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Hide all OBJ entries first (obj_mode=2 = hidden).
+        for i in 0..128 {
+            write_obj(&mut oam, i, 0x0200, 0, 0);
+        }
+
+        fill_4bpp_tile(&mut vram, 0, 1);
+
+        // attr0: obj_mode=1 (affine), gfx_mode=2 (OBJ window), y=0
+        // obj_mode=1 → bits 8-9 = 01, gfx_mode=2 → bits 10-11 = 10
+        // 0x0100 | 0x0800 = 0x0900
+        write_obj(&mut oam, 0, 0x0900, 0, 0);
+        write_affine_params(&mut oam, 0, 0x0100, 0, 0, 0x0100);
+
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+
+        // OBJ Window mask should be set for the sprite area.
+        assert!(result.obj_window[0]);
+        assert!(result.obj_window[7]);
+        // But pixels should NOT be opaque (OBJ Window doesn't draw).
+        assert!(!result.pixels[0].opaque);
+    }
+
+    #[test]
+    fn affine_double_size_extends_bounding_box() {
+        // Double-size (obj_mode=3) should check a 2× bounding box for scanline
+        // intersection, allowing the sprite to be visible on more scanlines.
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        pram[0x200 + 2] = 0x1F;
+        pram[0x200 + 3] = 0x00;
+        fill_4bpp_tile(&mut vram, 0, 1);
+
+        // 8×8 double-size at y=0: bounding box is 16×16.
+        write_obj(&mut oam, 0, 0x0300, 0, 0);
+        write_affine_params(&mut oam, 0, 0x0100, 0, 0, 0x0100); // identity
+
+        // Scanline 12 is within 16-tall bounding box but outside original 8-tall.
+        let result = render_obj_scanline(12, &oam, &vram, &pram, true, false);
+
+        // With identity transform on double-size, the texture (8×8) is centered
+        // in the 16×16 box. Row 12 maps to texture row 12-4=8 which is OOB → transparent.
+        // But rows 4..11 should be visible. Let's test row 6:
+        let result6 = render_obj_scanline(6, &oam, &vram, &pram, true, false);
+        let opaque_count: usize = (0..16).filter(|&x| result6.pixels[x].opaque).count();
+        assert!(opaque_count > 0, "Should have opaque pixels at scanline 6");
+
+        // Row 12 should be all transparent (texture y = (12-8) + 4 = 8 which is OOB).
+        let opaque_at_12: usize = (0..16).filter(|&x| result.pixels[x].opaque).count();
+        assert_eq!(
+            opaque_at_12, 0,
+            "Row 12 should be transparent for identity 8x8"
+        );
+    }
+
+    #[test]
+    fn fetch_obj_pixel_4bpp_returns_correct_index() {
+        let mut vram = make_vram();
+        // Tile 0: set pixel (3,2) to palette index 5.
+        // 4bpp: byte at tile_base + row*4 + col/2, high/low nibble.
+        let addr = OBJ_VRAM_BASE + 2 * 4 + 3 / 2; // row 2, col 3 → byte at offset 9
+        // col 3 is odd → high nibble
+        vram[addr] = 0x50; // low nibble=0, high nibble=5
+
+        let idx = fetch_obj_pixel(0, 8, 3, 2, false, true, &vram, OBJ_VRAM_BASE);
+        assert_eq!(idx, 5);
+    }
+
+    #[test]
+    fn fetch_obj_pixel_8bpp_returns_correct_index() {
+        let mut vram = make_vram();
+        // Tile 0 in 8bpp: 64 bytes/tile. Pixel (5, 3) = byte at offset row*8+col.
+        let addr = OBJ_VRAM_BASE + 3 * 8 + 5;
+        vram[addr] = 42;
+
+        let idx = fetch_obj_pixel(0, 8, 5, 3, true, true, &vram, OBJ_VRAM_BASE);
+        assert_eq!(idx, 42);
     }
 }
