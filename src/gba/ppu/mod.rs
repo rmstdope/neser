@@ -1490,7 +1490,7 @@ mod tests {
     }
 
     /// Step through one full frame (to latch state) then render scanline 0.
-    /// Returns the PPU with scanline 0 freshly rendered.
+    /// Mutates `ppu` in place so scanline 0 is freshly rendered in the framebuffer.
     fn step_and_render_scanline0(
         ppu: &mut Ppu,
         ic: &mut InterruptController,
