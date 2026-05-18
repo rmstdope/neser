@@ -158,6 +158,22 @@ pub(super) fn fetch_sprite_pixel_with_lcdc_samples(
     None
 }
 
+pub(super) fn sprite_tile_row_high_byte(
+    scanline: u8,
+    oam_index: usize,
+    oam: &[u8; 0xA0],
+    vram: &[u8; 0x2000],
+    lcdc: u8,
+) -> u8 {
+    let oam_y = oam[oam_index * 4];
+    let tile_num = oam[oam_index * 4 + 2];
+    let attrs = oam[oam_index * 4 + 3];
+    let screen_y = oam_y.wrapping_sub(16);
+    let y_flip = attrs & 0x40 != 0;
+    let addr = sprite_tile_row_addr(scanline, screen_y, tile_num, y_flip, lcdc);
+    vram[addr + 1]
+}
+
 fn sprite_tile_row_addr(scanline: u8, screen_y: u8, tile_num: u8, y_flip: bool, lcdc: u8) -> usize {
     let height: u8 = if lcdc & 0x04 != 0 { 16 } else { 8 };
     let row_mask = height - 1;
