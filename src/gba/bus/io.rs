@@ -158,7 +158,7 @@ impl IoRegisters {
             0x0400_0010..=0x0400_001E => None, // BG scroll offsets
             0x0400_0020..=0x0400_003E => None, // BG affine params
             0x0400_0040..=0x0400_0046 => None, // Window H/V coords
-            0x0400_004C => None,               // MOSAIC
+            ppu::REG_MOSAIC => None,           // MOSAIC
             0x0400_0054 => None,               // BLDY
             // PPU readable registers with masks.
             0x0400_0048 => Some(ppu.read_winin()),    // WININ
@@ -363,6 +363,7 @@ impl IoRegisters {
             ppu::REG_WIN1V => ppu.write_win_v(1, value),
             ppu::REG_WININ => ppu.write_winin(value),
             ppu::REG_WINOUT => ppu.write_winout(value),
+            ppu::REG_MOSAIC => ppu.write_mosaic(value),
             // PPU color special effect registers.
             ppu::REG_BLDCNT => ppu.write_bldcnt(value),
             ppu::REG_BLDALPHA => ppu.write_bldalpha(value),
@@ -509,6 +510,18 @@ impl IoRegisters {
             } else {
                 ppu.write_win_h(idx, merged);
             }
+            return;
+        }
+        // MOSAIC (0x0400_004C..=0x0400_004D) is write-only. Merge byte writes
+        // against the PPU's live value.
+        if (ppu::REG_MOSAIC..=ppu::REG_MOSAIC + 1).contains(&addr) {
+            let current = ppu.read_mosaic();
+            let merged = if addr & 1 == 0 {
+                (current & 0xFF00) | value as u16
+            } else {
+                (current & 0x00FF) | ((value as u16) << 8)
+            };
+            ppu.write_mosaic(merged);
             return;
         }
         // BLDY (0x0400_0054..=0x0400_0055) is write-only. The high byte is
@@ -1836,5 +1849,59 @@ mod tests {
             12,
             "EVY must not be cleared by a high-byte write to BLDY+1"
         );
+    }
+
+    #[test]
+    fn mosaic_halfword_write_routes_to_live_ppu_state() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write16(
+            ppu::REG_MOSAIC,
+            0xABCD,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        assert_eq!(p.read_mosaic(), 0xABCD);
+        assert_eq!(io.try_read16(ppu::REG_MOSAIC, &ic, &t, &d, &p, &k), None);
+    }
+
+    #[test]
+    fn mosaic_byte_writes_merge_into_live_ppu_state() {
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        io.write8(
+            ppu::REG_MOSAIC,
+            0x34,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        io.write8(
+            ppu::REG_MOSAIC + 1,
+            0x12,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+
+        assert_eq!(p.read_mosaic(), 0x1234);
     }
 }
