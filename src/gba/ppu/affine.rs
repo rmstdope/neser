@@ -45,31 +45,59 @@ pub struct BgAffine {
     /// Reference point Y — signed 19.8 fixed-point, 28 bits used.
     /// Stored sign-extended to a full `i32`.
     pub y: i32,
+    /// Internal reference point X — latched from `x` at VBlank start,
+    /// then incremented by `pb` after each visible scanline.
+    /// Used by the renderer for the current scanline's texture origin.
+    pub internal_x: i32,
+    /// Internal reference point Y — latched from `y` at VBlank start,
+    /// then incremented by `pd` after each visible scanline.
+    pub internal_y: i32,
 }
 
 impl BgAffine {
+    /// Latch internal reference points from the programmed register values.
+    /// Called at the start of VBlank (scanline entering 160).
+    pub fn latch_reference_points(&mut self) {
+        self.internal_x = self.x;
+        self.internal_y = self.y;
+    }
+
+    /// Increment internal reference points by PB/PD.
+    /// Called after each visible scanline is rendered.
+    pub fn increment_reference_points(&mut self) {
+        self.internal_x = self.internal_x.wrapping_add(self.pb as i32);
+        self.internal_y = self.internal_y.wrapping_add(self.pd as i32);
+    }
+
     /// Write the low halfword (bits 0..15) of the X reference point.
     /// Preserves the existing high halfword and re-applies sign-extension
-    /// from bit 27.
+    /// from bit 27. Also immediately updates the internal reference point.
     pub fn write_x_low(&mut self, lo: u16) {
         self.x = sign_extend_28(((self.x as u32) & 0xFFFF_0000) | (lo as u32));
+        self.internal_x = self.x;
     }
 
     /// Write the high halfword (bits 16..31) of the X reference point.
     /// Only bits 0..11 of `hi` are meaningful (the full register is
     /// 28 bits); bits 28..31 are discarded and bit 27 is sign-extended.
+    /// Also immediately updates the internal reference point.
     pub fn write_x_high(&mut self, hi: u16) {
         self.x = sign_extend_28(((hi as u32) << 16) | ((self.x as u32) & 0x0000_FFFF));
+        self.internal_x = self.x;
     }
 
     /// Write the low halfword (bits 0..15) of the Y reference point.
+    /// Also immediately updates the internal reference point.
     pub fn write_y_low(&mut self, lo: u16) {
         self.y = sign_extend_28(((self.y as u32) & 0xFFFF_0000) | (lo as u32));
+        self.internal_y = self.y;
     }
 
     /// Write the high halfword (bits 16..31) of the Y reference point.
+    /// Also immediately updates the internal reference point.
     pub fn write_y_high(&mut self, hi: u16) {
         self.y = sign_extend_28(((hi as u32) << 16) | ((self.y as u32) & 0x0000_FFFF));
+        self.internal_y = self.y;
     }
 }
 
