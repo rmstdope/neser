@@ -146,9 +146,12 @@ pub fn render_obj_scanline(
     pram: &[u8],
     obj_mapping_1d: bool,
     bitmap_mode: bool,
+    mosaic: u16,
 ) -> ObjScanline {
     let mut result = ObjScanline::default();
     let obj_vram_base = if bitmap_mode { 0x1_4000 } else { 0x1_0000 };
+    let obj_mosaic_h = super::mosaic_size(mosaic, 8);
+    let obj_mosaic_v = super::mosaic_size(mosaic, 12);
 
     // Process OBJs in order 0..127. Lower number = higher priority at same
     // priority level, so first writer wins for each pixel.
@@ -172,6 +175,7 @@ pub fn render_obj_scanline(
 
         let is_affine = obj_mode == 1 || obj_mode == 3;
         let is_double_size = obj_mode == 3;
+        let mosaic_enabled = attr0 & (1 << 12) != 0;
 
         // GFX mode (attr0 bits 10-11).
         let gfx_mode = (attr0 >> 10) & 3;
@@ -234,7 +238,12 @@ pub fn render_obj_scanline(
             let cy = bound_height as i32 / 2;
 
             // Pre-compute the row offset from center.
-            let iry = rel_y as i32 - cy;
+            let sample_rel_y = if mosaic_enabled {
+                super::mosaic_anchor(rel_y, obj_mosaic_v)
+            } else {
+                rel_y
+            };
+            let iry = sample_rel_y as i32 - cy;
 
             for bx in 0..bound_width {
                 let screen_x = obj_x + bx as i32;
@@ -244,7 +253,12 @@ pub fn render_obj_scanline(
                 let sx = screen_x as usize;
 
                 // Offset from bounding box center.
-                let irx = bx as i32 - cx;
+                let sample_bx = if mosaic_enabled {
+                    super::mosaic_anchor(bx, obj_mosaic_h)
+                } else {
+                    bx
+                };
+                let irx = sample_bx as i32 - cx;
 
                 // Apply affine transform: map screen pixel to texture space.
                 // Result is in 8.8 fixed-point, add half-sprite-size to center.
@@ -313,10 +327,15 @@ pub fn render_obj_scanline(
             let h_flip = (attr1 >> 12) & 1 != 0;
             let v_flip = (attr1 >> 13) & 1 != 0;
 
-            let sprite_row = if v_flip {
-                obj_height - 1 - rel_y
+            let sample_rel_y = if mosaic_enabled {
+                super::mosaic_anchor(rel_y, obj_mosaic_v)
             } else {
                 rel_y
+            };
+            let sprite_row = if v_flip {
+                obj_height - 1 - sample_rel_y
+            } else {
+                sample_rel_y
             };
 
             for sprite_col in 0..obj_width {
@@ -326,10 +345,15 @@ pub fn render_obj_scanline(
                 }
                 let sx = screen_x as usize;
 
-                let pixel_col = if h_flip {
-                    obj_width - 1 - sprite_col
+                let sample_col = if mosaic_enabled {
+                    super::mosaic_anchor(sprite_col, obj_mosaic_h)
                 } else {
                     sprite_col
+                };
+                let pixel_col = if h_flip {
+                    obj_width - 1 - sample_col
+                } else {
+                    sample_col
                 };
 
                 let palette_index = fetch_obj_pixel(
@@ -437,7 +461,7 @@ mod tests {
         let oam = make_oam();
         let vram = make_vram();
         let pram = make_pram();
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
         assert!(result.pixels.iter().all(|p| !p.opaque));
         assert!(result.obj_window.iter().all(|&w| !w));
     }
@@ -457,7 +481,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 1);
         set_obj_color(&mut pram, 1, 0x001F); // red
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
         assert!(!result.pixels[100].opaque, "hidden OBJ should not render");
     }
 
@@ -479,7 +503,7 @@ mod tests {
         set_obj_color(&mut pram, 3, 0x03E0);
 
         // Render scanline 5 (first row of sprite).
-        let result = render_obj_scanline(5, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(5, &oam, &vram, &pram, true, false, 0);
 
         // Pixels 10-17 should be green.
         for x in 10..18 {
@@ -510,7 +534,7 @@ mod tests {
         // Set OBJ palette color 5 = blue.
         set_obj_color(&mut pram, 5, 0x7C00);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
 
         for x in 0..8 {
             assert!(result.pixels[x].opaque, "pixel {x} should be opaque");
@@ -548,7 +572,7 @@ mod tests {
         set_obj_color(&mut pram, 1, 0x001F); // red
         set_obj_color(&mut pram, 2, 0x03E0); // green
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
 
         // With h-flip, right side (index 2, green) appears on left.
         // Pixel 0-3 should be green (was right side), 4-7 should be red (was left side).
@@ -585,18 +609,47 @@ mod tests {
         set_obj_color(&mut pram, 2, 0x03E0); // green
 
         // With v-flip, row 7 (index 2) becomes the top row (scanline 0).
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
         assert_eq!(
             result.pixels[0].color, 0x03E0,
             "v-flip: scanline 0 should show row 7 data (green)"
         );
 
         // Scanline 7 should show original row 0 (index 1, red).
-        let result7 = render_obj_scanline(7, &oam, &vram, &pram, true, false);
+        let result7 = render_obj_scanline(7, &oam, &vram, &pram, true, false, 0);
         assert_eq!(
             result7.pixels[0].color, 0x001F,
             "v-flip: scanline 7 should show row 0 data (red)"
         );
+    }
+
+    #[test]
+    fn obj_mosaic_repeats_upper_left_anchor_pixel() {
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // OBJ 0: 8x8 at (0,0), mosaic enabled.
+        write_obj(&mut oam, 0, 1 << 12, 0, 0);
+
+        // Palette entries 1..4 are distinct colors.
+        set_obj_color(&mut pram, 1, 0x001F);
+        set_obj_color(&mut pram, 2, 0x03E0);
+        set_obj_color(&mut pram, 3, 0x7C00);
+        set_obj_color(&mut pram, 4, 0x7FFF);
+
+        // Tile 0 rows have distinct pixels; pixel 2 verifies the next
+        // horizontal mosaic block uses a new anchor.
+        vram[OBJ_VRAM_BASE] = 0x21;
+        vram[OBJ_VRAM_BASE + 1] = 0x32;
+        vram[OBJ_VRAM_BASE + 4] = 0x43;
+
+        // OBJ mosaic H/V sizes are both 2 pixels.
+        let result = render_obj_scanline(1, &oam, &vram, &pram, true, false, 0x1100);
+
+        assert_eq!(result.pixels[0].color, 0x001F);
+        assert_eq!(result.pixels[1].color, 0x001F);
+        assert_eq!(result.pixels[2].color, 0x03E0);
     }
 
     #[test]
@@ -615,7 +668,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 2);
         set_obj_color(&mut pram, 2, 0x03E0); // green
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
         // OBJ 0 wins (lower index).
         assert_eq!(
             result.pixels[0].color, 0x001F,
@@ -638,7 +691,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 2);
         set_obj_color(&mut pram, 2, 0x03E0);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
         // OBJ 0 is transparent, so OBJ 1 should show through.
         assert_eq!(
             result.pixels[0].color, 0x03E0,
@@ -660,7 +713,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
 
         // OBJ Window should not produce visible pixels at x=100.
         assert!(
@@ -689,7 +742,7 @@ mod tests {
         set_obj_color(&mut pram, 3, 0x7C00); // blue
 
         // Scanline 8 = second tile row.
-        let result = render_obj_scanline(8, &oam, &vram, &pram, false, false);
+        let result = render_obj_scanline(8, &oam, &vram, &pram, false, false, 0);
         assert!(
             result.pixels[0].opaque,
             "2D mapping should find tile at stride 32"
@@ -714,7 +767,7 @@ mod tests {
         set_obj_color(&mut pram, 4, 0x03E0); // green
 
         // Scanline 8 = second tile row.
-        let result = render_obj_scanline(8, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(8, &oam, &vram, &pram, true, false, 0);
         assert!(
             result.pixels[0].opaque,
             "1D mapping should find tile at width stride"
@@ -735,7 +788,7 @@ mod tests {
         set_obj_color(&mut pram, 1, 0x001F);
 
         // Scanline 0: relative Y = (0 - 252) & 0xFF = 4. 4 < 8, so visible.
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
         assert!(
             result.pixels[0].opaque,
             "sprite at Y=252 should wrap to scanline 0"
@@ -761,7 +814,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 1, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
 
         // X=-4: pixels at screen 0,1,2,3 should be visible (sprite cols 4,5,6,7).
         assert!(
@@ -785,7 +838,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 0, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
         assert_eq!(result.pixels[0].priority, 2);
     }
 
@@ -805,7 +858,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 0, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
         // First 8 pixels should be opaque (tile 0).
         assert!(result.pixels[0].opaque);
         assert!(result.pixels[7].opaque);
@@ -849,7 +902,7 @@ mod tests {
 
         // Regular sprite: 8x8 at (10, 0), obj_mode=0
         write_obj(&mut oam, 0, 0x0000, 10, 0);
-        let regular = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let regular = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
 
         // Affine sprite: 8x8 at (10, 0), obj_mode=1, rotation group 0, identity matrix
         let mut oam2 = make_oam();
@@ -858,7 +911,7 @@ mod tests {
         write_obj(&mut oam2, 0, 0x0100, 10, 0);
         write_affine_params(&mut oam2, 0, 0x0100, 0, 0, 0x0100); // identity
 
-        let affine = render_obj_scanline(0, &oam2, &vram, &pram, true, false);
+        let affine = render_obj_scanline(0, &oam2, &vram, &pram, true, false, 0);
 
         // Both should render opaque pixels at x=10..17
         for x in 10..18 {
@@ -892,7 +945,7 @@ mod tests {
         write_affine_params(&mut oam, 0, 0x0080, 0, 0, 0x0080);
 
         // Double-size 8x8 gives bounding box 16x16. At scanline 0:
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
 
         // With 2× scaling and double-size bounding box (16×16), the 8×8 texture
         // should be stretched to cover roughly 16 pixels horizontally.
@@ -924,7 +977,7 @@ mod tests {
         write_obj(&mut oam, 0, 0x0900, 0, 0);
         write_affine_params(&mut oam, 0, 0x0100, 0, 0, 0x0100);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0);
 
         // OBJ Window mask should be set for the sprite area.
         assert!(result.obj_window[0]);
@@ -950,12 +1003,12 @@ mod tests {
         write_affine_params(&mut oam, 0, 0x0100, 0, 0, 0x0100); // identity
 
         // Scanline 12 is within 16-tall bounding box but outside original 8-tall.
-        let result = render_obj_scanline(12, &oam, &vram, &pram, true, false);
+        let result = render_obj_scanline(12, &oam, &vram, &pram, true, false, 0);
 
         // With identity transform on double-size, the texture (8×8) is centered
         // in the 16×16 box. Row 12 maps to texture row 12-4=8 which is OOB → transparent.
         // But rows 4..11 should be visible. Let's test row 6:
-        let result6 = render_obj_scanline(6, &oam, &vram, &pram, true, false);
+        let result6 = render_obj_scanline(6, &oam, &vram, &pram, true, false, 0);
         let opaque_count: usize = (0..16).filter(|&x| result6.pixels[x].opaque).count();
         assert!(opaque_count > 0, "Should have opaque pixels at scanline 6");
 
@@ -965,6 +1018,35 @@ mod tests {
             opaque_at_12, 0,
             "Row 12 should be transparent for identity 8x8"
         );
+    }
+
+    #[test]
+    fn affine_obj_mosaic_anchors_are_applied_before_affine_transform() {
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // 8x8 affine OBJ at (0,0), mosaic enabled.
+        write_obj(&mut oam, 0, 0x1100, 0, 0);
+        // Shear in X from Y so vertical anchoring affects transformed X.
+        write_affine_params(&mut oam, 0, 0x0100, 0x0100, 0x0000, 0x0100);
+
+        // Row 0: x=2 -> idx1, x=3 -> idx2, x=4 -> idx3.
+        vram[OBJ_VRAM_BASE + 1] = 0x21;
+        vram[OBJ_VRAM_BASE + 2] = 0x03;
+        // Row 1 differs to ensure vertical anchoring is observable.
+        vram[OBJ_VRAM_BASE + 4 + 1] = 0x54;
+
+        set_obj_color(&mut pram, 1, 0x001F);
+        set_obj_color(&mut pram, 2, 0x03E0);
+        set_obj_color(&mut pram, 3, 0x7C00);
+        set_obj_color(&mut pram, 4, 0x7FFF);
+        set_obj_color(&mut pram, 5, 0x03FF);
+
+        let result = render_obj_scanline(1, &oam, &vram, &pram, true, false, 0x1100);
+
+        assert_eq!(result.pixels[6].color, 0x001F);
+        assert_eq!(result.pixels[7].color, 0x001F);
     }
 
     #[test]
