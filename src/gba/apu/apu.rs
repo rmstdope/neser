@@ -406,6 +406,9 @@ impl Channel2 {
 
 // ── CH3 — Wave ────────────────────────────────────────────────────────────────
 
+/// Number of 4-bit samples per wave RAM bank.
+const SAMPLES_PER_BANK: u8 = 32;
+
 /// Channel 3: wave playback (32 × 4-bit samples, or 64 × 4-bit samples in two-bank mode).
 #[derive(Debug, Clone, Default)]
 pub struct Channel3 {
@@ -453,7 +456,11 @@ impl Channel3 {
         if period == 0 {
             return;
         }
-        let total_samples: u8 = if self.two_banks { 64 } else { 32 };
+        let total_samples: u8 = if self.two_banks {
+            SAMPLES_PER_BANK * 2
+        } else {
+            SAMPLES_PER_BANK
+        };
         let mut rem = cycles;
         while rem > 0 {
             if self.freq_timer == 0 {
@@ -464,13 +471,13 @@ impl Channel3 {
             rem -= advance;
             if self.freq_timer == 0 {
                 self.wave_pos = (self.wave_pos + 1) % total_samples;
-                // Samples 0-31 come from bank_select; samples 32-63 from the other bank.
-                let bank = if self.wave_pos < 32 {
+                // Samples 0..(SAMPLES_PER_BANK-1) come from bank_select; the rest from the other bank.
+                let bank = if self.wave_pos < SAMPLES_PER_BANK {
                     self.bank_select as usize
                 } else {
                     (self.bank_select as usize) ^ 1
                 };
-                let pos_in_bank = self.wave_pos % 32;
+                let pos_in_bank = self.wave_pos % SAMPLES_PER_BANK;
                 let byte = self.wave_ram[bank][(pos_in_bank / 2) as usize];
                 self.current_sample = if pos_in_bank & 1 == 0 {
                     (byte >> 4) & 0x0F // high nibble
