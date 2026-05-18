@@ -693,7 +693,11 @@ impl Ppu {
                     }
                     events.hblank_starts = events.hblank_starts.saturating_add(1);
                 }
-                if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0 {
+                // Per GBATek: "no H-Blank interrupts are generated within
+                // V-Blank period." Only raise on visible scanlines (0-159).
+                if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0
+                    && (self.vcount as u32) < VISIBLE_SCANLINES
+                {
                     ic.raise(irq_bits::HBLANK);
                 }
             }
@@ -1558,6 +1562,38 @@ mod tests {
             &make_oam(),
         );
         assert_ne!(ic.if_flags & irq_bits::HBLANK, 0);
+    }
+
+    #[test]
+    fn hblank_irq_not_fired_during_vblank() {
+        // Per GBATek: "no H-Blank interrupts are generated within V-Blank period."
+        // The H-Blank IRQ should NOT fire on scanlines 160-227.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+        let oam = make_oam();
+        // Enable H-Blank IRQ.
+        ppu.write_dispstat(dispstat::HBLANK_IRQ_ENABLE, &mut ic);
+        // Advance to the start of scanline 160 (first V-Blank scanline).
+        ppu.step(
+            CYCLES_PER_SCANLINE * VISIBLE_SCANLINES,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+        assert_eq!(ppu.read_vcount(), 160);
+        // Clear any IRQs accumulated during the visible scanlines.
+        ic.if_flags = 0;
+        // Advance through H-Blank of scanline 160 (V-Blank period).
+        ppu.step(HBLANK_START_CYCLE, &mut ic, &vram, &pram, &oam);
+        // H-Blank IRQ must NOT fire during V-Blank.
+        assert_eq!(
+            ic.if_flags & irq_bits::HBLANK,
+            0,
+            "H-Blank IRQ must not fire during V-Blank (scanline 160)"
+        );
     }
 
     #[test]
