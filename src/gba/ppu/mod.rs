@@ -2,8 +2,8 @@
 //!
 //! Implements the GBA LCD controller timing and a small subset of the
 //! display modes. This module is the foundation for subsequent rendering
-//! work — additional tile background layers and sprite (OBJ) rendering
-//! will be added in follow-up sub-issues of
+//! work — additional display effects, affine OBJ features, and remaining
+//! background details will be added in follow-up sub-issues of
 //! rmstdope/neser#2207.
 //!
 //! What is implemented here:
@@ -17,6 +17,7 @@
 //!   three associated IRQ sources (`VBLANK`, `HBLANK`, `VCOUNT`).
 //! * Mode 0 tile background rendering (BG0–BG3 with 4bpp text backgrounds,
 //!   priority compositing across all enabled layers).
+//! * Mode 1 mixed background rendering (BG0/BG1 regular text plus BG2 affine).
 //! * Mode 2 stub — renders backdrop only (affine tile rendering deferred).
 //! * Mode 3 background rendering (240×160 15-bit BGR555 direct bitmap
 //!   from VRAM) when `BG2` is enabled.
@@ -28,12 +29,14 @@
 //! * Backdrop fill from the first palette entry for unimplemented
 //!   display modes (modes 6, 7) and bitmap modes when BG2 is disabled.
 //!   Modes 6-7 are "prohibited" per GBATek but are handled gracefully.
+//! * Regular (non-affine) OBJ rendering, OAM attribute decoding, and
+//!   OBJ Window mask generation.
 //! * Forced-blank outputs solid white (per GBATek).
 //!
 //! Out of scope (deferred to follow-up sub-issues):
 //!
 //! * Mode 2 full affine tile background rendering for BG2/BG3.
-//! * Sprite (OBJ) rendering and OAM attribute decoding.
+//! * Affine OBJ rendering.
 //! * Window masks, alpha blending, mosaic, brightness effects.
 //!
 //! References:
