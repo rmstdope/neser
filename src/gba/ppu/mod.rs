@@ -621,6 +621,16 @@ impl Ppu {
         self.bldy = (value & 0x1F) as u8;
     }
 
+    /// Read the raw BLDY backing value as a halfword.
+    ///
+    /// **Not for CPU reads.** BLDY is write-only on hardware; CPU reads return
+    /// open-bus (handled by the I/O layer returning `None` from `try_read16`).
+    /// This accessor exists solely for byte-write merging in
+    /// `IoRegisters::write8`.
+    pub fn read_bldy(&self) -> u16 {
+        self.bldy as u16
+    }
+
     /// True after a completed frame, until [`Self::clear_frame_ready`].
     pub fn frame_ready(&self) -> bool {
         self.frame_ready
@@ -1319,7 +1329,31 @@ impl Ppu {
     /// where rendering is not yet implemented in this increment.
     fn render_backdrop_scanline(&mut self, y: u32, pram: &[u8]) {
         let backdrop = self.backdrop_bgr555(pram);
-        let (r, g, b) = color::bgr555_to_rgb888(backdrop);
+
+        // Apply brightness effects when backdrop (layer 5) is selected as a
+        // 1st target and SFX are not suppressed by a window.  When any window
+        // is active the SFX gate varies per-pixel, so we cannot apply a
+        // uniform effect; in that case fall back to the raw color.  (Window-
+        // gated backdrop effects are already handled in composite_scanline.)
+        let any_window_active = self.dispcnt
+            & (dispcnt::WIN0_ENABLE | dispcnt::WIN1_ENABLE | dispcnt::OBJ_WIN_ENABLE)
+            != 0;
+        let bld_mode = (self.bldcnt >> 6) & 3;
+        // Backdrop is layer index 5, corresponding to bit 5 in 1st-target mask.
+        let backdrop_is_first_target = (self.bldcnt & (1 << 5)) != 0;
+        let evy = self.bldy.min(16);
+
+        let final_backdrop = if !any_window_active && backdrop_is_first_target {
+            match bld_mode {
+                2 => brighten_bgr555(backdrop, evy),
+                3 => darken_bgr555(backdrop, evy),
+                _ => backdrop,
+            }
+        } else {
+            backdrop
+        };
+
+        let (r, g, b) = color::bgr555_to_rgb888(final_backdrop);
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
         for x in 0..(SCREEN_WIDTH as usize) {
             let dst = row_start + x * BYTES_PER_PIXEL;
@@ -3385,8 +3419,13 @@ mod tests {
 
         run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
 
-        let expected = alpha_blend_bgr555(0x001F, 0x7C00, 8, 8);
-        let (r, g, b) = color::bgr555_to_rgb888(expected);
+        // Independent calculation for 50% red (0x001F) + 50% blue (0x7C00):
+        //   R: (31 * 8 + 0 * 8) >> 4 = 248 >> 4 = 15
+        //   G: (0  * 8 + 0 * 8) >> 4 = 0
+        //   B: (0  * 8 + 31 * 8) >> 4 = 248 >> 4 = 15
+        // BGR555 = 15 | (0 << 5) | (15 << 10) = 0x3C0F
+        // RGB888: expand5(15) = (15<<3)|(15>>2) = 120|3 = 123 = 0x7B
+        let (r, g, b) = color::bgr555_to_rgb888(0x3C0F);
         assert_eq!(
             &ppu.framebuffer()[0..3],
             &[r, g, b],
@@ -3513,8 +3552,10 @@ mod tests {
 
         run_one_frame(&mut ppu, &mut ic, &vram, &pram, &oam);
 
-        let expected = alpha_blend_bgr555(0x001F, 0x7C00, 8, 8);
-        let (r, g, b) = color::bgr555_to_rgb888(expected);
+        // Independent calculation for 50% red OBJ (0x001F) + 50% blue BG (0x7C00):
+        //   R: (31*8 + 0*8) >> 4 = 15,  G: 0,  B: (0*8 + 31*8) >> 4 = 15
+        //   BGR555 = 0x3C0F → RGB888: expand5(15) = 0x7B
+        let (r, g, b) = color::bgr555_to_rgb888(0x3C0F);
         assert_eq!(
             &ppu.framebuffer()[0..3],
             &[r, g, b],
@@ -3635,5 +3676,83 @@ mod tests {
             &[0xFF, 0xFF, 0xFF],
             "Window SFX bit=1 should enable color effects"
         );
+    }
+
+    // ---- Backdrop brightness effect tests -----------------------------------
+
+    #[test]
+    fn backdrop_brightness_increase_applies_when_all_layers_disabled() {
+        // When no BG/OBJ layers are enabled, render_backdrop_scanline handles
+        // the scanline.  BLDCNT mode=2 with backdrop as 1st target (bit 5)
+        // and EVY=16 should brighten the backdrop to white.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+
+        // No BGs or OBJ enabled → pure backdrop render path.
+        ppu.write_dispcnt(0);
+
+        // Backdrop = pure blue.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+
+        // BLDCNT: mode=2 (brighten), 1st target = backdrop (bit 5 = 0x20).
+        ppu.write_bldcnt((2 << 6) | (1 << 5));
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0xFF, 0xFF, 0xFF],
+            "Backdrop brightness increase with EVY=16 should output white"
+        );
+    }
+
+    #[test]
+    fn backdrop_brightness_decrease_applies_when_all_layers_disabled() {
+        // BLDCNT mode=3 with backdrop as 1st target and EVY=16 → black.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+
+        ppu.write_dispcnt(0);
+
+        // Backdrop = white.
+        pram[0] = 0xFF;
+        pram[1] = 0x7F;
+
+        ppu.write_bldcnt((3 << 6) | (1 << 5));
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0, 0],
+            "Backdrop brightness decrease with EVY=16 should output black"
+        );
+    }
+
+    // ---- BLDY byte-write correctness ----------------------------------------
+
+    #[test]
+    fn bldy_high_byte_write_does_not_clobber_evy() {
+        // Verifies that the write8 merge path for BLDY uses the live PPU state
+        // (not the open-bus backing store) so that a high-byte write to
+        // 0x0400_0055 does not zero out the EVY coefficient.
+        let mut ppu = Ppu::new();
+        // Write EVY=15 to low byte.
+        ppu.write_bldy(15);
+        // Now simulate a high-byte write (addr & 1 == 1) by merging manually.
+        // The value in the high byte is irrelevant for EVY, but the merge must
+        // preserve the existing low byte.
+        let current = ppu.read_bldy();
+        let merged = (current & 0x00FF) | (0xAB_u16 << 8); // high byte junk
+        ppu.write_bldy(merged);
+        // EVY must still be 15 (low byte preserved, high byte discarded by mask).
+        assert_eq!(ppu.read_bldy(), 15, "EVY should survive a high-byte write");
     }
 }

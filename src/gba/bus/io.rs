@@ -509,6 +509,20 @@ impl IoRegisters {
             }
             return;
         }
+        // BLDY (0x0400_0054..=0x0400_0055) is write-only. The high byte is
+        // unused (EVY lives only in bits 0-4 of the low byte). Merge byte
+        // writes against the PPU's live bldy value so a high-byte write does
+        // not clobber the EVY coefficient.
+        if (ppu::REG_BLDY..=ppu::REG_BLDY + 1).contains(&addr) {
+            let current = ppu.read_bldy();
+            let merged = if addr & 1 == 0 {
+                (current & 0xFF00) | value as u16
+            } else {
+                (current & 0x00FF) | ((value as u16) << 8)
+            };
+            ppu.write_bldy(merged);
+            return;
+        }
         let aligned = addr & !1;
         let current = self.read16(aligned, ic, timers, dma, ppu, keypad);
         let merged = if addr & 1 == 0 {
@@ -1766,5 +1780,38 @@ mod tests {
             &mut k,
         );
         assert_eq!(p.read_win_v(1), 0xA000);
+    }
+
+    #[test]
+    fn bldy_high_byte_write_via_io_preserves_evy() {
+        // A byte write to BLDY+1 (0x0400_0055) must not clobber the EVY
+        // coefficient previously written to the low byte (0x0400_0054).
+        let mut io = IoRegisters::new();
+        let mut ic = InterruptController::new();
+        let mut t = Timers::new();
+        let mut d = DmaController::new();
+        let mut p = Ppu::new();
+        let mut k = Keypad::new();
+
+        // Write EVY = 12 via the normal halfword path.
+        io.write16(ppu::REG_BLDY, 12, &mut ic, &mut t, &mut d, &mut p, &mut k);
+        assert_eq!(p.read_bldy(), 12, "EVY should be 12 after halfword write");
+
+        // Now do a high-byte byte write (addr+1 = 0x0400_0055).
+        // On hardware the high byte is unused; EVY must remain 12.
+        io.write8(
+            ppu::REG_BLDY + 1,
+            0xFF,
+            &mut ic,
+            &mut t,
+            &mut d,
+            &mut p,
+            &mut k,
+        );
+        assert_eq!(
+            p.read_bldy(),
+            12,
+            "EVY must not be cleared by a high-byte write to BLDY+1"
+        );
     }
 }
