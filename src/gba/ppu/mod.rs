@@ -361,6 +361,11 @@ fn mosaic_size(mosaic: u16, shift: u32) -> u32 {
     (((mosaic >> shift) & 0x000F) + 1) as u32
 }
 
+/// Return the anchor coordinate of the mosaic block containing `value`.
+///
+/// For a block size of `N`, coordinate `C` maps to `C - (C % N)`, the
+/// upper-left coordinate of the block. `block_size` must be positive; MOSAIC
+/// fields satisfy this because [`mosaic_size`] returns values in 1..=16.
 fn mosaic_anchor(value: u32, block_size: u32) -> u32 {
     debug_assert!(block_size > 0);
     value - (value % block_size)

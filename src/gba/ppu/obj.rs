@@ -638,8 +638,10 @@ mod tests {
         set_obj_color(&mut pram, 3, 0x7C00);
         set_obj_color(&mut pram, 4, 0x7FFF);
 
-        // Tile 0: row 0 pixels 0/1 = palette 1/2, row 1 pixels 0/1 = 3/4.
+        // Tile 0 rows have distinct pixels; pixel 2 verifies the next
+        // horizontal mosaic block uses a new anchor.
         vram[OBJ_VRAM_BASE] = 0x21;
+        vram[OBJ_VRAM_BASE + 1] = 0x32;
         vram[OBJ_VRAM_BASE + 4] = 0x43;
 
         // OBJ mosaic H/V sizes are both 2 pixels.
@@ -647,6 +649,7 @@ mod tests {
 
         assert_eq!(result.pixels[0].color, 0x001F);
         assert_eq!(result.pixels[1].color, 0x001F);
+        assert_eq!(result.pixels[2].color, 0x03E0);
     }
 
     #[test]
