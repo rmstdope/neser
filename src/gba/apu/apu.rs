@@ -420,6 +420,8 @@ pub struct Channel3 {
     pub bank_select: bool,
     pub length_counter: u16,
     pub output_level: u8, // 0=mute, 1=100%, 2=50%, 3=25%
+    /// Bit 15 of SOUND3CNT_H: when true, forces 75% volume regardless of output_level.
+    pub force_volume: bool,
     pub freq: u16,
     pub length_en: bool,
 
@@ -436,6 +438,10 @@ impl Channel3 {
     pub fn output(&self) -> f32 {
         if !self.active || !self.dac_on {
             return 0.0;
+        }
+        // Bit 15 of SOUND3CNT_H: force 75% volume regardless of output_level.
+        if self.force_volume {
+            return ((self.current_sample as u16 * 3) / 4) as f32 / 15.0;
         }
         let shift: u8 = match self.output_level {
             1 => 0, // 100 %
@@ -521,12 +527,14 @@ impl Channel3 {
         }
     }
 
-    /// SOUND3CNT_H: sound length (bits 7-0) and output level (bits 14-13).
+    /// SOUND3CNT_H: sound length (bits 7-0), output level (bits 14-13), force volume (bit 15).
     pub fn write_cnt_h(&mut self, val: u16) {
         // Lower byte = sound length (0-255, counter = 256 - length)
         self.length_counter = 256 - (val & 0x00FF);
         // Bits 14-13: output level
         self.output_level = ((val >> 13) & 0x03) as u8;
+        // Bit 15: force 75% volume regardless of output_level
+        self.force_volume = (val & 0x8000) != 0;
     }
 
     /// SOUND3CNT_X: frequency and trigger.
@@ -960,7 +968,10 @@ impl Apu {
                     | (if self.ch3.dac_on { 0x0080 } else { 0 })
             }
             // SOUND3CNT_H
-            0x0400_0072 => (self.ch3.output_level as u16) << 13,
+            0x0400_0072 => {
+                ((self.ch3.output_level as u16) << 13)
+                    | (if self.ch3.force_volume { 0x8000 } else { 0 })
+            }
             // SOUND3CNT_X
             0x0400_0074 => {
                 if self.ch3.length_en {
@@ -1117,8 +1128,10 @@ impl Apu {
                 self.ch3.write_cnt_h(current_hi | val as u16);
             }
             0x0400_0073 => {
-                let current_lo = self.read16(0x0400_0072) & 0x00FF;
-                self.ch3.write_cnt_h(current_lo | ((val as u16) << 8));
+                // High byte contains output level + force-volume and must not clobber
+                // the write-only length value in low byte.
+                self.ch3.output_level = (val >> 5) & 0x03;
+                self.ch3.force_volume = (val & 0x80) != 0;
             }
             // SOUND3CNT_X: frequency/trigger
             0x0400_0074 => {
@@ -1657,7 +1670,103 @@ mod tests {
         }
     }
 
-    // ── CH4 noise tests (GBATek specification) ──────────────────────────────
+    // ── CH3 force-volume tests (GBATek SOUND3CNT_H bit 15) ──────────────────
+
+    #[test]
+    fn test_ch3_force_volume_bit_sets_field() {
+        // RED: bit 15 of SOUND3CNT_H must set force_volume on the channel.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0072, 0x8000); // bit 15 set
+        assert!(
+            apu.ch3.force_volume,
+            "force_volume must be true when SOUND3CNT_H bit 15 is set"
+        );
+    }
+
+    #[test]
+    fn test_ch3_force_volume_false_when_bit15_clear() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0072, 0x2000); // output_level=100%, no force
+        assert!(
+            !apu.ch3.force_volume,
+            "force_volume must be false when SOUND3CNT_H bit 15 is clear"
+        );
+    }
+
+    #[test]
+    fn test_ch3_force_volume_output_is_75_percent() {
+        // RED: when force_volume is set, output() must return (sample*3)/4 with truncation.
+        // Sample = 1 -> (1*3)/4 = 0, expected output = 0.
+        let ch3 = Channel3 {
+            dac_on: true,
+            active: true,
+            force_volume: true,
+            current_sample: 1,
+            output_level: 0, // would normally mute — force_volume overrides
+            ..Channel3::default()
+        };
+        let got = ch3.output();
+        let expected = ((1_u16 * 3) / 4) as f32 / 15.0;
+        assert!(
+            (got - expected).abs() < 1e-5,
+            "force_volume output mismatch: expected {expected}, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch3_force_volume_overrides_output_level() {
+        // When force_volume is set and output_level=3 (25%), output should be 75%, not 25%.
+        // Sample = 12 → force 75%: 12 * 3/4 = 9; expected = 9/15 = 0.6
+        // Normal 25%: 12 >> 2 = 3; 3/15 = 0.2
+        let ch3 = Channel3 {
+            dac_on: true,
+            active: true,
+            force_volume: true,
+            current_sample: 12,
+            output_level: 3, // 25% — should be overridden
+            ..Channel3::default()
+        };
+        let got = ch3.output();
+        let expected = ((12_u16 * 3) / 4) as f32 / 15.0;
+        assert!(
+            (got - expected).abs() < 1e-5,
+            "force_volume should override output_level: expected {expected}, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_write8_sound3cnt_h_high_byte_does_not_clobber_length() {
+        let mut apu = powered_apu();
+        apu.write8(0x0400_0072, 0x20); // length = 32 -> counter = 224
+        let before = apu.ch3.length_counter;
+
+        apu.write8(0x0400_0073, 0xC0); // force_volume=1, output_level=2
+
+        assert_eq!(
+            apu.ch3.length_counter, before,
+            "high-byte write must not change SOUND3CNT_H length counter"
+        );
+        assert_eq!(apu.ch3.output_level, 2);
+        assert!(apu.ch3.force_volume);
+    }
+
+    #[test]
+    fn test_ch3_force_volume_read_back() {
+        // Bit 15 written to SOUND3CNT_H must be readable back.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0072, 0xA000); // bit 15 + output_level=100% (bits 14-13=01)
+        let readback = apu.read16(0x0400_0072);
+        assert_eq!(
+            readback & 0x8000,
+            0x8000,
+            "Bit 15 (force_volume) must read back as set"
+        );
+        assert_eq!(
+            readback & 0x6000,
+            0x2000,
+            "output_level bits must also read back correctly"
+        );
+    }
 
     // Per GBATek (gbatek-gba-sound-channel-4-noise.htm):
     //   15-bit mode initial LFSR: X = 0x4000
@@ -2033,7 +2142,10 @@ mod tests {
         assert!(apu.sample_ready(), "sample should be ready");
         let stereo = apu.take_stereo_sample();
         assert!(stereo.is_some(), "take_stereo_sample() must return Some");
-        assert!(!apu.sample_ready(), "sample should be consumed after take_stereo_sample");
+        assert!(
+            !apu.sample_ready(),
+            "sample should be consumed after take_stereo_sample"
+        );
     }
 
     #[test]

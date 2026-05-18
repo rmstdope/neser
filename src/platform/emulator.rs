@@ -788,7 +788,10 @@ mod tests {
             "no sample should be ready on a fresh GBA"
         );
         let stereo = gba.get_stereo_sample();
-        assert!(stereo.is_none(), "get_stereo_sample() must return None when no sample is ready");
+        assert!(
+            stereo.is_none(),
+            "get_stereo_sample() must return None when no sample is ready"
+        );
     }
 
     #[test]
@@ -822,7 +825,10 @@ mod tests {
         // no sample is ready.
         let mut nes = crate::nes::console::Nes::new(make_shared_context());
         let stereo = nes.get_stereo_sample();
-        assert!(stereo.is_none(), "no stereo sample should be ready without a ROM");
+        assert!(
+            stereo.is_none(),
+            "no stereo sample should be ready without a ROM"
+        );
     }
 }
 
