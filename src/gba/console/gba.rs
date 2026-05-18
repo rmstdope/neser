@@ -184,6 +184,11 @@ impl Gba {
             self.cpu.clear_irq();
         }
 
+        if self.bus.halt_requested() {
+            self.cpu.halt();
+            self.bus.clear_halt_request();
+        }
+
         let cycles = self.cpu.step(&mut self.bus);
         self.bus.step(cycles);
         cycles as u8
@@ -269,6 +274,11 @@ impl Emulator for Gba {
             self.cpu.raise_irq();
         } else {
             self.cpu.clear_irq();
+        }
+
+        if self.bus.halt_requested() {
+            self.cpu.halt();
+            self.bus.clear_halt_request();
         }
 
         let cycles = self.cpu.step(&mut self.bus);
@@ -745,5 +755,66 @@ mod tests {
                 "BIOS byte at offset {i} should match EMBEDDED_BIOS when 'embedded' is configured"
             );
         }
+    }
+
+    // ---------------------------------------------------------------
+    // HALTCNT — Gba mediates halt between bus and CPU
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_haltcnt_write_halts_cpu_on_next_tick() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+        set_mode3_bg2_enabled(&mut gba);
+
+        // Precondition: CPU is not halted.
+        assert!(!gba.cpu.is_halted(), "CPU should start running");
+
+        // Software writes HALTCNT with bit 7 clear → halt mode.
+        gba.bus.write8(0x0400_0301, 0x00);
+        assert!(
+            gba.bus.halt_requested(),
+            "bus should have halt_requested set"
+        );
+
+        // Run one tick — Gba should pick up the flag and halt the CPU.
+        gba.run_tick_for_tests();
+
+        assert!(gba.cpu.is_halted(), "CPU should be halted after tick");
+        assert!(
+            !gba.bus.halt_requested(),
+            "halt_requested should be cleared after Gba consumed it"
+        );
+    }
+
+    #[test]
+    fn test_halted_cpu_wakes_on_irq() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+        set_mode3_bg2_enabled(&mut gba);
+
+        // Enable IRQs in CPSR (clear I flag).
+        gba.cpu.regs.cpsr &= !crate::gba::cpu::registers::FLAG_I;
+
+        // Halt the CPU via HALTCNT.
+        gba.bus.write8(0x0400_0301, 0x00);
+        gba.run_tick_for_tests();
+        assert!(gba.cpu.is_halted(), "CPU should be halted");
+
+        // Enable VBlank interrupt in IE and IME.
+        gba.bus.ic.write_ime(1);
+        gba.bus.ic.write_ie(0x0001); // VBlank
+        // Raise VBlank in IF.
+        gba.bus.ic.raise(0x0001);
+
+        // Run a tick — the IRQ should wake the CPU.
+        gba.run_tick_for_tests();
+
+        assert!(
+            !gba.cpu.is_halted(),
+            "CPU should wake from halt when IRQ fires"
+        );
     }
 }
