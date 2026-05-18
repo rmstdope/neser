@@ -2,8 +2,8 @@
 //!
 //! Implements the GBA LCD controller timing and a small subset of the
 //! display modes. This module is the foundation for subsequent rendering
-//! work — additional display modes (1, 5), tile background layers, and
-//! sprite (OBJ) rendering will be added in follow-up sub-issues of
+//! work — additional display effects, affine OBJ features, and remaining
+//! background details will be added in follow-up sub-issues of
 //! rmstdope/neser#2207.
 //!
 //! What is implemented here:
@@ -17,21 +17,26 @@
 //!   three associated IRQ sources (`VBLANK`, `HBLANK`, `VCOUNT`).
 //! * Mode 0 tile background rendering (BG0–BG3 with 4bpp/8bpp text
 //!   backgrounds, priority compositing across all enabled layers).
+//! * Mode 1 mixed background rendering (BG0/BG1 regular text plus BG2 affine).
 //! * Mode 2 stub — renders backdrop only (affine tile rendering deferred).
 //! * Mode 3 background rendering (240×160 15-bit BGR555 direct bitmap
 //!   from VRAM) when `BG2` is enabled.
 //! * Mode 4 background rendering (240×160 8-bit paletted bitmap from
 //!   VRAM) with dual-frame support via DISPCNT bit 4.
+//! * Mode 5 background rendering (160×128 15-bit BGR555 direct bitmap
+//!   from VRAM) with dual-frame support via DISPCNT bit 4 and BG2 affine
+//!   positioning/scaling.
 //! * Backdrop fill from the first palette entry for unimplemented
-//!   display modes (modes 1, 5, 6, 7) and Mode 3/4 when BG2 is disabled.
+//!   display modes (modes 6, 7) and bitmap modes when BG2 is disabled.
 //!   Modes 6-7 are "prohibited" per GBATek but are handled gracefully.
+//! * Regular (non-affine) OBJ rendering, OAM attribute decoding, and
+//!   OBJ Window mask generation.
 //! * Forced-blank outputs solid white (per GBATek).
 //!
 //! Out of scope (deferred to follow-up sub-issues):
 //!
-//! * Mode 1 mixed affine mode, Mode 5 (160×128 15-bit) rendering.
 //! * Mode 2 full affine tile background rendering for BG2/BG3.
-//! * Sprite (OBJ) rendering and OAM attribute decoding.
+//! * Affine OBJ rendering.
 //! * Window masks, alpha blending, mosaic, brightness effects.
 //!
 //! References:
@@ -59,6 +64,10 @@ pub const FRAMEBUFFER_BYTES: usize =
 /// Marker value for a transparent pixel in per-layer color buffers.
 /// Valid BGR555 colors use bits 0-14 only, so bit 15 set means "no pixel".
 const TRANSPARENT: u16 = 0x8000;
+/// Mode 5 bitmap width in pixels.
+const MODE5_WIDTH: usize = 160;
+/// Mode 5 bitmap height in pixels.
+const MODE5_HEIGHT: usize = 128;
 
 /// CPU cycles per scanline (308 dots × 4 cycles/dot).
 pub const CYCLES_PER_SCANLINE: u32 = 1232;
@@ -641,6 +650,7 @@ impl Ppu {
             2 => self.render_mode2_scanline(y, vram, pram, oam),
             3 => self.render_mode3_scanline(y, vram, pram, oam),
             4 => self.render_mode4_scanline(y, vram, pram, oam),
+            5 => self.render_mode5_scanline(y, vram, pram, oam),
             _ => self.render_backdrop_scanline(y, pram),
         }
     }
@@ -966,6 +976,60 @@ impl Ppu {
                         backdrop & 0x7FFF
                     }
                 };
+            }
+            let prio = (self.bg_cnt[2] & 3) as u8;
+            layers.push((2, prio, buf));
+        }
+
+        self.composite_scanline(y, pram, vram, oam, &layers);
+    }
+
+    /// Mode 5: 160×128 direct 15-bit bitmap. Two frames available.
+    ///
+    /// BG2 affine parameters select source coordinates. Pixels outside the
+    /// 160×128 source bitmap remain transparent so the backdrop or lower
+    /// priority layers show through.
+    #[allow(clippy::needless_range_loop)]
+    fn render_mode5_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
+        if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+
+        let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
+
+        if self.bg2_enabled() {
+            let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
+            let frame_base = if self.frame_select() {
+                0xA000usize
+            } else {
+                0x0000usize
+            };
+            let aff = self.bg_affine[0];
+            let pa = aff.pa as i32;
+            let pc = aff.pc as i32;
+            let mut tex_x = aff.internal_x;
+            let mut tex_y = aff.internal_y;
+
+            for x in 0..(SCREEN_WIDTH as usize) {
+                let sample_x = tex_x;
+                let sample_y = tex_y;
+
+                tex_x = tex_x.wrapping_add(pa);
+                tex_y = tex_y.wrapping_add(pc);
+
+                if sample_x < 0 || sample_y < 0 {
+                    continue;
+                }
+
+                let px = (sample_x >> 8) as usize;
+                let py = (sample_y >> 8) as usize;
+                if px >= MODE5_WIDTH || py >= MODE5_HEIGHT {
+                    continue;
+                }
+
+                let src = frame_base + (py * MODE5_WIDTH + px) * 2;
+                buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
             }
             let prio = (self.bg_cnt[2] & 3) as u8;
             layers.push((2, prio, buf));
@@ -1970,6 +2034,132 @@ mod tests {
         );
 
         // First pixel should be from frame 1, which is green (RGB888: 0, 255, 0).
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode5_renders_160x128_bgr555_bitmap_from_vram() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 5, BG2 enabled, identity affine transform.
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Backdrop = blue. Pixel (0,0) = red with bit 15 set (ignored).
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        vram[0] = 0x1F;
+        vram[1] = 0x80;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode5_frame_select_uses_frame_1_at_0xa000() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 5, BG2 enabled, frame 1 selected, identity affine transform.
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE | dispcnt::FRAME_SELECT);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Frame 0 pixel (0,0) = red; frame 1 pixel (0,0) = green.
+        vram[0] = 0x1F;
+        vram[1] = 0x00;
+        vram[0xA000] = 0xE0;
+        vram[0xA001] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode5_outside_160x128_bitmap_is_transparent() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 5, BG2 enabled, identity affine transform.
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Backdrop = blue. Fill the valid source area with red.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        for y in 0..MODE5_HEIGHT {
+            for x in 0..MODE5_WIDTH {
+                let off = (y * MODE5_WIDTH + x) * 2;
+                vram[off] = 0x1F;
+                vram[off + 1] = 0x00;
+            }
+        }
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        let x_outside = 160usize * BYTES_PER_PIXEL;
+        let y_outside = (128usize * SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+        assert_eq!(&ppu.framebuffer()[x_outside..x_outside + 3], &[0, 0, 0xFF]);
+        assert_eq!(&ppu.framebuffer()[y_outside..y_outside + 3], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn mode5_uses_bg2_affine_reference_point() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 5, BG2 enabled, identity affine transform starting at source (1, 0).
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        ppu.write_affine(REG_BG2X_L, 0x0100);
+
+        // Source pixel (0,0) = red; source pixel (1,0) = green.
+        vram[0] = 0x1F;
+        vram[1] = 0x00;
+        vram[2] = 0xE0;
+        vram[3] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
         assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
     }
 
