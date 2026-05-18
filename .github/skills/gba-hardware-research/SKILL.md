@@ -101,3 +101,11 @@ Use this skill whenever you need details about any part of Game Boy Advance hard
 
 - Researching ARM7TDMI instruction timing:
   start with ARM Architecture Reference for basic cycle counts, then cross-check GBATek CPU section and mGBA `src/arm/core.c` for GBA-specific penalties
+
+## Known Hardware Gotchas
+
+When writing code that targets GBA hardware (assembly or emulation), always verify against these known pitfalls:
+
+- **VRAM byte writes**: GBA VRAM does not support byte writes (STRB). A byte write to VRAM duplicates the byte into both bytes of the addressed halfword. Use LDRH/STRH read-modify-write for individual pixel placement in bitmap modes. OBJ VRAM ignores byte writes entirely.
+- **ARM alignment requirements**: LDRH/STRH require halfword-aligned addresses. Data structures accessed via LDRH must maintain 2-byte alignment throughout (e.g., RLE data using mixed .hword/.byte entries will misalign after the first entry).
+- **HALTCNT register**: Writing to 0x04000301 halts the CPU until an enabled interrupt fires. The proprietary BIOS depends on this for VBlank timing during boot.
