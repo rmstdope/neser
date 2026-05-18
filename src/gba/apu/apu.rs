@@ -406,20 +406,28 @@ impl Channel2 {
 
 // ── CH3 — Wave ────────────────────────────────────────────────────────────────
 
-/// Channel 3: wave playback (32 × 4-bit samples).
+/// Number of 4-bit samples per wave RAM bank.
+const SAMPLES_PER_BANK: u8 = 32;
+
+/// Channel 3: wave playback (32 × 4-bit samples, or 64 × 4-bit samples in two-bank mode).
 #[derive(Debug, Clone, Default)]
 pub struct Channel3 {
     pub dac_on: bool,
+    /// Bit 5 of SOUND3CNT_L: 0 = one bank (32 samples), 1 = two banks (64 samples).
+    pub two_banks: bool,
+    /// Bit 6 of SOUND3CNT_L: selects which bank (0 or 1) is played back.
+    /// The OTHER bank is accessible via Wave RAM register reads/writes.
+    pub bank_select: bool,
     pub length_counter: u16,
     pub output_level: u8, // 0=mute, 1=100%, 2=50%, 3=25%
     pub freq: u16,
     pub length_en: bool,
 
     pub active: bool,
-    pub wave_pos: u8, // 0-31
+    pub wave_pos: u8, // 0-31 (single bank) or 0-63 (two banks)
     pub freq_timer: u32,
-    /// Wave RAM: 16 bytes = 32 × 4-bit samples.
-    pub wave_ram: [u8; 16],
+    /// Wave RAM: 2 banks × 16 bytes = 32 bytes total (64 × 4-bit samples).
+    pub wave_ram: [[u8; 16]; 2],
     /// Current 4-bit output nibble.
     pub current_sample: u8,
 }
@@ -448,6 +456,8 @@ impl Channel3 {
         if period == 0 {
             return;
         }
+        // Use a bitmask to wrap wave_pos: single-bank → mask 0x1F (& 31), two-bank → 0x3F (& 63).
+        let pos_mask: u8 = if self.two_banks { 0x3F } else { 0x1F };
         let mut rem = cycles;
         while rem > 0 {
             if self.freq_timer == 0 {
@@ -457,9 +467,16 @@ impl Channel3 {
             self.freq_timer -= advance;
             rem -= advance;
             if self.freq_timer == 0 {
-                self.wave_pos = (self.wave_pos + 1) & 31;
-                let byte = self.wave_ram[(self.wave_pos / 2) as usize];
-                self.current_sample = if self.wave_pos & 1 == 0 {
+                self.wave_pos = (self.wave_pos + 1) & pos_mask;
+                // Samples 0..(SAMPLES_PER_BANK-1) come from bank_select; the rest from the other bank.
+                let bank = if self.wave_pos < SAMPLES_PER_BANK {
+                    self.bank_select as usize
+                } else {
+                    (self.bank_select as usize) ^ 1
+                };
+                let pos_in_bank = self.wave_pos & (SAMPLES_PER_BANK - 1);
+                let byte = self.wave_ram[bank][(pos_in_bank / 2) as usize];
+                self.current_sample = if pos_in_bank & 1 == 0 {
                     (byte >> 4) & 0x0F // high nibble
                 } else {
                     byte & 0x0F // low nibble
@@ -487,14 +504,17 @@ impl Channel3 {
         let period = (2048_u32.wrapping_sub(self.freq as u32)) * 8;
         self.freq_timer = period;
         self.wave_pos = 0;
-        // Read first sample (position 0 = high nibble of byte 0).
-        self.current_sample = (self.wave_ram[0] >> 4) & 0x0F;
+        // Read first sample from the playing bank (position 0 = high nibble of byte 0).
+        let bank = self.bank_select as usize;
+        self.current_sample = (self.wave_ram[bank][0] >> 4) & 0x0F;
     }
 
     // ── Register writes ───────────────────────────────────────────────────
 
-    /// SOUND3CNT_L: DAC enable (bit 7).
+    /// SOUND3CNT_L: wave RAM dimension (bit 5), bank select (bit 6), DAC enable (bit 7).
     pub fn write_cnt_l(&mut self, val: u16) {
+        self.two_banks = (val & 0x0020) != 0;
+        self.bank_select = (val & 0x0040) != 0;
         self.dac_on = (val & 0x0080) != 0;
         if !self.dac_on {
             self.active = false;
@@ -519,16 +539,20 @@ impl Channel3 {
     }
 
     /// Write one byte to wave RAM (address offset 0x00–0x0F from wave RAM base).
+    /// Always accesses the bank NOT currently selected for playback.
     pub fn write_wave_ram(&mut self, offset: usize, val: u8) {
+        let other_bank = (self.bank_select as usize) ^ 1;
         if offset < 16 {
-            self.wave_ram[offset] = val;
+            self.wave_ram[other_bank][offset] = val;
         }
     }
 
     /// Read one byte from wave RAM.
+    /// Always accesses the bank NOT currently selected for playback.
     pub fn read_wave_ram(&self, offset: usize) -> u8 {
+        let other_bank = (self.bank_select as usize) ^ 1;
         if offset < 16 {
-            self.wave_ram[offset]
+            self.wave_ram[other_bank][offset]
         } else {
             0xFF
         }
@@ -537,7 +561,7 @@ impl Channel3 {
     pub fn power_off(&mut self) {
         let wave_ram = self.wave_ram;
         *self = Self::default();
-        self.wave_ram = wave_ram; // wave RAM survives power-off
+        self.wave_ram = wave_ram; // both wave RAM banks survive power-off
     }
 }
 
@@ -912,11 +936,9 @@ impl Apu {
             }
             // SOUND3CNT_L
             0x0400_0070 => {
-                if self.ch3.dac_on {
-                    0x0080
-                } else {
-                    0
-                }
+                (if self.ch3.two_banks { 0x0020 } else { 0 })
+                    | (if self.ch3.bank_select { 0x0040 } else { 0 })
+                    | (if self.ch3.dac_on { 0x0080 } else { 0 })
             }
             // SOUND3CNT_H
             0x0400_0072 => (self.ch3.output_level as u16) << 13,
@@ -952,7 +974,8 @@ impl Apu {
             // WAVE RAM (0x04000090-0x0400009F)
             a if (0x0400_0090..=0x0400_009E).contains(&a) && a & 1 == 0 => {
                 let off = (a - 0x0400_0090) as usize;
-                (self.ch3.wave_ram[off] as u16) | ((self.ch3.wave_ram[off + 1] as u16) << 8)
+                (self.ch3.read_wave_ram(off) as u16)
+                    | ((self.ch3.read_wave_ram(off + 1) as u16) << 8)
             }
             _ => 0,
         }
@@ -978,8 +1001,8 @@ impl Apu {
             // WAVE RAM halfword writes
             a if (0x0400_0090..=0x0400_009E).contains(&a) && a & 1 == 0 => {
                 let off = (a - 0x0400_0090) as usize;
-                self.ch3.wave_ram[off] = val as u8;
-                self.ch3.wave_ram[off + 1] = (val >> 8) as u8;
+                self.ch3.write_wave_ram(off, val as u8);
+                self.ch3.write_wave_ram(off + 1, (val >> 8) as u8);
             }
             // FIFO_A write: 0x00A0–0x00A3 (all four bytes map to FIFO A)
             0x0400_00A0 | 0x0400_00A2 => {
@@ -1567,14 +1590,17 @@ mod tests {
             0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
             0xCD, 0xEF,
         ];
-        // Write wave RAM via register interface
+        // Write wave RAM via register interface.
+        // With bank_select=0 (default), writes go to bank 1 (the other bank).
         for (i, &b) in wave.iter().enumerate().step_by(2) {
             let hw = (b as u16) | ((wave[i + 1] as u16) << 8);
             apu.write16(0x0400_0090 + i as u32, hw);
         }
 
-        // SOUND3CNT_L: DAC on (bit 7)
-        apu.write16(0x0400_0070, 0x0080);
+        // SOUND3CNT_L: bank_select=1 (bit 6) + DAC on (bit 7).
+        // Switching bank_select to 1 makes bank 1 the playing bank, so the data
+        // written above (which went to bank 1 as the "other bank") is now played.
+        apu.write16(0x0400_0070, 0x00C0);
         // SOUND3CNT_H: output level = 100% (bits 14-13 = 01 = 0x2000), length = 0
         apu.write16(0x0400_0072, 0x2000);
         // SOUND3CNT_X: freq=0 (slow), trigger
@@ -1841,10 +1867,11 @@ mod tests {
     #[test]
     fn test_write8_wave_ram_byte_addressable() {
         let mut apu = Apu::new();
+        // bank_select=0 (default): writes go to the other bank (bank 1).
         apu.write8(0x0400_0090, 0xAB);
         apu.write8(0x0400_0091, 0xCD);
-        assert_eq!(apu.ch3.wave_ram[0], 0xAB);
-        assert_eq!(apu.ch3.wave_ram[1], 0xCD);
+        assert_eq!(apu.ch3.wave_ram[1][0], 0xAB);
+        assert_eq!(apu.ch3.wave_ram[1][1], 0xCD);
     }
 
     #[test]
@@ -1857,5 +1884,193 @@ mod tests {
         // Overwrite only the high byte.
         apu.write8(0x0400_0081, 0x78);
         assert_eq!(apu.soundcnt_l, 0x7856, "low byte should be preserved");
+    }
+
+    // ── CH3 dual-bank wave RAM tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_ch3_sound3cnt_l_two_banks_bit() {
+        let mut apu = powered_apu();
+        // Bit 5 = 0x0020: wave RAM dimension = two banks
+        apu.write16(0x0400_0070, 0x00A0); // bits 7 (DAC) + 5 (two_banks)
+        assert!(apu.ch3.two_banks, "bit 5 should enable two-bank mode");
+        // Clear bit 5
+        apu.write16(0x0400_0070, 0x0080); // only bit 7 (DAC)
+        assert!(
+            !apu.ch3.two_banks,
+            "bit 5 clear should disable two-bank mode"
+        );
+    }
+
+    #[test]
+    fn test_ch3_sound3cnt_l_bank_select_bit() {
+        let mut apu = powered_apu();
+        // Bit 6 = 0x0040: bank select = 1
+        apu.write16(0x0400_0070, 0x00C0); // bits 7 (DAC) + 6 (bank_select=1)
+        assert!(apu.ch3.bank_select, "bit 6 should select bank 1");
+        // Clear bit 6
+        apu.write16(0x0400_0070, 0x0080);
+        assert!(!apu.ch3.bank_select, "bit 6 clear should select bank 0");
+    }
+
+    #[test]
+    fn test_ch3_sound3cnt_l_bits_round_trip() {
+        let mut apu = powered_apu();
+        // Write bits 5+6+7
+        apu.write16(0x0400_0070, 0x00E0); // two_banks + bank_select + dac_on
+        let val = apu.read16(0x0400_0070);
+        assert_eq!(val & 0x00E0, 0x00E0, "bits 5, 6, 7 should all round-trip");
+        // Clear two_banks and bank_select
+        apu.write16(0x0400_0070, 0x0080);
+        let val = apu.read16(0x0400_0070);
+        assert_eq!(val & 0x00E0, 0x0080, "only bit 7 should be set");
+    }
+
+    #[test]
+    fn test_ch3_wave_ram_writes_to_other_bank() {
+        let mut apu = Apu::new();
+        // bank_select=0 (default): other bank = 1
+        apu.write8(0x0400_0090, 0xAB);
+        assert_eq!(
+            apu.ch3.wave_ram[1][0], 0xAB,
+            "write should go to bank 1 (other bank when bank_select=0)"
+        );
+        // bank_select=1: other bank = 0
+        apu.write16(0x0400_0070, 0x0040); // bit 6 = bank_select=1 (DAC off)
+        apu.write8(0x0400_0090, 0xCD);
+        assert_eq!(
+            apu.ch3.wave_ram[0][0], 0xCD,
+            "write should go to bank 0 (other bank when bank_select=1)"
+        );
+    }
+
+    #[test]
+    fn test_ch3_wave_ram_reads_from_other_bank() {
+        let mut apu = Apu::new();
+        // Directly place different values in each bank
+        apu.ch3.wave_ram[0][0] = 0x12;
+        apu.ch3.wave_ram[1][0] = 0x34;
+        // bank_select=0: reading wave RAM should return bank 1 content
+        let val = apu.ch3.read_wave_ram(0);
+        assert_eq!(val, 0x34, "read should return bank 1 when bank_select=0");
+        // bank_select=1: reading wave RAM should return bank 0 content
+        apu.ch3.bank_select = true;
+        let val = apu.ch3.read_wave_ram(0);
+        assert_eq!(val, 0x12, "read should return bank 0 when bank_select=1");
+    }
+
+    #[test]
+    fn test_ch3_single_bank_playback_wraps_at_32() {
+        let mut apu = powered_apu();
+        // Write wave data to bank 1 (other bank when bank_select=0)
+        for i in 0..16u8 {
+            apu.write8(0x0400_0090 + i as u32, i);
+        }
+        // Switch bank_select to 1 so bank 1 plays
+        apu.write16(0x0400_0070, 0x00C0); // bank_select=1 + DAC on
+        apu.write16(0x0400_0072, 0x2000); // 100% output
+        apu.write16(0x0400_0074, 0x8000); // trigger, freq=0
+        assert!(apu.ch3.active);
+        let period = 2048_u32 * 8;
+        for _ in 0..31 {
+            apu.ch3.tick(period);
+        }
+        assert_eq!(apu.ch3.wave_pos, 31, "wave_pos should reach 31");
+        apu.ch3.tick(period); // one more step: should wrap back to 0
+        assert_eq!(
+            apu.ch3.wave_pos, 0,
+            "single-bank mode should wrap to 0 after 32 samples"
+        );
+    }
+
+    #[test]
+    fn test_ch3_two_bank_plays_64_samples() {
+        let mut apu = powered_apu();
+        // bank_select=0 (default): write to bank 1 (other bank)
+        for i in 0..16u8 {
+            apu.write8(0x0400_0090 + i as u32, i * 0x11);
+        }
+        // Switch to two-bank mode, bank_select=1 so bank 1 plays first
+        apu.write16(0x0400_0070, 0x00E0); // two_banks (bit5) + bank_select=1 (bit6) + DAC on (bit7)
+        // Now write bank 0 data (other bank when bank_select=1)
+        for i in 0..16u8 {
+            apu.write8(0x0400_0090 + i as u32, 0xFF - i);
+        }
+        apu.write16(0x0400_0072, 0x2000); // 100% output
+        apu.write16(0x0400_0074, 0x8000); // trigger, freq=0
+        assert!(apu.ch3.active);
+        let period = 2048_u32 * 8;
+        for _ in 0..63 {
+            apu.ch3.tick(period);
+        }
+        assert_eq!(
+            apu.ch3.wave_pos, 63,
+            "wave_pos should reach 63 in two-bank mode"
+        );
+        apu.ch3.tick(period); // wrap
+        assert_eq!(
+            apu.ch3.wave_pos, 0,
+            "two-bank mode should wrap to 0 after 64 samples"
+        );
+    }
+
+    #[test]
+    fn test_ch3_two_bank_samples_cross_banks() {
+        let mut apu = powered_apu();
+        // bank_select=0: write distinctive data to bank 1 (other bank)
+        // Bank 1: all bytes = 0xF0 (high nibble=0xF, low nibble=0x0)
+        for i in 0..16u8 {
+            apu.write8(0x0400_0090 + i as u32, 0xF0);
+        }
+        // Switch to two-bank + bank_select=1 so bank 1 plays first
+        apu.write16(0x0400_0070, 0x00E0); // two_banks + bank_select=1 + DAC on
+        // Now bank 0 is the other bank: write 0x0A (high nibble=0x0, low nibble=0xA)
+        for i in 0..16u8 {
+            apu.write8(0x0400_0090 + i as u32, 0x0A);
+        }
+        apu.write16(0x0400_0072, 0x2000); // 100% output
+        apu.write16(0x0400_0074, 0x8000); // trigger, freq=0
+        assert!(apu.ch3.active);
+        let period = 2048_u32 * 8;
+        // Samples 0-31 come from bank 1 (0xF0 bytes → nibbles 0xF, 0x0, 0xF, 0x0, ...)
+        assert_eq!(apu.ch3.current_sample, 0xF, "first sample from bank 1");
+        apu.ch3.tick(period);
+        assert_eq!(apu.ch3.current_sample, 0x0, "second sample from bank 1");
+        // Advance to sample 32 (first sample from bank 0)
+        for _ in 0..30 {
+            apu.ch3.tick(period);
+        }
+        assert_eq!(apu.ch3.wave_pos, 31);
+        apu.ch3.tick(period); // advance to wave_pos=32, now in bank 0
+        assert_eq!(apu.ch3.wave_pos, 32);
+        // Bank 0 has 0x0A bytes → high nibble = 0x0
+        assert_eq!(
+            apu.ch3.current_sample, 0x0,
+            "first sample from bank 0 (high nibble of 0x0A)"
+        );
+        apu.ch3.tick(period); // wave_pos=33, low nibble of 0x0A = 0xA
+        assert_eq!(
+            apu.ch3.current_sample, 0xA,
+            "second sample from bank 0 (low nibble of 0x0A)"
+        );
+    }
+
+    #[test]
+    fn test_ch3_power_off_preserves_both_banks() {
+        let mut apu = powered_apu();
+        // Fill both banks with distinctive data
+        apu.ch3.wave_ram[0] = [0xAA; 16];
+        apu.ch3.wave_ram[1] = [0xBB; 16];
+        // Power off
+        apu.write16(0x0400_0084, 0x0000);
+        // Both wave RAM banks should survive
+        assert_eq!(
+            apu.ch3.wave_ram[0], [0xAA; 16],
+            "bank 0 should survive power-off"
+        );
+        assert_eq!(
+            apu.ch3.wave_ram[1], [0xBB; 16],
+            "bank 1 should survive power-off"
+        );
     }
 }
