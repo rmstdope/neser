@@ -149,7 +149,7 @@ pub fn render_obj_scanline(
     mosaic: u16,
 ) -> ObjScanline {
     let mut result = ObjScanline::default();
-    let obj_vram_base = if bitmap_mode { 0x1_4000 } else { 0x1_0000 };
+    let obj_vram_base = 0x1_0000;
     let obj_mosaic_h = super::mosaic_size(mosaic, 8);
     let obj_mosaic_v = super::mosaic_size(mosaic, 12);
 
@@ -562,7 +562,7 @@ mod tests {
         fill_4bpp_tile(&mut vram, 512, 1);
         set_obj_color(&mut pram, 1, 0x001F);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true);
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true, 0);
         assert!(
             !result.pixels[0].opaque,
             "tile IDs 0-511 must be invisible in bitmap modes"
@@ -584,8 +584,11 @@ mod tests {
         fill_4bpp_tile(&mut vram, 512, 2);
         set_obj_color(&mut pram, 2, 0x03E0);
 
-        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true);
-        assert!(result.pixels[0].opaque, "tile 512 should be visible in bitmap modes");
+        let result = render_obj_scanline(0, &oam, &vram, &pram, true, true, 0);
+        assert!(
+            result.pixels[0].opaque,
+            "tile 512 should be visible in bitmap modes"
+        );
         assert_eq!(result.pixels[0].color, 0x03E0);
     }
 
