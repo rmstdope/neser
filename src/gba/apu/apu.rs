@@ -14,6 +14,17 @@ const GBA_CLOCK_HZ: f32 = 16_777_216.0;
 /// Frame sequencer period: 512 Hz → one step every 32 768 GBA cycles.
 const FS_PERIOD: u32 = 32_768;
 
+// ── SOUNDBIAS / mixer constants ───────────────────────────────────────────────
+
+/// PSG mix (normalised 0..1) × this factor gives 10-bit unsigned units (0..128).
+const PSG_SCALE: f32 = 128.0; // ±0x80
+
+/// FIFO mix (normalised −1..+1) × this factor gives 10-bit signed units (±512).
+const FIFO_SCALE: f32 = 512.0; // ±0x200
+
+/// Maximum value in the unsigned 10-bit output range [0, 0x3FF].
+const MAX_10BIT: u32 = 0x3FF;
+
 // ── Duty cycle waveforms ──────────────────────────────────────────────────────
 
 /// 8-step duty-cycle waveforms (identical to DMG APU).
@@ -655,10 +666,40 @@ impl Apu {
             0.0
         };
 
-        let total_right = (dmg_right + a_right + b_right).clamp(-1.0, 1.0);
-        let total_left = (dmg_left + a_left + b_left).clamp(-1.0, 1.0);
+        // ── SOUNDBIAS pipeline (GBATek 4.17.5) ──────────────────────────────
+        //
+        // Scale each source to the GBA's 10-bit internal units:
+        //   PSG mix (unipolar 0..1)  → × PSG_SCALE   = 0..+128  (±0x80)
+        //   FIFO (bipolar  −1..+1)   → × FIFO_SCALE  = ±512     (±0x200)
+        //
+        // Then: add bias, clamp [0, MAX_10BIT], quantise, convert back to float.
+        let raw_left = dmg_left * PSG_SCALE + a_left * FIFO_SCALE + b_left * FIFO_SCALE;
+        let raw_right = dmg_right * PSG_SCALE + a_right * FIFO_SCALE + b_right * FIFO_SCALE;
+
+        let total_left = self.apply_soundbias(raw_left);
+        let total_right = self.apply_soundbias(raw_right);
 
         (total_left, total_right)
+    }
+
+    /// Apply the SOUNDBIAS pipeline to a single 10-bit-scale signed sample.
+    ///
+    /// Per GBATek (gbatek-gba-sound-control-registers.htm):
+    ///
+    /// 1. Add bias level (SOUNDBIAS bits 9-1, default 0x100 = 256).
+    /// 2. Clamp to unsigned 10-bit range [0, MAX_10BIT].
+    /// 3. Quantise: clear the low (resolution + 1) bits, where resolution is
+    ///    SOUNDBIAS bits 15-14 (0 → 9-bit, …, 3 → 6-bit).
+    /// 4. Subtract bias and normalise to [−1.0, 1.0] by dividing by FIFO_SCALE.
+    fn apply_soundbias(&self, sample: f32) -> f32 {
+        let bias = f32::from((self.soundbias >> 1) & 0x1FF);
+        let resolution = u32::from((self.soundbias >> 14) & 0x3);
+        // Clear (resolution + 1) LSBs: 0→0x3FE, 1→0x3FC, 2→0x3F8, 3→0x3F0.
+        let quant_mask = MAX_10BIT & !((1_u32 << (resolution + 1)) - 1);
+
+        let clamped = (sample + bias).round().clamp(0.0, MAX_10BIT as f32) as u32;
+        let quantized = (clamped & quant_mask) as f32;
+        ((quantized - bias) / FIFO_SCALE).clamp(-1.0, 1.0)
     }
 
     /// Mix DMG channel samples through a 4-bit enable mask.
@@ -1581,6 +1622,62 @@ mod tests {
         assert_eq!(
             right, 0.0,
             "FIFO B must be silent when master enable is off"
+        );
+    }
+
+    // ── SOUNDBIAS pipeline tests ─────────────────────────────────────────────
+
+    /// With SOUNDBIAS = 0 (bias level = 0), the bias is 0 and all negative
+    /// FIFO output should be clamped to zero.  The current code ignores
+    /// SOUNDBIAS in mix(), so a negative FIFO sample currently produces a
+    /// negative output — this test should FAIL before the fix is applied.
+    #[test]
+    fn test_soundbias_zero_bias_clips_negative_fifo() {
+        let mut apu = powered_apu();
+        // SOUNDBIAS = 0x0000: bits 14-15 = 0 (9-bit res), bias bits 9-1 = 0 → bias = 0.
+        apu.write16(0x0400_0088, 0x0000);
+        // FIFO A: full volume (bit 2), both L+R (bits 9,8).
+        apu.soundcnt_h = 0x0304;
+        // Push a negative sample: -64 in i8.
+        apu.fifo_a.push(-64);
+        apu.fifo_a.advance();
+
+        let (left, right) = apu.mix();
+        // Internal: (-64/128) * 512 = -256; biased = -256 + 0 = -256 → clamp to 0.
+        // Output: (0 − 0) / 512 = 0.0.
+        assert_eq!(
+            left, 0.0,
+            "negative FIFO with zero bias must be clamped to 0.0"
+        );
+        assert_eq!(
+            right, 0.0,
+            "negative FIFO with zero bias must be clamped to 0.0"
+        );
+    }
+
+    /// With amplitude resolution = 3 (6-bit, SOUNDBIAS bits 15-14 = 0b11),
+    /// a FIFO sample whose internal 10-bit value is not a multiple of 16
+    /// should be rounded down to the nearest multiple of 16.
+    /// The current code performs no quantisation, so this test should FAIL
+    /// before the fix.
+    #[test]
+    fn test_soundbias_amplitude_resolution_6bit_quantizes() {
+        let mut apu = powered_apu();
+        // SOUNDBIAS: bits 15-14 = 0b11 (resolution = 3, 6-bit),
+        //            bias bits 9-1 = 0b100000000 = 0x100 → bias = 256 (default level).
+        // Register value: (3 << 14) | (0x100 << 1) = 0xC000 | 0x0200 = 0xC200.
+        apu.write16(0x0400_0088, 0xC200);
+        apu.soundcnt_h = 0x0304;
+        // Push i8 = 1. Internal: (1/128) * 512 = 4; biased = 4 + 256 = 260.
+        // 6-bit quantisation mask = 0x3F0 → 260 & 0x3F0 = 256.
+        // Output: (256 − 256) / 512 = 0.0.
+        apu.fifo_a.push(1);
+        apu.fifo_a.advance();
+
+        let (left, _right) = apu.mix();
+        assert_eq!(
+            left, 0.0,
+            "i8=1 at 6-bit resolution must quantise to 0.0 (internal 4 rounds down to 256→bias)"
         );
     }
 
