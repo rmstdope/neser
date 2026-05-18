@@ -78,6 +78,7 @@ fn obj_size(shape: u8, size: u8) -> (u32, u32) {
 /// Given a pixel coordinate (`pixel_col`, `pixel_row`) in sprite-local space,
 /// looks up the tile data considering mapping mode and color depth.
 /// Returns the palette index (0 = transparent).
+#[allow(clippy::too_many_arguments)]
 fn fetch_obj_pixel(
     tile_id: usize,
     obj_width: u32,
