@@ -132,12 +132,7 @@ mod tests {
         let mut resampler = AudioResampler::new(4);
         resampler.set_rate_for_test(1.0);
 
-        let mut samples = VecDeque::from([
-            [0.0_f32, 0.0_f32],
-            [1.0, 1.0],
-            [0.0, 0.0],
-            [1.0, 1.0],
-        ]);
+        let mut samples = VecDeque::from([[0.0_f32, 0.0_f32], [1.0, 1.0], [0.0, 0.0], [1.0, 1.0]]);
         let mut pop_sample = || samples.pop_front();
 
         let first = resampler
@@ -165,21 +160,34 @@ mod tests {
         let mut resampler = AudioResampler::new(4);
         resampler.set_rate_for_test(0.5); // advance half a sample per call
 
-        let mut samples = VecDeque::from([
-            [0.0_f32, 1.0_f32],
-            [1.0, 0.0],
-        ]);
+        let mut samples = VecDeque::from([[0.0_f32, 1.0_f32], [1.0, 0.0]]);
         let mut pop_sample = || samples.pop_front();
 
         let first = resampler.render_next(&mut pop_sample).expect("first");
         // phase was 0.0 → outputs current = [0.0, 1.0]
-        assert!((first[0] - 0.0).abs() < 0.00001, "L at phase 0: {}", first[0]);
-        assert!((first[1] - 1.0).abs() < 0.00001, "R at phase 0: {}", first[1]);
+        assert!(
+            (first[0] - 0.0).abs() < 0.00001,
+            "L at phase 0: {}",
+            first[0]
+        );
+        assert!(
+            (first[1] - 1.0).abs() < 0.00001,
+            "R at phase 0: {}",
+            first[1]
+        );
 
         let second = resampler.render_next(&mut pop_sample).expect("second");
         // phase is now 0.5 → lerp between [0.0, 1.0] and [1.0, 0.0]
-        assert!((second[0] - 0.5).abs() < 0.00001, "L at phase 0.5: {}", second[0]);
-        assert!((second[1] - 0.5).abs() < 0.00001, "R at phase 0.5: {}", second[1]);
+        assert!(
+            (second[0] - 0.5).abs() < 0.00001,
+            "L at phase 0.5: {}",
+            second[0]
+        );
+        assert!(
+            (second[1] - 0.5).abs() < 0.00001,
+            "R at phase 0.5: {}",
+            second[1]
+        );
     }
 
     #[test]
