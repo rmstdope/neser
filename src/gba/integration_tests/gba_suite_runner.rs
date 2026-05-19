@@ -1436,11 +1436,13 @@ mod tests {
     }
 
     #[test]
-    fn mgba_memory_diagnostic_from_gba_uses_screen_crc_and_sram() {
+    fn mgba_memory_diagnostic_from_gba_uses_screen_crc_and_mgba_log() {
         let mut gba = Gba::new(AppContext::default());
+        gba.bus_mut().write16(0x04FF_F780, 0xC0DE);
         for (offset, byte) in b"Memory: 1/2\nROM OOB: fail value\0".iter().enumerate() {
-            gba.bus_mut().write8(0x0E00_0000 + offset as u32, *byte);
+            gba.bus_mut().write8(0x04FF_F600 + offset as u32, *byte);
         }
+        gba.bus_mut().write16(0x04FF_F700, 0x0100);
         let expected_crc = gba.screen_crc32();
 
         let result = mgba_memory_diagnostic_from_gba(&gba);
