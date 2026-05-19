@@ -19,6 +19,7 @@ pub mod timer;
 
 use crate::gba::apu::Apu;
 use crate::gba::cartridge::SaveBackend;
+use crate::gba::console::config::GbaTraceConfig;
 use crate::gba::cpu::bus::Bus;
 use crate::gba::input::Keypad;
 use crate::gba::ppu::{Ppu, PpuStepEvents};
@@ -36,6 +37,11 @@ use memory::{
     BIOS_SIZE, EWRAM_SIZE, IWRAM_SIZE, OAM_SIZE, PRAM_SIZE, ROM_MAX_SIZE, SRAM_SIZE, VRAM_SIZE,
     read_le_u16, read_le_u32, write_le_u16, write_le_u32,
 };
+
+#[cfg(test)]
+thread_local! {
+    static GBA_BUS_TRACE_LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 /// Pre-computed wait-state cycle counts for each memory region.
 ///
@@ -219,6 +225,8 @@ pub struct GbaBus {
     /// Updated only by DMA reads; DMA writes to restricted regions return
     /// this value instead of the CPU's `last_bus_value`.
     dma_latch: u32,
+    /// GBA-specific trace channel configuration.
+    trace_config: GbaTraceConfig,
     /// Whether the BIOS is locked. After the boot ROM finishes executing,
     /// BIOS reads from outside the BIOS region return open-bus instead of
     /// the BIOS contents.
@@ -253,6 +261,26 @@ fn check_region_size(region: &[u8], expected: usize, name: &str) -> Result<(), S
     Ok(())
 }
 
+#[cfg(test)]
+fn clear_gba_bus_trace_lines_for_tests() {
+    GBA_BUS_TRACE_LINES.with(|lines| lines.borrow_mut().clear());
+}
+
+#[cfg(test)]
+fn take_gba_bus_trace_lines_for_tests() -> Vec<String> {
+    GBA_BUS_TRACE_LINES.with(|lines| lines.borrow_mut().drain(..).collect())
+}
+
+#[cfg(test)]
+fn emit_gba_bus_trace_line(line: String) {
+    GBA_BUS_TRACE_LINES.with(|lines| lines.borrow_mut().push(line));
+}
+
+#[cfg(not(test))]
+fn emit_gba_bus_trace_line(line: String) {
+    println!("{line}");
+}
+
 impl GbaBus {
     /// Create a new bus with all regions sized per GBATek and all storage
     /// zero-initialised.
@@ -278,6 +306,7 @@ impl GbaBus {
             keypad: Keypad::new(),
             last_bus_value: 0,
             dma_latch: 0,
+            trace_config: GbaTraceConfig::default(),
             bios_locked: false,
             bios_image_loaded: false,
             waitstates: Waitstates::new(),
@@ -298,6 +327,11 @@ impl GbaBus {
     /// Whether a full BIOS image is currently loaded.
     pub fn has_bios_image(&self) -> bool {
         self.bios_image_loaded
+    }
+
+    /// Configure GBA trace channels for bus-owned diagnostics.
+    pub fn set_trace_config(&mut self, tracing: GbaTraceConfig) {
+        self.trace_config = tracing;
     }
 
     /// Lock BIOS access. After this is called, reads of the BIOS region
@@ -1003,6 +1037,10 @@ impl Bus for GbaBus {
     }
 
     fn write8(&mut self, addr: u32, value: u8) {
+        if self.trace_config.bus > 0 {
+            emit_gba_bus_trace_line(format!("[GBA BUS] W8 {addr:08X}={value:02X}"));
+        }
+
         let shift = (addr & 3) * 8;
         self.last_bus_value =
             (self.last_bus_value & !(0xFFu32 << shift)) | ((value as u32) << shift);
@@ -1358,6 +1396,21 @@ mod tests {
         let _ = bus.read32(0x0200_0000);
         // 0x0400_0400 is in I/O region 0x4 but past the 1 KB I/O window.
         assert_eq!(bus.read32(0x0400_0400), 0x1234_5678);
+    }
+
+    #[test]
+    fn bus_write8_emits_trace_when_enabled() {
+        let mut bus = GbaBus::new();
+        bus.set_trace_config(GbaTraceConfig {
+            bus: 1,
+            ..GbaTraceConfig::default()
+        });
+
+        clear_gba_bus_trace_lines_for_tests();
+        bus.write8(0x0300_0000, 0x12);
+        let lines = take_gba_bus_trace_lines_for_tests();
+
+        assert_eq!(lines, vec!["[GBA BUS] W8 03000000=12".to_string()]);
     }
 
     #[test]
