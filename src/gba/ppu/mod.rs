@@ -1458,7 +1458,7 @@ impl Ppu {
 
             let obj_px = obj_scanline.as_ref().map(|s| &s.pixels[x]);
             let obj_opaque = obj_px.is_some_and(|px| px.opaque);
-            let obj_visible = obj_opaque && (layer_mask & (1 << 4) != 0);
+            let obj_visible = obj_opaque && ((layer_mask & (1 << 4)) != 0);
             // Per GBATek "Semi-Transparent OBJ" section: "If a semi-transparent
             // OBJ pixel overlaps a 2nd Target pixel, semi-transparency wins;
             // brightness effect is NOT applied (neither to 1st nor 2nd target)."
