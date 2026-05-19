@@ -319,8 +319,7 @@ mod tests {
         let mut ch3 = Channel3::default();
         for i in 0..16u8 {
             let sample_base = i.wrapping_mul(2);
-            ch3.wave_ram[1][i as usize] =
-                (sample_base << 4) | ((sample_base + 1) & 0x0F);
+            ch3.wave_ram[1][i as usize] = (sample_base << 4) | ((sample_base + 1) & 0x0F);
         }
         ch3.active = true;
         ch3.wave_pos = 1;
