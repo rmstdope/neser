@@ -748,7 +748,8 @@ pub struct PixelFifoRenderer {
     #[serde(default)]
     bg_scy_sampler: BgScySampler,
     /// Effective SCY seen by the PPU tile fetcher. On DMG updated immediately on write;
-    /// on CGB updated after a 4-T-cycle effective delay in this dot scheduler model.
+    /// on CGB updated after a 4-dot effective delay in this emulator's scheduler
+    /// (2 hardware T-cycles of propagation + 2 dots from tick-before-write ordering).
     #[serde(default)]
     effective_scy: u8,
     /// Pending CGB SCY write: `(dot_when_active, new_value)`.
@@ -1109,7 +1110,8 @@ impl PixelFifoRenderer {
     /// - `old_scy`  — value of SCY before the write (kept for API symmetry; unused)
     /// - `new_scy`  — new value being written
     /// - `dot`      — current absolute dot counter (used to compute the elapsed delay)
-    /// - `cgb_mode` — `true` for CGB hardware (applies 4-T-cycle effective delay)
+    /// - `cgb_mode` — `true` for CGB hardware (applies a 4-dot effective delay in this
+    ///                emulator: 2 hardware T-cycles + 2 dots from tick-before-write ordering)
     pub fn record_scy_write(&mut self, old_scy: u8, new_scy: u8, dot: u16, cgb_mode: bool) {
         let _ = old_scy;
         if !self.active {
