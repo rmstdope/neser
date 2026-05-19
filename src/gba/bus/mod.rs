@@ -449,24 +449,29 @@ impl GbaBus {
     ///
     /// Per GBATek: SOUNDCNT_H bit 10 selects the timer for FIFO A (0=TM0, 1=TM1),
     /// and bit 14 selects the timer for FIFO B.
-    fn handle_timer_overflow_fifo(&mut self, overflow_mask: u8) {
-        if overflow_mask == 0 {
-            return;
-        }
-
+    ///
+    /// `overflow_counts` is `[TM0, TM1, TM2, TM3]` overflow counts returned by
+    /// `Timers::step()`. Each FIFO advances once per overflow of its selected timer.
+    fn handle_timer_overflow_fifo(&mut self, overflow_counts: [u32; 4]) {
         let soundcnt_h = self.apu.soundcnt_h;
         let fifo_a_timer = if soundcnt_h & 0x0400 != 0 { 1 } else { 0 };
         let fifo_b_timer = if soundcnt_h & 0x4000 != 0 { 1 } else { 0 };
 
-        if overflow_mask & (1 << fifo_a_timer) != 0 {
-            self.apu.fifo_a.advance();
+        let a_overflows = overflow_counts[fifo_a_timer];
+        if a_overflows > 0 {
+            for _ in 0..a_overflows {
+                self.apu.fifo_a.advance();
+            }
             if self.apu.fifo_a.len() <= 16 {
                 self.dma.notify_fifo(0);
             }
         }
 
-        if overflow_mask & (1 << fifo_b_timer) != 0 {
-            self.apu.fifo_b.advance();
+        let b_overflows = overflow_counts[fifo_b_timer];
+        if b_overflows > 0 {
+            for _ in 0..b_overflows {
+                self.apu.fifo_b.advance();
+            }
             if self.apu.fifo_b.len() <= 16 {
                 self.dma.notify_fifo(1);
             }
@@ -1920,6 +1925,58 @@ mod tests {
         bus.step(1);
 
         assert_eq!(bus.apu.fifo_b.current, 42, "FIFO B should have advanced");
+    }
+
+    #[test]
+    fn timer_overflow_multiple_times_advances_fifo_a_multiple_times() {
+        // Per GBATek: every timer overflow moves one 8-bit sample from FIFO to
+        // the sound circuit. When a timer with reload=0xFFFF overflows on every
+        // CPU cycle, stepping by 3 cycles must advance FIFO A exactly 3 times.
+        let mut bus = GbaBus::new();
+
+        bus.apu.fifo_a.push(11);
+        bus.apu.fifo_a.push(22);
+        bus.apu.fifo_a.push(33);
+        assert_eq!(bus.apu.fifo_a.current, 0);
+
+        // FIFO A uses Timer 0 (SOUNDCNT_H bit 10 = 0), enable A right (bit 8).
+        bus.apu.soundcnt_h = 0x0100;
+
+        // reload=0xFFFF → overflow on every cycle.
+        bus.timers.write_cnt_l(0, 0xFFFF);
+        bus.timers.write_cnt_h(0, 0x0080); // enable, prescaler=1
+
+        // Step 3 cycles → TM0 overflows 3 times → FIFO A must advance 3 times.
+        bus.step(3);
+
+        assert_eq!(
+            bus.apu.fifo_a.current, 33,
+            "FIFO A should have advanced 3 times (current=33)"
+        );
+    }
+
+    #[test]
+    fn timer_overflow_multiple_times_advances_fifo_b_multiple_times() {
+        // Same as above but for FIFO B on Timer 1.
+        let mut bus = GbaBus::new();
+
+        bus.apu.fifo_b.push(55);
+        bus.apu.fifo_b.push(66);
+        bus.apu.fifo_b.push(77);
+        assert_eq!(bus.apu.fifo_b.current, 0);
+
+        // FIFO B uses Timer 1 (SOUNDCNT_H bit 14 = 1), enable B right (bit 12).
+        bus.apu.soundcnt_h = 0x5000;
+
+        bus.timers.write_cnt_l(1, 0xFFFF);
+        bus.timers.write_cnt_h(1, 0x0080);
+
+        bus.step(3);
+
+        assert_eq!(
+            bus.apu.fifo_b.current, 77,
+            "FIFO B should have advanced 3 times (current=77)"
+        );
     }
 
     // ---------------------------------------------------------------
