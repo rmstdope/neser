@@ -334,6 +334,11 @@ impl GbaBus {
         self.trace_config = tracing;
     }
 
+    #[cfg(test)]
+    pub(crate) fn trace_config_for_tests(&self) -> GbaTraceConfig {
+        self.trace_config
+    }
+
     /// Lock BIOS access. After this is called, reads of the BIOS region
     /// while the CPU PC is outside the BIOS return open-bus. For the bus
     /// foundation we model the simpler "all reads are open-bus" semantics

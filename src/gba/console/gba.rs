@@ -116,10 +116,11 @@ impl Gba {
         let app_context = app_context.into_shared();
         let mut bus = GbaBus::new();
 
-        let configured_bios_path = {
+        let (configured_bios_path, trace_config) = {
             let cfg = app_context.borrow();
-            cfg.config().gba.bios_path.clone()
+            (cfg.config().gba.bios_path.clone(), cfg.config().gba.tracing)
         };
+        bus.set_trace_config(trace_config);
 
         // "embedded" is a sentinel value: skip the default-path fallback and
         // use the built-in open-source BIOS unconditionally.
@@ -617,6 +618,18 @@ mod tests {
         assert!(lines[0].starts_with("[GBA CPU] GBA ARM"));
         assert!(lines[0].contains("PC=00000000"));
         assert!(lines[0].contains("RAW="));
+    }
+
+    #[test]
+    fn test_new_copies_gba_trace_config_to_bus() {
+        let mut config = Config::default();
+        config.gba.tracing.bus = 1;
+        config.gba.tracing.dma = 2;
+        let gba = make_gba_with_config(config);
+
+        let tracing = gba.bus().trace_config_for_tests();
+        assert_eq!(tracing.bus, 1);
+        assert_eq!(tracing.dma, 2);
     }
 
     #[test]
