@@ -21,6 +21,9 @@ pub struct Channel4 {
     pub freq_timer: u32,
     pub volume: u8,
     pub env_timer: u8,
+    /// Output level set by the last LFSR clock carry: true=HIGH, false=LOW.
+    /// Per GBATek: carry=1 → OUT=HIGH; carry=0 → OUT=LOW.
+    pub output_level: bool,
 }
 
 impl Default for Channel4 {
@@ -41,6 +44,7 @@ impl Default for Channel4 {
             freq_timer: 0,
             volume: 0,
             env_timer: 0,
+            output_level: false,
         }
     }
 }
@@ -51,13 +55,14 @@ impl Channel4 {
     ///
     /// Per GBATek, the PSG DAC converts digital value D (0–15) to bipolar:
     ///   output = (D / 7.5) − 1.0
-    /// LFSR bit 0 low → output high (D = volume); LFSR bit 0 high → D = 0.
+    /// The output level is set by the carry of the last LFSR clock:
+    ///   carry=1 (OUT=HIGH) → D = volume; carry=0 (OUT=LOW) → D = 0.
     pub fn output(&self) -> f32 {
         if !self.active || !self.dac_on {
             return 0.0;
         }
-        // LFSR bit 0 low → output high.
-        let d = if self.lfsr & 0x01 == 0 {
+        // Per GBATek: carry=1 → OUT=HIGH (D=volume); carry=0 → OUT=LOW (D=0).
+        let d = if self.output_level {
             self.volume as f32
         } else {
             0.0
@@ -96,10 +101,11 @@ impl Channel4 {
     /// Clock the LFSR (exposed for testing).
     ///
     /// Implements the GBATek Galois LFSR form:
-    ///   15-bit: X = X SHR 1; IF carry THEN X = X XOR 6000h
-    ///   7-bit:  X = X SHR 1; IF carry THEN X = X XOR 0060h
+    ///   15-bit: X = X SHR 1; IF carry THEN Out=HIGH, X = X XOR 6000h ELSE Out=LOW
+    ///   7-bit:  X = X SHR 1; IF carry THEN Out=HIGH, X = X XOR 0060h ELSE Out=LOW
     pub fn clock_lfsr(&mut self) {
         let carry = self.lfsr & 1;
+        self.output_level = carry != 0;
         self.lfsr >>= 1;
         if carry != 0 {
             self.lfsr ^= if self.lfsr_7bit { 0x0060 } else { 0x6000 };
@@ -143,6 +149,7 @@ impl Channel4 {
         self.env_timer = self.env_period;
         // GBATek: 15-bit mode initial value 0x4000; 7-bit mode initial value 0x0040.
         self.lfsr = if self.lfsr_7bit { 0x0040 } else { 0x4000 };
+        self.output_level = false;
     }
 
     // ── Register writes ───────────────────────────────────────────────────
@@ -181,12 +188,22 @@ mod tests {
 
     // ── Bipolar output formula tests ──────────────────────────────────────────
 
-    fn active_ch4(volume: u8, lfsr: u16) -> Channel4 {
+    fn active_ch4_low(volume: u8) -> Channel4 {
         Channel4 {
             active: true,
             dac_on: true,
             volume,
-            lfsr,
+            output_level: false,
+            ..Channel4::default()
+        }
+    }
+
+    fn active_ch4_high(volume: u8) -> Channel4 {
+        Channel4 {
+            active: true,
+            dac_on: true,
+            volume,
+            output_level: true,
             ..Channel4::default()
         }
     }
@@ -202,36 +219,75 @@ mod tests {
     }
 
     #[test]
-    fn test_ch4_lfsr_bit0_high_outputs_minus_one() {
-        // LFSR bit 0 = 1 → output low, D=0 → bipolar output = -1.0.
-        let ch4 = active_ch4(15, 0x0001);
+    fn test_ch4_output_level_false_outputs_minus_one() {
+        // output_level=false (LOW) → D=0 → bipolar output = 0/7.5 - 1.0 = -1.0.
+        let ch4 = active_ch4_low(15);
         let got = ch4.output();
         assert!(
             (got - (-1.0_f32)).abs() < 1e-5,
-            "LFSR bit0=1 must produce -1.0, got {got}"
+            "output_level=false must produce -1.0, got {got}"
         );
     }
 
     #[test]
-    fn test_ch4_lfsr_bit0_low_full_volume_outputs_plus_one() {
-        // LFSR bit 0 = 0 → output high, volume=15, D=15 → bipolar output = +1.0.
-        let ch4 = active_ch4(15, 0x0000);
+    fn test_ch4_output_level_true_full_volume_outputs_plus_one() {
+        // output_level=true (HIGH), volume=15, D=15 → bipolar output = +1.0.
+        let ch4 = active_ch4_high(15);
         let got = ch4.output();
         assert!(
             (got - 1.0_f32).abs() < 1e-5,
-            "LFSR bit0=0 volume=15 must produce +1.0, got {got}"
+            "output_level=true volume=15 must produce +1.0, got {got}"
         );
     }
 
     #[test]
-    fn test_ch4_lfsr_bit0_low_half_volume_is_bipolar() {
-        // LFSR bit0=0, volume=8 → D=8, output = 8/7.5 - 1.0
-        let ch4 = active_ch4(8, 0x0000);
+    fn test_ch4_output_level_true_half_volume_is_bipolar() {
+        // output_level=true, volume=8 → D=8, output = 8/7.5 - 1.0
+        let ch4 = active_ch4_high(8);
         let expected = 8.0_f32 / 7.5 - 1.0;
         let got = ch4.output();
         assert!(
             (got - expected).abs() < 1e-5,
-            "LFSR bit0=0 volume=8: expected {expected}, got {got}"
+            "output_level=true volume=8: expected {expected}, got {got}"
+        );
+    }
+
+    // ── Carry-based output tests (RED → GREEN) ────────────────────────────────
+
+    #[test]
+    fn test_ch4_output_uses_carry_not_lfsr_bit0() {
+        // Per GBATek: output is HIGH when carry=1, LOW when carry=0.
+        // lfsr=0x4000 → bit0=0 → carry=0 → output must be LOW (-1.0) after clock.
+        let mut ch4 = Channel4 {
+            active: true,
+            dac_on: true,
+            volume: 15,
+            lfsr: 0x4000,
+            ..Channel4::default()
+        };
+        ch4.clock_lfsr();
+        let got = ch4.output();
+        assert!(
+            (got - (-1.0_f32)).abs() < 1e-5,
+            "After carry=0 clock (lfsr=0x4000), output must be LOW (-1.0), got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch4_output_high_after_carry_one_clock() {
+        // lfsr=0x0001 → bit0=1 → carry=1 → output must be HIGH (+1.0) after clock.
+        let mut ch4 = Channel4 {
+            active: true,
+            dac_on: true,
+            volume: 15,
+            lfsr: 0x0001,
+            ..Channel4::default()
+        };
+        ch4.clock_lfsr();
+        let got = ch4.output();
+        assert!(
+            (got - 1.0_f32).abs() < 1e-5,
+            "After carry=1 clock (lfsr=0x0001), output must be HIGH (+1.0), got {got}"
         );
     }
 

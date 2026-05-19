@@ -4,6 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
+    println!("cargo:rerun-if-changed=src/gba/bios/bios.bin");
+
     let root = Path::new("roms/games/mappers");
     emit_rerun_hints(root);
 

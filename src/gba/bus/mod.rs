@@ -449,24 +449,29 @@ impl GbaBus {
     ///
     /// Per GBATek: SOUNDCNT_H bit 10 selects the timer for FIFO A (0=TM0, 1=TM1),
     /// and bit 14 selects the timer for FIFO B.
-    fn handle_timer_overflow_fifo(&mut self, overflow_mask: u8) {
-        if overflow_mask == 0 {
-            return;
-        }
-
+    ///
+    /// `overflow_counts` is `[TM0, TM1, TM2, TM3]` overflow counts returned by
+    /// `Timers::step()`. Each FIFO advances once per overflow of its selected timer.
+    fn handle_timer_overflow_fifo(&mut self, overflow_counts: [u32; 4]) {
         let soundcnt_h = self.apu.soundcnt_h;
-        let fifo_a_timer = if soundcnt_h & 0x0400 != 0 { 1 } else { 0 };
-        let fifo_b_timer = if soundcnt_h & 0x4000 != 0 { 1 } else { 0 };
+        let fifo_a_timer: usize = if soundcnt_h & 0x0400 != 0 { 1 } else { 0 };
+        let fifo_b_timer: usize = if soundcnt_h & 0x4000 != 0 { 1 } else { 0 };
 
-        if overflow_mask & (1 << fifo_a_timer) != 0 {
-            self.apu.fifo_a.advance();
+        let a_overflows = overflow_counts[fifo_a_timer];
+        if a_overflows > 0 {
+            for _ in 0..a_overflows {
+                self.apu.fifo_a.advance();
+            }
             if self.apu.fifo_a.len() <= 16 {
                 self.dma.notify_fifo(0);
             }
         }
 
-        if overflow_mask & (1 << fifo_b_timer) != 0 {
-            self.apu.fifo_b.advance();
+        let b_overflows = overflow_counts[fifo_b_timer];
+        if b_overflows > 0 {
+            for _ in 0..b_overflows {
+                self.apu.fifo_b.advance();
+            }
             if self.apu.fifo_b.len() <= 16 {
                 self.dma.notify_fifo(1);
             }
@@ -577,13 +582,31 @@ impl GbaBus {
     }
 
     /// Return non-sequential access cycle count for `addr` and access width.
+    /// During active PPU rendering, VRAM (0x6), Palette RAM (0x5), and OAM
+    /// (0x7) incur an additional 1-cycle wait per GBATek "LCD VRAM Overview".
     pub fn n_cycles_width(&self, addr: u32, width: WidthClass) -> u32 {
-        self.waitstates.n_cycles(addr, width)
+        self.waitstates.n_cycles(addr, width) + self.video_mem_extra_cycles(addr)
     }
 
     /// Return sequential access cycle count for `addr` and access width.
+    /// Applies the same PPU-driven wait-state addition as [`n_cycles_width`].
     pub fn s_cycles_width(&self, addr: u32, width: WidthClass) -> u32 {
-        self.waitstates.s_cycles(addr, width)
+        self.waitstates.s_cycles(addr, width) + self.video_mem_extra_cycles(addr)
+    }
+
+    /// Returns 1 when the PPU requires an extra wait cycle for access to
+    /// the given address, 0 otherwise.
+    ///
+    /// Affects VRAM (region 0x6), Palette RAM (region 0x5), and OAM (region
+    /// 0x7) during active rendering. See [`Ppu::vram_pram_active_wait`] and
+    /// [`Ppu::oam_active_wait`] for the precise conditions.
+    #[inline]
+    fn video_mem_extra_cycles(&self, addr: u32) -> u32 {
+        match (addr >> 24) & 0xF {
+            0x5 | 0x6 => u32::from(self.ppu.vram_pram_active_wait()),
+            0x7 => u32::from(self.ppu.oam_active_wait()),
+            _ => 0,
+        }
     }
 
     /// Look up the BIOS contents at `addr` honouring the BIOS lock.
@@ -1922,11 +1945,229 @@ mod tests {
         assert_eq!(bus.apu.fifo_b.current, 42, "FIFO B should have advanced");
     }
 
+    #[test]
+    fn timer_overflow_multiple_times_advances_fifo_a_multiple_times() {
+        // Per GBATek: every timer overflow moves one 8-bit sample from FIFO to
+        // the sound circuit. When a timer with reload=0xFFFF overflows on every
+        // CPU cycle, stepping by 3 cycles must advance FIFO A exactly 3 times.
+        let mut bus = GbaBus::new();
+
+        bus.apu.fifo_a.push(11);
+        bus.apu.fifo_a.push(22);
+        bus.apu.fifo_a.push(33);
+        assert_eq!(bus.apu.fifo_a.current, 0);
+
+        // FIFO A uses Timer 0 (SOUNDCNT_H bit 10 = 0), enable A right (bit 8).
+        bus.apu.soundcnt_h = 0x0100;
+
+        // reload=0xFFFF → overflow on every cycle.
+        bus.timers.write_cnt_l(0, 0xFFFF);
+        bus.timers.write_cnt_h(0, 0x0080); // enable, prescaler=1
+
+        // Step 3 cycles → TM0 overflows 3 times → FIFO A must advance 3 times.
+        bus.step(3);
+
+        assert_eq!(
+            bus.apu.fifo_a.current, 33,
+            "FIFO A should have advanced 3 times (current=33)"
+        );
+    }
+
+    #[test]
+    fn timer_overflow_multiple_times_advances_fifo_b_multiple_times() {
+        // Same as above but for FIFO B on Timer 1.
+        let mut bus = GbaBus::new();
+
+        bus.apu.fifo_b.push(55);
+        bus.apu.fifo_b.push(66);
+        bus.apu.fifo_b.push(77);
+        assert_eq!(bus.apu.fifo_b.current, 0);
+
+        // FIFO B uses Timer 1 (SOUNDCNT_H bit 14 = 1), enable B right (bit 12).
+        bus.apu.soundcnt_h = 0x5000;
+
+        bus.timers.write_cnt_l(1, 0xFFFF);
+        bus.timers.write_cnt_h(1, 0x0080);
+
+        bus.step(3);
+
+        assert_eq!(
+            bus.apu.fifo_b.current, 77,
+            "FIFO B should have advanced 3 times (current=77)"
+        );
+    }
+
     // ---------------------------------------------------------------
     // BG scroll registers (0x04000010–0x0400001E) are write-only.
     // Per GBATek I/O map, CPU reads should return open-bus, not the
     // last-written scroll value.
     // ---------------------------------------------------------------
+
+    // =========================================================================
+    // PPU Video Memory Access Timing Tests
+    // Per GBATek "LCD VRAM Overview": CPU access to VRAM/OAM/Palette during
+    // active display inserts a 1-cycle wait. OAM is additionally constrained
+    // during H-Blank unless DISPCNT bit 5 (H-Blank Interval Free) is set.
+    // =========================================================================
+
+    #[test]
+    fn vram_pram_extra_wait_during_active_display() {
+        // Default state: vcount=0, line_cycle=0 — PPU is in active display.
+        let bus = GbaBus::new();
+        // PRAM base N16=1, N32=2; should be +1 during active display.
+        assert_eq!(
+            bus.n_cycles_width(0x0500_0000, WidthClass::HalfwordOrByte),
+            2,
+            "PRAM n_cycles16 should be +1 during active display"
+        );
+        assert_eq!(
+            bus.n_cycles_width(0x0500_0000, WidthClass::Word),
+            3,
+            "PRAM n_cycles32 should be +1 during active display"
+        );
+        // VRAM base N16=1, N32=2; should be +1 during active display.
+        assert_eq!(
+            bus.n_cycles_width(0x0600_0000, WidthClass::HalfwordOrByte),
+            2,
+            "VRAM n_cycles16 should be +1 during active display"
+        );
+        assert_eq!(
+            bus.n_cycles_width(0x0600_0000, WidthClass::Word),
+            3,
+            "VRAM n_cycles32 should be +1 during active display"
+        );
+        // s_cycles should also get the +1.
+        assert_eq!(
+            bus.s_cycles_width(0x0500_0000, WidthClass::HalfwordOrByte),
+            2,
+            "PRAM s_cycles16 should be +1 during active display"
+        );
+        assert_eq!(
+            bus.s_cycles_width(0x0600_0000, WidthClass::HalfwordOrByte),
+            2,
+            "VRAM s_cycles16 should be +1 during active display"
+        );
+    }
+
+    #[test]
+    fn oam_extra_wait_during_active_display() {
+        // Default state: vcount=0, line_cycle=0 — PPU is in active display.
+        let bus = GbaBus::new();
+        // OAM base N16=1, N32=1; should be +1 during active display.
+        assert_eq!(
+            bus.n_cycles_width(0x0700_0000, WidthClass::HalfwordOrByte),
+            2,
+            "OAM n_cycles16 should be +1 during active display"
+        );
+        assert_eq!(
+            bus.n_cycles_width(0x0700_0000, WidthClass::Word),
+            2,
+            "OAM n_cycles32 should be +1 during active display"
+        );
+        assert_eq!(
+            bus.s_cycles_width(0x0700_0000, WidthClass::HalfwordOrByte),
+            2,
+            "OAM s_cycles16 should be +1 during active display"
+        );
+    }
+
+    #[test]
+    fn vram_pram_no_extra_wait_during_hblank() {
+        let mut bus = GbaBus::new();
+        // Advance to H-blank on scanline 0.
+        bus.step(crate::gba::ppu::HBLANK_START_CYCLE);
+        // VRAM/PRAM should return base cycles — no extra wait during H-blank.
+        assert_eq!(
+            bus.n_cycles_width(0x0500_0000, WidthClass::HalfwordOrByte),
+            1,
+            "PRAM n_cycles16 should be base-only during H-blank"
+        );
+        assert_eq!(
+            bus.n_cycles_width(0x0600_0000, WidthClass::HalfwordOrByte),
+            1,
+            "VRAM n_cycles16 should be base-only during H-blank"
+        );
+        assert_eq!(
+            bus.s_cycles_width(0x0500_0000, WidthClass::HalfwordOrByte),
+            1,
+            "PRAM s_cycles16 should be base-only during H-blank"
+        );
+    }
+
+    #[test]
+    fn oam_extra_wait_during_hblank_without_hblank_interval_free() {
+        // DISPCNT=0: HBLANK_INTERVAL_FREE is not set.
+        let mut bus = GbaBus::new();
+        bus.step(crate::gba::ppu::HBLANK_START_CYCLE);
+        // OAM should still need the extra wait during H-blank when bit5 is clear.
+        assert_eq!(
+            bus.n_cycles_width(0x0700_0000, WidthClass::HalfwordOrByte),
+            2,
+            "OAM n_cycles16 should be +1 during H-blank without HBLANK_INTERVAL_FREE"
+        );
+    }
+
+    #[test]
+    fn oam_no_extra_wait_during_hblank_with_hblank_interval_free() {
+        let mut bus = GbaBus::new();
+        // Set HBLANK_INTERVAL_FREE (DISPCNT bit 5) before advancing.
+        bus.ppu
+            .write_dispcnt(crate::gba::ppu::dispcnt::HBLANK_INTERVAL_FREE);
+        bus.step(crate::gba::ppu::HBLANK_START_CYCLE);
+        // OAM is freely accessible during H-blank when HBLANK_INTERVAL_FREE is set.
+        assert_eq!(
+            bus.n_cycles_width(0x0700_0000, WidthClass::HalfwordOrByte),
+            1,
+            "OAM n_cycles16 should be base-only during H-blank with HBLANK_INTERVAL_FREE"
+        );
+    }
+
+    #[test]
+    fn video_mem_no_extra_wait_during_vblank() {
+        let mut bus = GbaBus::new();
+        // Step through all visible scanlines to enter V-blank.
+        bus.step(crate::gba::ppu::VISIBLE_SCANLINES * crate::gba::ppu::CYCLES_PER_SCANLINE);
+        // All video memory should be freely accessible during V-blank.
+        assert_eq!(
+            bus.n_cycles_width(0x0500_0000, WidthClass::HalfwordOrByte),
+            1,
+            "PRAM n_cycles16 should be base-only during V-blank"
+        );
+        assert_eq!(
+            bus.n_cycles_width(0x0600_0000, WidthClass::HalfwordOrByte),
+            1,
+            "VRAM n_cycles16 should be base-only during V-blank"
+        );
+        assert_eq!(
+            bus.n_cycles_width(0x0700_0000, WidthClass::HalfwordOrByte),
+            1,
+            "OAM n_cycles16 should be base-only during V-blank"
+        );
+    }
+
+    #[test]
+    fn video_mem_no_extra_wait_during_forced_blank() {
+        let mut bus = GbaBus::new();
+        // Set FORCED_BLANK (DISPCNT bit 7); PPU is still at scanline 0 active display,
+        // but forced blank overrides the wait-state restriction.
+        bus.ppu
+            .write_dispcnt(crate::gba::ppu::dispcnt::FORCED_BLANK);
+        assert_eq!(
+            bus.n_cycles_width(0x0500_0000, WidthClass::HalfwordOrByte),
+            1,
+            "PRAM n_cycles16 should be base-only during forced blank"
+        );
+        assert_eq!(
+            bus.n_cycles_width(0x0600_0000, WidthClass::HalfwordOrByte),
+            1,
+            "VRAM n_cycles16 should be base-only during forced blank"
+        );
+        assert_eq!(
+            bus.n_cycles_width(0x0700_0000, WidthClass::HalfwordOrByte),
+            1,
+            "OAM n_cycles16 should be base-only during forced blank"
+        );
+    }
 
     #[test]
     fn bg_scroll_registers_are_write_only_return_open_bus() {

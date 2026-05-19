@@ -427,17 +427,16 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[test]
-    fn bios_checksum_returns_identifier() {
+    fn bios_checksum_returns_gba_checksum() {
         let code = &[arm_swi(0x0D), ARM_IDLE];
 
         let mut gba = boot_with_embedded_bios(code);
         run_until_idle(&mut gba, 100_000);
 
-        // Our open-source BIOS returns "NESE" (0x4E455345)
         assert_eq!(
             gba.cpu_reg(0),
-            0x4E45_5345,
-            "BiosChecksum should return open-source identifier"
+            0xBAAE_187F,
+            "BiosChecksum should match the original GBA/GBA SP BIOS checksum for game compatibility"
         );
     }
 
