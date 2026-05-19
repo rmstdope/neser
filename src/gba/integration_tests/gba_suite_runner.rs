@@ -699,6 +699,10 @@ pub fn mgba_memory_diagnostic_from_sram(
     }
 }
 
+fn mgba_memory_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
+    mgba_memory_diagnostic_from_sram(gba.screen_crc32(), gba.bus().sram_snapshot())
+}
+
 pub fn parse_mgba_memory_sram_log(bytes: &[u8]) -> MgbaMemoryLog {
     let text_bytes: Vec<u8> = bytes
         .iter()
@@ -1307,5 +1311,21 @@ mod tests {
                 detail: "fail open bus".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn mgba_memory_diagnostic_from_gba_uses_screen_crc_and_sram() {
+        let mut gba = Gba::new(AppContext::default());
+        for (offset, byte) in b"Memory: 1/2\nROM OOB: fail value\0".iter().enumerate() {
+            gba.bus_mut().write8(0x0E00_0000 + offset as u32, *byte);
+        }
+        let expected_crc = gba.screen_crc32();
+
+        let result = mgba_memory_diagnostic_from_gba(&gba);
+
+        assert_eq!(result.framebuffer_crc32, expected_crc);
+        assert_eq!(result.passed_count, Some(1));
+        assert_eq!(result.total_count, Some(2));
+        assert_eq!(result.raw_log, "Memory: 1/2\nROM OOB: fail value");
     }
 }
