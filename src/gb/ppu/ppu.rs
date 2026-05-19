@@ -147,6 +147,10 @@ impl Ppu {
         self.cgb_model = model;
     }
 
+    pub(crate) fn fixup_after_state_load(&mut self) {
+        self.pixel_fifo.fixup_after_state_load(self.cgb_mode);
+    }
+
     // ── Dot-level tick ────────────────────────────────────────────────────────
 
     /// Advance the PPU by `n` dots (T-cycles).
@@ -541,6 +545,10 @@ impl Ppu {
         }
         if addr == 0xFF4B {
             self.pixel_fifo.record_wx_write(val);
+        }
+        if addr == 0xFF43 {
+            self.pixel_fifo
+                .record_scx_write(self.registers.scx, self.timing.dot());
         }
         let was_enabled = self.registers.lcd_enabled();
         self.registers.write(addr, val);

@@ -31,6 +31,9 @@ const OFF_LEFT_WINDOW_EXTRA_STALL_DOTS: u16 = 2;
 const STEADY_WINDOW_MAP_FETCH_DELAY_X: u8 = OBJ_PIXELS_PER_FETCH * 2;
 const LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X: u8 = OBJ_PIXELS_PER_FETCH * 2 + 5;
 const LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X: u8 = OBJ_PIXELS_PER_FETCH * 3 + 5;
+const SCX_FINE_MASK: u8 = 0x07;
+const SCX_TILE_MASK: u8 = !SCX_FINE_MASK;
+const SCX_LOW_BITS_SAMPLE_DOTS: u16 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LcdcBgEnableEdgeTiming {
@@ -383,6 +386,164 @@ struct WindowXEdge {
     wx: u8,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+enum BgScxFetchStep {
+    #[default]
+    GetTile,
+    TileDataLow,
+    TileDataHigh,
+    Sleep,
+    Push,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BgScxSampler {
+    config: BgScxSamplerConfig,
+    step: BgScxFetchStep,
+    step_dots: u8,
+    latched_scx: u8,
+    visible_tile_scx: u8,
+    visible_pixels_remaining: u8,
+    queued_tile_scx: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct BgScxSamplerConfig {
+    fetch_start_dots: u16,
+    queue_prefetched_tile: bool,
+    pause_on_obj_fetch: bool,
+}
+
+impl BgScxSampler {
+    fn new(scx: u8, config: BgScxSamplerConfig) -> Self {
+        let scx = scx & SCX_TILE_MASK;
+        Self {
+            config,
+            step: BgScxFetchStep::GetTile,
+            step_dots: 0,
+            latched_scx: scx,
+            visible_tile_scx: scx,
+            visible_pixels_remaining: 0,
+            queued_tile_scx: None,
+        }
+    }
+
+    fn reset(&mut self, scx: u8, config: BgScxSamplerConfig) {
+        *self = Self::new(scx, config);
+    }
+
+    fn tick(&mut self, elapsed: u16, scx: u8) {
+        if elapsed < self.config.fetch_start_dots {
+            return;
+        }
+
+        match self.step {
+            BgScxFetchStep::GetTile => {
+                if self.step_dots == 0 {
+                    self.latched_scx = scx & SCX_TILE_MASK;
+                }
+                self.advance_step(BgScxFetchStep::TileDataLow);
+            }
+            BgScxFetchStep::TileDataLow => self.advance_step(BgScxFetchStep::TileDataHigh),
+            BgScxFetchStep::TileDataHigh => self.advance_step(BgScxFetchStep::Sleep),
+            BgScxFetchStep::Sleep => {
+                self.step_dots += 1;
+                if self.step_dots == 2 {
+                    self.step = BgScxFetchStep::Push;
+                    self.step_dots = 0;
+                    self.push_latched_tile();
+                }
+            }
+            BgScxFetchStep::Push => self.push_latched_tile(),
+        }
+    }
+
+    fn will_sample_scx(&self, elapsed: u16) -> bool {
+        elapsed >= self.config.fetch_start_dots
+            && self.step == BgScxFetchStep::GetTile
+            && self.step_dots == 0
+    }
+
+    fn push_latched_tile(&mut self) {
+        if self.visible_pixels_remaining == 0 && self.queued_tile_scx.is_none() {
+            self.visible_tile_scx = self.latched_scx;
+            self.visible_pixels_remaining = OBJ_PIXELS_PER_FETCH;
+            self.step = BgScxFetchStep::GetTile;
+            self.step_dots = 0;
+            return;
+        }
+
+        if self.config.queue_prefetched_tile && self.queued_tile_scx.is_none() {
+            self.queued_tile_scx = Some(self.latched_scx);
+            self.step = BgScxFetchStep::GetTile;
+            self.step_dots = 0;
+        }
+    }
+
+    fn advance_step(&mut self, next_step: BgScxFetchStep) {
+        self.step_dots += 1;
+        if self.step_dots == 2 {
+            self.step = next_step;
+            self.step_dots = 0;
+        }
+    }
+
+    fn current_scx(&mut self) -> u8 {
+        self.ensure_front_loaded();
+        self.visible_tile_scx
+    }
+
+    fn consume_pixel(&mut self) {
+        self.ensure_front_loaded();
+        self.visible_pixels_remaining = self.visible_pixels_remaining.saturating_sub(1);
+    }
+
+    fn ensure_front_loaded(&mut self) {
+        if self.visible_pixels_remaining == 0
+            && let Some(scx) = self.queued_tile_scx.take()
+        {
+            self.visible_tile_scx = scx;
+            self.visible_pixels_remaining = OBJ_PIXELS_PER_FETCH;
+        }
+    }
+
+    fn pauses_on_obj_fetch(&self) -> bool {
+        self.config.pause_on_obj_fetch
+    }
+}
+
+impl Default for BgScxSampler {
+    fn default() -> Self {
+        Self::new(0, BgScxSamplerConfig::default())
+    }
+}
+
+impl BgScxSamplerConfig {
+    fn for_mode(cgb_mode: bool) -> Self {
+        if cgb_mode {
+            // Native CGB fetches one dot later and keeps a prefetched BG tile
+            // available while OBJ fetches stall the visible pixel stream.
+            Self {
+                fetch_start_dots: SCX_LOW_BITS_SAMPLE_DOTS + 1,
+                queue_prefetched_tile: true,
+                pause_on_obj_fetch: true,
+            }
+        } else {
+            Self::default()
+        }
+    }
+}
+
+impl Default for BgScxSamplerConfig {
+    fn default() -> Self {
+        Self {
+            fetch_start_dots: SCX_LOW_BITS_SAMPLE_DOTS,
+            queue_prefetched_tile: false,
+            pause_on_obj_fetch: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PixelFifoRenderer {
     active: bool,
@@ -407,6 +568,16 @@ pub struct PixelFifoRenderer {
     bgp_edge_value: u8,
     #[serde(default)]
     fine_scroll_delay_dots: u16,
+    #[serde(default)]
+    scanline_start_scx_low: u8,
+    #[serde(default)]
+    bg_fetch_scx: u8,
+    #[serde(default)]
+    scx_low_bits_sampled: bool,
+    #[serde(default)]
+    bg_scx_sampler: BgScxSampler,
+    #[serde(default)]
+    pending_scx_sample_override: Option<u8>,
     #[serde(default)]
     pending_obj_stall_dots: u16,
     #[serde(default)]
@@ -467,6 +638,11 @@ impl PixelFifoRenderer {
             bgp_edge_x: 0,
             bgp_edge_value: INITIAL_BGP,
             fine_scroll_delay_dots: 0,
+            scanline_start_scx_low: 0,
+            bg_fetch_scx: 0,
+            scx_low_bits_sampled: true,
+            bg_scx_sampler: BgScxSampler::default(),
+            pending_scx_sample_override: None,
             pending_obj_stall_dots: 0,
             obj_stall_events: Vec::new(),
             next_obj_stall_event: 0,
@@ -517,7 +693,13 @@ impl PixelFifoRenderer {
         self.lcdc_window_map_edge = LcdcWindowMapEdge::default();
         self.lcdc_tile_data_edge = LcdcTileDataEdge::default();
         self.lcdc_obj_enable_edge = LcdcObjEnableEdge::default();
-        self.fine_scroll_delay_dots = u16::from(registers.scx & 0x07);
+        self.scanline_start_scx_low = registers.scx & SCX_FINE_MASK;
+        self.bg_fetch_scx = registers.scx;
+        self.scx_low_bits_sampled = false;
+        self.bg_scx_sampler
+            .reset(registers.scx, BgScxSamplerConfig::for_mode(cgb_mode));
+        self.pending_scx_sample_override = None;
+        self.fine_scroll_delay_dots = u16::from(self.scanline_start_scx_low);
         self.pending_obj_stall_dots = 0;
         self.next_obj_stall_event = 0;
         self.active_obj_stall_x = None;
@@ -593,11 +775,26 @@ impl PixelFifoRenderer {
         }
 
         let elapsed = dot.saturating_sub(self.mode3_start_dot);
+        self.sample_scanline_start_scx_low(elapsed, registers.scx);
+        let will_sample_scx = self.bg_scx_sampler.will_sample_scx(elapsed);
+        let fetch_scx = self.scx_for_fetch_sample(elapsed, registers.scx);
+        if elapsed < FETCHER_STARTUP_DOTS {
+            self.bg_scx_sampler.tick(elapsed, fetch_scx);
+            self.clear_pending_scx_sample_override(will_sample_scx);
+            return None;
+        }
         if elapsed < FETCHER_STARTUP_DOTS + self.fine_scroll_delay_dots {
+            self.bg_scx_sampler.tick(elapsed, fetch_scx);
+            self.clear_pending_scx_sample_override(will_sample_scx);
+            self.consume_bg_scx_pixel();
             return None;
         }
         self.queue_stall_events_for_next_pixel(registers.lcdc);
         if self.pending_obj_stall_dots > 0 {
+            if !self.bg_scx_sampler.pauses_on_obj_fetch() {
+                self.bg_scx_sampler.tick(elapsed, fetch_scx);
+                self.clear_pending_scx_sample_override(will_sample_scx);
+            }
             self.pending_obj_stall_dots -= 1;
             if self.pending_obj_stall_dots == 0 {
                 self.active_obj_stall_x = None;
@@ -606,7 +803,10 @@ impl PixelFifoRenderer {
             return None;
         }
 
+        self.bg_scx_sampler.tick(elapsed, fetch_scx);
+        self.clear_pending_scx_sample_override(will_sample_scx);
         let x = u32::from(self.next_x);
+        self.update_bg_fetch_scx();
         if cgb_mode && !dmg_compat {
             self.render_cgb_pixel(
                 x,
@@ -642,6 +842,7 @@ impl PixelFifoRenderer {
         self.lcdc_tile_data_edge.clear_consumed(self.next_x);
         self.clear_consumed_obj_fetch_lcdc_ranges();
         self.clear_consumed_window_edges();
+        self.consume_bg_scx_pixel();
         self.next_x = self.next_x.saturating_add(1);
         if self.next_x as u32 >= ScreenBuffer::WIDTH {
             self.active = false;
@@ -653,6 +854,36 @@ impl PixelFifoRenderer {
 
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    pub(super) fn fixup_after_state_load(&mut self, cgb_mode: bool) {
+        self.bg_scx_sampler.config = BgScxSamplerConfig::for_mode(cgb_mode);
+    }
+
+    pub fn record_scx_write(&mut self, previous: u8, dot: u16) {
+        if self.active
+            && self
+                .bg_scx_sampler
+                .will_sample_scx(dot.saturating_sub(self.mode3_start_dot))
+        {
+            // Register writes are visible to the PPU after the fetch phase that
+            // is already sampling on the same dot.
+            self.pending_scx_sample_override = Some(previous);
+        }
+    }
+
+    fn scx_for_fetch_sample(&self, elapsed: u16, current_scx: u8) -> u8 {
+        if self.bg_scx_sampler.will_sample_scx(elapsed) {
+            self.pending_scx_sample_override.unwrap_or(current_scx)
+        } else {
+            current_scx
+        }
+    }
+
+    fn clear_pending_scx_sample_override(&mut self, sampled: bool) {
+        if sampled {
+            self.pending_scx_sample_override = None;
+        }
     }
 
     pub fn record_bgp_write(
@@ -2447,14 +2678,17 @@ impl PixelFifoRenderer {
         let win_enabled = lcdc & LCDC_WINDOW_ENABLE != 0;
         let master_priority = lcdc & 0x01 != 0;
 
-        let bg_px = background::fetch_bg_pixel_cgb(
-            x,
-            self.scanline,
+        let bg_px = background::fetch_bg_pixel_cgb_with_fine_scx(
             vram,
             vram_bank1,
-            lcdc,
-            registers.scx,
-            registers.scy,
+            background::CgbPixelFetch {
+                x,
+                scanline: self.scanline,
+                scx: self.bg_fetch_scx,
+                fine_scx: self.scanline_start_scx_low,
+                scy: registers.scy,
+                lcdc,
+            },
         );
         let bw_px = if win_enabled {
             let window_lcdc = self.lcdc_window_map_edge.lcdc_for_window_fetch(x, lcdc);
@@ -2622,6 +2856,7 @@ impl PixelFifoRenderer {
                 x,
                 scanline: self.scanline,
                 scx: registers.scx,
+                fine_scx: registers.scx & SCX_FINE_MASK,
                 scy: registers.scy,
                 wx: self.window_fetch_wx,
                 wy: registers.wy,
@@ -2671,7 +2906,8 @@ impl PixelFifoRenderer {
                     layer: DmgLayer::Background,
                     x: bg_x,
                     scanline: self.scanline,
-                    scx: registers.scx,
+                    scx: self.bg_fetch_scx,
+                    fine_scx: self.scanline_start_scx_low,
                     scy: registers.scy,
                     wx: registers.wx,
                     wy: registers.wy,
@@ -2717,6 +2953,7 @@ impl PixelFifoRenderer {
                         x,
                         scanline: self.scanline,
                         scx: registers.scx,
+                        fine_scx: registers.scx & SCX_FINE_MASK,
                         scy: registers.scy,
                         wx: window_wx,
                         wy: registers.wy,
@@ -2784,6 +3021,25 @@ impl PixelFifoRenderer {
         } else {
             current
         }
+    }
+
+    fn update_bg_fetch_scx(&mut self) {
+        self.bg_fetch_scx = self.bg_scx_sampler.current_scx() | self.scanline_start_scx_low;
+    }
+
+    fn consume_bg_scx_pixel(&mut self) {
+        self.bg_scx_sampler.consume_pixel();
+    }
+
+    fn sample_scanline_start_scx_low(&mut self, elapsed: u16, current_scx: u8) {
+        if self.scx_low_bits_sampled || elapsed < SCX_LOW_BITS_SAMPLE_DOTS {
+            return;
+        }
+
+        self.scanline_start_scx_low = current_scx & SCX_FINE_MASK;
+        self.bg_fetch_scx = (self.bg_fetch_scx & SCX_TILE_MASK) | self.scanline_start_scx_low;
+        self.fine_scroll_delay_dots = u16::from(self.scanline_start_scx_low);
+        self.scx_low_bits_sampled = true;
     }
 
     fn dmg_disabled_window_color0_pixel(&self, x: u32, registers: &Registers) -> bool {
@@ -2993,7 +3249,7 @@ fn prune_consumed_window_x_edges(edges: &mut Vec<WindowXEdge>, x: u8) {
 mod tests {
     use super::super::{registers::Registers, screen_buffer::ScreenBuffer};
     use super::{
-        LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE,
+        BgScxSamplerConfig, LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE,
         LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X, LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X,
         LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
         PixelFifoRenderer, WindowEnableEdge, WindowXEdge,
@@ -3109,6 +3365,26 @@ mod tests {
             Some(1),
             "native CGB rendering should report one window activation so PPU window_line advances"
         );
+    }
+
+    #[test]
+    fn fixup_after_state_load_restores_cgb_scx_sampler_timing() {
+        let mut renderer = PixelFifoRenderer::new();
+        let registers = Registers::new();
+        let oam = [0u8; 0xA0];
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, false);
+        renderer.bg_scx_sampler.config = BgScxSamplerConfig::default();
+
+        renderer.fixup_after_state_load(true);
+
+        assert_eq!(
+            renderer.bg_scx_sampler.config,
+            BgScxSamplerConfig::for_mode(true),
+            "legacy CGB save-states should not resume with DMG SCX fetch timing"
+        );
+        assert!(!renderer.bg_scx_sampler.will_sample_scx(6));
+        assert!(renderer.bg_scx_sampler.will_sample_scx(7));
     }
 
     #[test]
