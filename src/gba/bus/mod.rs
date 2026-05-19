@@ -1474,6 +1474,9 @@ mod tests {
             crate::gba::ppu::REG_DISPCNT,
             3 | crate::gba::ppu::dispcnt::BG2_ENABLE,
         );
+        // Mode 3 uses affine — set identity matrix so rendering is linear.
+        bus.write16(crate::gba::ppu::REG_BG2PA, 0x0100);
+        bus.write16(crate::gba::ppu::REG_BG2PD, 0x0100);
         // Pixel 0,0 = pure red (BGR555 0x001F). Pixel 1,0 = pure blue.
         bus.write16(0x0600_0000, 0x001F);
         bus.write16(0x0600_0002, 0x7C00);
