@@ -1667,9 +1667,11 @@ impl Ppu {
 
     /// Check if pixel (x, y) is inside window `n` (0 or 1).
     ///
-    /// Per GBATek 'LCD I/O Window Feature':
-    /// - If X2 > 240 or X1 > X2: treat as X2=240 (window extends to right screen edge).
-    /// - If Y2 > 160 or Y1 > Y2: treat as Y2=160 (window extends to bottom screen edge).
+    /// Per GBATek 'LCD I/O Window Feature' and hardware tests:
+    /// - If X2 > 240: clamp X2 to 240 (window is X1..240).
+    /// - If X1 > X2: window wraps around, covering 0..X2 AND X1..240.
+    /// - If Y2 > 160: clamp Y2 to 160 (window is Y1..160).
+    /// - If Y1 > Y2: window wraps around, covering 0..Y2 AND Y1..160.
     fn pixel_in_window(&self, n: usize, x: u32, y: u32) -> bool {
         let h = self.win_h[n];
         let v = self.win_v[n];
@@ -1678,10 +1680,26 @@ impl Ppu {
         let y1 = (v >> 8) as u32;
         let y2 = (v & 0xFF) as u32;
 
-        let effective_x2 = if x2 > 240 || x1 > x2 { 240 } else { x2 };
-        let effective_y2 = if y2 > 160 || y1 > y2 { 160 } else { y2 };
-        let in_x = x >= x1 && x < effective_x2;
-        let in_y = y >= y1 && y < effective_y2;
+        let in_x = if x2 > SCREEN_WIDTH {
+            // X2 out of range: clamp to SCREEN_WIDTH.
+            x >= x1 && x < SCREEN_WIDTH
+        } else if x1 > x2 {
+            // Wraparound: covers 0..X2 AND X1..SCREEN_WIDTH.
+            x >= x1 || x < x2
+        } else {
+            x >= x1 && x < x2
+        };
+
+        let in_y = if y2 > SCREEN_HEIGHT {
+            // Y2 out of range: clamp to SCREEN_HEIGHT.
+            y >= y1 && y < SCREEN_HEIGHT
+        } else if y1 > y2 {
+            // Wraparound: covers 0..Y2 AND Y1..SCREEN_HEIGHT.
+            y >= y1 || y < y2
+        } else {
+            y >= y1 && y < y2
+        };
+
         in_x && in_y
     }
 
@@ -4487,16 +4505,16 @@ mod tests {
     }
 
     #[test]
-    fn pixel_in_window_clamp_x1_gt_x2() {
+    fn pixel_in_window_wraparound_x() {
         let mut ppu = Ppu::new();
-        // X1=200, X2=50 → X1 > X2, per spec clamp X2 to 240.
-        // Window covers 200..240 only (no wrap).
+        // X1=200, X2=50 → X1 > X2: window wraps around.
+        // Covers 0..50 (low range) AND 200..240 (high range).
         ppu.write_win_h(0, (200 << 8) | 50);
         ppu.write_win_v(0, 160); // full height (Y1=0, Y2=160)
 
-        assert!(ppu.pixel_in_window(0, 210, 80)); // 200 <= 210 < 240
-        assert!(!ppu.pixel_in_window(0, 30, 80)); // 30 < 200, clamped (no wrap)
-        assert!(!ppu.pixel_in_window(0, 100, 80)); // 100 < 200
+        assert!(ppu.pixel_in_window(0, 210, 80)); // 200..240 high range
+        assert!(ppu.pixel_in_window(0, 30, 80)); // 0..50 low range (wrap)
+        assert!(!ppu.pixel_in_window(0, 100, 80)); // 50..200 gap
     }
 
     #[test]
@@ -4511,16 +4529,16 @@ mod tests {
     }
 
     #[test]
-    fn pixel_in_window_clamp_y1_gt_y2() {
+    fn pixel_in_window_wraparound_y() {
         let mut ppu = Ppu::new();
-        // Y1=120, Y2=50 → Y1 > Y2, per spec clamp Y2 to 160.
-        // Window covers Y 120..160 only (no wrap).
+        // Y1=120, Y2=50 → Y1 > Y2: window wraps around.
+        // Covers 0..50 (low range) AND 120..160 (high range).
         ppu.write_win_h(0, 240); // full width (X1=0, X2=240)
         ppu.write_win_v(0, (120 << 8) | 50);
 
-        assert!(ppu.pixel_in_window(0, 100, 130)); // 120 <= 130 < 160
-        assert!(!ppu.pixel_in_window(0, 100, 30)); // 30 < 120, clamped (no wrap)
-        assert!(!ppu.pixel_in_window(0, 100, 60)); // 60 < 120
+        assert!(ppu.pixel_in_window(0, 100, 130)); // 120..160 high range
+        assert!(ppu.pixel_in_window(0, 100, 30)); // 0..50 low range (wrap)
+        assert!(!ppu.pixel_in_window(0, 100, 60)); // 50..120 gap
     }
 
     #[test]
@@ -4532,6 +4550,52 @@ mod tests {
         assert!(ppu.pixel_in_window(0, 100, 10)); // top edge
         assert!(ppu.pixel_in_window(0, 100, 159)); // last pixel before clamped Y2=160
         assert!(!ppu.pixel_in_window(0, 100, 5)); // above window
+    }
+
+    #[test]
+    fn pixel_in_window_wraparound_x_low_range_is_inside() {
+        let mut ppu = Ppu::new();
+        // X1=200, X2=50: X1 > X2, so window wraps around.
+        // Per hardware: covers 0..50 AND 200..240.
+        ppu.write_win_h(0, (200 << 8) | 50);
+        ppu.write_win_v(0, 160); // full height (Y1=0, Y2=160)
+
+        // Low range (0..50): should be INSIDE window.
+        assert!(ppu.pixel_in_window(0, 0, 80)); // x=0 is in 0..50
+        assert!(ppu.pixel_in_window(0, 30, 80)); // x=30 is in 0..50
+        assert!(ppu.pixel_in_window(0, 49, 80)); // x=49 is last pixel of low range
+
+        // Gap (50..200): should be OUTSIDE window.
+        assert!(!ppu.pixel_in_window(0, 50, 80)); // x=50 is the start of the gap
+        assert!(!ppu.pixel_in_window(0, 100, 80)); // x=100 is in gap
+        assert!(!ppu.pixel_in_window(0, 199, 80)); // x=199 is last pixel of gap
+
+        // High range (200..240): should be INSIDE window.
+        assert!(ppu.pixel_in_window(0, 200, 80)); // x=200 is start of high range
+        assert!(ppu.pixel_in_window(0, 239, 80)); // x=239 is last pixel
+    }
+
+    #[test]
+    fn pixel_in_window_wraparound_y_low_range_is_inside() {
+        let mut ppu = Ppu::new();
+        // Y1=120, Y2=50: Y1 > Y2, so window wraps around.
+        // Per hardware: covers 0..50 AND 120..160.
+        ppu.write_win_h(0, 240); // full width (X1=0, X2=240)
+        ppu.write_win_v(0, (120 << 8) | 50);
+
+        // Low range (0..50): should be INSIDE window.
+        assert!(ppu.pixel_in_window(0, 100, 0)); // y=0 is in 0..50
+        assert!(ppu.pixel_in_window(0, 100, 30)); // y=30 is in 0..50
+        assert!(ppu.pixel_in_window(0, 100, 49)); // y=49 is last pixel of low range
+
+        // Gap (50..120): should be OUTSIDE window.
+        assert!(!ppu.pixel_in_window(0, 100, 50)); // y=50 is start of gap
+        assert!(!ppu.pixel_in_window(0, 100, 60)); // y=60 is in gap
+        assert!(!ppu.pixel_in_window(0, 100, 119)); // y=119 is last pixel of gap
+
+        // High range (120..160): should be INSIDE window.
+        assert!(ppu.pixel_in_window(0, 100, 120)); // y=120 is start of high range
+        assert!(ppu.pixel_in_window(0, 100, 159)); // y=159 is last pixel
     }
 
     #[test]
