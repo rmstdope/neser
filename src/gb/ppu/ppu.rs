@@ -532,6 +532,24 @@ impl Ppu {
                 self.cgb_model,
             );
         }
+        if addr == 0xFF48 {
+            self.pixel_fifo.record_obp0_write(
+                self.registers.obp0,
+                val,
+                self.cgb_mode,
+                self.dmg_compat,
+                self.cgb_model,
+            );
+        }
+        if addr == 0xFF49 {
+            self.pixel_fifo.record_obp1_write(
+                self.registers.obp1,
+                val,
+                self.cgb_mode,
+                self.dmg_compat,
+                self.cgb_model,
+            );
+        }
         if addr == 0xFF40 {
             self.pixel_fifo.record_lcdc_write_with_window(
                 self.registers.lcdc,
