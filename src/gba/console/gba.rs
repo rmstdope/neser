@@ -178,6 +178,10 @@ impl Gba {
             return 0;
         }
 
+        if self.bus.ic.halt_exit_line() {
+            self.cpu.signal_halt_exit();
+        }
+
         if self.bus.ic.irq_line() {
             self.cpu.raise_irq();
         } else {
@@ -270,6 +274,10 @@ impl Emulator for Gba {
         {
             crate::trace_cpu!("{line}");
         }
+        if self.bus.ic.halt_exit_line() {
+            self.cpu.signal_halt_exit();
+        }
+
         if self.bus.ic.irq_line() {
             self.cpu.raise_irq();
         } else {
@@ -819,6 +827,34 @@ mod tests {
         assert!(
             !gba.cpu.is_halted(),
             "CPU should wake from halt when IRQ fires"
+        );
+    }
+
+    #[test]
+    fn test_halted_cpu_wakes_when_irq_pending_but_cpu_irq_masked() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+        set_mode3_bg2_enabled(&mut gba);
+
+        // BIOS SWI Halt runs in SVC with the CPU I bit set. HALT still exits
+        // once IE & IF is non-zero; the IRQ handler is dispatched only after
+        // BIOS returns and restores an unmasked CPSR.
+        gba.cpu.regs.cpsr |= crate::gba::cpu::registers::FLAG_I;
+
+        gba.bus.write8(0x0400_0301, 0x00);
+        gba.run_tick_for_tests();
+        assert!(gba.cpu.is_halted(), "CPU should be halted");
+
+        gba.bus.ic.write_ime(1);
+        gba.bus.ic.write_ie(0x0010); // Timer 1
+        gba.bus.ic.raise(0x0010);
+
+        gba.run_tick_for_tests();
+
+        assert!(
+            !gba.cpu.is_halted(),
+            "HALT should exit when IE & IF is non-zero even if CPSR.I masks IRQ dispatch"
         );
     }
 }

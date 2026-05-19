@@ -330,8 +330,6 @@ fn mgba_suite_boots_to_menu() {
     );
 }
 
-/// Advance exactly one frame (until frame-ready edge).
-/// Panics if the CPU halts or the budget is exhausted.
 fn advance_one_frame(gba: &mut crate::gba::Gba, cycles: &mut u64) {
     let budget = GBA_CYCLES_PER_FRAME * 2;
     let mut spent: u64 = 0;

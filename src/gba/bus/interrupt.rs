@@ -68,6 +68,14 @@ impl InterruptController {
         self.ime && (self.ie & self.if_flags & IRQ_MASK) != 0
     }
 
+    /// Whether the HALT state should exit. On real GBA hardware the CPU
+    /// exits HALT when any interrupt fires that is enabled in `IE`,
+    /// regardless of `IME`. The `IME` flag only controls whether the CPU
+    /// actually vectors to the interrupt handler.
+    pub fn halt_exit_line(&self) -> bool {
+        (self.ie & self.if_flags & IRQ_MASK) != 0
+    }
+
     /// Raise an interrupt source. The bit is OR-ed into `IF`; whether the
     /// line actually asserts depends on `IE`/`IME`.
     pub fn raise(&mut self, sources: u16) {

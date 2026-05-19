@@ -279,10 +279,32 @@ reset_handler:
     mov     r0, #0
     strh    r0, [r5]            @ DISPCNT = 0 (forced blank / all off)
 
-    @ --- Clear VRAM logo region ---
-    @ Not strictly necessary but cleaner for the game's startup
+    @ --- Clear VRAM logo region (Mode 4 bitmap: 240×160 = 0x9600 bytes) ---
+    @ Games expect clean VRAM; the BIOS drew its logo into this region.
+    ldr     r0, =0x06000000     @ VRAM start (Mode 4 bitmap base)
+    ldr     r2, =0x06009600     @ end of bitmap (240*160 bytes)
+    mov     r1, #0
+.Lclear_vram_logo:
+    str     r1, [r0], #4        @ write 4 bytes at a time (VRAM supports 32-bit)
+    cmp     r0, r2
+    blt     .Lclear_vram_logo
+
+    @ --- Clear palette entries used by BIOS intro ---
+    @ palette[0] was faded to 0x7FFF (white); palette[1] was set white for logo text.
+    @ Leave them as 0 (black) so the game starts with a clean backdrop.
+    ldr     r0, =0x05000000
+    strh    r1, [r0]            @ palette[0] = 0 (black backdrop)
+    strh    r1, [r0, #2]        @ palette[1] = 0
 
 boot_finish:
+    @ --- Enable IRQ/FIQ at CPU level (clear I and F bits in CPSR) ---
+    @ Real GBA BIOS enters the game with I=0, F=0 so interrupt service routines
+    @ can fire once the game sets IME=1. Without this, games that wait for
+    @ VBLANK/timer IRQs will hang indefinitely.
+    mrs     r0, cpsr
+    bic     r0, r0, #0xC0      @ clear I (bit 7) and F (bit 6)
+    msr     cpsr_c, r0
+
     @ --- Clear registers before jump ---
     mov     r0, #0
     mov     r1, #0
@@ -584,7 +606,12 @@ swi_intr_wait:
     strh    r2, [r5]
 
 .intr_wait_loop:
-    @ Enable IRQs so they can fire while we wait
+    @ Set REG_IME=1 so the IRQ handler runs even if the ROM had IME=0
+    mov     r0, #0x04000000
+    mov     r1, #1
+    str     r1, [r0, #0x208]    @ REG_IME = 1
+
+    @ Enable IRQs in CPSR too
     mrs     r0, cpsr
     bic     r0, r0, #0x80       @ Clear I bit (enable IRQ)
     msr     cpsr_c, r0
@@ -629,7 +656,12 @@ swi_vblank_intr_wait:
     strh    r2, [r5]
 
 .vblank_wait_loop:
-    @ Enable IRQs so they can fire while we wait
+    @ Set REG_IME=1 so the IRQ handler runs even if the ROM had IME=0
+    mov     r0, #0x04000000
+    mov     r1, #1
+    str     r1, [r0, #0x208]    @ REG_IME = 1
+
+    @ Enable IRQs in CPSR too
     mrs     r0, cpsr
     bic     r0, r0, #0x80
     msr     cpsr_c, r0
@@ -780,10 +812,9 @@ swi_sqrt:
 @ SWI 0x0D: BiosChecksum
 @ Returns a checksum of the BIOS in r0.
 @ The original GBA BIOS returns 0xBAAE187F.
-@ We return our own unique checksum.
 @ ============================================================================
 swi_bios_checksum:
-    ldr     r0, =0x4E455345    @ "NESE" - our open-source BIOS identifier
+    ldr     r0, =0xBAAE187F    @ Original GBA/GBA SP BIOS checksum
     ldmfd   sp!, {r11, r12, lr}
     movs    pc, lr
 
@@ -2044,23 +2075,39 @@ swi_multiboot:
 @ ============================================================================
 @ IRQ Handler
 @ Reads the user IRQ handler address from 0x03FFFFFC (mirror of 0x03007FFC),
-@ saves context, calls the handler, acknowledges in BIOS IF, and returns.
+@ saves context, calls the handler, and returns.
 @ ============================================================================
 irq_handler:
     @ Save context on IRQ stack
     stmfd   sp!, {r0-r3, r12, lr}
 
-    @ Load user IRQ handler from 0x03FFFFFC
+    @ --- Update BIOS interrupt flags (IntrCheck at 0x03FFFFF8 = 0x03007FF8) ---
+    @ Per GBATek: BIOS ORs (IE & IF) into IntrCheck before calling the game's
+    @ handler. IntrWait / VBlankIntrWait poll this address to know when to wake.
+    @ NOTE: We do NOT acknowledge (clear) IF here. The user handler (e.g.
+    @ libgba's IntrMain) reads IE & IF to dispatch to the correct ISR and
+    @ clears IF itself. If we cleared IF first, IntrMain would see IF=0 and
+    @ fail to dispatch, breaking timer/DMA/etc. interrupt handlers.
     mov     r0, #0x04000000
-    sub     r0, r0, #4          @ r0 = 0x03FFFFFC
-    ldr     r1, [r0]            @ r1 = user handler address
+    add     r3, r0, #0x200      @ r3 = 0x04000200 (REG_IE)
+    ldrh    r1, [r3]            @ r1 = REG_IE (enabled interrupts)
+    ldrh    r2, [r3, #2]        @ r2 = REG_IF (pending interrupts, 0x04000202)
+    and     r1, r1, r2          @ fired = IE & IF
 
-    @ Set return address and call user handler
+    sub     r3, r0, #8          @ r3 = 0x03FFFFF8 (BIOS IntrCheck)
+    ldrh    r2, [r3]            @ read current BIOS IF
+    orr     r2, r2, r1          @ OR in newly fired interrupts
+    strh    r2, [r3]            @ write back
+
+    @ --- Call user IRQ handler from 0x03FFFFFC (= 0x03007FFC mirrored) ---
+    ldr     r1, [r0, #-4]       @ r1 = user handler address
+    cmp     r1, #0
+    beq     .irq_return
     adr     lr, .irq_return
     bx      r1
 
 .irq_return:
-    @ Restore context and return from IRQ
+    @ Restore context and return from IRQ (SUBS restores CPSR from SPSR)
     ldmfd   sp!, {r0-r3, r12, lr}
     subs    pc, lr, #4
 

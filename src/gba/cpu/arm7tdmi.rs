@@ -42,6 +42,9 @@ pub struct Arm7tdmi {
     irq_pending: bool,
     /// Pending FIQ line (rising-edge triggered).
     fiq_pending: bool,
+    /// HALT-exit signal: set when (IE & IF) != 0 regardless of IME/CPSR.I.
+    /// This unhalts the CPU without dispatching the IRQ handler.
+    halt_exit_pending: bool,
     /// Whether the prefetch buffers contain valid instructions for the
     /// current PC/state.
     prefetch_valid: bool,
@@ -77,6 +80,7 @@ impl Arm7tdmi {
             cycles: 0,
             irq_pending: false,
             fiq_pending: false,
+            halt_exit_pending: false,
             prefetch_valid: false,
             prefetch_arm: [0; 3],
             prefetch_thumb: [0; 3],
@@ -133,6 +137,13 @@ impl Arm7tdmi {
         self.halted = true;
     }
 
+    /// Signal that HALT should exit without dispatching an IRQ handler.
+    /// Used when (IE & IF) != 0 but interrupt dispatch is masked by IME or
+    /// CPSR.I.
+    pub fn signal_halt_exit(&mut self) {
+        self.halt_exit_pending = true;
+    }
+
     /// Returns true if the CPU is currently in halt state.
     #[cfg(test)]
     pub fn is_halted(&self) -> bool {
@@ -159,14 +170,24 @@ impl Arm7tdmi {
         // Service pending interrupts first (FIQ has higher priority).
         // An interrupt also wakes the CPU from halt state.
         if self.fiq_pending && !self.regs.f_flag() {
+            self.halt_exit_pending = false;
             self.halted = false;
             self.dispatch_fiq();
             return 3;
         }
         if self.irq_pending && !self.regs.i_flag() {
+            self.halt_exit_pending = false;
             self.halted = false;
             self.dispatch_irq();
             return 3;
+        }
+        // On real GBA hardware HALT exits when (IE & IF) != 0 regardless of
+        // IME and the CPU I flag. If dispatch is masked, the CPU still exits
+        // HALT so the running code can restore interrupt state and continue.
+        if self.halt_exit_pending {
+            self.halt_exit_pending = false;
+            self.halted = false;
+            // Fall through to normal instruction execution.
         }
 
         // While halted, idle for 1 cycle without executing instructions.
