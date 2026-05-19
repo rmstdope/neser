@@ -567,6 +567,18 @@ pub struct PixelFifoRenderer {
     bgp_edge_x: u8,
     bgp_edge_value: u8,
     #[serde(default)]
+    obp0_edge_active: bool,
+    #[serde(default)]
+    obp0_edge_x: u8,
+    #[serde(default)]
+    obp0_edge_value: u8,
+    #[serde(default)]
+    obp1_edge_active: bool,
+    #[serde(default)]
+    obp1_edge_x: u8,
+    #[serde(default)]
+    obp1_edge_value: u8,
+    #[serde(default)]
     fine_scroll_delay_dots: u16,
     #[serde(default)]
     scanline_start_scx_low: u8,
@@ -637,6 +649,12 @@ impl PixelFifoRenderer {
             bgp_edge_active: false,
             bgp_edge_x: 0,
             bgp_edge_value: INITIAL_BGP,
+            obp0_edge_active: false,
+            obp0_edge_x: 0,
+            obp0_edge_value: 0,
+            obp1_edge_active: false,
+            obp1_edge_x: 0,
+            obp1_edge_value: 0,
             fine_scroll_delay_dots: 0,
             scanline_start_scx_low: 0,
             bg_fetch_scx: 0,
@@ -688,6 +706,10 @@ impl PixelFifoRenderer {
         self.window_activation_count = 0;
         self.bgp_edge_active = false;
         self.bgp_edge_value = registers.bgp;
+        self.obp0_edge_active = false;
+        self.obp0_edge_value = registers.obp0;
+        self.obp1_edge_active = false;
+        self.obp1_edge_value = registers.obp1;
         self.lcdc_bg_enable_edge = LcdcBgEnableEdge::default();
         self.lcdc_bg_map_edge = LcdcBgMapEdge::default();
         self.lcdc_window_map_edge = LcdcWindowMapEdge::default();
@@ -835,6 +857,7 @@ impl PixelFifoRenderer {
             self.render_dmg_pixel(x, vram, oam, registers, window_line, screen_buffer);
         }
         self.clear_consumed_bgp_edge();
+        self.clear_consumed_obp_edges();
         self.lcdc_bg_enable_edge.clear_consumed(self.next_x);
         self.lcdc_obj_enable_edge.clear_consumed(self.next_x);
         self.lcdc_bg_map_edge.clear_consumed(self.next_x);
@@ -911,6 +934,65 @@ impl PixelFifoRenderer {
             }
         } else {
             previous | new
+        };
+    }
+
+    pub fn record_obp0_write(
+        &mut self,
+        previous: u8,
+        new: u8,
+        cgb_mode: bool,
+        dmg_compat: bool,
+        cgb_model: CgbModel,
+    ) {
+        if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
+            return;
+        }
+        if !(cgb_mode && dmg_compat) {
+            return;
+        }
+
+        self.obp0_edge_active = true;
+        self.obp0_edge_x = self.next_x;
+        // Unlike BGP (which affects background pixels), OBP0 affects sprite pixels.
+        // The model-specific timing rule applies regardless of whether a sprite
+        // fetch is in progress: CGB-D picks up the new value immediately;
+        // CGB-C latches it one pixel late (uses the previous value).
+        // At pixel 0 the write always takes effect immediately on all models.
+        self.obp0_edge_value = if self.next_x == 0 {
+            new
+        } else {
+            match cgb_model {
+                CgbModel::CgbD | CgbModel::CgbE => new,
+                CgbModel::Cgb0 | CgbModel::CgbA | CgbModel::CgbB | CgbModel::CgbC => previous,
+            }
+        };
+    }
+
+    pub fn record_obp1_write(
+        &mut self,
+        previous: u8,
+        new: u8,
+        cgb_mode: bool,
+        dmg_compat: bool,
+        cgb_model: CgbModel,
+    ) {
+        if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
+            return;
+        }
+        if !(cgb_mode && dmg_compat) {
+            return;
+        }
+
+        self.obp1_edge_active = true;
+        self.obp1_edge_x = self.next_x;
+        self.obp1_edge_value = if self.next_x == 0 {
+            new
+        } else {
+            match cgb_model {
+                CgbModel::CgbD | CgbModel::CgbE => new,
+                CgbModel::Cgb0 | CgbModel::CgbA | CgbModel::CgbB | CgbModel::CgbC => previous,
+            }
         };
     }
 
@@ -2645,9 +2727,9 @@ impl PixelFifoRenderer {
             self.dmg_pixel_layers_with_options(x, vram, oam, registers, window_line, false);
         let (r, g, b) = if is_sprite {
             let palette_reg = if sprite_palette == 0 {
-                registers.obp0
+                self.obp0_for_pixel(x, registers.obp0)
             } else {
-                registers.obp1
+                self.obp1_for_pixel(x, registers.obp1)
             };
             let mapped_index = dmg_palette_index(palette_reg, colour_index);
             cgb_palette_lookup(obj_palette_ram, sprite_palette, mapped_index)
@@ -3023,6 +3105,22 @@ impl PixelFifoRenderer {
         }
     }
 
+    fn obp0_for_pixel(&self, x: u32, current: u8) -> u8 {
+        if self.obp0_edge_active && u32::from(self.obp0_edge_x) == x {
+            self.obp0_edge_value
+        } else {
+            current
+        }
+    }
+
+    fn obp1_for_pixel(&self, x: u32, current: u8) -> u8 {
+        if self.obp1_edge_active && u32::from(self.obp1_edge_x) == x {
+            self.obp1_edge_value
+        } else {
+            current
+        }
+    }
+
     fn update_bg_fetch_scx(&mut self) {
         self.bg_fetch_scx = self.bg_scx_sampler.current_scx() | self.scanline_start_scx_low;
     }
@@ -3058,6 +3156,15 @@ impl PixelFifoRenderer {
     fn clear_consumed_bgp_edge(&mut self) {
         if self.bgp_edge_active && self.bgp_edge_x == self.next_x {
             self.bgp_edge_active = false;
+        }
+    }
+
+    fn clear_consumed_obp_edges(&mut self) {
+        if self.obp0_edge_active && self.obp0_edge_x == self.next_x {
+            self.obp0_edge_active = false;
+        }
+        if self.obp1_edge_active && self.obp1_edge_x == self.next_x {
+            self.obp1_edge_active = false;
         }
     }
 
@@ -3254,6 +3361,7 @@ mod tests {
         LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
         PixelFifoRenderer, WindowEnableEdge, WindowXEdge,
     };
+    use crate::gb::model::CgbModel;
 
     fn oam_with_sprite_at(oam_y: u8, oam_x: u8, tile: u8, attrs: u8) -> [u8; 0xA0] {
         let mut oam = [0u8; 0xA0];
@@ -5880,6 +5988,306 @@ mod tests {
             screen_buffer.get_pixel(0, 0),
             (255, 255, 255),
             "DMG object fetch cancellation should suppress the fetched sprite pixel in the production FIFO"
+        );
+    }
+
+    // ── OBP0 / OBP1 mid-Mode-3 write edge tests ──────────────────────────────
+    //
+    // The mealybug m3_obp0_change test shows that CGB-C uses the *previous*
+    // OBP0 value at the write-boundary pixel while CGB-D uses the *new* value
+    // (analogous to the existing BGP edge-tracking behaviour).
+    //
+    // Scenario: sprite at screen X=8 with all pixels having colour_index=1.
+    // obj_palette_ram (from tick_renderer helper):
+    //   palette 0, entry 0 (mapped_index=0) → 0x0000 → (0, 0, 0) black
+    //   palette 0, entry 1 (mapped_index=1) → 0x7FFF → (255,255,255) white
+    //
+    // OBP0 prev=0xE4: dmg_palette_index(0xE4, 1) = 1 → white
+    // OBP0 new =0x00: dmg_palette_index(0x00, 1) = 0 → black
+    //
+    // So at the write-boundary pixel (screen X=8):
+    //   CGB-C must render white  (previous value)
+    //   CGB-D must render black  (new value)
+
+    fn vram_with_solid_obj_tile() -> [u8; 0x2000] {
+        // Tile 1 (at 0x0010): all pixels have colour_index=1
+        // lo-byte=0xFF, hi-byte=0x00 → colour = (0<<1)|1 = 1 for every pixel
+        let mut vram = [0u8; 0x2000];
+        vram[0x0010] = 0xFF;
+        vram[0x0011] = 0x00;
+        vram
+    }
+
+    fn tick_cgb_compat_until_next_x(
+        renderer: &mut PixelFifoRenderer,
+        dot: &mut u16,
+        target_next_x: u8,
+        vram: &[u8; 0x2000],
+        oam: &[u8; 0xA0],
+        registers: &Registers,
+        screen_buffer: &mut ScreenBuffer,
+    ) {
+        let deadline = dot.saturating_add(512);
+        while renderer.next_x < target_next_x {
+            tick_renderer(
+                renderer,
+                *dot,
+                vram,
+                oam,
+                registers,
+                true,
+                true,
+                screen_buffer,
+            );
+            *dot = dot.saturating_add(1);
+            assert!(
+                *dot < deadline,
+                "renderer did not reach next_x={target_next_x}"
+            );
+        }
+    }
+
+    #[test]
+    fn cgb_c_obp0_write_mid_mode3_uses_previous_value_at_write_pixel() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0x83; // LCD on, BG+OBJ enabled, obj tile data at 0x8000
+        registers.bgp = 0x00; // bg = all white (transparent background)
+        registers.obp0 = 0xE4; // initial: colour_index 1 → mapped 1 → white in obj_palette_ram
+        let oam = oam_with_sprite_at(16, 16, 1, 0); // renders at screen X=8
+        let vram = vram_with_solid_obj_tile();
+        let mut screen_buffer = ScreenBuffer::new();
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, true);
+        let mut dot = 80u16;
+
+        // Advance to exactly before screen X=8 is output
+        tick_cgb_compat_until_next_x(
+            &mut renderer,
+            &mut dot,
+            8,
+            &vram,
+            &oam,
+            &registers,
+            &mut screen_buffer,
+        );
+
+        // Record OBP0 write (prev=0xE4→white, new=0x00→black) — CGB-C model
+        renderer.record_obp0_write(0xE4, 0x00, true, true, CgbModel::CgbC);
+        registers.obp0 = 0x00;
+
+        // Advance through sprite fetch stall and render pixel at screen X=8
+        tick_cgb_compat_until_next_x(
+            &mut renderer,
+            &mut dot,
+            9,
+            &vram,
+            &oam,
+            &registers,
+            &mut screen_buffer,
+        );
+
+        assert_eq!(
+            screen_buffer.get_pixel(8, 0),
+            (255, 255, 255),
+            "CGB-C: OBP0 write at the pixel boundary should use the *previous* palette value"
+        );
+    }
+
+    #[test]
+    fn cgb_d_obp0_write_mid_mode3_uses_new_value_at_write_pixel() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0x83;
+        registers.bgp = 0x00;
+        registers.obp0 = 0xE4;
+        let oam = oam_with_sprite_at(16, 16, 1, 0);
+        let vram = vram_with_solid_obj_tile();
+        let mut screen_buffer = ScreenBuffer::new();
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, true);
+        let mut dot = 80u16;
+
+        tick_cgb_compat_until_next_x(
+            &mut renderer,
+            &mut dot,
+            8,
+            &vram,
+            &oam,
+            &registers,
+            &mut screen_buffer,
+        );
+
+        // Record OBP0 write — CGB-D model
+        renderer.record_obp0_write(0xE4, 0x00, true, true, CgbModel::CgbD);
+        registers.obp0 = 0x00;
+
+        // Advance through sprite fetch stall and render pixel at screen X=8
+        tick_cgb_compat_until_next_x(
+            &mut renderer,
+            &mut dot,
+            9,
+            &vram,
+            &oam,
+            &registers,
+            &mut screen_buffer,
+        );
+
+        assert_eq!(
+            screen_buffer.get_pixel(8, 0),
+            (0, 0, 0),
+            "CGB-D: OBP0 write at the pixel boundary should use the *new* palette value"
+        );
+    }
+
+    #[test]
+    fn cgb_c_obp1_write_mid_mode3_uses_previous_value_at_write_pixel() {
+        // Same as OBP0 test but with OBP1 (OAM attr bit 4 = 1 selects OBP1)
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0x83;
+        registers.bgp = 0x00;
+        registers.obp0 = 0x00; // not used
+        registers.obp1 = 0xE4; // initial: colour_index 1 → mapped 1 → white via obj_palette_ram[8..9]
+        // OBP1 sprites use palette_ram slot 1 (bytes 8..15).
+        // Build custom obj_palette_ram: palette 1, entry 1 = 0x7FFF (white).
+        let mut obj_palette_ram = [0u8; 64];
+        obj_palette_ram[10] = 0xFF; // palette 1, entry 1, lo
+        obj_palette_ram[11] = 0x7F; // palette 1, entry 1, hi → 0x7FFF = white
+
+        let oam = oam_with_sprite_at(16, 16, 1, 0x10); // attr bit4=1 → OBP1
+        let vram = vram_with_solid_obj_tile();
+        let vram_bank1 = [0u8; 0x2000];
+        let bg_palette_ram = [0u8; 64];
+        let mut screen_buffer = ScreenBuffer::new();
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, true);
+        let mut dot = 80u16;
+
+        // Advance until next_x=8 (sprite at screen X=8 is about to render)
+        let deadline = dot.saturating_add(512);
+        while renderer.next_x < 8 {
+            renderer.tick(
+                dot,
+                &vram,
+                &vram_bank1,
+                &oam,
+                &registers,
+                &bg_palette_ram,
+                &obj_palette_ram,
+                0,
+                true,
+                false,
+                true,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+            assert!(dot < deadline, "renderer did not reach next_x=8");
+        }
+
+        // Record OBP1 write (prev=0xE4→white, new=0x00→black) — CGB-C model
+        renderer.record_obp1_write(0xE4, 0x00, true, true, CgbModel::CgbC);
+        registers.obp1 = 0x00;
+
+        // Advance through sprite fetch stall and render pixel at screen X=8
+        let deadline = dot.saturating_add(512);
+        while renderer.next_x < 9 {
+            renderer.tick(
+                dot,
+                &vram,
+                &vram_bank1,
+                &oam,
+                &registers,
+                &bg_palette_ram,
+                &obj_palette_ram,
+                0,
+                true,
+                false,
+                true,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+            assert!(dot < deadline, "renderer did not reach next_x=9");
+        }
+
+        assert_eq!(
+            screen_buffer.get_pixel(8, 0),
+            (255, 255, 255),
+            "CGB-C: OBP1 write at the pixel boundary should use the *previous* palette value"
+        );
+    }
+
+    #[test]
+    fn cgb_d_obp1_write_mid_mode3_uses_new_value_at_write_pixel() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0x83;
+        registers.bgp = 0x00;
+        registers.obp0 = 0x00;
+        registers.obp1 = 0xE4;
+        let mut obj_palette_ram = [0u8; 64];
+        obj_palette_ram[10] = 0xFF;
+        obj_palette_ram[11] = 0x7F;
+
+        let oam = oam_with_sprite_at(16, 16, 1, 0x10); // OBP1
+        let vram = vram_with_solid_obj_tile();
+        let vram_bank1 = [0u8; 0x2000];
+        let bg_palette_ram = [0u8; 64];
+        let mut screen_buffer = ScreenBuffer::new();
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, true);
+        let mut dot = 80u16;
+
+        // Advance until next_x=8
+        let deadline = dot.saturating_add(512);
+        while renderer.next_x < 8 {
+            renderer.tick(
+                dot,
+                &vram,
+                &vram_bank1,
+                &oam,
+                &registers,
+                &bg_palette_ram,
+                &obj_palette_ram,
+                0,
+                true,
+                false,
+                true,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+            assert!(dot < deadline, "renderer did not reach next_x=8");
+        }
+
+        // Record OBP1 write — CGB-D model
+        renderer.record_obp1_write(0xE4, 0x00, true, true, CgbModel::CgbD);
+        registers.obp1 = 0x00;
+
+        // Advance through sprite fetch stall and render pixel at screen X=8
+        let deadline = dot.saturating_add(512);
+        while renderer.next_x < 9 {
+            renderer.tick(
+                dot,
+                &vram,
+                &vram_bank1,
+                &oam,
+                &registers,
+                &bg_palette_ram,
+                &obj_palette_ram,
+                0,
+                true,
+                false,
+                true,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+            assert!(dot < deadline, "renderer did not reach next_x=9");
+        }
+
+        assert_eq!(
+            screen_buffer.get_pixel(8, 0),
+            (0, 0, 0),
+            "CGB-D: OBP1 write at the pixel boundary should use the *new* palette value"
         );
     }
 }

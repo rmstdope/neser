@@ -29,7 +29,12 @@
 //!   <https://www.coranac.com/tonc/text/affine.htm>
 
 /// Register file for one affine background (BG2 or BG3).
-#[derive(Debug, Default, Clone, Copy)]
+///
+/// Per GBATek "LCD I/O BG Rotation/Scaling": at power-on the hardware
+/// initialises `PA` and `PD` to `0x0100` (1.0 in 8.8 fixed-point, giving an
+/// identity transform). The emulator must reflect this so that code which
+/// relies on the default identity mapping works correctly out of the box.
+#[derive(Debug, Clone, Copy)]
 pub struct BgAffine {
     /// Affine parameter A — signed 8.8 fixed-point.
     pub pa: i16,
@@ -52,6 +57,23 @@ pub struct BgAffine {
     /// Internal reference point Y — latched from `y` at VBlank start,
     /// then incremented by `pd` after each visible scanline.
     pub internal_y: i32,
+}
+
+impl Default for BgAffine {
+    /// Returns the power-on default state: identity transform (`PA = PD = 0x0100`,
+    /// all other fields zero), matching real GBA hardware.
+    fn default() -> Self {
+        Self {
+            pa: 0x0100,
+            pb: 0,
+            pc: 0,
+            pd: 0x0100,
+            x: 0,
+            y: 0,
+            internal_x: 0,
+            internal_y: 0,
+        }
+    }
 }
 
 impl BgAffine {
@@ -116,12 +138,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_zero() {
+    fn defaults_match_hardware_power_on_values() {
+        // GBATek: BG2PA and BG2PD power on to 0x0100 (identity), all other
+        // fields are 0. This mirrors real GBA hardware behaviour.
         let a = BgAffine::default();
-        assert_eq!(a.pa, 0);
+        assert_eq!(a.pa, 0x0100, "PA should default to 0x0100 (identity)");
         assert_eq!(a.pb, 0);
         assert_eq!(a.pc, 0);
-        assert_eq!(a.pd, 0);
+        assert_eq!(a.pd, 0x0100, "PD should default to 0x0100 (identity)");
         assert_eq!(a.x, 0);
         assert_eq!(a.y, 0);
     }
