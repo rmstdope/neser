@@ -1155,6 +1155,11 @@ impl Ppu {
     /// screen pixel on scanline `y` into a source `(x, y)` within a bitmap of
     /// size `width`×`height`, starting at VRAM `frame_base`. Source samples
     /// outside bitmap bounds are left transparent.
+    ///
+    /// Per GBATek, the BG2CNT area overflow/wrap bit (bit 13) is intentionally
+    /// ignored for bitmap modes (3, 4, 5). Out-of-bounds pixels are always
+    /// transparent in bitmap modes regardless of that bit's value. Wrapping
+    /// only applies to affine tile modes (1 & 2).
     fn render_affine_bitmap_layer(
         &self,
         y: u32,
@@ -1222,6 +1227,11 @@ impl Ppu {
     /// paletted bitmap of size `width`×`height`, starting at VRAM `frame_base`.
     /// Palette index 0 is transparent. Source samples outside bitmap bounds
     /// are left transparent.
+    ///
+    /// Per GBATek, the BG2CNT area overflow/wrap bit (bit 13) is intentionally
+    /// ignored for bitmap modes (3, 4, 5). Out-of-bounds pixels are always
+    /// transparent in bitmap modes regardless of that bit's value. Wrapping
+    /// only applies to affine tile modes (1 & 2).
     fn render_affine_paletted_bitmap_layer(
         &self,
         y: u32,
@@ -2215,6 +2225,55 @@ mod tests {
     }
 
     #[test]
+    fn mode3_bgcnt_wrap_bit_set_oob_is_still_transparent() {
+        // Per GBATek: in bitmap modes, the area overflow bit (BGxCNT bit 13)
+        // is always transparent regardless of setting. It only works in affine
+        // tile modes (1 & 2), NOT in bitmap modes (3, 4, 5).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 3, BG2 enabled. Set BG2CNT bit 13 (wrap/overflow) = 1.
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_bg_cnt(2, 1 << 13);
+
+        // Identity transform with BG2X=240 so screen pixel 0 maps to source
+        // x=240 which is out-of-bounds for the 240-wide bitmap.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        // BG2X = 240.0 in 8.8 fixed-point: 240 * 256 = 61440 = 0xF000.
+        ppu.write_affine(REG_BG2X_L, 0xF000);
+
+        // Backdrop = blue.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        // Fill the entire 240×160 source bitmap with red.
+        for y in 0..160usize {
+            for x in 0..240usize {
+                let off = (y * 240 + x) * 2;
+                vram[off] = 0x1F;
+                vram[off + 1] = 0x00;
+            }
+        }
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // OOB pixel must be transparent → backdrop (blue), NOT wrapped to red.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0, 0xFF],
+            "Mode 3: BG2CNT wrap bit must be ignored; OOB pixels must show backdrop"
+        );
+    }
+
+    #[test]
     fn forced_blank_outputs_white() {
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
@@ -2865,6 +2924,54 @@ mod tests {
     }
 
     #[test]
+    fn mode4_bgcnt_wrap_bit_set_oob_is_still_transparent() {
+        // Per GBATek: in bitmap modes, the area overflow bit (BGxCNT bit 13)
+        // is always transparent regardless of setting. It only works in affine
+        // tile modes (1 & 2), NOT in bitmap modes (3, 4, 5).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 4, BG2 enabled. Set BG2CNT bit 13 (wrap/overflow) = 1.
+        ppu.write_dispcnt(4 | dispcnt::BG2_ENABLE);
+        ppu.write_bg_cnt(2, 1 << 13);
+
+        // Identity transform with BG2X=240 so screen pixel 0 maps to source
+        // x=240 which is out-of-bounds for the 240-wide bitmap.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        // BG2X = 240.0 in 8.8 fixed-point: 240 * 256 = 61440 = 0xF000.
+        ppu.write_affine(REG_BG2X_L, 0xF000);
+
+        // Backdrop = blue.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        // Palette index 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+        // Fill the entire 240×160 source bitmap with palette index 1 (red).
+        for i in 0..(SCREEN_WIDTH as usize * SCREEN_HEIGHT as usize) {
+            vram[i] = 1;
+        }
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // OOB pixel must be transparent → backdrop (blue), NOT wrapped to red.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0, 0xFF],
+            "Mode 4: BG2CNT wrap bit must be ignored; OOB pixels must show backdrop"
+        );
+    }
+
+    #[test]
     fn mode5_renders_160x128_bgr555_bitmap_from_vram() {
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
@@ -2958,6 +3065,55 @@ mod tests {
         assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
         assert_eq!(&ppu.framebuffer()[x_outside..x_outside + 3], &[0, 0, 0xFF]);
         assert_eq!(&ppu.framebuffer()[y_outside..y_outside + 3], &[0, 0, 0xFF]);
+    }
+
+    #[test]
+    fn mode5_bgcnt_wrap_bit_set_oob_is_still_transparent() {
+        // Per GBATek: in bitmap modes, the area overflow bit (BGxCNT bit 13)
+        // is always transparent regardless of setting. It only works in affine
+        // tile modes (1 & 2), NOT in bitmap modes (3, 4, 5).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 5 (160×128 bitmap), BG2 enabled. Set BG2CNT bit 13 (wrap/overflow) = 1.
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE);
+        ppu.write_bg_cnt(2, 1 << 13);
+
+        // Identity transform with BG2X=160 so screen pixel 0 maps to source
+        // x=160 which is out-of-bounds for the 160-wide Mode 5 bitmap.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        // BG2X = 160.0 in 8.8 fixed-point: 160 * 256 = 40960 = 0xA000.
+        ppu.write_affine(REG_BG2X_L, 0xA000);
+
+        // Backdrop = blue.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        // Fill the 160×128 source bitmap with red.
+        for y in 0..MODE5_HEIGHT {
+            for x in 0..MODE5_WIDTH {
+                let off = (y * MODE5_WIDTH + x) * 2;
+                vram[off] = 0x1F;
+                vram[off + 1] = 0x00;
+            }
+        }
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // OOB pixel must be transparent → backdrop (blue), NOT wrapped to red.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0, 0, 0xFF],
+            "Mode 5: BG2CNT wrap bit must be ignored; OOB pixels must show backdrop"
+        );
     }
 
     #[test]
