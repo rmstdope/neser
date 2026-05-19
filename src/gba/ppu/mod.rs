@@ -2991,8 +2991,11 @@ mod tests {
         pram[2] = 0x1F;
         pram[3] = 0x00;
         // Fill the entire 240×160 source bitmap with palette index 1 (red).
-        for i in 0..(SCREEN_WIDTH as usize * SCREEN_HEIGHT as usize) {
-            vram[i] = 1;
+        for item in vram
+            .iter_mut()
+            .take(SCREEN_WIDTH as usize * SCREEN_HEIGHT as usize)
+        {
+            *item = 1;
         }
 
         ppu.step(

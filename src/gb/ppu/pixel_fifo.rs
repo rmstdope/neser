@@ -1111,7 +1111,7 @@ impl PixelFifoRenderer {
     /// - `new_scy`  — new value being written
     /// - `dot`      — current absolute dot counter (used to compute the elapsed delay)
     /// - `cgb_mode` — `true` for CGB hardware (applies a 4-dot effective delay in this
-    ///                emulator: 2 hardware T-cycles + 2 dots from tick-before-write ordering)
+    ///   emulator: 2 hardware T-cycles + 2 dots from tick-before-write ordering)
     pub fn record_scy_write(&mut self, old_scy: u8, new_scy: u8, dot: u16, cgb_mode: bool) {
         let _ = old_scy;
         if !self.active {
