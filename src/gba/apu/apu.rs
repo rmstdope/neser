@@ -703,13 +703,15 @@ impl Apu {
     }
 
     /// Mix DMG channel samples through a 4-bit enable mask.
+    ///
+    /// Per GBATek: each enabled channel's sample is summed (not averaged).
+    /// Returns the sum of enabled channel samples (range 0..N for N enabled channels).
     fn mix_terminal(samples: [f32; 4], enable_mask: u8) -> f32 {
         samples
             .iter()
             .enumerate()
             .map(|(i, &s)| if enable_mask & (1 << i) != 0 { s } else { 0.0 })
             .sum::<f32>()
-            / 4.0
     }
 }
 
@@ -726,6 +728,70 @@ mod tests {
         let mut apu = Apu::new();
         apu.write16(0x0400_0084, 0x0080); // SOUNDCNT_X: power on
         apu
+    }
+
+    // ── PSG mixer scaling tests (GBATek: channels summed, not averaged) ─────
+
+    #[test]
+    fn test_mix_terminal_single_channel_returns_full_value() {
+        // Per GBATek, PSG channels are SUMMED. A single channel at 1.0
+        // must return 1.0, not 0.25 (old incorrect /4.0 average).
+        let result = Apu::mix_terminal([1.0, 0.0, 0.0, 0.0], 0x01);
+        assert!(
+            (result - 1.0).abs() < 1e-6,
+            "Single channel at max: expected 1.0, got {result}"
+        );
+        // Verify masking: channel 0 is at 1.0 but mask 0x02 enables channel 1 only.
+        let masked = Apu::mix_terminal([1.0, 0.0, 0.0, 0.0], 0x02);
+        assert!(
+            masked.abs() < 1e-6,
+            "Disabled channel must contribute 0.0, got {masked}"
+        );
+    }
+
+    #[test]
+    fn test_mix_terminal_four_channels_returns_sum() {
+        // RED: Four channels at 1.0 each must return 4.0 (sum), not 1.0 (average).
+        let result = Apu::mix_terminal([1.0, 1.0, 1.0, 1.0], 0x0F);
+        assert!(
+            (result - 4.0).abs() < 1e-6,
+            "Four channels at max: expected 4.0, got {result}"
+        );
+    }
+
+    #[test]
+    fn test_single_psg_channel_at_max_contributes_0x80_units() {
+        // RED: Per GBATek, each PSG channel at max spans +/-0x80 (128) in 10-bit space.
+        // Setup: CH1 triggered at duty=50% high position, NR50 vol=7, NR51 CH1→right only,
+        //        SOUNDCNT_H dmg_ratio=100%, soundbias=default 0x200 (bias=0x100=256).
+        //
+        // With single channel at output 1.0:
+        //   mix_terminal = 1.0, right_vol = 7/7 = 1.0, dmg_ratio = 1.0
+        //   raw_right = 1.0 * 1.0 * 1.0 * PSG_SCALE = 128 units
+        //   apply_soundbias: (128 + 256) = 384 → (384 - 256) / 512 = 128/512 = 0.25
+        //
+        // CH1 must output a non-zero value, so we check that the mix result is > 0.
+        // The old bug (/ 4.0) would give raw = 32, result = (32+256-256)/512 = 0.0625.
+        let mut apu = powered_apu();
+        // SOUNDCNT_L: NR51=0x01 (CH1 right only), NR50=0x07 (right vol=7)
+        apu.write16(0x0400_0080, 0x0107);
+        // SOUNDCNT_H: DMG at 100% (bits 1-0 = 2)
+        apu.soundcnt_h = 0x0002;
+        // CH1: duty pattern index 2 (50% = [1,0,0,0,0,1,1,1]), volume=15, trigger, freq=800.
+        // SOUND1CNT_H bits 7-6 = duty index, bits 15-12 = volume → 0xF080.
+        apu.write16(0x0400_0062, 0xF080); // vol=15, duty index=2 (50%)
+        apu.write16(0x0400_0064, 0x8320); // trigger, freq=800
+
+        let (left, right) = apu.mix();
+        // Left must be silent (CH1 not routed left)
+        assert_eq!(left, 0.0, "left must be 0 when CH1 is right-only");
+        // Right must be > old buggy max of ~0.062 (32 raw units with / 4.0 averaging).
+        // With correct summing, single channel at max gives 0.25 (128 raw units = ±0x80).
+        // Threshold of 0.1 is between 0.0625 (buggy) and 0.25 (correct).
+        assert!(
+            right > 0.1,
+            "single PSG channel at max should give >0.1 (expected ~0.25 per GBATek), got {right}"
+        );
     }
 
     // ── PCM channel A test (issue test vector) ───────────────────────────────

@@ -29,7 +29,8 @@ pub struct Channel3 {
 }
 
 impl Channel3 {
-    /// Analogue output in `[-1.0, +1.0]`; 0.0 when DAC is off (disconnected).
+    /// Analogue output in `[-1.0, +1.0]`; 0.0 when inactive, DAC is off
+    /// (disconnected), or output_level mutes the channel.
     ///
     /// Per GBATek, the PSG DAC converts digital value D (0–15) to bipolar:
     ///   output = (D / 7.5) − 1.0

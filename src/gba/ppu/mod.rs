@@ -1155,10 +1155,80 @@ impl Ppu {
     /// screen pixel on scanline `y` into a source `(x, y)` within a bitmap of
     /// size `width`×`height`, starting at VRAM `frame_base`. Source samples
     /// outside bitmap bounds are left transparent.
+    #[allow(clippy::needless_range_loop)]
     fn render_affine_bitmap_layer(
         &self,
         y: u32,
         vram: &[u8],
+        width: usize,
+        height: usize,
+        frame_base: usize,
+    ) -> [u16; SCREEN_WIDTH as usize] {
+        let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
+        let aff = self.bg_affine[0];
+        let pa = aff.pa as i32;
+        let pb = aff.pb as i32;
+        let pc = aff.pc as i32;
+        let pd = aff.pd as i32;
+        let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
+        let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
+        let mosaic_y_offset = if mosaic_enabled {
+            (y - mosaic_anchor(y, mosaic_v as u32)) as usize
+        } else {
+            0
+        };
+        // `internal_x/y` point at the current scanline. For vertical mosaic,
+        // sample from the block's top scanline instead, so rewind by PB/PD
+        // (source x/y deltas per screen scanline) multiplied by the offset
+        // within the current mosaic block.
+        let line_anchor_x = aff
+            .internal_x
+            .wrapping_sub(pb.wrapping_mul(mosaic_y_offset as i32));
+        let line_anchor_y = aff
+            .internal_y
+            .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
+
+        for (x, out_pixel) in buf.iter_mut().enumerate() {
+            let sample_screen_x = if mosaic_enabled {
+                mosaic_anchor(x as u32, mosaic_h as u32) as usize
+            } else {
+                x
+            };
+            let sample_x = line_anchor_x.wrapping_add(pa.wrapping_mul(sample_screen_x as i32));
+            let sample_y = line_anchor_y.wrapping_add(pc.wrapping_mul(sample_screen_x as i32));
+
+            if sample_x < 0 || sample_y < 0 {
+                continue;
+            }
+
+            let px = (sample_x >> 8) as usize;
+            let py = (sample_y >> 8) as usize;
+            if px >= width || py >= height {
+                continue;
+            }
+
+            let src = frame_base + (py * width + px) * 2;
+            // Keep bit 15 clear so valid BGR555 pixels never collide with
+            // TRANSPARENT (0x8000) sentinel values in layer buffers.
+            *out_pixel = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
+        }
+
+        buf
+    }
+
+    /// Render one BG2 affine 8-bit paletted bitmap layer scanline for Mode 4.
+    ///
+    /// Applies BG2 affine transform and BG mosaic rules to map each visible
+    /// screen pixel on scanline `y` into a source `(x, y)` within an 8-bit
+    /// paletted bitmap of size `width`×`height`, starting at VRAM `frame_base`.
+    /// Palette index 0 is transparent. Source samples outside bitmap bounds
+    /// are left transparent.
+    #[allow(clippy::needless_range_loop)]
+    fn render_affine_paletted_bitmap_layer(
+        &self,
+        y: u32,
+        vram: &[u8],
+        pram: &[u8],
         width: usize,
         height: usize,
         frame_base: usize,
@@ -1206,10 +1276,22 @@ impl Ppu {
                 continue;
             }
 
-            let src = frame_base + (py * width + px) * 2;
-            // Keep bit 15 clear so valid BGR555 pixels never collide with
-            // TRANSPARENT (0x8000) sentinel values in layer buffers.
-            buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
+            let src = frame_base + py * width + px;
+            if src >= vram.len() {
+                continue;
+            }
+
+            let pal_index = vram[src];
+            buf[x] = if pal_index == 0 {
+                TRANSPARENT
+            } else {
+                let pal_offset = (pal_index as usize) * 2;
+                if pal_offset + 1 < pram.len() {
+                    u16::from_le_bytes([pram[pal_offset], pram[pal_offset + 1]]) & 0x7FFF
+                } else {
+                    TRANSPARENT
+                }
+            };
         }
 
         buf
@@ -1244,7 +1326,10 @@ impl Ppu {
     }
 
     /// Mode 4: 240×160 8-bit paletted bitmap. Two frames available.
-    #[allow(clippy::needless_range_loop)]
+    ///
+    /// BG2 affine parameters select source coordinates. Pixels outside the
+    /// 240×160 source bitmap remain transparent so the backdrop or lower
+    /// priority layers show through.
     fn render_mode4_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
             self.render_backdrop_scanline(y, pram);
@@ -1254,44 +1339,19 @@ impl Ppu {
         let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
 
         if self.bg2_enabled() {
-            let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
             let frame_base = if self.frame_select() {
                 0xA000usize
             } else {
                 0x0000usize
             };
-
-            let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
-            let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
-            let sample_y = if mosaic_enabled {
-                mosaic_anchor(y, mosaic_v as u32) as usize
-            } else {
-                y as usize
-            };
-            let line_byte_offset = frame_base + sample_y * (SCREEN_WIDTH as usize);
-
-            for x in 0..(SCREEN_WIDTH as usize) {
-                let sample_x = if mosaic_enabled {
-                    mosaic_anchor(x as u32, mosaic_h as u32) as usize
-                } else {
-                    x
-                };
-                let src = line_byte_offset + sample_x;
-                let pal_index = if src < vram.len() { vram[src] } else { 0 };
-
-                // Per GBATek, palette index 0 in Mode 4 is transparent.
-                // OBJs (or the backdrop) can show through at these positions.
-                buf[x] = if pal_index == 0 {
-                    TRANSPARENT
-                } else {
-                    let pal_offset = (pal_index as usize) * 2;
-                    if pal_offset + 1 < pram.len() {
-                        u16::from_le_bytes([pram[pal_offset], pram[pal_offset + 1]]) & 0x7FFF
-                    } else {
-                        TRANSPARENT
-                    }
-                };
-            }
+            let buf = self.render_affine_paletted_bitmap_layer(
+                y,
+                vram,
+                pram,
+                SCREEN_WIDTH as usize,
+                SCREEN_HEIGHT as usize,
+                frame_base,
+            );
             let prio = (self.bg_cnt[2] & 3) as u8;
             layers.push((2, prio, buf));
         }
@@ -2456,9 +2516,9 @@ mod tests {
         let mut ppu = Ppu::new();
         // 0x0400_0000 (DISPCNT) is not an affine register.
         assert!(!ppu.write_affine(REG_DISPCNT, 0xFFFF));
-        // Affine state must remain at default.
+        // Affine state must remain at power-on default (PA = PD = 0x0100).
         let bg2 = ppu.bg_affine(0).expect("BG2 affine state must exist");
-        assert_eq!(bg2.pa, 0);
+        assert_eq!(bg2.pa, 0x0100);
         assert_eq!(bg2.x, 0);
     }
 
@@ -2613,6 +2673,9 @@ mod tests {
         ppu.write_dispcnt(4 | dispcnt::BG2_ENABLE);
         ppu.write_bg_cnt(2, 1 << 6);
         ppu.write_mosaic(0x0011);
+        // Identity affine transform so screen coordinates map 1:1 to source.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
 
         // Backdrop = blue.
         pram[0] = 0x00;
@@ -2707,6 +2770,85 @@ mod tests {
 
         // First pixel should be from frame 1, which is green (RGB888: 0, 255, 0).
         assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode4_uses_bg2_affine_reference_point() {
+        // Mode 4 must apply the BG2 affine reference point (BG2X/BG2Y) just as
+        // Mode 3 and Mode 5 do. With BG2X = 1.0, screen pixel 0 should map to
+        // source pixel 1, not source pixel 0.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 4, BG2 enabled, identity affine transform starting at source x=1.
+        ppu.write_dispcnt(4 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        // BG2X = 1.0 pixel (0x0100 = 256 in 8.8 fixed-point = 1.0)
+        ppu.write_affine(REG_BG2X_L, 0x0100);
+
+        // Palette index 1 = red; palette index 2 = green.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+        pram[4] = 0xE0;
+        pram[5] = 0x03;
+
+        // Source (0,0) = palette index 1 (red); source (1,0) = palette index 2 (green).
+        vram[0] = 1;
+        vram[1] = 2;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // With BG2X = 1.0, screen pixel 0 should map to source pixel 1 (green).
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode4_outside_240x160_bitmap_is_transparent() {
+        // Pixels whose source coordinates land outside the 240×160 source bitmap
+        // must be transparent (backdrop shows through), matching Mode 3/5 behavior.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 4, BG2 enabled, identity transform with BG2X=240 so screen
+        // pixel 0 maps to source x=240 which is out-of-bounds for 240-wide bitmap.
+        ppu.write_dispcnt(4 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        // BG2X = 240.0 in 8.8 fixed-point: 240 * 256 = 61440 = 0xF000 (low 16 bits).
+        ppu.write_affine(REG_BG2X_L, 0xF000);
+
+        // Backdrop = blue.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        // Palette index 1 = red.
+        pram[2] = 0x1F;
+        pram[3] = 0x00;
+        // Fill the entire 240×160 source bitmap with palette index 1 (red).
+        for i in 0..(SCREEN_WIDTH as usize * SCREEN_HEIGHT as usize) {
+            vram[i] = 1;
+        }
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Screen pixel 0 maps to source x=240 (OOB) → transparent → backdrop = blue.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0, 0xFF]);
     }
 
     #[test]
