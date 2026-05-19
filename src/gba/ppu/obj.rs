@@ -102,7 +102,10 @@ fn fetch_obj_pixel(
         let row_stride = width_in_tiles * col_stride;
         tile_id + (tile_row * row_stride + tile_col * col_stride) as usize
     } else {
-        tile_id + (tile_row as usize) * 32 + (tile_col * col_stride) as usize
+        // Per GBATek: in 256-color (8bpp) 2D mapping mode, the lower bit of the
+        // tile number is ignored (the 1024-tile space becomes a 16×32 matrix).
+        let effective_tile_id = if is_8bpp { tile_id & !1 } else { tile_id };
+        effective_tile_id + (tile_row as usize) * 32 + (tile_col * col_stride) as usize
     };
 
     if is_8bpp {
@@ -830,6 +833,51 @@ mod tests {
             "2D mapping should find tile at stride 32"
         );
         assert_eq!(result.pixels[0].color, 0x7C00);
+    }
+
+    #[test]
+    fn obj_2d_mapping_8bpp_ignores_lower_bit_of_tile_id() {
+        // GBATek: in 256-color/1-palette mode with 2D tile mapping, the lower bit
+        // of the OBJ tile number is ignored. An OBJ with odd tile_id=1 must render
+        // identically to one with tile_id=0 (lower bit masked to 0).
+        //
+        // 8bpp pixel (0,0) reads from: OBJ_VRAM_BASE + tile_offset*32
+        //   tile_id=0 → tile_offset=0 → addr = OBJ_VRAM_BASE + 0       → byte = 7 (green)
+        //   tile_id=1 → tile_offset=1 → addr = OBJ_VRAM_BASE + 32      → byte = 9 (other)
+        // After fix: tile_id=1 is masked to 0, so addr = OBJ_VRAM_BASE → byte = 7 (green).
+        let mut oam = make_oam();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Set the first 32-byte slot (4bpp tile 0 region) to palette index 7 (green).
+        for b in &mut vram[OBJ_VRAM_BASE..OBJ_VRAM_BASE + 32] {
+            *b = 7;
+        }
+        // Set the second 32-byte slot (4bpp tile 1 region) to palette index 9 (other).
+        for b in &mut vram[OBJ_VRAM_BASE + 32..OBJ_VRAM_BASE + 64] {
+            *b = 9;
+        }
+        set_obj_color(&mut pram, 7, 0x03E0); // green
+        set_obj_color(&mut pram, 9, 0x7C00); // blue (wrong color if bug is present)
+
+        // 8x8 sprite at (0,0), 8bpp (attr0 bit 13=1), tile_id=1 (odd).
+        let attr0 = 1 << 13; // 8bpp
+        let attr1 = 0; // x=0, 8x8
+        let attr2 = 1; // tile_id=1 (odd — lower bit must be ignored in 2D mode)
+        write_obj(&mut oam, 0, attr0, attr1, attr2);
+
+        // Render with 2D mapping (obj_mapping_1d=false).
+        let result = render_obj_scanline(0, &oam, &vram, &pram, false, false, 0, u32::MAX);
+
+        assert!(
+            result.pixels[0].opaque,
+            "8bpp 2D mapping with odd tile_id=1 must render using tile 0 (lower bit masked)"
+        );
+        assert_eq!(
+            result.pixels[0].color, 0x03E0,
+            "color must come from tile 0 (effective after masking tile_id=1 → 0); \
+             got blue means the bug is present (tile 1 used instead of tile 0)"
+        );
     }
 
     #[test]
