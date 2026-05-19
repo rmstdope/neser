@@ -662,6 +662,75 @@ pub struct MgbaSuiteResult {
     pub cycles: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MgbaMemoryFailure {
+    pub test_name: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MgbaMemoryLog {
+    pub raw_log: String,
+    pub passed_count: Option<u32>,
+    pub total_count: Option<u32>,
+    pub failures: Vec<MgbaMemoryFailure>,
+}
+
+pub fn parse_mgba_memory_sram_log(bytes: &[u8]) -> MgbaMemoryLog {
+    let text_bytes: Vec<u8> = bytes
+        .iter()
+        .copied()
+        .take_while(|&byte| byte != 0 && byte != 0xFF)
+        .filter(|byte| byte.is_ascii_graphic() || matches!(byte, b' ' | b'\n' | b'\r' | b'\t'))
+        .collect();
+    let raw_log = String::from_utf8_lossy(&text_bytes)
+        .trim_end_matches(['\r', '\n', '\t', ' '])
+        .to_string();
+    let (passed_count, total_count) = parse_mgba_score(&raw_log);
+    let failures = raw_log
+        .lines()
+        .filter(|line| line.to_ascii_lowercase().contains("fail"))
+        .map(parse_mgba_failure_line)
+        .collect();
+
+    MgbaMemoryLog {
+        raw_log,
+        passed_count,
+        total_count,
+        failures,
+    }
+}
+
+fn parse_mgba_score(raw_log: &str) -> (Option<u32>, Option<u32>) {
+    for token in raw_log.split(|ch: char| !(ch.is_ascii_digit() || ch == '/')) {
+        if let Some((passed, total)) = token.split_once('/') {
+            let Ok(passed) = passed.parse::<u32>() else {
+                continue;
+            };
+            let Ok(total) = total.parse::<u32>() else {
+                continue;
+            };
+            return (Some(passed), Some(total));
+        }
+    }
+
+    (None, None)
+}
+
+fn parse_mgba_failure_line(line: &str) -> MgbaMemoryFailure {
+    if let Some((test_name, detail)) = line.split_once(':') {
+        MgbaMemoryFailure {
+            test_name: test_name.trim().to_string(),
+            detail: detail.trim().to_string(),
+        }
+    } else {
+        MgbaMemoryFailure {
+            test_name: line.trim().to_string(),
+            detail: String::new(),
+        }
+    }
+}
+
 /// Boot the mgba-emu test suite ROM with the embedded BIOS.
 ///
 /// Returns a `Gba` instance ready to run, positioned at the cartridge
@@ -1169,5 +1238,32 @@ mod tests {
         assert_eq!(Suite::FuzzArmMixed.capture_stem(), "fuzzarm_mixed");
         assert_eq!(Suite::ArmWrestler.capture_stem(), "armwrestler");
         assert_eq!(Suite::Mgba.capture_stem(), "mgba_suite");
+    }
+
+    #[test]
+    fn mgba_memory_sram_log_parser_extracts_score_and_failures() {
+        let bytes = b"Memory: 1379/1552\nCPU ROM OOB: FAIL expected=00000000 actual=FFFFFFFF\nDMA3 SRAM mirror: fail source mismatch\0\xFF\xFF";
+
+        let log = parse_mgba_memory_sram_log(bytes);
+
+        assert_eq!(log.passed_count, Some(1379));
+        assert_eq!(log.total_count, Some(1552));
+        assert_eq!(
+            log.raw_log,
+            "Memory: 1379/1552\nCPU ROM OOB: FAIL expected=00000000 actual=FFFFFFFF\nDMA3 SRAM mirror: fail source mismatch"
+        );
+        assert_eq!(
+            log.failures,
+            vec![
+                MgbaMemoryFailure {
+                    test_name: "CPU ROM OOB".to_string(),
+                    detail: "FAIL expected=00000000 actual=FFFFFFFF".to_string(),
+                },
+                MgbaMemoryFailure {
+                    test_name: "DMA3 SRAM mirror".to_string(),
+                    detail: "fail source mismatch".to_string(),
+                },
+            ]
+        );
     }
 }
