@@ -1667,9 +1667,9 @@ impl Ppu {
         let y1 = (v >> 8) as u32;
         let y2 = (v & 0xFF) as u32;
 
-        let in_x = if x2 > 240 {
+        let in_x = if x2 > SCREEN_WIDTH {
             // X2 out of range: clamp to 240.
-            x >= x1 && x < 240
+            x >= x1 && x < SCREEN_WIDTH
         } else if x1 > x2 {
             // Wraparound: covers 0..X2 AND X1..240.
             x >= x1 || x < x2
@@ -1677,9 +1677,9 @@ impl Ppu {
             x >= x1 && x < x2
         };
 
-        let in_y = if y2 > 160 {
+        let in_y = if y2 > SCREEN_HEIGHT {
             // Y2 out of range: clamp to 160.
-            y >= y1 && y < 160
+            y >= y1 && y < SCREEN_HEIGHT
         } else if y1 > y2 {
             // Wraparound: covers 0..Y2 AND Y1..160.
             y >= y1 || y < y2
