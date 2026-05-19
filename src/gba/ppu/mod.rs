@@ -1187,7 +1187,7 @@ impl Ppu {
             .internal_y
             .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
 
-        for x in 0..(SCREEN_WIDTH as usize) {
+        for (x, pixel) in buf.iter_mut().enumerate() {
             let sample_screen_x = if mosaic_enabled {
                 mosaic_anchor(x as u32, mosaic_h as u32) as usize
             } else {
@@ -1209,7 +1209,7 @@ impl Ppu {
             let src = frame_base + (py * width + px) * 2;
             // Keep bit 15 clear so valid BGR555 pixels never collide with
             // TRANSPARENT (0x8000) sentinel values in layer buffers.
-            buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
+            *pixel = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
         }
 
         buf
@@ -1399,6 +1399,17 @@ impl Ppu {
 
             let obj_px = obj_scanline.as_ref().map(|s| &s.pixels[x]);
             let obj_opaque = obj_px.is_some_and(|px| px.opaque);
+            // Per GBATek "Semi-Transparent OBJ" section: "If a semi-transparent
+            // OBJ pixel overlaps a 2nd Target pixel, semi-transparency wins;
+            // brightness effect is NOT applied (neither to 1st nor 2nd target)."
+            // This suppression applies regardless of the OBJ's priority relative
+            // to other layers, matching mGBA's FLAG_REBLEND propagation behaviour.
+            // Suppression requires a 2nd target to be configured (same condition
+            // that sets FLAG_REBLEND in mGBA — when no 2nd target exists, the
+            // OBJ's TARGET_1 flag is cleared instead, and brightness on layers
+            // above the OBJ must still apply).
+            let obj_is_semi_transparent = obj_px.is_some_and(|px| px.opaque && px.semi_transparent);
+            let suppress_brightness = obj_is_semi_transparent && second_target_mask != 0;
 
             // Find the top-2 visible pixels using sort_key (lower = higher
             // priority). Encoding: OBJ at prio p → key = p*10;
@@ -1485,16 +1496,18 @@ impl Ppu {
                         }
                     }
                     2 => {
-                        // Brightness increase.
-                        if (first_target_mask >> top_layer) & 1 != 0 {
+                        // Brightness increase — suppressed when a semi-transparent
+                        // OBJ is present at this pixel and any 2nd target is set.
+                        if !suppress_brightness && (first_target_mask >> top_layer) & 1 != 0 {
                             brighten_bgr555(top_color, evy)
                         } else {
                             top_color
                         }
                     }
                     3 => {
-                        // Brightness decrease.
-                        if (first_target_mask >> top_layer) & 1 != 0 {
+                        // Brightness decrease — suppressed when a semi-transparent
+                        // OBJ is present at this pixel and any 2nd target is set.
+                        if !suppress_brightness && (first_target_mask >> top_layer) & 1 != 0 {
                             darken_bgr555(top_color, evy)
                         } else {
                             top_color
@@ -4574,6 +4587,230 @@ mod tests {
             &ppu.framebuffer()[0..3],
             &[r, g, b],
             "Semi-transparent OBJ with no 2nd target should display at normal intensity"
+        );
+    }
+
+    // Per GBATek: when a semi-transparent OBJ pixel is present at a position
+    // AND any layer is set as a 2nd target, brightness effects are suppressed
+    // for that pixel position, regardless of whether the OBJ is the topmost
+    // layer.
+
+    #[test]
+    fn semi_transparent_obj_on_top_in_brightness_mode_alpha_blends_when_second_target_exists() {
+        // Semi-transparent OBJ (red, priority 0) on top of BG0 (blue, priority 1).
+        // BLDCNT mode=2 (brightness increase), 1st target=OBJ, 2nd target=BG0.
+        // Expected: alpha blend (semi-transparent OBJ forces alpha blend regardless of mode).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+        ppu.write_bg_cnt(0, 1); // BG0 priority 1 (below OBJ priority 0)
+
+        pram[2] = 0x00;
+        pram[3] = 0x7C; // palette 1 = blue
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        let obj_tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11;
+        }
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00; // OBJ palette 1 = red
+
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 0); // OBJ priority 0
+
+        // BLDCNT: mode=2 (brightness), 1st target=OBJ (bit 4), 2nd target=BG0 (bit 8).
+        ppu.write_bldcnt((2 << 6) | 0x10 | (1 << 8));
+        ppu.write_bldalpha(8 | (8 << 8)); // EVA=8, EVB=8
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &oam);
+
+        // Semi-transparent OBJ forces alpha blend even in brightness mode.
+        // 50% red + 50% blue = 0x3C0F.
+        let (r, g, b) = color::bgr555_to_rgb888(0x3C0F);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "Semi-transparent OBJ on top in brightness mode must alpha-blend with 2nd target"
+        );
+    }
+
+    #[test]
+    fn semi_transparent_obj_on_top_in_brightness_mode_shows_normal_when_no_second_target() {
+        // Semi-transparent OBJ (red, priority 0) on top of BG0 (blue, priority 1).
+        // BLDCNT mode=2 (brightness), 1st target=OBJ, 2nd target=none.
+        // Expected: OBJ at normal red (no brightness applied to semi-transparent OBJ).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+        ppu.write_bg_cnt(0, 1); // BG0 priority 1
+
+        pram[2] = 0x00;
+        pram[3] = 0x7C;
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        let obj_tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11;
+        }
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 0);
+
+        // BLDCNT: mode=2 (brightness), 1st target=OBJ (bit 4), no 2nd target.
+        ppu.write_bldcnt((2 << 6) | 0x10);
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &oam);
+
+        // No 2nd target → OBJ at normal intensity (not brightened).
+        let (r, g, b) = color::bgr555_to_rgb888(0x001F);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "Semi-transparent OBJ on top in brightness mode with no 2nd target must show normally"
+        );
+    }
+
+    #[test]
+    fn semi_transparent_obj_below_top_layer_suppresses_brightness_increase() {
+        // BG0 (blue, priority 0) is topmost, semi-transparent OBJ (red, priority 1)
+        // is below. BLDCNT mode=2 (brightness increase), 1st target=BG0, 2nd
+        // target=backdrop. Per GBATek, the semi-transparent OBJ suppresses
+        // brightness because a 2nd target is configured.
+        // Expected: BG0 shows at normal blue (NOT brightened to white).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+        ppu.write_bg_cnt(0, 0); // BG0 priority 0 (top)
+
+        pram[2] = 0x00;
+        pram[3] = 0x7C; // palette 1 = blue (BGR555 0x7C00)
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        let obj_tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11;
+        }
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00; // OBJ palette 1 = red
+
+        // OBJ priority 1 → below BG0 priority 0.
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 1);
+
+        // BLDCNT: mode=2, 1st target=BG0 (bit 0), 2nd target=backdrop (bit 13).
+        ppu.write_bldcnt((2 << 6) | 0x01 | (1 << 13));
+        ppu.write_bldy(16); // max brightness (would give white if applied)
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &oam);
+
+        // Semi-transparent OBJ below + 2nd target present → brightness suppressed.
+        // BG0 must appear at normal blue, not white.
+        let (r, g, b) = color::bgr555_to_rgb888(0x7C00);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "Brightness increase must be suppressed when semi-transparent OBJ is below and 2nd target exists"
+        );
+    }
+
+    #[test]
+    fn semi_transparent_obj_below_top_layer_suppresses_brightness_decrease() {
+        // Same setup as above but BLDCNT mode=3 (brightness decrease).
+        // Expected: BG0 shows at normal blue (NOT darkened to black).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+        ppu.write_bg_cnt(0, 0); // BG0 priority 0 (top)
+
+        pram[2] = 0x00;
+        pram[3] = 0x7C; // blue
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        let obj_tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11;
+        }
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 1); // OBJ priority 1
+
+        // BLDCNT: mode=3, 1st target=BG0 (bit 0), 2nd target=backdrop (bit 13).
+        ppu.write_bldcnt((3 << 6) | 0x01 | (1 << 13));
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &oam);
+
+        let (r, g, b) = color::bgr555_to_rgb888(0x7C00);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "Brightness decrease must be suppressed when semi-transparent OBJ is below and 2nd target exists"
+        );
+    }
+
+    #[test]
+    fn semi_transparent_obj_below_does_not_suppress_brightness_when_no_second_target() {
+        // BG0 (blue, priority 0) on top, semi-transparent OBJ (red, priority 1) below.
+        // BLDCNT mode=2 (brightness), 1st target=BG0, but NO 2nd target configured.
+        // Without any 2nd target, brightness suppression does NOT apply (per GBATek).
+        // Expected: BG0 brightened to white.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        ppu.write_dispcnt(dispcnt::BG0_ENABLE | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+        ppu.write_bg_cnt(0, 0);
+
+        pram[2] = 0x00;
+        pram[3] = 0x7C;
+        vram[32] = 0x11;
+        vram[0x0000] = 0x01;
+
+        let obj_tile_base = 0x1_0000 + 32;
+        for byte in &mut vram[obj_tile_base..obj_tile_base + 32] {
+            *byte = 0x11;
+        }
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 1);
+
+        // BLDCNT: mode=2, 1st target=BG0 (bit 0), NO 2nd target.
+        ppu.write_bldcnt((2 << 6) | 0x01);
+        ppu.write_bldy(16);
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &oam);
+
+        // No 2nd target → brightness applies normally → white.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0xFF, 0xFF, 0xFF],
+            "Brightness must apply normally when no 2nd target is configured"
         );
     }
 
