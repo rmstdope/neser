@@ -3695,9 +3695,9 @@ mod tests {
         let mut pram = make_pram();
         let mut oam = make_oam();
 
-        // OBJ 0..13 are 64x64 and off scanline 0: each consumes 64 cycles (14*64=896).
+        // OBJ 0..13 are 64x64 and ON scanline 0: each consumes 64 cycles (14*64=896).
         for obj_idx in 0..14 {
-            setup_obj_in_oam(&mut oam, obj_idx, 0, 100, 0, 0);
+            setup_obj_in_oam(&mut oam, obj_idx, 0, 0, 0, 0);
             let base = obj_idx * 8;
             let attr1 = (oam[base + 2] as u16) | ((oam[base + 3] as u16) << 8) | (3 << 14);
             oam[base + 2] = attr1 as u8;
