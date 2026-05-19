@@ -492,6 +492,43 @@ impl Ppu {
         self.dispcnt & dispcnt::FORCED_BLANK != 0
     }
 
+    /// Returns `true` when VRAM and Palette RAM accesses require a 1-cycle wait
+    /// due to the PPU actively reading those regions.
+    ///
+    /// Per GBATek "LCD VRAM Overview": the extra wait applies during active
+    /// display (visible scanlines 0–159, not in H-Blank) when Forced Blank
+    /// (DISPCNT bit 7) is not set.
+    pub fn vram_pram_active_wait(&self) -> bool {
+        if self.forced_blank() {
+            return false;
+        }
+        if (self.vcount as u32) >= VISIBLE_SCANLINES {
+            return false;
+        }
+        self.dispstat & dispstat::HBLANK_FLAG == 0
+    }
+
+    /// Returns `true` when OAM accesses require a 1-cycle wait.
+    ///
+    /// Per GBATek: OAM is restricted during active display and during H-Blank
+    /// on visible scanlines unless DISPCNT bit 5 (H-Blank Interval Free) is
+    /// set. Forced Blank and V-Blank allow full-speed access.
+    pub fn oam_active_wait(&self) -> bool {
+        if self.forced_blank() {
+            return false;
+        }
+        if (self.vcount as u32) >= VISIBLE_SCANLINES {
+            return false;
+        }
+        // During H-Blank with HBLANK_INTERVAL_FREE set: OAM is freely accessible.
+        if self.dispstat & dispstat::HBLANK_FLAG != 0
+            && self.dispcnt & dispcnt::HBLANK_INTERVAL_FREE != 0
+        {
+            return false;
+        }
+        true
+    }
+
     /// Whether `BG2` is enabled in DISPCNT.
     pub fn bg2_enabled(&self) -> bool {
         self.dispcnt & dispcnt::BG2_ENABLE != 0
