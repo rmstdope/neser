@@ -3,7 +3,7 @@ use crate::gba::bios::EMBEDDED_BIOS;
 use crate::gba::cpu::bus::Bus;
 use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const MAX_CYCLES: u64 = 480_000_000;
 const IDLE_PROBE_STABLE_PC_THRESHOLD: u32 = 1;
@@ -14,6 +14,7 @@ const THUMB_BRANCH_SELF_OPCODE: u16 = 0xE7FE;
 pub(crate) const GBA_CYCLES_PER_FRAME: u64 = 280_896;
 // Allow up to two frames while waiting for a fresh frame-ready edge after idle-loop detection.
 const FRAME_SETTLE_MAX_CYCLES: u64 = GBA_CYCLES_PER_FRAME * 2;
+pub const MGBA_MEMORY_PROPRIETARY_BIOS_ENV: &str = "NESER_GBA_PROPRIETARY_BIOS";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Suite {
@@ -711,7 +712,11 @@ fn mgba_memory_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
 }
 
 pub fn run_mgba_memory_diagnostics() -> MgbaMemoryDiagnosticResult {
-    let (mut gba, _rom) = boot_mgba_suite();
+    let (gba, _rom) = boot_mgba_suite();
+    run_mgba_memory_diagnostics_from_gba(gba)
+}
+
+fn run_mgba_memory_diagnostics_from_gba(mut gba: Gba) -> MgbaMemoryDiagnosticResult {
     let mut cycles: u64 = 0;
 
     for _ in 0..10 {
@@ -764,6 +769,37 @@ pub fn run_mgba_memory_diagnostics() -> MgbaMemoryDiagnosticResult {
     }
 
     mgba_memory_diagnostic_from_gba(&gba)
+}
+
+pub fn run_mgba_memory_diagnostics_with_bios_path(
+    bios_path: Option<&Path>,
+) -> Result<Option<MgbaMemoryDiagnosticResult>, String> {
+    let Some(bios_path) = bios_path else {
+        return Ok(None);
+    };
+
+    let bios = std::fs::read(bios_path)
+        .map_err(|e| format!("failed to read GBA BIOS image {}: {e}", bios_path.display()))?;
+    if bios.len() != crate::gba::bus::memory::BIOS_SIZE {
+        return Err(format!(
+            "GBA BIOS image {} has invalid size: expected {} bytes, found {}",
+            bios_path.display(),
+            crate::gba::bus::memory::BIOS_SIZE,
+            bios.len()
+        ));
+    }
+
+    let (gba, _rom) = boot_mgba_suite_with_bios(&bios);
+    Ok(Some(run_mgba_memory_diagnostics_from_gba(gba)))
+}
+
+pub fn run_mgba_memory_diagnostics_with_proprietary_bios()
+-> Result<Option<MgbaMemoryDiagnosticResult>, String> {
+    let Some(path) = std::env::var_os(MGBA_MEMORY_PROPRIETARY_BIOS_ENV) else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(path);
+    run_mgba_memory_diagnostics_with_bios_path(Some(&path))
 }
 
 pub fn parse_mgba_memory_sram_log(bytes: &[u8]) -> MgbaMemoryLog {
@@ -845,13 +881,17 @@ fn parse_mgba_failure_line(line: &str) -> MgbaMemoryFailure {
 /// Returns a `Gba` instance ready to run, positioned at the cartridge
 /// entrypoint with stack pointers initialised by the BIOS boot sequence.
 pub fn boot_mgba_suite() -> (Gba, Vec<u8>) {
+    boot_mgba_suite_with_bios(EMBEDDED_BIOS)
+}
+
+fn boot_mgba_suite_with_bios(bios: &[u8]) -> (Gba, Vec<u8>) {
     let rom_path = Suite::Mgba.rom_path();
     let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {
         panic!("failed to read mgba suite ROM {}: {e}", rom_path.display());
     });
 
     let mut gba = Gba::new(AppContext::default());
-    gba.bus_mut().load_bios(EMBEDDED_BIOS);
+    gba.bus_mut().load_bios(bios);
     gba.bus_mut().write8(0x03007FFC, 1); // Skip BIOS intro
     gba.load_rom(&rom, rom_path.to_str().unwrap_or("mgba-emu-suite"))
         .unwrap_or_else(|e| {
