@@ -736,12 +736,18 @@ mod tests {
 
     #[test]
     fn test_mix_terminal_single_channel_returns_full_value() {
-        // RED: Per GBATek, PSG channels are SUMMED. A single channel at 1.0
+        // Per GBATek, PSG channels are SUMMED. A single channel at 1.0
         // must return 1.0, not 0.25 (old incorrect /4.0 average).
         let result = Apu::mix_terminal([1.0, 0.0, 0.0, 0.0], 0x01);
         assert!(
             (result - 1.0).abs() < 1e-6,
             "Single channel at max: expected 1.0, got {result}"
+        );
+        // Verify masking: channel 0 is at 1.0 but mask 0x02 enables channel 1 only.
+        let masked = Apu::mix_terminal([1.0, 0.0, 0.0, 0.0], 0x02);
+        assert!(
+            masked.abs() < 1e-6,
+            "Disabled channel must contribute 0.0, got {masked}"
         );
     }
 
@@ -773,8 +779,9 @@ mod tests {
         apu.write16(0x0400_0080, 0x0107);
         // SOUNDCNT_H: DMG at 100% (bits 1-0 = 2)
         apu.soundcnt_h = 0x0002;
-        // CH1: duty=50% (high phase at duty pos 0), volume=15, trigger, freq=0x320 (800)
-        apu.write16(0x0400_0062, 0xF080); // vol=15, duty=2
+        // CH1: duty pattern index 2 (50% = [1,0,0,0,0,1,1,1]), volume=15, trigger, freq=800.
+        // SOUND1CNT_H bits 7-6 = duty index, bits 15-12 = volume → 0xF080.
+        apu.write16(0x0400_0062, 0xF080); // vol=15, duty index=2 (50%)
         apu.write16(0x0400_0064, 0x8320); // trigger, freq=800
 
         let (left, right) = apu.mix();
