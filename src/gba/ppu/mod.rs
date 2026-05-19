@@ -1223,7 +1223,6 @@ impl Ppu {
     /// paletted bitmap of size `width`×`height`, starting at VRAM `frame_base`.
     /// Palette index 0 is transparent. Source samples outside bitmap bounds
     /// are left transparent.
-    #[allow(clippy::needless_range_loop)]
     fn render_affine_paletted_bitmap_layer(
         &self,
         y: u32,
@@ -1257,7 +1256,7 @@ impl Ppu {
             .internal_y
             .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
 
-        for x in 0..(SCREEN_WIDTH as usize) {
+        for (x, out_pixel) in buf.iter_mut().enumerate() {
             let sample_screen_x = if mosaic_enabled {
                 mosaic_anchor(x as u32, mosaic_h as u32) as usize
             } else {
@@ -1282,7 +1281,7 @@ impl Ppu {
             }
 
             let pal_index = vram[src];
-            buf[x] = if pal_index == 0 {
+            *out_pixel = if pal_index == 0 {
                 TRANSPARENT
             } else {
                 let pal_offset = (pal_index as usize) * 2;
