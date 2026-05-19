@@ -26,9 +26,9 @@
 //! * Mode 5 background rendering (160×128 15-bit BGR555 direct bitmap
 //!   from VRAM) with dual-frame support via DISPCNT bit 4 and BG2 affine
 //!   positioning/scaling.
-//! * Backdrop fill from the first palette entry for unimplemented
-//!   display modes (modes 6, 7) and bitmap modes when BG2 is disabled.
-//!   Modes 6-7 are "prohibited" per GBATek but are handled gracefully.
+//! * Modes 6-7 are "prohibited" per GBATek: no BG layers are rendered but OBJ
+//!   sprites and the backdrop behave normally (matching mGBA behavior). The
+//!   backdrop color shows through wherever no OBJ pixel lands.
 //! * OBJ rendering (regular and affine), OAM attribute decoding, and OBJ
 //!   Window mask generation.
 //! * Window masks, alpha blending / brightness effects, and MOSAIC for
@@ -51,7 +51,6 @@
 //!   is performed atomically at the H-Blank edge, so all pixels in a scanline
 //!   share the same register snapshot.  The `BG2X`/`BG2Y` mid-frame write
 //!   described above is an exception and is already handled.
-//! * Other prohibited-mode quirks and hardware timing edge cases.
 //!
 //! References:
 //! * GBATek "LCD I/O Display Control": <https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol>
@@ -895,6 +894,9 @@ impl Ppu {
             3 => self.render_mode3_scanline(y, vram, pram, oam),
             4 => self.render_mode4_scanline(y, vram, pram, oam),
             5 => self.render_mode5_scanline(y, vram, pram, oam),
+            // Modes 6-7 are "prohibited" per GBATek. No BG layers are rendered,
+            // but OBJ sprites and the backdrop behave normally.
+            6 | 7 => self.render_prohibited_mode_scanline(y, vram, pram, oam),
             _ => self.render_backdrop_scanline(y, pram),
         }
         // Green Swap (0x0400_0002): exchange the green channel between
@@ -1701,6 +1703,16 @@ impl Ppu {
         };
 
         in_x && in_y
+    }
+
+    /// Prohibited modes 6 and 7: per GBATek these are "prohibited" but hardware
+    /// still composites OBJ sprites over the backdrop — no BG layers are rendered.
+    fn render_prohibited_mode_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
+        if self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+        self.composite_scanline(y, pram, vram, oam, &[]);
     }
 
     /// Backdrop fill — uses palette entry 0 from PRAM. Used for modes
@@ -5639,5 +5651,147 @@ mod tests {
         assert_eq!(ppu.read_bldy(), 0x1F);
         ppu.write_bldy(0xFF); // clamped to 0x1F
         assert_eq!(ppu.read_bldy(), 0x1F);
+    }
+
+    /// Helper: fill 32 bytes of OBJ VRAM for tile `tile_id` (4bpp) with palette index `pal_idx`.
+    fn fill_obj_tile_4bpp(vram: &mut [u8], tile_id: usize, pal_idx: u8) {
+        let base = 0x1_0000 + tile_id * 32;
+        let nibble_pair = pal_idx | (pal_idx << 4);
+        for b in &mut vram[base..base + 32] {
+            *b = nibble_pair;
+        }
+    }
+
+    #[test]
+    fn prohibited_mode_6_obj_renders_when_obj_enabled() {
+        // GBA hardware (and mGBA) run OBJ rendering in prohibited modes 6-7.
+        // No BG layers are displayed, but OBJs composite over the backdrop.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        // Mode 6, OBJ enabled, 1D mapping.
+        ppu.write_dispcnt(6 | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        // In bitmap_mode (mode >= 3) tile IDs 0-511 are skipped; use tile 512.
+        // Tile 512 lives at OBJ_VRAM_BASE + 512*32 = 0x1_4000.
+        setup_obj_in_oam(&mut oam, 0, 100, 0, 512, 0);
+        fill_obj_tile_4bpp(&mut vram, 512, 1);
+
+        // OBJ palette color 1 = red (BGR555 0x001F → RGB888 255,0,0).
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        let dst = 100 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0xFF, 0, 0],
+            "mode 6: OBJ should render red pixel at x=100"
+        );
+    }
+
+    #[test]
+    fn prohibited_mode_7_obj_renders_when_obj_enabled() {
+        // Same as mode 6: OBJ must still composite over the backdrop in mode 7.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        ppu.write_dispcnt(7 | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        setup_obj_in_oam(&mut oam, 0, 100, 0, 512, 0);
+        fill_obj_tile_4bpp(&mut vram, 512, 1);
+
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        let dst = 100 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0xFF, 0, 0],
+            "mode 7: OBJ should render red pixel at x=100"
+        );
+    }
+
+    #[test]
+    fn prohibited_mode_6_backdrop_when_obj_disabled() {
+        // With OBJ disabled in mode 6, the whole scanline shows the backdrop.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+        let oam = make_oam();
+
+        ppu.write_dispcnt(6); // mode 6, OBJ disabled
+
+        // Backdrop = pure green (BGR555 0x03E0 → RGB888 0,255,0).
+        pram[0] = 0xE0;
+        pram[1] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        let dst = 0;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0, 0xFF, 0],
+            "mode 6: backdrop (green) should fill scanline when OBJ disabled"
+        );
+    }
+
+    #[test]
+    fn prohibited_mode_7_backdrop_when_obj_disabled() {
+        // With OBJ disabled in mode 7, the whole scanline shows the backdrop.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+        let oam = make_oam();
+
+        ppu.write_dispcnt(7); // mode 7, OBJ disabled
+
+        // Backdrop = pure green (BGR555 0x03E0 → RGB888 0,255,0).
+        pram[0] = 0xE0;
+        pram[1] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        let dst = 0;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0, 0xFF, 0],
+            "mode 7: backdrop (green) should fill scanline when OBJ disabled"
+        );
     }
 }
