@@ -860,28 +860,26 @@ impl Bus for GbaBus {
             0x4 => {
                 if let Some(value) = self.try_read_mgba_debug16(aligned) {
                     value as u32 | ((value as u32) << 16)
-                } else {
-                    if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
-                        let lo = self.apu.read16(aligned) as u32;
-                        // Only read the upper halfword if it is also within range.
-                        let hi = if aligned + 2 <= 0x0400_00A6 {
-                            self.apu.read16(aligned + 2) as u32
-                        } else {
-                            0
-                        };
-                        lo | (hi << 16)
+                } else if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
+                    let lo = self.apu.read16(aligned) as u32;
+                    // Only read the upper halfword if it is also within range.
+                    let hi = if aligned + 2 <= 0x0400_00A6 {
+                        self.apu.read16(aligned + 2) as u32
                     } else {
-                        self.io
-                            .try_read32(
-                                aligned,
-                                &self.ic,
-                                &self.timers,
-                                &self.dma,
-                                &self.ppu,
-                                &self.keypad,
-                            )
-                            .unwrap_or_else(|| self.open_bus_word())
-                    }
+                        0
+                    };
+                    lo | (hi << 16)
+                } else {
+                    self.io
+                        .try_read32(
+                            aligned,
+                            &self.ic,
+                            &self.timers,
+                            &self.dma,
+                            &self.ppu,
+                            &self.keypad,
+                        )
+                        .unwrap_or_else(|| self.open_bus_word())
                 }
             }
             0x5 => read_le_u32(&self.pram, aligned as usize),
@@ -981,30 +979,28 @@ impl Bus for GbaBus {
                     } else {
                         (value >> 8) as u8
                     }
+                } else if addr == 0x0400_0410 {
+                    self.undoc_0x410
                 } else {
-                    if addr == 0x0400_0410 {
-                        self.undoc_0x410
-                    } else {
-                        let aligned_hw = addr & !0x1;
-                        if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
-                            let hw = self.apu.read16(aligned_hw);
-                            if addr & 1 == 0 {
-                                hw as u8
-                            } else {
-                                (hw >> 8) as u8
-                            }
+                    let aligned_hw = addr & !0x1;
+                    if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
+                        let hw = self.apu.read16(aligned_hw);
+                        if addr & 1 == 0 {
+                            hw as u8
                         } else {
-                            self.io
-                                .try_read8(
-                                    addr,
-                                    &self.ic,
-                                    &self.timers,
-                                    &self.dma,
-                                    &self.ppu,
-                                    &self.keypad,
-                                )
-                                .unwrap_or_else(|| self.open_bus_byte(addr))
+                            (hw >> 8) as u8
                         }
+                    } else {
+                        self.io
+                            .try_read8(
+                                addr,
+                                &self.ic,
+                                &self.timers,
+                                &self.dma,
+                                &self.ppu,
+                                &self.keypad,
+                            )
+                            .unwrap_or_else(|| self.open_bus_byte(addr))
                     }
                 }
             }
