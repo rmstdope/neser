@@ -226,9 +226,17 @@ pub fn render_obj_scanline(
             (obj_width, obj_height)
         };
 
-        // Per GBATek "LCD OBJ - Overview": count cycles for every non-hidden OBJ
-        // with a valid shape, even if it doesn't intersect the current scanline.
-        // Cycle cost formula (GBATek):
+        // Y coordinate (attr0 bits 0-7), wraps at 256.
+        let obj_y = (attr0 & 0xFF) as u32;
+
+        // Check if this scanline intersects the sprite bounding box (wrapping Y at 256).
+        // Per GBATek open question: vertically-offscreen OBJs do NOT consume cycle budget.
+        let rel_y = y.wrapping_sub(obj_y) & 0xFF;
+        if rel_y >= bound_height {
+            continue;
+        }
+
+        // Cycle cost formula (GBATek "LCD OBJ - Overview"):
         //   - Normal OBJ:       n×1 cycles  (n = bound_width)
         //   - Rotation/Scaling: 10 + n×2 cycles (n = bound_width, including double-size)
         let cycle_cost = if is_affine {
@@ -244,19 +252,11 @@ pub fn render_obj_scanline(
         }
         cycles_used += cycle_cost;
 
-        // Y coordinate (attr0 bits 0-7), wraps at 256.
-        let obj_y = (attr0 & 0xFF) as u32;
         // X coordinate (attr1 bits 0-8), sign-extended 9 bits.
         let obj_x = {
             let raw = (attr1 & 0x1FF) as i32;
             if raw >= 256 { raw - 512 } else { raw }
         };
-
-        // Check if this scanline intersects the sprite bounding box (wrapping Y at 256).
-        let rel_y = y.wrapping_sub(obj_y) & 0xFF;
-        if rel_y >= bound_height {
-            continue;
-        }
 
         // Tile index (attr2 bits 0-9).
         let tile_id = (attr2 & 0x03FF) as usize;
@@ -1232,10 +1232,10 @@ mod tests {
     }
 
     #[test]
-    fn cycle_budget_counts_off_scanline_obj() {
-        // OBJ 0: 8x8 at y=100 (off scanline 0) — still costs 8 cycles.
+    fn cycle_budget_does_not_count_vertically_offscreen_obj() {
+        // OBJ 0: 8x8 at y=100 (off scanline 0) — costs 0 cycles (vertically offscreen).
         // OBJ 1: 8x8 at y=0 (on scanline 0) — costs 8 cycles.
-        // Budget of 10: OBJ 0 consumes 8 cycles (no pixels), OBJ 1 can't fit (16 > 10).
+        // Budget of 10: OBJ 0 consumes 0 cycles, OBJ 1 fits (8 ≤ 10) and should render.
         let mut oam = make_oam();
         let mut vram = make_vram();
         let mut pram = make_pram();
@@ -1249,10 +1249,10 @@ mod tests {
 
         let result = render_obj_scanline(0, &oam, &vram, &pram, true, false, 0, 10);
 
-        // OBJ 1 should NOT render; its budget was consumed by off-scanline OBJ 0.
+        // OBJ 1 SHOULD render; vertically-offscreen OBJ 0 did not consume cycle budget.
         assert!(
-            !result.pixels[10].opaque,
-            "OBJ 1 should not render: budget consumed by off-scanline OBJ 0"
+            result.pixels[10].opaque,
+            "OBJ 1 should render: vertically-offscreen OBJ 0 should not consume cycle budget"
         );
     }
 
