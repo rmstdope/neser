@@ -1146,12 +1146,69 @@ impl Ppu {
         self.composite_scanline(y, pram, vram, oam, &layers);
     }
 
+    #[allow(clippy::needless_range_loop)]
+    fn render_affine_bitmap_layer(
+        &self,
+        y: u32,
+        vram: &[u8],
+        width: usize,
+        height: usize,
+        frame_base: usize,
+    ) -> [u16; SCREEN_WIDTH as usize] {
+        let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
+        let aff = self.bg_affine[0];
+        let pa = aff.pa as i32;
+        let pb = aff.pb as i32;
+        let pc = aff.pc as i32;
+        let pd = aff.pd as i32;
+        let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
+        let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
+        let mosaic_y_offset = if mosaic_enabled {
+            (y - mosaic_anchor(y, mosaic_v as u32)) as usize
+        } else {
+            0
+        };
+        // `internal_x/y` point at the current scanline. For vertical mosaic,
+        // sample from the block's top scanline instead, so rewind by the
+        // affine per-line deltas PB/PD for the current offset within the block.
+        let line_anchor_x = aff
+            .internal_x
+            .wrapping_sub(pb.wrapping_mul(mosaic_y_offset as i32));
+        let line_anchor_y = aff
+            .internal_y
+            .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
+
+        for x in 0..(SCREEN_WIDTH as usize) {
+            let sample_screen_x = if mosaic_enabled {
+                mosaic_anchor(x as u32, mosaic_h as u32) as usize
+            } else {
+                x
+            };
+            let sample_x = line_anchor_x.wrapping_add(pa.wrapping_mul(sample_screen_x as i32));
+            let sample_y = line_anchor_y.wrapping_add(pc.wrapping_mul(sample_screen_x as i32));
+
+            if sample_x < 0 || sample_y < 0 {
+                continue;
+            }
+
+            let px = (sample_x >> 8) as usize;
+            let py = (sample_y >> 8) as usize;
+            if px >= width || py >= height {
+                continue;
+            }
+
+            let src = frame_base + (py * width + px) * 2;
+            buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
+        }
+
+        buf
+    }
+
     /// Mode 3: 240×160 direct 15-bit bitmap. Each pixel is a 16-bit BGR555 value.
     ///
     /// BG2 affine parameters select source coordinates. Pixels outside the
     /// 240×160 source bitmap remain transparent so the backdrop or lower
     /// priority layers show through.
-    #[allow(clippy::needless_range_loop)]
     fn render_mode3_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
             self.render_backdrop_scanline(y, pram);
@@ -1161,53 +1218,13 @@ impl Ppu {
         let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
 
         if self.bg2_enabled() {
-            let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
-            let aff = self.bg_affine[0];
-            let pa = aff.pa as i32;
-            let pb = aff.pb as i32;
-            let pc = aff.pc as i32;
-            let pd = aff.pd as i32;
-            let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
-            let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
-            let mosaic_y_offset = if mosaic_enabled {
-                (y - mosaic_anchor(y, mosaic_v as u32)) as usize
-            } else {
-                0
-            };
-            // `internal_x/y` point at the current scanline. For vertical mosaic,
-            // sample from the block's top scanline instead, so rewind by the
-            // affine per-scanline increments: PB (x advance per scanline) and
-            // PD (y advance per scanline) multiplied by the offset within the block.
-            let line_anchor_x = aff
-                .internal_x
-                .wrapping_sub(pb.wrapping_mul(mosaic_y_offset as i32));
-            let line_anchor_y = aff
-                .internal_y
-                .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
-
-            for x in 0..(SCREEN_WIDTH as usize) {
-                let sample_screen_x = if mosaic_enabled {
-                    mosaic_anchor(x as u32, mosaic_h as u32) as usize
-                } else {
-                    x
-                };
-                let sample_x = line_anchor_x.wrapping_add(pa.wrapping_mul(sample_screen_x as i32));
-                let sample_y = line_anchor_y.wrapping_add(pc.wrapping_mul(sample_screen_x as i32));
-
-                if sample_x < 0 || sample_y < 0 {
-                    continue;
-                }
-
-                let px = (sample_x >> 8) as usize;
-                let py = (sample_y >> 8) as usize;
-                if px >= SCREEN_WIDTH as usize || py >= SCREEN_HEIGHT as usize {
-                    continue;
-                }
-
-                let src = (py * SCREEN_WIDTH as usize + px) * 2;
-                // Mask bit 15 so valid pixels never collide with TRANSPARENT sentinel
-                buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
-            }
+            let buf = self.render_affine_bitmap_layer(
+                y,
+                vram,
+                SCREEN_WIDTH as usize,
+                SCREEN_HEIGHT as usize,
+                0,
+            );
             let prio = (self.bg_cnt[2] & 3) as u8;
             layers.push((2, prio, buf));
         }
@@ -1276,7 +1293,6 @@ impl Ppu {
     /// BG2 affine parameters select source coordinates. Pixels outside the
     /// 160×128 source bitmap remain transparent so the backdrop or lower
     /// priority layers show through.
-    #[allow(clippy::needless_range_loop)]
     fn render_mode5_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
             self.render_backdrop_scanline(y, pram);
@@ -1286,56 +1302,13 @@ impl Ppu {
         let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
 
         if self.bg2_enabled() {
-            let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
             let frame_base = if self.frame_select() {
                 0xA000usize
             } else {
                 0x0000usize
             };
-            let aff = self.bg_affine[0];
-            let pa = aff.pa as i32;
-            let pb = aff.pb as i32;
-            let pc = aff.pc as i32;
-            let pd = aff.pd as i32;
-            let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
-            let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
-            let mosaic_y_offset = if mosaic_enabled {
-                (y - mosaic_anchor(y, mosaic_v as u32)) as usize
-            } else {
-                0
-            };
-            // `internal_x/y` point at the current scanline. For vertical mosaic,
-            // sample from the block's top scanline instead, so rewind by the
-            // affine per-line deltas PB/PD for the current offset within the block.
-            let line_anchor_x = aff
-                .internal_x
-                .wrapping_sub(pb.wrapping_mul(mosaic_y_offset as i32));
-            let line_anchor_y = aff
-                .internal_y
-                .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
-
-            for x in 0..(SCREEN_WIDTH as usize) {
-                let sample_screen_x = if mosaic_enabled {
-                    mosaic_anchor(x as u32, mosaic_h as u32) as usize
-                } else {
-                    x
-                };
-                let sample_x = line_anchor_x.wrapping_add(pa.wrapping_mul(sample_screen_x as i32));
-                let sample_y = line_anchor_y.wrapping_add(pc.wrapping_mul(sample_screen_x as i32));
-
-                if sample_x < 0 || sample_y < 0 {
-                    continue;
-                }
-
-                let px = (sample_x >> 8) as usize;
-                let py = (sample_y >> 8) as usize;
-                if px >= MODE5_WIDTH || py >= MODE5_HEIGHT {
-                    continue;
-                }
-
-                let src = frame_base + (py * MODE5_WIDTH + px) * 2;
-                buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
-            }
+            let buf =
+                self.render_affine_bitmap_layer(y, vram, MODE5_WIDTH, MODE5_HEIGHT, frame_base);
             let prio = (self.bg_cnt[2] & 3) as u8;
             layers.push((2, prio, buf));
         }
