@@ -249,7 +249,7 @@ fn gba_mgba_suite_passes() {
 }
 
 #[test]
-fn gba_mgba_memory_diagnostics_reports_sram_log() {
+fn gba_mgba_memory_diagnostics_reports_mgba_log() {
     let result = run_mgba_memory_diagnostics();
 
     assert_eq!(
@@ -268,7 +268,7 @@ fn gba_mgba_memory_diagnostics_reports_sram_log() {
     );
     assert!(
         result.raw_log.contains("Memory"),
-        "mGBA Memory diagnostics should include the SRAM log, got: {:?}",
+        "mGBA Memory diagnostics should include the mGBA log, got: {:?}",
         result.raw_log
     );
 }
