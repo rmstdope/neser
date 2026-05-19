@@ -1176,7 +1176,8 @@ impl Ppu {
             };
             // `internal_x/y` point at the current scanline. For vertical mosaic,
             // sample from the block's top scanline instead, so rewind by the
-            // affine per-line deltas PB/PD for the current offset within the block.
+            // affine per-scanline increments: PB (x advance per scanline) and
+            // PD (y advance per scanline) multiplied by the offset within the block.
             let line_anchor_x = aff
                 .internal_x
                 .wrapping_sub(pb.wrapping_mul(mosaic_y_offset as i32));
