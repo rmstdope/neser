@@ -151,12 +151,25 @@ impl Channel3 {
 
     /// Read one byte from wave RAM.
     /// Always accesses the bank NOT currently selected for playback.
+    ///
+    /// Per GBATek, Wave RAM is internally a shift-register: during active playback the
+    /// entire 128-bit register has advanced by `wave_pos` nibbles, so the byte visible at
+    /// register address `offset` is the one that was originally `wave_pos/2` bytes ahead
+    /// (with wrapping).  When stopped, the bytes map directly to their written positions.
     pub fn read_wave_ram(&self, offset: usize) -> u8 {
         let other_bank = (self.bank_select as usize) ^ 1;
-        if offset < 16 {
-            self.wave_ram[other_bank][offset]
+        if offset >= 16 {
+            return 0xFF;
+        }
+        if self.active {
+            // Shift-register rotation: pos_in_bank counts samples within the current bank
+            // (masked to 0..=31 to handle both single- and two-bank modes).
+            let pos_in_bank = (self.wave_pos & (SAMPLES_PER_BANK - 1)) as usize;
+            let byte_shift = pos_in_bank / 2;
+            let shifted_offset = (offset + byte_shift) % 16;
+            self.wave_ram[other_bank][shifted_offset]
         } else {
-            0xFF
+            self.wave_ram[other_bank][offset]
         }
     }
 
@@ -209,6 +222,117 @@ mod tests {
         assert!(
             (got - expected).abs() < 1e-5,
             "force_volume should override output_level: expected {expected}, got {got}"
+        );
+    }
+
+    // ── Shift-register read-during-playback tests ─────────────────────────
+
+    #[test]
+    fn test_wave_ram_read_not_active_returns_direct_offset() {
+        // When CH3 is stopped, reads return data at the exact written offset (no shift).
+        let mut ch3 = Channel3::default();
+        // bank_select=0 → other bank = 1
+        for i in 0..16u8 {
+            ch3.wave_ram[1][i as usize] = i * 0x11;
+        }
+        ch3.wave_pos = 4; // even with wave_pos set, no shift when stopped
+        // active=false (default)
+        assert_eq!(
+            ch3.read_wave_ram(0),
+            0x00,
+            "stopped: offset 0 must return wave_ram[1][0]"
+        );
+        assert_eq!(
+            ch3.read_wave_ram(2),
+            0x22,
+            "stopped: offset 2 must return wave_ram[1][2]"
+        );
+    }
+
+    #[test]
+    fn test_wave_ram_read_active_wave_pos_0_no_shift() {
+        // At wave_pos=0, byte_shift=0, so read returns the same byte as when stopped.
+        let mut ch3 = Channel3::default();
+        for i in 0..16u8 {
+            ch3.wave_ram[1][i as usize] = i + 1;
+        }
+        ch3.active = true;
+        ch3.wave_pos = 0; // no shift
+        assert_eq!(
+            ch3.read_wave_ram(0),
+            1, // wave_ram[1][0] = 1
+            "wave_pos=0: no rotation, offset 0 must return wave_ram[1][0]"
+        );
+        assert_eq!(
+            ch3.read_wave_ram(3),
+            4, // wave_ram[1][3] = 4
+            "wave_pos=0: no rotation, offset 3 must return wave_ram[1][3]"
+        );
+    }
+
+    #[test]
+    fn test_wave_ram_read_active_shifts_by_wave_pos_div_2() {
+        // During active playback with wave_pos=4, byte_shift = 4/2 = 2.
+        // read_wave_ram(0) should return wave_ram[other_bank][2].
+        let mut ch3 = Channel3::default();
+        // bank_select=0 → other_bank=1
+        for i in 0..16u8 {
+            ch3.wave_ram[1][i as usize] = 0xA0 + i;
+        }
+        ch3.active = true;
+        ch3.wave_pos = 4; // byte_shift = 2
+        assert_eq!(
+            ch3.read_wave_ram(0),
+            0xA2,
+            "wave_pos=4: offset 0 must return wave_ram[1][2]"
+        );
+        assert_eq!(
+            ch3.read_wave_ram(1),
+            0xA3,
+            "wave_pos=4: offset 1 must return wave_ram[1][3]"
+        );
+    }
+
+    #[test]
+    fn test_wave_ram_read_active_wraps_around() {
+        // Wrapping: wave_pos=2 → byte_shift=1. read_wave_ram(15) → wave_ram[1][(15+1)%16] = wave_ram[1][0].
+        let mut ch3 = Channel3::default();
+        ch3.wave_ram[1][0] = 0xBB;
+        ch3.wave_ram[1][15] = 0xFF;
+        ch3.active = true;
+        ch3.wave_pos = 2; // byte_shift = 1
+        assert_eq!(
+            ch3.read_wave_ram(15),
+            0xBB,
+            "wave_pos=2: offset 15 must wrap to wave_ram[1][0]"
+        );
+    }
+
+    #[test]
+    fn test_wave_ram_read_active_two_banks_second_half_resets_shift() {
+        // In two-bank mode with wave_pos=32 (start of second bank), pos_in_bank=0 → byte_shift=0.
+        // Reading offset 0 should return the byte at offset 0 in the other bank (no shift at second-bank start).
+        let mut ch3 = Channel3 {
+            two_banks: true,
+            ..Channel3::default()
+        };
+        // bank_select=0 → other_bank=1
+        for i in 0..16u8 {
+            ch3.wave_ram[1][i as usize] = 0xC0 + i;
+        }
+        ch3.active = true;
+        ch3.wave_pos = 32; // pos_in_bank = 32 & 31 = 0 → byte_shift = 0
+        assert_eq!(
+            ch3.read_wave_ram(0),
+            0xC0,
+            "two-bank, wave_pos=32: pos_in_bank=0, offset 0 must return wave_ram[1][0]"
+        );
+        // wave_pos=34 → pos_in_bank=2 → byte_shift=1
+        ch3.wave_pos = 34;
+        assert_eq!(
+            ch3.read_wave_ram(0),
+            0xC1,
+            "two-bank, wave_pos=34: pos_in_bank=2, offset 0 must return wave_ram[1][1]"
         );
     }
 }
