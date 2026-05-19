@@ -18,7 +18,6 @@ use crate::gba::cpu::bus::Bus;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gba::debugging::{disasm_arm, disasm_thumb};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
-use crate::platform::debugging::cpu_trace_level;
 use crate::platform::emulator::{Emulator, SystemType};
 use std::fs;
 use std::path::PathBuf;
@@ -32,6 +31,12 @@ const SCREEN_HEIGHT: u32 = 160;
 /// GBA frame duration (~59.7275 Hz refresh rate).
 /// CPU clock: 16.78 MHz, 280896 cycles per frame → 16.743 ms per frame.
 const FRAME_DURATION_NANOS: u64 = 16_743_000;
+
+#[cfg(test)]
+thread_local! {
+    static GBA_CPU_TRACE_LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn default_gba_bios_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".neser").join("gba_bios.bin"))
@@ -64,6 +69,26 @@ fn load_bios_image(path: &PathBuf) -> Result<Vec<u8>, String> {
     }
 
     Ok(bytes)
+}
+
+#[cfg(test)]
+fn clear_gba_cpu_trace_lines_for_tests() {
+    GBA_CPU_TRACE_LINES.with(|lines| lines.borrow_mut().clear());
+}
+
+#[cfg(test)]
+fn take_gba_cpu_trace_lines_for_tests() -> Vec<String> {
+    GBA_CPU_TRACE_LINES.with(|lines| lines.borrow_mut().drain(..).collect())
+}
+
+#[cfg(test)]
+fn emit_gba_cpu_trace_line(line: String) {
+    GBA_CPU_TRACE_LINES.with(|lines| lines.borrow_mut().push(line));
+}
+
+#[cfg(not(test))]
+fn emit_gba_cpu_trace_line(line: String) {
+    println!("{line}");
 }
 
 /// Game Boy Advance emulator wrapper.
@@ -228,6 +253,10 @@ impl Gba {
             }
         }
     }
+
+    fn cpu_trace_level(&self) -> u8 {
+        self.app_context.borrow().config().gba.tracing.cpu
+    }
 }
 
 impl Emulator for Gba {
@@ -269,10 +298,10 @@ impl Emulator for Gba {
             return 0;
         }
 
-        if cpu_trace_level() > 0
+        if self.cpu_trace_level() > 0
             && let Some(line) = self.current_instruction_trace_line()
         {
-            crate::trace_cpu!("{line}");
+            emit_gba_cpu_trace_line(format!("[GBA CPU] {line}"));
         }
         if self.bus.ic.halt_exit_line() {
             self.cpu.signal_halt_exit();
@@ -409,6 +438,15 @@ mod tests {
 
     fn make_gba() -> Gba {
         let mut gba = make_gba_without_bios();
+        let bios = vec![0u8; crate::gba::bus::memory::BIOS_SIZE];
+        gba.bus.load_bios(&bios);
+        gba.bios_load_error = None;
+        gba
+    }
+
+    fn make_gba_with_config(mut config: Config) -> Gba {
+        config.gba.bios_path = Some("embedded".to_string());
+        let mut gba = Gba::new(AppContext::new_with_config(config));
         let bios = vec![0u8; crate::gba::bus::memory::BIOS_SIZE];
         gba.bus.load_bios(&bios);
         gba.bios_load_error = None;
@@ -560,6 +598,25 @@ mod tests {
         assert!(line.contains("RAW="));
         #[cfg(not(target_arch = "wasm32"))]
         assert!(line.contains("ASM="));
+    }
+
+    #[test]
+    fn test_run_tick_emits_gba_cpu_trace_from_gba_config() {
+        let mut config = Config::default();
+        config.frontend.tracing.cpu = 0;
+        config.gba.tracing.cpu = 1;
+        let mut gba = make_gba_with_config(config);
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+
+        clear_gba_cpu_trace_lines_for_tests();
+        let _ = gba.run_tick();
+        let lines = take_gba_cpu_trace_lines_for_tests();
+
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("[GBA CPU] GBA ARM"));
+        assert!(lines[0].contains("PC=00000000"));
+        assert!(lines[0].contains("RAW="));
     }
 
     #[test]
