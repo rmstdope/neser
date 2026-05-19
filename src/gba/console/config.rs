@@ -43,6 +43,31 @@ pub(crate) const GBA_CLI_FLAGS: &[CliFlag] = &[
         help: Some("Skip GBA BIOS intro (logo + jingle) but keep full hardware init"),
         has_value: false,
     },
+    CliFlag {
+        flag: "--gba-trace-cpu",
+        help: Some("Enable GBA CPU trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--gba-trace-bus",
+        help: Some("Enable GBA bus trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--gba-trace-dma",
+        help: Some("Enable GBA DMA trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--gba-trace-swi",
+        help: Some("Enable GBA SWI trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--gba-trace-mgba-log",
+        help: Some("Enable mGBA suite log trace output"),
+        has_value: false,
+    },
 ];
 
 /// Valid values for the `gba-hardware` option (used in error messages).
@@ -101,6 +126,13 @@ pub struct GbaConfig {
 }
 
 impl GbaConfig {
+    fn parse_trace_level(key: &str, value: &str) -> Result<u8, String> {
+        value
+            .parse::<u8>()
+            .map(|level| level.min(5))
+            .map_err(|_| format!("Invalid {key} value: '{value}'"))
+    }
+
     fn set_bios_path_from_input(&mut self, value: &str) {
         let trimmed = value.trim();
         if trimmed.is_empty() {
@@ -152,6 +184,10 @@ impl GbaConfig {
             "skip_bios_intro" => {
                 self.skip_bios_intro = crate::platform::config::parse_bool(value)
                     .map_err(|_| format!("Invalid skip_bios_intro value: '{value}'"))?;
+            }
+            "gba_trace_cpu" | "gba_trace_bus" | "gba_trace_dma" | "gba_trace_swi"
+            | "gba_trace_mgba_log" => {
+                let _level = Self::parse_trace_level(&key, value)?;
             }
             _ => {
                 return Err(format!("Unknown GBA config key: {key}"));
@@ -301,6 +337,22 @@ mod tests {
     }
 
     #[test]
+    fn test_gba_cli_flags_include_trace_channels() {
+        for flag in [
+            "--gba-trace-cpu",
+            "--gba-trace-bus",
+            "--gba-trace-dma",
+            "--gba-trace-swi",
+            "--gba-trace-mgba-log",
+        ] {
+            assert!(
+                GBA_CLI_FLAGS.iter().any(|f| f.flag == flag),
+                "GBA CLI flags should include {flag}"
+            );
+        }
+    }
+
+    #[test]
     fn test_config_file_parse_gba_bios_path_supported() {
         let mut config = GbaConfig::default();
         let result = config.apply_config_value("gba-bios-path", "/tmp/gba_bios.bin");
@@ -308,6 +360,24 @@ mod tests {
             result.is_ok(),
             "gba-bios-path should be accepted as a valid GBA config key"
         );
+    }
+
+    #[test]
+    fn test_config_file_parse_gba_trace_channels_supported() {
+        for key in [
+            "gba-trace-cpu",
+            "gba-trace-bus",
+            "gba-trace-dma",
+            "gba-trace-swi",
+            "gba-trace-mgba-log",
+        ] {
+            let mut config = GbaConfig::default();
+            let result = config.apply_config_value(key, "2");
+            assert!(
+                result.is_ok(),
+                "{key} should be accepted as a valid GBA config key"
+            );
+        }
     }
 
     #[test]
