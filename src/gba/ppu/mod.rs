@@ -3577,8 +3577,8 @@ mod tests {
             &make_oam(),
         );
 
-        // Mid-frame write (outside V-Blank): BG2X = 1.0 pixel (0x0100 in
-        // 8.8 fixed-point). Per GBATek, this must immediately update the
+        // Mid-frame write (outside V-Blank): BG2X = 1.0 pixel (0x0000_0100 in
+        // 19.8 fixed-point). Per GBATek, this must immediately update the
         // internal register.
         ppu.write_affine(REG_BG2X_L, 0x0100);
 
@@ -3625,7 +3625,7 @@ mod tests {
             &make_oam(),
         );
 
-        // Mid-frame write: BG2Y = 1.0 row (0x0100 in 8.8 fixed-point).
+        // Mid-frame write: BG2Y = 1.0 row (0x0000_0100 in 19.8 fixed-point).
         ppu.write_affine(REG_BG2Y_L, 0x0100);
 
         // Render scanline 0.
@@ -3732,8 +3732,8 @@ mod tests {
         // Frame 3, scanline 0.
         ppu.step(CYCLES_PER_SCANLINE, &mut ic, &vram, &pram, &make_oam());
 
-        // internal_x was re-latched from x = 0x0100 at the frame-3 VBlank,
-        // so screen (0,0) → source (1,0) = green.
+        // internal_x was re-latched from x = 0x0100 at frame-2 VBlank entry
+        // (i.e., before frame 3 scanline 0), so screen (0,0) → source (1,0) = green.
         let (r, g, b) = color::bgr555_to_rgb888(0x03E0);
         assert_eq!(
             &ppu.framebuffer()[0..3],
