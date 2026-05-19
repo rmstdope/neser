@@ -46,16 +46,22 @@ impl Default for Channel4 {
 }
 
 impl Channel4 {
+    /// Analogue output in `[-1.0, +1.0]`; 0.0 when DAC is off (disconnected).
+    ///
+    /// Per GBATek, the PSG DAC converts digital value D (0–15) to bipolar:
+    ///   output = (D / 7.5) − 1.0
+    /// LFSR bit 0 low → output high (D = volume); LFSR bit 0 high → D = 0.
     pub fn output(&self) -> f32 {
         if !self.active || !self.dac_on {
             return 0.0;
         }
         // LFSR bit 0 low → output high.
-        if self.lfsr & 0x01 == 0 {
-            self.volume as f32 / 15.0
+        let d = if self.lfsr & 0x01 == 0 {
+            self.volume as f32
         } else {
             0.0
-        }
+        };
+        d / 7.5 - 1.0
     }
 
     fn freq_period(&self) -> u32 {
@@ -171,6 +177,64 @@ impl Channel4 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Bipolar output formula tests ──────────────────────────────────────────
+
+    fn active_ch4(volume: u8, lfsr: u16) -> Channel4 {
+        Channel4 {
+            active: true,
+            dac_on: true,
+            volume,
+            lfsr,
+            ..Channel4::default()
+        }
+    }
+
+    #[test]
+    fn test_ch4_dac_off_outputs_zero() {
+        let ch4 = Channel4 {
+            dac_on: false,
+            active: false,
+            ..Channel4::default()
+        };
+        assert_eq!(ch4.output(), 0.0);
+    }
+
+    #[test]
+    fn test_ch4_lfsr_bit0_high_outputs_minus_one() {
+        // LFSR bit 0 = 1 → output low, D=0 → bipolar output = -1.0.
+        let ch4 = active_ch4(15, 0x0001);
+        let got = ch4.output();
+        assert!(
+            (got - (-1.0_f32)).abs() < 1e-5,
+            "LFSR bit0=1 must produce -1.0, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch4_lfsr_bit0_low_full_volume_outputs_plus_one() {
+        // LFSR bit 0 = 0 → output high, volume=15, D=15 → bipolar output = +1.0.
+        let ch4 = active_ch4(15, 0x0000);
+        let got = ch4.output();
+        assert!(
+            (got - 1.0_f32).abs() < 1e-5,
+            "LFSR bit0=0 volume=15 must produce +1.0, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch4_lfsr_bit0_low_half_volume_is_bipolar() {
+        // LFSR bit0=0, volume=8 → D=8, output = 8/7.5 - 1.0
+        let ch4 = active_ch4(8, 0x0000);
+        let expected = 8.0_f32 / 7.5 - 1.0;
+        let got = ch4.output();
+        assert!(
+            (got - expected).abs() < 1e-5,
+            "LFSR bit0=0 volume=8: expected {expected}, got {got}"
+        );
+    }
+
+    // ── LFSR tests ────────────────────────────────────────────────────────────
 
     #[test]
     fn test_ch4_lfsr_galois_no_carry_step() {

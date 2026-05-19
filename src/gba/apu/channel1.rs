@@ -35,17 +35,18 @@ pub struct Channel1 {
 }
 
 impl Channel1 {
-    /// Analogue output in `[0.0, 1.0]`; 0 when inactive.
+    /// Analogue output in `[-1.0, +1.0]`; 0.0 when DAC is off (disconnected).
+    ///
+    /// Per GBATek, the PSG DAC converts digital value D (0–15) to bipolar:
+    ///   output = (D / 7.5) − 1.0
+    /// giving −1.0 for D=0 and +1.0 for D=15.
     pub fn output(&self) -> f32 {
         if !self.active || !self.dac_on {
             return 0.0;
         }
         let bit = DUTY_TABLE[self.duty as usize][self.duty_pos as usize];
-        if bit == 1 {
-            self.volume as f32 / 15.0
-        } else {
-            0.0
-        }
+        let d = if bit == 1 { self.volume as f32 } else { 0.0 };
+        d / 7.5 - 1.0
     }
 
     /// Advance channel by `cycles` GBA cycles (frequency timer only).
@@ -198,5 +199,79 @@ impl Channel1 {
     /// Power-off reset.
     pub fn power_off(&mut self) {
         *self = Self::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn active_ch1(volume: u8, duty: u8, duty_pos: u8) -> Channel1 {
+        Channel1 {
+            active: true,
+            dac_on: true,
+            volume,
+            duty,
+            duty_pos,
+            ..Channel1::default()
+        }
+    }
+
+    #[test]
+    fn test_ch1_dac_off_outputs_zero() {
+        // When DAC is off, channel is disconnected → must output exactly 0.0.
+        let ch1 = Channel1 {
+            dac_on: false,
+            active: false,
+            ..Channel1::default()
+        };
+        assert_eq!(ch1.output(), 0.0);
+    }
+
+    #[test]
+    fn test_ch1_duty_low_outputs_minus_one() {
+        // When duty bit is 0, digital value D=0, bipolar output = -1.0.
+        // Duty=0 (12.5%) at pos 0 has bit=0.
+        let ch1 = active_ch1(15, 0, 0);
+        let got = ch1.output();
+        assert!(
+            (got - (-1.0_f32)).abs() < 1e-5,
+            "duty low must produce -1.0, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch1_duty_high_full_volume_outputs_plus_one() {
+        // When duty bit is 1 and volume=15, D=15, bipolar output = +1.0.
+        // Duty=2 (50%) at pos 0 has bit=1.
+        let ch1 = active_ch1(15, 2, 0);
+        let got = ch1.output();
+        assert!(
+            (got - 1.0_f32).abs() < 1e-5,
+            "volume=15 duty high must produce +1.0, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch1_duty_high_half_volume_is_bipolar() {
+        // Volume=8, duty high → D=8, output = 8/7.5 - 1.0 ≈ 0.0667
+        let ch1 = active_ch1(8, 2, 0);
+        let expected = 8.0_f32 / 7.5 - 1.0;
+        let got = ch1.output();
+        assert!(
+            (got - expected).abs() < 1e-5,
+            "volume=8 duty high: expected {expected}, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch1_volume_zero_duty_high_outputs_minus_one() {
+        // Volume=0, duty high → D=0, output = -1.0.
+        let ch1 = active_ch1(0, 2, 0);
+        let got = ch1.output();
+        assert!(
+            (got - (-1.0_f32)).abs() < 1e-5,
+            "volume=0 duty high must produce -1.0, got {got}"
+        );
     }
 }

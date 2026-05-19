@@ -29,21 +29,27 @@ pub struct Channel3 {
 }
 
 impl Channel3 {
+    /// Analogue output in `[-1.0, +1.0]`; 0.0 when DAC is off (disconnected).
+    ///
+    /// Per GBATek, the PSG DAC converts digital value D (0–15) to bipolar:
+    ///   output = (D / 7.5) − 1.0
     pub fn output(&self) -> f32 {
         if !self.active || !self.dac_on {
             return 0.0;
         }
         // Bit 15 of SOUND3CNT_H: force 75% volume regardless of output_level.
-        if self.force_volume {
-            return ((self.current_sample as u16 * 3) / 4) as f32 / 15.0;
-        }
-        let shift: u8 = match self.output_level {
-            1 => 0, // 100 %
-            2 => 1, // 50 %
-            3 => 2, // 25 %
-            _ => return 0.0,
+        let d = if self.force_volume {
+            ((self.current_sample as u16 * 3) / 4) as f32
+        } else {
+            let shift: u8 = match self.output_level {
+                1 => 0, // 100 %
+                2 => 1, // 50 %
+                3 => 2, // 25 %
+                _ => return 0.0,
+            };
+            (self.current_sample >> shift) as f32
         };
-        (self.current_sample >> shift) as f32 / 15.0
+        d / 7.5 - 1.0
     }
 
     /// Advance channel by `cycles` GBA cycles.
@@ -205,8 +211,8 @@ mod tests {
 
     #[test]
     fn test_ch3_force_volume_output_is_75_percent() {
-        // RED: when force_volume is set, output() must return (sample*3)/4 with truncation.
-        // Sample = 1 -> (1*3)/4 = 0, expected output = 0.
+        // When force_volume is set, output() must apply 75% scaling then bipolar formula.
+        // Sample = 1 -> (1*3)/4 = 0 (integer truncation), D=0, output = 0/7.5 - 1.0 = -1.0.
         let ch3 = Channel3 {
             dac_on: true,
             active: true,
@@ -216,7 +222,8 @@ mod tests {
             ..Channel3::default()
         };
         let got = ch3.output();
-        let expected = (3_u16 / 4) as f32 / 15.0;
+        let d = ((1_u16 * 3) / 4) as f32;
+        let expected = d / 7.5 - 1.0;
         assert!(
             (got - expected).abs() < 1e-5,
             "force_volume output mismatch: expected {expected}, got {got}"
@@ -225,9 +232,9 @@ mod tests {
 
     #[test]
     fn test_ch3_force_volume_overrides_output_level() {
-        // When force_volume is set and output_level=3 (25%), output should be 75%, not 25%.
-        // Sample = 12 → force 75%: 12 * 3/4 = 9; expected = 9/15 = 0.6
-        // Normal 25%: 12 >> 2 = 3; 3/15 = 0.2
+        // When force_volume is set and output_level=3 (25%), 75% applies instead.
+        // Sample = 12 → force 75%: D = 12*3/4 = 9; output = 9/7.5 - 1.0 = 0.2
+        // Normal 25%: 12 >> 2 = 3; 3/7.5 - 1.0 = -0.6
         let ch3 = Channel3 {
             dac_on: true,
             active: true,
@@ -237,10 +244,75 @@ mod tests {
             ..Channel3::default()
         };
         let got = ch3.output();
-        let expected = ((12_u16 * 3) / 4) as f32 / 15.0;
+        let d = ((12_u16 * 3) / 4) as f32; // = 9.0
+        let expected = d / 7.5 - 1.0; // = 0.2
         assert!(
             (got - expected).abs() < 1e-5,
             "force_volume should override output_level: expected {expected}, got {got}"
+        );
+    }
+
+    // ── Bipolar output formula tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_ch3_dac_off_outputs_zero() {
+        let ch3 = Channel3 {
+            dac_on: false,
+            active: false,
+            ..Channel3::default()
+        };
+        assert_eq!(ch3.output(), 0.0);
+    }
+
+    #[test]
+    fn test_ch3_sample_zero_outputs_minus_one() {
+        // D=0 → output = 0/7.5 - 1.0 = -1.0
+        let ch3 = Channel3 {
+            dac_on: true,
+            active: true,
+            output_level: 1, // 100%
+            current_sample: 0,
+            ..Channel3::default()
+        };
+        let got = ch3.output();
+        assert!(
+            (got - (-1.0_f32)).abs() < 1e-5,
+            "sample=0 must produce -1.0, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch3_sample_fifteen_outputs_plus_one() {
+        // D=15 → output = 15/7.5 - 1.0 = +1.0
+        let ch3 = Channel3 {
+            dac_on: true,
+            active: true,
+            output_level: 1, // 100%
+            current_sample: 15,
+            ..Channel3::default()
+        };
+        let got = ch3.output();
+        assert!(
+            (got - 1.0_f32).abs() < 1e-5,
+            "sample=15 must produce +1.0, got {got}"
+        );
+    }
+
+    #[test]
+    fn test_ch3_sample_eight_at_50pct_is_bipolar() {
+        // output_level=2 (50%): D = 8 >> 1 = 4; output = 4/7.5 - 1.0 ≈ -0.4667
+        let ch3 = Channel3 {
+            dac_on: true,
+            active: true,
+            output_level: 2,
+            current_sample: 8,
+            ..Channel3::default()
+        };
+        let expected = 4.0_f32 / 7.5 - 1.0;
+        let got = ch3.output();
+        assert!(
+            (got - expected).abs() < 1e-5,
+            "50% level sample=8: expected {expected}, got {got}"
         );
     }
 
