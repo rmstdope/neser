@@ -1155,7 +1155,6 @@ impl Ppu {
     /// screen pixel on scanline `y` into a source `(x, y)` within a bitmap of
     /// size `width`×`height`, starting at VRAM `frame_base`. Source samples
     /// outside bitmap bounds are left transparent.
-    #[allow(clippy::needless_range_loop)]
     fn render_affine_bitmap_layer(
         &self,
         y: u32,
