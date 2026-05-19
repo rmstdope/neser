@@ -34,11 +34,24 @@
 //! * Window masks, alpha blending / brightness effects, and MOSAIC for
 //!   BG/OBJ render paths.
 //! * Forced-blank outputs solid white (per GBATek).
+//! * `BG2X`/`BG2Y` mid-frame writes: per GBATek "LCD I/O BG
+//!   Rotation/Scaling", a write to `BG2X`/`BG2Y` (or the BG3 equivalents)
+//!   outside V-Blank immediately applies to the internal reference point for
+//!   the current scanline.  The write_affine methods on `Ppu` implement this
+//!   correctly — `internal_x`/`internal_y` are updated immediately alongside
+//!   the register values.  The PB/PD accumulation then continues from the
+//!   newly written base on every subsequent scanline, and the value is
+//!   re-latched at the next V-Blank as usual.
 //!
 //! Out of scope (deferred to follow-up sub-issues):
 //!
-//! * Cycle-exact display edge cases such as mid-scanline register changes,
-//!   prohibited-mode quirks, and other hardware timing details.
+//! * Per-pixel (cycle-exact) mid-scanline register changes: effects such as
+//!   raster-scroll tricks that require a register change to take effect at a
+//!   specific dot within a single scanline are not yet modelled.  Rendering
+//!   is performed atomically at the H-Blank edge, so all pixels in a scanline
+//!   share the same register snapshot.  The `BG2X`/`BG2Y` mid-frame write
+//!   described above is an exception and is already handled.
+//! * Other prohibited-mode quirks and hardware timing edge cases.
 //!
 //! References:
 //! * GBATek "LCD I/O Display Control": <https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol>
@@ -3521,6 +3534,211 @@ mod tests {
         assert_eq!(
             aff.internal_y, 0x0140,
             "internal_y should increment by PD per scanline"
+        );
+    }
+
+    // ---- Mid-frame BG2X/BG2Y write tests ----
+    //
+    // GBATek "LCD I/O BG Rotation/Scaling":
+    // "If software writes to BG2X/BG2Y outside V-Blank, the value is
+    //  immediately applied to the internal register for the current scanline."
+    //
+    // These tests verify the framebuffer-level effect of mid-frame writes and
+    // that the PB/PD accumulation is reset to the new value.
+
+    #[test]
+    fn bg2x_write_outside_vblank_applies_to_current_scanline() {
+        // Writing BG2X during the active period of a visible scanline (before
+        // its H-Blank edge) must immediately update the internal reference so
+        // that the scanline renders using the new value.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 3 + BG2 enabled, identity affine (PA=PD=1.0, PB=PC=0).
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Source pixel (0,0) = red (BGR555 0x001F).
+        // Source pixel (1,0) = green (BGR555 0x03E0).
+        vram[0] = 0x1F;
+        vram[1] = 0x00;
+        vram[2] = 0xE0;
+        vram[3] = 0x03;
+
+        // Run a full frame so VBlank latch initialises internal_x = x = 0.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Mid-frame write (outside V-Blank): BG2X = 1.0 pixel (0x0100 in
+        // 8.8 fixed-point). Per GBATek, this must immediately update the
+        // internal register.
+        ppu.write_affine(REG_BG2X_L, 0x0100);
+
+        // Run one scanline to trigger its render.
+        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &vram, &pram, &make_oam());
+
+        // Screen pixel (0,0) → source pixel (1,0) = green.
+        // Without the immediate internal update it would show source (0,0) = red.
+        let (r, g, b) = color::bgr555_to_rgb888(0x03E0);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "mid-frame BG2X write must take effect on the current scanline"
+        );
+    }
+
+    #[test]
+    fn bg2y_write_outside_vblank_applies_to_current_scanline() {
+        // Same as above but for the Y reference point: writing BG2Y outside
+        // V-Blank must immediately update the source row used for the scanline.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 3 + BG2 enabled, identity affine.
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Source row 0, col 0 = red; source row 1, col 0 = green.
+        // Mode 3: 240 pixels per row, 2 bytes each → row 1 starts at byte 480.
+        vram[0] = 0x1F;
+        vram[1] = 0x00; // source (0,0) = red
+        vram[480] = 0xE0;
+        vram[481] = 0x03; // source (0,1) = green
+
+        // Run a full frame so VBlank latch initialises internal_y = y = 0.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Mid-frame write: BG2Y = 1.0 row (0x0100 in 8.8 fixed-point).
+        ppu.write_affine(REG_BG2Y_L, 0x0100);
+
+        // Render scanline 0.
+        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &vram, &pram, &make_oam());
+
+        // Screen pixel (0,0) → source row 1, col 0 = green.
+        let (r, g, b) = color::bgr555_to_rgb888(0x03E0);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "mid-frame BG2Y write must take effect on the current scanline"
+        );
+    }
+
+    #[test]
+    fn bg2x_midframe_write_resets_pb_accumulation() {
+        // After a mid-frame write to BG2X, the PB-per-scanline accumulation
+        // must restart from the new value rather than continuing from the old
+        // accumulated position.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+
+        // BG2: PB = 0x0010 (1/16 per scanline).
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PB, 0x0010);
+        ppu.write_affine(REG_BG2PC, 0x0000);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Run one full frame so VBlank latches internal refs (to 0,0),
+        // then run 10 visible scanlines: internal_x = 10 * 0x0010 = 0x00A0.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+        ppu.step(CYCLES_PER_SCANLINE * 10, &mut ic, &vram, &pram, &make_oam());
+
+        // Mid-frame write: reset BG2X to 0x0200.  This must immediately update
+        // internal_x and restart PB accumulation from 0x0200.
+        ppu.write_affine(REG_BG2X_L, 0x0200);
+
+        // internal_x must be 0x0200 immediately (not the old accumulated 0x00A0).
+        let aff = ppu.bg_affine(0).unwrap();
+        assert_eq!(
+            aff.internal_x, 0x0200,
+            "mid-frame BG2X write must immediately set internal_x"
+        );
+
+        // Run 5 more scanlines.  internal_x should now be 0x0200 + 5*0x0010 = 0x0250.
+        ppu.step(CYCLES_PER_SCANLINE * 5, &mut ic, &vram, &pram, &make_oam());
+        let aff = ppu.bg_affine(0).unwrap();
+        assert_eq!(
+            aff.internal_x, 0x0250,
+            "after mid-frame write, PB increments must count from the new value"
+        );
+    }
+
+    #[test]
+    fn bg2x_midframe_write_preserved_through_next_vblank() {
+        // A mid-frame write to BG2X must be visible from the NEXT frame's
+        // first scanline, because VBlank re-latches internal_x from the
+        // register value (which was updated by the mid-frame write).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 3 + BG2, identity affine.
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Source (0,0) = red; source (1,0) = green.
+        vram[0] = 0x1F;
+        vram[1] = 0x00;
+        vram[2] = 0xE0;
+        vram[3] = 0x03;
+
+        // Run one full frame (latch: internal_x = x = 0).
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Mid-frame write at scanline 0 of frame 2.
+        ppu.write_affine(REG_BG2X_L, 0x0100);
+
+        // Complete frame 2 (228 scanlines) so VBlank latches x=0x0100 again.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Frame 3, scanline 0.
+        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &vram, &pram, &make_oam());
+
+        // internal_x was re-latched from x = 0x0100 at the frame-3 VBlank,
+        // so screen (0,0) → source (1,0) = green.
+        let (r, g, b) = color::bgr555_to_rgb888(0x03E0);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "mid-frame write must persist into the next frame via VBlank latch"
         );
     }
 
