@@ -153,9 +153,10 @@ impl Channel3 {
     /// Always accesses the bank NOT currently selected for playback.
     ///
     /// Per GBATek, Wave RAM is internally a shift-register: during active playback the
-    /// entire 128-bit register has advanced by `wave_pos` nibbles, so the byte visible at
-    /// register address `offset` is the one that was originally `wave_pos/2` bytes ahead
-    /// (with wrapping).  When stopped, the bytes map directly to their written positions.
+    /// entire 128-bit register has advanced by `wave_pos` nibbles. Reads therefore return
+    /// the two consecutive samples currently visible at `(2*offset + wave_pos)` and `+1`
+    /// (wrapped within the 32-sample bank). When stopped, bytes map directly to their
+    /// written positions.
     pub fn read_wave_ram(&self, offset: usize) -> u8 {
         let other_bank = (self.bank_select as usize) ^ 1;
         if offset >= 16 {
@@ -165,9 +166,24 @@ impl Channel3 {
             // Shift-register rotation: pos_in_bank counts samples within the current bank
             // (masked to 0..=31 to handle both single- and two-bank modes).
             let pos_in_bank = (self.wave_pos & (SAMPLES_PER_BANK - 1)) as usize;
-            let byte_shift = pos_in_bank / 2;
-            let shifted_offset = (offset + byte_shift) % 16;
-            self.wave_ram[other_bank][shifted_offset]
+            let first_sample = (offset * 2 + pos_in_bank) & ((SAMPLES_PER_BANK as usize) - 1);
+            let second_sample = (first_sample + 1) & ((SAMPLES_PER_BANK as usize) - 1);
+
+            let first_byte = self.wave_ram[other_bank][first_sample / 2];
+            let second_byte = self.wave_ram[other_bank][second_sample / 2];
+
+            let high_nibble = if first_sample & 1 == 0 {
+                first_byte >> 4
+            } else {
+                first_byte & 0x0F
+            };
+            let low_nibble = if second_sample & 1 == 0 {
+                second_byte >> 4
+            } else {
+                second_byte & 0x0F
+            };
+
+            (high_nibble << 4) | low_nibble
         } else {
             self.wave_ram[other_bank][offset]
         }
@@ -290,6 +306,32 @@ mod tests {
             ch3.read_wave_ram(1),
             0xA3,
             "wave_pos=4: offset 1 must return wave_ram[1][3]"
+        );
+    }
+
+    #[test]
+    fn test_wave_ram_read_active_odd_wave_pos_nibble_rotates() {
+        // Fill other bank so sample[n] = n mod 16:
+        // byte i contains sample(2i) in high nibble and sample(2i+1) in low nibble.
+        let mut ch3 = Channel3::default();
+        for i in 0..16u8 {
+            ch3.wave_ram[1][i as usize] =
+                ((i.wrapping_mul(2)) << 4) | ((i.wrapping_mul(2) + 1) & 0x0F);
+        }
+        ch3.active = true;
+        ch3.wave_pos = 1;
+
+        // offset 0 reads samples 1 and 2 => 0x12
+        assert_eq!(
+            ch3.read_wave_ram(0),
+            0x12,
+            "wave_pos=1: offset 0 must combine adjacent samples as 0x12"
+        );
+        // offset 15 reads samples 31 and 0 (wrap) => 0xF0
+        assert_eq!(
+            ch3.read_wave_ram(15),
+            0xF0,
+            "wave_pos=1: offset 15 must wrap nibble-wise to 0xF0"
         );
     }
 
