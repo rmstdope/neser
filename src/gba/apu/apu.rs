@@ -16,9 +16,7 @@ const FS_PERIOD: u32 = 32_768;
 
 // ── SOUNDBIAS / mixer constants ───────────────────────────────────────────────
 
-/// PSG mix (sum of enabled channels, each normalised 0..1) × this factor gives
-/// 10-bit units per channel (0..128 = ±0x80 per GBATek). With all 4 channels
-/// at max: 4 × 128 = 512 units total PSG contribution.
+/// PSG mix (normalised −1..+1) × this factor gives 10-bit signed units (±128 = ±0x80).
 const PSG_SCALE: f32 = 128.0; // ±0x80
 
 /// FIFO mix (normalised −1..+1) × this factor gives 10-bit signed units (±512).
@@ -671,8 +669,8 @@ impl Apu {
         // ── SOUNDBIAS pipeline (GBATek 4.17.5) ──────────────────────────────
         //
         // Scale each source to the GBA's 10-bit internal units:
-        //   PSG sum (each channel 0..1, summed) → × PSG_SCALE = 0..+128 per channel (±0x80)
-        //   FIFO (bipolar  −1..+1)              → × FIFO_SCALE = ±512               (±0x200)
+        //   PSG mix (bipolar −1..+1)  → × PSG_SCALE   = ±128     (±0x80)
+        //   FIFO (bipolar  −1..+1)    → × FIFO_SCALE  = ±512     (±0x200)
         //
         // Then: add bias, clamp [0, MAX_10BIT], quantise, convert back to float.
         let raw_left = dmg_left * PSG_SCALE + a_left * FIFO_SCALE + b_left * FIFO_SCALE;
