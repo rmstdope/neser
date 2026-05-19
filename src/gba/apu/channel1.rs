@@ -242,8 +242,8 @@ mod tests {
         };
         // sweep_period=1, negate=true, shift=1 → each sweep tick subtracts
         ch.write_cnt_l(0x0019); // period=1, negate=1, shift=1
-        // write_cnt_h: no length, 50% duty, volume env off, init_volume=8
-        ch.write_cnt_h(0x8040); // init_vol=8, duty=2(50%), env off
+        // write_cnt_h: no length, 25% duty, volume env off, init_volume=8
+        ch.write_cnt_h(0x8040); // init_vol=8, duty=1(25%), env off
         // write_cnt_x: freq=500, trigger
         ch.write_cnt_x(0x81F4); // trigger | freq=500
         ch
