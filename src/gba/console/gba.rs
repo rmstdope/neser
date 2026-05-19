@@ -258,6 +258,33 @@ impl Gba {
     fn cpu_trace_level(&self) -> u8 {
         self.app_context.borrow().config().gba.tracing.cpu
     }
+
+    fn swi_trace_level(&self) -> u8 {
+        self.app_context.borrow().config().gba.tracing.swi
+    }
+
+    fn current_swi_trace_line(&mut self) -> Option<String> {
+        if !self.bus.has_cart() {
+            return None;
+        }
+
+        let pc = self.cpu.regs.r[15];
+        if self.cpu.thumb() {
+            let raw = self.bus.peek16(pc);
+            if raw & 0xFF00 == 0xDF00 {
+                Some(format!("THUMB PC={pc:08X} IMM={:02X}", raw & 0x00FF))
+            } else {
+                None
+            }
+        } else {
+            let raw = self.bus.peek32(pc);
+            if raw & 0x0F00_0000 == 0x0F00_0000 {
+                Some(format!("ARM PC={pc:08X} IMM={:02X}", (raw >> 16) & 0x00FF))
+            } else {
+                None
+            }
+        }
+    }
 }
 
 impl Emulator for Gba {
@@ -303,6 +330,11 @@ impl Emulator for Gba {
             && let Some(line) = self.current_instruction_trace_line()
         {
             emit_gba_cpu_trace_line(format!("[GBA CPU] {line}"));
+        }
+        if self.swi_trace_level() > 0
+            && let Some(line) = self.current_swi_trace_line()
+        {
+            emit_gba_cpu_trace_line(format!("[GBA SWI] {line}"));
         }
         if self.bus.ic.halt_exit_line() {
             self.cpu.signal_halt_exit();
@@ -618,6 +650,24 @@ mod tests {
         assert!(lines[0].starts_with("[GBA CPU] GBA ARM"));
         assert!(lines[0].contains("PC=00000000"));
         assert!(lines[0].contains("RAW="));
+    }
+
+    #[test]
+    fn test_run_tick_emits_gba_swi_trace_from_gba_config() {
+        let mut config = Config::default();
+        config.gba.tracing.swi = 1;
+        let mut gba = make_gba_with_config(config);
+        let mut bios = vec![0u8; crate::gba::bus::memory::BIOS_SIZE];
+        bios[..4].copy_from_slice(&0xEF12_0000u32.to_le_bytes());
+        gba.bus.load_bios(&bios);
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+
+        clear_gba_cpu_trace_lines_for_tests();
+        let _ = gba.run_tick();
+        let lines = take_gba_cpu_trace_lines_for_tests();
+
+        assert_eq!(lines, vec!["[GBA SWI] ARM PC=00000000 IMM=12".to_string()]);
     }
 
     #[test]

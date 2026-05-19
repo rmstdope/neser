@@ -775,6 +775,20 @@ impl GbaBus {
         false
     }
 
+    fn trace_dma_cnt_h_write(&self, addr: u32, value: u16) {
+        if self.trace_config.dma == 0 || value & 0x8000 == 0 {
+            return;
+        }
+        let Some(channel) = dma_cnt_h_channel(addr) else {
+            return;
+        };
+        let dma = self.dma.channels[channel];
+        emit_gba_bus_trace_line(format!(
+            "[GBA DMA] CH{channel} SRC={:08X} DST={:08X} COUNT={:04X} CNT_H={value:04X}",
+            dma.sad, dma.dad, dma.count
+        ));
+    }
+
     /// Map the cartridge ROM with mirroring across the three wait-state
     /// regions. Returns `None` when no cartridge is inserted or when the
     /// offset falls beyond the ROM image — callers substitute the GBATek
@@ -824,6 +838,14 @@ impl GbaBus {
         self.last_bus_value = prev;
         value
     }
+}
+
+fn dma_cnt_h_channel(addr: u32) -> Option<usize> {
+    if !(0x0400_00B0..=0x0400_00DF).contains(&addr) {
+        return None;
+    }
+    let rel = addr - 0x0400_00B0;
+    (rel % 12 == 10).then_some((rel / 12) as usize)
 }
 
 impl Bus for GbaBus {
@@ -1110,6 +1132,7 @@ impl Bus for GbaBus {
                         &mut self.ppu,
                         &mut self.keypad,
                     );
+                    self.trace_dma_cnt_h_write(aligned, value);
                     if aligned == 0x0400_0204 {
                         self.waitstates.recalculate(value);
                     }
@@ -1519,6 +1542,27 @@ mod tests {
         let lines = take_gba_bus_trace_lines_for_tests();
 
         assert_eq!(lines, vec!["[GBA BUS] W8 03000000=12".to_string()]);
+    }
+
+    #[test]
+    fn dma_cnt_h_enable_emits_trace_when_enabled() {
+        let mut bus = GbaBus::new();
+        bus.set_trace_config(GbaTraceConfig {
+            dma: 1,
+            ..GbaTraceConfig::default()
+        });
+
+        bus.write32(0x0400_00B0, 0x0200_0000);
+        bus.write32(0x0400_00B4, 0x0200_1000);
+        bus.write16(0x0400_00B8, 1);
+        clear_gba_bus_trace_lines_for_tests();
+        bus.write16(0x0400_00BA, 0x8000 | 0x0400);
+        let lines = take_gba_bus_trace_lines_for_tests();
+
+        assert_eq!(
+            lines,
+            vec!["[GBA DMA] CH0 SRC=02000000 DST=02001000 COUNT=0001 CNT_H=8400".to_string()]
+        );
     }
 
     #[test]
