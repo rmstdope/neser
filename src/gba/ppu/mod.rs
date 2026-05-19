@@ -1147,6 +1147,10 @@ impl Ppu {
     }
 
     /// Mode 3: 240×160 direct 15-bit bitmap. Each pixel is a 16-bit BGR555 value.
+    ///
+    /// BG2 affine parameters select source coordinates. Pixels outside the
+    /// 240×160 source bitmap remain transparent so the backdrop or lower
+    /// priority layers show through.
     #[allow(clippy::needless_range_loop)]
     fn render_mode3_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
@@ -1158,21 +1162,48 @@ impl Ppu {
 
         if self.bg2_enabled() {
             let mut buf = [TRANSPARENT; SCREEN_WIDTH as usize];
+            let aff = self.bg_affine[0];
+            let pa = aff.pa as i32;
+            let pb = aff.pb as i32;
+            let pc = aff.pc as i32;
+            let pd = aff.pd as i32;
             let mosaic_enabled = self.bg_cnt[2] & (1 << 6) != 0;
             let (mosaic_h, mosaic_v) = self.bg_mosaic_size();
-            let sample_y = if mosaic_enabled {
-                mosaic_anchor(y, mosaic_v as u32) as usize
+            let mosaic_y_offset = if mosaic_enabled {
+                (y - mosaic_anchor(y, mosaic_v as u32)) as usize
             } else {
-                y as usize
+                0
             };
-            let line_byte_offset = sample_y * (SCREEN_WIDTH as usize) * 2;
+            // `internal_x/y` point at the current scanline. For vertical mosaic,
+            // sample from the block's top scanline instead, so rewind by the
+            // affine per-line deltas PB/PD for the current offset within the block.
+            let line_anchor_x = aff
+                .internal_x
+                .wrapping_sub(pb.wrapping_mul(mosaic_y_offset as i32));
+            let line_anchor_y = aff
+                .internal_y
+                .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
+
             for x in 0..(SCREEN_WIDTH as usize) {
-                let sample_x = if mosaic_enabled {
+                let sample_screen_x = if mosaic_enabled {
                     mosaic_anchor(x as u32, mosaic_h as u32) as usize
                 } else {
                     x
                 };
-                let src = line_byte_offset + sample_x * 2;
+                let sample_x = line_anchor_x.wrapping_add(pa.wrapping_mul(sample_screen_x as i32));
+                let sample_y = line_anchor_y.wrapping_add(pc.wrapping_mul(sample_screen_x as i32));
+
+                if sample_x < 0 || sample_y < 0 {
+                    continue;
+                }
+
+                let px = (sample_x >> 8) as usize;
+                let py = (sample_y >> 8) as usize;
+                if px >= SCREEN_WIDTH as usize || py >= SCREEN_HEIGHT as usize {
+                    continue;
+                }
+
+                let src = (py * SCREEN_WIDTH as usize + px) * 2;
                 // Mask bit 15 so valid pixels never collide with TRANSPARENT sentinel
                 buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
             }
@@ -1998,6 +2029,9 @@ mod tests {
         ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
         ppu.write_bg_cnt(2, 1 << 6);
         ppu.write_mosaic(0x0011);
+        // Mode 3 uses affine — set identity matrix so rendering is linear.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
 
         vram[0..2].copy_from_slice(&0x001Fu16.to_le_bytes());
         vram[2..4].copy_from_slice(&0x03E0u16.to_le_bytes());
@@ -2049,6 +2083,77 @@ mod tests {
             &make_oam(),
         );
         assert_eq!(&ppu.framebuffer()[0..3], &[0xFF, 0, 0]);
+    }
+
+    #[test]
+    fn mode3_uses_bg2_affine_reference_point() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 3, BG2 enabled, identity affine transform starting at source (1, 0).
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        // BG2X = 1.0 pixel (0x0100 = 256 in 8.8 fixed-point = 1.0)
+        ppu.write_affine(REG_BG2X_L, 0x0100);
+
+        // Source pixel (0,0) = red (BGR555 0x001F); source pixel (1,0) = green (0x03E0).
+        vram[0] = 0x1F;
+        vram[1] = 0x00;
+        vram[2] = 0xE0;
+        vram[3] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // With BG2X = 1.0, screen pixel 0 should map to source pixel 1 (green).
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0xFF, 0]);
+    }
+
+    #[test]
+    fn mode3_outside_240x160_bitmap_is_transparent() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 3, BG2 enabled, identity transform with BG2X=240 so screen
+        // pixel 0 maps to source x=240 which is out-of-bounds for 240-wide bitmap.
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+        // BG2X = 240.0 in 8.8 fixed-point: 240 * 256 = 61440 = 0xF000 (low 16 bits).
+        ppu.write_affine(REG_BG2X_L, 0xF000);
+
+        // Backdrop = blue.
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+        // Fill the entire 240×160 source bitmap with red.
+        for y in 0..160usize {
+            for x in 0..240usize {
+                let off = (y * 240 + x) * 2;
+                vram[off] = 0x1F;
+                vram[off + 1] = 0x00;
+            }
+        }
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Screen pixel 0 maps to source x=240 (OOB) → transparent → backdrop = blue.
+        assert_eq!(&ppu.framebuffer()[0..3], &[0, 0, 0xFF]);
     }
 
     #[test]
@@ -4049,6 +4154,9 @@ mod tests {
         ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
         // Enable green swap.
         ppu.write_green_swap(1);
+        // Mode 3 uses affine — set identity matrix so rendering is linear.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
 
         // Pixel 0 (even): R=1, G=4, B=0 → BGR555 = (4<<5)|1 = 0x0081
         let color_a: u16 = (4u16 << 5) | 1;
@@ -4086,6 +4194,9 @@ mod tests {
 
         ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
         // Green swap disabled (default).
+        // Mode 3 uses affine — set identity matrix so rendering is linear.
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
 
         let color_a: u16 = (4u16 << 5) | 1;
         let color_b: u16 = (8u16 << 5) | 2;
