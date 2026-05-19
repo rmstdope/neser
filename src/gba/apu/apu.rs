@@ -64,8 +64,12 @@ pub struct Apu {
     pub fifo_b: FifoChannel,
 
     /// SOUNDCNT_L (0x04000080): NR50/NR51 equivalent — DMG stereo volume.
-    /// Byte 0 (bits 7-0) = NR50 (master volume L/R + VIN).
-    /// Byte 1 (bits 15-8) = NR51 (channel enable L/R).
+    /// Byte 0 (bits 7-0) = NR50 equivalent (master volume L/R).
+    ///   Bits 2-0: right master volume (0-7).
+    ///   Bit 3:    unused (VIN right — not supported on GBA; always reads 0).
+    ///   Bits 6-4: left master volume (0-7).
+    ///   Bit 7:    unused (VIN left — not supported on GBA; always reads 0).
+    /// Byte 1 (bits 15-8) = NR51 equivalent (channel enable L/R).
     pub soundcnt_l: u16,
 
     /// SOUNDCNT_H (0x04000082): DMA sound control.
@@ -323,7 +327,7 @@ impl Apu {
             0x0400_0074 => self.ch3.write_cnt_x(val),
             0x0400_0078 => self.ch4.write_cnt_l(val),
             0x0400_007C => self.ch4.write_cnt_h(val),
-            0x0400_0080 => self.soundcnt_l = val,
+            0x0400_0080 => self.soundcnt_l = val & 0xFF77,
             0x0400_0082 => self.write_soundcnt_h(val),
             0x0400_0084 => self.write_soundcnt_x(val),
             0x0400_0088 => self.soundbias = val & 0xC3FE,
@@ -467,7 +471,7 @@ impl Apu {
             }
             // SOUNDCNT_L: plain read/write register — RMW safe.
             0x0400_0080 => {
-                self.soundcnt_l = (self.soundcnt_l & 0xFF00) | val as u16;
+                self.soundcnt_l = (self.soundcnt_l & 0xFF00) | (val & 0x77) as u16;
             }
             0x0400_0081 => {
                 self.soundcnt_l = (self.soundcnt_l & 0x00FF) | ((val as u16) << 8);
@@ -1254,8 +1258,34 @@ mod tests {
     #[test]
     fn test_soundcnt_l_round_trips() {
         let mut apu = powered_apu();
+        // 0xABCD: low byte 0xCD has bits 3 and 7 set → masked to 0x45 → result 0xAB45
         apu.write16(0x0400_0080, 0xABCD);
-        assert_eq!(apu.read16(0x0400_0080), 0xABCD);
+        assert_eq!(apu.read16(0x0400_0080), 0xAB45);
+    }
+
+    #[test]
+    fn test_soundcnt_l_masks_vin_bits_write16() {
+        let mut apu = powered_apu();
+        // Bit 3 (0x0008) and bit 7 (0x0080) in the low byte are VIN flags — unused on GBA.
+        // Writing them must leave bits 3 and 7 as 0 in the stored value.
+        apu.write16(0x0400_0080, 0x00FF);
+        assert_eq!(apu.read16(0x0400_0080), 0x0077);
+    }
+
+    #[test]
+    fn test_soundcnt_l_masks_vin_bits_write8_low() {
+        let mut apu = powered_apu();
+        // write8 to the low byte (0x0400_0080) must also mask bits 3 and 7.
+        apu.write8(0x0400_0080, 0xFF);
+        assert_eq!(apu.read16(0x0400_0080), 0x0077);
+    }
+
+    #[test]
+    fn test_soundcnt_l_enable_flags_unmasked() {
+        let mut apu = powered_apu();
+        // High byte (NR51, 0x0400_0081) contains channel enable flags — all 8 bits are valid.
+        apu.write16(0x0400_0080, 0xFF00);
+        assert_eq!(apu.read16(0x0400_0080), 0xFF00);
     }
 
     #[test]
