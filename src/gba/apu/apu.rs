@@ -1837,7 +1837,7 @@ mod tests {
 
     // ── SOUNDBIAS PWM rate tests ──────────────────────────────────────────────
 
-    /// Per GBATek, SOUNDBIAS bits 14-15 (resolution) select both amplitude
+    /// Per GBATek, SOUNDBIAS bits 15-14 (resolution) select both amplitude
     /// resolution AND the hardware PWM output rate:
     ///   0 → 32 768 Hz, 1 → 65 536 Hz, 2 → 131 072 Hz, 3 → 262 144 Hz.
     ///
@@ -1893,7 +1893,7 @@ mod tests {
 
     /// Known simplification: the configured output sample rate (set via
     /// `set_sample_rate()`) must NOT change when SOUNDBIAS resolution bits
-    /// 14-15 are written.  The hardware PWM rate (returned by
+    /// 15-14 are written.  The hardware PWM rate (returned by
     /// `soundbias_pwm_rate_hz()`) is intentionally decoupled from the
     /// emulated output rate.
     #[test]
