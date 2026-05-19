@@ -1188,7 +1188,7 @@ impl Ppu {
             .internal_y
             .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
 
-        for x in 0..(SCREEN_WIDTH as usize) {
+        for (x, out_pixel) in buf.iter_mut().enumerate() {
             let sample_screen_x = if mosaic_enabled {
                 mosaic_anchor(x as u32, mosaic_h as u32) as usize
             } else {
@@ -1210,7 +1210,7 @@ impl Ppu {
             let src = frame_base + (py * width + px) * 2;
             // Keep bit 15 clear so valid BGR555 pixels never collide with
             // TRANSPARENT (0x8000) sentinel values in layer buffers.
-            buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
+            *out_pixel = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
         }
 
         buf
