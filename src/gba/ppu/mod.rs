@@ -1149,6 +1149,12 @@ impl Ppu {
         self.composite_scanline(y, pram, vram, oam, &layers);
     }
 
+    /// Render one BG2 affine bitmap layer scanline for bitmap modes.
+    ///
+    /// Applies BG2 affine transform and BG mosaic rules to map each visible
+    /// screen pixel on scanline `y` into a source `(x, y)` within a bitmap of
+    /// size `width`×`height`, starting at VRAM `frame_base`. Source samples
+    /// outside bitmap bounds are left transparent.
     fn render_affine_bitmap_layer(
         &self,
         y: u32,
@@ -1201,6 +1207,8 @@ impl Ppu {
             }
 
             let src = frame_base + (py * width + px) * 2;
+            // Keep bit 15 clear so valid BGR555 pixels never collide with
+            // TRANSPARENT (0x8000) sentinel values in layer buffers.
             buf[x] = u16::from_le_bytes([vram[src], vram[src + 1]]) & 0x7FFF;
         }
 
