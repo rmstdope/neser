@@ -249,7 +249,7 @@ mod tests {
         ch
     }
 
-    // ─── RED tests: sweep zombie mode ────────────────────────────────────
+    // ─── Unit tests: sweep zombie mode ───────────────────────────────────
 
     /// After a negate sweep calculation, clearing the negate bit must disable
     /// the channel immediately (zombie mode).
