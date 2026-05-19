@@ -166,11 +166,14 @@ impl Channel3 {
             // Shift-register rotation: pos_in_bank counts samples within the current bank
             // (masked to 0..=31 to handle both single- and two-bank modes).
             let pos_in_bank = (self.wave_pos & (SAMPLES_PER_BANK - 1)) as usize;
-            let first_sample = (offset * 2 + pos_in_bank) & ((SAMPLES_PER_BANK as usize) - 1);
-            let second_sample = (first_sample + 1) & ((SAMPLES_PER_BANK as usize) - 1);
+            let sample_mask = (SAMPLES_PER_BANK as usize) - 1;
+            let first_sample = (offset * 2 + pos_in_bank) & sample_mask;
+            let second_sample = (first_sample + 1) & sample_mask;
 
-            let first_byte = self.wave_ram[other_bank][first_sample / 2];
-            let second_byte = self.wave_ram[other_bank][second_sample / 2];
+            let first_byte_index = first_sample / 2;
+            let second_byte_index = second_sample / 2;
+            let first_byte = self.wave_ram[other_bank][first_byte_index];
+            let second_byte = self.wave_ram[other_bank][second_byte_index];
 
             let high_nibble = if first_sample & 1 == 0 {
                 first_byte >> 4
@@ -311,12 +314,13 @@ mod tests {
 
     #[test]
     fn test_wave_ram_read_active_odd_wave_pos_nibble_rotates() {
-        // Fill other bank so sample[n] = n mod 16:
+        // Fill other bank so sample[n] = n mod 16 for n in 0..31:
         // byte i contains sample(2i) in high nibble and sample(2i+1) in low nibble.
         let mut ch3 = Channel3::default();
         for i in 0..16u8 {
+            let sample_base = i.wrapping_mul(2);
             ch3.wave_ram[1][i as usize] =
-                ((i.wrapping_mul(2)) << 4) | ((i.wrapping_mul(2) + 1) & 0x0F);
+                (sample_base << 4) | ((sample_base + 1) & 0x0F);
         }
         ch3.active = true;
         ch3.wave_pos = 1;
@@ -337,12 +341,12 @@ mod tests {
 
     #[test]
     fn test_wave_ram_read_active_wraps_around() {
-        // Wrapping: wave_pos=2 → byte_shift=1. read_wave_ram(15) → wave_ram[1][(15+1)%16] = wave_ram[1][0].
+        // Wrapping at end of bank: wave_pos=2 makes offset 15 read samples 0 and 1.
         let mut ch3 = Channel3::default();
         ch3.wave_ram[1][0] = 0xBB;
         ch3.wave_ram[1][15] = 0xFF;
         ch3.active = true;
-        ch3.wave_pos = 2; // byte_shift = 1
+        ch3.wave_pos = 2;
         assert_eq!(
             ch3.read_wave_ram(15),
             0xBB,
@@ -352,7 +356,7 @@ mod tests {
 
     #[test]
     fn test_wave_ram_read_active_two_banks_second_half_resets_shift() {
-        // In two-bank mode with wave_pos=32 (start of second bank), pos_in_bank=0 → byte_shift=0.
+        // In two-bank mode with wave_pos=32 (start of second bank), pos_in_bank=0.
         // Reading offset 0 should return the byte at offset 0 in the other bank (no shift at second-bank start).
         let mut ch3 = Channel3 {
             two_banks: true,
@@ -363,13 +367,13 @@ mod tests {
             ch3.wave_ram[1][i as usize] = 0xC0 + i;
         }
         ch3.active = true;
-        ch3.wave_pos = 32; // pos_in_bank = 32 & 31 = 0 → byte_shift = 0
+        ch3.wave_pos = 32; // pos_in_bank = 32 & 31 = 0
         assert_eq!(
             ch3.read_wave_ram(0),
             0xC0,
             "two-bank, wave_pos=32: pos_in_bank=0, offset 0 must return wave_ram[1][0]"
         );
-        // wave_pos=34 → pos_in_bank=2 → byte_shift=1
+        // wave_pos=34 → pos_in_bank=2 (equivalent to one-byte rotation for offset-aligned reads)
         ch3.wave_pos = 34;
         assert_eq!(
             ch3.read_wave_ram(0),
