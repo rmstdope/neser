@@ -2226,9 +2226,9 @@ mod tests {
 
     #[test]
     fn mode3_bgcnt_wrap_bit_set_oob_is_still_transparent() {
-        // Per GBATek: in bitmap modes, the area overflow bit (BGxCNT bit 13)
-        // is always transparent regardless of setting. It only works in affine
-        // tile modes (1 & 2), NOT in bitmap modes (3, 4, 5).
+        // Per GBATek: in bitmap modes, out-of-bounds source samples are always
+        // transparent regardless of BGxCNT bit 13. Wrapping via this bit only
+        // works in affine tile modes (1 & 2), NOT in bitmap modes (3, 4, 5).
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let mut vram = make_vram();
@@ -2925,9 +2925,9 @@ mod tests {
 
     #[test]
     fn mode4_bgcnt_wrap_bit_set_oob_is_still_transparent() {
-        // Per GBATek: in bitmap modes, the area overflow bit (BGxCNT bit 13)
-        // is always transparent regardless of setting. It only works in affine
-        // tile modes (1 & 2), NOT in bitmap modes (3, 4, 5).
+        // Per GBATek: in bitmap modes, out-of-bounds source samples are always
+        // transparent regardless of BGxCNT bit 13. Wrapping via this bit only
+        // works in affine tile modes (1 & 2), NOT in bitmap modes (3, 4, 5).
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let mut vram = make_vram();
@@ -3069,9 +3069,9 @@ mod tests {
 
     #[test]
     fn mode5_bgcnt_wrap_bit_set_oob_is_still_transparent() {
-        // Per GBATek: in bitmap modes, the area overflow bit (BGxCNT bit 13)
-        // is always transparent regardless of setting. It only works in affine
-        // tile modes (1 & 2), NOT in bitmap modes (3, 4, 5).
+        // Per GBATek: in bitmap modes, out-of-bounds source samples are always
+        // transparent regardless of BGxCNT bit 13. Wrapping via this bit only
+        // works in affine tile modes (1 & 2), NOT in bitmap modes (3, 4, 5).
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let mut vram = make_vram();
