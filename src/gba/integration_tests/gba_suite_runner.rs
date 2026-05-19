@@ -676,6 +676,29 @@ pub struct MgbaMemoryLog {
     pub failures: Vec<MgbaMemoryFailure>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MgbaMemoryDiagnosticResult {
+    pub framebuffer_crc32: u32,
+    pub passed_count: Option<u32>,
+    pub total_count: Option<u32>,
+    pub raw_log: String,
+    pub failures: Vec<MgbaMemoryFailure>,
+}
+
+pub fn mgba_memory_diagnostic_from_sram(
+    framebuffer_crc32: u32,
+    sram: &[u8],
+) -> MgbaMemoryDiagnosticResult {
+    let log = parse_mgba_memory_sram_log(sram);
+    MgbaMemoryDiagnosticResult {
+        framebuffer_crc32,
+        passed_count: log.passed_count,
+        total_count: log.total_count,
+        raw_log: log.raw_log,
+        failures: log.failures,
+    }
+}
+
 pub fn parse_mgba_memory_sram_log(bytes: &[u8]) -> MgbaMemoryLog {
     let text_bytes: Vec<u8> = bytes
         .iter()
@@ -1264,6 +1287,25 @@ mod tests {
                     detail: "fail source mismatch".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn mgba_memory_diagnostic_from_sram_includes_crc_and_log() {
+        let bytes = b"Memory: 1436/1552\nBIOS OOB: fail open bus\0";
+
+        let result = mgba_memory_diagnostic_from_sram(0x2298_4983, bytes);
+
+        assert_eq!(result.framebuffer_crc32, 0x2298_4983);
+        assert_eq!(result.passed_count, Some(1436));
+        assert_eq!(result.total_count, Some(1552));
+        assert_eq!(result.raw_log, "Memory: 1436/1552\nBIOS OOB: fail open bus");
+        assert_eq!(
+            result.failures,
+            vec![MgbaMemoryFailure {
+                test_name: "BIOS OOB".to_string(),
+                detail: "fail open bus".to_string(),
+            }]
         );
     }
 }
