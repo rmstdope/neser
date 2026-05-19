@@ -232,8 +232,10 @@ impl Apu {
             }
 
             // Advance PSG internal counter and accumulate at 262.144kHz rate.
+            // Note: `step` is bounded by `psg_remaining` so this fires at most once per
+            // loop iteration, but we use `while` for defensive correctness.
             self.psg_counter += step;
-            if self.psg_counter >= PSG_INTERNAL_PERIOD {
+            while self.psg_counter >= PSG_INTERNAL_PERIOD {
                 self.psg_counter -= PSG_INTERNAL_PERIOD;
                 self.accumulate_psg();
             }
@@ -662,8 +664,11 @@ impl Apu {
         let nr50 = (self.soundcnt_l & 0xFF) as u8;
         let nr51 = (self.soundcnt_l >> 8) as u8;
 
-        // Use 262.144kHz accumulated PSG samples if available; fall back to
-        // direct channel output when mix() is called outside the tick loop.
+        // Use 262.144kHz accumulated PSG samples if available; fall back to direct
+        // channel output only when mix() is called outside the tick loop (e.g. unit
+        // tests that exercise the mixer without ticking the APU first).  In normal
+        // emulation every output sample follows at least one PSG accumulation step,
+        // so the fallback path is never taken in production.
         let dmg_samples = if self.psg_sample_count > 0 {
             let n = self.psg_sample_count as f32;
             let s = [
@@ -1863,17 +1868,23 @@ mod tests {
 
     // ── PSG 262.144kHz internal sampling tests ───────────────────────────────
 
+    /// Output rate used in PSG timing tests: exactly half the PSG internal rate.
+    ///
+    /// 131.072kHz = PSG_INTERNAL_RATE / 2 → 128 GBA cycles per output sample,
+    /// so each output sample spans exactly 2 PSG internal periods.
+    const PSG_TEST_SAMPLE_RATE: f32 = (GBA_CLOCK_HZ / PSG_INTERNAL_PERIOD as f32) / 2.0;
+
     /// RED: PSG channels must be sampled internally at 262.144kHz (one sample
     /// every 64 GBA cycles), not at the output rate.
     ///
     /// After exactly 64 cycles the accumulator should hold 1 sample.
     /// No output sample should be produced yet (output period is 128 cycles
-    /// at 131.072kHz).
+    /// at PSG_TEST_SAMPLE_RATE = 131.072kHz).
     #[test]
     fn test_psg_internal_sampling_rate() {
         let mut apu = powered_apu();
-        // 131.072kHz output rate → 16777216 / 131072 = 128 cycles per output sample.
-        apu.set_sample_rate(131_072.0);
+        // PSG_TEST_SAMPLE_RATE = 131.072kHz → 128 cycles per output sample.
+        apu.set_sample_rate(PSG_TEST_SAMPLE_RATE);
 
         // After 64 cycles: exactly one PSG internal period has elapsed.
         apu.tick(64);
@@ -1892,8 +1903,8 @@ mod tests {
     #[test]
     fn test_psg_accumulator_resets_after_output_sample() {
         let mut apu = powered_apu();
-        // 131.072kHz output rate → 128 cycles per output sample, 2 PSG samples.
-        apu.set_sample_rate(131_072.0);
+        // PSG_TEST_SAMPLE_RATE → 128 cycles per output sample, 2 PSG samples.
+        apu.set_sample_rate(PSG_TEST_SAMPLE_RATE);
 
         // After 128 cycles: 2 PSG samples accumulated, then output sample fires.
         apu.tick(128);
