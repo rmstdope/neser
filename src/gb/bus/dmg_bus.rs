@@ -437,6 +437,7 @@ impl DmgBus {
             ));
         }
         self.ppu = state.ppu.clone();
+        self.ppu.fixup_after_state_load();
         self.wram.copy_from_slice(&state.wram[..0x2000]);
         self.hram = state.hram;
         self.timer = state.timer.clone();

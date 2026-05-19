@@ -816,6 +816,7 @@ impl CgbBus {
         }
         self.ppu = state.ppu.clone();
         self.ppu.set_cgb_model(self.model);
+        self.ppu.fixup_after_state_load();
         for (bank, bank_data) in self.wram.iter_mut().enumerate() {
             let offset = bank * 0x1000;
             bank_data.copy_from_slice(&state.wram[offset..offset + 0x1000]);

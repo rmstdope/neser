@@ -856,6 +856,10 @@ impl PixelFifoRenderer {
         self.active
     }
 
+    pub(super) fn fixup_after_state_load(&mut self, cgb_mode: bool) {
+        self.bg_scx_sampler.config = BgScxSamplerConfig::for_mode(cgb_mode);
+    }
+
     pub fn record_scx_write(&mut self, previous: u8, dot: u16) {
         if self.active
             && self
@@ -3245,7 +3249,7 @@ fn prune_consumed_window_x_edges(edges: &mut Vec<WindowXEdge>, x: u8) {
 mod tests {
     use super::super::{registers::Registers, screen_buffer::ScreenBuffer};
     use super::{
-        LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE,
+        BgScxSamplerConfig, LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE,
         LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X, LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X,
         LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
         PixelFifoRenderer, WindowEnableEdge, WindowXEdge,
@@ -3361,6 +3365,26 @@ mod tests {
             Some(1),
             "native CGB rendering should report one window activation so PPU window_line advances"
         );
+    }
+
+    #[test]
+    fn fixup_after_state_load_restores_cgb_scx_sampler_timing() {
+        let mut renderer = PixelFifoRenderer::new();
+        let registers = Registers::new();
+        let oam = [0u8; 0xA0];
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, false);
+        renderer.bg_scx_sampler.config = BgScxSamplerConfig::default();
+
+        renderer.fixup_after_state_load(true);
+
+        assert_eq!(
+            renderer.bg_scx_sampler.config,
+            BgScxSamplerConfig::for_mode(true),
+            "legacy CGB save-states should not resume with DMG SCX fetch timing"
+        );
+        assert!(!renderer.bg_scx_sampler.will_sample_scx(6));
+        assert!(renderer.bg_scx_sampler.will_sample_scx(7));
     }
 
     #[test]

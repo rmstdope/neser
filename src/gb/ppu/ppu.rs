@@ -147,6 +147,10 @@ impl Ppu {
         self.cgb_model = model;
     }
 
+    pub(crate) fn fixup_after_state_load(&mut self) {
+        self.pixel_fifo.fixup_after_state_load(self.cgb_mode);
+    }
+
     // ── Dot-level tick ────────────────────────────────────────────────────────
 
     /// Advance the PPU by `n` dots (T-cycles).
