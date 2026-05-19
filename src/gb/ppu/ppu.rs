@@ -542,6 +542,10 @@ impl Ppu {
         if addr == 0xFF4B {
             self.pixel_fifo.record_wx_write(val);
         }
+        if addr == 0xFF43 {
+            self.pixel_fifo
+                .record_scx_write(self.registers.scx, self.timing.dot());
+        }
         let was_enabled = self.registers.lcd_enabled();
         self.registers.write(addr, val);
         let now_enabled = self.registers.lcd_enabled();

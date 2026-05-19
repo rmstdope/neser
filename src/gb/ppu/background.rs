@@ -51,6 +51,16 @@ pub struct BgPixelCgb {
     pub bg_priority: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct CgbPixelFetch {
+    pub x: u32,
+    pub scanline: u8,
+    pub scx: u8,
+    pub fine_scx: u8,
+    pub scy: u8,
+    pub lcdc: u8,
+}
+
 /// Fetch a CGB background pixel and its tile attributes for a given screen pixel.
 ///
 /// Tile data is fetched from VRAM bank 0 or bank 1 according to the attribute's
@@ -74,10 +84,35 @@ pub fn fetch_bg_pixel_cgb(
     scx: u8,
     scy: u8,
 ) -> BgPixelCgb {
-    let bg_x = scx.wrapping_add(x as u8);
-    let bg_y = scy.wrapping_add(scanline);
+    fetch_bg_pixel_cgb_with_fine_scx(
+        vram,
+        vram_bank1,
+        CgbPixelFetch {
+            x,
+            scanline,
+            scx,
+            fine_scx: scx,
+            scy,
+            lcdc,
+        },
+    )
+}
 
-    let map_base: usize = if lcdc & 0x08 != 0 { 0x1C00 } else { 0x1800 };
+/// Fetch a CGB background pixel with SCX tile-map sampling split from the
+/// latched fine-scroll bits used to select the pixel within the tile.
+pub(super) fn fetch_bg_pixel_cgb_with_fine_scx(
+    vram: &[u8; 0x2000],
+    vram_bank1: &[u8; 0x2000],
+    fetch: CgbPixelFetch,
+) -> BgPixelCgb {
+    let bg_x = fetch.scx.wrapping_add(fetch.x as u8);
+    let bg_y = fetch.scy.wrapping_add(fetch.scanline);
+
+    let map_base: usize = if fetch.lcdc & 0x08 != 0 {
+        0x1C00
+    } else {
+        0x1800
+    };
     let tile_col = (bg_x / 8) as usize;
     let tile_row = (bg_y / 8) as usize;
     let map_offset = map_base + tile_row * 32 + tile_col;
@@ -92,7 +127,7 @@ pub fn fetch_bg_pixel_cgb(
     let y_flip = attrs & 0x40 != 0;
     let bg_priority = attrs & 0x80 != 0;
 
-    let tile_data_start: usize = if lcdc & 0x10 != 0 {
+    let tile_data_start: usize = if fetch.lcdc & 0x10 != 0 {
         (tile_index_raw as usize) * 16
     } else {
         (0x1000i32 + (tile_index_raw as i8 as i32) * 16) as usize
@@ -103,7 +138,7 @@ pub fn fetch_bg_pixel_cgb(
         row_in_tile = 7 - row_in_tile;
     }
 
-    let pixel_in_tile = bg_x % 8;
+    let pixel_in_tile = fetch.fine_scx.wrapping_add(fetch.x as u8) % 8;
     let bit = if x_flip {
         pixel_in_tile
     } else {

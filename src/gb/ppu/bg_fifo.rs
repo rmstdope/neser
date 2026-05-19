@@ -24,6 +24,7 @@ pub(super) struct DmgPixelFetch {
     pub x: u32,
     pub scanline: u8,
     pub scx: u8,
+    pub fine_scx: u8,
     pub scy: u8,
     pub wx: u8,
     pub wy: u8,
@@ -55,11 +56,12 @@ pub(super) fn fetch_dmg_pixel_with_data(
         DmgLayer::Background => {
             let bg_x = fetch.scx.wrapping_add(fetch.x as u8);
             let bg_y = fetch.scy.wrapping_add(fetch.scanline);
+            let pixel_x = fetch.fine_scx.wrapping_add(fetch.x as u8) & 0x07;
             (
                 tile_map_base(fetch.map_lcdc, 0x08),
                 (bg_x / 8) as usize,
                 (bg_y / 8) as usize,
-                bg_x % 8,
+                pixel_x,
                 bg_y % 8,
             )
         }
@@ -181,6 +183,7 @@ mod tests {
                 x: 0,
                 scanline: 0,
                 scx: 0,
+                fine_scx: 0,
                 scy: 0,
                 wx: 7,
                 wy: 0,
@@ -211,6 +214,7 @@ mod tests {
                 x: 0,
                 scanline: 0,
                 scx: 0,
+                fine_scx: 0,
                 scy: 0,
                 wx: 7,
                 wy: 0,
