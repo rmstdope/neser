@@ -1467,8 +1467,7 @@ impl Ppu {
             // that sets FLAG_REBLEND in mGBA — when no 2nd target exists, the
             // OBJ's TARGET_1 flag is cleared instead, and brightness on layers
             // above the OBJ must still apply).
-            let obj_is_semi_transparent =
-                obj_visible && obj_px.is_some_and(|px| px.semi_transparent);
+            let obj_is_semi_transparent = obj_visible && obj_px.unwrap().semi_transparent;
             let suppress_brightness = obj_is_semi_transparent && second_target_mask != 0;
 
             // Find the top-2 visible pixels using sort_key (lower = higher
