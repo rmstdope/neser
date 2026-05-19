@@ -1408,7 +1408,8 @@ impl Ppu {
             // that sets FLAG_REBLEND in mGBA — when no 2nd target exists, the
             // OBJ's TARGET_1 flag is cleared instead, and brightness on layers
             // above the OBJ must still apply).
-            let obj_is_semi_transparent = obj_px.is_some_and(|px| px.opaque && px.semi_transparent);
+            let obj_is_semi_transparent =
+                obj_opaque && obj_px.is_some_and(|px| px.semi_transparent);
             let suppress_brightness = obj_is_semi_transparent && second_target_mask != 0;
 
             // Find the top-2 visible pixels using sort_key (lower = higher
@@ -4621,7 +4622,7 @@ mod tests {
         pram[0x202] = 0x1F;
         pram[0x203] = 0x00; // OBJ palette 1 = red
 
-        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 0); // OBJ priority 0
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 0); // obj_idx=0, x=0, y=0, tile=1, priority=0
 
         // BLDCNT: mode=2 (brightness), 1st target=OBJ (bit 4), 2nd target=BG0 (bit 8).
         ppu.write_bldcnt((2 << 6) | 0x10 | (1 << 8));
@@ -4666,7 +4667,7 @@ mod tests {
         pram[0x202] = 0x1F;
         pram[0x203] = 0x00;
 
-        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 0);
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 0); // obj_idx=0, x=0, y=0, tile=1, priority=0
 
         // BLDCNT: mode=2 (brightness), 1st target=OBJ (bit 4), no 2nd target.
         ppu.write_bldcnt((2 << 6) | 0x10);
@@ -4712,7 +4713,7 @@ mod tests {
         pram[0x203] = 0x00; // OBJ palette 1 = red
 
         // OBJ priority 1 → below BG0 priority 0.
-        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 1);
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 1); // obj_idx=0, x=0, y=0, tile=1, priority=1
 
         // BLDCNT: mode=2, 1st target=BG0 (bit 0), 2nd target=backdrop (bit 13).
         ppu.write_bldcnt((2 << 6) | 0x01 | (1 << 13));
@@ -4755,7 +4756,7 @@ mod tests {
         pram[0x202] = 0x1F;
         pram[0x203] = 0x00;
 
-        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 1); // OBJ priority 1
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 1); // obj_idx=0, x=0, y=0, tile=1, priority=1
 
         // BLDCNT: mode=3, 1st target=BG0 (bit 0), 2nd target=backdrop (bit 13).
         ppu.write_bldcnt((3 << 6) | 0x01 | (1 << 13));
@@ -4798,7 +4799,7 @@ mod tests {
         pram[0x202] = 0x1F;
         pram[0x203] = 0x00;
 
-        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 1);
+        setup_semi_transparent_obj_in_oam(&mut oam, 0, 0, 0, 1, 1); // obj_idx=0, x=0, y=0, tile=1, priority=1
 
         // BLDCNT: mode=2, 1st target=BG0 (bit 0), NO 2nd target.
         ppu.write_bldcnt((2 << 6) | 0x01);
