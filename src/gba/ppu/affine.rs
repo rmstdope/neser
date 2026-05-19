@@ -2,11 +2,7 @@
 //!
 //! Stores the per-background affine parameters (`PA`, `PB`, `PC`, `PD`)
 //! and reference points (`X`, `Y`) that drive rotation/scaling for BG2
-//! and BG3 in tile modes 1 and 2 (and bitmap modes 3–5 for BG2). This
-//! increment only models the *register file* — the renderer that
-//! consumes these values is intentionally out of scope and lives in a
-//! follow-up sub-issue. Establishing the correct write semantics now
-//! gives the eventual renderer concrete, well-tested state to read.
+//! and BG3 in tile modes 1 and 2 (and bitmap modes 3–5 for BG2).
 //!
 //! Per GBATek "LCD I/O BG Rotation/Scaling":
 //!
@@ -21,6 +17,20 @@
 //!   return the bus open-bus / backing-store value, not the affine
 //!   state. The bus dispatcher therefore routes only writes to this
 //!   module.
+//!
+//! ## Mid-frame write semantics (GBATek)
+//!
+//! Per GBATek: *"If software writes to BG2X/BG2Y outside V-Blank, the value
+//! is immediately applied to the internal register for the current scanline."*
+//!
+//! The [`BgAffine::write_x_low`], [`BgAffine::write_x_high`],
+//! [`BgAffine::write_y_low`], and [`BgAffine::write_y_high`] methods
+//! therefore update **both** the register (`x`/`y`) and the internal
+//! accumulator (`internal_x`/`internal_y`) atomically.  After the write,
+//! PB/PD accumulation on subsequent scanlines starts from the newly written
+//! value.  At the next V-Blank, [`BgAffine::latch_reference_points`]
+//! re-initialises the accumulators from the (now updated) register values,
+//! which preserves the mid-frame write into the following frame.
 //!
 //! References:
 //! * GBATek "LCD I/O BG Rotation/Scaling":

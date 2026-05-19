@@ -156,8 +156,11 @@ impl Ppu {
 
     pub(crate) fn fixup_after_state_load(&mut self) {
         self.scy_b_stage_only = matches!(self.cgb_model, CgbModel::CgbD | CgbModel::CgbE);
-        self.pixel_fifo
-            .fixup_after_state_load(self.cgb_mode, self.scy_b_stage_only, self.registers.scy);
+        self.pixel_fifo.fixup_after_state_load(
+            self.cgb_mode,
+            self.scy_b_stage_only,
+            self.registers.scy,
+        );
     }
 
     // ── Dot-level tick ────────────────────────────────────────────────────────
