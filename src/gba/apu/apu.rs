@@ -14,6 +14,13 @@ const GBA_CLOCK_HZ: f32 = 16_777_216.0;
 /// Frame sequencer period: 512 Hz → one step every 32 768 GBA cycles.
 const FS_PERIOD: u32 = 32_768;
 
+/// PSG internal sampling period: 262.144kHz = 16.78MHz / 64 GBA cycles.
+///
+/// Per GBATek (gbatek-gba-sound-control-registers.htm, Resampling section):
+///   "The PSG channels 1-4 are internally generated at 262.144kHz"
+/// which equals one sample every 64 GBA CPU cycles.
+const PSG_INTERNAL_PERIOD: u32 = 64;
+
 // ── SOUNDBIAS / mixer constants ───────────────────────────────────────────────
 
 /// PSG mix (normalised −1..+1) × this factor gives 10-bit signed units (±128 = ±0x80).
@@ -98,6 +105,14 @@ pub struct Apu {
     sample_acc: f32,
     cycles_per_sample: f32,
     pending_sample: Option<(f32, f32)>,
+
+    // ── PSG 262.144kHz internal accumulator ──────────────────────────────
+    /// Cycle counter within the current PSG internal period (0..PSG_INTERNAL_PERIOD).
+    psg_counter: u32,
+    /// Sum of each PSG channel's output() snapshots taken at 262.144kHz.
+    psg_sum: [f32; 4],
+    /// Number of PSG internal samples accumulated since the last output sample.
+    psg_sample_count: u32,
 }
 
 impl Default for Apu {
@@ -125,6 +140,9 @@ impl Apu {
             sample_acc: 0.0,
             cycles_per_sample: GBA_CLOCK_HZ / 44_100.0,
             pending_sample: None,
+            psg_counter: 0,
+            psg_sum: [0.0; 4],
+            psg_sample_count: 0,
         }
     }
 
@@ -172,14 +190,18 @@ impl Apu {
     /// Advance the APU by `cycles` GBA CPU cycles.
     ///
     /// Rather than iterating one cycle at a time, this computes how many
-    /// cycles remain until the next frame-sequencer event and the next sample
-    /// boundary, advances the channel timers in one step, then handles those
-    /// events in order. This keeps APU stepping O(events) instead of O(cycles).
+    /// cycles remain until the next frame-sequencer event, the next PSG
+    /// internal sample (262.144kHz), and the next output sample boundary,
+    /// advances the channel timers in one step, then handles those events in
+    /// order. This keeps APU stepping O(events) instead of O(cycles).
     pub fn tick(&mut self, cycles: u32) {
         let mut remaining = cycles;
         while remaining > 0 {
             // How many cycles until the frame sequencer fires?
             let fs_remaining = FS_PERIOD - self.fs_counter;
+
+            // How many cycles until the next PSG internal sample?
+            let psg_remaining = PSG_INTERNAL_PERIOD - self.psg_counter;
 
             // How many cycles until the next output sample?
             // We track the fractional accumulator as f32; convert the ceiling
@@ -191,7 +213,10 @@ impl Apu {
             };
 
             // Advance only up to the nearest event (or end of budget).
-            let step = remaining.min(fs_remaining).min(sample_remaining);
+            let step = remaining
+                .min(fs_remaining)
+                .min(psg_remaining)
+                .min(sample_remaining);
 
             // Bulk-advance channel frequency timers.
             self.ch1.tick(step);
@@ -206,6 +231,13 @@ impl Apu {
                 self.clock_frame_sequencer_step();
             }
 
+            // Advance PSG internal counter and accumulate at 262.144kHz rate.
+            self.psg_counter += step;
+            if self.psg_counter >= PSG_INTERNAL_PERIOD {
+                self.psg_counter -= PSG_INTERNAL_PERIOD;
+                self.accumulate_psg();
+            }
+
             // Advance sample accumulator.
             self.sample_acc += step as f32;
             if self.sample_acc >= self.cycles_per_sample {
@@ -217,6 +249,17 @@ impl Apu {
 
             remaining -= step;
         }
+    }
+
+    /// Snapshot all 4 PSG channel outputs and add to the 262.144kHz accumulator.
+    ///
+    /// Called every 64 GBA cycles (= 262.144kHz) from [`tick`].
+    fn accumulate_psg(&mut self) {
+        self.psg_sum[0] += self.ch1.output();
+        self.psg_sum[1] += self.ch2.output();
+        self.psg_sum[2] += self.ch3.output();
+        self.psg_sum[3] += self.ch4.output();
+        self.psg_sample_count += 1;
     }
 
     // ── Register read/write ───────────────────────────────────────────────
@@ -602,9 +645,16 @@ impl Apu {
     }
 
     /// Mix all channels into a stereo `(left, right)` pair in `[-1.0, 1.0]`.
-    fn mix(&self) -> (f32, f32) {
+    ///
+    /// For PSG channels (CH1–CH4), uses the 262.144kHz accumulated average
+    /// when samples have been collected via [`tick`]. If called directly
+    /// (e.g., from tests without prior tick calls), falls back to reading
+    /// each channel's current output directly.
+    fn mix(&mut self) -> (f32, f32) {
         if !self.powered {
             // Per GBATek: "While Bit 7 is cleared, both PSG and FIFO sounds are disabled"
+            self.psg_sum = [0.0; 4];
+            self.psg_sample_count = 0;
             return (0.0, 0.0);
         }
 
@@ -612,12 +662,27 @@ impl Apu {
         let nr50 = (self.soundcnt_l & 0xFF) as u8;
         let nr51 = (self.soundcnt_l >> 8) as u8;
 
-        let dmg_samples = [
-            self.ch1.output(),
-            self.ch2.output(),
-            self.ch3.output(),
-            self.ch4.output(),
-        ];
+        // Use 262.144kHz accumulated PSG samples if available; fall back to
+        // direct channel output when mix() is called outside the tick loop.
+        let dmg_samples = if self.psg_sample_count > 0 {
+            let n = self.psg_sample_count as f32;
+            let s = [
+                self.psg_sum[0] / n,
+                self.psg_sum[1] / n,
+                self.psg_sum[2] / n,
+                self.psg_sum[3] / n,
+            ];
+            self.psg_sum = [0.0; 4];
+            self.psg_sample_count = 0;
+            s
+        } else {
+            [
+                self.ch1.output(),
+                self.ch2.output(),
+                self.ch3.output(),
+                self.ch4.output(),
+            ]
+        };
 
         // NR51 bits 3-0 = right enables (CH1-CH4), bits 7-4 = left enables.
         let right_mix = Self::mix_terminal(dmg_samples, nr51 & 0x0F);
@@ -1794,5 +1859,98 @@ mod tests {
             apu.ch3.wave_ram[1], [0xBB; 16],
             "bank 1 should survive power-off"
         );
+    }
+
+    // ── PSG 262.144kHz internal sampling tests ───────────────────────────────
+
+    /// RED: PSG channels must be sampled internally at 262.144kHz (one sample
+    /// every 64 GBA cycles), not at the output rate.
+    ///
+    /// After exactly 64 cycles the accumulator should hold 1 sample.
+    /// No output sample should be produced yet (output period is 128 cycles
+    /// at 131.072kHz).
+    #[test]
+    fn test_psg_internal_sampling_rate() {
+        let mut apu = powered_apu();
+        // 131.072kHz output rate → 16777216 / 131072 = 128 cycles per output sample.
+        apu.set_sample_rate(131_072.0);
+
+        // After 64 cycles: exactly one PSG internal period has elapsed.
+        apu.tick(64);
+        assert_eq!(
+            apu.psg_sample_count, 1,
+            "PSG must be sampled once every 64 GBA cycles (262.144kHz)"
+        );
+        assert!(
+            !apu.sample_ready(),
+            "No output sample yet after only 64 cycles"
+        );
+    }
+
+    /// RED: The PSG accumulator (psg_sum / psg_sample_count) must be reset
+    /// to zero after each output sample is generated by mix().
+    #[test]
+    fn test_psg_accumulator_resets_after_output_sample() {
+        let mut apu = powered_apu();
+        // 131.072kHz output rate → 128 cycles per output sample, 2 PSG samples.
+        apu.set_sample_rate(131_072.0);
+
+        // After 128 cycles: 2 PSG samples accumulated, then output sample fires.
+        apu.tick(128);
+        assert!(
+            apu.sample_ready(),
+            "Output sample must be ready after 128 cycles"
+        );
+        assert_eq!(
+            apu.psg_sample_count, 0,
+            "PSG accumulator must be reset to 0 after output sample is generated"
+        );
+        assert_eq!(
+            apu.psg_sum, [0.0; 4],
+            "PSG sum must be cleared to zero after output sample is generated"
+        );
+    }
+
+    /// RED: mix() must use the averaged accumulated PSG snapshots (psg_sum /
+    /// psg_sample_count) when available, rather than reading ch.output() at
+    /// the instant mix() is called.
+    ///
+    /// We inject known values directly into psg_sum / psg_sample_count and
+    /// verify the resulting mix output reflects those values.
+    #[test]
+    fn test_psg_mix_uses_accumulated_not_instantaneous() {
+        let mut apu = powered_apu();
+        // Route CH1 to right output only, full volume, DMG at 100%.
+        apu.write16(0x0400_0080, 0x0107); // NR51=0x01 (CH1 right), NR50=0x07 (right vol=7)
+        apu.soundcnt_h = 0x0002; // DMG at 100%
+        // Trigger CH1 at volume=15 so ch1.output() would be non-zero.
+        apu.write16(0x0400_0062, 0xF080);
+        apu.write16(0x0400_0064, 0x8320);
+
+        // Directly inject a known accumulated PSG value for CH1.
+        // One PSG snapshot where CH1 output averaged to 0.5.
+        apu.psg_sum = [0.5, 0.0, 0.0, 0.0];
+        apu.psg_sample_count = 1;
+
+        let (_, right) = apu.mix();
+
+        // Expected pipeline with accumulated CH1 average = 0.5/1 = 0.5:
+        //   right_mix = mix_terminal([0.5,0,0,0], 0x01) = 0.5
+        //   right_vol = 7/7 = 1.0, dmg_ratio = 1.0
+        //   dmg_right = 0.5 * 1.0 * 1.0 = 0.5
+        //   raw_right = 0.5 * 128 (PSG_SCALE) = 64.0
+        //   apply_soundbias(64.0): bias=256, clamped=320, quantized=320
+        //   result = (320 - 256) / 512 = 0.125
+        let expected = 0.125_f32;
+        assert!(
+            (right - expected).abs() < 1e-5,
+            "mix() must use accumulated PSG values (expected {expected:.4}, got {right:.4})"
+        );
+        // PSG accumulator must be reset after mix().
+        assert_eq!(
+            apu.psg_sample_count, 0,
+            "PSG accumulator must reset after mix()"
+        );
+        assert_eq!(apu.psg_sum, [0.0; 4], "PSG sum must clear after mix()");
     }
 }
