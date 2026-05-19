@@ -592,9 +592,10 @@ mod tests {
 
     #[test]
     fn test_run_tick_unimplemented_modes_render_backdrop() {
-        // Modes 1, 5, 6, 7 are not fully implemented but should gracefully
-        // render backdrop without panicking. This matches mGBA behavior where
-        // prohibited modes (6-7) simply don't render any backgrounds.
+        // Modes 6 and 7 are "prohibited" per GBATek. They render OBJ sprites
+        // over the backdrop (no BG layers), matching mGBA behavior.
+        // Modes 1 and 5 are fully implemented but included to ensure they
+        // don't regress to panicking either.
         let mut gba = make_gba();
         let rom = make_minimal_valid_gba_rom();
         gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
