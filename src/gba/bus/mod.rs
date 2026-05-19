@@ -454,8 +454,8 @@ impl GbaBus {
     /// `Timers::step()`. Each FIFO advances once per overflow of its selected timer.
     fn handle_timer_overflow_fifo(&mut self, overflow_counts: [u32; 4]) {
         let soundcnt_h = self.apu.soundcnt_h;
-        let fifo_a_timer = if soundcnt_h & 0x0400 != 0 { 1 } else { 0 };
-        let fifo_b_timer = if soundcnt_h & 0x4000 != 0 { 1 } else { 0 };
+        let fifo_a_timer: usize = if soundcnt_h & 0x0400 != 0 { 1 } else { 0 };
+        let fifo_b_timer: usize = if soundcnt_h & 0x4000 != 0 { 1 } else { 0 };
 
         let a_overflows = overflow_counts[fifo_a_timer];
         if a_overflows > 0 {
