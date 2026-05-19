@@ -35,6 +35,14 @@ const SCX_FINE_MASK: u8 = 0x07;
 const SCX_TILE_MASK: u8 = !SCX_FINE_MASK;
 const SCX_LOW_BITS_SAMPLE_DOTS: u16 = 6;
 
+fn scy_fetch_start_dots(cgb_mode: bool) -> u16 {
+    if cgb_mode {
+        SCX_LOW_BITS_SAMPLE_DOTS + 3
+    } else {
+        SCX_LOW_BITS_SAMPLE_DOTS + 1
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LcdcBgEnableEdgeTiming {
     CurrentPixelUsesNew,
@@ -740,7 +748,7 @@ pub struct PixelFifoRenderer {
     #[serde(default)]
     bg_scy_sampler: BgScySampler,
     /// Effective SCY seen by the PPU tile fetcher. On DMG updated immediately on write;
-    /// on CGB updated after the 2-T-cycle write delay.
+    /// on CGB updated after a 4-T-cycle effective delay in this dot scheduler model.
     #[serde(default)]
     effective_scy: u8,
     /// Pending CGB SCY write: `(dot_when_active, new_value)`.
@@ -891,13 +899,11 @@ impl PixelFifoRenderer {
         self.pending_scx_sample_override = None;
         self.effective_scy = registers.scy;
         self.pending_cgb_scy = None;
-        let scy_fetch_start_dots = if cgb_mode {
-            SCX_LOW_BITS_SAMPLE_DOTS + 3
-        } else {
-            SCX_LOW_BITS_SAMPLE_DOTS + 1
-        };
-        self.bg_scy_sampler
-            .reset(registers.scy, scy_fetch_start_dots, self.scy_b_stage_only);
+        self.bg_scy_sampler.reset(
+            registers.scy,
+            scy_fetch_start_dots(cgb_mode),
+            self.scy_b_stage_only,
+        );
         self.bg_fetch_scy_map = registers.scy;
         self.bg_fetch_scy_data_low = registers.scy;
         self.bg_fetch_scy_data_high = registers.scy;
@@ -1067,10 +1073,18 @@ impl PixelFifoRenderer {
         self.active
     }
 
-    pub(super) fn fixup_after_state_load(&mut self, cgb_mode: bool, scy_b_stage_only: bool) {
+    pub(super) fn fixup_after_state_load(
+        &mut self,
+        cgb_mode: bool,
+        scy_b_stage_only: bool,
+        current_scy: u8,
+    ) {
         self.bg_scx_sampler.config = BgScxSamplerConfig::for_mode(cgb_mode);
         self.scy_b_stage_only = scy_b_stage_only;
         self.bg_scy_sampler.b_stage_only = scy_b_stage_only;
+        self.bg_scy_sampler.fetch_start_dots = scy_fetch_start_dots(cgb_mode);
+        self.effective_scy = current_scy;
+        self.pending_cgb_scy = None;
     }
 
     pub(super) fn set_scy_b_stage_only(&mut self, b_stage_only: bool) {
@@ -1095,7 +1109,7 @@ impl PixelFifoRenderer {
     /// - `old_scy`  — value of SCY before the write (kept for API symmetry; unused)
     /// - `new_scy`  — new value being written
     /// - `dot`      — current absolute dot counter (used to compute the elapsed delay)
-    /// - `cgb_mode` — `true` for CGB hardware (applies 2-cycle write delay)
+    /// - `cgb_mode` — `true` for CGB hardware (applies 4-T-cycle effective delay)
     pub fn record_scy_write(&mut self, old_scy: u8, new_scy: u8, dot: u16, cgb_mode: bool) {
         let _ = old_scy;
         if !self.active {
@@ -3603,7 +3617,8 @@ mod tests {
         BgScxSamplerConfig, LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE,
         LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X, LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X,
         LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
-        PixelFifoRenderer, WindowEnableEdge, WindowXEdge,
+        PixelFifoRenderer, SCX_LOW_BITS_SAMPLE_DOTS, WindowEnableEdge, WindowXEdge,
+        scy_fetch_start_dots,
     };
     use crate::gb::model::CgbModel;
 
@@ -3727,8 +3742,10 @@ mod tests {
 
         renderer.begin_scanline(0, 80, &oam, &registers, true, false);
         renderer.bg_scx_sampler.config = BgScxSamplerConfig::default();
+        renderer.bg_scy_sampler.fetch_start_dots = SCX_LOW_BITS_SAMPLE_DOTS;
+        renderer.effective_scy = 0;
 
-        renderer.fixup_after_state_load(true, false);
+        renderer.fixup_after_state_load(true, false, 0x5a);
 
         assert_eq!(
             renderer.bg_scx_sampler.config,
@@ -3737,6 +3754,25 @@ mod tests {
         );
         assert!(!renderer.bg_scx_sampler.will_sample_scx(6));
         assert!(renderer.bg_scx_sampler.will_sample_scx(7));
+        assert_eq!(
+            renderer.bg_scy_sampler.fetch_start_dots,
+            scy_fetch_start_dots(true)
+        );
+        assert_eq!(renderer.effective_scy, 0x5a);
+    }
+
+    #[test]
+    fn fixup_after_state_load_restores_dmg_scy_sampler_timing() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.bg_scy_sampler.fetch_start_dots = SCX_LOW_BITS_SAMPLE_DOTS;
+
+        renderer.fixup_after_state_load(false, false, 0x81);
+
+        assert_eq!(
+            renderer.bg_scy_sampler.fetch_start_dots,
+            scy_fetch_start_dots(false)
+        );
+        assert_eq!(renderer.effective_scy, 0x81);
     }
 
     #[test]

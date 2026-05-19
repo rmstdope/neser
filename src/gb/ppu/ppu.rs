@@ -158,7 +158,7 @@ impl Ppu {
         let scy_b_stage_only = matches!(self.cgb_model, CgbModel::CgbD | CgbModel::CgbE);
         self.scy_b_stage_only = scy_b_stage_only;
         self.pixel_fifo
-            .fixup_after_state_load(self.cgb_mode, scy_b_stage_only);
+            .fixup_after_state_load(self.cgb_mode, scy_b_stage_only, self.registers.scy);
     }
 
     // ── Dot-level tick ────────────────────────────────────────────────────────
