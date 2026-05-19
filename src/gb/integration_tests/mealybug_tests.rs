@@ -486,7 +486,14 @@ fn test_m3_scx_low_3_bits_cgb_c() {
     assert_mealybug_crc("m3_scx_low_3_bits_cgb_c", crc, EXPECTED_CRC);
 }
 mealybug_ignored_cgb_c!(test_m3_scy_change_cgb_c, "m3_scy_change", "2358");
-mealybug_ignored_cgb_c!(test_m3_scy_change2_cgb_c, "m3_scy_change2", "2358");
+#[test]
+fn test_m3_scy_change2_cgb_c() {
+    let bytes = read_rom_from_zip("m3_scy_change2.gb");
+    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_scy_change2_cgb_c");
+    const EXPECTED_CRC: u32 = 0x6D57_9852;
+    assert_mealybug_crc("m3_scy_change2_cgb_c", crc, EXPECTED_CRC);
+}
 mealybug_ignored_cgb_c!(test_m3_window_timing_cgb_c, "m3_window_timing", "2359");
 mealybug_ignored_cgb_c!(
     test_m3_window_timing_wx_0_cgb_c,

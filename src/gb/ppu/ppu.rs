@@ -82,6 +82,10 @@ pub struct Ppu {
     /// re-applies its configured model immediately after restoring the PPU.
     #[serde(default)]
     cgb_model: CgbModel,
+    /// Whether SCY is only sampled at the B (GetTile) stage (`true` for CGB-D/E).
+    /// Preserved across LCD disable/enable cycles.
+    #[serde(default)]
+    scy_b_stage_only: bool,
 }
 
 impl Ppu {
@@ -114,6 +118,7 @@ impl Ppu {
             hblank_entered: false,
             dmg_compat: false,
             cgb_model: CgbModel::default(),
+            scy_b_stage_only: false,
         }
     }
 
@@ -145,10 +150,15 @@ impl Ppu {
     /// Select the CGB hardware revision used by model-specific PPU behavior.
     pub fn set_cgb_model(&mut self, model: CgbModel) {
         self.cgb_model = model;
+        self.scy_b_stage_only = matches!(model, CgbModel::CgbD | CgbModel::CgbE);
+        self.pixel_fifo.set_scy_b_stage_only(self.scy_b_stage_only);
     }
 
     pub(crate) fn fixup_after_state_load(&mut self) {
-        self.pixel_fifo.fixup_after_state_load(self.cgb_mode);
+        let scy_b_stage_only = matches!(self.cgb_model, CgbModel::CgbD | CgbModel::CgbE);
+        self.scy_b_stage_only = scy_b_stage_only;
+        self.pixel_fifo
+            .fixup_after_state_load(self.cgb_mode, scy_b_stage_only, self.registers.scy);
     }
 
     // ── Dot-level tick ────────────────────────────────────────────────────────
@@ -568,6 +578,14 @@ impl Ppu {
             self.pixel_fifo
                 .record_scx_write(self.registers.scx, self.timing.dot());
         }
+        if addr == 0xFF42 {
+            self.pixel_fifo.record_scy_write(
+                self.registers.scy,
+                val,
+                self.timing.dot(),
+                self.cgb_mode,
+            );
+        }
         let was_enabled = self.registers.lcd_enabled();
         self.registers.write(addr, val);
         let now_enabled = self.registers.lcd_enabled();
@@ -581,6 +599,7 @@ impl Ppu {
             }
             self.window_line = 0;
             self.pixel_fifo = PixelFifoRenderer::new();
+            self.pixel_fifo.set_scy_b_stage_only(self.scy_b_stage_only);
             // Initialise prev_stat_irq_line to the LYC source state that was active
             // while the LCD was off (based on the frozen LYC=LY bit).
             // This prevents a spurious STAT interrupt when LCD re-enables while
@@ -597,6 +616,7 @@ impl Ppu {
         } else if was_enabled && !now_enabled {
             trace_ppu!(1; "lcdc disable y={} dot={} lcdc={:02X}", self.timing.ly(), self.timing.dot(), val);
             self.pixel_fifo = PixelFifoRenderer::new();
+            self.pixel_fifo.set_scy_b_stage_only(self.scy_b_stage_only);
         }
         // LCD 1→0: lyc_eq_ly_frozen is intentionally NOT cleared here —
         // hardware retains the last LYC=LY state when the LCD is powered off.

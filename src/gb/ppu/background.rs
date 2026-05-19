@@ -57,7 +57,17 @@ pub(super) struct CgbPixelFetch {
     pub scanline: u8,
     pub scx: u8,
     pub fine_scx: u8,
-    pub scy: u8,
+    /// SCY value sampled at the tile-fetch **B** (GetTile) stage.
+    /// Used for the tile-map row: `(scy_map + scanline) / 8`.
+    pub scy_map: u8,
+    /// SCY value sampled at the tile-fetch **0** (TileDataLow) stage.
+    /// Used for the low-bitplane row-within-tile: `(scy_data_low + scanline) % 8`.
+    /// Equal to `scy_map` on CGB-D (SCY only read at B stage).
+    pub scy_data_low: u8,
+    /// SCY value sampled at the tile-fetch **1** (TileDataHigh) stage.
+    /// Used for the high-bitplane row-within-tile: `(scy_data_high + scanline) % 8`.
+    /// Equal to `scy_map` on CGB-D (SCY only read at B stage).
+    pub scy_data_high: u8,
     pub lcdc: u8,
 }
 
@@ -92,7 +102,9 @@ pub fn fetch_bg_pixel_cgb(
             scanline,
             scx,
             fine_scx: scx,
-            scy,
+            scy_map: scy,
+            scy_data_low: scy,
+            scy_data_high: scy,
             lcdc,
         },
     )
@@ -106,7 +118,9 @@ pub(super) fn fetch_bg_pixel_cgb_with_fine_scx(
     fetch: CgbPixelFetch,
 ) -> BgPixelCgb {
     let bg_x = fetch.scx.wrapping_add(fetch.x as u8);
-    let bg_y = fetch.scy.wrapping_add(fetch.scanline);
+    let bg_y_map = fetch.scy_map.wrapping_add(fetch.scanline);
+    let bg_y_data_low = fetch.scy_data_low.wrapping_add(fetch.scanline);
+    let bg_y_data_high = fetch.scy_data_high.wrapping_add(fetch.scanline);
 
     let map_base: usize = if fetch.lcdc & 0x08 != 0 {
         0x1C00
@@ -114,7 +128,7 @@ pub(super) fn fetch_bg_pixel_cgb_with_fine_scx(
         0x1800
     };
     let tile_col = (bg_x / 8) as usize;
-    let tile_row = (bg_y / 8) as usize;
+    let tile_row = (bg_y_map / 8) as usize;
     let map_offset = map_base + tile_row * 32 + tile_col;
 
     let tile_index_raw = vram[map_offset];
@@ -133,9 +147,11 @@ pub(super) fn fetch_bg_pixel_cgb_with_fine_scx(
         (0x1000i32 + (tile_index_raw as i8 as i32) * 16) as usize
     };
 
-    let mut row_in_tile = (bg_y % 8) as usize;
+    let mut row_in_tile_low = (bg_y_data_low % 8) as usize;
+    let mut row_in_tile_high = (bg_y_data_high % 8) as usize;
     if y_flip {
-        row_in_tile = 7 - row_in_tile;
+        row_in_tile_low = 7 - row_in_tile_low;
+        row_in_tile_high = 7 - row_in_tile_high;
     }
 
     let pixel_in_tile = fetch.fine_scx.wrapping_add(fetch.x as u8) % 8;
@@ -150,9 +166,8 @@ pub(super) fn fetch_bg_pixel_cgb_with_fine_scx(
     } else {
         vram
     };
-    let addr = tile_data_start + row_in_tile * 2;
-    let low = tile_vram[addr];
-    let high = tile_vram[addr + 1];
+    let low = tile_vram[tile_data_start + row_in_tile_low * 2];
+    let high = tile_vram[tile_data_start + row_in_tile_high * 2 + 1];
     let colour_index = ((high >> bit) & 1) << 1 | ((low >> bit) & 1);
 
     BgPixelCgb {
