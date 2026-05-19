@@ -334,6 +334,11 @@ impl GbaBus {
         self.trace_config = tracing;
     }
 
+    /// Return a read-only snapshot of the cartridge SRAM mirror.
+    pub fn sram_snapshot(&self) -> &[u8] {
+        &self.sram
+    }
+
     #[cfg(test)]
     pub(crate) fn trace_config_for_tests(&self) -> GbaTraceConfig {
         self.trace_config
@@ -1416,6 +1421,16 @@ mod tests {
         let lines = take_gba_bus_trace_lines_for_tests();
 
         assert_eq!(lines, vec!["[GBA BUS] W8 03000000=12".to_string()]);
+    }
+
+    #[test]
+    fn sram_snapshot_reflects_cart_save_writes() {
+        let mut bus = GbaBus::new();
+        bus.write8(0x0E00_0000, b'N');
+        bus.write8(0x0E00_0001, b'E');
+        bus.write8(0x0E00_0002, b'S');
+
+        assert_eq!(&bus.sram_snapshot()[..3], b"NES");
     }
 
     #[test]
