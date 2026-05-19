@@ -1131,6 +1131,10 @@ impl Config {
             "gba_bios_path" => {
                 self.gba.apply_config_value("gba_bios_path", value)?;
             }
+            "gba_trace_cpu" | "gba_trace_bus" | "gba_trace_dma" | "gba_trace_swi"
+            | "gba_trace_mgba_log" => {
+                self.gba.apply_config_value(&key, value)?;
+            }
             _ => {} // Unknown keys are silently ignored (may have been handled by sub-configs)
         }
         Ok(())
@@ -2599,6 +2603,25 @@ mod tests {
         config.apply_config_value("trace-nestest", "true").unwrap();
         assert!(config.frontend.tracing.enabled);
         assert!(config.frontend.tracing.nestest);
+    }
+
+    #[test]
+    fn test_config_file_gba_trace_channels() {
+        let mut config = Config::default();
+
+        config.apply_config_value("gba-trace-cpu", "1").unwrap();
+        config.apply_config_value("gba-trace-bus", "2").unwrap();
+        config.apply_config_value("gba-trace-dma", "3").unwrap();
+        config.apply_config_value("gba-trace-swi", "4").unwrap();
+        config
+            .apply_config_value("gba-trace-mgba-log", "9")
+            .unwrap();
+
+        assert_eq!(config.gba.tracing.cpu, 1);
+        assert_eq!(config.gba.tracing.bus, 2);
+        assert_eq!(config.gba.tracing.dma, 3);
+        assert_eq!(config.gba.tracing.swi, 4);
+        assert_eq!(config.gba.tracing.mgba_log, 5);
     }
 
     #[test]
