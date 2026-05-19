@@ -65,6 +65,8 @@ pub const FRAMEBUFFER_BYTES: usize =
 /// Marker value for a transparent pixel in per-layer color buffers.
 /// Valid BGR555 colors use bits 0-14 only, so bit 15 set means "no pixel".
 const TRANSPARENT: u16 = 0x8000;
+/// Mode 3 bitmap frame base in VRAM.
+const MODE3_FRAME_BASE: usize = 0x0000;
 /// Mode 5 bitmap width in pixels.
 const MODE5_WIDTH: usize = 160;
 /// Mode 5 bitmap height in pixels.
@@ -1147,7 +1149,6 @@ impl Ppu {
         self.composite_scanline(y, pram, vram, oam, &layers);
     }
 
-    #[allow(clippy::needless_range_loop)]
     fn render_affine_bitmap_layer(
         &self,
         y: u32,
@@ -1225,7 +1226,7 @@ impl Ppu {
                 vram,
                 SCREEN_WIDTH as usize,
                 SCREEN_HEIGHT as usize,
-                0,
+                MODE3_FRAME_BASE,
             );
             let prio = (self.bg_cnt[2] & 3) as u8;
             layers.push((2, prio, buf));
