@@ -232,10 +232,11 @@ impl Apu {
             }
 
             // Advance PSG internal counter and accumulate at 262.144kHz rate.
-            // Note: `step` is bounded by `psg_remaining` so this fires at most once per
-            // loop iteration, but we use `while` for defensive correctness.
+            // `step` is bounded by `psg_remaining` above, so `psg_counter + step`
+            // never exceeds PSG_INTERNAL_PERIOD and this fires at most once per
+            // loop iteration — matching the same pattern used for fs_counter.
             self.psg_counter += step;
-            while self.psg_counter >= PSG_INTERNAL_PERIOD {
+            if self.psg_counter >= PSG_INTERNAL_PERIOD {
                 self.psg_counter -= PSG_INTERNAL_PERIOD;
                 self.accumulate_psg();
             }
@@ -1870,9 +1871,9 @@ mod tests {
 
     /// Output rate used in PSG timing tests: exactly half the PSG internal rate.
     ///
-    /// 131.072kHz = PSG_INTERNAL_RATE / 2 → 128 GBA cycles per output sample,
+    /// 128 = PSG_INTERNAL_PERIOD * 2 GBA cycles per output sample,
     /// so each output sample spans exactly 2 PSG internal periods.
-    const PSG_TEST_SAMPLE_RATE: f32 = (GBA_CLOCK_HZ / PSG_INTERNAL_PERIOD as f32) / 2.0;
+    const PSG_TEST_SAMPLE_RATE: f32 = GBA_CLOCK_HZ / 128.0;
 
     /// RED: PSG channels must be sampled internally at 262.144kHz (one sample
     /// every 64 GBA cycles), not at the output rate.
