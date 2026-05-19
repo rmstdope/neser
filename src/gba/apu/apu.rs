@@ -25,6 +25,12 @@ const FIFO_SCALE: f32 = 512.0; // ±0x200
 /// Maximum value in the unsigned 10-bit output range [0, 0x3FF].
 const MAX_10BIT: u32 = 0x3FF;
 
+/// Base hardware PWM output rate (Hz) for SOUNDBIAS resolution = 0 (9-bit, 32.768 kHz).
+///
+/// Per GBATek: each resolution step doubles the rate:
+///   0 → 32 768 Hz, 1 → 65 536 Hz, 2 → 131 072 Hz, 3 → 262 144 Hz.
+const SOUNDBIAS_PWM_BASE_HZ: f32 = 32_768.0;
+
 // ── Duty cycle waveforms ──────────────────────────────────────────────────────
 
 /// 8-step duty-cycle waveforms (identical to DMG APU).
@@ -133,6 +139,10 @@ impl Apu {
     /// Set the output sample rate in Hz (default: 44 100).
     ///
     /// Invalid values (0, negative, NaN, infinity) are silently ignored.
+    ///
+    /// Note: this rate is independent of the SOUNDBIAS resolution setting.
+    /// On real hardware, SOUNDBIAS bits 15-14 also control the PWM output rate;
+    /// see [`soundbias_pwm_rate_hz`](Apu::soundbias_pwm_rate_hz) for that value.
     pub fn set_sample_rate(&mut self, rate: f32) {
         if !rate.is_finite() || rate <= 0.0 {
             return;
@@ -143,6 +153,30 @@ impl Apu {
     /// Returns the configured output sample rate in Hz.
     pub fn sample_rate(&self) -> f32 {
         GBA_CLOCK_HZ / self.cycles_per_sample
+    }
+
+    /// Returns the hardware PWM output rate in Hz implied by the current
+    /// SOUNDBIAS resolution setting (bits 15-14).
+    ///
+    /// Per GBATek (gbatek-gba-sound-control-registers.htm), SOUNDBIAS bits
+    /// 15-14 control both amplitude resolution AND the PWM sampling cycle:
+    ///
+    /// | Bits 15-14 | Resolution | Hardware PWM rate |
+    /// |------------|------------|-------------------|
+    /// | 0b00       | 9-bit      | 32 768 Hz         |
+    /// | 0b01       | 8-bit      | 65 536 Hz         |
+    /// | 0b10       | 7-bit      | 131 072 Hz        |
+    /// | 0b11       | 6-bit      | 262 144 Hz        |
+    ///
+    /// **Known simplification**: this emulator does **not** adjust the actual
+    /// output sample rate (configured via [`set_sample_rate`](Apu::set_sample_rate))
+    /// when the resolution changes.  The quantisation effect (amplitude
+    /// truncation, implemented in `apply_soundbias`) is the audible part;
+    /// the sampling-rate shift primarily affects ultrasonic content above the
+    /// range of most speakers and is therefore intentionally omitted.
+    pub fn soundbias_pwm_rate_hz(&self) -> f32 {
+        let resolution = u32::from((self.soundbias >> 14) & 0x3);
+        SOUNDBIAS_PWM_BASE_HZ * (1_u32 << resolution) as f32
     }
 
     /// Returns `true` when an output sample is ready to be collected.
@@ -695,6 +729,11 @@ impl Apu {
     /// 3. Quantise: clear the low (resolution + 1) bits, where resolution is
     ///    SOUNDBIAS bits 15-14 (0 → 9-bit, …, 3 → 6-bit).
     /// 4. Subtract bias and normalise to [−1.0, 1.0] by dividing by FIFO_SCALE.
+    ///
+    /// **Known simplification**: on real hardware, SOUNDBIAS bits 15-14 also
+    /// select the PWM output rate (see [`soundbias_pwm_rate_hz`](Apu::soundbias_pwm_rate_hz)).
+    /// This emulator does not alter the configured output sample rate when the
+    /// resolution changes — only the quantisation is applied here.
     fn apply_soundbias(&self, sample: f32) -> f32 {
         let bias = f32::from((self.soundbias >> 1) & 0x1FF);
         let resolution = u32::from((self.soundbias >> 14) & 0x3);
@@ -1793,6 +1832,83 @@ mod tests {
         assert_eq!(
             apu.ch3.wave_ram[1], [0xBB; 16],
             "bank 1 should survive power-off"
+        );
+    }
+
+    // ── SOUNDBIAS PWM rate tests ──────────────────────────────────────────────
+
+    /// Per GBATek, SOUNDBIAS bits 15-14 (resolution) select both amplitude
+    /// resolution AND the hardware PWM output rate:
+    ///   0 → 32 768 Hz, 1 → 65 536 Hz, 2 → 131 072 Hz, 3 → 262 144 Hz.
+    ///
+    /// `soundbias_pwm_rate_hz()` must return the correct hardware rate for each
+    /// resolution setting.
+    #[test]
+    fn test_soundbias_pwm_rate_resolution_0_is_32768hz() {
+        let mut apu = Apu::new();
+        // Bits 15-14 = 0b00 → resolution 0 → 32 768 Hz.
+        apu.write16(0x0400_0088, 0x0200); // default bias, resolution 0
+        assert_eq!(
+            apu.soundbias_pwm_rate_hz(),
+            32_768.0,
+            "resolution 0 must yield 32 768 Hz PWM rate"
+        );
+    }
+
+    #[test]
+    fn test_soundbias_pwm_rate_resolution_1_is_65536hz() {
+        let mut apu = Apu::new();
+        // Bits 15-14 = 0b01 → resolution 1 → 65 536 Hz.
+        apu.write16(0x0400_0088, 0x4200); // resolution 1, default bias
+        assert_eq!(
+            apu.soundbias_pwm_rate_hz(),
+            65_536.0,
+            "resolution 1 must yield 65 536 Hz PWM rate"
+        );
+    }
+
+    #[test]
+    fn test_soundbias_pwm_rate_resolution_2_is_131072hz() {
+        let mut apu = Apu::new();
+        // Bits 15-14 = 0b10 → resolution 2 → 131 072 Hz.
+        apu.write16(0x0400_0088, 0x8200); // resolution 2, default bias
+        assert_eq!(
+            apu.soundbias_pwm_rate_hz(),
+            131_072.0,
+            "resolution 2 must yield 131 072 Hz PWM rate"
+        );
+    }
+
+    #[test]
+    fn test_soundbias_pwm_rate_resolution_3_is_262144hz() {
+        let mut apu = Apu::new();
+        // Bits 15-14 = 0b11 → resolution 3 → 262 144 Hz.
+        apu.write16(0x0400_0088, 0xC200); // resolution 3, default bias
+        assert_eq!(
+            apu.soundbias_pwm_rate_hz(),
+            262_144.0,
+            "resolution 3 must yield 262 144 Hz PWM rate"
+        );
+    }
+
+    /// Known simplification: the configured output sample rate (set via
+    /// `set_sample_rate()`) must NOT change when SOUNDBIAS resolution bits
+    /// 15-14 are written.  The hardware PWM rate (returned by
+    /// `soundbias_pwm_rate_hz()`) is intentionally decoupled from the
+    /// emulated output rate.
+    #[test]
+    fn test_soundbias_resolution_does_not_change_output_sample_rate() {
+        let mut apu = Apu::new();
+        apu.set_sample_rate(44_100.0);
+        let rate_before = apu.sample_rate();
+
+        // Write resolution 3 (262 kHz hardware PWM rate).
+        apu.write16(0x0400_0088, 0xC200);
+
+        assert_eq!(
+            apu.sample_rate(),
+            rate_before,
+            "SOUNDBIAS resolution change must not alter the configured output sample rate"
         );
     }
 }
