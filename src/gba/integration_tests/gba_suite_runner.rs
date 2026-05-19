@@ -689,7 +689,13 @@ pub fn mgba_memory_diagnostic_from_sram(
     framebuffer_crc32: u32,
     sram: &[u8],
 ) -> MgbaMemoryDiagnosticResult {
-    let log = parse_mgba_memory_sram_log(sram);
+    mgba_memory_diagnostic_from_log(framebuffer_crc32, parse_mgba_memory_sram_log(sram))
+}
+
+fn mgba_memory_diagnostic_from_log(
+    framebuffer_crc32: u32,
+    log: MgbaMemoryLog,
+) -> MgbaMemoryDiagnosticResult {
     MgbaMemoryDiagnosticResult {
         framebuffer_crc32,
         passed_count: log.passed_count,
@@ -700,19 +706,68 @@ pub fn mgba_memory_diagnostic_from_sram(
 }
 
 fn mgba_memory_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
-    mgba_memory_diagnostic_from_sram(gba.screen_crc32(), gba.bus().sram_snapshot())
+    let log = parse_mgba_memory_sram_log(gba.bus().mgba_log_snapshot().as_bytes());
+    mgba_memory_diagnostic_from_log(gba.screen_crc32(), log)
+}
+
+pub fn run_mgba_memory_diagnostics() -> MgbaMemoryDiagnosticResult {
+    let (mut gba, _rom) = boot_mgba_suite();
+    let mut cycles: u64 = 0;
+
+    for _ in 0..10 {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "mgba Memory diagnostics: timed out during initial boot"
+        );
+        gba.clear_ready_to_render();
+    }
+
+    press_button(&mut gba, &mut cycles, BTN_A);
+
+    const STABLE_FRAMES: u32 = 30;
+    const MAX_SUITE_FRAMES: u32 = 2000;
+
+    assert!(
+        run_until_frame_ready(&mut gba, &mut cycles),
+        "mgba Memory diagnostics: timed out getting initial frame"
+    );
+    gba.clear_ready_to_render();
+    let initial_crc = gba.screen_crc32();
+
+    let mut prev_crc: u32 = initial_crc;
+    let mut stable_count: u32 = 1;
+    let mut saw_change_from_initial = false;
+
+    for frame in 1..MAX_SUITE_FRAMES {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "mgba Memory diagnostics: timed out at frame {frame}"
+        );
+        gba.clear_ready_to_render();
+
+        let crc = gba.screen_crc32();
+        if !saw_change_from_initial {
+            if crc != initial_crc {
+                saw_change_from_initial = true;
+                prev_crc = crc;
+                stable_count = 1;
+            }
+        } else if crc == prev_crc {
+            stable_count += 1;
+            if stable_count >= STABLE_FRAMES {
+                break;
+            }
+        } else {
+            prev_crc = crc;
+            stable_count = 1;
+        }
+    }
+
+    mgba_memory_diagnostic_from_gba(&gba)
 }
 
 pub fn parse_mgba_memory_sram_log(bytes: &[u8]) -> MgbaMemoryLog {
-    let text_bytes: Vec<u8> = bytes
-        .iter()
-        .copied()
-        .take_while(|&byte| byte != 0 && byte != 0xFF)
-        .filter(|byte| byte.is_ascii_graphic() || matches!(byte, b' ' | b'\n' | b'\r' | b'\t'))
-        .collect();
-    let raw_log = String::from_utf8_lossy(&text_bytes)
-        .trim_end_matches(['\r', '\n', '\t', ' '])
-        .to_string();
+    let raw_log = extract_mgba_log_text(bytes);
     let (passed_count, total_count) = parse_mgba_score(&raw_log);
     let failures = raw_log
         .lines()
@@ -726,6 +781,33 @@ pub fn parse_mgba_memory_sram_log(bytes: &[u8]) -> MgbaMemoryLog {
         total_count,
         failures,
     }
+}
+
+fn extract_mgba_log_text(bytes: &[u8]) -> String {
+    let mut segments = Vec::new();
+    let mut current = Vec::new();
+
+    for &byte in bytes {
+        if byte.is_ascii_graphic() || matches!(byte, b' ' | b'\n' | b'\r' | b'\t') {
+            current.push(byte);
+        } else if !current.is_empty() {
+            segments.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+
+    segments
+        .into_iter()
+        .map(|segment| {
+            String::from_utf8_lossy(&segment)
+                .trim_matches(['\r', '\n', '\t', ' '])
+                .to_string()
+        })
+        .filter(|segment| !segment.is_empty())
+        .find(|segment| segment.contains("Memory") && parse_mgba_score(segment).0.is_some())
+        .unwrap_or_default()
 }
 
 fn parse_mgba_score(raw_log: &str) -> (Option<u32>, Option<u32>) {

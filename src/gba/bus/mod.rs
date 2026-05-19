@@ -76,6 +76,14 @@ const WAIT_S1_LUT: [u32; 2] = [4, 1];
 /// LUT for ROM WS2 sequential access (1-bit index → cycles).
 const WAIT_S2_LUT: [u32; 2] = [8, 1];
 
+const MGBA_DEBUG_STRING: u32 = 0x04FF_F600;
+const MGBA_DEBUG_FLAGS: u32 = 0x04FF_F700;
+const MGBA_DEBUG_ENABLE: u32 = 0x04FF_F780;
+const MGBA_DEBUG_STRING_LEN: usize = 0x100;
+const MGBA_DEBUG_ENABLE_VALUE: u16 = 0xC0DE;
+const MGBA_DEBUG_OPEN_VALUE: u16 = 0x1DEA;
+const MGBA_DEBUG_SEND_FLAG: u16 = 0x0100;
+
 impl Default for Waitstates {
     fn default() -> Self {
         Self::new()
@@ -227,6 +235,12 @@ pub struct GbaBus {
     dma_latch: u32,
     /// GBA-specific trace channel configuration.
     trace_config: GbaTraceConfig,
+    /// mGBA debug console string buffer (`0x04FFF600`-`0x04FFF6FF`).
+    mgba_debug_string: [u8; MGBA_DEBUG_STRING_LEN],
+    /// Captured mGBA debug console output emitted via `0x04FFF700`.
+    mgba_log: String,
+    /// Whether the mGBA debug console has been enabled by writing `0xC0DE`.
+    mgba_debug_enabled: bool,
     /// Whether the BIOS is locked. After the boot ROM finishes executing,
     /// BIOS reads from outside the BIOS region return open-bus instead of
     /// the BIOS contents.
@@ -307,6 +321,9 @@ impl GbaBus {
             last_bus_value: 0,
             dma_latch: 0,
             trace_config: GbaTraceConfig::default(),
+            mgba_debug_string: [0; MGBA_DEBUG_STRING_LEN],
+            mgba_log: String::new(),
+            mgba_debug_enabled: false,
             bios_locked: false,
             bios_image_loaded: false,
             waitstates: Waitstates::new(),
@@ -337,6 +354,11 @@ impl GbaBus {
     /// Return a read-only snapshot of the cartridge SRAM mirror.
     pub fn sram_snapshot(&self) -> &[u8] {
         &self.sram
+    }
+
+    /// Return captured mGBA debug console output.
+    pub fn mgba_log_snapshot(&self) -> &str {
+        &self.mgba_log
     }
 
     #[cfg(test)]
@@ -698,6 +720,61 @@ impl GbaBus {
         self.last_bus_value
     }
 
+    fn try_read_mgba_debug16(&self, addr: u32) -> Option<u16> {
+        match addr {
+            MGBA_DEBUG_ENABLE if self.mgba_debug_enabled => Some(MGBA_DEBUG_OPEN_VALUE),
+            _ => None,
+        }
+    }
+
+    fn write_mgba_debug8(&mut self, addr: u32, value: u8) -> bool {
+        if (MGBA_DEBUG_STRING..MGBA_DEBUG_STRING + MGBA_DEBUG_STRING_LEN as u32).contains(&addr) {
+            self.mgba_debug_string[(addr - MGBA_DEBUG_STRING) as usize] = value;
+            return true;
+        }
+        false
+    }
+
+    fn write_mgba_debug16(&mut self, addr: u32, value: u16) -> bool {
+        if addr == MGBA_DEBUG_ENABLE {
+            self.mgba_debug_enabled = value == MGBA_DEBUG_ENABLE_VALUE;
+            return true;
+        }
+        if addr == MGBA_DEBUG_FLAGS {
+            if self.mgba_debug_enabled && value & MGBA_DEBUG_SEND_FLAG != 0 {
+                let len = self
+                    .mgba_debug_string
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(MGBA_DEBUG_STRING_LEN);
+                let text = String::from_utf8_lossy(&self.mgba_debug_string[..len]);
+                if self.trace_config.mgba_log > 0 {
+                    emit_gba_bus_trace_line(format!("[GBA MGBA] {text}"));
+                }
+                self.mgba_log.push_str(&text);
+                self.mgba_debug_string.fill(0);
+            }
+            return true;
+        }
+        if (MGBA_DEBUG_STRING..MGBA_DEBUG_STRING + MGBA_DEBUG_STRING_LEN as u32).contains(&addr) {
+            let bytes = value.to_le_bytes();
+            self.write_mgba_debug8(addr, bytes[0]);
+            self.write_mgba_debug8(addr + 1, bytes[1]);
+            return true;
+        }
+        false
+    }
+
+    fn write_mgba_debug32(&mut self, addr: u32, value: u32) -> bool {
+        if (MGBA_DEBUG_STRING..MGBA_DEBUG_STRING + MGBA_DEBUG_STRING_LEN as u32).contains(&addr) {
+            for (offset, byte) in value.to_le_bytes().into_iter().enumerate() {
+                self.write_mgba_debug8(addr + offset as u32, byte);
+            }
+            return true;
+        }
+        false
+    }
+
     /// Map the cartridge ROM with mirroring across the three wait-state
     /// regions. Returns `None` when no cartridge is inserted or when the
     /// offset falls beyond the ROM image — callers substitute the GBATek
@@ -759,28 +836,30 @@ impl Bus for GbaBus {
             0x2 => read_le_u32(&self.ewram, aligned as usize),
             0x3 => read_le_u32(&self.iwram, aligned as usize),
             0x4 => {
-                // aligned is 4-byte aligned; aligned16 == aligned for 32-bit reads
-                let aligned16 = aligned;
-                if (0x0400_0060..=0x0400_00A6).contains(&aligned16) {
-                    let lo = self.apu.read16(aligned16) as u32;
-                    // Only read the upper halfword if it is also within range.
-                    let hi = if aligned16 + 2 <= 0x0400_00A6 {
-                        self.apu.read16(aligned16 + 2) as u32
-                    } else {
-                        0
-                    };
-                    lo | (hi << 16)
+                if let Some(value) = self.try_read_mgba_debug16(aligned) {
+                    value as u32 | ((value as u32) << 16)
                 } else {
-                    self.io
-                        .try_read32(
-                            aligned,
-                            &self.ic,
-                            &self.timers,
-                            &self.dma,
-                            &self.ppu,
-                            &self.keypad,
-                        )
-                        .unwrap_or_else(|| self.open_bus_word())
+                    if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
+                        let lo = self.apu.read16(aligned) as u32;
+                        // Only read the upper halfword if it is also within range.
+                        let hi = if aligned + 2 <= 0x0400_00A6 {
+                            self.apu.read16(aligned + 2) as u32
+                        } else {
+                            0
+                        };
+                        lo | (hi << 16)
+                    } else {
+                        self.io
+                            .try_read32(
+                                aligned,
+                                &self.ic,
+                                &self.timers,
+                                &self.dma,
+                                &self.ppu,
+                                &self.keypad,
+                            )
+                            .unwrap_or_else(|| self.open_bus_word())
+                    }
                 }
             }
             0x5 => read_le_u32(&self.pram, aligned as usize),
@@ -815,7 +894,9 @@ impl Bus for GbaBus {
             0x2 => read_le_u16(&self.ewram, aligned as usize),
             0x3 => read_le_u16(&self.iwram, aligned as usize),
             0x4 => {
-                if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
+                if let Some(value) = self.try_read_mgba_debug16(aligned) {
+                    value
+                } else if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
                     self.apu.read16(aligned)
                 } else if aligned == 0x0400_0128 {
                     self.sio.read_siocnt()
@@ -872,28 +953,36 @@ impl Bus for GbaBus {
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE],
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE],
             0x4 => {
-                if addr == 0x0400_0410 {
-                    self.undoc_0x410
-                } else {
-                    let aligned_hw = addr & !0x1;
-                    if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
-                        let hw = self.apu.read16(aligned_hw);
-                        if addr & 1 == 0 {
-                            hw as u8
-                        } else {
-                            (hw >> 8) as u8
-                        }
+                if let Some(value) = self.try_read_mgba_debug16(addr & !1) {
+                    if addr & 1 == 0 {
+                        value as u8
                     } else {
-                        self.io
-                            .try_read8(
-                                addr,
-                                &self.ic,
-                                &self.timers,
-                                &self.dma,
-                                &self.ppu,
-                                &self.keypad,
-                            )
-                            .unwrap_or_else(|| self.open_bus_byte(addr))
+                        (value >> 8) as u8
+                    }
+                } else {
+                    if addr == 0x0400_0410 {
+                        self.undoc_0x410
+                    } else {
+                        let aligned_hw = addr & !0x1;
+                        if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
+                            let hw = self.apu.read16(aligned_hw);
+                            if addr & 1 == 0 {
+                                hw as u8
+                            } else {
+                                (hw >> 8) as u8
+                            }
+                        } else {
+                            self.io
+                                .try_read8(
+                                    addr,
+                                    &self.ic,
+                                    &self.timers,
+                                    &self.dma,
+                                    &self.ppu,
+                                    &self.keypad,
+                                )
+                                .unwrap_or_else(|| self.open_bus_byte(addr))
+                        }
                     }
                 }
             }
@@ -921,6 +1010,9 @@ impl Bus for GbaBus {
             0x2 => write_le_u32(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u32(&mut self.iwram, aligned as usize, value),
             0x4 => {
+                if self.write_mgba_debug32(aligned, value) {
+                    return;
+                }
                 // FIFO A and B need full 32-bit word writes.
                 if aligned == 0x0400_00A0 {
                     self.apu.write_fifo_a_word(value);
@@ -995,6 +1087,9 @@ impl Bus for GbaBus {
             0x2 => write_le_u16(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u16(&mut self.iwram, aligned as usize, value),
             0x4 => {
+                if self.write_mgba_debug16(aligned, value) {
+                    return;
+                }
                 if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
                     self.apu.write16(aligned, value);
                 } else {
@@ -1060,6 +1155,9 @@ impl Bus for GbaBus {
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE] = value,
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE] = value,
             0x4 => {
+                if self.write_mgba_debug8(addr, value) {
+                    return;
+                }
                 if addr == 0x0400_0410 {
                     self.undoc_0x410 = value;
                 } else if addr == 0x0400_0301 {
@@ -1421,6 +1519,28 @@ mod tests {
         let lines = take_gba_bus_trace_lines_for_tests();
 
         assert_eq!(lines, vec!["[GBA BUS] W8 03000000=12".to_string()]);
+    }
+
+    #[test]
+    fn mgba_debug_console_open_returns_expected_magic() {
+        let mut bus = GbaBus::new();
+
+        bus.write16(MGBA_DEBUG_ENABLE, MGBA_DEBUG_ENABLE_VALUE);
+
+        assert_eq!(bus.read16(MGBA_DEBUG_ENABLE), MGBA_DEBUG_OPEN_VALUE);
+    }
+
+    #[test]
+    fn mgba_debug_console_captures_string_when_flags_send() {
+        let mut bus = GbaBus::new();
+        bus.write16(MGBA_DEBUG_ENABLE, MGBA_DEBUG_ENABLE_VALUE);
+
+        for (offset, byte) in b"Memory tests: 1436/1552\n\0".iter().enumerate() {
+            bus.write8(MGBA_DEBUG_STRING + offset as u32, *byte);
+        }
+        bus.write16(MGBA_DEBUG_FLAGS, MGBA_DEBUG_SEND_FLAG | 0x0002);
+
+        assert_eq!(bus.mgba_log_snapshot(), "Memory tests: 1436/1552\n");
     }
 
     #[test]
