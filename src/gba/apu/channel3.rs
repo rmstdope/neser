@@ -223,7 +223,7 @@ mod tests {
             ..Channel3::default()
         };
         let got = ch3.output();
-        let d = ((1_u16 * 3) / 4) as f32;
+        let d = (3_u16 / 4) as f32;
         let expected = d / 7.5 - 1.0;
         assert!(
             (got - expected).abs() < 1e-5,

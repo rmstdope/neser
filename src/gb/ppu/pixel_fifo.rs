@@ -544,6 +544,142 @@ impl Default for BgScxSamplerConfig {
     }
 }
 
+/// Tracks the SCY register value sampled at specific background tile-fetch stages.
+///
+/// On DMG and CGB-C, SCY is read during the **B** (tile map), **0** (low byte), and **1**
+/// (high byte) fetch stages. Changing SCY between stages allows mixing tile-map rows and
+/// tile-data rows, producing the characteristic scanline-scroll glitch.
+///
+/// On CGB-D (and newer), SCY is only read at the **B** stage (`b_stage_only = true`), so
+/// no inter-stage mixing can occur.
+///
+/// The sampler mirrors the `BgScxSampler` step machine. The `fetch_start_dots` is set to
+/// `SCX_LOW_BITS_SAMPLE_DOTS + 1` for DMG and `SCX_LOW_BITS_SAMPLE_DOTS + 3` for CGB,
+/// placing the first B-stage one or two dots later than the SCX tile-column latch.
+/// This offset was determined empirically to best match mealybug tearoom reference images.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BgScySampler {
+    step: BgScxFetchStep,
+    step_dots: u8,
+    fetch_start_dots: u16,
+    /// When `true` (CGB-D), SCY is only latched at the B stage; all data latches equal
+    /// `scy_map` for the same tile (no inter-stage mixing).
+    b_stage_only: bool,
+    latched_scy_map: u8,
+    /// SCY latched at TileDataLow (stage 0); used for low bitplane row-within-tile.
+    latched_scy_data_low: u8,
+    /// SCY latched at TileDataHigh (stage 1); used for high bitplane row-within-tile.
+    latched_scy_data_high: u8,
+    visible_scy_map: u8,
+    visible_scy_data_low: u8,
+    visible_scy_data_high: u8,
+    visible_pixels_remaining: u8,
+}
+
+impl BgScySampler {
+    fn new(scy: u8, fetch_start_dots: u16, b_stage_only: bool) -> Self {
+        Self {
+            step: BgScxFetchStep::GetTile,
+            step_dots: 0,
+            fetch_start_dots,
+            b_stage_only,
+            latched_scy_map: scy,
+            latched_scy_data_low: scy,
+            latched_scy_data_high: scy,
+            visible_scy_map: scy,
+            visible_scy_data_low: scy,
+            visible_scy_data_high: scy,
+            visible_pixels_remaining: 0,
+        }
+    }
+
+    fn reset(&mut self, scy: u8, fetch_start_dots: u16, b_stage_only: bool) {
+        *self = Self::new(scy, fetch_start_dots, b_stage_only);
+    }
+
+    fn tick(&mut self, elapsed: u16, scy: u8) {
+        if elapsed < self.fetch_start_dots {
+            return;
+        }
+        match self.step {
+            BgScxFetchStep::GetTile => {
+                if self.step_dots == 0 {
+                    self.latched_scy_map = scy;
+                    if self.b_stage_only {
+                        self.latched_scy_data_low = scy;
+                        self.latched_scy_data_high = scy;
+                    }
+                }
+                self.advance_step(BgScxFetchStep::TileDataLow);
+            }
+            BgScxFetchStep::TileDataLow => {
+                if self.step_dots == 0 && !self.b_stage_only {
+                    self.latched_scy_data_low = scy;
+                    self.latched_scy_data_high = scy;
+                }
+                self.advance_step(BgScxFetchStep::TileDataHigh);
+            }
+            BgScxFetchStep::TileDataHigh => {
+                if self.step_dots == 0 && !self.b_stage_only {
+                    // Stage 1 independently re-samples SCY for the high tile byte.
+                    self.latched_scy_data_high = scy;
+                }
+                self.advance_step(BgScxFetchStep::Sleep);
+            }
+            BgScxFetchStep::Sleep => {
+                self.step_dots += 1;
+                if self.step_dots == 2 {
+                    self.step = BgScxFetchStep::Push;
+                    self.step_dots = 0;
+                    self.push_latched_tile();
+                }
+            }
+            BgScxFetchStep::Push => self.push_latched_tile(),
+        }
+    }
+
+    fn push_latched_tile(&mut self) {
+        if self.visible_pixels_remaining == 0 {
+            self.visible_scy_map = self.latched_scy_map;
+            self.visible_scy_data_low = self.latched_scy_data_low;
+            self.visible_scy_data_high = self.latched_scy_data_high;
+            self.visible_pixels_remaining = OBJ_PIXELS_PER_FETCH;
+            self.step = BgScxFetchStep::GetTile;
+            self.step_dots = 0;
+        }
+    }
+
+    fn advance_step(&mut self, next_step: BgScxFetchStep) {
+        self.step_dots += 1;
+        if self.step_dots == 2 {
+            self.step = next_step;
+            self.step_dots = 0;
+        }
+    }
+
+    fn current_scy_map(&self) -> u8 {
+        self.visible_scy_map
+    }
+
+    fn current_scy_data_low(&self) -> u8 {
+        self.visible_scy_data_low
+    }
+
+    fn current_scy_data_high(&self) -> u8 {
+        self.visible_scy_data_high
+    }
+
+    fn consume_pixel(&mut self) {
+        self.visible_pixels_remaining = self.visible_pixels_remaining.saturating_sub(1);
+    }
+}
+
+impl Default for BgScySampler {
+    fn default() -> Self {
+        Self::new(0, SCX_LOW_BITS_SAMPLE_DOTS, false)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PixelFifoRenderer {
     active: bool,
@@ -590,6 +726,31 @@ pub struct PixelFifoRenderer {
     bg_scx_sampler: BgScxSampler,
     #[serde(default)]
     pending_scx_sample_override: Option<u8>,
+    /// SCY value sampled at the B (tile-map) fetch stage for the current tile.
+    #[serde(default)]
+    bg_fetch_scy_map: u8,
+    /// SCY value sampled at the 0 (TileDataLow) fetch stage; used for low-bitplane pixel row.
+    /// Equals `bg_fetch_scy_map` on CGB-D (B-stage-only model).
+    #[serde(default)]
+    bg_fetch_scy_data_low: u8,
+    /// SCY value sampled at the 1 (TileDataHigh) fetch stage; used for high-bitplane pixel row.
+    /// Equals `bg_fetch_scy_map` on CGB-D (B-stage-only model).
+    #[serde(default)]
+    bg_fetch_scy_data_high: u8,
+    #[serde(default)]
+    bg_scy_sampler: BgScySampler,
+    /// Effective SCY seen by the PPU tile fetcher. On DMG updated immediately on write;
+    /// on CGB updated after the 2-T-cycle write delay.
+    #[serde(default)]
+    effective_scy: u8,
+    /// Pending CGB SCY write: `(dot_when_active, new_value)`.
+    /// When `elapsed >= dot_when_active`, `effective_scy` is updated to `new_value`.
+    #[serde(default)]
+    pending_cgb_scy: Option<(u16, u8)>,
+    /// When `true` (CGB-D and newer), SCY is only sampled at the B (GetTile) stage;
+    /// data latches always equal `scy_map` for each tile (no inter-stage mixing).
+    #[serde(default)]
+    scy_b_stage_only: bool,
     #[serde(default)]
     pending_obj_stall_dots: u16,
     #[serde(default)]
@@ -661,6 +822,13 @@ impl PixelFifoRenderer {
             scx_low_bits_sampled: true,
             bg_scx_sampler: BgScxSampler::default(),
             pending_scx_sample_override: None,
+            bg_fetch_scy_map: 0,
+            bg_fetch_scy_data_low: 0,
+            bg_fetch_scy_data_high: 0,
+            bg_scy_sampler: BgScySampler::default(),
+            effective_scy: 0,
+            pending_cgb_scy: None,
+            scy_b_stage_only: false,
             pending_obj_stall_dots: 0,
             obj_stall_events: Vec::new(),
             next_obj_stall_event: 0,
@@ -721,6 +889,18 @@ impl PixelFifoRenderer {
         self.bg_scx_sampler
             .reset(registers.scx, BgScxSamplerConfig::for_mode(cgb_mode));
         self.pending_scx_sample_override = None;
+        self.effective_scy = registers.scy;
+        self.pending_cgb_scy = None;
+        let scy_fetch_start_dots = if cgb_mode {
+            SCX_LOW_BITS_SAMPLE_DOTS + 3
+        } else {
+            SCX_LOW_BITS_SAMPLE_DOTS + 1
+        };
+        self.bg_scy_sampler
+            .reset(registers.scy, scy_fetch_start_dots, self.scy_b_stage_only);
+        self.bg_fetch_scy_map = registers.scy;
+        self.bg_fetch_scy_data_low = registers.scy;
+        self.bg_fetch_scy_data_high = registers.scy;
         self.fine_scroll_delay_dots = u16::from(self.scanline_start_scx_low);
         self.pending_obj_stall_dots = 0;
         self.next_obj_stall_event = 0;
@@ -797,18 +977,23 @@ impl PixelFifoRenderer {
         }
 
         let elapsed = dot.saturating_sub(self.mode3_start_dot);
+        self.update_effective_scy(elapsed);
+        let effective_scy = self.effective_scy;
         self.sample_scanline_start_scx_low(elapsed, registers.scx);
         let will_sample_scx = self.bg_scx_sampler.will_sample_scx(elapsed);
         let fetch_scx = self.scx_for_fetch_sample(elapsed, registers.scx);
         if elapsed < FETCHER_STARTUP_DOTS {
             self.bg_scx_sampler.tick(elapsed, fetch_scx);
             self.clear_pending_scx_sample_override(will_sample_scx);
+            self.bg_scy_sampler.tick(elapsed, effective_scy);
             return None;
         }
         if elapsed < FETCHER_STARTUP_DOTS + self.fine_scroll_delay_dots {
             self.bg_scx_sampler.tick(elapsed, fetch_scx);
             self.clear_pending_scx_sample_override(will_sample_scx);
+            self.bg_scy_sampler.tick(elapsed, effective_scy);
             self.consume_bg_scx_pixel();
+            self.bg_scy_sampler.consume_pixel();
             return None;
         }
         self.queue_stall_events_for_next_pixel(registers.lcdc);
@@ -816,6 +1001,7 @@ impl PixelFifoRenderer {
             if !self.bg_scx_sampler.pauses_on_obj_fetch() {
                 self.bg_scx_sampler.tick(elapsed, fetch_scx);
                 self.clear_pending_scx_sample_override(will_sample_scx);
+                self.bg_scy_sampler.tick(elapsed, effective_scy);
             }
             self.pending_obj_stall_dots -= 1;
             if self.pending_obj_stall_dots == 0 {
@@ -827,8 +1013,10 @@ impl PixelFifoRenderer {
 
         self.bg_scx_sampler.tick(elapsed, fetch_scx);
         self.clear_pending_scx_sample_override(will_sample_scx);
+        self.bg_scy_sampler.tick(elapsed, effective_scy);
         let x = u32::from(self.next_x);
         self.update_bg_fetch_scx();
+        self.update_bg_fetch_scy();
         if cgb_mode && !dmg_compat {
             self.render_cgb_pixel(
                 x,
@@ -879,8 +1067,15 @@ impl PixelFifoRenderer {
         self.active
     }
 
-    pub(super) fn fixup_after_state_load(&mut self, cgb_mode: bool) {
+    pub(super) fn fixup_after_state_load(&mut self, cgb_mode: bool, scy_b_stage_only: bool) {
         self.bg_scx_sampler.config = BgScxSamplerConfig::for_mode(cgb_mode);
+        self.scy_b_stage_only = scy_b_stage_only;
+        self.bg_scy_sampler.b_stage_only = scy_b_stage_only;
+    }
+
+    pub(super) fn set_scy_b_stage_only(&mut self, b_stage_only: bool) {
+        self.scy_b_stage_only = b_stage_only;
+        self.bg_scy_sampler.b_stage_only = b_stage_only;
     }
 
     pub fn record_scx_write(&mut self, previous: u8, dot: u16) {
@@ -892,6 +1087,32 @@ impl PixelFifoRenderer {
             // Register writes are visible to the PPU after the fetch phase that
             // is already sampling on the same dot.
             self.pending_scx_sample_override = Some(previous);
+        }
+    }
+
+    /// Record a write to the SCY register (`$FF42`) during mode 3.
+    ///
+    /// - `old_scy`  — value of SCY before the write (kept for API symmetry; unused)
+    /// - `new_scy`  — new value being written
+    /// - `dot`      — current absolute dot counter (used to compute the elapsed delay)
+    /// - `cgb_mode` — `true` for CGB hardware (applies 2-cycle write delay)
+    pub fn record_scy_write(&mut self, old_scy: u8, new_scy: u8, dot: u16, cgb_mode: bool) {
+        let _ = old_scy;
+        if !self.active {
+            return;
+        }
+        if cgb_mode {
+            let elapsed = dot.saturating_sub(self.mode3_start_dot);
+            // On CGB, SCY writes take effect 4 T-cycles after the write dot.
+            // This accounts for the emulator's tick-before-write model plus the CGB
+            // hardware write propagation delay. Both CGB-C and CGB-D use the same
+            // delay since the difference in behavior comes from which stages sample
+            // effective_scy (b_stage_only flag), not from write timing.
+            self.pending_cgb_scy = Some((elapsed.saturating_add(4), new_scy));
+        } else {
+            // DMG: immediate effect.
+            self.pending_cgb_scy = None;
+            self.effective_scy = new_scy;
         }
     }
 
@@ -2768,7 +2989,9 @@ impl PixelFifoRenderer {
                 scanline: self.scanline,
                 scx: self.bg_fetch_scx,
                 fine_scx: self.scanline_start_scx_low,
-                scy: registers.scy,
+                scy_map: self.bg_fetch_scy_map,
+                scy_data_low: self.bg_fetch_scy_data_low,
+                scy_data_high: self.bg_fetch_scy_data_high,
                 lcdc,
             },
         );
@@ -2939,7 +3162,9 @@ impl PixelFifoRenderer {
                 scanline: self.scanline,
                 scx: registers.scx,
                 fine_scx: registers.scx & SCX_FINE_MASK,
-                scy: registers.scy,
+                scy_map: registers.scy,
+                scy_data_low: registers.scy,
+                scy_data_high: registers.scy,
                 wx: self.window_fetch_wx,
                 wy: registers.wy,
                 window_line: self.window_fetch_line,
@@ -2990,7 +3215,9 @@ impl PixelFifoRenderer {
                     scanline: self.scanline,
                     scx: self.bg_fetch_scx,
                     fine_scx: self.scanline_start_scx_low,
-                    scy: registers.scy,
+                    scy_map: self.bg_fetch_scy_map,
+                    scy_data_low: self.bg_fetch_scy_data_low,
+                    scy_data_high: self.bg_fetch_scy_data_high,
                     wx: registers.wx,
                     wy: registers.wy,
                     window_line,
@@ -3036,7 +3263,9 @@ impl PixelFifoRenderer {
                         scanline: self.scanline,
                         scx: registers.scx,
                         fine_scx: registers.scx & SCX_FINE_MASK,
-                        scy: registers.scy,
+                        scy_map: registers.scy,
+                        scy_data_low: registers.scy,
+                        scy_data_high: registers.scy,
                         wx: window_wx,
                         wy: registers.wy,
                         window_line,
@@ -3123,6 +3352,21 @@ impl PixelFifoRenderer {
 
     fn update_bg_fetch_scx(&mut self) {
         self.bg_fetch_scx = self.bg_scx_sampler.current_scx() | self.scanline_start_scx_low;
+    }
+
+    fn update_bg_fetch_scy(&mut self) {
+        self.bg_fetch_scy_map = self.bg_scy_sampler.current_scy_map();
+        self.bg_fetch_scy_data_low = self.bg_scy_sampler.current_scy_data_low();
+        self.bg_fetch_scy_data_high = self.bg_scy_sampler.current_scy_data_high();
+        self.bg_scy_sampler.consume_pixel();
+    }
+
+    /// Apply any matured CGB SCY write to `effective_scy`.
+    fn update_effective_scy(&mut self, elapsed: u16) {
+        if matches!(self.pending_cgb_scy, Some((effective_at, _)) if elapsed >= effective_at) {
+            let (_, new_scy) = self.pending_cgb_scy.take().unwrap();
+            self.effective_scy = new_scy;
+        }
     }
 
     fn consume_bg_scx_pixel(&mut self) {
@@ -3484,7 +3728,7 @@ mod tests {
         renderer.begin_scanline(0, 80, &oam, &registers, true, false);
         renderer.bg_scx_sampler.config = BgScxSamplerConfig::default();
 
-        renderer.fixup_after_state_load(true);
+        renderer.fixup_after_state_load(true, false);
 
         assert_eq!(
             renderer.bg_scx_sampler.config,

@@ -25,7 +25,17 @@ pub(super) struct DmgPixelFetch {
     pub scanline: u8,
     pub scx: u8,
     pub fine_scx: u8,
-    pub scy: u8,
+    /// SCY value sampled at the tile-fetch **B** (GetTile) stage.
+    /// Used for the tile-map row lookup: `(scy_map + scanline) / 8`.
+    pub scy_map: u8,
+    /// SCY value sampled at the tile-fetch **0** (TileDataLow) stage.
+    /// Used for the low-bitplane row-within-tile: `(scy_data_low + scanline) % 8`.
+    /// Equal to `scy_map` on CGB-D (SCY only read at B stage on that model).
+    pub scy_data_low: u8,
+    /// SCY value sampled at the tile-fetch **1** (TileDataHigh) stage.
+    /// Used for the high-bitplane row-within-tile: `(scy_data_high + scanline) % 8`.
+    /// Equal to `scy_map` on CGB-D (SCY only read at B stage on that model).
+    pub scy_data_high: u8,
     pub wx: u8,
     pub wy: u8,
     pub window_line: u8,
@@ -52,17 +62,20 @@ pub(super) fn fetch_dmg_pixel_with_data(
     vram: &[u8; 0x2000],
     fetch: DmgPixelFetch,
 ) -> Option<DmgFetchedPixel> {
-    let (map_base, tile_x, tile_y, pixel_x, pixel_y) = match fetch.layer {
+    let (map_base, tile_x, tile_y, pixel_x, pixel_y_low, pixel_y_high) = match fetch.layer {
         DmgLayer::Background => {
             let bg_x = fetch.scx.wrapping_add(fetch.x as u8);
-            let bg_y = fetch.scy.wrapping_add(fetch.scanline);
+            let bg_y_map = fetch.scy_map.wrapping_add(fetch.scanline);
+            let bg_y_data_low = fetch.scy_data_low.wrapping_add(fetch.scanline);
+            let bg_y_data_high = fetch.scy_data_high.wrapping_add(fetch.scanline);
             let pixel_x = fetch.fine_scx.wrapping_add(fetch.x as u8) & 0x07;
             (
                 tile_map_base(fetch.map_lcdc, 0x08),
                 (bg_x / 8) as usize,
-                (bg_y / 8) as usize,
+                (bg_y_map / 8) as usize,
                 pixel_x,
-                bg_y % 8,
+                bg_y_data_low % 8,
+                bg_y_data_high % 8,
             )
         }
         DmgLayer::Window => {
@@ -76,27 +89,29 @@ pub(super) fn fetch_dmg_pixel_with_data(
             }
             let win_x = ((fetch.x as i16) - win_x_start) as u8;
             let win_y = fetch.window_line;
+            let row = win_y % 8;
             (
                 tile_map_base(fetch.map_lcdc, 0x40),
                 (win_x / 8) as usize,
                 (win_y / 8) as usize,
                 win_x % 8,
-                win_y % 8,
+                row,
+                row,
             )
         }
     };
 
     let tile_index = vram[map_base + tile_y * 32 + tile_x];
-    let low_addr = tile_data_addr(tile_index, pixel_y, fetch.low_lcdc);
-    let high_addr = tile_data_addr(tile_index, pixel_y, fetch.high_lcdc) + 1;
+    let low_addr = tile_data_addr(tile_index, pixel_y_low, fetch.low_lcdc);
+    let high_addr = tile_data_addr(tile_index, pixel_y_high, fetch.high_lcdc) + 1;
     let low_cache_data = fetch
         .low_override
         .cache_lcdc()
-        .map(|lcdc| vram[tile_data_addr(tile_index, pixel_y, lcdc)]);
+        .map(|lcdc| vram[tile_data_addr(tile_index, pixel_y_low, lcdc)]);
     let high_cache_data = fetch
         .high_override
         .cache_lcdc()
-        .map(|lcdc| vram[tile_data_addr(tile_index, pixel_y, lcdc) + 1]);
+        .map(|lcdc| vram[tile_data_addr(tile_index, pixel_y_high, lcdc) + 1]);
     let low_data = resolve_tile_byte_override(vram, tile_index, low_addr, fetch.low_override);
     let high_data = resolve_tile_byte_override(vram, tile_index, high_addr, fetch.high_override);
     let bit = 7 - pixel_x;
@@ -184,7 +199,9 @@ mod tests {
                 scanline: 0,
                 scx: 0,
                 fine_scx: 0,
-                scy: 0,
+                scy_map: 0,
+                scy_data_low: 0,
+                scy_data_high: 0,
                 wx: 7,
                 wy: 0,
                 window_line: 0,
@@ -215,7 +232,9 @@ mod tests {
                 scanline: 0,
                 scx: 0,
                 fine_scx: 0,
-                scy: 0,
+                scy_map: 0,
+                scy_data_low: 0,
+                scy_data_high: 0,
                 wx: 7,
                 wy: 0,
                 window_line: 0,
