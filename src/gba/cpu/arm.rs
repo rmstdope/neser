@@ -643,13 +643,13 @@ fn execute_single_data_transfer<B: Bus>(
     }
 
     if result_branch {
-        // LDR PC: 2S(code) + 1N(data) + 1I
+        // LDR PC: 2S(code) + 1N(code) + 1N(data) + 1I
         let width = if b_byte {
             WidthClass::HalfwordOrByte
         } else {
             WidthClass::Word
         };
-        ExecOutcome::branch_data_access(2, 0, 1, 0, 1, addr, width)
+        ExecOutcome::branch_data_access(2, 1, 1, 0, 1, addr, width)
     } else if l {
         // LDR: 1S(code) + 1N(data) + 1I
         let width = if b_byte {
@@ -1073,8 +1073,8 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
     }
 
     if result_branch {
-        // LDRH PC: 2S(code) + 1N(data) + 1I
-        ExecOutcome::branch_data_access(2, 0, 1, 0, 1, addr, WidthClass::HalfwordOrByte)
+        // LDRH PC: 2S(code) + 1N(code) + 1N(data) + 1I
+        ExecOutcome::branch_data_access(2, 1, 1, 0, 1, addr, WidthClass::HalfwordOrByte)
     } else if l {
         // LDRH/LDRSB/LDRSH: 1S(code) + 1N(data) + 1I
         ExecOutcome::data_access(1, 0, 1, 0, 1, addr, WidthClass::HalfwordOrByte)
@@ -2743,6 +2743,42 @@ mod tests {
         assert_eq!(outcome.data_nonseq, 1, "LDR should have 1N(data)");
         assert_eq!(outcome.internal, 1, "LDR should have 1I");
         assert_eq!(outcome.total_flat_cycles(), 3);
+    }
+
+    /// ARM LDR PC: 2S + 2N + 1I per GBATek (one extra N vs normal LDR).
+    #[test]
+    fn arm_ldr_pc_sni_is_2s_2n_1i() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 0x40;
+        bus.write32(0x40, 0x50);
+        // LDR R15, [R1] (immediate offset 0)
+        let instr = 0xE591_F000;
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(outcome.branched, "LDR PC should be a branch");
+        assert_eq!(outcome.seq, 2, "LDR PC should be 2S(code)");
+        assert_eq!(outcome.nonseq, 1, "LDR PC should have 1N(code)");
+        assert_eq!(outcome.data_nonseq, 1, "LDR PC should have 1N(data)");
+        assert_eq!(outcome.internal, 1, "LDR PC should have 1I");
+        assert_eq!(outcome.total_flat_cycles(), 5, "LDR PC total: 2S+2N+1I=5");
+    }
+
+    /// ARM LDRH PC: 2S + 2N + 1I per GBATek (one extra N vs normal LDRH).
+    #[test]
+    fn arm_ldrh_pc_sni_is_2s_2n_1i() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[1] = 0x40;
+        bus.write16(0x40, 0x50);
+        // LDRH R15, [R1] — P=1, U=1, W=0, L=1, S=0, H=1, Rd=15
+        let instr = arm_halfword_imm(0xE, true, true, false, true, 1, 15, false, true, 0);
+        let outcome = execute(&mut regs, &mut bus, instr);
+        assert!(outcome.branched, "LDRH PC should be a branch");
+        assert_eq!(outcome.seq, 2, "LDRH PC should be 2S(code)");
+        assert_eq!(outcome.nonseq, 1, "LDRH PC should have 1N(code)");
+        assert_eq!(outcome.data_nonseq, 1, "LDRH PC should have 1N(data)");
+        assert_eq!(outcome.internal, 1, "LDRH PC should have 1I");
+        assert_eq!(outcome.total_flat_cycles(), 5, "LDRH PC total: 2S+2N+1I=5");
     }
 
     /// ARM STR: 2N per GBATek.
