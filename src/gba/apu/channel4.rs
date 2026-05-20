@@ -123,18 +123,22 @@ impl Channel4 {
     }
 
     pub fn clock_envelope(&mut self) {
-        if self.env_period == 0 {
-            return;
-        }
+        let reload = if self.env_period > 0 {
+            self.env_period
+        } else {
+            8
+        };
         if self.env_timer > 0 {
             self.env_timer -= 1;
         }
         if self.env_timer == 0 {
-            self.env_timer = self.env_period;
-            if self.env_add && self.volume < 15 {
-                self.volume += 1;
-            } else if !self.env_add && self.volume > 0 {
-                self.volume -= 1;
+            self.env_timer = reload;
+            if self.env_period > 0 {
+                if self.env_add && self.volume < 15 {
+                    self.volume += 1;
+                } else if !self.env_add && self.volume > 0 {
+                    self.volume -= 1;
+                }
             }
         }
     }
@@ -146,7 +150,11 @@ impl Channel4 {
         }
         self.freq_timer = self.freq_period();
         self.volume = self.init_volume;
-        self.env_timer = self.env_period;
+        self.env_timer = if self.env_period > 0 {
+            self.env_period
+        } else {
+            8
+        };
         // GBATek: 15-bit mode initial value 0x4000; 7-bit mode initial value 0x0040.
         self.lfsr = if self.lfsr_7bit { 0x0040 } else { 0x4000 };
         self.output_level = false;
@@ -167,13 +175,27 @@ impl Channel4 {
     }
 
     /// SOUND4CNT_H: clock (7-4 shift, 3 LFSR mode, 2-0 divisor), 14 length-en, 15 trigger.
-    pub fn write_cnt_h(&mut self, val: u16) {
+    ///
+    /// `extra_clk` — see Channel1::write_cnt_x for the full description.
+    pub fn write_cnt_h(&mut self, val: u16, extra_clk: bool) {
         self.divisor_code = (val & 0x07) as u8;
         self.lfsr_7bit = (val & 0x08) != 0;
         self.clock_shift = ((val >> 4) & 0x0F) as u8;
+        let old_length_en = self.length_en;
         self.length_en = (val & 0x4000) != 0;
+        // Extra clock when enabling length_en (0→1) and next FS step won't clock.
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
         if val & 0x8000 != 0 {
+            let reloaded_length = self.length_counter == 0;
             self.trigger();
+            if extra_clk && self.length_en && reloaded_length {
+                self.length_counter = 63;
+            }
         }
     }
 
@@ -398,6 +420,73 @@ mod tests {
         assert_eq!(
             lfsr, 0x0040,
             "7-bit LFSR should return to 0x0040 after 127 steps"
+        );
+    }
+
+    // ─── Envelope timer period=0 behaviour (RED → GREEN) ─────────────────────
+
+    /// On trigger with env_period=0, env_timer must be initialized to 8,
+    /// not 0. Per Pan Docs / CGB hardware: the reload value is 8 when period=0.
+    #[test]
+    fn test_ch4_trigger_env_period_zero_sets_env_timer_to_8() {
+        let mut ch = Channel4 {
+            dac_on: true,
+            init_volume: 7,
+            env_period: 0,
+            ..Channel4::default()
+        };
+        ch.write_cnt_h(0x8000, false); // trigger (bit 15)
+        assert_eq!(
+            ch.env_timer, 8,
+            "env_timer must be 8 after trigger when env_period=0"
+        );
+    }
+
+    /// clock_envelope with env_period=0 must still decrement env_timer
+    /// (no volume change).
+    #[test]
+    fn test_ch4_clock_envelope_period_zero_decrements_timer() {
+        let mut ch = Channel4 {
+            active: true,
+            dac_on: true,
+            volume: 7,
+            env_period: 0,
+            env_timer: 8,
+            ..Channel4::default()
+        };
+        let vol_before = ch.volume;
+        ch.clock_envelope();
+        assert_eq!(
+            ch.volume, vol_before,
+            "volume must not change when env_period=0"
+        );
+        assert_eq!(
+            ch.env_timer, 7,
+            "env_timer must count down even when env_period=0"
+        );
+    }
+
+    /// When env_timer expires with env_period=0, the timer must reload to 8
+    /// and no volume change must occur.
+    #[test]
+    fn test_ch4_clock_envelope_period_zero_reloads_to_8_on_expiry() {
+        let mut ch = Channel4 {
+            active: true,
+            dac_on: true,
+            volume: 7,
+            env_period: 0,
+            env_timer: 1, // about to expire
+            ..Channel4::default()
+        };
+        let vol_before = ch.volume;
+        ch.clock_envelope();
+        assert_eq!(
+            ch.env_timer, 8,
+            "env_timer must reload to 8 when env_period=0 and timer expires"
+        );
+        assert_eq!(
+            ch.volume, vol_before,
+            "volume must not change when env_period=0"
         );
     }
 }

@@ -18,7 +18,9 @@
 //! * Mode 0 tile background rendering (BG0–BG3 with 4bpp/8bpp text
 //!   backgrounds, priority compositing across all enabled layers).
 //! * Mode 1 mixed background rendering (BG0/BG1 regular text plus BG2 affine).
-//! * Mode 2 stub — renders backdrop only (affine tile rendering deferred).
+//! * Mode 2 affine tile background rendering: BG2 and BG3 with wrapping,
+//!   mosaic, and priority compositing. Both BG2 and BG3 support affine
+//!   transforms (PA/PB/PC/PD + BG2X/BG2Y / BG3X/BG3Y reference points).
 //! * Mode 3 background rendering (240×160 15-bit BGR555 direct bitmap
 //!   from VRAM) when `BG2` is enabled.
 //! * Mode 4 background rendering (240×160 8-bit paletted bitmap from
@@ -26,19 +28,36 @@
 //! * Mode 5 background rendering (160×128 15-bit BGR555 direct bitmap
 //!   from VRAM) with dual-frame support via DISPCNT bit 4 and BG2 affine
 //!   positioning/scaling.
-//! * Backdrop fill from the first palette entry for unimplemented
-//!   display modes (modes 6, 7) and bitmap modes when BG2 is disabled.
-//!   Modes 6-7 are "prohibited" per GBATek but are handled gracefully.
+//! * Modes 6-7 are "prohibited" per GBATek: no BG layers are rendered but OBJ
+//!   sprites and the backdrop behave normally (matching mGBA behavior). The
+//!   backdrop color shows through wherever no OBJ pixel lands.
 //! * OBJ rendering (regular and affine), OAM attribute decoding, and OBJ
 //!   Window mask generation.
 //! * Window masks, alpha blending / brightness effects, and MOSAIC for
 //!   BG/OBJ render paths.
 //! * Forced-blank outputs solid white (per GBATek).
+//! * Forced-blank mid-frame restart: when DISPCNT bit 7 (Forced Blank)
+//!   transitions from 1 to 0 mid-frame, the PPU continues to output white
+//!   for ~2 additional scanlines, then resets VCOUNT to 0 and resumes
+//!   normal rendering from line 0.  This models the GBATek behaviour
+//!   "display restarts from line 0 after 2 vertical lines".
+//! * `BG2X`/`BG2Y` mid-frame writes: per GBATek "LCD I/O BG
+//!   Rotation/Scaling", a write to `BG2X`/`BG2Y` (or the BG3 equivalents)
+//!   outside V-Blank immediately applies to the internal reference point for
+//!   the current scanline.  The write_affine methods on `Ppu` implement this
+//!   correctly — `internal_x`/`internal_y` are updated immediately alongside
+//!   the register values.  The PB/PD accumulation then continues from the
+//!   newly written base on every subsequent scanline, and the value is
+//!   re-latched at the next V-Blank as usual.
 //!
 //! Out of scope (deferred to follow-up sub-issues):
 //!
-//! * Cycle-exact display edge cases such as mid-scanline register changes,
-//!   prohibited-mode quirks, and other hardware timing details.
+//! * Per-pixel (cycle-exact) mid-scanline register changes: effects such as
+//!   raster-scroll tricks that require a register change to take effect at a
+//!   specific dot within a single scanline are not yet modelled.  Rendering
+//!   is performed atomically at the H-Blank edge, so all pixels in a scanline
+//!   share the same register snapshot.  The `BG2X`/`BG2Y` mid-frame write
+//!   described above is an exception and is already handled.
 //!
 //! References:
 //! * GBATek "LCD I/O Display Control": <https://problemkaputt.de/gbatek.htm#lcdiodisplaycontrol>
@@ -209,7 +228,7 @@ pub const REG_BLDY: u32 = 0x0400_0054;
 /// reports the edges that occurred during the most recent step and the
 /// caller (the bus) routes them. Counts (rather than booleans) are
 /// required because a single `step()` call may span many scanlines —
-/// e.g. a full-frame step crosses 160 visible H-Blanks and one V-Blank,
+/// e.g. a full-frame step crosses 228 H-Blanks and one V-Blank,
 /// and the bus must propagate every one to keep H-Blank-mode DMA
 /// channels firing per scanline.
 #[derive(Debug, Default, Clone, Copy)]
@@ -217,10 +236,10 @@ pub struct PpuStepEvents {
     /// Number of V-Blank periods that started during this step
     /// (transitions into scanline 160).
     pub vblank_starts: u32,
-    /// Number of H-Blank periods that started on a *visible* scanline
-    /// during this step. H-Blank also occurs during V-Blank scanlines
-    /// but only visible-scanline H-Blanks trigger H-Blank-mode DMA per
-    /// GBATek.
+    /// Number of H-Blank periods that started during this step (on any
+    /// scanline, including non-visible scanlines 160–227). Per GBATek,
+    /// H-Blank DMA fires on all 228 scanlines. Only the H-Blank IRQ is
+    /// suppressed during V-Blank (scanlines 160–[`VBLANK_LAST_SCANLINE`]).
     pub hblank_starts: u32,
     /// Number of complete frames that finished during this step. The
     /// framebuffer is ready for the frontend to read whenever this is
@@ -285,6 +304,20 @@ pub struct Ppu {
     bldy: u8,
     /// `MOSAIC` (0x0400_004C, write-only): BG/OBJ mosaic block sizes.
     mosaic: u16,
+    /// Countdown of remaining scanlines before the display restarts from
+    /// line 0, triggered when Forced Blank (DISPCNT bit 7) transitions from
+    /// 1 to 0 mid-frame.  Per GBATek, the display restarts from line 0
+    /// approximately 2 vertical lines after the Forced Blank is de-asserted.
+    /// Counts down from 2 to 0; while > 0, the PPU outputs white just like
+    /// active Forced Blank.  Cleared immediately if Forced Blank is
+    /// re-asserted before the restart completes.
+    forced_blank_restart_lines: u32,
+    /// When true, apply GBA LCD color correction (gamma ≈ 4 curve) when
+    /// converting BGR555 palette entries to RGB888.
+    ///
+    /// Simulates the GBA TFT LCD's physical non-linear response where values
+    /// 0–14 appear nearly black. Default: false (linear expansion).
+    color_correction: bool,
 }
 
 // ---- Color special effect helpers ----------------------------------------
@@ -407,6 +440,8 @@ impl Ppu {
             bldalpha: 0,
             bldy: 0,
             mosaic: 0,
+            forced_blank_restart_lines: 0,
+            color_correction: false,
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -421,8 +456,24 @@ impl Ppu {
     }
 
     /// Write `DISPCNT`.
+    ///
+    /// Per GBATek "LCD I/O Display Control": when Forced Blank (bit 7)
+    /// transitions from 1 to 0, the display restarts from line 0 after
+    /// approximately 2 vertical lines.  We model this with a countdown
+    /// field that keeps forced-blank white output active for 2 more
+    /// scanlines, then resets VCOUNT to 0.  If Forced Blank is
+    /// re-asserted before the restart completes, the countdown is cleared.
     pub fn write_dispcnt(&mut self, value: u16) {
+        let was_forced_blank = self.dispcnt & dispcnt::FORCED_BLANK != 0;
+        let is_forced_blank = value & dispcnt::FORCED_BLANK != 0;
         self.dispcnt = value;
+        if was_forced_blank && !is_forced_blank {
+            // Forced Blank de-asserted: begin 2-scanline restart countdown.
+            self.forced_blank_restart_lines = 2;
+        } else if is_forced_blank {
+            // Forced Blank asserted (or kept asserted): cancel any pending restart.
+            self.forced_blank_restart_lines = 0;
+        }
     }
 
     /// Read Green Swap register (0x0400_0002). Returns bit 0 only.
@@ -434,6 +485,16 @@ impl Ppu {
     /// bits 1–15 are ignored per GBATek.
     pub fn write_green_swap(&mut self, value: u16) {
         self.green_swap = value & 1 != 0;
+    }
+
+    /// Enable or disable GBA LCD color correction.
+    ///
+    /// When enabled, BGR555 → RGB888 conversion uses a gamma ≈ 4 lookup
+    /// table that simulates the GBA TFT LCD's physical non-linear response.
+    /// When disabled (the default), the standard linear bit-replication
+    /// formula is used.
+    pub fn set_color_correction(&mut self, enabled: bool) {
+        self.color_correction = enabled;
     }
 
     /// Read `DISPSTAT` — returns the live status bits OR'd with the
@@ -488,16 +549,20 @@ impl Ppu {
     }
 
     /// Whether the screen is currently in forced-blank mode.
+    ///
+    /// Returns `true` when the FORCED_BLANK bit (DISPCNT bit 7) is set, or
+    /// when the post-de-assert restart countdown is still active (during those
+    /// ~2 scanlines the display still outputs white).
     pub fn forced_blank(&self) -> bool {
-        self.dispcnt & dispcnt::FORCED_BLANK != 0
+        self.dispcnt & dispcnt::FORCED_BLANK != 0 || self.forced_blank_restart_lines > 0
     }
 
     /// Returns `true` when VRAM and Palette RAM accesses require a 1-cycle wait
     /// due to the PPU actively reading those regions.
     ///
     /// Per GBATek "LCD VRAM Overview": the extra wait applies during active
-    /// display (visible scanlines 0–159, not in H-Blank) when Forced Blank
-    /// (DISPCNT bit 7) is not set.
+    /// display (visible scanlines 0–159, not in H-Blank) while the PPU is
+    /// actively rendering (`forced_blank()` is `false`).
     pub fn vram_pram_active_wait(&self) -> bool {
         if self.forced_blank() {
             return false;
@@ -789,8 +854,11 @@ impl Ppu {
                     for aff in &mut self.bg_affine {
                         aff.increment_reference_points();
                     }
-                    events.hblank_starts = events.hblank_starts.saturating_add(1);
                 }
+                // Per GBATek, H-Blank DMA fires on ALL 228 scanlines
+                // (visible and V-Blank alike). Only the H-Blank IRQ is
+                // suppressed during V-Blank (see comment below).
+                events.hblank_starts = events.hblank_starts.saturating_add(1);
                 // Per GBATek: "no H-Blank interrupts are generated within
                 // V-Blank period." Only raise on visible scanlines (0-159).
                 if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0
@@ -816,6 +884,28 @@ impl Ppu {
     fn advance_scanline(&mut self, ic: &mut InterruptController, events: &mut PpuStepEvents) {
         // Leaving this scanline — clear H-Blank flag.
         self.dispstat &= !dispstat::HBLANK_FLAG;
+
+        // Handle the forced-blank mid-frame restart countdown.
+        // When Forced Blank (DISPCNT bit 7) is de-asserted mid-frame, the PPU
+        // keeps outputting white for ~2 more scanlines, then restarts from
+        // line 0.  The countdown is decremented here at every scanline
+        // advance; when it reaches 0, VCOUNT is reset to 0 and normal
+        // operation resumes.
+        if self.forced_blank_restart_lines > 0 {
+            self.forced_blank_restart_lines -= 1;
+            if self.forced_blank_restart_lines == 0 {
+                // Display restarts from line 0: reset VCOUNT, clear any
+                // V-Blank flag that may have been set during the countdown.
+                self.vcount = 0;
+                self.dispstat &= !dispstat::VBLANK_FLAG;
+                // Latch affine reference points as if starting a new frame.
+                for aff in &mut self.bg_affine {
+                    aff.latch_reference_points();
+                }
+                self.update_vcount_match_flag(Some(ic));
+                return;
+            }
+        }
 
         let next = (self.vcount as u32 + 1) % SCANLINES_PER_FRAME;
         self.vcount = next as u16;
@@ -882,6 +972,9 @@ impl Ppu {
             3 => self.render_mode3_scanline(y, vram, pram, oam),
             4 => self.render_mode4_scanline(y, vram, pram, oam),
             5 => self.render_mode5_scanline(y, vram, pram, oam),
+            // Modes 6-7 are "prohibited" per GBATek. No BG layers are rendered,
+            // but OBJ sprites and the backdrop behave normally.
+            6 | 7 => self.render_prohibited_mode_scanline(y, vram, pram, oam),
             _ => self.render_backdrop_scanline(y, pram),
         }
         // Green Swap (0x0400_0002): exchange the green channel between
@@ -1490,6 +1583,14 @@ impl Ppu {
         let evb = (((self.bldalpha >> 8) & 0x1F) as u8).min(16);
         let evy = self.bldy.min(16);
 
+        // Select the pixel-write function once per scanline to avoid a
+        // per-pixel branch inside the hot 240-pixel loop.
+        let write_pixel: fn(&mut [u8], usize, u16) = if self.color_correction {
+            color::write_pixel_corrected
+        } else {
+            color::write_pixel
+        };
+
         for x in 0..(SCREEN_WIDTH as usize) {
             // Determine layer enable mask for this pixel.
             let layer_mask = if any_window_active {
@@ -1627,7 +1728,7 @@ impl Ppu {
             };
 
             let dst = row_start + x * BYTES_PER_PIXEL;
-            color::write_pixel(&mut self.framebuffer, dst, final_color);
+            write_pixel(&mut self.framebuffer, dst, final_color);
         }
     }
 
@@ -1654,9 +1755,11 @@ impl Ppu {
 
     /// Check if pixel (x, y) is inside window `n` (0 or 1).
     ///
-    /// Per GBATek 'LCD I/O Window Feature':
-    /// - If X2 > 240 or X1 > X2: treat as X2=240 (window extends to right screen edge).
-    /// - If Y2 > 160 or Y1 > Y2: treat as Y2=160 (window extends to bottom screen edge).
+    /// Per GBATek 'LCD I/O Window Feature' and hardware tests:
+    /// - If X2 > 240: clamp X2 to 240 (window is X1..240).
+    /// - If X1 > X2: window wraps around, covering 0..X2 AND X1..240.
+    /// - If Y2 > 160: clamp Y2 to 160 (window is Y1..160).
+    /// - If Y1 > Y2: window wraps around, covering 0..Y2 AND Y1..160.
     fn pixel_in_window(&self, n: usize, x: u32, y: u32) -> bool {
         let h = self.win_h[n];
         let v = self.win_v[n];
@@ -1665,11 +1768,37 @@ impl Ppu {
         let y1 = (v >> 8) as u32;
         let y2 = (v & 0xFF) as u32;
 
-        let effective_x2 = if x2 > 240 || x1 > x2 { 240 } else { x2 };
-        let effective_y2 = if y2 > 160 || y1 > y2 { 160 } else { y2 };
-        let in_x = x >= x1 && x < effective_x2;
-        let in_y = y >= y1 && y < effective_y2;
+        let in_x = if x2 > SCREEN_WIDTH {
+            // X2 out of range: clamp to SCREEN_WIDTH.
+            x >= x1 && x < SCREEN_WIDTH
+        } else if x1 > x2 {
+            // Wraparound: covers 0..X2 AND X1..SCREEN_WIDTH.
+            x >= x1 || x < x2
+        } else {
+            x >= x1 && x < x2
+        };
+
+        let in_y = if y2 > SCREEN_HEIGHT {
+            // Y2 out of range: clamp to SCREEN_HEIGHT.
+            y >= y1 && y < SCREEN_HEIGHT
+        } else if y1 > y2 {
+            // Wraparound: covers 0..Y2 AND Y1..SCREEN_HEIGHT.
+            y >= y1 || y < y2
+        } else {
+            y >= y1 && y < y2
+        };
+
         in_x && in_y
+    }
+
+    /// Prohibited modes 6 and 7: per GBATek these are "prohibited" but hardware
+    /// still composites OBJ sprites over the backdrop — no BG layers are rendered.
+    fn render_prohibited_mode_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
+        if self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+            self.render_backdrop_scanline(y, pram);
+            return;
+        }
+        self.composite_scanline(y, pram, vram, oam, &[]);
     }
 
     /// Backdrop fill — uses palette entry 0 from PRAM. Used for modes
@@ -1700,7 +1829,11 @@ impl Ppu {
             backdrop
         };
 
-        let (r, g, b) = color::bgr555_to_rgb888(final_backdrop);
+        let (r, g, b) = if self.color_correction {
+            color::bgr555_to_rgb888_corrected(final_backdrop)
+        } else {
+            color::bgr555_to_rgb888(final_backdrop)
+        };
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
         for x in 0..(SCREEN_WIDTH as usize) {
             let dst = row_start + x * BYTES_PER_PIXEL;
@@ -1912,23 +2045,28 @@ mod tests {
     }
 
     #[test]
-    fn hblank_event_only_on_visible_scanlines() {
+    fn hblank_dma_fires_during_vblank_scanlines() {
+        // Per GBATek, H-Blank DMA should trigger on ALL 228 scanlines,
+        // including the 67 V-Blank scanlines (160–226).
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let vram = make_vram();
         let pram = make_pram();
-        // Step up to the *start* of scanline 160 (V-Blank).
+        // Step up to the *start* of scanline 160 (V-Blank begins).
         let cycles = CYCLES_PER_SCANLINE * VISIBLE_SCANLINES;
         ppu.step(cycles, &mut ic, &vram, &pram, &make_oam());
         assert_eq!(ppu.read_vcount(), 160);
-        // Step through H-Blank of scanline 160 — no visible H-Blank.
+        // Step through H-Blank of scanline 160 — DMA must still fire.
         let events = ppu.step(HBLANK_START_CYCLE, &mut ic, &vram, &pram, &make_oam());
-        assert_eq!(events.hblank_starts, 0);
+        assert_eq!(
+            events.hblank_starts, 1,
+            "H-Blank DMA must fire on VBlank scanlines too (GBATek)"
+        );
     }
 
     #[test]
-    fn step_full_frame_counts_every_visible_hblank() {
-        // A full-frame step must report all 160 visible-scanline H-Blanks
+    fn step_full_frame_counts_every_hblank() {
+        // A full-frame step must report all 228 H-Blanks (visible + VBlank)
         // and exactly one V-Blank / completed frame so the bus can
         // forward each edge to the DMA hooks.
         let mut ppu = Ppu::new();
@@ -1942,7 +2080,7 @@ mod tests {
             &pram,
             &make_oam(),
         );
-        assert_eq!(events.hblank_starts, VISIBLE_SCANLINES);
+        assert_eq!(events.hblank_starts, SCANLINES_PER_FRAME);
         assert_eq!(events.vblank_starts, 1);
         assert_eq!(events.frames_completed, 1);
     }
@@ -1962,7 +2100,7 @@ mod tests {
         );
         assert_eq!(events.vblank_starts, 2);
         assert_eq!(events.frames_completed, 2);
-        assert_eq!(events.hblank_starts, VISIBLE_SCANLINES * 2);
+        assert_eq!(events.hblank_starts, SCANLINES_PER_FRAME * 2);
     }
 
     #[test]
@@ -2329,6 +2467,98 @@ mod tests {
         assert!(ppu.framebuffer().iter().all(|&b| b == 0xFF));
     }
 
+    // ---- Forced blank mid-frame restart (GBATek) ----------------------------
+
+    #[test]
+    fn forced_blank_midframe_deassert_resets_vcount_after_two_scanlines() {
+        // Per GBATek: when forced blank is de-asserted mid-frame, the display
+        // restarts from line 0 after approximately 2 vertical lines.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+        let oam = make_oam();
+
+        // Enable forced blank and advance to scanline 80.
+        ppu.write_dispcnt(dispcnt::FORCED_BLANK);
+        ppu.step(CYCLES_PER_SCANLINE * 80, &mut ic, &vram, &pram, &oam);
+        assert_eq!(ppu.read_vcount(), 80);
+
+        // De-assert forced blank → countdown of 2 scanlines begins.
+        ppu.write_dispcnt(0);
+
+        // After 2 full scanlines, vcount must have been reset to 0.
+        ppu.step(CYCLES_PER_SCANLINE * 2, &mut ic, &vram, &pram, &oam);
+        assert_eq!(
+            ppu.read_vcount(),
+            0,
+            "After forced blank de-assert, vcount must restart from 0 after 2 scanlines"
+        );
+    }
+
+    #[test]
+    fn forced_blank_transition_scanlines_still_output_white() {
+        // During the 2 transition scanlines after forced blank is de-asserted,
+        // the display must still output white (forced blank behaviour persists).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+        let oam = make_oam();
+
+        // Set a non-white backdrop so we can distinguish from forced-blank white.
+        // BGR555 pure blue = 0x7C00 → RGB888 = (0, 0, 0xFF).
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+
+        // Enable forced blank and advance to scanline 80.
+        ppu.write_dispcnt(dispcnt::FORCED_BLANK);
+        ppu.step(CYCLES_PER_SCANLINE * 80, &mut ic, &vram, &pram, &oam);
+
+        // De-assert forced blank; render the first transition scanline (80).
+        ppu.write_dispcnt(0);
+        // Step to H-Blank to trigger rendering of scanline 80.
+        ppu.step(HBLANK_START_CYCLE, &mut ic, &vram, &pram, &oam);
+
+        // Scanline 80 row should be white even though FORCED_BLANK bit is cleared.
+        let row_start = 80 * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        assert!(
+            ppu.framebuffer()[row_start..row_start + SCREEN_WIDTH as usize * BYTES_PER_PIXEL]
+                .iter()
+                .all(|&b| b == 0xFF),
+            "First transition scanline must output white while countdown is active"
+        );
+    }
+
+    #[test]
+    fn forced_blank_reassert_before_restart_cancels_countdown() {
+        // If forced blank is re-asserted before the 2-line restart completes,
+        // the countdown is cancelled and vcount continues advancing normally.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+        let oam = make_oam();
+
+        // Enable forced blank, advance to scanline 80.
+        ppu.write_dispcnt(dispcnt::FORCED_BLANK);
+        ppu.step(CYCLES_PER_SCANLINE * 80, &mut ic, &vram, &pram, &oam);
+        assert_eq!(ppu.read_vcount(), 80);
+
+        // De-assert forced blank → countdown starts.
+        ppu.write_dispcnt(0);
+        // Immediately re-assert forced blank → countdown must be cancelled.
+        ppu.write_dispcnt(dispcnt::FORCED_BLANK);
+
+        // Advance 2 scanlines — vcount must advance normally to 82, NOT restart.
+        ppu.step(CYCLES_PER_SCANLINE * 2, &mut ic, &vram, &pram, &oam);
+        assert_eq!(
+            ppu.read_vcount(),
+            82,
+            "Re-asserting forced blank must cancel the restart countdown"
+        );
+    }
+
     #[test]
     fn backdrop_fill_uses_pram_entry_0() {
         let mut ppu = Ppu::new();
@@ -2633,8 +2863,8 @@ mod tests {
 
     #[test]
     fn mode2_renders_backdrop_color() {
-        // Mode 2 is an affine tile mode for BG2/BG3. Currently we render
-        // only the backdrop; full affine tile rendering is deferred.
+        // Mode 2 is an affine tile mode for BG2/BG3. With no BG enables set,
+        // the backdrop color is rendered for all pixels.
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let vram = make_vram();
@@ -3524,6 +3754,211 @@ mod tests {
         );
     }
 
+    // ---- Mid-frame BG2X/BG2Y write tests ----
+    //
+    // GBATek "LCD I/O BG Rotation/Scaling":
+    // "If software writes to BG2X/BG2Y outside V-Blank, the value is
+    //  immediately applied to the internal register for the current scanline."
+    //
+    // These tests verify the framebuffer-level effect of mid-frame writes and
+    // that the PB/PD accumulation is reset to the new value.
+
+    #[test]
+    fn bg2x_write_outside_vblank_applies_to_current_scanline() {
+        // Writing BG2X during the active period of a visible scanline (before
+        // its H-Blank edge) must immediately update the internal reference so
+        // that the scanline renders using the new value.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 3 + BG2 enabled, identity affine (PA=PD=1.0, PB=PC=0).
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Source pixel (0,0) = red (BGR555 0x001F).
+        // Source pixel (1,0) = green (BGR555 0x03E0).
+        vram[0] = 0x1F;
+        vram[1] = 0x00;
+        vram[2] = 0xE0;
+        vram[3] = 0x03;
+
+        // Run a full frame so VBlank latch initialises internal_x = x = 0.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Mid-frame write (outside V-Blank): BG2X = 1.0 pixel (0x0000_0100 in
+        // 19.8 fixed-point). Per GBATek, this must immediately update the
+        // internal register.
+        ppu.write_affine(REG_BG2X_L, 0x0100);
+
+        // Run one scanline to trigger its render.
+        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &vram, &pram, &make_oam());
+
+        // Screen pixel (0,0) → source pixel (1,0) = green.
+        // Without the immediate internal update it would show source (0,0) = red.
+        let (r, g, b) = color::bgr555_to_rgb888(0x03E0);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "mid-frame BG2X write must take effect on the current scanline"
+        );
+    }
+
+    #[test]
+    fn bg2y_write_outside_vblank_applies_to_current_scanline() {
+        // Same as above but for the Y reference point: writing BG2Y outside
+        // V-Blank must immediately update the source row used for the scanline.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 3 + BG2 enabled, identity affine.
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Source row 0, col 0 = red; source row 1, col 0 = green.
+        // Mode 3: 240 pixels per row, 2 bytes each → row 1 starts at byte 480.
+        vram[0] = 0x1F;
+        vram[1] = 0x00; // source (0,0) = red
+        vram[480] = 0xE0;
+        vram[481] = 0x03; // source (0,1) = green
+
+        // Run a full frame so VBlank latch initialises internal_y = y = 0.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Mid-frame write: BG2Y = 1.0 row (0x0000_0100 in 19.8 fixed-point).
+        ppu.write_affine(REG_BG2Y_L, 0x0100);
+
+        // Render scanline 0.
+        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &vram, &pram, &make_oam());
+
+        // Screen pixel (0,0) → source row 1, col 0 = green.
+        let (r, g, b) = color::bgr555_to_rgb888(0x03E0);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "mid-frame BG2Y write must take effect on the current scanline"
+        );
+    }
+
+    #[test]
+    fn bg2x_midframe_write_resets_pb_accumulation() {
+        // After a mid-frame write to BG2X, the PB-per-scanline accumulation
+        // must restart from the new value rather than continuing from the old
+        // accumulated position.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+
+        // BG2: PB = 0x0010 (1/16 per scanline).
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PB, 0x0010);
+        ppu.write_affine(REG_BG2PC, 0x0000);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Run one full frame so VBlank latches internal refs (to 0,0),
+        // then run 10 visible scanlines: internal_x = 10 * 0x0010 = 0x00A0.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+        ppu.step(CYCLES_PER_SCANLINE * 10, &mut ic, &vram, &pram, &make_oam());
+
+        // Mid-frame write: reset BG2X to 0x0200.  This must immediately update
+        // internal_x and restart PB accumulation from 0x0200.
+        ppu.write_affine(REG_BG2X_L, 0x0200);
+
+        // internal_x must be 0x0200 immediately (not the old accumulated 0x00A0).
+        let aff = ppu.bg_affine(0).unwrap();
+        assert_eq!(
+            aff.internal_x, 0x0200,
+            "mid-frame BG2X write must immediately set internal_x"
+        );
+
+        // Run 5 more scanlines.  internal_x should now be 0x0200 + 5*0x0010 = 0x0250.
+        ppu.step(CYCLES_PER_SCANLINE * 5, &mut ic, &vram, &pram, &make_oam());
+        let aff = ppu.bg_affine(0).unwrap();
+        assert_eq!(
+            aff.internal_x, 0x0250,
+            "after mid-frame write, PB increments must count from the new value"
+        );
+    }
+
+    #[test]
+    fn bg2x_midframe_write_preserved_through_next_vblank() {
+        // A mid-frame write to BG2X must be visible from the NEXT frame's
+        // first scanline, because VBlank re-latches internal_x from the
+        // register value (which was updated by the mid-frame write).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+
+        // Mode 3 + BG2, identity affine.
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_affine(REG_BG2PA, 0x0100);
+        ppu.write_affine(REG_BG2PD, 0x0100);
+
+        // Source (0,0) = red; source (1,0) = green.
+        vram[0] = 0x1F;
+        vram[1] = 0x00;
+        vram[2] = 0xE0;
+        vram[3] = 0x03;
+
+        // Run one full frame (latch: internal_x = x = 0).
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Mid-frame write at scanline 0 of frame 2.
+        ppu.write_affine(REG_BG2X_L, 0x0100);
+
+        // Complete frame 2 (228 scanlines) so VBlank latches x=0x0100 again.
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &make_oam(),
+        );
+
+        // Frame 3, scanline 0.
+        ppu.step(CYCLES_PER_SCANLINE, &mut ic, &vram, &pram, &make_oam());
+
+        // internal_x was re-latched from x = 0x0100 at frame-2 VBlank entry
+        // (i.e., before frame 3 scanline 0), so screen (0,0) → source (1,0) = green.
+        let (r, g, b) = color::bgr555_to_rgb888(0x03E0);
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[r, g, b],
+            "mid-frame write must persist into the next frame via VBlank latch"
+        );
+    }
+
     // ---- Mode 2 affine tile rendering tests ----
 
     /// Helper: set up a minimal affine tile background in VRAM.
@@ -4269,16 +4704,16 @@ mod tests {
     }
 
     #[test]
-    fn pixel_in_window_clamp_x1_gt_x2() {
+    fn pixel_in_window_wraparound_x() {
         let mut ppu = Ppu::new();
-        // X1=200, X2=50 → X1 > X2, per spec clamp X2 to 240.
-        // Window covers 200..240 only (no wrap).
+        // X1=200, X2=50 → X1 > X2: window wraps around.
+        // Covers 0..50 (low range) AND 200..240 (high range).
         ppu.write_win_h(0, (200 << 8) | 50);
         ppu.write_win_v(0, 160); // full height (Y1=0, Y2=160)
 
-        assert!(ppu.pixel_in_window(0, 210, 80)); // 200 <= 210 < 240
-        assert!(!ppu.pixel_in_window(0, 30, 80)); // 30 < 200, clamped (no wrap)
-        assert!(!ppu.pixel_in_window(0, 100, 80)); // 100 < 200
+        assert!(ppu.pixel_in_window(0, 210, 80)); // 200..240 high range
+        assert!(ppu.pixel_in_window(0, 30, 80)); // 0..50 low range (wrap)
+        assert!(!ppu.pixel_in_window(0, 100, 80)); // 50..200 gap
     }
 
     #[test]
@@ -4293,16 +4728,16 @@ mod tests {
     }
 
     #[test]
-    fn pixel_in_window_clamp_y1_gt_y2() {
+    fn pixel_in_window_wraparound_y() {
         let mut ppu = Ppu::new();
-        // Y1=120, Y2=50 → Y1 > Y2, per spec clamp Y2 to 160.
-        // Window covers Y 120..160 only (no wrap).
+        // Y1=120, Y2=50 → Y1 > Y2: window wraps around.
+        // Covers 0..50 (low range) AND 120..160 (high range).
         ppu.write_win_h(0, 240); // full width (X1=0, X2=240)
         ppu.write_win_v(0, (120 << 8) | 50);
 
-        assert!(ppu.pixel_in_window(0, 100, 130)); // 120 <= 130 < 160
-        assert!(!ppu.pixel_in_window(0, 100, 30)); // 30 < 120, clamped (no wrap)
-        assert!(!ppu.pixel_in_window(0, 100, 60)); // 60 < 120
+        assert!(ppu.pixel_in_window(0, 100, 130)); // 120..160 high range
+        assert!(ppu.pixel_in_window(0, 100, 30)); // 0..50 low range (wrap)
+        assert!(!ppu.pixel_in_window(0, 100, 60)); // 50..120 gap
     }
 
     #[test]
@@ -4314,6 +4749,52 @@ mod tests {
         assert!(ppu.pixel_in_window(0, 100, 10)); // top edge
         assert!(ppu.pixel_in_window(0, 100, 159)); // last pixel before clamped Y2=160
         assert!(!ppu.pixel_in_window(0, 100, 5)); // above window
+    }
+
+    #[test]
+    fn pixel_in_window_wraparound_x_low_range_is_inside() {
+        let mut ppu = Ppu::new();
+        // X1=200, X2=50: X1 > X2, so window wraps around.
+        // Per hardware: covers 0..50 AND 200..240.
+        ppu.write_win_h(0, (200 << 8) | 50);
+        ppu.write_win_v(0, 160); // full height (Y1=0, Y2=160)
+
+        // Low range (0..50): should be INSIDE window.
+        assert!(ppu.pixel_in_window(0, 0, 80)); // x=0 is in 0..50
+        assert!(ppu.pixel_in_window(0, 30, 80)); // x=30 is in 0..50
+        assert!(ppu.pixel_in_window(0, 49, 80)); // x=49 is last pixel of low range
+
+        // Gap (50..200): should be OUTSIDE window.
+        assert!(!ppu.pixel_in_window(0, 50, 80)); // x=50 is the start of the gap
+        assert!(!ppu.pixel_in_window(0, 100, 80)); // x=100 is in gap
+        assert!(!ppu.pixel_in_window(0, 199, 80)); // x=199 is last pixel of gap
+
+        // High range (200..240): should be INSIDE window.
+        assert!(ppu.pixel_in_window(0, 200, 80)); // x=200 is start of high range
+        assert!(ppu.pixel_in_window(0, 239, 80)); // x=239 is last pixel
+    }
+
+    #[test]
+    fn pixel_in_window_wraparound_y_low_range_is_inside() {
+        let mut ppu = Ppu::new();
+        // Y1=120, Y2=50: Y1 > Y2, so window wraps around.
+        // Per hardware: covers 0..50 AND 120..160.
+        ppu.write_win_h(0, 240); // full width (X1=0, X2=240)
+        ppu.write_win_v(0, (120 << 8) | 50);
+
+        // Low range (0..50): should be INSIDE window.
+        assert!(ppu.pixel_in_window(0, 100, 0)); // y=0 is in 0..50
+        assert!(ppu.pixel_in_window(0, 100, 30)); // y=30 is in 0..50
+        assert!(ppu.pixel_in_window(0, 100, 49)); // y=49 is last pixel of low range
+
+        // Gap (50..120): should be OUTSIDE window.
+        assert!(!ppu.pixel_in_window(0, 100, 50)); // y=50 is start of gap
+        assert!(!ppu.pixel_in_window(0, 100, 60)); // y=60 is in gap
+        assert!(!ppu.pixel_in_window(0, 100, 119)); // y=119 is last pixel of gap
+
+        // High range (120..160): should be INSIDE window.
+        assert!(ppu.pixel_in_window(0, 100, 120)); // y=120 is start of high range
+        assert!(ppu.pixel_in_window(0, 100, 159)); // y=159 is last pixel
     }
 
     #[test]
@@ -5357,5 +5838,216 @@ mod tests {
         assert_eq!(ppu.read_bldy(), 0x1F);
         ppu.write_bldy(0xFF); // clamped to 0x1F
         assert_eq!(ppu.read_bldy(), 0x1F);
+    }
+
+    /// Helper: fill 32 bytes of OBJ VRAM for tile `tile_id` (4bpp) with palette index `pal_idx`.
+    fn fill_obj_tile_4bpp(vram: &mut [u8], tile_id: usize, pal_idx: u8) {
+        let base = 0x1_0000 + tile_id * 32;
+        let nibble_pair = pal_idx | (pal_idx << 4);
+        for b in &mut vram[base..base + 32] {
+            *b = nibble_pair;
+        }
+    }
+
+    #[test]
+    fn prohibited_mode_6_obj_renders_when_obj_enabled() {
+        // GBA hardware (and mGBA) run OBJ rendering in prohibited modes 6-7.
+        // No BG layers are displayed, but OBJs composite over the backdrop.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        // Mode 6, OBJ enabled, 1D mapping.
+        ppu.write_dispcnt(6 | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        // In bitmap_mode (mode >= 3) tile IDs 0-511 are skipped; use tile 512.
+        // Tile 512 lives at OBJ_VRAM_BASE + 512*32 = 0x1_4000.
+        setup_obj_in_oam(&mut oam, 0, 100, 0, 512, 0);
+        fill_obj_tile_4bpp(&mut vram, 512, 1);
+
+        // OBJ palette color 1 = red (BGR555 0x001F → RGB888 255,0,0).
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        let dst = 100 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0xFF, 0, 0],
+            "mode 6: OBJ should render red pixel at x=100"
+        );
+    }
+
+    #[test]
+    fn prohibited_mode_7_obj_renders_when_obj_enabled() {
+        // Same as mode 6: OBJ must still composite over the backdrop in mode 7.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let mut pram = make_pram();
+        let mut oam = make_oam();
+
+        ppu.write_dispcnt(7 | dispcnt::OBJ_ENABLE | dispcnt::OBJ_MAPPING_1D);
+
+        setup_obj_in_oam(&mut oam, 0, 100, 0, 512, 0);
+        fill_obj_tile_4bpp(&mut vram, 512, 1);
+
+        pram[0x202] = 0x1F;
+        pram[0x203] = 0x00;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        let dst = 100 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0xFF, 0, 0],
+            "mode 7: OBJ should render red pixel at x=100"
+        );
+    }
+
+    #[test]
+    fn prohibited_mode_6_backdrop_when_obj_disabled() {
+        // With OBJ disabled in mode 6, the whole scanline shows the backdrop.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+        let oam = make_oam();
+
+        ppu.write_dispcnt(6); // mode 6, OBJ disabled
+
+        // Backdrop = pure green (BGR555 0x03E0 → RGB888 0,255,0).
+        pram[0] = 0xE0;
+        pram[1] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        let dst = 0;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0, 0xFF, 0],
+            "mode 6: backdrop (green) should fill scanline when OBJ disabled"
+        );
+    }
+
+    #[test]
+    fn prohibited_mode_7_backdrop_when_obj_disabled() {
+        // With OBJ disabled in mode 7, the whole scanline shows the backdrop.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+        let oam = make_oam();
+
+        ppu.write_dispcnt(7); // mode 7, OBJ disabled
+
+        // Backdrop = pure green (BGR555 0x03E0 → RGB888 0,255,0).
+        pram[0] = 0xE0;
+        pram[1] = 0x03;
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * SCANLINES_PER_FRAME,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+
+        let dst = 0;
+        assert_eq!(
+            &ppu.framebuffer()[dst..dst + 3],
+            &[0, 0xFF, 0],
+            "mode 7: backdrop (green) should fill scanline when OBJ disabled"
+        );
+    }
+
+    // ---- Tests for PPU color correction -----------------------------------
+
+    #[test]
+    fn ppu_color_correction_defaults_to_false() {
+        let ppu = Ppu::new();
+        assert!(
+            !ppu.color_correction,
+            "color_correction should default to false"
+        );
+    }
+
+    #[test]
+    fn ppu_set_color_correction_enables_it() {
+        let mut ppu = Ppu::new();
+        ppu.set_color_correction(true);
+        assert!(
+            ppu.color_correction,
+            "set_color_correction(true) should enable it"
+        );
+    }
+
+    #[test]
+    fn ppu_set_color_correction_disables_it() {
+        let mut ppu = Ppu::new();
+        ppu.set_color_correction(true);
+        ppu.set_color_correction(false);
+        assert!(
+            !ppu.color_correction,
+            "set_color_correction(false) should disable it"
+        );
+    }
+
+    /// When color correction is enabled, mid-range palette colors are rendered
+    /// darker than the linear expansion. This tests that the corrected path is
+    /// actually taken in render_backdrop_scanline.
+    #[test]
+    fn ppu_color_correction_darkens_midrange_colors() {
+        // Set up a mode-0 backdrop with r5=16, g5=0, b5=0 (medium red).
+        // BGR555: r5=16 at bits 0..4 → 0x0010.
+        let bgr555_mid_red: u16 = 16; // r5=16
+        let vram = make_vram();
+        let mut pram = make_pram();
+        let oam = make_oam();
+        let mut ic = make_ic();
+        // Write the backdrop color (palette entry 0) into PRAM.
+        pram[0] = bgr555_mid_red as u8;
+        pram[1] = (bgr555_mid_red >> 8) as u8;
+
+        // Render without color correction.
+        let mut ppu_linear = Ppu::new();
+        // Set mode 0 (BG/OBJ disabled → backdrop only).
+        ppu_linear.write_dispcnt(0x0000);
+        step_and_render_scanline0(&mut ppu_linear, &mut ic, &vram, &pram, &oam);
+        let r_linear = ppu_linear.framebuffer()[0];
+
+        // Render with color correction enabled.
+        let mut ppu_corrected = Ppu::new();
+        ppu_corrected.write_dispcnt(0x0000);
+        ppu_corrected.set_color_correction(true);
+        let mut ic2 = make_ic();
+        step_and_render_scanline0(&mut ppu_corrected, &mut ic2, &vram, &pram, &oam);
+        let r_corrected = ppu_corrected.framebuffer()[0];
+
+        assert!(
+            r_corrected < r_linear,
+            "corrected red ({r_corrected}) should be darker than linear ({r_linear}) for r5=16"
+        );
     }
 }

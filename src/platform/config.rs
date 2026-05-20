@@ -860,6 +860,7 @@ pub(crate) const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--convert-autorun",
     "--recalculate-autorun",
     "--include-unofficial-roms",
+    "--gba-color-correction",
 ];
 
 /// Parse a boolean argument from command-line args.

@@ -32,6 +32,10 @@ pub struct Channel1 {
     /// Shadow copy of frequency used by sweep.
     pub sweep_shadow: u16,
     pub sweep_enabled: bool,
+    /// True if a sweep calculation was performed while sweep_negate was set.
+    /// Used for the "zombie mode" quirk: switching from negate to add after
+    /// a negate calculation immediately disables the channel.
+    negate_used: bool,
 }
 
 impl Channel1 {
@@ -87,18 +91,22 @@ impl Channel1 {
 
     /// Clock the volume envelope (FS step 7).
     pub fn clock_envelope(&mut self) {
-        if self.env_period == 0 {
-            return;
-        }
+        let reload = if self.env_period > 0 {
+            self.env_period
+        } else {
+            8
+        };
         if self.env_timer > 0 {
             self.env_timer -= 1;
         }
         if self.env_timer == 0 {
-            self.env_timer = self.env_period;
-            if self.env_add && self.volume < 15 {
-                self.volume += 1;
-            } else if !self.env_add && self.volume > 0 {
-                self.volume -= 1;
+            self.env_timer = reload;
+            if self.env_period > 0 {
+                if self.env_add && self.volume < 15 {
+                    self.volume += 1;
+                } else if !self.env_add && self.volume > 0 {
+                    self.volume -= 1;
+                }
             }
         }
     }
@@ -116,6 +124,9 @@ impl Channel1 {
             };
             if self.sweep_enabled && self.sweep_period > 0 {
                 let new_freq = self.calc_sweep();
+                if self.sweep_negate {
+                    self.negate_used = true;
+                }
                 if new_freq > 2047 {
                     self.active = false;
                 } else if self.sweep_shift > 0 {
@@ -149,7 +160,11 @@ impl Channel1 {
         let period = (2048_u32.wrapping_sub(self.freq as u32)) * 16;
         self.freq_timer = period;
         self.volume = self.init_volume;
-        self.env_timer = self.env_period;
+        self.env_timer = if self.env_period > 0 {
+            self.env_period
+        } else {
+            8
+        };
         // Sweep initialisation.
         self.sweep_shadow = self.freq;
         self.sweep_timer = if self.sweep_period > 0 {
@@ -158,6 +173,8 @@ impl Channel1 {
             8
         };
         self.sweep_enabled = self.sweep_period > 0 || self.sweep_shift > 0;
+        // Reset negate_used so zombie mode doesn't fire on the next direction change.
+        self.negate_used = false;
         // Overflow check on trigger.
         if self.sweep_enabled && self.sweep_shift > 0 && self.calc_sweep() > 2047 {
             self.active = false;
@@ -168,9 +185,15 @@ impl Channel1 {
 
     /// SOUND1CNT_L: sweep register (bits 6-4 period, bit 3 negate, bits 2-0 shift).
     pub fn write_cnt_l(&mut self, val: u16) {
+        let old_negate = self.sweep_negate;
         self.sweep_shift = (val & 0x07) as u8;
         self.sweep_negate = (val & 0x08) != 0;
         self.sweep_period = ((val >> 4) & 0x07) as u8;
+        // Zombie mode: if negate was in use and we're switching to add mode,
+        // the channel must be disabled immediately.
+        if old_negate && !self.sweep_negate && self.negate_used {
+            self.active = false;
+        }
     }
 
     /// SOUND1CNT_H: tone / envelope (bits 5-0 length, 7-6 duty, 10-8 env period,
@@ -189,11 +212,34 @@ impl Channel1 {
 
     /// SOUND1CNT_X: frequency and control (bits 10-0 freq, 14 length-enable,
     /// 15 trigger/reset — write-only).
-    pub fn write_cnt_x(&mut self, val: u16) {
+    ///
+    /// `extra_clk` must be `true` when the frame sequencer's next step will NOT
+    /// clock the length counter (i.e. `fs_step` is odd: 1, 3, 5, 7).  In that
+    /// case two extra-clock quirks apply:
+    ///
+    /// * Enabling `length_en` (0→1, no trigger): immediately decrement the
+    ///   counter by 1 if it is nonzero.
+    /// * Trigger: if the counter was just reloaded to the maximum (64) because
+    ///   it was 0, decrement by 1.
+    pub fn write_cnt_x(&mut self, val: u16, extra_clk: bool) {
         self.freq = val & 0x7FF;
+        let old_length_en = self.length_en;
         self.length_en = (val & 0x4000) != 0;
+        // Extra clock when enabling length_en (0→1) and next FS step won't clock.
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
         if val & 0x8000 != 0 {
+            let reloaded_length = self.length_counter == 0;
             self.trigger();
+            // Extra clock when trigger reloaded the counter to max (was 0) and
+            // length_en is set.
+            if extra_clk && self.length_en && reloaded_length {
+                self.length_counter = 63;
+            }
         }
     }
 
@@ -216,6 +262,80 @@ mod tests {
             duty_pos,
             ..Channel1::default()
         }
+    }
+
+    /// Helper: build a triggered CH1 with sweep in negate mode so we can
+    /// force a sweep calc to occur.
+    fn triggered_negate_sweep_ch1() -> Channel1 {
+        let mut ch = Channel1 {
+            dac_on: true,
+            ..Channel1::default()
+        };
+        // sweep_period=1, negate=true, shift=1 → each sweep tick subtracts
+        ch.write_cnt_l(0x0019); // period=1, negate=1, shift=1
+        // write_cnt_h: no length, 25% duty, volume env off, init_volume=8
+        ch.write_cnt_h(0x8040); // init_vol=8, duty=1(25%), env off
+        // write_cnt_x: freq=500, trigger
+        ch.write_cnt_x(0x81F4, false); // trigger | freq=500
+        ch
+    }
+
+    // ─── Unit tests: sweep zombie mode ───────────────────────────────────
+
+    /// After a negate sweep calculation, clearing the negate bit must disable
+    /// the channel immediately (zombie mode).
+    #[test]
+    fn test_ch1_sweep_zombie_disable_on_negate_to_add() {
+        let mut ch = triggered_negate_sweep_ch1();
+        assert!(ch.active, "channel should be active after trigger");
+
+        // Perform one full sweep clock so negate_used becomes true.
+        // sweep_period=1, sweep_timer will be 1, so one clock_sweep() fires.
+        ch.clock_sweep();
+        assert!(ch.active, "channel still active after negate sweep calc");
+
+        // Now switch direction from negate to add → zombie mode disables channel.
+        ch.write_cnt_l(0x0011); // period=1, negate=0, shift=1
+        assert!(
+            !ch.active,
+            "channel must be disabled when negate→add after negate calc (zombie mode)"
+        );
+    }
+
+    /// Without a prior negate calculation (negate_used=false), switching from
+    /// negate to add should NOT disable the channel.
+    #[test]
+    fn test_ch1_sweep_no_zombie_if_negate_not_used() {
+        let mut ch = triggered_negate_sweep_ch1();
+        assert!(ch.active, "channel should be active after trigger");
+
+        // Do NOT clock sweep — negate_used is still false.
+        // Switch direction: this must NOT kill the channel.
+        ch.write_cnt_l(0x0011); // period=1, negate=0, shift=1
+        assert!(
+            ch.active,
+            "channel must stay active when negate→add without prior negate calc"
+        );
+    }
+
+    /// After trigger, negate_used must be reset so a subsequent direction
+    /// change does not spuriously disable the channel.
+    #[test]
+    fn test_ch1_sweep_negate_used_resets_on_trigger() {
+        let mut ch = triggered_negate_sweep_ch1();
+        // Perform sweep so negate_used=true.
+        ch.clock_sweep();
+
+        // Re-trigger resets negate_used.
+        ch.write_cnt_x(0x81F4, false);
+        assert!(ch.active, "channel still active after re-trigger");
+
+        // Now direction change must NOT disable it (negate_used was reset).
+        ch.write_cnt_l(0x0011); // period=1, negate=0, shift=1
+        assert!(
+            ch.active,
+            "channel must stay active after trigger clears negate_used"
+        );
     }
 
     #[test]
@@ -273,6 +393,73 @@ mod tests {
         assert!(
             (got - (-1.0_f32)).abs() < 1e-5,
             "volume=0 duty high must produce -1.0, got {got}"
+        );
+    }
+
+    // ─── Envelope timer period=0 behaviour (RED → GREEN) ─────────────────────
+
+    /// On trigger with env_period=0, env_timer must be initialized to 8,
+    /// not 0. Per Pan Docs / CGB hardware: the reload value is 8 when period=0.
+    #[test]
+    fn test_ch1_trigger_env_period_zero_sets_env_timer_to_8() {
+        let mut ch = Channel1 {
+            dac_on: true,
+            init_volume: 7,
+            env_period: 0,
+            ..Channel1::default()
+        };
+        ch.write_cnt_x(0x8000, false); // trigger (bit 15), freq=0
+        assert_eq!(
+            ch.env_timer, 8,
+            "env_timer must be 8 after trigger when env_period=0"
+        );
+    }
+
+    /// clock_envelope with env_period=0 must still decrement env_timer
+    /// (no volume change).
+    #[test]
+    fn test_ch1_clock_envelope_period_zero_decrements_timer() {
+        let mut ch = Channel1 {
+            active: true,
+            dac_on: true,
+            volume: 7,
+            env_period: 0,
+            env_timer: 8,
+            ..Channel1::default()
+        };
+        let vol_before = ch.volume;
+        ch.clock_envelope();
+        assert_eq!(
+            ch.volume, vol_before,
+            "volume must not change when env_period=0"
+        );
+        assert_eq!(
+            ch.env_timer, 7,
+            "env_timer must count down even when env_period=0"
+        );
+    }
+
+    /// When env_timer expires with env_period=0, the timer must reload to 8
+    /// and no volume change must occur.
+    #[test]
+    fn test_ch1_clock_envelope_period_zero_reloads_to_8_on_expiry() {
+        let mut ch = Channel1 {
+            active: true,
+            dac_on: true,
+            volume: 7,
+            env_period: 0,
+            env_timer: 1, // about to expire
+            ..Channel1::default()
+        };
+        let vol_before = ch.volume;
+        ch.clock_envelope();
+        assert_eq!(
+            ch.env_timer, 8,
+            "env_timer must reload to 8 when env_period=0 and timer expires"
+        );
+        assert_eq!(
+            ch.volume, vol_before,
+            "volume must not change when env_period=0"
         );
     }
 }

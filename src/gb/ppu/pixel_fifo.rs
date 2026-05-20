@@ -37,11 +37,7 @@ const SCX_TILE_MASK: u8 = !SCX_FINE_MASK;
 const SCX_LOW_BITS_SAMPLE_DOTS: u16 = 6;
 
 fn scy_fetch_start_dots(cgb_mode: bool) -> u16 {
-    if cgb_mode {
-        SCX_LOW_BITS_SAMPLE_DOTS + 3
-    } else {
-        SCX_LOW_BITS_SAMPLE_DOTS + 1
-    }
+    SCX_LOW_BITS_SAMPLE_DOTS + if cgb_mode { 3 } else { 1 }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1146,13 +1142,12 @@ impl PixelFifoRenderer {
 
     /// Record a write to the SCY register (`$FF42`) during mode 3.
     ///
-    /// - `old_scy`  — value of SCY before the write (kept for API symmetry; unused)
+    /// - `_old_scy` — value of SCY before the write (kept for API symmetry with `record_scx_write`; unused)
     /// - `new_scy`  — new value being written
     /// - `dot`      — current absolute dot counter (used to compute the elapsed delay)
     /// - `cgb_mode` — `true` for CGB hardware (applies a 4-dot effective delay in this
     ///   emulator: 2 hardware T-cycles + 2 dots from tick-before-write ordering)
-    pub fn record_scy_write(&mut self, old_scy: u8, new_scy: u8, dot: u16, cgb_mode: bool) {
-        let _ = old_scy;
+    pub fn record_scy_write(&mut self, _old_scy: u8, new_scy: u8, dot: u16, cgb_mode: bool) {
         if !self.active {
             return;
         }

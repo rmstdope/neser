@@ -14,6 +14,13 @@ const GBA_CLOCK_HZ: f32 = 16_777_216.0;
 /// Frame sequencer period: 512 Hz → one step every 32 768 GBA cycles.
 const FS_PERIOD: u32 = 32_768;
 
+/// PSG internal sampling period: 262.144kHz = 16.78MHz / 64 GBA cycles.
+///
+/// Per GBATek (gbatek-gba-sound-control-registers.htm, Resampling section):
+///   "The PSG channels 1-4 are internally generated at 262.144kHz"
+/// which equals one sample every 64 GBA CPU cycles.
+const PSG_INTERNAL_PERIOD: u32 = 64;
+
 // ── SOUNDBIAS / mixer constants ───────────────────────────────────────────────
 
 /// PSG mix (normalised −1..+1) × this factor gives 10-bit signed units (±128 = ±0x80).
@@ -24,6 +31,12 @@ const FIFO_SCALE: f32 = 512.0; // ±0x200
 
 /// Maximum value in the unsigned 10-bit output range [0, 0x3FF].
 const MAX_10BIT: u32 = 0x3FF;
+
+/// Base hardware PWM output rate (Hz) for SOUNDBIAS resolution = 0 (9-bit, 32.768 kHz).
+///
+/// Per GBATek: each resolution step doubles the rate:
+///   0 → 32 768 Hz, 1 → 65 536 Hz, 2 → 131 072 Hz, 3 → 262 144 Hz.
+const SOUNDBIAS_PWM_BASE_HZ: f32 = 32_768.0;
 
 // ── Duty cycle waveforms ──────────────────────────────────────────────────────
 
@@ -98,6 +111,14 @@ pub struct Apu {
     sample_acc: f32,
     cycles_per_sample: f32,
     pending_sample: Option<(f32, f32)>,
+
+    // ── PSG 262.144kHz internal accumulator ──────────────────────────────
+    /// Cycle counter within the current PSG internal period (0..PSG_INTERNAL_PERIOD).
+    psg_counter: u32,
+    /// Sum of each PSG channel's output() snapshots taken at 262.144kHz.
+    psg_sum: [f32; 4],
+    /// Number of PSG internal samples accumulated since the last output sample.
+    psg_sample_count: u32,
 }
 
 impl Default for Apu {
@@ -125,6 +146,9 @@ impl Apu {
             sample_acc: 0.0,
             cycles_per_sample: GBA_CLOCK_HZ / 44_100.0,
             pending_sample: None,
+            psg_counter: 0,
+            psg_sum: [0.0; 4],
+            psg_sample_count: 0,
         }
     }
 
@@ -133,6 +157,10 @@ impl Apu {
     /// Set the output sample rate in Hz (default: 44 100).
     ///
     /// Invalid values (0, negative, NaN, infinity) are silently ignored.
+    ///
+    /// Note: this rate is independent of the SOUNDBIAS resolution setting.
+    /// On real hardware, SOUNDBIAS bits 15-14 also control the PWM output rate;
+    /// see [`soundbias_pwm_rate_hz`](Apu::soundbias_pwm_rate_hz) for that value.
     pub fn set_sample_rate(&mut self, rate: f32) {
         if !rate.is_finite() || rate <= 0.0 {
             return;
@@ -143,6 +171,30 @@ impl Apu {
     /// Returns the configured output sample rate in Hz.
     pub fn sample_rate(&self) -> f32 {
         GBA_CLOCK_HZ / self.cycles_per_sample
+    }
+
+    /// Returns the hardware PWM output rate in Hz implied by the current
+    /// SOUNDBIAS resolution setting (bits 15-14).
+    ///
+    /// Per GBATek (gbatek-gba-sound-control-registers.htm), SOUNDBIAS bits
+    /// 15-14 control both amplitude resolution AND the PWM sampling cycle:
+    ///
+    /// | Bits 15-14 | Resolution | Hardware PWM rate |
+    /// |------------|------------|-------------------|
+    /// | 0b00       | 9-bit      | 32 768 Hz         |
+    /// | 0b01       | 8-bit      | 65 536 Hz         |
+    /// | 0b10       | 7-bit      | 131 072 Hz        |
+    /// | 0b11       | 6-bit      | 262 144 Hz        |
+    ///
+    /// **Known simplification**: this emulator does **not** adjust the actual
+    /// output sample rate (configured via [`set_sample_rate`](Apu::set_sample_rate))
+    /// when the resolution changes.  The quantisation effect (amplitude
+    /// truncation, implemented in `apply_soundbias`) is the audible part;
+    /// the sampling-rate shift primarily affects ultrasonic content above the
+    /// range of most speakers and is therefore intentionally omitted.
+    pub fn soundbias_pwm_rate_hz(&self) -> f32 {
+        let resolution = u32::from((self.soundbias >> 14) & 0x3);
+        SOUNDBIAS_PWM_BASE_HZ * (1_u32 << resolution) as f32
     }
 
     /// Returns `true` when an output sample is ready to be collected.
@@ -172,14 +224,18 @@ impl Apu {
     /// Advance the APU by `cycles` GBA CPU cycles.
     ///
     /// Rather than iterating one cycle at a time, this computes how many
-    /// cycles remain until the next frame-sequencer event and the next sample
-    /// boundary, advances the channel timers in one step, then handles those
-    /// events in order. This keeps APU stepping O(events) instead of O(cycles).
+    /// cycles remain until the next frame-sequencer event, the next PSG
+    /// internal sample (262.144kHz), and the next output sample boundary,
+    /// advances the channel timers in one step, then handles those events in
+    /// order. This keeps APU stepping O(events) instead of O(cycles).
     pub fn tick(&mut self, cycles: u32) {
         let mut remaining = cycles;
         while remaining > 0 {
             // How many cycles until the frame sequencer fires?
             let fs_remaining = FS_PERIOD - self.fs_counter;
+
+            // How many cycles until the next PSG internal sample?
+            let psg_remaining = PSG_INTERNAL_PERIOD - self.psg_counter;
 
             // How many cycles until the next output sample?
             // We track the fractional accumulator as f32; convert the ceiling
@@ -191,7 +247,10 @@ impl Apu {
             };
 
             // Advance only up to the nearest event (or end of budget).
-            let step = remaining.min(fs_remaining).min(sample_remaining);
+            let step = remaining
+                .min(fs_remaining)
+                .min(psg_remaining)
+                .min(sample_remaining);
 
             // Bulk-advance channel frequency timers.
             self.ch1.tick(step);
@@ -199,11 +258,23 @@ impl Apu {
             self.ch3.tick(step);
             self.ch4.tick(step);
 
-            // Advance frame sequencer counter.
-            self.fs_counter += step;
-            if self.fs_counter >= FS_PERIOD {
-                self.fs_counter -= FS_PERIOD;
-                self.clock_frame_sequencer_step();
+            // Advance frame sequencer counter (only while powered).
+            if self.powered {
+                self.fs_counter += step;
+                if self.fs_counter >= FS_PERIOD {
+                    self.fs_counter -= FS_PERIOD;
+                    self.clock_frame_sequencer_step();
+                }
+            }
+
+            // Advance PSG internal counter and accumulate at 262.144kHz rate.
+            // `step` is bounded by `psg_remaining` above, so `psg_counter + step`
+            // never exceeds PSG_INTERNAL_PERIOD and this fires at most once per
+            // loop iteration — matching the same pattern used for fs_counter.
+            self.psg_counter += step;
+            if self.psg_counter >= PSG_INTERNAL_PERIOD {
+                self.psg_counter -= PSG_INTERNAL_PERIOD;
+                self.accumulate_psg();
             }
 
             // Advance sample accumulator.
@@ -217,6 +288,17 @@ impl Apu {
 
             remaining -= step;
         }
+    }
+
+    /// Snapshot all 4 PSG channel outputs and add to the 262.144kHz accumulator.
+    ///
+    /// Called every 64 GBA cycles (= 262.144kHz) from [`tick`].
+    fn accumulate_psg(&mut self) {
+        self.psg_sum[0] += self.ch1.output();
+        self.psg_sum[1] += self.ch2.output();
+        self.psg_sum[2] += self.ch3.output();
+        self.psg_sum[3] += self.ch4.output();
+        self.psg_sample_count += 1;
     }
 
     // ── Register read/write ───────────────────────────────────────────────
@@ -294,8 +376,9 @@ impl Apu {
             }
             // SOUNDCNT_L
             0x0400_0080 => self.soundcnt_l,
-            // SOUNDCNT_H
-            0x0400_0082 => self.soundcnt_h,
+            // SOUNDCNT_H — bits 4-7 are unused (Not used per GBATek), bits 11 and 15 are W-only.
+            // Mask 0x770F: keeps R/W bits 0-3, 8-10, 12-14; zeros bits 4-7, 11, 15.
+            0x0400_0082 => self.soundcnt_h & 0x770F,
             // SOUNDCNT_X (status + power)
             0x0400_0084 => self.read_soundcnt_x(),
             // SOUNDBIAS
@@ -316,17 +399,24 @@ impl Apu {
             return;
         }
 
+        // Extra length-counter clock: fs_step cycles through 0–7 (clamped by
+        // `(step + 1) & 7` in clock_frame_sequencer_step).  When the next step
+        // will NOT clock the length counter (fs_step is odd: 1, 3, 5, 7),
+        // enabling length_en or triggering with length_en causes an immediate
+        // extra decrement of the length counter.
+        let extra_clk = (self.fs_step & 1) == 1;
+
         match addr {
             0x0400_0060 => self.ch1.write_cnt_l(val),
             0x0400_0062 => self.ch1.write_cnt_h(val),
-            0x0400_0064 => self.ch1.write_cnt_x(val),
+            0x0400_0064 => self.ch1.write_cnt_x(val, extra_clk),
             0x0400_0068 => self.ch2.write_cnt_l(val),
-            0x0400_006C => self.ch2.write_cnt_h(val),
+            0x0400_006C => self.ch2.write_cnt_h(val, extra_clk),
             0x0400_0070 => self.ch3.write_cnt_l(val),
             0x0400_0072 => self.ch3.write_cnt_h(val),
-            0x0400_0074 => self.ch3.write_cnt_x(val),
+            0x0400_0074 => self.ch3.write_cnt_x(val, extra_clk),
             0x0400_0078 => self.ch4.write_cnt_l(val),
-            0x0400_007C => self.ch4.write_cnt_h(val),
+            0x0400_007C => self.ch4.write_cnt_h(val, extra_clk),
             0x0400_0080 => self.soundcnt_l = val & 0xFF77,
             0x0400_0082 => self.write_soundcnt_h(val),
             0x0400_0084 => self.write_soundcnt_x(val),
@@ -367,6 +457,13 @@ impl Apu {
             return;
         }
 
+        // Extra length-counter clock: fs_step cycles through 0–7 (clamped by
+        // `(step + 1) & 7` in clock_frame_sequencer_step).  When the next step
+        // will NOT clock the length counter (fs_step is odd: 1, 3, 5, 7),
+        // enabling length_en or triggering with length_en causes an immediate
+        // extra decrement of the length counter.
+        let extra_clk = (self.fs_step & 1) == 1;
+
         match addr {
             // SOUND1CNT_L: both bytes are fully read/write — RMW is safe.
             0x0400_0060 | 0x0400_0061 => {
@@ -398,12 +495,13 @@ impl Apu {
                 // Low byte: low 8 bits of frequency — write-only.
                 let hi = (self.ch1.freq >> 8) & 0x07;
                 let len_en = u16::from(self.ch1.length_en) << 6;
-                self.ch1.write_cnt_x(len_en | (hi << 8) | val as u16);
+                self.ch1
+                    .write_cnt_x(len_en | (hi << 8) | val as u16, extra_clk);
             }
             0x0400_0065 => {
                 // High byte: freq[10:8] | length_en | trigger.
                 self.ch1
-                    .write_cnt_x((val as u16) << 8 | (self.ch1.freq & 0xFF));
+                    .write_cnt_x((val as u16) << 8 | (self.ch1.freq & 0xFF), extra_clk);
             }
             // SOUND2CNT_L
             0x0400_0068 => {
@@ -418,11 +516,12 @@ impl Apu {
             0x0400_006C => {
                 let hi = (self.ch2.freq >> 8) & 0x07;
                 let len_en = u16::from(self.ch2.length_en) << 6;
-                self.ch2.write_cnt_h(len_en | (hi << 8) | val as u16);
+                self.ch2
+                    .write_cnt_h(len_en | (hi << 8) | val as u16, extra_clk);
             }
             0x0400_006D => {
                 self.ch2
-                    .write_cnt_h((val as u16) << 8 | (self.ch2.freq & 0xFF));
+                    .write_cnt_h((val as u16) << 8 | (self.ch2.freq & 0xFF), extra_clk);
             }
             // SOUND3CNT_L: DAC enable in bit 7
             0x0400_0070 => {
@@ -444,11 +543,12 @@ impl Apu {
             0x0400_0074 => {
                 let hi = (self.ch3.freq >> 8) & 0x07;
                 let len_en = u16::from(self.ch3.length_en) << 6;
-                self.ch3.write_cnt_x(len_en | (hi << 8) | val as u16);
+                self.ch3
+                    .write_cnt_x(len_en | (hi << 8) | val as u16, extra_clk);
             }
             0x0400_0075 => {
                 self.ch3
-                    .write_cnt_x((val as u16) << 8 | (self.ch3.freq & 0xFF));
+                    .write_cnt_x((val as u16) << 8 | (self.ch3.freq & 0xFF), extra_clk);
             }
             // SOUND4CNT_L: length (5-0) in low byte, envelope in high byte
             0x0400_0078 => {
@@ -462,12 +562,16 @@ impl Apu {
             // SOUND4CNT_H: clock params + trigger
             0x0400_007C => {
                 let len_en = u16::from(self.ch4.length_en) << 6;
-                self.ch4
-                    .write_cnt_h(len_en | (0xFF00 & self.read16(0x0400_007C)) | val as u16);
+                self.ch4.write_cnt_h(
+                    len_en | (0xFF00 & self.read16(0x0400_007C)) | val as u16,
+                    extra_clk,
+                );
             }
             0x0400_007D => {
-                self.ch4
-                    .write_cnt_h((val as u16) << 8 | (self.read16(0x0400_007C) & 0x00FF));
+                self.ch4.write_cnt_h(
+                    (val as u16) << 8 | (self.read16(0x0400_007C) & 0x00FF),
+                    extra_clk,
+                );
             }
             // SOUNDCNT_L: plain read/write register — RMW safe.
             0x0400_0080 => {
@@ -570,12 +674,15 @@ impl Apu {
     fn write_soundcnt_x(&mut self, val: u16) {
         let new_power = val & 0x0080 != 0;
         if !new_power && self.powered {
-            // Power-off: clear all channel registers.
+            // Power-off: clear all channel registers and reset frame sequencer.
             self.ch1.power_off();
             self.ch2.power_off();
             self.ch3.power_off();
             self.ch4.power_off();
             self.soundcnt_l = 0;
+            // Reset frame sequencer to deterministic state for next power-on.
+            self.fs_step = 0;
+            self.fs_counter = 0;
             // SOUNDCNT_H and FIFO channels are retained.
         }
         self.powered = new_power;
@@ -602,9 +709,16 @@ impl Apu {
     }
 
     /// Mix all channels into a stereo `(left, right)` pair in `[-1.0, 1.0]`.
-    fn mix(&self) -> (f32, f32) {
+    ///
+    /// For PSG channels (CH1–CH4), uses the 262.144kHz accumulated average
+    /// when samples have been collected via [`tick`]. If called directly
+    /// (e.g., from tests without prior tick calls), falls back to reading
+    /// each channel's current output directly.
+    fn mix(&mut self) -> (f32, f32) {
         if !self.powered {
             // Per GBATek: "While Bit 7 is cleared, both PSG and FIFO sounds are disabled"
+            self.psg_sum = [0.0; 4];
+            self.psg_sample_count = 0;
             return (0.0, 0.0);
         }
 
@@ -612,12 +726,30 @@ impl Apu {
         let nr50 = (self.soundcnt_l & 0xFF) as u8;
         let nr51 = (self.soundcnt_l >> 8) as u8;
 
-        let dmg_samples = [
-            self.ch1.output(),
-            self.ch2.output(),
-            self.ch3.output(),
-            self.ch4.output(),
-        ];
+        // Use 262.144kHz accumulated PSG samples if available; fall back to direct
+        // channel output only when mix() is called outside the tick loop (e.g. unit
+        // tests that exercise the mixer without ticking the APU first).  In normal
+        // emulation every output sample follows at least one PSG accumulation step,
+        // so the fallback path is never taken in production.
+        let dmg_samples = if self.psg_sample_count > 0 {
+            let n = self.psg_sample_count as f32;
+            let s = [
+                self.psg_sum[0] / n,
+                self.psg_sum[1] / n,
+                self.psg_sum[2] / n,
+                self.psg_sum[3] / n,
+            ];
+            self.psg_sum = [0.0; 4];
+            self.psg_sample_count = 0;
+            s
+        } else {
+            [
+                self.ch1.output(),
+                self.ch2.output(),
+                self.ch3.output(),
+                self.ch4.output(),
+            ]
+        };
 
         // NR51 bits 3-0 = right enables (CH1-CH4), bits 7-4 = left enables.
         let right_mix = Self::mix_terminal(dmg_samples, nr51 & 0x0F);
@@ -695,6 +827,11 @@ impl Apu {
     /// 3. Quantise: clear the low (resolution + 1) bits, where resolution is
     ///    SOUNDBIAS bits 15-14 (0 → 9-bit, …, 3 → 6-bit).
     /// 4. Subtract bias and normalise to [−1.0, 1.0] by dividing by FIFO_SCALE.
+    ///
+    /// **Known simplification**: on real hardware, SOUNDBIAS bits 15-14 also
+    /// select the PWM output rate (see [`soundbias_pwm_rate_hz`](Apu::soundbias_pwm_rate_hz)).
+    /// This emulator does not alter the configured output sample rate when the
+    /// resolution changes — only the quantisation is applied here.
     fn apply_soundbias(&self, sample: f32) -> f32 {
         let bias = f32::from((self.soundbias >> 1) & 0x1FF);
         let resolution = u32::from((self.soundbias >> 14) & 0x3);
@@ -885,6 +1022,286 @@ mod tests {
         }
         // Frequency should not change when period=0
         assert_eq!(apu.ch1.sweep_shadow, initial_shadow);
+    }
+
+    // ── Length-counter extra-clock quirk tests ──────────────────────────────
+    //
+    // When the Frame Sequencer's NEXT step will NOT clock the length counter
+    // (i.e. fs_step is odd: 1, 3, 5, 7), writing to a channel's control
+    // register must apply an "extra clock":
+    //  (a) enabling length_en (0→1, no trigger): decrement length_counter by 1
+    //  (b) trigger + length_en set: if counter was reloaded to max, decrement by 1
+    //
+    // When fs_step is even (0, 2, 4, 6) the NEXT step WILL clock length, so
+    // no extra clock should occur.
+
+    // ── CH1 extra-clock tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_ch1_trigger_extra_clocks_reloaded_counter_when_fs_step_odd() {
+        // fs_step=1 (odd): trigger + length_en, counter was 0 → reloads to 64
+        // then extra clock → 63.
+        let mut apu = powered_apu();
+        // DAC on, volume=15
+        apu.write16(0x0400_0062, 0xF080);
+        // force counter to 0 by setting length=64 and not triggering
+        apu.ch1.length_counter = 0;
+        // Advance FS to step 1 (odd) by clocking step 0 first.
+        apu.clock_frame_sequencer_step(); // processes step 0, fs_step becomes 1
+        // Trigger + length_en = bits 15 + 14 of SOUND1CNT_X
+        apu.write16(0x0400_0064, 0xC000); // trigger | length_en, freq=0
+        assert_eq!(
+            apu.ch1.length_counter, 63,
+            "trigger at odd fs_step: counter should be reloaded to 64 then extra-clocked to 63"
+        );
+    }
+
+    #[test]
+    fn test_ch1_trigger_no_extra_clock_when_fs_step_even() {
+        // fs_step=0 (even): trigger + length_en, counter was 0 → reloads to 64, no extra clock.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 0;
+        // fs_step is already 0 (even) after powered_apu()
+        apu.write16(0x0400_0064, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch1.length_counter, 64,
+            "trigger at even fs_step: counter should be 64 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch1_trigger_does_not_extra_clock_when_counter_already_max() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 64;
+        apu.ch1.length_en = true;
+        apu.fs_step = 1;
+        apu.write16(0x0400_0064, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch1.length_counter, 64,
+            "trigger at odd fs_step must not extra-clock unless it reloaded from 0"
+        );
+    }
+
+    #[test]
+    fn test_ch1_enable_length_extra_clocks_when_fs_step_odd() {
+        // fs_step=1 (odd): enabling length_en (0→1, no trigger) with counter=5 → 4.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 5;
+        apu.ch1.length_en = false;
+        apu.ch1.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        // Write length_en bit only (no trigger, no freq change)
+        apu.write16(0x0400_0064, 0x4000); // length_en | freq=0
+        assert_eq!(
+            apu.ch1.length_counter, 4,
+            "enabling length at odd fs_step: counter 5 → 4 (extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch1_enable_length_no_extra_clock_when_fs_step_even() {
+        // fs_step=0 (even): enabling length_en (0→1, no trigger) with counter=5 → stays 5.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 5;
+        apu.ch1.length_en = false;
+        apu.ch1.active = true;
+        // fs_step=0 (even) - no advancement needed
+        apu.write16(0x0400_0064, 0x4000); // length_en | freq=0
+        assert_eq!(
+            apu.ch1.length_counter, 5,
+            "enabling length at even fs_step: counter stays at 5 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch1_enable_length_extra_clock_disables_channel_when_counter_reaches_zero() {
+        // fs_step=1 (odd): counter=1, enabling length_en extra-clocks to 0 → channel disabled.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 1;
+        apu.ch1.length_en = false;
+        apu.ch1.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_0064, 0x4000);
+        assert_eq!(apu.ch1.length_counter, 0);
+        assert!(
+            !apu.ch1.active,
+            "channel disabled when extra clock drives counter to 0"
+        );
+    }
+
+    // ── CH2 extra-clock tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_ch2_trigger_extra_clocks_reloaded_counter_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0068, 0xF080);
+        apu.ch2.length_counter = 0;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_006C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch2.length_counter, 63,
+            "CH2 trigger at odd fs_step: counter should be 63 after extra clock"
+        );
+    }
+
+    #[test]
+    fn test_ch2_trigger_no_extra_clock_when_fs_step_even() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0068, 0xF080);
+        apu.ch2.length_counter = 0;
+        apu.write16(0x0400_006C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch2.length_counter, 64,
+            "CH2 trigger at even fs_step: counter should be 64 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch2_trigger_does_not_extra_clock_when_counter_already_max() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0068, 0xF080);
+        apu.ch2.length_counter = 64;
+        apu.ch2.length_en = true;
+        apu.fs_step = 1;
+        apu.write16(0x0400_006C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch2.length_counter, 64,
+            "CH2 trigger at odd fs_step must not extra-clock unless it reloaded from 0"
+        );
+    }
+
+    #[test]
+    fn test_ch2_enable_length_extra_clocks_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0068, 0xF080);
+        apu.ch2.length_counter = 3;
+        apu.ch2.length_en = false;
+        apu.ch2.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_006C, 0x4000); // length_en only
+        assert_eq!(
+            apu.ch2.length_counter, 2,
+            "CH2 enable length at odd fs_step: counter 3 → 2"
+        );
+    }
+
+    // ── CH3 extra-clock tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_ch3_trigger_extra_clocks_reloaded_counter_when_fs_step_odd() {
+        // CH3 max length counter is 256.
+        let mut apu = powered_apu();
+        // DAC on (bit 7 of SOUND3CNT_L)
+        apu.write16(0x0400_0070, 0x0080);
+        apu.ch3.length_counter = 0;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_0074, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch3.length_counter, 255,
+            "CH3 trigger at odd fs_step: counter should be 255 (256 → extra clock → 255)"
+        );
+    }
+
+    #[test]
+    fn test_ch3_trigger_no_extra_clock_when_fs_step_even() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0070, 0x0080);
+        apu.ch3.length_counter = 0;
+        apu.write16(0x0400_0074, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch3.length_counter, 256,
+            "CH3 trigger at even fs_step: counter should be 256 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch3_trigger_does_not_extra_clock_when_counter_already_max() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0070, 0x0080);
+        apu.ch3.length_counter = 256;
+        apu.ch3.length_en = true;
+        apu.fs_step = 1;
+        apu.write16(0x0400_0074, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch3.length_counter, 256,
+            "CH3 trigger at odd fs_step must not extra-clock unless it reloaded from 0"
+        );
+    }
+
+    #[test]
+    fn test_ch3_enable_length_extra_clocks_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0070, 0x0080);
+        apu.ch3.length_counter = 10;
+        apu.ch3.length_en = false;
+        apu.ch3.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_0074, 0x4000); // length_en only
+        assert_eq!(
+            apu.ch3.length_counter, 9,
+            "CH3 enable length at odd fs_step: counter 10 → 9"
+        );
+    }
+
+    // ── CH4 extra-clock tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_ch4_trigger_extra_clocks_reloaded_counter_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000); // volume=15, DAC on
+        apu.ch4.length_counter = 0;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_007C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch4.length_counter, 63,
+            "CH4 trigger at odd fs_step: counter should be 63 after extra clock"
+        );
+    }
+
+    #[test]
+    fn test_ch4_trigger_no_extra_clock_when_fs_step_even() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000);
+        apu.ch4.length_counter = 0;
+        apu.write16(0x0400_007C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch4.length_counter, 64,
+            "CH4 trigger at even fs_step: counter should be 64 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch4_trigger_does_not_extra_clock_when_counter_already_max() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000);
+        apu.ch4.length_counter = 64;
+        apu.ch4.length_en = true;
+        apu.fs_step = 1;
+        apu.write16(0x0400_007C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch4.length_counter, 64,
+            "CH4 trigger at odd fs_step must not extra-clock unless it reloaded from 0"
+        );
+    }
+
+    #[test]
+    fn test_ch4_enable_length_extra_clocks_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000);
+        apu.ch4.length_counter = 7;
+        apu.ch4.length_en = false;
+        apu.ch4.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_007C, 0x4000); // length_en only
+        assert_eq!(
+            apu.ch4.length_counter, 6,
+            "CH4 enable length at odd fs_step: counter 7 → 6"
+        );
     }
 
     // ── CH2 pulse test ──────────────────────────────────────────────────────
@@ -1240,7 +1657,9 @@ mod tests {
         apu.write8(0x0400_0088, 0x34);
         apu.write8(0x0400_0089, 0x12);
 
-        assert_eq!(apu.read16(0x0400_0082), 0x55AA);
+        // write8 stores 0xAA in low byte and 0x55 in high byte → raw 0x55AA.
+        // On read, mask 0x770F zeros unused bits 4-7 → read returns 0x550A.
+        assert_eq!(apu.read16(0x0400_0082), 0x550A);
         assert_eq!(apu.read16(0x0400_0088), 0x0234);
     }
 
@@ -1286,6 +1705,24 @@ mod tests {
         // High byte (NR51, 0x0400_0081) contains channel enable flags — all 8 bits are valid.
         apu.write16(0x0400_0080, 0xFF00);
         assert_eq!(apu.read16(0x0400_0080), 0xFF00);
+    }
+
+    #[test]
+    fn test_soundcnt_h_unused_bits_read_as_zero() {
+        let mut apu = Apu::new();
+        // Write a value with bits 4-7 set (these are "Not used" per GBATek).
+        // On read, bits 4-7 must return 0 regardless of what was written.
+        // Mask 0x770F keeps R/W bits: 0-3, 8-10, 12-14; zeros unused bits 4-7 and W bits 11,15.
+        apu.write16(0x0400_0082, 0x00F0); // bits 4-7 set
+        assert_eq!(apu.read16(0x0400_0082), 0x0000, "bits 4-7 must read as 0");
+
+        // Bypass write-side FIFO-reset auto-clear on bits 11/15 so read masking is tested directly.
+        apu.soundcnt_h = 0xFF0F; // bits 4-7 plus W-only bits 11/15 set in backing register
+        assert_eq!(
+            apu.read16(0x0400_0082),
+            0x770F,
+            "bits 4-7 and W-only bits must read as 0"
+        );
     }
 
     #[test]
@@ -1793,6 +2230,236 @@ mod tests {
         assert_eq!(
             apu.ch3.wave_ram[1], [0xBB; 16],
             "bank 1 should survive power-off"
+        );
+    }
+
+    // ── PSG 262.144kHz internal sampling tests ───────────────────────────────
+
+    /// Output rate for PSG timing tests: half the PSG internal rate.
+    /// 128 = PSG_INTERNAL_PERIOD * 2 GBA cycles per output sample,
+    /// so each output sample spans exactly 2 PSG internal periods.
+    /// Only used in this test module.
+    const PSG_TEST_SAMPLE_RATE: f32 = GBA_CLOCK_HZ / 128.0;
+
+    /// PSG channels must be sampled internally at 262.144kHz (one sample
+    /// every 64 GBA cycles), not at the output rate.
+    ///
+    /// After exactly 64 cycles the accumulator should hold 1 sample.
+    /// No output sample should be produced yet (output period is 128 cycles
+    /// at PSG_TEST_SAMPLE_RATE = 131.072kHz).
+    #[test]
+    fn test_psg_internal_sampling_rate() {
+        let mut apu = powered_apu();
+        // PSG_TEST_SAMPLE_RATE = 131.072kHz → 128 cycles per output sample.
+        apu.set_sample_rate(PSG_TEST_SAMPLE_RATE);
+
+        // After 64 cycles: exactly one PSG internal period has elapsed.
+        apu.tick(64);
+        assert_eq!(
+            apu.psg_sample_count, 1,
+            "PSG must be sampled once every 64 GBA cycles (262.144kHz)"
+        );
+        assert!(
+            !apu.sample_ready(),
+            "No output sample yet after only 64 cycles"
+        );
+    }
+
+    /// The PSG accumulator (psg_sum / psg_sample_count) must be reset
+    /// to zero after each output sample is generated by mix().
+    #[test]
+    fn test_psg_accumulator_resets_after_output_sample() {
+        let mut apu = powered_apu();
+        // PSG_TEST_SAMPLE_RATE → 128 cycles per output sample, 2 PSG samples.
+        apu.set_sample_rate(PSG_TEST_SAMPLE_RATE);
+
+        // After 128 cycles: 2 PSG samples accumulated, then output sample fires.
+        apu.tick(128);
+        assert!(
+            apu.sample_ready(),
+            "Output sample must be ready after 128 cycles"
+        );
+        assert_eq!(
+            apu.psg_sample_count, 0,
+            "PSG accumulator must be reset to 0 after output sample is generated"
+        );
+        assert_eq!(
+            apu.psg_sum, [0.0; 4],
+            "PSG sum must be cleared to zero after output sample is generated"
+        );
+    }
+
+    /// mix() must use the averaged accumulated PSG snapshots (psg_sum /
+    /// psg_sample_count) when available, rather than reading ch.output() at
+    /// the instant mix() is called.
+    ///
+    /// Known values are injected directly into psg_sum / psg_sample_count and
+    /// the resulting mix output is verified to reflect those values.
+    #[test]
+    fn test_psg_mix_uses_accumulated_not_instantaneous() {
+        let mut apu = powered_apu();
+        // Route CH1 to right output only, full volume, DMG at 100%.
+        apu.write16(0x0400_0080, 0x0107); // NR51=0x01 (CH1 right), NR50=0x07 (right vol=7)
+        apu.soundcnt_h = 0x0002; // DMG at 100%
+        // Trigger CH1 at volume=15 so ch1.output() would be non-zero.
+        apu.write16(0x0400_0062, 0xF080);
+        apu.write16(0x0400_0064, 0x8320);
+
+        // Directly inject a known accumulated PSG value for CH1.
+        // One PSG snapshot where CH1 output averaged to 0.5.
+        apu.psg_sum = [0.5, 0.0, 0.0, 0.0];
+        apu.psg_sample_count = 1;
+
+        let (_, right) = apu.mix();
+
+        // Expected pipeline with accumulated CH1 average = 0.5/1 = 0.5:
+        //   right_mix = mix_terminal([0.5,0,0,0], 0x01) = 0.5
+        //   right_vol = 7/7 = 1.0, dmg_ratio = 1.0
+        //   dmg_right = 0.5 * 1.0 * 1.0 = 0.5
+        //   raw_right = 0.5 * 128 (PSG_SCALE) = 64.0
+        //   apply_soundbias(64.0): bias=256, clamped=320, quantized=320
+        //   result = (320 - 256) / 512 = 0.125
+        let expected = 0.125_f32;
+        assert!(
+            (right - expected).abs() < 1e-5,
+            "mix() must use accumulated PSG values (expected {expected:.4}, got {right:.4})"
+        );
+        // PSG accumulator must be reset after mix().
+        assert_eq!(
+            apu.psg_sample_count, 0,
+            "PSG accumulator must reset after mix()"
+        );
+        assert_eq!(apu.psg_sum, [0.0; 4], "PSG sum must clear after mix()");
+    }
+
+    // ── SOUNDBIAS PWM rate tests ──────────────────────────────────────────────
+
+    /// Per GBATek, SOUNDBIAS bits 15-14 (resolution) select both amplitude
+    /// resolution AND the hardware PWM output rate:
+    ///   0 → 32 768 Hz, 1 → 65 536 Hz, 2 → 131 072 Hz, 3 → 262 144 Hz.
+    ///
+    /// `soundbias_pwm_rate_hz()` must return the correct hardware rate for each
+    /// resolution setting.
+    #[test]
+    fn test_soundbias_pwm_rate_resolution_0_is_32768hz() {
+        let mut apu = Apu::new();
+        // Bits 15-14 = 0b00 → resolution 0 → 32 768 Hz.
+        apu.write16(0x0400_0088, 0x0200); // default bias, resolution 0
+        assert_eq!(
+            apu.soundbias_pwm_rate_hz(),
+            32_768.0,
+            "resolution 0 must yield 32 768 Hz PWM rate"
+        );
+    }
+
+    #[test]
+    fn test_soundbias_pwm_rate_resolution_1_is_65536hz() {
+        let mut apu = Apu::new();
+        // Bits 15-14 = 0b01 → resolution 1 → 65 536 Hz.
+        apu.write16(0x0400_0088, 0x4200); // resolution 1, default bias
+        assert_eq!(
+            apu.soundbias_pwm_rate_hz(),
+            65_536.0,
+            "resolution 1 must yield 65 536 Hz PWM rate"
+        );
+    }
+
+    #[test]
+    fn test_soundbias_pwm_rate_resolution_2_is_131072hz() {
+        let mut apu = Apu::new();
+        // Bits 15-14 = 0b10 → resolution 2 → 131 072 Hz.
+        apu.write16(0x0400_0088, 0x8200); // resolution 2, default bias
+        assert_eq!(
+            apu.soundbias_pwm_rate_hz(),
+            131_072.0,
+            "resolution 2 must yield 131 072 Hz PWM rate"
+        );
+    }
+
+    #[test]
+    fn test_soundbias_pwm_rate_resolution_3_is_262144hz() {
+        let mut apu = Apu::new();
+        // Bits 15-14 = 0b11 → resolution 3 → 262 144 Hz.
+        apu.write16(0x0400_0088, 0xC200); // resolution 3, default bias
+        assert_eq!(
+            apu.soundbias_pwm_rate_hz(),
+            262_144.0,
+            "resolution 3 must yield 262 144 Hz PWM rate"
+        );
+    }
+
+    /// Known simplification: the configured output sample rate (set via
+    /// `set_sample_rate()`) must NOT change when SOUNDBIAS resolution bits
+    /// 15-14 are written.  The hardware PWM rate (returned by
+    /// `soundbias_pwm_rate_hz()`) is intentionally decoupled from the
+    /// emulated output rate.
+    #[test]
+    fn test_soundbias_resolution_does_not_change_output_sample_rate() {
+        let mut apu = Apu::new();
+        apu.set_sample_rate(44_100.0);
+        let rate_before = apu.sample_rate();
+
+        // Write resolution 3 (262 kHz hardware PWM rate).
+        apu.write16(0x0400_0088, 0xC200);
+
+        assert_eq!(
+            apu.sample_rate(),
+            rate_before,
+            "SOUNDBIAS resolution change must not alter the configured output sample rate"
+        );
+    }
+
+    // ── Frame sequencer power-off reset ─────────────────────────────────────
+
+    #[test]
+    fn test_power_off_resets_fs_step() {
+        // Per CGB/DMG spec inherited by GBA: power-off resets frame sequencer step.
+        let mut apu = powered_apu();
+        // Advance FS by clocking several steps so fs_step != 0.
+        apu.clock_frame_sequencer_step();
+        apu.clock_frame_sequencer_step();
+        apu.clock_frame_sequencer_step();
+        assert_ne!(
+            apu.fs_step, 0,
+            "fs_step should be non-zero before power-off"
+        );
+
+        apu.write16(0x0400_0084, 0x0000); // power off
+        assert_eq!(apu.fs_step, 0, "fs_step must be reset to 0 on power-off");
+    }
+
+    #[test]
+    fn test_power_off_resets_fs_counter() {
+        // Per CGB/DMG spec inherited by GBA: power-off resets frame sequencer counter.
+        let mut apu = powered_apu();
+        // Tick enough cycles to advance fs_counter without triggering a full step.
+        apu.tick(100);
+        assert_ne!(
+            apu.fs_counter, 0,
+            "fs_counter should be non-zero before power-off"
+        );
+
+        apu.write16(0x0400_0084, 0x0000); // power off
+        assert_eq!(
+            apu.fs_counter, 0,
+            "fs_counter must be reset to 0 on power-off"
+        );
+    }
+
+    #[test]
+    fn test_tick_does_not_advance_fs_counter_while_powered_off() {
+        // The frame sequencer must not advance while the APU is powered off.
+        let mut apu = Apu::new(); // starts powered off
+        assert!(!apu.powered);
+
+        apu.tick(FS_PERIOD * 2); // tick multiple FS periods
+        assert_eq!(
+            apu.fs_counter, 0,
+            "fs_counter must not advance while APU is powered off"
+        );
+        assert_eq!(
+            apu.fs_step, 0,
+            "fs_step must not advance while APU is powered off"
         );
     }
 }
