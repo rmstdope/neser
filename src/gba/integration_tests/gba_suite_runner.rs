@@ -3,7 +3,7 @@ use crate::gba::bios::EMBEDDED_BIOS;
 use crate::gba::cpu::bus::Bus;
 use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const MAX_CYCLES: u64 = 480_000_000;
 const IDLE_PROBE_STABLE_PC_THRESHOLD: u32 = 1;
@@ -14,6 +14,7 @@ const THUMB_BRANCH_SELF_OPCODE: u16 = 0xE7FE;
 pub(crate) const GBA_CYCLES_PER_FRAME: u64 = 280_896;
 // Allow up to two frames while waiting for a fresh frame-ready edge after idle-loop detection.
 const FRAME_SETTLE_MAX_CYCLES: u64 = GBA_CYCLES_PER_FRAME * 2;
+pub const MGBA_MEMORY_PROPRIETARY_BIOS_ENV: &str = "NESER_GBA_PROPRIETARY_BIOS";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Suite {
@@ -662,18 +663,235 @@ pub struct MgbaSuiteResult {
     pub cycles: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MgbaMemoryFailure {
+    pub test_name: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MgbaMemoryLog {
+    pub raw_log: String,
+    pub passed_count: Option<u32>,
+    pub total_count: Option<u32>,
+    pub failures: Vec<MgbaMemoryFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MgbaMemoryDiagnosticResult {
+    pub framebuffer_crc32: u32,
+    pub passed_count: Option<u32>,
+    pub total_count: Option<u32>,
+    pub raw_log: String,
+    pub failures: Vec<MgbaMemoryFailure>,
+}
+
+pub fn mgba_memory_diagnostic_from_sram(
+    framebuffer_crc32: u32,
+    sram: &[u8],
+) -> MgbaMemoryDiagnosticResult {
+    mgba_memory_diagnostic_from_log(framebuffer_crc32, parse_mgba_memory_sram_log(sram))
+}
+
+fn mgba_memory_diagnostic_from_log(
+    framebuffer_crc32: u32,
+    log: MgbaMemoryLog,
+) -> MgbaMemoryDiagnosticResult {
+    MgbaMemoryDiagnosticResult {
+        framebuffer_crc32,
+        passed_count: log.passed_count,
+        total_count: log.total_count,
+        raw_log: log.raw_log,
+        failures: log.failures,
+    }
+}
+
+fn mgba_memory_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
+    let log = parse_mgba_memory_sram_log(gba.bus().mgba_log_snapshot().as_bytes());
+    mgba_memory_diagnostic_from_log(gba.screen_crc32(), log)
+}
+
+pub fn run_mgba_memory_diagnostics() -> MgbaMemoryDiagnosticResult {
+    let (gba, _rom) = boot_mgba_suite();
+    run_mgba_memory_diagnostics_from_gba(gba)
+}
+
+fn run_mgba_memory_diagnostics_from_gba(mut gba: Gba) -> MgbaMemoryDiagnosticResult {
+    let mut cycles: u64 = 0;
+
+    for _ in 0..10 {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "mgba Memory diagnostics: timed out during initial boot"
+        );
+        gba.clear_ready_to_render();
+    }
+
+    press_button(&mut gba, &mut cycles, BTN_A);
+
+    const STABLE_FRAMES: u32 = 30;
+    const MAX_SUITE_FRAMES: u32 = 2000;
+
+    assert!(
+        run_until_frame_ready(&mut gba, &mut cycles),
+        "mgba Memory diagnostics: timed out getting initial frame"
+    );
+    gba.clear_ready_to_render();
+    let initial_crc = gba.screen_crc32();
+
+    let mut prev_crc: u32 = initial_crc;
+    let mut stable_count: u32 = 1;
+    let mut saw_change_from_initial = false;
+
+    for frame in 1..MAX_SUITE_FRAMES {
+        assert!(
+            run_until_frame_ready(&mut gba, &mut cycles),
+            "mgba Memory diagnostics: timed out at frame {frame}"
+        );
+        gba.clear_ready_to_render();
+
+        let crc = gba.screen_crc32();
+        if !saw_change_from_initial {
+            if crc != initial_crc {
+                saw_change_from_initial = true;
+                prev_crc = crc;
+                stable_count = 1;
+            }
+        } else if crc == prev_crc {
+            stable_count += 1;
+            if stable_count >= STABLE_FRAMES {
+                break;
+            }
+        } else {
+            prev_crc = crc;
+            stable_count = 1;
+        }
+    }
+
+    mgba_memory_diagnostic_from_gba(&gba)
+}
+
+pub fn run_mgba_memory_diagnostics_with_bios_path(
+    bios_path: Option<&Path>,
+) -> Result<Option<MgbaMemoryDiagnosticResult>, String> {
+    let Some(bios_path) = bios_path else {
+        return Ok(None);
+    };
+
+    let bios = std::fs::read(bios_path)
+        .map_err(|e| format!("failed to read GBA BIOS image {}: {e}", bios_path.display()))?;
+    if bios.len() != crate::gba::bus::memory::BIOS_SIZE {
+        return Err(format!(
+            "GBA BIOS image {} has invalid size: expected {} bytes, found {}",
+            bios_path.display(),
+            crate::gba::bus::memory::BIOS_SIZE,
+            bios.len()
+        ));
+    }
+
+    let (gba, _rom) = boot_mgba_suite_with_bios(&bios);
+    Ok(Some(run_mgba_memory_diagnostics_from_gba(gba)))
+}
+
+pub fn run_mgba_memory_diagnostics_with_proprietary_bios()
+-> Result<Option<MgbaMemoryDiagnosticResult>, String> {
+    let Some(path) = std::env::var_os(MGBA_MEMORY_PROPRIETARY_BIOS_ENV) else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(path);
+    run_mgba_memory_diagnostics_with_bios_path(Some(&path))
+}
+
+pub fn parse_mgba_memory_sram_log(bytes: &[u8]) -> MgbaMemoryLog {
+    let raw_log = extract_mgba_log_text(bytes);
+    let (passed_count, total_count) = parse_mgba_score(&raw_log);
+    let failures = raw_log
+        .lines()
+        .filter(|line| line.to_ascii_lowercase().contains("fail"))
+        .map(parse_mgba_failure_line)
+        .collect();
+
+    MgbaMemoryLog {
+        raw_log,
+        passed_count,
+        total_count,
+        failures,
+    }
+}
+
+fn extract_mgba_log_text(bytes: &[u8]) -> String {
+    let mut segments = Vec::new();
+    let mut current = Vec::new();
+
+    for &byte in bytes {
+        if byte.is_ascii_graphic() || matches!(byte, b' ' | b'\n' | b'\r' | b'\t') {
+            current.push(byte);
+        } else if !current.is_empty() {
+            segments.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+
+    segments
+        .into_iter()
+        .map(|segment| {
+            String::from_utf8_lossy(&segment)
+                .trim_matches(['\r', '\n', '\t', ' '])
+                .to_string()
+        })
+        .filter(|segment| !segment.is_empty())
+        .find(|segment| segment.contains("Memory") && parse_mgba_score(segment).0.is_some())
+        .unwrap_or_default()
+}
+
+fn parse_mgba_score(raw_log: &str) -> (Option<u32>, Option<u32>) {
+    for token in raw_log.split(|ch: char| !(ch.is_ascii_digit() || ch == '/')) {
+        if let Some((passed, total)) = token.split_once('/') {
+            let Ok(passed) = passed.parse::<u32>() else {
+                continue;
+            };
+            let Ok(total) = total.parse::<u32>() else {
+                continue;
+            };
+            return (Some(passed), Some(total));
+        }
+    }
+
+    (None, None)
+}
+
+fn parse_mgba_failure_line(line: &str) -> MgbaMemoryFailure {
+    if let Some((test_name, detail)) = line.split_once(':') {
+        MgbaMemoryFailure {
+            test_name: test_name.trim().to_string(),
+            detail: detail.trim().to_string(),
+        }
+    } else {
+        MgbaMemoryFailure {
+            test_name: line.trim().to_string(),
+            detail: String::new(),
+        }
+    }
+}
+
 /// Boot the mgba-emu test suite ROM with the embedded BIOS.
 ///
 /// Returns a `Gba` instance ready to run, positioned at the cartridge
 /// entrypoint with stack pointers initialised by the BIOS boot sequence.
 pub fn boot_mgba_suite() -> (Gba, Vec<u8>) {
+    boot_mgba_suite_with_bios(EMBEDDED_BIOS)
+}
+
+fn boot_mgba_suite_with_bios(bios: &[u8]) -> (Gba, Vec<u8>) {
     let rom_path = Suite::Mgba.rom_path();
     let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {
         panic!("failed to read mgba suite ROM {}: {e}", rom_path.display());
     });
 
     let mut gba = Gba::new(AppContext::default());
-    gba.bus_mut().load_bios(EMBEDDED_BIOS);
+    gba.bus_mut().load_bios(bios);
     gba.bus_mut().write8(0x03007FFC, 1); // Skip BIOS intro
     gba.load_rom(&rom, rom_path.to_str().unwrap_or("mgba-emu-suite"))
         .unwrap_or_else(|e| {
@@ -1169,5 +1387,69 @@ mod tests {
         assert_eq!(Suite::FuzzArmMixed.capture_stem(), "fuzzarm_mixed");
         assert_eq!(Suite::ArmWrestler.capture_stem(), "armwrestler");
         assert_eq!(Suite::Mgba.capture_stem(), "mgba_suite");
+    }
+
+    #[test]
+    fn mgba_memory_sram_log_parser_extracts_score_and_failures() {
+        let bytes = b"Memory: 1379/1552\nCPU ROM OOB: FAIL expected=00000000 actual=FFFFFFFF\nDMA3 SRAM mirror: fail source mismatch\0\xFF\xFF";
+
+        let log = parse_mgba_memory_sram_log(bytes);
+
+        assert_eq!(log.passed_count, Some(1379));
+        assert_eq!(log.total_count, Some(1552));
+        assert_eq!(
+            log.raw_log,
+            "Memory: 1379/1552\nCPU ROM OOB: FAIL expected=00000000 actual=FFFFFFFF\nDMA3 SRAM mirror: fail source mismatch"
+        );
+        assert_eq!(
+            log.failures,
+            vec![
+                MgbaMemoryFailure {
+                    test_name: "CPU ROM OOB".to_string(),
+                    detail: "FAIL expected=00000000 actual=FFFFFFFF".to_string(),
+                },
+                MgbaMemoryFailure {
+                    test_name: "DMA3 SRAM mirror".to_string(),
+                    detail: "fail source mismatch".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn mgba_memory_diagnostic_from_sram_includes_crc_and_log() {
+        let bytes = b"Memory: 1436/1552\nBIOS OOB: fail open bus\0";
+
+        let result = mgba_memory_diagnostic_from_sram(0x2298_4983, bytes);
+
+        assert_eq!(result.framebuffer_crc32, 0x2298_4983);
+        assert_eq!(result.passed_count, Some(1436));
+        assert_eq!(result.total_count, Some(1552));
+        assert_eq!(result.raw_log, "Memory: 1436/1552\nBIOS OOB: fail open bus");
+        assert_eq!(
+            result.failures,
+            vec![MgbaMemoryFailure {
+                test_name: "BIOS OOB".to_string(),
+                detail: "fail open bus".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn mgba_memory_diagnostic_from_gba_uses_screen_crc_and_mgba_log() {
+        let mut gba = Gba::new(AppContext::default());
+        gba.bus_mut().write16(0x04FF_F780, 0xC0DE);
+        for (offset, byte) in b"Memory: 1/2\nROM OOB: fail value\0".iter().enumerate() {
+            gba.bus_mut().write8(0x04FF_F600 + offset as u32, *byte);
+        }
+        gba.bus_mut().write16(0x04FF_F700, 0x0100);
+        let expected_crc = gba.screen_crc32();
+
+        let result = mgba_memory_diagnostic_from_gba(&gba);
+
+        assert_eq!(result.framebuffer_crc32, expected_crc);
+        assert_eq!(result.passed_count, Some(1));
+        assert_eq!(result.total_count, Some(2));
+        assert_eq!(result.raw_log, "Memory: 1/2\nROM OOB: fail value");
     }
 }

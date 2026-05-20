@@ -167,13 +167,27 @@ impl Channel4 {
     }
 
     /// SOUND4CNT_H: clock (7-4 shift, 3 LFSR mode, 2-0 divisor), 14 length-en, 15 trigger.
-    pub fn write_cnt_h(&mut self, val: u16) {
+    ///
+    /// `extra_clk` — see Channel1::write_cnt_x for the full description.
+    pub fn write_cnt_h(&mut self, val: u16, extra_clk: bool) {
         self.divisor_code = (val & 0x07) as u8;
         self.lfsr_7bit = (val & 0x08) != 0;
         self.clock_shift = ((val >> 4) & 0x0F) as u8;
+        let old_length_en = self.length_en;
         self.length_en = (val & 0x4000) != 0;
+        // Extra clock when enabling length_en (0→1) and next FS step won't clock.
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
         if val & 0x8000 != 0 {
+            let reloaded_length = self.length_counter == 0;
             self.trigger();
+            if extra_clk && self.length_en && reloaded_length {
+                self.length_counter = 63;
+            }
         }
     }
 

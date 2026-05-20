@@ -226,7 +226,7 @@ pub const REG_BLDY: u32 = 0x0400_0054;
 /// reports the edges that occurred during the most recent step and the
 /// caller (the bus) routes them. Counts (rather than booleans) are
 /// required because a single `step()` call may span many scanlines —
-/// e.g. a full-frame step crosses 160 visible H-Blanks and one V-Blank,
+/// e.g. a full-frame step crosses 228 H-Blanks and one V-Blank,
 /// and the bus must propagate every one to keep H-Blank-mode DMA
 /// channels firing per scanline.
 #[derive(Debug, Default, Clone, Copy)]
@@ -234,10 +234,10 @@ pub struct PpuStepEvents {
     /// Number of V-Blank periods that started during this step
     /// (transitions into scanline 160).
     pub vblank_starts: u32,
-    /// Number of H-Blank periods that started on a *visible* scanline
-    /// during this step. H-Blank also occurs during V-Blank scanlines
-    /// but only visible-scanline H-Blanks trigger H-Blank-mode DMA per
-    /// GBATek.
+    /// Number of H-Blank periods that started during this step (on any
+    /// scanline, including non-visible scanlines 160–227). Per GBATek,
+    /// H-Blank DMA fires on all 228 scanlines. Only the H-Blank IRQ is
+    /// suppressed during V-Blank (scanlines 160–[`VBLANK_LAST_SCANLINE`]).
     pub hblank_starts: u32,
     /// Number of complete frames that finished during this step. The
     /// framebuffer is ready for the frontend to read whenever this is
@@ -852,8 +852,11 @@ impl Ppu {
                     for aff in &mut self.bg_affine {
                         aff.increment_reference_points();
                     }
-                    events.hblank_starts = events.hblank_starts.saturating_add(1);
                 }
+                // Per GBATek, H-Blank DMA fires on ALL 228 scanlines
+                // (visible and V-Blank alike). Only the H-Blank IRQ is
+                // suppressed during V-Blank (see comment below).
+                events.hblank_starts = events.hblank_starts.saturating_add(1);
                 // Per GBATek: "no H-Blank interrupts are generated within
                 // V-Blank period." Only raise on visible scanlines (0-159).
                 if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0
@@ -2040,23 +2043,28 @@ mod tests {
     }
 
     #[test]
-    fn hblank_event_only_on_visible_scanlines() {
+    fn hblank_dma_fires_during_vblank_scanlines() {
+        // Per GBATek, H-Blank DMA should trigger on ALL 228 scanlines,
+        // including the 67 V-Blank scanlines (160–226).
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let vram = make_vram();
         let pram = make_pram();
-        // Step up to the *start* of scanline 160 (V-Blank).
+        // Step up to the *start* of scanline 160 (V-Blank begins).
         let cycles = CYCLES_PER_SCANLINE * VISIBLE_SCANLINES;
         ppu.step(cycles, &mut ic, &vram, &pram, &make_oam());
         assert_eq!(ppu.read_vcount(), 160);
-        // Step through H-Blank of scanline 160 — no visible H-Blank.
+        // Step through H-Blank of scanline 160 — DMA must still fire.
         let events = ppu.step(HBLANK_START_CYCLE, &mut ic, &vram, &pram, &make_oam());
-        assert_eq!(events.hblank_starts, 0);
+        assert_eq!(
+            events.hblank_starts, 1,
+            "H-Blank DMA must fire on VBlank scanlines too (GBATek)"
+        );
     }
 
     #[test]
-    fn step_full_frame_counts_every_visible_hblank() {
-        // A full-frame step must report all 160 visible-scanline H-Blanks
+    fn step_full_frame_counts_every_hblank() {
+        // A full-frame step must report all 228 H-Blanks (visible + VBlank)
         // and exactly one V-Blank / completed frame so the bus can
         // forward each edge to the DMA hooks.
         let mut ppu = Ppu::new();
@@ -2070,7 +2078,7 @@ mod tests {
             &pram,
             &make_oam(),
         );
-        assert_eq!(events.hblank_starts, VISIBLE_SCANLINES);
+        assert_eq!(events.hblank_starts, SCANLINES_PER_FRAME);
         assert_eq!(events.vblank_starts, 1);
         assert_eq!(events.frames_completed, 1);
     }
@@ -2090,7 +2098,7 @@ mod tests {
         );
         assert_eq!(events.vblank_starts, 2);
         assert_eq!(events.frames_completed, 2);
-        assert_eq!(events.hblank_starts, VISIBLE_SCANLINES * 2);
+        assert_eq!(events.hblank_starts, SCANLINES_PER_FRAME * 2);
     }
 
     #[test]
