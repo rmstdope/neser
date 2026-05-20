@@ -1000,7 +1000,7 @@ impl Ppu {
         ];
 
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_no_layers_scanline(y, pram, vram, oam);
+            self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
 
@@ -1230,7 +1230,7 @@ impl Ppu {
         ];
 
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_no_layers_scanline(y, pram, vram, oam);
+            self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
 
@@ -1258,7 +1258,7 @@ impl Ppu {
         ];
 
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_no_layers_scanline(y, pram, vram, oam);
+            self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
 
@@ -1442,7 +1442,7 @@ impl Ppu {
     /// priority layers show through.
     fn render_mode3_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_no_layers_scanline(y, pram, vram, oam);
+            self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
 
@@ -1470,7 +1470,7 @@ impl Ppu {
     /// priority layers show through.
     fn render_mode4_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_no_layers_scanline(y, pram, vram, oam);
+            self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
 
@@ -1504,7 +1504,7 @@ impl Ppu {
     /// priority layers show through.
     fn render_mode5_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_no_layers_scanline(y, pram, vram, oam);
+            self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
 
@@ -1795,7 +1795,7 @@ impl Ppu {
     /// still composites OBJ sprites over the backdrop — no BG layers are rendered.
     fn render_prohibited_mode_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_no_layers_scanline(y, pram, vram, oam);
+            self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
         self.composite_scanline(y, pram, vram, oam, &[]);
@@ -1807,7 +1807,7 @@ impl Ppu {
     /// per-pixel window-gated SFX are correctly applied to the backdrop (GBATek:
     /// WININ/WINOUT bit 5 controls 'Color Special Effect' per region).  When no
     /// window is active, uses the fast `render_backdrop_scanline` path.
-    fn render_no_layers_scanline(&mut self, y: u32, pram: &[u8], vram: &[u8], oam: &[u8]) {
+    fn render_no_layers_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         let any_window_active = self.dispcnt
             & (dispcnt::WIN0_ENABLE | dispcnt::WIN1_ENABLE | dispcnt::OBJ_WIN_ENABLE)
             != 0;

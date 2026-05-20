@@ -335,7 +335,7 @@ fn approvals_manifest_parses() {
     // mgba-emu/suite keys
     assert_eq!(approvals.get("mgba_memory"), Some(&0x179D_E4D1));
     assert_eq!(approvals.get("mgba_io_read"), Some(&0x5B5C_9186));
-    assert_eq!(approvals.get("mgba_timing"), Some(&0xD49C_DB49));
+    assert_eq!(approvals.get("mgba_timing"), Some(&0xDEEF_A167));
     assert_eq!(approvals.get("mgba_timers"), Some(&0xCFAB_2DCC));
     assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xD1FF_FC47));
     assert_eq!(approvals.get("mgba_shifter"), Some(&0x8B4A_12AA));
