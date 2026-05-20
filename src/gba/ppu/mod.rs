@@ -543,8 +543,8 @@ impl Ppu {
     /// due to the PPU actively reading those regions.
     ///
     /// Per GBATek "LCD VRAM Overview": the extra wait applies during active
-    /// display (visible scanlines 0–159, not in H-Blank) when Forced Blank
-    /// (DISPCNT bit 7) is not set.
+    /// display (visible scanlines 0–159, not in H-Blank) while the PPU is
+    /// actively rendering (`forced_blank()` is `false`).
     pub fn vram_pram_active_wait(&self) -> bool {
         if self.forced_blank() {
             return false;
