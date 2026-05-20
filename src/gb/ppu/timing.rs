@@ -269,7 +269,7 @@ impl Timing {
         }
 
         // At frame wrap (scan 153 → scan 0, dot=0), fire the Mode 2 IRQ source.
-        // On real DMG, this fires 4 T-cycles later than the dot-452 path (i.e., at the
+        // On real hardware, this fires 4 T-cycles later than the dot-452 path (i.e., at the
         // actual moment scan 0 begins), which is required for intr_1_2_timing-GS to pass.
         if self.dot == 0 && self.scanline == 0 {
             self.mode_for_irq = 2;
@@ -857,8 +857,8 @@ mod tests {
 
     #[test]
     fn test_mode_for_irq_becomes_2_at_frame_wrap_dot_0_scanline_0() {
-        // At the frame wrap (dot=0 of scanline 0 in frame 2+), the Mode 2 STAT source fires.
-        // Full first frame: 452 + 456 * 153 = 70220 dots.
+        // At the frame wrap (dot=0 of scanline 0 in frame 2+), the Mode 2 STAT source fires
+        // on both DMG and CGB. Full first frame: 452 + 456 * 153 = 70220 dots.
         let mut timing = Timing::new();
         tick_n(&mut timing, 452 + 456 * 153, 0xFF);
         assert_eq!(timing.scanline, 0);
