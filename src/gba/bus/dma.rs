@@ -43,6 +43,10 @@ const DMA_IRQ_BITS: [u16; NUM_CHANNELS] = [
     irq_bits::DMA3,
 ];
 
+const DMA_SOURCE_MASKS: [u32; NUM_CHANNELS] = [0x07FF_FFFE, 0x0FFF_FFFE, 0x0FFF_FFFE, 0x0FFF_FFFE];
+const DMA_DESTINATION_MASKS: [u32; NUM_CHANNELS] =
+    [0x07FF_FFFE, 0x07FF_FFFE, 0x07FF_FFFE, 0x0FFF_FFFE];
+
 /// Sound FIFO A address — destination for channel 1 in Special mode.
 pub const REG_FIFO_A: u32 = 0x0400_00A0;
 /// Sound FIFO B address — destination for channel 2 in Special mode.
@@ -284,6 +288,8 @@ impl DmaController {
             }
             _ => {}
         }
+        c.sad &= DMA_SOURCE_MASKS[chan];
+        c.dad &= DMA_DESTINATION_MASKS[chan];
         true
     }
 
@@ -323,10 +329,12 @@ impl DmaController {
                 // Re-use the halfword path so enable rising-edge detection
                 // and pending-arming kick in correctly.
                 let merged = (((c.cnt_h as u32) & mask) | byte) as u16;
-                self.write16(addr & !1, merged);
+                return self.write16(addr & !1, merged);
             }
             _ => {}
         }
+        c.sad &= DMA_SOURCE_MASKS[chan];
+        c.dad &= DMA_DESTINATION_MASKS[chan];
         true
     }
 
@@ -991,8 +999,9 @@ mod tests {
         d.write8(0x0400_00B1, 0x34); // SAD[15:8]
         d.write8(0x0400_00B2, 0x56); // SAD[23:16]
         d.write8(0x0400_00B3, 0x78); // SAD[31:24]
-        assert_eq!(d.channels[0].sad, 0x7856_3412);
-        // Same for DAD and CNT_L.
+        assert_eq!(d.channels[0].sad, 0x7856_3412 & DMA_SOURCE_MASKS[0]);
+        // Same for DAD and CNT_L. Address registers preserve byte writes
+        // within the hardware-visible masked address range.
         d.write8(0x0400_00B4, 0xAA);
         d.write8(0x0400_00B5, 0xBB);
         assert_eq!(d.channels[0].dad & 0xFFFF, 0xBBAA);
