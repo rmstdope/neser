@@ -575,7 +575,7 @@ impl Ppu {
             );
         }
         if addr == 0xFF4B {
-            self.pixel_fifo.record_wx_write(val);
+            self.pixel_fifo.record_wx_write(val, self.registers.wy);
         }
         if addr == 0xFF43 {
             self.pixel_fifo
