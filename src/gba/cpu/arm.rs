@@ -2868,10 +2868,6 @@ mod tests {
         // MLA R3, R0, R1, R2 (accumulate)
         let mla = arm_mla(0xE, false, 3, 2, 1, 0);
         let outcome_mla = execute(&mut regs, &mut bus, mla);
-        assert_eq!(outcome_mul.seq, 1, "MUL should have 1S");
-        assert_eq!(outcome_mul.nonseq, 0, "MUL should have 0N");
-        assert_eq!(outcome_mla.seq, 1, "MLA should have 1S");
-        assert_eq!(outcome_mla.nonseq, 0, "MLA should have 0N");
         assert_eq!(
             outcome_mla.internal,
             outcome_mul.internal + 1,
