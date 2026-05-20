@@ -260,12 +260,13 @@ pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOut
             execute_block_transfer(regs, bus, instr)
         }
         0b101 => execute_branch(regs, instr),
+        0b110 => ExecOutcome::undefined(), // LDC/STC: no coprocessor on GBA
         0b111 => {
             // SWI is encoded as 1111_xxxx_xxxx_xxxx_xxxx_xxxx_xxxx
             if (instr >> 24) & 0xF == 0xF {
                 return ExecOutcome::swi_sni(2, 1, 0); // 2S + 1N
             }
-            ExecOutcome::sni(1, 0, 0) // 1S: coprocessor (treated as NOP)
+            ExecOutcome::undefined() // CDP/MCR/MRC: no coprocessor on GBA
         }
         _ => ExecOutcome::sni(1, 0, 0), // 1S: unrecognized
     }
@@ -2535,6 +2536,112 @@ mod tests {
     /// Encode BKPT: cond 0001 0010 imm12 0111 imm4
     fn arm_bkpt(cond: u8) -> u32 {
         ((cond as u32) << 28) | (0b0001_0010 << 20) | (0b0111 << 4)
+    }
+
+    /// Encode LDC/STC: cond 110PUNWL Rn Cd Pn offset.
+    fn arm_coprocessor_transfer(cond: u8, load: bool) -> u32 {
+        ((cond as u32) << 28)
+            | (0b110 << 25)
+            | (1 << 24) // P=1
+            | (1 << 23) // U=1
+            | ((load as u32) << 20)
+            | (1 << 16) // Rn=R1
+            | (2 << 12) // Cd=C2
+            | (3 << 8) // Pn=P3
+    }
+
+    /// Encode CDP: cond 1110 cp-opc Cn Cd Pn cp Cm, with bit 4 clear.
+    fn arm_cdp(cond: u8) -> u32 {
+        ((cond as u32) << 28) | (0b1110 << 24) | (1 << 20) | (2 << 16) | (3 << 12) | (4 << 8) | 5
+    }
+
+    /// Encode MCR/MRC: cond 1110 opc L Cn Rd Pn cp 1 Cm.
+    fn arm_coprocessor_reg_transfer(cond: u8, load: bool) -> u32 {
+        ((cond as u32) << 28)
+            | (0b1110 << 24)
+            | (1 << 21)
+            | ((load as u32) << 20)
+            | (2 << 16) // Cn=C2
+            | (3 << 12) // Rd=R3
+            | (4 << 8) // Pn=P4
+            | (1 << 4)
+            | 5 // Cm=C5
+    }
+
+    #[test]
+    fn arm_ldc_triggers_undefined_without_coprocessor() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_coprocessor_transfer(0xE, true);
+        let outcome = execute(&mut regs, &mut bus, instr);
+
+        assert!(
+            outcome.undefined,
+            "LDC should trigger undefined on GBA without a coprocessor, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_stc_triggers_undefined_without_coprocessor() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_coprocessor_transfer(0xE, false);
+        let outcome = execute(&mut regs, &mut bus, instr);
+
+        assert!(
+            outcome.undefined,
+            "STC should trigger undefined on GBA without a coprocessor, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_cdp_triggers_undefined_without_coprocessor() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_cdp(0xE);
+        let outcome = execute(&mut regs, &mut bus, instr);
+
+        assert!(
+            outcome.undefined,
+            "CDP should trigger undefined on GBA without a coprocessor, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_mcr_triggers_undefined_without_coprocessor() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_coprocessor_reg_transfer(0xE, false);
+        let outcome = execute(&mut regs, &mut bus, instr);
+
+        assert!(
+            outcome.undefined,
+            "MCR should trigger undefined on GBA without a coprocessor, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_mrc_triggers_undefined_without_coprocessor() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_coprocessor_reg_transfer(0xE, true);
+        let outcome = execute(&mut regs, &mut bus, instr);
+
+        assert!(
+            outcome.undefined,
+            "MRC should trigger undefined on GBA without a coprocessor, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn arm_coprocessor_opcode_with_failed_condition_is_skipped() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        let instr = arm_coprocessor_reg_transfer(0x0, true); // MRCEQ
+        let outcome = execute(&mut regs, &mut bus, instr);
+
+        assert!(!outcome.undefined);
+        assert_eq!(outcome, ExecOutcome::sni(1, 0, 0));
     }
 
     #[test]
