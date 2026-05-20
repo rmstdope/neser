@@ -310,6 +310,12 @@ pub struct Ppu {
     /// active Forced Blank.  Cleared immediately if Forced Blank is
     /// re-asserted before the restart completes.
     forced_blank_restart_lines: u32,
+    /// When true, apply GBA LCD color correction (gamma ≈ 4 curve) when
+    /// converting BGR555 palette entries to RGB888.
+    ///
+    /// Simulates the GBA TFT LCD's physical non-linear response where values
+    /// 0–14 appear nearly black. Default: false (linear expansion).
+    color_correction: bool,
 }
 
 // ---- Color special effect helpers ----------------------------------------
@@ -433,6 +439,7 @@ impl Ppu {
             bldy: 0,
             mosaic: 0,
             forced_blank_restart_lines: 0,
+            color_correction: false,
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -476,6 +483,16 @@ impl Ppu {
     /// bits 1–15 are ignored per GBATek.
     pub fn write_green_swap(&mut self, value: u16) {
         self.green_swap = value & 1 != 0;
+    }
+
+    /// Enable or disable GBA LCD color correction.
+    ///
+    /// When enabled, BGR555 → RGB888 conversion uses a gamma ≈ 4 lookup
+    /// table that simulates the GBA TFT LCD's physical non-linear response.
+    /// When disabled (the default), the standard linear bit-replication
+    /// formula is used.
+    pub fn set_color_correction(&mut self, enabled: bool) {
+        self.color_correction = enabled;
     }
 
     /// Read `DISPSTAT` — returns the live status bits OR'd with the
@@ -1564,6 +1581,14 @@ impl Ppu {
         let evb = (((self.bldalpha >> 8) & 0x1F) as u8).min(16);
         let evy = self.bldy.min(16);
 
+        // Select the pixel-write function once per scanline to avoid a
+        // per-pixel branch inside the hot 240-pixel loop.
+        let write_pixel: fn(&mut [u8], usize, u16) = if self.color_correction {
+            color::write_pixel_corrected
+        } else {
+            color::write_pixel
+        };
+
         for x in 0..(SCREEN_WIDTH as usize) {
             // Determine layer enable mask for this pixel.
             let layer_mask = if any_window_active {
@@ -1701,7 +1726,7 @@ impl Ppu {
             };
 
             let dst = row_start + x * BYTES_PER_PIXEL;
-            color::write_pixel(&mut self.framebuffer, dst, final_color);
+            write_pixel(&mut self.framebuffer, dst, final_color);
         }
     }
 
@@ -1802,7 +1827,11 @@ impl Ppu {
             backdrop
         };
 
-        let (r, g, b) = color::bgr555_to_rgb888(final_backdrop);
+        let (r, g, b) = if self.color_correction {
+            color::bgr555_to_rgb888_corrected(final_backdrop)
+        } else {
+            color::bgr555_to_rgb888(final_backdrop)
+        };
         let row_start = (y as usize) * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
         for x in 0..(SCREEN_WIDTH as usize) {
             let dst = row_start + x * BYTES_PER_PIXEL;
@@ -5948,6 +5977,75 @@ mod tests {
             &ppu.framebuffer()[dst..dst + 3],
             &[0, 0xFF, 0],
             "mode 7: backdrop (green) should fill scanline when OBJ disabled"
+        );
+    }
+
+    // ---- Tests for PPU color correction -----------------------------------
+
+    #[test]
+    fn ppu_color_correction_defaults_to_false() {
+        let ppu = Ppu::new();
+        assert!(
+            !ppu.color_correction,
+            "color_correction should default to false"
+        );
+    }
+
+    #[test]
+    fn ppu_set_color_correction_enables_it() {
+        let mut ppu = Ppu::new();
+        ppu.set_color_correction(true);
+        assert!(
+            ppu.color_correction,
+            "set_color_correction(true) should enable it"
+        );
+    }
+
+    #[test]
+    fn ppu_set_color_correction_disables_it() {
+        let mut ppu = Ppu::new();
+        ppu.set_color_correction(true);
+        ppu.set_color_correction(false);
+        assert!(
+            !ppu.color_correction,
+            "set_color_correction(false) should disable it"
+        );
+    }
+
+    /// When color correction is enabled, mid-range palette colors are rendered
+    /// darker than the linear expansion. This tests that the corrected path is
+    /// actually taken in render_backdrop_scanline.
+    #[test]
+    fn ppu_color_correction_darkens_midrange_colors() {
+        // Set up a mode-0 backdrop with r5=16, g5=0, b5=0 (medium red).
+        // BGR555: r5=16 at bits 0..4 → 0x0010.
+        let bgr555_mid_red: u16 = 16; // r5=16
+        let vram = make_vram();
+        let mut pram = make_pram();
+        let oam = make_oam();
+        let mut ic = make_ic();
+        // Write the backdrop color (palette entry 0) into PRAM.
+        pram[0] = bgr555_mid_red as u8;
+        pram[1] = (bgr555_mid_red >> 8) as u8;
+
+        // Render without color correction.
+        let mut ppu_linear = Ppu::new();
+        // Set mode 0 (BG/OBJ disabled → backdrop only).
+        ppu_linear.write_dispcnt(0x0000);
+        step_and_render_scanline0(&mut ppu_linear, &mut ic, &vram, &pram, &oam);
+        let r_linear = ppu_linear.framebuffer()[0];
+
+        // Render with color correction enabled.
+        let mut ppu_corrected = Ppu::new();
+        ppu_corrected.write_dispcnt(0x0000);
+        ppu_corrected.set_color_correction(true);
+        let mut ic2 = make_ic();
+        step_and_render_scanline0(&mut ppu_corrected, &mut ic2, &vram, &pram, &oam);
+        let r_corrected = ppu_corrected.framebuffer()[0];
+
+        assert!(
+            r_corrected < r_linear,
+            "corrected red ({r_corrected}) should be darker than linear ({r_linear}) for r5=16"
         );
     }
 }

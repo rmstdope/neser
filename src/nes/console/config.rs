@@ -1131,6 +1131,12 @@ impl Config {
             "gba_bios_path" => {
                 self.gba.apply_config_value("gba_bios_path", value)?;
             }
+            "skip_bios_intro" => {
+                self.gba.apply_config_value("skip_bios_intro", value)?;
+            }
+            "gba_color_correction" => {
+                self.gba.apply_config_value("gba_color_correction", value)?;
+            }
             "gba_trace_cpu" | "gba_trace_bus" | "gba_trace_dma" | "gba_trace_swi"
             | "gba_trace_mgba_log" => {
                 self.gba.apply_config_value(&key, value)?;

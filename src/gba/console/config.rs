@@ -44,6 +44,13 @@ pub(crate) const GBA_CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
+        flag: "--gba-color-correction",
+        help: Some(
+            "Enable GBA LCD color correction (simulates TFT gamma; values 0-14 nearly black)",
+        ),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--gba-trace-cpu",
         help: Some("Enable GBA CPU trace output"),
         has_value: false,
@@ -138,6 +145,16 @@ pub struct GbaConfig {
     /// When true, skip the BIOS intro (logo + jingle) but still perform
     /// full hardware state setup (stacks, POSTFLG, SoundBias, etc.).
     pub skip_bios_intro: bool,
+    /// When true, enable GBA LCD color correction.
+    ///
+    /// Applies a gamma ≈ 4 curve to simulate the GBA TFT LCD's physical
+    /// non-linear response. Per GBATek, values 0–14 appear nearly black
+    /// on the GBA TFT; this correction concentrates most visible output
+    /// in the upper half of the intensity range.
+    ///
+    /// Default: false (linear expansion, technically correct for digital
+    /// color values).
+    pub color_correction: bool,
     /// GBA-specific trace channels.
     pub tracing: GbaTraceConfig,
 }
@@ -209,6 +226,10 @@ impl GbaConfig {
             self.skip_bios_intro = skip;
         }
 
+        if let Some(cc) = crate::platform::config::parse_bool_arg(args, "--gba-color-correction")? {
+            self.color_correction = cc;
+        }
+
         for arg in args {
             if self.apply_trace_arg("--gba-trace-cpu", "gba_trace_cpu", arg) {
                 continue;
@@ -230,7 +251,8 @@ impl GbaConfig {
 
     /// Apply a config file key-value pair to this config.
     ///
-    /// Accepts `gba-hardware`, `gba-bios-path`, and `skip-bios-intro` keys.
+    /// Accepts `gba-hardware`, `gba-bios-path`, `skip-bios-intro`, and
+    /// `gba-color-correction` keys.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
         match key.as_str() {
@@ -247,6 +269,10 @@ impl GbaConfig {
             "skip_bios_intro" => {
                 self.skip_bios_intro = crate::platform::config::parse_bool(value)
                     .map_err(|_| format!("Invalid skip_bios_intro value: '{value}'"))?;
+            }
+            "gba_color_correction" => {
+                self.color_correction = crate::platform::config::parse_bool(value)
+                    .map_err(|_| format!("Invalid gba_color_correction value: '{value}'"))?;
             }
             "gba_trace_cpu" | "gba_trace_bus" | "gba_trace_dma" | "gba_trace_swi"
             | "gba_trace_mgba_log" => {
@@ -564,6 +590,90 @@ mod tests {
         assert!(
             GBA_CLI_FLAGS.iter().any(|f| f.flag == "--skip-bios-intro"),
             "GBA CLI flags should include --skip-bios-intro"
+        );
+    }
+
+    #[test]
+    fn test_gba_config_color_correction_default_false() {
+        let config = GbaConfig::default();
+        assert!(
+            !config.color_correction,
+            "color_correction should default to false"
+        );
+    }
+
+    #[test]
+    fn test_cli_parse_gba_color_correction_flag() {
+        let mut config = GbaConfig::default();
+        let args = vec!["neser".to_string(), "--gba-color-correction".to_string()];
+        config.apply_args(&args).unwrap();
+        assert!(
+            config.color_correction,
+            "--gba-color-correction should enable color correction"
+        );
+    }
+
+    #[test]
+    fn test_cli_parse_gba_color_correction_explicit_true() {
+        let mut config = GbaConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gba-color-correction".to_string(),
+            "true".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert!(config.color_correction);
+    }
+
+    #[test]
+    fn test_cli_parse_gba_color_correction_explicit_false() {
+        let mut config = GbaConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gba-color-correction".to_string(),
+            "false".to_string(),
+        ];
+        config.apply_args(&args).unwrap();
+        assert!(!config.color_correction);
+    }
+
+    #[test]
+    fn test_config_file_parse_gba_color_correction_true() {
+        let mut config = GbaConfig::default();
+        config
+            .apply_config_value("gba-color-correction", "true")
+            .unwrap();
+        assert!(config.color_correction);
+    }
+
+    #[test]
+    fn test_config_file_parse_gba_color_correction_false() {
+        let mut config = GbaConfig::default();
+        config
+            .apply_config_value("gba-color-correction", "false")
+            .unwrap();
+        assert!(!config.color_correction);
+    }
+
+    #[test]
+    fn test_config_file_parse_gba_color_correction_invalid() {
+        let mut config = GbaConfig::default();
+        let result = config.apply_config_value("gba-color-correction", "maybe");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Invalid gba_color_correction value")
+        );
+    }
+
+    #[test]
+    fn test_gba_cli_flags_include_gba_color_correction() {
+        assert!(
+            GBA_CLI_FLAGS
+                .iter()
+                .any(|f| f.flag == "--gba-color-correction"),
+            "GBA CLI flags should include --gba-color-correction"
         );
     }
 }
