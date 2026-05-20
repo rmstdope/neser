@@ -138,3 +138,47 @@ No additional feedback.
 ### Navigator feedback
 
 No additional feedback.
+
+---
+
+## 2026-05-20 — PR #2574: Fix GBA SRAM 32-bit SWI lane handling
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2574
+**Linked issues:** none recorded
+
+### Customizations used
+
+| Type         | Name                      | Purpose                                                                                |
+| ------------ | ------------------------- | -------------------------------------------------------------------------------------- |
+| Skill        | `gba-hardware-research`   | Grounded the fix in the GBA memory-map spec: SRAM at 0x0E/0x0F is an 8-bit-only bus.  |
+| Skill        | `gba-cpu-development`     | Guided ARM7TDMI SWI dispatch and BIOS assembly conventions for CpuSet/CpuFastSet.      |
+| Skill        | `test-driven-development` | Structured the workflow around RED→GREEN→REFACTOR phase gates.                         |
+| Skill        | `rust-developer`          | Guided Rust test implementation in `src/gba/bios/mod.rs`.                              |
+| Skill        | `bug-hunter`              | Applied test-first bug-fix discipline before touching production code.                 |
+| Skill        | `github-administration`   | Supported branch, PR creation, and merge workflow via `gh`.                            |
+| Skill        | `self-learning-skills`    | Captured this retrospective after the PR was merged.                                   |
+| Instructions | `copilot-instructions.md` | Applied repository workflow rules (TDD, pre-merge checks, retrospective requirement).  |
+
+### What went well
+
+- ✅ The fix was narrowly scoped: a single `cmp r4, #0xE` / `biclo` conditional added to both `swi_cpu_set` and `swi_cpu_fast_set` in `bios.s`. No unrelated code was touched.
+- ✅ Test coverage was systematic and complete: both SRAM mirrors (0x0E and 0x0F), all three unaligned byte offsets (1, 2, 3), source and destination variants, and normal-memory regression tests. The test matrix was derived directly from the spec rather than observed behavior.
+- ✅ The GBA bus layer already correctly mirrored SRAM bytes across a 32-bit word; identifying that only the BIOS SWI alignment logic was broken kept the fix scope minimal.
+- ✅ The `gba-hardware-research` skill was the right primary skill: the SRAM 8-bit-bus property is a hardware-map fact, and anchoring the fix there prevented over-engineering.
+
+### What to improve
+
+- ❌ No linked issue number is traceable from the PR title or description. Each BIOS SWI fix should have a corresponding GitHub issue opened before branching, following the repository workflow rule.
+- ❌ The alignment guard uses `biclo` ("clear if lower than 0xE"), which intentionally covers both 0x0E and 0x0F SRAM mirrors, but this is not commented in the assembly. A brief inline comment explaining the deliberate range would make the spec intent self-evident for future maintainers.
+- ❌ The `gba-cpu-development` skill does not explicitly address the Rust-vs-assembly tradeoff for BIOS SWI shims. When a fix lives in `.s` source requiring a cross-assembler toolchain, the skill should prompt an explicit decision: is the assembly approach the right long-term choice, or should a Rust-level BIOS shim be preferred for testability?
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided.
+
+#### What to improve
+
+No feedback provided.
