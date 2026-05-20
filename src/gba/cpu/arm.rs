@@ -1511,26 +1511,27 @@ mod tests {
 
     #[test]
     fn arm_ldr_from_sram_uses_unaligned_cart_bus_lane() {
-        let mut bus = GbaBus::new();
-        let base = 0x0E00_0000;
-        bus.write8(base + 1, 0x61);
-        bus.write8(base + 2, 0x6D);
-        bus.write8(base + 3, 0x65);
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut bus = GbaBus::new();
+            bus.write8(base + 1, 0x61);
+            bus.write8(base + 2, 0x6D);
+            bus.write8(base + 3, 0x65);
 
-        for (offset, expected) in [(1, 0x6161_6161), (2, 0x6D6D_6D6D), (3, 0x6565_6565)] {
-            let mut regs = make_regs();
-            regs.r[1] = base;
-            let ldr = (0xE_u32 << 28)
-                | (0b010 << 25)
-                | (1 << 24)
-                | (1 << 23)
-                | (1 << 20)
-                | (1 << 16)
-                | offset;
+            for (offset, expected) in [(1, 0x6161_6161), (2, 0x6D6D_6D6D), (3, 0x6565_6565)] {
+                let mut regs = make_regs();
+                regs.r[1] = base;
+                let ldr = (0xE_u32 << 28)
+                    | (0b010 << 25)
+                    | (1 << 24)
+                    | (1 << 23)
+                    | (1 << 20)
+                    | (1 << 16)
+                    | offset;
 
-            execute(&mut regs, &mut bus, ldr);
+                execute(&mut regs, &mut bus, ldr);
 
-            assert_eq!(regs.r[0], expected, "offset {offset}");
+                assert_eq!(regs.r[0], expected, "base {base:#010X}, offset {offset}");
+            }
         }
     }
 
@@ -2149,17 +2150,18 @@ mod tests {
 
     #[test]
     fn arm_ldrh_from_sram_uses_unaligned_cart_bus_lane() {
-        let mut regs = make_regs();
-        let mut bus = GbaBus::new();
-        let base = 0x0E00_0000;
-        regs.r[1] = base;
-        bus.write8(base, 0x47);
-        bus.write8(base + 1, 0x61);
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut regs = make_regs();
+            let mut bus = GbaBus::new();
+            regs.r[1] = base;
+            bus.write8(base, 0x47);
+            bus.write8(base + 1, 0x61);
 
-        let ldrh = arm_halfword_imm(0xE, true, true, false, true, 1, 0, false, true, 1);
-        execute(&mut regs, &mut bus, ldrh);
+            let ldrh = arm_halfword_imm(0xE, true, true, false, true, 1, 0, false, true, 1);
+            execute(&mut regs, &mut bus, ldrh);
 
-        assert_eq!(regs.r[0], 0x6100_0061);
+            assert_eq!(regs.r[0], 0x6100_0061, "base {base:#010X}");
+        }
     }
 
     #[test]

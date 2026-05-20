@@ -1220,21 +1220,22 @@ mod tests {
 
     #[test]
     fn thumb_format7_ldr_from_sram_uses_unaligned_cart_bus_lane() {
-        let mut bus = GbaBus::new();
-        let base = 0x0E00_0000;
-        bus.write8(base + 1, 0x61);
-        bus.write8(base + 2, 0x6D);
-        bus.write8(base + 3, 0x65);
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut bus = GbaBus::new();
+            bus.write8(base + 1, 0x61);
+            bus.write8(base + 2, 0x6D);
+            bus.write8(base + 3, 0x65);
 
-        for (offset, expected) in [(1, 0x6161_6161), (2, 0x6D6D_6D6D), (3, 0x6565_6565)] {
-            let mut regs = make_regs();
-            regs.r[0] = base;
-            regs.r[1] = offset;
+            for (offset, expected) in [(1, 0x6161_6161), (2, 0x6D6D_6D6D), (3, 0x6565_6565)] {
+                let mut regs = make_regs();
+                regs.r[0] = base;
+                regs.r[1] = offset;
 
-            let ldr = 0b0101_100_001_000_010u16;
-            execute(&mut regs, &mut bus, ldr);
+                let ldr = 0b0101_100_001_000_010u16;
+                execute(&mut regs, &mut bus, ldr);
 
-            assert_eq!(regs.r[2], expected, "offset {offset}");
+                assert_eq!(regs.r[2], expected, "base {base:#010X}, offset {offset}");
+            }
         }
     }
 
@@ -1278,18 +1279,19 @@ mod tests {
 
     #[test]
     fn thumb_format8_ldrh_from_sram_uses_unaligned_cart_bus_lane() {
-        let mut regs = make_regs();
-        let mut bus = GbaBus::new();
-        let base = 0x0E00_0000;
-        regs.r[0] = base;
-        regs.r[1] = 1;
-        bus.write8(base, 0x47);
-        bus.write8(base + 1, 0x61);
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut regs = make_regs();
+            let mut bus = GbaBus::new();
+            regs.r[0] = base;
+            regs.r[1] = 1;
+            bus.write8(base, 0x47);
+            bus.write8(base + 1, 0x61);
 
-        let ldrh = 0b0101_101_001_000_010u16;
-        execute(&mut regs, &mut bus, ldrh);
+            let ldrh = 0b0101_101_001_000_010u16;
+            execute(&mut regs, &mut bus, ldrh);
 
-        assert_eq!(regs.r[2], 0x6100_0061);
+            assert_eq!(regs.r[2], 0x6100_0061, "base {base:#010X}");
+        }
     }
 
     #[test]
@@ -1341,17 +1343,18 @@ mod tests {
 
     #[test]
     fn thumb_format10_ldrh_from_sram_uses_unaligned_cart_bus_lane() {
-        let mut regs = make_regs();
-        let mut bus = GbaBus::new();
-        let base = 0x0E00_0000;
-        regs.r[0] = base + 1;
-        bus.write8(base, 0x47);
-        bus.write8(base + 1, 0x61);
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut regs = make_regs();
+            let mut bus = GbaBus::new();
+            regs.r[0] = base + 1;
+            bus.write8(base, 0x47);
+            bus.write8(base + 1, 0x61);
 
-        let ldrh = 0b1000_1_00000_000_001u16;
-        execute(&mut regs, &mut bus, ldrh);
+            let ldrh = 0b1000_1_00000_000_001u16;
+            execute(&mut regs, &mut bus, ldrh);
 
-        assert_eq!(regs.r[1], 0x6100_0061);
+            assert_eq!(regs.r[1], 0x6100_0061, "base {base:#010X}");
+        }
     }
 
     #[test]
