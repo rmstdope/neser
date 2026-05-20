@@ -227,6 +227,12 @@ impl LcdcWindowMapEdge {
     fn clear_consumed(&mut self, next_x: u8) {
         self.ranges.retain(|range| range.end_x != next_x);
     }
+
+    fn ranges_cover(&self, x: u8) -> bool {
+        self.ranges
+            .iter()
+            .any(|range| range.start_x <= x && x <= range.end_x)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -1315,11 +1321,12 @@ impl PixelFifoRenderer {
         }
 
         let waiting_on_obj_fetch = self.is_waiting_on_obj_fetch();
-        self.record_lcdc_window_enable_write(previous, new);
+        self.record_lcdc_window_enable_write(previous, new, wx);
         let window_fetch_active = previous & LCDC_WINDOW_ENABLE != 0
             && self.scanline >= wy
             && self.next_x == wx.saturating_sub(7);
         self.record_lcdc_window_map_write(previous, new, wx, window_fetch_active, cgb_mode);
+        self.record_window_startup_gap_window_map(previous, new, consumed, actual_next_x);
         let tile_data_fetch_phase = if window_fetch_active || self.window_active {
             self.next_x.saturating_sub(wx.saturating_sub(7)) & 0x07
         } else {
@@ -1334,20 +1341,27 @@ impl PixelFifoRenderer {
             cgb_mode && dmg_compat,
             waiting_on_obj_fetch,
         );
-        // Gap pixel fix: during the window startup stall, pixels in [actual_next_x, eff_nx-1]
-        // that fall within the first window tile render AFTER this write (in with-stall) but
-        // rendered BEFORE it in pre-stall. If the gap start is already covered, the current
-        // latched fetch range describes the rest of this first-tile gap; don't override mixed
-        // bitplane ranges that are already the hardware latch state.
-        if consumed > 0 && previous & LCDC_TILE_DATA != new & LCDC_TILE_DATA && !cgb_mode {
-            let window_tile_start = window_visible_start_x(wx);
-            let window_first_tile_end = window_tile_start.saturating_add(7);
+        // During the startup stall, the effective pre-stall fetch position can
+        // be ahead of the visible renderer. Fill only uncovered pixels in that
+        // gap so already-latched mixed bitplane ranges keep priority.
+        if consumed > 0 && previous & LCDC_TILE_DATA != new & LCDC_TILE_DATA {
             let gap_start = actual_next_x;
             // self.next_x is eff_nx here (effective state still applied)
-            let gap_end = self.next_x.saturating_sub(1).min(window_first_tile_end);
-            if gap_start <= gap_end && !self.lcdc_tile_data_edge.ranges_cover(gap_start) {
+            let gap_end = self.next_x.saturating_sub(1);
+            let mut start = gap_start;
+            while start <= gap_end {
+                if self.lcdc_tile_data_edge.ranges_cover(start) {
+                    start = start.saturating_add(1);
+                    continue;
+                }
+                let mut end = start;
+                while end < gap_end && !self.lcdc_tile_data_edge.ranges_cover(end.saturating_add(1))
+                {
+                    end = end.saturating_add(1);
+                }
                 self.lcdc_tile_data_edge
-                    .record_write(gap_start, gap_end, previous, previous);
+                    .record_write(start, end, previous, previous);
+                start = end.saturating_add(1);
             }
         }
         if let Some(model) = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat) {
@@ -1402,16 +1416,18 @@ impl PixelFifoRenderer {
         });
     }
 
-    fn record_lcdc_window_enable_write(&mut self, previous: u8, new: u8) {
+    fn record_lcdc_window_enable_write(&mut self, previous: u8, new: u8, current_wx: u8) {
         if previous & LCDC_WINDOW_ENABLE == new & LCDC_WINDOW_ENABLE {
             return;
         }
 
         let enabled = new & LCDC_WINDOW_ENABLE != 0;
-        let start_x = if enabled {
+        let start_x = if enabled && !self.window_active && !self.window_triggered {
             self.next_x
         } else {
-            self.next_window_fetch_boundary()
+            // Once the window fetcher is active, enable transitions take effect
+            // at fetch boundaries rather than at the CPU write pixel.
+            self.next_window_fetch_boundary(current_wx)
         };
         self.window_enable_edges
             .push(WindowEnableEdge { start_x, enabled });
@@ -1488,6 +1504,39 @@ impl PixelFifoRenderer {
             .record_write(start_x, end_x, previous, new);
     }
 
+    fn record_window_startup_gap_window_map(
+        &mut self,
+        previous: u8,
+        new: u8,
+        consumed: u8,
+        actual_next_x: u8,
+    ) {
+        if consumed == 0 || previous & LCDC_WINDOW_MAP == new & LCDC_WINDOW_MAP {
+            return;
+        }
+
+        let gap_start = actual_next_x;
+        let gap_end = self.next_x.saturating_sub(1);
+        let mut start = gap_start;
+        while start <= gap_end {
+            if self.lcdc_window_map_edge.ranges_cover(start) {
+                start = start.saturating_add(1);
+                continue;
+            }
+            let mut end = start;
+            while end < gap_end
+                && !self
+                    .lcdc_window_map_edge
+                    .ranges_cover(end.saturating_add(1))
+            {
+                end = end.saturating_add(1);
+            }
+            self.lcdc_window_map_edge
+                .record_write(start, end, previous, new);
+            start = end.saturating_add(1);
+        }
+    }
+
     fn should_delay_steady_window_map_fetch(
         &self,
         left_obj: Option<u8>,
@@ -1502,17 +1551,22 @@ impl PixelFifoRenderer {
         self.next_x >= STEADY_WINDOW_MAP_FETCH_DELAY_X
     }
 
-    fn next_window_fetch_boundary(&self) -> u8 {
-        if !self.window_triggered {
+    fn next_window_fetch_boundary(&self, current_wx: u8) -> u8 {
+        if !self.window_triggered && !self.window_active {
             return self.next_x;
         }
 
-        let start_x = window_visible_start_x(self.window_fetch_wx);
-        if start_x == 0 && self.next_x != 0 && self.window_fetch_wx <= 7 {
-            return if self.window_fetch_wx <= 1 {
-                self.window_fetch_wx.saturating_add(9)
+        let wx = if self.window_triggered {
+            self.window_fetch_wx
+        } else {
+            current_wx
+        };
+        let start_x = window_visible_start_x(wx);
+        if start_x == 0 && self.next_x != 0 && wx <= 7 {
+            return if wx <= 1 {
+                wx.saturating_add(9)
             } else {
-                self.window_fetch_wx.saturating_add(1)
+                wx.saturating_add(1)
             };
         }
 
@@ -3369,7 +3423,11 @@ impl PixelFifoRenderer {
                 ) {
                     Some(pixel) => {
                         self.update_cgb_dmg_tile_sel_glitch_data(pixel);
-                        pixel.colour_index
+                        if dmg_window_glitch && self.dmg_window_startup_gap_uses_bg_pixel(x) {
+                            bg_idx
+                        } else {
+                            pixel.colour_index
+                        }
                     }
                     None => bg_idx,
                 }
@@ -3400,6 +3458,7 @@ impl PixelFifoRenderer {
         if sprite_px.is_none()
             && tile_select_first_pixel_glitch
             && x == 0
+            && !self.dmg_window_startup_gap_uses_bg_pixel(x)
             && self.window_active
             && self.leftmost_obj_oam_x == Some(4)
         {
@@ -3486,6 +3545,18 @@ impl PixelFifoRenderer {
             && !self.window_enabled_for_pixel(x, registers.lcdc)
             && window_triggers_at_x(self.wx_for_pixel(x, registers.wx), x_u8)
             && x_u8 & 0x07 == 0
+    }
+
+    fn dmg_window_startup_gap_uses_bg_pixel(&self, x: u32) -> bool {
+        // On DMG, a WIN_MAP write in the startup gap can leave the first visible
+        // dot sourced from the BG FIFO even though the window fetch has triggered.
+        x == 0
+            && self.window_startup_stall_consumed > 0
+            && self
+                .lcdc_window_map_edge
+                .ranges
+                .iter()
+                .any(|range| range.start_x == 0 && range.window_map_bit == 0)
     }
 
     fn clear_consumed_bgp_edge(&mut self) {
