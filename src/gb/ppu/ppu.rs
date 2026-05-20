@@ -539,6 +539,7 @@ impl Ppu {
             self.pixel_fifo.record_bgp_write(
                 self.registers.bgp,
                 val,
+                &self.registers,
                 self.cgb_mode,
                 self.dmg_compat,
                 self.cgb_model,

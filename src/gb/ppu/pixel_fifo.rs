@@ -28,6 +28,7 @@ const CGB_DMG_COMPAT_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 3;
 const OFF_LEFT_WINDOW_DELAYED_OBJ_X_START: u8 = OBJ_PIXELS_PER_FETCH - 3;
 const OFF_LEFT_WINDOW_DELAYED_OBJ_X_END: u8 = OBJ_PIXELS_PER_FETCH - 1;
 const OFF_LEFT_WINDOW_EXTRA_STALL_DOTS: u16 = 2;
+const WINDOW_STARTUP_STALL_DOTS: u8 = 6;
 const STEADY_WINDOW_MAP_FETCH_DELAY_X: u8 = OBJ_PIXELS_PER_FETCH * 2;
 const LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X: u8 = OBJ_PIXELS_PER_FETCH * 2 + 5;
 const LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X: u8 = OBJ_PIXELS_PER_FETCH * 3 + 5;
@@ -222,6 +223,12 @@ impl LcdcWindowMapEdge {
     fn clear_consumed(&mut self, next_x: u8) {
         self.ranges.retain(|range| range.end_x != next_x);
     }
+
+    fn ranges_cover(&self, x: u8) -> bool {
+        self.ranges
+            .iter()
+            .any(|range| range.start_x <= x && x <= range.end_x)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -332,6 +339,12 @@ impl LcdcTileDataEdge {
 
     fn clear_consumed(&mut self, next_x: u8) {
         self.ranges.retain(|range| range.end_x != next_x);
+    }
+
+    fn ranges_cover(&self, x: u8) -> bool {
+        self.ranges
+            .iter()
+            .any(|range| range.start_x <= x && x <= range.end_x)
     }
 }
 
@@ -721,6 +734,10 @@ pub struct PixelFifoRenderer {
     #[serde(default)]
     fine_scroll_delay_dots: u16,
     #[serde(default)]
+    pending_window_startup_stall_dots: u8,
+    #[serde(default)]
+    window_startup_stall_consumed: u8,
+    #[serde(default)]
     scanline_start_scx_low: u8,
     #[serde(default)]
     bg_fetch_scx: u8,
@@ -822,6 +839,8 @@ impl PixelFifoRenderer {
             obp1_edge_x: 0,
             obp1_edge_value: 0,
             fine_scroll_delay_dots: 0,
+            pending_window_startup_stall_dots: 0,
+            window_startup_stall_consumed: 0,
             scanline_start_scx_low: 0,
             bg_fetch_scx: 0,
             scx_low_bits_sampled: true,
@@ -905,6 +924,8 @@ impl PixelFifoRenderer {
         self.bg_fetch_scy_data_low = registers.scy;
         self.bg_fetch_scy_data_high = registers.scy;
         self.fine_scroll_delay_dots = u16::from(self.scanline_start_scx_low);
+        self.pending_window_startup_stall_dots = 0;
+        self.window_startup_stall_consumed = 0;
         self.pending_obj_stall_dots = 0;
         self.next_obj_stall_event = 0;
         self.active_obj_stall_x = None;
@@ -1011,6 +1032,25 @@ impl PixelFifoRenderer {
                 self.active_obj_stall_x = None;
                 self.active_obj_fetch_lcdc_range = None;
             }
+            return None;
+        }
+
+        if self.pending_window_startup_stall_dots > 0 {
+            self.bg_scx_sampler.tick(elapsed, fetch_scx);
+            self.clear_pending_scx_sample_override(will_sample_scx);
+            self.bg_scy_sampler.tick(elapsed, effective_scy);
+            self.pending_window_startup_stall_dots -= 1;
+            self.window_startup_stall_consumed += 1;
+            return None;
+        }
+        if self.window_startup_stall_consumed == 0 && self.window_would_trigger_at_next_x(registers)
+        {
+            self.bg_scx_sampler.tick(elapsed, fetch_scx);
+            self.clear_pending_scx_sample_override(will_sample_scx);
+            self.bg_scy_sampler.tick(elapsed, effective_scy);
+            self.pending_window_startup_stall_dots =
+                self.window_startup_stall_dots(registers).saturating_sub(1);
+            self.window_startup_stall_consumed = 1;
             return None;
         }
 
@@ -1145,6 +1185,7 @@ impl PixelFifoRenderer {
         &mut self,
         previous: u8,
         new: u8,
+        registers: &Registers,
         cgb_mode: bool,
         dmg_compat: bool,
         cgb_model: CgbModel,
@@ -1157,7 +1198,11 @@ impl PixelFifoRenderer {
         self.bgp_edge_x = self.next_x;
         // If an OBJ fetch is delaying this pixel, the BGP write lands before
         // the pixel is pushed to LCD, so the delayed pixel sees the new value.
-        self.bgp_edge_value = if self.next_x == 0 || self.is_waiting_on_obj_fetch() {
+        self.bgp_edge_value = if self.next_x == 0
+            || self.is_waiting_on_obj_fetch()
+            || self.is_waiting_on_window_startup()
+            || self.window_startup_would_delay_next_pixel(registers)
+        {
             new
         } else if cgb_mode && dmg_compat {
             match cgb_model {
@@ -1255,12 +1300,29 @@ impl PixelFifoRenderer {
             return;
         }
 
+        let consumed = self.window_startup_stall_consumed;
+        let actual_next_x = self.next_x;
+        let actual_pend = self.pending_obj_stall_dots;
+        let actual_window_active = self.window_active;
+        if consumed > 0 {
+            let (effective_next_x, effective_pend) =
+                self.compute_effective_state_for_window_stall(consumed);
+            // Window is active in pre-PR once its first pixel (at window_visible_start_x)
+            // would have been rendered — i.e. effective_next_x is past the trigger point.
+            let effective_window_active =
+                self.window_active || effective_next_x > window_visible_start_x(wx);
+            self.next_x = effective_next_x;
+            self.pending_obj_stall_dots = effective_pend;
+            self.window_active = effective_window_active;
+        }
+
         let waiting_on_obj_fetch = self.is_waiting_on_obj_fetch();
-        self.record_lcdc_window_enable_write(previous, new);
+        self.record_lcdc_window_enable_write(previous, new, wx);
         let window_fetch_active = previous & LCDC_WINDOW_ENABLE != 0
             && self.scanline >= wy
             && self.next_x == wx.saturating_sub(7);
         self.record_lcdc_window_map_write(previous, new, wx, window_fetch_active, cgb_mode);
+        self.record_window_startup_gap_window_map(previous, new, consumed, actual_next_x);
         let tile_data_fetch_phase = if window_fetch_active || self.window_active {
             self.next_x.saturating_sub(wx.saturating_sub(7)) & 0x07
         } else {
@@ -1275,6 +1337,29 @@ impl PixelFifoRenderer {
             cgb_mode && dmg_compat,
             waiting_on_obj_fetch,
         );
+        // During the startup stall, the effective pre-stall fetch position can
+        // be ahead of the visible renderer. Fill only uncovered pixels in that
+        // gap so already-latched mixed bitplane ranges keep priority.
+        if consumed > 0 && previous & LCDC_TILE_DATA != new & LCDC_TILE_DATA {
+            let gap_start = actual_next_x;
+            // self.next_x is eff_nx here (effective state still applied)
+            let gap_end = self.next_x.saturating_sub(1);
+            let mut start = gap_start;
+            while start <= gap_end {
+                if self.lcdc_tile_data_edge.ranges_cover(start) {
+                    start = start.saturating_add(1);
+                    continue;
+                }
+                let mut end = start;
+                while end < gap_end && !self.lcdc_tile_data_edge.ranges_cover(end.saturating_add(1))
+                {
+                    end = end.saturating_add(1);
+                }
+                self.lcdc_tile_data_edge
+                    .record_write(start, end, previous, previous);
+                start = end.saturating_add(1);
+            }
+        }
         if let Some(model) = ObjFetchModel::for_dmg_render_path(cgb_mode, dmg_compat) {
             self.record_lcdc_obj_enable_write(model, previous, new);
         }
@@ -1309,6 +1394,11 @@ impl PixelFifoRenderer {
         };
         self.lcdc_bg_enable_edge
             .record_write(self.next_x, previous, new, timing);
+        if consumed > 0 {
+            self.next_x = actual_next_x;
+            self.pending_obj_stall_dots = actual_pend;
+            self.window_active = actual_window_active;
+        }
     }
 
     pub fn record_wx_write(&mut self, wx: u8) {
@@ -1322,16 +1412,18 @@ impl PixelFifoRenderer {
         });
     }
 
-    fn record_lcdc_window_enable_write(&mut self, previous: u8, new: u8) {
+    fn record_lcdc_window_enable_write(&mut self, previous: u8, new: u8, current_wx: u8) {
         if previous & LCDC_WINDOW_ENABLE == new & LCDC_WINDOW_ENABLE {
             return;
         }
 
         let enabled = new & LCDC_WINDOW_ENABLE != 0;
-        let start_x = if enabled {
+        let start_x = if enabled && !self.window_active && !self.window_triggered {
             self.next_x
         } else {
-            self.next_window_fetch_boundary()
+            // Once the window fetcher is active, enable transitions take effect
+            // at fetch boundaries rather than at the CPU write pixel.
+            self.next_window_fetch_boundary(current_wx)
         };
         self.window_enable_edges
             .push(WindowEnableEdge { start_x, enabled });
@@ -1408,6 +1500,39 @@ impl PixelFifoRenderer {
             .record_write(start_x, end_x, previous, new);
     }
 
+    fn record_window_startup_gap_window_map(
+        &mut self,
+        previous: u8,
+        new: u8,
+        consumed: u8,
+        actual_next_x: u8,
+    ) {
+        if consumed == 0 || previous & LCDC_WINDOW_MAP == new & LCDC_WINDOW_MAP {
+            return;
+        }
+
+        let gap_start = actual_next_x;
+        let gap_end = self.next_x.saturating_sub(1);
+        let mut start = gap_start;
+        while start <= gap_end {
+            if self.lcdc_window_map_edge.ranges_cover(start) {
+                start = start.saturating_add(1);
+                continue;
+            }
+            let mut end = start;
+            while end < gap_end
+                && !self
+                    .lcdc_window_map_edge
+                    .ranges_cover(end.saturating_add(1))
+            {
+                end = end.saturating_add(1);
+            }
+            self.lcdc_window_map_edge
+                .record_write(start, end, previous, new);
+            start = end.saturating_add(1);
+        }
+    }
+
     fn should_delay_steady_window_map_fetch(
         &self,
         left_obj: Option<u8>,
@@ -1422,17 +1547,22 @@ impl PixelFifoRenderer {
         self.next_x >= STEADY_WINDOW_MAP_FETCH_DELAY_X
     }
 
-    fn next_window_fetch_boundary(&self) -> u8 {
-        if !self.window_triggered {
+    fn next_window_fetch_boundary(&self, current_wx: u8) -> u8 {
+        if !self.window_triggered && !self.window_active {
             return self.next_x;
         }
 
-        let start_x = window_visible_start_x(self.window_fetch_wx);
-        if start_x == 0 && self.next_x != 0 && self.window_fetch_wx <= 7 {
-            return if self.window_fetch_wx <= 1 {
-                self.window_fetch_wx.saturating_add(9)
+        let wx = if self.window_triggered {
+            self.window_fetch_wx
+        } else {
+            current_wx
+        };
+        let start_x = window_visible_start_x(wx);
+        if start_x == 0 && self.next_x != 0 && wx <= 7 {
+            return if wx <= 1 {
+                wx.saturating_add(9)
             } else {
-                self.window_fetch_wx.saturating_add(1)
+                wx.saturating_add(1)
             };
         }
 
@@ -3289,7 +3419,11 @@ impl PixelFifoRenderer {
                 ) {
                     Some(pixel) => {
                         self.update_cgb_dmg_tile_sel_glitch_data(pixel);
-                        pixel.colour_index
+                        if dmg_window_glitch && self.dmg_window_startup_gap_uses_bg_pixel(x) {
+                            bg_idx
+                        } else {
+                            pixel.colour_index
+                        }
                     }
                     None => bg_idx,
                 }
@@ -3320,6 +3454,7 @@ impl PixelFifoRenderer {
         if sprite_px.is_none()
             && tile_select_first_pixel_glitch
             && x == 0
+            && !self.dmg_window_startup_gap_uses_bg_pixel(x)
             && self.window_active
             && self.leftmost_obj_oam_x == Some(4)
         {
@@ -3406,6 +3541,18 @@ impl PixelFifoRenderer {
             && !self.window_enabled_for_pixel(x, registers.lcdc)
             && window_triggers_at_x(self.wx_for_pixel(x, registers.wx), x_u8)
             && x_u8 & 0x07 == 0
+    }
+
+    fn dmg_window_startup_gap_uses_bg_pixel(&self, x: u32) -> bool {
+        // On DMG, a WIN_MAP write in the startup gap can leave the first visible
+        // dot sourced from the BG FIFO even though the window fetch has triggered.
+        x == 0
+            && self.window_startup_stall_consumed > 0
+            && self
+                .lcdc_window_map_edge
+                .ranges
+                .iter()
+                .any(|range| range.start_x == 0 && range.window_map_bit == 0)
     }
 
     fn clear_consumed_bgp_edge(&mut self) {
@@ -3556,6 +3703,95 @@ impl PixelFifoRenderer {
                 .obj_stall_events
                 .get(self.next_obj_stall_event)
                 .is_some_and(|event| event.x <= self.next_x)
+    }
+
+    fn window_would_trigger_at_next_x(&self, registers: &Registers) -> bool {
+        self.window_trigger_condition_at_next_x(registers)
+    }
+
+    fn window_trigger_condition_at_next_x(&self, registers: &Registers) -> bool {
+        !self.window_triggered
+            && self.scanline >= registers.wy
+            && !self.window_reset_edges.contains(&self.next_x)
+            && self.window_enabled_for_pixel(u32::from(self.next_x), registers.lcdc)
+            && window_triggers_at_x(
+                self.wx_for_pixel(u32::from(self.next_x), registers.wx),
+                self.next_x,
+            )
+    }
+
+    fn window_startup_stall_dots(&self, registers: &Registers) -> u8 {
+        let wx = self.wx_for_pixel(u32::from(self.next_x), registers.wx);
+        // The mealybug m3_window_timing_wx_0 ROM documents that WX=0 activates
+        // one T-cycle later when SCX has nonzero fine scroll.
+        WINDOW_STARTUP_STALL_DOTS + u8::from(wx == 0 && self.scanline_start_scx_low != 0)
+    }
+
+    fn is_waiting_on_window_startup(&self) -> bool {
+        self.pending_window_startup_stall_dots > 0
+    }
+
+    fn window_startup_would_delay_next_pixel(&self, registers: &Registers) -> bool {
+        self.window_startup_stall_consumed == 0
+            && self.window_trigger_condition_at_next_x(registers)
+    }
+
+    /// Computes the effective `(next_x, pending_obj_stall_dots)` as pre-window-stall code
+    /// would have seen them. Called only when `window_startup_stall_consumed > 0`.
+    fn compute_effective_state_for_window_stall(&self, consumed: u8) -> (u8, u16) {
+        let actual_next_x = self.next_x;
+        let actual_pend = self.pending_obj_stall_dots;
+        let actual_waiting = self.is_waiting_on_obj_fetch();
+
+        if actual_waiting {
+            let (stall_total, stall_x) = if actual_pend > 0 {
+                // In-stall: stall has been running for `consumed` fewer ticks in pre-PR.
+                (actual_pend, actual_next_x)
+            } else {
+                // Queued: event.x <= next_x but stall not yet started (pend=0).
+                // In pre-PR, the stall started `consumed` ticks ago.
+                let total = self
+                    .obj_stall_events
+                    .get(self.next_obj_stall_event)
+                    .map_or(0, |e| e.dots);
+                (total, actual_next_x)
+            };
+            let consumed_u16 = u16::from(consumed);
+            let effective_pend = stall_total.saturating_sub(consumed_u16);
+            // If stall ended early in pre-PR, `excess` additional pixels were rendered.
+            let excess = consumed_u16.saturating_sub(stall_total) as u8;
+            let effective_next_x = stall_x.saturating_add(excess);
+            (effective_next_x, effective_pend)
+        } else if let Some(event) = self.obj_stall_events.get(self.next_obj_stall_event) {
+            let stall_x = event.x;
+            let consumed_i = i32::from(consumed);
+            let next_x_i = i32::from(actual_next_x);
+            let stall_x_i = i32::from(stall_x);
+
+            if stall_x_i > next_x_i && stall_x_i <= next_x_i + consumed_i {
+                // Not-yet-queued: the OBJ stall at stall_x falls within the consumed window.
+                // In pre-PR, the stall at stall_x had already started by write time.
+                let elapsed_pre = next_x_i + consumed_i - stall_x_i;
+                let stall_total = event.dots as i32;
+                if elapsed_pre >= stall_total {
+                    // Stall ended in pre-PR; `elapsed_pre - stall_total` extra pixels rendered.
+                    let extra = (elapsed_pre - stall_total) as u8;
+                    (stall_x.saturating_add(extra), 0u16)
+                } else if elapsed_pre > 0 {
+                    // Stall in progress in pre-PR.
+                    (stall_x, (stall_total - elapsed_pre) as u16)
+                } else {
+                    // elapsed_pre == 0: stall queued (fires next tick) in pre-PR.
+                    (stall_x, 0u16)
+                }
+            } else {
+                // OBJ stall is beyond the consumed window; pre-PR had more pixels rendered.
+                (actual_next_x.saturating_add(consumed), 0)
+            }
+        } else {
+            // No pending OBJ events; pre-PR had rendered `consumed` more pixels.
+            (actual_next_x.saturating_add(consumed), 0)
+        }
     }
 
     fn leftmost_obj_starts_before_screen(&self) -> bool {
@@ -4847,7 +5083,7 @@ mod tests {
     }
 
     #[test]
-    fn off_left_obj_window_restore_after_boundary_mixes_first_following_pixel() {
+    fn off_left_obj_window_restore_after_boundary_keeps_delayed_high_byte() {
         let mut renderer = PixelFifoRenderer::new();
         let mut registers = Registers::new();
         registers.lcdc = 0xA3;
@@ -4901,8 +5137,8 @@ mod tests {
 
         assert_eq!(
             screen_buffer.get_pixel(8, 0),
-            (170, 170, 170),
-            "the first following window pixel should mix the set low byte with the restored high byte"
+            (85, 85, 85),
+            "with the window startup stall applied, the first following window pixel keeps the delayed high-byte sample"
         );
     }
 
@@ -5274,7 +5510,7 @@ mod tests {
     }
 
     #[test]
-    fn delayed_obj_window_set_later_mixes_first_stalled_fetch_pixels() {
+    fn delayed_obj_window_set_later_keeps_first_stalled_fetch_pixels_latched() {
         let mut renderer = PixelFifoRenderer::new();
         let mut registers = Registers::new();
         registers.lcdc = 0xA3;
@@ -5344,18 +5580,18 @@ mod tests {
 
         assert_eq!(
             screen_buffer.get_pixel(8, 0),
-            (85, 85, 85),
-            "the first later delayed window pixel should mix the previous low byte with the set high byte"
+            (255, 255, 255),
+            "with the window startup stall applied, the first later delayed window pixel remains on the previous tile-data sample"
         );
         assert_eq!(
             screen_buffer.get_pixel(9, 0),
-            (85, 85, 85),
-            "the second later delayed window pixel should keep the set high byte"
+            (255, 255, 255),
+            "with the window startup stall applied, the second later delayed window pixel remains on the previous tile-data sample"
         );
     }
 
     #[test]
-    fn delayed_obj_window_set_after_high_phase_mixes_first_stalled_fetch_pixels() {
+    fn delayed_obj_window_set_after_high_phase_keeps_first_stalled_fetch_pixels_latched() {
         let mut renderer = PixelFifoRenderer::new();
         let mut registers = Registers::new();
         registers.lcdc = 0xA3;
@@ -5425,13 +5661,13 @@ mod tests {
 
         assert_eq!(
             screen_buffer.get_pixel(8, 0),
-            (85, 85, 85),
-            "the first high-phase delayed window pixel should mix the previous low byte with the set high byte"
+            (255, 255, 255),
+            "with the window startup stall applied, the first high-phase delayed window pixel remains on the previous tile-data sample"
         );
         assert_eq!(
             screen_buffer.get_pixel(9, 0),
-            (85, 85, 85),
-            "the second high-phase delayed window pixel should keep the set high byte"
+            (255, 255, 255),
+            "with the window startup stall applied, the second high-phase delayed window pixel remains on the previous tile-data sample"
         );
     }
 
