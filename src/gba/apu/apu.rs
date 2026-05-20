@@ -258,11 +258,13 @@ impl Apu {
             self.ch3.tick(step);
             self.ch4.tick(step);
 
-            // Advance frame sequencer counter.
-            self.fs_counter += step;
-            if self.fs_counter >= FS_PERIOD {
-                self.fs_counter -= FS_PERIOD;
-                self.clock_frame_sequencer_step();
+            // Advance frame sequencer counter (only while powered).
+            if self.powered {
+                self.fs_counter += step;
+                if self.fs_counter >= FS_PERIOD {
+                    self.fs_counter -= FS_PERIOD;
+                    self.clock_frame_sequencer_step();
+                }
             }
 
             // Advance PSG internal counter and accumulate at 262.144kHz rate.
@@ -651,12 +653,15 @@ impl Apu {
     fn write_soundcnt_x(&mut self, val: u16) {
         let new_power = val & 0x0080 != 0;
         if !new_power && self.powered {
-            // Power-off: clear all channel registers.
+            // Power-off: clear all channel registers and reset frame sequencer.
             self.ch1.power_off();
             self.ch2.power_off();
             self.ch3.power_off();
             self.ch4.power_off();
             self.soundcnt_l = 0;
+            // Reset frame sequencer to deterministic state for next power-on.
+            self.fs_step = 0;
+            self.fs_counter = 0;
             // SOUNDCNT_H and FIFO channels are retained.
         }
         self.powered = new_power;
@@ -2100,6 +2105,60 @@ mod tests {
             apu.sample_rate(),
             rate_before,
             "SOUNDBIAS resolution change must not alter the configured output sample rate"
+        );
+    }
+
+    // ── Frame sequencer power-off reset ─────────────────────────────────────
+
+    #[test]
+    fn test_power_off_resets_fs_step() {
+        // Per CGB/DMG spec inherited by GBA: power-off resets frame sequencer step.
+        let mut apu = powered_apu();
+        // Advance FS by clocking several steps so fs_step != 0.
+        apu.clock_frame_sequencer_step();
+        apu.clock_frame_sequencer_step();
+        apu.clock_frame_sequencer_step();
+        assert_ne!(
+            apu.fs_step, 0,
+            "fs_step should be non-zero before power-off"
+        );
+
+        apu.write16(0x0400_0084, 0x0000); // power off
+        assert_eq!(apu.fs_step, 0, "fs_step must be reset to 0 on power-off");
+    }
+
+    #[test]
+    fn test_power_off_resets_fs_counter() {
+        // Per CGB/DMG spec inherited by GBA: power-off resets frame sequencer counter.
+        let mut apu = powered_apu();
+        // Tick enough cycles to advance fs_counter without triggering a full step.
+        apu.tick(100);
+        assert_ne!(
+            apu.fs_counter, 0,
+            "fs_counter should be non-zero before power-off"
+        );
+
+        apu.write16(0x0400_0084, 0x0000); // power off
+        assert_eq!(
+            apu.fs_counter, 0,
+            "fs_counter must be reset to 0 on power-off"
+        );
+    }
+
+    #[test]
+    fn test_tick_does_not_advance_fs_counter_while_powered_off() {
+        // The frame sequencer must not advance while the APU is powered off.
+        let mut apu = Apu::new(); // starts powered off
+        assert!(!apu.powered);
+
+        apu.tick(FS_PERIOD * 2); // tick multiple FS periods
+        assert_eq!(
+            apu.fs_counter, 0,
+            "fs_counter must not advance while APU is powered off"
+        );
+        assert_eq!(
+            apu.fs_step, 0,
+            "fs_step must not advance while APU is powered off"
         );
     }
 }
