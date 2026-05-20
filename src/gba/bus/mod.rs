@@ -1614,6 +1614,64 @@ mod tests {
         assert_eq!(&bus.sram_snapshot()[..3], b"NES");
     }
 
+    fn write_dma_registers(
+        bus: &mut GbaBus,
+        channel: u32,
+        source: u32,
+        destination: u32,
+        count: u16,
+        cnt_h: u16,
+    ) {
+        let base = 0x0400_00B0 + channel * 12;
+        bus.write32(base, source);
+        bus.write32(base + 4, destination);
+        bus.write16(base + 8, count);
+        bus.write16(base + 10, cnt_h);
+    }
+
+    #[test]
+    fn dma0_source_masks_game_pak_rom_to_internal_memory() {
+        let mut bus = GbaBus::new();
+        bus.load_bios(&0x1122_3344u32.to_le_bytes());
+        bus.load_rom(&0xAABB_CCDDu32.to_le_bytes());
+        bus.write32(0x0200_0000, 0);
+
+        write_dma_registers(&mut bus, 0, 0x0800_0000, 0x0200_0000, 1, 0x8000 | 0x0400);
+
+        assert_eq!(bus.read32(0x0200_0000), 0x1122_3344);
+    }
+
+    #[test]
+    fn dma0_to_dma2_destination_masks_game_pak_sram_to_internal_memory() {
+        for channel in 0..=2 {
+            let mut bus = GbaBus::new();
+            bus.write32(0x0200_0000, 0xD8D8_D8D8);
+            bus.write8(0x0E00_0000, 0x66);
+
+            write_dma_registers(
+                &mut bus,
+                channel,
+                0x0200_0000,
+                0x0E00_0000,
+                1,
+                0x8000 | 0x0400,
+            );
+
+            assert_eq!(bus.read32(0x0E00_0000), 0x6666_6666);
+        }
+    }
+
+    #[test]
+    fn dma3_destination_can_reach_game_pak_sram() {
+        let mut bus = GbaBus::new();
+        bus.write32(0x0200_0000, 0xD8D8_D8D8);
+        bus.write8(0x0E00_0000, 0x66);
+
+        write_dma_registers(&mut bus, 3, 0x0200_0000, 0x0E00_0000, 1, 0x8000 | 0x0400);
+
+        assert_eq!(bus.read32(0x0E00_0000), 0xD8D8_D8D8);
+    }
+
     #[test]
     fn dma_immediate_fires_via_cpu_io_writes() {
         // Acceptance: CPU programs DMA via I/O writes; transfer happens
