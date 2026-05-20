@@ -1410,7 +1410,8 @@ mod tests {
         apu.write16(0x0400_0082, 0x00F0); // bits 4-7 set
         assert_eq!(apu.read16(0x0400_0082), 0x0000, "bits 4-7 must read as 0");
 
-        apu.write16(0x0400_0082, 0xFF0F); // bits 4-7 set along with valid R/W bits
+        // Bypass write-side FIFO-reset auto-clear on bits 11/15 so read masking is tested directly.
+        apu.soundcnt_h = 0xFF0F; // bits 4-7 plus W-only bits 11/15 set in backing register
         assert_eq!(
             apu.read16(0x0400_0082),
             0x770F,
