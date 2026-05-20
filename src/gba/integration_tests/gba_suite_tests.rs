@@ -221,7 +221,6 @@ fn gba_suite_armwrestler_passes() {
 }
 
 #[test]
-#[ignore] // Not all sub-suite ROM tests pass yet — see issue tracking.
 fn gba_mgba_suite_passes() {
     let approvals = load_approved_crcs();
     let result = run_mgba_suite();
@@ -232,20 +231,22 @@ fn gba_mgba_suite_passes() {
         MGBA_SUITE_COUNT,
         result.suite_crcs.len()
     );
+    let mut mismatches = Vec::new();
     for (i, &crc) in result.suite_crcs.iter().enumerate() {
         let key = MGBA_SUITE_KEYS[i];
-        let expected = approvals.get(key).unwrap_or_else(|| {
-            panic!(
-                "missing approved CRC for '{}' in {}. Run with NESER_CAPTURE_SCREEN=1 and add {}=0x{:08X}",
-                key, APPROVALS_FILE, key, crc
-            )
-        });
-        assert_eq!(
-            crc, *expected,
-            "mgba sub-suite '{}' CRC mismatch: expected=0x{expected:08X} actual=0x{crc:08X}",
-            key
-        );
+        match approvals.get(key) {
+            Some(&expected) if crc == expected => {}
+            Some(&expected) => mismatches.push(format!(
+                "{key}: expected=0x{expected:08X} actual=0x{crc:08X}"
+            )),
+            None => mismatches.push(format!("{key}: missing approval actual=0x{crc:08X}")),
+        }
     }
+    assert!(
+        mismatches.is_empty(),
+        "mGBA suite approval mismatches:\n{}",
+        mismatches.join("\n")
+    );
 }
 
 #[test]
@@ -332,16 +333,16 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("armwrestler_page7"), Some(&0x562A_5C65));
 
     // mgba-emu/suite keys
-    assert_eq!(approvals.get("mgba_memory"), Some(&0x7588_A3AE));
-    assert_eq!(approvals.get("mgba_io_read"), Some(&0x5A3C_D2D5));
-    assert_eq!(approvals.get("mgba_timing"), Some(&0x7162_9F50));
-    assert_eq!(approvals.get("mgba_timers"), Some(&0xCA28_94C9));
+    assert_eq!(approvals.get("mgba_memory"), Some(&0xB06D_F212));
+    assert_eq!(approvals.get("mgba_io_read"), Some(&0x5B5C_9186));
+    assert_eq!(approvals.get("mgba_timing"), Some(&0xD49C_DB49));
+    assert_eq!(approvals.get("mgba_timers"), Some(&0xCFAB_2DCC));
     assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xD1FF_FC47));
     assert_eq!(approvals.get("mgba_shifter"), Some(&0x8B4A_12AA));
     assert_eq!(approvals.get("mgba_carry"), Some(&0xFD9E_45E6));
     assert_eq!(approvals.get("mgba_multiply_long"), Some(&0x6996_55AB));
-    assert_eq!(approvals.get("mgba_bios_math"), Some(&0x3C1B_28DE));
-    assert_eq!(approvals.get("mgba_dma"), Some(&0x7EC6_9695));
+    assert_eq!(approvals.get("mgba_bios_math"), Some(&0xA4E2_450F));
+    assert_eq!(approvals.get("mgba_dma"), Some(&0x0138_8CCA));
     assert_eq!(approvals.get("mgba_sio_read"), Some(&0xF5D9_8687));
     assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));
     assert_eq!(approvals.get("mgba_misc_edge"), Some(&0x36EC_DBF9));

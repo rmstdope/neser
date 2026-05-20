@@ -475,7 +475,7 @@ fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
             bus.read8(addr) as u32
         } else {
             // ARMv4 LDR rotation on unaligned addresses
-            let raw = bus.read32(addr & !0x3);
+            let raw = bus.read32(addr);
             let rot = (addr & 0x3) * 8;
             raw.rotate_right(rot)
         };
@@ -530,7 +530,7 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     regs.r[rd] = match (s, h) {
         (false, true) => {
             // LDRH: odd address rotates aligned halfword right by 8.
-            let raw = bus.read16(addr & !1) as u32;
+            let raw = bus.read16(addr) as u32;
             if addr & 1 != 0 {
                 raw.rotate_right(8)
             } else {
@@ -543,7 +543,7 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
             if addr & 1 != 0 {
                 bus.read8(addr) as i8 as i32 as u32
             } else {
-                bus.read16(addr & !1) as i16 as i32 as u32
+                bus.read16(addr) as i16 as i32 as u32
             }
         }
         _ => unreachable!(),
@@ -574,7 +574,7 @@ fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
             bus.read8(addr) as u32
         } else {
             // ARMv4 LDR rotation on unaligned addresses
-            let raw = bus.read32(addr & !0x3);
+            let raw = bus.read32(addr);
             let rot = (addr & 0x3) * 8;
             raw.rotate_right(rot)
         };
@@ -613,7 +613,7 @@ fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
     let addr = regs.r[rb].wrapping_add(offset);
 
     if l {
-        let raw = bus.read16(addr & !1) as u32;
+        let raw = bus.read16(addr) as u32;
         regs.r[rd] = if addr & 1 != 0 {
             raw.rotate_right(8)
         } else {
@@ -644,7 +644,7 @@ fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
 
     if l {
         // ARMv4 LDR rotation on unaligned addresses
-        let raw = bus.read32(addr & !0x3);
+        let raw = bus.read32(addr);
         let rot = (addr & 0x3) * 8;
         regs.r[rd] = raw.rotate_right(rot);
     } else {
@@ -727,13 +727,13 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         data_addr = sp;
         for i in 0..8 {
             if reg_list & (1 << i) != 0 {
-                regs.r[i] = bus.read32(sp & !0x3);
+                regs.r[i] = bus.read32(sp);
                 sp = sp.wrapping_add(4);
             }
         }
         if extra {
             // POP loads PC and may switch state on bit 0.
-            let value = bus.read32(sp & !0x3);
+            let value = bus.read32(sp);
             sp = sp.wrapping_add(4);
             // Stay in Thumb state regardless of bit 0 on ARM7TDMI POP {PC}.
             regs.r[15] = value & !1;
@@ -921,6 +921,7 @@ fn sub_flags(a: u32, b: u32) -> (u32, bool, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gba::bus::GbaBus;
     use crate::gba::cpu::bus::RamBus;
     use crate::gba::cpu::registers::CpuMode;
 
@@ -1218,6 +1219,27 @@ mod tests {
     }
 
     #[test]
+    fn thumb_format7_ldr_from_sram_uses_unaligned_cart_bus_lane() {
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut bus = GbaBus::new();
+            bus.write8(base + 1, 0x61);
+            bus.write8(base + 2, 0x6D);
+            bus.write8(base + 3, 0x65);
+
+            for (offset, expected) in [(1, 0x6161_6161), (2, 0x6D6D_6D6D), (3, 0x6565_6565)] {
+                let mut regs = make_regs();
+                regs.r[0] = base;
+                regs.r[1] = offset;
+
+                let ldr = 0b0101_100_001_000_010u16;
+                execute(&mut regs, &mut bus, ldr);
+
+                assert_eq!(regs.r[2], expected, "base {base:#010X}, offset {offset}");
+            }
+        }
+    }
+
+    #[test]
     fn thumb_format8_strh_ldrh() {
         let mut regs = make_regs();
         let mut bus = RamBus::new(0x100);
@@ -1253,6 +1275,23 @@ mod tests {
         let ldrsh = 0b0101_111_001_000_011u16;
         execute(&mut regs, &mut bus, ldrsh);
         assert_eq!(regs.r[3], 0xFFFF_FFFF);
+    }
+
+    #[test]
+    fn thumb_format8_ldrh_from_sram_uses_unaligned_cart_bus_lane() {
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut regs = make_regs();
+            let mut bus = GbaBus::new();
+            regs.r[0] = base;
+            regs.r[1] = 1;
+            bus.write8(base, 0x47);
+            bus.write8(base + 1, 0x61);
+
+            let ldrh = 0b0101_101_001_000_010u16;
+            execute(&mut regs, &mut bus, ldrh);
+
+            assert_eq!(regs.r[2], 0x6100_0061, "base {base:#010X}");
+        }
     }
 
     #[test]
@@ -1300,6 +1339,22 @@ mod tests {
         let ldrh = 0b1000_1_00000_000_001u16;
         execute(&mut regs, &mut bus, ldrh);
         assert_eq!(regs.r[1], 0xFF00_0000);
+    }
+
+    #[test]
+    fn thumb_format10_ldrh_from_sram_uses_unaligned_cart_bus_lane() {
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut regs = make_regs();
+            let mut bus = GbaBus::new();
+            regs.r[0] = base + 1;
+            bus.write8(base, 0x47);
+            bus.write8(base + 1, 0x61);
+
+            let ldrh = 0b1000_1_00000_000_001u16;
+            execute(&mut regs, &mut bus, ldrh);
+
+            assert_eq!(regs.r[1], 0x6100_0061, "base {base:#010X}");
+        }
     }
 
     #[test]

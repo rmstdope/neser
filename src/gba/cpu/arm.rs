@@ -1025,7 +1025,7 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
         let value = match sh {
             0b01 => {
                 // LDRH: Load unsigned halfword
-                let raw = bus.read16(addr & !1) as u32;
+                let raw = bus.read16(addr) as u32;
                 if addr & 1 != 0 {
                     raw.rotate_right(8)
                 } else {
@@ -1261,6 +1261,7 @@ fn execute_swap<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gba::bus::GbaBus;
     use crate::gba::cpu::bus::RamBus;
 
     fn make_regs() -> Registers {
@@ -1506,6 +1507,32 @@ mod tests {
             | (2 << 12);
         execute(&mut regs, &mut bus, ldr_instr);
         assert_eq!(regs.r[2], 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn arm_ldr_from_sram_uses_unaligned_cart_bus_lane() {
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut bus = GbaBus::new();
+            bus.write8(base + 1, 0x61);
+            bus.write8(base + 2, 0x6D);
+            bus.write8(base + 3, 0x65);
+
+            for (offset, expected) in [(1, 0x6161_6161), (2, 0x6D6D_6D6D), (3, 0x6565_6565)] {
+                let mut regs = make_regs();
+                regs.r[1] = base;
+                let ldr = (0xE_u32 << 28)
+                    | (0b010 << 25)
+                    | (1 << 24)
+                    | (1 << 23)
+                    | (1 << 20)
+                    | (1 << 16)
+                    | offset;
+
+                execute(&mut regs, &mut bus, ldr);
+
+                assert_eq!(regs.r[0], expected, "base {base:#010X}, offset {offset}");
+            }
+        }
     }
 
     #[test]
@@ -2119,6 +2146,22 @@ mod tests {
         execute(&mut regs, &mut bus, ldrh);
 
         assert_eq!(regs.r[0], 0x2000_0000);
+    }
+
+    #[test]
+    fn arm_ldrh_from_sram_uses_unaligned_cart_bus_lane() {
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            let mut regs = make_regs();
+            let mut bus = GbaBus::new();
+            regs.r[1] = base;
+            bus.write8(base, 0x47);
+            bus.write8(base + 1, 0x61);
+
+            let ldrh = arm_halfword_imm(0xE, true, true, false, true, 1, 0, false, true, 1);
+            execute(&mut regs, &mut bus, ldrh);
+
+            assert_eq!(regs.r[0], 0x6100_0061, "base {base:#010X}");
+        }
     }
 
     #[test]
