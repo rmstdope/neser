@@ -333,7 +333,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("armwrestler_page7"), Some(&0x562A_5C65));
 
     // mgba-emu/suite keys
-    assert_eq!(approvals.get("mgba_memory"), Some(&0xB06D_F212));
+    assert_eq!(approvals.get("mgba_memory"), Some(&0xA615_C59A));
     assert_eq!(approvals.get("mgba_io_read"), Some(&0x5B5C_9186));
     assert_eq!(approvals.get("mgba_timing"), Some(&0xD49C_DB49));
     assert_eq!(approvals.get("mgba_timers"), Some(&0xCFAB_2DCC));
