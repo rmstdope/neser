@@ -28,6 +28,10 @@ const CGB_DMG_COMPAT_OBJ_FETCH_HIGH_BYTE_SAMPLE_MIN_DOTS_REMAINING: u16 = 3;
 const OFF_LEFT_WINDOW_DELAYED_OBJ_X_START: u8 = OBJ_PIXELS_PER_FETCH - 3;
 const OFF_LEFT_WINDOW_DELAYED_OBJ_X_END: u8 = OBJ_PIXELS_PER_FETCH - 1;
 const OFF_LEFT_WINDOW_EXTRA_STALL_DOTS: u16 = 2;
+// Same-dot WX overwrites before x=95 occur at the off-left fetcher's reactivation
+// decision point; from x=95 onward the later write can still cancel the pending
+// off-left reactivation observed by the Mealybug WX=6 ROM.
+const OFF_LEFT_WX_OVERWRITE_CANCEL_X: u8 = 95;
 const WINDOW_STARTUP_STALL_DOTS: u8 = 6;
 const STEADY_WINDOW_MAP_FETCH_DELAY_X: u8 = OBJ_PIXELS_PER_FETCH * 2;
 const LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X: u8 = OBJ_PIXELS_PER_FETCH * 2 + 5;
@@ -715,6 +719,8 @@ pub struct PixelFifoRenderer {
     #[serde(default)]
     window_fetch_line: u8,
     #[serde(default)]
+    pending_hidden_window_fetch_wx: Option<u8>,
+    #[serde(default)]
     window_activation_count: u8,
     bgp_edge_active: bool,
     bgp_edge_x: u8,
@@ -810,6 +816,12 @@ pub struct PixelFifoRenderer {
     #[serde(default)]
     window_x_edges: Vec<WindowXEdge>,
     #[serde(default)]
+    window_reactivation_edges: Vec<u8>,
+    #[serde(default)]
+    window_reactivation_shift: u8,
+    #[serde(default)]
+    off_left_window_reactivation_x: Option<u8>,
+    #[serde(default)]
     bg_fetch_x_offset: u8,
     #[serde(default)]
     cgb_dmg_tile_sel_glitch_data: Option<u8>,
@@ -828,6 +840,7 @@ impl PixelFifoRenderer {
             window_triggered: false,
             window_fetch_wx: 7,
             window_fetch_line: 0,
+            pending_hidden_window_fetch_wx: None,
             window_activation_count: 0,
             bgp_edge_active: false,
             bgp_edge_x: 0,
@@ -871,6 +884,9 @@ impl PixelFifoRenderer {
             window_enable_edges: Vec::new(),
             window_reset_edges: Vec::new(),
             window_x_edges: Vec::new(),
+            window_reactivation_edges: Vec::new(),
+            window_reactivation_shift: 0,
+            off_left_window_reactivation_x: None,
             bg_fetch_x_offset: 0,
             cgb_dmg_tile_sel_glitch_data: None,
         }
@@ -895,6 +911,7 @@ impl PixelFifoRenderer {
         self.window_triggered = false;
         self.window_fetch_wx = registers.wx;
         self.window_fetch_line = 0;
+        self.pending_hidden_window_fetch_wx = None;
         self.window_activation_count = 0;
         self.bgp_edge_active = false;
         self.bgp_edge_value = registers.bgp;
@@ -934,6 +951,9 @@ impl PixelFifoRenderer {
         self.window_enable_edges.clear();
         self.window_reset_edges.clear();
         self.window_x_edges.clear();
+        self.window_reactivation_edges.clear();
+        self.window_reactivation_shift = 0;
+        self.off_left_window_reactivation_x = None;
         self.bg_fetch_x_offset = 0;
         self.cgb_dmg_tile_sel_glitch_data = None;
         self.active_obj_fetch_lcdc_range = None;
@@ -1402,11 +1422,62 @@ impl PixelFifoRenderer {
         }
     }
 
-    pub fn record_wx_write(&mut self, wx: u8) {
+    pub fn record_wx_write(&mut self, wx: u8, wy: u8) {
         if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
             return;
         }
 
+        let reactivation_x = window_visible_start_x(wx);
+        if !self.window_triggered
+            && self.next_x == 0
+            && self.scanline >= wy
+            && self.scanline_start_lcdc & LCDC_WINDOW_ENABLE != 0
+            // WX=0..6 starts fetching before the first visible dot; WX=7
+            // still uses the regular visible trigger and should not survive
+            // an immediate Mode 3 WX write as a hidden off-left fetch.
+            && self.scanline_start_wx < 7
+            && window_triggers_at_x(self.scanline_start_wx, 0)
+        {
+            let fetch_wx = if self.scanline_start_wx == 6 {
+                7
+            } else {
+                self.scanline_start_wx
+            };
+            self.pending_hidden_window_fetch_wx = Some(fetch_wx);
+        }
+        if self.scanline_start_wx == 6 && self.next_x == 0 && wx > 6 && wx < 167 {
+            self.off_left_window_reactivation_x = Some(reactivation_x);
+        } else if self.scanline_start_wx == 6
+            && self.off_left_window_reactivation_x.is_some()
+            && !self.window_triggered
+        {
+            let old_reactivation_x = self.off_left_window_reactivation_x.unwrap();
+            let same_fetch_decision_dot = old_reactivation_x == self.next_x
+                || old_reactivation_x == self.next_x.saturating_add(1);
+            if same_fetch_decision_dot && old_reactivation_x < OFF_LEFT_WX_OVERWRITE_CANCEL_X {
+                // The off-left window fetch has already reached its reactivation
+                // decision point; a same-dot WX overwrite cannot cancel it yet.
+            } else if reactivation_x > self.next_x {
+                self.off_left_window_reactivation_x = Some(reactivation_x);
+            } else {
+                self.off_left_window_reactivation_x = None;
+                self.pending_hidden_window_fetch_wx = None;
+            }
+        }
+        self.window_reactivation_edges.retain(|&x| x < self.next_x);
+        if self.next_x == 0
+            && self.scanline_start_wx < 6
+            && reactivation_x > self.next_x
+            // WX=4/5 off-left fetches are already one visible dot past their
+            // original trigger phase when the ROM writes WX=LY at x=0. The
+            // reactivation zero pixel appears only when the new trigger lands
+            // on that next fetch decision phase.
+            && reactivation_x & 0x07 == self.scanline_start_wx.wrapping_add(1) & 0x07
+            && u32::from(reactivation_x) < ScreenBuffer::WIDTH
+            && self.scanline >= wy
+        {
+            self.window_reactivation_edges.push(reactivation_x);
+        }
         self.window_x_edges.push(WindowXEdge {
             start_x: self.next_x,
             wx,
@@ -1426,9 +1497,24 @@ impl PixelFifoRenderer {
             // at fetch boundaries rather than at the CPU write pixel.
             self.next_window_fetch_boundary(current_wx)
         };
+        if enabled
+            && !self.window_active
+            && !self.window_triggered
+            && self.next_x == window_visible_start_x(current_wx)
+        {
+            // The WX trigger decision for this dot has already been missed; a
+            // same-dot LCDC.5 enable can only start the window on the next dot.
+            self.window_x_edges.push(WindowXEdge {
+                start_x,
+                wx: current_wx.saturating_add(1),
+            });
+        }
         self.window_enable_edges
             .push(WindowEnableEdge { start_x, enabled });
         if !enabled {
+            if self.next_x == 0 && !self.window_triggered {
+                self.pending_hidden_window_fetch_wx = None;
+            }
             self.window_reset_edges.push(start_x);
         }
     }
@@ -3120,7 +3206,6 @@ impl PixelFifoRenderer {
     ) {
         let lcdc = registers.lcdc;
         let obj_enabled = lcdc & LCDC_OBJ_ENABLE != 0;
-        let win_enabled = lcdc & LCDC_WINDOW_ENABLE != 0;
         let master_priority = lcdc & 0x01 != 0;
 
         let bg_px = background::fetch_bg_pixel_cgb_with_fine_scx(
@@ -3137,26 +3222,26 @@ impl PixelFifoRenderer {
                 lcdc,
             },
         );
-        let bw_px = if win_enabled {
+        let window_fetch = self.window_fetch_for_pixel(x, registers, window_line);
+        let bw_px = if let Some((window_wx, window_line)) = window_fetch {
             let window_lcdc = self.lcdc_window_map_edge.lcdc_for_window_fetch(x, lcdc);
+            let window_sample_x = self.window_sample_x_for_pixel(x);
             match window::fetch_window_pixel_cgb(
-                x,
+                window_sample_x,
                 self.scanline,
                 vram,
                 vram_bank1,
                 window_lcdc,
-                registers.wx,
+                window_wx,
                 registers.wy,
                 window_line,
             ) {
-                Some(win_px) => {
-                    if !self.window_triggered {
-                        self.window_triggered = true;
-                        self.window_active = true;
-                        self.window_fetch_wx = registers.wx;
-                        self.window_fetch_line =
-                            window_line.wrapping_add(self.window_activation_count);
-                        self.window_activation_count = self.window_activation_count.wrapping_add(1);
+                Some(mut win_px) => {
+                    if self.window_reactivation_zero_for_pixel(x) {
+                        win_px.colour_index = 0;
+                        win_px.palette_num = 0;
+                        win_px.vram_bank = 0;
+                        win_px.bg_priority = false;
                     }
                     win_px
                 }
@@ -3381,58 +3466,62 @@ impl PixelFifoRenderer {
         };
 
         let mut window_tile_select_latched = false;
-        let mut bw_idx =
-            if let Some((window_wx, window_line)) = window_fetch.filter(|_| bg_window_enabled) {
-                let (low_lcdc, high_lcdc, low_override, high_override) =
-                    self.lcdc_tile_data_edge.lcdc_for_tile_data(x, lcdc);
-                window_tile_select_latched = low_lcdc & LCDC_TILE_DATA != lcdc & LCDC_TILE_DATA
-                    || high_lcdc & LCDC_TILE_DATA != lcdc & LCDC_TILE_DATA
-                    || low_override != DmgTileByteOverride::None
-                    || high_override != DmgTileByteOverride::None;
-                let (low_override, high_override) = self.resolve_cgb_dmg_tile_sel_overrides(
+        let mut bw_idx = if let Some((window_wx, window_line)) =
+            window_fetch.filter(|_| bg_window_enabled)
+        {
+            let window_sample_x = self.window_sample_x_for_pixel(x);
+            let (low_lcdc, high_lcdc, low_override, high_override) =
+                self.lcdc_tile_data_edge.lcdc_for_tile_data(x, lcdc);
+            window_tile_select_latched = low_lcdc & LCDC_TILE_DATA != lcdc & LCDC_TILE_DATA
+                || high_lcdc & LCDC_TILE_DATA != lcdc & LCDC_TILE_DATA
+                || low_override != DmgTileByteOverride::None
+                || high_override != DmgTileByteOverride::None;
+            let (low_override, high_override) = self.resolve_cgb_dmg_tile_sel_overrides(
+                low_override,
+                high_override,
+                oam,
+                vram,
+                registers,
+            );
+            let window_map_lcdc = self.lcdc_window_map_edge.lcdc_for_window_fetch(x, lcdc);
+            match bg_fifo::fetch_dmg_pixel_with_data(
+                vram,
+                DmgPixelFetch {
+                    layer: DmgLayer::Window,
+                    x: window_sample_x,
+                    scanline: self.scanline,
+                    scx: registers.scx,
+                    fine_scx: registers.scx & SCX_FINE_MASK,
+                    scy_map: registers.scy,
+                    scy_data_low: registers.scy,
+                    scy_data_high: registers.scy,
+                    wx: window_wx,
+                    wy: registers.wy,
+                    window_line,
+                    map_lcdc: window_map_lcdc | LCDC_WINDOW_ENABLE,
+                    low_lcdc,
+                    high_lcdc,
                     low_override,
                     high_override,
-                    oam,
-                    vram,
-                    registers,
-                );
-                let window_map_lcdc = self.lcdc_window_map_edge.lcdc_for_window_fetch(x, lcdc);
-                match bg_fifo::fetch_dmg_pixel_with_data(
-                    vram,
-                    DmgPixelFetch {
-                        layer: DmgLayer::Window,
-                        x,
-                        scanline: self.scanline,
-                        scx: registers.scx,
-                        fine_scx: registers.scx & SCX_FINE_MASK,
-                        scy_map: registers.scy,
-                        scy_data_low: registers.scy,
-                        scy_data_high: registers.scy,
-                        wx: window_wx,
-                        wy: registers.wy,
-                        window_line,
-                        map_lcdc: window_map_lcdc | LCDC_WINDOW_ENABLE,
-                        low_lcdc,
-                        high_lcdc,
-                        low_override,
-                        high_override,
-                    },
-                ) {
-                    Some(pixel) => {
-                        self.update_cgb_dmg_tile_sel_glitch_data(pixel);
-                        if dmg_window_glitch && self.dmg_window_startup_gap_uses_bg_pixel(x) {
-                            bg_idx
-                        } else {
-                            pixel.colour_index
-                        }
+                },
+            ) {
+                Some(pixel) => {
+                    self.update_cgb_dmg_tile_sel_glitch_data(pixel);
+                    if self.window_reactivation_zero_for_pixel(x) {
+                        0
+                    } else if dmg_window_glitch && self.dmg_window_startup_gap_uses_bg_pixel(x) {
+                        bg_idx
+                    } else {
+                        pixel.colour_index
                     }
-                    None => bg_idx,
                 }
-            } else if dmg_window_glitch && self.dmg_disabled_window_color0_pixel(x, registers) {
-                0
-            } else {
-                bg_idx
-            };
+                None => bg_idx,
+            }
+        } else if dmg_window_glitch && self.dmg_disabled_window_color0_pixel(x, registers) {
+            0
+        } else {
+            bg_idx
+        };
 
         let sprite_px = if obj_enabled && !self.is_obj_fetch_canceled_for_pixel(x) {
             let (low_lcdc, high_lcdc) = self.obj_fetch_lcdc_for_pixel(x, lcdc);
@@ -3583,14 +3672,30 @@ impl PixelFifoRenderer {
             self.bg_fetch_x_offset = u8::from(x_u8 != 0);
         }
 
-        if self.scanline < registers.wy || !self.window_enabled_for_pixel(x, registers.lcdc) {
+        if self.scanline < registers.wy
+            || self.off_left_window_warmup_scanline(registers.wy)
+            || !self.window_enabled_for_pixel(x, registers.lcdc)
+        {
+            self.window_triggered = false;
+            return None;
+        }
+        if let Some(reactivation_x) = self.off_left_window_reactivation_x()
+            && x_u8 < reactivation_x
+        {
             self.window_triggered = false;
             return None;
         }
 
         if !self.window_triggered {
-            let wx = self.wx_for_pixel(x, registers.wx);
-            if !window_triggers_at_x(wx, x_u8) {
+            let pending_hidden_wx = self.pending_hidden_window_fetch_wx.take();
+            let wx = pending_hidden_wx.unwrap_or_else(|| self.wx_for_pixel(x, registers.wx));
+            let off_left_reactivation = self
+                .off_left_window_reactivation_x()
+                .is_some_and(|reactivation_x| x_u8 == reactivation_x);
+            if pending_hidden_wx.is_none()
+                && !off_left_reactivation
+                && !window_triggers_at_x(wx, x_u8)
+            {
                 return None;
             }
 
@@ -3696,6 +3801,16 @@ impl PixelFifoRenderer {
         self.window_reset_edges.retain(|&x| x != self.next_x);
         prune_consumed_window_enable_edges(&mut self.window_enable_edges, self.next_x);
         prune_consumed_window_x_edges(&mut self.window_x_edges, self.next_x);
+        if self.window_reactivation_edges.contains(&self.next_x) {
+            self.window_reactivation_shift = self.window_reactivation_shift.saturating_add(1);
+        }
+        self.window_reactivation_edges.retain(|&x| x != self.next_x);
+    }
+
+    fn window_reactivation_zero_for_pixel(&self, x: u32) -> bool {
+        self.window_reactivation_edges
+            .iter()
+            .any(|&edge_x| u32::from(edge_x) == x)
     }
 
     fn is_waiting_on_obj_fetch(&self) -> bool {
@@ -3713,6 +3828,7 @@ impl PixelFifoRenderer {
     fn window_trigger_condition_at_next_x(&self, registers: &Registers) -> bool {
         !self.window_triggered
             && self.scanline >= registers.wy
+            && !self.off_left_window_warmup_scanline(registers.wy)
             && !self.window_reset_edges.contains(&self.next_x)
             && self.window_enabled_for_pixel(u32::from(self.next_x), registers.lcdc)
             && window_triggers_at_x(
@@ -3730,6 +3846,22 @@ impl PixelFifoRenderer {
 
     fn is_waiting_on_window_startup(&self) -> bool {
         self.pending_window_startup_stall_dots > 0
+    }
+
+    fn off_left_window_warmup_scanline(&self, wy: u8) -> bool {
+        self.scanline_start_wx == 6 && self.scanline.wrapping_sub(wy) < 2
+    }
+
+    fn off_left_window_reactivation_x(&self) -> Option<u8> {
+        if self.scanline_start_wx != 6 {
+            return None;
+        }
+        self.off_left_window_reactivation_x
+    }
+
+    fn window_sample_x_for_pixel(&self, x: u32) -> u32 {
+        let reactivation_offset = self.off_left_window_reactivation_x().map_or(0, u32::from);
+        x.saturating_sub(reactivation_offset + u32::from(self.window_reactivation_shift))
     }
 
     fn window_startup_would_delay_next_pixel(&self, registers: &Registers) -> bool {
@@ -3848,11 +3980,11 @@ fn prune_consumed_window_x_edges(edges: &mut Vec<WindowXEdge>, x: u8) {
 mod tests {
     use super::super::{registers::Registers, screen_buffer::ScreenBuffer};
     use super::{
-        BgScxSamplerConfig, LCDC_BG_WINDOW_ENABLE, LCDC_TILE_DATA, LCDC_WINDOW_ENABLE,
-        LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X, LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X,
-        LcdcBgEnableEdge, LcdcBgEnableEdgeTiming, LcdcBgMapEdge, LcdcBgMapFetchDelay,
-        PixelFifoRenderer, SCX_LOW_BITS_SAMPLE_DOTS, WindowEnableEdge, WindowXEdge,
-        scy_fetch_start_dots,
+        BgScxSamplerConfig, LCDC_BG_WINDOW_ENABLE, LCDC_OBJ_ENABLE, LCDC_TILE_DATA,
+        LCDC_WINDOW_ENABLE, LCDC_WINDOW_MAP, LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X,
+        LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_SET_X, LcdcBgEnableEdge, LcdcBgEnableEdgeTiming,
+        LcdcBgMapEdge, LcdcBgMapFetchDelay, OFF_LEFT_WX_OVERWRITE_CANCEL_X, PixelFifoRenderer,
+        SCX_LOW_BITS_SAMPLE_DOTS, WindowEnableEdge, WindowXEdge, scy_fetch_start_dots,
     };
     use crate::gb::model::CgbModel;
 
@@ -3890,6 +4022,17 @@ mod tests {
         }
         vram[0x0010] = 0xFF;
         vram[0x0011] = 0xFF;
+        vram
+    }
+
+    fn vram_with_solid_window_and_sprite_tiles() -> [u8; 0x2000] {
+        let mut vram = [0u8; 0x2000];
+        for tile in &mut vram[0x1C00..0x1C20] {
+            *tile = 0x01;
+        }
+        vram[0x0010] = 0xFF;
+        vram[0x0011] = 0xFF;
+        vram[0x0020] = 0xFF;
         vram
     }
 
@@ -4061,6 +4204,115 @@ mod tests {
         );
     }
 
+    #[test]
+    fn wx_write_at_x0_preserves_only_off_left_hidden_window_fetch() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 12;
+        renderer.scanline_start_lcdc = LCDC_BG_WINDOW_ENABLE | LCDC_TILE_DATA | LCDC_WINDOW_ENABLE;
+        renderer.scanline_start_wx = 6;
+        renderer.next_x = 0;
+
+        renderer.record_wx_write(12, 0);
+
+        assert_eq!(renderer.pending_hidden_window_fetch_wx, Some(7));
+
+        renderer.pending_hidden_window_fetch_wx = None;
+        renderer.scanline_start_wx = 7;
+
+        renderer.record_wx_write(12, 0);
+
+        assert_eq!(renderer.pending_hidden_window_fetch_wx, None);
+    }
+
+    #[test]
+    fn wx_reactivation_edge_uses_next_fetch_decision_phase() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 12;
+        renderer.scanline_start_wx = 4;
+        renderer.next_x = 0;
+
+        renderer.record_wx_write(12, 0);
+
+        assert_eq!(renderer.window_reactivation_edges, vec![5]);
+
+        renderer.window_reactivation_edges.clear();
+
+        renderer.record_wx_write(11, 0);
+
+        assert!(
+            renderer.window_reactivation_edges.is_empty(),
+            "WX=11 reactivates at x=4, the original phase rather than the next fetch decision phase"
+        );
+
+        renderer.scanline_start_wx = 120;
+        renderer.record_wx_write(24, 0);
+
+        assert!(
+            renderer.window_reactivation_edges.is_empty(),
+            "ordinary on-screen WX starts must not create off-left reactivation edges"
+        );
+    }
+
+    #[test]
+    fn wx6_same_dot_overwrite_cancels_at_threshold() {
+        fn renderer_with_pending_reactivation(next_x: u8, reactivation_x: u8) -> PixelFifoRenderer {
+            let mut renderer = PixelFifoRenderer::new();
+            renderer.active = true;
+            renderer.scanline_start_wx = 6;
+            renderer.next_x = next_x;
+            renderer.off_left_window_reactivation_x = Some(reactivation_x);
+            renderer
+        }
+
+        let mut before_threshold = renderer_with_pending_reactivation(93, 94);
+
+        before_threshold.record_wx_write(80, 0);
+
+        assert_eq!(before_threshold.off_left_window_reactivation_x, Some(94));
+
+        let mut at_threshold =
+            renderer_with_pending_reactivation(94, OFF_LEFT_WX_OVERWRITE_CANCEL_X);
+
+        at_threshold.record_wx_write(80, 0);
+
+        assert_eq!(at_threshold.off_left_window_reactivation_x, None);
+    }
+
+    #[test]
+    fn same_dot_lcdc_window_enable_delays_inactive_window_trigger_one_pixel() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 16;
+        renderer.scanline_start_lcdc = LCDC_BG_WINDOW_ENABLE | LCDC_TILE_DATA;
+        renderer.next_x = 9;
+
+        renderer.record_lcdc_window_enable_write(
+            LCDC_BG_WINDOW_ENABLE | LCDC_TILE_DATA,
+            LCDC_BG_WINDOW_ENABLE | LCDC_TILE_DATA | LCDC_WINDOW_ENABLE,
+            16,
+        );
+
+        assert_eq!(
+            renderer
+                .window_x_edges
+                .iter()
+                .map(|edge| (edge.start_x, edge.wx))
+                .collect::<Vec<_>>(),
+            vec![(9, 17)]
+        );
+
+        let mut registers = Registers::new();
+        registers.lcdc = LCDC_BG_WINDOW_ENABLE | LCDC_TILE_DATA | LCDC_WINDOW_ENABLE;
+        registers.wx = 16;
+        registers.wy = 0;
+
+        assert!(!renderer.window_trigger_condition_at_next_x(&registers));
+        renderer.next_x = 10;
+        assert!(renderer.window_trigger_condition_at_next_x(&registers));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn tick_dmg_until_next_x(
         renderer: &mut PixelFifoRenderer,
@@ -4089,6 +4341,57 @@ mod tests {
                 "renderer did not reach next_x={target_next_x}"
             );
         }
+    }
+
+    #[test]
+    fn wx_write_after_off_left_window_fetch_keeps_initial_window_stream() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 12;
+        renderer.scanline_start_lcdc = LCDC_BG_WINDOW_ENABLE | LCDC_TILE_DATA | LCDC_WINDOW_ENABLE;
+        renderer.scanline_start_wx = 4;
+        renderer.next_x = 0;
+
+        renderer.record_wx_write(12, 4);
+
+        let mut registers = Registers::new();
+        registers.lcdc = LCDC_BG_WINDOW_ENABLE | LCDC_TILE_DATA | LCDC_WINDOW_ENABLE;
+        registers.wx = 12;
+        registers.wy = 4;
+
+        assert_eq!(
+            renderer.window_fetch_for_pixel(0, &registers, 0),
+            Some((4, 0)),
+            "a WX write after the off-left window fetch has started must not replace the active window stream"
+        );
+    }
+
+    #[test]
+    fn wx_reactivation_zero_pixel_allows_priority_sprite_to_show() {
+        let mut renderer = PixelFifoRenderer::new();
+        renderer.active = true;
+        renderer.scanline = 0;
+        renderer.window_active = true;
+        renderer.window_triggered = true;
+        renderer.window_fetch_wx = 7;
+        renderer.window_reactivation_edges = vec![5];
+        renderer.sprite_indices.push(0);
+        let mut registers = Registers::new();
+        registers.lcdc = LCDC_BG_WINDOW_ENABLE
+            | LCDC_OBJ_ENABLE
+            | LCDC_TILE_DATA
+            | LCDC_WINDOW_ENABLE
+            | LCDC_WINDOW_MAP;
+        registers.wx = 7;
+        registers.wy = 0;
+        registers.bgp = 0xE4;
+        let vram = vram_with_solid_window_and_sprite_tiles();
+        let oam = oam_with_sprite_at(16, 13, 2, 0x80);
+
+        let (colour_index, is_sprite, _) = renderer.dmg_pixel_layers(5, &vram, &oam, &registers, 0);
+
+        assert_eq!(colour_index, 1);
+        assert!(is_sprite);
     }
 
     #[test]
