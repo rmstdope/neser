@@ -91,10 +91,15 @@ impl Gba {
         let app_context = app_context.into_shared();
         let mut bus = GbaBus::new();
 
-        let configured_bios_path = {
+        let (configured_bios_path, color_correction) = {
             let cfg = app_context.borrow();
-            cfg.config().gba.bios_path.clone()
+            (
+                cfg.config().gba.bios_path.clone(),
+                cfg.config().gba.color_correction,
+            )
         };
+
+        bus.ppu.set_color_correction(color_correction);
 
         // "embedded" is a sentinel value: skip the default-path fallback and
         // use the built-in open-source BIOS unconditionally.
