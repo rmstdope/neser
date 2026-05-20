@@ -34,6 +34,11 @@
 //! * Window masks, alpha blending / brightness effects, and MOSAIC for
 //!   BG/OBJ render paths.
 //! * Forced-blank outputs solid white (per GBATek).
+//! * Forced-blank mid-frame restart: when DISPCNT bit 7 (Forced Blank)
+//!   transitions from 1 to 0 mid-frame, the PPU continues to output white
+//!   for ~2 additional scanlines, then resets VCOUNT to 0 and resumes
+//!   normal rendering from line 0.  This models the GBATek behaviour
+//!   "display restarts from line 0 after 2 vertical lines".
 //! * `BG2X`/`BG2Y` mid-frame writes: per GBATek "LCD I/O BG
 //!   Rotation/Scaling", a write to `BG2X`/`BG2Y` (or the BG3 equivalents)
 //!   outside V-Blank immediately applies to the internal reference point for
@@ -297,6 +302,14 @@ pub struct Ppu {
     bldy: u8,
     /// `MOSAIC` (0x0400_004C, write-only): BG/OBJ mosaic block sizes.
     mosaic: u16,
+    /// Countdown of remaining scanlines before the display restarts from
+    /// line 0, triggered when Forced Blank (DISPCNT bit 7) transitions from
+    /// 1 to 0 mid-frame.  Per GBATek, the display restarts from line 0
+    /// approximately 2 vertical lines after the Forced Blank is de-asserted.
+    /// Counts down from 2 to 0; while > 0, the PPU outputs white just like
+    /// active Forced Blank.  Cleared immediately if Forced Blank is
+    /// re-asserted before the restart completes.
+    forced_blank_restart_lines: u32,
 }
 
 // ---- Color special effect helpers ----------------------------------------
@@ -419,6 +432,7 @@ impl Ppu {
             bldalpha: 0,
             bldy: 0,
             mosaic: 0,
+            forced_blank_restart_lines: 0,
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
         // No IRQ is raised here — the controller hasn't been wired up
@@ -433,8 +447,24 @@ impl Ppu {
     }
 
     /// Write `DISPCNT`.
+    ///
+    /// Per GBATek "LCD I/O Display Control": when Forced Blank (bit 7)
+    /// transitions from 1 to 0, the display restarts from line 0 after
+    /// approximately 2 vertical lines.  We model this with a countdown
+    /// field that keeps forced-blank white output active for 2 more
+    /// scanlines, then resets VCOUNT to 0.  If Forced Blank is
+    /// re-asserted before the restart completes, the countdown is cleared.
     pub fn write_dispcnt(&mut self, value: u16) {
+        let was_forced_blank = self.dispcnt & dispcnt::FORCED_BLANK != 0;
+        let is_forced_blank = value & dispcnt::FORCED_BLANK != 0;
         self.dispcnt = value;
+        if was_forced_blank && !is_forced_blank {
+            // Forced Blank de-asserted: begin 2-scanline restart countdown.
+            self.forced_blank_restart_lines = 2;
+        } else if is_forced_blank {
+            // Forced Blank asserted (or kept asserted): cancel any pending restart.
+            self.forced_blank_restart_lines = 0;
+        }
     }
 
     /// Read Green Swap register (0x0400_0002). Returns bit 0 only.
@@ -500,16 +530,20 @@ impl Ppu {
     }
 
     /// Whether the screen is currently in forced-blank mode.
+    ///
+    /// Returns `true` when the FORCED_BLANK bit (DISPCNT bit 7) is set, or
+    /// when the post-de-assert restart countdown is still active (during those
+    /// ~2 scanlines the display still outputs white).
     pub fn forced_blank(&self) -> bool {
-        self.dispcnt & dispcnt::FORCED_BLANK != 0
+        self.dispcnt & dispcnt::FORCED_BLANK != 0 || self.forced_blank_restart_lines > 0
     }
 
     /// Returns `true` when VRAM and Palette RAM accesses require a 1-cycle wait
     /// due to the PPU actively reading those regions.
     ///
     /// Per GBATek "LCD VRAM Overview": the extra wait applies during active
-    /// display (visible scanlines 0–159, not in H-Blank) when Forced Blank
-    /// (DISPCNT bit 7) is not set.
+    /// display (visible scanlines 0–159, not in H-Blank) while the PPU is
+    /// actively rendering (`forced_blank()` is `false`).
     pub fn vram_pram_active_wait(&self) -> bool {
         if self.forced_blank() {
             return false;
@@ -828,6 +862,28 @@ impl Ppu {
     fn advance_scanline(&mut self, ic: &mut InterruptController, events: &mut PpuStepEvents) {
         // Leaving this scanline — clear H-Blank flag.
         self.dispstat &= !dispstat::HBLANK_FLAG;
+
+        // Handle the forced-blank mid-frame restart countdown.
+        // When Forced Blank (DISPCNT bit 7) is de-asserted mid-frame, the PPU
+        // keeps outputting white for ~2 more scanlines, then restarts from
+        // line 0.  The countdown is decremented here at every scanline
+        // advance; when it reaches 0, VCOUNT is reset to 0 and normal
+        // operation resumes.
+        if self.forced_blank_restart_lines > 0 {
+            self.forced_blank_restart_lines -= 1;
+            if self.forced_blank_restart_lines == 0 {
+                // Display restarts from line 0: reset VCOUNT, clear any
+                // V-Blank flag that may have been set during the countdown.
+                self.vcount = 0;
+                self.dispstat &= !dispstat::VBLANK_FLAG;
+                // Latch affine reference points as if starting a new frame.
+                for aff in &mut self.bg_affine {
+                    aff.latch_reference_points();
+                }
+                self.update_vcount_match_flag(Some(ic));
+                return;
+            }
+        }
 
         let next = (self.vcount as u32 + 1) % SCANLINES_PER_FRAME;
         self.vcount = next as u16;
@@ -2370,6 +2426,98 @@ mod tests {
         );
         // Every pixel should be white.
         assert!(ppu.framebuffer().iter().all(|&b| b == 0xFF));
+    }
+
+    // ---- Forced blank mid-frame restart (GBATek) ----------------------------
+
+    #[test]
+    fn forced_blank_midframe_deassert_resets_vcount_after_two_scanlines() {
+        // Per GBATek: when forced blank is de-asserted mid-frame, the display
+        // restarts from line 0 after approximately 2 vertical lines.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+        let oam = make_oam();
+
+        // Enable forced blank and advance to scanline 80.
+        ppu.write_dispcnt(dispcnt::FORCED_BLANK);
+        ppu.step(CYCLES_PER_SCANLINE * 80, &mut ic, &vram, &pram, &oam);
+        assert_eq!(ppu.read_vcount(), 80);
+
+        // De-assert forced blank → countdown of 2 scanlines begins.
+        ppu.write_dispcnt(0);
+
+        // After 2 full scanlines, vcount must have been reset to 0.
+        ppu.step(CYCLES_PER_SCANLINE * 2, &mut ic, &vram, &pram, &oam);
+        assert_eq!(
+            ppu.read_vcount(),
+            0,
+            "After forced blank de-assert, vcount must restart from 0 after 2 scanlines"
+        );
+    }
+
+    #[test]
+    fn forced_blank_transition_scanlines_still_output_white() {
+        // During the 2 transition scanlines after forced blank is de-asserted,
+        // the display must still output white (forced blank behaviour persists).
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+        let oam = make_oam();
+
+        // Set a non-white backdrop so we can distinguish from forced-blank white.
+        // BGR555 pure blue = 0x7C00 → RGB888 = (0, 0, 0xFF).
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+
+        // Enable forced blank and advance to scanline 80.
+        ppu.write_dispcnt(dispcnt::FORCED_BLANK);
+        ppu.step(CYCLES_PER_SCANLINE * 80, &mut ic, &vram, &pram, &oam);
+
+        // De-assert forced blank; render the first transition scanline (80).
+        ppu.write_dispcnt(0);
+        // Step to H-Blank to trigger rendering of scanline 80.
+        ppu.step(HBLANK_START_CYCLE, &mut ic, &vram, &pram, &oam);
+
+        // Scanline 80 row should be white even though FORCED_BLANK bit is cleared.
+        let row_start = 80 * (SCREEN_WIDTH as usize) * BYTES_PER_PIXEL;
+        assert!(
+            ppu.framebuffer()[row_start..row_start + SCREEN_WIDTH as usize * BYTES_PER_PIXEL]
+                .iter()
+                .all(|&b| b == 0xFF),
+            "First transition scanline must output white while countdown is active"
+        );
+    }
+
+    #[test]
+    fn forced_blank_reassert_before_restart_cancels_countdown() {
+        // If forced blank is re-asserted before the 2-line restart completes,
+        // the countdown is cancelled and vcount continues advancing normally.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let pram = make_pram();
+        let oam = make_oam();
+
+        // Enable forced blank, advance to scanline 80.
+        ppu.write_dispcnt(dispcnt::FORCED_BLANK);
+        ppu.step(CYCLES_PER_SCANLINE * 80, &mut ic, &vram, &pram, &oam);
+        assert_eq!(ppu.read_vcount(), 80);
+
+        // De-assert forced blank → countdown starts.
+        ppu.write_dispcnt(0);
+        // Immediately re-assert forced blank → countdown must be cancelled.
+        ppu.write_dispcnt(dispcnt::FORCED_BLANK);
+
+        // Advance 2 scanlines — vcount must advance normally to 82, NOT restart.
+        ppu.step(CYCLES_PER_SCANLINE * 2, &mut ic, &vram, &pram, &oam);
+        assert_eq!(
+            ppu.read_vcount(),
+            82,
+            "Re-asserting forced blank must cancel the restart countdown"
+        );
     }
 
     #[test]
