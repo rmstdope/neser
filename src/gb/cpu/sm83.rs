@@ -600,10 +600,11 @@ impl<B: GbBus> Sm83<B> {
         self.bus.notify_idu_glitch(sp0);
         self.write(self.regs.sp, pc_hi);
 
-        // Re-read IE after the high-byte push: if SP landed on $FFFF (the IE
-        // register), the push just overwrote IE.  Recompute the live interrupt
-        // queue with the new IE against the *original* IF (not yet cleared).
-        let mut interrupt_queue = self.bus.read(0xFFFF) & if_ & 0x1F;
+        // Re-read IE and IF after the high-byte push: if SP landed on $FFFF
+        // (IE), or a higher-priority interrupt became pending during dispatch,
+        // the vector selection uses the live queue rather than the queue that
+        // originally accepted the interrupt.
+        let mut interrupt_queue = self.bus.read(0xFFFF) & self.bus.read(0xFF0F) & 0x1F;
 
         // Push PC low byte onto the stack (M4).
         let sp1 = self.regs.sp;
@@ -1342,6 +1343,39 @@ mod tests {
         }
     }
 
+    struct LateInterruptBus {
+        mem: [u8; 0x10000],
+        ticks: u8,
+    }
+
+    impl LateInterruptBus {
+        fn new() -> Self {
+            let mut mem = [0u8; 0x10000];
+            mem[0xFFFF] = 0x03; // IE: VBlank + STAT enabled
+            mem[0xFF0F] = 0x02; // IF: STAT pending at dispatch start
+            Self { mem, ticks: 0 }
+        }
+    }
+
+    impl GbBus for LateInterruptBus {
+        fn read(&mut self, addr: u16) -> u8 {
+            self.mem[addr as usize]
+        }
+
+        fn write(&mut self, addr: u16, val: u8) {
+            self.mem[addr as usize] = val;
+        }
+
+        fn tick(&mut self, m_cycles: u8) {
+            for _ in 0..m_cycles {
+                self.ticks = self.ticks.saturating_add(1);
+                if self.ticks == 3 {
+                    self.mem[0xFF0F] |= 0x01; // VBlank becomes pending during dispatch
+                }
+            }
+        }
+    }
+
     impl GbBus for WritePhaseSpyBus {
         fn read(&mut self, addr: u16) -> u8 {
             self.mem[addr as usize]
@@ -1959,6 +1993,26 @@ mod tests {
             new_if & 0x01,
             0,
             "VBlank IF bit should be cleared after dispatch"
+        );
+    }
+
+    #[test]
+    fn test_interrupt_dispatch_uses_late_higher_priority_request() {
+        let mut cpu = Sm83::new(LateInterruptBus::new());
+        cpu.ime = true;
+        cpu.regs.pc = 0x1000;
+        cpu.regs.sp = 0xFFFE;
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.regs.pc, 0x0040,
+            "A higher-priority VBlank request that appears during dispatch should win over the initially pending STAT request"
+        );
+        assert_eq!(
+            cpu.bus.mem[0xFF0F] & 0x03,
+            0x02,
+            "Dispatch should clear only VBlank IF and leave the original STAT request pending"
         );
     }
 
