@@ -1183,9 +1183,7 @@ impl PixelFifoRenderer {
         &mut self,
         previous: u8,
         new: u8,
-        lcdc: u8,
-        wx: u8,
-        wy: u8,
+        registers: &Registers,
         cgb_mode: bool,
         dmg_compat: bool,
         cgb_model: CgbModel,
@@ -1201,7 +1199,7 @@ impl PixelFifoRenderer {
         self.bgp_edge_value = if self.next_x == 0
             || self.is_waiting_on_obj_fetch()
             || self.is_waiting_on_window_startup()
-            || self.window_startup_would_delay_next_pixel(lcdc, wx, wy)
+            || self.window_startup_would_delay_next_pixel(registers)
         {
             new
         } else if cgb_mode && dmg_compat {
@@ -3662,13 +3660,16 @@ impl PixelFifoRenderer {
         self.pending_window_startup_stall_dots > 0
     }
 
-    fn window_startup_would_delay_next_pixel(&self, lcdc: u8, wx: u8, wy: u8) -> bool {
+    fn window_startup_would_delay_next_pixel(&self, registers: &Registers) -> bool {
         self.window_startup_stall_consumed == 0
             && !self.window_triggered
-            && self.scanline >= wy
+            && self.scanline >= registers.wy
             && !self.window_reset_edges.contains(&self.next_x)
-            && self.window_enabled_for_pixel(u32::from(self.next_x), lcdc)
-            && window_triggers_at_x(self.wx_for_pixel(u32::from(self.next_x), wx), self.next_x)
+            && self.window_enabled_for_pixel(u32::from(self.next_x), registers.lcdc)
+            && window_triggers_at_x(
+                self.wx_for_pixel(u32::from(self.next_x), registers.wx),
+                self.next_x,
+            )
     }
 
     /// Computes the effective `(next_x, pending_obj_stall_dots)` as pre-window-stall code
