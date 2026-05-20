@@ -1046,7 +1046,7 @@ impl PixelFifoRenderer {
             self.bg_scx_sampler.tick(elapsed, fetch_scx);
             self.clear_pending_scx_sample_override(will_sample_scx);
             self.bg_scy_sampler.tick(elapsed, effective_scy);
-            self.pending_window_startup_stall_dots = WINDOW_STARTUP_STALL_DOTS - 1;
+            self.pending_window_startup_stall_dots = self.window_startup_stall_dots(registers) - 1;
             self.window_startup_stall_consumed = 1;
             return None;
         }
@@ -1183,6 +1183,9 @@ impl PixelFifoRenderer {
         &mut self,
         previous: u8,
         new: u8,
+        lcdc: u8,
+        wx: u8,
+        wy: u8,
         cgb_mode: bool,
         dmg_compat: bool,
         cgb_model: CgbModel,
@@ -1195,7 +1198,11 @@ impl PixelFifoRenderer {
         self.bgp_edge_x = self.next_x;
         // If an OBJ fetch is delaying this pixel, the BGP write lands before
         // the pixel is pushed to LCD, so the delayed pixel sees the new value.
-        self.bgp_edge_value = if self.next_x == 0 || self.is_waiting_on_obj_fetch() {
+        self.bgp_edge_value = if self.next_x == 0
+            || self.is_waiting_on_obj_fetch()
+            || self.is_waiting_on_window_startup()
+            || self.window_startup_would_delay_next_pixel(lcdc, wx, wy)
+        {
             new
         } else if cgb_mode && dmg_compat {
             match cgb_model {
@@ -3642,6 +3649,26 @@ impl PixelFifoRenderer {
                 self.wx_for_pixel(u32::from(self.next_x), registers.wx),
                 self.next_x,
             )
+    }
+
+    fn window_startup_stall_dots(&self, registers: &Registers) -> u8 {
+        let wx = self.wx_for_pixel(u32::from(self.next_x), registers.wx);
+        // The mealybug m3_window_timing_wx_0 ROM documents that WX=0 activates
+        // one T-cycle later when SCX has nonzero fine scroll.
+        WINDOW_STARTUP_STALL_DOTS + u8::from(wx == 0 && self.scanline_start_scx_low != 0)
+    }
+
+    fn is_waiting_on_window_startup(&self) -> bool {
+        self.pending_window_startup_stall_dots > 0
+    }
+
+    fn window_startup_would_delay_next_pixel(&self, lcdc: u8, wx: u8, wy: u8) -> bool {
+        self.window_startup_stall_consumed == 0
+            && !self.window_triggered
+            && self.scanline >= wy
+            && !self.window_reset_edges.contains(&self.next_x)
+            && self.window_enabled_for_pixel(u32::from(self.next_x), lcdc)
+            && window_triggers_at_x(self.wx_for_pixel(u32::from(self.next_x), wx), self.next_x)
     }
 
     /// Computes the effective `(next_x, pending_obj_stall_dots)` as pre-window-stall code
