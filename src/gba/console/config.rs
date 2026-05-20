@@ -156,7 +156,8 @@ impl GbaConfig {
 
     /// Apply a config file key-value pair to this config.
     ///
-    /// Accepts `gba-hardware`, `gba-bios-path`, and `skip-bios-intro` keys.
+    /// Accepts `gba-hardware`, `gba-bios-path`, `skip-bios-intro`, and
+    /// `gba-color-correction` keys.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
         match key.as_str() {

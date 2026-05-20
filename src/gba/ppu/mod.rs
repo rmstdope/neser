@@ -315,7 +315,7 @@ pub struct Ppu {
     ///
     /// Simulates the GBA TFT LCD's physical non-linear response where values
     /// 0–14 appear nearly black. Default: false (linear expansion).
-    pub color_correction: bool,
+    color_correction: bool,
 }
 
 // ---- Color special effect helpers ----------------------------------------
@@ -1578,6 +1578,14 @@ impl Ppu {
         let evb = (((self.bldalpha >> 8) & 0x1F) as u8).min(16);
         let evy = self.bldy.min(16);
 
+        // Select the pixel-write function once per scanline to avoid a
+        // per-pixel branch inside the hot 240-pixel loop.
+        let write_pixel: fn(&mut [u8], usize, u16) = if self.color_correction {
+            color::write_pixel_corrected
+        } else {
+            color::write_pixel
+        };
+
         for x in 0..(SCREEN_WIDTH as usize) {
             // Determine layer enable mask for this pixel.
             let layer_mask = if any_window_active {
@@ -1715,11 +1723,7 @@ impl Ppu {
             };
 
             let dst = row_start + x * BYTES_PER_PIXEL;
-            if self.color_correction {
-                color::write_pixel_corrected(&mut self.framebuffer, dst, final_color);
-            } else {
-                color::write_pixel(&mut self.framebuffer, dst, final_color);
-            }
+            write_pixel(&mut self.framebuffer, dst, final_color);
         }
     }
 
@@ -6002,7 +6006,7 @@ mod tests {
 
     /// When color correction is enabled, mid-range palette colors are rendered
     /// darker than the linear expansion. This tests that the corrected path is
-    /// actually taken in composite_scanline.
+    /// actually taken in render_backdrop_scanline.
     #[test]
     fn ppu_color_correction_darkens_midrange_colors() {
         // Set up a mode-0 backdrop with r5=16, g5=0, b5=0 (medium red).
