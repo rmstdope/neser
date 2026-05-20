@@ -1000,7 +1000,7 @@ impl Ppu {
         ];
 
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_backdrop_scanline(y, pram);
+            self.render_no_layers_scanline(y, pram, vram, oam);
             return;
         }
 
@@ -1230,7 +1230,7 @@ impl Ppu {
         ];
 
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_backdrop_scanline(y, pram);
+            self.render_no_layers_scanline(y, pram, vram, oam);
             return;
         }
 
@@ -1258,7 +1258,7 @@ impl Ppu {
         ];
 
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_backdrop_scanline(y, pram);
+            self.render_no_layers_scanline(y, pram, vram, oam);
             return;
         }
 
@@ -1442,7 +1442,7 @@ impl Ppu {
     /// priority layers show through.
     fn render_mode3_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_backdrop_scanline(y, pram);
+            self.render_no_layers_scanline(y, pram, vram, oam);
             return;
         }
 
@@ -1470,7 +1470,7 @@ impl Ppu {
     /// priority layers show through.
     fn render_mode4_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_backdrop_scanline(y, pram);
+            self.render_no_layers_scanline(y, pram, vram, oam);
             return;
         }
 
@@ -1504,7 +1504,7 @@ impl Ppu {
     /// priority layers show through.
     fn render_mode5_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_backdrop_scanline(y, pram);
+            self.render_no_layers_scanline(y, pram, vram, oam);
             return;
         }
 
@@ -1795,14 +1795,36 @@ impl Ppu {
     /// still composites OBJ sprites over the backdrop — no BG layers are rendered.
     fn render_prohibited_mode_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         if self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
-            self.render_backdrop_scanline(y, pram);
+            self.render_no_layers_scanline(y, pram, vram, oam);
             return;
         }
         self.composite_scanline(y, pram, vram, oam, &[]);
     }
 
-    /// Backdrop fill — uses palette entry 0 from PRAM. Used for modes
-    /// where rendering is not yet implemented in this increment.
+    /// Render a scanline where no BG layers or OBJ are active (backdrop-only).
+    ///
+    /// When any window is active, delegates to `composite_scanline` so that
+    /// per-pixel window-gated SFX are correctly applied to the backdrop (GBATek:
+    /// WININ/WINOUT bit 5 controls 'Color Special Effect' per region).  When no
+    /// window is active, uses the fast `render_backdrop_scanline` path.
+    fn render_no_layers_scanline(&mut self, y: u32, pram: &[u8], vram: &[u8], oam: &[u8]) {
+        let any_window_active = self.dispcnt
+            & (dispcnt::WIN0_ENABLE | dispcnt::WIN1_ENABLE | dispcnt::OBJ_WIN_ENABLE)
+            != 0;
+        if any_window_active {
+            self.composite_scanline(y, pram, vram, oam, &[]);
+        } else {
+            self.render_backdrop_scanline(y, pram);
+        }
+    }
+
+    /// Backdrop fill — uses palette entry 0 from PRAM.
+    ///
+    /// Applies brightness effects uniformly when no window is active, backdrop
+    /// is selected as a 1st target, and the SFX mode is brightness
+    /// increase/decrease.  This function is only called when windows are
+    /// inactive; when windows are active the caller routes to `composite_scanline`
+    /// via `render_no_layers_scanline` so that per-pixel window-gated SFX apply.
     fn render_backdrop_scanline(&mut self, y: u32, pram: &[u8]) {
         let backdrop = self.backdrop_bgr555(pram);
 
@@ -5820,6 +5842,59 @@ mod tests {
             &ppu.framebuffer()[0..3],
             &[0, 0, 0],
             "Backdrop brightness decrease with EVY=16 should output black"
+        );
+    }
+
+    #[test]
+    fn backdrop_sfx_applies_per_pixel_when_window_active_all_layers_disabled() {
+        // Per GBATek 'LCD I/O Window Feature': WININ/WINOUT bit 5 gates SFX
+        // per pixel, including for the backdrop.  When all BG layers and OBJ are
+        // disabled (pure backdrop scanline), windows must still control SFX
+        // per-pixel — pixels inside WIN0 with SFX=1 get the brightness effect;
+        // pixels outside WIN0 (SFX=0) receive the raw backdrop color.
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let vram = make_vram();
+        let mut pram = make_pram();
+
+        // Mode 0, no BG/OBJ layers, WIN0 enabled.
+        ppu.write_dispcnt(dispcnt::WIN0_ENABLE);
+
+        // Backdrop = pure blue (BGR555 0x7C00).
+        pram[0] = 0x00;
+        pram[1] = 0x7C;
+
+        // WIN0 covers x=0..120, full vertical.
+        // WIN_H: X1=0 (bits 15-8), X2=120 (bits 7-0) → value = (0 << 8) | 120
+        ppu.write_win_h(0, 120);
+        // WIN_V: Y1=0 (bits 15-8), Y2=160 (bits 7-0) → value = (0 << 8) | 160
+        ppu.write_win_v(0, 160);
+
+        // WININ: WIN0 SFX bit enabled (bit 5 = 1), no BG/OBJ bits needed.
+        ppu.write_winin(1 << 5); // 0x0020
+        // WINOUT: SFX disabled outside any window (bit 5 = 0).
+        ppu.write_winout(0);
+
+        // BLDCNT: mode=2 (brighten), 1st target = backdrop (bit 5).
+        ppu.write_bldcnt((2 << 6) | (1 << 5));
+        ppu.write_bldy(16); // EVY=16 → maximum brightening → white
+
+        run_one_frame(&mut ppu, &mut ic, &vram, &pram, &make_oam());
+
+        // Pixel at x=0 is inside WIN0 (SFX=1): backdrop should be brightened to white.
+        assert_eq!(
+            &ppu.framebuffer()[0..3],
+            &[0xFF, 0xFF, 0xFF],
+            "Backdrop inside WIN0 with SFX=1 and EVY=16 should be white"
+        );
+
+        // Pixel at x=120 is outside WIN0 (SFX=0): raw backdrop (blue).
+        let (r, g, b) = color::bgr555_to_rgb888(0x7C00);
+        let pixel_start = 120 * BYTES_PER_PIXEL;
+        assert_eq!(
+            &ppu.framebuffer()[pixel_start..pixel_start + 3],
+            &[r, g, b],
+            "Backdrop outside WIN0 with SFX=0 should remain raw blue"
         );
     }
 
