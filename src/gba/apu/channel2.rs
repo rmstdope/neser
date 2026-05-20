@@ -70,18 +70,22 @@ impl Channel2 {
     }
 
     pub fn clock_envelope(&mut self) {
-        if self.env_period == 0 {
-            return;
-        }
+        let reload = if self.env_period > 0 {
+            self.env_period
+        } else {
+            8
+        };
         if self.env_timer > 0 {
             self.env_timer -= 1;
         }
         if self.env_timer == 0 {
-            self.env_timer = self.env_period;
-            if self.env_add && self.volume < 15 {
-                self.volume += 1;
-            } else if !self.env_add && self.volume > 0 {
-                self.volume -= 1;
+            self.env_timer = reload;
+            if self.env_period > 0 {
+                if self.env_add && self.volume < 15 {
+                    self.volume += 1;
+                } else if !self.env_add && self.volume > 0 {
+                    self.volume -= 1;
+                }
             }
         }
     }
@@ -94,7 +98,11 @@ impl Channel2 {
         let period = (2048_u32.wrapping_sub(self.freq as u32)) * 16;
         self.freq_timer = period;
         self.volume = self.init_volume;
-        self.env_timer = self.env_period;
+        self.env_timer = if self.env_period > 0 {
+            self.env_period
+        } else {
+            8
+        };
     }
 
     // ── Register writes ───────────────────────────────────────────────────
@@ -196,6 +204,73 @@ mod tests {
         assert!(
             (got - expected).abs() < 1e-5,
             "volume=8 duty high: expected {expected}, got {got}"
+        );
+    }
+
+    // ─── Envelope timer period=0 behaviour (RED → GREEN) ─────────────────────
+
+    /// On trigger with env_period=0, env_timer must be initialized to 8,
+    /// not 0. Per Pan Docs / CGB hardware: the reload value is 8 when period=0.
+    #[test]
+    fn test_ch2_trigger_env_period_zero_sets_env_timer_to_8() {
+        let mut ch = Channel2 {
+            dac_on: true,
+            init_volume: 7,
+            env_period: 0,
+            ..Channel2::default()
+        };
+        ch.write_cnt_h(0x8000, false); // trigger (bit 15), freq=0
+        assert_eq!(
+            ch.env_timer, 8,
+            "env_timer must be 8 after trigger when env_period=0"
+        );
+    }
+
+    /// clock_envelope with env_period=0 must still decrement env_timer
+    /// (no volume change).
+    #[test]
+    fn test_ch2_clock_envelope_period_zero_decrements_timer() {
+        let mut ch = Channel2 {
+            active: true,
+            dac_on: true,
+            volume: 7,
+            env_period: 0,
+            env_timer: 8,
+            ..Channel2::default()
+        };
+        let vol_before = ch.volume;
+        ch.clock_envelope();
+        assert_eq!(
+            ch.volume, vol_before,
+            "volume must not change when env_period=0"
+        );
+        assert_eq!(
+            ch.env_timer, 7,
+            "env_timer must count down even when env_period=0"
+        );
+    }
+
+    /// When env_timer expires with env_period=0, the timer must reload to 8
+    /// and no volume change must occur.
+    #[test]
+    fn test_ch2_clock_envelope_period_zero_reloads_to_8_on_expiry() {
+        let mut ch = Channel2 {
+            active: true,
+            dac_on: true,
+            volume: 7,
+            env_period: 0,
+            env_timer: 1, // about to expire
+            ..Channel2::default()
+        };
+        let vol_before = ch.volume;
+        ch.clock_envelope();
+        assert_eq!(
+            ch.env_timer, 8,
+            "env_timer must reload to 8 when env_period=0 and timer expires"
+        );
+        assert_eq!(
+            ch.volume, vol_before,
+            "volume must not change when env_period=0"
         );
     }
 }
