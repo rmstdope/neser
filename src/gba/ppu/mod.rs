@@ -235,9 +235,9 @@ pub struct PpuStepEvents {
     /// (transitions into scanline 160).
     pub vblank_starts: u32,
     /// Number of H-Blank periods that started during this step (on any
-    /// scanline, including V-Blank scanlines 160-227). Per GBATek,
+    /// scanline, including non-visible scanlines 160–227). Per GBATek,
     /// H-Blank DMA fires on all 228 scanlines. Only the H-Blank IRQ is
-    /// suppressed during V-Blank.
+    /// suppressed during V-Blank (scanlines 160–[`VBLANK_LAST_SCANLINE`]).
     pub hblank_starts: u32,
     /// Number of complete frames that finished during this step. The
     /// framebuffer is ready for the frontend to read whenever this is
@@ -2016,7 +2016,7 @@ mod tests {
     #[test]
     fn hblank_dma_fires_during_vblank_scanlines() {
         // Per GBATek, H-Blank DMA should trigger on ALL 228 scanlines,
-        // including the 68 V-Blank scanlines (160-227).
+        // including the 67 V-Blank scanlines (160–226).
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let vram = make_vram();
