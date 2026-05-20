@@ -204,11 +204,33 @@ impl Channel1 {
 
     /// SOUND1CNT_X: frequency and control (bits 10-0 freq, 14 length-enable,
     /// 15 trigger/reset — write-only).
-    pub fn write_cnt_x(&mut self, val: u16) {
+    ///
+    /// `extra_clk` must be `true` when the frame sequencer's next step will NOT
+    /// clock the length counter (i.e. `fs_step` is odd: 1, 3, 5, 7).  In that
+    /// case two extra-clock quirks apply:
+    ///
+    /// * Enabling `length_en` (0→1, no trigger): immediately decrement the
+    ///   counter by 1 if it is nonzero.
+    /// * Trigger: if the counter was just reloaded to the maximum (64) because
+    ///   it was 0, decrement by 1.
+    pub fn write_cnt_x(&mut self, val: u16, extra_clk: bool) {
         self.freq = val & 0x7FF;
+        let old_length_en = self.length_en;
         self.length_en = (val & 0x4000) != 0;
+        // Extra clock when enabling length_en (0→1) and next FS step won't clock.
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
         if val & 0x8000 != 0 {
             self.trigger();
+            // Extra clock when trigger reloaded the counter to max (was 0) and
+            // length_en is set.
+            if extra_clk && self.length_en && self.length_counter == 64 {
+                self.length_counter = 63;
+            }
         }
     }
 
@@ -245,7 +267,7 @@ mod tests {
         // write_cnt_h: no length, 25% duty, volume env off, init_volume=8
         ch.write_cnt_h(0x8040); // init_vol=8, duty=1(25%), env off
         // write_cnt_x: freq=500, trigger
-        ch.write_cnt_x(0x81F4); // trigger | freq=500
+        ch.write_cnt_x(0x81F4, false); // trigger | freq=500
         ch
     }
 
@@ -296,7 +318,7 @@ mod tests {
         ch.clock_sweep();
 
         // Re-trigger resets negate_used.
-        ch.write_cnt_x(0x81F4);
+        ch.write_cnt_x(0x81F4, false);
         assert!(ch.active, "channel still active after re-trigger");
 
         // Now direction change must NOT disable it (negate_used was reset).

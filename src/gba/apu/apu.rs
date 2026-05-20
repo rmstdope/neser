@@ -397,17 +397,24 @@ impl Apu {
             return;
         }
 
+        // Extra length-counter clock: fs_step cycles through 0–7 (clamped by
+        // `(step + 1) & 7` in clock_frame_sequencer_step).  When the next step
+        // will NOT clock the length counter (fs_step is odd: 1, 3, 5, 7),
+        // enabling length_en or triggering with length_en causes an immediate
+        // extra decrement of the length counter.
+        let extra_clk = (self.fs_step & 1) == 1;
+
         match addr {
             0x0400_0060 => self.ch1.write_cnt_l(val),
             0x0400_0062 => self.ch1.write_cnt_h(val),
-            0x0400_0064 => self.ch1.write_cnt_x(val),
+            0x0400_0064 => self.ch1.write_cnt_x(val, extra_clk),
             0x0400_0068 => self.ch2.write_cnt_l(val),
-            0x0400_006C => self.ch2.write_cnt_h(val),
+            0x0400_006C => self.ch2.write_cnt_h(val, extra_clk),
             0x0400_0070 => self.ch3.write_cnt_l(val),
             0x0400_0072 => self.ch3.write_cnt_h(val),
-            0x0400_0074 => self.ch3.write_cnt_x(val),
+            0x0400_0074 => self.ch3.write_cnt_x(val, extra_clk),
             0x0400_0078 => self.ch4.write_cnt_l(val),
-            0x0400_007C => self.ch4.write_cnt_h(val),
+            0x0400_007C => self.ch4.write_cnt_h(val, extra_clk),
             0x0400_0080 => self.soundcnt_l = val & 0xFF77,
             0x0400_0082 => self.write_soundcnt_h(val),
             0x0400_0084 => self.write_soundcnt_x(val),
@@ -448,6 +455,13 @@ impl Apu {
             return;
         }
 
+        // Extra length-counter clock: fs_step cycles through 0–7 (clamped by
+        // `(step + 1) & 7` in clock_frame_sequencer_step).  When the next step
+        // will NOT clock the length counter (fs_step is odd: 1, 3, 5, 7),
+        // enabling length_en or triggering with length_en causes an immediate
+        // extra decrement of the length counter.
+        let extra_clk = (self.fs_step & 1) == 1;
+
         match addr {
             // SOUND1CNT_L: both bytes are fully read/write — RMW is safe.
             0x0400_0060 | 0x0400_0061 => {
@@ -479,12 +493,13 @@ impl Apu {
                 // Low byte: low 8 bits of frequency — write-only.
                 let hi = (self.ch1.freq >> 8) & 0x07;
                 let len_en = u16::from(self.ch1.length_en) << 6;
-                self.ch1.write_cnt_x(len_en | (hi << 8) | val as u16);
+                self.ch1
+                    .write_cnt_x(len_en | (hi << 8) | val as u16, extra_clk);
             }
             0x0400_0065 => {
                 // High byte: freq[10:8] | length_en | trigger.
                 self.ch1
-                    .write_cnt_x((val as u16) << 8 | (self.ch1.freq & 0xFF));
+                    .write_cnt_x((val as u16) << 8 | (self.ch1.freq & 0xFF), extra_clk);
             }
             // SOUND2CNT_L
             0x0400_0068 => {
@@ -499,11 +514,12 @@ impl Apu {
             0x0400_006C => {
                 let hi = (self.ch2.freq >> 8) & 0x07;
                 let len_en = u16::from(self.ch2.length_en) << 6;
-                self.ch2.write_cnt_h(len_en | (hi << 8) | val as u16);
+                self.ch2
+                    .write_cnt_h(len_en | (hi << 8) | val as u16, extra_clk);
             }
             0x0400_006D => {
                 self.ch2
-                    .write_cnt_h((val as u16) << 8 | (self.ch2.freq & 0xFF));
+                    .write_cnt_h((val as u16) << 8 | (self.ch2.freq & 0xFF), extra_clk);
             }
             // SOUND3CNT_L: DAC enable in bit 7
             0x0400_0070 => {
@@ -525,11 +541,12 @@ impl Apu {
             0x0400_0074 => {
                 let hi = (self.ch3.freq >> 8) & 0x07;
                 let len_en = u16::from(self.ch3.length_en) << 6;
-                self.ch3.write_cnt_x(len_en | (hi << 8) | val as u16);
+                self.ch3
+                    .write_cnt_x(len_en | (hi << 8) | val as u16, extra_clk);
             }
             0x0400_0075 => {
                 self.ch3
-                    .write_cnt_x((val as u16) << 8 | (self.ch3.freq & 0xFF));
+                    .write_cnt_x((val as u16) << 8 | (self.ch3.freq & 0xFF), extra_clk);
             }
             // SOUND4CNT_L: length (5-0) in low byte, envelope in high byte
             0x0400_0078 => {
@@ -543,12 +560,16 @@ impl Apu {
             // SOUND4CNT_H: clock params + trigger
             0x0400_007C => {
                 let len_en = u16::from(self.ch4.length_en) << 6;
-                self.ch4
-                    .write_cnt_h(len_en | (0xFF00 & self.read16(0x0400_007C)) | val as u16);
+                self.ch4.write_cnt_h(
+                    len_en | (0xFF00 & self.read16(0x0400_007C)) | val as u16,
+                    extra_clk,
+                );
             }
             0x0400_007D => {
-                self.ch4
-                    .write_cnt_h((val as u16) << 8 | (self.read16(0x0400_007C) & 0x00FF));
+                self.ch4.write_cnt_h(
+                    (val as u16) << 8 | (self.read16(0x0400_007C) & 0x00FF),
+                    extra_clk,
+                );
             }
             // SOUNDCNT_L: plain read/write register — RMW safe.
             0x0400_0080 => {
@@ -996,6 +1017,230 @@ mod tests {
         }
         // Frequency should not change when period=0
         assert_eq!(apu.ch1.sweep_shadow, initial_shadow);
+    }
+
+    // ── Length-counter extra-clock quirk tests ──────────────────────────────
+    //
+    // When the Frame Sequencer's NEXT step will NOT clock the length counter
+    // (i.e. fs_step is odd: 1, 3, 5, 7), writing to a channel's control
+    // register must apply an "extra clock":
+    //  (a) enabling length_en (0→1, no trigger): decrement length_counter by 1
+    //  (b) trigger + length_en set: if counter was reloaded to max, decrement by 1
+    //
+    // When fs_step is even (0, 2, 4, 6) the NEXT step WILL clock length, so
+    // no extra clock should occur.
+
+    // ── CH1 extra-clock tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_ch1_trigger_extra_clocks_reloaded_counter_when_fs_step_odd() {
+        // fs_step=1 (odd): trigger + length_en, counter was 0 → reloads to 64
+        // then extra clock → 63.
+        let mut apu = powered_apu();
+        // DAC on, volume=15
+        apu.write16(0x0400_0062, 0xF080);
+        // force counter to 0 by setting length=64 and not triggering
+        apu.ch1.length_counter = 0;
+        // Advance FS to step 1 (odd) by clocking step 0 first.
+        apu.clock_frame_sequencer_step(); // processes step 0, fs_step becomes 1
+        // Trigger + length_en = bits 15 + 14 of SOUND1CNT_X
+        apu.write16(0x0400_0064, 0xC000); // trigger | length_en, freq=0
+        assert_eq!(
+            apu.ch1.length_counter, 63,
+            "trigger at odd fs_step: counter should be reloaded to 64 then extra-clocked to 63"
+        );
+    }
+
+    #[test]
+    fn test_ch1_trigger_no_extra_clock_when_fs_step_even() {
+        // fs_step=0 (even): trigger + length_en, counter was 0 → reloads to 64, no extra clock.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 0;
+        // fs_step is already 0 (even) after powered_apu()
+        apu.write16(0x0400_0064, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch1.length_counter, 64,
+            "trigger at even fs_step: counter should be 64 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch1_enable_length_extra_clocks_when_fs_step_odd() {
+        // fs_step=1 (odd): enabling length_en (0→1, no trigger) with counter=5 → 4.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 5;
+        apu.ch1.length_en = false;
+        apu.ch1.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        // Write length_en bit only (no trigger, no freq change)
+        apu.write16(0x0400_0064, 0x4000); // length_en | freq=0
+        assert_eq!(
+            apu.ch1.length_counter, 4,
+            "enabling length at odd fs_step: counter 5 → 4 (extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch1_enable_length_no_extra_clock_when_fs_step_even() {
+        // fs_step=0 (even): enabling length_en (0→1, no trigger) with counter=5 → stays 5.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 5;
+        apu.ch1.length_en = false;
+        apu.ch1.active = true;
+        // fs_step=0 (even) - no advancement needed
+        apu.write16(0x0400_0064, 0x4000); // length_en | freq=0
+        assert_eq!(
+            apu.ch1.length_counter, 5,
+            "enabling length at even fs_step: counter stays at 5 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch1_enable_length_extra_clock_disables_channel_when_counter_reaches_zero() {
+        // fs_step=1 (odd): counter=1, enabling length_en extra-clocks to 0 → channel disabled.
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 1;
+        apu.ch1.length_en = false;
+        apu.ch1.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_0064, 0x4000);
+        assert_eq!(apu.ch1.length_counter, 0);
+        assert!(
+            !apu.ch1.active,
+            "channel disabled when extra clock drives counter to 0"
+        );
+    }
+
+    // ── CH2 extra-clock tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_ch2_trigger_extra_clocks_reloaded_counter_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0068, 0xF080);
+        apu.ch2.length_counter = 0;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_006C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch2.length_counter, 63,
+            "CH2 trigger at odd fs_step: counter should be 63 after extra clock"
+        );
+    }
+
+    #[test]
+    fn test_ch2_trigger_no_extra_clock_when_fs_step_even() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0068, 0xF080);
+        apu.ch2.length_counter = 0;
+        apu.write16(0x0400_006C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch2.length_counter, 64,
+            "CH2 trigger at even fs_step: counter should be 64 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch2_enable_length_extra_clocks_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0068, 0xF080);
+        apu.ch2.length_counter = 3;
+        apu.ch2.length_en = false;
+        apu.ch2.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_006C, 0x4000); // length_en only
+        assert_eq!(
+            apu.ch2.length_counter, 2,
+            "CH2 enable length at odd fs_step: counter 3 → 2"
+        );
+    }
+
+    // ── CH3 extra-clock tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_ch3_trigger_extra_clocks_reloaded_counter_when_fs_step_odd() {
+        // CH3 max length counter is 256.
+        let mut apu = powered_apu();
+        // DAC on (bit 7 of SOUND3CNT_L)
+        apu.write16(0x0400_0070, 0x0080);
+        apu.ch3.length_counter = 0;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_0074, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch3.length_counter, 255,
+            "CH3 trigger at odd fs_step: counter should be 255 (256 → extra clock → 255)"
+        );
+    }
+
+    #[test]
+    fn test_ch3_trigger_no_extra_clock_when_fs_step_even() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0070, 0x0080);
+        apu.ch3.length_counter = 0;
+        apu.write16(0x0400_0074, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch3.length_counter, 256,
+            "CH3 trigger at even fs_step: counter should be 256 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch3_enable_length_extra_clocks_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0070, 0x0080);
+        apu.ch3.length_counter = 10;
+        apu.ch3.length_en = false;
+        apu.ch3.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_0074, 0x4000); // length_en only
+        assert_eq!(
+            apu.ch3.length_counter, 9,
+            "CH3 enable length at odd fs_step: counter 10 → 9"
+        );
+    }
+
+    // ── CH4 extra-clock tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_ch4_trigger_extra_clocks_reloaded_counter_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000); // volume=15, DAC on
+        apu.ch4.length_counter = 0;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_007C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch4.length_counter, 63,
+            "CH4 trigger at odd fs_step: counter should be 63 after extra clock"
+        );
+    }
+
+    #[test]
+    fn test_ch4_trigger_no_extra_clock_when_fs_step_even() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000);
+        apu.ch4.length_counter = 0;
+        apu.write16(0x0400_007C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch4.length_counter, 64,
+            "CH4 trigger at even fs_step: counter should be 64 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch4_enable_length_extra_clocks_when_fs_step_odd() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000);
+        apu.ch4.length_counter = 7;
+        apu.ch4.length_en = false;
+        apu.ch4.active = true;
+        apu.clock_frame_sequencer_step(); // step 0 → fs_step=1
+        apu.write16(0x0400_007C, 0x4000); // length_en only
+        assert_eq!(
+            apu.ch4.length_counter, 6,
+            "CH4 enable length at odd fs_step: counter 7 → 6"
+        );
     }
 
     // ── CH2 pulse test ──────────────────────────────────────────────────────

@@ -139,11 +139,26 @@ impl Channel3 {
     }
 
     /// SOUND3CNT_X: frequency and trigger.
-    pub fn write_cnt_x(&mut self, val: u16) {
+    ///
+    /// `extra_clk` — see Channel1::write_cnt_x for the full description.
+    /// Note: CH3's maximum length counter is 256 (not 64).
+    pub fn write_cnt_x(&mut self, val: u16, extra_clk: bool) {
         self.freq = val & 0x7FF;
+        let old_length_en = self.length_en;
         self.length_en = (val & 0x4000) != 0;
+        // Extra clock when enabling length_en (0→1) and next FS step won't clock.
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
         if val & 0x8000 != 0 {
             self.trigger();
+            // CH3 reloads to 256 (not 64).
+            if extra_clk && self.length_en && self.length_counter == 256 {
+                self.length_counter = 255;
+            }
         }
     }
 

@@ -113,11 +113,24 @@ impl Channel2 {
     }
 
     /// SOUND2CNT_H: frequency and trigger.
-    pub fn write_cnt_h(&mut self, val: u16) {
+    ///
+    /// `extra_clk` — see Channel1::write_cnt_x for the full description.
+    pub fn write_cnt_h(&mut self, val: u16, extra_clk: bool) {
         self.freq = val & 0x7FF;
+        let old_length_en = self.length_en;
         self.length_en = (val & 0x4000) != 0;
+        // Extra clock when enabling length_en (0→1) and next FS step won't clock.
+        if extra_clk && !old_length_en && self.length_en && self.length_counter > 0 {
+            self.length_counter -= 1;
+            if self.length_counter == 0 {
+                self.active = false;
+            }
+        }
         if val & 0x8000 != 0 {
             self.trigger();
+            if extra_clk && self.length_en && self.length_counter == 64 {
+                self.length_counter = 63;
+            }
         }
     }
 
