@@ -447,7 +447,14 @@ fn test_m3_lcdc_win_map_change2_cgb_c() {
     const EXPECTED_CRC: u32 = 0x0A03_88F2;
     assert_mealybug_crc("m3_lcdc_win_map_change2_cgb_c", crc, EXPECTED_CRC);
 }
-mealybug_ignored_cgb_c!(test_m3_obp0_change_cgb_c, "m3_obp0_change", "2580");
+#[test]
+fn test_m3_obp0_change_cgb_c() {
+    let bytes = read_rom_from_zip("m3_obp0_change.gb");
+    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
+    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_obp0_change_cgb_c");
+    const EXPECTED_CRC: u32 = 0x7484_BAF1;
+    assert_mealybug_crc("m3_obp0_change_cgb_c", crc, EXPECTED_CRC);
+}
 #[test]
 fn test_m3_scx_high_5_bits_cgb_c() {
     let bytes = read_rom_from_zip("m3_scx_high_5_bits.gb");
