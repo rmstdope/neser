@@ -32,6 +32,10 @@ pub struct Channel1 {
     /// Shadow copy of frequency used by sweep.
     pub sweep_shadow: u16,
     pub sweep_enabled: bool,
+    /// True if a sweep calculation was performed while sweep_negate was set.
+    /// Used for the "zombie mode" quirk: switching from negate to add after
+    /// a negate calculation immediately disables the channel.
+    negate_used: bool,
 }
 
 impl Channel1 {
@@ -116,6 +120,9 @@ impl Channel1 {
             };
             if self.sweep_enabled && self.sweep_period > 0 {
                 let new_freq = self.calc_sweep();
+                if self.sweep_negate {
+                    self.negate_used = true;
+                }
                 if new_freq > 2047 {
                     self.active = false;
                 } else if self.sweep_shift > 0 {
@@ -158,6 +165,8 @@ impl Channel1 {
             8
         };
         self.sweep_enabled = self.sweep_period > 0 || self.sweep_shift > 0;
+        // Reset negate_used so zombie mode doesn't fire on the next direction change.
+        self.negate_used = false;
         // Overflow check on trigger.
         if self.sweep_enabled && self.sweep_shift > 0 && self.calc_sweep() > 2047 {
             self.active = false;
@@ -168,9 +177,15 @@ impl Channel1 {
 
     /// SOUND1CNT_L: sweep register (bits 6-4 period, bit 3 negate, bits 2-0 shift).
     pub fn write_cnt_l(&mut self, val: u16) {
+        let old_negate = self.sweep_negate;
         self.sweep_shift = (val & 0x07) as u8;
         self.sweep_negate = (val & 0x08) != 0;
         self.sweep_period = ((val >> 4) & 0x07) as u8;
+        // Zombie mode: if negate was in use and we're switching to add mode,
+        // the channel must be disabled immediately.
+        if old_negate && !self.sweep_negate && self.negate_used {
+            self.active = false;
+        }
     }
 
     /// SOUND1CNT_H: tone / envelope (bits 5-0 length, 7-6 duty, 10-8 env period,
@@ -216,6 +231,80 @@ mod tests {
             duty_pos,
             ..Channel1::default()
         }
+    }
+
+    /// Helper: build a triggered CH1 with sweep in negate mode so we can
+    /// force a sweep calc to occur.
+    fn triggered_negate_sweep_ch1() -> Channel1 {
+        let mut ch = Channel1 {
+            dac_on: true,
+            ..Channel1::default()
+        };
+        // sweep_period=1, negate=true, shift=1 → each sweep tick subtracts
+        ch.write_cnt_l(0x0019); // period=1, negate=1, shift=1
+        // write_cnt_h: no length, 25% duty, volume env off, init_volume=8
+        ch.write_cnt_h(0x8040); // init_vol=8, duty=1(25%), env off
+        // write_cnt_x: freq=500, trigger
+        ch.write_cnt_x(0x81F4); // trigger | freq=500
+        ch
+    }
+
+    // ─── Unit tests: sweep zombie mode ───────────────────────────────────
+
+    /// After a negate sweep calculation, clearing the negate bit must disable
+    /// the channel immediately (zombie mode).
+    #[test]
+    fn test_ch1_sweep_zombie_disable_on_negate_to_add() {
+        let mut ch = triggered_negate_sweep_ch1();
+        assert!(ch.active, "channel should be active after trigger");
+
+        // Perform one full sweep clock so negate_used becomes true.
+        // sweep_period=1, sweep_timer will be 1, so one clock_sweep() fires.
+        ch.clock_sweep();
+        assert!(ch.active, "channel still active after negate sweep calc");
+
+        // Now switch direction from negate to add → zombie mode disables channel.
+        ch.write_cnt_l(0x0011); // period=1, negate=0, shift=1
+        assert!(
+            !ch.active,
+            "channel must be disabled when negate→add after negate calc (zombie mode)"
+        );
+    }
+
+    /// Without a prior negate calculation (negate_used=false), switching from
+    /// negate to add should NOT disable the channel.
+    #[test]
+    fn test_ch1_sweep_no_zombie_if_negate_not_used() {
+        let mut ch = triggered_negate_sweep_ch1();
+        assert!(ch.active, "channel should be active after trigger");
+
+        // Do NOT clock sweep — negate_used is still false.
+        // Switch direction: this must NOT kill the channel.
+        ch.write_cnt_l(0x0011); // period=1, negate=0, shift=1
+        assert!(
+            ch.active,
+            "channel must stay active when negate→add without prior negate calc"
+        );
+    }
+
+    /// After trigger, negate_used must be reset so a subsequent direction
+    /// change does not spuriously disable the channel.
+    #[test]
+    fn test_ch1_sweep_negate_used_resets_on_trigger() {
+        let mut ch = triggered_negate_sweep_ch1();
+        // Perform sweep so negate_used=true.
+        ch.clock_sweep();
+
+        // Re-trigger resets negate_used.
+        ch.write_cnt_x(0x81F4);
+        assert!(ch.active, "channel still active after re-trigger");
+
+        // Now direction change must NOT disable it (negate_used was reset).
+        ch.write_cnt_l(0x0011); // period=1, negate=0, shift=1
+        assert!(
+            ch.active,
+            "channel must stay active after trigger clears negate_used"
+        );
     }
 
     #[test]
