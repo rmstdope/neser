@@ -659,6 +659,62 @@ mod tests {
     }
 
     #[test]
+    fn bios_cpu_set_copies_words_from_unaligned_sram_source() {
+        let dst_addr: u32 = 0x0200_0200;
+
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            for (offset, expected) in [(1, 0x6161_6161), (2, 0x6D6D_6D6D), (3, 0x6565_6565)] {
+                let src_addr = base + offset;
+                let mut code = arm_load_const(0, src_addr);
+                code.extend(arm_load_const(1, dst_addr));
+                let mut r2_code = arm_load_const(2, 1 | (1 << 26));
+                code.append(&mut r2_code);
+                code.push(arm_swi(0x0B));
+                code.push(ARM_IDLE);
+
+                let mut gba = boot_and_setup_memory(&code, &[(base, b"Game")]);
+                run_until_idle(&mut gba, 500_000);
+
+                assert_eq!(
+                    gba.bus_mut().read32(dst_addr),
+                    expected,
+                    "CpuSet word copy should preserve SRAM source lane at {src_addr:#010X}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bios_cpu_set_copies_words_to_unaligned_sram_destination() {
+        let src_addr: u32 = 0x0200_0100;
+        let src_data = 0x6666_6666u32.to_le_bytes();
+
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            for offset in 1..=3 {
+                let dst_addr = base + offset;
+                let mut code = arm_load_const(0, src_addr);
+                code.extend(arm_load_const(1, dst_addr));
+                let mut r2_code = arm_load_const(2, 1 | (1 << 26));
+                code.append(&mut r2_code);
+                code.push(arm_swi(0x0B));
+                code.push(ARM_IDLE);
+
+                let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+                for lane in 1..=3 {
+                    gba.bus_mut().write8(base + lane, 0xD8);
+                }
+                run_until_idle(&mut gba, 500_000);
+
+                assert_eq!(
+                    gba.bus_mut().read32(dst_addr),
+                    0x6666_6666,
+                    "CpuSet word copy should preserve SRAM destination lane at {dst_addr:#010X}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn bios_cpu_set_fill_mode() {
         // CpuSet fill: replicate first source word, 32-bit, count=4
         let src_addr: u32 = 0x0200_0100;
@@ -716,6 +772,60 @@ mod tests {
                 0x1000_0000 + i,
                 "CpuFastSet word {i}"
             );
+        }
+    }
+
+    #[test]
+    fn bios_cpu_fast_set_copies_words_from_unaligned_sram_source() {
+        let dst_addr: u32 = 0x0200_0200;
+
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            for (offset, expected) in [(1, 0x6161_6161), (2, 0x6D6D_6D6D), (3, 0x6565_6565)] {
+                let src_addr = base + offset;
+                let mut code = arm_load_const(0, src_addr);
+                code.extend(arm_load_const(1, dst_addr));
+                code.push(arm_mov_imm(2, 8));
+                code.push(arm_swi(0x0C));
+                code.push(ARM_IDLE);
+
+                let mut gba = boot_and_setup_memory(&code, &[(base, b"Game")]);
+                run_until_idle(&mut gba, 500_000);
+
+                assert_eq!(
+                    gba.bus_mut().read32(dst_addr),
+                    expected,
+                    "CpuFastSet word copy should preserve SRAM source lane at {src_addr:#010X}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bios_cpu_fast_set_copies_words_to_unaligned_sram_destination() {
+        let src_addr: u32 = 0x0200_0100;
+        let src_data = 0x6666_6666u32.to_le_bytes().repeat(8);
+
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            for offset in 1..=3 {
+                let dst_addr = base + offset;
+                let mut code = arm_load_const(0, src_addr);
+                code.extend(arm_load_const(1, dst_addr));
+                code.push(arm_mov_imm(2, 8));
+                code.push(arm_swi(0x0C));
+                code.push(ARM_IDLE);
+
+                let mut gba = boot_and_setup_memory(&code, &[(src_addr, &src_data)]);
+                for lane in 1..=3 {
+                    gba.bus_mut().write8(base + lane, 0xD8);
+                }
+                run_until_idle(&mut gba, 500_000);
+
+                assert_eq!(
+                    gba.bus_mut().read32(dst_addr),
+                    0x6666_6666,
+                    "CpuFastSet word copy should preserve SRAM destination lane at {dst_addr:#010X}"
+                );
+            }
         }
     }
 
