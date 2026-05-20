@@ -1,10 +1,13 @@
 use super::gba_suite_runner::{
     ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, VIDEO_TEST_NAMES,
-    boot_mgba_suite, run_armwrestler, run_mgba_suite, run_mgba_video_tests, run_suite,
+    boot_mgba_suite, run_armwrestler, run_mgba_memory_diagnostics,
+    run_mgba_memory_diagnostics_with_bios_path, run_mgba_suite, run_mgba_video_tests, run_suite,
 };
+use crate::gba::bios::EMBEDDED_BIOS;
 use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
 use crate::platform::emulator::Emulator;
 use std::collections::HashMap;
+use std::io::Write;
 
 const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.txt";
 const APPROVALS_RAW: &str = include_str!("gba_suite_crc_approvals.txt");
@@ -64,6 +67,16 @@ fn load_approved_crcs() -> HashMap<String, u32> {
 fn approved_crc_for_suite(suite: Suite) -> u32 {
     let approvals = load_approved_crcs();
     let key = suite_approval_key(suite);
+    *approvals.get(key).unwrap_or_else(|| {
+        panic!(
+            "missing approved CRC for suite '{}' in {}. Generate captures with NESER_CAPTURE_SCREEN=1 and add {}=0x........ after visual approval.",
+            key, APPROVALS_FILE, key
+        )
+    })
+}
+
+fn approved_crc_for_suite_key(key: &str) -> u32 {
+    let approvals = load_approved_crcs();
     *approvals.get(key).unwrap_or_else(|| {
         panic!(
             "missing approved CRC for suite '{}' in {}. Generate captures with NESER_CAPTURE_SCREEN=1 and add {}=0x........ after visual approval.",
@@ -236,6 +249,58 @@ fn gba_mgba_suite_passes() {
 }
 
 #[test]
+fn gba_mgba_memory_diagnostics_reports_mgba_log() {
+    let result = run_mgba_memory_diagnostics();
+
+    assert_eq!(
+        result.framebuffer_crc32,
+        approved_crc_for_suite_key("mgba_memory")
+    );
+    assert_eq!(
+        result.total_count,
+        Some(1552),
+        "raw mGBA Memory log: {:?}",
+        result.raw_log
+    );
+    assert!(
+        result.passed_count.is_some(),
+        "mGBA Memory diagnostics should include a parsed pass count"
+    );
+    assert!(
+        result.raw_log.contains("Memory"),
+        "mGBA Memory diagnostics should include the mGBA log, got: {:?}",
+        result.raw_log
+    );
+}
+
+#[test]
+fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
+    let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
+
+    assert!(result.is_none());
+}
+
+#[test]
+fn gba_mgba_memory_proprietary_diagnostics_run_with_bios_path() {
+    let mut bios_file = tempfile::NamedTempFile::new().unwrap();
+    bios_file.write_all(EMBEDDED_BIOS).unwrap();
+
+    let result = run_mgba_memory_diagnostics_with_bios_path(Some(bios_file.path())).unwrap();
+    let result = result.expect("configured BIOS path should run diagnostics");
+
+    assert_eq!(
+        result.framebuffer_crc32,
+        approved_crc_for_suite_key("mgba_memory")
+    );
+    assert_eq!(
+        result.total_count,
+        Some(1552),
+        "raw mGBA Memory log: {:?}",
+        result.raw_log
+    );
+}
+
+#[test]
 fn approvals_manifest_parses() {
     let approvals = load_approved_crcs();
     assert_eq!(approvals.get("arm"), Some(&0x12FD_AE0B));
@@ -360,7 +425,6 @@ fn gba_mgba_video_comparison() {
         "expected 7 video test results, got {}",
         result.tests.len()
     );
-
     println!("\n=== mgba-emu/suite Video Comparison Results ===\n");
     println!("| # | Test                        | Actual CRC | Expected CRC | Match |");
     println!("|---|-----------------------------|-----------:|-------------:|:-----:|");

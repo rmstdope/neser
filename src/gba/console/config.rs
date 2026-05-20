@@ -43,6 +43,31 @@ pub(crate) const GBA_CLI_FLAGS: &[CliFlag] = &[
         help: Some("Skip GBA BIOS intro (logo + jingle) but keep full hardware init"),
         has_value: false,
     },
+    CliFlag {
+        flag: "--gba-trace-cpu",
+        help: Some("Enable GBA CPU trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--gba-trace-bus",
+        help: Some("Enable GBA bus trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--gba-trace-dma",
+        help: Some("Enable GBA DMA trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--gba-trace-swi",
+        help: Some("Enable GBA SWI trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--gba-trace-mgba-log",
+        help: Some("Enable mGBA suite log trace output"),
+        has_value: false,
+    },
 ];
 
 /// Valid values for the `gba-hardware` option (used in error messages).
@@ -62,6 +87,21 @@ pub enum GbaModel {
     Sp,
     /// Game Boy Micro (OXY-001).
     Micro,
+}
+
+/// Game Boy Advance-specific trace configuration.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GbaTraceConfig {
+    /// CPU instruction trace level.
+    pub cpu: u8,
+    /// Bus read/write trace level.
+    pub bus: u8,
+    /// DMA transfer trace level.
+    pub dma: u8,
+    /// BIOS SWI trace level.
+    pub swi: u8,
+    /// mGBA suite log trace level.
+    pub mgba_log: u8,
 }
 
 impl GbaModel {
@@ -98,9 +138,48 @@ pub struct GbaConfig {
     /// When true, skip the BIOS intro (logo + jingle) but still perform
     /// full hardware state setup (stacks, POSTFLG, SoundBias, etc.).
     pub skip_bios_intro: bool,
+    /// GBA-specific trace channels.
+    pub tracing: GbaTraceConfig,
 }
 
 impl GbaConfig {
+    fn parse_trace_arg_level(suffix: &str) -> u8 {
+        if suffix.is_empty() {
+            1
+        } else if let Some(value) = suffix.strip_prefix('=') {
+            value.parse::<u8>().unwrap_or(1).min(5)
+        } else {
+            1
+        }
+    }
+
+    fn parse_trace_level(key: &str, value: &str) -> Result<u8, String> {
+        value
+            .parse::<u8>()
+            .map(|level| level.min(5))
+            .map_err(|_| format!("Invalid {key} value: '{value}'"))
+    }
+
+    fn set_trace_level(&mut self, key: &str, level: u8) {
+        match key {
+            "gba_trace_cpu" => self.tracing.cpu = level,
+            "gba_trace_bus" => self.tracing.bus = level,
+            "gba_trace_dma" => self.tracing.dma = level,
+            "gba_trace_swi" => self.tracing.swi = level,
+            "gba_trace_mgba_log" => self.tracing.mgba_log = level,
+            _ => {}
+        }
+    }
+
+    fn apply_trace_arg(&mut self, flag: &str, key: &str, arg: &str) -> bool {
+        if let Some(suffix) = arg.strip_prefix(flag) {
+            self.set_trace_level(key, Self::parse_trace_arg_level(suffix));
+            true
+        } else {
+            false
+        }
+    }
+
     fn set_bios_path_from_input(&mut self, value: &str) {
         let trimmed = value.trim();
         if trimmed.is_empty() {
@@ -130,6 +209,22 @@ impl GbaConfig {
             self.skip_bios_intro = skip;
         }
 
+        for arg in args {
+            if self.apply_trace_arg("--gba-trace-cpu", "gba_trace_cpu", arg) {
+                continue;
+            }
+            if self.apply_trace_arg("--gba-trace-bus", "gba_trace_bus", arg) {
+                continue;
+            }
+            if self.apply_trace_arg("--gba-trace-dma", "gba_trace_dma", arg) {
+                continue;
+            }
+            if self.apply_trace_arg("--gba-trace-swi", "gba_trace_swi", arg) {
+                continue;
+            }
+            self.apply_trace_arg("--gba-trace-mgba-log", "gba_trace_mgba_log", arg);
+        }
+
         Ok(())
     }
 
@@ -153,6 +248,11 @@ impl GbaConfig {
                 self.skip_bios_intro = crate::platform::config::parse_bool(value)
                     .map_err(|_| format!("Invalid skip_bios_intro value: '{value}'"))?;
             }
+            "gba_trace_cpu" | "gba_trace_bus" | "gba_trace_dma" | "gba_trace_swi"
+            | "gba_trace_mgba_log" => {
+                let level = Self::parse_trace_level(&key, value)?;
+                self.set_trace_level(&key, level);
+            }
             _ => {
                 return Err(format!("Unknown GBA config key: {key}"));
             }
@@ -169,6 +269,7 @@ mod tests {
     fn test_gba_config_default_values() {
         let config = GbaConfig::default();
         assert_eq!(config.hardware, GbaModel::Agb);
+        assert_eq!(config.tracing, GbaTraceConfig::default());
     }
 
     #[test]
@@ -301,6 +402,22 @@ mod tests {
     }
 
     #[test]
+    fn test_gba_cli_flags_include_trace_channels() {
+        for flag in [
+            "--gba-trace-cpu",
+            "--gba-trace-bus",
+            "--gba-trace-dma",
+            "--gba-trace-swi",
+            "--gba-trace-mgba-log",
+        ] {
+            assert!(
+                GBA_CLI_FLAGS.iter().any(|f| f.flag == flag),
+                "GBA CLI flags should include {flag}"
+            );
+        }
+    }
+
+    #[test]
     fn test_config_file_parse_gba_bios_path_supported() {
         let mut config = GbaConfig::default();
         let result = config.apply_config_value("gba-bios-path", "/tmp/gba_bios.bin");
@@ -308,6 +425,64 @@ mod tests {
             result.is_ok(),
             "gba-bios-path should be accepted as a valid GBA config key"
         );
+    }
+
+    #[test]
+    fn test_config_file_parse_gba_trace_channels_supported() {
+        for key in [
+            "gba-trace-cpu",
+            "gba-trace-bus",
+            "gba-trace-dma",
+            "gba-trace-swi",
+            "gba-trace-mgba-log",
+        ] {
+            let mut config = GbaConfig::default();
+            let result = config.apply_config_value(key, "2");
+            assert!(
+                result.is_ok(),
+                "{key} should be accepted as a valid GBA config key"
+            );
+        }
+    }
+
+    #[test]
+    fn test_config_file_parse_gba_trace_channels_sets_levels() {
+        let mut config = GbaConfig::default();
+
+        config.apply_config_value("gba-trace-cpu", "1").unwrap();
+        config.apply_config_value("gba-trace-bus", "2").unwrap();
+        config.apply_config_value("gba-trace-dma", "3").unwrap();
+        config.apply_config_value("gba-trace-swi", "4").unwrap();
+        config
+            .apply_config_value("gba-trace-mgba-log", "9")
+            .unwrap();
+
+        assert_eq!(config.tracing.cpu, 1);
+        assert_eq!(config.tracing.bus, 2);
+        assert_eq!(config.tracing.dma, 3);
+        assert_eq!(config.tracing.swi, 4);
+        assert_eq!(config.tracing.mgba_log, 5);
+    }
+
+    #[test]
+    fn test_cli_parse_gba_trace_channels_sets_levels() {
+        let mut config = GbaConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--gba-trace-cpu=1".to_string(),
+            "--gba-trace-bus=2".to_string(),
+            "--gba-trace-dma=3".to_string(),
+            "--gba-trace-swi=4".to_string(),
+            "--gba-trace-mgba-log=9".to_string(),
+        ];
+
+        config.apply_args(&args).unwrap();
+
+        assert_eq!(config.tracing.cpu, 1);
+        assert_eq!(config.tracing.bus, 2);
+        assert_eq!(config.tracing.dma, 3);
+        assert_eq!(config.tracing.swi, 4);
+        assert_eq!(config.tracing.mgba_log, 5);
     }
 
     #[test]

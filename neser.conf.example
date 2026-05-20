@@ -349,3 +349,13 @@ nes-vertical_overscan=8
 # skips the visual/audio splash screen for faster boot.
 # Default: false (intro is shown).
 #skip-bios-intro=false
+
+# GBA trace channels for emulator diagnostics.
+# Higher levels may emit more detail as channel-specific tracing grows.
+# Valid values: 0-5 (values above 5 are clamped).
+# Default: 0 (disabled)
+#gba-trace-cpu=0
+#gba-trace-bus=0
+#gba-trace-dma=0
+#gba-trace-swi=0
+#gba-trace-mgba-log=0
