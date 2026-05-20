@@ -584,6 +584,51 @@ mod tests {
     }
 
     #[test]
+    fn bios_cpu_set_copies_halfwords_from_unaligned_source() {
+        let src_addr: u32 = 0x0200_0101;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        code.push(arm_mov_imm(2, 2));
+        code.push(arm_swi(0x0B));
+        code.push(ARM_IDLE);
+
+        let src_data = 0xFEED_FACEu32.to_le_bytes();
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr & !1, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        assert_eq!(
+            gba.bus_mut().read32(dst_addr),
+            0x00FE_00FA,
+            "CpuSet halfword copy should preserve odd source byte lane"
+        );
+    }
+
+    #[test]
+    fn bios_cpu_set_fills_halfwords_from_unaligned_source() {
+        let src_addr: u32 = 0x0200_0101;
+        let dst_addr: u32 = 0x0200_0200;
+
+        let mut code = arm_load_const(0, src_addr);
+        code.extend(arm_load_const(1, dst_addr));
+        let mut r2_code = arm_load_const(2, 2 | (1 << 24));
+        code.append(&mut r2_code);
+        code.push(arm_swi(0x0B));
+        code.push(ARM_IDLE);
+
+        let src_data = 0xFEED_FACEu32.to_le_bytes();
+        let mut gba = boot_and_setup_memory(&code, &[(src_addr & !1, &src_data)]);
+        run_until_idle(&mut gba, 500_000);
+
+        assert_eq!(
+            gba.bus_mut().read32(dst_addr),
+            0x00FA_00FA,
+            "CpuSet halfword fill should preserve odd source byte lane"
+        );
+    }
+
+    #[test]
     fn bios_cpu_set_copies_words() {
         // CpuSet(src=0x02000100, dst=0x02000200, count=2, 32-bit copy)
         let src_addr: u32 = 0x0200_0100;

@@ -1064,12 +1064,16 @@ swi_cpu_set:
     bic     r3, r2, #0xFF000000
     bic     r3, r3, #0x00E00000  @ r3 = count (bits 0-20)
 
-    @ Align source and dest
+    @ Align addresses. 16-bit CpuSet preserves an odd source byte lane but
+    @ still aligns the destination; 32-bit mode aligns both endpoints.
     tst     r2, #(1 << 26)      @ 32-bit mode?
-    bicne   r0, r0, #3          @ yes: align to 4
-    bicne   r1, r1, #3
-    biceq   r0, r0, #1          @ no: align to 2
+    bne     .cpuset_align32
     biceq   r1, r1, #1
+    b       .cpuset_aligned
+.cpuset_align32:
+    bic     r0, r0, #3
+    bic     r1, r1, #3
+.cpuset_aligned:
 
     @ Check fill mode (bit 24)
     tst     r2, #(1 << 24)
@@ -1080,6 +1084,8 @@ swi_cpu_set:
     bne     .cpuset_copy32
 
     @ 16-bit copy
+    tst     r0, #1
+    bne     .cpuset_copy16_odd_source
 .cpuset_copy16:
     cmp     r3, #0
     beq     .cpuset_done
@@ -1087,6 +1093,14 @@ swi_cpu_set:
     strh    r4, [r1], #2
     sub     r3, r3, #1
     b       .cpuset_copy16
+
+.cpuset_copy16_odd_source:
+    cmp     r3, #0
+    beq     .cpuset_done
+    ldrb    r4, [r0], #2
+    strh    r4, [r1], #2
+    sub     r3, r3, #1
+    b       .cpuset_copy16_odd_source
 
     @ 32-bit copy
 .cpuset_copy32:
@@ -1103,7 +1117,9 @@ swi_cpu_set:
     bne     .cpuset_fill32
 
     @ 16-bit fill
-    ldrh    r4, [r0]
+    tst     r0, #1
+    ldrneb  r4, [r0]
+    ldreqh  r4, [r0]
 .cpuset_fill16:
     cmp     r3, #0
     beq     .cpuset_done
