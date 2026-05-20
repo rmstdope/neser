@@ -43,6 +43,10 @@ const DMA_IRQ_BITS: [u16; NUM_CHANNELS] = [
     irq_bits::DMA3,
 ];
 
+// GBATek "DMA Transfer Channels": DMA0 source/destination are internal-memory
+// only (27 address bits), DMA1/2 sources may use the full 28-bit bus but their
+// destinations are internal-memory only, and DMA3 may use the full 28-bit bus
+// for both. Bit 0 is always cleared because GBA DMA is 16/32-bit aligned.
 const DMA_SOURCE_MASKS: [u32; NUM_CHANNELS] = [0x07FF_FFFE, 0x0FFF_FFFE, 0x0FFF_FFFE, 0x0FFF_FFFE];
 const DMA_DESTINATION_MASKS: [u32; NUM_CHANNELS] =
     [0x07FF_FFFE, 0x07FF_FFFE, 0x07FF_FFFE, 0x0FFF_FFFE];
