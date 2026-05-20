@@ -225,10 +225,11 @@ impl Channel1 {
             }
         }
         if val & 0x8000 != 0 {
+            let reloaded_length = self.length_counter == 0;
             self.trigger();
             // Extra clock when trigger reloaded the counter to max (was 0) and
             // length_en is set.
-            if extra_clk && self.length_en && self.length_counter == 64 {
+            if extra_clk && self.length_en && reloaded_length {
                 self.length_counter = 63;
             }
         }

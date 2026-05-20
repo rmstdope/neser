@@ -154,9 +154,10 @@ impl Channel3 {
             }
         }
         if val & 0x8000 != 0 {
+            let reloaded_length = self.length_counter == 0;
             self.trigger();
             // CH3 reloads to 256 (not 64).
-            if extra_clk && self.length_en && self.length_counter == 256 {
+            if extra_clk && self.length_en && reloaded_length {
                 self.length_counter = 255;
             }
         }

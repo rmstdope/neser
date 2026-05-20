@@ -1066,6 +1066,20 @@ mod tests {
     }
 
     #[test]
+    fn test_ch1_trigger_does_not_extra_clock_when_counter_already_max() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0062, 0xF080);
+        apu.ch1.length_counter = 64;
+        apu.ch1.length_en = true;
+        apu.fs_step = 1;
+        apu.write16(0x0400_0064, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch1.length_counter, 64,
+            "trigger at odd fs_step must not extra-clock unless it reloaded from 0"
+        );
+    }
+
+    #[test]
     fn test_ch1_enable_length_extra_clocks_when_fs_step_odd() {
         // fs_step=1 (odd): enabling length_en (0→1, no trigger) with counter=5 → 4.
         let mut apu = powered_apu();
@@ -1143,6 +1157,20 @@ mod tests {
     }
 
     #[test]
+    fn test_ch2_trigger_does_not_extra_clock_when_counter_already_max() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0068, 0xF080);
+        apu.ch2.length_counter = 64;
+        apu.ch2.length_en = true;
+        apu.fs_step = 1;
+        apu.write16(0x0400_006C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch2.length_counter, 64,
+            "CH2 trigger at odd fs_step must not extra-clock unless it reloaded from 0"
+        );
+    }
+
+    #[test]
     fn test_ch2_enable_length_extra_clocks_when_fs_step_odd() {
         let mut apu = powered_apu();
         apu.write16(0x0400_0068, 0xF080);
@@ -1187,6 +1215,20 @@ mod tests {
     }
 
     #[test]
+    fn test_ch3_trigger_does_not_extra_clock_when_counter_already_max() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0070, 0x0080);
+        apu.ch3.length_counter = 256;
+        apu.ch3.length_en = true;
+        apu.fs_step = 1;
+        apu.write16(0x0400_0074, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch3.length_counter, 256,
+            "CH3 trigger at odd fs_step must not extra-clock unless it reloaded from 0"
+        );
+    }
+
+    #[test]
     fn test_ch3_enable_length_extra_clocks_when_fs_step_odd() {
         let mut apu = powered_apu();
         apu.write16(0x0400_0070, 0x0080);
@@ -1225,6 +1267,20 @@ mod tests {
         assert_eq!(
             apu.ch4.length_counter, 64,
             "CH4 trigger at even fs_step: counter should be 64 (no extra clock)"
+        );
+    }
+
+    #[test]
+    fn test_ch4_trigger_does_not_extra_clock_when_counter_already_max() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0078, 0xF000);
+        apu.ch4.length_counter = 64;
+        apu.ch4.length_en = true;
+        apu.fs_step = 1;
+        apu.write16(0x0400_007C, 0xC000); // trigger | length_en
+        assert_eq!(
+            apu.ch4.length_counter, 64,
+            "CH4 trigger at odd fs_step must not extra-clock unless it reloaded from 0"
         );
     }
 
