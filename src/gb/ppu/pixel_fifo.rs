@@ -1232,11 +1232,12 @@ impl PixelFifoRenderer {
         self.obp0_edge_active = true;
         self.obp0_edge_x = self.next_x;
         // Unlike BGP (which affects background pixels), OBP0 affects sprite pixels.
-        // The model-specific timing rule applies regardless of whether a sprite
-        // fetch is in progress: CGB-D picks up the new value immediately;
-        // CGB-C latches it one pixel late (uses the previous value).
+        // If an OBJ fetch is delaying this pixel, the OBP write lands before
+        // the pixel is pushed to LCD, so the delayed pixel sees the new value.
+        // Otherwise CGB-D picks up the new value immediately; CGB-C latches it
+        // one pixel late (uses the previous value).
         // At pixel 0 the write always takes effect immediately on all models.
-        self.obp0_edge_value = if self.next_x == 0 {
+        self.obp0_edge_value = if self.next_x == 0 || self.is_waiting_on_obj_fetch() {
             new
         } else {
             match cgb_model {
@@ -1263,7 +1264,7 @@ impl PixelFifoRenderer {
 
         self.obp1_edge_active = true;
         self.obp1_edge_x = self.next_x;
-        self.obp1_edge_value = if self.next_x == 0 {
+        self.obp1_edge_value = if self.next_x == 0 || self.is_waiting_on_obj_fetch() {
             new
         } else {
             match cgb_model {
@@ -6377,6 +6378,7 @@ mod tests {
         let mut renderer = PixelFifoRenderer::new();
         renderer.active = true;
         renderer.next_x = 0;
+        renderer.obj_stall_events.clear();
         renderer.pending_obj_stall_dots = 1;
 
         renderer.record_lcdc_write(0x93, 0x92, 0, true, true);
@@ -6585,7 +6587,9 @@ mod tests {
             &mut screen_buffer,
         );
 
-        // Record OBP0 write (prev=0xE4→white, new=0x00→black) — CGB-C model
+        // Record OBP0 write with no OBJ fetch delay (prev=0xE4→white, new=0x00→black).
+        renderer.pending_obj_stall_dots = 0;
+        renderer.obj_stall_events.clear();
         renderer.record_obp0_write(0xE4, 0x00, true, true, CgbModel::CgbC);
         registers.obp0 = 0x00;
 
@@ -6604,6 +6608,52 @@ mod tests {
             screen_buffer.get_pixel(8, 0),
             (255, 255, 255),
             "CGB-C: OBP0 write at the pixel boundary should use the *previous* palette value"
+        );
+    }
+
+    #[test]
+    fn cgb_c_obp0_write_during_obj_fetch_delay_uses_new_value_at_delayed_pixel() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0x83;
+        registers.bgp = 0x00;
+        registers.obp0 = 0xE4;
+        let oam = oam_with_sprite_at(16, 16, 1, 0);
+        let vram = vram_with_solid_obj_tile();
+        let mut screen_buffer = ScreenBuffer::new();
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, true);
+        let mut dot = 80u16;
+
+        tick_cgb_compat_until_next_x(
+            &mut renderer,
+            &mut dot,
+            8,
+            &vram,
+            &oam,
+            &registers,
+            &mut screen_buffer,
+        );
+
+        renderer.obj_stall_events.clear();
+        renderer.pending_obj_stall_dots = 1;
+        renderer.record_obp0_write(0xE4, 0x00, true, true, CgbModel::CgbC);
+        registers.obp0 = 0x00;
+
+        tick_cgb_compat_until_next_x(
+            &mut renderer,
+            &mut dot,
+            9,
+            &vram,
+            &oam,
+            &registers,
+            &mut screen_buffer,
+        );
+
+        assert_eq!(
+            screen_buffer.get_pixel(8, 0),
+            (0, 0, 0),
+            "CGB-C: OBP0 writes during OBJ fetch delay should affect the delayed pixel"
         );
     }
 
@@ -6698,7 +6748,9 @@ mod tests {
             assert!(dot < deadline, "renderer did not reach next_x=8");
         }
 
-        // Record OBP1 write (prev=0xE4→white, new=0x00→black) — CGB-C model
+        // Record OBP1 write with no OBJ fetch delay (prev=0xE4→white, new=0x00→black).
+        renderer.pending_obj_stall_dots = 0;
+        renderer.obj_stall_events.clear();
         renderer.record_obp1_write(0xE4, 0x00, true, true, CgbModel::CgbC);
         registers.obp1 = 0x00;
 
@@ -6727,6 +6779,78 @@ mod tests {
             screen_buffer.get_pixel(8, 0),
             (255, 255, 255),
             "CGB-C: OBP1 write at the pixel boundary should use the *previous* palette value"
+        );
+    }
+
+    #[test]
+    fn cgb_c_obp1_write_during_obj_fetch_delay_uses_new_value_at_delayed_pixel() {
+        let mut renderer = PixelFifoRenderer::new();
+        let mut registers = Registers::new();
+        registers.lcdc = 0x83;
+        registers.bgp = 0x00;
+        registers.obp0 = 0x00;
+        registers.obp1 = 0xE4;
+        let mut obj_palette_ram = [0u8; 64];
+        obj_palette_ram[10] = 0xFF;
+        obj_palette_ram[11] = 0x7F;
+
+        let oam = oam_with_sprite_at(16, 16, 1, 0x10);
+        let vram = vram_with_solid_obj_tile();
+        let vram_bank1 = [0u8; 0x2000];
+        let bg_palette_ram = [0u8; 64];
+        let mut screen_buffer = ScreenBuffer::new();
+
+        renderer.begin_scanline(0, 80, &oam, &registers, true, true);
+        let mut dot = 80u16;
+
+        let deadline = dot.saturating_add(512);
+        while renderer.next_x < 8 {
+            renderer.tick(
+                dot,
+                &vram,
+                &vram_bank1,
+                &oam,
+                &registers,
+                &bg_palette_ram,
+                &obj_palette_ram,
+                0,
+                true,
+                false,
+                true,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+            assert!(dot < deadline, "renderer did not reach next_x=8");
+        }
+
+        renderer.pending_obj_stall_dots = 1;
+        renderer.record_obp1_write(0xE4, 0x00, true, true, CgbModel::CgbC);
+        registers.obp1 = 0x00;
+
+        let deadline = dot.saturating_add(512);
+        while renderer.next_x < 9 {
+            renderer.tick(
+                dot,
+                &vram,
+                &vram_bank1,
+                &oam,
+                &registers,
+                &bg_palette_ram,
+                &obj_palette_ram,
+                0,
+                true,
+                false,
+                true,
+                &mut screen_buffer,
+            );
+            dot = dot.saturating_add(1);
+            assert!(dot < deadline, "renderer did not reach next_x=9");
+        }
+
+        assert_eq!(
+            screen_buffer.get_pixel(8, 0),
+            (0, 0, 0),
+            "CGB-C: OBP1 writes during OBJ fetch delay should affect the delayed pixel"
         );
     }
 

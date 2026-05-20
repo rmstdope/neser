@@ -182,3 +182,40 @@ No feedback provided.
 #### What to improve
 
 No feedback provided.
+
+---
+
+## 2026-05-20 — PR #2581: Fix mealybug m3_obp0_change CGB-C rendering
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2581
+**Linked issues:** #2580
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `gb-hardware-research` | Guided model-specific GB/CGB PPU behavior investigation. |
+| Skill | `bug-hunter` | Supported focused bug diagnosis and regression-oriented fix validation. |
+| Skill | `test-driven-development` | Guided RED/GREEN/REFACTOR workflow and reference CRC activation. |
+| Skill | `rust-developer` | Supported Rust implementation and required check validation. |
+| Agent | `code-review` | Provided fallback changed-file review before PR handoff. |
+| Agent | `Iteration Retrospective Gatherer` | Produced the retrospective content after PR creation; manual append was required. |
+| Instructions | Repository workflow instructions | Applied issue assignment, branch, TDD, validation, and PR workflow expectations. |
+
+### What went well
+
+- The selected skills matched the problem well: `gb-hardware-research` was appropriate for CGB-C DMG-compat PPU palette behavior, while `bug-hunter` and `test-driven-development` anchored the fix in reproducible coverage.
+- Activating the Mealybug `m3_obp0_change` CGB-C reference CRC `0x7484_BAF1` created a hardware-test regression guard for the exact edge case being fixed.
+- Focused OBP0/OBP1 unit tests complemented the Mealybug acceptance test, giving both narrow behavior coverage and high-level compatibility validation.
+- The `code-review` fallback agent found one useful test isolation improvement before the PR handoff.
+
+### What to improve
+
+- The retrospective agent could generate the entry but could not write the file directly. Keep the manual append step in mind when the agent reports that limitation.
+- For future GB PPU timing/palette fixes, capture the exact edge-behavior rationale in the code or PR when the fix is made, especially when model-specific CGB-C behavior changes at an OBJ fetch boundary.
+- The workflow involved several active skills. Summarizing each skill's concrete contribution before PR creation made the retrospective more reliable and should remain part of future handoffs.
+
+### Navigator feedback
+
+Pending — navigator unavailable during retrospective collection.
