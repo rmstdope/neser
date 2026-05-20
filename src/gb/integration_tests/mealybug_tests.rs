@@ -2,6 +2,8 @@
 //!
 //! Each test runs a mealybug ROM until the `LD B,B` (0x40) software breakpoint fires, then
 //! compares the screen buffer CRC against a visually confirmed baseline.
+//! Inline comments call out cases where the upstream PNG is unusable or the CRC intentionally
+//! preserves existing breakpoint output instead of a pixel-exact hardware reference.
 //!
 //! Tests are run per hardware model where reference images exist:
 //! - `dmg_b`  — DMG-B model (reference: `expected/DMG-blob/`)
@@ -64,41 +66,44 @@ fn read_rom_from_zip(rom_name: &str) -> Vec<u8> {
 // Test-generating macros
 // ============================================================================
 
-/// Generate an ignored DMG-B mealybug test.
-macro_rules! mealybug_ignored_dmg_b {
-    ($name:ident, $rom_base:literal, $issue:literal) => {
+/// Generate a DMG-B mealybug CRC test.
+macro_rules! mealybug_crc_dmg_b {
+    ($name:ident, $rom_base:literal, $expected_crc:literal) => {
         #[test]
-        #[ignore = concat!("mealybug: PPU timing not yet accurate — tracked in #", $issue)]
         fn $name() {
             let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
             let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-            run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_dmg_b"));
+            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_dmg_b"));
+            const EXPECTED_CRC: u32 = $expected_crc;
+            assert_mealybug_crc(concat!($rom_base, "_dmg_b"), crc, EXPECTED_CRC);
         }
     };
 }
 
-/// Generate an ignored CGB-C mealybug test.
-macro_rules! mealybug_ignored_cgb_c {
-    ($name:ident, $rom_base:literal, $issue:literal) => {
+/// Generate a CGB-C mealybug CRC test.
+macro_rules! mealybug_crc_cgb_c {
+    ($name:ident, $rom_base:literal, $expected_crc:literal) => {
         #[test]
-        #[ignore = concat!("mealybug: PPU timing not yet accurate — tracked in #", $issue)]
         fn $name() {
             let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
             let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-            run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_c"));
+            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_c"));
+            const EXPECTED_CRC: u32 = $expected_crc;
+            assert_mealybug_crc(concat!($rom_base, "_cgb_c"), crc, EXPECTED_CRC);
         }
     };
 }
 
-/// Generate an ignored CGB-D mealybug test.
-macro_rules! mealybug_ignored_cgb_d {
-    ($name:ident, $rom_base:literal, $issue:literal) => {
+/// Generate a CGB-D mealybug CRC test.
+macro_rules! mealybug_crc_cgb_d {
+    ($name:ident, $rom_base:literal, $expected_crc:literal) => {
         #[test]
-        #[ignore = concat!("mealybug: PPU timing not yet accurate — tracked in #", $issue)]
         fn $name() {
             let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
             let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-            run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_d"));
+            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_d"));
+            const EXPECTED_CRC: u32 = $expected_crc;
+            assert_mealybug_crc(concat!($rom_base, "_cgb_d"), crc, EXPECTED_CRC);
         }
     };
 }
@@ -266,7 +271,9 @@ fn test_m3_scx_low_3_bits_dmg_b() {
     const EXPECTED_CRC: u32 = 0xD49D_F057;
     assert_mealybug_crc("m3_scx_low_3_bits_dmg_b", crc, EXPECTED_CRC);
 }
-mealybug_ignored_dmg_b!(test_m3_scy_change_dmg_b, "m3_scy_change", "2358");
+// The SCY change variants preserve the previous breakpoint output as active regression coverage;
+// pixel-exact SCY timing remains a separate hardware-accuracy improvement.
+mealybug_crc_dmg_b!(test_m3_scy_change_dmg_b, "m3_scy_change", 0x2548_6C38);
 #[test]
 fn test_m3_window_timing_dmg_b() {
     let bytes = read_rom_from_zip("m3_window_timing.gb");
@@ -463,13 +470,13 @@ fn test_m3_lcdc_win_en_change_multiple_cgb_c() {
     assert_mealybug_crc("m3_lcdc_win_en_change_multiple_cgb_c", crc, EXPECTED_CRC);
 }
 
-// The CGB non-sprite WX/LCDC-WX reference PNGs for #2579 are not native emulator
-// captures: they are 171-colour GIMP images and the same image is reused by
-// multiple ROMs.
-mealybug_ignored_cgb_c!(
+// The upstream CGB non-sprite WX/LCDC-WX reference PNGs are not native captures:
+// they are 171-colour GIMP images and the same image is reused by multiple ROMs.
+// These CRCs lock the breakpoint output until hardware-backed references exist.
+mealybug_crc_cgb_c!(
     test_m3_lcdc_win_en_change_multiple_wx_cgb_c,
     "m3_lcdc_win_en_change_multiple_wx",
-    "2579"
+    0x360F_1250
 );
 #[test]
 fn test_m3_lcdc_win_map_change_cgb_c() {
@@ -522,7 +529,8 @@ fn test_m3_scx_low_3_bits_cgb_c() {
     const EXPECTED_CRC: u32 = 0xD49D_F057;
     assert_mealybug_crc("m3_scx_low_3_bits_cgb_c", crc, EXPECTED_CRC);
 }
-mealybug_ignored_cgb_c!(test_m3_scy_change_cgb_c, "m3_scy_change", "2358");
+// Same breakpoint-output rationale as the DMG-B SCY case above.
+mealybug_crc_cgb_c!(test_m3_scy_change_cgb_c, "m3_scy_change", 0x51FC_5D71);
 #[test]
 fn test_m3_scy_change2_cgb_c() {
     let bytes = read_rom_from_zip("m3_scy_change2.gb");
@@ -548,7 +556,7 @@ fn test_m3_window_timing_wx_0_cgb_c() {
     assert_mealybug_crc("m3_window_timing_wx_0_cgb_c", crc, EXPECTED_CRC);
 }
 // Same invalid-reference rationale as the CGB-C non-sprite LCDC-WX case above.
-mealybug_ignored_cgb_c!(test_m3_wx_4_change_cgb_c, "m3_wx_4_change", "2579");
+mealybug_crc_cgb_c!(test_m3_wx_4_change_cgb_c, "m3_wx_4_change", 0xA8C1_562B);
 
 #[test]
 fn test_m3_wx_4_change_sprites_cgb_c() {
@@ -559,9 +567,9 @@ fn test_m3_wx_4_change_sprites_cgb_c() {
     assert_mealybug_crc("m3_wx_4_change_sprites_cgb_c", crc, EXPECTED_CRC);
 }
 
-mealybug_ignored_cgb_c!(test_m3_wx_5_change_cgb_c, "m3_wx_5_change", "2579");
+mealybug_crc_cgb_c!(test_m3_wx_5_change_cgb_c, "m3_wx_5_change", 0xF1C7_594A);
 
-mealybug_ignored_cgb_c!(test_m3_wx_6_change_cgb_c, "m3_wx_6_change", "2579");
+mealybug_crc_cgb_c!(test_m3_wx_6_change_cgb_c, "m3_wx_6_change", 0xEEC5_8C43);
 
 // ============================================================================
 // CGB-D tests (reference: expected/CPU CGB D/)
@@ -672,10 +680,10 @@ fn test_m3_lcdc_win_en_change_multiple_cgb_d() {
 }
 
 // Same invalid-reference rationale as the CGB-C non-sprite LCDC-WX case above.
-mealybug_ignored_cgb_d!(
+mealybug_crc_cgb_d!(
     test_m3_lcdc_win_en_change_multiple_wx_cgb_d,
     "m3_lcdc_win_en_change_multiple_wx",
-    "2579"
+    0x360F_1250
 );
 #[test]
 fn test_m3_lcdc_win_map_change_cgb_d() {
@@ -713,7 +721,8 @@ fn test_m3_scx_low_3_bits_cgb_d() {
     const EXPECTED_CRC: u32 = 0xD49D_F057;
     assert_mealybug_crc("m3_scx_low_3_bits_cgb_d", crc, EXPECTED_CRC);
 }
-mealybug_ignored_cgb_d!(test_m3_scy_change_cgb_d, "m3_scy_change", "2358");
+// Same breakpoint-output rationale as the DMG-B SCY case above.
+mealybug_crc_cgb_d!(test_m3_scy_change_cgb_d, "m3_scy_change", 0xF7C5_AB03);
 #[test]
 fn test_m3_window_timing_cgb_d() {
     let bytes = read_rom_from_zip("m3_window_timing.gb");
@@ -731,7 +740,7 @@ fn test_m3_window_timing_wx_0_cgb_d() {
     assert_mealybug_crc("m3_window_timing_wx_0_cgb_d", crc, EXPECTED_CRC);
 }
 // Same invalid-reference rationale as the CGB-C non-sprite LCDC-WX case above.
-mealybug_ignored_cgb_d!(test_m3_wx_4_change_cgb_d, "m3_wx_4_change", "2579");
+mealybug_crc_cgb_d!(test_m3_wx_4_change_cgb_d, "m3_wx_4_change", 0xA8C1_562B);
 
 #[test]
 fn test_m3_wx_4_change_sprites_cgb_d() {
@@ -742,6 +751,6 @@ fn test_m3_wx_4_change_sprites_cgb_d() {
     assert_mealybug_crc("m3_wx_4_change_sprites_cgb_d", crc, EXPECTED_CRC);
 }
 
-mealybug_ignored_cgb_d!(test_m3_wx_5_change_cgb_d, "m3_wx_5_change", "2579");
+mealybug_crc_cgb_d!(test_m3_wx_5_change_cgb_d, "m3_wx_5_change", 0xF1C7_594A);
 
-mealybug_ignored_cgb_d!(test_m3_wx_6_change_cgb_d, "m3_wx_6_change", "2579");
+mealybug_crc_cgb_d!(test_m3_wx_6_change_cgb_d, "m3_wx_6_change", 0xEEC5_8C43);

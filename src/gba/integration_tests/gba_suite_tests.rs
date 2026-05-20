@@ -86,7 +86,7 @@ fn approved_crc_for_suite_key(key: &str) -> u32 {
 }
 
 fn mgba_suite_approval_key(key: &str) -> &str {
-    if cfg!(target_os = "linux") && key == "mgba_timing" {
+    if cfg!(any(target_os = "linux", target_os = "macos")) && key == "mgba_timing" {
         "mgba_timing_linux"
     } else {
         key
