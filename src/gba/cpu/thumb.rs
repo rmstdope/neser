@@ -805,8 +805,11 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         for i in 0..16 {
             if effective_rlist & (1 << i) != 0 {
                 let value = if i == 15 {
-                    // In Thumb state, storing PC in block transfer uses PC+2.
-                    regs.r[15].wrapping_add(2)
+                    // In Thumb state, storing PC writes the current PC value
+                    // (instruction_address + 4). The ARM7TDMI spec says the
+                    // value is implementation-defined; ARM7TDMI stores PC+4
+                    // (not PC+6), so we use regs.r[15] directly.
+                    regs.r[15]
                 } else if i == rb && rb != first_reg_in_list {
                     // Base in rlist stores updated base when it is not first.
                     writeback_value
@@ -1485,6 +1488,29 @@ mod tests {
         assert_eq!(bus.read32(0x108), 0x22);
         assert_eq!(bus.read32(0x10C), 0x33);
         assert_eq!(regs.r[1], 0x110);
+    }
+
+    /// ARM7TDMI Thumb STMIA with empty register list falls back to storing PC.
+    /// The stored value must be regs.r[15] (instruction_address + 4 in Thumb state),
+    /// NOT regs.r[15] + 2 (which would be instruction_address + 6).
+    #[test]
+    fn thumb_format15_stmia_empty_rlist_stores_pc_not_pc_plus_2() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        // Simulate: instruction at 0x100, so Thumb PC = 0x100 + 4 = 0x104.
+        regs.r[0] = 0x140; // base address (well within bus)
+        regs.r[15] = 0x104; // PC = instruction_address + 4 (Thumb prefetch)
+
+        // STMIA R0!, {} — empty rlist: stores PC, writeback += 0x40
+        let stmia_empty = 0b1100_0_000_00000000u16;
+        execute(&mut regs, &mut bus, stmia_empty);
+
+        // Stored value must be PC (0x104), not PC+2 (0x106).
+        assert_eq!(
+            bus.read32(0x140),
+            0x104,
+            "STMIA empty-rlist must store regs.r[15] (PC+4), not PC+6"
+        );
     }
 
     #[test]
