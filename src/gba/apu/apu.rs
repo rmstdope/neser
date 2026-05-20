@@ -374,8 +374,9 @@ impl Apu {
             }
             // SOUNDCNT_L
             0x0400_0080 => self.soundcnt_l,
-            // SOUNDCNT_H
-            0x0400_0082 => self.soundcnt_h,
+            // SOUNDCNT_H — bits 4-7 are unused (Not used per GBATek), bits 11 and 15 are W-only.
+            // Mask 0x770F: keeps R/W bits 0-3, 8-10, 12-14; zeros bits 4-7, 11, 15.
+            0x0400_0082 => self.soundcnt_h & 0x770F,
             // SOUNDCNT_X (status + power)
             0x0400_0084 => self.read_soundcnt_x(),
             // SOUNDBIAS
@@ -1350,7 +1351,9 @@ mod tests {
         apu.write8(0x0400_0088, 0x34);
         apu.write8(0x0400_0089, 0x12);
 
-        assert_eq!(apu.read16(0x0400_0082), 0x55AA);
+        // write8 stores 0xAA in low byte and 0x55 in high byte → raw 0x55AA.
+        // On read, mask 0x770F zeros unused bits 4-7 → read returns 0x550A.
+        assert_eq!(apu.read16(0x0400_0082), 0x550A);
         assert_eq!(apu.read16(0x0400_0088), 0x0234);
     }
 
@@ -1396,6 +1399,24 @@ mod tests {
         // High byte (NR51, 0x0400_0081) contains channel enable flags — all 8 bits are valid.
         apu.write16(0x0400_0080, 0xFF00);
         assert_eq!(apu.read16(0x0400_0080), 0xFF00);
+    }
+
+    #[test]
+    fn test_soundcnt_h_unused_bits_read_as_zero() {
+        let mut apu = Apu::new();
+        // Write a value with bits 4-7 set (these are "Not used" per GBATek).
+        // On read, bits 4-7 must return 0 regardless of what was written.
+        // Mask 0x770F keeps R/W bits: 0-3, 8-10, 12-14; zeros unused bits 4-7 and W bits 11,15.
+        apu.write16(0x0400_0082, 0x00F0); // bits 4-7 set
+        assert_eq!(apu.read16(0x0400_0082), 0x0000, "bits 4-7 must read as 0");
+
+        // Bypass write-side FIFO-reset auto-clear on bits 11/15 so read masking is tested directly.
+        apu.soundcnt_h = 0xFF0F; // bits 4-7 plus W-only bits 11/15 set in backing register
+        assert_eq!(
+            apu.read16(0x0400_0082),
+            0x770F,
+            "bits 4-7 and W-only bits must read as 0"
+        );
     }
 
     #[test]
