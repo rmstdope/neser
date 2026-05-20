@@ -1065,14 +1065,22 @@ swi_cpu_set:
     bic     r3, r3, #0x00E00000  @ r3 = count (bits 0-20)
 
     @ Align addresses. 16-bit CpuSet preserves an odd source byte lane but
-    @ still aligns the destination; 32-bit mode aligns both endpoints.
+    @ still aligns the destination; 32-bit mode aligns both endpoints for
+    @ normal memory. Cart RAM (SRAM 0x0E/0x0F) is an 8-bit bus, so its
+    @ effective byte lane is preserved by skipping alignment for those regions.
     tst     r2, #(1 << 26)      @ 32-bit mode?
     bne     .cpuset_align32
     biceq   r1, r1, #1
     b       .cpuset_aligned
 .cpuset_align32:
-    bic     r0, r0, #3
-    bic     r1, r1, #3
+    mov     r4, r0, lsr #24
+    and     r4, r4, #0xF
+    cmp     r4, #0xE
+    biclo   r0, r0, #3
+    mov     r4, r1, lsr #24
+    and     r4, r4, #0xF
+    cmp     r4, #0xE
+    biclo   r1, r1, #3
 .cpuset_aligned:
 
     @ Check fill mode (bit 24)
@@ -1151,9 +1159,16 @@ swi_cpu_set:
 swi_cpu_fast_set:
     stmfd   sp!, {r4-r11, lr}
 
-    @ Align source and dest to 4 bytes
-    bic     r0, r0, #3
-    bic     r1, r1, #3
+    @ Align normal-memory endpoints to 4 bytes. Cart RAM is an 8-bit bus, so
+    @ SRAM and its mirror must preserve the effective byte lane.
+    mov     r4, r0, lsr #24
+    and     r4, r4, #0xF
+    cmp     r4, #0xE
+    biclo   r0, r0, #3
+    mov     r4, r1, lsr #24
+    and     r4, r4, #0xF
+    cmp     r4, #0xE
+    biclo   r1, r1, #3
 
     @ Extract count (bits 0-20) and round up to multiple of 8
     bic     r3, r2, #0xFF000000
