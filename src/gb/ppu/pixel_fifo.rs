@@ -1048,7 +1048,8 @@ impl PixelFifoRenderer {
             self.bg_scx_sampler.tick(elapsed, fetch_scx);
             self.clear_pending_scx_sample_override(will_sample_scx);
             self.bg_scy_sampler.tick(elapsed, effective_scy);
-            self.pending_window_startup_stall_dots = self.window_startup_stall_dots(registers) - 1;
+            self.pending_window_startup_stall_dots =
+                self.window_startup_stall_dots(registers).saturating_sub(1);
             self.window_startup_stall_consumed = 1;
             return None;
         }
@@ -3705,6 +3706,10 @@ impl PixelFifoRenderer {
     }
 
     fn window_would_trigger_at_next_x(&self, registers: &Registers) -> bool {
+        self.window_trigger_condition_at_next_x(registers)
+    }
+
+    fn window_trigger_condition_at_next_x(&self, registers: &Registers) -> bool {
         !self.window_triggered
             && self.scanline >= registers.wy
             && !self.window_reset_edges.contains(&self.next_x)
@@ -3728,14 +3733,7 @@ impl PixelFifoRenderer {
 
     fn window_startup_would_delay_next_pixel(&self, registers: &Registers) -> bool {
         self.window_startup_stall_consumed == 0
-            && !self.window_triggered
-            && self.scanline >= registers.wy
-            && !self.window_reset_edges.contains(&self.next_x)
-            && self.window_enabled_for_pixel(u32::from(self.next_x), registers.lcdc)
-            && window_triggers_at_x(
-                self.wx_for_pixel(u32::from(self.next_x), registers.wx),
-                self.next_x,
-            )
+            && self.window_trigger_condition_at_next_x(registers)
     }
 
     /// Computes the effective `(next_x, pending_obj_stall_dots)` as pre-window-stall code
