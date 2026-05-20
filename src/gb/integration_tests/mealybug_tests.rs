@@ -224,7 +224,7 @@ fn test_m3_lcdc_win_en_change_multiple_dmg_b() {
 mealybug_ignored_dmg_b!(
     test_m3_lcdc_win_en_change_multiple_wx_dmg_b,
     "m3_lcdc_win_en_change_multiple_wx",
-    "2360"
+    "2579"
 );
 #[test]
 fn test_m3_lcdc_win_map_change_dmg_b() {
@@ -276,17 +276,17 @@ fn test_m3_window_timing_wx_0_dmg_b() {
     const EXPECTED_CRC: u32 = 0x68EF_35FF;
     assert_mealybug_crc("m3_window_timing_wx_0_dmg_b", crc, EXPECTED_CRC);
 }
-mealybug_ignored_dmg_b!(test_m3_wx_4_change_dmg_b, "m3_wx_4_change", "2360");
+mealybug_ignored_dmg_b!(test_m3_wx_4_change_dmg_b, "m3_wx_4_change", "2579");
 
 mealybug_ignored_dmg_b!(
     test_m3_wx_4_change_sprites_dmg_b,
     "m3_wx_4_change_sprites",
-    "2360"
+    "2579"
 );
 
-mealybug_ignored_dmg_b!(test_m3_wx_5_change_dmg_b, "m3_wx_5_change", "2360");
+mealybug_ignored_dmg_b!(test_m3_wx_5_change_dmg_b, "m3_wx_5_change", "2579");
 
-mealybug_ignored_dmg_b!(test_m3_wx_6_change_dmg_b, "m3_wx_6_change", "2360");
+mealybug_ignored_dmg_b!(test_m3_wx_6_change_dmg_b, "m3_wx_6_change", "2579");
 
 // ============================================================================
 // CGB-C tests (reference: expected/CPU CGB C/)
@@ -428,7 +428,7 @@ fn test_m3_lcdc_win_en_change_multiple_cgb_c() {
 mealybug_ignored_cgb_c!(
     test_m3_lcdc_win_en_change_multiple_wx_cgb_c,
     "m3_lcdc_win_en_change_multiple_wx",
-    "2360"
+    "2579"
 );
 #[test]
 fn test_m3_lcdc_win_map_change_cgb_c() {
@@ -447,7 +447,7 @@ fn test_m3_lcdc_win_map_change2_cgb_c() {
     const EXPECTED_CRC: u32 = 0x0A03_88F2;
     assert_mealybug_crc("m3_lcdc_win_map_change2_cgb_c", crc, EXPECTED_CRC);
 }
-mealybug_ignored_cgb_c!(test_m3_obp0_change_cgb_c, "m3_obp0_change", "2356");
+mealybug_ignored_cgb_c!(test_m3_obp0_change_cgb_c, "m3_obp0_change", "2580");
 #[test]
 fn test_m3_scx_high_5_bits_cgb_c() {
     let bytes = read_rom_from_zip("m3_scx_high_5_bits.gb");
@@ -499,17 +499,17 @@ fn test_m3_window_timing_wx_0_cgb_c() {
     const EXPECTED_CRC: u32 = 0x1C33_F2FF;
     assert_mealybug_crc("m3_window_timing_wx_0_cgb_c", crc, EXPECTED_CRC);
 }
-mealybug_ignored_cgb_c!(test_m3_wx_4_change_cgb_c, "m3_wx_4_change", "2360");
+mealybug_ignored_cgb_c!(test_m3_wx_4_change_cgb_c, "m3_wx_4_change", "2579");
 
 mealybug_ignored_cgb_c!(
     test_m3_wx_4_change_sprites_cgb_c,
     "m3_wx_4_change_sprites",
-    "2360"
+    "2579"
 );
 
-mealybug_ignored_cgb_c!(test_m3_wx_5_change_cgb_c, "m3_wx_5_change", "2360");
+mealybug_ignored_cgb_c!(test_m3_wx_5_change_cgb_c, "m3_wx_5_change", "2579");
 
-mealybug_ignored_cgb_c!(test_m3_wx_6_change_cgb_c, "m3_wx_6_change", "2360");
+mealybug_ignored_cgb_c!(test_m3_wx_6_change_cgb_c, "m3_wx_6_change", "2579");
 
 // ============================================================================
 // CGB-D tests (reference: expected/CPU CGB D/)
@@ -615,7 +615,7 @@ fn test_m3_lcdc_win_en_change_multiple_cgb_d() {
 mealybug_ignored_cgb_d!(
     test_m3_lcdc_win_en_change_multiple_wx_cgb_d,
     "m3_lcdc_win_en_change_multiple_wx",
-    "2360"
+    "2579"
 );
 #[test]
 fn test_m3_lcdc_win_map_change_cgb_d() {
@@ -670,14 +670,14 @@ fn test_m3_window_timing_wx_0_cgb_d() {
     const EXPECTED_CRC: u32 = 0x68EF_35FF;
     assert_mealybug_crc("m3_window_timing_wx_0_cgb_d", crc, EXPECTED_CRC);
 }
-mealybug_ignored_cgb_d!(test_m3_wx_4_change_cgb_d, "m3_wx_4_change", "2360");
+mealybug_ignored_cgb_d!(test_m3_wx_4_change_cgb_d, "m3_wx_4_change", "2579");
 
 mealybug_ignored_cgb_d!(
     test_m3_wx_4_change_sprites_cgb_d,
     "m3_wx_4_change_sprites",
-    "2360"
+    "2579"
 );
 
-mealybug_ignored_cgb_d!(test_m3_wx_5_change_cgb_d, "m3_wx_5_change", "2360");
+mealybug_ignored_cgb_d!(test_m3_wx_5_change_cgb_d, "m3_wx_5_change", "2579");
 
-mealybug_ignored_cgb_d!(test_m3_wx_6_change_cgb_d, "m3_wx_6_change", "2360");
+mealybug_ignored_cgb_d!(test_m3_wx_6_change_cgb_d, "m3_wx_6_change", "2579");
