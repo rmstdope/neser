@@ -18,7 +18,9 @@
 //! * Mode 0 tile background rendering (BG0–BG3 with 4bpp/8bpp text
 //!   backgrounds, priority compositing across all enabled layers).
 //! * Mode 1 mixed background rendering (BG0/BG1 regular text plus BG2 affine).
-//! * Mode 2 stub — renders backdrop only (affine tile rendering deferred).
+//! * Mode 2 affine tile background rendering: BG2 and BG3 with wrapping,
+//!   mosaic, and priority compositing. Both BG2 and BG3 support affine
+//!   transforms (PA/PB/PC/PD + BG2X/BG2Y / BG3X/BG3Y reference points).
 //! * Mode 3 background rendering (240×160 15-bit BGR555 direct bitmap
 //!   from VRAM) when `BG2` is enabled.
 //! * Mode 4 background rendering (240×160 8-bit paletted bitmap from
@@ -2861,8 +2863,8 @@ mod tests {
 
     #[test]
     fn mode2_renders_backdrop_color() {
-        // Mode 2 is an affine tile mode for BG2/BG3. Currently we render
-        // only the backdrop; full affine tile rendering is deferred.
+        // Mode 2 is an affine tile mode for BG2/BG3. With no BG enables set,
+        // the backdrop color is rendered for all pixels.
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let vram = make_vram();
