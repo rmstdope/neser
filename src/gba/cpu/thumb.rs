@@ -819,8 +819,13 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         }
     }
 
-    // Writeback uses original base, not potentially modified regs.r[rb]
-    regs.r[rb] = base.wrapping_add(count * 4);
+    // Writeback the updated base address.  For LDMIA, if Rb is in the
+    // register list the loaded value takes precedence over writeback
+    // (ARMv4/ARM7TDMI: "no writeback (LDM/ARMv4)" per GBATek).
+    let base_in_rlist = l && (effective_rlist & (1 << rb)) != 0;
+    if !base_in_rlist {
+        regs.r[rb] = base.wrapping_add(count * 4);
+    }
 
     let n = count as u8;
     if branched {
@@ -1485,6 +1490,32 @@ mod tests {
         assert_eq!(bus.read32(0x108), 0x22);
         assert_eq!(bus.read32(0x10C), 0x33);
         assert_eq!(regs.r[1], 0x110);
+    }
+
+    /// When the base register Rb is in the register list for Thumb LDMIA
+    /// (Format 15), ARMv4/ARM7TDMI specifies that the loaded value takes
+    /// precedence — writeback must NOT overwrite it.
+    #[test]
+    fn thumb_format15_ldmia_base_in_rlist_loaded_value_wins() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        // R0 is both the base register and the first register in the list.
+        regs.r[0] = 0x100;
+        bus.write32(0x100, 0xDEAD_BEEF); // loaded into R0
+        bus.write32(0x104, 0x1234_5678); // loaded into R1
+
+        // LDMIA R0!, {R0, R1}: 1100_1_000_00000011
+        // Rb=0 (R0), rlist=0b00000011 (R0 and R1)
+        let ldmia = 0b1100_1_000_00000011u16;
+        execute(&mut regs, &mut bus, ldmia);
+
+        // Per ARMv4 spec: loaded value wins over writeback (0x108 would be
+        // the writeback value).
+        assert_eq!(
+            regs.r[0], 0xDEAD_BEEF,
+            "R0 should hold loaded value, not writeback"
+        );
+        assert_eq!(regs.r[1], 0x1234_5678);
     }
 
     #[test]
