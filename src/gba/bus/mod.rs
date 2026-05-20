@@ -900,7 +900,7 @@ impl Bus for GbaBus {
             0xE | 0xF => {
                 // SRAM is 8-bit only on real hardware; word access mirrors
                 // the byte across the word.
-                let b = self.cart_read8(aligned);
+                let b = self.cart_read8(addr);
                 u32::from_le_bytes([b, b, b, b])
             }
             _ => self.open_bus_word(),
