@@ -744,10 +744,10 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
 
     let n = count as u8;
     if branched {
-        // POP {PC}: 2S(code) + 1N(data) + (n-1)S(data) + 1I
+        // POP {PC}: 2S(code) + 1N(code) + 1N(data) + (n-1)S(data) + 1I
         ExecOutcome::branch_data_access(
             2,
-            0,
+            1,
             1,
             n.saturating_sub(1),
             1,
@@ -824,8 +824,8 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
 
     let n = count as u8;
     if branched {
-        // LDMIA with PC: 2S(code) + 1N(data) + (n-1)S(data) + 1I
-        ExecOutcome::branch_data_access(2, 0, 1, n.saturating_sub(1), 1, base, WidthClass::Word)
+        // LDMIA with PC: 2S(code) + 1N(code) + 1N(data) + (n-1)S(data) + 1I
+        ExecOutcome::branch_data_access(2, 1, 1, n.saturating_sub(1), 1, base, WidthClass::Word)
     } else if l {
         // LDMIA: 1S(code) + 1N(data) + (n-1)S(data) + 1I
         ExecOutcome::data_access(1, 0, 1, n.saturating_sub(1), 1, base, WidthClass::Word)
@@ -1446,6 +1446,25 @@ mod tests {
         assert!(outcome.branched);
         assert_eq!(regs.r[15], 0x80);
         assert_eq!(regs.r[0], 0x80);
+        assert_eq!(outcome.seq, 2, "empty-rlist LDMIA PC should be 2S(code)");
+        assert_eq!(
+            outcome.nonseq, 1,
+            "empty-rlist LDMIA PC should have 1N(code)"
+        );
+        assert_eq!(
+            outcome.data_seq, 15,
+            "empty-rlist LDMIA PC should have (n-1)S(data) for n=16"
+        );
+        assert_eq!(
+            outcome.data_nonseq, 1,
+            "empty-rlist LDMIA PC should have 1N(data)"
+        );
+        assert_eq!(outcome.internal, 1, "empty-rlist LDMIA PC should have 1I");
+        assert_eq!(
+            outcome.total_flat_cycles(),
+            20,
+            "empty-rlist LDMIA PC total: 17S+2N+1I=20"
+        );
     }
 
     #[test]
@@ -1586,5 +1605,39 @@ mod tests {
         assert_eq!(outcome.seq, 2, "Thumb branch should be 2S");
         assert_eq!(outcome.nonseq, 1, "Thumb branch should have 1N");
         assert_eq!(outcome.internal, 0);
+    }
+
+    /// Thumb POP {PC}: (n+1)S + 2N + 1I per GBATek.
+    #[test]
+    fn thumb_pop_pc_sni_is_n_plus_1s_2n_1i() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[13] = 0x40;
+        bus.write32(0x40, 0x11);
+        bus.write32(0x44, 0x22);
+        bus.write32(0x48, 0x80);
+
+        // POP {R0, R1, PC}; n=3.
+        let instr = 0b1011_1_10_1_0000_0011u16;
+        let outcome = execute(&mut regs, &mut bus, instr);
+
+        assert!(outcome.branched, "POP PC should be a branch");
+        assert_eq!(regs.r[0], 0x11);
+        assert_eq!(regs.r[1], 0x22);
+        assert_eq!(regs.r[15], 0x80);
+        assert_eq!(regs.r[13], 0x4C);
+        assert_eq!(outcome.seq, 2, "POP PC should be 2S(code)");
+        assert_eq!(outcome.nonseq, 1, "POP PC should have 1N(code)");
+        assert_eq!(
+            outcome.data_seq, 2,
+            "POP PC with n=3 should have (n-1)S(data)"
+        );
+        assert_eq!(outcome.data_nonseq, 1, "POP PC should have 1N(data)");
+        assert_eq!(outcome.internal, 1, "POP PC should have 1I");
+        assert_eq!(
+            outcome.total_flat_cycles(),
+            7,
+            "POP PC total for n=3: 4S+2N+1I=7"
+        );
     }
 }

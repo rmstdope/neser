@@ -218,9 +218,19 @@ impl Arm7tdmi {
                 self.prefetch_thumb[1] = self.prefetch_thumb[2];
                 self.prefetch_thumb[2] = bus.read16(exec_pc.wrapping_add(6));
             }
+            let code_addr = if outcome.branched {
+                self.regs.r[15]
+            } else {
+                exec_pc
+            };
+            let code_width = if outcome.branched && !self.thumb() {
+                WidthClass::Word
+            } else {
+                WidthClass::HalfwordOrByte
+            };
             outcome.resolve_cycles(
-                bus.s_cycles(exec_pc, WidthClass::HalfwordOrByte),
-                bus.n_cycles(exec_pc, WidthClass::HalfwordOrByte),
+                bus.s_cycles(code_addr, code_width),
+                bus.n_cycles(code_addr, code_width),
                 bus.s_cycles(outcome.data_addr, outcome.data_width),
                 bus.n_cycles(outcome.data_addr, outcome.data_width),
             )
@@ -241,9 +251,19 @@ impl Arm7tdmi {
                 self.prefetch_arm[1] = self.prefetch_arm[2];
                 self.prefetch_arm[2] = bus.read32(exec_pc.wrapping_add(12));
             }
+            let code_addr = if outcome.branched {
+                self.regs.r[15]
+            } else {
+                exec_pc
+            };
+            let code_width = if outcome.branched && self.thumb() {
+                WidthClass::HalfwordOrByte
+            } else {
+                WidthClass::Word
+            };
             outcome.resolve_cycles(
-                bus.s_cycles(exec_pc, WidthClass::Word),
-                bus.n_cycles(exec_pc, WidthClass::Word),
+                bus.s_cycles(code_addr, code_width),
+                bus.n_cycles(code_addr, code_width),
                 bus.s_cycles(outcome.data_addr, outcome.data_width),
                 bus.n_cycles(outcome.data_addr, outcome.data_width),
             )
@@ -711,6 +731,70 @@ mod tests {
         }
     }
 
+    struct AddressTimingBus {
+        inner: RamBus,
+    }
+
+    impl AddressTimingBus {
+        fn new() -> Self {
+            Self {
+                inner: RamBus::new(0x1000),
+            }
+        }
+
+        fn write_word(&mut self, addr: u32, word: u32) {
+            self.inner.write_word(addr, word);
+        }
+
+        fn write_halfword(&mut self, addr: u32, halfword: u16) {
+            self.inner.write_halfword(addr, halfword);
+        }
+
+        fn costs_for_addr(addr: u32) -> (u32, u32) {
+            match addr >> 24 {
+                0x01 => (5, 11), // branch target region
+                0x02 => (3, 7),  // data region
+                _ => (1, 2),     // executed instruction region
+            }
+        }
+    }
+
+    impl Bus for AddressTimingBus {
+        fn read32(&mut self, addr: u32) -> u32 {
+            self.inner.read32(addr)
+        }
+
+        fn read16(&mut self, addr: u32) -> u16 {
+            self.inner.read16(addr)
+        }
+
+        fn read8(&mut self, addr: u32) -> u8 {
+            self.inner.read8(addr)
+        }
+
+        fn write32(&mut self, addr: u32, value: u32) {
+            self.inner.write32(addr, value);
+        }
+
+        fn write16(&mut self, addr: u32, value: u16) {
+            self.inner.write16(addr, value);
+        }
+
+        fn write8(&mut self, addr: u32, value: u8) {
+            self.inner.write8(addr, value);
+        }
+
+        fn n_cycles(&self, addr: u32, _width: WidthClass) -> u32 {
+            let (_, n) = Self::costs_for_addr(addr);
+            n
+        }
+
+        fn s_cycles(&self, addr: u32, _width: WidthClass) -> u32 {
+            let (s, _) = Self::costs_for_addr(addr);
+            s
+        }
+    }
+
     /// With a RamBus (all costs = 1), a MOV immediate (1S) should cost 1 cycle.
     /// With a SlowBus (S=3, N=5), the same MOV should cost 3 cycles.
     #[test]
@@ -737,6 +821,51 @@ mod tests {
         assert_eq!(
             slow_cycles, 3,
             "MOV (1S) with SlowBus (s_cycles=3) should resolve to 3 cycles"
+        );
+    }
+
+    #[test]
+    fn arm_ldm_pc_step_resolves_branch_cycles_at_loaded_pc() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.r[15] = 0x0000_0000;
+        cpu.regs.r[0] = 0x0200_0040;
+
+        let mut bus = AddressTimingBus::new();
+        // LDMIA R0, {PC}
+        let ldmia_pc = (0xE_u32 << 28) | (0b100 << 25) | (1 << 23) | (1 << 20) | (1 << 15);
+        bus.write_word(0x0000_0000, ldmia_pc);
+        bus.write_word(0x0200_0040, 0x0100_0080);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.r[15], 0x0100_0080);
+        assert_eq!(
+            cycles, 29,
+            "LDM PC branch refill should use target-region code timing: 2*5S + 1*11N + 1*7N(data) + 1I"
+        );
+    }
+
+    #[test]
+    fn thumb_pop_pc_step_resolves_branch_cycles_at_loaded_pc() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.set_thumb(true);
+        cpu.regs.r[15] = 0x0000_0000;
+        cpu.regs.r[13] = 0x0200_0040;
+
+        let mut bus = AddressTimingBus::new();
+        // POP {PC}
+        let pop_pc = 0b1011_1_10_1_0000_0000u16;
+        bus.write_halfword(0x0000_0000, pop_pc);
+        bus.write_word(0x0200_0040, 0x0100_0081);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.r[15], 0x0100_0080);
+        assert_eq!(
+            cycles, 29,
+            "POP PC branch refill should use target-region code timing: 2*5S + 1*11N + 1*7N(data) + 1I"
         );
     }
 

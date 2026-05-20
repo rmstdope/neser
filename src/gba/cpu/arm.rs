@@ -1187,12 +1187,12 @@ fn execute_block_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32)
     // Cycle timing per GBATek:
     // LDM: 1S(code) + 1N(data) + (n-1)S(data) + 1I
     // STM: 1N(code) + 1N(data) + (n-1)S(data)
-    // LDM with PC: 2S(code) + 1N(data) + (n-1)S(data) + 1I
+    // LDM with PC: 2S(code) + 1N(code) + 1N(data) + (n-1)S(data) + 1I
     if branch_occurred {
         let n = reg_count as u8;
         ExecOutcome::branch_data_access(
             2,
-            0,
+            1,
             1,
             n.saturating_sub(1),
             1,
@@ -2781,6 +2781,46 @@ mod tests {
         assert_eq!(outcome.data_nonseq, 1, "LDRH PC should have 1N(data)");
         assert_eq!(outcome.internal, 1, "LDRH PC should have 1I");
         assert_eq!(outcome.total_flat_cycles(), 5, "LDRH PC total: 2S+2N+1I=5");
+    }
+
+    /// ARM LDM with PC: (n+1)S + 2N + 1I per GBATek.
+    #[test]
+    fn arm_ldm_pc_sni_is_n_plus_1s_2n_1i() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x40;
+        bus.write32(0x40, 0x1234_5678);
+        bus.write32(0x44, 0x2000_0000);
+
+        // LDMIA R0, {R1, R15}; n=2.
+        let instr = arm_block_transfer(
+            0xE,
+            false,
+            true,
+            false,
+            false,
+            true,
+            0,
+            (1 << 1) | (1 << 15),
+        );
+        let outcome = execute(&mut regs, &mut bus, instr);
+
+        assert!(outcome.branched, "LDM PC should be a branch");
+        assert_eq!(regs.r[1], 0x1234_5678);
+        assert_eq!(regs.r[15], 0x2000_0000);
+        assert_eq!(outcome.seq, 2, "LDM PC should be 2S(code)");
+        assert_eq!(outcome.nonseq, 1, "LDM PC should have 1N(code)");
+        assert_eq!(
+            outcome.data_seq, 1,
+            "LDM PC with n=2 should have (n-1)S(data)"
+        );
+        assert_eq!(outcome.data_nonseq, 1, "LDM PC should have 1N(data)");
+        assert_eq!(outcome.internal, 1, "LDM PC should have 1I");
+        assert_eq!(
+            outcome.total_flat_cycles(),
+            6,
+            "LDM PC total for n=2: 3S+2N+1I=6"
+        );
     }
 
     /// ARM STR: 2N per GBATek.
