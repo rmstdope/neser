@@ -703,7 +703,9 @@ fn execute_multiply(regs: &mut Registers, instr: u32) -> ExecOutcome {
         regs.set_nzcv(n, z, c, regs.v_flag());
     }
 
-    ExecOutcome::sni(1, 0, cycles - 1) // MUL/MLA: 1S + mI
+    // GBATek: MUL = 1S+mI, MLA = 1S+(m+1)I (extra I for the accumulate step)
+    let internal = if acc { cycles } else { cycles - 1 };
+    ExecOutcome::sni(1, 0, internal)
 }
 
 // ---------------------------------------------------------------------------
@@ -2849,6 +2851,31 @@ mod tests {
             outcome_umlal.internal,
             outcome_umull.internal + 1,
             "UMLAL should have +1I vs UMULL"
+        );
+    }
+
+    /// MLA (accumulate) gets +1I vs MUL per GBATek: MUL=1S+mI, MLA=1S+(m+1)I.
+    #[test]
+    fn arm_mla_accumulate_has_extra_internal_vs_mul() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 5; // Rm
+        regs.r[1] = 1; // Rs (small value → early termination, m=1)
+        regs.r[2] = 10; // Rn (accumulate value for MLA)
+        // MUL R3, R0, R1 (no accumulate)
+        let mul = arm_mul(0xE, false, 3, 1, 0);
+        let outcome_mul = execute(&mut regs, &mut bus, mul);
+        // MLA R3, R0, R1, R2 (accumulate)
+        let mla = arm_mla(0xE, false, 3, 2, 1, 0);
+        let outcome_mla = execute(&mut regs, &mut bus, mla);
+        assert_eq!(outcome_mul.seq, 1, "MUL should have 1S");
+        assert_eq!(outcome_mul.nonseq, 0, "MUL should have 0N");
+        assert_eq!(outcome_mla.seq, 1, "MLA should have 1S");
+        assert_eq!(outcome_mla.nonseq, 0, "MLA should have 0N");
+        assert_eq!(
+            outcome_mla.internal,
+            outcome_mul.internal + 1,
+            "MLA should have +1I vs MUL (GBATek: MUL=1S+mI, MLA=1S+(m+1)I)"
         );
     }
 
