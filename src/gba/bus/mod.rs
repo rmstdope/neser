@@ -738,6 +738,10 @@ impl GbaBus {
     fn write_mgba_debug16(&mut self, addr: u32, value: u16) -> bool {
         if addr == MGBA_DEBUG_ENABLE {
             self.mgba_debug_enabled = value == MGBA_DEBUG_ENABLE_VALUE;
+            if self.mgba_debug_enabled {
+                self.mgba_log.clear();
+                self.mgba_debug_string.fill(0);
+            }
             return true;
         }
         if addr == MGBA_DEBUG_FLAGS {
@@ -1581,6 +1585,23 @@ mod tests {
         bus.write16(MGBA_DEBUG_FLAGS, MGBA_DEBUG_SEND_FLAG | 0x0002);
 
         assert_eq!(bus.mgba_log_snapshot(), "Memory tests: 1436/1552\n");
+    }
+
+    #[test]
+    fn mgba_debug_console_enable_clears_previous_log_and_string_buffer() {
+        let mut bus = GbaBus::new();
+        bus.write16(MGBA_DEBUG_ENABLE, MGBA_DEBUG_ENABLE_VALUE);
+
+        for (offset, byte) in b"stale log\0".iter().enumerate() {
+            bus.write8(MGBA_DEBUG_STRING + offset as u32, *byte);
+        }
+        bus.write16(MGBA_DEBUG_FLAGS, MGBA_DEBUG_SEND_FLAG);
+        bus.write8(MGBA_DEBUG_STRING, b'x');
+
+        bus.write16(MGBA_DEBUG_ENABLE, MGBA_DEBUG_ENABLE_VALUE);
+        bus.write16(MGBA_DEBUG_FLAGS, MGBA_DEBUG_SEND_FLAG);
+
+        assert_eq!(bus.mgba_log_snapshot(), "");
     }
 
     #[test]
