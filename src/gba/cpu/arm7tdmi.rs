@@ -351,10 +351,35 @@ impl Arm7tdmi {
 mod tests {
     use super::*;
     use crate::gba::cpu::bus::RamBus;
-    use crate::gba::cpu::registers::FLAG_Z;
+    use crate::gba::cpu::registers::{FLAG_F, FLAG_Z};
 
     fn write_arm_word(bus: &mut RamBus, addr: u32, word: u32) {
         bus.write_word(addr, word);
+    }
+
+    fn assert_arm_undefined_dispatch(instr: u32) {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !(FLAG_I | FLAG_F);
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = RamBus::new(0x200);
+        write_arm_word(&mut bus, 0x100, instr);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.mode(), CpuMode::Undefined);
+        assert_eq!(cpu.regs.spsr(), cpsr_before);
+        assert_eq!(cpu.regs.r[14], 0x100 + 4);
+        assert!(cpu.regs.i_flag(), "IRQ must be masked");
+        assert_eq!(
+            cpu.regs.cpsr & FLAG_F,
+            cpsr_before & FLAG_F,
+            "FIQ mask state must be preserved"
+        );
+        assert!(!cpu.regs.thumb(), "undefined exception enters ARM state");
+        assert_eq!(cpu.regs.r[15], ExceptionVector::Undefined as u32);
     }
 
     #[test]
@@ -680,6 +705,59 @@ mod tests {
         );
         assert!(!cpu.regs.thumb(), "T bit should be clear (ARM state)");
         assert_eq!(cpu.regs.r[15], ExceptionVector::Undefined as u32);
+    }
+
+    #[test]
+    fn coprocessor_transfer_dispatches_undefined_exception() {
+        // LDC p3, c2, [r1]: no GBA coprocessor acknowledges the transfer.
+        let ldc = (0xE_u32 << 28)
+            | (0b110 << 25)
+            | (1 << 24)
+            | (1 << 23)
+            | (1 << 20)
+            | (1 << 16)
+            | (2 << 12)
+            | (3 << 8);
+
+        assert_arm_undefined_dispatch(ldc);
+    }
+
+    #[test]
+    fn coprocessor_register_transfer_dispatches_undefined_exception() {
+        // MRC p4, #1, r3, c2, c5: no GBA coprocessor acknowledges the transfer.
+        let mrc = (0xE_u32 << 28)
+            | (0b1110 << 24)
+            | (1 << 21)
+            | (1 << 20)
+            | (2 << 16)
+            | (3 << 12)
+            | (4 << 8)
+            | (1 << 4)
+            | 5;
+
+        assert_arm_undefined_dispatch(mrc);
+    }
+
+    #[test]
+    fn swi_still_dispatches_to_supervisor_exception() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !(FLAG_I | FLAG_F);
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = RamBus::new(0x200);
+        write_arm_word(&mut bus, 0x100, 0xEF00_0000);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.mode(), CpuMode::Supervisor);
+        assert_eq!(cpu.regs.spsr(), cpsr_before);
+        assert_eq!(cpu.regs.r[14], 0x100 + 4);
+        assert!(cpu.regs.i_flag(), "IRQ must be masked");
+        assert_eq!(cpu.regs.cpsr & FLAG_F, cpsr_before & FLAG_F);
+        assert!(!cpu.regs.thumb(), "SWI enters ARM state");
+        assert_eq!(cpu.regs.r[15], ExceptionVector::SoftwareInterrupt as u32);
     }
 
     // -----------------------------------------------------------------------
