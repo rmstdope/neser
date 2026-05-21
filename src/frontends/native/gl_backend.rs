@@ -513,7 +513,7 @@ impl GlBackend {
     /// Applies an input event to ImGui and handles renderer-local shortcuts.
     pub fn handle_input(&mut self, event: &InputEvent) {
         if let InputEvent::Key {
-            key: imgui::Key::F1,
+            key: crate::frontends::native::input::UiKey::F1,
             down: true,
         } = event
         {

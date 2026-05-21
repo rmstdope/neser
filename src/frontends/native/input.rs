@@ -1,6 +1,66 @@
 use imgui::Io;
 use imgui::Key;
 
+/// Keyboard keys relevant to the native UI layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiKey {
+    Tab,
+    LeftArrow,
+    RightArrow,
+    UpArrow,
+    DownArrow,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Insert,
+    Delete,
+    Backspace,
+    Space,
+    Enter,
+    Escape,
+    A,
+    C,
+    V,
+    X,
+    Y,
+    Z,
+    F1,
+    F5,
+    F10,
+    F11,
+}
+
+pub(crate) fn imgui_key_for(key: UiKey) -> Key {
+    match key {
+        UiKey::Tab => Key::Tab,
+        UiKey::LeftArrow => Key::LeftArrow,
+        UiKey::RightArrow => Key::RightArrow,
+        UiKey::UpArrow => Key::UpArrow,
+        UiKey::DownArrow => Key::DownArrow,
+        UiKey::PageUp => Key::PageUp,
+        UiKey::PageDown => Key::PageDown,
+        UiKey::Home => Key::Home,
+        UiKey::End => Key::End,
+        UiKey::Insert => Key::Insert,
+        UiKey::Delete => Key::Delete,
+        UiKey::Backspace => Key::Backspace,
+        UiKey::Space => Key::Space,
+        UiKey::Enter => Key::Enter,
+        UiKey::Escape => Key::Escape,
+        UiKey::A => Key::A,
+        UiKey::C => Key::C,
+        UiKey::V => Key::V,
+        UiKey::X => Key::X,
+        UiKey::Y => Key::Y,
+        UiKey::Z => Key::Z,
+        UiKey::F1 => Key::F1,
+        UiKey::F5 => Key::F5,
+        UiKey::F10 => Key::F10,
+        UiKey::F11 => Key::F11,
+    }
+}
+
 /// Mouse buttons relevant to the renderer input layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseButton {
@@ -18,10 +78,10 @@ pub enum InputEvent {
     MouseButton { button: MouseButton, pressed: bool },
     /// Mouse wheel scroll delta.
     MouseWheel { x: f32, y: f32 },
-    /// Text input for ImGui.
+    /// Text input for the UI layer.
     TextInput(String),
-    /// Key press/release events routed to ImGui.
-    Key { key: Key, down: bool },
+    /// Key press/release events routed to the UI layer.
+    Key { key: UiKey, down: bool },
 }
 
 /// Applies a single input event to the ImGui IO state.
@@ -48,7 +108,7 @@ pub fn apply_input(io: &mut Io, event: &InputEvent) {
             }
         }
         InputEvent::Key { key, down } => {
-            io.add_key_event(*key, *down);
+            io.add_key_event(imgui_key_for(*key), *down);
         }
     }
 }
@@ -57,6 +117,18 @@ pub fn apply_input(io: &mut Io, event: &InputEvent) {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[test]
+    fn ui_key_space_maps_to_imgui_space() {
+        // Given the UI-neutral Space key.
+        let key = UiKey::Space;
+
+        // When bridging to the current ImGui backend.
+        let imgui_key = imgui_key_for(key);
+
+        // Then it maps to the matching backend key.
+        assert_eq!(imgui_key, Key::Space);
+    }
 
     #[serial]
     #[test]
@@ -104,7 +176,7 @@ mod tests {
         apply_input(
             io,
             &InputEvent::Key {
-                key: Key::Space,
+                key: UiKey::Space,
                 down: true,
             },
         );

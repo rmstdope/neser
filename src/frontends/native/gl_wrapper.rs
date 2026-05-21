@@ -1,7 +1,7 @@
 #![allow(dead_code)] // Public API for future use in native frontend
 use super::render_target::WinitRenderTarget;
 use crate::frontends::native::gl_backend::{Crosshair, GlBackend, ProcAddressLoader};
-use crate::frontends::native::input::{InputEvent, MouseButton as RenderMouseButton};
+use crate::frontends::native::input::{InputEvent, MouseButton as RenderMouseButton, UiKey};
 use crate::nes::debugging::ui::DebuggerUiAction;
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::debugging::breakpoints::BreakpointList;
@@ -305,41 +305,41 @@ impl NativeGlWrapper {
             .handle_input(&InputEvent::MouseWheel { x, y });
     }
 
-    /// Forwards text input to the renderer (for ImGui text fields).
+    /// Forwards text input to the renderer UI layer.
     pub fn handle_text_input(&mut self, text: String) {
         self.gl_backend.handle_input(&InputEvent::TextInput(text));
     }
 }
 
-/// Maps winit physical key codes to ImGui keys for the renderer input layer.
-fn map_winit_key(key: &PhysicalKey) -> Option<imgui::Key> {
+/// Maps winit physical key codes to UI keys for the renderer input layer.
+fn map_winit_key(key: &PhysicalKey) -> Option<UiKey> {
     match key {
         PhysicalKey::Code(code) => match code {
-            KeyCode::Tab => Some(imgui::Key::Tab),
-            KeyCode::ArrowLeft => Some(imgui::Key::LeftArrow),
-            KeyCode::ArrowRight => Some(imgui::Key::RightArrow),
-            KeyCode::ArrowUp => Some(imgui::Key::UpArrow),
-            KeyCode::ArrowDown => Some(imgui::Key::DownArrow),
-            KeyCode::PageUp => Some(imgui::Key::PageUp),
-            KeyCode::PageDown => Some(imgui::Key::PageDown),
-            KeyCode::Home => Some(imgui::Key::Home),
-            KeyCode::End => Some(imgui::Key::End),
-            KeyCode::Insert => Some(imgui::Key::Insert),
-            KeyCode::Delete => Some(imgui::Key::Delete),
-            KeyCode::Backspace => Some(imgui::Key::Backspace),
-            KeyCode::Space => Some(imgui::Key::Space),
-            KeyCode::Enter => Some(imgui::Key::Enter),
-            KeyCode::Escape => Some(imgui::Key::Escape),
-            KeyCode::KeyA => Some(imgui::Key::A),
-            KeyCode::KeyC => Some(imgui::Key::C),
-            KeyCode::KeyV => Some(imgui::Key::V),
-            KeyCode::KeyX => Some(imgui::Key::X),
-            KeyCode::KeyY => Some(imgui::Key::Y),
-            KeyCode::KeyZ => Some(imgui::Key::Z),
-            KeyCode::F1 => Some(imgui::Key::F1),
-            KeyCode::F5 => Some(imgui::Key::F5),
-            KeyCode::F10 => Some(imgui::Key::F10),
-            KeyCode::F11 => Some(imgui::Key::F11),
+            KeyCode::Tab => Some(UiKey::Tab),
+            KeyCode::ArrowLeft => Some(UiKey::LeftArrow),
+            KeyCode::ArrowRight => Some(UiKey::RightArrow),
+            KeyCode::ArrowUp => Some(UiKey::UpArrow),
+            KeyCode::ArrowDown => Some(UiKey::DownArrow),
+            KeyCode::PageUp => Some(UiKey::PageUp),
+            KeyCode::PageDown => Some(UiKey::PageDown),
+            KeyCode::Home => Some(UiKey::Home),
+            KeyCode::End => Some(UiKey::End),
+            KeyCode::Insert => Some(UiKey::Insert),
+            KeyCode::Delete => Some(UiKey::Delete),
+            KeyCode::Backspace => Some(UiKey::Backspace),
+            KeyCode::Space => Some(UiKey::Space),
+            KeyCode::Enter => Some(UiKey::Enter),
+            KeyCode::Escape => Some(UiKey::Escape),
+            KeyCode::KeyA => Some(UiKey::A),
+            KeyCode::KeyC => Some(UiKey::C),
+            KeyCode::KeyV => Some(UiKey::V),
+            KeyCode::KeyX => Some(UiKey::X),
+            KeyCode::KeyY => Some(UiKey::Y),
+            KeyCode::KeyZ => Some(UiKey::Z),
+            KeyCode::F1 => Some(UiKey::F1),
+            KeyCode::F5 => Some(UiKey::F5),
+            KeyCode::F10 => Some(UiKey::F10),
+            KeyCode::F11 => Some(UiKey::F11),
             _ => None,
         },
         _ => None,
@@ -389,28 +389,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn map_winit_key_returns_correct_imgui_key_for_tab() {
+    fn map_winit_key_returns_correct_ui_key_for_tab() {
         let key = PhysicalKey::Code(KeyCode::Tab);
-        assert_eq!(map_winit_key(&key), Some(imgui::Key::Tab));
+        assert_eq!(map_winit_key(&key), Some(UiKey::Tab));
     }
 
     #[test]
-    fn map_winit_key_returns_correct_imgui_key_for_arrows() {
+    fn map_winit_key_returns_correct_ui_key_for_arrows() {
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::ArrowLeft)),
-            Some(imgui::Key::LeftArrow)
+            Some(UiKey::LeftArrow)
         );
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::ArrowRight)),
-            Some(imgui::Key::RightArrow)
+            Some(UiKey::RightArrow)
         );
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::ArrowUp)),
-            Some(imgui::Key::UpArrow)
+            Some(UiKey::UpArrow)
         );
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::ArrowDown)),
-            Some(imgui::Key::DownArrow)
+            Some(UiKey::DownArrow)
         );
     }
 
@@ -420,14 +420,14 @@ mod tests {
     }
 
     #[test]
-    fn map_winit_key_returns_correct_imgui_key_for_letters() {
+    fn map_winit_key_returns_correct_ui_key_for_letters() {
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::KeyA)),
-            Some(imgui::Key::A)
+            Some(UiKey::A)
         );
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::KeyZ)),
-            Some(imgui::Key::Z)
+            Some(UiKey::Z)
         );
     }
 
@@ -441,15 +441,15 @@ mod tests {
     fn map_winit_key_maps_debugger_function_keys() {
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::F5)),
-            Some(imgui::Key::F5)
+            Some(UiKey::F5)
         );
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::F10)),
-            Some(imgui::Key::F10)
+            Some(UiKey::F10)
         );
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::F11)),
-            Some(imgui::Key::F11)
+            Some(UiKey::F11)
         );
     }
 
