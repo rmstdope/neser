@@ -795,6 +795,68 @@ mod tests {
         }
     }
 
+    struct AddressWidthTimingBus {
+        inner: RamBus,
+    }
+
+    impl AddressWidthTimingBus {
+        fn new() -> Self {
+            Self {
+                inner: RamBus::new(0x1000),
+            }
+        }
+
+        fn write_word(&mut self, addr: u32, word: u32) {
+            self.inner.write_word(addr, word);
+        }
+
+        fn write_halfword(&mut self, addr: u32, halfword: u16) {
+            self.inner.write_halfword(addr, halfword);
+        }
+    }
+
+    impl Bus for AddressWidthTimingBus {
+        fn read32(&mut self, addr: u32) -> u32 {
+            self.inner.read32(addr)
+        }
+
+        fn read16(&mut self, addr: u32) -> u16 {
+            self.inner.read16(addr)
+        }
+
+        fn read8(&mut self, addr: u32) -> u8 {
+            self.inner.read8(addr)
+        }
+
+        fn write32(&mut self, addr: u32, value: u32) {
+            self.inner.write32(addr, value);
+        }
+
+        fn write16(&mut self, addr: u32, value: u16) {
+            self.inner.write16(addr, value);
+        }
+
+        fn write8(&mut self, addr: u32, value: u8) {
+            self.inner.write8(addr, value);
+        }
+
+        fn n_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+            match (addr >> 24, width) {
+                (0x01, WidthClass::HalfwordOrByte) => 13,
+                (0x01, WidthClass::Word) => 11,
+                _ => AddressTimingBus::costs_for_addr(addr).1,
+            }
+        }
+
+        fn s_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+            match (addr >> 24, width) {
+                (0x01, WidthClass::HalfwordOrByte) => 7,
+                (0x01, WidthClass::Word) => 5,
+                _ => AddressTimingBus::costs_for_addr(addr).0,
+            }
+        }
+    }
+
     /// With a RamBus (all costs = 1), a MOV immediate (1S) should cost 1 cycle.
     /// With a SlowBus (S=3, N=5), the same MOV should cost 3 cycles.
     #[test]
@@ -981,7 +1043,7 @@ mod tests {
         cpu.regs.r[15] = 0x0000_0000;
         cpu.regs.r[1] = 0x0100_0001; // bit 0 = 1 → switch to Thumb
 
-        let mut bus = AddressTimingBus::new();
+        let mut bus = AddressWidthTimingBus::new();
         // ARM BX R1: 0xE12FFF11
         let bx_instr: u32 = 0xE12F_FF11;
         bus.write_word(0x0000_0000, bx_instr);
@@ -994,8 +1056,8 @@ mod tests {
         );
         assert!(cpu.thumb(), "BX with bit 0 set should switch to Thumb");
         assert_eq!(
-            cycles, 21,
-            "ARM BX cross-region (Thumb): 2*5S + 1*11N at target = 21"
+            cycles, 27,
+            "ARM BX cross-region (Thumb): 2*7S + 1*13N at target = 27"
         );
     }
 
@@ -1009,7 +1071,7 @@ mod tests {
         cpu.regs.r[15] = 0x0000_0000;
         cpu.regs.r[1] = 0x0100_0000; // bit 0 = 0 → switch to ARM
 
-        let mut bus = AddressTimingBus::new();
+        let mut bus = AddressWidthTimingBus::new();
         // Thumb BX R1: 0100 0111 0 0 001 000 = 0x4708
         let bx_thumb: u16 = 0x4708;
         bus.write_halfword(0x0000_0000, bx_thumb);
@@ -1078,6 +1140,10 @@ mod tests {
         assert_eq!(
             cpu.regs.r[15], 0x0100_0000,
             "BL second step: PC = branch target"
+        );
+        assert_eq!(
+            cpu.regs.r[14], 0x0000_0005,
+            "BL second step: LR should be old_pc|1 for Thumb return"
         );
         assert_eq!(
             cycles, 21,
