@@ -358,20 +358,6 @@ impl GlBackend {
         self.render_target.notify_resize(w, h);
     }
 
-    /// Returns the largest size that fits inside the container while preserving aspect.
-    fn letterbox_size(container_w: f32, container_h: f32, aspect: f32) -> (f32, f32) {
-        if container_h == 0.0 {
-            return (container_w, 0.0);
-        }
-
-        let container_aspect = container_w / container_h;
-        if container_aspect > aspect {
-            (container_h * aspect, container_h)
-        } else {
-            (container_w, container_w / aspect)
-        }
-    }
-
     /// Creates a new OpenGL renderer bound to the provided render target.
     pub fn new(
         render_target: Box<dyn RenderTarget>,
@@ -693,7 +679,11 @@ impl GlBackend {
             let drawable_w_f = drawable_w as f32;
             let drawable_h_f = drawable_h as f32;
             let (shader_out_w_f, shader_out_h_f) =
-                Self::letterbox_size(drawable_w_f, drawable_h_f, target_aspect);
+                crate::frontends::native::ui_geometry::letterbox_size(
+                    drawable_w_f,
+                    drawable_h_f,
+                    target_aspect,
+                );
             let shader_out_w = (shader_out_w_f as u32).max(1);
             let shader_out_h = (shader_out_h_f as u32).max(1);
 
@@ -720,7 +710,8 @@ impl GlBackend {
             // Draw NES frame as a background image, preserving aspect ratio with letterboxing.
             let win_w = win_w as f32;
             let win_h = win_h as f32;
-            let (draw_w, draw_h) = Self::letterbox_size(win_w, win_h, target_aspect);
+            let (draw_w, draw_h) =
+                crate::frontends::native::ui_geometry::letterbox_size(win_w, win_h, target_aspect);
 
             let x0 = (win_w - draw_w) * 0.5;
             let y0 = (win_h - draw_h) * 0.5;
@@ -935,28 +926,28 @@ pub fn shader_toast_message(preset_name: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests_letterbox {
-    use super::GlBackend;
+    use crate::frontends::native::ui_geometry::letterbox_size;
 
     // NES pixel aspect (8:7) times NTSC display correction (16:15).
     const NTSC_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
 
     #[test]
     fn test_letterbox_size_wide_container() {
-        let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, NTSC_ASPECT);
+        let (w, h) = letterbox_size(1920.0, 1080.0, NTSC_ASPECT);
         assert!((w - 1316.5714).abs() < 0.01);
         assert_eq!(h, 1080.0);
     }
 
     #[test]
     fn test_letterbox_size_matches_aspect() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 600.0, NTSC_ASPECT);
+        let (w, h) = letterbox_size(800.0, 600.0, NTSC_ASPECT);
         assert!((w - 731.4286).abs() < 0.01);
         assert_eq!(h, 600.0);
     }
 
     #[test]
     fn test_letterbox_size_zero_height() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 0.0, NTSC_ASPECT);
+        let (w, h) = letterbox_size(800.0, 0.0, NTSC_ASPECT);
         assert_eq!(w, 800.0);
         assert_eq!(h, 0.0);
     }
