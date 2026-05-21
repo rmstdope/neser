@@ -45,6 +45,16 @@ To launch a specific ROM directly (skipping the browser):
 cargo run --release -- path/to/rom.nes
 ```
 
+### Native emulator keyboard controls
+
+NES and Game Boy use the same primary layout: `W/A/S/D` for the D-pad, `R` for B,
+`T` for A, `4` for Select, and `5` for Start. Game Boy and Game Boy Advance also
+accept the arrow keys as D-pad aliases. Game Boy Advance adds `Q` for L and `E`
+for R.
+
+NES player 2 uses `I/J/K/L` for the D-pad, `P` for B, `O` for A, `9` for Select,
+and `0` for Start.
+
 ### ROM Browser
 
 The ROM browser scans configured search paths for NES ROMs and displays them in a cover art grid with metadata from TheGamesDB.
