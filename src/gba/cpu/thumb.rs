@@ -805,7 +805,11 @@ fn exec_format15<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         for i in 0..16 {
             if effective_rlist & (1 << i) != 0 {
                 let value = if i == 15 {
-                    // In Thumb state, storing PC in block transfer uses PC+2.
+                    // On ARM7TDMI, Thumb STMIA storing R15 writes
+                    // instruction_address + 6 (= regs.r[15] + 2, since
+                    // regs.r[15] holds instruction_address + 4 due to
+                    // Thumb prefetch). This matches real hardware behaviour
+                    // verified by the gba-tests thumb suite (test #229).
                     regs.r[15].wrapping_add(2)
                 } else if i == rb && rb != first_reg_in_list {
                     // Base in rlist stores updated base when it is not first.
@@ -1490,6 +1494,31 @@ mod tests {
         assert_eq!(bus.read32(0x108), 0x22);
         assert_eq!(bus.read32(0x10C), 0x33);
         assert_eq!(regs.r[1], 0x110);
+    }
+
+    /// ARM7TDMI Thumb STMIA with empty register list falls back to storing PC.
+    /// On real ARM7TDMI hardware (verified by the gba-tests Thumb suite test
+    /// #229), the stored value is instruction_address + 6 = regs.r[15] + 2,
+    /// because regs.r[15] holds instruction_address + 4 (Thumb prefetch) and
+    /// the hardware adds one more pipeline stage worth (+2) before storing.
+    #[test]
+    fn thumb_format15_stmia_empty_rlist_stores_instruction_address_plus_6() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x200);
+        // Simulate: instruction at 0x100, so Thumb PC = 0x100 + 4 = 0x104.
+        regs.r[0] = 0x140; // base address (well within bus)
+        regs.r[15] = 0x104; // PC = instruction_address + 4 (Thumb prefetch)
+
+        // STMIA R0!, {} — empty rlist: stores PC+2 (= instruction_address + 6)
+        let stmia_empty = 0b1100_0_000_00000000u16;
+        execute(&mut regs, &mut bus, stmia_empty);
+
+        // Stored value must be regs.r[15] + 2 = 0x106 (instruction_address + 6).
+        assert_eq!(
+            bus.read32(0x140),
+            0x106,
+            "STMIA empty-rlist must store regs.r[15] + 2 (= instruction_address + 6)"
+        );
     }
 
     /// When the base register Rb is in the register list for Thumb LDMIA
