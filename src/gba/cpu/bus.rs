@@ -36,6 +36,20 @@ pub trait Bus {
 
     /// Sequential access cycle cost for the given address and width.
     fn s_cycles(&self, addr: u32, width: WidthClass) -> u32;
+
+    /// Returns `true` if the most recent instruction fetch caused a prefetch
+    /// abort (bus fault on instruction read).  The default returns `false`,
+    /// which is correct for GBA hardware where all fetches succeed.
+    fn prefetch_abort_pending(&self) -> bool {
+        false
+    }
+
+    /// Returns `true` if the most recent data access (load or store) caused a
+    /// data abort (bus fault on data read/write).  The default returns `false`,
+    /// which is correct for GBA hardware where all accesses succeed.
+    fn data_abort_pending(&self) -> bool {
+        false
+    }
 }
 
 /// Flat, little-endian RAM-only bus used in unit tests and as a stub for the
