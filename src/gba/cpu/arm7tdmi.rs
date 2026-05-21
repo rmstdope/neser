@@ -923,7 +923,7 @@ mod tests {
     /// not at the source exec_pc.
     ///
     /// GBATek: "If an instruction jumps to a different memory area, then all
-    /// code cycles for that opcode are having waitstate characteristics of the
+    /// code cycles for that opcode are having wait state characteristics of the
     /// NEW memory area."
     #[test]
     fn arm_b_cross_region_resolves_cycles_at_target_pc() {
@@ -1028,7 +1028,7 @@ mod tests {
     }
 
     /// Thumb BL first halfword (H=0): NOT a branch. GBATek spec says Thumb BL
-    /// still executes 1S in the OLD area for the setup instruction.
+    /// still executes 1S in the OLD area (source region) for the setup instruction.
     #[test]
     fn thumb_bl_first_step_uses_source_region() {
         let mut cpu = Arm7tdmi::new();
