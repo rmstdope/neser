@@ -37,17 +37,45 @@ pub trait Bus {
     /// Sequential access cycle cost for the given address and width.
     fn s_cycles(&self, addr: u32, width: WidthClass) -> u32;
 
-    /// Returns `true` if the most recent instruction fetch caused a prefetch
-    /// abort (bus fault on instruction read).  The default returns `false`,
-    /// which is correct for GBA hardware where all fetches succeed.
-    fn prefetch_abort_pending(&self) -> bool {
+    /// Read a 32-bit word for an **instruction fetch**.  The address must
+    /// already be aligned to a 4-byte boundary.  Implementations may track
+    /// this access separately from data reads so that bus faults can be
+    /// attributed to [`prefetch_abort_pending`](Bus::prefetch_abort_pending)
+    /// rather than [`data_abort_pending`](Bus::data_abort_pending).
+    ///
+    /// The default delegates to [`read32`](Bus::read32).
+    fn fetch32(&mut self, addr: u32) -> u32 {
+        self.read32(addr)
+    }
+
+    /// Read a 16-bit halfword for a **Thumb instruction fetch**.
+    /// Implementations may set [`prefetch_abort_pending`](Bus::prefetch_abort_pending)
+    /// on a bus fault.
+    ///
+    /// The default delegates to [`read16`](Bus::read16).
+    fn fetch16(&mut self, addr: u32) -> u16 {
+        self.read16(addr)
+    }
+
+    /// Returns `true` if the most recent **instruction fetch** (via
+    /// [`fetch32`](Bus::fetch32) / [`fetch16`](Bus::fetch16)) caused a
+    /// prefetch abort, and **clears** the pending flag so subsequent calls
+    /// return `false` until a new fault occurs (consuming semantics).
+    ///
+    /// The default returns `false`, which is correct for GBA hardware where
+    /// all fetches succeed.
+    fn prefetch_abort_pending(&mut self) -> bool {
         false
     }
 
-    /// Returns `true` if the most recent data access (load or store) caused a
-    /// data abort (bus fault on data read/write).  The default returns `false`,
-    /// which is correct for GBA hardware where all accesses succeed.
-    fn data_abort_pending(&self) -> bool {
+    /// Returns `true` if the most recent **data access** (load or store via
+    /// [`read32`](Bus::read32) / [`write32`](Bus::write32) / etc.) caused a
+    /// data abort, and **clears** the pending flag so subsequent calls return
+    /// `false` until a new fault occurs (consuming semantics).
+    ///
+    /// The default returns `false`, which is correct for GBA hardware where
+    /// all accesses succeed.
+    fn data_abort_pending(&mut self) -> bool {
         false
     }
 }
