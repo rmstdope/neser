@@ -64,6 +64,45 @@ fn read_rom_from_zip(rom_name: &str) -> Vec<u8> {
 // Test-generating macros
 // ============================================================================
 
+/// Generate an active DMG-B mealybug test with a CRC assertion.
+macro_rules! mealybug_dmg_b {
+    ($name:ident, $rom_base:literal, $expected_crc:expr) => {
+        #[test]
+        fn $name() {
+            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
+            let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
+            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_dmg_b"));
+            assert_mealybug_crc(concat!($rom_base, "_dmg_b"), crc, $expected_crc);
+        }
+    };
+}
+
+/// Generate an active CGB-C mealybug test with a CRC assertion.
+macro_rules! mealybug_cgb_c {
+    ($name:ident, $rom_base:literal, $expected_crc:expr) => {
+        #[test]
+        fn $name() {
+            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
+            let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
+            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_c"));
+            assert_mealybug_crc(concat!($rom_base, "_cgb_c"), crc, $expected_crc);
+        }
+    };
+}
+
+/// Generate an active CGB-D mealybug test with a CRC assertion.
+macro_rules! mealybug_cgb_d {
+    ($name:ident, $rom_base:literal, $expected_crc:expr) => {
+        #[test]
+        fn $name() {
+            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
+            let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
+            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_d"));
+            assert_mealybug_crc(concat!($rom_base, "_cgb_d"), crc, $expected_crc);
+        }
+    };
+}
+
 /// Generate an ignored DMG-B mealybug test.
 macro_rules! mealybug_ignored_dmg_b {
     ($name:ident, $rom_base:literal, $issue:literal) => {
@@ -114,355 +153,171 @@ fn assert_mealybug_crc(capture_name: &str, crc: u32, expected_crc: u32) {
 // DMG-B tests (reference: expected/DMG-blob/)
 // ============================================================================
 
-#[test]
-fn test_m2_win_en_toggle_dmg_b() {
-    let bytes = read_rom_from_zip("m2_win_en_toggle.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m2_win_en_toggle_dmg_b");
-    const EXPECTED_CRC: u32 = 0xCE29_5724;
-    assert_eq!(
-        crc, EXPECTED_CRC,
-        "m2_win_en_toggle DMG-B CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
-    );
-}
-
-#[test]
-fn test_m3_bgp_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_bgp_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0x2BA6_1257;
-    assert_mealybug_crc("m3_bgp_change_dmg_b", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_bgp_change_sprites_dmg_b() {
-    let bytes = read_rom_from_zip("m3_bgp_change_sprites.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_sprites_dmg_b");
-    const EXPECTED_CRC: u32 = 0x7E8E_86BC;
-    assert_mealybug_crc("m3_bgp_change_sprites_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_bg_en_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_bg_en_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_bg_en_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0x8897_C19D;
-    assert_mealybug_crc("m3_lcdc_bg_en_change_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_bg_map_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_bg_map_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_bg_map_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0x286F_119C;
-    assert_mealybug_crc("m3_lcdc_bg_map_change_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_obj_en_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_en_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_en_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0xE7B3_C4EC;
-    assert_mealybug_crc("m3_lcdc_obj_en_change_dmg_b", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_obj_en_change_variant_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_en_change_variant.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc =
-        run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_en_change_variant_dmg_b");
-    const EXPECTED_CRC: u32 = 0x9840_7F19;
-    assert_mealybug_crc("m3_lcdc_obj_en_change_variant_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_obj_size_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_size_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_size_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0xB198_14D0;
-    assert_mealybug_crc("m3_lcdc_obj_size_change_dmg_b", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_obj_size_change_scx_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_size_change_scx.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_size_change_scx_dmg_b");
-    const EXPECTED_CRC: u32 = 0x7564_DEC9;
-    assert_mealybug_crc("m3_lcdc_obj_size_change_scx_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_tile_sel_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_tile_sel_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_tile_sel_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0x2CFB_252D;
-    assert_mealybug_crc("m3_lcdc_tile_sel_change_dmg_b", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_tile_sel_win_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_tile_sel_win_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_tile_sel_win_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0x12DD_F759;
-    assert_mealybug_crc("m3_lcdc_tile_sel_win_change_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_win_en_change_multiple_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_win_en_change_multiple.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc =
-        run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_win_en_change_multiple_dmg_b");
-    const EXPECTED_CRC: u32 = 0xD1B2_30C6;
-    assert_mealybug_crc("m3_lcdc_win_en_change_multiple_dmg_b", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_win_en_change_multiple_wx_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_win_en_change_multiple_wx.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(
-        &mut gb,
-        CYCLE_LIMIT,
-        "m3_lcdc_win_en_change_multiple_wx_dmg_b",
-    );
-    const EXPECTED_CRC: u32 = 0xF538_4C09;
-    assert_mealybug_crc("m3_lcdc_win_en_change_multiple_wx_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_win_map_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_lcdc_win_map_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_win_map_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0x6066_383D;
-    assert_mealybug_crc("m3_lcdc_win_map_change_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_obp0_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_obp0_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_obp0_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0xC7E0_7D30;
-    assert_mealybug_crc("m3_obp0_change_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_scx_high_5_bits_dmg_b() {
-    let bytes = read_rom_from_zip("m3_scx_high_5_bits.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_scx_high_5_bits_dmg_b");
-    const EXPECTED_CRC: u32 = 0x76B4_CBF2;
-    assert_mealybug_crc("m3_scx_high_5_bits_dmg_b", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_scx_low_3_bits_dmg_b() {
-    let bytes = read_rom_from_zip("m3_scx_low_3_bits.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_scx_low_3_bits_dmg_b");
-    const EXPECTED_CRC: u32 = 0xD49D_F057;
-    assert_mealybug_crc("m3_scx_low_3_bits_dmg_b", crc, EXPECTED_CRC);
-}
+mealybug_dmg_b!(test_m2_win_en_toggle_dmg_b, "m2_win_en_toggle", 0xCE29_5724);
+mealybug_dmg_b!(test_m3_bgp_change_dmg_b, "m3_bgp_change", 0x2BA6_1257);
+mealybug_dmg_b!(
+    test_m3_bgp_change_sprites_dmg_b,
+    "m3_bgp_change_sprites",
+    0x7E8E_86BC
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_bg_en_change_dmg_b,
+    "m3_lcdc_bg_en_change",
+    0x8897_C19D
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_bg_map_change_dmg_b,
+    "m3_lcdc_bg_map_change",
+    0x286F_119C
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_obj_en_change_dmg_b,
+    "m3_lcdc_obj_en_change",
+    0xE7B3_C4EC
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_obj_en_change_variant_dmg_b,
+    "m3_lcdc_obj_en_change_variant",
+    0x9840_7F19
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_obj_size_change_dmg_b,
+    "m3_lcdc_obj_size_change",
+    0xB198_14D0
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_obj_size_change_scx_dmg_b,
+    "m3_lcdc_obj_size_change_scx",
+    0x7564_DEC9
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_tile_sel_change_dmg_b,
+    "m3_lcdc_tile_sel_change",
+    0x2CFB_252D
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_tile_sel_win_change_dmg_b,
+    "m3_lcdc_tile_sel_win_change",
+    0x12DD_F759
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_win_en_change_multiple_dmg_b,
+    "m3_lcdc_win_en_change_multiple",
+    0xD1B2_30C6
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_win_en_change_multiple_wx_dmg_b,
+    "m3_lcdc_win_en_change_multiple_wx",
+    0xF538_4C09
+);
+mealybug_dmg_b!(
+    test_m3_lcdc_win_map_change_dmg_b,
+    "m3_lcdc_win_map_change",
+    0x6066_383D
+);
+mealybug_dmg_b!(test_m3_obp0_change_dmg_b, "m3_obp0_change", 0xC7E0_7D30);
+mealybug_dmg_b!(
+    test_m3_scx_high_5_bits_dmg_b,
+    "m3_scx_high_5_bits",
+    0x76B4_CBF2
+);
+mealybug_dmg_b!(
+    test_m3_scx_low_3_bits_dmg_b,
+    "m3_scx_low_3_bits",
+    0xD49D_F057
+);
 mealybug_ignored_dmg_b!(test_m3_scy_change_dmg_b, "m3_scy_change", "2358");
-#[test]
-fn test_m3_window_timing_dmg_b() {
-    let bytes = read_rom_from_zip("m3_window_timing.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_window_timing_dmg_b");
-    const EXPECTED_CRC: u32 = 0x92B6_5C2A;
-    assert_mealybug_crc("m3_window_timing_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_window_timing_wx_0_dmg_b() {
-    let bytes = read_rom_from_zip("m3_window_timing_wx_0.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_window_timing_wx_0_dmg_b");
-    const EXPECTED_CRC: u32 = 0x68EF_35FF;
-    assert_mealybug_crc("m3_window_timing_wx_0_dmg_b", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_wx_4_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_wx_4_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_wx_4_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0xCC43_C685;
-    assert_mealybug_crc("m3_wx_4_change_dmg_b", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_wx_4_change_sprites_dmg_b() {
-    let bytes = read_rom_from_zip("m3_wx_4_change_sprites.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_wx_4_change_sprites_dmg_b");
-    const EXPECTED_CRC: u32 = 0x9929_A33F;
-    assert_mealybug_crc("m3_wx_4_change_sprites_dmg_b", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_wx_5_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_wx_5_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_wx_5_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0xC4E8_2D09;
-    assert_mealybug_crc("m3_wx_5_change_dmg_b", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_wx_6_change_dmg_b() {
-    let bytes = read_rom_from_zip("m3_wx_6_change.gb");
-    let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_wx_6_change_dmg_b");
-    const EXPECTED_CRC: u32 = 0x271A_96AF;
-    assert_mealybug_crc("m3_wx_6_change_dmg_b", crc, EXPECTED_CRC);
-}
+mealybug_dmg_b!(test_m3_window_timing_dmg_b, "m3_window_timing", 0x92B6_5C2A);
+mealybug_dmg_b!(
+    test_m3_window_timing_wx_0_dmg_b,
+    "m3_window_timing_wx_0",
+    0x68EF_35FF
+);
+mealybug_dmg_b!(test_m3_wx_4_change_dmg_b, "m3_wx_4_change", 0xCC43_C685);
+mealybug_dmg_b!(
+    test_m3_wx_4_change_sprites_dmg_b,
+    "m3_wx_4_change_sprites",
+    0x9929_A33F
+);
+mealybug_dmg_b!(test_m3_wx_5_change_dmg_b, "m3_wx_5_change", 0xC4E8_2D09);
+mealybug_dmg_b!(test_m3_wx_6_change_dmg_b, "m3_wx_6_change", 0x271A_96AF);
 
 // ============================================================================
 // CGB-C tests (reference: expected/CPU CGB C/)
 // ============================================================================
 
-#[test]
-fn test_m2_win_en_toggle_cgb_c() {
-    let bytes = read_rom_from_zip("m2_win_en_toggle.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m2_win_en_toggle_cgb_c");
-    const EXPECTED_CRC: u32 = 0x5BB7_9D8A;
-    assert_mealybug_crc("m2_win_en_toggle_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_bgp_change_cgb_c() {
-    let bytes = read_rom_from_zip("m3_bgp_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_cgb_c");
-    const EXPECTED_CRC: u32 = 0x1A14_901B;
-    assert_mealybug_crc("m3_bgp_change_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_bgp_change_sprites_cgb_c() {
-    let bytes = read_rom_from_zip("m3_bgp_change_sprites.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_sprites_cgb_c");
-    const EXPECTED_CRC: u32 = 0x4F83_5D92;
-    assert_mealybug_crc("m3_bgp_change_sprites_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_bg_en_change_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_bg_en_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_bg_en_change_cgb_c");
-    const EXPECTED_CRC: u32 = 0xB600_98E1;
-    assert_mealybug_crc("m3_lcdc_bg_en_change_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_bg_en_change2_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_bg_en_change2.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_bg_en_change2_cgb_c");
-    const EXPECTED_CRC: u32 = 0x9610_CDF4;
-    assert_mealybug_crc("m3_lcdc_bg_en_change2_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_bg_map_change_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_bg_map_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_bg_map_change_cgb_c");
-    const EXPECTED_CRC: u32 = 0x044C_1F04;
-    assert_mealybug_crc("m3_lcdc_bg_map_change_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_bg_map_change2_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_bg_map_change2.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_bg_map_change2_cgb_c");
-    const EXPECTED_CRC: u32 = 0xFFD9_6BD0;
-    assert_mealybug_crc("m3_lcdc_bg_map_change2_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_obj_en_change_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_en_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_en_change_cgb_c");
-    const EXPECTED_CRC: u32 = 0xAC65_AE57;
-    assert_mealybug_crc("m3_lcdc_obj_en_change_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_obj_en_change_variant_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_en_change_variant.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc =
-        run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_en_change_variant_cgb_c");
-    const EXPECTED_CRC: u32 = 0x1CC1_760F;
-    assert_mealybug_crc("m3_lcdc_obj_en_change_variant_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_obj_size_change_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_size_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_size_change_cgb_c");
-    const EXPECTED_CRC: u32 = 0xE7AD_A38D;
-    assert_mealybug_crc("m3_lcdc_obj_size_change_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_obj_size_change_scx_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_size_change_scx.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_size_change_scx_cgb_c");
-    const EXPECTED_CRC: u32 = 0x19B3_AC60;
-    assert_mealybug_crc("m3_lcdc_obj_size_change_scx_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_tile_sel_change_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_tile_sel_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_tile_sel_change_cgb_c");
-    const EXPECTED_CRC: u32 = 0x1542_042D;
-    assert_mealybug_crc("m3_lcdc_tile_sel_change_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_tile_sel_change2_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_tile_sel_change2.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_tile_sel_change2_cgb_c");
-    const EXPECTED_CRC: u32 = 0x607B_6469;
-    assert_mealybug_crc("m3_lcdc_tile_sel_change2_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_tile_sel_win_change_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_tile_sel_win_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_tile_sel_win_change_cgb_c");
-    const EXPECTED_CRC: u32 = 0xCA7A_715D;
-    assert_mealybug_crc("m3_lcdc_tile_sel_win_change_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_tile_sel_win_change2_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_tile_sel_win_change2.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_tile_sel_win_change2_cgb_c");
-    const EXPECTED_CRC: u32 = 0x81DC_4AC9;
-    assert_mealybug_crc("m3_lcdc_tile_sel_win_change2_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_win_en_change_multiple_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_win_en_change_multiple.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc =
-        run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_win_en_change_multiple_cgb_c");
-    const EXPECTED_CRC: u32 = 0xC001_01D8;
-    assert_mealybug_crc("m3_lcdc_win_en_change_multiple_cgb_c", crc, EXPECTED_CRC);
-}
-
+mealybug_cgb_c!(test_m2_win_en_toggle_cgb_c, "m2_win_en_toggle", 0x5BB7_9D8A);
+mealybug_cgb_c!(test_m3_bgp_change_cgb_c, "m3_bgp_change", 0x1A14_901B);
+mealybug_cgb_c!(
+    test_m3_bgp_change_sprites_cgb_c,
+    "m3_bgp_change_sprites",
+    0x4F83_5D92
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_bg_en_change_cgb_c,
+    "m3_lcdc_bg_en_change",
+    0xB600_98E1
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_bg_en_change2_cgb_c,
+    "m3_lcdc_bg_en_change2",
+    0x9610_CDF4
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_bg_map_change_cgb_c,
+    "m3_lcdc_bg_map_change",
+    0x044C_1F04
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_bg_map_change2_cgb_c,
+    "m3_lcdc_bg_map_change2",
+    0xFFD9_6BD0
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_obj_en_change_cgb_c,
+    "m3_lcdc_obj_en_change",
+    0xAC65_AE57
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_obj_en_change_variant_cgb_c,
+    "m3_lcdc_obj_en_change_variant",
+    0x1CC1_760F
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_obj_size_change_cgb_c,
+    "m3_lcdc_obj_size_change",
+    0xE7AD_A38D
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_obj_size_change_scx_cgb_c,
+    "m3_lcdc_obj_size_change_scx",
+    0x19B3_AC60
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_tile_sel_change_cgb_c,
+    "m3_lcdc_tile_sel_change",
+    0x1542_042D
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_tile_sel_change2_cgb_c,
+    "m3_lcdc_tile_sel_change2",
+    0x607B_6469
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_tile_sel_win_change_cgb_c,
+    "m3_lcdc_tile_sel_win_change",
+    0xCA7A_715D
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_tile_sel_win_change2_cgb_c,
+    "m3_lcdc_tile_sel_win_change2",
+    0x81DC_4AC9
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_win_en_change_multiple_cgb_c,
+    "m3_lcdc_win_en_change_multiple",
+    0xC001_01D8
+);
 // The CGB non-sprite WX/LCDC-WX reference PNGs for #2579 are not native emulator
 // captures: they are 171-colour GIMP images and the same image is reused by
 // multiple ROMs.
@@ -471,277 +326,143 @@ mealybug_ignored_cgb_c!(
     "m3_lcdc_win_en_change_multiple_wx",
     "2579"
 );
-#[test]
-fn test_m3_lcdc_win_map_change_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_win_map_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_win_map_change_cgb_c");
-    const EXPECTED_CRC: u32 = 0x3E2C_073C;
-    assert_mealybug_crc("m3_lcdc_win_map_change_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_win_map_change2_cgb_c() {
-    let bytes = read_rom_from_zip("m3_lcdc_win_map_change2.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_win_map_change2_cgb_c");
-    const EXPECTED_CRC: u32 = 0x0A03_88F2;
-    assert_mealybug_crc("m3_lcdc_win_map_change2_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_obp0_change_cgb_c() {
-    let bytes = read_rom_from_zip("m3_obp0_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_obp0_change_cgb_c");
-    const EXPECTED_CRC: u32 = 0x7484_BAF1;
-    assert_mealybug_crc("m3_obp0_change_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_scx_high_5_bits_cgb_c() {
-    let bytes = read_rom_from_zip("m3_scx_high_5_bits.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_scx_high_5_bits_cgb_c");
-    const EXPECTED_CRC: u32 = 0x3C71_CF1F;
-    assert_mealybug_crc("m3_scx_high_5_bits_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_scx_high_5_bits_change2_cgb_c() {
-    let bytes = read_rom_from_zip("m3_scx_high_5_bits_change2.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_scx_high_5_bits_change2_cgb_c");
-    const EXPECTED_CRC: u32 = 0x582C_90F1;
-    assert_mealybug_crc("m3_scx_high_5_bits_change2_cgb_c", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_scx_low_3_bits_cgb_c() {
-    let bytes = read_rom_from_zip("m3_scx_low_3_bits.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_scx_low_3_bits_cgb_c");
-    const EXPECTED_CRC: u32 = 0xD49D_F057;
-    assert_mealybug_crc("m3_scx_low_3_bits_cgb_c", crc, EXPECTED_CRC);
-}
+mealybug_cgb_c!(
+    test_m3_lcdc_win_map_change_cgb_c,
+    "m3_lcdc_win_map_change",
+    0x3E2C_073C
+);
+mealybug_cgb_c!(
+    test_m3_lcdc_win_map_change2_cgb_c,
+    "m3_lcdc_win_map_change2",
+    0x0A03_88F2
+);
+mealybug_cgb_c!(test_m3_obp0_change_cgb_c, "m3_obp0_change", 0x7484_BAF1);
+mealybug_cgb_c!(
+    test_m3_scx_high_5_bits_cgb_c,
+    "m3_scx_high_5_bits",
+    0x3C71_CF1F
+);
+mealybug_cgb_c!(
+    test_m3_scx_high_5_bits_change2_cgb_c,
+    "m3_scx_high_5_bits_change2",
+    0x582C_90F1
+);
+mealybug_cgb_c!(
+    test_m3_scx_low_3_bits_cgb_c,
+    "m3_scx_low_3_bits",
+    0xD49D_F057
+);
 mealybug_ignored_cgb_c!(test_m3_scy_change_cgb_c, "m3_scy_change", "2358");
-#[test]
-fn test_m3_scy_change2_cgb_c() {
-    let bytes = read_rom_from_zip("m3_scy_change2.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_scy_change2_cgb_c");
-    const EXPECTED_CRC: u32 = 0x6D57_9852;
-    assert_mealybug_crc("m3_scy_change2_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_window_timing_cgb_c() {
-    let bytes = read_rom_from_zip("m3_window_timing.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_window_timing_cgb_c");
-    const EXPECTED_CRC: u32 = 0x0BE0_3D45;
-    assert_mealybug_crc("m3_window_timing_cgb_c", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_window_timing_wx_0_cgb_c() {
-    let bytes = read_rom_from_zip("m3_window_timing_wx_0.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_window_timing_wx_0_cgb_c");
-    const EXPECTED_CRC: u32 = 0x1C33_F2FF;
-    assert_mealybug_crc("m3_window_timing_wx_0_cgb_c", crc, EXPECTED_CRC);
-}
+mealybug_cgb_c!(test_m3_scy_change2_cgb_c, "m3_scy_change2", 0x6D57_9852);
+mealybug_cgb_c!(test_m3_window_timing_cgb_c, "m3_window_timing", 0x0BE0_3D45);
+mealybug_cgb_c!(
+    test_m3_window_timing_wx_0_cgb_c,
+    "m3_window_timing_wx_0",
+    0x1C33_F2FF
+);
 // Same invalid-reference rationale as the CGB-C non-sprite LCDC-WX case above.
 mealybug_ignored_cgb_c!(test_m3_wx_4_change_cgb_c, "m3_wx_4_change", "2579");
-
-#[test]
-fn test_m3_wx_4_change_sprites_cgb_c() {
-    let bytes = read_rom_from_zip("m3_wx_4_change_sprites.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_wx_4_change_sprites_cgb_c");
-    const EXPECTED_CRC: u32 = 0x2F7D_8812;
-    assert_mealybug_crc("m3_wx_4_change_sprites_cgb_c", crc, EXPECTED_CRC);
-}
-
+mealybug_cgb_c!(
+    test_m3_wx_4_change_sprites_cgb_c,
+    "m3_wx_4_change_sprites",
+    0x2F7D_8812
+);
 mealybug_ignored_cgb_c!(test_m3_wx_5_change_cgb_c, "m3_wx_5_change", "2579");
-
 mealybug_ignored_cgb_c!(test_m3_wx_6_change_cgb_c, "m3_wx_6_change", "2579");
 
 // ============================================================================
 // CGB-D tests (reference: expected/CPU CGB D/)
 // ============================================================================
 
-#[test]
-fn test_m2_win_en_toggle_cgb_d() {
-    let bytes = read_rom_from_zip("m2_win_en_toggle.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m2_win_en_toggle_cgb_d");
-    const EXPECTED_CRC: u32 = 0x5BB7_9D8A;
-    assert_mealybug_crc("m2_win_en_toggle_cgb_d", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_bgp_change_cgb_d() {
-    let bytes = read_rom_from_zip("m3_bgp_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_cgb_d");
-    const EXPECTED_CRC: u32 = 0xEAF2_256B;
-    assert_mealybug_crc("m3_bgp_change_cgb_d", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_bgp_change_sprites_cgb_d() {
-    let bytes = read_rom_from_zip("m3_bgp_change_sprites.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_bgp_change_sprites_cgb_d");
-    const EXPECTED_CRC: u32 = 0x09D9_587E;
-    assert_mealybug_crc("m3_bgp_change_sprites_cgb_d", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_bg_en_change_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_bg_en_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_bg_en_change_cgb_d");
-    const EXPECTED_CRC: u32 = 0xB600_98E1;
-    assert_mealybug_crc("m3_lcdc_bg_en_change_cgb_d", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_bg_map_change_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_bg_map_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_bg_map_change_cgb_d");
-    const EXPECTED_CRC: u32 = 0x044C_1F04;
-    assert_mealybug_crc("m3_lcdc_bg_map_change_cgb_d", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_obj_en_change_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_en_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_en_change_cgb_d");
-    const EXPECTED_CRC: u32 = 0xAC65_AE57;
-    assert_mealybug_crc("m3_lcdc_obj_en_change_cgb_d", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_obj_en_change_variant_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_en_change_variant.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc =
-        run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_en_change_variant_cgb_d");
-    const EXPECTED_CRC: u32 = 0x7DA1_31B3;
-    assert_mealybug_crc("m3_lcdc_obj_en_change_variant_cgb_d", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_obj_size_change_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_size_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_size_change_cgb_d");
-    const EXPECTED_CRC: u32 = 0xE7AD_A38D;
-    assert_mealybug_crc("m3_lcdc_obj_size_change_cgb_d", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_obj_size_change_scx_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_obj_size_change_scx.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_obj_size_change_scx_cgb_d");
-    const EXPECTED_CRC: u32 = 0x19B3_AC60;
-    assert_mealybug_crc("m3_lcdc_obj_size_change_scx_cgb_d", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_tile_sel_change_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_tile_sel_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_tile_sel_change_cgb_d");
-    const EXPECTED_CRC: u32 = 0x1542_042D;
-    assert_mealybug_crc("m3_lcdc_tile_sel_change_cgb_d", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_lcdc_tile_sel_win_change_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_tile_sel_win_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_tile_sel_win_change_cgb_d");
-    const EXPECTED_CRC: u32 = 0xCA7A_715D;
-    assert_mealybug_crc("m3_lcdc_tile_sel_win_change_cgb_d", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_lcdc_win_en_change_multiple_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_win_en_change_multiple.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc =
-        run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_win_en_change_multiple_cgb_d");
-    const EXPECTED_CRC: u32 = 0xC001_01D8;
-    assert_mealybug_crc("m3_lcdc_win_en_change_multiple_cgb_d", crc, EXPECTED_CRC);
-}
-
+mealybug_cgb_d!(test_m2_win_en_toggle_cgb_d, "m2_win_en_toggle", 0x5BB7_9D8A);
+mealybug_cgb_d!(test_m3_bgp_change_cgb_d, "m3_bgp_change", 0xEAF2_256B);
+mealybug_cgb_d!(
+    test_m3_bgp_change_sprites_cgb_d,
+    "m3_bgp_change_sprites",
+    0x09D9_587E
+);
+mealybug_cgb_d!(
+    test_m3_lcdc_bg_en_change_cgb_d,
+    "m3_lcdc_bg_en_change",
+    0xB600_98E1
+);
+mealybug_cgb_d!(
+    test_m3_lcdc_bg_map_change_cgb_d,
+    "m3_lcdc_bg_map_change",
+    0x044C_1F04
+);
+mealybug_cgb_d!(
+    test_m3_lcdc_obj_en_change_cgb_d,
+    "m3_lcdc_obj_en_change",
+    0xAC65_AE57
+);
+mealybug_cgb_d!(
+    test_m3_lcdc_obj_en_change_variant_cgb_d,
+    "m3_lcdc_obj_en_change_variant",
+    0x7DA1_31B3
+);
+mealybug_cgb_d!(
+    test_m3_lcdc_obj_size_change_cgb_d,
+    "m3_lcdc_obj_size_change",
+    0xE7AD_A38D
+);
+mealybug_cgb_d!(
+    test_m3_lcdc_obj_size_change_scx_cgb_d,
+    "m3_lcdc_obj_size_change_scx",
+    0x19B3_AC60
+);
+mealybug_cgb_d!(
+    test_m3_lcdc_tile_sel_change_cgb_d,
+    "m3_lcdc_tile_sel_change",
+    0x1542_042D
+);
+mealybug_cgb_d!(
+    test_m3_lcdc_tile_sel_win_change_cgb_d,
+    "m3_lcdc_tile_sel_win_change",
+    0xCA7A_715D
+);
+mealybug_cgb_d!(
+    test_m3_lcdc_win_en_change_multiple_cgb_d,
+    "m3_lcdc_win_en_change_multiple",
+    0xC001_01D8
+);
 // Same invalid-reference rationale as the CGB-C non-sprite LCDC-WX case above.
 mealybug_ignored_cgb_d!(
     test_m3_lcdc_win_en_change_multiple_wx_cgb_d,
     "m3_lcdc_win_en_change_multiple_wx",
     "2579"
 );
-#[test]
-fn test_m3_lcdc_win_map_change_cgb_d() {
-    let bytes = read_rom_from_zip("m3_lcdc_win_map_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_lcdc_win_map_change_cgb_d");
-    const EXPECTED_CRC: u32 = 0x3E2C_073C;
-    assert_mealybug_crc("m3_lcdc_win_map_change_cgb_d", crc, EXPECTED_CRC);
-}
-
+mealybug_cgb_d!(
+    test_m3_lcdc_win_map_change_cgb_d,
+    "m3_lcdc_win_map_change",
+    0x3E2C_073C
+);
 // NOTE: m3_lcdc_win_map_change2 has no reference image in expected/CPU CGB D/,
 // so no CGB-D test is added here (CGB-C only).
-#[test]
-fn test_m3_obp0_change_cgb_d() {
-    let bytes = read_rom_from_zip("m3_obp0_change.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_obp0_change_cgb_d");
-    const EXPECTED_CRC: u32 = 0xF2A5_FCD4;
-    assert_mealybug_crc("m3_obp0_change_cgb_d", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_scx_high_5_bits_cgb_d() {
-    let bytes = read_rom_from_zip("m3_scx_high_5_bits.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_scx_high_5_bits_cgb_d");
-    const EXPECTED_CRC: u32 = 0x3C71_CF1F;
-    assert_mealybug_crc("m3_scx_high_5_bits_cgb_d", crc, EXPECTED_CRC);
-}
-
-#[test]
-fn test_m3_scx_low_3_bits_cgb_d() {
-    let bytes = read_rom_from_zip("m3_scx_low_3_bits.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_scx_low_3_bits_cgb_d");
-    const EXPECTED_CRC: u32 = 0xD49D_F057;
-    assert_mealybug_crc("m3_scx_low_3_bits_cgb_d", crc, EXPECTED_CRC);
-}
+mealybug_cgb_d!(test_m3_obp0_change_cgb_d, "m3_obp0_change", 0xF2A5_FCD4);
+mealybug_cgb_d!(
+    test_m3_scx_high_5_bits_cgb_d,
+    "m3_scx_high_5_bits",
+    0x3C71_CF1F
+);
+mealybug_cgb_d!(
+    test_m3_scx_low_3_bits_cgb_d,
+    "m3_scx_low_3_bits",
+    0xD49D_F057
+);
 mealybug_ignored_cgb_d!(test_m3_scy_change_cgb_d, "m3_scy_change", "2358");
-#[test]
-fn test_m3_window_timing_cgb_d() {
-    let bytes = read_rom_from_zip("m3_window_timing.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_window_timing_cgb_d");
-    const EXPECTED_CRC: u32 = 0x92B6_5C2A;
-    assert_mealybug_crc("m3_window_timing_cgb_d", crc, EXPECTED_CRC);
-}
-#[test]
-fn test_m3_window_timing_wx_0_cgb_d() {
-    let bytes = read_rom_from_zip("m3_window_timing_wx_0.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_window_timing_wx_0_cgb_d");
-    const EXPECTED_CRC: u32 = 0x68EF_35FF;
-    assert_mealybug_crc("m3_window_timing_wx_0_cgb_d", crc, EXPECTED_CRC);
-}
+mealybug_cgb_d!(test_m3_window_timing_cgb_d, "m3_window_timing", 0x92B6_5C2A);
+mealybug_cgb_d!(
+    test_m3_window_timing_wx_0_cgb_d,
+    "m3_window_timing_wx_0",
+    0x68EF_35FF
+);
 // Same invalid-reference rationale as the CGB-C non-sprite LCDC-WX case above.
 mealybug_ignored_cgb_d!(test_m3_wx_4_change_cgb_d, "m3_wx_4_change", "2579");
-
-#[test]
-fn test_m3_wx_4_change_sprites_cgb_d() {
-    let bytes = read_rom_from_zip("m3_wx_4_change_sprites.gb");
-    let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-    let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, "m3_wx_4_change_sprites_cgb_d");
-    const EXPECTED_CRC: u32 = 0x2F7D_8812;
-    assert_mealybug_crc("m3_wx_4_change_sprites_cgb_d", crc, EXPECTED_CRC);
-}
-
+mealybug_cgb_d!(
+    test_m3_wx_4_change_sprites_cgb_d,
+    "m3_wx_4_change_sprites",
+    0x2F7D_8812
+);
 mealybug_ignored_cgb_d!(test_m3_wx_5_change_cgb_d, "m3_wx_5_change", "2579");
-
 mealybug_ignored_cgb_d!(test_m3_wx_6_change_cgb_d, "m3_wx_6_change", "2579");

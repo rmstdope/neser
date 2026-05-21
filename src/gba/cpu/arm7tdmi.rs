@@ -55,6 +55,11 @@ pub struct Arm7tdmi {
     /// CPU is halted (e.g. via SWI Halt/VBlankIntrWait). While halted the
     /// CPU consumes idle cycles until an enabled interrupt wakes it.
     halted: bool,
+    /// Saved PC of an instruction whose data access caused a fault, waiting
+    /// to be dispatched as a Data Abort at the start of the next `step`.
+    /// Data Abort has ARM7TDMI exception priority 2 (higher than FIQ=3 and
+    /// IRQ=4), so it must be dispatched before asynchronous interrupts.
+    pending_data_abort_exec_pc: Option<u32>,
     /// Debug counter: number of times dispatch_irq has been called.
     #[cfg(test)]
     irq_dispatch_count: u64,
@@ -85,6 +90,7 @@ impl Arm7tdmi {
             prefetch_arm: [0; 3],
             prefetch_thumb: [0; 3],
             halted: false,
+            pending_data_abort_exec_pc: None,
             #[cfg(test)]
             irq_dispatch_count: 0,
         }
@@ -93,13 +99,13 @@ impl Arm7tdmi {
     fn refill_prefetch<B: Bus>(&mut self, bus: &mut B) {
         let pc = self.regs.r[15];
         if self.thumb() {
-            self.prefetch_thumb[0] = bus.read16(pc);
-            self.prefetch_thumb[1] = bus.read16(pc.wrapping_add(2));
-            self.prefetch_thumb[2] = bus.read16(pc.wrapping_add(4));
+            self.prefetch_thumb[0] = bus.fetch16(pc);
+            self.prefetch_thumb[1] = bus.fetch16(pc.wrapping_add(2));
+            self.prefetch_thumb[2] = bus.fetch16(pc.wrapping_add(4));
         } else {
-            self.prefetch_arm[0] = bus.read32(pc);
-            self.prefetch_arm[1] = bus.read32(pc.wrapping_add(4));
-            self.prefetch_arm[2] = bus.read32(pc.wrapping_add(8));
+            self.prefetch_arm[0] = bus.fetch32(pc);
+            self.prefetch_arm[1] = bus.fetch32(pc.wrapping_add(4));
+            self.prefetch_arm[2] = bus.fetch32(pc.wrapping_add(8));
         }
         self.prefetch_valid = true;
     }
@@ -167,7 +173,16 @@ impl Arm7tdmi {
     /// instructions ahead of the address being executed, matching the
     /// ARM7TDMI three-stage pipeline.
     pub fn step<B: Bus>(&mut self, bus: &mut B) -> u32 {
-        // Service pending interrupts first (FIQ has higher priority).
+        // Data Abort has ARM7TDMI exception priority 2, which is higher than
+        // FIQ (3) and IRQ (4).  A fault detected at the end of the previous
+        // step is saved in `pending_data_abort_exec_pc` and dispatched here,
+        // before any asynchronous interrupt is serviced.
+        if let Some(abort_pc) = self.pending_data_abort_exec_pc.take() {
+            self.dispatch_data_abort(abort_pc);
+            return 3;
+        }
+
+        // Service pending interrupts (FIQ has higher priority than IRQ).
         // An interrupt also wakes the CPU from halt state.
         if self.fiq_pending && !self.regs.f_flag() {
             self.halt_exit_pending = false;
@@ -201,6 +216,15 @@ impl Arm7tdmi {
         }
 
         let exec_pc = self.regs.r[15];
+
+        // Check for prefetch abort: raised when the instruction fetch to the
+        // current PC caused a bus fault.  Dispatch before executing the
+        // instruction — it reaches the Execute stage already faulted.
+        if bus.prefetch_abort_pending() {
+            self.dispatch_prefetch_abort(exec_pc);
+            return 3;
+        }
+
         let cycles = if self.thumb() {
             // PC during Thumb execution should read as exec_pc + 4.
             self.regs.r[15] = exec_pc.wrapping_add(4);
@@ -216,7 +240,7 @@ impl Arm7tdmi {
                 self.regs.r[15] = exec_pc.wrapping_add(2);
                 self.prefetch_thumb[0] = self.prefetch_thumb[1];
                 self.prefetch_thumb[1] = self.prefetch_thumb[2];
-                self.prefetch_thumb[2] = bus.read16(exec_pc.wrapping_add(6));
+                self.prefetch_thumb[2] = bus.fetch16(exec_pc.wrapping_add(6));
             }
             let code_addr = if outcome.branched {
                 self.regs.r[15]
@@ -249,7 +273,7 @@ impl Arm7tdmi {
                 self.regs.r[15] = exec_pc.wrapping_add(4);
                 self.prefetch_arm[0] = self.prefetch_arm[1];
                 self.prefetch_arm[1] = self.prefetch_arm[2];
-                self.prefetch_arm[2] = bus.read32(exec_pc.wrapping_add(12));
+                self.prefetch_arm[2] = bus.fetch32(exec_pc.wrapping_add(12));
             }
             let code_addr = if outcome.branched {
                 self.regs.r[15]
@@ -268,6 +292,15 @@ impl Arm7tdmi {
                 bus.n_cycles(outcome.data_addr, outcome.data_width),
             )
         };
+
+        // Data Abort: raised when a load/store instruction caused a bus fault.
+        // Rather than dispatching immediately (which would give it lower priority
+        // than FIQ/IRQ on the *next* step), save the faulting PC and dispatch at
+        // the start of the next step, where Data Abort (ARM7TDMI priority 2) is
+        // checked before FIQ (3) and IRQ (4).
+        if bus.data_abort_pending() {
+            self.pending_data_abort_exec_pc = Some(exec_pc);
+        }
 
         self.cycles = self.cycles.wrapping_add(cycles as u64);
         cycles
@@ -345,16 +378,81 @@ impl Arm7tdmi {
         // Latched-edge semantics: clear pending on dispatch.
         self.fiq_pending = false;
     }
+
+    /// Dispatch a Prefetch Abort: switch to Abort mode, save state, jump to 0x0C.
+    ///
+    /// Per ARM7TDMI spec (GBATek BASE+0Ch, priority 5):
+    ///   LR_abt = exec_pc + 4, so `SUBS PC, LR, #4` retries the faulting
+    ///   instruction.  I is set; F is unchanged.
+    fn dispatch_prefetch_abort(&mut self, exec_pc: u32) {
+        // LR_abt = exec_pc + 4 in both ARM and Thumb state.
+        let lr = exec_pc.wrapping_add(4);
+        let cpsr = self.regs.cpsr;
+        self.regs.switch_mode(CpuMode::Abort);
+        self.regs.set_spsr(cpsr);
+        self.regs.r[14] = lr;
+        self.regs.cpsr |= FLAG_I;
+        // F flag is left unchanged per GBATek ("I=1, F=unchanged").
+        self.regs.cpsr &= !FLAG_T;
+        self.regs.r[15] = ExceptionVector::PrefetchAbort as u32;
+        self.prefetch_valid = false;
+        self.cycles = self.cycles.wrapping_add(3);
+    }
+
+    /// Dispatch a Data Abort: switch to Abort mode, save state, jump to 0x10.
+    ///
+    /// Per ARM7TDMI spec (GBATek BASE+10h, priority 2):
+    ///   LR_abt = exec_pc + 8, so `SUBS PC, LR, #8` retries the faulting
+    ///   instruction.  I is set; F is unchanged.
+    fn dispatch_data_abort(&mut self, exec_pc: u32) {
+        // LR_abt = exec_pc + 8 in both ARM and Thumb state.
+        let lr = exec_pc.wrapping_add(8);
+        let cpsr = self.regs.cpsr;
+        self.regs.switch_mode(CpuMode::Abort);
+        self.regs.set_spsr(cpsr);
+        self.regs.r[14] = lr;
+        self.regs.cpsr |= FLAG_I;
+        // F flag is left unchanged per GBATek ("I=1, F=unchanged").
+        self.regs.cpsr &= !FLAG_T;
+        self.regs.r[15] = ExceptionVector::DataAbort as u32;
+        self.prefetch_valid = false;
+        self.cycles = self.cycles.wrapping_add(3);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::gba::cpu::bus::RamBus;
-    use crate::gba::cpu::registers::FLAG_Z;
+    use crate::gba::cpu::registers::{FLAG_F, FLAG_Z};
 
     fn write_arm_word(bus: &mut RamBus, addr: u32, word: u32) {
         bus.write_word(addr, word);
+    }
+
+    fn assert_arm_undefined_dispatch(instr: u32) {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !(FLAG_I | FLAG_F);
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = RamBus::new(0x200);
+        write_arm_word(&mut bus, 0x100, instr);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.mode(), CpuMode::Undefined);
+        assert_eq!(cpu.regs.spsr(), cpsr_before);
+        assert_eq!(cpu.regs.r[14], 0x100 + 4);
+        assert!(cpu.regs.i_flag(), "IRQ must be masked");
+        assert_eq!(
+            cpu.regs.cpsr & FLAG_F,
+            cpsr_before & FLAG_F,
+            "FIQ mask state must be preserved"
+        );
+        assert!(!cpu.regs.thumb(), "undefined exception enters ARM state");
+        assert_eq!(cpu.regs.r[15], ExceptionVector::Undefined as u32);
     }
 
     #[test]
@@ -680,6 +778,59 @@ mod tests {
         );
         assert!(!cpu.regs.thumb(), "T bit should be clear (ARM state)");
         assert_eq!(cpu.regs.r[15], ExceptionVector::Undefined as u32);
+    }
+
+    #[test]
+    fn coprocessor_transfer_dispatches_undefined_exception() {
+        // LDC p3, c2, [r1]: no GBA coprocessor acknowledges the transfer.
+        let ldc = (0xE_u32 << 28)
+            | (0b110 << 25)
+            | (1 << 24)
+            | (1 << 23)
+            | (1 << 20)
+            | (1 << 16)
+            | (2 << 12)
+            | (3 << 8);
+
+        assert_arm_undefined_dispatch(ldc);
+    }
+
+    #[test]
+    fn coprocessor_register_transfer_dispatches_undefined_exception() {
+        // MRC p4, #1, r3, c2, c5: no GBA coprocessor acknowledges the transfer.
+        let mrc = (0xE_u32 << 28)
+            | (0b1110 << 24)
+            | (1 << 21)
+            | (1 << 20)
+            | (2 << 16)
+            | (3 << 12)
+            | (4 << 8)
+            | (1 << 4)
+            | 5;
+
+        assert_arm_undefined_dispatch(mrc);
+    }
+
+    #[test]
+    fn swi_still_dispatches_to_supervisor_exception() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !(FLAG_I | FLAG_F);
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = RamBus::new(0x200);
+        write_arm_word(&mut bus, 0x100, 0xEF00_0000);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.mode(), CpuMode::Supervisor);
+        assert_eq!(cpu.regs.spsr(), cpsr_before);
+        assert_eq!(cpu.regs.r[14], 0x100 + 4);
+        assert!(cpu.regs.i_flag(), "IRQ must be masked");
+        assert_eq!(cpu.regs.cpsr & FLAG_F, cpsr_before & FLAG_F);
+        assert!(!cpu.regs.thumb(), "SWI enters ARM state");
+        assert_eq!(cpu.regs.r[15], ExceptionVector::SoftwareInterrupt as u32);
     }
 
     // -----------------------------------------------------------------------
@@ -1149,6 +1300,252 @@ mod tests {
             cycles, 21,
             "Thumb BL second halfword: 2*5S + 1*11N at target = 21"
         );
+    }
+
+    // Prefetch Abort and Data Abort exception dispatch tests
+    // -----------------------------------------------------------------------
+
+    /// Test bus that can be configured to signal prefetch or data aborts.
+    struct FaultBus {
+        inner: RamBus,
+        signal_prefetch_abort: bool,
+        signal_data_abort: bool,
+    }
+
+    impl FaultBus {
+        fn new() -> Self {
+            Self {
+                inner: RamBus::new(0x200),
+                signal_prefetch_abort: false,
+                signal_data_abort: false,
+            }
+        }
+    }
+
+    impl Bus for FaultBus {
+        fn read32(&mut self, addr: u32) -> u32 {
+            self.inner.read32(addr)
+        }
+        fn read16(&mut self, addr: u32) -> u16 {
+            self.inner.read16(addr)
+        }
+        fn read8(&mut self, addr: u32) -> u8 {
+            self.inner.read8(addr)
+        }
+        fn write32(&mut self, addr: u32, value: u32) {
+            self.inner.write32(addr, value);
+        }
+        fn write16(&mut self, addr: u32, value: u16) {
+            self.inner.write16(addr, value);
+        }
+        fn write8(&mut self, addr: u32, value: u8) {
+            self.inner.write8(addr, value);
+        }
+        fn n_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+            self.inner.n_cycles(addr, width)
+        }
+        fn s_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+            self.inner.s_cycles(addr, width)
+        }
+        fn prefetch_abort_pending(&mut self) -> bool {
+            let v = self.signal_prefetch_abort;
+            self.signal_prefetch_abort = false;
+            v
+        }
+        fn data_abort_pending(&mut self) -> bool {
+            let v = self.signal_data_abort;
+            self.signal_data_abort = false;
+            v
+        }
+    }
+
+    #[test]
+    fn prefetch_abort_dispatch_arm() {
+        // ARM mode: bus signals prefetch abort → CPU enters Abort mode.
+        // LR_abt = exec_pc + 4; SUBS PC, LR, #4 retries the faulting instruction.
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !FLAG_I;
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = FaultBus::new();
+        bus.signal_prefetch_abort = true;
+        // Prefill valid ARM NOPs so bus reads don't return garbage.
+        bus.inner.write_word(0x100, 0xE320_F000); // NOP
+        bus.inner.write_word(0x104, 0xE320_F000);
+        bus.inner.write_word(0x108, 0xE320_F000);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.regs.mode(),
+            CpuMode::Abort,
+            "CPU should enter Abort mode on prefetch abort"
+        );
+        assert_eq!(cpu.regs.spsr(), cpsr_before, "SPSR_abt should be old CPSR");
+        assert_eq!(
+            cpu.regs.r[14],
+            0x100 + 4,
+            "LR_abt = exec_pc + 4 for prefetch abort"
+        );
+        assert!(cpu.regs.i_flag(), "IRQ must be masked after prefetch abort");
+        assert!(!cpu.regs.thumb(), "T bit must be clear on exception entry");
+        assert_eq!(
+            cpu.regs.r[15],
+            ExceptionVector::PrefetchAbort as u32,
+            "PC should jump to prefetch abort vector (0x0C)"
+        );
+    }
+
+    #[test]
+    fn prefetch_abort_dispatch_thumb() {
+        // Thumb mode: bus signals prefetch abort → same LR_abt = exec_pc + 4.
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.set_thumb(true);
+        cpu.regs.cpsr &= !FLAG_I;
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = FaultBus::new();
+        bus.signal_prefetch_abort = true;
+        // Prefill valid Thumb NOPs (MOV R8, R8).
+        bus.inner.write_halfword(0x100, 0x46C0);
+        bus.inner.write_halfword(0x102, 0x46C0);
+        bus.inner.write_halfword(0x104, 0x46C0);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.mode(), CpuMode::Abort);
+        assert_eq!(cpu.regs.spsr(), cpsr_before);
+        assert_eq!(
+            cpu.regs.r[14],
+            0x100 + 4,
+            "LR_abt = exec_pc + 4 for Thumb prefetch abort"
+        );
+        assert!(cpu.regs.i_flag());
+        assert!(!cpu.regs.thumb());
+        assert_eq!(cpu.regs.r[15], ExceptionVector::PrefetchAbort as u32);
+    }
+
+    #[test]
+    fn data_abort_dispatch_arm() {
+        // ARM mode: bus signals data abort after LDR → CPU enters Abort mode on
+        // the *next* step, before any FIQ/IRQ (priority 2 > FIQ 3 > IRQ 4).
+        // LR_abt = exec_pc + 8; SUBS PC, LR, #8 retries the faulting instruction.
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !FLAG_I;
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = FaultBus::new();
+        bus.signal_data_abort = true;
+        // LDR R0, [R1] at 0x100 — data access faults; abort is saved as pending.
+        bus.inner.write_word(0x100, 0xE591_0000); // LDR R0, [R1]
+        bus.inner.write_word(0x104, 0xE320_F000);
+        bus.inner.write_word(0x108, 0xE320_F000);
+
+        // Step 1: LDR executes; data abort is saved as pending (not yet dispatched).
+        cpu.step(&mut bus);
+        assert_eq!(
+            cpu.regs.mode(),
+            CpuMode::User,
+            "abort not yet dispatched after step 1"
+        );
+        // Step 2: pending data abort is dispatched before any FIQ/IRQ.
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.regs.mode(),
+            CpuMode::Abort,
+            "CPU should enter Abort mode on data abort"
+        );
+        assert_eq!(cpu.regs.spsr(), cpsr_before, "SPSR_abt should be old CPSR");
+        assert_eq!(
+            cpu.regs.r[14],
+            0x100 + 8,
+            "LR_abt = exec_pc + 8 for data abort"
+        );
+        assert!(cpu.regs.i_flag(), "IRQ must be masked after data abort");
+        assert!(!cpu.regs.thumb(), "T bit must be clear on exception entry");
+        assert_eq!(
+            cpu.regs.r[15],
+            ExceptionVector::DataAbort as u32,
+            "PC should jump to data abort vector (0x10)"
+        );
+    }
+
+    #[test]
+    fn data_abort_dispatch_thumb() {
+        // Thumb mode: bus signals data abort → LR_abt = exec_pc + 8 (fixed per spec).
+        // Abort is dispatched on the next step before any FIQ/IRQ.
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.set_thumb(true);
+        cpu.regs.cpsr &= !FLAG_I;
+        cpu.regs.r[15] = 0x100;
+        let cpsr_before = cpu.regs.cpsr;
+
+        let mut bus = FaultBus::new();
+        bus.signal_data_abort = true;
+        // Thumb LDR R0, [R1] (format 9, offset=0) at 0x100.
+        bus.inner.write_halfword(0x100, 0x6808); // LDR R0, [R1]
+        bus.inner.write_halfword(0x102, 0x46C0);
+        bus.inner.write_halfword(0x104, 0x46C0);
+
+        // Step 1: LDR executes; data abort is saved as pending (not yet dispatched).
+        cpu.step(&mut bus);
+        assert_eq!(
+            cpu.regs.mode(),
+            CpuMode::User,
+            "abort not yet dispatched after step 1"
+        );
+        // Step 2: pending data abort is dispatched before any FIQ/IRQ.
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.mode(), CpuMode::Abort);
+        assert_eq!(cpu.regs.spsr(), cpsr_before);
+        assert_eq!(
+            cpu.regs.r[14],
+            0x100 + 8,
+            "LR_abt = exec_pc + 8 for Thumb data abort"
+        );
+        assert!(cpu.regs.i_flag());
+        assert!(!cpu.regs.thumb());
+        assert_eq!(cpu.regs.r[15], ExceptionVector::DataAbort as u32);
+    }
+
+    #[test]
+    fn data_abort_preempts_irq() {
+        // Verify Data Abort (priority 2) preempts a pending IRQ (priority 4).
+        // Step 1: LDR executes and faults → abort saved as pending.
+        // Step 2: IRQ is raised.  Data abort must be dispatched first.
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.cpsr &= !FLAG_I; // unmask IRQ
+        cpu.regs.r[15] = 0x100;
+
+        let mut bus = FaultBus::new();
+        bus.signal_data_abort = true;
+        bus.inner.write_word(0x100, 0xE591_0000); // LDR R0, [R1]
+        bus.inner.write_word(0x104, 0xE320_F000);
+        bus.inner.write_word(0x108, 0xE320_F000);
+
+        // Step 1: fault occurs, abort saved.
+        cpu.step(&mut bus);
+        // Raise IRQ while abort is still pending.
+        cpu.raise_irq();
+        // Step 2: data abort must win over IRQ.
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.regs.mode(),
+            CpuMode::Abort,
+            "Data Abort should preempt IRQ (priority 2 > 4)"
+        );
+        assert_eq!(cpu.regs.r[15], ExceptionVector::DataAbort as u32);
     }
 
     /// ARM step (32-bit fetch) should use Word width; Thumb step should use HalfwordOrByte.
