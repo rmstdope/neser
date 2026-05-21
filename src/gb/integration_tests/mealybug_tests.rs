@@ -314,15 +314,12 @@ mod tests {
     }
 
     fn parse_crc(value: &str) -> u32 {
-        u32::from_str_radix(
-            value
-                .strip_prefix("0x")
-                .unwrap_or_else(|| panic!("{value} should be a hex CRC literal"))
-                .replace('_', "")
-                .as_str(),
-            16,
-        )
-        .unwrap_or_else(|err| panic!("{value} should parse as a CRC-32 literal: {err}"))
+        let hex = value
+            .strip_prefix("0x")
+            .unwrap_or_else(|| panic!("{value} should be a hex CRC literal"))
+            .replace('_', "");
+        u32::from_str_radix(&hex, 16)
+            .unwrap_or_else(|err| panic!("{value} should parse as a CRC-32 literal: {err}"))
     }
 
     fn expected_png_path(case: &MealybugCase) -> PathBuf {
@@ -337,13 +334,8 @@ mod tests {
                 .join(model.expected_dir()),
         )
         .unwrap_or_else(|err| panic!("read expected PNG directory for {:?}: {err}", model))
-        .filter(|entry| {
-            entry
-                .as_ref()
-                .ok()
-                .and_then(|entry| entry.path().extension().map(|extension| extension == "png"))
-                .unwrap_or(false)
-        })
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
         .count()
     }
 
