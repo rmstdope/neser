@@ -39,9 +39,11 @@ const LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X: u8 = OBJ_PIXELS_PER_FETCH * 
 const SCX_FINE_MASK: u8 = 0x07;
 const SCX_TILE_MASK: u8 = !SCX_FINE_MASK;
 const SCX_LOW_BITS_SAMPLE_DOTS: u16 = 6;
+const DMG_SCY_WRITE_CALLBACK_DELAY_DOTS: u16 = 2;
+const DMG_OBJ_FETCH_EXTRA_SCY_ADVANCE_DOTS: u16 = 1;
 
-fn scy_fetch_start_dots(cgb_mode: bool) -> u16 {
-    SCX_LOW_BITS_SAMPLE_DOTS + if cgb_mode { 3 } else { 1 }
+fn scy_fetch_start_dots(_cgb_mode: bool) -> u16 {
+    SCX_LOW_BITS_SAMPLE_DOTS + 3
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -574,10 +576,9 @@ impl Default for BgScxSamplerConfig {
 /// On CGB-D (and newer), SCY is only read at the **B** stage (`b_stage_only = true`), so
 /// no inter-stage mixing can occur.
 ///
-/// The sampler mirrors the `BgScxSampler` step machine. The `fetch_start_dots` is set to
-/// `SCX_LOW_BITS_SAMPLE_DOTS + 1` for DMG and `SCX_LOW_BITS_SAMPLE_DOTS + 3` for CGB,
-/// placing the first B-stage one or two dots later than the SCX tile-column latch.
-/// This offset was determined empirically to best match mealybug tearoom reference images.
+/// The sampler mirrors the `BgScxSampler` step machine. The `fetch_start_dots`
+/// places the first B-stage three dots later than the SCX tile-column latch,
+/// matching Mealybug's mid-scanline SCY timing on DMG and CGB revisions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BgScySampler {
     step: BgScxFetchStep,
@@ -766,12 +767,11 @@ pub struct PixelFifoRenderer {
     bg_fetch_scy_data_high: u8,
     #[serde(default)]
     bg_scy_sampler: BgScySampler,
-    /// Effective SCY seen by the PPU tile fetcher. On DMG updated immediately on write;
-    /// on CGB updated after a 4-dot effective delay in this emulator's scheduler
-    /// (2 hardware T-cycles of propagation + 2 dots from tick-before-write ordering).
+    /// Effective SCY seen by the PPU tile fetcher after the write callback has
+    /// reached the model-specific fetch sampling point.
     #[serde(default)]
     effective_scy: u8,
-    /// Pending CGB SCY write: `(dot_when_active, new_value)`.
+    /// Pending SCY write: `(dot_when_active, new_value)`.
     /// When `elapsed >= dot_when_active`, `effective_scy` is updated to `new_value`.
     #[serde(default)]
     pending_cgb_scy: Option<(u16, u8)>,
@@ -965,10 +965,16 @@ impl PixelFifoRenderer {
             .is_some_and(ObjFetchModel::ignores_lcdc_obj_enable);
         if self.obj_fetch_ignores_lcdc || registers.lcdc & LCDC_OBJ_ENABLE != 0 {
             sprites::scan_oam_line_into(scanline, oam, registers.lcdc, &mut self.sprite_indices);
-            sprites::schedule_obj_penalties(
+            let bg_fetch_wait_extra_dots = if cgb_mode {
+                0
+            } else {
+                DMG_OBJ_FETCH_EXTRA_SCY_ADVANCE_DOTS
+            };
+            sprites::schedule_obj_penalties_with_bg_fetch_wait_extra(
                 &self.sprite_indices,
                 oam,
                 registers.scx,
+                bg_fetch_wait_extra_dots,
                 &mut self.obj_stall_events,
             );
             self.leftmost_obj_oam_x = self
@@ -1049,9 +1055,9 @@ impl PixelFifoRenderer {
             if !self.bg_scx_sampler.pauses_on_obj_fetch() {
                 self.bg_scx_sampler.tick(elapsed, fetch_scx);
                 self.clear_pending_scx_sample_override(will_sample_scx);
-                self.bg_scy_sampler.tick(elapsed, effective_scy);
-            } else if self.pending_obj_bg_fetch_wait_dots > 0 {
-                // The leading OBJ tile-wait samples SCY timing without
+            }
+            if self.pending_obj_bg_fetch_wait_dots > 0 {
+                // The leading OBJ tile-wait/fetch setup samples SCY timing without
                 // advancing the CGB visible-tile SCX prefetch abstraction.
                 self.bg_scy_sampler.tick(elapsed, effective_scy);
             }
@@ -1183,8 +1189,8 @@ impl PixelFifoRenderer {
         if !self.active {
             return;
         }
+        let elapsed = dot.saturating_sub(self.mode3_start_dot);
         if cgb_mode {
-            let elapsed = dot.saturating_sub(self.mode3_start_dot);
             // On CGB, SCY writes take effect 4 T-cycles after the write dot.
             // This accounts for the emulator's tick-before-write model plus the CGB
             // hardware write propagation delay. Both CGB-C and CGB-D use the same
@@ -1192,9 +1198,13 @@ impl PixelFifoRenderer {
             // effective_scy (b_stage_only flag), not from write timing.
             self.pending_cgb_scy = Some((elapsed.saturating_add(4), new_scy));
         } else {
-            // DMG: immediate effect.
-            self.pending_cgb_scy = None;
-            self.effective_scy = new_scy;
+            // DMG has no hardware propagation delay; the two-dot delay here
+            // aligns this tick-before-register-write callback with the PPU's
+            // observed fetch-stage sampling point.
+            self.pending_cgb_scy = Some((
+                elapsed.saturating_add(DMG_SCY_WRITE_CALLBACK_DELAY_DOTS),
+                new_scy,
+            ));
         }
     }
 

@@ -104,6 +104,7 @@ macro_rules! mealybug_cgb_d {
 }
 
 /// Generate an ignored DMG-B mealybug test.
+#[allow(unused_macros)]
 macro_rules! mealybug_ignored_dmg_b {
     ($name:ident, $rom_base:literal, $issue:literal, $expected_crc:expr) => {
         #[test]
@@ -554,12 +555,7 @@ mealybug_dmg_b!(
     "m3_scx_low_3_bits",
     0xD49D_F057
 );
-mealybug_ignored_dmg_b!(
-    test_m3_scy_change_dmg_b,
-    "m3_scy_change",
-    "2597",
-    0x8179_BF2F
-);
+mealybug_dmg_b!(test_m3_scy_change_dmg_b, "m3_scy_change", 0x8179_BF2F);
 mealybug_dmg_b!(test_m3_window_timing_dmg_b, "m3_window_timing", 0x92B6_5C2A);
 mealybug_dmg_b!(
     test_m3_window_timing_wx_0_dmg_b,

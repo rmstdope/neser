@@ -20,8 +20,8 @@ pub struct SpritePixel {
 pub(super) struct ObjPenaltyEvent {
     pub x: u8,
     pub dots: u16,
-    /// Leading dots where an on-screen OBJ waits for the BG fetcher to reach
-    /// the target tile before the OBJ tile fetch itself starts.
+    /// Leading stall dots where the BG fetcher keeps advancing before the
+    /// visible pixel stream resumes.
     #[serde(default)]
     pub bg_fetch_wait_dots: u16,
 }
@@ -356,6 +356,18 @@ pub(super) fn schedule_obj_penalties(
     scx: u8,
     events: &mut Vec<ObjPenaltyEvent>,
 ) {
+    schedule_obj_penalties_with_bg_fetch_wait_extra(sprite_indices, oam, scx, 0, events);
+}
+
+/// Build OBJ stall events, adding model-specific BG fetcher advance dots to
+/// on-screen sprites without changing the total OBJ penalty.
+pub(super) fn schedule_obj_penalties_with_bg_fetch_wait_extra(
+    sprite_indices: &[usize],
+    oam: &[u8; 0xA0],
+    scx: u8,
+    bg_fetch_wait_extra_dots: u16,
+    events: &mut Vec<ObjPenaltyEvent>,
+) {
     events.clear();
     debug_assert!(
         sprite_indices.len() <= 10,
@@ -391,7 +403,7 @@ pub(super) fn schedule_obj_penalties(
             let tile_wait_dots = tile_wait_penalty(oam_x, bg_x);
             event_dots += tile_wait_dots;
             if oam_x >= FIRST_VISIBLE_OAM_X {
-                bg_fetch_wait_dots = tile_wait_dots;
+                bg_fetch_wait_dots = (tile_wait_dots + bg_fetch_wait_extra_dots).min(event_dots);
             }
             if seen_count < seen_tiles.len() {
                 seen_tiles[seen_count] = tile_id;
@@ -719,6 +731,23 @@ mod tests {
                 x: 0,
                 dots: 11,
                 bg_fetch_wait_dots: 5
+            }]
+        );
+        assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 11);
+    }
+
+    #[test]
+    fn test_obj_penalty_extra_bg_fetch_wait_does_not_change_total_penalty() {
+        let (oam, indices) = penalty_sprites(&[8]);
+        let mut events = Vec::new();
+        schedule_obj_penalties_with_bg_fetch_wait_extra(&indices, &oam, 0, 1, &mut events);
+
+        assert_eq!(
+            events,
+            vec![ObjPenaltyEvent {
+                x: 0,
+                dots: 11,
+                bg_fetch_wait_dots: 6
             }]
         );
         assert_eq!(calculate_obj_penalty(&indices, &oam, 0), 11);
