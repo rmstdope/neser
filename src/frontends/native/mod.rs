@@ -5,6 +5,7 @@
 
 mod app_state;
 mod audio;
+pub(crate) mod egui_theme;
 mod event_loop;
 pub(crate) mod gamepad;
 pub(crate) mod gl_backend;
