@@ -62,10 +62,7 @@ pub fn handle_key_pressed(
             handle_unmodified_key(console, key_code, app_state, audio)
         }
         Console::GameBoy(_) => handle_gameboy_key_pressed(console, key_code, app_state, audio),
-        Console::GameBoyAdvance(_) => {
-            // GBA input not yet implemented - use game boy handler for now
-            handle_gameboy_key_pressed(console, key_code, app_state, audio)
-        }
+        Console::GameBoyAdvance(_) => handle_gba_key_pressed(console, key_code, app_state, audio),
     }
 }
 
@@ -94,8 +91,7 @@ pub fn handle_key_released(
             }
         }
         Console::GameBoyAdvance(_) => {
-            // GBA input not yet implemented - use Game Boy handler for now
-            if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
+            if let Some(btn_id) = gba_key_to_button_id(key_code) {
                 console.set_button(0, btn_id, false);
             }
         }
@@ -158,6 +154,18 @@ fn gameboy_key_to_button_id(key_code: KeyCode) -> Option<u8> {
     }
 }
 
+/// Maps a key code to a GBA button ID.
+///
+/// Extends the Game Boy/NES-style keyboard layout with Q=L and E=R,
+/// matching the native NES/SNES shoulder-button positions.
+fn gba_key_to_button_id(key_code: KeyCode) -> Option<u8> {
+    match key_code {
+        KeyCode::KeyQ => Some(8), // L
+        KeyCode::KeyE => Some(9), // R
+        _ => gameboy_key_to_button_id(key_code),
+    }
+}
+
 /// Attempts to handle a key press that is identical for all console types.
 ///
 /// Returns `Some(KeyOutcome::Continue)` for Escape and Space (which mutate
@@ -210,6 +218,31 @@ fn handle_gameboy_key_pressed(
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
+    handle_single_joypad_key_pressed(
+        console,
+        key_code,
+        app_state,
+        audio,
+        gameboy_key_to_button_id,
+    )
+}
+
+fn handle_gba_key_pressed(
+    console: &mut Console,
+    key_code: KeyCode,
+    app_state: &mut NativeAppState,
+    audio: Option<&dyn EmulatorAudio>,
+) -> KeyOutcome {
+    handle_single_joypad_key_pressed(console, key_code, app_state, audio, gba_key_to_button_id)
+}
+
+fn handle_single_joypad_key_pressed(
+    console: &mut Console,
+    key_code: KeyCode,
+    app_state: &mut NativeAppState,
+    audio: Option<&dyn EmulatorAudio>,
+    key_to_button_id: fn(KeyCode) -> Option<u8>,
+) -> KeyOutcome {
     // Generic hotkeys that work for any system.
     if app_state.modifiers.control_key() {
         return match key_code {
@@ -245,7 +278,7 @@ fn handle_gameboy_key_pressed(
         KeyCode::F10 => return KeyOutcome::StepOver,
         KeyCode::F11 => return KeyOutcome::StepInto,
         _ => {
-            if let Some(btn_id) = gameboy_key_to_button_id(key_code) {
+            if let Some(btn_id) = key_to_button_id(key_code) {
                 console.set_button(0, btn_id, true);
             }
         }
@@ -639,6 +672,17 @@ mod tests {
         Console::Nes(Box::new(make_nes_four_score()))
     }
 
+    fn make_gba_console() -> Console {
+        Console::new_gba(AppContext::new_with_config(Config::default()))
+    }
+
+    fn gba_keyinput(console: &Console) -> u16 {
+        let Console::GameBoyAdvance(gba) = console else {
+            panic!("expected GBA console");
+        };
+        gba.bus().keypad.read_keyinput()
+    }
+
     fn make_state() -> NativeAppState {
         NativeAppState::default()
     }
@@ -664,6 +708,17 @@ mod tests {
     const BIT_DOWN: u8 = 1 << Button::Down as u8;
     const BIT_LEFT: u8 = 1 << Button::Left as u8;
     const BIT_RIGHT: u8 = 1 << Button::Right as u8;
+
+    const GBA_KEY_A: u16 = 1 << 0;
+    const GBA_KEY_B: u16 = 1 << 1;
+    const GBA_KEY_SELECT: u16 = 1 << 2;
+    const GBA_KEY_START: u16 = 1 << 3;
+    const GBA_KEY_RIGHT: u16 = 1 << 4;
+    const GBA_KEY_LEFT: u16 = 1 << 5;
+    const GBA_KEY_UP: u16 = 1 << 6;
+    const GBA_KEY_DOWN: u16 = 1 << 7;
+    const GBA_KEY_R: u16 = 1 << 8;
+    const GBA_KEY_L: u16 = 1 << 9;
 
     // ── Mock audio ────────────────────────────────────────────────────────────
 
@@ -1791,6 +1846,94 @@ mod tests {
             console.get_joypad_button_states(0) & BIT_RIGHT,
             0,
             "Releasing D should clear GB Right button"
+        );
+    }
+
+    #[test]
+    fn gba_keyboard_maps_all_ten_buttons() {
+        let cases = [
+            (KeyCode::KeyT, GBA_KEY_A, "T should press GBA A"),
+            (KeyCode::KeyR, GBA_KEY_B, "R should press GBA B"),
+            (KeyCode::Digit4, GBA_KEY_SELECT, "4 should press GBA Select"),
+            (KeyCode::Digit5, GBA_KEY_START, "5 should press GBA Start"),
+            (KeyCode::KeyW, GBA_KEY_UP, "W should press GBA Up"),
+            (KeyCode::KeyS, GBA_KEY_DOWN, "S should press GBA Down"),
+            (KeyCode::KeyA, GBA_KEY_LEFT, "A should press GBA Left"),
+            (KeyCode::KeyD, GBA_KEY_RIGHT, "D should press GBA Right"),
+            (KeyCode::KeyQ, GBA_KEY_L, "Q should press GBA L"),
+            (KeyCode::KeyE, GBA_KEY_R, "E should press GBA R"),
+            (KeyCode::ArrowUp, GBA_KEY_UP, "ArrowUp should press GBA Up"),
+            (
+                KeyCode::ArrowDown,
+                GBA_KEY_DOWN,
+                "ArrowDown should press GBA Down",
+            ),
+            (
+                KeyCode::ArrowLeft,
+                GBA_KEY_LEFT,
+                "ArrowLeft should press GBA Left",
+            ),
+            (
+                KeyCode::ArrowRight,
+                GBA_KEY_RIGHT,
+                "ArrowRight should press GBA Right",
+            ),
+        ];
+
+        for (key, mask, message) in cases {
+            let mut console = make_gba_console();
+            let mut state = make_state();
+            handle_key_pressed(&mut console, key, &mut state, None);
+            assert_eq!(gba_keyinput(&console) & mask, 0, "{message}");
+        }
+    }
+
+    #[test]
+    fn gba_keyboard_releases_l_and_r_shoulders() {
+        let mut console = make_gba_console();
+        let mut state = make_state();
+
+        handle_key_pressed(&mut console, KeyCode::KeyQ, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyE, &mut state, None);
+
+        assert_eq!(
+            gba_keyinput(&console) & GBA_KEY_L,
+            0,
+            "Q should press GBA L"
+        );
+        assert_eq!(
+            gba_keyinput(&console) & GBA_KEY_R,
+            0,
+            "E should press GBA R"
+        );
+
+        handle_key_released(&mut console, KeyCode::KeyQ, 0, false);
+        handle_key_released(&mut console, KeyCode::KeyE, 0, false);
+
+        assert_ne!(
+            gba_keyinput(&console) & GBA_KEY_L,
+            0,
+            "releasing Q should clear GBA L"
+        );
+        assert_ne!(
+            gba_keyinput(&console) & GBA_KEY_R,
+            0,
+            "releasing E should clear GBA R"
+        );
+    }
+
+    #[test]
+    fn gameboy_q_and_e_do_not_map_to_buttons() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+
+        handle_key_pressed(&mut console, KeyCode::KeyQ, &mut state, None);
+        handle_key_pressed(&mut console, KeyCode::KeyE, &mut state, None);
+
+        assert_eq!(
+            console.get_joypad_button_states(0),
+            0,
+            "Game Boy keyboard mapping should remain eight-button only"
         );
     }
 }

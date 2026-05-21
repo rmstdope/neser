@@ -253,6 +253,7 @@ impl NativeAppState {
                 Console::GameBoy(_) | Console::GameBoyAdvance(_) => (false, false),
             };
             return Some(help_overlay_text(
+                console,
                 self.gamepad_count,
                 self.four_score_enabled,
                 port1_is_power_pad,
@@ -272,6 +273,7 @@ impl NativeAppState {
 }
 
 fn help_overlay_text(
+    console: &Console,
     gamepad_count: usize,
     four_score: bool,
     port1_is_power_pad: bool,
@@ -301,6 +303,10 @@ F6/F7: Save/Load state";
     };
 
     let mut controllers = String::new();
+
+    if matches!(console, Console::GameBoyAdvance(_)) {
+        return format!("{hotkeys}{}", gba_keyboard_section());
+    }
 
     for port in 1..=max_ports {
         let port_u8 = port as u8;
@@ -347,8 +353,8 @@ fn joypad_keyboard_section(port: usize, slot: usize) -> String {
         format!(
             "\n\nPort {port}: Keyboard\n\
 W/A/S/D: D-Pad\n\
-R: A\n\
-T: B\n\
+R: B\n\
+T: A\n\
 4: Select\n\
 5: Start"
         )
@@ -362,6 +368,18 @@ P: B\n\
 0: Start"
         )
     }
+}
+
+fn gba_keyboard_section() -> &'static str {
+    "\n\nGBA Keyboard\n\
+W/A/S/D: D-Pad\n\
+Arrow keys: D-Pad\n\
+Q: L\n\
+E: R\n\
+R: B\n\
+T: A\n\
+4: Select\n\
+5: Start"
 }
 
 fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
@@ -471,6 +489,10 @@ mod tests {
         Console::Nes(Box::new(Nes::new(AppContext::new_with_config(
             Config::default(),
         ))))
+    }
+
+    fn make_gba_console() -> Console {
+        Console::new_gba(AppContext::new_with_config(Config::default()))
     }
 
     // ── overlay_text: help overlay ────────────────────────────────────────────
@@ -1088,6 +1110,33 @@ mod tests {
         assert!(
             !text.contains("Power Pad"),
             "Help overlay should not show Power Pad section for default joypads, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_lists_gba_keyboard_shoulders() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            ..NativeAppState::default()
+        };
+
+        let text = state.overlay_text(&make_gba_console(), None).unwrap();
+
+        assert!(
+            text.contains("Q: L"),
+            "GBA help overlay should list Q as L shoulder, got:\n{text}"
+        );
+        assert!(
+            text.contains("E: R"),
+            "GBA help overlay should list E as R shoulder, got:\n{text}"
+        );
+        assert!(
+            text.contains("R: B"),
+            "GBA help overlay should list R as B, got:\n{text}"
+        );
+        assert!(
+            text.contains("T: A"),
+            "GBA help overlay should list T as A, got:\n{text}"
         );
     }
 }
