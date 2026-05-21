@@ -686,12 +686,7 @@ mealybug_cgb_c!(
     "m3_scx_low_3_bits",
     0xD49D_F057
 );
-mealybug_ignored_cgb_c!(
-    test_m3_scy_change_cgb_c,
-    "m3_scy_change",
-    "2597",
-    0xEEAF_63B5
-);
+mealybug_cgb_c!(test_m3_scy_change_cgb_c, "m3_scy_change", 0xEEAF_63B5);
 mealybug_cgb_c!(test_m3_scy_change2_cgb_c, "m3_scy_change2", 0x6D57_9852);
 mealybug_cgb_c!(test_m3_window_timing_cgb_c, "m3_window_timing", 0x0BE0_3D45);
 mealybug_cgb_c!(
@@ -805,12 +800,7 @@ mealybug_cgb_d!(
     "m3_scx_low_3_bits",
     0xD49D_F057
 );
-mealybug_ignored_cgb_d!(
-    test_m3_scy_change_cgb_d,
-    "m3_scy_change",
-    "2597",
-    0x7A71_4C6D
-);
+mealybug_cgb_d!(test_m3_scy_change_cgb_d, "m3_scy_change", 0x7A71_4C6D);
 mealybug_cgb_d!(test_m3_window_timing_cgb_d, "m3_window_timing", 0x92B6_5C2A);
 mealybug_cgb_d!(
     test_m3_window_timing_wx_0_cgb_d,

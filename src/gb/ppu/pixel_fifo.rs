@@ -782,6 +782,8 @@ pub struct PixelFifoRenderer {
     #[serde(default)]
     pending_obj_stall_dots: u16,
     #[serde(default)]
+    pending_obj_bg_fetch_wait_dots: u16,
+    #[serde(default)]
     obj_stall_events: Vec<sprites::ObjPenaltyEvent>,
     #[serde(default)]
     next_obj_stall_event: usize,
@@ -867,6 +869,7 @@ impl PixelFifoRenderer {
             pending_cgb_scy: None,
             scy_b_stage_only: false,
             pending_obj_stall_dots: 0,
+            pending_obj_bg_fetch_wait_dots: 0,
             obj_stall_events: Vec::new(),
             next_obj_stall_event: 0,
             active_obj_stall_x: None,
@@ -944,6 +947,7 @@ impl PixelFifoRenderer {
         self.pending_window_startup_stall_dots = 0;
         self.window_startup_stall_consumed = 0;
         self.pending_obj_stall_dots = 0;
+        self.pending_obj_bg_fetch_wait_dots = 0;
         self.next_obj_stall_event = 0;
         self.active_obj_stall_x = None;
         self.canceled_obj_fetch_ranges.clear();
@@ -1046,9 +1050,16 @@ impl PixelFifoRenderer {
                 self.bg_scx_sampler.tick(elapsed, fetch_scx);
                 self.clear_pending_scx_sample_override(will_sample_scx);
                 self.bg_scy_sampler.tick(elapsed, effective_scy);
+            } else if self.pending_obj_bg_fetch_wait_dots > 0 {
+                // The leading OBJ tile-wait samples SCY timing without
+                // advancing the CGB visible-tile SCX prefetch abstraction.
+                self.bg_scy_sampler.tick(elapsed, effective_scy);
             }
+            self.pending_obj_bg_fetch_wait_dots =
+                self.pending_obj_bg_fetch_wait_dots.saturating_sub(1);
             self.pending_obj_stall_dots -= 1;
             if self.pending_obj_stall_dots == 0 {
+                self.pending_obj_bg_fetch_wait_dots = 0;
                 self.active_obj_stall_x = None;
                 self.active_obj_fetch_lcdc_range = None;
             }
@@ -3770,6 +3781,7 @@ impl PixelFifoRenderer {
                 self.start_obj_fetch_lcdc_range(event.x, lcdc);
             }
             self.pending_obj_stall_dots += event.dots;
+            self.pending_obj_bg_fetch_wait_dots += event.bg_fetch_wait_dots;
             self.next_obj_stall_event += 1;
         }
     }
