@@ -712,10 +712,10 @@ impl ApplicationHandler for NativeEventLoop {
 
                 if let Some(ref mut gl) = self.gl_wrapper {
                     gl.handle_key_event(&event);
-                    // Forward character text to imgui for debugger input fields
+                    // Forward character text to UI debugger input fields
                     // (breakpoint address, memory-watch).  Without this, typing
-                    // in imgui text fields has no effect (#1859).
-                    if self.state.keyboard_captured_by_imgui()
+                    // in debugger text fields has no effect (#1859).
+                    if self.state.keyboard_captured_by_ui()
                         && let Some(ref text) = event.text
                     {
                         gl.handle_text_input(text.to_string());
@@ -852,7 +852,7 @@ impl ApplicationHandler for NativeEventLoop {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                // Forward to imgui/UI layer always.
+                // Forward to the UI layer always.
                 if let Some(ref mut gl) = self.gl_wrapper {
                     gl.handle_cursor_moved(position);
                 }
@@ -862,7 +862,7 @@ impl ApplicationHandler for NativeEventLoop {
             }
 
             WindowEvent::MouseInput { button, state, .. } => {
-                // Forward to imgui/UI layer.
+                // Forward to the UI layer.
                 if let Some(ref mut gl) = self.gl_wrapper {
                     gl.handle_mouse_button(button, state);
                 }
