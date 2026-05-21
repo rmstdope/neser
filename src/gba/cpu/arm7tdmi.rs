@@ -915,6 +915,176 @@ mod tests {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Cross-region branch timing (RED → GREEN for each branch type)
+    // -----------------------------------------------------------------------
+
+    /// ARM B cross-region: 2S+1N code cycles must be at the NEW (target) PC,
+    /// not at the source exec_pc.
+    ///
+    /// GBATek: "If an instruction jumps to a different memory area, then all
+    /// code cycles for that opcode are having waitstate characteristics of the
+    /// NEW memory area."
+    #[test]
+    fn arm_b_cross_region_resolves_cycles_at_target_pc() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.r[15] = 0x0000_0000;
+
+        let mut bus = AddressTimingBus::new();
+        // ARM B: from exec_pc=0x00000000 to target 0x01000000.
+        // During ARM execution: PC = exec_pc + 8 = 0x8.
+        // offset = 0x01000000 - 0x8 = 0x00FFFFF8; imm24 = 0x3FFFFE.
+        let b_instr: u32 = 0xEA3F_FFFE;
+        bus.write_word(0x0000_0000, b_instr);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.r[15], 0x0100_0000, "B should jump to target");
+        assert_eq!(
+            cycles, 21,
+            "ARM B cross-region: 2*5S + 1*11N at target = 21"
+        );
+    }
+
+    /// ARM BL cross-region: same pipeline-refill timing as B, plus saves LR.
+    #[test]
+    fn arm_bl_cross_region_resolves_cycles_at_target_pc() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.r[15] = 0x0000_0000;
+
+        let mut bus = AddressTimingBus::new();
+        // ARM BL: same offset as B (0x3FFFFE) but bit 24 set for link.
+        let bl_instr: u32 = 0xEB3F_FFFE;
+        bus.write_word(0x0000_0000, bl_instr);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.regs.r[15], 0x0100_0000, "BL should jump to target");
+        assert_eq!(
+            cpu.regs.r[14], 0x0000_0004,
+            "BL should save return addr to LR"
+        );
+        assert_eq!(
+            cycles, 21,
+            "ARM BL cross-region: 2*5S + 1*11N at target = 21"
+        );
+    }
+
+    /// ARM BX cross-region (switches to Thumb): 2S+1N at target, width is
+    /// HalfwordOrByte because BX entered Thumb mode.
+    #[test]
+    fn arm_bx_cross_region_resolves_cycles_at_target_pc() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.r[15] = 0x0000_0000;
+        cpu.regs.r[1] = 0x0100_0001; // bit 0 = 1 → switch to Thumb
+
+        let mut bus = AddressTimingBus::new();
+        // ARM BX R1: 0xE12FFF11
+        let bx_instr: u32 = 0xE12F_FF11;
+        bus.write_word(0x0000_0000, bx_instr);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.regs.r[15], 0x0100_0000,
+            "BX should jump to target (bit 0 cleared)"
+        );
+        assert!(cpu.thumb(), "BX with bit 0 set should switch to Thumb");
+        assert_eq!(
+            cycles, 21,
+            "ARM BX cross-region (Thumb): 2*5S + 1*11N at target = 21"
+        );
+    }
+
+    /// Thumb BX cross-region (switches to ARM): 2S+1N at target, width is
+    /// Word because BX entered ARM mode.
+    #[test]
+    fn thumb_bx_cross_region_resolves_cycles_at_target_pc() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.set_thumb(true);
+        cpu.regs.r[15] = 0x0000_0000;
+        cpu.regs.r[1] = 0x0100_0000; // bit 0 = 0 → switch to ARM
+
+        let mut bus = AddressTimingBus::new();
+        // Thumb BX R1: 0100 0111 0 0 001 000 = 0x4708
+        let bx_thumb: u16 = 0x4708;
+        bus.write_halfword(0x0000_0000, bx_thumb);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.regs.r[15], 0x0100_0000,
+            "Thumb BX should jump to target"
+        );
+        assert!(!cpu.thumb(), "BX with bit 0 clear should switch to ARM");
+        assert_eq!(
+            cycles, 21,
+            "Thumb BX cross-region (ARM): 2*5S + 1*11N at target = 21"
+        );
+    }
+
+    /// Thumb BL first halfword (H=0): NOT a branch. GBATek spec says Thumb BL
+    /// still executes 1S in the OLD area for the setup instruction.
+    #[test]
+    fn thumb_bl_first_step_uses_source_region() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.set_thumb(true);
+        cpu.regs.r[15] = 0x0000_0000;
+
+        let mut bus = AddressTimingBus::new();
+        // BL first halfword (H=0): 1111 0 _ _ _ _ _ _ _ _ _ _ _ = 0xF000 (offset=0)
+        let bl_hi: u16 = 0xF000;
+        bus.write_halfword(0x0000_0000, bl_hi);
+        bus.write_halfword(0x0000_0002, 0x0000); // padding for prefetch
+
+        let cycles = cpu.step(&mut bus);
+
+        // First halfword sets LR but does NOT branch (PC advances normally).
+        assert_eq!(
+            cpu.regs.r[15], 0x0000_0002,
+            "BL first step: PC advances by 2"
+        );
+        assert_eq!(
+            cycles, 1,
+            "Thumb BL first halfword: 1S at source region = 1 cycle"
+        );
+    }
+
+    /// Thumb BL second halfword (H=1): IS a branch. Per GBATek, the 2S+1N
+    /// pipeline refill uses the NEW (target) area timing.
+    #[test]
+    fn thumb_bl_second_step_cross_region_resolves_cycles_at_target_pc() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.set_thumb(true);
+        cpu.regs.r[15] = 0x0000_0002; // second halfword address
+        // Pre-set LR so BL suffix branches to 0x01000000 (target region).
+        // exec_format19(H=1): target = LR + (offset11 << 1); with offset11=0 → target = LR.
+        cpu.regs.r[14] = 0x0100_0000;
+
+        let mut bus = AddressTimingBus::new();
+        // BL second halfword (H=1): 1111 1 _ _ _ _ _ _ _ _ _ _ _ = 0xF800 (offset=0)
+        let bl_lo: u16 = 0xF800;
+        bus.write_halfword(0x0000_0002, bl_lo);
+        bus.write_halfword(0x0000_0004, 0x0000); // padding for prefetch
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.regs.r[15], 0x0100_0000,
+            "BL second step: PC = branch target"
+        );
+        assert_eq!(
+            cycles, 21,
+            "Thumb BL second halfword: 2*5S + 1*11N at target = 21"
+        );
+    }
+
     /// ARM step (32-bit fetch) should use Word width; Thumb step should use HalfwordOrByte.
     #[test]
     fn step_arm_uses_word_width_thumb_uses_halfword() {
