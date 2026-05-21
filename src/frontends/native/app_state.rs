@@ -305,7 +305,11 @@ F6/F7: Save/Load state";
     let mut controllers = String::new();
 
     if matches!(console, Console::GameBoyAdvance(_)) {
-        return format!("{hotkeys}{}", gba_keyboard_section());
+        return format!("{hotkeys}{}", gba_keyboard_section(gamepad_count));
+    }
+
+    if matches!(console, Console::GameBoy(_)) {
+        return format!("{hotkeys}{}", gameboy_keyboard_section(gamepad_count));
     }
 
     for port in 1..=max_ports {
@@ -370,8 +374,31 @@ P: B\n\
     }
 }
 
-fn gba_keyboard_section() -> &'static str {
-    "\n\nGBA Keyboard\n\
+fn gameboy_keyboard_section(gamepad_count: usize) -> String {
+    let controller = if gamepad_count == 0 {
+        "Keyboard".to_string()
+    } else {
+        "Gamepad + Keyboard aliases".to_string()
+    };
+    format!(
+        "\n\nGame Boy: {controller}\n\
+W/A/S/D: D-Pad\n\
+Arrow keys: D-Pad\n\
+R: B\n\
+T: A\n\
+4: Select\n\
+5: Start"
+    )
+}
+
+fn gba_keyboard_section(gamepad_count: usize) -> String {
+    let controller = if gamepad_count == 0 {
+        "Keyboard".to_string()
+    } else {
+        "Gamepad + Keyboard shoulders/aliases".to_string()
+    };
+    format!(
+        "\n\nGBA: {controller}\n\
 W/A/S/D: D-Pad\n\
 Arrow keys: D-Pad\n\
 Q: L\n\
@@ -380,6 +407,7 @@ R: B\n\
 T: A\n\
 4: Select\n\
 5: Start"
+    )
 }
 
 fn cart_switch_overlay_text(cart_switch: &CartridgeSwitchState) -> String {
@@ -493,6 +521,10 @@ mod tests {
 
     fn make_gba_console() -> Console {
         Console::new_gba(AppContext::new_with_config(Config::default()))
+    }
+
+    fn make_gameboy_console() -> Console {
+        Console::new_gameboy(AppContext::new_with_config(Config::default()))
     }
 
     // ── overlay_text: help overlay ────────────────────────────────────────────
@@ -1137,6 +1169,73 @@ mod tests {
         assert!(
             text.contains("T: A"),
             "GBA help overlay should list T as A, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_lists_gba_gamepad_and_keyboard_when_gamepad_connected() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 1,
+            ..NativeAppState::default()
+        };
+
+        let text = state.overlay_text(&make_gba_console(), None).unwrap();
+
+        assert!(
+            text.contains("Gamepad + Keyboard shoulders/aliases"),
+            "GBA help overlay should mention connected gamepad plus keyboard-only controls, got:\n{text}"
+        );
+        assert!(
+            text.contains("Q: L") && text.contains("E: R"),
+            "GBA help overlay should still list keyboard shoulders with a gamepad connected, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_lists_gameboy_arrow_key_aliases() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            ..NativeAppState::default()
+        };
+
+        let text = state.overlay_text(&make_gameboy_console(), None).unwrap();
+
+        assert!(
+            text.contains("Game Boy: Keyboard"),
+            "Game Boy help overlay should use a Game Boy-specific section, got:\n{text}"
+        );
+        assert!(
+            text.contains("Arrow keys: D-Pad"),
+            "Game Boy help overlay should list arrow-key D-pad aliases, got:\n{text}"
+        );
+        assert!(
+            !text.contains("Q: L") && !text.contains("E: R"),
+            "Game Boy help overlay should not list GBA shoulders, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_lists_gameboy_gamepad_and_keyboard_when_gamepad_connected() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            gamepad_count: 1,
+            ..NativeAppState::default()
+        };
+
+        let text = state.overlay_text(&make_gameboy_console(), None).unwrap();
+
+        assert!(
+            text.contains("Game Boy: Gamepad + Keyboard aliases"),
+            "Game Boy help overlay should mention connected gamepad plus keyboard aliases, got:\n{text}"
+        );
+        assert!(
+            text.contains("Arrow keys: D-Pad"),
+            "Game Boy help overlay should still list arrow-key D-pad aliases with a gamepad connected, got:\n{text}"
+        );
+        assert!(
+            !text.contains("Keyboard shoulders/aliases"),
+            "Game Boy help overlay should not use GBA shoulder wording, got:\n{text}"
         );
     }
 }
