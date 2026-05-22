@@ -1,4 +1,4 @@
-use crate::frontends::native::input::{InputEvent, apply_input};
+use crate::frontends::native::input::{InputEvent, apply_imgui_input};
 use crate::frontends::native::shader_manager::ShaderManager;
 use crate::gb::debugging::GbDebuggerViewState;
 use crate::gb::debugging::debugger_ui as gb_debugger_ui;
@@ -520,7 +520,7 @@ impl GlBackend {
             self.overlay_text_color = self.overlay_text_color.toggle();
         }
 
-        apply_input(self.imgui.io_mut(), event);
+        apply_imgui_input(self.imgui.io_mut(), event);
     }
 
     /// Sets the debugger window background opacity (clamped to 0.1–1.0).

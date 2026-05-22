@@ -84,12 +84,13 @@ pub enum InputEvent {
     Key { key: UiKey, down: bool },
 }
 
-/// Applies a single input event to the ImGui IO state.
-pub fn apply_input(io: &mut Io, event: &InputEvent) {
+/// Applies a single input event to the current ImGui adapter state.
+pub fn apply_imgui_input(io: &mut Io, event: &InputEvent) {
     match event {
         InputEvent::MouseMotion { x, y } => {
             io.mouse_pos = [*x, *y];
         }
+
         InputEvent::MouseButton { button, pressed } => {
             let index = match button {
                 MouseButton::Left => 0,
@@ -107,6 +108,7 @@ pub fn apply_input(io: &mut Io, event: &InputEvent) {
                 io.add_input_character(ch);
             }
         }
+
         InputEvent::Key { key, down } => {
             io.add_key_event(imgui_key_for(*key), *down);
         }
@@ -132,21 +134,21 @@ mod tests {
 
     #[serial]
     #[test]
-    fn apply_input_sets_mouse_position() {
+    fn apply_imgui_input_sets_mouse_position() {
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
         let io = imgui.io_mut();
-        apply_input(io, &InputEvent::MouseMotion { x: 10.0, y: 20.0 });
+        apply_imgui_input(io, &InputEvent::MouseMotion { x: 10.0, y: 20.0 });
         assert_eq!(io.mouse_pos, [10.0, 20.0]);
     }
 
     #[serial]
     #[test]
-    fn apply_input_sets_mouse_button_down() {
+    fn apply_imgui_input_sets_mouse_button_down() {
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
         let io = imgui.io_mut();
-        apply_input(
+        apply_imgui_input(
             io,
             &InputEvent::MouseButton {
                 button: MouseButton::Left,
@@ -158,22 +160,22 @@ mod tests {
 
     #[serial]
     #[test]
-    fn apply_input_updates_mouse_wheel() {
+    fn apply_imgui_input_updates_mouse_wheel() {
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
         let io = imgui.io_mut();
-        apply_input(io, &InputEvent::MouseWheel { x: 1.0, y: -2.0 });
+        apply_imgui_input(io, &InputEvent::MouseWheel { x: 1.0, y: -2.0 });
         assert_eq!(io.mouse_wheel_h, 1.0);
         assert_eq!(io.mouse_wheel, -2.0);
     }
 
     #[serial]
     #[test]
-    fn apply_input_sets_key_state() {
+    fn apply_imgui_input_sets_key_state() {
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
         let io = imgui.io_mut();
-        apply_input(
+        apply_imgui_input(
             io,
             &InputEvent::Key {
                 key: UiKey::Space,
