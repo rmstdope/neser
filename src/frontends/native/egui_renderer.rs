@@ -173,14 +173,9 @@ impl NativeEguiRenderer {
         self.painter.free_texture(texture_id);
     }
 
+    /// Releases egui GL resources. Must be called while the owning GL context is current.
     pub(crate) fn destroy(&mut self) {
         self.painter.destroy();
-    }
-}
-
-impl Drop for NativeEguiRenderer {
-    fn drop(&mut self) {
-        self.destroy();
     }
 }
 

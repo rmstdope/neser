@@ -1,4 +1,5 @@
-use crate::frontends::native::input::{InputEvent, apply_imgui_input};
+use crate::frontends::native::egui_renderer::{EguiFrameInput, NativeEguiRenderer};
+use crate::frontends::native::input::{EguiInputState, InputEvent, apply_imgui_input};
 use crate::frontends::native::shader_manager::ShaderManager;
 use crate::gb::debugging::GbDebuggerViewState;
 use crate::gb::debugging::debugger_ui as gb_debugger_ui;
@@ -72,6 +73,8 @@ pub type ProcAddressLoader = Rc<dyn Fn(&str) -> *const c_void>;
 pub struct GlBackend {
     render_target: Box<dyn RenderTarget>,
     glow_context: std::sync::Arc<glow::Context>,
+    egui_renderer: NativeEguiRenderer,
+    egui_input: EguiInputState,
     imgui: imgui::Context,
     imgui_renderer: imgui_glow_renderer::Renderer,
     nes_texture: gl::types::GLuint,
@@ -316,6 +319,33 @@ fn toast_background_rgba() -> [f32; 4] {
     [0.35, 0.35, 0.35, 0.7]
 }
 
+fn egui_frame_input_for_window(
+    window_size: (u32, u32),
+    drawable_size: (u32, u32),
+    predicted_dt: f32,
+) -> EguiFrameInput {
+    let (win_w, win_h) = window_size;
+    let (drawable_w, drawable_h) = drawable_size;
+    EguiFrameInput::new(
+        [win_w as f32, win_h as f32],
+        [drawable_w, drawable_h],
+        egui_pixels_per_point(window_size, drawable_size),
+        predicted_dt,
+    )
+}
+
+fn egui_pixels_per_point(window_size: (u32, u32), drawable_size: (u32, u32)) -> f32 {
+    let (win_w, win_h) = window_size;
+    let (drawable_w, drawable_h) = drawable_size;
+    if win_w > 0 {
+        drawable_w as f32 / win_w as f32
+    } else if win_h > 0 {
+        drawable_h as f32 / win_h as f32
+    } else {
+        1.0
+    }
+}
+
 impl GlBackend {
     /// Returns the aspect ratio used for rendering the current frame.
     fn target_aspect(&self, pixel_aspect: f32) -> f32 {
@@ -387,6 +417,14 @@ impl GlBackend {
                 (proc_address)(s) as *const _
             }))
         };
+
+        let egui_glow_context = unsafe {
+            let proc_address = proc_address.clone();
+            std::sync::Arc::new(egui_glow::glow::Context::from_loader_function(|s| {
+                (proc_address)(s) as *const _
+            }))
+        };
+        let egui_renderer = NativeEguiRenderer::new(egui_glow_context)?;
 
         let imgui_renderer = imgui_glow_renderer::Renderer::new(
             &glow_context,
@@ -463,6 +501,8 @@ impl GlBackend {
         Ok(Self {
             render_target,
             glow_context,
+            egui_renderer,
+            egui_input: EguiInputState::default(),
             imgui,
             imgui_renderer,
             nes_texture,
@@ -513,6 +553,7 @@ impl GlBackend {
         }
 
         apply_imgui_input(self.imgui.io_mut(), event);
+        self.egui_input.apply_input(event);
     }
 
     /// Sets the debugger window background opacity (clamped to 0.1–1.0).
@@ -576,9 +617,12 @@ impl GlBackend {
         let dt = now.saturating_duration_since(self.last_frame);
         self.last_frame = now;
         self.imgui.io_mut().delta_time = dt.as_secs_f32().max(1.0 / 1000.0);
+        let predicted_dt = self.imgui.io().delta_time;
 
         let (win_w, win_h) = self.render_target.window_size();
         let (drawable_w, drawable_h) = self.render_target.drawable_size();
+        let egui_frame_input =
+            egui_frame_input_for_window((win_w, win_h), (drawable_w, drawable_h), predicted_dt);
 
         // Keep the GL viewport in sync with the current drawable size.
         unsafe {
@@ -597,6 +641,9 @@ impl GlBackend {
         };
 
         {
+            let _paint_data =
+                self.egui_renderer
+                    .run(egui_frame_input, &mut self.egui_input, |_ui| {});
             let io = self.imgui.io_mut();
             io.display_size = [win_w as f32, win_h as f32];
             io.display_framebuffer_scale = [scale_x, scale_y];
@@ -1007,6 +1054,33 @@ mod tests_crosshair_projection {
     }
 }
 
+#[cfg(test)]
+mod tests_egui_frame_input {
+    use super::egui_frame_input_for_window;
+
+    #[test]
+    fn egui_frame_input_uses_logical_and_drawable_sizes() {
+        let frame_input = egui_frame_input_for_window((320, 240), (640, 480), 1.0 / 60.0);
+
+        assert_eq!(frame_input.drawable_size(), [640, 480]);
+        assert_eq!(frame_input.pixels_per_point(), 2.0);
+    }
+
+    #[test]
+    fn egui_frame_input_falls_back_to_height_scale_when_width_is_zero() {
+        let frame_input = egui_frame_input_for_window((0, 240), (640, 480), 1.0 / 60.0);
+
+        assert_eq!(frame_input.pixels_per_point(), 2.0);
+    }
+
+    #[test]
+    fn egui_frame_input_uses_unit_scale_for_empty_window() {
+        let frame_input = egui_frame_input_for_window((0, 0), (640, 480), 1.0 / 60.0);
+
+        assert_eq!(frame_input.pixels_per_point(), 1.0);
+    }
+}
+
 /// Create a RGBA GL texture of the given dimensions with NEAREST filtering.
 ///
 /// # Safety
@@ -1364,6 +1438,7 @@ impl Drop for GlBackend {
     fn drop(&mut self) {
         // Best-effort: make current and clean up GL resources.
         if self.render_target.make_current().is_ok() {
+            self.egui_renderer.destroy();
             self.imgui_renderer.destroy(&self.glow_context);
             unsafe {
                 gl::DeleteTextures(1, &self.nes_texture);
