@@ -1,6 +1,6 @@
 use crate::frontends::native::egui_renderer::{EguiFrameInput, NativeEguiRenderer};
 use crate::frontends::native::egui_texture::NativeTextureName;
-use crate::frontends::native::input::{EguiInputState, InputEvent, apply_imgui_input};
+use crate::frontends::native::input::{EguiInputState, InputEvent};
 use crate::frontends::native::shader_manager::ShaderManager;
 use crate::gb::debugging::GbDebuggerViewState;
 use crate::gb::debugging::debugger_ui as gb_debugger_ui;
@@ -76,8 +76,6 @@ pub struct GlBackend {
     glow_context: std::sync::Arc<glow::Context>,
     egui_renderer: NativeEguiRenderer,
     egui_input: EguiInputState,
-    imgui: imgui::Context,
-    imgui_renderer: imgui_glow_renderer::Renderer,
     nes_texture: gl::types::GLuint,
     nes_egui_texture_id: egui::TextureId,
     shader_output_egui_texture: Option<RegisteredEguiTexture>,
@@ -476,10 +474,7 @@ impl GlBackend {
             gl::ClearColor(0.0, 0.0, 0.0, 1.0);
         }
 
-        let mut imgui = imgui::Context::create();
-        imgui.set_ini_filename(None);
-
-        // Create glow context (shared by imgui renderer and librashader).
+        // Create glow context used by librashader.
         let glow_context = unsafe {
             let proc_address = proc_address.clone();
             std::sync::Arc::new(glow::Context::from_loader_function(|s| {
@@ -494,14 +489,6 @@ impl GlBackend {
             }))
         };
         let mut egui_renderer = NativeEguiRenderer::new(egui_glow_context)?;
-
-        let imgui_renderer = imgui_glow_renderer::Renderer::new(
-            &glow_context,
-            &mut imgui,
-            &mut imgui_glow_renderer::SimpleTextureMap::default(),
-            true,
-        )
-        .map_err(|e| format!("Failed to initialise imgui glow renderer: {e:?}"))?;
 
         let (nes_texture, nes_egui_texture_id) = unsafe {
             let mut tex: gl::types::GLuint = 0;
@@ -581,8 +568,6 @@ impl GlBackend {
             glow_context,
             egui_renderer,
             egui_input: EguiInputState::default(),
-            imgui,
-            imgui_renderer,
             nes_texture,
             nes_egui_texture_id,
             shader_output_egui_texture: None,
@@ -620,7 +605,7 @@ impl GlBackend {
         })
     }
 
-    /// Applies an input event to ImGui and handles renderer-local shortcuts.
+    /// Applies an input event to egui and handles renderer-local shortcuts.
     pub fn handle_input(&mut self, event: &InputEvent) {
         if let InputEvent::Key {
             key: crate::frontends::native::input::UiKey::F1,
@@ -630,7 +615,6 @@ impl GlBackend {
             self.overlay_text_color = self.overlay_text_color.toggle();
         }
 
-        apply_imgui_input(self.imgui.io_mut(), event);
         self.egui_input.apply_input(event);
     }
 
@@ -694,8 +678,7 @@ impl GlBackend {
         let now = Instant::now();
         let dt = now.saturating_duration_since(self.last_frame);
         self.last_frame = now;
-        self.imgui.io_mut().delta_time = dt.as_secs_f32().max(1.0 / 1000.0);
-        let predicted_dt = self.imgui.io().delta_time;
+        let predicted_dt = dt.as_secs_f32().max(1.0 / 1000.0);
 
         let (win_w, win_h) = self.render_target.window_size();
         let (drawable_w, drawable_h) = self.render_target.drawable_size();
@@ -705,23 +688,6 @@ impl GlBackend {
         // Keep the GL viewport in sync with the current drawable size.
         unsafe {
             gl::Viewport(0, 0, drawable_w as i32, drawable_h as i32);
-        }
-
-        let scale_x = if win_w == 0 {
-            1.0
-        } else {
-            drawable_w as f32 / win_w as f32
-        };
-        let scale_y = if win_h == 0 {
-            1.0
-        } else {
-            drawable_h as f32 / win_h as f32
-        };
-
-        {
-            let io = self.imgui.io_mut();
-            io.display_size = [win_w as f32, win_h as f32];
-            io.display_framebuffer_scale = [scale_x, scale_y];
         }
 
         // Compute overscan and pixel dimensions from the console.
@@ -1028,20 +994,6 @@ impl GlBackend {
                 self.gb_debugger_alpha = (self.gb_debugger_alpha - 0.1).max(0.1);
             }
             self.last_gb_action = gb_action;
-        }
-
-        // Start ImGui frame
-        {
-            let _ui = self.imgui.frame();
-        }
-
-        let draw_data = self.imgui.render();
-        if let Err(err) = self.imgui_renderer.render(
-            &self.glow_context,
-            &imgui_glow_renderer::SimpleTextureMap::default(),
-            draw_data,
-        ) {
-            log_info(format!("imgui render failed: {}", err));
         }
 
         self.render_target.swap_buffers();
@@ -1750,7 +1702,6 @@ impl Drop for GlBackend {
         // Best-effort: make current and clean up GL resources.
         if self.render_target.make_current().is_ok() {
             self.egui_renderer.destroy();
-            self.imgui_renderer.destroy(&self.glow_context);
         }
     }
 }

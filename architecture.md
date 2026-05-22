@@ -335,7 +335,7 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 | `src/debugging/tracing.rs` | CPU/PPU/APU/Mapper trace output at configurable verbosity levels. |
 | `src/debugging/logging.rs` | Debug logging infrastructure. |
 | `src/nes/debugging/` | NES-specific debugging tools. |
-| `src/nes/debugging/ui.rs` | ImGui-based debugger UI with CPU state, memory viewer, and disassembly. |
+| `src/nes/debugging/ui.rs` | egui-based debugger UI with CPU state, memory viewer, and disassembly. |
 | `src/nes/debugging/disasm.rs` | 6502 disassembler for real-time instruction display. |
 | `src/nes/debugging/ppu_viewer.rs` | PPU nametable and pattern table viewer. |
 | `src/nes/debugging/snapshot.rs` | Debugging state snapshots. |

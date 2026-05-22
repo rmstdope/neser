@@ -39,7 +39,6 @@ glutin = { version = "0.32", optional = true, default-features = false, features
 glutin-winit = { version = "0.5", optional = true, default-features = false, features = ["egl", "glx", "x11", "wayland", "wgl"] }
 raw-window-handle = { version = "0.6", optional = true }
 gl = { version = "0.14", optional = true }
-imgui-glow-renderer = { version = "0.13.0", optional = true }
 glow = { version = "0.14", optional = true }
 librashader = { version = "0.5", optional = true, default-features = false, features = ["runtime-gl", "presets", "stable"] }
 png = "0.17"
@@ -49,7 +48,6 @@ console_error_panic_hook = { version = "0.1", optional = true }
 js-sys = { version = "0.3", optional = true }
 web-sys = { version = "0.3", optional = true, features = ["Window", "console"] }
 wasm-bindgen-test = { version = "0.3.45", optional = true }
-imgui = { version = "0.12", optional = true }
 egui = { version = "0.34.2", optional = true, default-features = false, features = ["default_fonts"] }
 egui-winit = { version = "0.34.2", optional = true, default-features = false }
 egui_glow = { version = "0.34.2", optional = true, features = ["winit"] }
@@ -80,8 +78,6 @@ native = [
 	"dep:raw-window-handle",
 	"dep:gl",
 	"dep:glow",
-	"dep:imgui",
-	"dep:imgui-glow-renderer",
 	"dep:librashader",
 	"dep:cpal",
 	"dep:gilrs",

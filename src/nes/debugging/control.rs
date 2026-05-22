@@ -290,7 +290,7 @@ impl DebuggerController {
 
     // ── UI action handling ─────────────────────────────────────────────
 
-    /// Process a `DebuggerUiAction` returned from the ImGui render pass.
+    /// Process a `DebuggerUiAction` returned from the native debugger UI render pass.
     ///
     /// This handles control-flow actions (stepping, continue, breakpoint CRUD,
     /// run-to-interrupt). View-state actions (toggle PPU viewer, opacity,
