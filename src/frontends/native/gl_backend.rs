@@ -82,9 +82,9 @@ pub struct GlBackend {
     nes_egui_texture_id: egui::TextureId,
     shader_output_egui_texture: Option<RegisteredEguiTexture>,
     ppu_viewer_nt_texture: gl::types::GLuint,
-    ppu_viewer_nt_texture_id: imgui::TextureId,
+    ppu_viewer_nt_texture_id: egui::TextureId,
     ppu_viewer_tiles_texture: gl::types::GLuint,
-    ppu_viewer_tiles_texture_id: imgui::TextureId,
+    ppu_viewer_tiles_texture_id: egui::TextureId,
     overlay_text_color: OverlayTextColor,
     app_context: SharedAppContext,
     framebuffer: Vec<u8>,
@@ -533,27 +533,32 @@ impl GlBackend {
         };
 
         let (ppu_viewer_nt_texture, ppu_viewer_nt_texture_id) = unsafe {
-            create_rgba_texture(PPU_VIEWER_NT_TEXTURE_WIDTH, PPU_VIEWER_NT_TEXTURE_HEIGHT)
+            create_egui_rgba_texture(
+                &mut egui_renderer,
+                PPU_VIEWER_NT_TEXTURE_WIDTH,
+                PPU_VIEWER_NT_TEXTURE_HEIGHT,
+            )?
         };
         let (ppu_viewer_tiles_texture, ppu_viewer_tiles_texture_id) = unsafe {
-            create_rgba_texture(
+            create_egui_rgba_texture(
+                &mut egui_renderer,
                 PPU_VIEWER_TILES_TEXTURE_WIDTH,
                 PPU_VIEWER_TILES_TEXTURE_HEIGHT,
-            )
+            )?
         };
 
         // GB PPU viewer textures
         let (gb_ppu_viewer_tiles_texture, gb_ppu_viewer_tiles_texture_id) = unsafe {
-            create_rgba_texture(
+            create_imgui_rgba_texture(
                 GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB,
                 GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB,
-            )
+            )?
         };
         let (gb_ppu_viewer_bg_maps_texture, gb_ppu_viewer_bg_maps_texture_id) = unsafe {
-            create_rgba_texture(
+            create_imgui_rgba_texture(
                 GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH,
                 GB_PPU_VIEWER_BG_MAPS_TEXTURE_HEIGHT,
-            )
+            )?
         };
 
         let mut shader_manager = ShaderManager::new(allowed_shaders);
@@ -811,6 +816,18 @@ impl GlBackend {
         }
 
         let visible_toasts = self.app_context.borrow_mut().visible_toasts(now);
+        let nes_ppu_viewer_scroll = if show_debugger
+            && let Console::Nes(nes) = console
+            && self.debugger_view_state.is_ppu_viewer_visible()
+        {
+            Some(update_ppu_viewer_textures(
+                nes,
+                self.ppu_viewer_nt_texture,
+                self.ppu_viewer_tiles_texture,
+            ))
+        } else {
+            None
+        };
         let cropped_w = self.tex_w;
         let cropped_h = self.tex_h;
 
@@ -836,6 +853,8 @@ impl GlBackend {
         };
 
         let egui_texture_id = shader_output_texture_id.unwrap_or(self.nes_egui_texture_id);
+        let ppu_viewer_nt_texture_id = self.ppu_viewer_nt_texture_id;
+        let ppu_viewer_tiles_texture_id = self.ppu_viewer_tiles_texture_id;
         let egui_paint_data =
             self.egui_renderer
                 .run(egui_frame_input, &mut self.egui_input, |ui| {
@@ -858,6 +877,14 @@ impl GlBackend {
                     }
                     if !visible_toasts.is_empty() {
                         draw_egui_toasts(ui, &visible_toasts, x0, y0, draw_w, draw_h);
+                    }
+                    if let Some(scroll) = nes_ppu_viewer_scroll {
+                        draw_ppu_viewer_window(
+                            ui,
+                            ppu_viewer_nt_texture_id,
+                            ppu_viewer_tiles_texture_id,
+                            scroll,
+                        );
                     }
                 });
         self.egui_renderer.paint(egui_paint_data);
@@ -902,19 +929,6 @@ impl GlBackend {
                 }
                 if action.decrease_opacity {
                     self.debugger_alpha = (self.debugger_alpha - 0.1).max(0.1);
-                }
-                if self.debugger_view_state.is_ppu_viewer_visible() {
-                    let scroll = update_ppu_viewer_textures(
-                        nes,
-                        self.ppu_viewer_nt_texture,
-                        self.ppu_viewer_tiles_texture,
-                    );
-                    draw_ppu_viewer_window(
-                        ui,
-                        self.ppu_viewer_nt_texture_id,
-                        self.ppu_viewer_tiles_texture_id,
-                        scroll,
-                    );
                 }
             } else if show_debugger && let Console::GameBoy(gb) = console {
                 let snapshot = gb.create_debugger_snapshot(&mut self.gb_debugger_view_state);
@@ -1118,8 +1132,9 @@ mod tests_crosshair_projection {
 #[cfg(test)]
 mod tests_egui_frame_input {
     use super::{
-        RegisteredEguiTexture, crosshair_rgba, egui_color_from_rgba, egui_frame_input_for_window,
-        fps_counter_text, toast_background_rgba, toast_text_rgba,
+        LineSegment, RegisteredEguiTexture, crosshair_rgba, egui_color_from_rgba,
+        egui_frame_input_for_window, fps_counter_text, scroll_rect_line_segments,
+        toast_background_rgba, toast_text_rgba,
     };
 
     #[test]
@@ -1195,17 +1210,113 @@ mod tests_egui_frame_input {
         assert!(registered.matches_gl_id(42));
         assert!(!registered.matches_gl_id(7));
     }
+
+    #[test]
+    fn scroll_rect_line_segments_draws_unwrapped_rectangle_edges() {
+        let segments =
+            scroll_rect_line_segments([10.0, 20.0], (4, 8), (2.0, 3.0), (16.0, 12.0), (64.0, 64.0));
+
+        assert_eq!(
+            segments,
+            vec![
+                LineSegment {
+                    start: [18.0, 44.0],
+                    end: [50.0, 44.0],
+                },
+                LineSegment {
+                    start: [18.0, 80.0],
+                    end: [50.0, 80.0],
+                },
+                LineSegment {
+                    start: [18.0, 44.0],
+                    end: [18.0, 80.0],
+                },
+                LineSegment {
+                    start: [50.0, 44.0],
+                    end: [50.0, 80.0],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn scroll_rect_line_segments_omits_internal_wrap_edges() {
+        let segments =
+            scroll_rect_line_segments([0.0, 0.0], (56, 0), (1.0, 1.0), (16.0, 12.0), (64.0, 64.0));
+
+        assert_eq!(
+            segments,
+            vec![
+                LineSegment {
+                    start: [56.0, 0.0],
+                    end: [64.0, 0.0],
+                },
+                LineSegment {
+                    start: [56.0, 12.0],
+                    end: [64.0, 12.0],
+                },
+                LineSegment {
+                    start: [56.0, 0.0],
+                    end: [56.0, 12.0],
+                },
+                LineSegment {
+                    start: [0.0, 0.0],
+                    end: [8.0, 0.0],
+                },
+                LineSegment {
+                    start: [0.0, 12.0],
+                    end: [8.0, 12.0],
+                },
+                LineSegment {
+                    start: [8.0, 0.0],
+                    end: [8.0, 12.0],
+                },
+            ]
+        );
+    }
 }
 
-/// Create a RGBA GL texture of the given dimensions with NEAREST filtering.
+/// Create and register a RGBA GL texture of the given dimensions with NEAREST filtering.
 ///
 /// # Safety
 /// Must be called with an active GL context.
-unsafe fn create_rgba_texture(width: i32, height: i32) -> (gl::types::GLuint, imgui::TextureId) {
+unsafe fn create_egui_rgba_texture(
+    egui_renderer: &mut NativeEguiRenderer,
+    width: i32,
+    height: i32,
+) -> Result<(gl::types::GLuint, egui::TextureId), String> {
+    let texture = unsafe { create_rgba_texture_handle(width, height)? };
+    let texture_name = NativeTextureName::from_gl_id(texture)
+        .ok_or_else(|| "Failed to create egui RGBA texture".to_owned())?;
+    let texture_id = egui_renderer.register_native_texture(texture_name);
+    Ok((texture, texture_id))
+}
+
+/// Create a RGBA GL texture of the given dimensions for the temporary ImGui surfaces.
+///
+/// # Safety
+/// Must be called with an active GL context.
+unsafe fn create_imgui_rgba_texture(
+    width: i32,
+    height: i32,
+) -> Result<(gl::types::GLuint, imgui::TextureId), String> {
+    let texture = unsafe { create_rgba_texture_handle(width, height)? };
+    Ok((texture, (texture as usize).into()))
+}
+
+/// Create a RGBA GL texture handle of the given dimensions with NEAREST filtering.
+///
+/// # Safety
+/// Must be called with an active GL context.
+unsafe fn create_rgba_texture_handle(width: i32, height: i32) -> Result<gl::types::GLuint, String> {
     unsafe {
-        let mut tex: gl::types::GLuint = 0;
-        gl::GenTextures(1, &mut tex);
-        gl::BindTexture(gl::TEXTURE_2D, tex);
+        let mut texture: gl::types::GLuint = 0;
+        gl::GenTextures(1, &mut texture);
+        if texture == 0 {
+            return Err(format!("Failed to create RGBA texture {width}x{height}"));
+        }
+
+        gl::BindTexture(gl::TEXTURE_2D, texture);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
@@ -1222,8 +1333,7 @@ unsafe fn create_rgba_texture(width: i32, height: i32) -> (gl::types::GLuint, im
             gl::UNSIGNED_BYTE,
             std::ptr::null(),
         );
-        let id: imgui::TextureId = (tex as usize).into();
-        (tex, id)
+        Ok(texture)
     }
 }
 
@@ -1249,11 +1359,11 @@ unsafe fn upload_rgba_texture(texture: gl::types::GLuint, width: i32, height: i3
     }
 }
 
-/// Render the PPU viewer ImGui window showing pattern tables and nametables.
+/// Render the PPU viewer egui window showing pattern tables and nametables.
 fn draw_ppu_viewer_window(
-    ui: &imgui::Ui,
-    nt_texture_id: imgui::TextureId,
-    tiles_texture_id: imgui::TextureId,
+    ui: &mut egui::Ui,
+    nt_texture_id: egui::TextureId,
+    tiles_texture_id: egui::TextureId,
     scroll: (u16, u16),
 ) {
     // Aspect ratios of the underlying textures.
@@ -1267,35 +1377,37 @@ fn draw_ppu_viewer_window(
     const NT_TEX_W: f32 = PPU_VIEWER_NT_TEXTURE_WIDTH as f32;
     const NT_TEX_H: f32 = PPU_VIEWER_NT_TEXTURE_HEIGHT as f32;
 
-    ui.window("PPU Viewer")
-        .size(
-            [
-                PPU_VIEWER_WINDOW_INITIAL_WIDTH,
-                PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
-            ],
-            imgui::Condition::FirstUseEver,
-        )
-        .build(|| {
-            ui.text("Pattern Tables");
+    egui::Window::new("PPU Viewer")
+        .default_size(egui::vec2(
+            PPU_VIEWER_WINDOW_INITIAL_WIDTH,
+            PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
+        ))
+        .show(ui.ctx(), |ui| {
+            ui.label("Pattern Tables");
             ui.separator();
-            let avail_w = ui.content_region_avail()[0];
-            imgui::Image::new(tiles_texture_id, [avail_w, avail_w * TILES_ASPECT]).build(ui);
+            let avail_w = ui.available_width();
+            ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+                tiles_texture_id,
+                egui::vec2(avail_w, avail_w * TILES_ASPECT),
+            )));
 
-            ui.dummy([0.0, 6.0]);
-            ui.text("Nametables (2\u{00D7}2)");
+            ui.add_space(6.0);
+            ui.label("Nametables (2\u{00D7}2)");
             ui.separator();
-            let avail_w = ui.content_region_avail()[0];
+            let avail_w = ui.available_width();
             let img_h = avail_w * NT_ASPECT;
-            let img_origin = ui.cursor_screen_pos();
-            imgui::Image::new(nt_texture_id, [avail_w, img_h]).build(ui);
+            let response = ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+                nt_texture_id,
+                egui::vec2(avail_w, img_h),
+            )));
 
             // Scale factors from nametable-texture pixels to screen pixels.
             let sx = avail_w / NT_TEX_W;
             let sy = img_h / NT_TEX_H;
 
-            draw_scroll_rect(
+            draw_egui_scroll_rect(
                 ui,
-                img_origin,
+                [response.rect.min.x, response.rect.min.y],
                 scroll,
                 (sx, sy),
                 (VISIBLE_W, VISIBLE_H),
@@ -1308,14 +1420,41 @@ fn draw_ppu_viewer_window(
 ///
 /// Handles cases where the 256×240 view window wraps past the 512×480 boundary by
 /// splitting into up to four partial rectangles.
-fn draw_scroll_rect(
-    ui: &imgui::Ui,
+fn draw_egui_scroll_rect(
+    ui: &mut egui::Ui,
     img_origin: [f32; 2],
     scroll: (u16, u16),
     scale: (f32, f32),
     visible_size: (f32, f32),
     nametable_size: (f32, f32),
 ) {
+    let stroke = egui::Stroke::new(1.5, egui::Color32::YELLOW);
+    for segment in
+        scroll_rect_line_segments(img_origin, scroll, scale, visible_size, nametable_size)
+    {
+        ui.painter().line_segment(
+            [
+                egui::pos2(segment.start[0], segment.start[1]),
+                egui::pos2(segment.end[0], segment.end[1]),
+            ],
+            stroke,
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LineSegment {
+    start: [f32; 2],
+    end: [f32; 2],
+}
+
+fn scroll_rect_line_segments(
+    img_origin: [f32; 2],
+    scroll: (u16, u16),
+    scale: (f32, f32),
+    visible_size: (f32, f32),
+    nametable_size: (f32, f32),
+) -> Vec<LineSegment> {
     let ox = img_origin[0];
     let oy = img_origin[1];
     let scroll_x = scroll.0 as f32;
@@ -1346,9 +1485,7 @@ fn draw_scroll_rect(
         &[(scroll_y, visible_h, true, true)]
     };
 
-    let draw_list = ui.get_window_draw_list();
-    let color = [1.0f32, 1.0, 0.0, 1.0]; // yellow
-    let thickness = 1.5;
+    let mut segments = Vec::new();
 
     for &(xs, xw, draw_left, draw_right) in x_segs {
         for &(ys, yh, draw_top, draw_bottom) in y_segs {
@@ -1358,31 +1495,32 @@ fn draw_scroll_rect(
             let y1 = y0 + yh * sy;
 
             if draw_top {
-                draw_list
-                    .add_line([x0, y0], [x1, y0], color)
-                    .thickness(thickness)
-                    .build();
+                segments.push(LineSegment {
+                    start: [x0, y0],
+                    end: [x1, y0],
+                });
             }
             if draw_bottom {
-                draw_list
-                    .add_line([x0, y1], [x1, y1], color)
-                    .thickness(thickness)
-                    .build();
+                segments.push(LineSegment {
+                    start: [x0, y1],
+                    end: [x1, y1],
+                });
             }
             if draw_left {
-                draw_list
-                    .add_line([x0, y0], [x0, y1], color)
-                    .thickness(thickness)
-                    .build();
+                segments.push(LineSegment {
+                    start: [x0, y0],
+                    end: [x0, y1],
+                });
             }
             if draw_right {
-                draw_list
-                    .add_line([x1, y0], [x1, y1], color)
-                    .thickness(thickness)
-                    .build();
+                segments.push(LineSegment {
+                    start: [x1, y0],
+                    end: [x1, y1],
+                });
             }
         }
     }
+    segments
 }
 
 /// Upload pixel data for the PPU nametable and pattern table textures from the current NES state.
@@ -1557,8 +1695,6 @@ impl Drop for GlBackend {
             self.egui_renderer.destroy();
             self.imgui_renderer.destroy(&self.glow_context);
             unsafe {
-                gl::DeleteTextures(1, &self.ppu_viewer_nt_texture);
-                gl::DeleteTextures(1, &self.ppu_viewer_tiles_texture);
                 gl::DeleteTextures(1, &self.gb_ppu_viewer_tiles_texture);
                 gl::DeleteTextures(1, &self.gb_ppu_viewer_bg_maps_texture);
             }
