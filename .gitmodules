@@ -2,12 +2,3 @@
 	path = vendor/slang-shaders
 	url = https://github.com/libretro/slang-shaders
 	shallow = true
-[submodule "roms/gba/automated_tests/gba-tests"]
-	path = roms/gba/automated_tests/gba-tests
-	url = https://github.com/jsmolka/gba-tests.git
-[submodule "roms/gba/automated_tests/FuzzARM"]
-	path = roms/gba/automated_tests/FuzzARM
-	url = https://github.com/DenSinH/FuzzARM.git
-[submodule "roms/gba/automated_tests/armwrestler"]
-	path = roms/gba/automated_tests/armwrestler
-	url = https://github.com/destoer/armwrestler-gba-fixed.git
