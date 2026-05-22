@@ -25,6 +25,12 @@ pub(crate) struct TextPanelLayout {
     pub text_pos: [f32; 2],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RectLayout {
+    pub rect_min: [f32; 2],
+    pub rect_max: [f32; 2],
+}
+
 pub(crate) fn top_left_text_panel(
     origin: [f32; 2],
     text_size: [f32; 2],
@@ -90,6 +96,38 @@ pub(crate) fn bottom_center_text_panel(
         rect_max,
         text_pos,
     }
+}
+
+pub(crate) fn crosshair_marker_rects(
+    origin: [f32; 2],
+    size: [f32; 2],
+    cropped_size: [u32; 2],
+    cropped_index: [f32; 2],
+) -> [RectLayout; 8] {
+    let pixel_w = size[0] / cropped_size[0].max(1) as f32;
+    let pixel_h = size[1] / cropped_size[1].max(1) as f32;
+    let center_x = origin[0] + (cropped_index[0] + 0.5) * pixel_w;
+    let center_y = origin[1] + (cropped_index[1] + 0.5) * pixel_h;
+
+    let pattern: [(i32, i32); 8] = [
+        (0, -2),
+        (0, -1),
+        (-2, 0),
+        (-1, 0),
+        (1, 0),
+        (2, 0),
+        (0, 1),
+        (0, 2),
+    ];
+
+    pattern.map(|(dx, dy)| {
+        let cx = center_x + dx as f32 * pixel_w;
+        let cy = center_y + dy as f32 * pixel_h;
+        RectLayout {
+            rect_min: [cx - pixel_w * 0.5, cy - pixel_h * 0.5],
+            rect_max: [cx + pixel_w * 0.5, cy + pixel_h * 0.5],
+        }
+    })
 }
 
 #[cfg(test)]
@@ -222,5 +260,56 @@ mod tests {
         assert_eq!(third_layout.rect_min, [432.0, 514.0]);
         assert_eq!(third_layout.rect_max, [568.0, 550.0]);
         assert_eq!(third_layout.text_pos, [440.0, 520.0]);
+    }
+
+    #[test]
+    fn crosshair_marker_rects_center_around_projected_pixel() {
+        // Given a one-to-one cropped frame and a projected crosshair pixel index.
+        let origin = [10.0, 20.0];
+        let size = [256.0, 240.0];
+        let cropped_size = [256, 240];
+        let cropped_index = [10.0, 20.0];
+
+        // When computing the eight crosshair marker rectangles.
+        let rects = crosshair_marker_rects(origin, size, cropped_size, cropped_index);
+
+        // Then the marker pattern surrounds, but does not cover, the selected pixel center.
+        assert_eq!(
+            rects,
+            [
+                RectLayout {
+                    rect_min: [20.0, 38.0],
+                    rect_max: [21.0, 39.0],
+                },
+                RectLayout {
+                    rect_min: [20.0, 39.0],
+                    rect_max: [21.0, 40.0],
+                },
+                RectLayout {
+                    rect_min: [18.0, 40.0],
+                    rect_max: [19.0, 41.0],
+                },
+                RectLayout {
+                    rect_min: [19.0, 40.0],
+                    rect_max: [20.0, 41.0],
+                },
+                RectLayout {
+                    rect_min: [21.0, 40.0],
+                    rect_max: [22.0, 41.0],
+                },
+                RectLayout {
+                    rect_min: [22.0, 40.0],
+                    rect_max: [23.0, 41.0],
+                },
+                RectLayout {
+                    rect_min: [20.0, 41.0],
+                    rect_max: [21.0, 42.0],
+                },
+                RectLayout {
+                    rect_min: [20.0, 42.0],
+                    rect_max: [21.0, 43.0],
+                },
+            ]
+        );
     }
 }

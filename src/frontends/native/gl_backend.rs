@@ -175,34 +175,17 @@ fn draw_crosshair(ui: &imgui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDraw
     let color = [1.0, 0.2, 0.2, 1.0];
     let draw_list = ui.get_background_draw_list();
 
-    let pixel_w = draw_ctx.draw_w / draw_ctx.cropped_w.max(1) as f32;
-    let pixel_h = draw_ctx.draw_h / draw_ctx.cropped_h.max(1) as f32;
-
     let (ix, iy) = project_crosshair_to_cropped_indices(crosshair, draw_ctx);
+    let rects = crate::frontends::native::ui_geometry::crosshair_marker_rects(
+        [draw_ctx.x0, draw_ctx.y0],
+        [draw_ctx.draw_w, draw_ctx.draw_h],
+        [draw_ctx.cropped_w, draw_ctx.cropped_h],
+        [ix, iy],
+    );
 
-    let center_x = draw_ctx.x0 + (ix + 0.5) * pixel_w;
-    let center_y = draw_ctx.y0 + (iy + 0.5) * pixel_h;
-
-    let pattern: [(i32, i32); 8] = [
-        (0, -2),
-        (0, -1),
-        (-2, 0),
-        (-1, 0),
-        (1, 0),
-        (2, 0),
-        (0, 1),
-        (0, 2),
-    ];
-
-    for (dx, dy) in pattern {
-        let cx = center_x + dx as f32 * pixel_w;
-        let cy = center_y + dy as f32 * pixel_h;
+    for rect in rects {
         draw_list
-            .add_rect(
-                [cx - pixel_w * 0.5, cy - pixel_h * 0.5],
-                [cx + pixel_w * 0.5, cy + pixel_h * 0.5],
-                color,
-            )
+            .add_rect(rect.rect_min, rect.rect_max, color)
             .filled(true)
             .build();
     }
