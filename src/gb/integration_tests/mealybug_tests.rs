@@ -103,51 +103,6 @@ macro_rules! mealybug_cgb_d {
     };
 }
 
-/// Generate an ignored DMG-B mealybug test.
-#[allow(unused_macros)]
-macro_rules! mealybug_ignored_dmg_b {
-    ($name:ident, $rom_base:literal, $issue:literal, $expected_crc:expr) => {
-        #[test]
-        #[ignore = concat!("mealybug: PPU timing not yet accurate — tracked in #", $issue)]
-        fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
-            let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_dmg_b"));
-            assert_mealybug_crc(concat!($rom_base, "_dmg_b"), crc, $expected_crc);
-        }
-    };
-}
-
-/// Generate an ignored CGB-C mealybug test.
-#[allow(unused_macros)]
-macro_rules! mealybug_ignored_cgb_c {
-    ($name:ident, $rom_base:literal, $issue:literal, $expected_crc:expr) => {
-        #[test]
-        #[ignore = concat!("mealybug: PPU timing not yet accurate — tracked in #", $issue)]
-        fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
-            let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_c"));
-            assert_mealybug_crc(concat!($rom_base, "_cgb_c"), crc, $expected_crc);
-        }
-    };
-}
-
-/// Generate an ignored CGB-D mealybug test.
-#[allow(unused_macros)]
-macro_rules! mealybug_ignored_cgb_d {
-    ($name:ident, $rom_base:literal, $issue:literal, $expected_crc:expr) => {
-        #[test]
-        #[ignore = concat!("mealybug: PPU timing not yet accurate — tracked in #", $issue)]
-        fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
-            let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_d"));
-            assert_mealybug_crc(concat!($rom_base, "_cgb_d"), crc, $expected_crc);
-        }
-    };
-}
-
 fn assert_mealybug_crc(capture_name: &str, crc: u32, expected_crc: u32) {
     assert_eq!(
         crc, expected_crc,
@@ -194,45 +149,15 @@ mod tests {
         expected_crc: u32,
     }
 
-    fn macro_definition<'a>(source: &'a str, macro_name: &str) -> &'a str {
-        let marker = format!("macro_rules! {macro_name}");
-        let start = source
-            .find(&marker)
-            .unwrap_or_else(|| panic!("{macro_name} macro definition should exist"));
-        let open_brace = source[start..]
-            .find('{')
-            .unwrap_or_else(|| panic!("{macro_name} macro definition should open with a brace"));
-
-        let mut depth = 0_u32;
-        for (offset, ch) in source[start + open_brace..].char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        let end = start + open_brace + offset;
-                        return &source[start..=end];
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        panic!("{macro_name} macro definition should close its braces");
-    }
-
     fn parse_mealybug_cases(source: &str) -> Vec<MealybugCase> {
         let specs = [
-            ("mealybug_dmg_b", MealybugModel::DmgB, false),
-            ("mealybug_cgb_c", MealybugModel::CgbC, false),
-            ("mealybug_cgb_d", MealybugModel::CgbD, false),
-            ("mealybug_ignored_dmg_b", MealybugModel::DmgB, true),
-            ("mealybug_ignored_cgb_c", MealybugModel::CgbC, true),
-            ("mealybug_ignored_cgb_d", MealybugModel::CgbD, true),
+            ("mealybug_dmg_b", MealybugModel::DmgB),
+            ("mealybug_cgb_c", MealybugModel::CgbC),
+            ("mealybug_cgb_d", MealybugModel::CgbD),
         ];
         let mut cases = Vec::new();
 
-        for (macro_name, model, ignored) in specs {
+        for (macro_name, model) in specs {
             let needle = format!("{macro_name}!(");
             let mut search_from = 0;
 
@@ -241,17 +166,16 @@ mod tests {
                 let args_start = invocation_start + needle.len();
                 let close_paren = find_matching_paren(source, args_start - 1);
                 let args = split_macro_args(&source[args_start..close_paren]);
-                let expected_arg_count = if ignored { 4 } else { 3 };
                 assert_eq!(
                     args.len(),
-                    expected_arg_count,
-                    "{macro_name} invocation should have {expected_arg_count} arguments: {args:?}"
+                    3,
+                    "{macro_name} invocation should have 3 arguments: {args:?}"
                 );
 
                 cases.push(MealybugCase {
                     model,
                     rom_base: unquote(&args[1]),
-                    expected_crc: parse_crc(&args[expected_arg_count - 1]),
+                    expected_crc: parse_crc(&args[2]),
                 });
 
                 search_from = close_paren + 1;
@@ -388,27 +312,6 @@ mod tests {
         );
 
         crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&rgb)
-    }
-
-    #[test]
-    fn ignored_mealybug_macros_require_expected_crc_assertions() {
-        let source = include_str!("mealybug_tests.rs");
-
-        for macro_name in [
-            "mealybug_ignored_dmg_b",
-            "mealybug_ignored_cgb_c",
-            "mealybug_ignored_cgb_d",
-        ] {
-            let definition = macro_definition(source, macro_name);
-            assert!(
-                definition.contains("$expected_crc:expr"),
-                "{macro_name} should require an expected CRC argument"
-            );
-            assert!(
-                definition.contains("assert_mealybug_crc("),
-                "{macro_name} should assert the breakpoint CRC"
-            );
-        }
     }
 
     #[test]
