@@ -15,10 +15,6 @@ impl NativeTextureName {
         NonZeroU32::new(gl_id).map(Self)
     }
 
-    pub(crate) fn gl_id(self) -> u32 {
-        self.0.get()
-    }
-
     pub(crate) fn egui_glow_texture(self) -> egui_glow::glow::Texture {
         egui_glow::glow::NativeTexture(self.0)
     }
@@ -53,13 +49,6 @@ mod tests {
     #[test]
     fn native_texture_name_rejects_zero_gl_id() {
         assert_eq!(NativeTextureName::from_gl_id(0), None);
-    }
-
-    #[test]
-    fn native_texture_name_preserves_gl_id() {
-        let texture_name = NativeTextureName::from_gl_id(42).expect("non-zero texture id");
-
-        assert_eq!(texture_name.gl_id(), 42);
     }
 
     #[test]

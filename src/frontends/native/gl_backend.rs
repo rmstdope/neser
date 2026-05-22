@@ -1,4 +1,5 @@
 use crate::frontends::native::egui_renderer::{EguiFrameInput, NativeEguiRenderer};
+use crate::frontends::native::egui_texture::NativeTextureName;
 use crate::frontends::native::input::{EguiInputState, InputEvent, apply_imgui_input};
 use crate::frontends::native::shader_manager::ShaderManager;
 use crate::gb::debugging::GbDebuggerViewState;
@@ -79,6 +80,7 @@ pub struct GlBackend {
     imgui_renderer: imgui_glow_renderer::Renderer,
     nes_texture: gl::types::GLuint,
     nes_texture_id: imgui::TextureId,
+    nes_egui_texture_id: egui::TextureId,
     ppu_viewer_nt_texture: gl::types::GLuint,
     ppu_viewer_nt_texture_id: imgui::TextureId,
     ppu_viewer_tiles_texture: gl::types::GLuint,
@@ -125,6 +127,22 @@ pub struct Crosshair {
 enum OverlayTextColor {
     White,
     Black,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameBackgroundRenderer {
+    Egui,
+    ImGui,
+}
+
+fn frame_background_renderer(
+    shader_output_texture_id: Option<imgui::TextureId>,
+) -> FrameBackgroundRenderer {
+    if shader_output_texture_id.is_some() {
+        FrameBackgroundRenderer::ImGui
+    } else {
+        FrameBackgroundRenderer::Egui
+    }
 }
 
 fn draw_frame_background(
@@ -296,6 +314,23 @@ impl OverlayTextColor {
     }
 }
 
+fn draw_egui_frame_background(
+    ui: &mut egui::Ui,
+    texture_id: egui::TextureId,
+    x0: f32,
+    y0: f32,
+    draw_w: f32,
+    draw_h: f32,
+) {
+    let rect = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x0 + draw_w, y0 + draw_h));
+    ui.painter().image(
+        texture_id,
+        rect,
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+}
+
 fn overlay_text_rgba(text_color: OverlayTextColor, blink_red: bool) -> [f32; 4] {
     if blink_red {
         [1.0, 0.0, 0.0, 1.0]
@@ -424,7 +459,7 @@ impl GlBackend {
                 (proc_address)(s) as *const _
             }))
         };
-        let egui_renderer = NativeEguiRenderer::new(egui_glow_context)?;
+        let mut egui_renderer = NativeEguiRenderer::new(egui_glow_context)?;
 
         let imgui_renderer = imgui_glow_renderer::Renderer::new(
             &glow_context,
@@ -434,9 +469,11 @@ impl GlBackend {
         )
         .map_err(|e| format!("Failed to initialise imgui glow renderer: {e:?}"))?;
 
-        let (nes_texture, nes_texture_id) = unsafe {
+        let (nes_texture, nes_texture_id, nes_egui_texture_id) = unsafe {
             let mut tex: gl::types::GLuint = 0;
             gl::GenTextures(1, &mut tex);
+            let texture_name = NativeTextureName::from_gl_id(tex)
+                .ok_or_else(|| "Failed to create emulator frame texture".to_owned())?;
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
@@ -458,7 +495,8 @@ impl GlBackend {
             );
 
             let id: imgui::TextureId = (tex as usize).into();
-            (tex, id)
+            let egui_id = egui_renderer.register_native_texture(texture_name);
+            (tex, id, egui_id)
         };
 
         let (ppu_viewer_nt_texture, ppu_viewer_nt_texture_id) = unsafe {
@@ -507,6 +545,7 @@ impl GlBackend {
             imgui_renderer,
             nes_texture,
             nes_texture_id,
+            nes_egui_texture_id,
             ppu_viewer_nt_texture,
             ppu_viewer_nt_texture_id,
             ppu_viewer_tiles_texture,
@@ -641,9 +680,6 @@ impl GlBackend {
         };
 
         {
-            let _paint_data =
-                self.egui_renderer
-                    .run(egui_frame_input, &mut self.egui_input, |_ui| {});
             let io = self.imgui.io_mut();
             io.display_size = [win_w as f32, win_h as f32];
             io.display_framebuffer_scale = [scale_x, scale_y];
@@ -742,26 +778,37 @@ impl GlBackend {
         let visible_toasts = self.app_context.borrow_mut().visible_toasts(now);
         let cropped_w = self.tex_w;
         let cropped_h = self.tex_h;
+
+        let win_w = win_w as f32;
+        let win_h = win_h as f32;
+        let frame_rect = crate::frontends::native::ui_geometry::letterbox_rect(
+            [0.0, 0.0],
+            [win_w, win_h],
+            target_aspect,
+        );
+        let x0 = frame_rect.rect_min[0];
+        let y0 = frame_rect.rect_min[1];
+        let [draw_w, draw_h] = frame_rect.size();
+        let background_renderer = frame_background_renderer(shader_output_texture_id);
+
+        let egui_texture_id = self.nes_egui_texture_id;
+        let egui_paint_data =
+            self.egui_renderer
+                .run(egui_frame_input, &mut self.egui_input, |ui| {
+                    if background_renderer == FrameBackgroundRenderer::Egui {
+                        draw_egui_frame_background(ui, egui_texture_id, x0, y0, draw_w, draw_h);
+                    }
+                });
+        self.egui_renderer.paint(egui_paint_data);
+
         // Start ImGui frame
         {
             let ui = self.imgui.frame();
 
-            // Draw NES frame as a background image, preserving aspect ratio with letterboxing.
-            let win_w = win_w as f32;
-            let win_h = win_h as f32;
-            let frame_rect = crate::frontends::native::ui_geometry::letterbox_rect(
-                [0.0, 0.0],
-                [win_w, win_h],
-                target_aspect,
-            );
-            let x0 = frame_rect.rect_min[0];
-            let y0 = frame_rect.rect_min[1];
-            let [draw_w, draw_h] = frame_rect.size();
-
-            // Only draw the NES texture as a background if no shader is active.
-            // When a shader is active, we draw the shader output texture.
             let background_texture = shader_output_texture_id.unwrap_or(self.nes_texture_id);
-            draw_frame_background(ui, background_texture, x0, y0, draw_w, draw_h);
+            if background_renderer == FrameBackgroundRenderer::ImGui {
+                draw_frame_background(ui, background_texture, x0, y0, draw_w, draw_h);
+            }
 
             if let Some(text) = overlay_text {
                 draw_overlay_text(
@@ -1056,7 +1103,7 @@ mod tests_crosshair_projection {
 
 #[cfg(test)]
 mod tests_egui_frame_input {
-    use super::egui_frame_input_for_window;
+    use super::{FrameBackgroundRenderer, egui_frame_input_for_window, frame_background_renderer};
 
     #[test]
     fn egui_frame_input_uses_logical_and_drawable_sizes() {
@@ -1078,6 +1125,22 @@ mod tests_egui_frame_input {
         let frame_input = egui_frame_input_for_window((0, 0), (640, 480), 1.0 / 60.0);
 
         assert_eq!(frame_input.pixels_per_point(), 1.0);
+    }
+
+    #[test]
+    fn stock_frame_background_uses_egui_renderer() {
+        assert_eq!(
+            frame_background_renderer(None),
+            FrameBackgroundRenderer::Egui
+        );
+    }
+
+    #[test]
+    fn shader_frame_background_keeps_imgui_until_shader_texture_is_registered() {
+        assert_eq!(
+            frame_background_renderer(Some(7usize.into())),
+            FrameBackgroundRenderer::ImGui
+        );
     }
 }
 
@@ -1441,7 +1504,6 @@ impl Drop for GlBackend {
             self.egui_renderer.destroy();
             self.imgui_renderer.destroy(&self.glow_context);
             unsafe {
-                gl::DeleteTextures(1, &self.nes_texture);
                 gl::DeleteTextures(1, &self.ppu_viewer_nt_texture);
                 gl::DeleteTextures(1, &self.ppu_viewer_tiles_texture);
                 gl::DeleteTextures(1, &self.gb_ppu_viewer_tiles_texture);

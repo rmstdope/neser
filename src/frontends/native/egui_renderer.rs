@@ -1,5 +1,6 @@
 #![allow(dead_code)] // Incremental egui backend seam; wired into the emulator renderer next.
 
+use crate::frontends::native::egui_texture::NativeTextureName;
 use crate::frontends::native::input::EguiInputState;
 use std::sync::Arc;
 
@@ -164,9 +165,10 @@ impl NativeEguiRenderer {
 
     pub(crate) fn register_native_texture(
         &mut self,
-        texture: egui_glow::glow::Texture,
+        texture: NativeTextureName,
     ) -> egui::TextureId {
-        self.painter.register_native_texture(texture)
+        self.painter
+            .register_native_texture(texture.egui_glow_texture())
     }
 
     pub(crate) fn free_texture(&mut self, texture_id: egui::TextureId) {
