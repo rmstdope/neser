@@ -5,6 +5,7 @@
 
 mod app_state;
 mod audio;
+pub(crate) mod egui_renderer;
 pub(crate) mod egui_texture;
 pub(crate) mod egui_theme;
 mod event_loop;
