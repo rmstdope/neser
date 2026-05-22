@@ -18,46 +18,26 @@
 //!     gb::integration_tests::mealybug_tests -- --include-ignored --nocapture
 //! ```
 //!
-//! Compare each PNG to the reference image in the submodule:
+//! Compare each PNG to the reference image:
 //!
 //! ```bash
 //! compare -metric AE \
 //!     target/mealybug-captures/m3_bgp_change_dmg_b.png \
-//!     roms/gb/automated_tests/mealybug-tearoom-tests/expected/DMG-blob/m3_bgp_change.png \
+//!     roms/gb/automated_tests/mealybug-tearoom/expected/DMG-blob/m3_bgp_change.png \
 //!     /dev/null
 //! ```
-
-use std::io::Read;
-use std::sync::OnceLock;
 
 use super::helpers::{load_cgb_rom_from_bytes, load_gb_rom_from_bytes, run_to_breakpoint_and_crc};
 use crate::gb::model::{CgbModel, DmgModel};
 
-const ZIP_PATH: &str = "roms/gb/automated_tests/mealybug-tearoom-tests/mealybug-tearoom-tests.zip";
+const ROM_DIR: &str = "roms/gb/automated_tests/mealybug-tearoom/roms";
 
 const CYCLE_LIMIT: u64 = 10_000_000;
 
-/// Return the raw bytes of the mealybug ZIP archive, reading the file only once.
-fn zip_bytes() -> &'static [u8] {
-    static ZIP: OnceLock<Vec<u8>> = OnceLock::new();
-    ZIP.get_or_init(|| {
-        std::fs::read(ZIP_PATH).unwrap_or_else(|e| panic!("failed to read {ZIP_PATH}: {e}"))
-    })
-}
-
-/// Extract a ROM by filename from the mealybug zip archive and return its bytes.
-fn read_rom_from_zip(rom_name: &str) -> Vec<u8> {
-    let cursor = std::io::Cursor::new(zip_bytes());
-    let mut archive =
-        zip::ZipArchive::new(cursor).expect("mealybug zip should be a valid ZIP archive");
-    let mut entry = archive
-        .by_name(rom_name)
-        .unwrap_or_else(|_| panic!("{rom_name} not found in mealybug zip"));
-    let mut bytes = Vec::new();
-    entry
-        .read_to_end(&mut bytes)
-        .expect("read ROM bytes from zip");
-    bytes
+/// Read a mealybug ROM file by base name and return its bytes.
+fn read_rom(rom_name: &str) -> Vec<u8> {
+    let path = format!("{ROM_DIR}/{rom_name}");
+    std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"))
 }
 
 // ============================================================================
@@ -69,7 +49,7 @@ macro_rules! mealybug_dmg_b {
     ($name:ident, $rom_base:literal, $expected_crc:expr) => {
         #[test]
         fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
+            let bytes = read_rom(concat!($rom_base, ".gb"));
             let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
             let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_dmg_b"));
             assert_mealybug_crc(concat!($rom_base, "_dmg_b"), crc, $expected_crc);
@@ -82,7 +62,7 @@ macro_rules! mealybug_cgb_c {
     ($name:ident, $rom_base:literal, $expected_crc:expr) => {
         #[test]
         fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
+            let bytes = read_rom(concat!($rom_base, ".gb"));
             let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
             let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_c"));
             assert_mealybug_crc(concat!($rom_base, "_cgb_c"), crc, $expected_crc);
@@ -95,7 +75,7 @@ macro_rules! mealybug_cgb_d {
     ($name:ident, $rom_base:literal, $expected_crc:expr) => {
         #[test]
         fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
+            let bytes = read_rom(concat!($rom_base, ".gb"));
             let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
             let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_d"));
             assert_mealybug_crc(concat!($rom_base, "_cgb_d"), crc, $expected_crc);
@@ -250,14 +230,14 @@ mod tests {
     }
 
     fn expected_png_path(case: &MealybugCase) -> PathBuf {
-        Path::new("roms/gb/automated_tests/mealybug-tearoom-tests/expected")
+        Path::new("roms/gb/automated_tests/mealybug-tearoom/expected")
             .join(case.model.expected_dir())
             .join(format!("{}.png", case.rom_base))
     }
 
     fn expected_png_count(model: MealybugModel) -> usize {
         std::fs::read_dir(
-            Path::new("roms/gb/automated_tests/mealybug-tearoom-tests/expected")
+            Path::new("roms/gb/automated_tests/mealybug-tearoom/expected")
                 .join(model.expected_dir()),
         )
         .unwrap_or_else(|err| panic!("read expected PNG directory for {:?}: {err}", model))
