@@ -18,6 +18,21 @@ pub(crate) fn letterbox_size(container_w: f32, container_h: f32, aspect: f32) ->
     }
 }
 
+pub(crate) fn letterbox_rect(
+    origin: [f32; 2],
+    container_size: [f32; 2],
+    aspect: f32,
+) -> RectLayout {
+    let (draw_w, draw_h) = letterbox_size(container_size[0], container_size[1], aspect);
+    let rect_min = [
+        origin[0] + (container_size[0] - draw_w) * 0.5,
+        origin[1] + (container_size[1] - draw_h) * 0.5,
+    ];
+    let rect_max = [rect_min[0] + draw_w, rect_min[1] + draw_h];
+
+    RectLayout { rect_min, rect_max }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct TextPanelLayout {
     pub rect_min: [f32; 2],
@@ -199,6 +214,22 @@ mod tests {
             assert_close(w, container_w);
             assert_close(h, container_h);
         }
+    }
+
+    #[test]
+    fn letterbox_rect_centers_preserved_aspect_size() {
+        // Given a non-zero origin and a wide container.
+        let origin = [10.0, 20.0];
+        let container_size = [1920.0, 1080.0];
+
+        // When computing a centered letterbox rectangle.
+        let rect = letterbox_rect(origin, container_size, NTSC_ASPECT);
+
+        // Then the height fills the container and the width is centered.
+        assert_close(rect.rect_min[0], 311.7143);
+        assert_close(rect.rect_min[1], 20.0);
+        assert_close(rect.rect_max[0], 1628.2856);
+        assert_close(rect.rect_max[1], 1100.0);
     }
 
     #[test]

@@ -702,11 +702,15 @@ impl GlBackend {
             // Draw NES frame as a background image, preserving aspect ratio with letterboxing.
             let win_w = win_w as f32;
             let win_h = win_h as f32;
-            let (draw_w, draw_h) =
-                crate::frontends::native::ui_geometry::letterbox_size(win_w, win_h, target_aspect);
-
-            let x0 = (win_w - draw_w) * 0.5;
-            let y0 = (win_h - draw_h) * 0.5;
+            let frame_rect = crate::frontends::native::ui_geometry::letterbox_rect(
+                [0.0, 0.0],
+                [win_w, win_h],
+                target_aspect,
+            );
+            let x0 = frame_rect.rect_min[0];
+            let y0 = frame_rect.rect_min[1];
+            let draw_w = frame_rect.rect_max[0] - frame_rect.rect_min[0];
+            let draw_h = frame_rect.rect_max[1] - frame_rect.rect_min[1];
 
             // Only draw the NES texture as a background if no shader is active.
             // When a shader is active, we draw the shader output texture.
