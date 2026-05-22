@@ -14,6 +14,7 @@ pub struct ShaderManager {
     frame_count: usize,
     output_texture: Option<gl::types::GLuint>,
     output_size: Option<Size<u32>>,
+    output_texture_owned_by_manager: bool,
 }
 
 impl ShaderManager {
@@ -29,6 +30,7 @@ impl ShaderManager {
             frame_count: 0,
             output_texture: None,
             output_size: None,
+            output_texture_owned_by_manager: true,
         }
     }
 
@@ -84,7 +86,9 @@ impl ShaderManager {
                 tex
             };
 
-            if let Some(old) = self.output_texture.take() {
+            if let Some(old) = self.output_texture.take()
+                && self.output_texture_owned_by_manager
+            {
                 unsafe {
                     gl::DeleteTextures(1, &old);
                 }
@@ -92,6 +96,7 @@ impl ShaderManager {
 
             self.output_texture = Some(tex);
             self.output_size = Some(desired_size);
+            self.output_texture_owned_by_manager = true;
         }
 
         Ok(self.output_texture.expect("output texture must be set"))
@@ -233,6 +238,15 @@ impl ShaderManager {
         self.output_texture
     }
 
+    pub fn release_output_texture_ownership(&mut self, texture: gl::types::GLuint) -> bool {
+        if self.output_texture == Some(texture) {
+            self.output_texture_owned_by_manager = false;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn cycle_shader(&mut self, gl_context: Arc<glow::Context>) -> Result<(), String> {
         if self.available_presets.is_empty() {
             return Err("No shader presets available".to_string());
@@ -262,7 +276,9 @@ impl ShaderManager {
 
 impl Drop for ShaderManager {
     fn drop(&mut self) {
-        if let Some(tex) = self.output_texture.take() {
+        if let Some(tex) = self.output_texture.take()
+            && self.output_texture_owned_by_manager
+        {
             unsafe {
                 gl::DeleteTextures(1, &tex);
             }
@@ -286,7 +302,15 @@ mod tests {
                 frame_count: 0,
                 output_texture: None,
                 output_size: None,
+                output_texture_owned_by_manager: true,
             }
+        }
+
+        fn with_output_texture(texture: gl::types::GLuint, owned_by_manager: bool) -> Self {
+            let mut manager = ShaderManager::with_presets(Vec::new());
+            manager.output_texture = Some(texture);
+            manager.output_texture_owned_by_manager = owned_by_manager;
+            manager
         }
     }
 
@@ -336,6 +360,26 @@ mod tests {
             "first F4 from 'no shader' state should land on crt, not index {}",
             next_index
         );
+    }
+
+    #[test]
+    fn release_output_texture_ownership_marks_current_texture_external() {
+        let mut manager = ShaderManager::with_output_texture(7, true);
+
+        assert!(manager.release_output_texture_ownership(7));
+        assert!(!manager.output_texture_owned_by_manager);
+
+        manager.output_texture = None;
+    }
+
+    #[test]
+    fn release_output_texture_ownership_rejects_non_current_texture() {
+        let mut manager = ShaderManager::with_output_texture(7, true);
+
+        assert!(!manager.release_output_texture_ownership(8));
+        assert!(manager.output_texture_owned_by_manager);
+
+        manager.output_texture = None;
     }
 
     #[test]
