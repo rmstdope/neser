@@ -154,12 +154,10 @@ struct CpuWindowLayout {
     left_w: f32,
     right_w: f32,
     gap: f32,
-    left_pos: [f32; 2],
-    right_pos: [f32; 2],
 }
 
 #[cfg(feature = "native")]
-fn cpu_window_layout(avail: [f32; 2], cursor: [f32; 2]) -> CpuWindowLayout {
+fn cpu_window_layout(avail: [f32; 2]) -> CpuWindowLayout {
     // Layout: left code view, right column split into registers (top) + PRG hexdump (bottom)
     let gap = 8.0;
     let target_left_w = code_view_target_width_for_font_scale(debugger_ui_font_scale());
@@ -167,15 +165,10 @@ fn cpu_window_layout(avail: [f32; 2], cursor: [f32; 2]) -> CpuWindowLayout {
     let left_w = target_left_w.min(max_left_w);
     let right_w = (avail[0] - left_w - gap).max(0.0);
 
-    let left_pos = cursor;
-    let right_pos = [cursor[0] + left_w + gap, cursor[1]];
-
     CpuWindowLayout {
         left_w,
         right_w,
         gap,
-        left_pos,
-        right_pos,
     }
 }
 
@@ -206,7 +199,7 @@ fn render_cpu_window(
     ui.separator();
 
     let avail = [ui.available_width(), ui.available_height()];
-    let layout = cpu_window_layout(avail, [0.0, 0.0]);
+    let layout = cpu_window_layout(avail);
 
     ui.horizontal_top(|ui| {
         ui.allocate_ui_with_layout(
@@ -925,19 +918,13 @@ mod tests {
 
     #[test]
     fn test_cpu_window_layout_splits_left_and_right_columns() {
-        let cursor = [5.0, 7.0];
         let avail = [100.0, 50.0];
-        let layout = cpu_window_layout(avail, cursor);
+        let layout = cpu_window_layout(avail);
 
         // With constrained width, keep space for right panel and collapse left panel.
         assert_close(layout.left_w, 0.0);
         assert_close(layout.gap, 8.0);
         assert_close(layout.right_w, 92.0);
-
-        assert_close(layout.left_pos[0], 5.0);
-        assert_close(layout.left_pos[1], 7.0);
-        assert_close(layout.right_pos[0], 5.0 + 0.0 + 8.0);
-        assert_close(layout.right_pos[1], 7.0);
     }
 
     #[test]
