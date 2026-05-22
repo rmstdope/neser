@@ -79,13 +79,12 @@ pub struct GlBackend {
     imgui: imgui::Context,
     imgui_renderer: imgui_glow_renderer::Renderer,
     nes_texture: gl::types::GLuint,
-    nes_texture_id: imgui::TextureId,
     nes_egui_texture_id: egui::TextureId,
+    shader_output_egui_texture: Option<RegisteredEguiTexture>,
     ppu_viewer_nt_texture: gl::types::GLuint,
     ppu_viewer_nt_texture_id: imgui::TextureId,
     ppu_viewer_tiles_texture: gl::types::GLuint,
     ppu_viewer_tiles_texture_id: imgui::TextureId,
-    overlay_font: imgui::FontId,
     overlay_text_color: OverlayTextColor,
     app_context: SharedAppContext,
     framebuffer: Vec<u8>,
@@ -130,85 +129,14 @@ enum OverlayTextColor {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FrameBackgroundRenderer {
-    Egui,
-    ImGui,
+struct RegisteredEguiTexture {
+    gl_id: gl::types::GLuint,
+    egui_id: egui::TextureId,
 }
 
-fn frame_background_renderer(
-    shader_output_texture_id: Option<imgui::TextureId>,
-) -> FrameBackgroundRenderer {
-    if shader_output_texture_id.is_some() {
-        FrameBackgroundRenderer::ImGui
-    } else {
-        FrameBackgroundRenderer::Egui
-    }
-}
-
-fn draw_frame_background(
-    ui: &imgui::Ui,
-    texture_id: imgui::TextureId,
-    x0: f32,
-    y0: f32,
-    draw_w: f32,
-    draw_h: f32,
-) {
-    ui.get_background_draw_list()
-        .add_image(texture_id, [x0, y0], [x0 + draw_w, y0 + draw_h])
-        .build();
-}
-
-fn draw_overlay_text(
-    ui: &imgui::Ui,
-    text: &str,
-    font: imgui::FontId,
-    text_color: OverlayTextColor,
-    blink_red: bool,
-    x0: f32,
-    y0: f32,
-) {
-    let draw_list = ui.get_background_draw_list();
-    let _font = ui.push_font(font);
-    let text_size = ui.calc_text_size(text);
-    let layout = crate::frontends::native::ui_geometry::top_left_text_panel(
-        [x0, y0],
-        text_size,
-        [8.0, 8.0],
-        [6.0, 4.0],
-    );
-
-    draw_list
-        .add_rect(
-            layout.rect_min,
-            layout.rect_max,
-            overlay_background_color_for(text_color),
-        )
-        .filled(true)
-        .build();
-    draw_list.add_text(
-        layout.text_pos,
-        overlay_text_rgba(text_color, blink_red),
-        text,
-    );
-}
-
-fn draw_crosshair(ui: &imgui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDrawContext) {
-    let color = crosshair_rgba();
-    let draw_list = ui.get_background_draw_list();
-
-    let (ix, iy) = project_crosshair_to_cropped_indices(crosshair, draw_ctx);
-    let rects = crate::frontends::native::ui_geometry::crosshair_marker_rects(
-        [draw_ctx.x0, draw_ctx.y0],
-        [draw_ctx.draw_w, draw_ctx.draw_h],
-        [draw_ctx.cropped_w, draw_ctx.cropped_h],
-        [ix, iy],
-    );
-
-    for rect in rects {
-        draw_list
-            .add_rect(rect.rect_min, rect.rect_max, color)
-            .filled(true)
-            .build();
+impl RegisteredEguiTexture {
+    fn matches_gl_id(self, gl_id: gl::types::GLuint) -> bool {
+        self.gl_id == gl_id
     }
 }
 
@@ -240,70 +168,8 @@ fn project_crosshair_to_cropped_indices(
     (ix, iy)
 }
 
-fn draw_fps_counter(
-    ui: &imgui::Ui,
-    font: imgui::FontId,
-    fps: usize,
-    x0: f32,
-    y0: f32,
-    draw_w: f32,
-) {
-    let draw_list = ui.get_background_draw_list();
-    let _font = ui.push_font(font);
-    let text = fps_counter_text(fps);
-    let text_size = ui.calc_text_size(&text);
-    let layout = crate::frontends::native::ui_geometry::top_right_text_panel(
-        [x0, y0],
-        draw_w,
-        text_size,
-        [8.0, 8.0],
-        [6.0, 4.0],
-    );
-    draw_list
-        .add_rect(layout.rect_min, layout.rect_max, [0.0, 0.0, 0.0, 0.6])
-        .filled(true)
-        .rounding(3.0)
-        .build();
-    draw_list.add_text(layout.text_pos, [1.0, 1.0, 0.0, 1.0], &text);
-}
-
 fn fps_counter_text(fps: usize) -> String {
     format!("{fps} FPS")
-}
-
-fn draw_toasts(
-    ui: &imgui::Ui,
-    font: imgui::FontId,
-    visible_toasts: &[String],
-    x0: f32,
-    y0: f32,
-    draw_w: f32,
-    draw_h: f32,
-) {
-    let draw_list = ui.get_background_draw_list();
-    let _font = ui.push_font(font);
-    let padding = [8.0, 6.0];
-    let spacing = 8.0;
-    let bottom_margin = 12.0;
-
-    for (stack_index, toast_text) in visible_toasts.iter().rev().enumerate() {
-        let text_size = ui.calc_text_size(toast_text);
-        let layout = crate::frontends::native::ui_geometry::bottom_center_text_panel(
-            [x0, y0],
-            [draw_w, draw_h],
-            text_size,
-            stack_index,
-            bottom_margin,
-            spacing,
-            padding,
-        );
-
-        draw_list
-            .add_rect(layout.rect_min, layout.rect_max, toast_background_rgba())
-            .filled(true)
-            .build();
-        draw_list.add_text(layout.text_pos, toast_text_rgba(), toast_text);
-    }
 }
 
 impl OverlayTextColor {
@@ -569,6 +435,31 @@ impl GlBackend {
         self.render_target.notify_resize(w, h);
     }
 
+    fn register_shader_output_texture(
+        &mut self,
+        gl_id: gl::types::GLuint,
+    ) -> Result<egui::TextureId, String> {
+        if let Some(registered) = self.shader_output_egui_texture
+            && registered.matches_gl_id(gl_id)
+        {
+            return Ok(registered.egui_id);
+        }
+
+        let texture_name = NativeTextureName::from_gl_id(gl_id)
+            .ok_or_else(|| "Shader output texture ID was zero".to_owned())?;
+        if !self.shader_manager.release_output_texture_ownership(gl_id) {
+            return Err("ShaderManager did not own the shader output texture".to_owned());
+        }
+
+        if let Some(registered) = self.shader_output_egui_texture.take() {
+            self.egui_renderer.free_texture(registered.egui_id);
+        }
+
+        let egui_id = self.egui_renderer.register_native_texture(texture_name);
+        self.shader_output_egui_texture = Some(RegisteredEguiTexture { gl_id, egui_id });
+        Ok(egui_id)
+    }
+
     /// Creates a new OpenGL renderer bound to the provided render target.
     pub fn new(
         render_target: Box<dyn RenderTarget>,
@@ -587,17 +478,6 @@ impl GlBackend {
 
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
-
-        let overlay_font = {
-            let font_size = 26.0;
-            let sources = [imgui::FontSource::DefaultFontData {
-                config: Some(imgui::FontConfig {
-                    size_pixels: font_size,
-                    ..Default::default()
-                }),
-            }];
-            imgui.fonts().add_font(&sources)
-        };
 
         // Create glow context (shared by imgui renderer and librashader).
         let glow_context = unsafe {
@@ -623,7 +503,7 @@ impl GlBackend {
         )
         .map_err(|e| format!("Failed to initialise imgui glow renderer: {e:?}"))?;
 
-        let (nes_texture, nes_texture_id, nes_egui_texture_id) = unsafe {
+        let (nes_texture, nes_egui_texture_id) = unsafe {
             let mut tex: gl::types::GLuint = 0;
             gl::GenTextures(1, &mut tex);
             let texture_name = NativeTextureName::from_gl_id(tex)
@@ -648,9 +528,8 @@ impl GlBackend {
                 std::ptr::null(),
             );
 
-            let id: imgui::TextureId = (tex as usize).into();
             let egui_id = egui_renderer.register_native_texture(texture_name);
-            (tex, id, egui_id)
+            (tex, egui_id)
         };
 
         let (ppu_viewer_nt_texture, ppu_viewer_nt_texture_id) = unsafe {
@@ -698,13 +577,12 @@ impl GlBackend {
             imgui,
             imgui_renderer,
             nes_texture,
-            nes_texture_id,
             nes_egui_texture_id,
+            shader_output_egui_texture: None,
             ppu_viewer_nt_texture,
             ppu_viewer_nt_texture_id,
             ppu_viewer_tiles_texture,
             ppu_viewer_tiles_texture_id,
-            overlay_font,
             overlay_text_color: OverlayTextColor::White,
             app_context,
             framebuffer: Vec::new(),
@@ -902,7 +780,7 @@ impl GlBackend {
         // Note: librashader's OpenGL runtime renders into a texture-backed output, not
         // directly into the default framebuffer. We therefore render into an output texture
         // and draw that texture as the background.
-        let mut shader_output_texture_id: Option<imgui::TextureId> = None;
+        let mut shader_output_texture_id: Option<egui::TextureId> = None;
         if self.shader_manager.has_shader() {
             // Compute a drawable-space letterbox size for the shader output.
             let drawable_w_f = drawable_w as f32;
@@ -925,7 +803,10 @@ impl GlBackend {
             ) {
                 log_info(format!("Shader application error: {}", e));
             } else if let Some(tex) = self.shader_manager.output_texture() {
-                shader_output_texture_id = Some((tex as usize).into());
+                match self.register_shader_output_texture(tex) {
+                    Ok(texture_id) => shader_output_texture_id = Some(texture_id),
+                    Err(e) => log_info(format!("Shader texture registration error: {}", e)),
+                }
             }
         }
 
@@ -943,7 +824,6 @@ impl GlBackend {
         let x0 = frame_rect.rect_min[0];
         let y0 = frame_rect.rect_min[1];
         let [draw_w, draw_h] = frame_rect.size();
-        let background_renderer = frame_background_renderer(shader_output_texture_id);
         let crosshair_draw_ctx = CrosshairDrawContext {
             x0,
             y0,
@@ -955,31 +835,29 @@ impl GlBackend {
             v_overscan,
         };
 
-        let egui_texture_id = self.nes_egui_texture_id;
+        let egui_texture_id = shader_output_texture_id.unwrap_or(self.nes_egui_texture_id);
         let egui_paint_data =
             self.egui_renderer
                 .run(egui_frame_input, &mut self.egui_input, |ui| {
-                    if background_renderer == FrameBackgroundRenderer::Egui {
-                        draw_egui_frame_background(ui, egui_texture_id, x0, y0, draw_w, draw_h);
-                        if let Some(text) = overlay_text {
-                            draw_egui_overlay_text(
-                                ui,
-                                text,
-                                self.overlay_text_color,
-                                overlay_blink_red,
-                                x0,
-                                y0,
-                            );
-                        }
-                        if let Some(crosshair) = crosshair {
-                            draw_egui_crosshair(ui, crosshair, &crosshair_draw_ctx);
-                        }
-                        if let Some(fps_value) = fps {
-                            draw_egui_fps_counter(ui, fps_value, x0, y0, draw_w);
-                        }
-                        if !visible_toasts.is_empty() {
-                            draw_egui_toasts(ui, &visible_toasts, x0, y0, draw_w, draw_h);
-                        }
+                    draw_egui_frame_background(ui, egui_texture_id, x0, y0, draw_w, draw_h);
+                    if let Some(text) = overlay_text {
+                        draw_egui_overlay_text(
+                            ui,
+                            text,
+                            self.overlay_text_color,
+                            overlay_blink_red,
+                            x0,
+                            y0,
+                        );
+                    }
+                    if let Some(crosshair) = crosshair {
+                        draw_egui_crosshair(ui, crosshair, &crosshair_draw_ctx);
+                    }
+                    if let Some(fps_value) = fps {
+                        draw_egui_fps_counter(ui, fps_value, x0, y0, draw_w);
+                    }
+                    if !visible_toasts.is_empty() {
+                        draw_egui_toasts(ui, &visible_toasts, x0, y0, draw_w, draw_h);
                     }
                 });
         self.egui_renderer.paint(egui_paint_data);
@@ -987,49 +865,6 @@ impl GlBackend {
         // Start ImGui frame
         {
             let ui = self.imgui.frame();
-
-            let background_texture = shader_output_texture_id.unwrap_or(self.nes_texture_id);
-            if background_renderer == FrameBackgroundRenderer::ImGui {
-                draw_frame_background(ui, background_texture, x0, y0, draw_w, draw_h);
-            }
-
-            if background_renderer == FrameBackgroundRenderer::ImGui
-                && let Some(text) = overlay_text
-            {
-                draw_overlay_text(
-                    ui,
-                    text,
-                    self.overlay_font,
-                    self.overlay_text_color,
-                    overlay_blink_red,
-                    x0,
-                    y0,
-                );
-            }
-
-            if background_renderer == FrameBackgroundRenderer::ImGui
-                && let Some(crosshair) = crosshair
-            {
-                draw_crosshair(ui, crosshair, &crosshair_draw_ctx);
-            }
-
-            if background_renderer == FrameBackgroundRenderer::ImGui
-                && let Some(fps_value) = fps
-            {
-                draw_fps_counter(ui, self.overlay_font, fps_value, x0, y0, draw_w);
-            }
-
-            if background_renderer == FrameBackgroundRenderer::ImGui && !visible_toasts.is_empty() {
-                draw_toasts(
-                    ui,
-                    self.overlay_font,
-                    &visible_toasts,
-                    x0,
-                    y0,
-                    draw_w,
-                    draw_h,
-                );
-            }
 
             if show_debugger && let Console::Nes(nes) = console {
                 let snapshot = self.debugger_view_state.snapshot(nes);
@@ -1283,8 +1118,8 @@ mod tests_crosshair_projection {
 #[cfg(test)]
 mod tests_egui_frame_input {
     use super::{
-        FrameBackgroundRenderer, crosshair_rgba, egui_color_from_rgba, egui_frame_input_for_window,
-        fps_counter_text, frame_background_renderer, toast_background_rgba, toast_text_rgba,
+        RegisteredEguiTexture, crosshair_rgba, egui_color_from_rgba, egui_frame_input_for_window,
+        fps_counter_text, toast_background_rgba, toast_text_rgba,
     };
 
     #[test]
@@ -1307,22 +1142,6 @@ mod tests_egui_frame_input {
         let frame_input = egui_frame_input_for_window((0, 0), (640, 480), 1.0 / 60.0);
 
         assert_eq!(frame_input.pixels_per_point(), 1.0);
-    }
-
-    #[test]
-    fn stock_frame_background_uses_egui_renderer() {
-        assert_eq!(
-            frame_background_renderer(None),
-            FrameBackgroundRenderer::Egui
-        );
-    }
-
-    #[test]
-    fn shader_frame_background_keeps_imgui_until_shader_texture_is_registered() {
-        assert_eq!(
-            frame_background_renderer(Some(7usize.into())),
-            FrameBackgroundRenderer::ImGui
-        );
     }
 
     #[test]
@@ -1364,6 +1183,17 @@ mod tests_egui_frame_input {
             egui_color_from_rgba(crosshair_rgba()),
             egui::Color32::from_rgba_unmultiplied(255, 51, 51, 255)
         );
+    }
+
+    #[test]
+    fn registered_egui_texture_matches_its_gl_id() {
+        let registered = RegisteredEguiTexture {
+            gl_id: 42,
+            egui_id: egui::TextureId::User(7),
+        };
+
+        assert!(registered.matches_gl_id(42));
+        assert!(!registered.matches_gl_id(7));
     }
 }
 
