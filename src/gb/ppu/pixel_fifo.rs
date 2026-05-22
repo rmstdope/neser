@@ -39,7 +39,14 @@ const LEFT_EDGE_OBJ_X1_STEADY_WINDOW_MAP_RESTORE_X: u8 = OBJ_PIXELS_PER_FETCH * 
 const SCX_FINE_MASK: u8 = 0x07;
 const SCX_TILE_MASK: u8 = !SCX_FINE_MASK;
 const SCX_LOW_BITS_SAMPLE_DOTS: u16 = 6;
+/// DMG SCY write callback delay: aligns the tick-before-register-write callback with
+/// the PPU's observed fetch-stage sampling point.
 const DMG_SCY_WRITE_CALLBACK_DELAY_DOTS: u16 = 2;
+/// CGB SCY write callback delay: 2 hardware T-cycles of propagation delay plus 2 dots
+/// from the emulator's tick-before-write model. Both CGB-C and CGB-D share this value;
+/// the difference in behaviour comes from which stages sample `effective_scy`
+/// (`b_stage_only` flag), not from write timing.
+const CGB_SCY_WRITE_CALLBACK_DELAY_DOTS: u16 = 4;
 const DMG_OBJ_FETCH_EXTRA_SCY_ADVANCE_DOTS: u16 = 1;
 
 fn scy_fetch_start_dots() -> u16 {
@@ -1180,29 +1187,18 @@ impl PixelFifoRenderer {
     /// - `_old_scy` — value of SCY before the write (kept for API symmetry with `record_scx_write`; unused)
     /// - `new_scy`  — new value being written
     /// - `dot`      — current absolute dot counter (used to compute the elapsed delay)
-    /// - `cgb_mode` — `true` for CGB hardware (applies a 4-dot effective delay in this
-    ///   emulator: 2 hardware T-cycles + 2 dots from tick-before-write ordering)
+    /// - `cgb_mode` — selects the model-specific callback delay constant
     pub fn record_scy_write(&mut self, _old_scy: u8, new_scy: u8, dot: u16, cgb_mode: bool) {
         if !self.active {
             return;
         }
         let elapsed = dot.saturating_sub(self.mode3_start_dot);
-        if cgb_mode {
-            // On CGB, SCY writes take effect 4 T-cycles after the write dot.
-            // This accounts for the emulator's tick-before-write model plus the CGB
-            // hardware write propagation delay. Both CGB-C and CGB-D use the same
-            // delay since the difference in behavior comes from which stages sample
-            // effective_scy (b_stage_only flag), not from write timing.
-            self.pending_scy_write = Some((elapsed.saturating_add(4), new_scy));
+        let delay = if cgb_mode {
+            CGB_SCY_WRITE_CALLBACK_DELAY_DOTS
         } else {
-            // DMG has no hardware propagation delay; the two-dot delay here
-            // aligns this tick-before-register-write callback with the PPU's
-            // observed fetch-stage sampling point.
-            self.pending_scy_write = Some((
-                elapsed.saturating_add(DMG_SCY_WRITE_CALLBACK_DELAY_DOTS),
-                new_scy,
-            ));
-        }
+            DMG_SCY_WRITE_CALLBACK_DELAY_DOTS
+        };
+        self.pending_scy_write = Some((elapsed.saturating_add(delay), new_scy));
     }
 
     fn scx_for_fetch_sample(&self, elapsed: u16, current_scx: u8) -> u8 {
