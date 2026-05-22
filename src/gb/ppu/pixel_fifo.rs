@@ -42,7 +42,7 @@ const SCX_LOW_BITS_SAMPLE_DOTS: u16 = 6;
 const DMG_SCY_WRITE_CALLBACK_DELAY_DOTS: u16 = 2;
 const DMG_OBJ_FETCH_EXTRA_SCY_ADVANCE_DOTS: u16 = 1;
 
-fn scy_fetch_start_dots(_cgb_mode: bool) -> u16 {
+fn scy_fetch_start_dots() -> u16 {
     SCX_LOW_BITS_SAMPLE_DOTS + 3
 }
 
@@ -773,8 +773,8 @@ pub struct PixelFifoRenderer {
     effective_scy: u8,
     /// Pending SCY write: `(dot_when_active, new_value)`.
     /// When `elapsed >= dot_when_active`, `effective_scy` is updated to `new_value`.
-    #[serde(default)]
-    pending_cgb_scy: Option<(u16, u8)>,
+    #[serde(default, alias = "pending_cgb_scy")]
+    pending_scy_write: Option<(u16, u8)>,
     /// When `true` (CGB-D and newer), SCY is only sampled at the B (GetTile) stage;
     /// data latches always equal `scy_map` for each tile (no inter-stage mixing).
     #[serde(default)]
@@ -866,7 +866,7 @@ impl PixelFifoRenderer {
             bg_fetch_scy_data_high: 0,
             bg_scy_sampler: BgScySampler::default(),
             effective_scy: 0,
-            pending_cgb_scy: None,
+            pending_scy_write: None,
             scy_b_stage_only: false,
             pending_obj_stall_dots: 0,
             pending_obj_bg_fetch_wait_dots: 0,
@@ -934,12 +934,9 @@ impl PixelFifoRenderer {
             .reset(registers.scx, BgScxSamplerConfig::for_mode(cgb_mode));
         self.pending_scx_sample_override = None;
         self.effective_scy = registers.scy;
-        self.pending_cgb_scy = None;
-        self.bg_scy_sampler.reset(
-            registers.scy,
-            scy_fetch_start_dots(cgb_mode),
-            self.scy_b_stage_only,
-        );
+        self.pending_scy_write = None;
+        self.bg_scy_sampler
+            .reset(registers.scy, scy_fetch_start_dots(), self.scy_b_stage_only);
         self.bg_fetch_scy_map = registers.scy;
         self.bg_fetch_scy_data_low = registers.scy;
         self.bg_fetch_scy_data_high = registers.scy;
@@ -1156,9 +1153,9 @@ impl PixelFifoRenderer {
         self.bg_scx_sampler.config = BgScxSamplerConfig::for_mode(cgb_mode);
         self.scy_b_stage_only = scy_b_stage_only;
         self.bg_scy_sampler.b_stage_only = scy_b_stage_only;
-        self.bg_scy_sampler.fetch_start_dots = scy_fetch_start_dots(cgb_mode);
+        self.bg_scy_sampler.fetch_start_dots = scy_fetch_start_dots();
         self.effective_scy = current_scy;
-        self.pending_cgb_scy = None;
+        self.pending_scy_write = None;
     }
 
     pub(super) fn set_scy_b_stage_only(&mut self, b_stage_only: bool) {
@@ -1196,12 +1193,12 @@ impl PixelFifoRenderer {
             // hardware write propagation delay. Both CGB-C and CGB-D use the same
             // delay since the difference in behavior comes from which stages sample
             // effective_scy (b_stage_only flag), not from write timing.
-            self.pending_cgb_scy = Some((elapsed.saturating_add(4), new_scy));
+            self.pending_scy_write = Some((elapsed.saturating_add(4), new_scy));
         } else {
             // DMG has no hardware propagation delay; the two-dot delay here
             // aligns this tick-before-register-write callback with the PPU's
             // observed fetch-stage sampling point.
-            self.pending_cgb_scy = Some((
+            self.pending_scy_write = Some((
                 elapsed.saturating_add(DMG_SCY_WRITE_CALLBACK_DELAY_DOTS),
                 new_scy,
             ));
@@ -3618,10 +3615,10 @@ impl PixelFifoRenderer {
         self.bg_scy_sampler.consume_pixel();
     }
 
-    /// Apply any matured CGB SCY write to `effective_scy`.
+    /// Apply any matured SCY write to `effective_scy`.
     fn update_effective_scy(&mut self, elapsed: u16) {
-        if matches!(self.pending_cgb_scy, Some((effective_at, _)) if elapsed >= effective_at) {
-            let (_, new_scy) = self.pending_cgb_scy.take().unwrap();
+        if matches!(self.pending_scy_write, Some((effective_at, _)) if elapsed >= effective_at) {
+            let (_, new_scy) = self.pending_scy_write.take().unwrap();
             self.effective_scy = new_scy;
         }
     }
@@ -4155,7 +4152,7 @@ mod tests {
         assert!(renderer.bg_scx_sampler.will_sample_scx(7));
         assert_eq!(
             renderer.bg_scy_sampler.fetch_start_dots,
-            scy_fetch_start_dots(true)
+            scy_fetch_start_dots()
         );
         assert_eq!(renderer.effective_scy, 0x5a);
     }
@@ -4169,7 +4166,7 @@ mod tests {
 
         assert_eq!(
             renderer.bg_scy_sampler.fetch_start_dots,
-            scy_fetch_start_dots(false)
+            scy_fetch_start_dots()
         );
         assert_eq!(renderer.effective_scy, 0x81);
     }
