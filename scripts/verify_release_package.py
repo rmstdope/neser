@@ -1,5 +1,6 @@
 """Verify neser release archive contents and smoke-test packaged binaries."""
 
+import argparse
 import stat
 import subprocess
 import tarfile
@@ -40,6 +41,27 @@ def verify_release_package(config: VerificationConfig) -> None:
 
         if config.smoke_command is not None:
             _run_smoke_command(config.smoke_command, extract_root / "neser")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the release package verifier CLI."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("archive_path", type=Path)
+    parser.add_argument("--binary-name", required=True)
+    parser.add_argument("--require-unix-executable", action="store_true")
+    parser.add_argument("--smoke-command", nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+
+    verify_release_package(
+        VerificationConfig(
+            archive_path=args.archive_path,
+            binary_name=args.binary_name,
+            smoke_command=args.smoke_command,
+            require_unix_executable=args.require_unix_executable,
+        )
+    )
+    return 0
 
 
 def _required_paths(binary_name: str) -> set[str]:
@@ -114,3 +136,7 @@ def _run_smoke_command(smoke_command: list[str], cwd: Path) -> None:
         raise ReleasePackageVerificationError(
             f"smoke command failed with exit code {result.returncode}: {output}"
         )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

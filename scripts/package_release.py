@@ -1,5 +1,6 @@
 """Build verified release archives for neser."""
 
+import argparse
 import re
 import tarfile
 import zipfile
@@ -52,6 +53,31 @@ def create_release_archive(config: ReleasePackageConfig) -> Path:
                 archive.write(source_path, archive_path_in_package.as_posix())
 
     return archive_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the release packager CLI."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
+    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--target", required=True)
+    parser.add_argument("--format", choices=("tar.gz", "zip"), required=True)
+    parser.add_argument("--binary-name", default="neser")
+    args = parser.parse_args(argv)
+
+    create_release_archive(
+        ReleasePackageConfig(
+            repo_root=args.repo_root,
+            binary_path=args.binary,
+            output_dir=args.output_dir,
+            target=args.target,
+            archive_format=args.format,
+            binary_name=args.binary_name,
+        )
+    )
+    return 0
 
 
 _PRESET_PATH_RE = re.compile(
@@ -217,3 +243,7 @@ def _tree_files(source_dir: Path, archive_dir: Path) -> list[tuple[Path, Path]]:
 
 def _add_file_to_tar(archive: tarfile.TarFile, source_path: Path, archive_path: Path) -> None:
     archive.add(source_path, arcname=archive_path.as_posix(), recursive=False)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

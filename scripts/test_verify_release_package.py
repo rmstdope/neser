@@ -9,6 +9,7 @@ from pathlib import Path
 from scripts.verify_release_package import (
     ReleasePackageVerificationError,
     VerificationConfig,
+    main,
     verify_release_package,
 )
 
@@ -110,6 +111,29 @@ class VerifyReleasePackageTests(unittest.TestCase):
                         require_unix_executable=True,
                     )
                 )
+
+    def test_main_verifies_archive_from_cli_arguments(self) -> None:
+        """CLI arguments verify an archive and run the smoke command."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            package_root = create_package_tree(temp_dir / "src")
+            archive_path = temp_dir / "neser-linux-x86_64.tar.gz"
+            create_tar_gz(package_root, archive_path)
+
+            exit_code = main(
+                [
+                    str(archive_path),
+                    "--binary-name",
+                    "neser",
+                    "--require-unix-executable",
+                    "--smoke-command",
+                    "./neser",
+                    "--version",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
 
 
 if __name__ == "__main__":

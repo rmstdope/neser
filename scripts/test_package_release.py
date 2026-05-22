@@ -11,6 +11,7 @@ from scripts.package_release import (
     ReleasePackageConfig,
     collect_shader_dependencies,
     create_release_archive,
+    main,
 )
 
 
@@ -174,6 +175,46 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
             self.assertIn("neser/gamecontrollerdb.txt", names)
             self.assertIn("neser/shaders/stock.slangp", names)
             self.assertFalse(any(name.startswith("neser/scripts/") for name in names))
+
+    def test_main_creates_archive_from_cli_arguments(self) -> None:
+        """CLI arguments create the requested release archive."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            repo_root = Path(temp_dir_str)
+            output_dir = repo_root / "dist"
+            binary_path = repo_root / "target/release/neser"
+            write_bytes(binary_path, b"#!/bin/sh\n")
+            binary_path.chmod(0o755)
+            write_bytes(repo_root / "assets/fonts/NunitoSans-Regular.ttf")
+            write_text(repo_root / "gamecontrollerdb.txt", "controller mappings\n")
+            write_text(repo_root / "neser.conf.example", "# config\n")
+            write_text(repo_root / "README.md", "# neser\n")
+            write_text(repo_root / "LICENSE", "license\n")
+            write_text(repo_root / "shaders/stock.slangp", "shader0 = stock.slang\n")
+            write_text(repo_root / "shaders/stock.slang", "void main() {}\n")
+            write_text(
+                repo_root / "src/platform/shaders.rs",
+                'pub const SHADER_PRESETS: &[(&str, &str)] = &[("none", '
+                '"shaders/stock.slangp")];',
+            )
+
+            exit_code = main(
+                [
+                    "--repo-root",
+                    str(repo_root),
+                    "--binary",
+                    str(binary_path),
+                    "--output-dir",
+                    str(output_dir),
+                    "--target",
+                    "x86_64-unknown-linux-gnu",
+                    "--format",
+                    "tar.gz",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue((output_dir / "neser-x86_64-unknown-linux-gnu.tar.gz").exists())
 
 
 if __name__ == "__main__":
