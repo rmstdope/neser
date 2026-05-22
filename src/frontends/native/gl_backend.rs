@@ -106,9 +106,9 @@ pub struct GlBackend {
     last_gb_action: gb_debugger_ui::GbDebuggerUiAction,
     // GB PPU viewer textures
     gb_ppu_viewer_tiles_texture: gl::types::GLuint,
-    gb_ppu_viewer_tiles_texture_id: imgui::TextureId,
+    gb_ppu_viewer_tiles_texture_id: egui::TextureId,
     gb_ppu_viewer_bg_maps_texture: gl::types::GLuint,
-    gb_ppu_viewer_bg_maps_texture_id: imgui::TextureId,
+    gb_ppu_viewer_bg_maps_texture_id: egui::TextureId,
     shader_manager: ShaderManager,
     /// Current GL texture width (updated when console type changes).
     tex_w: u32,
@@ -549,13 +549,15 @@ impl GlBackend {
 
         // GB PPU viewer textures
         let (gb_ppu_viewer_tiles_texture, gb_ppu_viewer_tiles_texture_id) = unsafe {
-            create_imgui_rgba_texture(
+            create_egui_rgba_texture(
+                &mut egui_renderer,
                 GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB,
                 GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB,
             )?
         };
         let (gb_ppu_viewer_bg_maps_texture, gb_ppu_viewer_bg_maps_texture_id) = unsafe {
-            create_imgui_rgba_texture(
+            create_egui_rgba_texture(
+                &mut egui_renderer,
                 GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH,
                 GB_PPU_VIEWER_BG_MAPS_TEXTURE_HEIGHT,
             )?
@@ -828,6 +830,20 @@ impl GlBackend {
         } else {
             None
         };
+        let gb_ppu_viewer_snapshot = if show_debugger
+            && let Console::GameBoy(gb) = console
+            && self.gb_debugger_view_state.is_ppu_viewer_visible()
+        {
+            let ppu_snap = gb.create_ppu_viewer_snapshot();
+            update_gb_ppu_viewer_textures_from_snapshot(
+                &ppu_snap,
+                self.gb_ppu_viewer_tiles_texture,
+                self.gb_ppu_viewer_bg_maps_texture,
+            );
+            Some(ppu_snap)
+        } else {
+            None
+        };
         let cropped_w = self.tex_w;
         let cropped_h = self.tex_h;
 
@@ -855,6 +871,8 @@ impl GlBackend {
         let egui_texture_id = shader_output_texture_id.unwrap_or(self.nes_egui_texture_id);
         let ppu_viewer_nt_texture_id = self.ppu_viewer_nt_texture_id;
         let ppu_viewer_tiles_texture_id = self.ppu_viewer_tiles_texture_id;
+        let gb_ppu_viewer_tiles_texture_id = self.gb_ppu_viewer_tiles_texture_id;
+        let gb_ppu_viewer_bg_maps_texture_id = self.gb_ppu_viewer_bg_maps_texture_id;
         let egui_paint_data =
             self.egui_renderer
                 .run(egui_frame_input, &mut self.egui_input, |ui| {
@@ -884,6 +902,14 @@ impl GlBackend {
                             ppu_viewer_nt_texture_id,
                             ppu_viewer_tiles_texture_id,
                             scroll,
+                        );
+                    }
+                    if let Some(ppu_snap) = gb_ppu_viewer_snapshot.as_ref() {
+                        draw_gb_ppu_viewer_window(
+                            ui,
+                            gb_ppu_viewer_tiles_texture_id,
+                            gb_ppu_viewer_bg_maps_texture_id,
+                            ppu_snap,
                         );
                     }
                 });
@@ -976,20 +1002,6 @@ impl GlBackend {
                 }
                 // Store action for processing by controller
                 self.last_gb_action = gb_action;
-                if self.gb_debugger_view_state.is_ppu_viewer_visible() {
-                    let ppu_snap = gb.create_ppu_viewer_snapshot();
-                    update_gb_ppu_viewer_textures_from_snapshot(
-                        &ppu_snap,
-                        self.gb_ppu_viewer_tiles_texture,
-                        self.gb_ppu_viewer_bg_maps_texture,
-                    );
-                    draw_gb_ppu_viewer_window(
-                        ui,
-                        self.gb_ppu_viewer_tiles_texture_id,
-                        self.gb_ppu_viewer_bg_maps_texture_id,
-                        &ppu_snap,
-                    );
-                }
             }
         }
 
@@ -1133,8 +1145,8 @@ mod tests_crosshair_projection {
 mod tests_egui_frame_input {
     use super::{
         LineSegment, RegisteredEguiTexture, crosshair_rgba, egui_color_from_rgba,
-        egui_frame_input_for_window, fps_counter_text, scroll_rect_line_segments,
-        toast_background_rgba, toast_text_rgba,
+        egui_frame_input_for_window, fps_counter_text, gb_tiles_texture_aspect,
+        gb_tiles_texture_uv, scroll_rect_line_segments, toast_background_rgba, toast_text_rgba,
     };
 
     #[test]
@@ -1274,6 +1286,24 @@ mod tests_egui_frame_input {
             ]
         );
     }
+
+    #[test]
+    fn gb_dmg_tiles_image_uses_visible_half_of_cgb_sized_texture() {
+        assert_eq!(
+            gb_tiles_texture_uv(false),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.5, 1.0))
+        );
+        assert_eq!(gb_tiles_texture_aspect(false), 128.0 / 256.0);
+    }
+
+    #[test]
+    fn gb_cgb_tiles_image_uses_full_texture() {
+        assert_eq!(
+            gb_tiles_texture_uv(true),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
+        );
+        assert_eq!(gb_tiles_texture_aspect(true), 128.0 / 512.0);
+    }
 }
 
 /// Create and register a RGBA GL texture of the given dimensions with NEAREST filtering.
@@ -1290,18 +1320,6 @@ unsafe fn create_egui_rgba_texture(
         .ok_or_else(|| "Failed to create egui RGBA texture".to_owned())?;
     let texture_id = egui_renderer.register_native_texture(texture_name);
     Ok((texture, texture_id))
-}
-
-/// Create a RGBA GL texture of the given dimensions for the temporary ImGui surfaces.
-///
-/// # Safety
-/// Must be called with an active GL context.
-unsafe fn create_imgui_rgba_texture(
-    width: i32,
-    height: i32,
-) -> Result<(gl::types::GLuint, imgui::TextureId), String> {
-    let texture = unsafe { create_rgba_texture_handle(width, height)? };
-    Ok((texture, (texture as usize).into()))
 }
 
 /// Create a RGBA GL texture handle of the given dimensions with NEAREST filtering.
@@ -1616,63 +1634,59 @@ fn update_gb_ppu_viewer_textures_from_snapshot(
     }
 }
 
-/// Render the GB PPU viewer ImGui window showing tiles, BG maps, OAM, and palettes.
+/// Render the GB PPU viewer egui window showing tiles, BG maps, OAM, and palettes.
 fn draw_gb_ppu_viewer_window(
-    ui: &imgui::Ui,
-    tiles_texture_id: imgui::TextureId,
-    bg_maps_texture_id: imgui::TextureId,
+    ui: &mut egui::Ui,
+    tiles_texture_id: egui::TextureId,
+    bg_maps_texture_id: egui::TextureId,
     ppu_snap: &crate::gb::debugging::ppu_viewer::GbPpuViewerSnapshot,
 ) {
     use crate::gb::debugging::ppu_viewer::{format_oam_entries, format_palette_info};
 
     let is_cgb = ppu_snap.cgb_mode;
-    // Aspect ratios for GB PPU viewer textures
-    let tiles_aspect = if is_cgb {
-        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB as f32
-    } else {
-        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_DMG as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_DMG as f32
-    };
     const BG_MAPS_ASPECT: f32 =
         GB_PPU_VIEWER_BG_MAPS_TEXTURE_HEIGHT as f32 / GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH as f32;
 
-    ui.window("GB PPU Viewer")
-        .size(
-            [
-                GB_PPU_VIEWER_WINDOW_INITIAL_WIDTH,
-                GB_PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
-            ],
-            imgui::Condition::FirstUseEver,
-        )
-        .build(|| {
+    egui::Window::new("GB PPU Viewer")
+        .default_size(egui::vec2(
+            GB_PPU_VIEWER_WINDOW_INITIAL_WIDTH,
+            GB_PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
+        ))
+        .show(ui.ctx(), |ui| {
             let mode_label = if is_cgb { "CGB" } else { "DMG" };
-            ui.text(format!("Tiles ({})", mode_label));
+            ui.label(format!("Tiles ({mode_label})"));
             ui.separator();
-            let avail_w = ui.content_region_avail()[0];
-            let tiles_uv1 = if is_cgb { [1.0, 1.0] } else { [0.5, 1.0] };
-            imgui::Image::new(tiles_texture_id, [avail_w, avail_w * tiles_aspect])
-                .uv0([0.0, 0.0])
-                .uv1(tiles_uv1)
-                .build(ui);
+            let avail_w = ui.available_width();
+            ui.add(
+                egui::Image::from_texture(egui::load::SizedTexture::new(
+                    tiles_texture_id,
+                    egui::vec2(avail_w, avail_w * gb_tiles_texture_aspect(is_cgb)),
+                ))
+                .uv(gb_tiles_texture_uv(is_cgb)),
+            );
 
-            ui.dummy([0.0, 6.0]);
-            ui.text("BG Maps (0x9800 | 0x9C00)");
+            ui.add_space(6.0);
+            ui.label("BG Maps (0x9800 | 0x9C00)");
             ui.separator();
-            let avail_w = ui.content_region_avail()[0];
-            imgui::Image::new(bg_maps_texture_id, [avail_w, avail_w * BG_MAPS_ASPECT]).build(ui);
+            let avail_w = ui.available_width();
+            ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+                bg_maps_texture_id,
+                egui::vec2(avail_w, avail_w * BG_MAPS_ASPECT),
+            )));
 
-            ui.dummy([0.0, 6.0]);
-            ui.text("OAM Sprites");
+            ui.add_space(6.0);
+            ui.label("OAM Sprites");
             ui.separator();
             let oam_lines = format_oam_entries(&ppu_snap.oam, is_cgb);
             for line in oam_lines.iter().take(10) {
-                ui.text(line);
+                ui.label(line);
             }
             if oam_lines.len() > 10 {
-                ui.text(format!("... {} more sprites", oam_lines.len() - 10));
+                ui.label(format!("... {} more sprites", oam_lines.len() - 10));
             }
 
-            ui.dummy([0.0, 6.0]);
-            ui.text("Palettes");
+            ui.add_space(6.0);
+            ui.label("Palettes");
             ui.separator();
             let palette_lines = format_palette_info(
                 ppu_snap.bgp,
@@ -1683,9 +1697,22 @@ fn draw_gb_ppu_viewer_window(
                 is_cgb,
             );
             for line in palette_lines {
-                ui.text(line);
+                ui.label(line);
             }
         });
+}
+
+fn gb_tiles_texture_aspect(is_cgb: bool) -> f32 {
+    if is_cgb {
+        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB as f32
+    } else {
+        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_DMG as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_DMG as f32
+    }
+}
+
+fn gb_tiles_texture_uv(is_cgb: bool) -> egui::Rect {
+    let max_x = if is_cgb { 1.0 } else { 0.5 };
+    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(max_x, 1.0))
 }
 
 impl Drop for GlBackend {
@@ -1694,10 +1721,6 @@ impl Drop for GlBackend {
         if self.render_target.make_current().is_ok() {
             self.egui_renderer.destroy();
             self.imgui_renderer.destroy(&self.glow_context);
-            unsafe {
-                gl::DeleteTextures(1, &self.gb_ppu_viewer_tiles_texture);
-                gl::DeleteTextures(1, &self.gb_ppu_viewer_bg_maps_texture);
-            }
         }
     }
 }
