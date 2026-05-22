@@ -17,8 +17,31 @@ fn debugger_ui_font_scale() -> f32 {
     DEBUGGER_UI_FONT_SCALE
 }
 
-fn apply_debugger_ui_font_scale(ui: &imgui::Ui) {
-    ui.set_window_font_scale(debugger_ui_font_scale());
+#[cfg(feature = "native")]
+fn apply_debugger_ui_font_scale(ui: &mut egui::Ui) {
+    ui.style_mut().override_font_id = Some(debugger_font_id());
+}
+
+#[cfg(feature = "native")]
+fn debugger_font_id() -> egui::FontId {
+    egui::FontId::monospace(13.0 * debugger_ui_font_scale())
+}
+
+#[cfg(feature = "native")]
+fn debugger_window_frame(ui: &egui::Ui, alpha: f32) -> egui::Frame {
+    let mut fill = ui.visuals().window_fill();
+    fill = egui::Color32::from_rgba_unmultiplied(
+        fill.r(),
+        fill.g(),
+        fill.b(),
+        (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+    );
+    egui::Frame::window(ui.style()).fill(fill)
+}
+
+#[cfg(feature = "native")]
+fn error_text(message: &str) -> egui::RichText {
+    egui::RichText::new(message).color(egui::Color32::from_rgb(255, 102, 102))
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +117,7 @@ pub fn layout_model(display_size: [f32; 2]) -> (&'static str, [f32; 2], [f32; 2]
 
 #[cfg(feature = "native")]
 pub fn render(
-    ui: &imgui::Ui,
+    ui: &mut egui::Ui,
     snapshot: &DebuggerSnapshot,
     alpha: f32,
     breakpoints: &BreakpointList,
@@ -103,14 +126,14 @@ pub fn render(
     watch_state: &mut WatchlistUiState,
 ) -> DebuggerUiAction {
     let mut action = DebuggerUiAction::default();
-    let (title, pos, size) = layout_model(ui.io().display_size);
+    let content_size = ui.ctx().content_rect().size();
+    let (title, pos, size) = layout_model([content_size.x, content_size.y]);
 
-    ui.window(title)
-        .position(pos, imgui::Condition::Always)
-        .size(size, imgui::Condition::Always)
-        .bring_to_front_on_focus(false)
-        .bg_alpha(alpha)
-        .build(|| {
+    egui::Window::new(title)
+        .fixed_pos(egui::pos2(pos[0], pos[1]))
+        .fixed_size(egui::vec2(size[0], size[1]))
+        .frame(debugger_window_frame(ui, alpha))
+        .show(ui.ctx(), |ui| {
             apply_debugger_ui_font_scale(ui);
             render_cpu_window(
                 ui,
@@ -170,7 +193,7 @@ fn code_panel_disasm_height_for_line_height(line_height_with_spacing: f32) -> f3
 
 #[cfg(feature = "native")]
 fn render_cpu_window(
-    ui: &imgui::Ui,
+    ui: &mut egui::Ui,
     snapshot: &DebuggerSnapshot,
     breakpoints: &BreakpointList,
     add_state: &mut BreakpointAddUiState,
@@ -182,83 +205,100 @@ fn render_cpu_window(
     render_breakpoint_panel(ui, breakpoints, add_state, action);
     ui.separator();
 
-    let avail = ui.content_region_avail();
-    let layout = cpu_window_layout(avail, ui.cursor_pos());
+    let avail = [ui.available_width(), ui.available_height()];
+    let layout = cpu_window_layout(avail, [0.0, 0.0]);
 
-    ui.set_cursor_pos(layout.left_pos);
-    render_cpu_code_panel(ui, snapshot, [layout.left_w, avail[1]]);
-
-    ui.set_cursor_pos(layout.right_pos);
-    render_cpu_right_panel(
-        ui,
-        snapshot,
-        [layout.right_w, avail[1]],
-        layout.gap,
-        hexdump_state,
-        watch_state,
-        action,
-    );
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(layout.left_w, avail[1]),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| render_cpu_code_panel(ui, snapshot, [layout.left_w, avail[1]]),
+        );
+        ui.add_space(layout.gap);
+        ui.allocate_ui_with_layout(
+            egui::vec2(layout.right_w, avail[1]),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                render_cpu_right_panel(
+                    ui,
+                    snapshot,
+                    [layout.right_w, avail[1]],
+                    layout.gap,
+                    hexdump_state,
+                    watch_state,
+                    action,
+                );
+            },
+        );
+    });
 }
 
 #[cfg(feature = "native")]
 fn render_breakpoint_panel(
-    ui: &imgui::Ui,
+    ui: &mut egui::Ui,
     breakpoints: &BreakpointList,
     add_state: &mut BreakpointAddUiState,
     action: &mut DebuggerUiAction,
 ) {
-    if !ui.collapsing_header("Breakpoints##bp_header", imgui::TreeNodeFlags::empty()) {
-        return;
-    }
-
-    render_existing_breakpoints(ui, breakpoints, action);
-    ui.separator();
-    render_add_breakpoint_row(ui, add_state, action);
+    egui::CollapsingHeader::new("Breakpoints")
+        .id_salt("bp_header")
+        .show(ui, |ui| {
+            render_existing_breakpoints(ui, breakpoints, action);
+            ui.separator();
+            render_add_breakpoint_row(ui, add_state, action);
+        });
 }
 
 #[cfg(feature = "native")]
 fn render_existing_breakpoints(
-    ui: &imgui::Ui,
+    ui: &mut egui::Ui,
     breakpoints: &BreakpointList,
     action: &mut DebuggerUiAction,
 ) {
     for (i, bp) in breakpoints.iter().enumerate() {
-        let mut enabled = bp.enabled;
-        if ui.checkbox(format!("##bp_en_{}", i), &mut enabled) {
-            if enabled {
-                action.enable_breakpoint = Some(i);
-            } else {
-                action.disable_breakpoint = Some(i);
+        ui.horizontal(|ui| {
+            let mut enabled = bp.enabled;
+            if ui.checkbox(&mut enabled, "").changed() {
+                if enabled {
+                    action.enable_breakpoint = Some(i);
+                } else {
+                    action.disable_breakpoint = Some(i);
+                }
             }
-        }
-        ui.same_line();
-        ui.text(format_breakpoint_label(bp));
-        ui.same_line();
-        if ui.small_button(format!("X##bp_rm_{}", i)) {
-            action.remove_breakpoint = Some(i);
-        }
+            ui.label(format_breakpoint_label(bp));
+            if ui.small_button("X").clicked() {
+                action.remove_breakpoint = Some(i);
+            }
+        });
     }
 }
 
 #[cfg(feature = "native")]
 fn render_add_breakpoint_row(
-    ui: &imgui::Ui,
+    ui: &mut egui::Ui,
     add_state: &mut BreakpointAddUiState,
     action: &mut DebuggerUiAction,
 ) {
     let kinds = ["PC", "Cycle", "Write", "Frame"];
-    let _width = ui.push_item_width(60.0);
-    ui.combo_simple_string("##bp_kind", &mut add_state.kind_idx, &kinds);
-    drop(_width);
-    ui.same_line();
-    let _width = ui.push_item_width(120.0);
-    let enter_pressed = ui
-        .input_text("##bp_val", &mut add_state.value)
-        .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
-        .build();
-    drop(_width);
-    ui.same_line();
-    let add_clicked = ui.button("Add##bp_add");
+    let mut enter_pressed = false;
+    let mut add_clicked = false;
+    ui.horizontal(|ui| {
+        let selected_kind = kinds.get(add_state.kind_idx).copied().unwrap_or(kinds[0]);
+        egui::ComboBox::from_id_salt("bp_kind")
+            .selected_text(selected_kind)
+            .width(60.0)
+            .show_ui(ui, |ui| {
+                for (index, kind) in kinds.iter().enumerate() {
+                    ui.selectable_value(&mut add_state.kind_idx, index, *kind);
+                }
+            });
+        let response = ui.add_sized(
+            [120.0, 0.0],
+            egui::TextEdit::singleline(&mut add_state.value).desired_width(120.0),
+        );
+        enter_pressed = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        add_clicked = ui.button("Add").clicked();
+    });
     if breakpoint_add_submit_requested(add_clicked, enter_pressed) {
         match validate_breakpoint_input(add_state.kind_idx, &add_state.value) {
             Ok(kind) => {
@@ -273,7 +313,7 @@ fn render_add_breakpoint_row(
     }
 
     if let Some(message) = add_state.error.as_deref() {
-        ui.text_colored([1.0, 0.4, 0.4, 1.0], message);
+        ui.label(error_text(message));
     }
 }
 
@@ -316,111 +356,107 @@ fn hexdump_go_submit_requested(go_clicked: bool, enter_pressed: bool) -> bool {
     go_clicked || enter_pressed
 }
 
-fn render_cpu_controls(ui: &imgui::Ui, action: &mut DebuggerUiAction) {
-    if ui.button("Step over") {
-        action.step_over = true;
-    }
-    ui.same_line();
-    if ui.button("Step into") {
-        action.step_into = true;
-    }
-    ui.same_line();
-    if ui.button("Continue") {
-        action.continue_run = true;
-    }
-
-    if ui.button("Run to next frame") {
-        action.run_to_next_frame = true;
-    }
-    ui.same_line();
-    if ui.button("Run to next scanline") {
-        action.run_to_next_scanline = true;
-    }
-    ui.same_line();
-    if ui.button("Run to NMI") {
-        action.run_to_nmi = true;
-    }
-    ui.same_line();
-    if ui.button("Run to IRQ") {
-        action.run_to_irq = true;
-    }
-    ui.same_line();
-    if ui.button("PPU Viewer") {
-        action.toggle_ppu_viewer = true;
-    }
-    ui.same_line();
-    if ui.button("α-") {
-        action.decrease_opacity = true;
-    }
-    ui.same_line();
-    if ui.button("α+") {
-        action.increase_opacity = true;
-    }
+fn render_cpu_controls(ui: &mut egui::Ui, action: &mut DebuggerUiAction) {
+    ui.horizontal_wrapped(|ui| {
+        if ui.button("Step over").clicked() {
+            action.step_over = true;
+        }
+        if ui.button("Step into").clicked() {
+            action.step_into = true;
+        }
+        if ui.button("Continue").clicked() {
+            action.continue_run = true;
+        }
+        if ui.button("Run to next frame").clicked() {
+            action.run_to_next_frame = true;
+        }
+        if ui.button("Run to next scanline").clicked() {
+            action.run_to_next_scanline = true;
+        }
+        if ui.button("Run to NMI").clicked() {
+            action.run_to_nmi = true;
+        }
+        if ui.button("Run to IRQ").clicked() {
+            action.run_to_irq = true;
+        }
+        if ui.button("PPU Viewer").clicked() {
+            action.toggle_ppu_viewer = true;
+        }
+        if ui.button("alpha-").clicked() {
+            action.decrease_opacity = true;
+        }
+        if ui.button("alpha+").clicked() {
+            action.increase_opacity = true;
+        }
+    });
 }
 
-fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2]) {
-    ui.child_window("cpu_code")
-        .size(size)
-        .border(true)
-        .build(|| {
-            apply_debugger_ui_font_scale(ui);
-            ui.text("Code");
-            ui.separator();
+fn render_cpu_code_panel(ui: &mut egui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2]) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_min_size(egui::vec2(size[0], size[1]));
+        apply_debugger_ui_font_scale(ui);
+        ui.label("Code");
+        ui.separator();
 
-            let disasm_height =
-                code_panel_disasm_height_for_line_height(ui.text_line_height_with_spacing())
-                    .min(ui.content_region_avail()[1].max(0.0));
+        let line_height =
+            ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y;
+        let disasm_height = code_panel_disasm_height_for_line_height(line_height)
+            .min(ui.available_height().max(0.0));
 
-            ui.child_window("cpu_code_disasm")
-                .size([0.0, disasm_height])
-                .border(false)
-                .build(|| {
-                    apply_debugger_ui_font_scale(ui);
-                    for line in &snapshot.cpu_disasm {
-                        let bytes = format_disasm_bytes(&line.bytes);
-                        let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
-                        if line.is_current {
-                            let cursor = ui.cursor_screen_pos();
-                            let draw_w = ui.content_region_avail()[0];
-                            let draw_h = ui.text_line_height();
+        egui::ScrollArea::vertical()
+            .id_salt("cpu_code_disasm")
+            .max_height(disasm_height)
+            .show(ui, |ui| {
+                apply_debugger_ui_font_scale(ui);
+                for line in &snapshot.cpu_disasm {
+                    render_disasm_line(ui, line.addr, &line.bytes, &line.text, line.is_current);
+                }
+            });
 
-                            ui.get_window_draw_list()
-                                .add_rect(
-                                    cursor,
-                                    [cursor[0] + draw_w, cursor[1] + draw_h],
-                                    [1.0, 1.0, 1.0, 1.0],
-                                )
-                                .filled(true)
-                                .build();
+        ui.separator();
+        ui.label("Trace (recent 32)");
+        ui.separator();
 
-                            let _text =
-                                ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 1.0]);
-                            ui.text(text);
-                        } else {
-                            ui.text(text);
-                        }
-                    }
-                });
+        egui::ScrollArea::vertical()
+            .id_salt("cpu_trace")
+            .max_height(ui.available_height().max(0.0))
+            .show(ui, |ui| {
+                apply_debugger_ui_font_scale(ui);
+                for line in &snapshot.recent_trace {
+                    ui.label(
+                        egui::RichText::new(format_trace_entry(line.addr, &line.bytes, &line.text))
+                            .monospace(),
+                    );
+                }
+            });
+    });
+}
 
-            ui.separator();
-            ui.text("Trace (recent 32)");
-            ui.separator();
-
-            let trace_height = ui.content_region_avail()[1].max(0.0);
-            ui.child_window("cpu_trace")
-                .size([0.0, trace_height])
-                .border(false)
-                .build(|| {
-                    apply_debugger_ui_font_scale(ui);
-                    for line in &snapshot.recent_trace {
-                        ui.text(format_trace_entry(line.addr, &line.bytes, &line.text));
-                    }
-                });
-        });
+#[cfg(feature = "native")]
+fn render_disasm_line(ui: &mut egui::Ui, addr: u16, bytes: &[u8], text: &str, is_current: bool) {
+    let bytes = format_disasm_bytes(bytes);
+    let text = format!("{addr:04X}: {bytes:<8} {text}");
+    if is_current {
+        let height = ui.text_style_height(&egui::TextStyle::Body);
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), height),
+            egui::Sense::hover(),
+        );
+        ui.painter().rect_filled(rect, 0.0, egui::Color32::WHITE);
+        ui.painter().text(
+            rect.left_top(),
+            egui::Align2::LEFT_TOP,
+            text,
+            debugger_font_id(),
+            egui::Color32::BLACK,
+        );
+    } else {
+        ui.label(egui::RichText::new(text).monospace());
+    }
 }
 
 fn render_cpu_right_panel(
-    ui: &imgui::Ui,
+    ui: &mut egui::Ui,
     snapshot: &DebuggerSnapshot,
     size: [f32; 2],
     gap: f32,
@@ -428,75 +464,78 @@ fn render_cpu_right_panel(
     watch_state: &mut WatchlistUiState,
     action: &mut DebuggerUiAction,
 ) {
-    ui.child_window("cpu_right")
-        .size(size)
-        .border(false)
-        .build(|| {
-            apply_debugger_ui_font_scale(ui);
-            let right_avail = ui.content_region_avail();
-            let (regs_h, hex_h, oam_h, watch_h) = cpu_right_panel_split(right_avail, gap);
+    ui.set_min_size(egui::vec2(size[0], size[1]));
+    apply_debugger_ui_font_scale(ui);
+    let right_avail = [ui.available_width(), ui.available_height()];
+    let (regs_h, hex_h, oam_h, watch_h) = cpu_right_panel_split(right_avail, gap);
 
-            ui.child_window("cpu_regs")
-                .size([right_avail[0], regs_h])
-                .border(true)
-                .build(|| {
-                    apply_debugger_ui_font_scale(ui);
-                    render_cpu_registers(ui, snapshot);
-                });
+    render_panel(ui, [right_avail[0], regs_h], |ui| {
+        render_cpu_registers(ui, snapshot);
+    });
 
-            ui.dummy([0.0, gap]);
+    ui.add_space(gap);
 
-            ui.child_window("cpu_prg_hex")
-                .size([right_avail[0], hex_h])
-                .border(true)
-                .build(|| {
-                    apply_debugger_ui_font_scale(ui);
-                    render_hexdump_controls(ui, snapshot.prg_hexdump_base, hexdump_state, action);
-                    ui.text(format!(
-                        "PRG-ROM hexdump @ {:04X}",
-                        snapshot.prg_hexdump_base
-                    ));
-                    ui.separator();
+    render_panel(ui, [right_avail[0], hex_h], |ui| {
+        render_hexdump_controls(ui, snapshot.prg_hexdump_base, hexdump_state, action);
+        ui.label(format!(
+            "PRG-ROM hexdump @ {:04X}",
+            snapshot.prg_hexdump_base
+        ));
+        ui.separator();
 
-                    for line in
-                        format_hexdump_lines(snapshot.prg_hexdump_base, &snapshot.prg_hexdump_bytes)
-                    {
-                        ui.text(line);
-                    }
-                });
+        egui::ScrollArea::vertical()
+            .id_salt("cpu_prg_hex")
+            .show(ui, |ui| {
+                for line in
+                    format_hexdump_lines(snapshot.prg_hexdump_base, &snapshot.prg_hexdump_bytes)
+                {
+                    ui.label(egui::RichText::new(line).monospace());
+                }
+            });
+    });
 
-            ui.dummy([0.0, gap]);
+    ui.add_space(gap);
 
-            ui.child_window("oam_panel")
-                .size([right_avail[0], oam_h])
-                .border(true)
-                .build(|| {
-                    apply_debugger_ui_font_scale(ui);
-                    render_oam_panel(ui, snapshot);
-                });
+    render_panel(ui, [right_avail[0], oam_h], |ui| {
+        render_oam_panel(ui, snapshot);
+    });
 
-            ui.dummy([0.0, gap]);
+    ui.add_space(gap);
 
-            ui.child_window("watch_panel")
-                .size([right_avail[0], watch_h])
-                .border(true)
-                .build(|| {
-                    apply_debugger_ui_font_scale(ui);
-                    render_memory_watch_panel(ui, snapshot, watch_state, action);
-                });
+    render_panel(ui, [right_avail[0], watch_h], |ui| {
+        render_memory_watch_panel(ui, snapshot, watch_state, action);
+    });
+}
+
+#[cfg(feature = "native")]
+fn render_panel(ui: &mut egui::Ui, size: [f32; 2], contents: impl FnOnce(&mut egui::Ui)) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(size[0], size[1]),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_min_size(egui::vec2(size[0], size[1]));
+                apply_debugger_ui_font_scale(ui);
+                contents(ui);
+            });
+        },
+    );
+}
+
+fn render_oam_panel(ui: &mut egui::Ui, snapshot: &DebuggerSnapshot) {
+    ui.label("OAM (#  Y  tile attr  X)");
+    ui.separator();
+    egui::ScrollArea::vertical()
+        .id_salt("oam_panel")
+        .show(ui, |ui| {
+            for entry in format_oam_entries(&snapshot.oam) {
+                ui.label(egui::RichText::new(entry).monospace());
+            }
         });
 }
 
-fn render_oam_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
-    ui.text("OAM (#  Y  tile attr  X)");
-    ui.separator();
-    for entry in format_oam_entries(&snapshot.oam) {
-        ui.text(entry);
-    }
-}
-
 fn render_hexdump_controls(
-    ui: &imgui::Ui,
+    ui: &mut egui::Ui,
     current_base: u16,
     hexdump_state: &mut HexdumpUiState,
     action: &mut DebuggerUiAction,
@@ -505,28 +544,27 @@ fn render_hexdump_controls(
         hexdump_state.address_input = format!("{:04X}", current_base);
     }
 
-    if ui.small_button("-##hex_step") {
-        action.nudge_prg_hexdump_base_by_bytes = Some(-16);
-        let next = normalize_hexdump_base_for_ui(current_base.saturating_sub(16));
-        hexdump_state.address_input = format!("{:04X}", next);
-    }
-    ui.same_line();
-    if ui.small_button("+##hex_step") {
-        action.nudge_prg_hexdump_base_by_bytes = Some(16);
-        let next = normalize_hexdump_base_for_ui(current_base.saturating_add(16));
-        hexdump_state.address_input = format!("{:04X}", next);
-    }
-    ui.same_line();
+    let mut enter_pressed = false;
+    let mut go_clicked = false;
+    ui.horizontal(|ui| {
+        if ui.small_button("-").clicked() {
+            action.nudge_prg_hexdump_base_by_bytes = Some(-16);
+            let next = normalize_hexdump_base_for_ui(current_base.saturating_sub(16));
+            hexdump_state.address_input = format!("{next:04X}");
+        }
+        if ui.small_button("+").clicked() {
+            action.nudge_prg_hexdump_base_by_bytes = Some(16);
+            let next = normalize_hexdump_base_for_ui(current_base.saturating_add(16));
+            hexdump_state.address_input = format!("{next:04X}");
+        }
 
-    let _width = ui.push_item_width(90.0);
-    let enter_pressed = ui
-        .input_text("##hex_base", &mut hexdump_state.address_input)
-        .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
-        .build();
-    drop(_width);
-    ui.same_line();
-
-    let go_clicked = ui.small_button("Go##hex_base");
+        let response = ui.add_sized(
+            [90.0, 0.0],
+            egui::TextEdit::singleline(&mut hexdump_state.address_input).desired_width(90.0),
+        );
+        enter_pressed = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        go_clicked = ui.small_button("Go").clicked();
+    });
     if hexdump_go_submit_requested(go_clicked, enter_pressed) {
         match validate_hexdump_input(&hexdump_state.address_input) {
             Ok(addr) => {
@@ -542,7 +580,7 @@ fn render_hexdump_controls(
     }
 
     if let Some(message) = hexdump_state.error.as_deref() {
-        ui.text_colored([1.0, 0.4, 0.4, 1.0], message);
+        ui.label(error_text(message));
     }
 }
 
@@ -555,78 +593,85 @@ fn cpu_right_panel_split(avail: [f32; 2], gap: f32) -> (f32, f32, f32, f32) {
 }
 
 fn render_memory_watch_panel(
-    ui: &imgui::Ui,
+    ui: &mut egui::Ui,
     snapshot: &DebuggerSnapshot,
     watch_state: &mut WatchlistUiState,
     action: &mut DebuggerUiAction,
 ) {
-    if !ui.collapsing_header("Memory Watch##watch_header", imgui::TreeNodeFlags::empty()) {
-        return;
-    }
-
-    let _width = ui.push_item_width(100.0);
-    let add_enter_pressed = ui
-        .input_text("##watch_add_addr", &mut watch_state.add_input)
-        .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
-        .build();
-    drop(_width);
-    ui.same_line();
-    let add_clicked = ui.small_button("Add##watch_add");
-    if add_clicked || add_enter_pressed {
-        match validate_watch_address_input(&watch_state.add_input) {
-            Ok(address) => {
-                action.add_watch_address = Some(address);
-                watch_state.add_input.clear();
-                watch_state.add_error = None;
-            }
-            Err(message) => {
-                watch_state.add_error = Some(message.to_string());
-            }
-        }
-    }
-
-    if let Some(message) = watch_state.add_error.as_deref() {
-        ui.text_colored([1.0, 0.4, 0.4, 1.0], message);
-    }
-
-    ensure_watch_row_state_capacity(watch_state, snapshot.watch_values.len());
-    for (index, entry) in snapshot.watch_values.iter().enumerate() {
-        if watch_state.row_inputs[index].is_empty() {
-            watch_state.row_inputs[index] = format!("{:04X}", entry.address);
-        }
-
-        let _width = ui.push_item_width(70.0);
-        let edit_enter_pressed = ui
-            .input_text(
-                format!("##watch_addr_{}", index),
-                &mut watch_state.row_inputs[index],
-            )
-            .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
-            .build();
-        drop(_width);
-        if edit_enter_pressed {
-            match validate_watch_address_input(&watch_state.row_inputs[index]) {
-                Ok(address) => {
-                    action.update_watch_address = Some(WatchAddressUpdate { index, address });
-                    watch_state.row_errors[index] = None;
-                }
-                Err(message) => {
-                    watch_state.row_errors[index] = Some(message.to_string());
+    egui::CollapsingHeader::new("Memory Watch")
+        .id_salt("watch_header")
+        .show(ui, |ui| {
+            let mut add_enter_pressed = false;
+            let mut add_clicked = false;
+            ui.horizontal(|ui| {
+                let response = ui.add_sized(
+                    [100.0, 0.0],
+                    egui::TextEdit::singleline(&mut watch_state.add_input).desired_width(100.0),
+                );
+                add_enter_pressed =
+                    response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                add_clicked = ui.small_button("Add").clicked();
+            });
+            if add_clicked || add_enter_pressed {
+                match validate_watch_address_input(&watch_state.add_input) {
+                    Ok(address) => {
+                        action.add_watch_address = Some(address);
+                        watch_state.add_input.clear();
+                        watch_state.add_error = None;
+                    }
+                    Err(message) => {
+                        watch_state.add_error = Some(message.to_string());
+                    }
                 }
             }
-        }
 
-        ui.same_line();
-        ui.text(format_watch_entry(entry.address, entry.value));
-        ui.same_line();
-        if ui.small_button(format!("X##watch_rm_{}", index)) {
-            action.remove_watch_address = Some(index);
-        }
+            if let Some(message) = watch_state.add_error.as_deref() {
+                ui.label(error_text(message));
+            }
 
-        if let Some(message) = watch_state.row_errors[index].as_deref() {
-            ui.text_colored([1.0, 0.4, 0.4, 1.0], message);
-        }
-    }
+            ensure_watch_row_state_capacity(watch_state, snapshot.watch_values.len());
+            egui::ScrollArea::vertical()
+                .id_salt("watch_rows")
+                .show(ui, |ui| {
+                    for (index, entry) in snapshot.watch_values.iter().enumerate() {
+                        if watch_state.row_inputs[index].is_empty() {
+                            watch_state.row_inputs[index] = format!("{:04X}", entry.address);
+                        }
+
+                        let mut edit_enter_pressed = false;
+                        ui.horizontal(|ui| {
+                            let response = ui.add_sized(
+                                [70.0, 0.0],
+                                egui::TextEdit::singleline(&mut watch_state.row_inputs[index])
+                                    .desired_width(70.0),
+                            );
+                            edit_enter_pressed = response.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                            ui.label(format_watch_entry(entry.address, entry.value));
+                            if ui.small_button("X").clicked() {
+                                action.remove_watch_address = Some(index);
+                            }
+                        });
+                        if edit_enter_pressed {
+                            match validate_watch_address_input(&watch_state.row_inputs[index]) {
+                                Ok(address) => {
+                                    action.update_watch_address =
+                                        Some(WatchAddressUpdate { index, address });
+                                    watch_state.row_errors[index] = None;
+                                }
+                                Err(message) => {
+                                    watch_state.row_errors[index] = Some(message.to_string());
+                                }
+                            }
+                        }
+
+                        if let Some(message) = watch_state.row_errors[index].as_deref() {
+                            ui.label(error_text(message));
+                        }
+                    }
+                });
+        });
 }
 
 fn ensure_watch_row_state_capacity(watch_state: &mut WatchlistUiState, len: usize) {
@@ -665,9 +710,9 @@ fn format_disasm_bytes(bytes: &[u8]) -> String {
     }
 }
 
-fn render_cpu_registers(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
+fn render_cpu_registers(ui: &mut egui::Ui, snapshot: &DebuggerSnapshot) {
     for line in cpu_register_lines(snapshot) {
-        ui.text(line);
+        ui.label(egui::RichText::new(line).monospace());
     }
 }
 

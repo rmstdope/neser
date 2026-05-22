@@ -844,6 +844,11 @@ impl GlBackend {
         } else {
             None
         };
+        let nes_debugger_snapshot = if show_debugger && let Console::Nes(nes) = console {
+            Some(self.debugger_view_state.snapshot(nes))
+        } else {
+            None
+        };
         let cropped_w = self.tex_w;
         let cropped_h = self.tex_h;
 
@@ -873,6 +878,12 @@ impl GlBackend {
         let ppu_viewer_tiles_texture_id = self.ppu_viewer_tiles_texture_id;
         let gb_ppu_viewer_tiles_texture_id = self.gb_ppu_viewer_tiles_texture_id;
         let gb_ppu_viewer_bg_maps_texture_id = self.gb_ppu_viewer_bg_maps_texture_id;
+        let debugger_alpha = self.debugger_alpha;
+        let breakpoints = &self.breakpoints;
+        let bp_add_state = &mut self.bp_add_state;
+        let hexdump_ui_state = &mut self.hexdump_ui_state;
+        let watchlist_ui_state = &mut self.watchlist_ui_state;
+        let mut nes_debugger_action = None;
         let egui_paint_data =
             self.egui_renderer
                 .run(egui_frame_input, &mut self.egui_input, |ui| {
@@ -912,51 +923,57 @@ impl GlBackend {
                             ppu_snap,
                         );
                     }
+                    if let Some(snapshot) = nes_debugger_snapshot.as_ref() {
+                        nes_debugger_action = Some(debugger_ui::render(
+                            ui,
+                            snapshot,
+                            debugger_alpha,
+                            breakpoints,
+                            bp_add_state,
+                            hexdump_ui_state,
+                            watchlist_ui_state,
+                        ));
+                    }
                 });
         self.egui_renderer.paint(egui_paint_data);
+
+        if let (Some(action_from_ui), Some(snapshot)) =
+            (nes_debugger_action, nes_debugger_snapshot.as_ref())
+        {
+            action = action_from_ui;
+            if action.toggle_ppu_viewer {
+                self.debugger_view_state.toggle_ppu_viewer();
+            }
+            if let Some(base) = action.set_prg_hexdump_base {
+                self.debugger_view_state.set_prg_hexdump_base(base);
+            }
+            if let Some(delta) = action.nudge_prg_hexdump_base_by_bytes {
+                self.debugger_view_state
+                    .nudge_prg_hexdump_base_by_bytes_from(snapshot.prg_hexdump_base, delta);
+            }
+            if let Some(address) = action.add_watch_address {
+                self.debugger_view_state.add_watch_address(address);
+            }
+            if let Some(index) = action.remove_watch_address {
+                self.debugger_view_state.remove_watch_address(index);
+            }
+            if let Some(update) = action.update_watch_address {
+                self.debugger_view_state
+                    .update_watch_address(update.index, update.address);
+            }
+            if action.increase_opacity {
+                self.debugger_alpha = (self.debugger_alpha + 0.1).min(1.0);
+            }
+            if action.decrease_opacity {
+                self.debugger_alpha = (self.debugger_alpha - 0.1).max(0.1);
+            }
+        }
 
         // Start ImGui frame
         {
             let ui = self.imgui.frame();
 
-            if show_debugger && let Console::Nes(nes) = console {
-                let snapshot = self.debugger_view_state.snapshot(nes);
-                action = debugger_ui::render(
-                    ui,
-                    &snapshot,
-                    self.debugger_alpha,
-                    &self.breakpoints,
-                    &mut self.bp_add_state,
-                    &mut self.hexdump_ui_state,
-                    &mut self.watchlist_ui_state,
-                );
-                if action.toggle_ppu_viewer {
-                    self.debugger_view_state.toggle_ppu_viewer();
-                }
-                if let Some(base) = action.set_prg_hexdump_base {
-                    self.debugger_view_state.set_prg_hexdump_base(base);
-                }
-                if let Some(delta) = action.nudge_prg_hexdump_base_by_bytes {
-                    self.debugger_view_state
-                        .nudge_prg_hexdump_base_by_bytes_from(snapshot.prg_hexdump_base, delta);
-                }
-                if let Some(address) = action.add_watch_address {
-                    self.debugger_view_state.add_watch_address(address);
-                }
-                if let Some(index) = action.remove_watch_address {
-                    self.debugger_view_state.remove_watch_address(index);
-                }
-                if let Some(update) = action.update_watch_address {
-                    self.debugger_view_state
-                        .update_watch_address(update.index, update.address);
-                }
-                if action.increase_opacity {
-                    self.debugger_alpha = (self.debugger_alpha + 0.1).min(1.0);
-                }
-                if action.decrease_opacity {
-                    self.debugger_alpha = (self.debugger_alpha - 0.1).max(0.1);
-                }
-            } else if show_debugger && let Console::GameBoy(gb) = console {
+            if show_debugger && let Console::GameBoy(gb) = console {
                 let snapshot = gb.create_debugger_snapshot(&mut self.gb_debugger_view_state);
                 let gb_action = gb_debugger_ui::render(
                     ui,
