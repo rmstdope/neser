@@ -306,6 +306,9 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 | `src/frontends/native/mouse.rs` | Mouse input — Zapper light gun, SNES mouse, and Arkanoid paddle coordinate mapping. |
 | `src/frontends/native/gl_wrapper.rs` | OpenGL context management for native windows. |
 | `src/frontends/native/gl_backend.rs` | OpenGL framebuffer, texture management, and debugger UI. |
+| `src/frontends/native/egui_theme.rs` | Shared egui font and dark-theme setup used by native egui surfaces. |
+| `src/frontends/native/egui_texture.rs` | Shared egui native texture metadata used by ROM browser textures and future emulator egui rendering. |
+| `src/frontends/native/ui_geometry.rs` | Shared pure geometry helpers for letterboxed frames, overlays, toasts, and crosshair layout. |
 | `src/frontends/native/shader_manager.rs` | Shader pipeline using librashader — loads `.slangp` presets (CRT, NTSC, xBRZ). |
 | `src/frontends/native/rom_browser/` | Graphical ROM browser — a console-style launcher with cover art grid, search, genre filter, detail view, and favorites. |
 | `src/frontends/native/rom_browser/app.rs` | `RomBrowserApp` — winit `ApplicationHandler` implementing the browser state machine, grid rendering, overlay modes (search, genre filter, detail view), input handling, and favorites. |

@@ -483,7 +483,8 @@ impl RomBrowserApp {
             .filter_map(|e| {
                 let game_id = e.metadata_game_id?;
                 let tex = gl.get_texture(&TextureKey::CoverArt(game_id))?;
-                Some((game_id, (tex.egui_id, tex.width, tex.height)))
+                let [width, height] = tex.size();
+                Some((game_id, (tex.egui_id, width, height)))
             })
             .collect();
 
@@ -548,9 +549,11 @@ impl RomBrowserApp {
             for (i, path) in entry.screenshot_paths.iter().enumerate() {
                 let key = TextureKey::Screenshot(game_id, i);
                 if let Some(tex) = gl.get_texture(&key) {
-                    screenshot_textures.push((tex.egui_id, tex.width, tex.height));
+                    let [width, height] = tex.size();
+                    screenshot_textures.push((tex.egui_id, width, height));
                 } else if let Some(tex) = gl.load_texture_from_file(key, path) {
-                    screenshot_textures.push((tex.egui_id, tex.width, tex.height));
+                    let [width, height] = tex.size();
+                    screenshot_textures.push((tex.egui_id, width, height));
                 }
             }
         }

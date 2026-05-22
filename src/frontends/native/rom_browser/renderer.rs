@@ -22,6 +22,8 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes};
 
+pub use crate::frontends::native::egui_texture::NativeTexture as LoadedTexture;
+
 /// Browser GL renderer managing the window, GL context, and egui.
 pub struct BrowserGl {
     window: Arc<Window>,
@@ -43,14 +45,6 @@ pub enum TextureKey {
     Screenshot(i64, usize),
     /// The placeholder texture for games without cover art.
     Placeholder,
-}
-
-/// A loaded GL texture with its dimensions.
-#[derive(Debug, Clone, Copy)]
-pub struct LoadedTexture {
-    pub egui_id: egui::TextureId,
-    pub width: u32,
-    pub height: u32,
 }
 
 impl BrowserGl {
