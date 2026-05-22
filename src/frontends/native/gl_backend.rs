@@ -331,6 +331,55 @@ fn draw_egui_frame_background(
     );
 }
 
+fn draw_egui_overlay_text(
+    ui: &mut egui::Ui,
+    text: &str,
+    text_color: OverlayTextColor,
+    blink_red: bool,
+    x0: f32,
+    y0: f32,
+) {
+    let painter = ui.painter();
+    let overlay_style = text_color;
+    let egui_text_color = egui_color_from_rgba(overlay_text_rgba(overlay_style, blink_red));
+    let background_color = egui_color_from_rgba(overlay_background_color_for(overlay_style));
+    let galley = painter.layout_no_wrap(text.to_owned(), overlay_egui_font_id(), egui_text_color);
+    let text_size = [galley.size().x, galley.size().y];
+    let layout = crate::frontends::native::ui_geometry::top_left_text_panel(
+        [x0, y0],
+        text_size,
+        [8.0, 8.0],
+        [6.0, 4.0],
+    );
+
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(layout.rect_min[0], layout.rect_min[1]),
+            egui::pos2(layout.rect_max[0], layout.rect_max[1]),
+        ),
+        0.0,
+        background_color,
+    );
+    painter.galley(
+        egui::pos2(layout.text_pos[0], layout.text_pos[1]),
+        galley,
+        egui_text_color,
+    );
+}
+
+fn overlay_egui_font_id() -> egui::FontId {
+    egui::FontId::proportional(26.0)
+}
+
+fn egui_color_from_rgba(rgba: [f32; 4]) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(
+        (rgba[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (rgba[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (rgba[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (rgba[3].clamp(0.0, 1.0) * 255.0).round() as u8,
+    )
+}
+
 fn overlay_text_rgba(text_color: OverlayTextColor, blink_red: bool) -> [f32; 4] {
     if blink_red {
         [1.0, 0.0, 0.0, 1.0]
@@ -797,6 +846,16 @@ impl GlBackend {
                 .run(egui_frame_input, &mut self.egui_input, |ui| {
                     if background_renderer == FrameBackgroundRenderer::Egui {
                         draw_egui_frame_background(ui, egui_texture_id, x0, y0, draw_w, draw_h);
+                        if let Some(text) = overlay_text {
+                            draw_egui_overlay_text(
+                                ui,
+                                text,
+                                self.overlay_text_color,
+                                overlay_blink_red,
+                                x0,
+                                y0,
+                            );
+                        }
                     }
                 });
         self.egui_renderer.paint(egui_paint_data);
@@ -810,7 +869,9 @@ impl GlBackend {
                 draw_frame_background(ui, background_texture, x0, y0, draw_w, draw_h);
             }
 
-            if let Some(text) = overlay_text {
+            if background_renderer == FrameBackgroundRenderer::ImGui
+                && let Some(text) = overlay_text
+            {
                 draw_overlay_text(
                     ui,
                     text,
@@ -1103,7 +1164,10 @@ mod tests_crosshair_projection {
 
 #[cfg(test)]
 mod tests_egui_frame_input {
-    use super::{FrameBackgroundRenderer, egui_frame_input_for_window, frame_background_renderer};
+    use super::{
+        FrameBackgroundRenderer, egui_color_from_rgba, egui_frame_input_for_window,
+        frame_background_renderer,
+    };
 
     #[test]
     fn egui_frame_input_uses_logical_and_drawable_sizes() {
@@ -1140,6 +1204,22 @@ mod tests_egui_frame_input {
         assert_eq!(
             frame_background_renderer(Some(7usize.into())),
             FrameBackgroundRenderer::ImGui
+        );
+    }
+
+    #[test]
+    fn egui_color_from_rgba_converts_unit_floats_to_color32() {
+        assert_eq!(
+            egui_color_from_rgba([1.0, 0.5, 0.0, 0.25]),
+            egui::Color32::from_rgba_unmultiplied(255, 128, 0, 64)
+        );
+    }
+
+    #[test]
+    fn egui_color_from_rgba_clamps_out_of_range_channels() {
+        assert_eq!(
+            egui_color_from_rgba([2.0, -1.0, 0.0, 1.5]),
+            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 255)
         );
     }
 }
