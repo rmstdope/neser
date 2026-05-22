@@ -170,6 +170,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Config::print_help();
             return Ok(());
         }
+        ParseResult::Version => {
+            println!("neser {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
         ParseResult::Config(c) => *c,
     };
 

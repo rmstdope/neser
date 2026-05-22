@@ -745,6 +745,7 @@ impl Config {
     ///
     /// # Returns
     /// - `Ok(ParseResult::Help)` if --help or -h was specified
+    /// - `Ok(ParseResult::Version)` if --version was specified
     /// - `Ok(ParseResult::Config(config))` on successful parse
     /// - `Err(message)` on validation error
     #[allow(clippy::new_ret_no_self)]
@@ -752,6 +753,9 @@ impl Config {
         // Check for help first
         if args.iter().any(|a| a == "--help" || a == "-h") {
             return Ok(ParseResult::Help);
+        }
+        if args.iter().any(|a| a == "--version") {
+            return Ok(ParseResult::Version);
         }
 
         // Validate arguments
@@ -1432,6 +1436,7 @@ mod tests {
         match config_new(args).unwrap() {
             ParseResult::Config(c) => *c,
             ParseResult::Help => panic!("Expected Config, got Help"),
+            ParseResult::Version => panic!("Expected Config, got Version"),
         }
     }
 
@@ -5168,6 +5173,7 @@ nes-filter=invalid-shader
                 assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Dmg));
             }
             ParseResult::Help => panic!("Expected Config, got Help"),
+            ParseResult::Version => panic!("Expected Config, got Version"),
         }
     }
 
