@@ -709,8 +709,7 @@ impl GlBackend {
             );
             let x0 = frame_rect.rect_min[0];
             let y0 = frame_rect.rect_min[1];
-            let draw_w = frame_rect.rect_max[0] - frame_rect.rect_min[0];
-            let draw_h = frame_rect.rect_max[1] - frame_rect.rect_min[1];
+            let [draw_w, draw_h] = frame_rect.size();
 
             // Only draw the NES texture as a background if no shader is active.
             // When a shader is active, we draw the shader output texture.

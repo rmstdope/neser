@@ -46,6 +46,15 @@ pub(crate) struct RectLayout {
     pub rect_max: [f32; 2],
 }
 
+impl RectLayout {
+    pub(crate) fn size(self) -> [f32; 2] {
+        [
+            self.rect_max[0] - self.rect_min[0],
+            self.rect_max[1] - self.rect_min[1],
+        ]
+    }
+}
+
 pub(crate) fn top_left_text_panel(
     origin: [f32; 2],
     text_size: [f32; 2],
@@ -230,6 +239,21 @@ mod tests {
         assert_close(rect.rect_min[1], 20.0);
         assert_close(rect.rect_max[0], 1628.2856);
         assert_close(rect.rect_max[1], 1100.0);
+    }
+
+    #[test]
+    fn rect_layout_size_returns_width_and_height() {
+        // Given a rectangle layout with non-zero origin.
+        let rect = RectLayout {
+            rect_min: [12.0, 34.0],
+            rect_max: [112.0, 94.0],
+        };
+
+        // When reading its size.
+        let size = rect.size();
+
+        // Then it returns width and height, not the absolute max point.
+        assert_eq!(size, [100.0, 60.0]);
     }
 
     #[test]
