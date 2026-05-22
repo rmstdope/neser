@@ -68,6 +68,30 @@ pub(crate) fn top_right_text_panel(
     }
 }
 
+pub(crate) fn bottom_center_text_panel(
+    origin: [f32; 2],
+    size: [f32; 2],
+    text_size: [f32; 2],
+    stack_index: usize,
+    bottom_margin: f32,
+    spacing: f32,
+    padding: [f32; 2],
+) -> TextPanelLayout {
+    let rect_w = text_size[0] + padding[0] * 2.0;
+    let rect_h = text_size[1] + padding[1] * 2.0;
+    let rect_x = origin[0] + (size[0] - rect_w) * 0.5;
+    let rect_max_y = origin[1] + size[1] - bottom_margin - stack_index as f32 * (rect_h + spacing);
+    let rect_min = [rect_x, rect_max_y - rect_h];
+    let rect_max = [rect_x + rect_w, rect_max_y];
+    let text_pos = [rect_min[0] + padding[0], rect_min[1] + padding[1]];
+
+    TextPanelLayout {
+        rect_min,
+        rect_max,
+        text_pos,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +196,31 @@ mod tests {
         assert_eq!(layout.rect_min, [820.0, 58.0]);
         assert_eq!(layout.rect_max, [892.0, 86.0]);
         assert_eq!(layout.text_pos, [826.0, 62.0]);
+    }
+
+    #[test]
+    fn bottom_center_text_panel_stacks_up_from_bottom_edge() {
+        // Given a letterboxed frame origin, frame size, toast text size, and stack spacing.
+        let origin = [100.0, 50.0];
+        let size = [800.0, 600.0];
+        let text_size = [120.0, 24.0];
+        let bottom_margin = 12.0;
+        let spacing = 8.0;
+        let padding = [8.0, 6.0];
+
+        // When computing bottom and third-from-bottom toast panels.
+        let bottom_layout =
+            bottom_center_text_panel(origin, size, text_size, 0, bottom_margin, spacing, padding);
+        let third_layout =
+            bottom_center_text_panel(origin, size, text_size, 2, bottom_margin, spacing, padding);
+
+        // Then panels are horizontally centered and stack upward by their padded height plus spacing.
+        assert_eq!(bottom_layout.rect_min, [432.0, 602.0]);
+        assert_eq!(bottom_layout.rect_max, [568.0, 638.0]);
+        assert_eq!(bottom_layout.text_pos, [440.0, 608.0]);
+
+        assert_eq!(third_layout.rect_min, [432.0, 514.0]);
+        assert_eq!(third_layout.rect_max, [568.0, 550.0]);
+        assert_eq!(third_layout.text_pos, [440.0, 520.0]);
     }
 }

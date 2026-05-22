@@ -276,19 +276,21 @@ fn draw_toasts(
 
     for (stack_index, toast_text) in visible_toasts.iter().rev().enumerate() {
         let text_size = ui.calc_text_size(toast_text);
-        let rect_w = text_size[0] + padding[0] * 2.0;
-        let rect_h = text_size[1] + padding[1] * 2.0;
-        let rect_x = x0 + (draw_w - rect_w) * 0.5;
-        let rect_max_y = y0 + draw_h - bottom_margin - stack_index as f32 * (rect_h + spacing);
-        let rect_min = [rect_x, rect_max_y - rect_h];
-        let rect_max = [rect_x + rect_w, rect_max_y];
-        let text_pos = [rect_min[0] + padding[0], rect_min[1] + padding[1]];
+        let layout = crate::frontends::native::ui_geometry::bottom_center_text_panel(
+            [x0, y0],
+            [draw_w, draw_h],
+            text_size,
+            stack_index,
+            bottom_margin,
+            spacing,
+            padding,
+        );
 
         draw_list
-            .add_rect(rect_min, rect_max, toast_background_rgba())
+            .add_rect(layout.rect_min, layout.rect_max, toast_background_rgba())
             .filled(true)
             .build();
-        draw_list.add_text(text_pos, toast_text_rgba(), toast_text);
+        draw_list.add_text(layout.text_pos, toast_text_rgba(), toast_text);
     }
 }
 
