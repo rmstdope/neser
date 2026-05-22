@@ -45,6 +45,29 @@ pub(crate) fn top_left_text_panel(
     }
 }
 
+pub(crate) fn top_right_text_panel(
+    origin: [f32; 2],
+    width: f32,
+    text_size: [f32; 2],
+    margin: [f32; 2],
+    padding: [f32; 2],
+) -> TextPanelLayout {
+    let rect_w = text_size[0] + padding[0] * 2.0;
+    let rect_h = text_size[1] + padding[1] * 2.0;
+    let rect_min = [
+        origin[0] + width - rect_w - margin[0],
+        origin[1] + margin[1],
+    ];
+    let rect_max = [rect_min[0] + rect_w, rect_min[1] + rect_h];
+    let text_pos = [rect_min[0] + padding[0], rect_min[1] + padding[1]];
+
+    TextPanelLayout {
+        rect_min,
+        rect_max,
+        text_pos,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,5 +154,23 @@ mod tests {
         assert_eq!(layout.text_pos, [108.0, 58.0]);
         assert_eq!(layout.rect_min, [102.0, 54.0]);
         assert_eq!(layout.rect_max, [194.0, 82.0]);
+    }
+
+    #[test]
+    fn top_right_text_panel_aligns_to_right_edge() {
+        // Given a letterboxed frame origin, frame width, text size, margin, and padding.
+        let origin = [100.0, 50.0];
+        let width = 800.0;
+        let text_size = [60.0, 20.0];
+        let margin = [8.0, 8.0];
+        let padding = [6.0, 4.0];
+
+        // When computing a top-right text panel.
+        let layout = top_right_text_panel(origin, width, text_size, margin, padding);
+
+        // Then the panel is inset from the right edge and text starts after padding.
+        assert_eq!(layout.rect_min, [820.0, 58.0]);
+        assert_eq!(layout.rect_max, [892.0, 86.0]);
+        assert_eq!(layout.text_pos, [826.0, 62.0]);
     }
 }

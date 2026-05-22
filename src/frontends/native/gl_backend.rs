@@ -244,19 +244,19 @@ fn draw_fps_counter(
     let _font = ui.push_font(font);
     let text = format!("{fps} FPS");
     let text_size = ui.calc_text_size(&text);
-    let padding = [6.0, 4.0];
-    let margin = 8.0;
-    let rect_w = text_size[0] + padding[0] * 2.0;
-    let rect_h = text_size[1] + padding[1] * 2.0;
-    let rect_min = [x0 + draw_w - rect_w - margin, y0 + margin];
-    let rect_max = [rect_min[0] + rect_w, rect_min[1] + rect_h];
-    let text_pos = [rect_min[0] + padding[0], rect_min[1] + padding[1]];
+    let layout = crate::frontends::native::ui_geometry::top_right_text_panel(
+        [x0, y0],
+        draw_w,
+        text_size,
+        [8.0, 8.0],
+        [6.0, 4.0],
+    );
     draw_list
-        .add_rect(rect_min, rect_max, [0.0, 0.0, 0.0, 0.6])
+        .add_rect(layout.rect_min, layout.rect_max, [0.0, 0.0, 0.0, 0.6])
         .filled(true)
         .rounding(3.0)
         .build();
-    draw_list.add_text(text_pos, [1.0, 1.0, 0.0, 1.0], &text);
+    draw_list.add_text(layout.text_pos, [1.0, 1.0, 0.0, 1.0], &text);
 }
 
 fn draw_toasts(
