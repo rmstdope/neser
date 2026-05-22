@@ -246,7 +246,7 @@ fn draw_fps_counter(
 ) {
     let draw_list = ui.get_background_draw_list();
     let _font = ui.push_font(font);
-    let text = format!("{fps} FPS");
+    let text = fps_counter_text(fps);
     let text_size = ui.calc_text_size(&text);
     let layout = crate::frontends::native::ui_geometry::top_right_text_panel(
         [x0, y0],
@@ -261,6 +261,10 @@ fn draw_fps_counter(
         .rounding(3.0)
         .build();
     draw_list.add_text(layout.text_pos, [1.0, 1.0, 0.0, 1.0], &text);
+}
+
+fn fps_counter_text(fps: usize) -> String {
+    format!("{fps} FPS")
 }
 
 fn draw_toasts(
@@ -364,6 +368,35 @@ fn draw_egui_overlay_text(
         egui::pos2(layout.text_pos[0], layout.text_pos[1]),
         galley,
         egui_text_color,
+    );
+}
+
+fn draw_egui_fps_counter(ui: &mut egui::Ui, fps: usize, x0: f32, y0: f32, draw_w: f32) {
+    let painter = ui.painter();
+    let text = fps_counter_text(fps);
+    let text_color = egui::Color32::YELLOW;
+    let galley = painter.layout_no_wrap(text, overlay_egui_font_id(), text_color);
+    let text_size = [galley.size().x, galley.size().y];
+    let layout = crate::frontends::native::ui_geometry::top_right_text_panel(
+        [x0, y0],
+        draw_w,
+        text_size,
+        [8.0, 8.0],
+        [6.0, 4.0],
+    );
+
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(layout.rect_min[0], layout.rect_min[1]),
+            egui::pos2(layout.rect_max[0], layout.rect_max[1]),
+        ),
+        3.0,
+        egui_color_from_rgba([0.0, 0.0, 0.0, 0.6]),
+    );
+    painter.galley(
+        egui::pos2(layout.text_pos[0], layout.text_pos[1]),
+        galley,
+        text_color,
     );
 }
 
@@ -856,6 +889,9 @@ impl GlBackend {
                                 y0,
                             );
                         }
+                        if let Some(fps_value) = fps {
+                            draw_egui_fps_counter(ui, fps_value, x0, y0, draw_w);
+                        }
                     }
                 });
         self.egui_renderer.paint(egui_paint_data);
@@ -897,7 +933,9 @@ impl GlBackend {
                 draw_crosshair(ui, crosshair, &draw_ctx);
             }
 
-            if let Some(fps_value) = fps {
+            if background_renderer == FrameBackgroundRenderer::ImGui
+                && let Some(fps_value) = fps
+            {
                 draw_fps_counter(ui, self.overlay_font, fps_value, x0, y0, draw_w);
             }
 
@@ -1166,7 +1204,7 @@ mod tests_crosshair_projection {
 mod tests_egui_frame_input {
     use super::{
         FrameBackgroundRenderer, egui_color_from_rgba, egui_frame_input_for_window,
-        frame_background_renderer,
+        fps_counter_text, frame_background_renderer,
     };
 
     #[test]
@@ -1221,6 +1259,11 @@ mod tests_egui_frame_input {
             egui_color_from_rgba([2.0, -1.0, 0.0, 1.5]),
             egui::Color32::from_rgba_unmultiplied(255, 0, 0, 255)
         );
+    }
+
+    #[test]
+    fn fps_counter_text_formats_value() {
+        assert_eq!(fps_counter_text(60), "60 FPS");
     }
 }
 
