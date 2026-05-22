@@ -18,6 +18,33 @@ pub(crate) fn letterbox_size(container_w: f32, container_h: f32, aspect: f32) ->
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TextPanelLayout {
+    pub rect_min: [f32; 2],
+    pub rect_max: [f32; 2],
+    pub text_pos: [f32; 2],
+}
+
+pub(crate) fn top_left_text_panel(
+    origin: [f32; 2],
+    text_size: [f32; 2],
+    margin: [f32; 2],
+    padding: [f32; 2],
+) -> TextPanelLayout {
+    let text_pos = [origin[0] + margin[0], origin[1] + margin[1]];
+    let rect_min = [text_pos[0] - padding[0], text_pos[1] - padding[1]];
+    let rect_max = [
+        text_pos[0] + text_size[0] + padding[0],
+        text_pos[1] + text_size[1] + padding[1],
+    ];
+
+    TextPanelLayout {
+        rect_min,
+        rect_max,
+        text_pos,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +114,22 @@ mod tests {
             assert_close(w, container_w);
             assert_close(h, container_h);
         }
+    }
+
+    #[test]
+    fn top_left_text_panel_offsets_text_and_padding_from_origin() {
+        // Given a letterboxed frame origin, text size, margin, and padding.
+        let origin = [100.0, 50.0];
+        let text_size = [80.0, 20.0];
+        let margin = [8.0, 8.0];
+        let padding = [6.0, 4.0];
+
+        // When computing a top-left text panel.
+        let layout = top_left_text_panel(origin, text_size, margin, padding);
+
+        // Then the text starts at origin + margin, and the panel includes padding.
+        assert_eq!(layout.text_pos, [108.0, 58.0]);
+        assert_eq!(layout.rect_min, [102.0, 54.0]);
+        assert_eq!(layout.rect_max, [194.0, 82.0]);
     }
 }

@@ -149,19 +149,26 @@ fn draw_overlay_text(
     let draw_list = ui.get_background_draw_list();
     let _font = ui.push_font(font);
     let text_size = ui.calc_text_size(text);
-    let padding = [6.0, 4.0];
-    let text_pos = [x0 + 8.0, y0 + 8.0];
-    let rect_min = [text_pos[0] - padding[0], text_pos[1] - padding[1]];
-    let rect_max = [
-        text_pos[0] + text_size[0] + padding[0],
-        text_pos[1] + text_size[1] + padding[1],
-    ];
+    let layout = crate::frontends::native::ui_geometry::top_left_text_panel(
+        [x0, y0],
+        text_size,
+        [8.0, 8.0],
+        [6.0, 4.0],
+    );
 
     draw_list
-        .add_rect(rect_min, rect_max, overlay_background_color_for(text_color))
+        .add_rect(
+            layout.rect_min,
+            layout.rect_max,
+            overlay_background_color_for(text_color),
+        )
         .filled(true)
         .build();
-    draw_list.add_text(text_pos, overlay_text_rgba(text_color, blink_red), text);
+    draw_list.add_text(
+        layout.text_pos,
+        overlay_text_rgba(text_color, blink_red),
+        text,
+    );
 }
 
 fn draw_crosshair(ui: &imgui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDrawContext) {
