@@ -400,6 +400,51 @@ fn draw_egui_fps_counter(ui: &mut egui::Ui, fps: usize, x0: f32, y0: f32, draw_w
     );
 }
 
+fn draw_egui_toasts(
+    ui: &mut egui::Ui,
+    visible_toasts: &[String],
+    x0: f32,
+    y0: f32,
+    draw_w: f32,
+    draw_h: f32,
+) {
+    let painter = ui.painter();
+    let text_color = egui_color_from_rgba(toast_text_rgba());
+    let background_color = egui_color_from_rgba(toast_background_rgba());
+    let padding = [8.0, 6.0];
+    let spacing = 8.0;
+    let bottom_margin = 12.0;
+
+    for (stack_index, toast_text) in visible_toasts.iter().rev().enumerate() {
+        let galley =
+            painter.layout_no_wrap(toast_text.to_owned(), overlay_egui_font_id(), text_color);
+        let text_size = [galley.size().x, galley.size().y];
+        let layout = crate::frontends::native::ui_geometry::bottom_center_text_panel(
+            [x0, y0],
+            [draw_w, draw_h],
+            text_size,
+            stack_index,
+            bottom_margin,
+            spacing,
+            padding,
+        );
+
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(layout.rect_min[0], layout.rect_min[1]),
+                egui::pos2(layout.rect_max[0], layout.rect_max[1]),
+            ),
+            0.0,
+            background_color,
+        );
+        painter.galley(
+            egui::pos2(layout.text_pos[0], layout.text_pos[1]),
+            galley,
+            text_color,
+        );
+    }
+}
+
 fn overlay_egui_font_id() -> egui::FontId {
     egui::FontId::proportional(26.0)
 }
@@ -892,6 +937,9 @@ impl GlBackend {
                         if let Some(fps_value) = fps {
                             draw_egui_fps_counter(ui, fps_value, x0, y0, draw_w);
                         }
+                        if !visible_toasts.is_empty() {
+                            draw_egui_toasts(ui, &visible_toasts, x0, y0, draw_w, draw_h);
+                        }
                     }
                 });
         self.egui_renderer.paint(egui_paint_data);
@@ -939,7 +987,7 @@ impl GlBackend {
                 draw_fps_counter(ui, self.overlay_font, fps_value, x0, y0, draw_w);
             }
 
-            if !visible_toasts.is_empty() {
+            if background_renderer == FrameBackgroundRenderer::ImGui && !visible_toasts.is_empty() {
                 draw_toasts(
                     ui,
                     self.overlay_font,
@@ -1204,7 +1252,7 @@ mod tests_crosshair_projection {
 mod tests_egui_frame_input {
     use super::{
         FrameBackgroundRenderer, egui_color_from_rgba, egui_frame_input_for_window,
-        fps_counter_text, frame_background_renderer,
+        fps_counter_text, frame_background_renderer, toast_background_rgba, toast_text_rgba,
     };
 
     #[test]
@@ -1264,6 +1312,18 @@ mod tests_egui_frame_input {
     #[test]
     fn fps_counter_text_formats_value() {
         assert_eq!(fps_counter_text(60), "60 FPS");
+    }
+
+    #[test]
+    fn toast_egui_colors_match_rgba_helpers() {
+        assert_eq!(
+            egui_color_from_rgba(toast_text_rgba()),
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 255)
+        );
+        assert_eq!(
+            egui_color_from_rgba(toast_background_rgba()),
+            egui::Color32::from_rgba_unmultiplied(89, 89, 89, 179)
+        );
     }
 }
 
