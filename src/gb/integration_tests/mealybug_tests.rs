@@ -104,6 +104,7 @@ macro_rules! mealybug_cgb_d {
 }
 
 /// Generate an ignored DMG-B mealybug test.
+#[allow(unused_macros)]
 macro_rules! mealybug_ignored_dmg_b {
     ($name:ident, $rom_base:literal, $issue:literal, $expected_crc:expr) => {
         #[test]
@@ -546,12 +547,7 @@ mealybug_dmg_b!(
     "m3_scx_low_3_bits",
     0xD49D_F057
 );
-mealybug_ignored_dmg_b!(
-    test_m3_scy_change_dmg_b,
-    "m3_scy_change",
-    "2358",
-    0x8179_BF2F
-);
+mealybug_dmg_b!(test_m3_scy_change_dmg_b, "m3_scy_change", 0x8179_BF2F);
 mealybug_dmg_b!(test_m3_window_timing_dmg_b, "m3_window_timing", 0x92B6_5C2A);
 mealybug_dmg_b!(
     test_m3_window_timing_wx_0_dmg_b,
@@ -643,13 +639,13 @@ mealybug_cgb_c!(
     "m3_lcdc_win_en_change_multiple",
     0xC001_01D8
 );
-// The CGB non-sprite WX/LCDC-WX reference PNGs for #2579 are not native emulator
+// The CGB non-sprite WX/LCDC-WX reference PNGs for #2598 are not native emulator
 // captures: they are 171-colour GIMP images and the same image is reused by
 // multiple ROMs.
 mealybug_ignored_cgb_c!(
     test_m3_lcdc_win_en_change_multiple_wx_cgb_c,
     "m3_lcdc_win_en_change_multiple_wx",
-    "2579",
+    "2598",
     0x6581_49F1
 );
 mealybug_cgb_c!(
@@ -678,12 +674,7 @@ mealybug_cgb_c!(
     "m3_scx_low_3_bits",
     0xD49D_F057
 );
-mealybug_ignored_cgb_c!(
-    test_m3_scy_change_cgb_c,
-    "m3_scy_change",
-    "2358",
-    0xEEAF_63B5
-);
+mealybug_cgb_c!(test_m3_scy_change_cgb_c, "m3_scy_change", 0xEEAF_63B5);
 mealybug_cgb_c!(test_m3_scy_change2_cgb_c, "m3_scy_change2", 0x6D57_9852);
 mealybug_cgb_c!(test_m3_window_timing_cgb_c, "m3_window_timing", 0x0BE0_3D45);
 mealybug_cgb_c!(
@@ -695,7 +686,7 @@ mealybug_cgb_c!(
 mealybug_ignored_cgb_c!(
     test_m3_wx_4_change_cgb_c,
     "m3_wx_4_change",
-    "2579",
+    "2598",
     0x6581_49F1
 );
 mealybug_cgb_c!(
@@ -706,13 +697,13 @@ mealybug_cgb_c!(
 mealybug_ignored_cgb_c!(
     test_m3_wx_5_change_cgb_c,
     "m3_wx_5_change",
-    "2579",
+    "2598",
     0x6581_49F1
 );
 mealybug_ignored_cgb_c!(
     test_m3_wx_6_change_cgb_c,
     "m3_wx_6_change",
-    "2579",
+    "2598",
     0x6581_49F1
 );
 
@@ -776,7 +767,7 @@ mealybug_cgb_d!(
 mealybug_ignored_cgb_d!(
     test_m3_lcdc_win_en_change_multiple_wx_cgb_d,
     "m3_lcdc_win_en_change_multiple_wx",
-    "2579",
+    "2598",
     0x6581_49F1
 );
 mealybug_cgb_d!(
@@ -797,12 +788,7 @@ mealybug_cgb_d!(
     "m3_scx_low_3_bits",
     0xD49D_F057
 );
-mealybug_ignored_cgb_d!(
-    test_m3_scy_change_cgb_d,
-    "m3_scy_change",
-    "2358",
-    0x7A71_4C6D
-);
+mealybug_cgb_d!(test_m3_scy_change_cgb_d, "m3_scy_change", 0x7A71_4C6D);
 mealybug_cgb_d!(test_m3_window_timing_cgb_d, "m3_window_timing", 0x92B6_5C2A);
 mealybug_cgb_d!(
     test_m3_window_timing_wx_0_cgb_d,
@@ -813,7 +799,7 @@ mealybug_cgb_d!(
 mealybug_ignored_cgb_d!(
     test_m3_wx_4_change_cgb_d,
     "m3_wx_4_change",
-    "2579",
+    "2598",
     0x6581_49F1
 );
 mealybug_cgb_d!(
@@ -824,12 +810,12 @@ mealybug_cgb_d!(
 mealybug_ignored_cgb_d!(
     test_m3_wx_5_change_cgb_d,
     "m3_wx_5_change",
-    "2579",
+    "2598",
     0x6581_49F1
 );
 mealybug_ignored_cgb_d!(
     test_m3_wx_6_change_cgb_d,
     "m3_wx_6_change",
-    "2579",
+    "2598",
     0x6581_49F1
 );
