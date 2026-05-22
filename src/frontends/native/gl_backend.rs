@@ -443,18 +443,22 @@ impl GlBackend {
             return Ok(registered.egui_id);
         }
 
-        let texture_name = NativeTextureName::from_gl_id(gl_id)
+        let output_texture = self
+            .shader_manager
+            .take_output_texture_ownership(gl_id)
+            .ok_or_else(|| "ShaderManager did not own the shader output texture".to_owned())?;
+        let texture_name = NativeTextureName::from_gl_id(output_texture.gl_id())
             .ok_or_else(|| "Shader output texture ID was zero".to_owned())?;
-        if !self.shader_manager.release_output_texture_ownership(gl_id) {
-            return Err("ShaderManager did not own the shader output texture".to_owned());
-        }
 
         if let Some(registered) = self.shader_output_egui_texture.take() {
             self.egui_renderer.free_texture(registered.egui_id);
         }
 
         let egui_id = self.egui_renderer.register_native_texture(texture_name);
-        self.shader_output_egui_texture = Some(RegisteredEguiTexture { gl_id, egui_id });
+        self.shader_output_egui_texture = Some(RegisteredEguiTexture {
+            gl_id: output_texture.gl_id(),
+            egui_id,
+        });
         Ok(egui_id)
     }
 
@@ -1701,6 +1705,8 @@ impl Drop for GlBackend {
     fn drop(&mut self) {
         // Best-effort: make current and clean up GL resources.
         if self.render_target.make_current().is_ok() {
+            // NativeEguiRenderer owns every GL texture registered with it,
+            // including framebuffer, PPU viewer, and shader output textures.
             self.egui_renderer.destroy();
         }
     }

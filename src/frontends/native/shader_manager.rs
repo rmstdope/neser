@@ -17,6 +17,18 @@ pub struct ShaderManager {
     output_texture_owned_by_manager: bool,
 }
 
+/// Shader output texture whose GL ownership has moved out of [`ShaderManager`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShaderOutputTexture {
+    gl_id: gl::types::GLuint,
+}
+
+impl ShaderOutputTexture {
+    pub fn gl_id(self) -> gl::types::GLuint {
+        self.gl_id
+    }
+}
+
 impl ShaderManager {
     pub fn new(allowed_names: &[&str]) -> Self {
         let available_presets = Self::discover_presets_filtered(allowed_names);
@@ -238,12 +250,19 @@ impl ShaderManager {
         self.output_texture
     }
 
-    pub fn release_output_texture_ownership(&mut self, texture: gl::types::GLuint) -> bool {
+    /// Transfers the current output texture to the caller.
+    ///
+    /// After this succeeds, [`ShaderManager`] will no longer delete that GL
+    /// texture; the caller must register it with the renderer that owns and frees it.
+    pub fn take_output_texture_ownership(
+        &mut self,
+        texture: gl::types::GLuint,
+    ) -> Option<ShaderOutputTexture> {
         if self.output_texture == Some(texture) {
             self.output_texture_owned_by_manager = false;
-            true
+            Some(ShaderOutputTexture { gl_id: texture })
         } else {
-            false
+            None
         }
     }
 
@@ -363,23 +382,27 @@ mod tests {
     }
 
     #[test]
-    fn release_output_texture_ownership_marks_current_texture_external() {
+    fn take_output_texture_ownership_returns_current_texture_and_marks_external() {
         let mut manager = ShaderManager::with_output_texture(7, true);
 
-        assert!(manager.release_output_texture_ownership(7));
-        assert!(!manager.output_texture_owned_by_manager);
-
+        let texture = manager.take_output_texture_ownership(7);
+        let owned_by_manager = manager.output_texture_owned_by_manager;
         manager.output_texture = None;
+
+        assert_eq!(texture.map(ShaderOutputTexture::gl_id), Some(7));
+        assert!(!owned_by_manager);
     }
 
     #[test]
-    fn release_output_texture_ownership_rejects_non_current_texture() {
+    fn take_output_texture_ownership_rejects_non_current_texture() {
         let mut manager = ShaderManager::with_output_texture(7, true);
 
-        assert!(!manager.release_output_texture_ownership(8));
-        assert!(manager.output_texture_owned_by_manager);
-
+        let texture = manager.take_output_texture_ownership(8);
+        let owned_by_manager = manager.output_texture_owned_by_manager;
         manager.output_texture = None;
+
+        assert_eq!(texture, None);
+        assert!(owned_by_manager);
     }
 
     #[test]

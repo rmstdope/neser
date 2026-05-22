@@ -167,6 +167,8 @@ impl NativeEguiRenderer {
         &mut self,
         texture: NativeTextureName,
     ) -> egui::TextureId {
+        // egui_glow owns registered native textures: free_texture() and destroy()
+        // delete the GL texture name through the glow context.
         self.painter
             .register_native_texture(texture.egui_glow_texture())
     }

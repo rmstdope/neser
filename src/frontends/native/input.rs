@@ -66,6 +66,28 @@ pub enum MouseButton {
     Middle,
 }
 
+/// Modifier keys relevant to UI input.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct UiModifiers {
+    pub alt: bool,
+    pub ctrl: bool,
+    pub shift: bool,
+    pub mac_cmd: bool,
+    pub command: bool,
+}
+
+impl UiModifiers {
+    fn egui(self) -> egui::Modifiers {
+        egui::Modifiers {
+            alt: self.alt,
+            ctrl: self.ctrl,
+            shift: self.shift,
+            mac_cmd: self.mac_cmd,
+            command: self.command,
+        }
+    }
+}
+
 /// Input events forwarded to the renderer (backend-agnostic).
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputEvent {
@@ -79,17 +101,23 @@ pub enum InputEvent {
     TextInput(String),
     /// Key press/release events routed to the UI layer.
     Key { key: UiKey, down: bool },
+    /// Current keyboard modifier state.
+    ModifiersChanged(UiModifiers),
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct EguiInputState {
     events: Vec<egui::Event>,
     pointer_pos: Option<egui::Pos2>,
+    modifiers: egui::Modifiers,
 }
 
 impl EguiInputState {
     pub(crate) fn apply_input(&mut self, event: &InputEvent) {
         match event {
+            InputEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.egui();
+            }
             InputEvent::MouseMotion { x, y } => {
                 let pos = egui::pos2(*x, *y);
                 self.pointer_pos = Some(pos);
@@ -101,7 +129,7 @@ impl EguiInputState {
                         pos,
                         button: egui_pointer_button_for(*button),
                         pressed: *pressed,
-                        modifiers: egui::Modifiers::default(),
+                        modifiers: self.modifiers,
                     });
                 }
             }
@@ -110,7 +138,7 @@ impl EguiInputState {
                     unit: egui::MouseWheelUnit::Point,
                     delta: egui::vec2(*x, *y),
                     phase: egui::TouchPhase::Move,
-                    modifiers: egui::Modifiers::default(),
+                    modifiers: self.modifiers,
                 });
             }
             InputEvent::TextInput(text) => {
@@ -123,7 +151,7 @@ impl EguiInputState {
                     physical_key: Some(key),
                     pressed: *down,
                     repeat: false,
-                    modifiers: egui::Modifiers::default(),
+                    modifiers: self.modifiers,
                 });
             }
         }
@@ -208,6 +236,86 @@ mod tests {
                     button: egui::PointerButton::Primary,
                     pressed: true,
                     modifiers: egui::Modifiers::default(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn egui_input_state_applies_current_modifiers_to_key_events() {
+        // Given current Ctrl+Shift modifier state.
+        let mut state = EguiInputState::default();
+        let modifiers = UiModifiers {
+            ctrl: true,
+            shift: true,
+            command: true,
+            ..Default::default()
+        };
+
+        // When applying a key event after the modifier change.
+        state.apply_input(&InputEvent::ModifiersChanged(modifiers));
+        state.apply_input(&InputEvent::Key {
+            key: UiKey::C,
+            down: true,
+        });
+
+        // Then egui receives the key with the current modifiers.
+        assert_eq!(
+            state.take_events(),
+            vec![egui::Event::Key {
+                key: egui::Key::C,
+                physical_key: Some(egui::Key::C),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    command: true,
+                    ..Default::default()
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn egui_input_state_applies_current_modifiers_to_pointer_and_wheel_events() {
+        // Given current Alt modifier state and a known pointer position.
+        let mut state = EguiInputState::default();
+        state.apply_input(&InputEvent::MouseMotion { x: 12.0, y: 34.0 });
+        state.apply_input(&InputEvent::ModifiersChanged(UiModifiers {
+            alt: true,
+            ..Default::default()
+        }));
+
+        // When applying pointer and wheel events after the modifier change.
+        state.apply_input(&InputEvent::MouseButton {
+            button: MouseButton::Left,
+            pressed: true,
+        });
+        state.apply_input(&InputEvent::MouseWheel { x: 1.0, y: -2.0 });
+
+        // Then both egui events carry the current modifier state.
+        assert_eq!(
+            state.take_events(),
+            vec![
+                egui::Event::PointerMoved(egui::pos2(12.0, 34.0)),
+                egui::Event::PointerButton {
+                    pos: egui::pos2(12.0, 34.0),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers {
+                        alt: true,
+                        ..Default::default()
+                    },
+                },
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(1.0, -2.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers {
+                        alt: true,
+                        ..Default::default()
+                    },
                 },
             ]
         );

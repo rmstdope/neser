@@ -1,7 +1,9 @@
 #![allow(dead_code)] // Public API for future use in native frontend
 use super::render_target::WinitRenderTarget;
 use crate::frontends::native::gl_backend::{Crosshair, GlBackend, ProcAddressLoader};
-use crate::frontends::native::input::{InputEvent, MouseButton as RenderMouseButton, UiKey};
+use crate::frontends::native::input::{
+    InputEvent, MouseButton as RenderMouseButton, UiKey, UiModifiers,
+};
 use crate::nes::debugging::ui::DebuggerUiAction;
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::debugging::breakpoints::BreakpointList;
@@ -16,7 +18,7 @@ use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasWindowHandle;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowAttributes};
 
 use std::num::NonZeroU32;
@@ -309,6 +311,29 @@ impl NativeGlWrapper {
     pub fn handle_text_input(&mut self, text: String) {
         self.gl_backend.handle_input(&InputEvent::TextInput(text));
     }
+
+    /// Forwards the current keyboard modifier state to the renderer UI layer.
+    pub fn handle_modifiers_changed(&mut self, state: ModifiersState) {
+        self.gl_backend
+            .handle_input(&InputEvent::ModifiersChanged(ui_modifiers_from_winit(
+                state,
+            )));
+    }
+}
+
+fn ui_modifiers_from_winit(state: ModifiersState) -> UiModifiers {
+    let super_key = state.super_key();
+    UiModifiers {
+        alt: state.alt_key(),
+        ctrl: state.control_key(),
+        shift: state.shift_key(),
+        mac_cmd: cfg!(target_os = "macos") && super_key,
+        command: if cfg!(target_os = "macos") {
+            super_key
+        } else {
+            state.control_key()
+        },
+    }
 }
 
 /// Maps winit physical key codes to UI keys for the renderer input layer.
@@ -450,6 +475,35 @@ mod tests {
         assert_eq!(
             map_winit_key(&PhysicalKey::Code(KeyCode::F11)),
             Some(UiKey::F11)
+        );
+    }
+
+    #[test]
+    fn ui_modifiers_from_winit_preserves_modifier_flags() {
+        let modifiers = ui_modifiers_from_winit(ModifiersState::CONTROL | ModifiersState::SHIFT);
+
+        assert_eq!(
+            modifiers,
+            UiModifiers {
+                ctrl: true,
+                shift: true,
+                command: !cfg!(target_os = "macos"),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn ui_modifiers_from_winit_maps_super_to_macos_command() {
+        let modifiers = ui_modifiers_from_winit(ModifiersState::SUPER);
+
+        assert_eq!(
+            modifiers,
+            UiModifiers {
+                mac_cmd: cfg!(target_os = "macos"),
+                command: cfg!(target_os = "macos"),
+                ..Default::default()
+            }
         );
     }
 

@@ -702,7 +702,11 @@ impl ApplicationHandler for NativeEventLoop {
             }
 
             WindowEvent::ModifiersChanged(mods) => {
-                self.state.modifiers = mods.state();
+                let state = mods.state();
+                self.state.modifiers = state;
+                if let Some(ref mut gl) = self.gl_wrapper {
+                    gl.handle_modifiers_changed(state);
+                }
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
