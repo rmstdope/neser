@@ -18,46 +18,26 @@
 //!     gb::integration_tests::mealybug_tests -- --include-ignored --nocapture
 //! ```
 //!
-//! Compare each PNG to the reference image in the submodule:
+//! Compare each PNG to the reference image:
 //!
 //! ```bash
 //! compare -metric AE \
 //!     target/mealybug-captures/m3_bgp_change_dmg_b.png \
-//!     roms/gb/automated_tests/mealybug-tearoom-tests/expected/DMG-blob/m3_bgp_change.png \
+//!     roms/gb/automated_tests/mealybug-tearoom/expected/DMG-blob/m3_bgp_change.png \
 //!     /dev/null
 //! ```
-
-use std::io::Read;
-use std::sync::OnceLock;
 
 use super::helpers::{load_cgb_rom_from_bytes, load_gb_rom_from_bytes, run_to_breakpoint_and_crc};
 use crate::gb::model::{CgbModel, DmgModel};
 
-const ZIP_PATH: &str = "roms/gb/automated_tests/mealybug-tearoom-tests/mealybug-tearoom-tests.zip";
+const ROM_DIR: &str = "roms/gb/automated_tests/mealybug-tearoom/roms";
 
 const CYCLE_LIMIT: u64 = 10_000_000;
 
-/// Return the raw bytes of the mealybug ZIP archive, reading the file only once.
-fn zip_bytes() -> &'static [u8] {
-    static ZIP: OnceLock<Vec<u8>> = OnceLock::new();
-    ZIP.get_or_init(|| {
-        std::fs::read(ZIP_PATH).unwrap_or_else(|e| panic!("failed to read {ZIP_PATH}: {e}"))
-    })
-}
-
-/// Extract a ROM by filename from the mealybug zip archive and return its bytes.
-fn read_rom_from_zip(rom_name: &str) -> Vec<u8> {
-    let cursor = std::io::Cursor::new(zip_bytes());
-    let mut archive =
-        zip::ZipArchive::new(cursor).expect("mealybug zip should be a valid ZIP archive");
-    let mut entry = archive
-        .by_name(rom_name)
-        .unwrap_or_else(|_| panic!("{rom_name} not found in mealybug zip"));
-    let mut bytes = Vec::new();
-    entry
-        .read_to_end(&mut bytes)
-        .expect("read ROM bytes from zip");
-    bytes
+/// Read a mealybug ROM file by base name and return its bytes.
+fn read_rom(rom_name: &str) -> Vec<u8> {
+    let path = format!("{ROM_DIR}/{rom_name}");
+    std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"))
 }
 
 // ============================================================================
@@ -69,7 +49,7 @@ macro_rules! mealybug_dmg_b {
     ($name:ident, $rom_base:literal, $expected_crc:expr) => {
         #[test]
         fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
+            let bytes = read_rom(concat!($rom_base, ".gb"));
             let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
             let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_dmg_b"));
             assert_mealybug_crc(concat!($rom_base, "_dmg_b"), crc, $expected_crc);
@@ -82,7 +62,7 @@ macro_rules! mealybug_cgb_c {
     ($name:ident, $rom_base:literal, $expected_crc:expr) => {
         #[test]
         fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
+            let bytes = read_rom(concat!($rom_base, ".gb"));
             let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
             let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_c"));
             assert_mealybug_crc(concat!($rom_base, "_cgb_c"), crc, $expected_crc);
@@ -95,49 +75,7 @@ macro_rules! mealybug_cgb_d {
     ($name:ident, $rom_base:literal, $expected_crc:expr) => {
         #[test]
         fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
-            let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
-            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_d"));
-            assert_mealybug_crc(concat!($rom_base, "_cgb_d"), crc, $expected_crc);
-        }
-    };
-}
-
-/// Generate an ignored DMG-B mealybug test.
-macro_rules! mealybug_ignored_dmg_b {
-    ($name:ident, $rom_base:literal, $issue:literal, $expected_crc:expr) => {
-        #[test]
-        #[ignore = concat!("mealybug: PPU timing not yet accurate — tracked in #", $issue)]
-        fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
-            let mut gb = load_gb_rom_from_bytes(&bytes, DmgModel::DmgB);
-            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_dmg_b"));
-            assert_mealybug_crc(concat!($rom_base, "_dmg_b"), crc, $expected_crc);
-        }
-    };
-}
-
-/// Generate an ignored CGB-C mealybug test.
-macro_rules! mealybug_ignored_cgb_c {
-    ($name:ident, $rom_base:literal, $issue:literal, $expected_crc:expr) => {
-        #[test]
-        #[ignore = concat!("mealybug: PPU timing not yet accurate — tracked in #", $issue)]
-        fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
-            let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbC);
-            let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_c"));
-            assert_mealybug_crc(concat!($rom_base, "_cgb_c"), crc, $expected_crc);
-        }
-    };
-}
-
-/// Generate an ignored CGB-D mealybug test.
-macro_rules! mealybug_ignored_cgb_d {
-    ($name:ident, $rom_base:literal, $issue:literal, $expected_crc:expr) => {
-        #[test]
-        #[ignore = concat!("mealybug: PPU timing not yet accurate — tracked in #", $issue)]
-        fn $name() {
-            let bytes = read_rom_from_zip(concat!($rom_base, ".gb"));
+            let bytes = read_rom(concat!($rom_base, ".gb"));
             let mut gb = load_cgb_rom_from_bytes(&bytes, CgbModel::CgbD);
             let crc = run_to_breakpoint_and_crc(&mut gb, CYCLE_LIMIT, concat!($rom_base, "_cgb_d"));
             assert_mealybug_crc(concat!($rom_base, "_cgb_d"), crc, $expected_crc);
@@ -191,45 +129,15 @@ mod tests {
         expected_crc: u32,
     }
 
-    fn macro_definition<'a>(source: &'a str, macro_name: &str) -> &'a str {
-        let marker = format!("macro_rules! {macro_name}");
-        let start = source
-            .find(&marker)
-            .unwrap_or_else(|| panic!("{macro_name} macro definition should exist"));
-        let open_brace = source[start..]
-            .find('{')
-            .unwrap_or_else(|| panic!("{macro_name} macro definition should open with a brace"));
-
-        let mut depth = 0_u32;
-        for (offset, ch) in source[start + open_brace..].char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        let end = start + open_brace + offset;
-                        return &source[start..=end];
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        panic!("{macro_name} macro definition should close its braces");
-    }
-
     fn parse_mealybug_cases(source: &str) -> Vec<MealybugCase> {
         let specs = [
-            ("mealybug_dmg_b", MealybugModel::DmgB, false),
-            ("mealybug_cgb_c", MealybugModel::CgbC, false),
-            ("mealybug_cgb_d", MealybugModel::CgbD, false),
-            ("mealybug_ignored_dmg_b", MealybugModel::DmgB, true),
-            ("mealybug_ignored_cgb_c", MealybugModel::CgbC, true),
-            ("mealybug_ignored_cgb_d", MealybugModel::CgbD, true),
+            ("mealybug_dmg_b", MealybugModel::DmgB),
+            ("mealybug_cgb_c", MealybugModel::CgbC),
+            ("mealybug_cgb_d", MealybugModel::CgbD),
         ];
         let mut cases = Vec::new();
 
-        for (macro_name, model, ignored) in specs {
+        for (macro_name, model) in specs {
             let needle = format!("{macro_name}!(");
             let mut search_from = 0;
 
@@ -238,17 +146,16 @@ mod tests {
                 let args_start = invocation_start + needle.len();
                 let close_paren = find_matching_paren(source, args_start - 1);
                 let args = split_macro_args(&source[args_start..close_paren]);
-                let expected_arg_count = if ignored { 4 } else { 3 };
                 assert_eq!(
                     args.len(),
-                    expected_arg_count,
-                    "{macro_name} invocation should have {expected_arg_count} arguments: {args:?}"
+                    3,
+                    "{macro_name} invocation should have 3 arguments: {args:?}"
                 );
 
                 cases.push(MealybugCase {
                     model,
                     rom_base: unquote(&args[1]),
-                    expected_crc: parse_crc(&args[expected_arg_count - 1]),
+                    expected_crc: parse_crc(&args[2]),
                 });
 
                 search_from = close_paren + 1;
@@ -314,36 +221,28 @@ mod tests {
     }
 
     fn parse_crc(value: &str) -> u32 {
-        u32::from_str_radix(
-            value
-                .strip_prefix("0x")
-                .unwrap_or_else(|| panic!("{value} should be a hex CRC literal"))
-                .replace('_', "")
-                .as_str(),
-            16,
-        )
-        .unwrap_or_else(|err| panic!("{value} should parse as a CRC-32 literal: {err}"))
+        let hex = value
+            .strip_prefix("0x")
+            .unwrap_or_else(|| panic!("{value} should be a hex CRC literal"))
+            .replace('_', "");
+        u32::from_str_radix(&hex, 16)
+            .unwrap_or_else(|err| panic!("{value} should parse as a CRC-32 literal: {err}"))
     }
 
     fn expected_png_path(case: &MealybugCase) -> PathBuf {
-        Path::new("roms/gb/automated_tests/mealybug-tearoom-tests/expected")
+        Path::new("roms/gb/automated_tests/mealybug-tearoom/expected")
             .join(case.model.expected_dir())
             .join(format!("{}.png", case.rom_base))
     }
 
     fn expected_png_count(model: MealybugModel) -> usize {
         std::fs::read_dir(
-            Path::new("roms/gb/automated_tests/mealybug-tearoom-tests/expected")
+            Path::new("roms/gb/automated_tests/mealybug-tearoom/expected")
                 .join(model.expected_dir()),
         )
         .unwrap_or_else(|err| panic!("read expected PNG directory for {:?}: {err}", model))
-        .filter(|entry| {
-            entry
-                .as_ref()
-                .ok()
-                .and_then(|entry| entry.path().extension().map(|extension| extension == "png"))
-                .unwrap_or(false)
-        })
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
         .count()
     }
 
@@ -396,40 +295,22 @@ mod tests {
     }
 
     #[test]
-    fn ignored_mealybug_macros_require_expected_crc_assertions() {
-        let source = include_str!("mealybug_tests.rs");
-
-        for macro_name in [
-            "mealybug_ignored_dmg_b",
-            "mealybug_ignored_cgb_c",
-            "mealybug_ignored_cgb_d",
-        ] {
-            let definition = macro_definition(source, macro_name);
-            assert!(
-                definition.contains("$expected_crc:expr"),
-                "{macro_name} should require an expected CRC argument"
-            );
-            assert!(
-                definition.contains("assert_mealybug_crc("),
-                "{macro_name} should assert the breakpoint CRC"
-            );
-        }
-    }
-
-    #[test]
     fn expected_crc_constants_match_reference_pngs() {
         let source = include_str!("mealybug_tests.rs");
         let cases = parse_mealybug_cases(source);
         assert_eq!(
             cases.len(),
-            79,
+            71,
             "all scoped Mealybug tests should be audited"
         );
 
-        for (model, expected_count) in [
-            (MealybugModel::DmgB, 24),
-            (MealybugModel::CgbC, 31),
-            (MealybugModel::CgbD, 24),
+        for (model, expected_count, placeholder_png_count) in [
+            (MealybugModel::DmgB, 24, 0),
+            // 4 placeholder PNGs remain in the submodule for CGB-C/D (m3_lcdc_win_en_change_multiple_wx,
+            // m3_wx_4_change, m3_wx_5_change, m3_wx_6_change). These are GIMP-created images that do not
+            // represent real hardware captures; the corresponding tests are commented out. See #2598.
+            (MealybugModel::CgbC, 27, 4),
+            (MealybugModel::CgbD, 20, 4),
         ] {
             let case_count = cases.iter().filter(|case| case.model == model).count();
             assert_eq!(
@@ -440,9 +321,10 @@ mod tests {
             );
             assert_eq!(
                 expected_png_count(model),
-                expected_count,
-                "{} expected PNG count should match #2427 coverage",
-                model.suffix()
+                expected_count + placeholder_png_count,
+                "{} expected PNG count should match test coverage plus {} known placeholder PNGs (#2598)",
+                model.suffix(),
+                placeholder_png_count
             );
         }
 
@@ -554,12 +436,7 @@ mealybug_dmg_b!(
     "m3_scx_low_3_bits",
     0xD49D_F057
 );
-mealybug_ignored_dmg_b!(
-    test_m3_scy_change_dmg_b,
-    "m3_scy_change",
-    "2358",
-    0x8179_BF2F
-);
+mealybug_dmg_b!(test_m3_scy_change_dmg_b, "m3_scy_change", 0x8179_BF2F);
 mealybug_dmg_b!(test_m3_window_timing_dmg_b, "m3_window_timing", 0x92B6_5C2A);
 mealybug_dmg_b!(
     test_m3_window_timing_wx_0_dmg_b,
@@ -651,15 +528,11 @@ mealybug_cgb_c!(
     "m3_lcdc_win_en_change_multiple",
     0xC001_01D8
 );
-// The CGB non-sprite WX/LCDC-WX reference PNGs for #2579 are not native emulator
-// captures: they are 171-colour GIMP images and the same image is reused by
-// multiple ROMs.
-mealybug_ignored_cgb_c!(
-    test_m3_lcdc_win_en_change_multiple_wx_cgb_c,
-    "m3_lcdc_win_en_change_multiple_wx",
-    "2579",
-    0x6581_49F1
-);
+// test_m3_lcdc_win_en_change_multiple_wx_cgb_c — commented out: no valid reference
+// PNG exists for this ROM on CGB-C. The file in expected/CPU CGB C/ is a GIMP-created
+// placeholder (identical to m3_wx_4_change, m3_wx_5_change, m3_wx_6_change) and
+// does not represent a real hardware capture. The test cannot be verified until a
+// proper reference screenshot is provided. See issue #2598.
 mealybug_cgb_c!(
     test_m3_lcdc_win_map_change_cgb_c,
     "m3_lcdc_win_map_change",
@@ -686,12 +559,7 @@ mealybug_cgb_c!(
     "m3_scx_low_3_bits",
     0xD49D_F057
 );
-mealybug_ignored_cgb_c!(
-    test_m3_scy_change_cgb_c,
-    "m3_scy_change",
-    "2358",
-    0xEEAF_63B5
-);
+mealybug_cgb_c!(test_m3_scy_change_cgb_c, "m3_scy_change", 0xEEAF_63B5);
 mealybug_cgb_c!(test_m3_scy_change2_cgb_c, "m3_scy_change2", 0x6D57_9852);
 mealybug_cgb_c!(test_m3_window_timing_cgb_c, "m3_window_timing", 0x0BE0_3D45);
 mealybug_cgb_c!(
@@ -699,30 +567,18 @@ mealybug_cgb_c!(
     "m3_window_timing_wx_0",
     0x1C33_F2FF
 );
-// Same invalid-reference rationale as the CGB-C non-sprite LCDC-WX case above.
-mealybug_ignored_cgb_c!(
-    test_m3_wx_4_change_cgb_c,
-    "m3_wx_4_change",
-    "2579",
-    0x6581_49F1
-);
+// test_m3_wx_4_change_cgb_c — commented out: no valid reference PNG. Same reason
+// as test_m3_lcdc_win_en_change_multiple_wx_cgb_c above. See issue #2598.
 mealybug_cgb_c!(
     test_m3_wx_4_change_sprites_cgb_c,
     "m3_wx_4_change_sprites",
     0x2F7D_8812
 );
-mealybug_ignored_cgb_c!(
-    test_m3_wx_5_change_cgb_c,
-    "m3_wx_5_change",
-    "2579",
-    0x6581_49F1
-);
-mealybug_ignored_cgb_c!(
-    test_m3_wx_6_change_cgb_c,
-    "m3_wx_6_change",
-    "2579",
-    0x6581_49F1
-);
+// test_m3_wx_5_change_cgb_c — commented out: no valid reference PNG. Same reason
+// as test_m3_lcdc_win_en_change_multiple_wx_cgb_c above. See issue #2598.
+
+// test_m3_wx_6_change_cgb_c — commented out: no valid reference PNG. Same reason
+// as test_m3_lcdc_win_en_change_multiple_wx_cgb_c above. See issue #2598.
 
 // ============================================================================
 // CGB-D tests (reference: expected/CPU CGB D/)
@@ -780,13 +636,11 @@ mealybug_cgb_d!(
     "m3_lcdc_win_en_change_multiple",
     0xC001_01D8
 );
-// Same invalid-reference rationale as the CGB-C non-sprite LCDC-WX case above.
-mealybug_ignored_cgb_d!(
-    test_m3_lcdc_win_en_change_multiple_wx_cgb_d,
-    "m3_lcdc_win_en_change_multiple_wx",
-    "2579",
-    0x6581_49F1
-);
+// test_m3_lcdc_win_en_change_multiple_wx_cgb_d — commented out: no valid reference
+// PNG exists for this ROM on CGB-D. The file in expected/CPU CGB D/ is a GIMP-created
+// placeholder (identical to m3_wx_4_change, m3_wx_5_change, m3_wx_6_change) and
+// does not represent a real hardware capture. The test cannot be verified until a
+// proper reference screenshot is provided. See issue #2598.
 mealybug_cgb_d!(
     test_m3_lcdc_win_map_change_cgb_d,
     "m3_lcdc_win_map_change",
@@ -805,39 +659,22 @@ mealybug_cgb_d!(
     "m3_scx_low_3_bits",
     0xD49D_F057
 );
-mealybug_ignored_cgb_d!(
-    test_m3_scy_change_cgb_d,
-    "m3_scy_change",
-    "2358",
-    0x7A71_4C6D
-);
+mealybug_cgb_d!(test_m3_scy_change_cgb_d, "m3_scy_change", 0x7A71_4C6D);
 mealybug_cgb_d!(test_m3_window_timing_cgb_d, "m3_window_timing", 0x92B6_5C2A);
 mealybug_cgb_d!(
     test_m3_window_timing_wx_0_cgb_d,
     "m3_window_timing_wx_0",
     0x68EF_35FF
 );
-// Same invalid-reference rationale as the CGB-C non-sprite LCDC-WX case above.
-mealybug_ignored_cgb_d!(
-    test_m3_wx_4_change_cgb_d,
-    "m3_wx_4_change",
-    "2579",
-    0x6581_49F1
-);
+// test_m3_wx_4_change_cgb_d — commented out: no valid reference PNG. Same reason
+// as test_m3_lcdc_win_en_change_multiple_wx_cgb_d above. See issue #2598.
 mealybug_cgb_d!(
     test_m3_wx_4_change_sprites_cgb_d,
     "m3_wx_4_change_sprites",
     0x2F7D_8812
 );
-mealybug_ignored_cgb_d!(
-    test_m3_wx_5_change_cgb_d,
-    "m3_wx_5_change",
-    "2579",
-    0x6581_49F1
-);
-mealybug_ignored_cgb_d!(
-    test_m3_wx_6_change_cgb_d,
-    "m3_wx_6_change",
-    "2579",
-    0x6581_49F1
-);
+// test_m3_wx_5_change_cgb_d — commented out: no valid reference PNG. Same reason
+// as test_m3_lcdc_win_en_change_multiple_wx_cgb_d above. See issue #2598.
+
+// test_m3_wx_6_change_cgb_d — commented out: no valid reference PNG. Same reason
+// as test_m3_lcdc_win_en_change_multiple_wx_cgb_d above. See issue #2598.
