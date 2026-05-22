@@ -193,7 +193,7 @@ fn draw_overlay_text(
 }
 
 fn draw_crosshair(ui: &imgui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDrawContext) {
-    let color = [1.0, 0.2, 0.2, 1.0];
+    let color = crosshair_rgba();
     let draw_list = ui.get_background_draw_list();
 
     let (ix, iy) = project_crosshair_to_cropped_indices(crosshair, draw_ctx);
@@ -210,6 +210,10 @@ fn draw_crosshair(ui: &imgui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDraw
             .filled(true)
             .build();
     }
+}
+
+fn crosshair_rgba() -> [f32; 4] {
+    [1.0, 0.2, 0.2, 1.0]
 }
 
 struct CrosshairDrawContext {
@@ -441,6 +445,29 @@ fn draw_egui_toasts(
             egui::pos2(layout.text_pos[0], layout.text_pos[1]),
             galley,
             text_color,
+        );
+    }
+}
+
+fn draw_egui_crosshair(ui: &mut egui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDrawContext) {
+    let painter = ui.painter();
+    let color = egui_color_from_rgba(crosshair_rgba());
+    let (ix, iy) = project_crosshair_to_cropped_indices(crosshair, draw_ctx);
+    let rects = crate::frontends::native::ui_geometry::crosshair_marker_rects(
+        [draw_ctx.x0, draw_ctx.y0],
+        [draw_ctx.draw_w, draw_ctx.draw_h],
+        [draw_ctx.cropped_w, draw_ctx.cropped_h],
+        [ix, iy],
+    );
+
+    for rect in rects {
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.rect_min[0], rect.rect_min[1]),
+                egui::pos2(rect.rect_max[0], rect.rect_max[1]),
+            ),
+            0.0,
+            color,
         );
     }
 }
@@ -917,6 +944,16 @@ impl GlBackend {
         let y0 = frame_rect.rect_min[1];
         let [draw_w, draw_h] = frame_rect.size();
         let background_renderer = frame_background_renderer(shader_output_texture_id);
+        let crosshair_draw_ctx = CrosshairDrawContext {
+            x0,
+            y0,
+            draw_w,
+            draw_h,
+            cropped_w,
+            cropped_h,
+            h_overscan,
+            v_overscan,
+        };
 
         let egui_texture_id = self.nes_egui_texture_id;
         let egui_paint_data =
@@ -933,6 +970,9 @@ impl GlBackend {
                                 x0,
                                 y0,
                             );
+                        }
+                        if let Some(crosshair) = crosshair {
+                            draw_egui_crosshair(ui, crosshair, &crosshair_draw_ctx);
                         }
                         if let Some(fps_value) = fps {
                             draw_egui_fps_counter(ui, fps_value, x0, y0, draw_w);
@@ -967,18 +1007,10 @@ impl GlBackend {
                 );
             }
 
-            if let Some(crosshair) = crosshair {
-                let draw_ctx = CrosshairDrawContext {
-                    x0,
-                    y0,
-                    draw_w,
-                    draw_h,
-                    cropped_w,
-                    cropped_h,
-                    h_overscan,
-                    v_overscan,
-                };
-                draw_crosshair(ui, crosshair, &draw_ctx);
+            if background_renderer == FrameBackgroundRenderer::ImGui
+                && let Some(crosshair) = crosshair
+            {
+                draw_crosshair(ui, crosshair, &crosshair_draw_ctx);
             }
 
             if background_renderer == FrameBackgroundRenderer::ImGui
@@ -1251,7 +1283,7 @@ mod tests_crosshair_projection {
 #[cfg(test)]
 mod tests_egui_frame_input {
     use super::{
-        FrameBackgroundRenderer, egui_color_from_rgba, egui_frame_input_for_window,
+        FrameBackgroundRenderer, crosshair_rgba, egui_color_from_rgba, egui_frame_input_for_window,
         fps_counter_text, frame_background_renderer, toast_background_rgba, toast_text_rgba,
     };
 
@@ -1323,6 +1355,14 @@ mod tests_egui_frame_input {
         assert_eq!(
             egui_color_from_rgba(toast_background_rgba()),
             egui::Color32::from_rgba_unmultiplied(89, 89, 89, 179)
+        );
+    }
+
+    #[test]
+    fn crosshair_egui_color_matches_rgba_helper() {
+        assert_eq!(
+            egui_color_from_rgba(crosshair_rgba()),
+            egui::Color32::from_rgba_unmultiplied(255, 51, 51, 255)
         );
     }
 }
