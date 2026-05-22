@@ -849,6 +849,11 @@ impl GlBackend {
         } else {
             None
         };
+        let gb_debugger_snapshot = if show_debugger && let Console::GameBoy(gb) = console {
+            Some(gb.create_debugger_snapshot(&mut self.gb_debugger_view_state))
+        } else {
+            None
+        };
         let cropped_w = self.tex_w;
         let cropped_h = self.tex_h;
 
@@ -884,6 +889,12 @@ impl GlBackend {
         let hexdump_ui_state = &mut self.hexdump_ui_state;
         let watchlist_ui_state = &mut self.watchlist_ui_state;
         let mut nes_debugger_action = None;
+        let gb_debugger_alpha = self.gb_debugger_alpha;
+        let gb_breakpoints = &self.gb_breakpoints;
+        let gb_bp_add_state = &mut self.gb_bp_add_state;
+        let gb_hexdump_ui_state = &mut self.gb_hexdump_ui_state;
+        let gb_watchlist_ui_state = &mut self.gb_watchlist_ui_state;
+        let mut gb_debugger_action = None;
         let egui_paint_data =
             self.egui_renderer
                 .run(egui_frame_input, &mut self.egui_input, |ui| {
@@ -934,6 +945,17 @@ impl GlBackend {
                             watchlist_ui_state,
                         ));
                     }
+                    if let Some(snapshot) = gb_debugger_snapshot.as_ref() {
+                        gb_debugger_action = Some(gb_debugger_ui::render(
+                            ui,
+                            snapshot,
+                            gb_debugger_alpha,
+                            gb_breakpoints,
+                            gb_bp_add_state,
+                            gb_hexdump_ui_state,
+                            gb_watchlist_ui_state,
+                        ));
+                    }
                 });
         self.egui_renderer.paint(egui_paint_data);
 
@@ -969,57 +991,48 @@ impl GlBackend {
             }
         }
 
+        if let (Some(gb_action), Some(snapshot)) =
+            (gb_debugger_action, gb_debugger_snapshot.as_ref())
+        {
+            if gb_action.toggle_ppu_viewer {
+                self.gb_debugger_view_state.toggle_ppu_viewer();
+            }
+            if let Some(base) = gb_action.set_wram_hexdump_base {
+                self.gb_debugger_view_state.set_wram_hexdump_base(base);
+            }
+            if let Some(delta) = gb_action.nudge_wram_hexdump_base_by_bytes {
+                self.gb_debugger_view_state
+                    .nudge_wram_hexdump_base_by_bytes_from(snapshot.wram_hexdump_base, delta);
+            }
+            if let Some(base) = gb_action.set_vram_hexdump_base {
+                self.gb_debugger_view_state.set_vram_hexdump_base(base);
+            }
+            if let Some(delta) = gb_action.nudge_vram_hexdump_base_by_bytes {
+                self.gb_debugger_view_state
+                    .nudge_vram_hexdump_base_by_bytes_from(snapshot.vram_hexdump_base, delta);
+            }
+            if let Some(address) = gb_action.add_watch_address {
+                self.gb_debugger_view_state.add_watch_address(address);
+            }
+            if let Some(index) = gb_action.remove_watch_address {
+                self.gb_debugger_view_state.remove_watch_address(index);
+            }
+            if let Some(update) = gb_action.update_watch_address {
+                self.gb_debugger_view_state
+                    .update_watch_address(update.index, update.address);
+            }
+            if gb_action.increase_opacity {
+                self.gb_debugger_alpha = (self.gb_debugger_alpha + 0.1).min(1.0);
+            }
+            if gb_action.decrease_opacity {
+                self.gb_debugger_alpha = (self.gb_debugger_alpha - 0.1).max(0.1);
+            }
+            self.last_gb_action = gb_action;
+        }
+
         // Start ImGui frame
         {
-            let ui = self.imgui.frame();
-
-            if show_debugger && let Console::GameBoy(gb) = console {
-                let snapshot = gb.create_debugger_snapshot(&mut self.gb_debugger_view_state);
-                let gb_action = gb_debugger_ui::render(
-                    ui,
-                    &snapshot,
-                    self.gb_debugger_alpha,
-                    &self.gb_breakpoints,
-                    &mut self.gb_bp_add_state,
-                    &mut self.gb_hexdump_ui_state,
-                    &mut self.gb_watchlist_ui_state,
-                );
-                if gb_action.toggle_ppu_viewer {
-                    self.gb_debugger_view_state.toggle_ppu_viewer();
-                }
-                if let Some(base) = gb_action.set_wram_hexdump_base {
-                    self.gb_debugger_view_state.set_wram_hexdump_base(base);
-                }
-                if let Some(delta) = gb_action.nudge_wram_hexdump_base_by_bytes {
-                    self.gb_debugger_view_state
-                        .nudge_wram_hexdump_base_by_bytes_from(snapshot.wram_hexdump_base, delta);
-                }
-                if let Some(base) = gb_action.set_vram_hexdump_base {
-                    self.gb_debugger_view_state.set_vram_hexdump_base(base);
-                }
-                if let Some(delta) = gb_action.nudge_vram_hexdump_base_by_bytes {
-                    self.gb_debugger_view_state
-                        .nudge_vram_hexdump_base_by_bytes_from(snapshot.vram_hexdump_base, delta);
-                }
-                if let Some(address) = gb_action.add_watch_address {
-                    self.gb_debugger_view_state.add_watch_address(address);
-                }
-                if let Some(index) = gb_action.remove_watch_address {
-                    self.gb_debugger_view_state.remove_watch_address(index);
-                }
-                if let Some(update) = gb_action.update_watch_address {
-                    self.gb_debugger_view_state
-                        .update_watch_address(update.index, update.address);
-                }
-                if gb_action.increase_opacity {
-                    self.gb_debugger_alpha = (self.gb_debugger_alpha + 0.1).min(1.0);
-                }
-                if gb_action.decrease_opacity {
-                    self.gb_debugger_alpha = (self.gb_debugger_alpha - 0.1).max(0.1);
-                }
-                // Store action for processing by controller
-                self.last_gb_action = gb_action;
-            }
+            let _ui = self.imgui.frame();
         }
 
         let draw_data = self.imgui.render();
