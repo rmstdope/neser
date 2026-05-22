@@ -2,6 +2,7 @@
 
 import re
 import tarfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,30 +34,22 @@ def collect_shader_dependencies(repo_root: Path) -> set[Path]:
 def create_release_archive(config: ReleasePackageConfig) -> Path:
     """Create a release archive and return its path."""
 
-    if config.archive_format != "tar.gz":
+    if config.archive_format not in {"tar.gz", "zip"}:
         raise ValueError(f"unsupported archive format: {config.archive_format}")
 
     repo_root = config.repo_root.resolve()
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = config.output_dir / f"neser-{config.target}.tar.gz"
+    extension = "tar.gz" if config.archive_format == "tar.gz" else "zip"
+    archive_path = config.output_dir / f"neser-{config.target}.{extension}"
 
-    with tarfile.open(archive_path, "w:gz") as archive:
-        _add_file_to_tar(archive, config.binary_path, Path("neser") / config.binary_name)
-        _add_tree_to_tar(archive, repo_root / "assets/fonts", Path("neser/assets/fonts"))
-        for required_file in (
-            "gamecontrollerdb.txt",
-            "neser.conf.example",
-            "README.md",
-            "LICENSE",
-        ):
-            _add_file_to_tar(archive, repo_root / required_file, Path("neser") / required_file)
-
-        for shader_dependency in sorted(collect_shader_dependencies(repo_root)):
-            _add_file_to_tar(
-                archive,
-                repo_root / shader_dependency,
-                Path("neser") / shader_dependency,
-            )
+    if config.archive_format == "tar.gz":
+        with tarfile.open(archive_path, "w:gz") as archive:
+            for source_path, archive_path_in_package in _package_files(config, repo_root):
+                _add_file_to_tar(archive, source_path, archive_path_in_package)
+    else:
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            for source_path, archive_path_in_package in _package_files(config, repo_root):
+                archive.write(source_path, archive_path_in_package.as_posix())
 
     return archive_path
 
@@ -194,13 +187,32 @@ def _clean_path(path: str) -> str:
     return path
 
 
-def _add_tree_to_tar(archive: tarfile.TarFile, source_dir: Path, archive_dir: Path) -> None:
+def _package_files(config: ReleasePackageConfig, repo_root: Path) -> list[tuple[Path, Path]]:
+    package_files = [(config.binary_path, Path("neser") / config.binary_name)]
+    package_files.extend(_tree_files(repo_root / "assets/fonts", Path("neser/assets/fonts")))
+    for required_file in (
+        "gamecontrollerdb.txt",
+        "neser.conf.example",
+        "README.md",
+        "LICENSE",
+    ):
+        package_files.append((repo_root / required_file, Path("neser") / required_file))
+
+    for shader_dependency in sorted(collect_shader_dependencies(repo_root)):
+        package_files.append((repo_root / shader_dependency, Path("neser") / shader_dependency))
+
+    return package_files
+
+
+def _tree_files(source_dir: Path, archive_dir: Path) -> list[tuple[Path, Path]]:
     if not source_dir.is_dir():
         raise FileNotFoundError(source_dir)
 
-    for path in sorted(source_dir.rglob("*")):
-        if path.is_file():
-            _add_file_to_tar(archive, path, archive_dir / path.relative_to(source_dir))
+    return [
+        (path, archive_dir / path.relative_to(source_dir))
+        for path in sorted(source_dir.rglob("*"))
+        if path.is_file()
+    ]
 
 
 def _add_file_to_tar(archive: tarfile.TarFile, source_path: Path, archive_path: Path) -> None:

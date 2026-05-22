@@ -4,6 +4,7 @@ import stat
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from scripts.package_release import (
@@ -131,6 +132,48 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
 
                 binary_info = archive.getmember("neser/neser")
                 self.assertTrue(binary_info.mode & stat.S_IXUSR)
+
+    def test_create_zip_archive_uses_windows_release_layout(self) -> None:
+        """Zip packages contain Windows binary and runtime resources under neser/."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            repo_root = Path(temp_dir_str)
+            output_dir = repo_root / "dist"
+            binary_path = repo_root / "target/release/neser.exe"
+            write_bytes(binary_path, b"MZ")
+            write_bytes(repo_root / "assets/fonts/NunitoSans-Regular.ttf")
+            write_text(repo_root / "gamecontrollerdb.txt", "controller mappings\n")
+            write_text(repo_root / "neser.conf.example", "# config\n")
+            write_text(repo_root / "README.md", "# neser\n")
+            write_text(repo_root / "LICENSE", "license\n")
+            write_text(repo_root / "shaders/stock.slangp", "shader0 = stock.slang\n")
+            write_text(repo_root / "shaders/stock.slang", "void main() {}\n")
+            write_text(
+                repo_root / "src/platform/shaders.rs",
+                'pub const SHADER_PRESETS: &[(&str, &str)] = &[("none", '
+                '"shaders/stock.slangp")];',
+            )
+            write_text(repo_root / "scripts/dev-only.py", "print('dev only')\n")
+
+            archive_path = create_release_archive(
+                ReleasePackageConfig(
+                    repo_root=repo_root,
+                    binary_path=binary_path,
+                    output_dir=output_dir,
+                    target="x86_64-pc-windows-msvc",
+                    archive_format="zip",
+                    binary_name="neser.exe",
+                )
+            )
+
+            self.assertEqual(archive_path.name, "neser-x86_64-pc-windows-msvc.zip")
+            with zipfile.ZipFile(archive_path) as archive:
+                names = set(archive.namelist())
+
+            self.assertIn("neser/neser.exe", names)
+            self.assertIn("neser/gamecontrollerdb.txt", names)
+            self.assertIn("neser/shaders/stock.slangp", names)
+            self.assertFalse(any(name.startswith("neser/scripts/") for name in names))
 
 
 if __name__ == "__main__":
