@@ -17,6 +17,8 @@ use crate::gb::model::{CgbModel, DmgModel};
 
 const DAID_DIR: &str = "roms/gb/automated_tests/daid";
 const DEFAULT_FRAMES: u32 = 500;
+const DAID_PPU_SCANLINE_BGP_DMG_REFERENCE_CRCS: &[u32] = &[0x2299_88DA, 0x15BE_B1C2, 0x9858_EF48];
+
 macro_rules! daid_dmg_case {
     ($(#[$meta:meta])* $test_name:ident, $capture_name:literal, $rom_name:literal, $model:expr, $expected_crc:expr) => {
         #[test]
@@ -25,6 +27,18 @@ macro_rules! daid_dmg_case {
             let mut gb = load_gb_rom_with_model(&rom_path($rom_name), $model);
             let crc = run_case_and_crc(&mut gb, DEFAULT_FRAMES, $capture_name);
             assert_daid_crc($capture_name, DEFAULT_FRAMES, crc, $expected_crc);
+        }
+    };
+}
+
+macro_rules! daid_dmg_any_crc_case {
+    ($(#[$meta:meta])* $test_name:ident, $capture_name:literal, $rom_name:literal, $model:expr, $expected_crcs:expr) => {
+        #[test]
+        $(#[$meta])*
+        fn $test_name() {
+            let mut gb = load_gb_rom_with_model(&rom_path($rom_name), $model);
+            let crc = run_case_and_crc(&mut gb, DEFAULT_FRAMES, $capture_name);
+            assert_daid_crc_in($capture_name, DEFAULT_FRAMES, crc, $expected_crcs);
         }
     };
 }
@@ -67,6 +81,14 @@ fn assert_daid_crc(capture_name: &str, frames: u32, crc: u32, expected_crc: u32)
     assert_eq!(
         crc, expected_crc,
         "{capture_name} frame {frames} CRC mismatch: got {crc:#010X}, expected {expected_crc:#010X}"
+    );
+}
+
+fn assert_daid_crc_in(capture_name: &str, frames: u32, crc: u32, expected_crcs: &[u32]) {
+    let expected_hex: Vec<String> = expected_crcs.iter().map(|c| format!("{c:#010X}")).collect();
+    assert!(
+        expected_crcs.contains(&crc),
+        "{capture_name} frame {frames} CRC mismatch: got {crc:#010X}, expected one of {expected_hex:?}"
     );
 }
 
@@ -152,46 +174,41 @@ const CGB_CAPTURE_CASES: &[(&str, &str, CgbModel)] = &[
     ),
 ];
 
-daid_dmg_case!(
-    #[ignore = "known daid mismatch: mid-scanline BGP timing differs from upstream DMG references (#2611)"]
+daid_dmg_any_crc_case!(
     test_ppu_scanline_bgp_dmg0_matches_reviewed_crc,
     "ppu_scanline_bgp_dmg0",
     "ppu_scanline_bgp.gb",
     DmgModel::Dmg0,
-    0x0108_A1A4
+    DAID_PPU_SCANLINE_BGP_DMG_REFERENCE_CRCS
 );
-daid_dmg_case!(
-    #[ignore = "known daid mismatch: mid-scanline BGP timing differs from upstream DMG references (#2611)"]
+daid_dmg_any_crc_case!(
     test_ppu_scanline_bgp_dmga_matches_reviewed_crc,
     "ppu_scanline_bgp_dmga",
     "ppu_scanline_bgp.gb",
     DmgModel::DmgA,
-    0x0108_A1A4
+    DAID_PPU_SCANLINE_BGP_DMG_REFERENCE_CRCS
 );
-daid_dmg_case!(
-    #[ignore = "known daid mismatch: mid-scanline BGP timing differs from upstream DMG references (#2611)"]
+daid_dmg_any_crc_case!(
     test_ppu_scanline_bgp_dmgb_matches_reviewed_crc,
     "ppu_scanline_bgp_dmgb",
     "ppu_scanline_bgp.gb",
     DmgModel::DmgB,
-    0x0108_A1A4
+    DAID_PPU_SCANLINE_BGP_DMG_REFERENCE_CRCS
 );
-daid_dmg_case!(
-    #[ignore = "known daid mismatch: mid-scanline BGP timing differs from upstream DMG references (#2611)"]
+daid_dmg_any_crc_case!(
     test_ppu_scanline_bgp_dmgc_matches_reviewed_crc,
     "ppu_scanline_bgp_dmgc",
     "ppu_scanline_bgp.gb",
     DmgModel::DmgC,
-    0x0108_A1A4
+    DAID_PPU_SCANLINE_BGP_DMG_REFERENCE_CRCS
 );
 
 daid_cgb_case!(
-    #[ignore = "known daid mismatch: mid-scanline BGP timing differs from upstream CGB reference (#2611)"]
     test_ppu_scanline_bgp_cgbe_matches_reviewed_crc,
     "ppu_scanline_bgp_cgbe",
     "ppu_scanline_bgp.gb",
     CgbModel::CgbE,
-    0x0D4D_6F75
+    0x80FE_B937
 );
 
 daid_dmg_case!(

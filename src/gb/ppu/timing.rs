@@ -91,6 +91,8 @@ pub struct Timing {
     /// Increments when LY wraps from 153 to 0 (frame boundary).
     /// Used for CPU tracing and debugging to correlate events with frame numbers.
     frame_count: u64,
+    #[serde(default = "default_line_153_ly_zero_dot")]
+    line_153_ly_zero_dot: u16,
 }
 
 /// Events returned by a single dot tick.
@@ -104,6 +106,10 @@ pub struct DotEvents {
     pub mode_changed: bool,
     /// A new frame just began (LY wrapped from 153 back to 0).
     pub new_frame: bool,
+}
+
+fn default_line_153_ly_zero_dot() -> u16 {
+    8
 }
 
 impl Timing {
@@ -135,7 +141,13 @@ impl Timing {
             mode3_extra_dots: 0,
             ly: 0,
             frame_count: 0,
+            line_153_ly_zero_dot: default_line_153_ly_zero_dot(),
         }
+    }
+
+    pub(crate) fn set_line_153_ly_zero_dot(&mut self, dot: u16) {
+        debug_assert!(dot < Self::DOTS_PER_SCANLINE);
+        self.line_153_ly_zero_dot = dot;
     }
 
     /// Advance timing by one dot and return any events that occurred.
@@ -273,6 +285,13 @@ impl Timing {
         // actual moment scan 0 begins), which is required for intr_1_2_timing-GS to pass.
         if self.dot == 0 && self.scanline == 0 {
             self.mode_for_irq = 2;
+        }
+
+        // During the last VBlank line, LY begins reading and comparing as 0
+        // before the physical frame boundary. Raster code can use LYC=0 here
+        // to start work for the next visible frame before scanline 0 begins.
+        if self.scanline == Self::TOTAL_SCANLINES - 1 && self.dot == self.line_153_ly_zero_dot {
+            self.ly = 0;
         }
 
         // Mode 0 STAT IRQ source fires 4 T-cycles before HBlank physically starts (DMG).
@@ -563,6 +582,19 @@ mod tests {
     #[test]
     fn test_initial_ly_is_zero() {
         let timing = Timing::new();
+        assert_eq!(timing.ly(), 0);
+    }
+
+    #[test]
+    fn test_line_153_compares_as_ly_zero_before_frame_wrap() {
+        let mut timing = Timing::new();
+
+        tick_n(&mut timing, 452 + 152 * 456 + 7, 0xFF);
+        assert_eq!(timing.scanline(), 153);
+        assert_eq!(timing.ly(), 153);
+
+        tick_n(&mut timing, 1, 0xFF);
+        assert_eq!(timing.scanline(), 153);
         assert_eq!(timing.ly(), 0);
     }
 
