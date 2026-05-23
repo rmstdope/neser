@@ -124,10 +124,11 @@ impl Ppu {
 
     /// Create a new PPU initialised for CGB (Game Boy Color) mode.
     pub fn new_cgb() -> Self {
-        Self {
-            cgb_mode: true,
-            ..Self::new()
-        }
+        let mut ppu = Self::new();
+        ppu.cgb_mode = true;
+        ppu.timing
+            .set_line_153_ly_zero_dot(line_153_ly_zero_dot(true, ppu.cgb_model));
+        ppu
     }
 
     /// Seed the post-boot registered-mark tile at $8190.
@@ -152,10 +153,14 @@ impl Ppu {
         self.cgb_model = model;
         self.scy_b_stage_only = matches!(model, CgbModel::CgbD | CgbModel::CgbE);
         self.pixel_fifo.set_scy_b_stage_only(self.scy_b_stage_only);
+        self.timing
+            .set_line_153_ly_zero_dot(line_153_ly_zero_dot(self.cgb_mode, self.cgb_model));
     }
 
     pub(crate) fn fixup_after_state_load(&mut self) {
         self.scy_b_stage_only = matches!(self.cgb_model, CgbModel::CgbD | CgbModel::CgbE);
+        self.timing
+            .set_line_153_ly_zero_dot(line_153_ly_zero_dot(self.cgb_mode, self.cgb_model));
         self.pixel_fifo.fixup_after_state_load(
             self.cgb_mode,
             self.scy_b_stage_only,
@@ -1009,6 +1014,16 @@ impl Default for Ppu {
     }
 }
 
+fn line_153_ly_zero_dot(cgb_mode: bool, cgb_model: CgbModel) -> u16 {
+    // SameBoy models the line-153 LY=0 comparison window later on CGB-D/E than
+    // on DMG and older CGB revisions.
+    if cgb_mode && matches!(cgb_model, CgbModel::CgbD | CgbModel::CgbE) {
+        12
+    } else {
+        8
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1308,6 +1323,55 @@ mod tests {
             flags & 0x02,
             0x02,
             "expected STAT interrupt from LYC=LY match"
+        );
+    }
+
+    #[test]
+    fn test_stat_interrupt_fires_when_line_153_compares_as_ly_zero() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0xFF45, 0);
+        ppu.write_register(0xFF41, 0x40);
+        let _ = ppu.take_pending_interrupts();
+
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 152 * 456 + 7);
+        assert_eq!(ppu.ly(), 153);
+        assert_eq!(ppu.dot(), 7);
+        let _ = ppu.take_pending_interrupts();
+
+        ppu.tick_dots(1);
+
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(ppu.ly(), 0);
+        assert_eq!(ppu.dot(), 8);
+        assert_eq!(
+            flags & 0x02,
+            0x02,
+            "expected STAT interrupt from LYC=0 during line 153"
+        );
+    }
+
+    #[test]
+    fn test_cgb_e_stat_interrupt_fires_when_line_153_compares_as_ly_zero() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.set_cgb_model(CgbModel::CgbE);
+        ppu.write_register(0xFF45, 0);
+        ppu.write_register(0xFF41, 0x40);
+        let _ = ppu.take_pending_interrupts();
+
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 152 * 456 + 11);
+        assert_eq!(ppu.ly(), 153);
+        assert_eq!(ppu.dot(), 11);
+        let _ = ppu.take_pending_interrupts();
+
+        ppu.tick_dots(1);
+
+        let flags = ppu.take_pending_interrupts();
+        assert_eq!(ppu.ly(), 0);
+        assert_eq!(ppu.dot(), 12);
+        assert_eq!(
+            flags & 0x02,
+            0x02,
+            "expected CGB-E STAT interrupt from LYC=0 during line 153"
         );
     }
 
