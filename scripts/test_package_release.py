@@ -84,7 +84,9 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
                 },
             )
 
-    def test_create_tar_gz_archive_uses_release_layout_and_excludes_scripts(self) -> None:
+    def test_create_tar_gz_archive_uses_release_layout_and_excludes_scripts(
+        self,
+    ) -> None:
         """Tar packages contain runtime resources under neser/ and omit dev scripts."""
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
@@ -129,7 +131,9 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
                 self.assertIn("neser/LICENSE", names)
                 self.assertIn("neser/shaders/stock.slangp", names)
                 self.assertIn("neser/shaders/stock.slang", names)
-                self.assertFalse(any(name.startswith("neser/scripts/") for name in names))
+                self.assertFalse(
+                    any(name.startswith("neser/scripts/") for name in names)
+                )
 
                 binary_info = archive.getmember("neser/neser")
                 self.assertTrue(binary_info.mode & stat.S_IXUSR)
@@ -214,7 +218,9 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
             )
 
             self.assertEqual(exit_code, 0)
-            self.assertTrue((output_dir / "neser-x86_64-unknown-linux-gnu.tar.gz").exists())
+            self.assertTrue(
+                (output_dir / "neser-x86_64-unknown-linux-gnu.tar.gz").exists()
+            )
 
 
 if __name__ == "__main__":

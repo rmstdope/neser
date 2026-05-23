@@ -113,7 +113,9 @@ def _verify_zip(
 def _verify_required_paths(required_paths: set[str], names: set[str]) -> None:
     missing_paths = sorted(required_paths - names)
     if missing_paths:
-        raise ReleasePackageVerificationError(f"missing required path: {missing_paths[0]}")
+        raise ReleasePackageVerificationError(
+            f"missing required path: {missing_paths[0]}"
+        )
 
 
 def _verify_archive_paths_are_safe(names: set[str]) -> None:

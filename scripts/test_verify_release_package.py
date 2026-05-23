@@ -57,7 +57,9 @@ def create_zip(package_root: Path, archive_path: Path) -> None:
 class VerifyReleasePackageTests(unittest.TestCase):
     """Behavior tests for release archive verification."""
 
-    def test_verify_tar_gz_package_accepts_required_layout_and_smoke_command(self) -> None:
+    def test_verify_tar_gz_package_accepts_required_layout_and_smoke_command(
+        self,
+    ) -> None:
         """A complete Unix package passes manifest, permission, and smoke checks."""
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
@@ -80,7 +82,9 @@ class VerifyReleasePackageTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_dir = Path(temp_dir_str)
-            package_root = create_package_tree(temp_dir / "src", binary_name="neser.exe")
+            package_root = create_package_tree(
+                temp_dir / "src", binary_name="neser.exe"
+            )
             archive_path = temp_dir / "neser-windows-x86_64.zip"
             create_zip(package_root, archive_path)
 
