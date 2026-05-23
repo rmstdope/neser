@@ -126,6 +126,8 @@ pub struct Sm83<B: GbBus> {
     pub ime: bool,
     /// Set by HALT; cleared when an interrupt fires or IME is re-enabled.
     pub halted: bool,
+    /// Set by STOP when it enters low-power standby instead of switching CGB speed.
+    pub stopped: bool,
     /// Set when HALT executes with IME=false and a pending interrupt (HALT bug).
     /// The next opcode fetch reads without advancing PC.
     pub halt_bug: bool,
@@ -143,6 +145,7 @@ impl<B: GbBus> Sm83<B> {
             regs: Registers::new(),
             ime: false,
             halted: false,
+            stopped: false,
             halt_bug: false,
             ime_pending: false,
             bus,
@@ -184,13 +187,14 @@ impl<B: GbBus> Sm83<B> {
 
     /// Reset the CPU to power-on state.
     ///
-    /// All registers zeroed, IME/halted/halt_bug/ime_pending cleared.
+    /// All registers zeroed, IME/halted/stopped/halt_bug/ime_pending cleared.
     /// PC starts at $0000 (boot ROM entry point).
     /// The cycle counter is intentionally NOT reset.
     pub fn reset_to_power_on(&mut self) {
         self.regs = Registers::new();
         self.ime = false;
         self.halted = false;
+        self.stopped = false;
         self.halt_bug = false;
         self.last_write_addr = None;
         self.ime_pending = false;
@@ -222,6 +226,7 @@ impl<B: GbBus> Sm83<B> {
         self.regs.pc = 0x0100;
         self.ime = false;
         self.halted = false;
+        self.stopped = false;
         self.halt_bug = false;
         self.ime_pending = false;
     }
@@ -706,6 +711,14 @@ impl<B: GbBus> Sm83<B> {
             return;
         }
 
+        if self.stopped {
+            if self.bus.read(0xFF0F) & 0x10 != 0 {
+                self.stopped = false;
+            } else {
+                return;
+            }
+        }
+
         // T1–T2 of M1: check & potentially dispatch interrupts.
         // service_interrupts() consumes 4 more M-cycles internally when
         // dispatching (NOP + push_hi + push_lo + vector), giving the correct
@@ -1016,7 +1029,7 @@ impl<B: GbBus> Sm83<B> {
                 // If the bus supports CGB speed switching and KEY1 is armed,
                 // perform the speed switch instead of halting.
                 if !self.bus.try_speed_switch() {
-                    self.halted = true;
+                    self.stopped = true;
                 }
             }
 
@@ -2411,14 +2424,14 @@ mod tests {
     }
 
     #[test]
-    fn test_stop_with_speed_switch_armed_does_not_halt() {
+    fn test_stop_with_speed_switch_armed_does_not_stop() {
         // Given: STOP instruction with speed switch armed
         // 0x10, 0x00 = STOP
         let mut cpu = Sm83::new(SpeedSwitchBus::new(&[0x10, 0x00], true));
         // When: execute STOP
         cpu.execute();
-        // Then: CPU is NOT halted (speed switch consumed the STOP)
-        assert!(!cpu.halted, "CPU should not be halted after speed switch");
+        // Then: CPU is NOT stopped (speed switch consumed the STOP)
+        assert!(!cpu.stopped, "CPU should not be stopped after speed switch");
         // And: speed switch was triggered
         assert!(
             cpu.bus.speed_switched,
@@ -2429,17 +2442,54 @@ mod tests {
     }
 
     #[test]
-    fn test_stop_without_speed_switch_armed_halts_cpu() {
+    fn test_stop_without_speed_switch_armed_stops_cpu() {
         // Given: STOP instruction without speed switch armed
         let mut cpu = Sm83::new(SpeedSwitchBus::new(&[0x10, 0x00], false));
         // When: execute STOP
         cpu.execute();
-        // Then: CPU is halted (no speed switch)
-        assert!(cpu.halted, "CPU should be halted when no speed switch");
+        // Then: CPU is stopped (no speed switch)
+        assert!(cpu.stopped, "CPU should be stopped when no speed switch");
         // And: speed switch was NOT triggered
         assert!(
             !cpu.bus.speed_switched,
             "Speed switch should not have been triggered"
         );
+    }
+
+    #[test]
+    fn test_stopped_cpu_does_not_resume_for_vblank_interrupt() {
+        // Given: STOP instruction followed by an instruction that would mutate A
+        let mut cpu = Sm83::new(SpeedSwitchBus::new(&[0x10, 0x00, 0x3E, 0x42], false));
+        cpu.ime = true;
+        cpu.bus.write(0xFFFF, 0x01);
+
+        // When: STOP executes and a VBlank interrupt is requested afterwards
+        cpu.execute();
+        cpu.bus.write(0xFF0F, 0x01);
+        let pc_after_stop = cpu.regs.pc;
+        cpu.execute();
+
+        // Then: STOP remains active and the next opcode is not executed
+        assert!(cpu.stopped, "CPU should remain stopped");
+        assert_eq!(cpu.regs.pc, pc_after_stop, "PC should not advance in STOP");
+        assert_ne!(
+            cpu.regs.a, 0x42,
+            "instruction after STOP should not execute"
+        );
+    }
+
+    #[test]
+    fn test_stopped_cpu_resumes_for_joypad_interrupt_request() {
+        // Given: STOP instruction followed by an instruction that mutates A
+        let mut cpu = Sm83::new(SpeedSwitchBus::new(&[0x10, 0x00, 0x3E, 0x42], false));
+
+        // When: STOP executes and a joypad wake request appears afterwards
+        cpu.execute();
+        cpu.bus.write(0xFF0F, 0x10);
+        cpu.execute();
+
+        // Then: STOP is cleared and execution resumes at the next opcode
+        assert!(!cpu.stopped, "CPU should leave STOP on joypad wake");
+        assert_eq!(cpu.regs.a, 0x42, "instruction after STOP should execute");
     }
 }

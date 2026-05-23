@@ -36,6 +36,8 @@ pub struct Sm83State {
     pub regs: Registers,
     pub ime: bool,
     pub halted: bool,
+    #[serde(default)]
+    pub stopped: bool,
     pub halt_bug: bool,
     pub ime_pending: bool,
     pub cycles: u64,
@@ -185,6 +187,7 @@ impl<B: crate::gb::bus::GbBus> Sm83<B> {
             regs: self.regs,
             ime: self.ime,
             halted: self.halted,
+            stopped: self.stopped,
             halt_bug: self.halt_bug,
             ime_pending: self.ime_pending(),
             cycles: self.cycles(),
@@ -196,6 +199,7 @@ impl<B: crate::gb::bus::GbBus> Sm83<B> {
         self.regs = state.regs;
         self.ime = state.ime;
         self.halted = state.halted;
+        self.stopped = state.stopped;
         self.halt_bug = state.halt_bug;
         self.set_ime_pending(state.ime_pending);
         self.set_cycles(state.cycles);

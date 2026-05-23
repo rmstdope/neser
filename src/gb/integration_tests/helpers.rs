@@ -2,6 +2,8 @@ use crate::gb::bus::{CgbBus, DmgBus, GbBus};
 use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 use crate::gb::model::{CgbModel, DmgModel};
+use crate::gb::ppu::screen_buffer::ScreenBuffer;
+use std::path::Path;
 
 // ============================================================================
 // Mooneye/SameSuite Test Oracle Constants and Types
@@ -163,7 +165,6 @@ pub fn run_frames_and_crc<B: GbBus>(gb: &mut Gb<B>, n: u32) -> u32 {
 
 /// Save the screen buffer as a PNG to `path` for visual inspection.
 pub fn save_screen_png<B: GbBus>(gb: &Gb<B>, path: &str) {
-    use crate::gb::ppu::screen_buffer::ScreenBuffer;
     use png::{BitDepth, ColorType, Encoder};
     use std::fs::File;
     use std::io::{BufWriter, Write};
@@ -188,6 +189,55 @@ pub fn save_screen_png<B: GbBus>(gb: &Gb<B>, path: &str) {
     png_writer.write_image_data(&raw).expect("write PNG data");
     drop(png_writer);
     bw.flush().expect("flush PNG writer");
+}
+
+/// Decode a Game Boy-sized PNG to RGB8 bytes and return its screen-buffer CRC.
+pub fn decoded_png_rgb_crc(path: &Path) -> u32 {
+    let file = std::fs::File::open(path)
+        .unwrap_or_else(|err| panic!("open PNG {}: {err}", path.display()));
+    let mut decoder = png::Decoder::new(file);
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+
+    let mut reader = decoder
+        .read_info()
+        .unwrap_or_else(|err| panic!("read PNG info {}: {err}", path.display()));
+    let mut raw = vec![0; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut raw)
+        .unwrap_or_else(|err| panic!("decode PNG {}: {err}", path.display()));
+    let raw = &raw[..info.buffer_size()];
+
+    assert_eq!(
+        (info.width, info.height),
+        (ScreenBuffer::WIDTH, ScreenBuffer::HEIGHT),
+        "{} should have Game Boy screen dimensions",
+        path.display()
+    );
+
+    let rgb = match info.color_type {
+        png::ColorType::Rgb => raw.to_vec(),
+        png::ColorType::Rgba => raw
+            .chunks_exact(4)
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
+            .collect(),
+        png::ColorType::Grayscale => raw.iter().flat_map(|value| [*value; 3]).collect(),
+        png::ColorType::GrayscaleAlpha => raw
+            .chunks_exact(2)
+            .flat_map(|pixel| [pixel[0]; 3])
+            .collect(),
+        png::ColorType::Indexed => {
+            panic!("{} should be expanded from indexed to RGB", path.display())
+        }
+    };
+
+    assert_eq!(
+        rgb.len(),
+        (ScreenBuffer::WIDTH * ScreenBuffer::HEIGHT * 3) as usize,
+        "{} should decode to RGB8 screen-buffer bytes",
+        path.display()
+    );
+
+    crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&rgb)
 }
 
 // ============================================================================

@@ -4,7 +4,7 @@ use super::huc1::Huc1;
 /// Each cartridge type (MBC0, MBC1, …) implements this trait.
 /// The `DmgBus` holds a `Box<dyn GbCartridge>` and delegates ROM/RAM
 /// accesses to it.
-use super::mbc0::Mbc0;
+use super::mbc0::{Mbc0, RomRam};
 use super::mbc1::Mbc1;
 use super::mbc2::Mbc2;
 use super::mbc3::Mbc3;
@@ -114,7 +114,7 @@ fn ram_size_from_byte(byte: u8) -> usize {
 /// Validations performed:
 /// 1. Length must be at least 32 KB (0x8000) — returns [`RomError::TooShort`].
 /// 2. Header checksum at 0x014D must be correct — returns [`RomError::BadHeaderChecksum`].
-/// 3. MBC type at 0x0147 must be supported (0x00–0x03, 0x05–0x06, 0x19–0x1E, 0x22, 0xFF) — returns [`RomError::UnsupportedMbc`].
+/// 3. MBC type at 0x0147 must be supported (0x00–0x03, 0x05–0x06, 0x08–0x09, 0x19–0x1E, 0x22, 0xFF) — returns [`RomError::UnsupportedMbc`].
 pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
     if bytes.len() < 0x8000 {
         return Err(RomError::TooShort);
@@ -133,6 +133,15 @@ pub fn load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError> {
     let mbc_type = bytes[0x0147];
     match mbc_type {
         0x00 => Ok(Box::new(Mbc0::new(bytes.to_vec()))),
+        0x08..=0x09 => {
+            let ram_size = ram_size_from_byte(bytes[0x0149]);
+            let has_battery = mbc_type == 0x09;
+            Ok(Box::new(RomRam::new(
+                bytes.to_vec(),
+                vec![0u8; ram_size],
+                has_battery,
+            )))
+        }
         0x01..=0x03 => {
             let ram_size = ram_size_from_byte(bytes[0x0149]);
             let has_battery = mbc_type == 0x03;
@@ -183,11 +192,15 @@ mod tests {
 
     /// Build a syntactically valid ROM of the given MBC type and ROM-size byte.
     fn make_valid_rom(mbc_type: u8, rom_size_byte: u8) -> Vec<u8> {
+        make_valid_rom_with_ram(mbc_type, rom_size_byte, 0x00)
+    }
+
+    fn make_valid_rom_with_ram(mbc_type: u8, rom_size_byte: u8, ram_size_byte: u8) -> Vec<u8> {
         let bank_count: usize = 2 << (rom_size_byte as usize);
         let mut rom = vec![0u8; bank_count * 0x4000];
         rom[0x0147] = mbc_type;
         rom[0x0148] = rom_size_byte;
-        rom[0x0149] = 0x00; // no RAM
+        rom[0x0149] = ram_size_byte;
         let checksum = compute_header_checksum(&rom);
         rom[0x014D] = checksum;
         rom
@@ -217,6 +230,19 @@ mod tests {
     fn test_load_returns_ok_for_valid_mbc1_rom() {
         let rom = make_valid_rom(0x01, 0x01);
         assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_rom_ram_rom() {
+        let rom = make_valid_rom_with_ram(0x08, 0x00, 0x01);
+        assert!(load_cartridge(&rom).is_ok());
+    }
+
+    #[test]
+    fn test_load_returns_ok_for_rom_ram_battery_rom() {
+        let rom = make_valid_rom_with_ram(0x09, 0x00, 0x01);
+        let cart = load_cartridge(&rom).expect("ROM+RAM+BATTERY should load");
+        assert!(cart.has_battery());
     }
 
     #[test]
