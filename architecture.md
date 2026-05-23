@@ -97,6 +97,8 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | Tool | Description |
 | ------ | ------------- |
 | `scripts/sort_roms.py` | Sorts ROM files into mapper-numbered subdirectories based on their iNES header. |
+| `scripts/package_release.py` | Builds per-target release archives with a top-level `neser/` directory. Includes the binary, runtime resources, README, LICENSE, config example, fonts, and only shader files reachable from configured shader presets. Excludes development scripts. |
+| `scripts/verify_release_package.py` | Verifies release archive manifests for `.tar.gz` and `.zip`, checks Unix executable permissions when requested, extracts packages to a temporary directory, and can run a smoke command such as `./neser --version` from the package root. |
 | `scripts/disassemble_rom.py` | Disassembles a NES ROM file and prints 6502 assembly output. |
 | `scripts/display_audio_output.py` | Visualizes APU audio output data for debugging audio issues. |
 | `scripts/mappertool/` | A Textual-based TUI application for browsing and managing a ROM database, inspecting mapper assignments, and cross-referencing ROM files with the embedded ROM database. |
@@ -437,7 +439,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 | Workflow | Description |
 | ---------- | ------------- |
 | `ci.yml` | Main CI pipeline. Runs on push to `main` and PRs. Jobs: Rust tests (`cargo test --lib --all-features`), Clippy lint, `cargo fmt` check, WASM build + test (`wasm-pack test`), web JS unit tests (`npm test`), web Playwright integration tests, and Python script tests. Uses path-based change detection to skip unchanged jobs, and runs NES/GBA integration suites selectively (GBA integration also triggers on `roms/gba/automated_tests/gba-tests` asset changes). |
-| `release.yml` | Release pipeline triggered by version tags (`v*.*.*`). Runs full CI, then cross-compiles release binaries for Linux (x86_64), macOS (x86_64 + aarch64), and Windows (x86_64). Windows builds bundle SDL2.dll and SDL2_ttf.dll. Publishes to GitHub Releases with a git-cliff changelog. |
+| `release.yml` | Release pipeline triggered by version tags (`v*.*.*`). Runs full CI, then builds Linux x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 on target-compatible runners. Each build job creates a structured release archive with `scripts/package_release.py`, verifies it with `scripts/verify_release_package.py`, and smoke-runs the packaged binary with `--version` from inside the extracted `neser/` directory. Publishes only verified `.tar.gz` and `.zip` archives to GitHub Releases with a git-cliff changelog. |
 
 #### Agentic Workflows (Copilot-powered)
 

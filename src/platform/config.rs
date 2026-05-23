@@ -600,6 +600,8 @@ impl FrontendConfig {
 pub enum ParseResult {
     /// User requested help - print and exit.
     Help,
+    /// User requested version information - print and exit.
+    Version,
     /// Successfully parsed configuration.
     Config(Box<Config>),
 }
@@ -641,6 +643,11 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "-h",
         help: None,
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--version",
+        help: Some("Print version information and exit"),
         has_value: false,
     },
     CliFlag {
@@ -1355,6 +1362,7 @@ mod tests {
         match config_new(args).unwrap() {
             ParseResult::Config(c) => *c,
             ParseResult::Help => panic!("Expected Config, got Help"),
+            ParseResult::Version => panic!("Expected Config, got Version"),
         }
     }
 
@@ -1364,6 +1372,7 @@ mod tests {
         let args = vec!["neser".to_string(), "--help".to_string()];
         match config_new(args).unwrap() {
             ParseResult::Help => {}
+            ParseResult::Version => panic!("Expected Help, got Version"),
             ParseResult::Config(_) => panic!("Expected Help"),
         }
     }
@@ -1373,8 +1382,32 @@ mod tests {
         let args = vec!["neser".to_string(), "-h".to_string()];
         match config_new(args).unwrap() {
             ParseResult::Help => {}
+            ParseResult::Version => panic!("Expected Help, got Version"),
             ParseResult::Config(_) => panic!("Expected Help"),
         }
+    }
+
+    #[test]
+    fn test_config_version_flag_returns_version_before_validation() {
+        let args = vec![
+            "neser".to_string(),
+            "--version".to_string(),
+            "--not-a-real-flag".to_string(),
+        ];
+
+        match Config::new(&args).unwrap() {
+            ParseResult::Version => {}
+            ParseResult::Help => panic!("Expected Version, got Help"),
+            ParseResult::Config(_) => panic!("Expected Version, got Config"),
+        }
+    }
+
+    #[test]
+    fn test_help_text_lists_version_flag() {
+        let help = help_text();
+
+        assert!(help.contains("--version"));
+        assert!(help.contains("Print version information and exit"));
     }
 
     #[test]
