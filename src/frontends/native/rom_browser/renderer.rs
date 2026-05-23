@@ -22,6 +22,8 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes};
 
+pub use crate::frontends::native::egui_texture::NativeTexture as LoadedTexture;
+
 /// Browser GL renderer managing the window, GL context, and egui.
 pub struct BrowserGl {
     window: Arc<Window>,
@@ -43,14 +45,6 @@ pub enum TextureKey {
     Screenshot(i64, usize),
     /// The placeholder texture for games without cover art.
     Placeholder,
-}
-
-/// A loaded GL texture with its dimensions.
-#[derive(Debug, Clone, Copy)]
-pub struct LoadedTexture {
-    pub egui_id: egui::TextureId,
-    pub width: u32,
-    pub height: u32,
 }
 
 impl BrowserGl {
@@ -152,44 +146,12 @@ impl BrowserGl {
 
         let egui_glow = EguiGlow::new(event_loop, glow_context.clone(), None, None, true);
 
-        // Configure Nunito Sans font family.
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "nunito_regular".to_owned(),
-            egui::FontData::from_static(include_bytes!(
-                "../../../../assets/fonts/NunitoSans-Regular.ttf"
-            ))
-            .into(),
-        );
-        fonts.font_data.insert(
-            "nunito_bold".to_owned(),
-            egui::FontData::from_static(include_bytes!(
-                "../../../../assets/fonts/NunitoSans-Bold.ttf"
-            ))
-            .into(),
-        );
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, "nunito_regular".to_owned());
-        // Map monospace family to Nunito Bold for headings.
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .insert(0, "nunito_bold".to_owned());
-        egui_glow.egui_ctx.set_fonts(fonts);
-
-        // Dark theme.
-        egui_glow.egui_ctx.set_visuals(egui::Visuals {
-            dark_mode: true,
-            window_fill: egui::Color32::from_rgb(15, 15, 20),
-            panel_fill: egui::Color32::from_rgb(15, 15, 20),
-            extreme_bg_color: egui::Color32::from_rgb(10, 10, 15),
-            faint_bg_color: egui::Color32::from_rgb(20, 20, 30),
-            ..egui::Visuals::dark()
-        });
+        egui_glow
+            .egui_ctx
+            .set_fonts(crate::frontends::native::egui_theme::native_font_definitions());
+        egui_glow
+            .egui_ctx
+            .set_visuals(crate::frontends::native::egui_theme::native_dark_visuals());
 
         // Enable vsync.
         let _ = surface.set_swap_interval(

@@ -14,6 +14,19 @@ pub struct ShaderManager {
     frame_count: usize,
     output_texture: Option<gl::types::GLuint>,
     output_size: Option<Size<u32>>,
+    output_texture_owned_by_manager: bool,
+}
+
+/// Shader output texture whose GL ownership has moved out of [`ShaderManager`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShaderOutputTexture {
+    gl_id: gl::types::GLuint,
+}
+
+impl ShaderOutputTexture {
+    pub fn gl_id(self) -> gl::types::GLuint {
+        self.gl_id
+    }
 }
 
 impl ShaderManager {
@@ -29,6 +42,7 @@ impl ShaderManager {
             frame_count: 0,
             output_texture: None,
             output_size: None,
+            output_texture_owned_by_manager: true,
         }
     }
 
@@ -84,7 +98,9 @@ impl ShaderManager {
                 tex
             };
 
-            if let Some(old) = self.output_texture.take() {
+            if let Some(old) = self.output_texture.take()
+                && self.output_texture_owned_by_manager
+            {
                 unsafe {
                     gl::DeleteTextures(1, &old);
                 }
@@ -92,6 +108,7 @@ impl ShaderManager {
 
             self.output_texture = Some(tex);
             self.output_size = Some(desired_size);
+            self.output_texture_owned_by_manager = true;
         }
 
         Ok(self.output_texture.expect("output texture must be set"))
@@ -233,6 +250,22 @@ impl ShaderManager {
         self.output_texture
     }
 
+    /// Transfers the current output texture to the caller.
+    ///
+    /// After this succeeds, [`ShaderManager`] will no longer delete that GL
+    /// texture; the caller must register it with the renderer that owns and frees it.
+    pub fn take_output_texture_ownership(
+        &mut self,
+        texture: gl::types::GLuint,
+    ) -> Option<ShaderOutputTexture> {
+        if self.output_texture == Some(texture) {
+            self.output_texture_owned_by_manager = false;
+            Some(ShaderOutputTexture { gl_id: texture })
+        } else {
+            None
+        }
+    }
+
     pub fn cycle_shader(&mut self, gl_context: Arc<glow::Context>) -> Result<(), String> {
         if self.available_presets.is_empty() {
             return Err("No shader presets available".to_string());
@@ -262,7 +295,9 @@ impl ShaderManager {
 
 impl Drop for ShaderManager {
     fn drop(&mut self) {
-        if let Some(tex) = self.output_texture.take() {
+        if let Some(tex) = self.output_texture.take()
+            && self.output_texture_owned_by_manager
+        {
             unsafe {
                 gl::DeleteTextures(1, &tex);
             }
@@ -286,7 +321,15 @@ mod tests {
                 frame_count: 0,
                 output_texture: None,
                 output_size: None,
+                output_texture_owned_by_manager: true,
             }
+        }
+
+        fn with_output_texture(texture: gl::types::GLuint, owned_by_manager: bool) -> Self {
+            let mut manager = ShaderManager::with_presets(Vec::new());
+            manager.output_texture = Some(texture);
+            manager.output_texture_owned_by_manager = owned_by_manager;
+            manager
         }
     }
 
@@ -336,6 +379,30 @@ mod tests {
             "first F4 from 'no shader' state should land on crt, not index {}",
             next_index
         );
+    }
+
+    #[test]
+    fn take_output_texture_ownership_returns_current_texture_and_marks_external() {
+        let mut manager = ShaderManager::with_output_texture(7, true);
+
+        let texture = manager.take_output_texture_ownership(7);
+        let owned_by_manager = manager.output_texture_owned_by_manager;
+        manager.output_texture = None;
+
+        assert_eq!(texture.map(ShaderOutputTexture::gl_id), Some(7));
+        assert!(!owned_by_manager);
+    }
+
+    #[test]
+    fn take_output_texture_ownership_rejects_non_current_texture() {
+        let mut manager = ShaderManager::with_output_texture(7, true);
+
+        let texture = manager.take_output_texture_ownership(8);
+        let owned_by_manager = manager.output_texture_owned_by_manager;
+        manager.output_texture = None;
+
+        assert_eq!(texture, None);
+        assert!(owned_by_manager);
     }
 
     #[test]

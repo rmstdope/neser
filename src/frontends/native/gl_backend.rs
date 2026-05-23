@@ -1,4 +1,6 @@
-use crate::frontends::native::input::{InputEvent, apply_input};
+use crate::frontends::native::egui_renderer::{EguiFrameInput, NativeEguiRenderer};
+use crate::frontends::native::egui_texture::NativeTextureName;
+use crate::frontends::native::input::{EguiInputState, InputEvent};
 use crate::frontends::native::shader_manager::ShaderManager;
 use crate::gb::debugging::GbDebuggerViewState;
 use crate::gb::debugging::debugger_ui as gb_debugger_ui;
@@ -72,15 +74,15 @@ pub type ProcAddressLoader = Rc<dyn Fn(&str) -> *const c_void>;
 pub struct GlBackend {
     render_target: Box<dyn RenderTarget>,
     glow_context: std::sync::Arc<glow::Context>,
-    imgui: imgui::Context,
-    imgui_renderer: imgui_glow_renderer::Renderer,
+    egui_renderer: NativeEguiRenderer,
+    egui_input: EguiInputState,
     nes_texture: gl::types::GLuint,
-    nes_texture_id: imgui::TextureId,
+    nes_egui_texture_id: egui::TextureId,
+    shader_output_egui_texture: Option<RegisteredEguiTexture>,
     ppu_viewer_nt_texture: gl::types::GLuint,
-    ppu_viewer_nt_texture_id: imgui::TextureId,
+    ppu_viewer_nt_texture_id: egui::TextureId,
     ppu_viewer_tiles_texture: gl::types::GLuint,
-    ppu_viewer_tiles_texture_id: imgui::TextureId,
-    overlay_font: imgui::FontId,
+    ppu_viewer_tiles_texture_id: egui::TextureId,
     overlay_text_color: OverlayTextColor,
     app_context: SharedAppContext,
     framebuffer: Vec<u8>,
@@ -102,9 +104,9 @@ pub struct GlBackend {
     last_gb_action: gb_debugger_ui::GbDebuggerUiAction,
     // GB PPU viewer textures
     gb_ppu_viewer_tiles_texture: gl::types::GLuint,
-    gb_ppu_viewer_tiles_texture_id: imgui::TextureId,
+    gb_ppu_viewer_tiles_texture_id: egui::TextureId,
     gb_ppu_viewer_bg_maps_texture: gl::types::GLuint,
-    gb_ppu_viewer_bg_maps_texture_id: imgui::TextureId,
+    gb_ppu_viewer_bg_maps_texture_id: egui::TextureId,
     shader_manager: ShaderManager,
     /// Current GL texture width (updated when console type changes).
     tex_w: u32,
@@ -124,81 +126,20 @@ enum OverlayTextColor {
     Black,
 }
 
-fn draw_frame_background(
-    ui: &imgui::Ui,
-    texture_id: imgui::TextureId,
-    x0: f32,
-    y0: f32,
-    draw_w: f32,
-    draw_h: f32,
-) {
-    ui.get_background_draw_list()
-        .add_image(texture_id, [x0, y0], [x0 + draw_w, y0 + draw_h])
-        .build();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RegisteredEguiTexture {
+    gl_id: gl::types::GLuint,
+    egui_id: egui::TextureId,
 }
 
-fn draw_overlay_text(
-    ui: &imgui::Ui,
-    text: &str,
-    font: imgui::FontId,
-    text_color: OverlayTextColor,
-    blink_red: bool,
-    x0: f32,
-    y0: f32,
-) {
-    let draw_list = ui.get_background_draw_list();
-    let _font = ui.push_font(font);
-    let text_size = ui.calc_text_size(text);
-    let padding = [6.0, 4.0];
-    let text_pos = [x0 + 8.0, y0 + 8.0];
-    let rect_min = [text_pos[0] - padding[0], text_pos[1] - padding[1]];
-    let rect_max = [
-        text_pos[0] + text_size[0] + padding[0],
-        text_pos[1] + text_size[1] + padding[1],
-    ];
-
-    draw_list
-        .add_rect(rect_min, rect_max, overlay_background_color_for(text_color))
-        .filled(true)
-        .build();
-    draw_list.add_text(text_pos, overlay_text_rgba(text_color, blink_red), text);
-}
-
-fn draw_crosshair(ui: &imgui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDrawContext) {
-    let color = [1.0, 0.2, 0.2, 1.0];
-    let draw_list = ui.get_background_draw_list();
-
-    let pixel_w = draw_ctx.draw_w / draw_ctx.cropped_w.max(1) as f32;
-    let pixel_h = draw_ctx.draw_h / draw_ctx.cropped_h.max(1) as f32;
-
-    let (ix, iy) = project_crosshair_to_cropped_indices(crosshair, draw_ctx);
-
-    let center_x = draw_ctx.x0 + (ix + 0.5) * pixel_w;
-    let center_y = draw_ctx.y0 + (iy + 0.5) * pixel_h;
-
-    let pattern: [(i32, i32); 8] = [
-        (0, -2),
-        (0, -1),
-        (-2, 0),
-        (-1, 0),
-        (1, 0),
-        (2, 0),
-        (0, 1),
-        (0, 2),
-    ];
-
-    for (dx, dy) in pattern {
-        let cx = center_x + dx as f32 * pixel_w;
-        let cy = center_y + dy as f32 * pixel_h;
-        draw_list
-            .add_rect(
-                [cx - pixel_w * 0.5, cy - pixel_h * 0.5],
-                [cx + pixel_w * 0.5, cy + pixel_h * 0.5],
-                color,
-            )
-            .filled(true)
-            .build();
+impl RegisteredEguiTexture {
+    fn matches_gl_id(self, gl_id: gl::types::GLuint) -> bool {
+        self.gl_id == gl_id
     }
+}
+
+fn crosshair_rgba() -> [f32; 4] {
+    [1.0, 0.2, 0.2, 1.0]
 }
 
 struct CrosshairDrawContext {
@@ -225,64 +166,8 @@ fn project_crosshair_to_cropped_indices(
     (ix, iy)
 }
 
-fn draw_fps_counter(
-    ui: &imgui::Ui,
-    font: imgui::FontId,
-    fps: usize,
-    x0: f32,
-    y0: f32,
-    draw_w: f32,
-) {
-    let draw_list = ui.get_background_draw_list();
-    let _font = ui.push_font(font);
-    let text = format!("{fps} FPS");
-    let text_size = ui.calc_text_size(&text);
-    let padding = [6.0, 4.0];
-    let margin = 8.0;
-    let rect_w = text_size[0] + padding[0] * 2.0;
-    let rect_h = text_size[1] + padding[1] * 2.0;
-    let rect_min = [x0 + draw_w - rect_w - margin, y0 + margin];
-    let rect_max = [rect_min[0] + rect_w, rect_min[1] + rect_h];
-    let text_pos = [rect_min[0] + padding[0], rect_min[1] + padding[1]];
-    draw_list
-        .add_rect(rect_min, rect_max, [0.0, 0.0, 0.0, 0.6])
-        .filled(true)
-        .rounding(3.0)
-        .build();
-    draw_list.add_text(text_pos, [1.0, 1.0, 0.0, 1.0], &text);
-}
-
-fn draw_toasts(
-    ui: &imgui::Ui,
-    font: imgui::FontId,
-    visible_toasts: &[String],
-    x0: f32,
-    y0: f32,
-    draw_w: f32,
-    draw_h: f32,
-) {
-    let draw_list = ui.get_background_draw_list();
-    let _font = ui.push_font(font);
-    let padding = [8.0, 6.0];
-    let spacing = 8.0;
-    let bottom_margin = 12.0;
-
-    for (stack_index, toast_text) in visible_toasts.iter().rev().enumerate() {
-        let text_size = ui.calc_text_size(toast_text);
-        let rect_w = text_size[0] + padding[0] * 2.0;
-        let rect_h = text_size[1] + padding[1] * 2.0;
-        let rect_x = x0 + (draw_w - rect_w) * 0.5;
-        let rect_max_y = y0 + draw_h - bottom_margin - stack_index as f32 * (rect_h + spacing);
-        let rect_min = [rect_x, rect_max_y - rect_h];
-        let rect_max = [rect_x + rect_w, rect_max_y];
-        let text_pos = [rect_min[0] + padding[0], rect_min[1] + padding[1]];
-
-        draw_list
-            .add_rect(rect_min, rect_max, toast_background_rgba())
-            .filled(true)
-            .build();
-        draw_list.add_text(text_pos, toast_text_rgba(), toast_text);
-    }
+fn fps_counter_text(fps: usize) -> String {
+    format!("{fps} FPS")
 }
 
 impl OverlayTextColor {
@@ -299,6 +184,169 @@ impl OverlayTextColor {
             OverlayTextColor::Black => [0.0, 0.0, 0.0, 1.0],
         }
     }
+}
+
+fn draw_egui_frame_background(
+    ui: &mut egui::Ui,
+    texture_id: egui::TextureId,
+    x0: f32,
+    y0: f32,
+    draw_w: f32,
+    draw_h: f32,
+) {
+    let rect = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x0 + draw_w, y0 + draw_h));
+    ui.painter().image(
+        texture_id,
+        rect,
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+}
+
+fn draw_egui_overlay_text(
+    ui: &mut egui::Ui,
+    text: &str,
+    text_color: OverlayTextColor,
+    blink_red: bool,
+    x0: f32,
+    y0: f32,
+) {
+    let painter = ui.painter();
+    let overlay_style = text_color;
+    let egui_text_color = egui_color_from_rgba(overlay_text_rgba(overlay_style, blink_red));
+    let background_color = egui_color_from_rgba(overlay_background_color_for(overlay_style));
+    let galley = painter.layout_no_wrap(text.to_owned(), overlay_egui_font_id(), egui_text_color);
+    let text_size = [galley.size().x, galley.size().y];
+    let layout = crate::frontends::native::ui_geometry::top_left_text_panel(
+        [x0, y0],
+        text_size,
+        [8.0, 8.0],
+        [6.0, 4.0],
+    );
+
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(layout.rect_min[0], layout.rect_min[1]),
+            egui::pos2(layout.rect_max[0], layout.rect_max[1]),
+        ),
+        0.0,
+        background_color,
+    );
+    painter.galley(
+        egui::pos2(layout.text_pos[0], layout.text_pos[1]),
+        galley,
+        egui_text_color,
+    );
+}
+
+fn draw_egui_fps_counter(ui: &mut egui::Ui, fps: usize, x0: f32, y0: f32, draw_w: f32) {
+    let painter = ui.painter();
+    let text = fps_counter_text(fps);
+    let text_color = egui::Color32::YELLOW;
+    let galley = painter.layout_no_wrap(text, overlay_egui_font_id(), text_color);
+    let text_size = [galley.size().x, galley.size().y];
+    let layout = crate::frontends::native::ui_geometry::top_right_text_panel(
+        [x0, y0],
+        draw_w,
+        text_size,
+        [8.0, 8.0],
+        [6.0, 4.0],
+    );
+
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(layout.rect_min[0], layout.rect_min[1]),
+            egui::pos2(layout.rect_max[0], layout.rect_max[1]),
+        ),
+        3.0,
+        egui_color_from_rgba([0.0, 0.0, 0.0, 0.6]),
+    );
+    painter.galley(
+        egui::pos2(layout.text_pos[0], layout.text_pos[1]),
+        galley,
+        text_color,
+    );
+}
+
+fn draw_egui_toasts(
+    ui: &mut egui::Ui,
+    visible_toasts: &[String],
+    x0: f32,
+    y0: f32,
+    draw_w: f32,
+    draw_h: f32,
+) {
+    let painter = ui.painter();
+    let text_color = egui_color_from_rgba(toast_text_rgba());
+    let background_color = egui_color_from_rgba(toast_background_rgba());
+    let padding = [8.0, 6.0];
+    let spacing = 8.0;
+    let bottom_margin = 12.0;
+
+    for (stack_index, toast_text) in visible_toasts.iter().rev().enumerate() {
+        let galley =
+            painter.layout_no_wrap(toast_text.to_owned(), overlay_egui_font_id(), text_color);
+        let text_size = [galley.size().x, galley.size().y];
+        let layout = crate::frontends::native::ui_geometry::bottom_center_text_panel(
+            [x0, y0],
+            [draw_w, draw_h],
+            text_size,
+            stack_index,
+            bottom_margin,
+            spacing,
+            padding,
+        );
+
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(layout.rect_min[0], layout.rect_min[1]),
+                egui::pos2(layout.rect_max[0], layout.rect_max[1]),
+            ),
+            0.0,
+            background_color,
+        );
+        painter.galley(
+            egui::pos2(layout.text_pos[0], layout.text_pos[1]),
+            galley,
+            text_color,
+        );
+    }
+}
+
+fn draw_egui_crosshair(ui: &mut egui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDrawContext) {
+    let painter = ui.painter();
+    let color = egui_color_from_rgba(crosshair_rgba());
+    let (ix, iy) = project_crosshair_to_cropped_indices(crosshair, draw_ctx);
+    let rects = crate::frontends::native::ui_geometry::crosshair_marker_rects(
+        [draw_ctx.x0, draw_ctx.y0],
+        [draw_ctx.draw_w, draw_ctx.draw_h],
+        [draw_ctx.cropped_w, draw_ctx.cropped_h],
+        [ix, iy],
+    );
+
+    for rect in rects {
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.rect_min[0], rect.rect_min[1]),
+                egui::pos2(rect.rect_max[0], rect.rect_max[1]),
+            ),
+            0.0,
+            color,
+        );
+    }
+}
+
+fn overlay_egui_font_id() -> egui::FontId {
+    egui::FontId::proportional(26.0)
+}
+
+fn egui_color_from_rgba(rgba: [f32; 4]) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(
+        (rgba[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (rgba[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (rgba[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (rgba[3].clamp(0.0, 1.0) * 255.0).round() as u8,
+    )
 }
 
 fn overlay_text_rgba(text_color: OverlayTextColor, blink_red: bool) -> [f32; 4] {
@@ -322,6 +370,33 @@ fn toast_text_rgba() -> [f32; 4] {
 
 fn toast_background_rgba() -> [f32; 4] {
     [0.35, 0.35, 0.35, 0.7]
+}
+
+fn egui_frame_input_for_window(
+    window_size: (u32, u32),
+    drawable_size: (u32, u32),
+    predicted_dt: f32,
+) -> EguiFrameInput {
+    let (win_w, win_h) = window_size;
+    let (drawable_w, drawable_h) = drawable_size;
+    EguiFrameInput::new(
+        [win_w as f32, win_h as f32],
+        [drawable_w, drawable_h],
+        egui_pixels_per_point(window_size, drawable_size),
+        predicted_dt,
+    )
+}
+
+fn egui_pixels_per_point(window_size: (u32, u32), drawable_size: (u32, u32)) -> f32 {
+    let (win_w, win_h) = window_size;
+    let (drawable_w, drawable_h) = drawable_size;
+    if win_w > 0 {
+        drawable_w as f32 / win_w as f32
+    } else if win_h > 0 {
+        drawable_h as f32 / win_h as f32
+    } else {
+        1.0
+    }
 }
 
 impl GlBackend {
@@ -358,18 +433,33 @@ impl GlBackend {
         self.render_target.notify_resize(w, h);
     }
 
-    /// Returns the largest size that fits inside the container while preserving aspect.
-    fn letterbox_size(container_w: f32, container_h: f32, aspect: f32) -> (f32, f32) {
-        if container_h == 0.0 {
-            return (container_w, 0.0);
+    fn register_shader_output_texture(
+        &mut self,
+        gl_id: gl::types::GLuint,
+    ) -> Result<egui::TextureId, String> {
+        if let Some(registered) = self.shader_output_egui_texture
+            && registered.matches_gl_id(gl_id)
+        {
+            return Ok(registered.egui_id);
         }
 
-        let container_aspect = container_w / container_h;
-        if container_aspect > aspect {
-            (container_h * aspect, container_h)
-        } else {
-            (container_w, container_w / aspect)
+        let output_texture = self
+            .shader_manager
+            .take_output_texture_ownership(gl_id)
+            .ok_or_else(|| "ShaderManager did not own the shader output texture".to_owned())?;
+        let texture_name = NativeTextureName::from_gl_id(output_texture.gl_id())
+            .ok_or_else(|| "Shader output texture ID was zero".to_owned())?;
+
+        if let Some(registered) = self.shader_output_egui_texture.take() {
+            self.egui_renderer.free_texture(registered.egui_id);
         }
+
+        let egui_id = self.egui_renderer.register_native_texture(texture_name);
+        self.shader_output_egui_texture = Some(RegisteredEguiTexture {
+            gl_id: output_texture.gl_id(),
+            egui_id,
+        });
+        Ok(egui_id)
     }
 
     /// Creates a new OpenGL renderer bound to the provided render target.
@@ -388,21 +478,7 @@ impl GlBackend {
             gl::ClearColor(0.0, 0.0, 0.0, 1.0);
         }
 
-        let mut imgui = imgui::Context::create();
-        imgui.set_ini_filename(None);
-
-        let overlay_font = {
-            let font_size = 26.0;
-            let sources = [imgui::FontSource::DefaultFontData {
-                config: Some(imgui::FontConfig {
-                    size_pixels: font_size,
-                    ..Default::default()
-                }),
-            }];
-            imgui.fonts().add_font(&sources)
-        };
-
-        // Create glow context (shared by imgui renderer and librashader).
+        // Create glow context used by librashader.
         let glow_context = unsafe {
             let proc_address = proc_address.clone();
             std::sync::Arc::new(glow::Context::from_loader_function(|s| {
@@ -410,17 +486,19 @@ impl GlBackend {
             }))
         };
 
-        let imgui_renderer = imgui_glow_renderer::Renderer::new(
-            &glow_context,
-            &mut imgui,
-            &mut imgui_glow_renderer::SimpleTextureMap::default(),
-            true,
-        )
-        .map_err(|e| format!("Failed to initialise imgui glow renderer: {e:?}"))?;
+        let egui_glow_context = unsafe {
+            let proc_address = proc_address.clone();
+            std::sync::Arc::new(egui_glow::glow::Context::from_loader_function(|s| {
+                (proc_address)(s) as *const _
+            }))
+        };
+        let mut egui_renderer = NativeEguiRenderer::new(egui_glow_context)?;
 
-        let (nes_texture, nes_texture_id) = unsafe {
+        let (nes_texture, nes_egui_texture_id) = unsafe {
             let mut tex: gl::types::GLuint = 0;
             gl::GenTextures(1, &mut tex);
+            let texture_name = NativeTextureName::from_gl_id(tex)
+                .ok_or_else(|| "Failed to create emulator frame texture".to_owned())?;
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
@@ -441,32 +519,39 @@ impl GlBackend {
                 std::ptr::null(),
             );
 
-            let id: imgui::TextureId = (tex as usize).into();
-            (tex, id)
+            let egui_id = egui_renderer.register_native_texture(texture_name);
+            (tex, egui_id)
         };
 
         let (ppu_viewer_nt_texture, ppu_viewer_nt_texture_id) = unsafe {
-            create_rgba_texture(PPU_VIEWER_NT_TEXTURE_WIDTH, PPU_VIEWER_NT_TEXTURE_HEIGHT)
+            create_egui_rgba_texture(
+                &mut egui_renderer,
+                PPU_VIEWER_NT_TEXTURE_WIDTH,
+                PPU_VIEWER_NT_TEXTURE_HEIGHT,
+            )?
         };
         let (ppu_viewer_tiles_texture, ppu_viewer_tiles_texture_id) = unsafe {
-            create_rgba_texture(
+            create_egui_rgba_texture(
+                &mut egui_renderer,
                 PPU_VIEWER_TILES_TEXTURE_WIDTH,
                 PPU_VIEWER_TILES_TEXTURE_HEIGHT,
-            )
+            )?
         };
 
         // GB PPU viewer textures
         let (gb_ppu_viewer_tiles_texture, gb_ppu_viewer_tiles_texture_id) = unsafe {
-            create_rgba_texture(
+            create_egui_rgba_texture(
+                &mut egui_renderer,
                 GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB,
                 GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB,
-            )
+            )?
         };
         let (gb_ppu_viewer_bg_maps_texture, gb_ppu_viewer_bg_maps_texture_id) = unsafe {
-            create_rgba_texture(
+            create_egui_rgba_texture(
+                &mut egui_renderer,
                 GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH,
                 GB_PPU_VIEWER_BG_MAPS_TEXTURE_HEIGHT,
-            )
+            )?
         };
 
         let mut shader_manager = ShaderManager::new(allowed_shaders);
@@ -485,15 +570,15 @@ impl GlBackend {
         Ok(Self {
             render_target,
             glow_context,
-            imgui,
-            imgui_renderer,
+            egui_renderer,
+            egui_input: EguiInputState::default(),
             nes_texture,
-            nes_texture_id,
+            nes_egui_texture_id,
+            shader_output_egui_texture: None,
             ppu_viewer_nt_texture,
             ppu_viewer_nt_texture_id,
             ppu_viewer_tiles_texture,
             ppu_viewer_tiles_texture_id,
-            overlay_font,
             overlay_text_color: OverlayTextColor::White,
             app_context,
             framebuffer: Vec::new(),
@@ -524,17 +609,17 @@ impl GlBackend {
         })
     }
 
-    /// Applies an input event to ImGui and handles renderer-local shortcuts.
+    /// Applies an input event to egui and handles renderer-local shortcuts.
     pub fn handle_input(&mut self, event: &InputEvent) {
         if let InputEvent::Key {
-            key: imgui::Key::F1,
+            key: crate::frontends::native::input::UiKey::F1,
             down: true,
         } = event
         {
             self.overlay_text_color = self.overlay_text_color.toggle();
         }
 
-        apply_input(self.imgui.io_mut(), event);
+        self.egui_input.apply_input(event);
     }
 
     /// Sets the debugger window background opacity (clamped to 0.1–1.0).
@@ -597,31 +682,16 @@ impl GlBackend {
         let now = Instant::now();
         let dt = now.saturating_duration_since(self.last_frame);
         self.last_frame = now;
-        self.imgui.io_mut().delta_time = dt.as_secs_f32().max(1.0 / 1000.0);
+        let predicted_dt = dt.as_secs_f32().max(1.0 / 1000.0);
 
         let (win_w, win_h) = self.render_target.window_size();
         let (drawable_w, drawable_h) = self.render_target.drawable_size();
+        let egui_frame_input =
+            egui_frame_input_for_window((win_w, win_h), (drawable_w, drawable_h), predicted_dt);
 
         // Keep the GL viewport in sync with the current drawable size.
         unsafe {
             gl::Viewport(0, 0, drawable_w as i32, drawable_h as i32);
-        }
-
-        let scale_x = if win_w == 0 {
-            1.0
-        } else {
-            drawable_w as f32 / win_w as f32
-        };
-        let scale_y = if win_h == 0 {
-            1.0
-        } else {
-            drawable_h as f32 / win_h as f32
-        };
-
-        {
-            let io = self.imgui.io_mut();
-            io.display_size = [win_w as f32, win_h as f32];
-            io.display_framebuffer_scale = [scale_x, scale_y];
         }
 
         // Compute overscan and pixel dimensions from the console.
@@ -687,13 +757,17 @@ impl GlBackend {
         // Note: librashader's OpenGL runtime renders into a texture-backed output, not
         // directly into the default framebuffer. We therefore render into an output texture
         // and draw that texture as the background.
-        let mut shader_output_texture_id: Option<imgui::TextureId> = None;
+        let mut shader_output_texture_id: Option<egui::TextureId> = None;
         if self.shader_manager.has_shader() {
             // Compute a drawable-space letterbox size for the shader output.
             let drawable_w_f = drawable_w as f32;
             let drawable_h_f = drawable_h as f32;
             let (shader_out_w_f, shader_out_h_f) =
-                Self::letterbox_size(drawable_w_f, drawable_h_f, target_aspect);
+                crate::frontends::native::ui_geometry::letterbox_size(
+                    drawable_w_f,
+                    drawable_h_f,
+                    target_aspect,
+                );
             let shader_out_w = (shader_out_w_f as u32).max(1);
             let shader_out_h = (shader_out_h_f as u32).max(1);
 
@@ -706,192 +780,224 @@ impl GlBackend {
             ) {
                 log_info(format!("Shader application error: {}", e));
             } else if let Some(tex) = self.shader_manager.output_texture() {
-                shader_output_texture_id = Some((tex as usize).into());
+                match self.register_shader_output_texture(tex) {
+                    Ok(texture_id) => shader_output_texture_id = Some(texture_id),
+                    Err(e) => log_info(format!("Shader texture registration error: {}", e)),
+                }
             }
         }
 
         let visible_toasts = self.app_context.borrow_mut().visible_toasts(now);
+        let nes_ppu_viewer_scroll = if show_debugger
+            && let Console::Nes(nes) = console
+            && self.debugger_view_state.is_ppu_viewer_visible()
+        {
+            Some(update_ppu_viewer_textures(
+                nes,
+                self.ppu_viewer_nt_texture,
+                self.ppu_viewer_tiles_texture,
+            ))
+        } else {
+            None
+        };
+        let gb_ppu_viewer_snapshot = if show_debugger
+            && let Console::GameBoy(gb) = console
+            && self.gb_debugger_view_state.is_ppu_viewer_visible()
+        {
+            let ppu_snap = gb.create_ppu_viewer_snapshot();
+            update_gb_ppu_viewer_textures_from_snapshot(
+                &ppu_snap,
+                self.gb_ppu_viewer_tiles_texture,
+                self.gb_ppu_viewer_bg_maps_texture,
+            );
+            Some(ppu_snap)
+        } else {
+            None
+        };
+        let nes_debugger_snapshot = if show_debugger && let Console::Nes(nes) = console {
+            Some(self.debugger_view_state.snapshot(nes))
+        } else {
+            None
+        };
+        let gb_debugger_snapshot = if show_debugger && let Console::GameBoy(gb) = console {
+            Some(gb.create_debugger_snapshot(&mut self.gb_debugger_view_state))
+        } else {
+            None
+        };
         let cropped_w = self.tex_w;
         let cropped_h = self.tex_h;
-        // Start ImGui frame
+
+        let win_w = win_w as f32;
+        let win_h = win_h as f32;
+        let frame_rect = crate::frontends::native::ui_geometry::letterbox_rect(
+            [0.0, 0.0],
+            [win_w, win_h],
+            target_aspect,
+        );
+        let x0 = frame_rect.rect_min[0];
+        let y0 = frame_rect.rect_min[1];
+        let [draw_w, draw_h] = frame_rect.size();
+        let crosshair_draw_ctx = CrosshairDrawContext {
+            x0,
+            y0,
+            draw_w,
+            draw_h,
+            cropped_w,
+            cropped_h,
+            h_overscan,
+            v_overscan,
+        };
+
+        let egui_texture_id = shader_output_texture_id.unwrap_or(self.nes_egui_texture_id);
+        let ppu_viewer_nt_texture_id = self.ppu_viewer_nt_texture_id;
+        let ppu_viewer_tiles_texture_id = self.ppu_viewer_tiles_texture_id;
+        let gb_ppu_viewer_tiles_texture_id = self.gb_ppu_viewer_tiles_texture_id;
+        let gb_ppu_viewer_bg_maps_texture_id = self.gb_ppu_viewer_bg_maps_texture_id;
+        let debugger_alpha = self.debugger_alpha;
+        let breakpoints = &self.breakpoints;
+        let bp_add_state = &mut self.bp_add_state;
+        let hexdump_ui_state = &mut self.hexdump_ui_state;
+        let watchlist_ui_state = &mut self.watchlist_ui_state;
+        let mut nes_debugger_action = None;
+        let gb_debugger_alpha = self.gb_debugger_alpha;
+        let gb_breakpoints = &self.gb_breakpoints;
+        let gb_bp_add_state = &mut self.gb_bp_add_state;
+        let gb_hexdump_ui_state = &mut self.gb_hexdump_ui_state;
+        let gb_watchlist_ui_state = &mut self.gb_watchlist_ui_state;
+        let mut gb_debugger_action = None;
+        let egui_paint_data =
+            self.egui_renderer
+                .run(egui_frame_input, &mut self.egui_input, |ui| {
+                    draw_egui_frame_background(ui, egui_texture_id, x0, y0, draw_w, draw_h);
+                    if let Some(text) = overlay_text {
+                        draw_egui_overlay_text(
+                            ui,
+                            text,
+                            self.overlay_text_color,
+                            overlay_blink_red,
+                            x0,
+                            y0,
+                        );
+                    }
+                    if let Some(crosshair) = crosshair {
+                        draw_egui_crosshair(ui, crosshair, &crosshair_draw_ctx);
+                    }
+                    if let Some(fps_value) = fps {
+                        draw_egui_fps_counter(ui, fps_value, x0, y0, draw_w);
+                    }
+                    if !visible_toasts.is_empty() {
+                        draw_egui_toasts(ui, &visible_toasts, x0, y0, draw_w, draw_h);
+                    }
+                    if let Some(scroll) = nes_ppu_viewer_scroll {
+                        draw_ppu_viewer_window(
+                            ui,
+                            ppu_viewer_nt_texture_id,
+                            ppu_viewer_tiles_texture_id,
+                            scroll,
+                        );
+                    }
+                    if let Some(ppu_snap) = gb_ppu_viewer_snapshot.as_ref() {
+                        draw_gb_ppu_viewer_window(
+                            ui,
+                            gb_ppu_viewer_tiles_texture_id,
+                            gb_ppu_viewer_bg_maps_texture_id,
+                            ppu_snap,
+                        );
+                    }
+                    if let Some(snapshot) = nes_debugger_snapshot.as_ref() {
+                        nes_debugger_action = Some(debugger_ui::render(
+                            ui,
+                            snapshot,
+                            debugger_alpha,
+                            breakpoints,
+                            bp_add_state,
+                            hexdump_ui_state,
+                            watchlist_ui_state,
+                        ));
+                    }
+                    if let Some(snapshot) = gb_debugger_snapshot.as_ref() {
+                        gb_debugger_action = Some(gb_debugger_ui::render(
+                            ui,
+                            snapshot,
+                            gb_debugger_alpha,
+                            gb_breakpoints,
+                            gb_bp_add_state,
+                            gb_hexdump_ui_state,
+                            gb_watchlist_ui_state,
+                        ));
+                    }
+                });
+        self.egui_renderer.paint(egui_paint_data);
+
+        if let (Some(action_from_ui), Some(snapshot)) =
+            (nes_debugger_action, nes_debugger_snapshot.as_ref())
         {
-            let ui = self.imgui.frame();
-
-            // Draw NES frame as a background image, preserving aspect ratio with letterboxing.
-            let win_w = win_w as f32;
-            let win_h = win_h as f32;
-            let (draw_w, draw_h) = Self::letterbox_size(win_w, win_h, target_aspect);
-
-            let x0 = (win_w - draw_w) * 0.5;
-            let y0 = (win_h - draw_h) * 0.5;
-
-            // Only draw the NES texture as a background if no shader is active.
-            // When a shader is active, we draw the shader output texture.
-            let background_texture = shader_output_texture_id.unwrap_or(self.nes_texture_id);
-            draw_frame_background(ui, background_texture, x0, y0, draw_w, draw_h);
-
-            if let Some(text) = overlay_text {
-                draw_overlay_text(
-                    ui,
-                    text,
-                    self.overlay_font,
-                    self.overlay_text_color,
-                    overlay_blink_red,
-                    x0,
-                    y0,
-                );
+            action = action_from_ui;
+            if action.toggle_ppu_viewer {
+                self.debugger_view_state.toggle_ppu_viewer();
             }
-
-            if let Some(crosshair) = crosshair {
-                let draw_ctx = CrosshairDrawContext {
-                    x0,
-                    y0,
-                    draw_w,
-                    draw_h,
-                    cropped_w,
-                    cropped_h,
-                    h_overscan,
-                    v_overscan,
-                };
-                draw_crosshair(ui, crosshair, &draw_ctx);
+            if let Some(base) = action.set_prg_hexdump_base {
+                self.debugger_view_state.set_prg_hexdump_base(base);
             }
-
-            if let Some(fps_value) = fps {
-                draw_fps_counter(ui, self.overlay_font, fps_value, x0, y0, draw_w);
+            if let Some(delta) = action.nudge_prg_hexdump_base_by_bytes {
+                self.debugger_view_state
+                    .nudge_prg_hexdump_base_by_bytes_from(snapshot.prg_hexdump_base, delta);
             }
-
-            if !visible_toasts.is_empty() {
-                draw_toasts(
-                    ui,
-                    self.overlay_font,
-                    &visible_toasts,
-                    x0,
-                    y0,
-                    draw_w,
-                    draw_h,
-                );
+            if let Some(address) = action.add_watch_address {
+                self.debugger_view_state.add_watch_address(address);
             }
-
-            if show_debugger && let Console::Nes(nes) = console {
-                let snapshot = self.debugger_view_state.snapshot(nes);
-                action = debugger_ui::render(
-                    ui,
-                    &snapshot,
-                    self.debugger_alpha,
-                    &self.breakpoints,
-                    &mut self.bp_add_state,
-                    &mut self.hexdump_ui_state,
-                    &mut self.watchlist_ui_state,
-                );
-                if action.toggle_ppu_viewer {
-                    self.debugger_view_state.toggle_ppu_viewer();
-                }
-                if let Some(base) = action.set_prg_hexdump_base {
-                    self.debugger_view_state.set_prg_hexdump_base(base);
-                }
-                if let Some(delta) = action.nudge_prg_hexdump_base_by_bytes {
-                    self.debugger_view_state
-                        .nudge_prg_hexdump_base_by_bytes_from(snapshot.prg_hexdump_base, delta);
-                }
-                if let Some(address) = action.add_watch_address {
-                    self.debugger_view_state.add_watch_address(address);
-                }
-                if let Some(index) = action.remove_watch_address {
-                    self.debugger_view_state.remove_watch_address(index);
-                }
-                if let Some(update) = action.update_watch_address {
-                    self.debugger_view_state
-                        .update_watch_address(update.index, update.address);
-                }
-                if action.increase_opacity {
-                    self.debugger_alpha = (self.debugger_alpha + 0.1).min(1.0);
-                }
-                if action.decrease_opacity {
-                    self.debugger_alpha = (self.debugger_alpha - 0.1).max(0.1);
-                }
-                if self.debugger_view_state.is_ppu_viewer_visible() {
-                    let scroll = update_ppu_viewer_textures(
-                        nes,
-                        self.ppu_viewer_nt_texture,
-                        self.ppu_viewer_tiles_texture,
-                    );
-                    draw_ppu_viewer_window(
-                        ui,
-                        self.ppu_viewer_nt_texture_id,
-                        self.ppu_viewer_tiles_texture_id,
-                        scroll,
-                    );
-                }
-            } else if show_debugger && let Console::GameBoy(gb) = console {
-                let snapshot = gb.create_debugger_snapshot(&mut self.gb_debugger_view_state);
-                let gb_action = gb_debugger_ui::render(
-                    ui,
-                    &snapshot,
-                    self.gb_debugger_alpha,
-                    &self.gb_breakpoints,
-                    &mut self.gb_bp_add_state,
-                    &mut self.gb_hexdump_ui_state,
-                    &mut self.gb_watchlist_ui_state,
-                );
-                if gb_action.toggle_ppu_viewer {
-                    self.gb_debugger_view_state.toggle_ppu_viewer();
-                }
-                if let Some(base) = gb_action.set_wram_hexdump_base {
-                    self.gb_debugger_view_state.set_wram_hexdump_base(base);
-                }
-                if let Some(delta) = gb_action.nudge_wram_hexdump_base_by_bytes {
-                    self.gb_debugger_view_state
-                        .nudge_wram_hexdump_base_by_bytes_from(snapshot.wram_hexdump_base, delta);
-                }
-                if let Some(base) = gb_action.set_vram_hexdump_base {
-                    self.gb_debugger_view_state.set_vram_hexdump_base(base);
-                }
-                if let Some(delta) = gb_action.nudge_vram_hexdump_base_by_bytes {
-                    self.gb_debugger_view_state
-                        .nudge_vram_hexdump_base_by_bytes_from(snapshot.vram_hexdump_base, delta);
-                }
-                if let Some(address) = gb_action.add_watch_address {
-                    self.gb_debugger_view_state.add_watch_address(address);
-                }
-                if let Some(index) = gb_action.remove_watch_address {
-                    self.gb_debugger_view_state.remove_watch_address(index);
-                }
-                if let Some(update) = gb_action.update_watch_address {
-                    self.gb_debugger_view_state
-                        .update_watch_address(update.index, update.address);
-                }
-                if gb_action.increase_opacity {
-                    self.gb_debugger_alpha = (self.gb_debugger_alpha + 0.1).min(1.0);
-                }
-                if gb_action.decrease_opacity {
-                    self.gb_debugger_alpha = (self.gb_debugger_alpha - 0.1).max(0.1);
-                }
-                // Store action for processing by controller
-                self.last_gb_action = gb_action;
-                if self.gb_debugger_view_state.is_ppu_viewer_visible() {
-                    let ppu_snap = gb.create_ppu_viewer_snapshot();
-                    update_gb_ppu_viewer_textures_from_snapshot(
-                        &ppu_snap,
-                        self.gb_ppu_viewer_tiles_texture,
-                        self.gb_ppu_viewer_bg_maps_texture,
-                    );
-                    draw_gb_ppu_viewer_window(
-                        ui,
-                        self.gb_ppu_viewer_tiles_texture_id,
-                        self.gb_ppu_viewer_bg_maps_texture_id,
-                        &ppu_snap,
-                    );
-                }
+            if let Some(index) = action.remove_watch_address {
+                self.debugger_view_state.remove_watch_address(index);
+            }
+            if let Some(update) = action.update_watch_address {
+                self.debugger_view_state
+                    .update_watch_address(update.index, update.address);
+            }
+            if action.increase_opacity {
+                self.debugger_alpha = (self.debugger_alpha + 0.1).min(1.0);
+            }
+            if action.decrease_opacity {
+                self.debugger_alpha = (self.debugger_alpha - 0.1).max(0.1);
             }
         }
 
-        let draw_data = self.imgui.render();
-        if let Err(err) = self.imgui_renderer.render(
-            &self.glow_context,
-            &imgui_glow_renderer::SimpleTextureMap::default(),
-            draw_data,
-        ) {
-            log_info(format!("imgui render failed: {}", err));
+        if let (Some(gb_action), Some(snapshot)) =
+            (gb_debugger_action, gb_debugger_snapshot.as_ref())
+        {
+            if gb_action.toggle_ppu_viewer {
+                self.gb_debugger_view_state.toggle_ppu_viewer();
+            }
+            if let Some(base) = gb_action.set_wram_hexdump_base {
+                self.gb_debugger_view_state.set_wram_hexdump_base(base);
+            }
+            if let Some(delta) = gb_action.nudge_wram_hexdump_base_by_bytes {
+                self.gb_debugger_view_state
+                    .nudge_wram_hexdump_base_by_bytes_from(snapshot.wram_hexdump_base, delta);
+            }
+            if let Some(base) = gb_action.set_vram_hexdump_base {
+                self.gb_debugger_view_state.set_vram_hexdump_base(base);
+            }
+            if let Some(delta) = gb_action.nudge_vram_hexdump_base_by_bytes {
+                self.gb_debugger_view_state
+                    .nudge_vram_hexdump_base_by_bytes_from(snapshot.vram_hexdump_base, delta);
+            }
+            if let Some(address) = gb_action.add_watch_address {
+                self.gb_debugger_view_state.add_watch_address(address);
+            }
+            if let Some(index) = gb_action.remove_watch_address {
+                self.gb_debugger_view_state.remove_watch_address(index);
+            }
+            if let Some(update) = gb_action.update_watch_address {
+                self.gb_debugger_view_state
+                    .update_watch_address(update.index, update.address);
+            }
+            if gb_action.increase_opacity {
+                self.gb_debugger_alpha = (self.gb_debugger_alpha + 0.1).min(1.0);
+            }
+            if gb_action.decrease_opacity {
+                self.gb_debugger_alpha = (self.gb_debugger_alpha - 0.1).max(0.1);
+            }
+            self.last_gb_action = gb_action;
         }
 
         self.render_target.swap_buffers();
@@ -935,28 +1041,28 @@ pub fn shader_toast_message(preset_name: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests_letterbox {
-    use super::GlBackend;
+    use crate::frontends::native::ui_geometry::letterbox_size;
 
     // NES pixel aspect (8:7) times NTSC display correction (16:15).
     const NTSC_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
 
     #[test]
     fn test_letterbox_size_wide_container() {
-        let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, NTSC_ASPECT);
+        let (w, h) = letterbox_size(1920.0, 1080.0, NTSC_ASPECT);
         assert!((w - 1316.5714).abs() < 0.01);
         assert_eq!(h, 1080.0);
     }
 
     #[test]
     fn test_letterbox_size_matches_aspect() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 600.0, NTSC_ASPECT);
+        let (w, h) = letterbox_size(800.0, 600.0, NTSC_ASPECT);
         assert!((w - 731.4286).abs() < 0.01);
         assert_eq!(h, 600.0);
     }
 
     #[test]
     fn test_letterbox_size_zero_height() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 0.0, NTSC_ASPECT);
+        let (w, h) = letterbox_size(800.0, 0.0, NTSC_ASPECT);
         assert_eq!(w, 800.0);
         assert_eq!(h, 0.0);
     }
@@ -1021,15 +1127,200 @@ mod tests_crosshair_projection {
     }
 }
 
-/// Create a RGBA GL texture of the given dimensions with NEAREST filtering.
+#[cfg(test)]
+mod tests_egui_frame_input {
+    use super::{
+        LineSegment, RegisteredEguiTexture, crosshair_rgba, egui_color_from_rgba,
+        egui_frame_input_for_window, fps_counter_text, gb_tiles_texture_aspect,
+        gb_tiles_texture_uv, scroll_rect_line_segments, toast_background_rgba, toast_text_rgba,
+    };
+
+    #[test]
+    fn egui_frame_input_uses_logical_and_drawable_sizes() {
+        let frame_input = egui_frame_input_for_window((320, 240), (640, 480), 1.0 / 60.0);
+
+        assert_eq!(frame_input.drawable_size(), [640, 480]);
+        assert_eq!(frame_input.pixels_per_point(), 2.0);
+    }
+
+    #[test]
+    fn egui_frame_input_falls_back_to_height_scale_when_width_is_zero() {
+        let frame_input = egui_frame_input_for_window((0, 240), (640, 480), 1.0 / 60.0);
+
+        assert_eq!(frame_input.pixels_per_point(), 2.0);
+    }
+
+    #[test]
+    fn egui_frame_input_uses_unit_scale_for_empty_window() {
+        let frame_input = egui_frame_input_for_window((0, 0), (640, 480), 1.0 / 60.0);
+
+        assert_eq!(frame_input.pixels_per_point(), 1.0);
+    }
+
+    #[test]
+    fn egui_color_from_rgba_converts_unit_floats_to_color32() {
+        assert_eq!(
+            egui_color_from_rgba([1.0, 0.5, 0.0, 0.25]),
+            egui::Color32::from_rgba_unmultiplied(255, 128, 0, 64)
+        );
+    }
+
+    #[test]
+    fn egui_color_from_rgba_clamps_out_of_range_channels() {
+        assert_eq!(
+            egui_color_from_rgba([2.0, -1.0, 0.0, 1.5]),
+            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 255)
+        );
+    }
+
+    #[test]
+    fn fps_counter_text_formats_value() {
+        assert_eq!(fps_counter_text(60), "60 FPS");
+    }
+
+    #[test]
+    fn toast_egui_colors_match_rgba_helpers() {
+        assert_eq!(
+            egui_color_from_rgba(toast_text_rgba()),
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 255)
+        );
+        assert_eq!(
+            egui_color_from_rgba(toast_background_rgba()),
+            egui::Color32::from_rgba_unmultiplied(89, 89, 89, 179)
+        );
+    }
+
+    #[test]
+    fn crosshair_egui_color_matches_rgba_helper() {
+        assert_eq!(
+            egui_color_from_rgba(crosshair_rgba()),
+            egui::Color32::from_rgba_unmultiplied(255, 51, 51, 255)
+        );
+    }
+
+    #[test]
+    fn registered_egui_texture_matches_its_gl_id() {
+        let registered = RegisteredEguiTexture {
+            gl_id: 42,
+            egui_id: egui::TextureId::User(7),
+        };
+
+        assert!(registered.matches_gl_id(42));
+        assert!(!registered.matches_gl_id(7));
+    }
+
+    #[test]
+    fn scroll_rect_line_segments_draws_unwrapped_rectangle_edges() {
+        let segments =
+            scroll_rect_line_segments([10.0, 20.0], (4, 8), (2.0, 3.0), (16.0, 12.0), (64.0, 64.0));
+
+        assert_eq!(
+            segments,
+            vec![
+                LineSegment {
+                    start: [18.0, 44.0],
+                    end: [50.0, 44.0],
+                },
+                LineSegment {
+                    start: [18.0, 80.0],
+                    end: [50.0, 80.0],
+                },
+                LineSegment {
+                    start: [18.0, 44.0],
+                    end: [18.0, 80.0],
+                },
+                LineSegment {
+                    start: [50.0, 44.0],
+                    end: [50.0, 80.0],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn scroll_rect_line_segments_omits_internal_wrap_edges() {
+        let segments =
+            scroll_rect_line_segments([0.0, 0.0], (56, 0), (1.0, 1.0), (16.0, 12.0), (64.0, 64.0));
+
+        assert_eq!(
+            segments,
+            vec![
+                LineSegment {
+                    start: [56.0, 0.0],
+                    end: [64.0, 0.0],
+                },
+                LineSegment {
+                    start: [56.0, 12.0],
+                    end: [64.0, 12.0],
+                },
+                LineSegment {
+                    start: [56.0, 0.0],
+                    end: [56.0, 12.0],
+                },
+                LineSegment {
+                    start: [0.0, 0.0],
+                    end: [8.0, 0.0],
+                },
+                LineSegment {
+                    start: [0.0, 12.0],
+                    end: [8.0, 12.0],
+                },
+                LineSegment {
+                    start: [8.0, 0.0],
+                    end: [8.0, 12.0],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn gb_dmg_tiles_image_uses_visible_half_of_cgb_sized_texture() {
+        assert_eq!(
+            gb_tiles_texture_uv(false),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.5, 1.0))
+        );
+        assert_eq!(gb_tiles_texture_aspect(false), 128.0 / 256.0);
+    }
+
+    #[test]
+    fn gb_cgb_tiles_image_uses_full_texture() {
+        assert_eq!(
+            gb_tiles_texture_uv(true),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
+        );
+        assert_eq!(gb_tiles_texture_aspect(true), 128.0 / 512.0);
+    }
+}
+
+/// Create and register a RGBA GL texture of the given dimensions with NEAREST filtering.
 ///
 /// # Safety
 /// Must be called with an active GL context.
-unsafe fn create_rgba_texture(width: i32, height: i32) -> (gl::types::GLuint, imgui::TextureId) {
+unsafe fn create_egui_rgba_texture(
+    egui_renderer: &mut NativeEguiRenderer,
+    width: i32,
+    height: i32,
+) -> Result<(gl::types::GLuint, egui::TextureId), String> {
+    let texture = unsafe { create_rgba_texture_handle(width, height)? };
+    let texture_name = NativeTextureName::from_gl_id(texture)
+        .ok_or_else(|| "Failed to create egui RGBA texture".to_owned())?;
+    let texture_id = egui_renderer.register_native_texture(texture_name);
+    Ok((texture, texture_id))
+}
+
+/// Create a RGBA GL texture handle of the given dimensions with NEAREST filtering.
+///
+/// # Safety
+/// Must be called with an active GL context.
+unsafe fn create_rgba_texture_handle(width: i32, height: i32) -> Result<gl::types::GLuint, String> {
     unsafe {
-        let mut tex: gl::types::GLuint = 0;
-        gl::GenTextures(1, &mut tex);
-        gl::BindTexture(gl::TEXTURE_2D, tex);
+        let mut texture: gl::types::GLuint = 0;
+        gl::GenTextures(1, &mut texture);
+        if texture == 0 {
+            return Err(format!("Failed to create RGBA texture {width}x{height}"));
+        }
+
+        gl::BindTexture(gl::TEXTURE_2D, texture);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
@@ -1046,8 +1337,7 @@ unsafe fn create_rgba_texture(width: i32, height: i32) -> (gl::types::GLuint, im
             gl::UNSIGNED_BYTE,
             std::ptr::null(),
         );
-        let id: imgui::TextureId = (tex as usize).into();
-        (tex, id)
+        Ok(texture)
     }
 }
 
@@ -1073,11 +1363,11 @@ unsafe fn upload_rgba_texture(texture: gl::types::GLuint, width: i32, height: i3
     }
 }
 
-/// Render the PPU viewer ImGui window showing pattern tables and nametables.
+/// Render the PPU viewer egui window showing pattern tables and nametables.
 fn draw_ppu_viewer_window(
-    ui: &imgui::Ui,
-    nt_texture_id: imgui::TextureId,
-    tiles_texture_id: imgui::TextureId,
+    ui: &mut egui::Ui,
+    nt_texture_id: egui::TextureId,
+    tiles_texture_id: egui::TextureId,
     scroll: (u16, u16),
 ) {
     // Aspect ratios of the underlying textures.
@@ -1091,35 +1381,37 @@ fn draw_ppu_viewer_window(
     const NT_TEX_W: f32 = PPU_VIEWER_NT_TEXTURE_WIDTH as f32;
     const NT_TEX_H: f32 = PPU_VIEWER_NT_TEXTURE_HEIGHT as f32;
 
-    ui.window("PPU Viewer")
-        .size(
-            [
-                PPU_VIEWER_WINDOW_INITIAL_WIDTH,
-                PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
-            ],
-            imgui::Condition::FirstUseEver,
-        )
-        .build(|| {
-            ui.text("Pattern Tables");
+    egui::Window::new("PPU Viewer")
+        .default_size(egui::vec2(
+            PPU_VIEWER_WINDOW_INITIAL_WIDTH,
+            PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
+        ))
+        .show(ui.ctx(), |ui| {
+            ui.label("Pattern Tables");
             ui.separator();
-            let avail_w = ui.content_region_avail()[0];
-            imgui::Image::new(tiles_texture_id, [avail_w, avail_w * TILES_ASPECT]).build(ui);
+            let avail_w = ui.available_width();
+            ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+                tiles_texture_id,
+                egui::vec2(avail_w, avail_w * TILES_ASPECT),
+            )));
 
-            ui.dummy([0.0, 6.0]);
-            ui.text("Nametables (2\u{00D7}2)");
+            ui.add_space(6.0);
+            ui.label("Nametables (2\u{00D7}2)");
             ui.separator();
-            let avail_w = ui.content_region_avail()[0];
+            let avail_w = ui.available_width();
             let img_h = avail_w * NT_ASPECT;
-            let img_origin = ui.cursor_screen_pos();
-            imgui::Image::new(nt_texture_id, [avail_w, img_h]).build(ui);
+            let response = ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+                nt_texture_id,
+                egui::vec2(avail_w, img_h),
+            )));
 
             // Scale factors from nametable-texture pixels to screen pixels.
             let sx = avail_w / NT_TEX_W;
             let sy = img_h / NT_TEX_H;
 
-            draw_scroll_rect(
+            draw_egui_scroll_rect(
                 ui,
-                img_origin,
+                [response.rect.min.x, response.rect.min.y],
                 scroll,
                 (sx, sy),
                 (VISIBLE_W, VISIBLE_H),
@@ -1132,14 +1424,41 @@ fn draw_ppu_viewer_window(
 ///
 /// Handles cases where the 256×240 view window wraps past the 512×480 boundary by
 /// splitting into up to four partial rectangles.
-fn draw_scroll_rect(
-    ui: &imgui::Ui,
+fn draw_egui_scroll_rect(
+    ui: &mut egui::Ui,
     img_origin: [f32; 2],
     scroll: (u16, u16),
     scale: (f32, f32),
     visible_size: (f32, f32),
     nametable_size: (f32, f32),
 ) {
+    let stroke = egui::Stroke::new(1.5, egui::Color32::YELLOW);
+    for segment in
+        scroll_rect_line_segments(img_origin, scroll, scale, visible_size, nametable_size)
+    {
+        ui.painter().line_segment(
+            [
+                egui::pos2(segment.start[0], segment.start[1]),
+                egui::pos2(segment.end[0], segment.end[1]),
+            ],
+            stroke,
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LineSegment {
+    start: [f32; 2],
+    end: [f32; 2],
+}
+
+fn scroll_rect_line_segments(
+    img_origin: [f32; 2],
+    scroll: (u16, u16),
+    scale: (f32, f32),
+    visible_size: (f32, f32),
+    nametable_size: (f32, f32),
+) -> Vec<LineSegment> {
     let ox = img_origin[0];
     let oy = img_origin[1];
     let scroll_x = scroll.0 as f32;
@@ -1170,9 +1489,7 @@ fn draw_scroll_rect(
         &[(scroll_y, visible_h, true, true)]
     };
 
-    let draw_list = ui.get_window_draw_list();
-    let color = [1.0f32, 1.0, 0.0, 1.0]; // yellow
-    let thickness = 1.5;
+    let mut segments = Vec::new();
 
     for &(xs, xw, draw_left, draw_right) in x_segs {
         for &(ys, yh, draw_top, draw_bottom) in y_segs {
@@ -1182,31 +1499,32 @@ fn draw_scroll_rect(
             let y1 = y0 + yh * sy;
 
             if draw_top {
-                draw_list
-                    .add_line([x0, y0], [x1, y0], color)
-                    .thickness(thickness)
-                    .build();
+                segments.push(LineSegment {
+                    start: [x0, y0],
+                    end: [x1, y0],
+                });
             }
             if draw_bottom {
-                draw_list
-                    .add_line([x0, y1], [x1, y1], color)
-                    .thickness(thickness)
-                    .build();
+                segments.push(LineSegment {
+                    start: [x0, y1],
+                    end: [x1, y1],
+                });
             }
             if draw_left {
-                draw_list
-                    .add_line([x0, y0], [x0, y1], color)
-                    .thickness(thickness)
-                    .build();
+                segments.push(LineSegment {
+                    start: [x0, y0],
+                    end: [x0, y1],
+                });
             }
             if draw_right {
-                draw_list
-                    .add_line([x1, y0], [x1, y1], color)
-                    .thickness(thickness)
-                    .build();
+                segments.push(LineSegment {
+                    start: [x1, y0],
+                    end: [x1, y1],
+                });
             }
         }
     }
+    segments
 }
 
 /// Upload pixel data for the PPU nametable and pattern table textures from the current NES state.
@@ -1302,63 +1620,59 @@ fn update_gb_ppu_viewer_textures_from_snapshot(
     }
 }
 
-/// Render the GB PPU viewer ImGui window showing tiles, BG maps, OAM, and palettes.
+/// Render the GB PPU viewer egui window showing tiles, BG maps, OAM, and palettes.
 fn draw_gb_ppu_viewer_window(
-    ui: &imgui::Ui,
-    tiles_texture_id: imgui::TextureId,
-    bg_maps_texture_id: imgui::TextureId,
+    ui: &mut egui::Ui,
+    tiles_texture_id: egui::TextureId,
+    bg_maps_texture_id: egui::TextureId,
     ppu_snap: &crate::gb::debugging::ppu_viewer::GbPpuViewerSnapshot,
 ) {
     use crate::gb::debugging::ppu_viewer::{format_oam_entries, format_palette_info};
 
     let is_cgb = ppu_snap.cgb_mode;
-    // Aspect ratios for GB PPU viewer textures
-    let tiles_aspect = if is_cgb {
-        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB as f32
-    } else {
-        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_DMG as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_DMG as f32
-    };
     const BG_MAPS_ASPECT: f32 =
         GB_PPU_VIEWER_BG_MAPS_TEXTURE_HEIGHT as f32 / GB_PPU_VIEWER_BG_MAPS_TEXTURE_WIDTH as f32;
 
-    ui.window("GB PPU Viewer")
-        .size(
-            [
-                GB_PPU_VIEWER_WINDOW_INITIAL_WIDTH,
-                GB_PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
-            ],
-            imgui::Condition::FirstUseEver,
-        )
-        .build(|| {
+    egui::Window::new("GB PPU Viewer")
+        .default_size(egui::vec2(
+            GB_PPU_VIEWER_WINDOW_INITIAL_WIDTH,
+            GB_PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
+        ))
+        .show(ui.ctx(), |ui| {
             let mode_label = if is_cgb { "CGB" } else { "DMG" };
-            ui.text(format!("Tiles ({})", mode_label));
+            ui.label(format!("Tiles ({mode_label})"));
             ui.separator();
-            let avail_w = ui.content_region_avail()[0];
-            let tiles_uv1 = if is_cgb { [1.0, 1.0] } else { [0.5, 1.0] };
-            imgui::Image::new(tiles_texture_id, [avail_w, avail_w * tiles_aspect])
-                .uv0([0.0, 0.0])
-                .uv1(tiles_uv1)
-                .build(ui);
+            let avail_w = ui.available_width();
+            ui.add(
+                egui::Image::from_texture(egui::load::SizedTexture::new(
+                    tiles_texture_id,
+                    egui::vec2(avail_w, avail_w * gb_tiles_texture_aspect(is_cgb)),
+                ))
+                .uv(gb_tiles_texture_uv(is_cgb)),
+            );
 
-            ui.dummy([0.0, 6.0]);
-            ui.text("BG Maps (0x9800 | 0x9C00)");
+            ui.add_space(6.0);
+            ui.label("BG Maps (0x9800 | 0x9C00)");
             ui.separator();
-            let avail_w = ui.content_region_avail()[0];
-            imgui::Image::new(bg_maps_texture_id, [avail_w, avail_w * BG_MAPS_ASPECT]).build(ui);
+            let avail_w = ui.available_width();
+            ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+                bg_maps_texture_id,
+                egui::vec2(avail_w, avail_w * BG_MAPS_ASPECT),
+            )));
 
-            ui.dummy([0.0, 6.0]);
-            ui.text("OAM Sprites");
+            ui.add_space(6.0);
+            ui.label("OAM Sprites");
             ui.separator();
             let oam_lines = format_oam_entries(&ppu_snap.oam, is_cgb);
             for line in oam_lines.iter().take(10) {
-                ui.text(line);
+                ui.label(line);
             }
             if oam_lines.len() > 10 {
-                ui.text(format!("... {} more sprites", oam_lines.len() - 10));
+                ui.label(format!("... {} more sprites", oam_lines.len() - 10));
             }
 
-            ui.dummy([0.0, 6.0]);
-            ui.text("Palettes");
+            ui.add_space(6.0);
+            ui.label("Palettes");
             ui.separator();
             let palette_lines = format_palette_info(
                 ppu_snap.bgp,
@@ -1369,23 +1683,31 @@ fn draw_gb_ppu_viewer_window(
                 is_cgb,
             );
             for line in palette_lines {
-                ui.text(line);
+                ui.label(line);
             }
         });
+}
+
+fn gb_tiles_texture_aspect(is_cgb: bool) -> f32 {
+    if is_cgb {
+        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_CGB as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_CGB as f32
+    } else {
+        GB_PPU_VIEWER_TILES_TEXTURE_HEIGHT_DMG as f32 / GB_PPU_VIEWER_TILES_TEXTURE_WIDTH_DMG as f32
+    }
+}
+
+fn gb_tiles_texture_uv(is_cgb: bool) -> egui::Rect {
+    let max_x = if is_cgb { 1.0 } else { 0.5 };
+    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(max_x, 1.0))
 }
 
 impl Drop for GlBackend {
     fn drop(&mut self) {
         // Best-effort: make current and clean up GL resources.
         if self.render_target.make_current().is_ok() {
-            self.imgui_renderer.destroy(&self.glow_context);
-            unsafe {
-                gl::DeleteTextures(1, &self.nes_texture);
-                gl::DeleteTextures(1, &self.ppu_viewer_nt_texture);
-                gl::DeleteTextures(1, &self.ppu_viewer_tiles_texture);
-                gl::DeleteTextures(1, &self.gb_ppu_viewer_tiles_texture);
-                gl::DeleteTextures(1, &self.gb_ppu_viewer_bg_maps_texture);
-            }
+            // NativeEguiRenderer owns every GL texture registered with it,
+            // including framebuffer, PPU viewer, and shader output textures.
+            self.egui_renderer.destroy();
         }
     }
 }

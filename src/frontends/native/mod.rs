@@ -5,6 +5,9 @@
 
 mod app_state;
 mod audio;
+pub(crate) mod egui_renderer;
+pub(crate) mod egui_texture;
+pub(crate) mod egui_theme;
 mod event_loop;
 pub(crate) mod gamepad;
 pub(crate) mod gl_backend;
@@ -16,6 +19,7 @@ mod render_target;
 pub mod rom_browser;
 mod shader_manager;
 mod sleep_inhibitor;
+pub(crate) mod ui_geometry;
 
 pub use audio::NativeAudio;
 pub use event_loop::NativeEventLoop;

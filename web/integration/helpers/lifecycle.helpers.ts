@@ -7,9 +7,16 @@ const STATUS_SELECTOR = "#status";
 const ROM_SELECT_ID = "rom-select";
 const ROM_SELECT_SELECTOR = `#${ROM_SELECT_ID}`;
 const BUNDLED_ROM_NAME = "cpu.nes";
+const BUNDLED_ROM_PATH = path.join(
+    "roms",
+    "nes",
+    "automated_tests",
+    "blargg_nes_cpu_test5",
+    BUNDLED_ROM_NAME
+);
 
 function readMockRomBytes() {
-    return readFileSync(path.join(process.cwd(), "roms", "nes", BUNDLED_ROM_NAME));
+    return readFileSync(path.join(process.cwd(), BUNDLED_ROM_PATH));
 }
 
 async function injectBundledRomOption(page: Page) {

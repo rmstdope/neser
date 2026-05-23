@@ -264,10 +264,9 @@ impl NativeAppState {
     }
 
     /// Returns `true` when keyboard text characters should be forwarded to the
-    /// ImGui layer (for debugger input fields such as breakpoint address and
-    /// memory-watch entries) rather than being consumed only by the game
-    /// controller handler.
-    pub fn keyboard_captured_by_imgui(&self) -> bool {
+    /// active UI layer rather than being consumed only by the game controller
+    /// handler.
+    pub fn keyboard_captured_by_ui(&self) -> bool {
         self.debugger_open
     }
 }
@@ -963,17 +962,36 @@ mod tests {
         );
     }
 
-    // ── keyboard_captured_by_imgui (#1859) ────────────────────────────────────
+    // --- keyboard_captured_by_ui (#1859) ---
 
     #[test]
-    fn keyboard_not_captured_by_imgui_when_debugger_closed() {
-        // When the debugger is closed, text characters should NOT be forwarded
-        // to imgui (normal gameplay).
+    fn keyboard_not_captured_by_ui_when_debugger_closed() {
+        // Given the debugger is closed.
         let state = NativeAppState::default();
+
+        // When checking whether the UI should receive keyboard text.
+        let captured = state.keyboard_captured_by_ui();
+
+        // Then gameplay input keeps exclusive keyboard ownership.
         assert!(
-            !state.keyboard_captured_by_imgui(),
-            "imgui must not capture keyboard during normal gameplay"
+            !captured,
+            "UI must not capture keyboard during normal gameplay"
         );
+    }
+
+    #[test]
+    fn keyboard_captured_by_ui_when_debugger_open() {
+        // Given the debugger is open.
+        let state = NativeAppState {
+            debugger_open: true,
+            ..NativeAppState::default()
+        };
+
+        // When checking whether the UI should receive keyboard text.
+        let captured = state.keyboard_captured_by_ui();
+
+        // Then debugger text fields can receive keyboard input.
+        assert!(captured, "UI must capture keyboard when debugger is open");
     }
 
     // ── Four Score: help overlay ──────────────────────────────────────────────
@@ -1063,20 +1081,6 @@ mod tests {
         assert!(
             !text.contains("W/A/S/D"),
             "no keyboard keys when all 4 ports have gamepads, got:\n{text}"
-        );
-    }
-
-    #[test]
-    fn keyboard_captured_by_imgui_when_debugger_open() {
-        // When the debugger is open, typed characters must be forwarded to
-        // imgui so the breakpoint and memory-watch input fields accept input.
-        let state = NativeAppState {
-            debugger_open: true,
-            ..NativeAppState::default()
-        };
-        assert!(
-            state.keyboard_captured_by_imgui(),
-            "imgui must capture keyboard when debugger is open"
         );
     }
 
