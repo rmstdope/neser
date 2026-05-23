@@ -93,6 +93,19 @@ fn rtc3test_basic_suite_matches_reviewed_crc() {
 }
 
 #[test]
+fn suite_assertions_capture_screenshots_when_enabled() {
+    let capture_path = Path::new("target/rtc3test-captures/rtc3test_basic.png");
+    let _ = std::fs::remove_file(capture_path);
+
+    assert_suite_crc_with_capture(BASIC_SUITE, true);
+
+    assert!(
+        capture_path.is_file(),
+        "suite assertion should write {capture_path:?} when NESER_CAPTURE_SCREEN is set"
+    );
+}
+
+#[test]
 fn rtc3test_cgb_auto_mode_reaches_visible_screen() {
     let rom = std::fs::read(RTC3TEST_ROM).expect("rtc3test ROM should be present");
     let mut gb = GameBoy::new(AppContext::new());
@@ -113,24 +126,34 @@ fn rtc3test_cgb_auto_mode_reaches_visible_screen() {
 }
 
 #[test]
-#[ignore = "known MBC3 RTC range failures in rtc3test (#2618)"]
 fn rtc3test_range_suite_matches_reviewed_crc() {
     assert_suite_crc(RANGE_SUITE);
 }
 
 #[test]
-#[ignore = "known MBC3 RTC sub-second timing failures in rtc3test (#2619)"]
 fn rtc3test_sub_second_suite_matches_reviewed_crc() {
     assert_suite_crc(SUB_SECOND_SUITE);
 }
 
 fn assert_suite_crc(suite: Rtc3Suite) {
-    let crc = run_suite_and_crc(suite);
+    assert_suite_crc_with_capture(suite, should_capture_screen());
+}
+
+fn assert_suite_crc_with_capture(suite: Rtc3Suite, capture_screen: bool) {
+    let gb = load_completed_suite(suite);
+    let crc = gb.cpu.bus.ppu().screen_buffer().crc32();
+    if capture_screen {
+        capture_screen_result(&gb, suite.capture_name, crc);
+    }
     assert_eq!(
         crc, suite.expected_crc,
         "{} CRC mismatch: got {crc:#010X}, expected {:#010X}",
         suite.capture_name, suite.expected_crc
     );
+}
+
+fn should_capture_screen() -> bool {
+    std::env::var_os("NESER_CAPTURE_SCREEN").is_some()
 }
 
 fn load_completed_suite(suite: Rtc3Suite) -> Gb<DmgBus> {
@@ -139,11 +162,6 @@ fn load_completed_suite(suite: Rtc3Suite) -> Gb<DmgBus> {
     select_suite(&mut gb, suite);
     wait_for_result_screen(&mut gb, suite);
     gb
-}
-
-fn run_suite_and_crc(suite: Rtc3Suite) -> u32 {
-    let gb = load_completed_suite(suite);
-    gb.cpu.bus.ppu().screen_buffer().crc32()
 }
 
 fn run_to_menu(gb: &mut Gb<DmgBus>) {
@@ -218,10 +236,12 @@ fn wait_for_result_screen(gb: &mut Gb<DmgBus>, suite: Rtc3Suite) {
 }
 
 fn capture_screen_if_requested(gb: &Gb<DmgBus>, capture_name: &str, crc: u32) {
-    if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
-        return;
+    if should_capture_screen() {
+        capture_screen_result(gb, capture_name, crc);
     }
+}
 
+fn capture_screen_result(gb: &Gb<DmgBus>, capture_name: &str, crc: u32) {
     let dir = Path::new("target/rtc3test-captures");
     std::fs::create_dir_all(dir).expect("create rtc3test capture directory");
     let path = dir.join(format!("{capture_name}.png"));
