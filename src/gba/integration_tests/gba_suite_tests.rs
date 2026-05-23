@@ -12,10 +12,6 @@ use std::io::Write;
 const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.txt";
 const APPROVALS_RAW: &str = include_str!("gba_suite_crc_approvals.txt");
 
-fn suite_approval_key(suite: Suite) -> &'static str {
-    suite.label()
-}
-
 fn parse_hex_crc(value: &str) -> Option<u32> {
     let trimmed = value.trim();
     let digits = trimmed
@@ -65,14 +61,7 @@ fn load_approved_crcs() -> HashMap<String, u32> {
 }
 
 fn approved_crc_for_suite(suite: Suite) -> u32 {
-    let approvals = load_approved_crcs();
-    let key = suite_approval_key(suite);
-    *approvals.get(key).unwrap_or_else(|| {
-        panic!(
-            "missing approved CRC for suite '{}' in {}. Generate captures with NESER_CAPTURE_SCREEN=1 and add {}=0x........ after visual approval.",
-            key, APPROVALS_FILE, key
-        )
-    })
+    approved_crc_for_suite_key(suite.label())
 }
 
 fn approved_crc_for_suite_key(key: &str) -> u32 {
