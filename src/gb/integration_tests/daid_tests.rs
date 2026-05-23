@@ -85,9 +85,10 @@ fn assert_daid_crc(capture_name: &str, frames: u32, crc: u32, expected_crc: u32)
 }
 
 fn assert_daid_crc_in(capture_name: &str, frames: u32, crc: u32, expected_crcs: &[u32]) {
+    let expected_hex: Vec<String> = expected_crcs.iter().map(|c| format!("{c:#010X}")).collect();
     assert!(
         expected_crcs.contains(&crc),
-        "{capture_name} frame {frames} CRC mismatch: got {crc:#010X}, expected one of {expected_crcs:#010X?}"
+        "{capture_name} frame {frames} CRC mismatch: got {crc:#010X}, expected one of {expected_hex:?}"
     );
 }
 
