@@ -1,6 +1,7 @@
 pub mod acid_tests;
 pub mod blargg_tests;
 pub mod boot_tests;
+pub mod daid_tests;
 pub mod helpers;
 pub mod mealybug_tests;
 pub mod mooneye_tests;

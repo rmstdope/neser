@@ -234,7 +234,7 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/gb/apu/channel2.rs` | `Channel2` — Pulse channel without sweep. Duty cycle, length counter, volume envelope. |
 | `src/gb/apu/channel3.rs` | `Channel3` — Wave output channel. 32-nibble wave RAM ($FF30–$FF3F), 4 output levels (mute/100%/50%/25%), length counter, wave position advancing at half the pulse-channel rate. |
 | `src/gb/apu/channel4.rs` | `Channel4` — Noise channel. 15-bit or 7-bit LFSR, 8 clock divisor codes × 8 shift values = 64 noise frequencies, length counter, volume envelope. |
-| `src/gb/cpu/sm83.rs` | `Sm83<B: GbBus>` — SM83/LR35902 CPU core. Full instruction set (primary + CB-prefixed), HALT bug, interrupt dispatch at five vectors. Each M-cycle increments an internal counter used by the console for bus ticking. |
+| `src/gb/cpu/sm83.rs` | `Sm83<B: GbBus>` — SM83/LR35902 CPU core. Full instruction set (primary + CB-prefixed), HALT bug, STOP state/speed-switch handling, and interrupt dispatch at five vectors. Each M-cycle increments an internal counter used by the console for bus ticking. |
 | `src/gb/cpu/opcode.rs` | Opcode metadata tables (BASE[256] and CB[256]) for debugging and tracing. |
 | `src/gb/ppu/mod.rs` | Module declarations and re-exports for the GB PPU. Re-exports `Ppu` so the public path remains `crate::gb::ppu::Ppu`. |
 | `src/gb/ppu/ppu.rs` | `Ppu` — DMG/CGB LCD controller. Owns VRAM/OAM, LCD/STAT timing state, screen buffer, CGB palette RAM/bank state, STAT/VBlank interrupt generation, OAM corruption helpers, and dispatches per-dot Pixel FIFO rendering for all GB modes. |
@@ -244,7 +244,7 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/gb/ppu/sprites.rs` | GB/CGB sprite scan, pixel fetch, priority ordering, separate low/high-byte OBJ-size sampling for DMG fetches, and Mode 3 OBJ penalty helpers. |
 | `src/gb/timer/timer.rs` | `Timer` — DIV/TIMA/TMA/TAC subsystem. `tick(m_cycles)` advances counters and sets `interrupt_pending` on TIMA overflow; caller (DmgBus) propagates this to IF. |
 | `src/gb/cartridge/cartridge.rs` | `GbCartridge` trait plus ROM loader surface. `load_cartridge(bytes: &[u8]) -> Result<Box<dyn GbCartridge>, RomError>` validates the header checksum and returns the appropriate MBC implementation. |
-| `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00). No banking; writes are silently ignored. |
+| `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00) and ROM+RAM cartridges (types 0x08/0x09). ROM+RAM uses a fixed 32 KiB ROM window plus externally enabled/wrapped SRAM for homebrew/test ROM compatibility. |
 | `src/gb/cartridge/mbc1.rs` | MBC1 cartridge (types 0x01–0x03). ROM bank switching ($2000–$3FFF), secondary bank register ($4000–$5FFF), banking mode ($6000–$7FFF), RAM enable ($0000–$1FFF). Supports up to 2 MB ROM and 32 KB RAM. |
 | `src/gb/cartridge/mod.rs` | Module declarations and re-exports for GB cartridge support. Re-exports `GbCartridge`, `RomError`, and `load_cartridge`. |
 
@@ -415,6 +415,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 | Directory | Description |
 | --------- | ------------- |
 | `roms/automated_tests/` | **70+ test ROM suites** used by the integration test harness. Includes Blargg's CPU/PPU/APU tests, DMA timing tests, mapper-specific tests (MMC3, MMC5, FME-7, VRC6), sprite tests, and more. |
+| `roms/gb/automated_tests/daid/` | Vendored daid GB/GBC accuracy ROMs and upstream PNG references from GBEmulatorShootout, used by `src/gb/integration_tests/daid_tests.rs` for screen CRC and reference-PNG auditing. |
 | `roms/gba/automated_tests/gba-tests/` | Git submodule snapshot of jsmolka `gba-tests` (ARM/Thumb GBA CPU validation ROMs) used by `src/gba/integration_tests/gba_suite_tests.rs`. |
 | `roms/automated_tests/mapper_verification/` | Custom mapper verification ROMs built from assembly source with per-mapper test definitions. |
 | `roms/manual_tests/` | ROMs for manual visual/audio verification (e.g., volume tests). |
@@ -479,7 +480,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 ## Testing Strategy
 
 1. **Unit tests** — Extensive per-module tests throughout the codebase (run with `cargo test --lib`).
-2. **ROM-based integration tests** — Blargg, holy-mapperel, and other community test ROMs verified via headless execution.
+2. **ROM-based integration tests** — Blargg, holy-mapperel, daid GB/GBC, Mealybug, SameSuite, and other community test ROMs verified via headless execution and screen CRC/reference artifact checks.
 3. **Autorun regression tests** — Build-time generated tests that replay recorded input and verify CRC checkspoints.
 4. **WASM tests** — Browser-environment tests via `wasm-pack test --headless --chrome`.
 5. **JavaScript unit tests** — Web frontend JS modules tested with Vitest (`npm test`).
