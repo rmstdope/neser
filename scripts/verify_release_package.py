@@ -6,6 +6,7 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -73,11 +74,12 @@ def _required_paths(binary_name: str) -> set[str]:
         "neser/README.md",
         "neser/LICENSE",
         "neser/shaders/stock.slangp",
+        "neser/shaders/stock.slang",
     }
 
 
 def _is_tar_gz(path: Path) -> bool:
-    return path.suffixes[-2:] == [".tar", ".gz"]
+    return path.name.endswith(".tar.gz")
 
 
 def _verify_tar_gz(
@@ -95,6 +97,7 @@ def _verify_tar_gz(
                 raise ReleasePackageVerificationError(f"not executable: {binary_path}")
 
         _verify_archive_paths_are_safe(set(members))
+        _verify_tar_members_are_extractable(members.values())
         archive.extractall(extract_root)
 
 
@@ -123,6 +126,14 @@ def _verify_archive_paths_are_safe(names: set[str]) -> None:
         path = Path(name)
         if path.is_absolute() or ".." in path.parts:
             raise ReleasePackageVerificationError(f"unsafe archive path: {name}")
+
+
+def _verify_tar_members_are_extractable(
+    members: Iterable[tarfile.TarInfo],
+) -> None:
+    for member in members:
+        if member.issym() or member.islnk():
+            raise ReleasePackageVerificationError(f"unsupported tar link: {member.name}")
 
 
 def _run_smoke_command(smoke_command: list[str], cwd: Path) -> None:

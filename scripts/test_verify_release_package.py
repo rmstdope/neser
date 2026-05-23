@@ -116,6 +116,67 @@ class VerifyReleasePackageTests(unittest.TestCase):
                     )
                 )
 
+    def test_verify_package_requires_default_shader_source(self) -> None:
+        """The verifier requires the shader source referenced by stock.slangp."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            package_root = create_package_tree(temp_dir / "src")
+            (package_root / "shaders/stock.slang").unlink()
+            archive_path = temp_dir / "neser-linux-x86_64.tar.gz"
+            create_tar_gz(package_root, archive_path)
+
+            with self.assertRaisesRegex(
+                ReleasePackageVerificationError, "neser/shaders/stock.slang"
+            ):
+                verify_release_package(
+                    VerificationConfig(
+                        archive_path=archive_path,
+                        binary_name="neser",
+                    )
+                )
+
+    def test_verify_tar_gz_package_rejects_link_members(self) -> None:
+        """Tar packages with symlink members are rejected before extraction."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            package_root = create_package_tree(temp_dir / "src")
+            archive_path = temp_dir / "neser-linux-x86_64.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                archive.add(package_root, arcname="neser")
+                link_info = tarfile.TarInfo("neser/shaders/escape")
+                link_info.type = tarfile.SYMTYPE
+                link_info.linkname = "../../outside"
+                archive.addfile(link_info)
+
+            with self.assertRaisesRegex(
+                ReleasePackageVerificationError, "unsupported tar link"
+            ):
+                verify_release_package(
+                    VerificationConfig(
+                        archive_path=archive_path,
+                        binary_name="neser",
+                    )
+                )
+
+    def test_verify_package_reports_unsupported_single_suffix_archive(self) -> None:
+        """Unsupported archive suffixes fail with a clean verifier error."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            archive_path = Path(temp_dir_str) / "neser-linux-x86_64.tgz"
+            archive_path.write_bytes(b"not an archive")
+
+            with self.assertRaisesRegex(
+                ReleasePackageVerificationError, "unsupported archive format"
+            ):
+                verify_release_package(
+                    VerificationConfig(
+                        archive_path=archive_path,
+                        binary_name="neser",
+                    )
+                )
+
     def test_main_verifies_archive_from_cli_arguments(self) -> None:
         """CLI arguments verify an archive and run the smoke command."""
 
