@@ -248,20 +248,18 @@ daid_cgb_case!(
     0xA4B6_C5D8
 );
 daid_cgb_case!(
-    #[ignore = "known daid mismatch: LY samples after CGB speed switch differ from upstream reference (#2612)"]
     test_speed_switch_timing_ly_cgbe_matches_reviewed_crc,
     "speed_switch_timing_ly_cgbe",
     "speed_switch_timing_ly.gbc",
     CgbModel::CgbE,
-    0x694F_B5DD
+    0xC162_BEA6
 );
 daid_cgb_case!(
-    #[ignore = "known daid mismatch: STAT samples after CGB speed switch differ from upstream reference (#2612)"]
     test_speed_switch_timing_stat_cgbe_matches_reviewed_crc,
     "speed_switch_timing_stat_cgbe",
     "speed_switch_timing_stat.gbc",
     CgbModel::CgbE,
-    0x12C1_9D7A
+    0xD956_3C8E
 );
 
 daid_dmg_case!(

@@ -10,6 +10,9 @@ use crate::gb::ppu::Ppu;
 use crate::gb::ppu::timing::PpuMode;
 use crate::gb::timer::{DIV_APU_BIT_DOUBLE, DIV_APU_BIT_NORMAL, Timer};
 
+const CGB_SPEED_SWITCH_DOTS_NORMAL_TO_DOUBLE: u32 = 0x1_0004;
+const CGB_SPEED_SWITCH_DOTS_DOUBLE_TO_NORMAL: u32 = 0x8002;
+
 /// Full CGB (Game Boy Color) memory bus.
 ///
 /// Implements the CGB memory map for use with the generic `Gb<CgbBus>` console.
@@ -375,8 +378,8 @@ impl CgbBus {
     /// Attempt a CGB double-speed switch.
     ///
     /// If KEY1 bit 0 is armed, this method:
-    /// 1. Ticks the PPU for 2050 M-cycles (at the pre-switch dot rate),
-    ///    without ticking the timer or APU (DIV is frozen during the switch).
+    /// 1. Ticks the PPU for the CGB STOP speed-switch pause without ticking
+    ///    the timer or APU (DIV is frozen during the switch).
     /// 2. Resets the DIV counter to 0 (may trigger DIV-APU event).
     /// 3. Toggles the speed (KEY1 bit 7) and clears the arm bit (bit 0).
     /// 4. Updates the Timer's DIV-APU bit for the new speed mode.
@@ -387,11 +390,17 @@ impl CgbBus {
             return false;
         }
 
-        // Determine dots-per-M-cycle using the PRE-switch speed.
-        let dots_per_mcycle: u32 = if self.is_double_speed() { 2 } else { 4 };
+        let was_double_speed = self.is_double_speed();
 
-        // Tick PPU for 2050 M-cycles. Timer and APU are frozen.
-        let total_dots = 2050 * dots_per_mcycle;
+        // Tick PPU for the STOP speed-switch pause. Timer and APU are frozen.
+        // The daid speed_switch_timing LY/STAT tests observe the normal-to-double
+        // path resuming after this longer LCD-visible pause, not the shorter
+        // KEY1 documentation summary of 2050 regular M-cycles.
+        let total_dots = if was_double_speed {
+            CGB_SPEED_SWITCH_DOTS_DOUBLE_TO_NORMAL
+        } else {
+            CGB_SPEED_SWITCH_DOTS_NORMAL_TO_DOUBLE
+        };
         self.ppu.tick_dots(total_dots);
         self.if_reg |= self.ppu.take_pending_interrupts();
 
@@ -1973,6 +1982,42 @@ mod tests {
         bus.try_speed_switch();
         // Then: DIV is reset to 0
         assert_eq!(bus.read(0xFF04), 0x00);
+    }
+
+    #[test]
+    fn test_key1_speed_switch_advances_ppu_for_pause_plus_extra_t_cycles() {
+        // Given: CGB bus with LCD running and KEY1 armed for a normal-to-double switch
+        let mut bus = make_bus();
+        enable_lcd(&mut bus);
+        let start_dot = bus.ppu.dot();
+        bus.write(0xFF4D, 0x01);
+
+        // When: STOP performs the speed switch pause
+        assert!(bus.try_speed_switch());
+
+        // Then: the LCD has advanced for the observed CGB STOP switch pause
+        // before CPU execution resumes.
+        let expected_dot = (u32::from(start_dot) + CGB_SPEED_SWITCH_DOTS_NORMAL_TO_DOUBLE) % 456;
+        assert_eq!(u32::from(bus.ppu.dot()), expected_dot);
+    }
+
+    #[test]
+    fn test_key1_speed_switch_back_to_normal_uses_double_speed_pause_length() {
+        // Given: CGB bus already switched to double speed
+        let mut bus = make_bus();
+        enable_lcd(&mut bus);
+        bus.write(0xFF4D, 0x01);
+        assert!(bus.try_speed_switch());
+        assert!(bus.is_double_speed());
+        let start_dot = bus.ppu.dot();
+        bus.write(0xFF4D, 0x01);
+
+        // When: STOP performs the switch back to normal speed
+        assert!(bus.try_speed_switch());
+
+        // Then: the LCD pause uses the double-speed path length.
+        let expected_dot = (u32::from(start_dot) + CGB_SPEED_SWITCH_DOTS_DOUBLE_TO_NORMAL) % 456;
+        assert_eq!(u32::from(bus.ppu.dot()), expected_dot);
     }
 
     /// Helper: compute total dot position from LY and dot.
