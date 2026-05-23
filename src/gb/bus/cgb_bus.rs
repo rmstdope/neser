@@ -229,7 +229,7 @@ impl CgbBus {
             bus.ppu.write_cgb_register(0xFF6C, opri_value);
         }
         if skip_boot_rom {
-            bus.ppu.seed_boot_registered_mark_tile();
+            bus.seed_skip_boot_post_boot_state();
         }
 
         // Apply DMG compatibility palette when skipping boot ROM for DMG-only games.
@@ -246,49 +246,6 @@ impl CgbBus {
             // Enable DMG-compat mode for correct OBJ palette selection during rendering.
             bus.ppu.set_dmg_compat(true);
         }
-        if skip_boot_rom {
-            bus.joypad.write(0x30);
-            bus.apu.write_nr52_with_div_state(0x80, false);
-            bus.apu.write_register(0xFF11, 0x80);
-            bus.apu.write_register(0xFF12, 0xF3);
-            bus.apu.write_register(0xFF14, 0x80);
-            bus.apu.write_register(0xFF24, 0x77);
-            bus.apu.write_register(0xFF25, 0xF3);
-        }
-
-        // Initialize PPU to CGB post-boot state.
-        // LCDC = $91: LCD on, BG on, OBJ 8x8, BG map $9800, tiles $8800, OBJ on.
-        bus.ppu.write_register(0xFF40, 0x91);
-        // SCY = $00, SCX = $00 (default)
-        bus.ppu.write_register(0xFF42, 0x00);
-        bus.ppu.write_register(0xFF43, 0x00);
-        // LYC = $00
-        bus.ppu.write_register(0xFF45, 0x00);
-        // BGP = $FC (compatibility palette)
-        bus.ppu.write_register(0xFF47, 0xFC);
-        // WY = $00, WX = $00
-        bus.ppu.write_register(0xFF4A, 0x00);
-        bus.ppu.write_register(0xFF4B, 0x00);
-
-        // When skipping the boot ROM, initialize additional registers to post-boot state.
-        // These values match what the official CGB boot ROM leaves at PC=$0100.
-        // Reference: Mooneye boot_hwio-C test (verified on real CGB hardware).
-        //
-        // Note: KEY1 is NOT initialized here because:
-        // - KEY1=$81 would put the system in double-speed mode (bit 7 set)
-        // - Pan Docs states "CGB is operating in Normal Speed Mode when first turned on"
-        // - The Mooneye boot_hwio-C test's KEY1=$FF expectation may be for a specific
-        //   scenario that doesn't apply to standard post-boot state.
-        if skip_boot_rom {
-            // SVBK ($FF70): reads as $FF when svbk = $07
-            //   (read formula: svbk | 0xF8 = 0x07 | 0xF8 = $FF)
-            bus.svbk = 0x07;
-            // BCPS ($FF68): $C8 (auto-increment + index $48)
-            // OCPS ($FF6A): $D0 (auto-increment + index $50)
-            bus.ppu.write_cgb_register(0xFF68, 0xC8);
-            bus.ppu.write_cgb_register(0xFF6A, 0xD0);
-        }
-
         // Initialize DIV to post-boot value for CGB models.
         // The internal 16-bit counter value must be precisely set for Mooneye
         // boot_div tests to pass. These tests verify the exact phase alignment
@@ -323,6 +280,30 @@ impl CgbBus {
         bus.timer.set_div_counter(initial_div_counter);
 
         bus
+    }
+
+    fn seed_skip_boot_post_boot_state(&mut self) {
+        self.if_reg = 0x01;
+        self.joypad.write(0x30);
+        self.apu.write_nr52_with_div_state(0x80, false);
+        self.apu.write_register(0xFF11, 0x80);
+        self.apu.write_register(0xFF12, 0xF3);
+        self.apu.write_register(0xFF14, 0x80);
+        self.apu.write_register(0xFF24, 0x77);
+        self.apu.write_register(0xFF25, 0xF3);
+
+        self.ppu.seed_boot_registered_mark_tile();
+        self.ppu.write_register(0xFF40, 0x91);
+        self.ppu.write_register(0xFF42, 0x00);
+        self.ppu.write_register(0xFF43, 0x00);
+        self.ppu.write_register(0xFF45, 0x00);
+        self.ppu.write_register(0xFF47, 0xFC);
+        self.ppu.write_register(0xFF4A, 0x00);
+        self.ppu.write_register(0xFF4B, 0x00);
+
+        self.svbk = 0x07;
+        self.ppu.write_cgb_register(0xFF68, 0xC8);
+        self.ppu.write_cgb_register(0xFF6A, 0xD0);
     }
 
     /// Returns the CGB hardware model variant for this bus.
@@ -724,14 +705,7 @@ impl CgbBus {
         // Reset KEY0 state: if boot ROM is active, unlock so boot ROM can write;
         // if skipping boot ROM, set appropriate value based on cartridge type.
         if self.skip_boot_rom {
-            self.joypad.write(0x30);
-            self.apu.write_nr52_with_div_state(0x80, false);
-            self.apu.write_register(0xFF11, 0x80);
-            self.apu.write_register(0xFF12, 0xF3);
-            self.apu.write_register(0xFF14, 0x80);
-            self.apu.write_register(0xFF24, 0x77);
-            self.apu.write_register(0xFF25, 0xF3);
-            self.ppu.seed_boot_registered_mark_tile();
+            self.seed_skip_boot_post_boot_state();
             // Same logic as constructor: set KEY0/OPRI based on cartridge header
             let is_cgb = self.cart.is_cgb();
             if is_cgb {

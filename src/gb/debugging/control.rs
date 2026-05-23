@@ -25,6 +25,7 @@ const RST_20_OPCODE: u8 = 0xE7;
 const RST_28_OPCODE: u8 = 0xEF;
 const RST_30_OPCODE: u8 = 0xF7;
 const RST_38_OPCODE: u8 = 0xFF;
+const DEFAULT_FRAME_BUDGET_M_CYCLES: u64 = 35_112;
 
 /// Central debugger state for Game Boy.
 pub struct GbDebuggerController {
@@ -282,11 +283,31 @@ impl GbDebuggerController {
     where
         F: FnMut(&mut Gb<B>),
     {
+        self.run_frame_with_cycle_budget(gb, DEFAULT_FRAME_BUDGET_M_CYCLES, audio_drain);
+    }
+
+    /// Run the emulator until frame ready, debugger pause, or a frontend safety budget.
+    ///
+    /// The budget prevents native rendering from blocking forever before presenting
+    /// a window if a ROM/hardware path fails to raise `frame_ready`.
+    fn run_frame_with_cycle_budget<B: GbBus, F>(
+        &mut self,
+        gb: &mut Gb<B>,
+        max_m_cycles: u64,
+        audio_drain: &mut F,
+    ) where
+        F: FnMut(&mut Gb<B>),
+    {
         if self.core.paused {
             return;
         }
 
+        let start_cycles = gb.cycles();
         while !gb.is_frame_ready() {
+            if gb.cycles().saturating_sub(start_cycles) >= max_m_cycles {
+                return;
+            }
+
             // Check pre-instruction breakpoints (PC, interrupt)
             if self.check_breakpoint_hit_pre_instruction(gb) {
                 self.enter_debugger(gb);
@@ -515,10 +536,11 @@ impl GbDebuggerController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gb::bus::DmgBus;
+    use crate::gb::bus::{DmgBus, GbBus};
     use crate::gb::cartridge::load_cartridge;
     use crate::gb::console::Gb;
     use crate::gb::model::DmgModel;
+    use crate::gb::ppu::Ppu;
 
     // ── Test helpers ───────────────────────────────────────────────────
 
@@ -552,6 +574,30 @@ mod tests {
         gb.cpu.bus.write(0xFF50, 0x01);
         gb.cpu.regs.pc = 0x0000;
         gb
+    }
+
+    struct NoFrameBus {
+        ppu: Ppu,
+    }
+
+    impl GbBus for NoFrameBus {
+        fn read(&mut self, _addr: u16) -> u8 {
+            0x00
+        }
+
+        fn write(&mut self, _addr: u16, _val: u8) {}
+
+        fn ppu(&self) -> &Ppu {
+            &self.ppu
+        }
+
+        fn read_for_debugger(&self, _addr: u16) -> u8 {
+            0x00
+        }
+    }
+
+    fn gb_without_frame_ready() -> Gb<NoFrameBus> {
+        Gb::new(NoFrameBus { ppu: Ppu::new() })
     }
 
     // ── State management tests ─────────────────────────────────────────
@@ -674,6 +720,28 @@ mod tests {
         assert!(
             ctrl.is_debugger_open(),
             "Debugger should open when breakpoint is hit"
+        );
+    }
+
+    #[test]
+    fn test_run_frame_returns_when_frame_budget_is_exhausted() {
+        let mut ctrl = default_controller();
+        let mut gb = gb_without_frame_ready();
+        let mut audio_drain = |_: &mut Gb<NoFrameBus>| {};
+
+        ctrl.run_frame_with_cycle_budget(&mut gb, 8, &mut audio_drain);
+
+        assert!(
+            gb.cycles() >= 8,
+            "run_frame should execute until the safety budget is reached"
+        );
+        assert!(
+            !ctrl.is_paused(),
+            "exhausting the safety budget should not enter the debugger"
+        );
+        assert!(
+            !gb.is_frame_ready(),
+            "test bus intentionally never produces a complete frame"
         );
     }
 
