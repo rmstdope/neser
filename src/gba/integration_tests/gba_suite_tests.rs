@@ -85,14 +85,6 @@ fn approved_crc_for_suite_key(key: &str) -> u32 {
     })
 }
 
-fn mgba_suite_approval_key(key: &str) -> &str {
-    if cfg!(target_os = "linux") && key == "mgba_timing" {
-        "mgba_timing_linux"
-    } else {
-        key
-    }
-}
-
 fn assert_suite_passes_with_crc(suite: Suite) {
     let suite_label = suite.label();
     let expected_crc32 = approved_crc_for_suite(suite);
@@ -241,7 +233,7 @@ fn gba_mgba_suite_passes() {
     );
     let mut mismatches = Vec::new();
     for (i, &crc) in result.suite_crcs.iter().enumerate() {
-        let key = mgba_suite_approval_key(MGBA_SUITE_KEYS[i]);
+        let key = MGBA_SUITE_KEYS[i];
         match approvals.get(key) {
             Some(&expected) if crc == expected => {}
             Some(&expected) => mismatches.push(format!(
@@ -343,8 +335,7 @@ fn approvals_manifest_parses() {
     // mgba-emu/suite keys
     assert_eq!(approvals.get("mgba_memory"), Some(&0x179D_E4D1));
     assert_eq!(approvals.get("mgba_io_read"), Some(&0x5B5C_9186));
-    assert_eq!(approvals.get("mgba_timing"), Some(&0xD49C_DB49));
-    assert_eq!(approvals.get("mgba_timing_linux"), Some(&0xDEEF_A167));
+    assert_eq!(approvals.get("mgba_timing"), Some(&0xDEEF_A167));
     assert_eq!(approvals.get("mgba_timers"), Some(&0xCFAB_2DCC));
     assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xD1FF_FC47));
     assert_eq!(approvals.get("mgba_shifter"), Some(&0x8B4A_12AA));
