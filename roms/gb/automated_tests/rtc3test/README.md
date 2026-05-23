@@ -1,13 +1,18 @@
 # ax6 rtc3test
 
-This directory contains `rtc3test.gb` from ax6's MBC3 RTC test ROM release v004:
+This directory contains the split ax6 MBC3 RTC test ROMs mirrored by
+GBEmulatorShootout:
 
-<https://github.com/aaaaaa123456789/rtc3test/releases/tag/v004>
+<https://github.com/gbdev/GBEmulatorShootout/tree/main/testroms/ax6>
 
-The ROM is used by `src/gb/integration_tests/ax6_tests.rs` to automate the Basic,
-Range, and Sub-second writes result screens. The vendored v004 binary is 32 KiB
-with SHA-256:
+The ROMs are used by `src/gb/integration_tests/ax6_tests.rs` to run the Basic,
+Range, and Sub-second writes result screens directly on both DMG and CGB
+hardware modes. The vendored files are from GBEmulatorShootout commit
+`0464f9077abd7355943d47654d4970af33c8527b`; each binary is 32 KiB with
+SHA-256:
 
 ```text
-a271013fb37ea1d927b854798401320b220d57abb3ca77f3d318ceb8a9def30d  rtc3test.gb
+5862a567c4799ce87e64d699420daa59d216744781a517965e074ed399dd56d0  rtc3test-1.gb
+a50f2da808feff4de8f05067af34e4e444e35a4303e7fc636656e58a4ccea90c  rtc3test-2.gb
+38a004276ad0d90670dc7cd00ebbd85b7eac04f54a8f244360ae5092e5aefa76  rtc3test-3.gb
 ```
