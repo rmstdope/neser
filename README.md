@@ -8,6 +8,27 @@ NESER - NES Emulator in Rust
 
 Download the latest release for your platform from the [GitHub Releases](https://github.com/rmstdope/neser/releases) page.
 
+Release downloads are archives with a top-level `neser/` directory:
+
+| Platform | Archive format | Example asset |
+| -------- | -------------- | ------------- |
+| Linux x86_64 | `.tar.gz` | `neser-x86_64-unknown-linux-gnu.tar.gz` |
+| macOS x86_64 | `.tar.gz` | `neser-x86_64-apple-darwin.tar.gz` |
+| macOS aarch64 | `.tar.gz` | `neser-aarch64-apple-darwin.tar.gz` |
+| Windows x86_64 | `.zip` | `neser-x86_64-pc-windows-msvc.zip` |
+
+After extracting, run NESER from inside the extracted `neser/` directory so the bundled runtime resources are found:
+
+```bash
+cd neser
+./neser --version
+./neser
+```
+
+On Windows, use `neser.exe --version` and `neser.exe` from the extracted `neser\` directory.
+
+Release archives include the emulator binary, `assets/fonts/`, `gamecontrollerdb.txt`, shader presets and only the shader dependencies required by configured presets, `neser.conf.example`, `README.md`, and `LICENSE`. Development scripts are not included in release archives.
+
 ### From source via cargo install
 
 ```bash
