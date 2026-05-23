@@ -5,7 +5,7 @@
 //! against a visually reviewed baseline. Set `NESER_CAPTURE_SCREEN=1` to write
 //! screenshots to `target/daid-captures/` while baselines are being reviewed.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::helpers::{
     load_cgb_rom_with_model, load_gb_rom_with_model, run_frames_and_crc, run_one_frame,
@@ -297,7 +297,9 @@ daid_cgb_case!(
 
 #[cfg(test)]
 mod tests {
+    use super::super::helpers::decoded_png_rgb_crc;
     use super::*;
+    use std::path::PathBuf;
 
     struct ReferencePngCase {
         name: &'static str,
@@ -378,60 +380,5 @@ mod tests {
             "daid reference PNG CRC mismatch(es):\n{}",
             mismatches.join("\n")
         );
-    }
-
-    fn decoded_png_rgb_crc(path: &Path) -> u32 {
-        let file = std::fs::File::open(path)
-            .unwrap_or_else(|err| panic!("failed to open {}: {err}", path.display()));
-        let mut decoder = png::Decoder::new(file);
-        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-        let mut reader = decoder
-            .read_info()
-            .unwrap_or_else(|err| panic!("failed to read PNG info for {}: {err}", path.display()));
-        let mut raw = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut raw).unwrap_or_else(|err| {
-            panic!("failed to decode PNG frame for {}: {err}", path.display())
-        });
-        let raw = &raw[..info.buffer_size()];
-
-        assert_eq!(
-            (info.width, info.height),
-            (
-                crate::gb::ppu::screen_buffer::ScreenBuffer::WIDTH,
-                crate::gb::ppu::screen_buffer::ScreenBuffer::HEIGHT,
-            ),
-            "{} should have Game Boy screen dimensions",
-            path.display()
-        );
-
-        let rgb = match info.color_type {
-            png::ColorType::Rgb => raw.to_vec(),
-            png::ColorType::Rgba => raw
-                .chunks_exact(4)
-                .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
-                .collect(),
-            png::ColorType::Grayscale => raw.iter().flat_map(|value| [*value; 3]).collect(),
-            png::ColorType::GrayscaleAlpha => raw
-                .chunks_exact(2)
-                .flat_map(|pixel| [pixel[0], pixel[0], pixel[0]])
-                .collect(),
-            png::ColorType::Indexed => {
-                panic!(
-                    "{} should be expanded away from indexed color",
-                    path.display()
-                )
-            }
-        };
-
-        assert_eq!(
-            rgb.len(),
-            crate::gb::ppu::screen_buffer::ScreenBuffer::WIDTH as usize
-                * crate::gb::ppu::screen_buffer::ScreenBuffer::HEIGHT as usize
-                * 3,
-            "{} should decode to RGB8 screen-buffer bytes",
-            path.display()
-        );
-
-        crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&rgb)
     }
 }

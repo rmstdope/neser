@@ -95,7 +95,7 @@ mod tests {
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
-    use crate::gb::ppu::screen_buffer::ScreenBuffer;
+    use super::super::helpers::decoded_png_rgb_crc;
 
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     enum MealybugModel {
@@ -244,54 +244,6 @@ mod tests {
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
         .count()
-    }
-
-    fn decoded_png_rgb_crc(path: &Path) -> u32 {
-        let file = std::fs::File::open(path)
-            .unwrap_or_else(|err| panic!("open expected PNG {}: {err}", path.display()));
-        let mut decoder = png::Decoder::new(file);
-        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-
-        let mut reader = decoder
-            .read_info()
-            .unwrap_or_else(|err| panic!("read expected PNG info {}: {err}", path.display()));
-        let mut raw = vec![0; reader.output_buffer_size()];
-        let info = reader
-            .next_frame(&mut raw)
-            .unwrap_or_else(|err| panic!("decode expected PNG {}: {err}", path.display()));
-        let raw = &raw[..info.buffer_size()];
-
-        assert_eq!(
-            (info.width, info.height),
-            (ScreenBuffer::WIDTH, ScreenBuffer::HEIGHT),
-            "{} should have Game Boy screen dimensions",
-            path.display()
-        );
-
-        let rgb = match info.color_type {
-            png::ColorType::Rgb => raw.to_vec(),
-            png::ColorType::Rgba => raw
-                .chunks_exact(4)
-                .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
-                .collect(),
-            png::ColorType::Grayscale => raw.iter().flat_map(|value| [*value; 3]).collect(),
-            png::ColorType::GrayscaleAlpha => raw
-                .chunks_exact(2)
-                .flat_map(|pixel| [pixel[0]; 3])
-                .collect(),
-            png::ColorType::Indexed => {
-                panic!("{} should be expanded from indexed to RGB", path.display())
-            }
-        };
-
-        assert_eq!(
-            rgb.len(),
-            (ScreenBuffer::WIDTH * ScreenBuffer::HEIGHT * 3) as usize,
-            "{} should decode to RGB8 screen-buffer bytes",
-            path.display()
-        );
-
-        crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&rgb)
     }
 
     #[test]

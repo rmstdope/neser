@@ -712,7 +712,11 @@ impl<B: GbBus> Sm83<B> {
         }
 
         if self.stopped {
-            return;
+            if self.bus.read(0xFF0F) & 0x10 != 0 {
+                self.stopped = false;
+            } else {
+                return;
+            }
         }
 
         // T1–T2 of M1: check & potentially dispatch interrupts.
@@ -2472,5 +2476,20 @@ mod tests {
             cpu.regs.a, 0x42,
             "instruction after STOP should not execute"
         );
+    }
+
+    #[test]
+    fn test_stopped_cpu_resumes_for_joypad_interrupt_request() {
+        // Given: STOP instruction followed by an instruction that mutates A
+        let mut cpu = Sm83::new(SpeedSwitchBus::new(&[0x10, 0x00, 0x3E, 0x42], false));
+
+        // When: STOP executes and a joypad wake request appears afterwards
+        cpu.execute();
+        cpu.bus.write(0xFF0F, 0x10);
+        cpu.execute();
+
+        // Then: STOP is cleared and execution resumes at the next opcode
+        assert!(!cpu.stopped, "CPU should leave STOP on joypad wake");
+        assert_eq!(cpu.regs.a, 0x42, "instruction after STOP should execute");
     }
 }
