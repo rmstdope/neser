@@ -18,16 +18,28 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: neser
-          - os: macos-latest
+            binary: neser
+            archive_format: tar.gz
+            verify_flags: --require-unix-executable
+            smoke_binary: ./neser
+          - os: macos-13
             target: x86_64-apple-darwin
-            artifact: neser
-          - os: macos-latest
+            binary: neser
+            archive_format: tar.gz
+            verify_flags: --require-unix-executable
+            smoke_binary: ./neser
+          - os: macos-14
             target: aarch64-apple-darwin
-            artifact: neser
+            binary: neser
+            archive_format: tar.gz
+            verify_flags: --require-unix-executable
+            smoke_binary: ./neser
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: neser.exe
+            binary: neser.exe
+            archive_format: zip
+            verify_flags: ""
+            smoke_binary: ./neser.exe
 
     steps:
       - uses: actions/checkout@v6
@@ -51,20 +63,28 @@ jobs:
       - name: Build
         run: cargo build --release --features native --target ${{ matrix.target }}
 
-      - name: Upload artifact (Unix)
-        if: matrix.os != 'windows-latest'
-        uses: actions/upload-artifact@v5
-        with:
-          name: neser-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/neser
+      - name: Package release archive
+        run: >
+          python scripts/package_release.py
+          --binary target/${{ matrix.target }}/release/${{ matrix.binary }}
+          --output-dir dist
+          --target ${{ matrix.target }}
+          --format ${{ matrix.archive_format }}
+          --binary-name ${{ matrix.binary }}
 
-      - name: Upload artifact (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Verify release archive
+        run: >
+          python scripts/verify_release_package.py
+          dist/neser-${{ matrix.target }}.${{ matrix.archive_format }}
+          --binary-name ${{ matrix.binary }}
+          ${{ matrix.verify_flags }}
+          --smoke-command ${{ matrix.smoke_binary }} --version
+
+      - name: Upload release archive
         uses: actions/upload-artifact@v5
         with:
           name: neser-${{ matrix.target }}
-          path: |
-            target/${{ matrix.target }}/release/neser.exe
+          path: dist/neser-${{ matrix.target }}.${{ matrix.archive_format }}
 
   release:
     name: Create GitHub Release
@@ -84,13 +104,6 @@ jobs:
         with:
           path: artifacts
 
-      - name: Prepare release assets
-        run: |
-          mv artifacts/neser-x86_64-unknown-linux-gnu/neser artifacts/neser-linux-x86_64
-          mv artifacts/neser-x86_64-apple-darwin/neser artifacts/neser-macos-x86_64
-          mv artifacts/neser-aarch64-apple-darwin/neser artifacts/neser-macos-aarch64
-          cd artifacts/neser-x86_64-pc-windows-msvc && zip -r ../neser-windows-x86_64.zip . && cd ../..
-
       - name: Install git-cliff
         uses: taiki-e/install-action@v2
         with:
@@ -103,10 +116,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/neser-linux-x86_64
-            artifacts/neser-macos-x86_64
-            artifacts/neser-macos-aarch64
-            artifacts/neser-windows-x86_64.zip
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
           body_path: RELEASE_NOTES.md
           make_latest: true
 
