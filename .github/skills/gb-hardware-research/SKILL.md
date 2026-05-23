@@ -40,6 +40,7 @@ Use this skill whenever you need details about any part of Game Boy or Game Boy 
 5. When fixing visual ROM-suite reference tests, validate suspicious reference assets before tuning.
 
 - Read the ROM source/comments when available so the intended visual result is clear.
+- If the upstream suite metadata lists multiple valid result images for one ROM, preserve that as an explicit acceptance set unless hardware documentation proves a narrower model-specific mapping. Do not collapse multiple references to the one image the current emulator happens to match.
 - If a reference PNG or framebuffer expectation looks unlike the ROM's stated output, inspect basic provenance before changing emulator behavior: compare reused CRCs across ROMs, colour counts, metadata, and whether the output can be reproduced by a native run.
 - Do not force emulator output to match a reference artifact that appears to be a post-processed image, boot-screen capture, or otherwise non-hardware output. Keep the case ignored or document it as invalid until a hardware-backed/native reference is available.
 
