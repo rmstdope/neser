@@ -8,9 +8,11 @@
 use std::path::Path;
 
 use super::helpers::{load_gb_rom_with_model, run_one_frame, save_screen_png};
+use crate::gb::GameBoy;
 use crate::gb::bus::{DmgBus, GbBus};
 use crate::gb::console::Gb;
 use crate::gb::model::DmgModel;
+use crate::platform::app_context::AppContext;
 
 const RTC3TEST_ROM: &str = "roms/gb/automated_tests/rtc3test/rtc3test.gb";
 const RTC3TEST_V004_SIZE: u64 = 32 * 1024;
@@ -88,6 +90,26 @@ fn capture_all_rtc3test_screenshots() {
 #[test]
 fn rtc3test_basic_suite_matches_reviewed_crc() {
     assert_suite_crc(BASIC_SUITE);
+}
+
+#[test]
+fn rtc3test_cgb_auto_mode_reaches_visible_screen() {
+    let rom = std::fs::read(RTC3TEST_ROM).expect("rtc3test ROM should be present");
+    let mut gb = GameBoy::new(AppContext::new());
+    gb.load_rom(&rom, RTC3TEST_ROM)
+        .expect("rtc3test should load in GB auto mode");
+    gb.reset(false);
+
+    let mut cycles = 0u64;
+    let max_cycles = u64::from(BOOT_FRAMES) * 35_112;
+    while cycles < max_cycles {
+        cycles += u64::from(gb.run_tick());
+    }
+
+    assert!(
+        gb.screen_snapshot().iter().any(|channel| *channel != 0),
+        "rtc3test is CGB-compatible and should not render as an all-black screen in native auto mode"
+    );
 }
 
 #[test]
