@@ -145,10 +145,10 @@ impl Timing {
         }
     }
 
-pub(crate) fn set_line_153_ly_zero_dot(&mut self, dot: u16) {
-    debug_assert!(dot < Self::DOTS_PER_SCANLINE);
-    self.line_153_ly_zero_dot = dot;
-}
+    pub(crate) fn set_line_153_ly_zero_dot(&mut self, dot: u16) {
+        debug_assert!(dot < Self::DOTS_PER_SCANLINE);
+        self.line_153_ly_zero_dot = dot;
+    }
 
     /// Advance timing by one dot and return any events that occurred.
     ///
