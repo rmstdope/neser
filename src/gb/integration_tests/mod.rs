@@ -1,4 +1,5 @@
 pub mod acid_tests;
+pub mod ax6_tests;
 pub mod blargg_tests;
 pub mod boot_tests;
 pub mod daid_tests;

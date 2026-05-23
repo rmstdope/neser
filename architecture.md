@@ -249,6 +249,7 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00) and ROM+RAM cartridges (types 0x08/0x09). ROM+RAM uses a fixed 32 KiB ROM window plus externally enabled/wrapped SRAM for homebrew/test ROM compatibility. |
 | `src/gb/cartridge/mbc1.rs` | MBC1 cartridge (types 0x01–0x03). ROM bank switching ($2000–$3FFF), secondary bank register ($4000–$5FFF), banking mode ($6000–$7FFF), RAM enable ($0000–$1FFF). Supports up to 2 MB ROM and 32 KB RAM. |
 | `src/gb/cartridge/mod.rs` | Module declarations and re-exports for GB cartridge support. Re-exports `GbCartridge`, `RomError`, and `load_cartridge`. |
+| `src/gb/integration_tests/ax6_tests.rs` | Headless automation for ax6 `rtc3test` MBC3 RTC validation. Drives the interactive DMG menu with joypad input, captures result-screen PNGs with `NESER_CAPTURE_SCREEN=1`, and asserts reviewed screen CRCs for passing suites while ignored tests track known RTC gaps. |
 
 #### Game Boy Advance Emulation (`src/gba/`)
 
@@ -418,6 +419,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 | --------- | ------------- |
 | `roms/automated_tests/` | **70+ test ROM suites** used by the integration test harness. Includes Blargg's CPU/PPU/APU tests, DMA timing tests, mapper-specific tests (MMC3, MMC5, FME-7, VRC6), sprite tests, and more. |
 | `roms/gb/automated_tests/daid/` | Vendored daid GB/GBC accuracy ROMs and upstream PNG references from GBEmulatorShootout, used by `src/gb/integration_tests/daid_tests.rs` for screen CRC and reference-PNG auditing. |
+| `roms/gb/automated_tests/rtc3test/` | Vendored ax6 `rtc3test` v004 MBC3 RTC test ROM used by `src/gb/integration_tests/ax6_tests.rs` for interactive result-screen CRC testing. |
 | `roms/gba/automated_tests/gba-tests/` | Git submodule snapshot of jsmolka `gba-tests` (ARM/Thumb GBA CPU validation ROMs) used by `src/gba/integration_tests/gba_suite_tests.rs`. |
 | `roms/automated_tests/mapper_verification/` | Custom mapper verification ROMs built from assembly source with per-mapper test definitions. |
 | `roms/manual_tests/` | ROMs for manual visual/audio verification (e.g., volume tests). |
@@ -482,7 +484,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 ## Testing Strategy
 
 1. **Unit tests** — Extensive per-module tests throughout the codebase (run with `cargo test --lib`).
-2. **ROM-based integration tests** — Blargg, holy-mapperel, daid GB/GBC, Mealybug, SameSuite, and other community test ROMs verified via headless execution and screen CRC/reference artifact checks.
+2. **ROM-based integration tests** — Blargg, holy-mapperel, daid GB/GBC, Mealybug, SameSuite, ax6 rtc3test, and other community test ROMs verified via headless execution and screen CRC/reference artifact checks.
 3. **Autorun regression tests** — Build-time generated tests that replay recorded input and verify CRC checkspoints.
 4. **WASM tests** — Browser-environment tests via `wasm-pack test --headless --chrome`.
 5. **JavaScript unit tests** — Web frontend JS modules tested with Vitest (`npm test`).
