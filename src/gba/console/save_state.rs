@@ -83,6 +83,9 @@ pub struct BusMemoryState {
     /// DMA internal data latch (separate from CPU open-bus).
     #[serde(default)]
     pub dma_latch: u32,
+    /// Whether the DMA latch has been initialized by a DMA read.
+    #[serde(default)]
+    pub dma_latch_valid: bool,
     /// Dynamic wait-state timing derived from WAITCNT.
     pub waitstates: Waitstates,
     /// Undocumented BIOS-written register at 0x04000410.

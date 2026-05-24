@@ -239,6 +239,8 @@ pub struct GbaBus {
     /// Updated only by DMA reads; DMA writes to restricted regions return
     /// this value instead of the CPU's `last_bus_value`.
     dma_latch: u32,
+    /// Whether `dma_latch` has been initialized by a DMA read.
+    dma_latch_valid: bool,
     /// GBA-specific trace channel configuration.
     trace_config: GbaTraceConfig,
     /// mGBA debug console string buffer (`0x04FFF600`-`0x04FFF6FF`).
@@ -330,6 +332,7 @@ impl GbaBus {
             bios_open_bus_value: 0,
             executing_bios: false,
             dma_latch: 0,
+            dma_latch_valid: false,
             trace_config: GbaTraceConfig::default(),
             mgba_debug_string: [0; MGBA_DEBUG_STRING_LEN],
             mgba_log: String::new(),
@@ -623,6 +626,7 @@ impl GbaBus {
             bios_open_bus_value: self.bios_open_bus_value,
             executing_bios: self.executing_bios,
             dma_latch: self.dma_latch,
+            dma_latch_valid: self.dma_latch_valid,
             waitstates: self.waitstates.clone(),
             undoc_0x410: self.undoc_0x410,
             halt_requested: self.halt_requested,
@@ -632,8 +636,8 @@ impl GbaBus {
     /// Restore the bus memory regions captured by
     /// [`capture_memory_state`](Self::capture_memory_state).
     ///
-    /// The currently loaded BIOS image is preserved — only the BIOS
-    /// lock flag is restored.
+    /// The currently loaded BIOS image is preserved, while BIOS protection,
+    /// CPU open-bus, and DMA latch state are restored.
     ///
     /// Returns an error if any region's length does not match the
     /// expected GBA region size.
@@ -666,6 +670,7 @@ impl GbaBus {
         self.bios_open_bus_value = state.bios_open_bus_value;
         self.executing_bios = state.executing_bios;
         self.dma_latch = state.dma_latch;
+        self.dma_latch_valid = state.dma_latch_valid;
         self.io = state.io.clone();
         self.ic = state.ic.clone();
         self.timers = state.timers.clone();
@@ -1439,7 +1444,7 @@ impl Bus for GbaBus {
 /// CPU stores.
 impl dma::DmaBus for GbaBus {
     fn dma_read16(&mut self, addr: u32) -> u16 {
-        if self.dma_latch != 0 && (Self::is_bios_addr(addr) || Self::is_unused_internal_addr(addr))
+        if self.dma_latch_valid && (Self::is_bios_addr(addr) || Self::is_unused_internal_addr(addr))
         {
             return self.dma_latch_halfword(addr);
         }
@@ -1449,6 +1454,7 @@ impl dma::DmaBus for GbaBus {
         self.last_bus_value = self.dma_latch;
         let val = <Self as Bus>::read16(self, addr);
         self.dma_latch = self.last_bus_value;
+        self.dma_latch_valid = true;
         self.last_bus_value = saved;
         val
     }
@@ -1458,7 +1464,7 @@ impl dma::DmaBus for GbaBus {
         self.last_bus_value = saved;
     }
     fn dma_read32(&mut self, addr: u32) -> u32 {
-        if self.dma_latch != 0 && (Self::is_bios_addr(addr) || Self::is_unused_internal_addr(addr))
+        if self.dma_latch_valid && (Self::is_bios_addr(addr) || Self::is_unused_internal_addr(addr))
         {
             return self.dma_latch;
         }
@@ -1466,6 +1472,7 @@ impl dma::DmaBus for GbaBus {
         self.last_bus_value = self.dma_latch;
         let val = <Self as Bus>::read32(self, addr);
         self.dma_latch = self.last_bus_value;
+        self.dma_latch_valid = true;
         self.last_bus_value = saved;
         val
     }
@@ -2340,6 +2347,25 @@ mod tests {
         // not the CPU's last_bus_value (0xDEAD_BEEF).
         let bios_val = bus.dma_read32(0x0000_0000);
         assert_eq!(bios_val, 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn dma_read32_zero_latch_still_isolates_from_cpu_open_bus() {
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+
+        bus.write32(0x0300_0000, 0);
+        assert_eq!(bus.dma_read32(0x0300_0000), 0);
+
+        bus.write32(0x0200_0000, 0xDEAD_BEEF);
+        let _ = bus.read32(0x0200_0000);
+        bus.lock_bios();
+
+        assert_eq!(
+            bus.dma_read32(0x0000_0000),
+            0,
+            "a legitimate zero DMA latch must not fall through to CPU protected/open-bus data"
+        );
     }
 
     #[test]
