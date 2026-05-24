@@ -254,7 +254,7 @@ impl Console {
         match self {
             Console::Nes(nes) => nes.state_path(),
             Console::GameBoy(gb) => gb.state_path(),
-            Console::GameBoyAdvance(_) => None, // GBA save states not yet implemented
+            Console::GameBoyAdvance(gba) => gba.state_path(),
         }
     }
 

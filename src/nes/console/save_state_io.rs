@@ -114,6 +114,7 @@ mod tests {
     use crate::platform::app_context::AppContext;
     use crate::platform::emulator::Console;
     use std::fs;
+    use std::path::Path;
     use std::time::Instant;
     use tempfile::TempDir;
 
@@ -134,6 +135,50 @@ mod tests {
         nes.insert_cartridge(cart);
         console.reset(false);
         console
+    }
+
+    fn minimal_valid_gba_rom() -> Vec<u8> {
+        use crate::gba::cartridge::header::{
+            COMPLEMENT_CHECK_OFFSET, FIXED_BYTE_OFFSET, FIXED_BYTE_VALUE, compute_complement_check,
+        };
+
+        let mut rom = vec![0u8; 0xC0];
+        rom[FIXED_BYTE_OFFSET] = FIXED_BYTE_VALUE;
+        rom[COMPLEMENT_CHECK_OFFSET] = compute_complement_check(&rom);
+        rom
+    }
+
+    fn setup_gba_console_with_temp_rom(temp_dir: &TempDir) -> Console {
+        let rom_path = temp_dir.path().join("test.gba");
+        fs::write(&rom_path, minimal_valid_gba_rom()).expect("Failed to write GBA ROM");
+        let rom_bytes = fs::read(&rom_path).expect("Failed to read GBA ROM");
+        let mut config = Config::default();
+        config.gba.bios_path = Some("embedded".to_string());
+        let mut console = Console::new_gba(AppContext::new_with_config(config));
+        console
+            .load_rom(&rom_bytes, rom_path.to_str().expect("ROM path is UTF-8"))
+            .expect("Failed to load GBA ROM");
+        console
+    }
+
+    fn assert_visible_toast(console: &Console, expected: &str) {
+        let toasts = console
+            .app_context()
+            .borrow_mut()
+            .visible_toasts(Instant::now());
+        assert!(
+            toasts.iter().any(|t| t.contains(expected)),
+            "expected '{expected}' toast, got: {toasts:?}"
+        );
+    }
+
+    fn assert_state_file_exists(rom_path: &Path) {
+        let state_path = rom_path.with_extension("state");
+        assert!(
+            state_path.exists(),
+            "expected save-state file at {}",
+            state_path.display()
+        );
     }
 
     #[test]
@@ -230,5 +275,75 @@ mod tests {
             toasts.iter().any(|t| t.contains("Failed to load state")),
             "expected 'Failed to load state' toast on read error, got: {toasts:?}"
         );
+    }
+
+    #[test]
+    fn test_gba_save_state_to_disk_writes_file_and_shows_state_saved_toast() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut console = setup_gba_console_with_temp_rom(&temp_dir);
+        let rom_path = temp_dir.path().join("test.gba");
+
+        save_state_to_disk(&mut console);
+
+        assert_state_file_exists(&rom_path);
+        assert_visible_toast(&console, "State saved");
+    }
+
+    #[test]
+    fn test_gba_load_state_from_disk_shows_no_save_state_found_toast_when_file_absent() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut console = setup_gba_console_with_temp_rom(&temp_dir);
+
+        load_state_from_disk(&mut console);
+
+        assert_visible_toast(&console, "No save state found");
+    }
+
+    #[test]
+    fn test_gba_load_state_from_disk_shows_state_loaded_toast_when_file_exists() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut console = setup_gba_console_with_temp_rom(&temp_dir);
+
+        save_state_to_disk(&mut console);
+        load_state_from_disk(&mut console);
+
+        assert_visible_toast(&console, "State loaded");
+    }
+
+    #[test]
+    fn test_gba_save_state_to_disk_shows_failed_toast_on_io_error() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut console = setup_gba_console_with_temp_rom(&temp_dir);
+        let state_path = temp_dir.path().join("test.state");
+        fs::create_dir_all(&state_path).expect("Failed to create blocking directory");
+
+        save_state_to_disk(&mut console);
+
+        assert_visible_toast(&console, "Failed to save state");
+    }
+
+    #[test]
+    fn test_gba_load_state_from_disk_shows_failed_toast_on_read_error() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut console = setup_gba_console_with_temp_rom(&temp_dir);
+        let state_path = temp_dir.path().join("test.state");
+        fs::create_dir_all(&state_path).expect("Failed to create blocking directory");
+
+        load_state_from_disk(&mut console);
+
+        assert_visible_toast(&console, "Failed to load state");
+    }
+
+    #[test]
+    fn test_gba_load_state_from_disk_shows_failed_toast_on_corrupt_state_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut console = setup_gba_console_with_temp_rom(&temp_dir);
+        let state_path = temp_dir.path().join("test.state");
+        fs::write(&state_path, b"not a valid GBA save state")
+            .expect("Failed to write corrupt state file");
+
+        load_state_from_disk(&mut console);
+
+        assert_visible_toast(&console, "Failed to load state");
     }
 }
