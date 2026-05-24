@@ -1,10 +1,12 @@
 // ── PCM FIFO ─────────────────────────────────────────────────────────────────
 
+use serde::{Deserialize, Serialize};
+
 /// GBA FIFO capacity: 32 bytes per GBATek spec.
 pub(super) const FIFO_CAPACITY: usize = 32;
 
 /// PCM FIFO channel (A or B).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FifoChannel {
     samples: std::collections::VecDeque<i8>,
     /// The sample currently being output.

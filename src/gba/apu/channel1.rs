@@ -1,9 +1,10 @@
 use super::apu::DUTY_TABLE;
+use serde::{Deserialize, Serialize};
 
 // ── CH1 — Pulse + Sweep ───────────────────────────────────────────────────────
 
 /// Channel 1: pulse wave with frequency sweep.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Channel1 {
     // Sweep (SOUND1CNT_L)
     pub sweep_period: u8,

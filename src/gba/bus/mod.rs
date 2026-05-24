@@ -583,14 +583,8 @@ impl GbaBus {
         self.dma.take_cpu_stall()
     }
 
-    /// Capture the bus memory regions and a few simple scalar fields
-    /// for save-state serialization.
-    ///
-    /// This is intentionally limited to the parts of bus state that are
-    /// already trivially serializable (raw byte regions plus the BIOS
-    /// lock flag and last-bus-value).  Subsystem state owned by the bus
-    /// (PPU, APU, IO, IC, timers, DMA, keypad) will be added as those
-    /// modules grow `Serialize`/`Deserialize` support.
+    /// Capture the bus memory regions and bus-owned subsystem state for
+    /// save-state serialization.
     ///
     /// The BIOS image is **not** captured — it is copyrighted firmware
     /// the user supplies separately at startup, so it must not be
@@ -611,6 +605,7 @@ impl GbaBus {
             sio: self.sio.clone(),
             keypad: self.keypad.clone(),
             ppu: self.ppu.capture_state(),
+            apu: self.apu.capture_state(),
             bios_locked: self.bios_locked,
             last_bus_value: self.last_bus_value,
             dma_latch: self.dma_latch,
@@ -662,6 +657,7 @@ impl GbaBus {
         self.sio = state.sio.clone();
         self.keypad = state.keypad.clone();
         self.ppu.restore_state(&state.ppu);
+        self.apu.restore_state(&state.apu);
         self.waitstates = state.waitstates.clone();
         self.undoc_0x410 = state.undoc_0x410;
         self.halt_requested = state.halt_requested;
@@ -1503,6 +1499,37 @@ mod tests {
         bus.step(1);
         assert_eq!(bus.read16(0x0400_0128) & 0x0080, 0);
         assert_ne!(bus.read16(0x0400_0202) & irq_bits::SERIAL, 0);
+    }
+
+    #[test]
+    fn save_state_restores_apu_state() {
+        let mut bus = GbaBus::new();
+        bus.write16(0x0400_0084, 0x0080);
+        bus.write16(0x0400_0080, 0x1177);
+        bus.write16(0x0400_0082, 0x030F);
+        bus.write16(0x0400_0088, 0x43FE);
+        bus.write16(0x0400_0068, 0xF080);
+        bus.write16(0x0400_006C, 0x8000);
+        bus.write8(0x0400_00A0, 42);
+        bus.apu.fifo_a.advance();
+
+        let saved = bus.capture_memory_state();
+
+        bus.write16(0x0400_0080, 0);
+        bus.write16(0x0400_0082, 0);
+        bus.write16(0x0400_0088, 0x0200);
+        bus.write16(0x0400_0084, 0);
+        bus.apu.fifo_a.clear();
+
+        bus.restore_memory_state(&saved).expect("restore succeeds");
+
+        assert_eq!(bus.read16(0x0400_0084) & 0x0080, 0x0080);
+        assert_eq!(bus.read16(0x0400_0080), 0x1177);
+        assert_eq!(bus.read16(0x0400_0082), 0x030F);
+        assert_eq!(bus.read16(0x0400_0088), 0x43FE);
+        assert_eq!(bus.read16(0x0400_006C), 0);
+        assert!(bus.apu.ch2.active);
+        assert_eq!(bus.apu.fifo_a.current, 42);
     }
 
     #[test]

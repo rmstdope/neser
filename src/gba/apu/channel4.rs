@@ -1,10 +1,12 @@
 // ── CH4 — Noise ───────────────────────────────────────────────────────────────
 
+use serde::{Deserialize, Serialize};
+
 /// CH4 noise-clock divisors (in GB T-cycles; ×4 gives GBA cycles).
 pub(super) const DIVISORS: [u32; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
 /// Channel 4: noise generator (15-bit or 7-bit LFSR).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel4 {
     pub init_volume: u8,
     pub env_add: bool,

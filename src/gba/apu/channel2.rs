@@ -1,9 +1,10 @@
 use super::apu::DUTY_TABLE;
+use serde::{Deserialize, Serialize};
 
 // ── CH2 — Pulse (no sweep) ────────────────────────────────────────────────────
 
 /// Channel 2: pulse wave without sweep.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Channel2 {
     pub duty: u8,
     pub length_counter: u16,

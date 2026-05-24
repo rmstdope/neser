@@ -7,16 +7,17 @@
 //!
 //! This is the initial scaffold for the GBA save-state pipeline.  It
 //! currently captures the CPU plus bus memory regions (BIOS, EWRAM, IWRAM,
-//! PRAM, VRAM, OAM, SRAM), bus-owned peripherals, and a few simple bus scalars.
-//! Subsystem state for the PPU, APU, and cartridge save backends will be added
-//! as those modules are wired into the [`Gba`](super::gba::Gba)
-//! console wrapper.  Because every save-state carries a `version` field,
-//! breaking changes to the captured shape will simply bump
+//! PRAM, VRAM, OAM, SRAM), bus-owned peripherals, PPU state, APU state, and a
+//! few simple bus scalars. Cartridge save backend state will be added as it is
+//! wired into the [`Gba`](super::gba::Gba) console wrapper. Because every
+//! save-state carries a `version` field, breaking changes to the captured shape
+//! will simply bump
 //! [`GBA_SAVESTATE_VERSION`] and the loader will reject older states with
 //! a clear [`GbaSaveStateError::IncompatibleVersion`] error.
 
 use serde::{Deserialize, Serialize};
 
+use crate::gba::apu::ApuState;
 use crate::gba::bus::{
     DmaController, InterruptController, IoRegisters, Timers, Waitstates, sio::Sio,
 };
@@ -26,7 +27,7 @@ use crate::gba::ppu::PpuState;
 
 /// Current save-state format version for Game Boy Advance.
 /// Increment this when making breaking changes to the state format.
-pub const GBA_SAVESTATE_VERSION: u32 = 4;
+pub const GBA_SAVESTATE_VERSION: u32 = 5;
 
 /// Serializable snapshot of the [`GbaBus`](crate::gba::GbaBus) memory
 /// regions and a small number of associated scalar fields.
@@ -67,6 +68,8 @@ pub struct BusMemoryState {
     pub keypad: Keypad,
     /// PPU state including display registers, timing, and framebuffer.
     pub ppu: PpuState,
+    /// APU state including channel, FIFO, mixer, and timing state.
+    pub apu: ApuState,
     /// Whether external BIOS reads are currently locked out.
     pub bios_locked: bool,
     /// Last value driven on the bus (used to model open-bus reads).
@@ -206,8 +209,8 @@ mod tests {
     // ── Version checks ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_gba_savestate_version_is_4() {
-        assert_eq!(GBA_SAVESTATE_VERSION, 4);
+    fn test_gba_savestate_version_is_5() {
+        assert_eq!(GBA_SAVESTATE_VERSION, 5);
     }
 
     // ── Round-trip ─────────────────────────────────────────────────────────

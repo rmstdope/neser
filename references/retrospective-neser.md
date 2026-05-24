@@ -5,6 +5,38 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-05-24 - #2631 / PR #2638: Capture and restore GBA PPU state
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2638
+**Linked issues:** #2625, #2631
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `test-driven-development` | Guided RED -> GREEN -> REFACTOR -> COMMIT workflow for the PPU save-state slice. |
+| Skill | `rust-developer` | Guided Rust implementation, serde state design, and validation. |
+| Skill | `self-learning-skills` | Captured this retrospective after merge. |
+| Agent | `code-review` | Reviewed changed PPU/save-state files before commit. |
+
+### What went well
+
+- The failing PPU tests covered the important save-state contract directly: register/affine restore, framebuffer/timing/frame-ready restore, and JSON round-trip.
+- The implementation stayed consistent with earlier CPU and bus save-state slices by using an explicit `PpuState` plus `capture_state` / `restore_state` helpers.
+- Local checks and PR CI both completed cleanly before merge, and issue/parent traceability was updated immediately after merge.
+
+### What to improve
+
+- The resumed workflow had already entered GREEN after compaction; future resumed TDD work should restate the current phase and approval/autonomy basis before the next edit.
+- The session SQL todo update failed after merge due a local session database access issue. For future long-running autopilot sessions, treat SQL tracking as helpful but non-blocking and keep `plan.md`/GitHub issues as the durable source of truth.
+
+### Navigator feedback
+
+Navigator unavailable; feedback pending.
+
+---
+
 ## 2026-05-13 — #2347 Fix mealybug m2_win_en_toggle CGB-C and CGB-D (PR #2364)
 
 ### What went well

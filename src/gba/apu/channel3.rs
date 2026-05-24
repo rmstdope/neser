@@ -1,10 +1,12 @@
 // ── CH3 — Wave ────────────────────────────────────────────────────────────────
 
+use serde::{Deserialize, Serialize};
+
 /// Number of 4-bit samples per wave RAM bank.
 pub(super) const SAMPLES_PER_BANK: u8 = 32;
 
 /// Channel 3: wave playback (32 × 4-bit samples, or 64 × 4-bit samples in two-bank mode).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Channel3 {
     pub dac_on: bool,
     /// Bit 5 of SOUND3CNT_L: 0 = one bank (32 samples), 1 = two banks (64 samples).
