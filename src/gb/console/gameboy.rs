@@ -151,6 +151,7 @@ impl GbConsole {
             Self::Dmg(gb) => {
                 gb.cpu.restore_state(&state.cpu);
                 gb.cpu.bus.restore_bus_state(&state.bus)?;
+                gb.reconcile_stop_display_after_state_load();
                 gb.cpu.bus.restore_cart_ram(&state.cart_ram);
                 gb.cpu.bus.restore_mbc_state(&state.mbc_state);
                 gb.cpu.bus.joypad.clear_buttons();
@@ -158,6 +159,7 @@ impl GbConsole {
             Self::Cgb(gb) => {
                 gb.cpu.restore_state(&state.cpu);
                 gb.cpu.bus.restore_bus_state(&state.bus)?;
+                gb.reconcile_stop_display_after_state_load();
                 gb.cpu.bus.restore_cart_ram(&state.cart_ram);
                 gb.cpu.bus.restore_mbc_state(&state.mbc_state);
                 gb.cpu.bus.joypad.clear_buttons();

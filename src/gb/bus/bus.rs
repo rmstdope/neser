@@ -82,6 +82,13 @@ pub trait GbBus {
         false
     }
 
+    /// Enter normal STOP display behavior after a STOP instruction that did not
+    /// perform a CGB speed switch.
+    fn enter_stop_mode(&mut self) {}
+
+    /// Leave normal STOP display behavior after a joypad wake request.
+    fn exit_stop_mode(&mut self) {}
+
     /// Check if the CPU should be halted for HDMA and consume one halt cycle.
     ///
     /// Returns `true` if the CPU should perform a halt stall (tick subsystems

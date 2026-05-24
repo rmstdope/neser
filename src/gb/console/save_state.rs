@@ -172,6 +172,7 @@ impl Gb<DmgBus> {
     pub fn load_state(&mut self, state: &GbSaveState) -> Result<(), String> {
         self.cpu.restore_state(&state.cpu);
         self.cpu.bus.restore_bus_state(&state.bus)?;
+        self.reconcile_stop_display_after_state_load();
         self.cpu.bus.restore_cart_ram(&state.cart_ram);
         self.cpu.bus.restore_mbc_state(&state.mbc_state);
         Ok(())
@@ -213,6 +214,7 @@ mod tests {
     use crate::gb::cartridge::load_cartridge;
     use crate::gb::console::Gb;
     use crate::gb::model::{CgbModel, DmgModel};
+    use crate::gb::ppu::StopDisplayMode;
 
     fn minimal_rom() -> Vec<u8> {
         let mut rom = vec![0u8; 0x8000];
@@ -375,6 +377,62 @@ mod tests {
             .restore_bus_state(&bus_state)
             .expect("restore should succeed");
         assert_eq!(gb.cpu.bus.read(0xC100), 0x00);
+    }
+
+    #[test]
+    fn test_dmg_load_state_reconciles_stopped_cpu_display_mode() {
+        // Given: an older-style stopped CPU state whose PPU snapshot has no STOP display override.
+        let mut gb = make_dmg();
+        gb.cpu.stopped = true;
+        let save = gb.save_state();
+
+        // When: the state is loaded.
+        let mut restored = make_dmg();
+        restored.load_state(&save).expect("load state");
+
+        // Then: the DMG STOP display is restored to the blank white output.
+        assert_eq!(
+            restored.cpu.bus.ppu().screen_buffer().get_pixel(0, 0),
+            (0xFF, 0xFF, 0xFF)
+        );
+        assert_eq!(
+            restored.cpu.bus.ppu().stop_display_mode(),
+            StopDisplayMode::SolidWhite
+        );
+    }
+
+    #[test]
+    fn test_cgb_load_state_preserves_saved_stop_display_mode() {
+        // Given: a CGB Mode 3 STOP state saved after timing has advanced away from Mode 3.
+        let mut gb = make_cgb();
+        gb.cpu.stopped = true;
+        gb.cpu
+            .bus
+            .ppu_mut()
+            .enter_stop_display_mode(StopDisplayMode::PreserveCurrent);
+        let save = GbSaveState {
+            version: GB_SAVESTATE_VERSION,
+            cpu: gb.cpu.capture_state(),
+            bus: gb.cpu.bus.capture_bus_state(),
+            cart_ram: gb.cpu.bus.cart_ram_snapshot(),
+            mbc_state: gb.cpu.bus.mbc_state_snapshot(),
+        };
+
+        // When: the state is loaded.
+        let mut restored = make_cgb();
+        restored.cpu.restore_state(&save.cpu);
+        restored
+            .cpu
+            .bus
+            .restore_bus_state(&save.bus)
+            .expect("restore bus");
+        restored.reconcile_stop_display_after_state_load();
+
+        // Then: reconciliation trusts the serialized display mode instead of recomputing black.
+        assert_eq!(
+            restored.cpu.bus.ppu().stop_display_mode(),
+            StopDisplayMode::PreserveCurrent
+        );
     }
 
     #[test]

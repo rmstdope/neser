@@ -102,6 +102,16 @@ impl<B: GbBus> Gb<B> {
     pub fn clear_frame_ready(&mut self) {
         self.cpu.bus.ppu_mut().clear_frame_ready();
     }
+
+    pub(crate) fn reconcile_stop_display_after_state_load(&mut self) {
+        if self.cpu.stopped
+            && self.cpu.bus.ppu().stop_display_mode() == crate::gb::ppu::StopDisplayMode::Inactive
+        {
+            self.cpu.bus.enter_stop_mode();
+        } else if !self.cpu.stopped {
+            self.cpu.bus.exit_stop_mode();
+        }
+    }
 }
 
 /// Reset support for Gb<DmgBus>.

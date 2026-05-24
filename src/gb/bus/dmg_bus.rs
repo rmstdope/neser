@@ -4,7 +4,7 @@ use crate::gb::bus::GbBus;
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
-use crate::gb::ppu::{Ppu, timing::PpuMode};
+use crate::gb::ppu::{Ppu, StopDisplayMode, timing::PpuMode};
 use crate::gb::timer::Timer;
 
 /// Full DMG memory bus.
@@ -637,6 +637,15 @@ impl GbBus for DmgBus {
             self.tick(1);
             self.write(addr, val);
         }
+    }
+
+    fn enter_stop_mode(&mut self) {
+        self.ppu
+            .enter_stop_display_mode(StopDisplayMode::SolidWhite);
+    }
+
+    fn exit_stop_mode(&mut self) {
+        self.ppu.exit_stop_display_mode();
     }
 
     fn notify_idu_glitch(&mut self, addr: u16) {

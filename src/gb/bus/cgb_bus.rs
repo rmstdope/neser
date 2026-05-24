@@ -6,8 +6,8 @@ use crate::gb::cartridge::GbCartridge;
 use crate::gb::compat_palettes;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
-use crate::gb::ppu::Ppu;
 use crate::gb::ppu::timing::PpuMode;
+use crate::gb::ppu::{Ppu, StopDisplayMode};
 use crate::gb::timer::{DIV_APU_BIT_DOUBLE, DIV_APU_BIT_NORMAL, Timer};
 
 // LCD-visible STOP speed-switch pause lengths in PPU dots. daid
@@ -1129,6 +1129,19 @@ impl GbBus for CgbBus {
 
     fn consume_hdma_halt_cycle(&mut self) -> bool {
         CgbBus::consume_hdma_halt_cycle(self)
+    }
+
+    fn enter_stop_mode(&mut self) {
+        let mode = if self.ppu.mode() == PpuMode::PixelTransfer {
+            StopDisplayMode::PreserveCurrent
+        } else {
+            StopDisplayMode::SolidBlack
+        };
+        self.ppu.enter_stop_display_mode(mode);
+    }
+
+    fn exit_stop_mode(&mut self) {
+        self.ppu.exit_stop_display_mode();
     }
 
     fn ppu(&self) -> &Ppu {

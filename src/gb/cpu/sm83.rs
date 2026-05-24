@@ -714,6 +714,7 @@ impl<B: GbBus> Sm83<B> {
         if self.stopped {
             if self.bus.read(0xFF0F) & 0x10 != 0 {
                 self.stopped = false;
+                self.bus.exit_stop_mode();
             } else {
                 return;
             }
@@ -1029,6 +1030,7 @@ impl<B: GbBus> Sm83<B> {
                 // If the bus supports CGB speed switching and KEY1 is armed,
                 // perform the speed switch instead of halting.
                 if !self.bus.try_speed_switch() {
+                    self.bus.enter_stop_mode();
                     self.stopped = true;
                 }
             }
@@ -2391,6 +2393,8 @@ mod tests {
         mem: [u8; 0x10000],
         switch_armed: bool,
         speed_switched: bool,
+        stop_mode_entered: bool,
+        stop_mode_exited: bool,
     }
 
     impl SpeedSwitchBus {
@@ -2401,6 +2405,8 @@ mod tests {
                 mem,
                 switch_armed: armed,
                 speed_switched: false,
+                stop_mode_entered: false,
+                stop_mode_exited: false,
             }
         }
     }
@@ -2421,6 +2427,12 @@ mod tests {
                 false
             }
         }
+        fn enter_stop_mode(&mut self) {
+            self.stop_mode_entered = true;
+        }
+        fn exit_stop_mode(&mut self) {
+            self.stop_mode_exited = true;
+        }
     }
 
     #[test]
@@ -2436,6 +2448,10 @@ mod tests {
         assert!(
             cpu.bus.speed_switched,
             "Speed switch should have been triggered"
+        );
+        assert!(
+            !cpu.bus.stop_mode_entered,
+            "speed-switch STOP must not enter normal STOP display mode"
         );
         // And: PC advanced past STOP + operand byte
         assert_eq!(cpu.regs.pc, 2, "PC should advance past STOP instruction");
@@ -2453,6 +2469,10 @@ mod tests {
         assert!(
             !cpu.bus.speed_switched,
             "Speed switch should not have been triggered"
+        );
+        assert!(
+            cpu.bus.stop_mode_entered,
+            "normal STOP should enter STOP display mode"
         );
     }
 
@@ -2490,6 +2510,10 @@ mod tests {
 
         // Then: STOP is cleared and execution resumes at the next opcode
         assert!(!cpu.stopped, "CPU should leave STOP on joypad wake");
+        assert!(
+            cpu.bus.stop_mode_exited,
+            "joypad wake should exit STOP display mode"
+        );
         assert_eq!(cpu.regs.a, 0x42, "instruction after STOP should execute");
     }
 }
