@@ -296,6 +296,12 @@ reset_handler:
     strh    r1, [r0]            @ palette[0] = 0 (black backdrop)
     strh    r1, [r0, #2]        @ palette[1] = 0
 
+    @ --- Silence BIOS jingle before jumping to game ---
+    @ Leave master sound enabled, but disable CH1 DAC so SOUNDCNT_X active
+    @ channel bits don't leak into cartridge code.
+    ldr     r0, =0x04000062     @ SOUND1CNT_H
+    strh    r1, [r0]
+
 boot_finish:
     @ --- Enable IRQ/FIQ at CPU level (clear I and F bits in CPSR) ---
     @ Real GBA BIOS enters the game with I=0, F=0 so interrupt service routines

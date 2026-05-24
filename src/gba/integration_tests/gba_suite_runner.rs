@@ -711,20 +711,65 @@ fn mgba_memory_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
     mgba_memory_diagnostic_from_log(gba.screen_crc32(), log)
 }
 
+fn mgba_io_read_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
+    let log = parse_mgba_sub_suite_log(
+        gba.bus().mgba_log_snapshot().as_bytes(),
+        gba.bus().sram_snapshot(),
+        "I/O read tests",
+    );
+    mgba_memory_diagnostic_from_log(gba.screen_crc32(), log)
+}
+
 pub fn run_mgba_memory_diagnostics() -> MgbaMemoryDiagnosticResult {
     let (gba, _rom) = boot_mgba_suite();
     run_mgba_memory_diagnostics_from_gba(gba)
 }
 
-fn run_mgba_memory_diagnostics_from_gba(mut gba: Gba) -> MgbaMemoryDiagnosticResult {
+pub fn run_mgba_io_read_diagnostics() -> MgbaMemoryDiagnosticResult {
+    let (gba, _rom) = boot_mgba_suite();
+    run_mgba_sub_suite_diagnostics_from_gba(gba, 1, "I/O read diagnostics")
+}
+
+pub fn run_mgba_io_read_diagnostics_after_bios_intro() -> MgbaMemoryDiagnosticResult {
+    let (gba, _rom) = boot_mgba_suite_without_bios_intro_skip();
+    run_mgba_sub_suite_diagnostics_from_gba_with_boot_frames(
+        gba,
+        1,
+        "I/O read diagnostics after BIOS intro",
+        300,
+    )
+}
+
+fn run_mgba_memory_diagnostics_from_gba(gba: Gba) -> MgbaMemoryDiagnosticResult {
+    run_mgba_sub_suite_diagnostics_from_gba(gba, 0, "mgba Memory diagnostics")
+}
+
+fn run_mgba_sub_suite_diagnostics_from_gba(
+    gba: Gba,
+    suite_index: usize,
+    label: &str,
+) -> MgbaMemoryDiagnosticResult {
+    run_mgba_sub_suite_diagnostics_from_gba_with_boot_frames(gba, suite_index, label, 10)
+}
+
+fn run_mgba_sub_suite_diagnostics_from_gba_with_boot_frames(
+    mut gba: Gba,
+    suite_index: usize,
+    label: &str,
+    boot_frames: u32,
+) -> MgbaMemoryDiagnosticResult {
     let mut cycles: u64 = 0;
 
-    for _ in 0..10 {
+    for _ in 0..boot_frames {
         assert!(
             run_until_frame_ready(&mut gba, &mut cycles),
-            "mgba Memory diagnostics: timed out during initial boot"
+            "{label}: timed out during initial boot"
         );
         gba.clear_ready_to_render();
+    }
+
+    for _ in 0..suite_index {
+        press_button(&mut gba, &mut cycles, BTN_DOWN);
     }
 
     press_button(&mut gba, &mut cycles, BTN_A);
@@ -734,7 +779,7 @@ fn run_mgba_memory_diagnostics_from_gba(mut gba: Gba) -> MgbaMemoryDiagnosticRes
 
     assert!(
         run_until_frame_ready(&mut gba, &mut cycles),
-        "mgba Memory diagnostics: timed out getting initial frame"
+        "{label}: timed out getting initial frame"
     );
     gba.clear_ready_to_render();
     let initial_crc = gba.screen_crc32();
@@ -746,7 +791,7 @@ fn run_mgba_memory_diagnostics_from_gba(mut gba: Gba) -> MgbaMemoryDiagnosticRes
     for frame in 1..MAX_SUITE_FRAMES {
         assert!(
             run_until_frame_ready(&mut gba, &mut cycles),
-            "mgba Memory diagnostics: timed out at frame {frame}"
+            "{label}: timed out at frame {frame}"
         );
         gba.clear_ready_to_render();
 
@@ -768,7 +813,11 @@ fn run_mgba_memory_diagnostics_from_gba(mut gba: Gba) -> MgbaMemoryDiagnosticRes
         }
     }
 
-    mgba_memory_diagnostic_from_gba(&gba)
+    if suite_index == 1 {
+        mgba_io_read_diagnostic_from_gba(&gba)
+    } else {
+        mgba_memory_diagnostic_from_gba(&gba)
+    }
 }
 
 pub fn run_mgba_memory_diagnostics_with_bios_path(
@@ -819,7 +868,69 @@ pub fn parse_mgba_memory_sram_log(bytes: &[u8]) -> MgbaMemoryLog {
     }
 }
 
+fn parse_mgba_sub_suite_log(
+    score_bytes: &[u8],
+    failure_bytes: &[u8],
+    suite_name: &str,
+) -> MgbaMemoryLog {
+    let score_log = extract_mgba_debug_suite_log(score_bytes, suite_name);
+    let failure_log = extract_ascii_segments(failure_bytes)
+        .into_iter()
+        .filter(|segment| segment.to_ascii_lowercase().contains("fail"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let raw_log = [score_log.as_str(), failure_log.as_str()]
+        .into_iter()
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (passed_count, total_count) = parse_mgba_score(&score_log);
+    let failures = failure_log
+        .lines()
+        .filter(|line| line.to_ascii_lowercase().contains("fail"))
+        .map(parse_mgba_failure_line)
+        .collect();
+
+    MgbaMemoryLog {
+        raw_log,
+        passed_count,
+        total_count,
+        failures,
+    }
+}
+
 fn extract_mgba_log_text(bytes: &[u8]) -> String {
+    extract_ascii_segments(bytes)
+        .into_iter()
+        .find(|segment| segment.contains("Memory") && parse_mgba_score(segment).0.is_some())
+        .unwrap_or_default()
+}
+
+fn extract_mgba_debug_suite_log(bytes: &[u8], suite_name: &str) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let Some(begin) = text.find(&format!("BEGIN: {suite_name}")) else {
+        return String::new();
+    };
+    let suffix = &text[begin..];
+    let Some(end) = suffix.find("END: ") else {
+        return suffix.to_string();
+    };
+    let end_suffix = &suffix[end..];
+    let score_end = end_suffix
+        .find(|ch: char| {
+            !(ch.is_ascii_digit()
+                || ch == '/'
+                || ch == 'E'
+                || ch == 'N'
+                || ch == 'D'
+                || ch == ':'
+                || ch == ' ')
+        })
+        .unwrap_or(end_suffix.len());
+    suffix[..end + score_end].to_string()
+}
+
+fn extract_ascii_segments(bytes: &[u8]) -> Vec<String> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
 
@@ -842,8 +953,7 @@ fn extract_mgba_log_text(bytes: &[u8]) -> String {
                 .to_string()
         })
         .filter(|segment| !segment.is_empty())
-        .find(|segment| segment.contains("Memory") && parse_mgba_score(segment).0.is_some())
-        .unwrap_or_default()
+        .collect()
 }
 
 fn parse_mgba_score(raw_log: &str) -> (Option<u32>, Option<u32>) {
@@ -885,6 +995,14 @@ pub fn boot_mgba_suite() -> (Gba, Vec<u8>) {
 }
 
 fn boot_mgba_suite_with_bios(bios: &[u8]) -> (Gba, Vec<u8>) {
+    boot_mgba_suite_with_bios_intro_skip(bios, true)
+}
+
+fn boot_mgba_suite_without_bios_intro_skip() -> (Gba, Vec<u8>) {
+    boot_mgba_suite_with_bios_intro_skip(EMBEDDED_BIOS, false)
+}
+
+fn boot_mgba_suite_with_bios_intro_skip(bios: &[u8], skip_intro: bool) -> (Gba, Vec<u8>) {
     let rom_path = Suite::Mgba.rom_path();
     let rom = std::fs::read(&rom_path).unwrap_or_else(|e| {
         panic!("failed to read mgba suite ROM {}: {e}", rom_path.display());
@@ -892,7 +1010,9 @@ fn boot_mgba_suite_with_bios(bios: &[u8]) -> (Gba, Vec<u8>) {
 
     let mut gba = Gba::new(AppContext::default());
     gba.bus_mut().load_bios(bios);
-    gba.bus_mut().write8(0x03007FFC, 1); // Skip BIOS intro
+    if skip_intro {
+        gba.bus_mut().write8(0x03007FFC, 1); // Skip BIOS intro
+    }
     gba.load_rom(&rom, rom_path.to_str().unwrap_or("mgba-emu-suite"))
         .unwrap_or_else(|e| {
             panic!("failed to load mgba suite ROM {}: {e}", rom_path.display());
@@ -1413,6 +1533,24 @@ mod tests {
                     detail: "fail source mismatch".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn mgba_sub_suite_log_parser_combines_debug_score_and_sram_failures() {
+        let debug = b"BEGIN: I/O read testsPASS: BG0CNTFAIL: BG0HOFSEND: 129/130";
+        let sram = b"Game Boy Advance Test Suite\n===\0BG0HOFS: Got 0xFFFF vs 0xDEAD: FAIL\0";
+
+        let log = parse_mgba_sub_suite_log(debug, sram, "I/O read tests");
+
+        assert_eq!(log.passed_count, Some(129));
+        assert_eq!(log.total_count, Some(130));
+        assert_eq!(
+            log.failures,
+            vec![MgbaMemoryFailure {
+                test_name: "BG0HOFS".to_string(),
+                detail: "Got 0xFFFF vs 0xDEAD: FAIL".to_string(),
+            }]
         );
     }
 
