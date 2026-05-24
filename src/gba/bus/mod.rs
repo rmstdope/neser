@@ -840,6 +840,24 @@ impl GbaBus {
         ((self.last_bus_value >> shift) & 0xFFFF) as u16
     }
 
+    fn io_open_bus_halfword(&self) -> u16 {
+        (self.last_bus_value >> 16) as u16
+    }
+
+    fn io_open_bus_word(&self) -> u32 {
+        let hw = self.io_open_bus_halfword() as u32;
+        hw | (hw << 16)
+    }
+
+    fn io_open_bus_byte(&self, addr: u32) -> u8 {
+        let hw = self.io_open_bus_halfword();
+        if addr & 1 == 0 {
+            hw as u8
+        } else {
+            (hw >> 8) as u8
+        }
+    }
+
     /// Open-bus word for a given address.
     fn open_bus_word(&self) -> u32 {
         self.last_bus_value
@@ -850,6 +868,10 @@ impl GbaBus {
             MGBA_DEBUG_ENABLE if self.mgba_debug_enabled => Some(MGBA_DEBUG_OPEN_VALUE),
             _ => None,
         }
+    }
+
+    fn is_apu_open_bus_read(addr: u32) -> bool {
+        matches!(addr, 0x0400_008C | 0x0400_008E | 0x0400_00A0..=0x0400_00A6)
     }
 
     fn write_mgba_debug8(&mut self, addr: u32, value: u8) -> bool {
@@ -1001,6 +1023,8 @@ impl Bus for GbaBus {
             0x4 => {
                 if let Some(value) = self.try_read_mgba_debug16(aligned) {
                     value as u32 | ((value as u32) << 16)
+                } else if Self::is_apu_open_bus_read(aligned) {
+                    self.io_open_bus_word()
                 } else if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
                     let lo = self.apu.read16(aligned) as u32;
                     // Only read the upper halfword if it is also within range.
@@ -1020,7 +1044,13 @@ impl Bus for GbaBus {
                             &self.ppu,
                             &self.keypad,
                         )
-                        .unwrap_or_else(|| self.open_bus_word())
+                        .unwrap_or_else(|| {
+                            if (0x0400_0000..0x0400_0400).contains(&aligned) {
+                                self.io_open_bus_word()
+                            } else {
+                                self.open_bus_word()
+                            }
+                        })
                 }
             }
             0x5 => read_le_u32(&self.pram, aligned as usize),
@@ -1061,6 +1091,8 @@ impl Bus for GbaBus {
             0x4 => {
                 if let Some(value) = self.try_read_mgba_debug16(aligned) {
                     value
+                } else if Self::is_apu_open_bus_read(aligned) {
+                    self.io_open_bus_halfword()
                 } else if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
                     self.apu.read16(aligned)
                 } else if aligned == 0x0400_0128 {
@@ -1076,7 +1108,7 @@ impl Bus for GbaBus {
                             &self.ppu,
                             &self.keypad,
                         )
-                        .unwrap_or_else(|| self.open_bus_halfword(aligned));
+                        .unwrap_or_else(|| self.io_open_bus_halfword());
                     // WAITCNT: bits 13, 15 are unused and read as 0.
                     if aligned == 0x0400_0204 {
                         raw & 0x5FFF
@@ -1132,7 +1164,9 @@ impl Bus for GbaBus {
                     self.undoc_0x410
                 } else {
                     let aligned_hw = addr & !0x1;
-                    if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
+                    if Self::is_apu_open_bus_read(aligned_hw) {
+                        self.io_open_bus_byte(addr)
+                    } else if (0x0400_0060..=0x0400_00A6).contains(&aligned_hw) {
                         let hw = self.apu.read16(aligned_hw);
                         if addr & 1 == 0 {
                             hw as u8
@@ -1149,7 +1183,7 @@ impl Bus for GbaBus {
                                 &self.ppu,
                                 &self.keypad,
                             )
-                            .unwrap_or_else(|| self.open_bus_byte(addr))
+                            .unwrap_or_else(|| self.io_open_bus_byte(addr))
                     }
                 }
             }
@@ -1213,9 +1247,12 @@ impl Bus for GbaBus {
 
     fn write32(&mut self, addr: u32, value: u32) {
         let aligned = addr & !0x3;
-        self.last_bus_value = value;
-        let touches_io = (aligned >> 24) & 0xF == 0x4;
-        match (aligned >> 24) & 0xF {
+        let region = (aligned >> 24) & 0xF;
+        if region != 0x4 {
+            self.last_bus_value = value;
+        }
+        let touches_io = region == 0x4;
+        match region {
             0x0 | 0x1 => { /* BIOS is read-only */ }
             0x2 => write_le_u32(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u32(&mut self.iwram, aligned as usize, value),
@@ -1288,11 +1325,14 @@ impl Bus for GbaBus {
 
     fn write16(&mut self, addr: u32, value: u16) {
         let aligned = addr & !0x1;
-        let shift = if aligned & 0x2 == 0 { 0 } else { 16 };
-        self.last_bus_value =
-            (self.last_bus_value & !(0xFFFFu32 << shift)) | ((value as u32) << shift);
-        let touches_io = (aligned >> 24) & 0xF == 0x4;
-        match (aligned >> 24) & 0xF {
+        let region = (aligned >> 24) & 0xF;
+        if region != 0x4 {
+            let shift = if aligned & 0x2 == 0 { 0 } else { 16 };
+            self.last_bus_value =
+                (self.last_bus_value & !(0xFFFFu32 << shift)) | ((value as u32) << shift);
+        }
+        let touches_io = region == 0x4;
+        match region {
             0x0 | 0x1 => {}
             0x2 => write_le_u16(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u16(&mut self.iwram, aligned as usize, value),
@@ -1357,11 +1397,14 @@ impl Bus for GbaBus {
             emit_gba_bus_trace_line(format!("[GBA BUS] W8 {addr:08X}={value:02X}"));
         }
 
-        let shift = (addr & 3) * 8;
-        self.last_bus_value =
-            (self.last_bus_value & !(0xFFu32 << shift)) | ((value as u32) << shift);
-        let touches_io = (addr >> 24) & 0xF == 0x4;
-        match (addr >> 24) & 0xF {
+        let region = (addr >> 24) & 0xF;
+        if region != 0x4 {
+            let shift = (addr & 3) * 8;
+            self.last_bus_value =
+                (self.last_bus_value & !(0xFFu32 << shift)) | ((value as u32) << shift);
+        }
+        let touches_io = region == 0x4;
+        match region {
             0x0 | 0x1 => {}
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE] = value,
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE] = value,
@@ -1934,6 +1977,43 @@ mod tests {
         let _ = bus.read32(0x0200_0000);
         // 0x0400_0400 is in I/O region 0x4 but past the 1 KB I/O window.
         assert_eq!(bus.read32(0x0400_0400), 0x1234_5678);
+    }
+
+    #[test]
+    fn io_write_does_not_replace_prefetch_open_bus_for_write_only_registers() {
+        let mut bus = GbaBus::new();
+        bus.write32(0x0200_0000, 0xDEAD_BEEF);
+        let _ = bus.read32(0x0200_0000);
+
+        bus.write16(0x0400_0010, 0xFFFF); // BG0HOFS is write-only.
+
+        assert_eq!(bus.read16(0x0400_0010), 0xDEAD);
+    }
+
+    #[test]
+    fn fifo_and_late_sound_write_only_reads_return_open_bus() {
+        let mut bus = GbaBus::new();
+
+        bus.write32(0x0200_0000, 0xDEAD_BEEF);
+        let _ = bus.read32(0x0200_0000);
+        bus.write16(0x0400_00A0, 0xFFFF); // FIFO A low is write-only.
+        assert_eq!(bus.read16(0x0400_00A0), 0xDEAD);
+
+        bus.write32(0x0200_0000, 0xDEAD_BEEF);
+        let _ = bus.read32(0x0200_0000);
+        bus.write16(0x0400_008C, 0xFFFF); // Invalid late sound register.
+        assert_eq!(bus.read16(0x0400_008C), 0xDEAD);
+    }
+
+    #[test]
+    fn io_read32_write_only_inside_window_mirrors_io_open_bus_halfword() {
+        let mut bus = GbaBus::new();
+        bus.write32(0x0200_0000, 0xDEAD_BEEF);
+        let _ = bus.read32(0x0200_0000);
+
+        bus.write32(0x0400_0010, 0xFFFF_FFFF); // BG0HOFS/BG0VOFS are write-only.
+
+        assert_eq!(bus.read32(0x0400_0010), 0xDEAD_DEAD);
     }
 
     #[test]

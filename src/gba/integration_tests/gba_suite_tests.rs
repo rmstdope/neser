@@ -1,6 +1,7 @@
 use super::gba_suite_runner::{
     ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, VIDEO_TEST_NAMES,
-    boot_mgba_suite, run_armwrestler, run_mgba_memory_diagnostics,
+    boot_mgba_suite, run_armwrestler, run_mgba_io_read_diagnostics,
+    run_mgba_io_read_diagnostics_after_bios_intro, run_mgba_memory_diagnostics,
     run_mgba_memory_diagnostics_with_bios_path, run_mgba_suite, run_mgba_video_tests, run_suite,
 };
 use crate::gba::bios::EMBEDDED_BIOS;
@@ -275,6 +276,56 @@ fn gba_mgba_memory_diagnostics_reports_mgba_log() {
 }
 
 #[test]
+fn gba_mgba_io_read_diagnostics_passes_every_register_read() {
+    let result = run_mgba_io_read_diagnostics();
+
+    assert_eq!(
+        result.total_count,
+        Some(130),
+        "raw mGBA I/O read log: {:?}",
+        result.raw_log
+    );
+    assert!(
+        result.passed_count.is_some(),
+        "mGBA I/O read diagnostics should include a parsed pass count"
+    );
+    assert_eq!(
+        result.passed_count, result.total_count,
+        "mGBA I/O read diagnostics should pass every register read with the embedded BIOS.\nfailures: {:?}\nraw log:\n{}",
+        result.failures, result.raw_log
+    );
+    assert!(
+        result.failures.is_empty(),
+        "mGBA I/O read diagnostics reported failures with the embedded BIOS: {:?}\nraw log:\n{}",
+        result.failures,
+        result.raw_log
+    );
+}
+
+#[test]
+fn gba_mgba_io_read_diagnostics_passes_after_bios_intro() {
+    let result = run_mgba_io_read_diagnostics_after_bios_intro();
+
+    assert_eq!(
+        result.total_count,
+        Some(130),
+        "raw mGBA I/O read log after BIOS intro: {:?}",
+        result.raw_log
+    );
+    assert_eq!(
+        result.passed_count, result.total_count,
+        "mGBA I/O read diagnostics should pass after the normal BIOS intro.\nfailures: {:?}\nraw log:\n{}",
+        result.failures, result.raw_log
+    );
+    assert!(
+        result.failures.is_empty(),
+        "mGBA I/O read diagnostics reported failures after the normal BIOS intro: {:?}\nraw log:\n{}",
+        result.failures,
+        result.raw_log
+    );
+}
+
+#[test]
 fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
     let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
 
@@ -334,7 +385,7 @@ fn approvals_manifest_parses() {
 
     // mgba-emu/suite keys
     assert_eq!(approvals.get("mgba_memory"), Some(&0x61F6_5500));
-    assert_eq!(approvals.get("mgba_io_read"), Some(&0x5B5C_9186));
+    assert_eq!(approvals.get("mgba_io_read"), Some(&0x7D32_0909));
     assert_eq!(approvals.get("mgba_timing"), Some(&0xDEEF_A167));
     assert_eq!(approvals.get("mgba_timers"), Some(&0xCFAB_2DCC));
     assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xD1FF_FC47));
