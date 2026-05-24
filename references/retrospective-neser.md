@@ -257,3 +257,42 @@ Pending — navigator unavailable during retrospective collection.
 ### Navigator feedback
 
 Pending/unavailable — navigator was unavailable during retrospective feedback collection.
+
+---
+
+## 2026-05-24 — PR #2635: Enable GBA save-state disk routing
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2635
+**Linked issues:** #2628
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `github-issue-designer` | Supported sub-issue framing and scope traceability for #2628. |
+| Skill | `github-administration` | Supported issue metadata, branch, and PR workflow for #2635. |
+| Skill | `test-driven-development` | Guided RED/GREEN/REFACTOR/COMMIT flow and save/load state toast tests. |
+| Skill | `rust-developer` | Guided Rust implementation across GBA state path and console routing code. |
+| Skill | `gba-cpu-development` | Provided GBA-specific emulator context while planning save-state routing behavior. |
+| Skill | `self-learning-skills` | Triggered issue-creation and PR retrospectives. |
+| Agent | `code-review` | Reviewed changed files for routing/path/toast issues before PR creation. |
+| Agent | `Iteration Retrospective Gatherer` | Produced this retrospective content after PR creation; manual append was required. |
+| Instructions | Repository workflow instructions | Applied small-increment TDD, GitHub issue workflow, validation, and review-first PR requirements. |
+
+### What went well
+
+- The selected skills matched the work package: `rust-developer` and `gba-cpu-development` fit the GBA save-state implementation, while `test-driven-development` anchored the routing fix in failing save/load toast coverage.
+- The implementation stayed narrow: storing the loaded GBA ROM path, adding `Gba::state_path()`, and routing `Console::GameBoyAdvance` through it directly addressed the disk-routing gap without broad save-state redesign.
+- The tests cover user-visible behavior through the shared disk save/load path, not just low-level path construction.
+- The workflow discovered a local disk-space blocker during RED verification and resolved it by cleaning repository build artifacts before continuing.
+
+### What to improve
+
+- Navigator feedback could not be collected during this retrospective. Keep it pending rather than inventing feedback.
+- The retrospective agent could generate the entry but could not write the file directly. Continue using the manual append fallback when that limitation appears.
+- The `gh issue-child-add` extension was unavailable, so #2625 child tracking used explicit issue references. If hierarchical linking is important for future work, install or document the extension setup before large split-issue workflows.
+
+### Navigator feedback
+
+Pending — navigator unavailable during retrospective collection.
