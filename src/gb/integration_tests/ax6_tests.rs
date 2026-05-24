@@ -55,8 +55,8 @@ const SUB_SECOND_ROM: Rtc3Rom = Rtc3Rom {
     path: "roms/gb/automated_tests/rtc3test/rtc3test-3.gb",
     min_result_frames: 1_200,
     max_result_frames: 1_800,
-    expected_dmg_crc: 0,
-    expected_cgb_crc: 0,
+    expected_dmg_crc: 0x3893_9BB8,
+    expected_cgb_crc: 0xB8C4_57C3,
 };
 
 #[test]
@@ -80,13 +80,11 @@ fn rtc3test_2_matches_reviewed_crc_on_cgb() {
 }
 
 #[test]
-#[ignore = "visual FAIL in rtc3test Sub-second DMG result screen (#2619)"]
 fn rtc3test_3_matches_reviewed_crc_on_dmg() {
     assert_rom_crc(SUB_SECOND_ROM, HardwareMode::Dmg);
 }
 
 #[test]
-#[ignore = "visual FAIL in rtc3test Sub-second CGB result screen (#2619)"]
 fn rtc3test_3_matches_reviewed_crc_on_cgb() {
     assert_rom_crc(SUB_SECOND_ROM, HardwareMode::Cgb);
 }
