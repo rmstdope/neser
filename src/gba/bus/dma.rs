@@ -31,6 +31,7 @@
 //! <https://problemkaputt.de/gbatek.htm#gbadmatransfers>
 
 use super::interrupt::bits as irq_bits;
+use serde::{Deserialize, Serialize};
 
 /// Number of DMA channels on the GBA.
 pub const NUM_CHANNELS: usize = 4;
@@ -107,7 +108,7 @@ impl StartTiming {
 }
 
 /// Single DMA channel state.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 pub struct DmaChannel {
     /// Source address latch (last value written by software).
     pub sad: u32,
@@ -184,7 +185,7 @@ impl DmaChannel {
 }
 
 /// Controller managing the four GBA DMA channels.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct DmaController {
     pub channels: [DmaChannel; NUM_CHANNELS],
     /// CPU cycle balance owed by recent DMA transfers. The bus accumulates

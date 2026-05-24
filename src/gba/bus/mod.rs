@@ -23,6 +23,7 @@ use crate::gba::console::config::GbaTraceConfig;
 use crate::gba::cpu::bus::Bus;
 use crate::gba::input::Keypad;
 use crate::gba::ppu::{Ppu, PpuStepEvents};
+use serde::{Deserialize, Serialize};
 
 #[allow(unused_imports)]
 pub use dma::{DmaBus, DmaChannel, DmaController};
@@ -49,7 +50,7 @@ thread_local! {
 /// access times for 16-bit and 32-bit widths. Updated when WAITCNT is written.
 ///
 /// Values match mGBA/GBATek conventions (no +1 adjustment).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Waitstates {
     /// Per-region cycle lookup: indexed by `(addr >> 24) & 0xF`, then by
     /// `[N16, N32, S16, S32]`.
@@ -603,9 +604,18 @@ impl GbaBus {
             vram: self.vram.clone(),
             oam: self.oam.clone(),
             sram: self.sram.clone(),
+            io: self.io.clone(),
+            ic: self.ic.clone(),
+            timers: self.timers.clone(),
+            dma: self.dma.clone(),
+            sio: self.sio.clone(),
+            keypad: self.keypad.clone(),
             bios_locked: self.bios_locked,
             last_bus_value: self.last_bus_value,
             dma_latch: self.dma_latch,
+            waitstates: self.waitstates.clone(),
+            undoc_0x410: self.undoc_0x410,
+            halt_requested: self.halt_requested,
         }
     }
 
@@ -644,6 +654,15 @@ impl GbaBus {
         self.bios_locked = state.bios_locked;
         self.last_bus_value = state.last_bus_value;
         self.dma_latch = state.dma_latch;
+        self.io = state.io.clone();
+        self.ic = state.ic.clone();
+        self.timers = state.timers.clone();
+        self.dma = state.dma.clone();
+        self.sio = state.sio.clone();
+        self.keypad = state.keypad.clone();
+        self.waitstates = state.waitstates.clone();
+        self.undoc_0x410 = state.undoc_0x410;
+        self.halt_requested = state.halt_requested;
         Ok(())
     }
 
@@ -1374,6 +1393,131 @@ mod tests {
         bus.lock_bios();
         // After lock, BIOS reads return open-bus (last bus value).
         assert_eq!(bus.read32(0x0000_0000), 0xAAAA_BBBB);
+    }
+
+    #[test]
+    fn save_state_restores_interrupt_timer_waitcnt_and_io_backing_state() {
+        let mut bus = GbaBus::new();
+        bus.write16(0x0400_0200, irq_bits::TIMER0);
+        bus.ic.raise(irq_bits::TIMER0);
+        bus.write16(0x0400_0208, 1);
+        bus.write16(0x0400_0204, 0x4018);
+        bus.write16(0x0400_0100, 0xFFF0);
+        bus.write16(0x0400_0102, 0x0081);
+        bus.step(63);
+        bus.write16(0x0400_0300, 0x8001);
+
+        let saved = bus.capture_memory_state();
+
+        bus.write16(0x0400_0200, 0);
+        bus.write16(0x0400_0202, irq_bits::TIMER0);
+        bus.write16(0x0400_0208, 0);
+        bus.write16(0x0400_0204, 0);
+        bus.write16(0x0400_0100, 0);
+        bus.write16(0x0400_0102, 0);
+        bus.write16(0x0400_0300, 0);
+
+        bus.restore_memory_state(&saved).expect("restore succeeds");
+
+        assert_eq!(bus.read16(0x0400_0200), irq_bits::TIMER0);
+        assert_eq!(bus.read16(0x0400_0202), irq_bits::TIMER0);
+        assert_eq!(bus.read16(0x0400_0208), 1);
+        assert_eq!(bus.read16(0x0400_0204), 0x4018);
+        assert_eq!(bus.read16(0x0400_0300), 0x8001);
+        assert_eq!(bus.read16(0x0400_0100), 0xFFF0);
+        bus.step(1);
+        assert_eq!(
+            bus.read16(0x0400_0100),
+            0xFFF1,
+            "timer prescaler accumulator must resume from the saved partial period"
+        );
+    }
+
+    #[test]
+    fn save_state_restores_dma_armed_transfer_state() {
+        let mut bus = GbaBus::new();
+        bus.write32(0x0200_0100, 0x1122_3344);
+        bus.write32(0x0400_00B0, 0x0200_0100);
+        bus.write32(0x0400_00B4, 0x0300_0020);
+        bus.write16(0x0400_00B8, 1);
+        bus.write16(0x0400_00BA, 0xA400);
+
+        let saved = bus.capture_memory_state();
+
+        bus.write16(0x0400_00BA, 0);
+        bus.write32(0x0200_0100, 0);
+        bus.write32(0x0300_0020, 0);
+
+        bus.restore_memory_state(&saved).expect("restore succeeds");
+        bus.notify_hblank();
+
+        assert_eq!(bus.read32(0x0300_0020), 0x1122_3344);
+        assert_eq!(bus.take_dma_stall_cycles(), 2);
+    }
+
+    #[test]
+    fn save_state_restores_keypad_irq_edge_state() {
+        let mut bus = GbaBus::new();
+        bus.write16(0x0400_0132, crate::gba::input::KEYCNT_IRQ_ENABLE | 0x0001);
+        bus.keypad.set_button(0, true, &mut bus.ic);
+        bus.write16(0x0400_0202, irq_bits::KEYPAD);
+
+        let saved = bus.capture_memory_state();
+
+        bus.write16(0x0400_0132, 0);
+        bus.keypad.set_button(0, false, &mut bus.ic);
+
+        bus.restore_memory_state(&saved).expect("restore succeeds");
+
+        assert_eq!(bus.read16(0x0400_0130), 0x03FE);
+        assert_eq!(
+            bus.read16(0x0400_0132),
+            crate::gba::input::KEYCNT_IRQ_ENABLE | 0x0001
+        );
+        bus.keypad.set_button(0, true, &mut bus.ic);
+        assert_eq!(
+            bus.read16(0x0400_0202) & irq_bits::KEYPAD,
+            0,
+            "restored irq_active must prevent re-raising while the saved key remains held"
+        );
+    }
+
+    #[test]
+    fn save_state_restores_sio_transfer_countdown() {
+        let mut bus = GbaBus::new();
+        bus.write16(0x0400_0200, irq_bits::SERIAL);
+        bus.write16(0x0400_0128, 0x4082);
+        bus.step(63);
+
+        let saved = bus.capture_memory_state();
+
+        bus.step(1);
+        bus.write16(0x0400_0202, irq_bits::SERIAL);
+        bus.write16(0x0400_0128, 0);
+
+        bus.restore_memory_state(&saved).expect("restore succeeds");
+
+        assert_ne!(bus.read16(0x0400_0128) & 0x0080, 0);
+        bus.step(1);
+        assert_eq!(bus.read16(0x0400_0128) & 0x0080, 0);
+        assert_ne!(bus.read16(0x0400_0202) & irq_bits::SERIAL, 0);
+    }
+
+    #[test]
+    fn save_state_restores_undocumented_register_and_halt_request() {
+        let mut bus = GbaBus::new();
+        bus.write8(0x0400_0410, 0xFF);
+        bus.write8(0x0400_0301, 0x00);
+
+        let saved = bus.capture_memory_state();
+
+        bus.write8(0x0400_0410, 0x00);
+        bus.clear_halt_request();
+
+        bus.restore_memory_state(&saved).expect("restore succeeds");
+
+        assert_eq!(bus.read8(0x0400_0410), 0xFF);
+        assert!(bus.halt_requested());
     }
 
     #[test]

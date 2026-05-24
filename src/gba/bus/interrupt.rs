@@ -8,6 +8,8 @@
 //!
 //! [1]: <https://problemkaputt.de/gbatek.htm#gbainterruptregisterimeimeie>
 
+use serde::{Deserialize, Serialize};
+
 /// `IF` / `IE` bit positions used elsewhere in the bus (timers/PPU/etc.).
 pub mod bits {
     /// V-Blank interrupt source.
@@ -44,7 +46,7 @@ pub mod bits {
 pub const IRQ_MASK: u16 = 0x3FFF;
 
 /// Interrupt controller state — `IE`, `IF`, `IME` registers.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct InterruptController {
     /// Interrupt Enable (`IE`, 0x04000200) — one bit per interrupt source.
     pub ie: u16,

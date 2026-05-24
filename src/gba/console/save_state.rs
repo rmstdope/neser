@@ -7,8 +7,8 @@
 //!
 //! This is the initial scaffold for the GBA save-state pipeline.  It
 //! currently captures the CPU plus bus memory regions (BIOS, EWRAM, IWRAM,
-//! PRAM, VRAM, OAM, SRAM) and a few simple bus scalars.  Subsystem state for
-//! the PPU, APU, timers, DMA, interrupt controller and keypad will be added
+//! PRAM, VRAM, OAM, SRAM), bus-owned peripherals, and a few simple bus scalars.
+//! Subsystem state for the PPU, APU, and cartridge save backends will be added
 //! as those modules are wired into the [`Gba`](super::gba::Gba)
 //! console wrapper.  Because every save-state carries a `version` field,
 //! breaking changes to the captured shape will simply bump
@@ -17,11 +17,15 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::gba::bus::{
+    DmaController, InterruptController, IoRegisters, Timers, Waitstates, sio::Sio,
+};
 use crate::gba::cpu::Arm7tdmiState;
+use crate::gba::input::Keypad;
 
 /// Current save-state format version for Game Boy Advance.
 /// Increment this when making breaking changes to the state format.
-pub const GBA_SAVESTATE_VERSION: u32 = 2;
+pub const GBA_SAVESTATE_VERSION: u32 = 3;
 
 /// Serializable snapshot of the [`GbaBus`](crate::gba::GbaBus) memory
 /// regions and a small number of associated scalar fields.
@@ -48,6 +52,18 @@ pub struct BusMemoryState {
     pub oam: Vec<u8>,
     /// 64 KB cartridge SRAM region (battery-backed RAM).
     pub sram: Vec<u8>,
+    /// Raw I/O backing store for registers not yet owned by a subsystem.
+    pub io: IoRegisters,
+    /// Interrupt controller (`IE`, `IF`, `IME`).
+    pub ic: InterruptController,
+    /// Timer bank including live counters and prescaler accumulators.
+    pub timers: Timers,
+    /// DMA controller including armed/live transfer state.
+    pub dma: DmaController,
+    /// Serial I/O controller including in-progress transfer countdown.
+    pub sio: Sio,
+    /// Keypad state including KEYCNT, pressed buttons, and IRQ edge latch.
+    pub keypad: Keypad,
     /// Whether external BIOS reads are currently locked out.
     pub bios_locked: bool,
     /// Last value driven on the bus (used to model open-bus reads).
@@ -55,6 +71,12 @@ pub struct BusMemoryState {
     /// DMA internal data latch (separate from CPU open-bus).
     #[serde(default)]
     pub dma_latch: u32,
+    /// Dynamic wait-state timing derived from WAITCNT.
+    pub waitstates: Waitstates,
+    /// Undocumented BIOS-written register at 0x04000410.
+    pub undoc_0x410: u8,
+    /// Pending HALTCNT halt request consumed by the CPU wrapper.
+    pub halt_requested: bool,
 }
 
 /// Complete Game Boy Advance emulator state snapshot.
@@ -181,8 +203,8 @@ mod tests {
     // ── Version checks ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_gba_savestate_version_is_2() {
-        assert_eq!(GBA_SAVESTATE_VERSION, 2);
+    fn test_gba_savestate_version_is_3() {
+        assert_eq!(GBA_SAVESTATE_VERSION, 3);
     }
 
     // ── Round-trip ─────────────────────────────────────────────────────────
@@ -201,6 +223,7 @@ mod tests {
         assert_eq!(loaded.bus.vram.len(), save.bus.vram.len());
         assert_eq!(loaded.bus.oam.len(), save.bus.oam.len());
         assert_eq!(loaded.bus.sram.len(), save.bus.sram.len());
+        assert_eq!(loaded.bus.ic.ie, save.bus.ic.ie);
         assert_eq!(loaded.cpu.regs.r[15], save.cpu.regs.r[15]);
     }
 
