@@ -257,3 +257,39 @@ Pending — navigator unavailable during retrospective collection.
 ### Navigator feedback
 
 Pending/unavailable — navigator was unavailable during retrospective feedback collection.
+
+---
+
+## 2026-05-24 — PR #2627: Fix MBC3 RTC sub-second timing
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2627
+**Linked issues:** #2619
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `bug-hunter` | Guided issue verification, reproduction, and focused regression-oriented bug fixing. |
+| Skill | `test-driven-development` | Structured the work into RED/GREEN/REFACTOR iterations for MBC3 timing, CGB RTC scaling, and acceptance CRC approval. |
+| Skill | `gb-hardware-research` | Grounded MBC3 RTC behavior in Pan Docs first, then SameBoy implementation evidence where Pan Docs was incomplete. |
+| Agent | `code-review` | Reviewed MBC3, CGB/save-state, and final changed-file behavior before PR creation. |
+| Agent | `Iteration Retrospective Gatherer` | Produced retrospective content after PR creation; manual append was required. |
+| Instructions | Repository workflow instructions | Applied issue assignment, branch, TDD, validation, visual approval, PR creation, and review-first merge workflow. |
+
+### What went well
+
+- The initial planning interview resolved key design branches before code changes: SameBoy-backed seconds-write reset, halt/resume preservation, CGB double-speed RTC scaling, save-state version bump, and visual approval before CRC updates.
+- The TDD slices kept the hardware-timing work reviewable: focused MBC3 unit tests, focused CGB bus/save-state tests, then `rtc3test-3` acceptance activation.
+- `gb-hardware-research` was useful because Pan Docs did not define fractional RTC write timing; the workflow clearly labeled SameBoy as implementation evidence rather than primary specification.
+- The first full validation exposed a local disk-space issue during Wasm tests. Cleaning generated wasm target artifacts and rerunning the full suite after rebasing gave a clean merge-ready validation.
+
+### What to improve
+
+- The retrospective agent again could generate the entry but could not write the file directly. Keep the manual append step in mind when the agent reports that limitation.
+- For MBC/RTC timing issues, capture the key research conclusion in the PR body: which behavior is spec-confirmed, which behavior is implementation-evidence-backed, and which acceptance ROM proves the result.
+- When a plan expands from the original issue, as with CGB double-speed RTC scaling here, explicitly call out why the added scope belongs in the same PR.
+
+### Navigator feedback
+
+No additional feedback.
