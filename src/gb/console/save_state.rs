@@ -22,6 +22,7 @@ use crate::gb::timer::Timer;
 /// Current save-state format version for Game Boy.
 /// Increment this when making breaking changes to the state format.
 pub const GB_SAVESTATE_VERSION: u32 = 5;
+const GB_LEGACY_SAVESTATE_VERSION_WITHOUT_CGB_RTC_PHASE: u32 = 4;
 
 /// Identifies which bus variant was active when the state was saved.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,7 +145,10 @@ impl GbSaveState {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, GbSaveStateError> {
         let state: Self = serde_json::from_slice(bytes)
             .map_err(|e| GbSaveStateError::DeserializationFailed(e.to_string()))?;
-        if state.version != GB_SAVESTATE_VERSION {
+        if !matches!(
+            state.version,
+            GB_SAVESTATE_VERSION | GB_LEGACY_SAVESTATE_VERSION_WITHOUT_CGB_RTC_PHASE
+        ) {
             return Err(GbSaveStateError::IncompatibleVersion {
                 expected: GB_SAVESTATE_VERSION,
                 found: state.version,
@@ -261,6 +265,33 @@ mod tests {
     #[test]
     fn test_gb_savestate_version_is_5() {
         assert_eq!(GB_SAVESTATE_VERSION, 5);
+    }
+
+    #[test]
+    fn test_version_4_save_state_without_cgb_rtc_phase_loads() {
+        let gb = make_cgb();
+        let save = GbSaveState {
+            version: GB_SAVESTATE_VERSION,
+            cpu: gb.cpu.capture_state(),
+            bus: gb.cpu.bus.capture_bus_state(),
+            cart_ram: gb.cpu.bus.cart_ram_snapshot(),
+            mbc_state: gb.cpu.bus.mbc_state_snapshot(),
+        };
+        let mut json = serde_json::to_value(&save).expect("serialize save state");
+        json["version"] = serde_json::json!(GB_LEGACY_SAVESTATE_VERSION_WITHOUT_CGB_RTC_PHASE);
+        json["bus"]
+            .as_object_mut()
+            .expect("bus state should be an object")
+            .remove("rtc_tick_accumulator");
+        let bytes = serde_json::to_vec(&json).expect("serialize legacy save state");
+
+        let loaded = GbSaveState::from_bytes(&bytes).expect("legacy save state should load");
+
+        assert_eq!(
+            loaded.version,
+            GB_LEGACY_SAVESTATE_VERSION_WITHOUT_CGB_RTC_PHASE
+        );
+        assert_eq!(loaded.bus.rtc_tick_accumulator, None);
     }
 
     // ── DMG round-trip ─────────────────────────────────────────────────────
