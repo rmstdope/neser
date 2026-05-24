@@ -270,6 +270,7 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 | `src/gba/integration_tests/mod.rs` | GBA integration test module root. Includes gba-suite runner and test definitions. |
 | `src/gba/integration_tests/gba_suite_runner.rs` | Headless harness for jsmolka `gba-tests` ARM/Thumb/Memory ROMs. Loads ROM assets from `roms/gba/automated_tests/gba-tests`, injects a synthetic stub BIOS and HLE SWI for CI-safe execution, runs until idle-loop detection/timeout, and reports pass/fail from suite registers (ARM `R12`, Thumb `R7`, Memory `R12`). |
 | `src/gba/integration_tests/gba_suite_tests.rs` | Three ROM-level integration tests (`arm.gba`, `thumb.gba`, `memory.gba`) with failure diagnostics (index/register/PC/cycles/exit reason). |
+| `src/gba/integration_tests/save_state_tests.rs` | End-to-end GBA save-state integration tests that save, dirty CPU/bus/PPU state, restore, and verify screen CRC plus state markers return to the saved point. |
 | `src/gba/cpu/mod.rs` | Module root for the ARM7TDMI core. Re-exports `Arm7tdmi`, `Bus`, `RamBus`, `Registers`, `CpuMode`, etc. |
 | `src/gba/cpu/registers.rs` | `Registers` — ARM7TDMI register file with R0–R15, CPSR, and per-mode banked SPSR/SP/LR (and FIQ-banked R8–R12). Includes `CpuMode` (USR/FIQ/IRQ/SVC/ABT/UND/SYS) and `condition_met` for the 16 ARM condition codes. |
 | `src/gba/cpu/bus.rs` | `Bus` trait used by the CPU for byte/halfword/word reads and writes, plus a flat little-endian `RamBus` implementation used by tests and boot stubs. |
