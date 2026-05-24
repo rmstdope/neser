@@ -9,12 +9,17 @@
 
 use super::cartridge::GbCartridge;
 
+const RTC_SECONDS_MASK: u8 = 0x3F;
+const RTC_MINUTES_MASK: u8 = 0x3F;
+const RTC_HOURS_MASK: u8 = 0x1F;
+const RTC_DAY_HIGH_MASK: u8 = 0xC1;
+
 /// RTC register values (live counters)
 #[derive(Debug, Clone, Default)]
 struct RtcRegisters {
-    seconds: u8,  // 0-59
-    minutes: u8,  // 0-59
-    hours: u8,    // 0-23
+    seconds: u8,  // Bits 0-5
+    minutes: u8,  // Bits 0-5
+    hours: u8,    // Bits 0-4
     day_low: u8,  // Lower 8 bits of day counter
     day_high: u8, // Bit 0: day counter bit 8, Bit 6: halt, Bit 7: carry
 }
@@ -29,6 +34,13 @@ impl RtcRegisters {
     fn set_day_counter(&mut self, value: u16) {
         self.day_low = (value & 0xFF) as u8;
         self.day_high = (self.day_high & 0xFE) | ((value >> 8) & 0x01) as u8;
+    }
+
+    fn normalize(&mut self) {
+        self.seconds &= RTC_SECONDS_MASK;
+        self.minutes &= RTC_MINUTES_MASK;
+        self.hours &= RTC_HOURS_MASK;
+        self.day_high &= RTC_DAY_HIGH_MASK;
     }
 
     /// Returns true if the halt flag is set
@@ -200,11 +212,11 @@ impl Mbc3 {
                 if self.is_rtc_selected() {
                     // Write to live RTC registers
                     match self.ram_bank {
-                        0x08 => self.rtc.seconds = value,
-                        0x09 => self.rtc.minutes = value,
-                        0x0A => self.rtc.hours = value,
+                        0x08 => self.rtc.seconds = value & RTC_SECONDS_MASK,
+                        0x09 => self.rtc.minutes = value & RTC_MINUTES_MASK,
+                        0x0A => self.rtc.hours = value & RTC_HOURS_MASK,
                         0x0B => self.rtc.day_low = value,
-                        0x0C => self.rtc.day_high = value,
+                        0x0C => self.rtc.day_high = value & RTC_DAY_HIGH_MASK,
                         _ => {}
                     }
                 } else if self.has_ram && !self.ram.is_empty() {
@@ -223,25 +235,43 @@ impl Mbc3 {
 
     /// Increment the RTC by one second, handling overflow
     fn increment_rtc_second(&mut self) {
-        self.rtc.seconds = self.rtc.seconds.wrapping_add(1);
-        if self.rtc.seconds >= 60 {
+        let seconds = self.rtc.seconds & RTC_SECONDS_MASK;
+        if seconds == 59 {
             self.rtc.seconds = 0;
-            self.rtc.minutes = self.rtc.minutes.wrapping_add(1);
-            if self.rtc.minutes >= 60 {
-                self.rtc.minutes = 0;
-                self.rtc.hours = self.rtc.hours.wrapping_add(1);
-                if self.rtc.hours >= 24 {
-                    self.rtc.hours = 0;
-                    let day = self.rtc.day_counter().wrapping_add(1);
-                    if day > 511 {
-                        // Day counter overflow - set carry flag and wrap to 0
-                        self.rtc.set_day_counter(0);
-                        self.rtc.set_carry(true);
-                    } else {
-                        self.rtc.set_day_counter(day);
-                    }
-                }
-            }
+            self.increment_rtc_minute();
+        } else {
+            self.rtc.seconds = seconds.wrapping_add(1) & RTC_SECONDS_MASK;
+        }
+    }
+
+    fn increment_rtc_minute(&mut self) {
+        let minutes = self.rtc.minutes & RTC_MINUTES_MASK;
+        if minutes == 59 {
+            self.rtc.minutes = 0;
+            self.increment_rtc_hour();
+        } else {
+            self.rtc.minutes = minutes.wrapping_add(1) & RTC_MINUTES_MASK;
+        }
+    }
+
+    fn increment_rtc_hour(&mut self) {
+        let hours = self.rtc.hours & RTC_HOURS_MASK;
+        if hours == 23 {
+            self.rtc.hours = 0;
+            self.increment_rtc_day();
+        } else {
+            self.rtc.hours = hours.wrapping_add(1) & RTC_HOURS_MASK;
+        }
+    }
+
+    fn increment_rtc_day(&mut self) {
+        let day = self.rtc.day_counter().wrapping_add(1);
+        if day > 511 {
+            // Day counter overflow - set carry flag and wrap to 0
+            self.rtc.set_day_counter(0);
+            self.rtc.set_carry(true);
+        } else {
+            self.rtc.set_day_counter(day);
         }
     }
 
@@ -251,33 +281,47 @@ impl Mbc3 {
             return;
         }
 
-        // Calculate total seconds including current RTC time
-        let current_seconds = self.rtc.seconds as u32
-            + self.rtc.minutes as u32 * 60
-            + self.rtc.hours as u32 * 3600
-            + self.rtc.day_counter() as u32 * 86400;
+        let elapsed_seconds = seconds as u64;
+        let minute_increments =
+            elapsed_register_carries(self.rtc.seconds, elapsed_seconds, RTC_SECONDS_MASK, 59);
+        self.rtc.seconds =
+            wrapping_register_add(self.rtc.seconds, elapsed_seconds, RTC_SECONDS_MASK);
 
-        let total_seconds = current_seconds.saturating_add(seconds);
+        let hour_increments =
+            elapsed_register_carries(self.rtc.minutes, minute_increments, RTC_MINUTES_MASK, 59);
+        self.rtc.minutes =
+            wrapping_register_add(self.rtc.minutes, minute_increments, RTC_MINUTES_MASK);
 
-        // Convert back to RTC format
-        let days = total_seconds / 86400;
-        let remaining = total_seconds % 86400;
-        let hours = remaining / 3600;
-        let remaining = remaining % 3600;
-        let minutes = remaining / 60;
-        let secs = remaining % 60;
+        let day_increments =
+            elapsed_register_carries(self.rtc.hours, hour_increments, RTC_HOURS_MASK, 23);
+        self.rtc.hours = wrapping_register_add(self.rtc.hours, hour_increments, RTC_HOURS_MASK);
 
-        self.rtc.seconds = secs as u8;
-        self.rtc.minutes = minutes as u8;
-        self.rtc.hours = hours as u8;
-
+        let days = self.rtc.day_counter() as u64 + day_increments;
         if days > 511 {
-            // Overflow - set carry flag
             self.rtc.set_day_counter((days % 512) as u16);
             self.rtc.set_carry(true);
         } else {
             self.rtc.set_day_counter(days as u16);
         }
+    }
+}
+
+fn wrapping_register_add(value: u8, increment: u64, mask: u8) -> u8 {
+    let modulus = mask as u64 + 1;
+    ((value as u64 + increment) % modulus) as u8
+}
+
+fn elapsed_register_carries(value: u8, increments: u64, mask: u8, carry_value: u8) -> u64 {
+    if increments == 0 {
+        return 0;
+    }
+
+    let modulus = mask as u64 + 1;
+    let first_carry_offset = (carry_value as u64 + modulus - (value & mask) as u64) % modulus;
+    if increments <= first_carry_offset {
+        0
+    } else {
+        1 + (increments - first_carry_offset - 1) / modulus
     }
 }
 
@@ -341,11 +385,13 @@ impl GbCartridge for Mbc3 {
             self.rtc.hours = rtc_data[2];
             self.rtc.day_low = rtc_data[3];
             self.rtc.day_high = rtc_data[4];
+            self.rtc.normalize();
             self.latched_rtc.seconds = rtc_data[5];
             self.latched_rtc.minutes = rtc_data[6];
             self.latched_rtc.hours = rtc_data[7];
             self.latched_rtc.day_low = rtc_data[8];
             self.latched_rtc.day_high = rtc_data[9];
+            self.latched_rtc.normalize();
 
             // Calculate elapsed time and add to RTC
             let saved_timestamp = u64::from_le_bytes(rtc_data[10..18].try_into().unwrap_or([0; 8]));
@@ -600,21 +646,169 @@ mod tests {
         assert_eq!(mbc3.read(0xA000), 30, "Seconds should be 30");
     }
 
+    fn write_rtc_register(mbc3: &mut Mbc3, register: u8, value: u8) {
+        mbc3.write(0x4000, register);
+        mbc3.write(0xA000, value);
+    }
+
+    fn latch_rtc(mbc3: &mut Mbc3) {
+        mbc3.write(0x6000, 0x00);
+        mbc3.write(0x6000, 0x01);
+    }
+
+    fn read_latched_rtc_register(mbc3: &mut Mbc3, register: u8) -> u8 {
+        mbc3.write(0x4000, register);
+        mbc3.read(0xA000)
+    }
+
     #[test]
-    fn test_rtc_accepts_out_of_range_values() {
+    fn test_rtc_register_writes_keep_only_valid_bits() {
         let rom = make_rom(2);
         let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
 
         mbc3.write(0x0000, 0x0A); // Enable
 
-        // Write out-of-range value to seconds (valid: 0-59)
-        mbc3.write(0x4000, 0x08);
-        mbc3.write(0xA000, 99);
+        write_rtc_register(&mut mbc3, 0x08, 0xFF);
+        write_rtc_register(&mut mbc3, 0x09, 0xFF);
+        write_rtc_register(&mut mbc3, 0x0A, 0xFF);
+        write_rtc_register(&mut mbc3, 0x0B, 0xFF);
+        write_rtc_register(&mut mbc3, 0x0C, 0xFF);
+        latch_rtc(&mut mbc3);
 
-        // Latch and verify - should accept value as-is
-        mbc3.write(0x6000, 0x00);
-        mbc3.write(0x6000, 0x01);
-        assert_eq!(mbc3.read(0xA000), 99, "Should accept out-of-range values");
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 0x3F);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x09), 0x3F);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0A), 0x1F);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0B), 0xFF);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0C), 0xC1);
+    }
+
+    #[test]
+    fn test_rtc_invalid_time_values_increment_without_decimal_carry() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+
+        write_rtc_register(&mut mbc3, 0x08, 60);
+        write_rtc_register(&mut mbc3, 0x09, 63);
+        write_rtc_register(&mut mbc3, 0x0A, 28);
+        write_rtc_register(&mut mbc3, 0x0B, 0x34);
+        write_rtc_register(&mut mbc3, 0x0C, 0x01);
+
+        mbc3.tick(M_CYCLES_PER_SECOND);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 61);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x09), 63);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0A), 28);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0B), 0x34);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0C) & 0x01, 0x01);
+    }
+
+    #[test]
+    fn test_rtc_invalid_seconds_rollover_does_not_increment_minutes() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+
+        write_rtc_register(&mut mbc3, 0x08, 63);
+        write_rtc_register(&mut mbc3, 0x09, 12);
+
+        mbc3.tick(M_CYCLES_PER_SECOND);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x09), 12);
+    }
+
+    #[test]
+    fn test_rtc_invalid_minutes_rollover_does_not_increment_hours() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+
+        write_rtc_register(&mut mbc3, 0x08, 59);
+        write_rtc_register(&mut mbc3, 0x09, 63);
+        write_rtc_register(&mut mbc3, 0x0A, 12);
+
+        mbc3.tick(M_CYCLES_PER_SECOND);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x09), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0A), 12);
+    }
+
+    #[test]
+    fn test_rtc_invalid_hours_rollover_does_not_increment_day() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+
+        write_rtc_register(&mut mbc3, 0x08, 59);
+        write_rtc_register(&mut mbc3, 0x09, 59);
+        write_rtc_register(&mut mbc3, 0x0A, 31);
+        write_rtc_register(&mut mbc3, 0x0B, 0x22);
+
+        mbc3.tick(M_CYCLES_PER_SECOND);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x09), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0A), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0B), 0x22);
+    }
+
+    #[test]
+    fn test_rtc_high_minutes_and_hours_increment_on_valid_lower_rollovers() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+
+        write_rtc_register(&mut mbc3, 0x08, 59);
+        write_rtc_register(&mut mbc3, 0x09, 62);
+        write_rtc_register(&mut mbc3, 0x0A, 30);
+
+        mbc3.tick(M_CYCLES_PER_SECOND);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x09), 63);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0A), 30);
+
+        write_rtc_register(&mut mbc3, 0x08, 59);
+        write_rtc_register(&mut mbc3, 0x09, 59);
+        write_rtc_register(&mut mbc3, 0x0A, 30);
+
+        mbc3.tick(M_CYCLES_PER_SECOND);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x09), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0A), 31);
+    }
+
+    #[test]
+    fn test_rtc_elapsed_restore_preserves_invalid_register_semantics() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+
+        write_rtc_register(&mut mbc3, 0x08, 60);
+        write_rtc_register(&mut mbc3, 0x09, 63);
+        write_rtc_register(&mut mbc3, 0x0A, 28);
+
+        mbc3.add_elapsed_seconds(64);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 60);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x09), 0);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0A), 28);
     }
 
     // ========================================================================
