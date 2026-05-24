@@ -1,3 +1,4 @@
+use crate::gba::Gba;
 use crate::gba::cartridge::header::{
     COMPLEMENT_CHECK_OFFSET, FIXED_BYTE_OFFSET, FIXED_BYTE_VALUE, compute_complement_check,
 };
@@ -9,10 +10,10 @@ use crate::platform::app_context::AppContext;
 use crate::platform::config::Config;
 use crate::platform::emulator::Emulator;
 
-fn make_gba() -> crate::gba::Gba {
+fn make_gba() -> Gba {
     let mut config = Config::default();
     config.gba.bios_path = Some("embedded".to_string());
-    crate::gba::Gba::new(AppContext::new_with_config(config))
+    Gba::new(AppContext::new_with_config(config))
 }
 
 fn minimal_valid_gba_rom() -> Vec<u8> {
@@ -22,7 +23,7 @@ fn minimal_valid_gba_rom() -> Vec<u8> {
     rom
 }
 
-fn render_mode3_frame(gba: &mut crate::gba::Gba, color: u16) {
+fn render_mode3_frame(gba: &mut Gba, color: u16) {
     let bus = gba.bus_mut();
     bus.write16(ppu::REG_DISPCNT, 3 | ppu::dispcnt::BG2_ENABLE);
     bus.write16(ppu::REG_BG2PA, 0x0100);
