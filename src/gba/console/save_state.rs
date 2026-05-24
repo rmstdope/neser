@@ -187,9 +187,12 @@ impl Gba {
                 found: state.version,
             });
         }
+        let current_input = self.bus().keypad.pressed_mask();
         self.bus_mut()
             .restore_memory_state(&state.bus)
             .map_err(GbaSaveStateError::RestoreFailed)?;
+        let bus = self.bus_mut();
+        bus.keypad.set_pressed_mask(current_input, &mut bus.ic);
         self.restore_cpu_state(&state.cpu);
         Ok(())
     }
@@ -241,6 +244,50 @@ mod tests {
         assert_eq!(loaded.bus.sram.len(), save.bus.sram.len());
         assert_eq!(loaded.bus.ic.ie, save.bus.ic.ie);
         assert_eq!(loaded.cpu.regs.r[15], save.cpu.regs.r[15]);
+    }
+
+    #[test]
+    fn test_load_state_preserves_current_physical_button_state() {
+        let mut gba = make_gba();
+        gba.set_button(0, 0, true);
+        let saved = gba.save_state();
+
+        gba.set_button(0, 0, false);
+        assert_eq!(
+            gba.get_joypad_button_states(0) & 0x01,
+            0,
+            "test setup must release A before restoring"
+        );
+
+        gba.load_state(&saved).expect("restore should succeed");
+
+        assert_eq!(
+            gba.get_joypad_button_states(0) & 0x01,
+            0,
+            "loading a save state must not resurrect a stale physical A press"
+        );
+    }
+
+    #[test]
+    fn test_load_state_preserves_current_physical_shoulder_button_state() {
+        let mut gba = make_gba();
+        gba.set_button(0, 8, true);
+        let saved = gba.save_state();
+
+        gba.set_button(0, 8, false);
+        assert_ne!(
+            gba.bus().keypad.read_keyinput() & (1 << 9),
+            0,
+            "test setup must release L before restoring"
+        );
+
+        gba.load_state(&saved).expect("restore should succeed");
+
+        assert_ne!(
+            gba.bus().keypad.read_keyinput() & (1 << 9),
+            0,
+            "loading a save state must not resurrect a stale physical L press"
+        );
     }
 
     // ── Capture / restore preserves modified memory ────────────────────────
