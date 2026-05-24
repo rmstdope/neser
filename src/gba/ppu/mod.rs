@@ -70,6 +70,7 @@ pub mod obj;
 
 use self::affine::BgAffine;
 use super::bus::interrupt::{InterruptController, bits as irq_bits};
+use serde::{Deserialize, Serialize};
 
 /// GBA visible screen width in pixels.
 pub const SCREEN_WIDTH: u32 = 240;
@@ -320,6 +321,31 @@ pub struct Ppu {
     color_correction: bool,
 }
 
+/// Serializable GBA PPU snapshot for save states.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PpuState {
+    dispcnt: u16,
+    dispstat: u16,
+    bg_cnt: [u16; 4],
+    vcount: u16,
+    line_cycle: u32,
+    framebuffer: Vec<u8>,
+    frame_ready: bool,
+    bg_affine: [BgAffine; 2],
+    bg_scroll: [(u16, u16); 4],
+    win_h: [u16; 2],
+    win_v: [u16; 2],
+    winin: u16,
+    winout: u16,
+    green_swap: bool,
+    bldcnt: u16,
+    bldalpha: u16,
+    bldy: u8,
+    mosaic: u16,
+    forced_blank_restart_lines: u32,
+    color_correction: bool,
+}
+
 // ---- Color special effect helpers ----------------------------------------
 
 /// Apply alpha blending to two BGR555 colors using integer fixed-point math.
@@ -448,6 +474,56 @@ impl Ppu {
         // yet at construction time.
         ppu.update_vcount_match_flag(None);
         ppu
+    }
+
+    /// Capture PPU state for save-state serialization.
+    pub fn capture_state(&self) -> PpuState {
+        PpuState {
+            dispcnt: self.dispcnt,
+            dispstat: self.dispstat,
+            bg_cnt: self.bg_cnt,
+            vcount: self.vcount,
+            line_cycle: self.line_cycle,
+            framebuffer: self.framebuffer.clone(),
+            frame_ready: self.frame_ready,
+            bg_affine: self.bg_affine,
+            bg_scroll: self.bg_scroll,
+            win_h: self.win_h,
+            win_v: self.win_v,
+            winin: self.winin,
+            winout: self.winout,
+            green_swap: self.green_swap,
+            bldcnt: self.bldcnt,
+            bldalpha: self.bldalpha,
+            bldy: self.bldy,
+            mosaic: self.mosaic,
+            forced_blank_restart_lines: self.forced_blank_restart_lines,
+            color_correction: self.color_correction,
+        }
+    }
+
+    /// Restore PPU state from a save-state snapshot.
+    pub fn restore_state(&mut self, state: &PpuState) {
+        self.dispcnt = state.dispcnt;
+        self.dispstat = state.dispstat;
+        self.bg_cnt = state.bg_cnt;
+        self.vcount = state.vcount;
+        self.line_cycle = state.line_cycle;
+        self.framebuffer.clone_from(&state.framebuffer);
+        self.frame_ready = state.frame_ready;
+        self.bg_affine = state.bg_affine;
+        self.bg_scroll = state.bg_scroll;
+        self.win_h = state.win_h;
+        self.win_v = state.win_v;
+        self.winin = state.winin;
+        self.winout = state.winout;
+        self.green_swap = state.green_swap;
+        self.bldcnt = state.bldcnt;
+        self.bldalpha = state.bldalpha;
+        self.bldy = state.bldy;
+        self.mosaic = state.mosaic;
+        self.forced_blank_restart_lines = state.forced_blank_restart_lines;
+        self.color_correction = state.color_correction;
     }
 
     /// Read `DISPCNT`.
@@ -1934,6 +2010,150 @@ mod tests {
             oam,
         );
         ppu.step(CYCLES_PER_SCANLINE, ic, vram, pram, oam);
+    }
+
+    #[test]
+    fn save_state_restores_registers_and_affine_state() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        ppu.write_green_swap(1);
+        ppu.write_dispstat(dispstat::VBLANK_IRQ_ENABLE | (42 << 8), &mut ic);
+        ppu.write_bg_cnt(0, 0xDFFF);
+        ppu.write_bg_cnt(2, 0xE0C3);
+        ppu.write_bg_hofs(0, 0x0123);
+        ppu.write_bg_vofs(0, 0x01F0);
+        ppu.write_win_h(0, 0x1234);
+        ppu.write_win_v(0, 0x5678);
+        ppu.write_winin(0x3F3F);
+        ppu.write_winout(0x2A2A);
+        ppu.write_mosaic(0x4321);
+        ppu.write_bldcnt(0x3F1F);
+        ppu.write_bldalpha(0x100F);
+        ppu.write_bldy(0x0011);
+        ppu.write_affine(REG_BG2PA, 0x0200);
+        ppu.write_affine(REG_BG2PB, 0x0010);
+        ppu.write_affine(REG_BG2PC, 0xFFF0);
+        ppu.write_affine(REG_BG2PD, 0x0180);
+        ppu.write_affine(REG_BG2X_L, 0x3456);
+        ppu.write_affine(REG_BG2X_H, 0x0001);
+        ppu.write_affine(REG_BG2Y_L, 0x789A);
+        ppu.write_affine(REG_BG2Y_H, 0x0800);
+        ppu.set_color_correction(true);
+
+        let saved = ppu.capture_state();
+
+        ppu.write_dispcnt(0);
+        ppu.write_green_swap(0);
+        ppu.write_dispstat(0, &mut ic);
+        ppu.write_bg_cnt(0, 0);
+        ppu.write_bg_cnt(2, 0);
+        ppu.write_bg_hofs(0, 0);
+        ppu.write_bg_vofs(0, 0);
+        ppu.write_win_h(0, 0);
+        ppu.write_win_v(0, 0);
+        ppu.write_winin(0);
+        ppu.write_winout(0);
+        ppu.write_mosaic(0);
+        ppu.write_bldcnt(0);
+        ppu.write_bldalpha(0);
+        ppu.write_bldy(0);
+        ppu.write_affine(REG_BG2PA, 0);
+        ppu.write_affine(REG_BG2PB, 0);
+        ppu.write_affine(REG_BG2PC, 0);
+        ppu.write_affine(REG_BG2PD, 0);
+        ppu.write_affine(REG_BG2X_L, 0);
+        ppu.write_affine(REG_BG2X_H, 0);
+        ppu.write_affine(REG_BG2Y_L, 0);
+        ppu.write_affine(REG_BG2Y_H, 0);
+        ppu.set_color_correction(false);
+
+        ppu.restore_state(&saved);
+
+        assert_eq!(ppu.read_dispcnt(), 3 | dispcnt::BG2_ENABLE);
+        assert_eq!(ppu.read_green_swap(), 1);
+        assert_eq!(
+            ppu.read_dispstat() & dispstat::WRITE_MASK,
+            dispstat::VBLANK_IRQ_ENABLE | (42 << 8)
+        );
+        assert_eq!(ppu.read_bg_cnt(0), 0xDFFF & !0x2000);
+        assert_eq!(ppu.read_bg_cnt(2), 0xE0C3);
+        assert_eq!(ppu.read_bg_hofs(0), 0x0123);
+        assert_eq!(ppu.read_bg_vofs(0), 0x01F0);
+        assert_eq!(ppu.read_win_h(0), 0x1234);
+        assert_eq!(ppu.read_win_v(0), 0x5678);
+        assert_eq!(ppu.read_winin(), 0x3F3F);
+        assert_eq!(ppu.read_winout(), 0x2A2A);
+        assert_eq!(ppu.read_mosaic(), 0x4321);
+        assert_eq!(ppu.read_bldcnt(), 0x3F1F);
+        assert_eq!(ppu.read_bldalpha(), 0x100F);
+        assert_eq!(ppu.read_bldy(), 0x0011);
+        assert_eq!(ppu.read_affine(REG_BG2PA), Some(0x0200));
+        assert_eq!(ppu.read_affine(REG_BG2PB), Some(0x0010));
+        assert_eq!(ppu.read_affine(REG_BG2PC), Some(0xFFF0));
+        assert_eq!(ppu.read_affine(REG_BG2PD), Some(0x0180));
+        assert_eq!(ppu.read_affine(REG_BG2X_L), Some(0x3456));
+        assert_eq!(ppu.read_affine(REG_BG2X_H), Some(0x0001));
+        assert_eq!(ppu.read_affine(REG_BG2Y_L), Some(0x789A));
+        assert_eq!(ppu.read_affine(REG_BG2Y_H), Some(0xF800));
+        assert!(ppu.color_correction);
+    }
+
+    #[test]
+    fn save_state_restores_framebuffer_ready_and_timing_state() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        let mut vram = make_vram();
+        let pram = make_pram();
+        let oam = make_oam();
+        ppu.write_dispcnt(3 | dispcnt::BG2_ENABLE);
+        for x in 0..(SCREEN_WIDTH as usize) {
+            let off = x * 2;
+            vram[off..off + 2].copy_from_slice(&0x001Fu16.to_le_bytes());
+        }
+
+        ppu.step(
+            CYCLES_PER_SCANLINE * VISIBLE_SCANLINES + 17,
+            &mut ic,
+            &vram,
+            &pram,
+            &oam,
+        );
+        assert!(ppu.frame_ready());
+        assert_eq!(ppu.read_vcount(), VISIBLE_SCANLINES as u16);
+        assert_eq!(ppu.line_cycle, 17);
+        let saved = ppu.capture_state();
+        let saved_pixel = ppu.framebuffer()[0..3].to_vec();
+
+        ppu.clear_frame_ready();
+        ppu.step(CYCLES_PER_SCANLINE * 3, &mut ic, &vram, &pram, &oam);
+        ppu.framebuffer[0..3].copy_from_slice(&[0, 0, 0]);
+
+        ppu.restore_state(&saved);
+
+        assert!(ppu.frame_ready());
+        assert_eq!(ppu.read_vcount(), VISIBLE_SCANLINES as u16);
+        assert_eq!(ppu.line_cycle, 17);
+        assert_eq!(&ppu.framebuffer()[0..3], saved_pixel.as_slice());
+    }
+
+    #[test]
+    fn save_state_roundtrips_through_json() {
+        let mut ppu = Ppu::new();
+        let mut ic = make_ic();
+        ppu.write_dispcnt(5 | dispcnt::BG2_ENABLE | dispcnt::FRAME_SELECT);
+        ppu.write_dispstat(dispstat::HBLANK_IRQ_ENABLE | (7 << 8), &mut ic);
+        ppu.step(123, &mut ic, &make_vram(), &make_pram(), &make_oam());
+
+        let saved = ppu.capture_state();
+        let bytes = serde_json::to_vec(&saved).expect("serialize PPU state");
+        let decoded: PpuState = serde_json::from_slice(&bytes).expect("deserialize PPU state");
+        let mut restored = Ppu::new();
+        restored.restore_state(&decoded);
+
+        assert_eq!(restored.read_dispcnt(), ppu.read_dispcnt());
+        assert_eq!(restored.read_dispstat(), ppu.read_dispstat());
+        assert_eq!(restored.line_cycle, ppu.line_cycle);
     }
 
     #[test]
