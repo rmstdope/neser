@@ -212,7 +212,10 @@ impl Mbc3 {
                 if self.is_rtc_selected() {
                     // Write to live RTC registers
                     match self.ram_bank {
-                        0x08 => self.rtc.seconds = value & RTC_SECONDS_MASK,
+                        0x08 => {
+                            self.rtc.seconds = value & RTC_SECONDS_MASK;
+                            self.cycle_counter = 0;
+                        }
                         0x09 => self.rtc.minutes = value & RTC_MINUTES_MASK,
                         0x0A => self.rtc.hours = value & RTC_HOURS_MASK,
                         0x0B => self.rtc.day_low = value,
@@ -897,6 +900,68 @@ mod tests {
         mbc3.write(0x6000, 0x01);
 
         assert_eq!(mbc3.read(0xA000), 1, "Seconds should increment to 1");
+    }
+
+    #[test]
+    fn test_rtc_seconds_write_resets_sub_second_counter() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+        write_rtc_register(&mut mbc3, 0x08, 10);
+        mbc3.tick(M_CYCLES_PER_SECOND - 1);
+
+        write_rtc_register(&mut mbc3, 0x08, 20);
+        mbc3.tick(1);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 20);
+
+        mbc3.tick(M_CYCLES_PER_SECOND - 1);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 21);
+    }
+
+    #[test]
+    fn test_rtc_non_seconds_writes_preserve_sub_second_counter() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+        write_rtc_register(&mut mbc3, 0x08, 10);
+        mbc3.tick(M_CYCLES_PER_SECOND - 1);
+
+        write_rtc_register(&mut mbc3, 0x09, 1);
+        write_rtc_register(&mut mbc3, 0x0A, 2);
+        write_rtc_register(&mut mbc3, 0x0B, 3);
+        write_rtc_register(&mut mbc3, 0x0C, 0);
+        mbc3.tick(1);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 11);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x09), 1);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0A), 2);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0B), 3);
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x0C), 0);
+    }
+
+    #[test]
+    fn test_rtc_halt_resume_preserves_sub_second_counter() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+        write_rtc_register(&mut mbc3, 0x08, 10);
+        mbc3.tick(M_CYCLES_PER_SECOND - 1);
+
+        write_rtc_register(&mut mbc3, 0x0C, 0x40);
+        mbc3.tick(10);
+        write_rtc_register(&mut mbc3, 0x0C, 0x00);
+        mbc3.tick(1);
+        latch_rtc(&mut mbc3);
+
+        assert_eq!(read_latched_rtc_register(&mut mbc3, 0x08), 11);
     }
 
     #[test]

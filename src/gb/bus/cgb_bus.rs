@@ -95,6 +95,9 @@ pub struct CgbBus {
     key1: u8,
     /// Accumulator for half-rate APU ticking in double-speed mode.
     apu_tick_accumulator: u8,
+    /// Accumulator for half-rate cartridge RTC ticking in double-speed mode.
+    /// Uses u16 to avoid overflow before modulo when a tick receives u8::MAX.
+    rtc_tick_accumulator: u16,
     /// Double-speed APU tick accumulator phase when the APU was powered on.
     apu_power_on_accumulator: u8,
     /// Hardware model variant (CGB-0 through CGB-E).
@@ -199,6 +202,7 @@ impl CgbBus {
             svbk: 0,
             key1: 0,
             apu_tick_accumulator: 0,
+            rtc_tick_accumulator: 0,
             apu_power_on_accumulator: 0,
             model,
             // Undocumented CGB registers.
@@ -431,6 +435,7 @@ impl CgbBus {
 
         // Reset APU accumulator when switching speeds.
         self.apu_tick_accumulator = 0;
+        self.rtc_tick_accumulator = 0;
         self.apu_power_on_accumulator = 0;
 
         true
@@ -526,8 +531,19 @@ impl CgbBus {
         } else {
             self.apu.tick(m_cycles);
         }
-        // Tick the cartridge (for MBC3 RTC)
-        self.cart.tick(u32::from(m_cycles));
+        // Tick the cartridge RTC in real-time units. In double speed, each CPU
+        // M-cycle takes half as much real time, so MBC3 sees half the normal rate.
+        if double {
+            self.rtc_tick_accumulator += u16::from(m_cycles);
+            let cart_ticks = self.rtc_tick_accumulator / 2;
+            self.rtc_tick_accumulator %= 2;
+            if cart_ticks > 0 {
+                self.cart.tick(u32::from(cart_ticks));
+            }
+        } else {
+            self.rtc_tick_accumulator = 0;
+            self.cart.tick(u32::from(m_cycles));
+        }
 
         // HDMA state machine: activate pending HDMA when LCD turns on.
         // HDMA requested with LCD off remains pending until LCD is enabled.
@@ -707,6 +723,7 @@ impl CgbBus {
         self.svbk = 0;
         self.key1 = 0;
         self.apu_tick_accumulator = 0;
+        self.rtc_tick_accumulator = 0;
         self.apu_power_on_accumulator = 0;
         // Respect skip_boot_rom setting from construction
         self.boot_rom_active = !self.skip_boot_rom;
@@ -771,6 +788,7 @@ impl CgbBus {
             svbk: Some(self.svbk),
             key1: Some(self.key1),
             apu_tick_accumulator: Some(self.apu_tick_accumulator),
+            rtc_tick_accumulator: Some(self.rtc_tick_accumulator),
             ff72: Some(self.ff72),
             ff73: Some(self.ff73),
             ff74: Some(self.ff74),
@@ -826,6 +844,7 @@ impl CgbBus {
         self.svbk = state.svbk.unwrap_or(0);
         self.key1 = state.key1.unwrap_or(0);
         self.apu_tick_accumulator = state.apu_tick_accumulator.unwrap_or(0);
+        self.rtc_tick_accumulator = state.rtc_tick_accumulator.unwrap_or(0);
         self.apu_power_on_accumulator = 0;
         // Restore undocumented CGB registers with defaults for older save states
         self.ff72 = state.ff72.unwrap_or(0x00);
@@ -1224,6 +1243,8 @@ impl GbBus for CgbBus {
 mod tests {
     use super::*;
     use crate::gb::cartridge::load_cartridge;
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -1239,6 +1260,31 @@ mod tests {
             .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
         rom[0x014D] = chk;
         load_cartridge(&rom).expect("valid ROM")
+    }
+
+    #[derive(Default)]
+    struct TickCountingCart {
+        ticks: Rc<Cell<u32>>,
+    }
+
+    impl GbCartridge for TickCountingCart {
+        fn read(&self, addr: u16) -> u8 {
+            if addr == 0x0143 { 0x80 } else { 0xFF }
+        }
+
+        fn write(&mut self, _addr: u16, _val: u8) {}
+
+        fn tick(&mut self, cycles: u32) {
+            self.ticks.set(self.ticks.get() + cycles);
+        }
+    }
+
+    fn tick_counting_bus() -> (CgbBus, Rc<Cell<u32>>) {
+        let ticks = Rc::new(Cell::new(0));
+        let cart = Box::new(TickCountingCart {
+            ticks: Rc::clone(&ticks),
+        });
+        (CgbBus::new(cart, CgbModel::default(), false), ticks)
     }
 
     /// Build a minimal DMG-only ROM cartridge, as used by Mooneye `*-C` tests
@@ -2133,6 +2179,63 @@ mod tests {
     }
 
     #[test]
+    fn test_normal_speed_ticks_cartridge_rtc_once_per_mcycle() {
+        let (mut bus, cart_ticks) = tick_counting_bus();
+
+        bus.tick(5);
+
+        assert_eq!(cart_ticks.get(), 5);
+    }
+
+    #[test]
+    fn test_double_speed_ticks_cartridge_rtc_at_half_rate() {
+        let (mut bus, cart_ticks) = tick_counting_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+
+        bus.tick(1);
+        assert_eq!(cart_ticks.get(), 0);
+
+        bus.tick(1);
+        assert_eq!(cart_ticks.get(), 1);
+
+        bus.tick(3);
+        assert_eq!(cart_ticks.get(), 2);
+    }
+
+    #[test]
+    fn test_cgb_rtc_tick_accumulator_is_saved() {
+        let (mut bus, _cart_ticks) = tick_counting_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        bus.tick(1);
+
+        let state_json =
+            serde_json::to_string(&bus.capture_bus_state()).expect("serialize bus state");
+
+        assert!(state_json.contains("rtc_tick_accumulator"));
+    }
+
+    #[test]
+    fn test_cgb_rtc_tick_accumulator_restores_half_rate_phase() {
+        let (mut bus, cart_ticks) = tick_counting_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.try_speed_switch();
+        bus.tick(1);
+        assert_eq!(cart_ticks.get(), 0);
+
+        let state = bus.capture_bus_state();
+        let (mut restored_bus, restored_cart_ticks) = tick_counting_bus();
+        restored_bus
+            .restore_bus_state(&state)
+            .expect("restore should succeed");
+
+        restored_bus.tick(1);
+
+        assert_eq!(restored_cart_ticks.get(), 1);
+    }
+
+    #[test]
     fn test_speed_switch_round_trip_restores_normal_tick_rates() {
         // Given: CGB bus switched to double, then back to normal
         let mut bus = make_bus();
@@ -2164,6 +2267,7 @@ mod tests {
         assert_eq!(dots, 20, "normal speed restored: 5 M-cycles × 4 dots = 20");
         // And: APU accumulator is 0
         assert_eq!(bus.apu_tick_accumulator, 0);
+        assert_eq!(bus.rtc_tick_accumulator, 0);
     }
 
     #[test]
