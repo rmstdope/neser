@@ -243,10 +243,6 @@ fn gba_mgba_memory_diagnostics_reports_mgba_log() {
     let result = run_mgba_memory_diagnostics();
 
     assert_eq!(
-        result.framebuffer_crc32,
-        approved_crc_for_suite_key("mgba_memory")
-    );
-    assert_eq!(
         result.total_count,
         Some(1552),
         "raw mGBA Memory log: {:?}",
@@ -256,10 +252,25 @@ fn gba_mgba_memory_diagnostics_reports_mgba_log() {
         result.passed_count.is_some(),
         "mGBA Memory diagnostics should include a parsed pass count"
     );
+    assert_eq!(
+        result.passed_count, result.total_count,
+        "mGBA Memory diagnostics should pass every test with the embedded BIOS.\nraw log:\n{}",
+        result.raw_log
+    );
+    assert!(
+        result.failures.is_empty(),
+        "mGBA Memory diagnostics reported failures with the embedded BIOS: {:?}\nraw log:\n{}",
+        result.failures,
+        result.raw_log
+    );
     assert!(
         result.raw_log.contains("Memory"),
         "mGBA Memory diagnostics should include the mGBA log, got: {:?}",
         result.raw_log
+    );
+    assert_eq!(
+        result.framebuffer_crc32,
+        approved_crc_for_suite_key("mgba_memory")
     );
 }
 
@@ -322,7 +333,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("armwrestler_page7"), Some(&0x562A_5C65));
 
     // mgba-emu/suite keys
-    assert_eq!(approvals.get("mgba_memory"), Some(&0x179D_E4D1));
+    assert_eq!(approvals.get("mgba_memory"), Some(&0x61F6_5500));
     assert_eq!(approvals.get("mgba_io_read"), Some(&0x5B5C_9186));
     assert_eq!(approvals.get("mgba_timing"), Some(&0xDEEF_A167));
     assert_eq!(approvals.get("mgba_timers"), Some(&0xCFAB_2DCC));
@@ -331,7 +342,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("mgba_carry"), Some(&0xFD9E_45E6));
     assert_eq!(approvals.get("mgba_multiply_long"), Some(&0x6996_55AB));
     assert_eq!(approvals.get("mgba_bios_math"), Some(&0xA4E2_450F));
-    assert_eq!(approvals.get("mgba_dma"), Some(&0x0138_8CCA));
+    assert_eq!(approvals.get("mgba_dma"), Some(&0x9090_0973));
     assert_eq!(approvals.get("mgba_sio_read"), Some(&0xF5D9_8687));
     assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));
     assert_eq!(approvals.get("mgba_misc_edge"), Some(&0x36EC_DBF9));
