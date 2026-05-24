@@ -22,6 +22,7 @@ use super::interrupt::InterruptController;
 use super::timer::Timers;
 use crate::gba::input::{Keypad, REG_KEYCNT, REG_KEYINPUT};
 use crate::gba::ppu::{self, Ppu};
+use serde::{Deserialize, Serialize};
 
 /// Size of the I/O window backing store. Registers above this limit
 /// (`0x0400_0400`+) read as open-bus on real hardware.
@@ -49,7 +50,7 @@ pub const REG_DISPCNT: u32 = 0x0400_0000;
 /// values without panicking. Specific addresses (interrupt controller,
 /// timers) are intercepted in [`Self::write16`] / [`Self::read16`] and
 /// dispatched to the live state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IoRegisters {
     /// Flat backing store for unimplemented registers.
     bytes: Vec<u8>,

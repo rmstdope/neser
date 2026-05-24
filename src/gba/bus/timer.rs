@@ -19,6 +19,7 @@
 //! <https://problemkaputt.de/gbatek.htm#gbatimers>
 
 use super::interrupt::{InterruptController, bits};
+use serde::{Deserialize, Serialize};
 
 /// The four GBA timer IRQ bits, indexed 0–3.
 const TIMER_IRQ_BITS: [u16; 4] = [bits::TIMER0, bits::TIMER1, bits::TIMER2, bits::TIMER3];
@@ -27,7 +28,7 @@ const TIMER_IRQ_BITS: [u16; 4] = [bits::TIMER0, bits::TIMER1, bits::TIMER2, bits
 const PRESCALERS: [u32; 4] = [1, 64, 256, 1024];
 
 /// Single GBA timer channel.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 pub struct Timer {
     /// Live counter value (the value reported by `CNT_L` reads).
     pub counter: u16,
@@ -63,7 +64,7 @@ impl Timer {
 }
 
 /// Bank of four GBA timers TM0–TM3.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Timers {
     pub channels: [Timer; 4],
 }

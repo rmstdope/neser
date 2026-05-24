@@ -44,6 +44,7 @@
 //! [1]: <https://problemkaputt.de/gbatek.htm#gbakeypadinput>
 
 use crate::gba::bus::interrupt::{InterruptController, bits};
+use serde::{Deserialize, Serialize};
 
 /// Address of `KEYINPUT` (read-only).
 pub const REG_KEYINPUT: u32 = 0x0400_0130;
@@ -58,7 +59,7 @@ pub const KEYCNT_IRQ_ENABLE: u16 = 1 << 14;
 pub const KEYCNT_COND_AND: u16 = 1 << 15;
 
 /// GBA keypad state.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Keypad {
     /// Pressed-state of each button (`1` = pressed). Bit layout matches
     /// `KEYINPUT` (which is the inverse of this — see [`Self::read_keyinput`]).

@@ -20,12 +20,13 @@
 //! <https://problemkaputt.de/gbatek.htm#gaborealcommunication>
 
 use super::interrupt::{InterruptController, bits};
+use serde::{Deserialize, Serialize};
 
 /// GBA CPU frequency in Hz (16.78 MHz).
 const CPU_FREQ: u32 = 16_777_216;
 
 /// SIO controller state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sio {
     /// SIOCNT register value (with live bit 7 state).
     siocnt: u16,
