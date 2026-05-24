@@ -10,6 +10,10 @@ use crate::gb::ppu::Ppu;
 use crate::gb::ppu::timing::PpuMode;
 use crate::gb::timer::{DIV_APU_BIT_DOUBLE, DIV_APU_BIT_NORMAL, Timer};
 
+// LCD-visible STOP speed-switch pause lengths in PPU dots. daid
+// speed_switch_timing_ly/stat and SameBoy's 8 MHz-cycle halt countdown both
+// indicate a 0x20008 half-dot-cycle pause, which is observed as 0x10004 PPU
+// dots while entering double speed and 0x8002 PPU dots while leaving it.
 const CGB_SPEED_SWITCH_DOTS_NORMAL_TO_DOUBLE: u32 = 0x1_0004;
 const CGB_SPEED_SWITCH_DOTS_DOUBLE_TO_NORMAL: u32 = 0x8002;
 
@@ -1989,7 +1993,7 @@ mod tests {
         // Given: CGB bus with LCD running and KEY1 armed for a normal-to-double switch
         let mut bus = make_bus();
         enable_lcd(&mut bus);
-        let start_dot = bus.ppu.dot();
+        let start_dots = total_ppu_dots(&bus);
         bus.write(0xFF4D, 0x01);
 
         // When: STOP performs the speed switch pause
@@ -1997,8 +2001,8 @@ mod tests {
 
         // Then: the LCD has advanced for the observed CGB STOP switch pause
         // before CPU execution resumes.
-        let expected_dot = (u32::from(start_dot) + CGB_SPEED_SWITCH_DOTS_NORMAL_TO_DOUBLE) % 456;
-        assert_eq!(u32::from(bus.ppu.dot()), expected_dot);
+        let advanced_dots = ppu_dot_delta(start_dots, total_ppu_dots(&bus));
+        assert_eq!(advanced_dots, CGB_SPEED_SWITCH_DOTS_NORMAL_TO_DOUBLE);
     }
 
     #[test]
@@ -2009,20 +2013,30 @@ mod tests {
         bus.write(0xFF4D, 0x01);
         assert!(bus.try_speed_switch());
         assert!(bus.is_double_speed());
-        let start_dot = bus.ppu.dot();
+        let start_dots = total_ppu_dots(&bus);
         bus.write(0xFF4D, 0x01);
 
         // When: STOP performs the switch back to normal speed
         assert!(bus.try_speed_switch());
 
         // Then: the LCD pause uses the double-speed path length.
-        let expected_dot = (u32::from(start_dot) + CGB_SPEED_SWITCH_DOTS_DOUBLE_TO_NORMAL) % 456;
-        assert_eq!(u32::from(bus.ppu.dot()), expected_dot);
+        let advanced_dots = ppu_dot_delta(start_dots, total_ppu_dots(&bus));
+        assert_eq!(advanced_dots, CGB_SPEED_SWITCH_DOTS_DOUBLE_TO_NORMAL);
     }
 
     /// Helper: compute total dot position from LY and dot.
     fn total_ppu_dots(bus: &CgbBus) -> u32 {
         u32::from(bus.ppu.ly()) * 456 + u32::from(bus.ppu.dot())
+    }
+
+    fn ppu_dot_delta(start: u32, end: u32) -> u32 {
+        const DOTS_PER_FRAME: u32 = 154 * 456;
+
+        if end >= start {
+            end - start
+        } else {
+            end + DOTS_PER_FRAME - start
+        }
     }
 
     #[test]
