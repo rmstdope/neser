@@ -7,6 +7,7 @@
 //! before calling [`Sram::read`] / [`Sram::write`].
 
 use crate::gba::cartridge::save_type::SaveType;
+use serde::{Deserialize, Serialize};
 
 /// Default SRAM size for shipping titles. 64 KB SRAM was rare and exposed
 /// the upper 32 KB through bank-switching that very few games used; mirror
@@ -19,6 +20,12 @@ pub const SAVE_TYPE: SaveType = SaveType::Sram32K;
 /// 32 KB battery-backed SRAM with mirrored access.
 #[derive(Debug, Clone)]
 pub struct Sram {
+    data: Vec<u8>,
+}
+
+/// Serializable SRAM snapshot for GBA save states.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SramState {
     data: Vec<u8>,
 }
 
@@ -50,6 +57,25 @@ impl Sram {
     /// Borrow the entire backing buffer (for `.sav` flush).
     pub fn snapshot(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Capture SRAM state for save-state serialization.
+    pub fn capture_state(&self) -> SramState {
+        SramState {
+            data: self.data.clone(),
+        }
+    }
+
+    /// Restore SRAM state from a save-state snapshot.
+    pub fn restore_state(&mut self, state: &SramState) -> Result<(), String> {
+        if state.data.len() != SRAM_SIZE {
+            return Err(format!(
+                "SRAM save-state length mismatch: expected {SRAM_SIZE}, got {}",
+                state.data.len()
+            ));
+        }
+        self.data.clone_from(&state.data);
+        Ok(())
     }
 
     /// Restore the SRAM contents from `data`. Bytes past [`SRAM_SIZE`] are
@@ -127,5 +153,39 @@ mod tests {
         assert_eq!(sram.read(0), 0x11);
         assert_eq!(sram.read(2), 0x33);
         assert_eq!(sram.read(SRAM_SIZE - 1), 0x99);
+    }
+
+    #[test]
+    fn save_state_restores_sram_contents() {
+        let mut sram = Sram::new();
+        sram.write(0x0000, 0x12);
+        sram.write(0x1234, 0x34);
+        sram.write(SRAM_SIZE - 1, 0x56);
+
+        let state = sram.capture_state();
+
+        sram.write(0x0000, 0xAA);
+        sram.write(0x1234, 0xBB);
+        sram.write(SRAM_SIZE - 1, 0xCC);
+        sram.restore_state(&state).expect("restore SRAM state");
+
+        assert_eq!(sram.read(0x0000), 0x12);
+        assert_eq!(sram.read(0x1234), 0x34);
+        assert_eq!(sram.read(SRAM_SIZE - 1), 0x56);
+    }
+
+    #[test]
+    fn save_state_roundtrips_through_json() {
+        let mut sram = Sram::new();
+        sram.write(0x0042, 0x99);
+
+        let bytes = serde_json::to_vec(&sram.capture_state()).expect("serialize SRAM state");
+        let decoded: SramState = serde_json::from_slice(&bytes).expect("deserialize SRAM state");
+        let mut restored = Sram::new();
+        restored
+            .restore_state(&decoded)
+            .expect("restore SRAM state");
+
+        assert_eq!(restored.read(0x0042), 0x99);
     }
 }

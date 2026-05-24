@@ -19,7 +19,9 @@ pub mod save_type;
 pub mod sram;
 
 #[allow(unused_imports)]
-pub use cartridge::{CartridgeError, GbaCartridge, ROM_MAX_SIZE, SaveBackend, load_cartridge};
+pub use cartridge::{
+    CartridgeError, GbaCartridge, ROM_MAX_SIZE, SaveBackend, SaveBackendState, load_cartridge,
+};
 #[allow(unused_imports)]
 pub use eeprom::Eeprom;
 #[allow(unused_imports)]

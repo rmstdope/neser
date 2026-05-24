@@ -613,6 +613,7 @@ impl GbaBus {
             vram: self.vram.clone(),
             oam: self.oam.clone(),
             sram: self.sram.clone(),
+            cart_save: self.cart_save.capture_state(),
             io: self.io.clone(),
             ic: self.ic.clone(),
             timers: self.timers.clone(),
@@ -657,13 +658,14 @@ impl GbaBus {
         self.vram.clone_from(&state.vram);
         self.oam.clone_from(&state.oam);
         self.sram.clone_from(&state.sram);
+        self.cart_save.restore_state(&state.cart_save)?;
         match &mut self.cart_save {
-            SaveBackend::Sram(sram) => sram.restore(&self.sram),
-            // The save-state bus mirror is only 64 KB. Restoring a Flash backend
-            // (especially Flash128) from this mirror would silently truncate data.
-            // Keep the backend as-is until full Flash snapshot state is serialized.
-            SaveBackend::Flash(_) => {}
-            SaveBackend::None | SaveBackend::Eeprom(_) => {}
+            SaveBackend::Sram(sram) => {
+                self.sram.fill(0xFF);
+                let snapshot = sram.snapshot();
+                self.sram[..snapshot.len()].copy_from_slice(snapshot);
+            }
+            SaveBackend::None | SaveBackend::Eeprom(_) | SaveBackend::Flash(_) => {}
         }
         self.bios_locked = state.bios_locked;
         self.last_bus_value = state.last_bus_value;
@@ -1764,6 +1766,41 @@ mod tests {
         assert_eq!(bus.read16(0x0400_006C), 0);
         assert!(bus.apu.ch2.active);
         assert_eq!(bus.apu.fifo_a.current, 42);
+    }
+
+    #[test]
+    fn save_state_restores_flash128_backend_without_truncating_bank_state() {
+        fn flash_magic_prefix(bus: &mut GbaBus) {
+            bus.write8(0x0E00_5555, 0xAA);
+            bus.write8(0x0E00_2AAA, 0x55);
+        }
+
+        let mut bus = GbaBus::new();
+        bus.load_rom_with_save(&[0; 0xC0], SaveBackend::Flash(Flash::new_128k()));
+        flash_magic_prefix(&mut bus);
+        bus.write8(0x0E00_5555, 0xA0);
+        bus.write8(0x0E00_0000, 0x11);
+        flash_magic_prefix(&mut bus);
+        bus.write8(0x0E00_5555, 0xB0);
+        bus.write8(0x0E00_0000, 0x01);
+        flash_magic_prefix(&mut bus);
+        bus.write8(0x0E00_5555, 0xA0);
+        bus.write8(0x0E00_0000, 0x22);
+
+        let saved = bus.capture_memory_state();
+
+        flash_magic_prefix(&mut bus);
+        bus.write8(0x0E00_5555, 0xA0);
+        bus.write8(0x0E00_0000, 0x00);
+        assert_eq!(bus.read8(0x0E00_0000), 0x00);
+
+        bus.restore_memory_state(&saved).expect("restore succeeds");
+
+        assert_eq!(bus.read8(0x0E00_0000), 0x22);
+        flash_magic_prefix(&mut bus);
+        bus.write8(0x0E00_5555, 0xB0);
+        bus.write8(0x0E00_0000, 0x00);
+        assert_eq!(bus.read8(0x0E00_0000), 0x11);
     }
 
     #[test]

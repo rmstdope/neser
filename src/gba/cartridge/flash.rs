@@ -29,6 +29,7 @@
 //! Pokémon, F-Zero and other first-party titles probe for.
 
 use crate::gba::cartridge::save_type::SaveType;
+use serde::{Deserialize, Serialize};
 
 /// Size of one Flash bank (always 64 KB on real hardware).
 pub const FLASH_BANK_SIZE: usize = 64 * 1024;
@@ -46,7 +47,7 @@ const ID_64K: (u8, u8) = (0x1F, 0x3D);
 const ID_128K: (u8, u8) = (0x62, 0x13);
 
 /// Internal state machine tracking the JEDEC command parser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum FlashState {
     /// Idle — first magic byte not yet seen.
     Ready,
@@ -79,6 +80,16 @@ pub struct Flash {
     /// Variant chip IDs returned in [`Self::id_mode`].
     id: (u8, u8),
     /// Command-sequence state machine.
+    state: FlashState,
+}
+
+/// Serializable Flash snapshot for GBA save states.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlashStateSnapshot {
+    data: Vec<u8>,
+    bank: usize,
+    id_mode: bool,
+    id: (u8, u8),
     state: FlashState,
 }
 
@@ -239,6 +250,48 @@ impl Flash {
     /// Borrow the full backing buffer (for `.sav` flush).
     pub fn snapshot(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Capture Flash state for save-state serialization.
+    pub fn capture_state(&self) -> FlashStateSnapshot {
+        FlashStateSnapshot {
+            data: self.data.clone(),
+            bank: self.bank,
+            id_mode: self.id_mode,
+            id: self.id,
+            state: self.state,
+        }
+    }
+
+    /// Restore Flash state from a save-state snapshot.
+    pub fn restore_state(&mut self, state: &FlashStateSnapshot) -> Result<(), String> {
+        if state.data.len() != FLASH_BANK_SIZE && state.data.len() != FLASH_BANK_SIZE * 2 {
+            return Err(format!(
+                "Flash save-state length mismatch: expected {FLASH_BANK_SIZE} or {}, got {}",
+                FLASH_BANK_SIZE * 2,
+                state.data.len()
+            ));
+        }
+        let bank_count = state.data.len() / FLASH_BANK_SIZE;
+        if state.bank >= bank_count {
+            return Err(format!(
+                "Flash save-state bank out of range: bank {} for {bank_count} banks",
+                state.bank
+            ));
+        }
+        if self.data.len() != state.data.len() {
+            return Err(format!(
+                "Flash save-state variant mismatch: live={} bytes, state={} bytes",
+                self.data.len(),
+                state.data.len()
+            ));
+        }
+        self.data.clone_from(&state.data);
+        self.bank = state.bank;
+        self.id_mode = state.id_mode;
+        self.id = state.id;
+        self.state = state.state;
+        Ok(())
     }
 
     /// Restore Flash contents from a saved buffer. Bytes past the chip
@@ -419,5 +472,99 @@ mod tests {
         // that have no effect (no A0 has been issued).
         flash.write(0x1234, 0x99);
         assert_eq!(flash.read(0x1234), 0xFF);
+    }
+
+    #[test]
+    fn save_state_restores_id_mode() {
+        let mut flash = Flash::new(SaveType::Flash64K);
+        magic_prefix(&mut flash);
+        flash.write(0x5555, 0x90);
+
+        let state = flash.capture_state();
+        magic_prefix(&mut flash);
+        flash.write(0x5555, 0xF0);
+        flash.restore_state(&state).expect("restore Flash state");
+
+        assert_eq!(flash.read(0x0000), ID_64K.0);
+        assert_eq!(flash.read(0x0001), ID_64K.1);
+    }
+
+    #[test]
+    fn save_state_restores_await_write_data_command_state() {
+        let mut flash = Flash::new(SaveType::Flash64K);
+        magic_prefix(&mut flash);
+        flash.write(0x5555, 0xA0);
+
+        let state = flash.capture_state();
+        let mut restored = Flash::new(SaveType::Flash64K);
+        restored.restore_state(&state).expect("restore Flash state");
+        restored.write(0x2468, 0x5A);
+
+        assert_eq!(restored.read(0x2468), 0x5A);
+    }
+
+    #[test]
+    fn save_state_restores_128k_bank_and_data() {
+        let mut flash = Flash::new(SaveType::Flash128K);
+        magic_prefix(&mut flash);
+        flash.write(0x5555, 0xA0);
+        flash.write(0x0000, 0x11);
+        magic_prefix(&mut flash);
+        flash.write(0x5555, 0xB0);
+        flash.write(0x0000, 0x01);
+        magic_prefix(&mut flash);
+        flash.write(0x5555, 0xA0);
+        flash.write(0x0000, 0x22);
+
+        let state = flash.capture_state();
+        let mut restored = Flash::new(SaveType::Flash128K);
+        restored.restore_state(&state).expect("restore Flash state");
+
+        assert_eq!(restored.read(0x0000), 0x22);
+        magic_prefix(&mut restored);
+        restored.write(0x5555, 0xB0);
+        restored.write(0x0000, 0x00);
+        assert_eq!(restored.read(0x0000), 0x11);
+    }
+
+    #[test]
+    fn save_state_roundtrips_through_json() {
+        let mut flash = Flash::new(SaveType::Flash64K);
+        magic_prefix(&mut flash);
+        flash.write(0x5555, 0xA0);
+        flash.write(0x3210, 0x66);
+
+        let bytes = serde_json::to_vec(&flash.capture_state()).expect("serialize Flash state");
+        let decoded: FlashStateSnapshot =
+            serde_json::from_slice(&bytes).expect("deserialize Flash state");
+        let mut restored = Flash::new(SaveType::Flash64K);
+        restored
+            .restore_state(&decoded)
+            .expect("restore Flash state");
+
+        assert_eq!(restored.read(0x3210), 0x66);
+    }
+
+    #[test]
+    fn save_state_rejects_flash_variant_mismatch_without_mutating() {
+        let mut flash64 = Flash::new(SaveType::Flash64K);
+        magic_prefix(&mut flash64);
+        flash64.write(0x5555, 0xA0);
+        flash64.write(0x3210, 0x66);
+        let state = flash64.capture_state();
+
+        let mut flash128 = Flash::new(SaveType::Flash128K);
+        magic_prefix(&mut flash128);
+        flash128.write(0x5555, 0xB0);
+        flash128.write(0x0000, 0x01);
+        magic_prefix(&mut flash128);
+        flash128.write(0x5555, 0xA0);
+        flash128.write(0x3210, 0x99);
+
+        let result = flash128.restore_state(&state);
+
+        assert!(result.is_err());
+        assert_eq!(flash128.size(), FLASH_BANK_SIZE * 2);
+        assert_eq!(flash128.read(0x3210), 0x99);
     }
 }
