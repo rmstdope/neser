@@ -131,6 +131,15 @@ impl Keypad {
         actions | (up << 4) | (down << 5) | (left << 6) | (right << 7)
     }
 
+    pub(crate) fn pressed_mask(&self) -> u16 {
+        self.pressed & KEYS_MASK
+    }
+
+    pub(crate) fn set_pressed_mask(&mut self, pressed: u16, ic: &mut InterruptController) {
+        self.pressed = pressed & KEYS_MASK;
+        self.update_irq(ic);
+    }
+
     /// Set the 8 NES-convention buttons in bulk. Preserves the `L`/`R`
     /// shoulder buttons and re-evaluates the keypad IRQ.
     pub fn set_states(&mut self, state: u8, ic: &mut InterruptController) {
