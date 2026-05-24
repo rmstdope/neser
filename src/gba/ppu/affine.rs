@@ -44,7 +44,9 @@
 /// initialises `PA` and `PD` to `0x0100` (1.0 in 8.8 fixed-point, giving an
 /// identity transform). The emulator must reflect this so that code which
 /// relies on the default identity mapping works correctly out of the box.
-#[derive(Debug, Clone, Copy)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BgAffine {
     /// Affine parameter A — signed 8.8 fixed-point.
     pub pa: i16,

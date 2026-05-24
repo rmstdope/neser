@@ -610,6 +610,7 @@ impl GbaBus {
             dma: self.dma.clone(),
             sio: self.sio.clone(),
             keypad: self.keypad.clone(),
+            ppu: self.ppu.capture_state(),
             bios_locked: self.bios_locked,
             last_bus_value: self.last_bus_value,
             dma_latch: self.dma_latch,
@@ -660,6 +661,7 @@ impl GbaBus {
         self.dma = state.dma.clone();
         self.sio = state.sio.clone();
         self.keypad = state.keypad.clone();
+        self.ppu.restore_state(&state.ppu);
         self.waitstates = state.waitstates.clone();
         self.undoc_0x410 = state.undoc_0x410;
         self.halt_requested = state.halt_requested;

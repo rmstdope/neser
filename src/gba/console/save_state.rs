@@ -22,10 +22,11 @@ use crate::gba::bus::{
 };
 use crate::gba::cpu::Arm7tdmiState;
 use crate::gba::input::Keypad;
+use crate::gba::ppu::PpuState;
 
 /// Current save-state format version for Game Boy Advance.
 /// Increment this when making breaking changes to the state format.
-pub const GBA_SAVESTATE_VERSION: u32 = 3;
+pub const GBA_SAVESTATE_VERSION: u32 = 4;
 
 /// Serializable snapshot of the [`GbaBus`](crate::gba::GbaBus) memory
 /// regions and a small number of associated scalar fields.
@@ -64,6 +65,8 @@ pub struct BusMemoryState {
     pub sio: Sio,
     /// Keypad state including KEYCNT, pressed buttons, and IRQ edge latch.
     pub keypad: Keypad,
+    /// PPU state including display registers, timing, and framebuffer.
+    pub ppu: PpuState,
     /// Whether external BIOS reads are currently locked out.
     pub bios_locked: bool,
     /// Last value driven on the bus (used to model open-bus reads).
@@ -203,8 +206,8 @@ mod tests {
     // ── Version checks ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_gba_savestate_version_is_3() {
-        assert_eq!(GBA_SAVESTATE_VERSION, 3);
+    fn test_gba_savestate_version_is_4() {
+        assert_eq!(GBA_SAVESTATE_VERSION, 4);
     }
 
     // ── Round-trip ─────────────────────────────────────────────────────────
