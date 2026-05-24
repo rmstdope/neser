@@ -406,6 +406,7 @@ impl DmgBus {
             svbk: None,
             key1: None,
             apu_tick_accumulator: None,
+            rtc_tick_accumulator: None,
             ff72: None,
             ff73: None,
             ff74: None,

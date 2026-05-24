@@ -152,7 +152,9 @@ mod tests {
         let rom_path = temp_dir.path().join("test.gba");
         fs::write(&rom_path, minimal_valid_gba_rom()).expect("Failed to write GBA ROM");
         let rom_bytes = fs::read(&rom_path).expect("Failed to read GBA ROM");
-        let mut console = Console::new_gba(AppContext::new_with_config(Config::default()));
+        let mut config = Config::default();
+        config.gba.bios_path = Some("embedded".to_string());
+        let mut console = Console::new_gba(AppContext::new_with_config(config));
         console
             .load_rom(&rom_bytes, rom_path.to_str().expect("ROM path is UTF-8"))
             .expect("Failed to load GBA ROM");
@@ -326,6 +328,19 @@ mod tests {
         let mut console = setup_gba_console_with_temp_rom(&temp_dir);
         let state_path = temp_dir.path().join("test.state");
         fs::create_dir_all(&state_path).expect("Failed to create blocking directory");
+
+        load_state_from_disk(&mut console);
+
+        assert_visible_toast(&console, "Failed to load state");
+    }
+
+    #[test]
+    fn test_gba_load_state_from_disk_shows_failed_toast_on_corrupt_state_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut console = setup_gba_console_with_temp_rom(&temp_dir);
+        let state_path = temp_dir.path().join("test.state");
+        fs::write(&state_path, b"not a valid GBA save state")
+            .expect("Failed to write corrupt state file");
 
         load_state_from_disk(&mut console);
 
