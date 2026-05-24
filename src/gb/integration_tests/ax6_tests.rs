@@ -46,8 +46,8 @@ const RANGE_ROM: Rtc3Rom = Rtc3Rom {
     path: "roms/gb/automated_tests/rtc3test/rtc3test-2.gb",
     min_result_frames: 300,
     max_result_frames: 900,
-    expected_dmg_crc: 0,
-    expected_cgb_crc: 0,
+    expected_dmg_crc: 0x1E4D_05D6,
+    expected_cgb_crc: 0x18F2_60D1,
 };
 
 const SUB_SECOND_ROM: Rtc3Rom = Rtc3Rom {
@@ -70,13 +70,11 @@ fn rtc3test_1_matches_reviewed_crc_on_cgb() {
 }
 
 #[test]
-#[ignore = "visual FAIL in rtc3test Range DMG result screen (#2618)"]
 fn rtc3test_2_matches_reviewed_crc_on_dmg() {
     assert_rom_crc(RANGE_ROM, HardwareMode::Dmg);
 }
 
 #[test]
-#[ignore = "visual FAIL in rtc3test Range CGB result screen (#2618)"]
 fn rtc3test_2_matches_reviewed_crc_on_cgb() {
     assert_rom_crc(RANGE_ROM, HardwareMode::Cgb);
 }
