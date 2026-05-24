@@ -102,6 +102,7 @@ pub struct Gba {
     /// System bus owning all peripheral state including APU, keypad and
     /// interrupt controller.
     bus: GbaBus,
+    rom_path: Option<PathBuf>,
     bios_load_error: Option<String>,
 }
 
@@ -169,6 +170,7 @@ impl Gba {
             app_context,
             cpu,
             bus,
+            rom_path: None,
             bios_load_error,
         }
     }
@@ -181,6 +183,12 @@ impl Gba {
     /// Mutably borrow the underlying system bus.
     pub fn bus_mut(&mut self) -> &mut GbaBus {
         &mut self.bus
+    }
+
+    /// Returns the save-state file path (`{rom_path}.state`), or `None`
+    /// if no ROM is loaded.
+    pub fn state_path(&self) -> Option<PathBuf> {
+        self.rom_path.as_ref().map(|p| p.with_extension("state"))
     }
 
     #[cfg(test)]
@@ -302,7 +310,7 @@ impl Emulator for Gba {
         GBA_FILTER_NAMES
     }
 
-    fn load_rom(&mut self, bytes: &[u8], _name: &str) -> Result<(), String> {
+    fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         if !self.bus.has_bios_image() {
             return Err(self
                 .bios_load_error
@@ -323,6 +331,7 @@ impl Emulator for Gba {
             self.bus.write8(0x03007FFC, 1);
         }
 
+        self.rom_path = Some(PathBuf::from(name));
         self.cpu.regs.r[15] = 0x0000_0000;
         Ok(())
     }
