@@ -219,3 +219,41 @@ No feedback provided.
 ### Navigator feedback
 
 Pending — navigator unavailable during retrospective collection.
+
+---
+
+## 2026-05-24 — PR #2623: Fix daid CGB speed-switch LY/STAT timing
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2623
+**Linked issues:** #2612
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `gb-hardware-research` | Supported Game Boy Color STOP/KEY1 timing investigation for LY/STAT speed-switch behavior. |
+| Skill | `test-driven-development` | Structured the implementation around RED, GREEN, REFACTOR, COMMIT, and MERGE gates. |
+| Skill | `rust-developer` | Guided Rust implementation and test coverage for the CGB bus timing changes. |
+| Skill | `github-administration` | Supported issue assignment, PR review-thread handling, CI checks, and merge workflow through `gh`. |
+| Skill | `self-learning-skills` | Triggered the required post-merge retrospective and skill update. |
+| Agent | `code-review` | Reviewed the changed timing code before PR creation. |
+| Agent | `Iteration Retrospective Gatherer` | Produced retrospective content after the PR merged; manual append was required. |
+| Instructions | Repository workflow instructions | Applied branch, TDD, validation, review, CI, merge, and retrospective requirements. |
+
+### What went well
+
+- The work waited for the overlapping #2611 PR to merge before branching, avoiding churn in `daid_tests.rs`, `ppu.rs`, and `timing.rs`.
+- The RED phase activated the daid LY/STAT CRCs against upstream reviewed baselines and added focused speed-switch timing coverage before implementation.
+- Review comments were fetched with `gh`/GraphQL, addressed with code changes, replied to, and resolved before merge.
+- Full local checks and GitHub CI were both green before merging PR #2623.
+
+### What to improve
+
+- The review-thread GraphQL query shape was useful but not fully documented in the GitHub administration skill before this PR. Add the fetch/reply/resolve pattern so future review-response loops are faster.
+- The retrospective agent again could generate the entry but could not write the file directly. Keep the manual append step in mind when the agent reports that limitation.
+- Navigator feedback was unavailable during retrospective collection. Keep feedback pending/unavailable rather than blocking the retrospective.
+
+### Navigator feedback
+
+Pending/unavailable — navigator was unavailable during retrospective feedback collection.
