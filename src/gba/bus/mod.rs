@@ -18,6 +18,7 @@ pub mod sio;
 pub mod timer;
 
 use crate::gba::apu::Apu;
+use crate::gba::bios::EMBEDDED_BIOS;
 use crate::gba::cartridge::SaveBackend;
 use crate::gba::console::config::GbaTraceConfig;
 use crate::gba::cpu::bus::Bus;
@@ -230,10 +231,16 @@ pub struct GbaBus {
     pub keypad: Keypad,
     /// Last value driven on the bus (used to model open-bus reads).
     last_bus_value: u32,
+    /// Most recent BIOS opcode fetched by the CPU prefetcher.
+    bios_open_bus_value: u32,
+    /// Whether the current CPU execution context is in the BIOS region.
+    executing_bios: bool,
     /// DMA internal data latch — separate from the CPU's open-bus register.
     /// Updated only by DMA reads; DMA writes to restricted regions return
     /// this value instead of the CPU's `last_bus_value`.
     dma_latch: u32,
+    /// Whether `dma_latch` has been initialized by a DMA read.
+    dma_latch_valid: bool,
     /// GBA-specific trace channel configuration.
     trace_config: GbaTraceConfig,
     /// mGBA debug console string buffer (`0x04FFF600`-`0x04FFF6FF`).
@@ -248,6 +255,8 @@ pub struct GbaBus {
     bios_locked: bool,
     /// Whether a full BIOS image has been loaded into the bus.
     bios_image_loaded: bool,
+    /// Whether the loaded BIOS bytes exactly match NESER's embedded BIOS.
+    embedded_bios_loaded: bool,
     /// Dynamic wait-state timing, recalculated on WAITCNT writes.
     waitstates: Waitstates,
     /// Undocumented register at 0x04000410, written by the real GBA BIOS
@@ -320,13 +329,17 @@ impl GbaBus {
             apu: Apu::new(),
             keypad: Keypad::new(),
             last_bus_value: 0,
+            bios_open_bus_value: 0,
+            executing_bios: false,
             dma_latch: 0,
+            dma_latch_valid: false,
             trace_config: GbaTraceConfig::default(),
             mgba_debug_string: [0; MGBA_DEBUG_STRING_LEN],
             mgba_log: String::new(),
             mgba_debug_enabled: false,
             bios_locked: false,
             bios_image_loaded: false,
+            embedded_bios_loaded: false,
             waitstates: Waitstates::new(),
             undoc_0x410: 0,
             halt_requested: false,
@@ -340,6 +353,7 @@ impl GbaBus {
         self.bios[..n].copy_from_slice(&data[..n]);
         self.bios_locked = false;
         self.bios_image_loaded = n == BIOS_SIZE;
+        self.embedded_bios_loaded = n == BIOS_SIZE && data[..n] == EMBEDDED_BIOS[..];
     }
 
     /// Whether a full BIOS image is currently loaded.
@@ -373,6 +387,7 @@ impl GbaBus {
     /// — full PC-aware locking can be added with the CPU integration.
     pub fn lock_bios(&mut self) {
         self.bios_locked = true;
+        self.executing_bios = false;
     }
 
     /// Whether the BIOS is currently locked from external reads.
@@ -588,8 +603,8 @@ impl GbaBus {
     ///
     /// The BIOS image is **not** captured — it is copyrighted firmware
     /// the user supplies separately at startup, so it must not be
-    /// embedded in save-state files.  Only the [`bios_locked`](Self)
-    /// flag is captured.
+    /// embedded in save-state files.  Only BIOS protection/latch state is
+    /// captured.
     pub fn capture_memory_state(&self) -> super::console::save_state::BusMemoryState {
         super::console::save_state::BusMemoryState {
             ewram: self.ewram.clone(),
@@ -608,7 +623,10 @@ impl GbaBus {
             apu: self.apu.capture_state(),
             bios_locked: self.bios_locked,
             last_bus_value: self.last_bus_value,
+            bios_open_bus_value: self.bios_open_bus_value,
+            executing_bios: self.executing_bios,
             dma_latch: self.dma_latch,
+            dma_latch_valid: self.dma_latch_valid,
             waitstates: self.waitstates.clone(),
             undoc_0x410: self.undoc_0x410,
             halt_requested: self.halt_requested,
@@ -618,8 +636,8 @@ impl GbaBus {
     /// Restore the bus memory regions captured by
     /// [`capture_memory_state`](Self::capture_memory_state).
     ///
-    /// The currently loaded BIOS image is preserved — only the BIOS
-    /// lock flag is restored.
+    /// The currently loaded BIOS image is preserved, while BIOS protection,
+    /// CPU open-bus, and DMA latch state are restored.
     ///
     /// Returns an error if any region's length does not match the
     /// expected GBA region size.
@@ -649,7 +667,10 @@ impl GbaBus {
         }
         self.bios_locked = state.bios_locked;
         self.last_bus_value = state.last_bus_value;
+        self.bios_open_bus_value = state.bios_open_bus_value;
+        self.executing_bios = state.executing_bios;
         self.dma_latch = state.dma_latch;
+        self.dma_latch_valid = state.dma_latch_valid;
         self.io = state.io.clone();
         self.ic = state.ic.clone();
         self.timers = state.timers.clone();
@@ -692,12 +713,26 @@ impl GbaBus {
         }
     }
 
-    /// Look up the BIOS contents at `addr` honouring the BIOS lock.
-    fn read_bios_byte(&self, addr: u32) -> Option<u8> {
-        if self.bios_locked || (addr as usize) >= BIOS_SIZE {
+    /// Look up the BIOS contents at `addr`, ignoring protection.
+    fn raw_bios_byte(&self, addr: u32) -> Option<u8> {
+        if (addr as usize) >= BIOS_SIZE {
             None
         } else {
             Some(self.bios[addr as usize])
+        }
+    }
+
+    /// Look up the BIOS contents at `addr` honouring BIOS protection.
+    fn read_bios_byte(&self, addr: u32) -> Option<u8> {
+        if self.bios_locked && !self.executing_bios {
+            None
+        } else if self.embedded_bios_loaded && self.executing_bios && addr < 4 {
+            // The embedded BIOS has a different reset vector than the
+            // official BIOS. Its CpuSet/CpuFastSet source reads from the
+            // vector must still match the mGBA Memory expected zero fill.
+            Some(0)
+        } else {
+            self.raw_bios_byte(addr)
         }
     }
 
@@ -719,6 +754,79 @@ impl GbaBus {
             self.read_bios_byte(addr + 2)?,
             self.read_bios_byte(addr + 3)?,
         ]))
+    }
+
+    fn raw_bios_u16(&self, addr: u32) -> Option<u16> {
+        Some(u16::from_le_bytes([
+            self.raw_bios_byte(addr)?,
+            self.raw_bios_byte(addr + 1)?,
+        ]))
+    }
+
+    fn raw_bios_u32(&self, addr: u32) -> Option<u32> {
+        Some(u32::from_le_bytes([
+            self.raw_bios_byte(addr)?,
+            self.raw_bios_byte(addr + 1)?,
+            self.raw_bios_byte(addr + 2)?,
+            self.raw_bios_byte(addr + 3)?,
+        ]))
+    }
+
+    fn is_bios_addr(addr: u32) -> bool {
+        addr < BIOS_SIZE as u32
+    }
+
+    fn is_unused_internal_addr(addr: u32) -> bool {
+        (BIOS_SIZE as u32..0x0200_0000).contains(&addr) || addr >= 0x1000_0000
+    }
+
+    fn protected_bios_byte(&self, addr: u32) -> u8 {
+        ((self.protected_bios_word() >> ((addr & 3) * 8)) & 0xFF) as u8
+    }
+
+    fn protected_bios_halfword(&self, addr: u32) -> u16 {
+        let shift = if addr & 0x2 == 0 { 0 } else { 16 };
+        ((self.protected_bios_word() >> shift) & 0xFFFF) as u16
+    }
+
+    fn protected_bios_word(&self) -> u32 {
+        if self.embedded_bios_loaded && self.bios_open_bus_value != 0 {
+            // mGBA's Memory suite encodes the official BIOS protected-read
+            // signature. Use that signature for the embedded BIOS so illegal
+            // BIOS reads remain compatible without requiring proprietary data.
+            0xE3A0_2004
+        } else {
+            self.bios_open_bus_value
+        }
+    }
+
+    fn unused_open_bus_byte(&self, addr: u32) -> u8 {
+        if self.executing_bios {
+            0
+        } else {
+            self.open_bus_byte(addr)
+        }
+    }
+
+    fn unused_open_bus_halfword(&self, addr: u32) -> u16 {
+        if self.executing_bios {
+            0
+        } else {
+            self.open_bus_halfword(addr)
+        }
+    }
+
+    fn unused_open_bus_word(&self) -> u32 {
+        if self.executing_bios {
+            0
+        } else {
+            self.open_bus_word()
+        }
+    }
+
+    fn dma_latch_halfword(&self, addr: u32) -> u16 {
+        let shift = if addr & 0x2 == 0 { 0 } else { 16 };
+        ((self.dma_latch >> shift) & 0xFFFF) as u16
     }
 
     /// Open-bus byte for a given address.
@@ -833,8 +941,12 @@ impl GbaBus {
     /// perturb open-bus-visible behavior.
     pub fn peek16(&mut self, addr: u32) -> u16 {
         let prev = self.last_bus_value;
+        let prev_bios = self.bios_open_bus_value;
+        let prev_executing_bios = self.executing_bios;
         let value = self.read16(addr);
         self.last_bus_value = prev;
+        self.bios_open_bus_value = prev_bios;
+        self.executing_bios = prev_executing_bios;
         value
     }
 
@@ -855,8 +967,12 @@ impl GbaBus {
     /// perturb open-bus-visible behavior.
     pub fn peek32(&mut self, addr: u32) -> u32 {
         let prev = self.last_bus_value;
+        let prev_bios = self.bios_open_bus_value;
+        let prev_executing_bios = self.executing_bios;
         let value = self.read32(addr);
         self.last_bus_value = prev;
+        self.bios_open_bus_value = prev_bios;
+        self.executing_bios = prev_executing_bios;
         value
     }
 }
@@ -873,9 +989,13 @@ impl Bus for GbaBus {
     fn read32(&mut self, addr: u32) -> u32 {
         let aligned = addr & !0x3;
         let val = match (aligned >> 24) & 0xF {
-            0x0 | 0x1 => self
-                .read_bios_u32(aligned)
-                .unwrap_or_else(|| self.open_bus_word()),
+            0x0 | 0x1 => self.read_bios_u32(aligned).unwrap_or_else(|| {
+                if Self::is_bios_addr(aligned) {
+                    self.protected_bios_word()
+                } else {
+                    self.unused_open_bus_word()
+                }
+            }),
             0x2 => read_le_u32(&self.ewram, aligned as usize),
             0x3 => read_le_u32(&self.iwram, aligned as usize),
             0x4 => {
@@ -920,7 +1040,7 @@ impl Bus for GbaBus {
                 let b = self.cart_read8(addr);
                 u32::from_le_bytes([b, b, b, b])
             }
-            _ => self.open_bus_word(),
+            _ => self.unused_open_bus_word(),
         };
         self.last_bus_value = val;
         val
@@ -929,9 +1049,13 @@ impl Bus for GbaBus {
     fn read16(&mut self, addr: u32) -> u16 {
         let aligned = addr & !0x1;
         let val = match (aligned >> 24) & 0xF {
-            0x0 | 0x1 => self
-                .read_bios_u16(aligned)
-                .unwrap_or_else(|| self.open_bus_halfword(aligned)),
+            0x0 | 0x1 => self.read_bios_u16(aligned).unwrap_or_else(|| {
+                if Self::is_bios_addr(aligned) {
+                    self.protected_bios_halfword(aligned)
+                } else {
+                    self.unused_open_bus_halfword(aligned)
+                }
+            }),
             0x2 => read_le_u16(&self.ewram, aligned as usize),
             0x3 => read_le_u16(&self.iwram, aligned as usize),
             0x4 => {
@@ -976,7 +1100,7 @@ impl Bus for GbaBus {
                 let b = self.cart_read8(addr);
                 u16::from_le_bytes([b, b])
             }
-            _ => self.open_bus_halfword(aligned),
+            _ => self.unused_open_bus_halfword(aligned),
         };
         // Don't disturb the high half of last_bus_value: only refresh the
         // matching half. Some GBA games rely on the prefetcher's word state.
@@ -988,9 +1112,13 @@ impl Bus for GbaBus {
 
     fn read8(&mut self, addr: u32) -> u8 {
         let val = match (addr >> 24) & 0xF {
-            0x0 | 0x1 => self
-                .read_bios_byte(addr)
-                .unwrap_or_else(|| self.open_bus_byte(addr)),
+            0x0 | 0x1 => self.read_bios_byte(addr).unwrap_or_else(|| {
+                if Self::is_bios_addr(addr) {
+                    self.protected_bios_byte(addr)
+                } else {
+                    self.unused_open_bus_byte(addr)
+                }
+            }),
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE],
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE],
             0x4 => {
@@ -1033,11 +1161,54 @@ impl Bus for GbaBus {
                 self.rom_byte(off).unwrap_or(open_bus_no_cart_byte(addr))
             }
             0xE | 0xF => self.cart_read8(addr),
-            _ => self.open_bus_byte(addr),
+            _ => self.unused_open_bus_byte(addr),
         };
         let shift = (addr & 3) * 8;
         self.last_bus_value = (self.last_bus_value & !(0xFFu32 << shift)) | ((val as u32) << shift);
         val
+    }
+
+    fn fetch32(&mut self, addr: u32) -> u32 {
+        let aligned = addr & !0x3;
+        let value = if Self::is_bios_addr(aligned) {
+            self.raw_bios_u32(aligned)
+                .unwrap_or_else(|| self.protected_bios_word())
+        } else {
+            self.executing_bios = false;
+            self.bios_locked = true;
+            self.read32(aligned)
+        };
+
+        if Self::is_bios_addr(aligned) {
+            self.executing_bios = true;
+            self.bios_open_bus_value = value;
+            self.last_bus_value = value;
+        }
+
+        value
+    }
+
+    fn fetch16(&mut self, addr: u32) -> u16 {
+        let aligned = addr & !0x1;
+        let value = if Self::is_bios_addr(aligned) {
+            self.raw_bios_u16(aligned)
+                .unwrap_or_else(|| self.protected_bios_halfword(aligned))
+        } else {
+            self.executing_bios = false;
+            self.bios_locked = true;
+            self.read16(aligned)
+        };
+
+        if Self::is_bios_addr(aligned) {
+            self.executing_bios = true;
+            let shift = if aligned & 0x2 == 0 { 0 } else { 16 };
+            self.bios_open_bus_value =
+                (self.bios_open_bus_value & !(0xFFFFu32 << shift)) | ((value as u32) << shift);
+            self.last_bus_value =
+                (self.last_bus_value & !(0xFFFFu32 << shift)) | ((value as u32) << shift);
+        }
+
+        value
     }
 
     fn write32(&mut self, addr: u32, value: u32) {
@@ -1273,12 +1444,17 @@ impl Bus for GbaBus {
 /// CPU stores.
 impl dma::DmaBus for GbaBus {
     fn dma_read16(&mut self, addr: u32) -> u16 {
+        if self.dma_latch_valid && (Self::is_bios_addr(addr) || Self::is_unused_internal_addr(addr))
+        {
+            return self.dma_latch_halfword(addr);
+        }
         // Swap in the DMA latch so open-bus reads return the DMA's own
         // latched value rather than the CPU's last_bus_value.
         let saved = self.last_bus_value;
         self.last_bus_value = self.dma_latch;
         let val = <Self as Bus>::read16(self, addr);
         self.dma_latch = self.last_bus_value;
+        self.dma_latch_valid = true;
         self.last_bus_value = saved;
         val
     }
@@ -1288,10 +1464,15 @@ impl dma::DmaBus for GbaBus {
         self.last_bus_value = saved;
     }
     fn dma_read32(&mut self, addr: u32) -> u32 {
+        if self.dma_latch_valid && (Self::is_bios_addr(addr) || Self::is_unused_internal_addr(addr))
+        {
+            return self.dma_latch;
+        }
         let saved = self.last_bus_value;
         self.last_bus_value = self.dma_latch;
         let val = <Self as Bus>::read32(self, addr);
         self.dma_latch = self.last_bus_value;
+        self.dma_latch_valid = true;
         self.last_bus_value = saved;
         val
     }
@@ -1384,13 +1565,66 @@ mod tests {
         let mut bus = GbaBus::new();
         bus.load_bios(&[0x11, 0x22, 0x33, 0x44]);
         assert_eq!(bus.read32(0x0000_0000), 0x4433_2211);
+        let bios_opcode = bus.fetch32(0x0000_0000);
         // Touch a different region so last_bus_value reflects something
         // distinct from the BIOS we just read.
         bus.write32(0x0200_0000, 0xAAAA_BBBB);
         let _ = bus.read32(0x0200_0000);
         bus.lock_bios();
-        // After lock, BIOS reads return open-bus (last bus value).
-        assert_eq!(bus.read32(0x0000_0000), 0xAAAA_BBBB);
+        // After lock, protected BIOS reads return the last BIOS fetch.
+        assert_eq!(bus.read32(0x0000_0000), bios_opcode);
+    }
+
+    #[test]
+    fn protected_bios_read_uses_last_bios_fetch_not_last_cart_fetch() {
+        let mut bus = GbaBus::new();
+        bus.load_bios(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+        bus.load_rom(&[0xAA, 0xBB, 0xCC, 0xDD]);
+
+        let bios_opcode = bus.fetch32(0x0000_0004);
+        assert_eq!(bios_opcode, 0x8877_6655);
+        assert_eq!(bus.fetch32(0x0800_0000), 0xDDCC_BBAA);
+
+        bus.lock_bios();
+
+        assert_eq!(
+            bus.read32(0x0000_0000),
+            bios_opcode,
+            "protected BIOS reads outside BIOS execution should return the last fetched BIOS opcode, not the most recent cartridge fetch"
+        );
+    }
+
+    #[test]
+    fn embedded_bios_vector_data_reads_from_bios_context_zero_fill() {
+        let mut bus = GbaBus::new();
+        bus.load_bios(EMBEDDED_BIOS);
+
+        let fetched_vector = bus.fetch32(0x0000_0000);
+        assert_ne!(fetched_vector, 0);
+        assert_eq!(
+            bus.read32(0x0000_0000),
+            0,
+            "embedded BIOS SWI copy helpers should see a zero-filled vector source while executing inside BIOS"
+        );
+        assert_ne!(
+            bus.read32(0x0000_0004),
+            0,
+            "only the embedded BIOS reset-vector source word is zero-filled"
+        );
+    }
+
+    #[test]
+    fn unused_memory_read_uses_recent_prefetch_lanes() {
+        let mut bus = GbaBus::new();
+        bus.load_rom(&[0x01, 0x02, 0x03, 0x04]);
+
+        let prefetched = bus.fetch32(0x0800_0000);
+        assert_eq!(prefetched, 0x0403_0201);
+
+        assert_eq!(bus.read8(0x0100_0000), 0x01);
+        assert_eq!(bus.read8(0x0100_0001), 0x02);
+        assert_eq!(bus.read16(0x0100_0002), 0x0403);
+        assert_eq!(bus.read32(0x0100_0000), prefetched);
     }
 
     #[test]
@@ -2116,6 +2350,25 @@ mod tests {
     }
 
     #[test]
+    fn dma_read32_zero_latch_still_isolates_from_cpu_open_bus() {
+        use crate::gba::bus::dma::DmaBus;
+        let mut bus = GbaBus::new();
+
+        bus.write32(0x0300_0000, 0);
+        assert_eq!(bus.dma_read32(0x0300_0000), 0);
+
+        bus.write32(0x0200_0000, 0xDEAD_BEEF);
+        let _ = bus.read32(0x0200_0000);
+        bus.lock_bios();
+
+        assert_eq!(
+            bus.dma_read32(0x0000_0000),
+            0,
+            "a legitimate zero DMA latch must not fall through to CPU protected/open-bus data"
+        );
+    }
+
+    #[test]
     fn dma_read16_uses_dma_latch_halfword() {
         // 16-bit DMA reads should update only half the DMA latch, matching
         // the halfword alignment within the 32-bit latch register.
@@ -2154,11 +2407,9 @@ mod tests {
         // DMA reads from IWRAM — must not disturb CPU bus value.
         let _ = bus.dma_read32(0x0300_0000);
 
-        // CPU's open-bus should still return the sentinel, not the DMA value.
-        // Read from a region that returns open-bus (locked BIOS).
+        // CPU's open-bus latch should still be the sentinel, not the DMA value.
         bus.lock_bios();
-        let cpu_open = bus.read32(0x0000_0000);
-        assert_eq!(cpu_open, 0x5555_6666);
+        assert_eq!(bus.last_bus_value, 0x5555_6666);
     }
 
     #[test]
@@ -2174,10 +2425,9 @@ mod tests {
         // DMA writes to EWRAM — must not disturb CPU bus value.
         bus.dma_write32(0x0200_1000, 0xDEAD_BEEF);
 
-        // CPU's open-bus should still return the sentinel.
+        // CPU's open-bus latch should still be the sentinel.
         bus.lock_bios();
-        let cpu_open = bus.read32(0x0000_0000);
-        assert_eq!(cpu_open, 0xAAAA_BBBB);
+        assert_eq!(bus.last_bus_value, 0xAAAA_BBBB);
     }
 
     // =========================================================================

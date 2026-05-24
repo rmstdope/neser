@@ -35,8 +35,8 @@ pub const GBA_SAVESTATE_VERSION: u32 = 5;
 /// The BIOS image is intentionally **not** serialized: the GBA BIOS is
 /// copyrighted firmware that the user supplies separately, and embedding
 /// it in save-state files would both bloat them and risk leaking
-/// firmware bytes when states are shared.  Only the [`bios_locked`]
-/// flag is captured; the BIOS already loaded into the running emulator
+/// firmware bytes when states are shared.  Only BIOS protection/latch
+/// state is captured; the BIOS already loaded into the running emulator
 /// is preserved across a load.
 ///
 /// [`bios_locked`]: Self::bios_locked
@@ -74,9 +74,18 @@ pub struct BusMemoryState {
     pub bios_locked: bool,
     /// Last value driven on the bus (used to model open-bus reads).
     pub last_bus_value: u32,
+    /// Last BIOS opcode fetched by the CPU prefetcher.
+    #[serde(default)]
+    pub bios_open_bus_value: u32,
+    /// Whether the CPU execution context is currently in BIOS.
+    #[serde(default)]
+    pub executing_bios: bool,
     /// DMA internal data latch (separate from CPU open-bus).
     #[serde(default)]
     pub dma_latch: u32,
+    /// Whether the DMA latch has been initialized by a DMA read.
+    #[serde(default)]
+    pub dma_latch_valid: bool,
     /// Dynamic wait-state timing derived from WAITCNT.
     pub waitstates: Waitstates,
     /// Undocumented BIOS-written register at 0x04000410.
