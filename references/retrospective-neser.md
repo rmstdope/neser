@@ -254,6 +254,42 @@ Pending — navigator unavailable during retrospective collection.
 
 ---
 
+## 2026-05-24 — PR #2640: Fix mGBA Memory BIOS open-bus behavior
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2640
+**Linked issues:** none
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `test-driven-development` | Structured the work around TDD phase gates until navigator unavailable. |
+| Skill | `gba-hardware-research` | Grounded the BIOS open-bus behavior investigation in GBA hardware behavior. |
+| Skill | `bug-hunter` | Supported focused diagnosis and regression-oriented validation. |
+| Skill | `rust-developer` | Guided Rust implementation and validation work. |
+| Skill | `rust-code-refactoring` | Supported cleanup and refactor review after the functional fix. |
+| Agent | `code-review` | Caught the expensive embedded BIOS slice comparison and unclear vector special case during refactor. |
+| Agent | `Iteration Retrospective Gatherer` | Produced this retrospective content after PR creation; manual append was required. |
+
+### What went well
+
+- The TDD phase gates were followed through the navigator-guided portion of the work, preserving a disciplined RED/GREEN/REFACTOR structure before autonomous approval mode became necessary.
+- The `code-review` agent added concrete value during refactor by identifying an expensive embedded BIOS slice comparison and an unclear vector special case, producing actionable refinement targets rather than generic feedback.
+- Local pre-merge check failure from disk exhaustion was recovered without abandoning validation: `cargo clean`, `CARGO_INCREMENTAL=0`, and running Rust-heavy checks individually allowed checks to complete under constrained local resources.
+
+### What to improve
+
+- When navigator availability ends mid-workflow, explicitly record the transition into autonomous approval mode and the current TDD phase before continuing, so the retrospective does not have to reconstruct where the phase gate changed.
+- Pre-merge validation should account for local disk pressure earlier on Rust-heavy workflows; when incremental artifacts are likely to be large, start with `CARGO_INCREMENTAL=0` or staged check execution instead of discovering the issue during final checks.
+- PR creation first failed because the stacked base branch had been deleted. Before opening future PRs, verify the intended base branch still exists and rebase onto `origin/main` proactively when the stacked dependency has already landed or disappeared.
+
+### Navigator feedback
+
+No additional feedback — navigator unavailable during retrospective collection.
+
+---
+
 ## 2026-05-24 — PR #2623: Fix daid CGB speed-switch LY/STAT timing
 
 **Repository:** rmstdope/neser
