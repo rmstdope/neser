@@ -117,11 +117,11 @@ mod tests {
         // When: the buffer is filled
         buf.fill_rgb(0xAA, 0xBB, 0xCC);
 
-        // Then: every sampled pixel has the fill colour
-        assert_eq!(buf.get_pixel(0, 0), (0xAA, 0xBB, 0xCC));
-        assert_eq!(
-            buf.get_pixel(ScreenBuffer::WIDTH - 1, ScreenBuffer::HEIGHT - 1),
-            (0xAA, 0xBB, 0xCC)
+        // Then: every pixel has the fill colour
+        assert!(
+            buf.snapshot()
+                .chunks_exact(ScreenBuffer::BYTES_PER_PIXEL)
+                .all(|pixel| pixel == [0xAA, 0xBB, 0xCC])
         );
     }
 

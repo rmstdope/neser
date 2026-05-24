@@ -351,10 +351,6 @@ impl Ppu {
     }
 
     fn render_pixel_fifo_dot(&mut self) {
-        if self.stop_display_mode != StopDisplayMode::Inactive {
-            return;
-        }
-
         let completed_window_activations = self.pixel_fifo.tick(
             self.timing.dot(),
             &self.vram,
@@ -368,6 +364,7 @@ impl Ppu {
             self.opri,
             self.dmg_compat,
             &mut self.screen_buffer,
+            self.stop_display_mode != StopDisplayMode::Inactive,
         );
         if let Some(window_activations) = completed_window_activations {
             self.window_line = self.window_line.wrapping_add(window_activations);
@@ -1462,6 +1459,23 @@ mod tests {
 
         // Then: frame cadence continues, and normal rendering does not overwrite the blank output.
         assert!(ppu.is_frame_ready());
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (0xFF, 0xFF, 0xFF));
+    }
+
+    #[test]
+    fn test_stop_display_suppresses_pixels_but_keeps_fifo_advancing() {
+        // Given: a STOP display override active before pixel transfer begins.
+        let mut ppu = Ppu::new();
+        ppu.enter_stop_display_mode(StopDisplayMode::SolidWhite);
+        tick_until_pixel_transfer_starts(&mut ppu);
+        assert!(ppu.pixel_fifo.is_active());
+
+        // When: the scanline advances beyond the visible FIFO output period.
+        tick_dots(&mut ppu, 200);
+
+        // Then: the FIFO completed normally, but the STOP blank output was not overwritten.
+        assert_eq!(ppu.timing.mode(), PpuMode::HBlank);
+        assert!(!ppu.pixel_fifo.is_active());
         assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (0xFF, 0xFF, 0xFF));
     }
 

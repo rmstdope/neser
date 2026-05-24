@@ -1029,6 +1029,7 @@ impl PixelFifoRenderer {
         opri_dmg_mode: bool,
         dmg_compat: bool,
         screen_buffer: &mut ScreenBuffer,
+        suppress_output: bool,
     ) -> Option<u8> {
         if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
             return None;
@@ -1101,32 +1102,34 @@ impl PixelFifoRenderer {
         let x = u32::from(self.next_x);
         self.update_bg_fetch_scx();
         self.update_bg_fetch_scy();
-        if cgb_mode && !dmg_compat {
-            self.render_cgb_pixel(
-                x,
-                vram,
-                vram_bank1,
-                oam,
-                registers,
-                bg_palette_ram,
-                obj_palette_ram,
-                window_line,
-                opri_dmg_mode,
-                screen_buffer,
-            );
-        } else if cgb_mode {
-            self.render_cgb_dmg_compat_pixel(
-                x,
-                vram,
-                oam,
-                registers,
-                bg_palette_ram,
-                obj_palette_ram,
-                window_line,
-                screen_buffer,
-            );
-        } else {
-            self.render_dmg_pixel(x, vram, oam, registers, window_line, screen_buffer);
+        if !suppress_output {
+            if cgb_mode && !dmg_compat {
+                self.render_cgb_pixel(
+                    x,
+                    vram,
+                    vram_bank1,
+                    oam,
+                    registers,
+                    bg_palette_ram,
+                    obj_palette_ram,
+                    window_line,
+                    opri_dmg_mode,
+                    screen_buffer,
+                );
+            } else if cgb_mode {
+                self.render_cgb_dmg_compat_pixel(
+                    x,
+                    vram,
+                    oam,
+                    registers,
+                    bg_palette_ram,
+                    obj_palette_ram,
+                    window_line,
+                    screen_buffer,
+                );
+            } else {
+                self.render_dmg_pixel(x, vram, oam, registers, window_line, screen_buffer);
+            }
         }
         self.clear_consumed_bgp_edge();
         self.clear_consumed_obp_edges();
@@ -4080,6 +4083,7 @@ mod tests {
             false,
             dmg_compat,
             screen_buffer,
+            false,
         );
     }
 
@@ -4113,6 +4117,7 @@ mod tests {
                 false,
                 false,
                 &mut screen_buffer,
+                false,
             ) {
                 activation_count = Some(count);
                 break;
@@ -7061,6 +7066,7 @@ mod tests {
                 false,
                 true,
                 &mut screen_buffer,
+                false,
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=8");
@@ -7088,6 +7094,7 @@ mod tests {
                 false,
                 true,
                 &mut screen_buffer,
+                false,
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=9");
@@ -7136,6 +7143,7 @@ mod tests {
                 false,
                 true,
                 &mut screen_buffer,
+                false,
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=8");
@@ -7160,6 +7168,7 @@ mod tests {
                 false,
                 true,
                 &mut screen_buffer,
+                false,
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=9");
@@ -7209,6 +7218,7 @@ mod tests {
                 false,
                 true,
                 &mut screen_buffer,
+                false,
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=8");
@@ -7234,6 +7244,7 @@ mod tests {
                 false,
                 true,
                 &mut screen_buffer,
+                false,
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=9");
