@@ -4,11 +4,12 @@
 //! header, runs the save-type heuristic, and returns a [`GbaCartridge`]
 //! bundling the ROM bytes with the appropriate save backend.
 
-use crate::gba::cartridge::eeprom::Eeprom;
-use crate::gba::cartridge::flash::Flash;
+use crate::gba::cartridge::eeprom::{Eeprom, EepromState};
+use crate::gba::cartridge::flash::{Flash, FlashStateSnapshot};
 use crate::gba::cartridge::header::{GbaHeader, HEADER_SIZE, HeaderError, parse_header};
 use crate::gba::cartridge::save_type::{SaveType, detect_save_type};
-use crate::gba::cartridge::sram::Sram;
+use crate::gba::cartridge::sram::{Sram, SramState};
+use serde::{Deserialize, Serialize};
 
 /// Maximum cartridge ROM size addressable on the GBA (32 MB).
 pub const ROM_MAX_SIZE: usize = 32 * 1024 * 1024;
@@ -45,6 +46,16 @@ pub enum SaveBackend {
     Flash(Flash),
 }
 
+/// Serializable cartridge save-backend snapshot for GBA save states.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum SaveBackendState {
+    #[default]
+    None,
+    Sram(SramState),
+    Eeprom(EepromState),
+    Flash(FlashStateSnapshot),
+}
+
 impl SaveBackend {
     /// Build a fresh save backend for the given save type.
     fn for_save_type(save_type: SaveType) -> Self {
@@ -75,6 +86,57 @@ impl SaveBackend {
             SaveBackend::Sram(s) => s.restore(data),
             SaveBackend::Eeprom(e) => e.restore(data),
             SaveBackend::Flash(f) => f.restore(data),
+        }
+    }
+
+    /// Capture save-backend state for save-state serialization.
+    pub fn capture_state(&self) -> SaveBackendState {
+        match self {
+            SaveBackend::None => SaveBackendState::None,
+            SaveBackend::Sram(sram) => SaveBackendState::Sram(sram.capture_state()),
+            SaveBackend::Eeprom(eeprom) => SaveBackendState::Eeprom(eeprom.capture_state()),
+            SaveBackend::Flash(flash) => SaveBackendState::Flash(flash.capture_state()),
+        }
+    }
+
+    /// Restore save-backend state from a save-state snapshot.
+    pub fn restore_state(&mut self, state: &SaveBackendState) -> Result<(), String> {
+        match (self, state) {
+            (SaveBackend::None, SaveBackendState::None) => Ok(()),
+            (SaveBackend::Sram(sram), SaveBackendState::Sram(sram_state)) => {
+                sram.restore_state(sram_state)
+            }
+            (SaveBackend::Eeprom(eeprom), SaveBackendState::Eeprom(eeprom_state)) => {
+                eeprom.restore_state(eeprom_state)
+            }
+            (SaveBackend::Flash(flash), SaveBackendState::Flash(flash_state)) => {
+                flash.restore_state(flash_state)
+            }
+            (backend, state) => Err(format!(
+                "cartridge save-backend type mismatch: live={}, state={}",
+                backend.kind_name(),
+                state.kind_name()
+            )),
+        }
+    }
+
+    fn kind_name(&self) -> &'static str {
+        match self {
+            SaveBackend::None => "none",
+            SaveBackend::Sram(_) => "sram",
+            SaveBackend::Eeprom(_) => "eeprom",
+            SaveBackend::Flash(_) => "flash",
+        }
+    }
+}
+
+impl SaveBackendState {
+    fn kind_name(&self) -> &'static str {
+        match self {
+            SaveBackendState::None => "none",
+            SaveBackendState::Sram(_) => "sram",
+            SaveBackendState::Eeprom(_) => "eeprom",
+            SaveBackendState::Flash(_) => "flash",
         }
     }
 }
@@ -262,5 +324,36 @@ mod tests {
         } else {
             panic!("expected SRAM backend");
         }
+    }
+
+    #[test]
+    fn save_backend_state_restores_sram_variant() {
+        let mut backend = SaveBackend::Sram(Sram::new());
+        if let SaveBackend::Sram(sram) = &mut backend {
+            sram.write(0x42, 0xA5);
+        }
+
+        let state = backend.capture_state();
+        if let SaveBackend::Sram(sram) = &mut backend {
+            sram.write(0x42, 0x00);
+        }
+        backend
+            .restore_state(&state)
+            .expect("restore backend state");
+
+        assert_eq!(backend.snapshot()[0x42], 0xA5);
+    }
+
+    #[test]
+    fn save_backend_state_rejects_mismatched_variant_without_mutating() {
+        let mut backend = SaveBackend::Sram(Sram::new());
+        if let SaveBackend::Sram(sram) = &mut backend {
+            sram.write(0x42, 0xA5);
+        }
+
+        let result = backend.restore_state(&SaveBackendState::None);
+
+        assert!(result.is_err());
+        assert_eq!(backend.snapshot()[0x42], 0xA5);
     }
 }

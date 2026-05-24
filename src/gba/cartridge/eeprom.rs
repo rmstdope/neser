@@ -23,6 +23,7 @@
 //! responsible for actually wiring up the address comparison.
 
 use crate::gba::cartridge::save_type::SaveType;
+use serde::{Deserialize, Serialize};
 
 /// Address width (number of bits) for the 512 B variant.
 const ADDR_BITS_512: u32 = 6;
@@ -37,7 +38,7 @@ const BLOCK_BITS: u32 = 64;
 const BLOCK_BYTES: usize = 8;
 
 /// EEPROM I²C state machine phases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Phase {
     /// No active transaction.
     Idle,
@@ -69,6 +70,16 @@ pub struct Eeprom {
     /// `AwaitDirection`, etc.
     shift_in: u64,
     /// Buffer for incoming write data bits before commit.
+    write_shift: u64,
+}
+
+/// Serializable EEPROM snapshot for GBA save states.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EepromState {
+    data: Vec<u8>,
+    addr_bits: u32,
+    phase: Phase,
+    shift_in: u64,
     write_shift: u64,
 }
 
@@ -230,6 +241,49 @@ impl Eeprom {
         &self.data
     }
 
+    /// Capture EEPROM state for save-state serialization.
+    pub fn capture_state(&self) -> EepromState {
+        EepromState {
+            data: self.data.clone(),
+            addr_bits: self.addr_bits,
+            phase: self.phase,
+            shift_in: self.shift_in,
+            write_shift: self.write_shift,
+        }
+    }
+
+    /// Restore EEPROM state from a save-state snapshot.
+    pub fn restore_state(&mut self, state: &EepromState) -> Result<(), String> {
+        let expected_len = match state.addr_bits {
+            ADDR_BITS_512 => SaveType::Eeprom512.size_bytes(),
+            ADDR_BITS_8K => SaveType::Eeprom8K.size_bytes(),
+            other => {
+                return Err(format!(
+                    "invalid EEPROM address width in save state: {other}"
+                ));
+            }
+        };
+        if state.data.len() != expected_len {
+            return Err(format!(
+                "EEPROM save-state length mismatch: expected {expected_len}, got {}",
+                state.data.len()
+            ));
+        }
+        if self.data.len() != state.data.len() {
+            return Err(format!(
+                "EEPROM save-state variant mismatch: live={} bytes, state={} bytes",
+                self.data.len(),
+                state.data.len()
+            ));
+        }
+        self.data.clone_from(&state.data);
+        self.addr_bits = state.addr_bits;
+        self.phase = state.phase;
+        self.shift_in = state.shift_in;
+        self.write_shift = state.write_shift;
+        Ok(())
+    }
+
     /// Restore EEPROM contents from a saved buffer. Bytes past the chip
     /// capacity are ignored.
     pub fn restore(&mut self, data: &[u8]) {
@@ -359,5 +413,86 @@ mod tests {
         perform_write(&mut e8k, 1023, 0x4444_4444_4444_4444);
         assert_eq!(perform_read(&mut e8k, 0), 0x3333_3333_3333_3333);
         assert_eq!(perform_read(&mut e8k, 1023), 0x4444_4444_4444_4444);
+    }
+
+    #[test]
+    fn save_state_restores_mid_write_transaction() {
+        let mut eeprom = Eeprom::new(SaveType::Eeprom512);
+        let addr_bits = eeprom.addr_bits();
+        send_bits(&mut eeprom, 0b10, 2);
+        send_bits(&mut eeprom, 5, addr_bits);
+        send_bits(&mut eeprom, 0xCAFE_BABE, 32);
+
+        let state = eeprom.capture_state();
+        let mut restored = Eeprom::new(SaveType::Eeprom512);
+        restored
+            .restore_state(&state)
+            .expect("restore EEPROM state");
+
+        send_bits(&mut restored, 0xDEAD_BEEF, 32);
+        restored.write_bit(0);
+
+        assert_eq!(perform_read(&mut restored, 5), 0xCAFE_BABE_DEAD_BEEF);
+    }
+
+    #[test]
+    fn save_state_restores_mid_read_transaction() {
+        let mut eeprom = Eeprom::new(SaveType::Eeprom512);
+        perform_write(&mut eeprom, 9, 0x0123_4567_89AB_CDEF);
+        let addr_bits = eeprom.addr_bits();
+        send_bits(&mut eeprom, 0b11, 2);
+        send_bits(&mut eeprom, 9, addr_bits);
+        for _ in 0..4 {
+            assert_eq!(eeprom.read_bit(), 0);
+        }
+        let mut prefix = 0u64;
+        for _ in 0..16 {
+            prefix = (prefix << 1) | u64::from(eeprom.read_bit());
+        }
+
+        let state = eeprom.capture_state();
+        let mut restored = Eeprom::new(SaveType::Eeprom512);
+        restored
+            .restore_state(&state)
+            .expect("restore EEPROM state");
+        let mut value = prefix;
+        for _ in 0..48 {
+            value = (value << 1) | u64::from(restored.read_bit());
+        }
+
+        assert_eq!(value, 0x0123_4567_89AB_CDEF);
+    }
+
+    #[test]
+    fn save_state_roundtrips_through_json() {
+        let mut eeprom = Eeprom::new(SaveType::Eeprom8K);
+        perform_write(&mut eeprom, 0x123, 0x55AA_0123_CDEF_9876);
+
+        let bytes = serde_json::to_vec(&eeprom.capture_state()).expect("serialize EEPROM state");
+        let decoded: EepromState =
+            serde_json::from_slice(&bytes).expect("deserialize EEPROM state");
+        let mut restored = Eeprom::new(SaveType::Eeprom8K);
+        restored
+            .restore_state(&decoded)
+            .expect("restore EEPROM state");
+
+        assert_eq!(perform_read(&mut restored, 0x123), 0x55AA_0123_CDEF_9876);
+    }
+
+    #[test]
+    fn save_state_rejects_eeprom_variant_mismatch_without_mutating() {
+        let mut e512 = Eeprom::new(SaveType::Eeprom512);
+        perform_write(&mut e512, 7, 0xDEAD_BEEF_C0DE_F00D);
+        let state = e512.capture_state();
+
+        let mut e8k = Eeprom::new(SaveType::Eeprom8K);
+        perform_write(&mut e8k, 7, 0x1111_2222_3333_4444);
+
+        let result = e8k.restore_state(&state);
+
+        assert!(result.is_err());
+        assert_eq!(e8k.size(), SaveType::Eeprom8K.size_bytes());
+        assert_eq!(e8k.addr_bits(), ADDR_BITS_8K);
+        assert_eq!(perform_read(&mut e8k, 7), 0x1111_2222_3333_4444);
     }
 }

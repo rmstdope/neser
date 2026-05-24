@@ -6,12 +6,10 @@
 //! [`GbaSaveState::from_bytes`].
 //!
 //! This is the initial scaffold for the GBA save-state pipeline.  It
-//! currently captures the CPU plus bus memory regions (BIOS, EWRAM, IWRAM,
-//! PRAM, VRAM, OAM, SRAM), bus-owned peripherals, PPU state, APU state, and a
-//! few simple bus scalars. Cartridge save backend state will be added as it is
-//! wired into the [`Gba`](super::gba::Gba) console wrapper. Because every
-//! save-state carries a `version` field, breaking changes to the captured shape
-//! will simply bump
+//! captures the CPU plus bus memory regions (EWRAM, IWRAM, PRAM, VRAM, OAM,
+//! SRAM mirror), bus-owned peripherals, PPU state, APU state, cartridge save
+//! backend state, and a few simple bus scalars. Because every save-state
+//! carries a `version` field, breaking changes to the captured shape will bump
 //! [`GBA_SAVESTATE_VERSION`] and the loader will reject older states with
 //! a clear [`GbaSaveStateError::IncompatibleVersion`] error.
 
@@ -21,13 +19,14 @@ use crate::gba::apu::ApuState;
 use crate::gba::bus::{
     DmaController, InterruptController, IoRegisters, Timers, Waitstates, sio::Sio,
 };
+use crate::gba::cartridge::SaveBackendState;
 use crate::gba::cpu::Arm7tdmiState;
 use crate::gba::input::Keypad;
 use crate::gba::ppu::PpuState;
 
 /// Current save-state format version for Game Boy Advance.
 /// Increment this when making breaking changes to the state format.
-pub const GBA_SAVESTATE_VERSION: u32 = 5;
+pub const GBA_SAVESTATE_VERSION: u32 = 6;
 
 /// Serializable snapshot of the [`GbaBus`](crate::gba::GbaBus) memory
 /// regions and a small number of associated scalar fields.
@@ -38,8 +37,6 @@ pub const GBA_SAVESTATE_VERSION: u32 = 5;
 /// firmware bytes when states are shared.  Only BIOS protection/latch
 /// state is captured; the BIOS already loaded into the running emulator
 /// is preserved across a load.
-///
-/// [`bios_locked`]: Self::bios_locked
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BusMemoryState {
     /// 256 KB on-board work RAM (EWRAM).
@@ -54,6 +51,10 @@ pub struct BusMemoryState {
     pub oam: Vec<u8>,
     /// 64 KB cartridge SRAM region (battery-backed RAM).
     pub sram: Vec<u8>,
+    /// Cartridge save backend, including SRAM/EEPROM/Flash data and volatile
+    /// EEPROM/Flash command state.
+    #[serde(default)]
+    pub cart_save: SaveBackendState,
     /// Raw I/O backing store for registers not yet owned by a subsystem.
     pub io: IoRegisters,
     /// Interrupt controller (`IE`, `IF`, `IME`).
@@ -218,8 +219,8 @@ mod tests {
     // ── Version checks ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_gba_savestate_version_is_5() {
-        assert_eq!(GBA_SAVESTATE_VERSION, 5);
+    fn test_gba_savestate_version_is_6() {
+        assert_eq!(GBA_SAVESTATE_VERSION, 6);
     }
 
     // ── Round-trip ─────────────────────────────────────────────────────────

@@ -5,6 +5,38 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-05-24 - #2632 / PR #2639: Capture and restore GBA APU state
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2639
+**Linked issues:** #2625, #2632
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `test-driven-development` | Guided RED -> GREEN -> REFACTOR -> COMMIT workflow for the APU save-state slice. |
+| Skill | `rust-developer` | Guided Rust serde derives, snapshot design, and validation. |
+| Skill | `self-learning-skills` | Captured this retrospective after merge. |
+| Agent | `code-review` | Reviewed changed APU/save-state files before commit. |
+
+### What went well
+
+- The tests covered both observable register/FIFO/wave restore and private timing accumulators, including preserving the frontend's current runtime output sample rate.
+- The implementation reused the established explicit state-object pattern from CPU and PPU save-state work.
+- A local wasm disk-space/incremental-build issue was handled safely by rerunning wasm with `CARGO_INCREMENTAL=0`, matching the same behavior without deleting unrelated artifacts.
+
+### What to improve
+
+- The RED test initially expected a readable CH1 length-enable bit after a trigger that did not set length enable; future APU tests should double-check write-only/readable register masks before locking assertions.
+- A concurrent PR opened against overlapping GBA save-state files while starting the next sub-issue. Future sub-issue starts should treat open-overlap PRs as a hard branching checkpoint before creating the next branch.
+
+### Navigator feedback
+
+Navigator unavailable; feedback pending.
+
+---
+
 ## 2026-05-24 - #2631 / PR #2638: Capture and restore GBA PPU state
 
 **Repository:** rmstdope/neser
