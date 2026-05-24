@@ -19,6 +19,7 @@ use super::bus::Bus;
 use super::registers::{CpuMode, FLAG_F, FLAG_I, FLAG_T, Registers};
 use super::thumb;
 use crate::gba::bus::WidthClass;
+use serde::{Deserialize, Serialize};
 
 /// Address of each ARM exception vector in the BIOS region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +64,21 @@ pub struct Arm7tdmi {
     /// Debug counter: number of times dispatch_irq has been called.
     #[cfg(test)]
     irq_dispatch_count: u64,
+}
+
+/// Serializable ARM7TDMI CPU snapshot for GBA save states.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Arm7tdmiState {
+    pub regs: Registers,
+    pub cycles: u64,
+    pub irq_pending: bool,
+    pub fiq_pending: bool,
+    pub halt_exit_pending: bool,
+    pub prefetch_valid: bool,
+    pub prefetch_arm: [u32; 3],
+    pub prefetch_thumb: [u16; 3],
+    pub halted: bool,
+    pub pending_data_abort_exec_pc: Option<u32>,
 }
 
 impl Default for Arm7tdmi {
@@ -113,6 +129,36 @@ impl Arm7tdmi {
     /// Whether the CPU is currently executing in Thumb state.
     pub fn thumb(&self) -> bool {
         self.regs.thumb()
+    }
+
+    /// Capture CPU state for save-state serialization.
+    pub fn capture_state(&self) -> Arm7tdmiState {
+        Arm7tdmiState {
+            regs: self.regs.clone(),
+            cycles: self.cycles,
+            irq_pending: self.irq_pending,
+            fiq_pending: self.fiq_pending,
+            halt_exit_pending: self.halt_exit_pending,
+            prefetch_valid: self.prefetch_valid,
+            prefetch_arm: self.prefetch_arm,
+            prefetch_thumb: self.prefetch_thumb,
+            halted: self.halted,
+            pending_data_abort_exec_pc: self.pending_data_abort_exec_pc,
+        }
+    }
+
+    /// Restore CPU state from a save-state snapshot.
+    pub fn restore_state(&mut self, state: &Arm7tdmiState) {
+        self.regs = state.regs.clone();
+        self.cycles = state.cycles;
+        self.irq_pending = state.irq_pending;
+        self.fiq_pending = state.fiq_pending;
+        self.halt_exit_pending = state.halt_exit_pending;
+        self.prefetch_valid = state.prefetch_valid;
+        self.prefetch_arm = state.prefetch_arm;
+        self.prefetch_thumb = state.prefetch_thumb;
+        self.halted = state.halted;
+        self.pending_data_abort_exec_pc = state.pending_data_abort_exec_pc;
     }
 
     /// Raise an external IRQ. Will be dispatched on the next `step` if not
@@ -453,6 +499,100 @@ mod tests {
         );
         assert!(!cpu.regs.thumb(), "undefined exception enters ARM state");
         assert_eq!(cpu.regs.r[15], ExceptionVector::Undefined as u32);
+    }
+
+    #[test]
+    fn save_state_restores_register_banks_and_spsr_values() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.r[0] = 0x1111_0000;
+        cpu.regs.r[8] = 0x1111_0008;
+        cpu.regs.r[13] = 0x1111_000D;
+        cpu.regs.r[14] = 0x1111_000E;
+        cpu.regs.r[15] = 0x1111_000F;
+
+        cpu.regs.switch_mode(CpuMode::Fiq);
+        cpu.regs.r[8] = 0xF100_0008;
+        cpu.regs.r[13] = 0xF100_000D;
+        cpu.regs.r[14] = 0xF100_000E;
+        cpu.regs.set_spsr(0xF100_00F0);
+
+        cpu.regs.switch_mode(CpuMode::Irq);
+        cpu.regs.r[13] = 0x1200_000D;
+        cpu.regs.r[14] = 0x1200_000E;
+        cpu.regs.set_spsr(0x1200_00F0);
+
+        let saved = cpu.capture_state();
+
+        cpu = Arm7tdmi::new();
+        cpu.restore_state(&saved);
+
+        cpu.regs.switch_mode(CpuMode::User);
+        assert_eq!(cpu.regs.r[0], 0x1111_0000);
+        assert_eq!(cpu.regs.r[8], 0x1111_0008);
+        assert_eq!(cpu.regs.r[13], 0x1111_000D);
+        assert_eq!(cpu.regs.r[14], 0x1111_000E);
+        assert_eq!(cpu.regs.r[15], 0x1111_000F);
+
+        cpu.regs.switch_mode(CpuMode::Fiq);
+        assert_eq!(cpu.regs.r[8], 0xF100_0008);
+        assert_eq!(cpu.regs.r[13], 0xF100_000D);
+        assert_eq!(cpu.regs.r[14], 0xF100_000E);
+        assert_eq!(cpu.regs.spsr(), 0xF100_00F0);
+
+        cpu.regs.switch_mode(CpuMode::Irq);
+        assert_eq!(cpu.regs.r[13], 0x1200_000D);
+        assert_eq!(cpu.regs.r[14], 0x1200_000E);
+        assert_eq!(cpu.regs.spsr(), 0x1200_00F0);
+    }
+
+    #[test]
+    fn save_state_restores_private_execution_state() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.cycles = 0x1234_5678_9ABC_DEF0;
+        cpu.irq_pending = true;
+        cpu.fiq_pending = true;
+        cpu.halt_exit_pending = true;
+        cpu.prefetch_valid = true;
+        cpu.prefetch_arm = [0x1111_1111, 0x2222_2222, 0x3333_3333];
+        cpu.prefetch_thumb = [0x4444, 0x5555, 0x6666];
+        cpu.halted = true;
+        cpu.pending_data_abort_exec_pc = Some(0x0800_1234);
+
+        let saved = cpu.capture_state();
+
+        cpu = Arm7tdmi::new();
+        cpu.restore_state(&saved);
+
+        assert_eq!(cpu.cycles, 0x1234_5678_9ABC_DEF0);
+        assert!(cpu.irq_pending);
+        assert!(cpu.fiq_pending);
+        assert!(cpu.halt_exit_pending);
+        assert!(cpu.prefetch_valid);
+        assert_eq!(cpu.prefetch_arm, [0x1111_1111, 0x2222_2222, 0x3333_3333]);
+        assert_eq!(cpu.prefetch_thumb, [0x4444, 0x5555, 0x6666]);
+        assert!(cpu.halted);
+        assert_eq!(cpu.pending_data_abort_exec_pc, Some(0x0800_1234));
+    }
+
+    #[test]
+    fn save_state_roundtrips_through_json() {
+        let mut cpu = Arm7tdmi::new();
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.r[0] = 0xCAFE_BABE;
+        cpu.cycles = 12345;
+        cpu.halted = true;
+
+        let saved = cpu.capture_state();
+        let bytes = serde_json::to_vec(&saved).expect("serialize CPU state");
+        let decoded: Arm7tdmiState = serde_json::from_slice(&bytes).expect("deserialize CPU state");
+
+        let mut restored = Arm7tdmi::new();
+        restored.restore_state(&decoded);
+
+        assert_eq!(restored.regs.r[0], 0xCAFE_BABE);
+        assert_eq!(restored.cycles, 12345);
+        assert!(restored.halted);
     }
 
     #[test]

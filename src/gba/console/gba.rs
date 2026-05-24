@@ -13,8 +13,8 @@
 use crate::gba::GbaBus;
 use crate::gba::cartridge::load_cartridge;
 use crate::gba::console::config::GBA_FILTER_NAMES;
-use crate::gba::cpu::Arm7tdmi;
 use crate::gba::cpu::bus::Bus;
+use crate::gba::cpu::{Arm7tdmi, Arm7tdmiState};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gba::debugging::{disasm_arm, disasm_thumb};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
@@ -189,6 +189,14 @@ impl Gba {
     /// if no ROM is loaded.
     pub fn state_path(&self) -> Option<PathBuf> {
         self.rom_path.as_ref().map(|p| p.with_extension("state"))
+    }
+
+    pub(crate) fn capture_cpu_state(&self) -> Arm7tdmiState {
+        self.cpu.capture_state()
+    }
+
+    pub(crate) fn restore_cpu_state(&mut self, state: &Arm7tdmiState) {
+        self.cpu.restore_state(state);
     }
 
     #[cfg(test)]
