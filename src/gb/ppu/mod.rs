@@ -14,3 +14,4 @@ mod trace_tests;
 pub mod window;
 
 pub use ppu::Ppu;
+pub(crate) use ppu::StopDisplayMode;

@@ -9,6 +9,15 @@ use crate::gb::model::CgbModel;
 use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum StopDisplayMode {
+    #[default]
+    Inactive,
+    SolidWhite,
+    SolidBlack,
+    PreserveCurrent,
+}
+
 /// Dots per CPU M-cycle — the granularity at which Mode 3 length is observable.
 const DOTS_PER_M_CYCLE: u16 = 4;
 const WINDOW_SETUP_DOTS: u16 = 6;
@@ -33,6 +42,8 @@ pub struct Ppu {
     screen_buffer: ScreenBuffer,
     #[serde(default)]
     pixel_fifo: PixelFifoRenderer,
+    #[serde(default)]
+    stop_display_mode: StopDisplayMode,
     /// Pending interrupt bits for IF register (bit 0 = VBlank, bit 1 = STAT).
     pending_interrupts: u8,
     /// Internal window-line counter (increments each scanline where window is drawn).
@@ -103,6 +114,7 @@ impl Ppu {
             registers: Registers::new(),
             screen_buffer: ScreenBuffer::new(),
             pixel_fifo: PixelFifoRenderer::new(),
+            stop_display_mode: StopDisplayMode::Inactive,
             pending_interrupts: 0,
             window_line: 0,
             prev_stat_irq_line: false,
@@ -166,6 +178,23 @@ impl Ppu {
             self.scy_b_stage_only,
             self.registers.scy,
         );
+    }
+
+    pub(crate) fn enter_stop_display_mode(&mut self, mode: StopDisplayMode) {
+        self.stop_display_mode = mode;
+        match mode {
+            StopDisplayMode::Inactive | StopDisplayMode::PreserveCurrent => {}
+            StopDisplayMode::SolidWhite => self.screen_buffer.fill_rgb(0xFF, 0xFF, 0xFF),
+            StopDisplayMode::SolidBlack => self.screen_buffer.fill_rgb(0x00, 0x00, 0x00),
+        }
+    }
+
+    pub(crate) fn exit_stop_display_mode(&mut self) {
+        self.stop_display_mode = StopDisplayMode::Inactive;
+    }
+
+    pub(crate) fn stop_display_mode(&self) -> StopDisplayMode {
+        self.stop_display_mode
     }
 
     // ── Dot-level tick ────────────────────────────────────────────────────────
@@ -322,6 +351,10 @@ impl Ppu {
     }
 
     fn render_pixel_fifo_dot(&mut self) {
+        if self.stop_display_mode != StopDisplayMode::Inactive {
+            return;
+        }
+
         let completed_window_activations = self.pixel_fifo.tick(
             self.timing.dot(),
             &self.vram,
@@ -1414,6 +1447,38 @@ mod tests {
         assert!(ppu.is_frame_ready());
         ppu.clear_frame_ready();
         assert!(!ppu.is_frame_ready());
+    }
+
+    #[test]
+    fn test_stop_solid_white_display_keeps_frame_timing_running() {
+        // Given: STOP display override has forced the DMG LCD to the blank white reference.
+        let mut ppu = Ppu::new();
+        ppu.screen_buffer.set_pixel(0, 0, 1, 2, 3);
+        ppu.enter_stop_display_mode(StopDisplayMode::SolidWhite);
+        ppu.clear_frame_ready();
+
+        // When: enough PPU dots elapse for one frame while STOP remains active.
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 153);
+
+        // Then: frame cadence continues, and normal rendering does not overwrite the blank output.
+        assert!(ppu.is_frame_ready());
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (0xFF, 0xFF, 0xFF));
+    }
+
+    #[test]
+    fn test_stop_preserve_current_display_keeps_existing_framebuffer() {
+        // Given: CGB Mode 3 STOP preserves the visible screen instead of blanking it.
+        let mut ppu = Ppu::new_cgb();
+        ppu.screen_buffer.set_pixel(0, 0, 1, 2, 3);
+        ppu.enter_stop_display_mode(StopDisplayMode::PreserveCurrent);
+        ppu.clear_frame_ready();
+
+        // When: the PPU keeps ticking for a frame.
+        tick_dots(&mut ppu, FIRST_SCANLINE_DOTS + 456 * 153);
+
+        // Then: frame cadence continues, but the framebuffer is not redrawn.
+        assert!(ppu.is_frame_ready());
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), (1, 2, 3));
     }
 
     // ── LCD disable/re-enable frame_ready ─────────────────────────────────────

@@ -263,44 +263,39 @@ daid_cgb_case!(
 );
 
 daid_dmg_case!(
-    #[ignore = "known daid mismatch: STOP with LCD on should leave blank DMG reference output (#2613)"]
     test_stop_instr_dmg0_matches_reviewed_crc,
     "stop_instr_dmg0",
     "stop_instr.gb",
     DmgModel::Dmg0,
-    0x7D75_95AD
+    0x811B_B2FB
 );
 daid_dmg_case!(
-    #[ignore = "known daid mismatch: STOP with LCD on should leave blank DMG reference output (#2613)"]
     test_stop_instr_dmga_matches_reviewed_crc,
     "stop_instr_dmga",
     "stop_instr.gb",
     DmgModel::DmgA,
-    0x6763_B6A5
+    0x811B_B2FB
 );
 daid_dmg_case!(
-    #[ignore = "known daid mismatch: STOP with LCD on should leave blank DMG reference output (#2613)"]
     test_stop_instr_dmgb_matches_reviewed_crc,
     "stop_instr_dmgb",
     "stop_instr.gb",
     DmgModel::DmgB,
-    0x6763_B6A5
+    0x811B_B2FB
 );
 daid_dmg_case!(
-    #[ignore = "known daid mismatch: STOP with LCD on should leave blank DMG reference output (#2613)"]
     test_stop_instr_dmgc_matches_reviewed_crc,
     "stop_instr_dmgc",
     "stop_instr.gb",
     DmgModel::DmgC,
-    0x6763_B6A5
+    0x811B_B2FB
 );
 daid_cgb_case!(
-    #[ignore = "known daid mismatch: STOP with LCD on should blank the CGB reference output (#2613)"]
     test_stop_instr_cgbe_matches_reviewed_crc,
     "stop_instr_cgbe",
     "stop_instr.gb",
     CgbModel::CgbE,
-    0x7D75_95AD
+    0x252F_710F
 );
 daid_cgb_case!(
     test_stop_instr_gbc_mode3_cgbe_matches_reviewed_crc,
