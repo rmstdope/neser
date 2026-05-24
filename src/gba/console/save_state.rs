@@ -6,10 +6,10 @@
 //! [`GbaSaveState::from_bytes`].
 //!
 //! This is the initial scaffold for the GBA save-state pipeline.  It
-//! currently captures the bus memory regions (BIOS, EWRAM, IWRAM, PRAM,
-//! VRAM, OAM, SRAM) plus a few simple bus scalars.  Subsystem state for
-//! the CPU, PPU, APU, timers, DMA, interrupt controller and keypad will be
-//! added as those modules are wired into the [`Gba`](super::gba::Gba)
+//! currently captures the CPU plus bus memory regions (BIOS, EWRAM, IWRAM,
+//! PRAM, VRAM, OAM, SRAM) and a few simple bus scalars.  Subsystem state for
+//! the PPU, APU, timers, DMA, interrupt controller and keypad will be added
+//! as those modules are wired into the [`Gba`](super::gba::Gba)
 //! console wrapper.  Because every save-state carries a `version` field,
 //! breaking changes to the captured shape will simply bump
 //! [`GBA_SAVESTATE_VERSION`] and the loader will reject older states with
@@ -17,9 +17,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::gba::cpu::Arm7tdmiState;
+
 /// Current save-state format version for Game Boy Advance.
 /// Increment this when making breaking changes to the state format.
-pub const GBA_SAVESTATE_VERSION: u32 = 1;
+pub const GBA_SAVESTATE_VERSION: u32 = 2;
 
 /// Serializable snapshot of the [`GbaBus`](crate::gba::GbaBus) memory
 /// regions and a small number of associated scalar fields.
@@ -60,6 +62,8 @@ pub struct BusMemoryState {
 pub struct GbaSaveState {
     /// Version of the save-state format.
     pub version: u32,
+    /// ARM7TDMI CPU state.
+    pub cpu: Arm7tdmiState,
     /// Bus memory state (RAM regions and a few scalar fields).
     pub bus: BusMemoryState,
 }
@@ -127,6 +131,7 @@ impl Gba {
     pub fn save_state(&self) -> GbaSaveState {
         GbaSaveState {
             version: GBA_SAVESTATE_VERSION,
+            cpu: self.capture_cpu_state(),
             bus: self.bus().capture_memory_state(),
         }
     }
@@ -146,25 +151,38 @@ impl Gba {
         }
         self.bus_mut()
             .restore_memory_state(&state.bus)
-            .map_err(GbaSaveStateError::RestoreFailed)
+            .map_err(GbaSaveStateError::RestoreFailed)?;
+        self.restore_cpu_state(&state.cpu);
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gba::cartridge::header::{
+        COMPLEMENT_CHECK_OFFSET, FIXED_BYTE_OFFSET, FIXED_BYTE_VALUE, compute_complement_check,
+    };
     use crate::gba::console::gba::Gba;
     use crate::platform::app_context::AppContext;
+    use crate::platform::emulator::Emulator;
 
     fn make_gba() -> Gba {
         Gba::new(AppContext::default())
     }
 
+    fn minimal_valid_gba_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0xC0];
+        rom[FIXED_BYTE_OFFSET] = FIXED_BYTE_VALUE;
+        rom[COMPLEMENT_CHECK_OFFSET] = compute_complement_check(&rom);
+        rom
+    }
+
     // ── Version checks ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_gba_savestate_version_is_1() {
-        assert_eq!(GBA_SAVESTATE_VERSION, 1);
+    fn test_gba_savestate_version_is_2() {
+        assert_eq!(GBA_SAVESTATE_VERSION, 2);
     }
 
     // ── Round-trip ─────────────────────────────────────────────────────────
@@ -183,6 +201,7 @@ mod tests {
         assert_eq!(loaded.bus.vram.len(), save.bus.vram.len());
         assert_eq!(loaded.bus.oam.len(), save.bus.oam.len());
         assert_eq!(loaded.bus.sram.len(), save.bus.sram.len());
+        assert_eq!(loaded.cpu.regs.r[15], save.cpu.regs.r[15]);
     }
 
     // ── Capture / restore preserves modified memory ────────────────────────
@@ -211,6 +230,23 @@ mod tests {
         assert_eq!(gba.bus_mut().read8(0x0200_0010), 0xAA);
         assert_eq!(gba.bus_mut().read8(0x0300_0020), 0xBB);
         assert_eq!(gba.bus_mut().read8(0x0E00_0030), 0xCC);
+    }
+
+    #[test]
+    fn test_save_state_captures_and_restores_cpu_position() {
+        let mut gba = make_gba();
+        gba.load_rom(&minimal_valid_gba_rom(), "test.gba")
+            .expect("valid GBA ROM");
+
+        let saved = gba.save_state();
+        let saved_pc = gba.cpu_pc();
+
+        gba.run_tick_for_tests();
+        assert_ne!(gba.cpu_pc(), saved_pc, "test must dirty CPU PC after save");
+
+        gba.load_state(&saved).expect("restore should succeed");
+
+        assert_eq!(gba.cpu_pc(), saved_pc);
     }
 
     // ── BIOS exclusion ─────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ pub mod registers;
 pub mod thumb;
 
 #[allow(unused_imports)]
-pub use arm7tdmi::{Arm7tdmi, ExceptionVector};
+pub use arm7tdmi::{Arm7tdmi, Arm7tdmiState, ExceptionVector};
 #[allow(unused_imports)]
 pub use bus::{Bus, RamBus};
 #[allow(unused_imports)]
