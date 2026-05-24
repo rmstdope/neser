@@ -1,5 +1,7 @@
 //! GBA APU — dual-source audio: 4 DMG-legacy channels + 2 PCM FIFO channels.
 
+use serde::{Deserialize, Serialize};
+
 pub use super::channel1::Channel1;
 pub use super::channel2::Channel2;
 pub use super::channel3::Channel3;
@@ -121,6 +123,29 @@ pub struct Apu {
     psg_sample_count: u32,
 }
 
+/// Serializable GBA APU snapshot for save states.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApuState {
+    ch1: Channel1,
+    ch2: Channel2,
+    ch3: Channel3,
+    ch4: Channel4,
+    fifo_a: FifoChannel,
+    fifo_b: FifoChannel,
+    soundcnt_l: u16,
+    soundcnt_h: u16,
+    powered: bool,
+    soundbias: u16,
+    fs_counter: u32,
+    fs_step: u8,
+    sample_acc: f32,
+    cycles_per_sample: f32,
+    pending_sample: Option<(f32, f32)>,
+    psg_counter: u32,
+    psg_sum: [f32; 4],
+    psg_sample_count: u32,
+}
+
 impl Default for Apu {
     fn default() -> Self {
         Self::new()
@@ -171,6 +196,58 @@ impl Apu {
     /// Returns the configured output sample rate in Hz.
     pub fn sample_rate(&self) -> f32 {
         GBA_CLOCK_HZ / self.cycles_per_sample
+    }
+
+    /// Capture APU state for save-state serialization.
+    pub fn capture_state(&self) -> ApuState {
+        ApuState {
+            ch1: self.ch1.clone(),
+            ch2: self.ch2.clone(),
+            ch3: self.ch3.clone(),
+            ch4: self.ch4.clone(),
+            fifo_a: self.fifo_a.clone(),
+            fifo_b: self.fifo_b.clone(),
+            soundcnt_l: self.soundcnt_l,
+            soundcnt_h: self.soundcnt_h,
+            powered: self.powered,
+            soundbias: self.soundbias,
+            fs_counter: self.fs_counter,
+            fs_step: self.fs_step,
+            sample_acc: self.sample_acc,
+            cycles_per_sample: self.cycles_per_sample,
+            pending_sample: self.pending_sample,
+            psg_counter: self.psg_counter,
+            psg_sum: self.psg_sum,
+            psg_sample_count: self.psg_sample_count,
+        }
+    }
+
+    /// Restore APU state from a save-state snapshot.
+    pub fn restore_state(&mut self, state: &ApuState) {
+        let current_cycles_per_sample = self.cycles_per_sample;
+        self.ch1 = state.ch1.clone();
+        self.ch2 = state.ch2.clone();
+        self.ch3 = state.ch3.clone();
+        self.ch4 = state.ch4.clone();
+        self.fifo_a = state.fifo_a.clone();
+        self.fifo_b = state.fifo_b.clone();
+        self.soundcnt_l = state.soundcnt_l;
+        self.soundcnt_h = state.soundcnt_h;
+        self.powered = state.powered;
+        self.soundbias = state.soundbias;
+        self.fs_counter = state.fs_counter;
+        self.fs_step = state.fs_step;
+        self.cycles_per_sample = current_cycles_per_sample;
+        self.sample_acc = if state.cycles_per_sample.is_finite() && state.cycles_per_sample > 0.0 {
+            (state.sample_acc / state.cycles_per_sample * self.cycles_per_sample)
+                .clamp(0.0, self.cycles_per_sample)
+        } else {
+            0.0
+        };
+        self.pending_sample = state.pending_sample;
+        self.psg_counter = state.psg_counter;
+        self.psg_sum = state.psg_sum;
+        self.psg_sample_count = state.psg_sample_count;
     }
 
     /// Returns the hardware PWM output rate in Hz implied by the current
@@ -869,6 +946,121 @@ mod tests {
         let mut apu = Apu::new();
         apu.write16(0x0400_0084, 0x0080); // SOUNDCNT_X: power on
         apu
+    }
+
+    #[test]
+    fn save_state_restores_register_channels_fifo_and_wave_state() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0060, 0x005B);
+        apu.write16(0x0400_0062, 0xF2BF);
+        apu.write16(0x0400_0064, 0x8734);
+        apu.write16(0x0400_0068, 0xA1A5);
+        apu.write16(0x0400_006C, 0x85AA);
+        apu.write16(0x0400_0070, 0x00C0);
+        apu.write16(0x0400_0072, 0xA055);
+        for (offset, value) in [0x10u8, 0x32, 0x54, 0x76].into_iter().enumerate() {
+            apu.write8(0x0400_0090 + offset as u32, value);
+        }
+        apu.write16(0x0400_0074, 0x8678);
+        apu.write16(0x0400_0078, 0xE13F);
+        apu.write16(0x0400_007C, 0x80C7);
+        apu.write16(0x0400_0080, 0xFF77);
+        apu.write16(0x0400_0082, 0x330F);
+        apu.write16(0x0400_0088, 0xC3FE);
+        apu.push_fifo_a(11);
+        apu.push_fifo_a(-22);
+        apu.fifo_a.advance();
+        apu.push_fifo_b(33);
+        apu.push_fifo_b(-44);
+        apu.fifo_b.advance();
+        apu.ch1.duty_pos = 6;
+        apu.ch2.duty_pos = 5;
+        apu.ch3.wave_pos = 3;
+        apu.ch4.lfsr = 0x1234;
+
+        let saved = apu.capture_state();
+        let mut restored = Apu::new();
+        restored.restore_state(&saved);
+
+        assert_eq!(restored.read16(0x0400_0060), 0x005B);
+        assert_eq!(restored.read16(0x0400_0062), 0xF280);
+        assert_eq!(restored.read16(0x0400_0064), 0);
+        assert_eq!(restored.read16(0x0400_0068), 0xA180);
+        assert_eq!(restored.read16(0x0400_006C), 0);
+        assert_eq!(restored.read16(0x0400_0070), 0x00C0);
+        assert_eq!(restored.read16(0x0400_0072), 0xA000);
+        assert_eq!(restored.read16(0x0400_0074), 0);
+        assert_eq!(restored.read16(0x0400_0078), 0xE100);
+        assert_eq!(restored.read16(0x0400_007C), 0x00C7);
+        assert_eq!(restored.read16(0x0400_0080), 0xFF77);
+        assert_eq!(restored.read16(0x0400_0082), 0x330F);
+        assert_eq!(restored.read16(0x0400_0088), 0xC3FE);
+        assert!(restored.powered);
+        assert!(restored.ch1.active);
+        assert!(restored.ch2.active);
+        assert!(restored.ch3.active);
+        assert!(restored.ch4.active);
+        assert_eq!(restored.ch1.duty_pos, 6);
+        assert_eq!(restored.ch2.duty_pos, 5);
+        assert_eq!(restored.ch3.wave_pos, 3);
+        assert_eq!(restored.ch4.lfsr, 0x1234);
+        assert_eq!(restored.fifo_a.current, 11);
+        assert_eq!(restored.fifo_b.current, 33);
+        restored.fifo_a.advance();
+        restored.fifo_b.advance();
+        assert_eq!(restored.fifo_a.current, -22);
+        assert_eq!(restored.fifo_b.current, -44);
+        assert_eq!(restored.ch3.wave_ram[0][0..4], [0x10, 0x32, 0x54, 0x76]);
+    }
+
+    #[test]
+    fn save_state_restores_timing_accumulators_and_pending_sample() {
+        let mut apu = powered_apu();
+        apu.set_sample_rate(32_000.0);
+        apu.fs_counter = FS_PERIOD - 7;
+        apu.fs_step = 6;
+        apu.sample_acc = apu.cycles_per_sample / 4.0;
+        apu.pending_sample = Some((0.25, -0.5));
+        apu.psg_counter = PSG_INTERNAL_PERIOD - 2;
+        apu.psg_sum = [1.0, -2.0, 3.0, -4.0];
+        apu.psg_sample_count = 9;
+
+        let saved = apu.capture_state();
+        let mut restored = Apu::new();
+        restored.set_sample_rate(48_000.0);
+        restored.restore_state(&saved);
+
+        assert_eq!(restored.fs_counter, FS_PERIOD - 7);
+        assert_eq!(restored.fs_step, 6);
+        assert!((restored.sample_acc - (restored.cycles_per_sample / 4.0)).abs() < 0.01);
+        assert_eq!(restored.pending_sample, Some((0.25, -0.5)));
+        assert_eq!(restored.psg_counter, PSG_INTERNAL_PERIOD - 2);
+        assert_eq!(restored.psg_sum, [1.0, -2.0, 3.0, -4.0]);
+        assert_eq!(restored.psg_sample_count, 9);
+        assert!(
+            (restored.sample_rate() - 48_000.0).abs() < 0.01,
+            "restore must preserve the runtime output sample rate"
+        );
+    }
+
+    #[test]
+    fn save_state_roundtrips_through_json() {
+        let mut apu = powered_apu();
+        apu.write16(0x0400_0080, 0x1177);
+        apu.write16(0x0400_0082, 0x030F);
+        apu.write16(0x0400_0088, 0x43FE);
+        apu.pending_sample = Some((0.125, 0.5));
+
+        let saved = apu.capture_state();
+        let bytes = serde_json::to_vec(&saved).expect("serialize APU state");
+        let decoded: ApuState = serde_json::from_slice(&bytes).expect("deserialize APU state");
+        let mut restored = Apu::new();
+        restored.restore_state(&decoded);
+
+        assert_eq!(restored.read16(0x0400_0080), 0x1177);
+        assert_eq!(restored.read16(0x0400_0082), 0x030F);
+        assert_eq!(restored.read16(0x0400_0088), 0x43FE);
+        assert_eq!(restored.take_stereo_sample(), Some((0.125, 0.5)));
     }
 
     // ── PSG mixer scaling tests (GBATek: channels summed, not averaged) ─────

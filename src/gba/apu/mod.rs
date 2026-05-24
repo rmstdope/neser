@@ -27,4 +27,4 @@ pub mod fifo;
 
 #[allow(clippy::module_inception)]
 pub mod apu;
-pub use apu::Apu;
+pub use apu::{Apu, ApuState};
