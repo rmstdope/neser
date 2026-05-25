@@ -374,6 +374,25 @@ fn gba_mgba_timing_diagnostics_passes_c_loop_prefetch_cases() {
 }
 
 #[test]
+fn gba_mgba_timing_diagnostics_passes_trivial_internal_dma_start_cases() {
+    let result = run_mgba_timing_diagnostics();
+    let failing_cases = [
+        "FAIL: Trivial DMA (16) ARM/IWRAM",
+        "FAIL: Trivial DMA (16) Thumb/IWRAM",
+        "FAIL: Trivial DMA (32) ARM/IWRAM",
+        "FAIL: Trivial DMA (32) Thumb/IWRAM",
+    ];
+
+    for failing_case in failing_cases {
+        assert!(
+            !result.raw_log.contains(failing_case),
+            "mGBA Timing internal DMA start case should pass: {failing_case}\nraw log:\n{}",
+            result.raw_log
+        );
+    }
+}
+
+#[test]
 fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
     let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
 

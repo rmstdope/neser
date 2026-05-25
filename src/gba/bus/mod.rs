@@ -271,6 +271,9 @@ pub struct GbaBus {
     /// Set when a CPU-visible write enables a timer. The instruction that
     /// performs the enable write completes before the timer starts ticking.
     timer_start_delay_pending: bool,
+    /// Remaining CPU cycles before a newly enabled immediate DMA can seize the
+    /// bus. GBATek documents a 2-cycle delay after the DMA enable edge.
+    dma_start_delay_cycles: u32,
 }
 
 impl Default for GbaBus {
@@ -348,6 +351,7 @@ impl GbaBus {
             undoc_0x410: 0,
             halt_requested: false,
             timer_start_delay_pending: false,
+            dma_start_delay_cycles: 0,
         }
     }
 
@@ -494,8 +498,7 @@ impl GbaBus {
             self.oam.as_slice(),
         );
         self.handle_ppu_events(events);
-        self.run_pending_dma();
-        self.step_dma_stalls();
+        self.run_pending_dma_after_start_delay(cycles);
     }
 
     /// Step peripherals after one CPU instruction. If that instruction enabled
@@ -520,8 +523,7 @@ impl GbaBus {
             self.oam.as_slice(),
         );
         self.handle_ppu_events(events);
-        self.run_pending_dma();
-        self.step_dma_stalls();
+        self.run_pending_dma_after_start_delay(cycles);
     }
 
     fn step_dma_stalls(&mut self) {
@@ -545,6 +547,18 @@ impl GbaBus {
         }
     }
 
+    fn run_pending_dma_after_start_delay(&mut self, cycles: u32) {
+        if self.dma_start_delay_cycles > 0 {
+            if cycles <= self.dma_start_delay_cycles {
+                self.dma_start_delay_cycles -= cycles;
+                return;
+            }
+            self.dma_start_delay_cycles = 0;
+        }
+        self.run_pending_dma();
+        self.step_dma_stalls();
+    }
+
     fn mark_timer_start_delay_for_write16(&mut self, addr: u32, value: u16) {
         let Some(timer) = timer_control_index(addr) else {
             return;
@@ -565,6 +579,30 @@ impl GbaBus {
         let shift = (addr & 1) * 8;
         let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
         self.mark_timer_start_delay_for_write16(aligned, merged);
+    }
+
+    fn mark_dma_start_delay_for_write16(&mut self, addr: u32, value: u16) {
+        let Some(channel) = dma_control_index(addr) else {
+            return;
+        };
+        let old = self.dma.channels[channel].cnt_h;
+        let was_enabled = old & 0x8000 != 0;
+        let now_enabled = value & 0x8000 != 0;
+        let immediate = (value >> 12) & 0x3 == 0;
+        if !was_enabled && now_enabled && immediate {
+            self.dma_start_delay_cycles = 2;
+        }
+    }
+
+    fn mark_dma_start_delay_for_write8(&mut self, addr: u32, value: u8) {
+        let aligned = addr & !1;
+        let Some(channel) = dma_control_index(aligned) else {
+            return;
+        };
+        let old = self.dma.channels[channel].cnt_h;
+        let shift = (addr & 1) * 8;
+        let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
+        self.mark_dma_start_delay_for_write16(aligned, merged);
     }
 
     /// Propagate PPU V-Blank / H-Blank edges to DMA-mode hooks. Each
@@ -739,6 +777,7 @@ impl GbaBus {
         self.undoc_0x410 = state.undoc_0x410;
         self.halt_requested = state.halt_requested;
         self.timer_start_delay_pending = false;
+        self.dma_start_delay_cycles = 0;
         Ok(())
     }
 
@@ -1338,6 +1377,7 @@ impl Bus for GbaBus {
                         }
                     }
                     self.mark_timer_start_delay_for_write16(aligned + 2, (value >> 16) as u16);
+                    self.mark_dma_start_delay_for_write16(aligned + 2, (value >> 16) as u16);
                     self.io.write32(
                         aligned,
                         value,
@@ -1376,7 +1416,7 @@ impl Bus for GbaBus {
             }
             _ => {}
         }
-        if touches_io && self.dma.any_pending() {
+        if touches_io && self.dma.any_pending() && self.dma_start_delay_cycles == 0 {
             self.run_pending_dma();
         }
     }
@@ -1410,6 +1450,7 @@ impl Bus for GbaBus {
                         }
                     }
                     self.mark_timer_start_delay_for_write16(aligned, value);
+                    self.mark_dma_start_delay_for_write16(aligned, value);
                     self.io.write16(
                         aligned,
                         value,
@@ -1446,7 +1487,7 @@ impl Bus for GbaBus {
             }
             _ => {}
         }
-        if touches_io && self.dma.any_pending() {
+        if touches_io && self.dma.any_pending() && self.dma_start_delay_cycles == 0 {
             self.run_pending_dma();
         }
     }
@@ -1482,6 +1523,7 @@ impl Bus for GbaBus {
                     self.apu.write8(addr, value);
                 } else {
                     self.mark_timer_start_delay_for_write8(addr, value);
+                    self.mark_dma_start_delay_for_write8(addr, value);
                     self.io.write8(
                         addr,
                         value,
@@ -1617,6 +1659,16 @@ fn timer_control_index(addr: u32) -> Option<usize> {
         0x0400_0106 => Some(1),
         0x0400_010A => Some(2),
         0x0400_010E => Some(3),
+        _ => None,
+    }
+}
+
+fn dma_control_index(addr: u32) -> Option<usize> {
+    match addr {
+        0x0400_00BA => Some(0),
+        0x0400_00C6 => Some(1),
+        0x0400_00D2 => Some(2),
+        0x0400_00DE => Some(3),
         _ => None,
     }
 }
@@ -2244,6 +2296,10 @@ mod tests {
         bus.write16(base + 10, cnt_h);
     }
 
+    fn step_past_immediate_dma_start_delay(bus: &mut GbaBus) {
+        bus.step(3);
+    }
+
     #[test]
     fn dma0_source_masks_game_pak_rom_to_internal_memory() {
         let mut bus = GbaBus::new();
@@ -2252,6 +2308,7 @@ mod tests {
         bus.write32(0x0200_0000, 0);
 
         write_dma_registers(&mut bus, 0, 0x0800_0000, 0x0200_0000, 1, 0x8000 | 0x0400);
+        step_past_immediate_dma_start_delay(&mut bus);
 
         assert_eq!(bus.read32(0x0200_0000), 0x1122_3344);
     }
@@ -2283,6 +2340,7 @@ mod tests {
         bus.write8(0x0E00_0000, 0x66);
 
         write_dma_registers(&mut bus, 3, 0x0200_0000, 0x0E00_0000, 1, 0x8000 | 0x0400);
+        step_past_immediate_dma_start_delay(&mut bus);
 
         assert_eq!(bus.read32(0x0E00_0000), 0xD8D8_D8D8);
     }
@@ -2305,12 +2363,13 @@ mod tests {
         bus.write16(REG_IE, irq_bits::DMA0);
         bus.write16(REG_IME, 1);
         bus.write16(0x0400_00BA, 0x8000 | 0x4000 | 0x0400);
+        step_past_immediate_dma_start_delay(&mut bus);
         // Verify destination contains the source data.
         for i in 0..4 {
             assert_eq!(bus.read32(0x0200_1000 + i * 4), 0xAABB_0000 + i);
         }
-        // CPU stall accumulator reflects DMA startup plus source/destination waitstates.
-        assert_eq!(bus.take_dma_stall_cycles(), 50);
+        // CPU stall cycles were drained while stepping through the DMA pause.
+        assert_eq!(bus.take_dma_stall_cycles(), 0);
         // IRQ was raised through the controller.
         assert!(bus.ic.irq_line());
         // Enable bit is cleared after one-shot completion.
@@ -2330,9 +2389,9 @@ mod tests {
 
         bus.write16(0x0400_0100, 0);
         bus.write16(0x0400_0102, 0x80);
-        bus.step(1);
+        bus.step(3);
 
-        assert_eq!(bus.read16(0x0400_0100), 51);
+        assert_eq!(bus.read16(0x0400_0100), 53);
         assert_eq!(bus.take_dma_stall_cycles(), 0);
     }
 
@@ -2376,6 +2435,7 @@ mod tests {
         // priority, even though CH1 was armed earlier.
         bus.write16(0x0400_00C6, 0x8000 | 0x0400); // CH1 enable, word
         bus.write16(0x0400_00BA, 0x8000 | 0x0400); // CH0 enable, word
+        step_past_immediate_dma_start_delay(&mut bus);
         // Both transfers must have completed.
         assert_eq!(bus.read32(0x0200_3000), 0xC1_DA);
         assert_eq!(bus.read32(0x0200_2000), 0xC0_DA);
