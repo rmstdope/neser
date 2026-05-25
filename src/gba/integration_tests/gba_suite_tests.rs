@@ -434,6 +434,24 @@ fn gba_mgba_timing_diagnostics_passes_bios_division_cases() {
 }
 
 #[test]
+fn gba_mgba_timing_diagnostics_passes_bios_sqrt_cases() {
+    let result = run_mgba_timing_diagnostics();
+    let failing_prefixes = [
+        "FAIL: BIOS Sqrt ",
+        "FAIL: BIOS Sqrt 2 ",
+        "FAIL: BIOS Sqrt 3 ",
+    ];
+
+    for failing_prefix in failing_prefixes {
+        assert!(
+            !result.raw_log.contains(failing_prefix),
+            "mGBA Timing BIOS sqrt case should pass: {failing_prefix}\nraw log:\n{}",
+            result.raw_log
+        );
+    }
+}
+
+#[test]
 fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
     let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
 

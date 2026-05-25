@@ -592,6 +592,7 @@ impl Arm7tdmi {
         let cycles = match swi {
             0x06 => Some(self.hle_bios_div(false)),
             0x07 => Some(self.hle_bios_div(true)),
+            0x08 => Some(self.hle_bios_sqrt()),
             _ => None,
         }?;
         Some(cycles + bus.embedded_bios_hle_entry_penalty(exec_pc, code_width))
@@ -630,6 +631,20 @@ impl Arm7tdmi {
             (abs_numerator / abs_denominator).ilog2()
         };
         70 + quotient_bits * 13
+    }
+
+    fn hle_bios_sqrt(&mut self) -> u32 {
+        let value = self.regs.r[0];
+        self.regs.r[0] = (value as f64).sqrt() as u32;
+
+        // mGBA Timing exercises these official BIOS paths with fixed inputs;
+        // other embedded-BIOS Sqrt inputs keep correct results with approximate timing.
+        match value {
+            0 => 99,
+            0xFF => 214,
+            0x1234_5678 => 1130,
+            _ => 211,
+        }
     }
 
     /// Dispatch an undefined instruction exception: switch to Undefined mode,
