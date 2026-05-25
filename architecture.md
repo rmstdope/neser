@@ -228,10 +228,10 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/gb/console/mod.rs` | Module declarations and re-exports for the GB console layer. Re-exports `Gb` and `CpuTraceLine` so call sites can keep using `crate::gb::console::Gb`. |
 | `src/gb/console/gb.rs` | `Gb<B: GbBus>` — thin console shell that owns the CPU. `step()` executes one instruction and ticks the bus by the elapsed M-cycles. DMG-specific impls for screen, frame-ready, and reset. |
 | `src/gb/console/gameboy.rs` | `GameBoy` — platform-facing wrapper that owns a `Gb<DmgBus>` (created lazily on `load_rom`). Implements the `Emulator` trait for system-agnostic dispatch. |
-| `src/gb/console/save_state.rs` | Versioned DMG/CGB save-state serialization. Captures CPU, bus, cartridge RAM, and opaque MBC state; CGB-specific fields include double-speed accumulator state used by APU and cartridge RTC timing. |
+| `src/gb/console/save_state.rs` | Versioned DMG/CGB save-state serialization. Captures CPU, bus, cartridge RAM, and opaque MBC state; CGB-specific fields include double-speed accumulator state used by APU/cartridge RTC timing and CGB 0-D extra-OAM RAM state. |
 | `src/gb/bus/bus.rs` | `GbBus` trait — `read(&mut self, addr: u16) -> u8`, `write(&mut self, addr: u16, val: u8)`, and a default no-op `tick(&mut self, m_cycles: u8)`. `StubBus` implements the trait for unit tests. |
 | `src/gb/bus/dmg_bus.rs` | `DmgBus` — full DMG memory map. Routes all 16-bit addresses to cartridge ROM/RAM, VRAM, WRAM, echo RAM, OAM, HRAM, Timer registers ($FF04–$FF07), APU registers ($FF10–$FF3F), IF ($FF0F), IE ($FFFF), and I/O stubs. Owns the cartridge, Timer, and APU. Overrides `tick()` to advance the Timer, APU, and propagate timer interrupts to IF. Exposes `sample_ready()`/`take_sample()`/`set_audio_sample_rate()` for the platform audio layer. |
-| `src/gb/bus/cgb_bus.rs` | `CgbBus` — full CGB memory map with VRAM/WRAM banking, HDMA, KEY0/KEY1 speed switching, CGB boot ROM handling, and double-speed timing. In double speed it half-rates real-time peripherals such as the APU and cartridge RTC while preserving accumulator phase in save states. |
+| `src/gb/bus/cgb_bus.rs` | `CgbBus` — full CGB memory map with VRAM/WRAM banking, CGB 0-D extra-OAM RAM / CGB-E `$FEA0-$FEFF` behavior, HDMA, KEY0/KEY1 speed switching, CGB boot ROM handling, and double-speed timing. In double speed it half-rates real-time peripherals such as the APU and cartridge RTC while preserving accumulator phase in save states. |
 | `src/gb/apu/mod.rs` | Module declarations and re-exports for the GB APU. Re-exports `Apu` from the sibling implementation file. |
 | `src/gb/apu/apu.rs` | `Apu` — DMG Audio Processing Unit. 8-step frame sequencer (512 Hz), NR50/NR51/NR52 power/volume/panning control, mixer (NR51 L/R routing, NR50 master volume), sample output pipeline (fractional M-cycle accumulator). |
 | `src/gb/apu/channel1.rs` | `Channel1` — Pulse channel with frequency sweep. Duty cycle (4 patterns), length counter, volume envelope, frequency sweep (period, direction, shift). |
@@ -251,6 +251,7 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/gb/cartridge/mbc0.rs` | ROM-only cartridge (MBC type 0x00) and ROM+RAM cartridges (types 0x08/0x09). ROM+RAM uses a fixed 32 KiB ROM window plus externally enabled/wrapped SRAM for homebrew/test ROM compatibility. |
 | `src/gb/cartridge/mbc1.rs` | MBC1 cartridge (types 0x01–0x03). ROM bank switching ($2000–$3FFF), secondary bank register ($4000–$5FFF), banking mode ($6000–$7FFF), RAM enable ($0000–$1FFF). Supports up to 2 MB ROM and 32 KB RAM. |
 | `src/gb/cartridge/mod.rs` | Module declarations and re-exports for GB cartridge support. Re-exports `GbCartridge`, `RomError`, and `load_cartridge`. |
+| `src/gb/integration_tests/acid_tests.rs` | Headless automation for GBEmulatorShootout acid rendering and hardware-probe ROMs. Runs `dmg-acid2.gb`, `cgb-acid2.gbc`, `cgb-acid-hell.gbc`, and `which.gb` on the relevant DMG/CGB models and asserts screen CRCs. |
 | `src/gb/integration_tests/ax6_tests.rs` | Headless automation for ax6 `rtc3test` MBC3 RTC validation. Runs the GBEmulatorShootout split ROMs (`rtc3test-1.gb` through `rtc3test-3.gb`) on both DMG and CGB hardware modes, captures result-screen PNGs with `NESER_CAPTURE_SCREEN=1`, and asserts reviewed screen CRCs. |
 
 #### Game Boy Advance Emulation (`src/gba/`)
@@ -422,6 +423,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 | Directory | Description |
 | --------- | ------------- |
 | `roms/automated_tests/` | **70+ test ROM suites** used by the integration test harness. Includes Blargg's CPU/PPU/APU tests, DMA timing tests, mapper-specific tests (MMC3, MMC5, FME-7, VRC6), sprite tests, and more. |
+| `roms/gb/automated_tests/acid/` | Vendored GBEmulatorShootout acid ROMs (`which.gb`, `dmg-acid2.gb`, `cgb-acid2.gbc`, `cgb-acid-hell.gbc`) used by `src/gb/integration_tests/acid_tests.rs` for DMG/CGB screen CRC coverage. |
 | `roms/gb/automated_tests/daid/` | Vendored daid GB/GBC accuracy ROMs and upstream PNG references from GBEmulatorShootout, used by `src/gb/integration_tests/daid_tests.rs` for screen CRC and reference-PNG auditing. |
 | `roms/gb/automated_tests/rtc3test/` | Vendored ax6 `rtc3test` split MBC3 RTC test ROMs from GBEmulatorShootout, used by `src/gb/integration_tests/ax6_tests.rs` for DMG/CGB result-screen CRC testing. |
 | `roms/gba/automated_tests/gba-tests/` | Git submodule snapshot of jsmolka `gba-tests` (ARM/Thumb GBA CPU validation ROMs) used by `src/gba/integration_tests/gba_suite_tests.rs`. |

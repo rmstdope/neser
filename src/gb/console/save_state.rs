@@ -84,6 +84,9 @@ pub struct BusState {
     pub key0: Option<u8>,
     #[serde(default)]
     pub key0_locked: Option<bool>,
+    // CGB $FEA0-$FEFF extra OAM RAM (None for DMG and older save states)
+    #[serde(default)]
+    pub cgb_extra_oam: Option<Vec<u8>>,
     // DMG-only fields (None for CGB)
     pub boot_rom_active: Option<bool>,
     pub sb: Option<u8>,

@@ -456,3 +456,38 @@ No additional feedback.
 ### Navigator feedback
 
 Pending — navigator unavailable during retrospective collection.
+---
+
+## 2026-05-25 — PR #2657: Automate GB acid which model checks
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2657
+**Linked issues:** #2651
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `test-driven-development` | Guided the acid/which.gb automation through regression-focused coverage and validation. |
+| Skill | `rust-developer` | Supported Rust implementation quality, formatting, clippy compliance, and save-state updates. |
+| Skill | `gb-hardware-research` | Helped interpret model-specific GB/CGB behavior for extra-OAM and $FEA0-$FEFF reads. |
+| Skill | `github-administration` | Supported PR and linked-issue workflow context. |
+| Agent | `code-review agent fallback` | Provided fallback review-oriented scrutiny when dedicated review flow was needed. |
+| Agent | `Iteration Retrospective Gatherer` | Captured AI-assisted workflow learnings for this retrospective. |
+
+### What went well
+
+- The `gb-hardware-research` customization was well matched to the core issue: identifying model-specific behavior needed for which.gb to distinguish CGB-D and CGB-E.
+- The `test-driven-development` skill aligned the work around durable automated coverage by adding non-ignored CRC checks across DMG and CGB model variants instead of relying on manual ROM inspection.
+- The `rust-developer` skill supported a clean Rust implementation path, including persistence of CGB extra-OAM RAM in save states and successful completion of clippy, fmt, native, wasm, script, and npm validation.
+- The retrospective gatherer had sufficient PR context and validation details available, reducing the need for additional reconstruction after the PR was created.
+
+### What to improve
+
+- The workflow depended on several customizations at once; future iterations should explicitly record which customization contributed to each major decision while the work is happening, especially for hardware-research findings.
+- The code-review fallback was used as a fallback rather than a planned checkpoint; for hardware-sensitive emulator changes, schedule review-oriented scrutiny earlier before the full validation sweep.
+- The acid ROM asset consolidation and model-behavior implementation were both part of the same package; future AI-assisted workflows should separate asset-layout decisions from hardware-behavior reasoning in notes to make later review easier.
+
+### Navigator feedback
+
+No additional feedback.
