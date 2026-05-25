@@ -10,6 +10,7 @@ use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
 use crate::platform::emulator::Emulator;
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::OnceLock;
 
 const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.txt";
 const APPROVALS_RAW: &str = include_str!("gba_suite_crc_approvals.txt");
@@ -74,6 +75,12 @@ fn approved_crc_for_suite_key(key: &str) -> u32 {
             key, APPROVALS_FILE, key
         )
     })
+}
+
+fn cached_mgba_timing_diagnostics() -> &'static super::gba_suite_runner::MgbaMemoryDiagnosticResult
+{
+    static RESULT: OnceLock<super::gba_suite_runner::MgbaMemoryDiagnosticResult> = OnceLock::new();
+    RESULT.get_or_init(run_mgba_timing_diagnostics)
 }
 
 fn assert_suite_passes_with_crc(suite: Suite) {
@@ -328,12 +335,12 @@ fn gba_mgba_io_read_diagnostics_passes_after_bios_intro() {
 
 #[test]
 fn gba_mgba_timing_diagnostics_passes_every_timing_case() {
-    let result = run_mgba_timing_diagnostics();
+    let result = cached_mgba_timing_diagnostics();
 
     assert_eq!(
         result.total_count,
         Some(2020),
-        "raw mGBA Timing log: {:?}",
+        "raw mGBA Timing log:\n{}",
         result.raw_log
     );
     assert!(
@@ -355,7 +362,7 @@ fn gba_mgba_timing_diagnostics_passes_every_timing_case() {
 
 #[test]
 fn gba_mgba_timing_diagnostics_passes_c_loop_prefetch_cases() {
-    let result = run_mgba_timing_diagnostics();
+    let result = cached_mgba_timing_diagnostics();
     let c_loop_start = result
         .raw_log
         .find("Timing test: C loop")
@@ -375,7 +382,7 @@ fn gba_mgba_timing_diagnostics_passes_c_loop_prefetch_cases() {
 
 #[test]
 fn gba_mgba_timing_diagnostics_passes_trivial_internal_dma_start_cases() {
-    let result = run_mgba_timing_diagnostics();
+    let result = cached_mgba_timing_diagnostics();
     let failing_cases = [
         "FAIL: Trivial DMA (16) ARM/IWRAM",
         "FAIL: Trivial DMA (16) Thumb/IWRAM",
@@ -394,7 +401,7 @@ fn gba_mgba_timing_diagnostics_passes_trivial_internal_dma_start_cases() {
 
 #[test]
 fn gba_mgba_timing_diagnostics_passes_rom_dma_prefetch_cases() {
-    let result = run_mgba_timing_diagnostics();
+    let result = cached_mgba_timing_diagnostics();
     let failing_prefixes = [
         "FAIL: Trivial DMA (16/ROM)",
         "FAIL: Trivial DMA (16/to ROM)",
@@ -421,7 +428,7 @@ fn gba_mgba_timing_diagnostics_passes_rom_dma_prefetch_cases() {
 
 #[test]
 fn gba_mgba_timing_diagnostics_passes_bios_division_cases() {
-    let result = run_mgba_timing_diagnostics();
+    let result = cached_mgba_timing_diagnostics();
     let failing_prefixes = ["FAIL: BIOS Division ", "FAIL: BIOS Division 2 "];
 
     for failing_prefix in failing_prefixes {
@@ -435,7 +442,7 @@ fn gba_mgba_timing_diagnostics_passes_bios_division_cases() {
 
 #[test]
 fn gba_mgba_timing_diagnostics_passes_bios_sqrt_cases() {
-    let result = run_mgba_timing_diagnostics();
+    let result = cached_mgba_timing_diagnostics();
     let failing_prefixes = [
         "FAIL: BIOS Sqrt ",
         "FAIL: BIOS Sqrt 2 ",
@@ -453,7 +460,7 @@ fn gba_mgba_timing_diagnostics_passes_bios_sqrt_cases() {
 
 #[test]
 fn gba_mgba_timing_diagnostics_passes_bios_arctan_cases() {
-    let result = run_mgba_timing_diagnostics();
+    let result = cached_mgba_timing_diagnostics();
 
     assert!(
         !result.raw_log.contains("FAIL: BIOS ArcTan "),
@@ -464,7 +471,7 @@ fn gba_mgba_timing_diagnostics_passes_bios_arctan_cases() {
 
 #[test]
 fn gba_mgba_timing_diagnostics_passes_bios_cpuset_cases() {
-    let result = run_mgba_timing_diagnostics();
+    let result = cached_mgba_timing_diagnostics();
 
     assert!(
         !result.raw_log.contains("FAIL: CpuSet "),

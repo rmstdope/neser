@@ -1570,7 +1570,7 @@ impl Bus for GbaBus {
             0xE | 0xF => self.cart_write8(addr, value),
             _ => {}
         }
-        if touches_io && self.dma.any_pending() {
+        if touches_io && self.dma.any_pending() && self.dma_start_delay_cycles == 0 {
             self.run_pending_dma();
         }
     }
@@ -1612,11 +1612,14 @@ impl Bus for GbaBus {
     fn embedded_bios_hle_entry_penalty(&self, addr: u32, width: WidthClass) -> u32 {
         match (addr >> 24) & 0xF {
             0x2 => self.n_cycles_width(addr, width) + 2 * self.s_cycles_width(addr, width) - 1,
-            0x8 | 0x9 => {
+            0x8..=0xD => {
                 let n = self.n_cycles_width(addr, width);
                 let s = self.s_cycles_width(addr, width);
-                let ws0_n_slow = ((self.waitstates.waitcnt >> 2) & 0x3) == 0;
-                n + 2 * s + u32::from(ws0_n_slow)
+                n + 2 * s
+                    + u32::from(gamepak_nonseq_wait_is_slowest(
+                        self.waitstates.waitcnt,
+                        addr,
+                    ))
             }
             _ => 0,
         }
@@ -1720,6 +1723,16 @@ fn gamepak_second_access_fast(waitcnt: u16, addr: u32) -> bool {
         _ => return false,
     };
     waitcnt & (1 << bit) != 0
+}
+
+fn gamepak_nonseq_wait_is_slowest(waitcnt: u16, addr: u32) -> bool {
+    let shift = match (addr >> 24) & 0xF {
+        0x8 | 0x9 => 2,
+        0xA | 0xB => 5,
+        0xC | 0xD => 8,
+        _ => return false,
+    };
+    ((waitcnt >> shift) & 0x3) == 0
 }
 
 /// Reading from cartridge ROM with no cart inserted returns the lower half of
@@ -2426,6 +2439,25 @@ mod tests {
     }
 
     #[test]
+    fn dma_immediate_enabled_by_byte_write_waits_start_delay() {
+        let mut bus = GbaBus::new();
+        bus.write32(0x0200_0000, 0xAABB_CCDD);
+        bus.write32(0x0400_00B0, 0x0200_0000);
+        bus.write32(0x0400_00B4, 0x0200_1000);
+        bus.write16(0x0400_00B8, 1);
+
+        bus.write8(0x0400_00BB, 0x84);
+
+        assert_eq!(
+            bus.read32(0x0200_1000),
+            0,
+            "immediate DMA should not run in the same byte write that enables it"
+        );
+        step_past_immediate_dma_start_delay(&mut bus);
+        assert_eq!(bus.read32(0x0200_1000), 0xAABB_CCDD);
+    }
+
+    #[test]
     fn bus_step_advances_peripherals_during_dma_stalls() {
         let mut bus = GbaBus::new();
         for i in 0..4 {
@@ -2869,6 +2901,24 @@ mod tests {
         assert_eq!(
             bus.s_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
             5
+        );
+    }
+
+    #[test]
+    fn embedded_bios_hle_entry_penalty_uses_rom_waitstate_region() {
+        let bus = GbaBus::new();
+
+        assert_eq!(
+            bus.embedded_bios_hle_entry_penalty(0x0800_0000, WidthClass::HalfwordOrByte),
+            12
+        );
+        assert_eq!(
+            bus.embedded_bios_hle_entry_penalty(0x0A00_0000, WidthClass::HalfwordOrByte),
+            16
+        );
+        assert_eq!(
+            bus.embedded_bios_hle_entry_penalty(0x0C00_0000, WidthClass::HalfwordOrByte),
+            24
         );
     }
 
