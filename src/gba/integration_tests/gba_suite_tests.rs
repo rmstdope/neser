@@ -452,6 +452,17 @@ fn gba_mgba_timing_diagnostics_passes_bios_sqrt_cases() {
 }
 
 #[test]
+fn gba_mgba_timing_diagnostics_passes_bios_arctan_cases() {
+    let result = run_mgba_timing_diagnostics();
+
+    assert!(
+        !result.raw_log.contains("FAIL: BIOS ArcTan "),
+        "mGBA Timing BIOS ArcTan case should pass.\nraw log:\n{}",
+        result.raw_log
+    );
+}
+
+#[test]
 fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
     let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
 

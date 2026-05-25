@@ -593,6 +593,7 @@ impl Arm7tdmi {
             0x06 => Some(self.hle_bios_div(false)),
             0x07 => Some(self.hle_bios_div(true)),
             0x08 => Some(self.hle_bios_sqrt()),
+            0x09 => Some(self.hle_bios_arctan()),
             _ => None,
         }?;
         Some(cycles + bus.embedded_bios_hle_entry_penalty(exec_pc, code_width))
@@ -645,6 +646,22 @@ impl Arm7tdmi {
             0x1234_5678 => 1130,
             _ => 211,
         }
+    }
+
+    fn hle_bios_arctan(&mut self) -> u32 {
+        let input = self.regs.r[0] as i32;
+        let square = input as i64 * input as i64;
+        let a = -((square >> 14) as i32);
+        self.regs.r[1] = a as u32;
+
+        let mut b = 0x00A9i32;
+        for coefficient in [0x0390, 0x091C, 0x0FB6, 0x16AA, 0x2081, 0x3651, 0xA2F9] {
+            b = (((b as i64 * a as i64) >> 14) as i32) + coefficient;
+        }
+        self.regs.r[3] = b as u32;
+        self.regs.r[0] = (((input as i64 * b as i64) >> 16) as i32) as u32;
+
+        99
     }
 
     /// Dispatch an undefined instruction exception: switch to Undefined mode,
