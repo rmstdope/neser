@@ -2,7 +2,7 @@ use crate::gb::apu::Apu;
 use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
-use crate::gb::cartridge::{GbCartridge, has_canonical_nintendo_logo};
+use crate::gb::cartridge::GbCartridge;
 use crate::gb::compat_palettes;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
@@ -357,6 +357,10 @@ impl CgbBus {
         }
     }
 
+    fn cartridge_header_logo(&self) -> [u8; 48] {
+        std::array::from_fn(|index| self.cart.read(0x0104 + index as u16))
+    }
+
     fn seed_skip_boot_post_boot_state(&mut self) {
         self.if_reg = 0x01;
         self.joypad.write(0x30);
@@ -373,9 +377,8 @@ impl CgbBus {
             }
         }
 
-        if has_canonical_nintendo_logo(self.cart.as_ref()) {
-            self.ppu.seed_boot_logo();
-        }
+        self.ppu
+            .seed_boot_logo_from_header(&self.cartridge_header_logo());
         self.ppu.seed_boot_registered_mark_tile();
         self.ppu.write_register(0xFF40, 0x91);
         self.ppu.write_register(0xFF42, 0x00);
@@ -1199,9 +1202,8 @@ impl GbBus for CgbBus {
                 if self.boot_rom_active {
                     self.boot_rom_active = false;
                     self.key0_locked = true;
-                    if has_canonical_nintendo_logo(self.cart.as_ref()) {
-                        self.ppu.seed_boot_logo();
-                    }
+                    self.ppu
+                        .seed_boot_logo_from_header(&self.cartridge_header_logo());
                     self.ppu.seed_boot_registered_mark_tile();
 
                     // Apply DMG compatibility palettes for DMG-only games.

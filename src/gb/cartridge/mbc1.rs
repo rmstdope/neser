@@ -1,11 +1,7 @@
 use super::cartridge::GbCartridge;
 
-/// Nintendo logo bitmap stored at offset $0104 in every valid GB ROM header (48 bytes).
-const NINTENDO_LOGO: [u8; 48] = [
-    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
-    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
-    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
-];
+const HEADER_LOGO_LEN: usize = 48;
+const CANONICAL_HEADER_LOGO_CRC32: u32 = 0x4619_5417;
 
 /// Return true if `rom` is an MBC1M multi-game compilation cart.
 ///
@@ -17,8 +13,8 @@ fn is_multicart_rom(rom: &[u8]) -> bool {
         return false;
     }
     let logo_offset = 0x10 * 0x4000 + 0x104;
-    rom.get(logo_offset..logo_offset + NINTENDO_LOGO.len())
-        .is_some_and(|slice| slice == NINTENDO_LOGO)
+    rom.get(logo_offset..logo_offset + HEADER_LOGO_LEN)
+        .is_some_and(|slice| crate::platform::crc32::crc32(&[slice]) == CANONICAL_HEADER_LOGO_CRC32)
 }
 
 /// MBC1 cartridge (types 0x01 = MBC1, 0x02 = MBC1+RAM, 0x03 = MBC1+RAM+BATTERY).
@@ -350,8 +346,14 @@ mod tests {
     fn make_mbc1m_rom() -> Vec<u8> {
         let mut rom = make_mbc1_rom(64);
         let logo_offset = 0x10 * 0x4000 + 0x104;
-        rom[logo_offset..logo_offset + NINTENDO_LOGO.len()].copy_from_slice(&NINTENDO_LOGO);
+        rom[logo_offset..logo_offset + HEADER_LOGO_LEN].copy_from_slice(&fixture_header_logo());
         rom
+    }
+
+    fn fixture_header_logo() -> [u8; HEADER_LOGO_LEN] {
+        let rom =
+            std::fs::read("roms/gb/automated_tests/daid/rom_and_ram.gb").expect("fixture ROM");
+        rom[0x0104..0x0134].try_into().expect("header logo bytes")
     }
 
     #[test]
@@ -367,7 +369,7 @@ mod tests {
         // Given: 2 MiB (128-bank) ROM that happens to have the logo in bank $10
         let mut rom = make_mbc1_rom(128);
         let logo_offset = 0x10 * 0x4000 + 0x104;
-        rom[logo_offset..logo_offset + NINTENDO_LOGO.len()].copy_from_slice(&NINTENDO_LOGO);
+        rom[logo_offset..logo_offset + HEADER_LOGO_LEN].copy_from_slice(&fixture_header_logo());
         // Then: not detected as multicart (wrong size)
         assert!(!is_multicart_rom(&rom));
     }

@@ -1,7 +1,7 @@
 use crate::gb::apu::Apu;
 use crate::gb::boot_rom::{DMG_BOOT_ROM, DMG0_BOOT_ROM};
 use crate::gb::bus::GbBus;
-use crate::gb::cartridge::{GbCartridge, has_canonical_nintendo_logo};
+use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
 use crate::gb::ppu::{Ppu, StopDisplayMode, timing::PpuMode};
@@ -390,6 +390,10 @@ impl DmgBus {
         self.read_raw((u16::from(self.dma_source) << 8) + byte_idx)
     }
 
+    fn cartridge_header_logo(&self) -> [u8; 48] {
+        std::array::from_fn(|index| self.cart.read(0x0104 + index as u16))
+    }
+
     /// Begin a cycle-accurate OAM DMA transfer from `(val << 8)`.
     ///
     /// Sets the DMA state so that `tick()` copies one byte per M-cycle.
@@ -648,9 +652,9 @@ impl GbBus for DmgBus {
             0xFF50 => {
                 if self.boot_rom_active
                     && matches!(self.model.boot_variant(), DmgBootVariant::Production)
-                    && has_canonical_nintendo_logo(self.cart.as_ref())
                 {
-                    self.ppu.seed_boot_logo();
+                    self.ppu
+                        .seed_boot_logo_from_header(&self.cartridge_header_logo());
                     self.ppu.seed_boot_registered_mark_tile();
                 }
                 self.boot_rom_active = false;
