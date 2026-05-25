@@ -26,9 +26,11 @@
 //! - `misc/boot_div-A.gb`
 //! - `misc/boot_regs-A.gb`
 
+use std::path::Path;
+
 use super::helpers::{
-    MooneyeResult, detect_mooneye_result_with_limit, load_gb_rom, run_and_detect_cgb,
-    run_and_detect_dmg,
+    MooneyeResult, detect_mooneye_result_with_limit, load_gb_rom, load_gb_rom_with_model,
+    run_and_detect_cgb, run_and_detect_dmg, run_frames_and_crc, save_screen_png,
 };
 use crate::gb::bus::{DmgBus, GbBus};
 use crate::gb::console::Gb;
@@ -235,6 +237,29 @@ mod helper_tests {
 // ============================================================================
 
 const BASE: &str = "roms/gb/automated_tests/mts-20240926-1737-443f6e1";
+const SPRITE_PRIORITY_FRAMES: u32 = 500;
+
+fn run_mooneye_visual_case_and_crc<B: GbBus>(
+    gb: &mut Gb<B>,
+    frames: u32,
+    capture_name: &str,
+) -> u32 {
+    let crc = run_frames_and_crc(gb, frames);
+    capture_mooneye_screen_if_requested(gb, capture_name, crc);
+    crc
+}
+
+fn capture_mooneye_screen_if_requested<B: GbBus>(gb: &Gb<B>, capture_name: &str, crc: u32) {
+    if std::env::var_os("NESER_CAPTURE_SCREEN").is_none() {
+        return;
+    }
+
+    let dir = Path::new("target/mooneye-captures");
+    std::fs::create_dir_all(dir).expect("create mooneye capture directory");
+    let path = dir.join(format!("{capture_name}.png"));
+    save_screen_png(gb, path.to_str().expect("valid mooneye capture path"));
+    println!("[mooneye] {capture_name}: CRC={crc:#010X}, PNG saved to {path:?}");
+}
 
 #[test]
 fn test_mooneye_acceptance_add_sp_e_timing() {
@@ -775,6 +800,32 @@ fn test_mooneye_misc_ppu_vblank_stat_intr_c() {
         &format!("{BASE}/misc/ppu/vblank_stat_intr-C.gb"),
         CgbModel::CgbE
     );
+}
+
+// ============================================================================
+// manual-only/ visual tests
+// ============================================================================
+
+#[test]
+fn test_mooneye_manual_only_sprite_priority_dmg_b_matches_reference_crc() {
+    let path = format!("{BASE}/manual-only/sprite_priority.gb");
+    let mut gb = load_gb_rom_with_model(&path, DmgModel::DmgB);
+    let crc =
+        run_mooneye_visual_case_and_crc(&mut gb, SPRITE_PRIORITY_FRAMES, "sprite_priority_dmg_b");
+
+    const EXPECTED_CRC: u32 = 0x8ADF_6D41;
+    assert_eq!(
+        crc, EXPECTED_CRC,
+        "sprite_priority_dmg_b frame {SPRITE_PRIORITY_FRAMES} CRC mismatch: got {crc:#010X}, expected {EXPECTED_CRC:#010X}"
+    );
+}
+
+#[test]
+#[ignore = "screenshot helper - run manually with NESER_CAPTURE_SCREEN=1 for baseline review"]
+fn capture_mooneye_sprite_priority_screenshot() {
+    let path = format!("{BASE}/manual-only/sprite_priority.gb");
+    let mut gb = load_gb_rom_with_model(&path, DmgModel::DmgB);
+    run_mooneye_visual_case_and_crc(&mut gb, SPRITE_PRIORITY_FRAMES, "sprite_priority_dmg_b");
 }
 
 // ============================================================================
