@@ -104,6 +104,9 @@ pub struct CgbBus {
     /// Stored for model-specific hardware initialization (DIV counter initial
     /// state, post-boot register values).
     model: CgbModel,
+    /// CGB revisions 0-D expose unique RAM in the normally prohibited
+    /// `$FEA0-$FEFF` range, with revision-specific address masks.
+    cgb_extra_oam: [u8; 0x60],
     /// Undocumented CGB register $FF72 (fully R/W, initial value $00).
     /// Pan Docs: "CGB Registers" — undocumented registers section.
     ff72: u8,
@@ -136,6 +139,44 @@ pub struct CgbBus {
 }
 
 impl CgbBus {
+    fn cgb_extra_oam_index(&self, addr: u16) -> Option<usize> {
+        let mut lower_addr = addr as u8;
+        match self.model {
+            CgbModel::Cgb0 | CgbModel::CgbA | CgbModel::CgbB | CgbModel::CgbC => {
+                lower_addr &= !0x18;
+                Some((lower_addr - 0xA0) as usize)
+            }
+            CgbModel::CgbD => {
+                if lower_addr >= 0xC0 {
+                    lower_addr |= 0xF0;
+                }
+                Some((lower_addr - 0xA0) as usize)
+            }
+            CgbModel::CgbE => None,
+        }
+    }
+
+    fn cgb_forbidden_region_read(&self, addr: u16) -> u8 {
+        if let Some(index) = self.cgb_extra_oam_index(addr) {
+            return self.cgb_extra_oam[index];
+        }
+
+        let high_nibble = ((addr as u8) >> 4) & 0x0F;
+        (high_nibble << 4) | high_nibble
+    }
+
+    fn cgb_forbidden_region_write(&mut self, addr: u16, val: u8) {
+        if let Some(index) = self.cgb_extra_oam_index(addr) {
+            self.cgb_extra_oam[index] = val;
+        }
+    }
+
+    fn cgb_forbidden_region_blocked(&self) -> bool {
+        self.dma_oam_blocked
+            || (self.ppu.is_lcd_enabled()
+                && matches!(self.ppu.mode(), PpuMode::OamScan | PpuMode::PixelTransfer))
+    }
+
     fn needs_mode3_lcdc_write_phase(&self, addr: u16, val: u8) -> bool {
         const LCDC_TILE_DATA: u8 = 0x10;
 
@@ -205,6 +246,7 @@ impl CgbBus {
             rtc_tick_accumulator: 0,
             apu_power_on_accumulator: 0,
             model,
+            cgb_extra_oam: [0; 0x60],
             // Undocumented CGB registers.
             // $FF72-$FF73: fully R/W, initial value $00.
             // $FF74: R/W in CGB mode, initial value $FF (per Mooneye boot_hwio-C test).
@@ -302,6 +344,12 @@ impl CgbBus {
         self.apu.write_register(0xFF14, 0x80);
         self.apu.write_register(0xFF24, 0x77);
         self.apu.write_register(0xFF25, 0xF3);
+        if self.model != CgbModel::Cgb0 {
+            for offset in 0..16 {
+                let value = if offset % 2 == 0 { 0x00 } else { 0xFF };
+                self.apu.write_register(0xFF30 + offset, value);
+            }
+        }
 
         self.ppu.seed_boot_registered_mark_tile();
         self.ppu.write_register(0xFF40, 0x91);
@@ -795,6 +843,7 @@ impl CgbBus {
             ff75: Some(self.ff75),
             key0: Some(self.key0),
             key0_locked: Some(self.key0_locked),
+            cgb_extra_oam: Some(self.cgb_extra_oam.to_vec()),
             boot_rom_active: Some(self.boot_rom_active),
             sb: None,
             sc: None,
@@ -854,6 +903,18 @@ impl CgbBus {
         // Restore KEY0 state; default to locked with post-boot value for older save states
         self.key0 = state.key0.unwrap_or(0x00);
         self.key0_locked = state.key0_locked.unwrap_or(true);
+        if let Some(extra_oam) = &state.cgb_extra_oam {
+            if extra_oam.len() != self.cgb_extra_oam.len() {
+                return Err(format!(
+                    "invalid CGB extra OAM length: expected {}, found {}",
+                    self.cgb_extra_oam.len(),
+                    extra_oam.len()
+                ));
+            }
+            self.cgb_extra_oam.copy_from_slice(extra_oam);
+        } else {
+            self.cgb_extra_oam = [0; 0x60];
+        }
         // Restore boot ROM state; default to inactive for older save states
         self.boot_rom_active = state.boot_rom_active.unwrap_or(false);
         Ok(())
@@ -906,7 +967,12 @@ impl GbBus for CgbBus {
                 }
                 self.ppu.read_oam(addr)
             }
-            0xFEA0..=0xFEFF => 0xFF,
+            0xFEA0..=0xFEFF => {
+                if self.cgb_forbidden_region_blocked() {
+                    return 0xFF;
+                }
+                self.cgb_forbidden_region_read(addr)
+            }
             0xFF00 => self.joypad.read(),
             0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
@@ -968,7 +1034,11 @@ impl GbBus for CgbBus {
                     self.ppu.write_oam(addr, val);
                 }
             }
-            0xFEA0..=0xFEFF => {}
+            0xFEA0..=0xFEFF => {
+                if !self.cgb_forbidden_region_blocked() {
+                    self.cgb_forbidden_region_write(addr, val);
+                }
+            }
             0xFF00 => self.joypad.write(val),
             0xFF01 => self.sb = val,
             0xFF02 => {
@@ -1196,7 +1266,13 @@ impl GbBus for CgbBus {
                 // side-effect-free).
                 self.ppu.oam[(addr - 0xFE00) as usize]
             }
-            0xFEA0..=0xFEFF => 0xFF,
+            0xFEA0..=0xFEFF => {
+                if self.cgb_forbidden_region_blocked() {
+                    0xFF
+                } else {
+                    self.cgb_forbidden_region_read(addr)
+                }
+            }
             0xFF00 => self.joypad.read(),
             0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
@@ -1409,6 +1485,101 @@ mod tests {
         for &(addr, value) in expected {
             assert_eq!(bus.read(addr), value, "read ${addr:04X}");
         }
+    }
+
+    #[test]
+    fn cgb_e_skip_boot_seeds_production_wave_ram_pattern_for_dmg_compat_roms() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+
+        // Given/When: a DMG-only cartridge starts on CGB-E with the boot ROM skipped.
+        // Then: production CGB post-boot wave RAM is the alternating 00/FF pattern
+        // that the CGB boot ROM leaves behind, allowing hardware probes such as
+        // GBEmulatorShootout's acid/which.gb to distinguish CGB-E from generic CGB.
+        for offset in 0..16 {
+            let expected = if offset % 2 == 0 { 0x00 } else { 0xFF };
+            assert_eq!(
+                bus.read(0xFF30 + offset),
+                expected,
+                "wave RAM byte {offset} should match CGB-E post-boot pattern"
+            );
+        }
+    }
+
+    #[test]
+    fn cgb_e_forbidden_region_reads_address_high_nibble_pattern_when_oam_accessible() {
+        let mut bus = CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbE, true);
+
+        // Given/When: OAM is accessible on CGB-E.
+        // Then: Pan Docs specifies $FEA0-$FEFF returns the high nibble of the
+        // lower address byte twice, e.g. $FEA0 -> $AA, $FEB8 -> $BB.
+        assert_eq!(bus.read(0xFEA0), 0xAA);
+        assert_eq!(bus.read(0xFEB8), 0xBB);
+        assert_eq!(bus.read(0xFEFF), 0xFF);
+        assert_eq!(bus.read_for_debugger(0xFEA0), 0xAA);
+        assert_eq!(bus.read_for_debugger(0xFEB8), 0xBB);
+    }
+
+    #[test]
+    fn cgb_c_forbidden_region_aliases_addresses_using_early_cgb_mask() {
+        let mut bus = CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbC, true);
+
+        // Given/When: software writes two addresses that CGB-C masks to the
+        // same underlying extra-OAM RAM byte.
+        bus.write(0xFEA0, 0x12);
+        bus.write(0xFEB8, 0x34);
+
+        // Then: both reads observe the later write through the CGB 0-C address mask.
+        assert_eq!(bus.read(0xFEA0), 0x34);
+        assert_eq!(bus.read(0xFEB8), 0x34);
+    }
+
+    #[test]
+    fn cgb_d_forbidden_region_keeps_addresses_distinct_until_fec0_mirror() {
+        let mut bus = CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbD, true);
+
+        // Given/When: software writes addresses that CGB-C aliases but CGB-D
+        // keeps distinct. GBEmulatorShootout's acid/which.gb uses this
+        // hardware difference to distinguish CGB-D from CGB-C.
+        bus.write(0xFEA0, 0x12);
+        bus.write(0xFEB8, 0x34);
+
+        // Then: CGB-D reads both values back independently.
+        assert_eq!(bus.read(0xFEA0), 0x12);
+        assert_eq!(bus.read(0xFEB8), 0x34);
+
+        // And: the CGB-D $FEC0-$FEFF mirror maps into the last 16 bytes.
+        bus.write(0xFEB0, 0x56);
+        bus.write(0xFEC0, 0x78);
+        assert_eq!(bus.read(0xFEB0), 0x56);
+        assert_eq!(bus.read(0xFEC0), 0x78);
+        assert_eq!(bus.read(0xFEF0), 0x78);
+    }
+
+    #[test]
+    fn cgb_forbidden_region_extra_oam_round_trips_through_save_state() {
+        let mut bus = CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbD, true);
+        bus.write(0xFEA0, 0x12);
+        bus.write(0xFEB8, 0x34);
+        let state = bus.capture_bus_state();
+
+        let mut restored = CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbD, true);
+        restored
+            .restore_bus_state(&state)
+            .expect("CGB extra OAM should restore");
+
+        assert_eq!(restored.read(0xFEA0), 0x12);
+        assert_eq!(restored.read(0xFEB8), 0x34);
+    }
+
+    #[test]
+    fn cgb_e_forbidden_region_debugger_read_returns_ff_when_oam_blocked() {
+        let mut bus = CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbE, true);
+        bus.write(0xFF40, 0x91);
+        for _ in 0..22 {
+            bus.tick(1);
+        }
+
+        assert_eq!(bus.read_for_debugger(0xFEA0), 0xFF);
     }
 
     #[test]
