@@ -2,7 +2,6 @@ use super::helpers::{
     load_cgb_rom, load_cgb_rom_with_model, load_gb_rom, load_gb_rom_with_model, run_frames_and_crc,
     run_one_frame, save_screen_png,
 };
-use crate::gb::bus::GbBus;
 use crate::gb::model::{CgbModel, DmgModel};
 
 const ACID_DIR: &str = "roms/gb/automated_tests/acid";
