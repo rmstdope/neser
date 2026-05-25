@@ -1,4 +1,4 @@
-use super::helpers::load_gb_rom;
+use super::helpers::{load_cgb_rom, load_gb_rom};
 use crate::gb::bus::{DmgBus, GbBus};
 use crate::gb::console::Gb;
 
@@ -118,8 +118,8 @@ fn run_blargg_rom_cart_ram(gb: &mut Gb<DmgBus>) -> String {
 ///
 /// Returns a `String` containing the decoded visible tile map content with
 /// newlines between rows, with trailing whitespace stripped from each row.
-fn vram_tilemap_text(gb: &Gb<DmgBus>) -> String {
-    let tile_map = &gb.cpu.bus.ppu.vram[0x1800..0x1C00];
+fn vram_tilemap_text<B: GbBus>(gb: &Gb<B>) -> String {
+    let tile_map = &gb.cpu.bus.ppu().vram[0x1800..0x1C00];
     let mut result = String::new();
     for row in 0..18usize {
         let start = row * 32;
@@ -147,7 +147,7 @@ fn vram_tilemap_text(gb: &Gb<DmgBus>) -> String {
 ///
 /// Polls the tilemap every 50 000 M-cycles rather than always running to the
 /// full budget, keeping CI runtime predictable.
-fn run_blargg_rom_lcd(gb: &mut Gb<DmgBus>) -> String {
+fn run_blargg_rom_lcd<B: GbBus>(gb: &mut Gb<B>) -> String {
     const POLL_INTERVAL: u64 = 50_000;
     let start = gb.cycles();
     loop {
@@ -308,6 +308,16 @@ fn test_halt_bug() {
 }
 
 #[test]
+fn test_interrupt_time() {
+    let mut gb = load_cgb_rom("roms/gb/automated_tests/blargg/interrupt_time/interrupt_time.gb");
+    let output = run_blargg_rom_lcd(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed in LCD output, got: {output:?}"
+    );
+}
+
+#[test]
 fn test_mem_timing() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/mem_timing/mem_timing.gb");
     let output = run_blargg_rom(&mut gb);
@@ -318,8 +328,74 @@ fn test_mem_timing() {
 }
 
 #[test]
+fn test_mem_timing_01_read_timing() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/mem_timing/individual/01-read_timing.gb");
+    let output = run_blargg_rom(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_mem_timing_02_write_timing() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/mem_timing/individual/02-write_timing.gb");
+    let output = run_blargg_rom(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_mem_timing_03_modify_timing() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/mem_timing/individual/03-modify_timing.gb");
+    let output = run_blargg_rom(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
 fn test_mem_timing_2() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/mem_timing-2/mem_timing.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_mem_timing_2_01_read_timing() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/mem_timing-2/rom_singles/01-read_timing.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_mem_timing_2_02_write_timing() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/mem_timing-2/rom_singles/02-write_timing.gb");
+    let output = run_blargg_rom_cart_ram(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_mem_timing_2_03_modify_timing() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/mem_timing-2/rom_singles/03-modify_timing.gb");
     let output = run_blargg_rom_cart_ram(&mut gb);
     assert!(
         output.contains("Passed"),
