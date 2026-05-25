@@ -102,6 +102,14 @@ fn data_word_access_is_sequential(prev_addr: u32, addr: u32) -> bool {
     true
 }
 
+fn align_cpu_fast_set_addr(addr: u32) -> u32 {
+    if matches!((addr >> 24) & 0xF, 0xE | 0xF) {
+        addr
+    } else {
+        addr & !3
+    }
+}
+
 impl Default for Arm7tdmi {
     fn default() -> Self {
         Self::new()
@@ -581,7 +589,7 @@ impl Arm7tdmi {
 
     fn hle_embedded_bios_swi<B: Bus>(
         &mut self,
-        bus: &B,
+        bus: &mut B,
         swi: u8,
         exec_pc: u32,
         code_width: WidthClass,
@@ -594,6 +602,7 @@ impl Arm7tdmi {
             0x07 => Some(self.hle_bios_div(true)),
             0x08 => Some(self.hle_bios_sqrt()),
             0x09 => Some(self.hle_bios_arctan()),
+            0x0C => Some(self.hle_bios_cpu_fast_set(bus)),
             _ => None,
         }?;
         Some(cycles + bus.embedded_bios_hle_entry_penalty(exec_pc, code_width))
@@ -662,6 +671,31 @@ impl Arm7tdmi {
         self.regs.r[0] = (((input as i64 * b as i64) >> 16) as i32) as u32;
 
         99
+    }
+
+    fn hle_bios_cpu_fast_set<B: Bus>(&mut self, bus: &mut B) -> u32 {
+        let mut src = align_cpu_fast_set_addr(self.regs.r[0]);
+        let mut dst = align_cpu_fast_set_addr(self.regs.r[1]);
+        let control = self.regs.r[2];
+        let fill = control & (1 << 24) != 0;
+        let count = ((control & 0x001F_FFFF).saturating_add(7)) & !7;
+
+        if fill {
+            let value = bus.read32(src);
+            for _ in 0..count {
+                bus.write32(dst, value);
+                dst = dst.wrapping_add(4);
+            }
+        } else {
+            for _ in 0..count {
+                let value = bus.read32(src);
+                bus.write32(dst, value);
+                src = src.wrapping_add(4);
+                dst = dst.wrapping_add(4);
+            }
+        }
+
+        3_390
     }
 
     /// Dispatch an undefined instruction exception: switch to Undefined mode,
