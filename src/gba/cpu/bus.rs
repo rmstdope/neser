@@ -42,6 +42,13 @@ pub trait Bus {
         false
     }
 
+    /// Whether the instruction that just executed enabled an immediate DMA
+    /// transfer whose Game Pak bus use blocks the opcode prefetcher for one
+    /// extra cycle.
+    fn immediate_gamepak_dma_prefetch_penalty(&self, _code_width: WidthClass) -> bool {
+        false
+    }
+
     /// Read a 32-bit word for an **instruction fetch**.  The address must
     /// already be aligned to a 4-byte boundary.  Implementations may track
     /// this access separately from data reads so that bus faults can be

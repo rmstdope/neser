@@ -393,6 +393,33 @@ fn gba_mgba_timing_diagnostics_passes_trivial_internal_dma_start_cases() {
 }
 
 #[test]
+fn gba_mgba_timing_diagnostics_passes_rom_dma_prefetch_cases() {
+    let result = run_mgba_timing_diagnostics();
+    let failing_prefixes = [
+        "FAIL: Trivial DMA (16/ROM)",
+        "FAIL: Trivial DMA (16/to ROM)",
+        "FAIL: Trivial DMA (16/ROM to ROM)",
+        "FAIL: Trivial DMA (32/from ROM)",
+        "FAIL: Trivial DMA (32/to ROM)",
+        "FAIL: Trivial DMA (32/ROM to ROM)",
+        "FAIL: Short DMA (16/from ROM)",
+        "FAIL: Short DMA (16/to ROM)",
+        "FAIL: Short DMA (16/ROM to ROM)",
+        "FAIL: Short DMA (32/from ROM)",
+        "FAIL: Short DMA (32/to ROM)",
+        "FAIL: Short DMA (32/ROM to ROM)",
+    ];
+
+    for failing_prefix in failing_prefixes {
+        assert!(
+            !result.raw_log.contains(failing_prefix),
+            "mGBA Timing ROM-DMA prefetch case should pass: {failing_prefix}\nraw log:\n{}",
+            result.raw_log
+        );
+    }
+}
+
+#[test]
 fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
     let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
 

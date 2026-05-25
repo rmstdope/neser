@@ -300,6 +300,11 @@ impl Arm7tdmi {
                 .saturating_add(queued)
                 .min(8);
             self.gamepak_prefetch_cycle_credit = (credit % prefetch_halfword_cycles) as u8;
+            if bus.immediate_gamepak_dma_prefetch_penalty(code_width) {
+                code_cycles += 1;
+                self.gamepak_prefetch_halfwords = 0;
+                self.gamepak_prefetch_cycle_credit = 0;
+            }
         } else if outcome.branched {
             self.gamepak_prefetch_halfwords = 0;
             self.gamepak_prefetch_cycle_credit = 0;

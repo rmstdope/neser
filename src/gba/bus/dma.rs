@@ -223,6 +223,14 @@ impl DmaController {
         self.channels.iter().any(|c| c.pending)
     }
 
+    /// Source/destination of the highest-priority pending immediate DMA.
+    pub fn pending_immediate_src_dst(&self) -> Option<(u32, u32)> {
+        self.channels
+            .iter()
+            .find(|c| c.pending && c.timing() == StartTiming::Immediate)
+            .map(|c| (c.cur_src, c.cur_dst))
+    }
+
     /// Whether the highest-priority pending channel that is ready to run
     /// right now is `channel`. Used by the bus to drive immediate-mode
     /// transfers.

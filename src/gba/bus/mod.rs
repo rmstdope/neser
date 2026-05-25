@@ -1586,6 +1586,24 @@ impl Bus for GbaBus {
     fn gamepak_prefetch_enabled(&self) -> bool {
         self.waitstates.prefetch_enabled
     }
+
+    fn immediate_gamepak_dma_prefetch_penalty(&self, code_width: WidthClass) -> bool {
+        if self.dma_start_delay_cycles == 0 {
+            return false;
+        }
+        let Some((src, dst)) = self.dma.pending_immediate_src_dst() else {
+            return false;
+        };
+        let src_gamepak = dma_addr_uses_gamepak(src);
+        let dst_gamepak = dma_addr_uses_gamepak(dst);
+        let src_second_fast = gamepak_second_access_fast(self.waitstates.waitcnt, src);
+        let dst_second_fast = gamepak_second_access_fast(self.waitstates.waitcnt, dst);
+
+        // mGBA Timing shows a one-cycle arbitration bubble when immediate
+        // DMA steals the Game Pak bus from the opcode prefetcher.
+        (src_gamepak && code_width == WidthClass::Word && src_second_fast)
+            || (!src_gamepak && dst_gamepak && !dst_second_fast)
+    }
 }
 
 /// DMA transfers use the bus' standard read/write paths so that DMA
@@ -1671,6 +1689,20 @@ fn dma_control_index(addr: u32) -> Option<usize> {
         0x0400_00DE => Some(3),
         _ => None,
     }
+}
+
+fn dma_addr_uses_gamepak(addr: u32) -> bool {
+    matches!((addr >> 24) & 0xF, 0x8..=0xD)
+}
+
+fn gamepak_second_access_fast(waitcnt: u16, addr: u32) -> bool {
+    let bit = match (addr >> 24) & 0xF {
+        0x8 | 0x9 => 4,
+        0xA | 0xB => 7,
+        0xC | 0xD => 10,
+        _ => return false,
+    };
+    waitcnt & (1 << bit) != 0
 }
 
 /// Reading from cartridge ROM with no cart inserted returns the lower half of
