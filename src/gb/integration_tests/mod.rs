@@ -3,6 +3,7 @@ pub mod ashiepaws_tests;
 pub mod ax6_tests;
 pub mod blargg_tests;
 pub mod boot_tests;
+pub mod cpp_tests;
 pub mod daid_tests;
 pub mod helpers;
 pub mod mealybug_tests;

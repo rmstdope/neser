@@ -78,7 +78,6 @@ pub struct Mbc3 {
     // RTC state
     rtc: RtcRegisters,
     latched_rtc: RtcRegisters,
-    latch_armed: bool,  // True if $00 was written to $6000-$7FFF
     cycle_counter: u32, // M-cycle counter for RTC ticking
 }
 
@@ -103,7 +102,6 @@ impl Mbc3 {
             has_battery,
             rtc: RtcRegisters::default(),
             latched_rtc: RtcRegisters::default(),
-            latch_armed: false,
             cycle_counter: 0,
         }
     }
@@ -128,8 +126,32 @@ impl Mbc3 {
     }
 
     /// Returns true if the current RAM/RTC bank selects an RTC register
+    #[cfg(test)]
     fn is_rtc_selected(&self) -> bool {
-        self.has_rtc && self.ram_bank >= 0x08 && self.ram_bank <= 0x0C
+        self.selected_rtc_register().is_some()
+    }
+
+    fn rtc_mapped(&self) -> bool {
+        self.has_rtc && self.ram_bank & 0x08 != 0
+    }
+
+    fn selected_rtc_register(&self) -> Option<u8> {
+        if !self.rtc_mapped() {
+            return None;
+        }
+
+        let register = self.ram_bank & 0x07;
+        (register <= 0x04).then_some(0x08 + register)
+    }
+
+    fn selected_ram_bank(&self) -> Option<usize> {
+        let bank = (self.ram_bank & 0x07) as usize;
+        if self.has_rtc && bank > 3 {
+            return None;
+        }
+
+        let bank_count = self.ram_bank_count().max(1);
+        Some(bank % bank_count)
     }
 
     /// Read from ROM space ($0000-$7FFF)
@@ -155,24 +177,30 @@ impl Mbc3 {
             return 0xFF;
         }
 
-        if self.is_rtc_selected() {
-            // Read from latched RTC registers
-            match self.ram_bank {
-                0x08 => self.latched_rtc.seconds,
-                0x09 => self.latched_rtc.minutes,
-                0x0A => self.latched_rtc.hours,
-                0x0B => self.latched_rtc.day_low,
-                0x0C => self.latched_rtc.day_high,
-                _ => 0xFF,
-            }
+        if self.rtc_mapped() {
+            self.selected_rtc_register()
+                .map_or(0xFF, |register| self.read_rtc_register(register))
         } else if self.has_ram && !self.ram.is_empty() {
             // Read from RAM
-            let bank_count = self.ram_bank_count().max(1);
-            let bank = (self.ram_bank as usize) % bank_count;
-            let offset = (addr as usize - 0xA000) + bank * 0x2000;
-            *self.ram.get(offset).unwrap_or(&0xFF)
+            if let Some(bank) = self.selected_ram_bank() {
+                let offset = (addr as usize - 0xA000) + bank * 0x2000;
+                *self.ram.get(offset).unwrap_or(&0xFF)
+            } else {
+                0xFF
+            }
         } else {
             0xFF
+        }
+    }
+
+    fn read_rtc_register(&self, register: u8) -> u8 {
+        match register {
+            0x08 => self.latched_rtc.seconds,
+            0x09 => self.latched_rtc.minutes,
+            0x0A => self.latched_rtc.hours,
+            0x0B => self.latched_rtc.day_low,
+            0x0C => self.latched_rtc.day_high,
+            _ => 0xFF,
         }
     }
 
@@ -193,14 +221,8 @@ impl Mbc3 {
             }
             // $6000-$7FFF: Latch Clock Data
             0x6000..=0x7FFF => {
-                if value == 0x00 {
-                    self.latch_armed = true;
-                } else if value == 0x01 && self.latch_armed {
-                    // Latch current RTC values
+                if self.has_rtc {
                     self.latched_rtc = self.rtc.clone();
-                    self.latch_armed = false;
-                } else {
-                    self.latch_armed = false;
                 }
             }
             // $A000-$BFFF: RAM / RTC Write
@@ -209,29 +231,34 @@ impl Mbc3 {
                     return;
                 }
 
-                if self.is_rtc_selected() {
-                    // Write to live RTC registers
-                    match self.ram_bank {
-                        0x08 => {
-                            self.rtc.seconds = value & RTC_SECONDS_MASK;
-                            self.cycle_counter = 0;
-                        }
-                        0x09 => self.rtc.minutes = value & RTC_MINUTES_MASK,
-                        0x0A => self.rtc.hours = value & RTC_HOURS_MASK,
-                        0x0B => self.rtc.day_low = value,
-                        0x0C => self.rtc.day_high = value & RTC_DAY_HIGH_MASK,
-                        _ => {}
+                if self.rtc_mapped() {
+                    if let Some(register) = self.selected_rtc_register() {
+                        self.write_rtc_register(register, value);
                     }
                 } else if self.has_ram && !self.ram.is_empty() {
                     // Write to RAM
-                    let bank_count = self.ram_bank_count().max(1);
-                    let bank = (self.ram_bank as usize) % bank_count;
-                    let offset = (addr as usize - 0xA000) + bank * 0x2000;
-                    if let Some(byte) = self.ram.get_mut(offset) {
-                        *byte = value;
+                    if let Some(bank) = self.selected_ram_bank() {
+                        let offset = (addr as usize - 0xA000) + bank * 0x2000;
+                        if let Some(byte) = self.ram.get_mut(offset) {
+                            *byte = value;
+                        }
                     }
                 }
             }
+            _ => {}
+        }
+    }
+
+    fn write_rtc_register(&mut self, register: u8, value: u8) {
+        match register {
+            0x08 => {
+                self.rtc.seconds = value & RTC_SECONDS_MASK;
+                self.cycle_counter = 0;
+            }
+            0x09 => self.rtc.minutes = value & RTC_MINUTES_MASK,
+            0x0A => self.rtc.hours = value & RTC_HOURS_MASK,
+            0x0B => self.rtc.day_low = value,
+            0x0C => self.rtc.day_high = value & RTC_DAY_HIGH_MASK,
             _ => {}
         }
     }
@@ -422,7 +449,7 @@ impl GbCartridge for Mbc3 {
             self.rom_bank,
             self.ram_bank,
             self.ram_enabled as u8,
-            self.latch_armed as u8,
+            0, // Legacy latch_armed snapshot byte; ignored by current latch semantics.
         ];
         // Include cycle_counter for smooth RTC across save-states
         state.extend_from_slice(&self.cycle_counter.to_le_bytes());
@@ -434,7 +461,6 @@ impl GbCartridge for Mbc3 {
             self.rom_bank = data[0];
             self.ram_bank = data[1];
             self.ram_enabled = data[2] != 0;
-            self.latch_armed = data[3] != 0;
         }
         if data.len() >= 8 {
             self.cycle_counter = u32::from_le_bytes(data[4..8].try_into().unwrap_or([0; 4]));
@@ -606,6 +632,58 @@ mod tests {
         // Select bank 3 - should wrap to bank 0
         mbc3.write(0x4000, 3);
         assert_eq!(mbc3.read(0xA000), 0x42, "Bank 3 should wrap to bank 0");
+    }
+
+    #[test]
+    fn test_mbc3_rtc_cart_ram_banks_4_to_7_are_unmapped() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x8000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+        mbc3.write(0x4000, 0x00);
+        mbc3.write(0xA000, 0x42);
+
+        for bank in 0x04..=0x07 {
+            mbc3.write(0x4000, bank);
+            assert_eq!(
+                mbc3.read(0xA000),
+                0xFF,
+                "RAM bank {bank:#04X} should be unmapped"
+            );
+            mbc3.write(0xA000, bank);
+        }
+
+        mbc3.write(0x4000, 0x00);
+        assert_eq!(
+            mbc3.read(0xA000),
+            0x42,
+            "unmapped bank writes should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_mbc3_rtc_cart_bank_select_ignores_upper_nibble() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x8000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+        mbc3.write(0x4000, 0x00);
+        mbc3.write(0xA000, 0x34);
+        write_rtc_register(&mut mbc3, 0x08, 0x12);
+        mbc3.write(0x6000, 0x01);
+
+        mbc3.write(0x4000, 0x10);
+        assert_eq!(mbc3.read(0xA000), 0x34, "0x10 should mirror RAM bank 0");
+
+        mbc3.write(0x4000, 0x18);
+        assert_eq!(mbc3.read(0xA000), 0x12, "0x18 should mirror RTC seconds");
+
+        mbc3.write(0x4000, 0x1D);
+        assert_eq!(
+            mbc3.read(0xA000),
+            0xFF,
+            "0x1D should mirror unmapped RTC index 5"
+        );
     }
 
     // ========================================================================
@@ -819,7 +897,7 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_rtc_latch_requires_exact_sequence() {
+    fn test_rtc_latch_does_not_require_exact_sequence() {
         let rom = make_rom(2);
         let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
 
@@ -829,14 +907,29 @@ mod tests {
         mbc3.write(0x4000, 0x08);
         mbc3.write(0xA000, 30);
 
-        // Incorrect sequence: $01 without $00 first
         mbc3.write(0x6000, 0x01);
 
-        // Latched value should still be default (0)
         assert_eq!(
             mbc3.read(0xA000),
-            0,
-            "Latch should not trigger without $00 first"
+            30,
+            "MBC3 should latch RTC on a single latch register write"
+        );
+    }
+
+    #[test]
+    fn test_rtc_latches_on_any_latch_register_write() {
+        let rom = make_rom(2);
+        let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
+
+        mbc3.write(0x0000, 0x0A);
+        write_rtc_register(&mut mbc3, 0x08, 0x21);
+
+        mbc3.write(0x6000, 0xA5);
+
+        assert_eq!(
+            read_latched_rtc_register(&mut mbc3, 0x08),
+            0x21,
+            "MBC3 should latch RTC on any write to the latch register"
         );
     }
 
