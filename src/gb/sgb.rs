@@ -126,15 +126,27 @@ impl SgbState {
         }
 
         let control = self.command.get(1).copied().unwrap_or(0) & 0x03;
-        self.player_count = control + 1;
-        if control == 2 {
-            // SameSuite documents mode 2 as a glitched three-player state: it
-            // performs one extra current-player step, then masks with 2.
-            self.current_player = self.current_player.wrapping_add(1);
-        } else if self.player_count == 3 {
-            self.player_count = 4;
+        match control {
+            0 => {
+                self.player_count = 1;
+                self.current_player = 0;
+            }
+            1 => {
+                self.player_count = 2;
+                self.current_player &= 1;
+            }
+            2 => {
+                // SameSuite documents mode 2 as a glitched three-player state:
+                // it performs one extra current-player step, then masks with 2.
+                self.player_count = 3;
+                self.current_player = self.current_player.wrapping_add(1) & 2;
+            }
+            3 => {
+                self.player_count = 4;
+                self.current_player &= 3;
+            }
+            _ => unreachable!(),
         }
-        self.current_player &= self.player_count - 1;
     }
 }
 
