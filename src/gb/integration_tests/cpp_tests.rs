@@ -18,7 +18,9 @@ use crate::gb::model::{CgbModel, DmgModel};
 
 const CPP_DIR: &str = "roms/gb/automated_tests/cpp";
 const RESULT_SCREEN_FRAMES: u32 = 300;
-const DMG_GREYSCALE_CGB_PALETTE: [u16; 4] = [0x7FFF, 0x56B5, 0x294A, 0x0000];
+// This is intentionally not sourced from CGB boot ROM compatibility palettes:
+// it normalizes CGB execution to the grayscale upstream DMG reference PNGs.
+const UPSTREAM_REFERENCE_GREYSCALE_PALETTE: [u16; 4] = [0x7FFF, 0x56B5, 0x294A, 0x0000];
 
 #[derive(Clone, Copy, Debug)]
 enum HardwareMode {
@@ -193,9 +195,9 @@ fn run_case_frames_and_crc(case: CppCase, frames: u32) -> u32 {
             // Normalize DMG-compat CGB colorization so extra CGB coverage can use
             // the same upstream PNG references as the official DMG Shootout rows.
             gb.cpu.bus.ppu.apply_dmg_compat_palettes(
-                &DMG_GREYSCALE_CGB_PALETTE,
-                &DMG_GREYSCALE_CGB_PALETTE,
-                &DMG_GREYSCALE_CGB_PALETTE,
+                &UPSTREAM_REFERENCE_GREYSCALE_PALETTE,
+                &UPSTREAM_REFERENCE_GREYSCALE_PALETTE,
+                &UPSTREAM_REFERENCE_GREYSCALE_PALETTE,
             );
             run_loaded_case_and_crc(&mut gb, case, frames)
         }

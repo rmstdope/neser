@@ -221,6 +221,9 @@ impl Mbc3 {
             }
             // $6000-$7FFF: Latch Clock Data
             0x6000..=0x7FFF => {
+                // CasualPokePlayer's latch-rtc ROM, and SameBoy's MBC3 model,
+                // observe latch-on-write behavior rather than a strict $00->$01
+                // edge sequence.
                 if self.has_rtc {
                     self.latched_rtc = self.rtc.clone();
                 }
@@ -897,7 +900,7 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_rtc_latch_does_not_require_exact_sequence() {
+    fn test_rtc_latch_matches_casual_poke_player_single_write_semantics() {
         let rom = make_rom(2);
         let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
 
@@ -917,7 +920,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rtc_latches_on_any_latch_register_write() {
+    fn test_rtc_latch_matches_casual_poke_player_any_write_semantics() {
         let rom = make_rom(2);
         let mut mbc3 = Mbc3::new(rom, 0x2000, true, true);
 
