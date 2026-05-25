@@ -5,6 +5,7 @@ use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
 use crate::gb::ppu::{Ppu, StopDisplayMode, timing::PpuMode};
+use crate::gb::sgb::SgbState;
 use crate::gb::timer::Timer;
 
 /// Full DMG memory bus.
@@ -91,6 +92,8 @@ pub struct DmgBus {
     /// Determines which boot ROM is loaded and which CPU post-boot register
     /// values are used on reset.
     model: DmgModel,
+    /// Optional minimal SGB command/input overlay.
+    sgb: Option<SgbState>,
 }
 
 impl DmgBus {
@@ -140,12 +143,23 @@ impl DmgBus {
             dma_position: 0,
             dma_oam_blocked: false,
             model,
+            sgb: None,
         };
         // Real DMG hardware powers on with LCDC=$00 (LCD disabled).
         // The boot ROM tile-loading runs while the LCD is off so VRAM writes
         // are never blocked by Mode 3; our boot ROM explicitly re-enables the
         // LCD (LCDC=$91) just before starting the scroll animation.
         bus.ppu.write_register(0xFF40, 0x00);
+        bus
+    }
+
+    /// Construct a DMG bus with the minimal SGB command/input overlay enabled.
+    ///
+    /// This is intentionally explicit so normal DMG emulation does not imply
+    /// full Super Game Boy support.
+    pub fn new_sgb(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
+        let mut bus = Self::new(cart, model);
+        bus.sgb = Some(SgbState::new());
         bus
     }
 
@@ -185,6 +199,9 @@ impl DmgBus {
         self.dma_source = 0xFF;
         self.dma_position = 0;
         self.dma_oam_blocked = false;
+        if self.sgb.is_some() {
+            self.sgb = Some(SgbState::new());
+        }
     }
 
     /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
@@ -421,6 +438,7 @@ impl DmgBus {
             serial_bits_remaining: Some(self.serial_bits_remaining),
             serial_master_clock: Some(self.serial_master_clock),
             model: Some(self.model),
+            sgb: self.sgb.clone(),
         }
     }
 
@@ -476,6 +494,7 @@ impl DmgBus {
                 DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
             };
         }
+        self.sgb = state.sgb.clone();
         Ok(())
     }
 
@@ -528,7 +547,10 @@ impl GbBus for DmgBus {
                 }
                 self.ppu.read_forbidden_zone()
             }
-            0xFF00 => self.joypad.read(),
+            0xFF00 => {
+                let value = self.joypad.read();
+                self.sgb.as_ref().map_or(value, |sgb| sgb.read_p1(value))
+            }
             0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E, // bits 6-1 unused on DMG, always read as 1
             0xFF04..=0xFF07 => self.timer.read(addr),
@@ -558,7 +580,13 @@ impl GbBus for DmgBus {
                 }
             }
             0xFEA0..=0xFEFF => {}
-            0xFF00 => self.joypad.write(val),
+            0xFF00 => {
+                let previous_select = self.joypad.read() & 0x30;
+                if let Some(sgb) = &mut self.sgb {
+                    sgb.write_p1(previous_select, val);
+                }
+                self.joypad.write(val);
+            }
             0xFF01 => self.sb = val,
             0xFF02 => {
                 // Clock-alignment step when *starting* an
@@ -722,7 +750,10 @@ impl GbBus for DmgBus {
                 self.ppu.oam[(addr - 0xFE00) as usize]
             }
             0xFEA0..=0xFEFF => 0xFF,
-            0xFF00 => self.joypad.read(),
+            0xFF00 => {
+                let value = self.joypad.read();
+                self.sgb.as_ref().map_or(value, |sgb| sgb.read_p1(value))
+            }
             0xFF01 => self.sb,
             0xFF02 => self.sc | 0x7E,
             0xFF04..=0xFF07 => self.timer.read(addr),
@@ -760,6 +791,25 @@ mod tests {
 
     fn make_bus() -> DmgBus {
         DmgBus::new(rom_only_cart(), DmgModel::DmgB)
+    }
+
+    fn make_sgb_bus() -> DmgBus {
+        DmgBus::new_sgb(rom_only_cart(), DmgModel::DmgB)
+    }
+
+    fn send_sgb_packet(bus: &mut DmgBus, packet: &[u8; 16]) {
+        bus.write(0xFF00, 0x00);
+        bus.write(0xFF00, 0x30);
+        for byte in packet {
+            let mut bits = *byte;
+            for _ in 0..8 {
+                bus.write(0xFF00, if bits & 1 == 0 { 0x20 } else { 0x10 });
+                bus.write(0xFF00, 0x30);
+                bits >>= 1;
+            }
+        }
+        bus.write(0xFF00, 0x20);
+        bus.write(0xFF00, 0x30);
     }
 
     // ── VRAM ─────────────────────────────────────────────────────────────────
@@ -1134,6 +1184,58 @@ mod tests {
         bus.set_joypad_button(0, true);
         // Then: IF bit 4 not set
         assert_eq!(bus.read(0xFF0F) & 0x10, 0x00, "IF bit 4 should NOT be set");
+    }
+
+    #[test]
+    fn test_sgb_mlt_req_deselect_both_reads_current_player_id() {
+        let mut bus = make_sgb_bus();
+        let mlt_req_1 = [0x89, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        send_sgb_packet(&mut bus, &mlt_req_1);
+        assert_eq!(bus.read(0xFF00), 0xFF);
+        bus.write(0xFF00, 0x10);
+        bus.write(0xFF00, 0x30);
+
+        assert_eq!(bus.read(0xFF00), 0xFE);
+    }
+
+    #[test]
+    fn test_normal_dmg_deselect_both_still_reads_all_released_nibble() {
+        let mut bus = make_bus();
+
+        bus.write(0xFF00, 0x30);
+
+        assert_eq!(bus.read(0xFF00), 0xFF);
+    }
+
+    #[test]
+    fn test_sgb_state_round_trips_through_dmg_bus_save_state() {
+        let mut bus = make_sgb_bus();
+        let mlt_req_1 = [0x89, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        send_sgb_packet(&mut bus, &mlt_req_1);
+        bus.write(0xFF00, 0x10);
+        bus.write(0xFF00, 0x30);
+        let state = bus.capture_bus_state();
+
+        let mut restored = make_sgb_bus();
+        restored
+            .restore_bus_state(&state)
+            .expect("restore DMG SGB bus state");
+
+        assert_eq!(restored.read(0xFF00), 0xFE);
+    }
+
+    #[test]
+    fn test_missing_sgb_state_in_save_state_disables_sgb_overlay() {
+        let mut bus = make_sgb_bus();
+        let mut state = bus.capture_bus_state();
+        state.sgb = None;
+
+        bus.restore_bus_state(&state)
+            .expect("restore old DMG bus state without SGB field");
+        bus.write(0xFF00, 0x30);
+
+        assert_eq!(bus.read(0xFF00), 0xFF);
     }
 
     // ── IF register ──────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ pub mod debugging;
 pub mod input;
 pub mod model;
 pub mod ppu;
+pub mod sgb;
 pub mod timer;
 
 pub use console::gameboy::GameBoy;

@@ -851,6 +851,7 @@ impl CgbBus {
             serial_bits_remaining: None,
             serial_master_clock: None,
             model: None,
+            sgb: None,
         }
     }
 

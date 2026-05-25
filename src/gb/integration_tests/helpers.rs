@@ -54,6 +54,13 @@ pub fn load_gb_rom_with_model(path: &str, model: DmgModel) -> Gb<DmgBus> {
     Gb::new(DmgBus::new(cart, model))
 }
 
+/// Load a DMG ROM from `path` with the minimal SGB input overlay enabled.
+pub fn load_sgb_rom_with_model(path: &str, model: DmgModel) -> Gb<DmgBus> {
+    let rom = std::fs::read(path).expect("ROM file should be present");
+    let cart = load_cartridge(&rom).expect("valid GB ROM");
+    Gb::new(DmgBus::new_sgb(cart, model))
+}
+
 /// Load a CGB ROM from `path` and return a ready-to-step `Gb<CgbBus>`.
 ///
 /// Sets the post-boot-ROM CGB CPU register state (A=$11 = CGB hardware identifier).
@@ -134,6 +141,12 @@ fn step_until_breakpoint<B: GbBus>(gb: &mut Gb<B>, cycle_limit: u64) -> bool {
 /// Run a DMG ROM and detect Mooneye/SameSuite result with a given cycle limit.
 pub fn run_and_detect_dmg(path: &str, model: DmgModel, cycle_limit: u64) -> MooneyeResult {
     let mut gb = load_gb_rom_with_model(path, model);
+    detect_mooneye_result_with_limit(&mut gb, cycle_limit)
+}
+
+/// Run a DMG ROM with the minimal SGB input overlay and detect Mooneye/SameSuite result.
+pub fn run_and_detect_sgb(path: &str, model: DmgModel, cycle_limit: u64) -> MooneyeResult {
+    let mut gb = load_sgb_rom_with_model(path, model);
     detect_mooneye_result_with_limit(&mut gb, cycle_limit)
 }
 
