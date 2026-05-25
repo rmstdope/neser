@@ -37,6 +37,11 @@ pub trait Bus {
     /// Sequential access cycle cost for the given address and width.
     fn s_cycles(&self, addr: u32, width: WidthClass) -> u32;
 
+    /// Whether Game Pak ROM opcode prefetch is enabled in WAITCNT.
+    fn gamepak_prefetch_enabled(&self) -> bool {
+        false
+    }
+
     /// Read a 32-bit word for an **instruction fetch**.  The address must
     /// already be aligned to a 4-byte boundary.  Implementations may track
     /// this access separately from data reads so that bus faults can be

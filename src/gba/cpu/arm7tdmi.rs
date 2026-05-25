@@ -61,6 +61,11 @@ pub struct Arm7tdmi {
     /// Data Abort has ARM7TDMI exception priority 2 (higher than FIQ=3 and
     /// IRQ=4), so it must be dispatched before asynchronous interrupts.
     pending_data_abort_exec_pc: Option<u32>,
+    /// Number of prefetched Game Pak ROM halfwords available for future opcode
+    /// fetches when WAITCNT prefetch is enabled.
+    gamepak_prefetch_halfwords: u8,
+    /// Partial cycle progress toward the next Game Pak prefetch halfword.
+    gamepak_prefetch_cycle_credit: u8,
     /// Debug counter: number of times dispatch_irq has been called.
     #[cfg(test)]
     irq_dispatch_count: u64,
@@ -79,6 +84,22 @@ pub struct Arm7tdmiState {
     pub prefetch_thumb: [u16; 3],
     pub halted: bool,
     pub pending_data_abort_exec_pc: Option<u32>,
+    #[serde(default)]
+    pub gamepak_prefetch_halfwords: u8,
+    #[serde(default)]
+    pub gamepak_prefetch_cycle_credit: u8,
+}
+
+fn data_word_access_is_sequential(prev_addr: u32, addr: u32) -> bool {
+    let prev_region = (prev_addr >> 24) & 0xF;
+    let region = (addr >> 24) & 0xF;
+    if prev_region != region {
+        return false;
+    }
+    if matches!(region, 0x8..=0xD) {
+        return (prev_addr & 0x01FE_0000) == (addr & 0x01FE_0000);
+    }
+    true
 }
 
 impl Default for Arm7tdmi {
@@ -107,6 +128,8 @@ impl Arm7tdmi {
             prefetch_thumb: [0; 3],
             halted: false,
             pending_data_abort_exec_pc: None,
+            gamepak_prefetch_halfwords: 0,
+            gamepak_prefetch_cycle_credit: 0,
             #[cfg(test)]
             irq_dispatch_count: 0,
         }
@@ -131,6 +154,156 @@ impl Arm7tdmi {
         self.regs.thumb()
     }
 
+    fn code_fetch_costs<B: Bus>(
+        bus: &B,
+        code_addr: u32,
+        code_width: WidthClass,
+        outcome: &arm::ExecOutcome,
+    ) -> (u32, u32) {
+        let s_cost = bus.s_cycles(code_addr, code_width);
+        let n_cost = bus.n_cycles(code_addr, code_width);
+        let gamepak_opcode = matches!((code_addr >> 24) & 0xF, 0x8..=0xD);
+        if gamepak_opcode
+            && !bus.gamepak_prefetch_enabled()
+            && !outcome.branched
+            && outcome.internal > 0
+        {
+            (n_cost, n_cost)
+        } else {
+            (s_cost, n_cost)
+        }
+    }
+
+    fn resolve_outcome_cycles<B: Bus>(
+        &mut self,
+        bus: &B,
+        code_addr: u32,
+        code_width: WidthClass,
+        outcome: &arm::ExecOutcome,
+    ) -> u32 {
+        let (s_cost, n_cost) = Self::code_fetch_costs(bus, code_addr, code_width, outcome);
+        let mut code_cycles = outcome.seq as u32 * s_cost + outcome.nonseq as u32 * n_cost;
+        let data_cycles = if outcome.data_seq > 0 && outcome.data_width == WidthClass::Word {
+            let nonseq_cycles = (0..outcome.data_nonseq as u32)
+                .map(|i| bus.n_cycles(outcome.data_addr.wrapping_add(i * 4), outcome.data_width))
+                .sum::<u32>();
+            let seq_base = outcome
+                .data_addr
+                .wrapping_add(outcome.data_nonseq as u32 * 4);
+            let mut prev_addr = seq_base.wrapping_sub(4);
+            nonseq_cycles
+                + (0..outcome.data_seq as u32)
+                    .map(|i| {
+                        let addr = seq_base.wrapping_add(i * 4);
+                        let cycles = if data_word_access_is_sequential(prev_addr, addr) {
+                            bus.s_cycles(addr, outcome.data_width)
+                        } else {
+                            bus.n_cycles(addr, outcome.data_width)
+                        };
+                        prev_addr = addr;
+                        cycles
+                    })
+                    .sum::<u32>()
+        } else {
+            let data_s_cost = bus.s_cycles(outcome.data_addr, outcome.data_width);
+            let data_n_cost = bus.n_cycles(outcome.data_addr, outcome.data_width);
+            outcome.data_seq as u32 * data_s_cost + outcome.data_nonseq as u32 * data_n_cost
+        };
+        let internal_cycles = outcome.internal as u32;
+
+        let gamepak_opcode = matches!((code_addr >> 24) & 0xF, 0x8..=0xD);
+        if gamepak_opcode && bus.gamepak_prefetch_enabled() && !outcome.branched {
+            let data_accesses = outcome.data_seq as u32 + outcome.data_nonseq as u32;
+            let data_stride = match outcome.data_width {
+                WidthClass::HalfwordOrByte => 2,
+                WidthClass::Word => 4,
+            };
+            let data_uses_gamepak = (0..data_accesses).any(|i| {
+                matches!(
+                    (outcome.data_addr.wrapping_add(i * data_stride) >> 24) & 0xF,
+                    0x8..=0xD
+                )
+            });
+            let first_gamepak_data_access = (0..data_accesses).find(|&i| {
+                matches!(
+                    (outcome.data_addr.wrapping_add(i * data_stride) >> 24) & 0xF,
+                    0x8..=0xD
+                )
+            });
+            if data_uses_gamepak {
+                let pending_prefetch_credit = self.gamepak_prefetch_cycle_credit;
+                self.gamepak_prefetch_halfwords = 0;
+                self.gamepak_prefetch_cycle_credit = 0;
+                code_cycles = (outcome.seq as u32 + outcome.nonseq as u32) * n_cost
+                    + u32::from(pending_prefetch_credit > 0);
+            } else {
+                code_cycles = (outcome.seq as u32 + outcome.nonseq as u32) * s_cost;
+            }
+            let code_halfwords = match code_width {
+                WidthClass::HalfwordOrByte => outcome.seq as u8 + outcome.nonseq as u8,
+                WidthClass::Word => (outcome.seq as u8 + outcome.nonseq as u8) * 2,
+            };
+            let prefetch_halfword_cycles =
+                bus.s_cycles(code_addr, WidthClass::HalfwordOrByte).max(1);
+            let block_transfer_crosses_into_gamepak = outcome.data_width == WidthClass::Word
+                && outcome.data_seq > 0
+                && !matches!((outcome.data_addr >> 24) & 0xF, 0x8..=0xD)
+                && first_gamepak_data_access
+                    .is_some_and(|i| i < 4 && (i % 2) != (prefetch_halfword_cycles % 2));
+            if block_transfer_crosses_into_gamepak {
+                code_cycles += 1;
+            }
+            let prefetched_halfwords = self.gamepak_prefetch_halfwords.min(code_halfwords);
+            if prefetched_halfwords == code_halfwords {
+                code_cycles = 0;
+            } else {
+                let prefetched_cycles = prefetched_halfwords as u32 * prefetch_halfword_cycles;
+                code_cycles = code_cycles.saturating_sub(prefetched_cycles);
+                if self.gamepak_prefetch_cycle_credit > 0 {
+                    let credit = u32::from(self.gamepak_prefetch_cycle_credit).min(code_cycles);
+                    code_cycles -= credit;
+                    self.gamepak_prefetch_cycle_credit = 0;
+                }
+            }
+            let fully_served_from_queue = prefetched_halfwords == code_halfwords;
+            self.gamepak_prefetch_halfwords -= prefetched_halfwords;
+            let code_cycles_before_current_overlap = code_cycles;
+
+            let overlap_cycles = if data_uses_gamepak {
+                0
+            } else {
+                internal_cycles + data_cycles
+            };
+            code_cycles = code_cycles.saturating_sub(overlap_cycles);
+            if fully_served_from_queue && (data_cycles > 0 || internal_cycles > 0) {
+                code_cycles = code_cycles.max(1);
+            }
+            if !fully_served_from_queue
+                && code_halfwords > 0
+                && (data_cycles > 0 || internal_cycles > 0)
+            {
+                code_cycles = code_cycles.max(1);
+            }
+            let overlap_used = code_cycles_before_current_overlap.saturating_sub(code_cycles);
+            let unused_overlap = overlap_cycles.saturating_sub(overlap_used);
+            let credit = u32::from(self.gamepak_prefetch_cycle_credit) + unused_overlap;
+            let queued = (credit / prefetch_halfword_cycles).min(8) as u8;
+            self.gamepak_prefetch_halfwords = self
+                .gamepak_prefetch_halfwords
+                .saturating_add(queued)
+                .min(8);
+            self.gamepak_prefetch_cycle_credit = (credit % prefetch_halfword_cycles) as u8;
+        } else if outcome.branched {
+            self.gamepak_prefetch_halfwords = 0;
+            self.gamepak_prefetch_cycle_credit = 0;
+        } else if !gamepak_opcode {
+            self.gamepak_prefetch_halfwords = 0;
+            self.gamepak_prefetch_cycle_credit = 0;
+        }
+
+        (code_cycles + data_cycles + internal_cycles).max(1)
+    }
+
     /// Capture CPU state for save-state serialization.
     pub fn capture_state(&self) -> Arm7tdmiState {
         Arm7tdmiState {
@@ -144,6 +317,8 @@ impl Arm7tdmi {
             prefetch_thumb: self.prefetch_thumb,
             halted: self.halted,
             pending_data_abort_exec_pc: self.pending_data_abort_exec_pc,
+            gamepak_prefetch_halfwords: self.gamepak_prefetch_halfwords,
+            gamepak_prefetch_cycle_credit: self.gamepak_prefetch_cycle_credit,
         }
     }
 
@@ -159,6 +334,8 @@ impl Arm7tdmi {
         self.prefetch_thumb = state.prefetch_thumb;
         self.halted = state.halted;
         self.pending_data_abort_exec_pc = state.pending_data_abort_exec_pc;
+        self.gamepak_prefetch_halfwords = state.gamepak_prefetch_halfwords;
+        self.gamepak_prefetch_cycle_credit = state.gamepak_prefetch_cycle_credit;
     }
 
     /// Raise an external IRQ. Will be dispatched on the next `step` if not
@@ -298,12 +475,7 @@ impl Arm7tdmi {
             } else {
                 WidthClass::HalfwordOrByte
             };
-            outcome.resolve_cycles(
-                bus.s_cycles(code_addr, code_width),
-                bus.n_cycles(code_addr, code_width),
-                bus.s_cycles(outcome.data_addr, outcome.data_width),
-                bus.n_cycles(outcome.data_addr, outcome.data_width),
-            )
+            self.resolve_outcome_cycles(bus, code_addr, code_width, &outcome)
         } else {
             // PC during ARM execution should read as exec_pc + 8.
             self.regs.r[15] = exec_pc.wrapping_add(8);
@@ -331,12 +503,7 @@ impl Arm7tdmi {
             } else {
                 WidthClass::Word
             };
-            outcome.resolve_cycles(
-                bus.s_cycles(code_addr, code_width),
-                bus.n_cycles(code_addr, code_width),
-                bus.s_cycles(outcome.data_addr, outcome.data_width),
-                bus.n_cycles(outcome.data_addr, outcome.data_width),
-            )
+            self.resolve_outcome_cycles(bus, code_addr, code_width, &outcome)
         };
 
         // Data Abort: raised when a load/store instruction caused a bus fault.
@@ -1086,6 +1253,54 @@ mod tests {
         }
     }
 
+    struct BoundaryTimingBus;
+
+    impl Bus for BoundaryTimingBus {
+        fn read32(&mut self, _addr: u32) -> u32 {
+            0
+        }
+
+        fn read16(&mut self, _addr: u32) -> u16 {
+            0
+        }
+
+        fn read8(&mut self, _addr: u32) -> u8 {
+            0
+        }
+
+        fn write32(&mut self, _addr: u32, _value: u32) {}
+
+        fn write16(&mut self, _addr: u32, _value: u16) {}
+
+        fn write8(&mut self, _addr: u32, _value: u8) {}
+
+        fn n_cycles(&self, addr: u32, _width: WidthClass) -> u32 {
+            match (addr >> 24) & 0xF {
+                0x8..=0xD => 7,
+                _ => 1,
+            }
+        }
+
+        fn s_cycles(&self, addr: u32, _width: WidthClass) -> u32 {
+            match (addr >> 24) & 0xF {
+                0x8..=0xD => 5,
+                _ => 1,
+            }
+        }
+    }
+
+    #[test]
+    fn word_block_data_cycles_restart_nonsequential_after_region_boundary() {
+        let bus = BoundaryTimingBus;
+        let mut cpu = Arm7tdmi::new();
+        let outcome = arm::ExecOutcome::data_access(1, 0, 1, 4, 1, 0x07FF_FFFC, WidthClass::Word);
+
+        assert_eq!(
+            cpu.resolve_outcome_cycles(&bus, 0x0300_0000, WidthClass::Word, &outcome),
+            25
+        );
+    }
+
     struct AddressWidthTimingBus {
         inner: RamBus,
     }
@@ -1145,6 +1360,75 @@ mod tests {
                 (0x01, WidthClass::Word) => 5,
                 _ => AddressTimingBus::costs_for_addr(addr).0,
             }
+        }
+    }
+
+    struct GamePakPrefetchTimingBus {
+        inner: RamBus,
+        prefetch_enabled: bool,
+    }
+
+    impl GamePakPrefetchTimingBus {
+        fn new(prefetch_enabled: bool) -> Self {
+            Self {
+                inner: RamBus::new(0x1000),
+                prefetch_enabled,
+            }
+        }
+
+        fn map_addr(addr: u32) -> u32 {
+            match (addr >> 24) & 0xF {
+                0x2 => 0x100 + (addr & 0xFF),
+                0x8..=0xD => addr & 0xFF,
+                _ => 0x200 + (addr & 0xFF),
+            }
+        }
+    }
+
+    impl Bus for GamePakPrefetchTimingBus {
+        fn read32(&mut self, addr: u32) -> u32 {
+            self.inner.read32(Self::map_addr(addr))
+        }
+
+        fn read16(&mut self, addr: u32) -> u16 {
+            self.inner.read16(Self::map_addr(addr))
+        }
+
+        fn read8(&mut self, addr: u32) -> u8 {
+            self.inner.read8(Self::map_addr(addr))
+        }
+
+        fn write32(&mut self, addr: u32, value: u32) {
+            self.inner.write32(Self::map_addr(addr), value);
+        }
+
+        fn write16(&mut self, addr: u32, value: u16) {
+            self.inner.write16(Self::map_addr(addr), value);
+        }
+
+        fn write8(&mut self, addr: u32, value: u8) {
+            self.inner.write8(Self::map_addr(addr), value);
+        }
+
+        fn n_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+            match ((addr >> 24) & 0xF, width) {
+                (0x8..=0xD, WidthClass::Word) => 8,
+                (0x8..=0xD, WidthClass::HalfwordOrByte) => 5,
+                (0x2, _) => 3,
+                _ => 2,
+            }
+        }
+
+        fn s_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+            match ((addr >> 24) & 0xF, width) {
+                (0x8..=0xD, WidthClass::Word) => 6,
+                (0x8..=0xD, WidthClass::HalfwordOrByte) => 3,
+                _ => 1,
+            }
+        }
+
+        fn gamepak_prefetch_enabled(&self) -> bool {
+            self.prefetch_enabled
         }
     }
 
@@ -1219,6 +1503,106 @@ mod tests {
         assert_eq!(
             cycles, 29,
             "POP PC branch refill should use target-region code timing: 2*5S + 1*11N + 1*7N(data) + 1I"
+        );
+    }
+
+    #[test]
+    fn gamepak_prefetch_disable_bug_uses_nonseq_opcode_fetch_for_loads_with_internal_cycle() {
+        let ldr_r0_r1: u32 = 0xE591_0000;
+        let mut cpu = Arm7tdmi::new();
+        let mut bus = GamePakPrefetchTimingBus::new(false);
+        cpu.regs.r[15] = 0x0800_0000;
+        cpu.regs.r[1] = 0x0200_0000;
+        bus.write32(0x0800_0000, ldr_r0_r1);
+        bus.write32(0x0200_0000, 0x1234_5678);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 12, "1N(code=8) + 1N(data=3) + 1I");
+    }
+
+    #[test]
+    fn gamepak_prefetch_enabled_overlaps_opcode_fetch_with_data_and_internal_cycles() {
+        let ldr_r0_r1: u32 = 0xE591_0000;
+        let mut cpu = Arm7tdmi::new();
+        let mut bus = GamePakPrefetchTimingBus::new(true);
+        cpu.regs.r[15] = 0x0800_0000;
+        cpu.regs.r[1] = 0x0200_0000;
+        bus.write32(0x0800_0000, ldr_r0_r1);
+        bus.write32(0x0200_0000, 0x1234_5678);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6, "(1S code=6 - 4 overlapped) + 1N(data=3) + 1I");
+    }
+
+    #[test]
+    fn gamepak_prefetch_enabled_converts_store_opcode_fetch_to_sequential() {
+        let str_r0_r1: u32 = 0xE581_0000;
+        let mut cpu = Arm7tdmi::new();
+        let mut bus = GamePakPrefetchTimingBus::new(true);
+        cpu.regs.r[15] = 0x0800_0000;
+        cpu.regs.r[0] = 0x1234_5678;
+        cpu.regs.r[1] = 0x0200_0000;
+        bus.write32(0x0800_0000, str_r0_r1);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6, "(1S code=6 - 1N(data=3)) + 1N(data=3)");
+    }
+
+    #[test]
+    fn gamepak_prefetch_enabled_serves_queued_thumb_opcode_with_minimum_step_cycles() {
+        let ldmia_r1_r0_r2_to_r7 = 0b1100_1_001_1111_1101u16;
+        let nop = 0x0000u16;
+        let mut cpu = Arm7tdmi::new();
+        let mut bus = GamePakPrefetchTimingBus::new(true);
+        cpu.regs.switch_mode(CpuMode::User);
+        cpu.regs.set_thumb(true);
+        cpu.regs.r[15] = 0x0800_0000;
+        cpu.regs.r[1] = 0x0200_0000;
+        bus.write16(0x0800_0000, ldmia_r1_r0_r2_to_r7);
+        bus.write16(0x0800_0002, nop);
+        for i in 0..7 {
+            bus.write32(0x0200_0000 + i * 4, 0x1234_5678 + i);
+        }
+
+        let _ldmia_cycles = cpu.step(&mut bus);
+        let nop_cycles = cpu.step(&mut bus);
+
+        assert_eq!(
+            nop_cycles, 1,
+            "the next Thumb opcode should avoid its 3-cycle Game Pak fetch wait"
+        );
+    }
+
+    #[test]
+    fn gamepak_prefetch_enabled_does_not_overlap_opcode_fetch_with_gamepak_data_access() {
+        let ldr_r0_r1: u32 = 0xE591_0000;
+        let mut cpu = Arm7tdmi::new();
+        let mut bus = GamePakPrefetchTimingBus::new(true);
+        cpu.regs.r[15] = 0x0800_0000;
+        cpu.regs.r[1] = 0x0800_0080;
+        bus.write32(0x0800_0000, ldr_r0_r1);
+        bus.write32(0x0800_0080, 0x1234_5678);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(
+            cycles, 17,
+            "Game Pak data access blocks prefetch: 1N(code=8) + 1N(ROM data=8) + 1I"
+        );
+    }
+
+    #[test]
+    fn gamepak_prefetch_accounts_for_block_transfer_entering_rom_mid_burst() {
+        let bus = GamePakPrefetchTimingBus::new(true);
+        let mut cpu = Arm7tdmi::new();
+        let outcome = arm::ExecOutcome::data_access(1, 0, 1, 4, 1, 0x07FF_FFFC, WidthClass::Word);
+
+        assert_eq!(
+            cpu.resolve_outcome_cycles(&bus, 0x0800_0000, WidthClass::Word, &outcome),
+            37
         );
     }
 

@@ -242,7 +242,7 @@ impl Gba {
         }
 
         let cycles = self.cpu.step(&mut self.bus);
-        self.bus.step(cycles);
+        self.bus.step_after_cpu_instruction(cycles);
         cycles as u8
     }
 
@@ -375,7 +375,7 @@ impl Emulator for Gba {
         }
 
         let cycles = self.cpu.step(&mut self.bus);
-        self.bus.step(cycles);
+        self.bus.step_after_cpu_instruction(cycles);
         cycles as u8
     }
 

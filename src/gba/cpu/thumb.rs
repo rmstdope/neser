@@ -361,11 +361,11 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
             // MUL: Rd = Rd * Rs
             // C flag is computed by the ARM7TDMI Booth multiplier
             let result = a.wrapping_mul(b);
-            let (_, full) = super::arm::multiply_cycles_and_full(b, true);
+            let (_, full) = super::arm::multiply_cycles_and_full(a, true);
             let c = if full {
-                super::arm::multiply_carry_simple(b)
+                super::arm::multiply_carry_simple(a)
             } else {
-                super::arm::multiply_carry_lo(a, b, 0)
+                super::arm::multiply_carry_lo(b, a, 0)
             };
             (result, c, regs.v_flag(), true)
         }
@@ -383,7 +383,7 @@ fn exec_format4(regs: &mut Registers, instr: u16) -> ExecOutcome {
     let internal = match op {
         0x2 | 0x3 | 0x4 | 0x7 => 1, // register shifts: +1I
         0xD => {
-            let (cycles, _) = super::arm::multiply_cycles_and_full(b, true);
+            let (cycles, _) = super::arm::multiply_cycles_and_full(a, true);
             cycles - 1 // subtract the 1S already counted
         }
         _ => 0,
@@ -1203,6 +1203,19 @@ mod tests {
         // MUL R0, R1: Rd = Rd * Rs
         execute(&mut regs, &mut bus, thumb_alu_op(0xD, 1, 0));
         assert_eq!(regs.r[0], 42);
+    }
+
+    #[test]
+    fn thumb_mul_timing_depends_on_destination_operand() {
+        let mut regs = make_regs();
+        let mut bus = RamBus::new(0x100);
+        regs.r[0] = 0x0034_5678;
+        regs.r[1] = 0xFF;
+
+        let outcome = execute(&mut regs, &mut bus, thumb_alu_op(0xD, 1, 0));
+
+        assert_eq!(outcome.seq, 1);
+        assert_eq!(outcome.internal, 3);
     }
 
     // -------------------------------------------------------------------------

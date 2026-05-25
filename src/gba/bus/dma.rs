@@ -30,6 +30,7 @@
 //!
 //! <https://problemkaputt.de/gbatek.htm#gbadmatransfers>
 
+use super::WidthClass;
 use super::interrupt::bits as irq_bits;
 use serde::{Deserialize, Serialize};
 
@@ -398,8 +399,35 @@ pub trait DmaBus {
     fn dma_write16(&mut self, addr: u32, value: u16);
     fn dma_read32(&mut self, addr: u32) -> u32;
     fn dma_write32(&mut self, addr: u32, value: u32);
+    fn dma_n_cycles(&self, _addr: u32, _width: WidthClass) -> u32 {
+        1
+    }
+    fn dma_s_cycles(&self, _addr: u32, _width: WidthClass) -> u32 {
+        1
+    }
     /// Raise the given IRQ source bits in the bus' interrupt controller.
     fn dma_raise_irq(&mut self, sources: u16);
+}
+
+fn dma_unit_cycles<B: DmaBus>(bus: &B, src: u32, dst: u32, word: bool, first_unit: bool) -> u32 {
+    let width = if word {
+        WidthClass::Word
+    } else {
+        WidthClass::HalfwordOrByte
+    };
+    let src_cycles = if first_unit {
+        bus.dma_n_cycles(src, width)
+    } else {
+        bus.dma_s_cycles(src, width)
+    };
+    let dst_follows_gamepak_src =
+        matches!((src >> 24) & 0xF, 0x8..=0xD) && matches!((dst >> 24) & 0xF, 0x8..=0xD);
+    let dst_cycles = if !first_unit || dst_follows_gamepak_src {
+        bus.dma_s_cycles(dst, width)
+    } else {
+        bus.dma_n_cycles(dst, width)
+    };
+    src_cycles + dst_cycles
 }
 
 impl DmaController {
@@ -509,6 +537,8 @@ impl DmaController {
         };
 
         self.channels[idx].active = true;
+        let mut first_unit = true;
+        self.cpu_stall += 2;
 
         while count > 0 {
             // Higher-priority preemption: bail out and let the caller
@@ -545,6 +575,8 @@ impl DmaController {
 
             let src = self.channels[idx].cur_src;
             let dst = fifo_dst.unwrap_or(self.channels[idx].cur_dst);
+            self.cpu_stall += dma_unit_cycles(bus, src, dst, active_word, first_unit);
+            first_unit = false;
             if active_word {
                 let v = bus.dma_read32(src & !0x3);
                 bus.dma_write32(dst & !0x3, v);
@@ -556,9 +588,6 @@ impl DmaController {
             if fifo_dst.is_none() {
                 self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
             }
-            // Each unit takes ~2 cycles (1N + 1S) — model a flat 2 cycles
-            // per unit; bus contention details are deferred per scope.
-            self.cpu_stall += 2;
             count -= 1;
         }
 
@@ -580,6 +609,8 @@ impl DmaController {
         bus: &mut B,
     ) {
         self.channels[idx].active = true;
+        let mut first_unit = true;
+        self.cpu_stall += 2;
         while count > 0 {
             for higher in 0..idx {
                 let c = &self.channels[higher];
@@ -593,6 +624,8 @@ impl DmaController {
             }
             let src = self.channels[idx].cur_src;
             let dst = fifo_dst.unwrap_or(self.channels[idx].cur_dst);
+            self.cpu_stall += dma_unit_cycles(bus, src, dst, active_word, first_unit);
+            first_unit = false;
             if active_word {
                 let v = bus.dma_read32(src & !0x3);
                 bus.dma_write32(dst & !0x3, v);
@@ -604,7 +637,6 @@ impl DmaController {
             if fifo_dst.is_none() {
                 self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
             }
-            self.cpu_stall += 2;
             count -= 1;
         }
         self.finish_burst(idx, special, irq, repeat, bus);
@@ -703,6 +735,58 @@ mod tests {
         }
         fn dma_raise_irq(&mut self, sources: u16) {
             self.ic.raise(sources);
+        }
+    }
+
+    struct TimedTestBus {
+        inner: TestBus,
+    }
+
+    impl TimedTestBus {
+        fn new() -> Self {
+            Self {
+                inner: TestBus::new(),
+            }
+        }
+
+        fn write16_at(&mut self, addr: u32, v: u16) {
+            self.inner.write16_at(addr, v);
+        }
+    }
+
+    impl DmaBus for TimedTestBus {
+        fn dma_read32(&mut self, addr: u32) -> u32 {
+            self.inner.read32_at(addr)
+        }
+
+        fn dma_write32(&mut self, addr: u32, value: u32) {
+            self.inner.write32_at(addr, value);
+        }
+
+        fn dma_read16(&mut self, addr: u32) -> u16 {
+            self.inner.read16_at(addr)
+        }
+
+        fn dma_write16(&mut self, addr: u32, value: u16) {
+            self.inner.write16_at(addr, value);
+        }
+
+        fn dma_n_cycles(&self, addr: u32, _width: WidthClass) -> u32 {
+            match (addr >> 24) & 0xF {
+                0x8..=0xD => 5,
+                _ => 1,
+            }
+        }
+
+        fn dma_s_cycles(&self, addr: u32, _width: WidthClass) -> u32 {
+            match (addr >> 24) & 0xF {
+                0x8..=0xD => 3,
+                _ => 1,
+            }
+        }
+
+        fn dma_raise_irq(&mut self, sources: u16) {
+            self.inner.ic.raise(sources);
         }
     }
 
@@ -833,7 +917,6 @@ mod tests {
         // checking that we wrote the same word 0x4000 times — easiest by
         // checking cycle stall (2 per unit).
         let mut bus = TestBus::new();
-
         let mut d = DmaController::new();
         write_dma_setup(
             &mut d,
@@ -844,7 +927,7 @@ mod tests {
             cnt_h(true, false, 0, false, false, 2, 2),
         );
         d.run_pending(&mut bus);
-        assert_eq!(d.take_cpu_stall(), 0x4000 * 2);
+        assert_eq!(d.take_cpu_stall(), 2 + 0x4000 * 2);
 
         // Channel 3: 0x10000 units — large but acceptable for a test.
         let mut bus = TestBus::new();
@@ -858,7 +941,7 @@ mod tests {
             cnt_h(true, false, 0, false, false, 2, 2),
         );
         d.run_pending(&mut bus);
-        assert_eq!(d.take_cpu_stall(), 0x1_0000 * 2);
+        assert_eq!(d.take_cpu_stall(), 2 + 0x1_0000 * 2);
     }
 
     #[test]
@@ -970,7 +1053,7 @@ mod tests {
         assert_eq!(bus.read32_at(REG_FIFO_A), 0x1000_0003);
         // Bogus DAD must NOT have been written.
         assert_eq!(bus.read32_at(0xDEAD_BEEF & !0x3), 0);
-        assert_eq!(d.take_cpu_stall(), 4 * 2);
+        assert_eq!(d.take_cpu_stall(), 2 + 4 * 2);
     }
 
     #[test]
@@ -1097,7 +1180,7 @@ mod tests {
         assert_eq!(bus.read32_at(0x2004), 0xC0_0001);
         assert_eq!(bus.read32_at(0x4000), 0xA1_0000);
         assert_eq!(bus.read32_at(0x4004), 0xA1_0001);
-        assert_eq!(d.take_cpu_stall(), (2 + 2) * 2);
+        assert_eq!(d.take_cpu_stall(), 2 * 2 + (2 + 2) * 2);
     }
 
     #[test]
@@ -1116,7 +1199,46 @@ mod tests {
             cnt_h(true, false, 0, true, false, 0, 0),
         );
         d.run_pending(&mut bus);
-        assert_eq!(d.take_cpu_stall(), 7 * 2);
+        assert_eq!(d.take_cpu_stall(), 2 + 7 * 2);
+    }
+
+    #[test]
+    fn cpu_stall_cycles_use_source_and_destination_waitstates() {
+        let mut bus = TimedTestBus::new();
+        bus.write16_at(0x0800_0000, 0x1234);
+        bus.write16_at(0x0800_0002, 0x5678);
+        let mut d = DmaController::new();
+
+        write_dma_setup(
+            &mut d,
+            3,
+            0x0800_0000,
+            0x0200_0000,
+            2,
+            cnt_h(true, false, 0, false, false, 0, 0),
+        );
+        d.run_pending(&mut bus);
+
+        assert_eq!(d.take_cpu_stall(), 2 + (5 + 1) + (3 + 1));
+    }
+
+    #[test]
+    fn cpu_stall_cycles_treat_gamepak_destination_after_gamepak_source_as_sequential() {
+        let mut bus = TimedTestBus::new();
+        bus.write16_at(0x0800_0000, 0x1234);
+        let mut d = DmaController::new();
+
+        write_dma_setup(
+            &mut d,
+            3,
+            0x0800_0000,
+            0x0A00_0000,
+            1,
+            cnt_h(true, false, 0, false, false, 0, 0),
+        );
+        d.run_pending(&mut bus);
+
+        assert_eq!(d.take_cpu_stall(), 2 + 5 + 3);
     }
 
     #[test]
