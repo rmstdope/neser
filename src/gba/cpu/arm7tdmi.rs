@@ -231,11 +231,12 @@ impl Arm7tdmi {
                 )
             });
             if data_uses_gamepak {
+                let pending_prefetch_halfwords = self.gamepak_prefetch_halfwords;
                 let pending_prefetch_credit = self.gamepak_prefetch_cycle_credit;
                 self.gamepak_prefetch_halfwords = 0;
                 self.gamepak_prefetch_cycle_credit = 0;
                 code_cycles = (outcome.seq as u32 + outcome.nonseq as u32) * n_cost
-                    + u32::from(pending_prefetch_credit > 0);
+                    + u32::from(pending_prefetch_halfwords > 0 || pending_prefetch_credit > 0);
             } else {
                 code_cycles = (outcome.seq as u32 + outcome.nonseq as u32) * s_cost;
             }
@@ -253,6 +254,12 @@ impl Arm7tdmi {
             if block_transfer_crosses_into_gamepak {
                 code_cycles += 1;
             }
+            let prefetch_halfword_cycles =
+                if data_uses_gamepak || block_transfer_crosses_into_gamepak {
+                    prefetch_halfword_cycles
+                } else {
+                    prefetch_halfword_cycles.saturating_sub(1).max(1)
+                };
             let prefetched_halfwords = self.gamepak_prefetch_halfwords.min(code_halfwords);
             if prefetched_halfwords == code_halfwords {
                 code_cycles = 0;

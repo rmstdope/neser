@@ -354,6 +354,26 @@ fn gba_mgba_timing_diagnostics_passes_every_timing_case() {
 }
 
 #[test]
+fn gba_mgba_timing_diagnostics_passes_c_loop_prefetch_cases() {
+    let result = run_mgba_timing_diagnostics();
+    let c_loop_start = result
+        .raw_log
+        .find("Timing test: C loop")
+        .expect("mGBA Timing log should include the C-loop test section");
+    let c_loop_suffix = &result.raw_log[c_loop_start..];
+    let c_loop_end = c_loop_suffix
+        .find("Timing test: BIOS Division")
+        .unwrap_or(c_loop_suffix.len());
+    let c_loop_log = &c_loop_suffix[..c_loop_end];
+
+    assert!(
+        !c_loop_log.contains("FAIL:"),
+        "mGBA Timing C-loop prefetch cases should pass.\nC-loop log:\n{}",
+        c_loop_log
+    );
+}
+
+#[test]
 fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
     let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
 
