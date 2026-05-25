@@ -381,6 +381,19 @@ impl DmgBus {
         }
     }
 
+    fn dma_conflict_active(&self) -> bool {
+        self.dma_active && self.dma_oam_blocked && !matches!(self.dma_source, 0x80..=0x9F)
+    }
+
+    fn dma_conflict_byte(&self) -> u8 {
+        let byte_idx = self.dma_position.saturating_sub(2) as u16;
+        self.read_raw((u16::from(self.dma_source) << 8) + byte_idx)
+    }
+
+    fn cartridge_header_logo(&self) -> [u8; 48] {
+        std::array::from_fn(|index| self.cart.read(0x0104 + index as u16))
+    }
+
     /// Begin a cycle-accurate OAM DMA transfer from `(val << 8)`.
     ///
     /// Sets the DMA state so that `tick()` copies one byte per M-cycle.
@@ -640,6 +653,8 @@ impl GbBus for DmgBus {
                 if self.boot_rom_active
                     && matches!(self.model.boot_variant(), DmgBootVariant::Production)
                 {
+                    self.ppu
+                        .seed_boot_logo_from_header(&self.cartridge_header_logo());
                     self.ppu.seed_boot_registered_mark_tile();
                 }
                 self.boot_rom_active = false;
@@ -665,7 +680,17 @@ impl GbBus for DmgBus {
             self.tick_after_ppu(1);
         } else {
             self.tick(1);
-            self.write(addr, val);
+            if !self.dma_conflict_active() || matches!(addr, 0xFF46 | 0xFF80..=0xFFFE) {
+                self.write(addr, val);
+            }
+        }
+    }
+
+    fn read_cpu_m_cycle(&mut self, addr: u16) -> u8 {
+        if self.dma_conflict_active() && !matches!(addr, 0xFF46 | 0xFF80..=0xFFFE) {
+            self.dma_conflict_byte()
+        } else {
+            self.read(addr)
         }
     }
 
@@ -1962,5 +1987,55 @@ mod tests {
             0xFF,
             "OAM must remain blocked during warm-up of a restarted DMA"
         );
+    }
+
+    #[test]
+    fn oam_dma_conflict_feeds_source_byte_to_cpu_reads_outside_hram() {
+        let mut bus = make_bus();
+        bus.wram[0] = 0x06;
+        bus.wram[1] = 0x13;
+        bus.write(0xFF46, 0xC0);
+
+        bus.tick(2);
+        assert_eq!(bus.read_cpu_m_cycle(0x2000), 0x06);
+        bus.tick(1);
+        assert_eq!(bus.read_cpu_m_cycle(0x2001), 0x13);
+    }
+
+    #[test]
+    fn oam_dma_conflict_blocks_cpu_writes_outside_hram_but_allows_hram() {
+        let mut bus = make_bus();
+        bus.wram[0x0100] = 0x42;
+        bus.write(0xFF46, 0xC0);
+        bus.tick(2);
+
+        bus.write_cpu_m_cycle(0xC100, 0x99);
+        bus.write_cpu_m_cycle(0xFF80, 0x77);
+
+        assert_eq!(bus.wram[0x0100], 0x42);
+        assert_eq!(bus.hram[0], 0x77);
+    }
+
+    #[test]
+    fn oam_dma_from_vram_allows_cpu_reads_outside_oam() {
+        let mut bus = make_bus();
+        bus.wram[0x1DFF] = 0xE8;
+        bus.ppu.vram[0] = 0x42;
+        bus.write(0xFF46, 0x80);
+        bus.tick(2);
+
+        assert_eq!(bus.read_cpu_m_cycle(0xFDFF), 0xE8);
+        assert_eq!(bus.read_cpu_m_cycle(0xFE00), 0xFF);
+    }
+
+    #[test]
+    fn oam_dma_register_remains_cpu_accessible_during_dma() {
+        let mut bus = make_bus();
+        bus.write(0xFF46, 0xC0);
+        bus.tick(2);
+
+        assert_eq!(bus.read_cpu_m_cycle(0xFF46), 0xC0);
+        bus.write_cpu_m_cycle(0xFF46, 0x80);
+        assert_eq!(bus.read(0xFF46), 0x80);
     }
 }

@@ -171,23 +171,15 @@ mod tests {
     use crate::gb::model::DmgModel;
     use crate::platform::autorun::{AUTORUN_VERSION, AutorunCheckpoint, AutorunFile, AutorunFrame};
 
-    /// Nintendo logo bitmap (48 bytes at $0104–$0133).
-    /// Required for the boot ROM to pass validation and reach $0100.
-    const NINTENDO_LOGO: [u8; 48] = [
-        0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00,
-        0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD,
-        0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB,
-        0xB9, 0x33, 0x3E,
-    ];
-
     /// Build a minimal valid ROM-only (MBC0) cartridge that loops forever.
     fn minimal_gb_rom() -> Vec<u8> {
         let mut rom = vec![0u8; 0x8000];
         // Put an infinite loop (JR -2 = 0x18, 0xFE) at the cartridge entry point $0100.
         rom[0x0100] = 0x18; // JR offset
         rom[0x0101] = 0xFE; // -2 (jumps back to $0100)
-        // Nintendo logo — required for the boot ROM to pass validation
-        rom[0x0104..0x0134].copy_from_slice(&NINTENDO_LOGO);
+        for (index, byte) in rom[0x0104..0x0134].iter_mut().enumerate() {
+            *byte = ((index as u8).wrapping_mul(17)) ^ 0x5A;
+        }
         rom[0x0147] = 0x00; // ROM only
         rom[0x0148] = 0x00; // 32 KB
         rom[0x0149] = 0x00; // no RAM

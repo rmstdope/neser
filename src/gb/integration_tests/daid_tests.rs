@@ -223,21 +223,24 @@ daid_dmg_case!(
     "rom_and_ram_dmga",
     "rom_and_ram.gb",
     DmgModel::DmgA,
-    0x239E_C786
+    // Production DMG boot leaves decoded canonical-logo VRAM behind.
+    0x3C4C_91DB
 );
 daid_dmg_case!(
     test_rom_and_ram_dmgb_matches_reviewed_crc,
     "rom_and_ram_dmgb",
     "rom_and_ram.gb",
     DmgModel::DmgB,
-    0x239E_C786
+    // Production DMG boot leaves decoded canonical-logo VRAM behind.
+    0x3C4C_91DB
 );
 daid_dmg_case!(
     test_rom_and_ram_dmgc_matches_reviewed_crc,
     "rom_and_ram_dmgc",
     "rom_and_ram.gb",
     DmgModel::DmgC,
-    0x239E_C786
+    // Production DMG boot leaves decoded canonical-logo VRAM behind.
+    0x3C4C_91DB
 );
 
 daid_cgb_case!(
@@ -245,7 +248,8 @@ daid_cgb_case!(
     "speed_switch_timing_div_cgbe",
     "speed_switch_timing_div.gbc",
     CgbModel::CgbE,
-    0xA4B6_C5D8
+    // CGB skip-boot state includes decoded canonical-logo VRAM.
+    0x5486_EE85
 );
 daid_cgb_case!(
     test_speed_switch_timing_ly_cgbe_matches_reviewed_crc,
@@ -302,7 +306,8 @@ daid_cgb_case!(
     "stop_instr_gbc_mode3_cgbe",
     "stop_instr_gbc_mode3.gb",
     CgbModel::CgbE,
-    0x4D1E_1139
+    // CGB skip-boot state includes decoded canonical-logo VRAM.
+    0xE0FC_20D4
 );
 
 #[cfg(test)]

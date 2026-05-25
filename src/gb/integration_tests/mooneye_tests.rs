@@ -129,20 +129,11 @@ mod helper_tests {
     use crate::gb::cartridge::load_cartridge;
     use crate::gb::console::Gb;
 
-    /// Canonical Nintendo logo bitmap (48 bytes at $0104–$0133).
-    ///
-    /// The boot ROM compares the cartridge header logo against this reference.
-    /// Test ROMs must include it or the boot ROM will hang in an infinite loop.
-    const NINTENDO_LOGO: [u8; 48] = [
-        0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00,
-        0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD,
-        0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB,
-        0xB9, 0x33, 0x3E,
-    ];
-
-    /// Patch `rom` with a valid Nintendo logo and correct header checksum.
+    /// Patch `rom` with deterministic header-logo bytes and correct header checksum.
     fn fix_rom_header(rom: &mut [u8]) {
-        rom[0x0104..0x0134].copy_from_slice(&NINTENDO_LOGO);
+        for (index, byte) in rom[0x0104..0x0134].iter_mut().enumerate() {
+            *byte = ((index as u8).wrapping_mul(17)) ^ 0x5A;
+        }
         let checksum = rom[0x0134..=0x014C]
             .iter()
             .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));

@@ -527,3 +527,48 @@ No additional feedback.
 ### Navigator feedback
 
 No feedback provided.
+
+---
+
+## 2026-05-25 — PR #2661: Fix #2655: automate Ashiepaws GB shootout tests
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2661
+**Linked issues:** #2655
+
+### Customizations used
+
+| Type         | Name                        | Purpose                                                                 |
+| ------------ | --------------------------- | ----------------------------------------------------------------------- |
+| Skill        | `github-issue-designer`     | Supported issue-scoped framing and traceability for the Ashiepaws rows. |
+| Skill        | `github-administration`     | Guided PR, issue, and full pre-merge checklist workflow.                |
+| Skill        | `test-driven-development`   | Enforced RED/GREEN/REFACTOR/COMMIT approval gates for the automation.   |
+| Skill        | `rust-developer`            | Guided Rust test automation and validation work.                        |
+| Skill        | `gb-hardware-research`      | Grounded OAM DMA behavior decisions in Game Boy hardware behavior.      |
+| Skill        | `bug-hunter`                | Kept the workflow focused on reproducible regression coverage.          |
+| Skill        | `self-learning-skills`      | Triggered retrospective capture after the PR was created.               |
+| Agent        | `code-review`               | Provided fallback review-oriented scrutiny during the refactor phase.   |
+| Instructions | `copilot-instructions.md`   | Applied repository workflow rules for TDD, review, and validation.      |
+
+### What went well
+
+- ✅ The customization mix matched the work: `test-driven-development` controlled the RED/GREEN/REFACTOR/COMMIT gates while `gb-hardware-research` supplied the OAM DMA context needed for hardware-sensitive Ashiepaws shootout automation.
+- ✅ The issue and GitHub workflow customizations kept PR #2661 tied back to #2655 and carried the work through the full pre-merge checklist instead of stopping at local test automation.
+- ✅ The code-review fallback was used at the right risk point during REFACTOR, adding a second AI-assisted review pass without bypassing the TDD approval gates.
+- ✅ The workflow converted Ashiepaws GBEmulatorShootout rows into automated coverage, making future regressions detectable by the test suite rather than manual shootout inspection.
+
+### What to improve
+
+- ❌ Many skills were active at once; future iterations should record which customization drove each major decision, especially where hardware research changes the expected OAM DMA behavior.
+- ❌ The code-review agent was used as a fallback during refactor; for hardware-sensitive test automation, schedule review-oriented scrutiny as an explicit planned checkpoint before the final validation sweep.
+- ❌ The OAM DMA research outcome should be summarized near the tests or PR rationale so future Ashiepaws row automation does not have to reconstruct why the expected behavior is hardware-accurate.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided
+
+#### What to improve
+
+No feedback provided

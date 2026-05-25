@@ -25,6 +25,14 @@ pub trait GbBus {
         self.write(addr, val);
     }
 
+    /// Perform the bus sample for a CPU read M-cycle after peripherals have ticked.
+    ///
+    /// The CPU owns the cycle tick so implementations can use this hook for
+    /// CPU-only bus effects that do not apply to debugger or helper reads.
+    fn read_cpu_m_cycle(&mut self, addr: u16) -> u8 {
+        self.read(addr)
+    }
+
     /// Notify the bus that the CPU is about to fetch and execute a new instruction.
     ///
     /// Called BEFORE the M1 bus tick.  The default implementation is a no-op;

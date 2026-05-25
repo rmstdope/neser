@@ -105,6 +105,13 @@ impl Ppu {
         0x3C, 0x00, 0x42, 0x00, 0xB9, 0x00, 0xA5, 0x00, 0xB9, 0x00, 0xA5, 0x00, 0x42, 0x00, 0x3C,
         0x00,
     ];
+    const BOOT_LOGO_TILE_DATA_ADDR: usize = 0x0010;
+    const BOOT_LOGO_TILE_MAP_ADDR: usize = 0x1904;
+    const BOOT_LOGO_TILE_MAP: [u8; 44] = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x19, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    ];
 
     pub fn new() -> Self {
         Self {
@@ -151,6 +158,41 @@ impl Ppu {
         let start = Self::BOOT_REGISTERED_MARK_TILE_ADDR;
         let end = start + Self::BOOT_REGISTERED_MARK_TILE.len();
         self.vram[start..end].copy_from_slice(&Self::BOOT_REGISTERED_MARK_TILE);
+    }
+
+    /// Seed decoded cartridge-logo tile data and tile map left by the boot ROM.
+    pub(crate) fn seed_boot_logo_from_header(&mut self, header_logo: &[u8; 48]) {
+        let mut dst = Self::BOOT_LOGO_TILE_DATA_ADDR;
+        for mut byte in *header_logo {
+            for _ in 0..2 {
+                let value = Self::decode_boot_logo_nibble(&mut byte);
+                self.vram[dst] = value;
+                self.vram[dst + 2] = value;
+                dst += 4;
+            }
+        }
+        let map_start = Self::BOOT_LOGO_TILE_MAP_ADDR;
+        let map_end = map_start + Self::BOOT_LOGO_TILE_MAP.len();
+        self.vram[map_start..map_end].copy_from_slice(&Self::BOOT_LOGO_TILE_MAP);
+    }
+
+    fn decode_boot_logo_nibble(byte: &mut u8) -> u8 {
+        let mut value = 0;
+        for _ in 0..4 {
+            let carry = (*byte & 0x80) != 0;
+            *byte <<= 1;
+            value = (value << 1) | u8::from(carry);
+            value = (value << 1) | u8::from(carry);
+        }
+        value
+    }
+
+    /// Seed the CGB post-boot faded BG palette state.
+    pub(crate) fn seed_cgb_boot_fade_bg_palettes(&mut self) {
+        for color in self.bg_palette_ram.chunks_exact_mut(2) {
+            color[0] = 0xFF;
+            color[1] = 0x7F;
+        }
     }
 
     /// Enable DMG compatibility mode for CGB running a DMG-only game.
@@ -1082,6 +1124,29 @@ mod tests {
         let base = palette * 8 + slot * 2;
         palette_ram[base] = (rgb555 & 0x00FF) as u8;
         palette_ram[base + 1] = (rgb555 >> 8) as u8;
+    }
+
+    #[test]
+    fn boot_logo_seeding_decodes_cartridge_header_bytes_without_embedded_logo() {
+        let mut ppu = Ppu::new();
+        let mut header_logo = [0u8; 48];
+        header_logo[0] = 0x80;
+        header_logo[1] = 0x01;
+
+        ppu.seed_boot_logo_from_header(&header_logo);
+
+        assert_eq!(ppu.vram[Ppu::BOOT_LOGO_TILE_DATA_ADDR], 0xC0);
+        assert_eq!(ppu.vram[Ppu::BOOT_LOGO_TILE_DATA_ADDR + 2], 0xC0);
+        assert_eq!(ppu.vram[Ppu::BOOT_LOGO_TILE_DATA_ADDR + 8], 0x00);
+        assert_eq!(ppu.vram[Ppu::BOOT_LOGO_TILE_DATA_ADDR + 10], 0x00);
+        assert_eq!(ppu.vram[Ppu::BOOT_LOGO_TILE_DATA_ADDR + 12], 0x03);
+        assert_eq!(ppu.vram[Ppu::BOOT_LOGO_TILE_DATA_ADDR + 14], 0x03);
+        assert_eq!(
+            &ppu.vram[Ppu::BOOT_LOGO_TILE_MAP_ADDR..Ppu::BOOT_LOGO_TILE_MAP_ADDR + 12],
+            &[
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C
+            ]
+        );
     }
 
     /// Number of dots in the first scanline after LCD enable (starts at dot 4).
