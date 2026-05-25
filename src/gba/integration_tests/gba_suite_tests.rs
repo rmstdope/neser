@@ -534,13 +534,13 @@ fn approvals_manifest_parses() {
     // mgba-emu/suite keys
     assert_eq!(approvals.get("mgba_memory"), Some(&0x61F6_5500));
     assert_eq!(approvals.get("mgba_io_read"), Some(&0x7D32_0909));
-    assert_eq!(approvals.get("mgba_timing"), Some(&0xDEEF_A167));
+    assert_eq!(approvals.get("mgba_timing"), Some(&0xEABA_32BC));
     assert_eq!(approvals.get("mgba_timers"), Some(&0xCFAB_2DCC));
-    assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xD1FF_FC47));
+    assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xB906_EDAC));
     assert_eq!(approvals.get("mgba_shifter"), Some(&0x8B4A_12AA));
     assert_eq!(approvals.get("mgba_carry"), Some(&0xFD9E_45E6));
     assert_eq!(approvals.get("mgba_multiply_long"), Some(&0x6996_55AB));
-    assert_eq!(approvals.get("mgba_bios_math"), Some(&0xA4E2_450F));
+    assert_eq!(approvals.get("mgba_bios_math"), Some(&0x09E8_2124));
     assert_eq!(approvals.get("mgba_dma"), Some(&0x9090_0973));
     assert_eq!(approvals.get("mgba_sio_read"), Some(&0xF5D9_8687));
     assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));

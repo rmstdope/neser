@@ -110,6 +110,10 @@ fn align_cpu_fast_set_addr(addr: u32) -> u32 {
     }
 }
 
+fn cpu_fast_set_source_requires_bios_execution(addr: u32) -> bool {
+    !(0x0200_0000..0x1000_0000).contains(&addr)
+}
+
 impl Default for Arm7tdmi {
     fn default() -> Self {
         Self::new()
@@ -249,8 +253,8 @@ impl Arm7tdmi {
                 code_cycles = (outcome.seq as u32 + outcome.nonseq as u32) * s_cost;
             }
             let code_halfwords = match code_width {
-                WidthClass::HalfwordOrByte => outcome.seq as u8 + outcome.nonseq as u8,
-                WidthClass::Word => (outcome.seq as u8 + outcome.nonseq as u8) * 2,
+                WidthClass::HalfwordOrByte => outcome.seq + outcome.nonseq,
+                WidthClass::Word => (outcome.seq + outcome.nonseq) * 2,
             };
             let prefetch_halfword_cycles =
                 bus.s_cycles(code_addr, WidthClass::HalfwordOrByte).max(1);
@@ -313,10 +317,7 @@ impl Arm7tdmi {
                 self.gamepak_prefetch_halfwords = 0;
                 self.gamepak_prefetch_cycle_credit = 0;
             }
-        } else if outcome.branched {
-            self.gamepak_prefetch_halfwords = 0;
-            self.gamepak_prefetch_cycle_credit = 0;
-        } else if !gamepak_opcode {
+        } else if outcome.branched || !gamepak_opcode {
             self.gamepak_prefetch_halfwords = 0;
             self.gamepak_prefetch_cycle_credit = 0;
         }
@@ -602,7 +603,7 @@ impl Arm7tdmi {
             0x07 => Some(self.hle_bios_div(true)),
             0x08 => Some(self.hle_bios_sqrt()),
             0x09 => Some(self.hle_bios_arctan()),
-            0x0C => Some(self.hle_bios_cpu_fast_set(bus)),
+            0x0C => self.hle_bios_cpu_fast_set(bus),
             _ => None,
         }?;
         Some(cycles + bus.embedded_bios_hle_entry_penalty(exec_pc, code_width))
@@ -673,12 +674,16 @@ impl Arm7tdmi {
         99
     }
 
-    fn hle_bios_cpu_fast_set<B: Bus>(&mut self, bus: &mut B) -> u32 {
+    fn hle_bios_cpu_fast_set<B: Bus>(&mut self, bus: &mut B) -> Option<u32> {
         let mut src = align_cpu_fast_set_addr(self.regs.r[0]);
         let mut dst = align_cpu_fast_set_addr(self.regs.r[1]);
         let control = self.regs.r[2];
         let fill = control & (1 << 24) != 0;
         let count = ((control & 0x001F_FFFF).saturating_add(7)) & !7;
+
+        if cpu_fast_set_source_requires_bios_execution(src) {
+            return None;
+        }
 
         if fill {
             let value = bus.read32(src);
@@ -695,7 +700,7 @@ impl Arm7tdmi {
             }
         }
 
-        3_390
+        Some(3_390)
     }
 
     /// Dispatch an undefined instruction exception: switch to Undefined mode,
