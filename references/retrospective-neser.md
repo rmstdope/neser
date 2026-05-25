@@ -491,3 +491,39 @@ Pending — navigator unavailable during retrospective collection.
 ### Navigator feedback
 
 No additional feedback.
+
+---
+
+## 2026-05-25 - PR #2658: Automate remaining Blargg GB timing rows
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2658
+**Linked issues:** #2652
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `github-administration` | Guided PR creation, merge flow, and issue/PR tracking. |
+| Skill | `test-driven-development` | Enforced strict RED/GREEN/REFACTOR/COMMIT/MERGE gates. |
+| Skill | `rust-developer` | Guided Rust integration-test and helper changes. |
+| Skill | `self-learning-skills` | Guided post-merge retrospective capture. |
+| Agent | `code-review` | Reviewed changed Blargg test code during REFACTOR. |
+| Agent | `Iteration Retrospective Gatherer` | Produced retrospective content after merge; manual append was required. |
+
+### What went well
+
+- The strict RED/GREEN/REFACTOR/COMMIT/MERGE gates kept the workflow controlled and reviewable.
+- User feedback before GREEN was incorporated cleanly by removing `shootout` from test names before finalizing the test suite.
+- The GREEN implementation stayed focused on `src/gb/integration_tests/blargg_tests.rs`, adding Blargg timing coverage and making the LCD helper generic over `GbBus`.
+- The full checkpoint suite passed before PR creation and merge.
+
+### What to improve
+
+- Naming concerns surfaced after the initial RED proposal; future RED phases should include an explicit quick naming review before asking for GREEN approval.
+- The need to make the LCD helper generic over `GbBus` emerged during GREEN; future similar test automation should inspect helper type constraints earlier during RED planning.
+- The retrospective agent could generate the entry but could not write the file directly. Continue using the manual append fallback when that limitation appears.
+
+### Navigator feedback
+
+No feedback provided.
