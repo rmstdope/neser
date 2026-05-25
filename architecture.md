@@ -254,6 +254,7 @@ All Game Boy (DMG) hardware lives under `src/gb/`. The module is structured arou
 | `src/gb/sgb.rs` | Minimal Super Game Boy command/input state used by explicit SGB test helpers. Decodes SGB packets sent through `$FF00` and implements only `MLT_REQ` player selection/current-player behavior; full SGB rendering, borders, palettes, and sound remain out of scope. |
 | `src/gb/integration_tests/acid_tests.rs` | Headless automation for GBEmulatorShootout acid rendering and hardware-probe ROMs. Runs `dmg-acid2.gb`, `cgb-acid2.gbc`, `cgb-acid-hell.gbc`, and `which.gb` on the relevant DMG/CGB models and asserts screen CRCs. |
 | `src/gb/integration_tests/ax6_tests.rs` | Headless automation for ax6 `rtc3test` MBC3 RTC validation. Runs the GBEmulatorShootout split ROMs (`rtc3test-1.gb` through `rtc3test-3.gb`) on both DMG and CGB hardware modes, captures result-screen PNGs with `NESER_CAPTURE_SCREEN=1`, and asserts reviewed screen CRCs. |
+| `src/gb/integration_tests/cpp_tests.rs` | Headless automation for CasualPokePlayer GBEmulatorShootout MBC3/RTC ROMs. Runs `rtc-invalid-banks-test.gb`, `latch-rtc-test.gb`, and `ramg-mbc3-test.gb` on DMG and CGB paths and asserts CRCs against the upstream reference PNGs. |
 | `src/gb/integration_tests/samesuite_sgb_tests.rs` | SameSuite SGB command integration tests. Runs `command_mlt_req.gb` and `command_mlt_req_1_incrementing.gb` on DMG-B with the explicit SGB input overlay and asserts the Mooneye-compatible pass marker. |
 
 #### Game Boy Advance Emulation (`src/gba/`)
@@ -426,6 +427,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 | --------- | ------------- |
 | `roms/automated_tests/` | **70+ test ROM suites** used by the integration test harness. Includes Blargg's CPU/PPU/APU tests, DMA timing tests, mapper-specific tests (MMC3, MMC5, FME-7, VRC6), sprite tests, and more. |
 | `roms/gb/automated_tests/acid/` | Vendored GBEmulatorShootout acid ROMs (`which.gb`, `dmg-acid2.gb`, `cgb-acid2.gbc`, `cgb-acid-hell.gbc`) used by `src/gb/integration_tests/acid_tests.rs` for DMG/CGB screen CRC coverage. |
+| `roms/gb/automated_tests/cpp/` | Vendored CasualPokePlayer GBEmulatorShootout MBC3/RTC ROMs and upstream PNG references used by `src/gb/integration_tests/cpp_tests.rs`. |
 | `roms/gb/automated_tests/daid/` | Vendored daid GB/GBC accuracy ROMs and upstream PNG references from GBEmulatorShootout, used by `src/gb/integration_tests/daid_tests.rs` for screen CRC and reference-PNG auditing. |
 | `roms/gb/automated_tests/rtc3test/` | Vendored ax6 `rtc3test` split MBC3 RTC test ROMs from GBEmulatorShootout, used by `src/gb/integration_tests/ax6_tests.rs` for DMG/CGB result-screen CRC testing. |
 | `roms/gba/automated_tests/gba-tests/` | Git submodule snapshot of jsmolka `gba-tests` (ARM/Thumb GBA CPU validation ROMs) used by `src/gba/integration_tests/gba_suite_tests.rs`. |
