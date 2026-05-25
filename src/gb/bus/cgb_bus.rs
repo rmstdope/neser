@@ -2,7 +2,7 @@ use crate::gb::apu::Apu;
 use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
-use crate::gb::cartridge::GbCartridge;
+use crate::gb::cartridge::{GbCartridge, has_canonical_nintendo_logo};
 use crate::gb::compat_palettes;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
@@ -112,8 +112,8 @@ pub struct CgbBus {
     ff72: u8,
     /// Undocumented CGB register $FF73 (fully R/W, initial value $00).
     ff73: u8,
-    /// Undocumented CGB register $FF74 (fully R/W in CGB mode, initial value $FF).
-    /// Per Mooneye boot_hwio-C test (verified against real hardware).
+    /// Undocumented CGB register $FF74 (fully R/W in CGB mode, initial value $00).
+    /// Locked to $FF outside CGB mode.
     ff74: u8,
     /// Undocumented CGB register $FF75 (bits 4-6 R/W, initial value $00).
     ff75: u8,
@@ -136,6 +136,13 @@ pub struct CgbBus {
     key0: u8,
     /// Whether KEY0 is locked (writes ignored). Set when $FF50 is written.
     key0_locked: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CgbDmaBusKind {
+    Cartridge,
+    Wram,
+    Vram,
 }
 
 impl CgbBus {
@@ -249,11 +256,11 @@ impl CgbBus {
             cgb_extra_oam: [0; 0x60],
             // Undocumented CGB registers.
             // $FF72-$FF73: fully R/W, initial value $00.
-            // $FF74: R/W in CGB mode, initial value $FF (per Mooneye boot_hwio-C test).
+            // $FF74: R/W in CGB mode, initial value $00; locked to $FF outside CGB mode.
             // $FF75: bits 4-6 R/W, reads return value | $8F, initial value $00.
             ff72: 0x00,
             ff73: 0x00,
-            ff74: 0xFF, // Value on reset per Mooneye test and Pan Docs
+            ff74: 0x00,
             ff75: 0x00,
             // Select boot ROM based on model: CGB-0 uses CGB0_BOOT_ROM (no wave RAM init),
             // all other CGB models use CGB_BOOT_ROM (with wave RAM init).
@@ -285,21 +292,23 @@ impl CgbBus {
             bus.seed_skip_boot_post_boot_state();
         }
 
-        // Apply DMG compatibility palette when skipping boot ROM for DMG-only games.
-        // DMG-only games (bit 7 of $0143 clear) need colorization palettes.
-        if skip_boot_rom && !is_cgb {
-            // Read ROM header bytes $0100-$014B for palette lookup.
-            let mut header = [0u8; 0x4C];
-            for (i, byte) in header.iter_mut().enumerate() {
-                *byte = bus.cart.read(0x0100 + i as u16);
+        if skip_boot_rom {
+            if is_cgb {
+                bus.ppu.seed_cgb_boot_fade_bg_palettes();
+            } else {
+                // DMG-only games (bit 7 of $0143 clear) need colorization palettes.
+                let mut header = [0u8; 0x4C];
+                for (i, byte) in header.iter_mut().enumerate() {
+                    *byte = bus.cart.read(0x0100 + i as u16);
+                }
+                let palette = compat_palettes::get_palette_colors(&header);
+                bus.ppu
+                    .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
+                // Enable DMG-compat mode for correct OBJ palette selection during rendering.
+                bus.ppu.set_dmg_compat(true);
             }
-            let palette = compat_palettes::get_palette_colors(&header);
-            bus.ppu
-                .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
-            // Enable DMG-compat mode for correct OBJ palette selection during rendering.
-            bus.ppu.set_dmg_compat(true);
         }
-        // Initialize DIV to post-boot value for CGB models.
+        // Initialize DIV to post-boot value for CGB models when skipping the boot ROM.
         // The internal 16-bit counter value must be precisely set for Mooneye
         // boot_div tests to pass. These tests verify the exact phase alignment
         // of DIV relative to M-cycle timing after boot ROM hand-off.
@@ -324,15 +333,28 @@ impl CgbBus {
         //   For counter at Read 1 = $2900, initial = $2900 - 32*4 = $2900 - 128 = $2880
         //
         // Reference: Mooneye boot_div-cgb0.s and boot_div-cgbABCDE.s
-        let initial_div_counter = match model {
+        if skip_boot_rom {
+            bus.timer
+                .set_div_counter(Self::skip_boot_div_counter(model, is_cgb));
+        }
+
+        bus
+    }
+
+    fn skip_boot_div_counter(model: CgbModel, cgb_compatible: bool) -> u16 {
+        if cgb_compatible {
+            // BullyGB's CGB-compatible DIV probe expects DIV=$1F when its first
+            // test reads $FF04. From the cartridge entry point, that read occurs
+            // after 77 M-cycles, so seed the raw counter to $1DCC.
+            return 0x1DCC;
+        }
+
+        match model {
             CgbModel::Cgb0 => 0x2880,
             CgbModel::CgbA | CgbModel::CgbB | CgbModel::CgbC | CgbModel::CgbD | CgbModel::CgbE => {
                 0x2674
             }
-        };
-        bus.timer.set_div_counter(initial_div_counter);
-
-        bus
+        }
     }
 
     fn seed_skip_boot_post_boot_state(&mut self) {
@@ -351,6 +373,9 @@ impl CgbBus {
             }
         }
 
+        if has_canonical_nintendo_logo(self.cart.as_ref()) {
+            self.ppu.seed_boot_logo();
+        }
         self.ppu.seed_boot_registered_mark_tile();
         self.ppu.write_register(0xFF40, 0x91);
         self.ppu.write_register(0xFF42, 0x00);
@@ -698,6 +723,30 @@ impl CgbBus {
         }
     }
 
+    fn dma_conflict_active(&self, addr: u16) -> bool {
+        self.dma_active
+            && self.dma_oam_blocked
+            && Self::dma_bus_for_addr(addr).is_some_and(|bus| bus == self.dma_source_bus())
+    }
+
+    fn dma_source_bus(&self) -> CgbDmaBusKind {
+        Self::dma_bus_for_addr(u16::from(self.dma_source) << 8).unwrap_or(CgbDmaBusKind::Wram)
+    }
+
+    fn dma_bus_for_addr(addr: u16) -> Option<CgbDmaBusKind> {
+        match addr {
+            0x0000..=0x7FFF | 0xA000..=0xBFFF => Some(CgbDmaBusKind::Cartridge),
+            0x8000..=0x9FFF => Some(CgbDmaBusKind::Vram),
+            0xC000..=0xFDFF => Some(CgbDmaBusKind::Wram),
+            _ => None,
+        }
+    }
+
+    fn dma_conflict_byte(&self) -> u8 {
+        let byte_idx = self.dma_position.saturating_sub(2) as u16;
+        self.read_raw((u16::from(self.dma_source) << 8) + byte_idx)
+    }
+
     fn do_oam_dma(&mut self, val: u8) {
         let preserve_blocking = self.dma_active && self.dma_oam_blocked;
         self.dma_active = true;
@@ -778,7 +827,7 @@ impl CgbBus {
         // Reset undocumented CGB registers
         self.ff72 = 0x00;
         self.ff73 = 0x00;
-        self.ff74 = 0xFF; // Initial value per Mooneye test
+        self.ff74 = 0x00;
         self.ff75 = 0x00;
         // Reset KEY0 state: if boot ROM is active, unlock so boot ROM can write;
         // if skipping boot ROM, set appropriate value based on cartridge type.
@@ -786,8 +835,11 @@ impl CgbBus {
             self.seed_skip_boot_post_boot_state();
             // Same logic as constructor: set KEY0/OPRI based on cartridge header
             let is_cgb = self.cart.is_cgb();
+            self.timer
+                .set_div_counter(Self::skip_boot_div_counter(self.model, is_cgb));
             if is_cgb {
                 self.key0 = self.cart.read(0x0143);
+                self.ppu.seed_cgb_boot_fade_bg_palettes();
             } else {
                 self.key0 = 0x04;
                 self.ppu.write_cgb_register(0xFF6C, 0x01); // OPRI for DMG mode
@@ -899,7 +951,7 @@ impl CgbBus {
         // Restore undocumented CGB registers with defaults for older save states
         self.ff72 = state.ff72.unwrap_or(0x00);
         self.ff73 = state.ff73.unwrap_or(0x00);
-        self.ff74 = state.ff74.unwrap_or(0xFF);
+        self.ff74 = state.ff74.unwrap_or(0x00);
         self.ff75 = state.ff75.unwrap_or(0x00);
         // Restore KEY0 state; default to locked with post-boot value for older save states
         self.key0 = state.key0.unwrap_or(0x00);
@@ -1147,6 +1199,9 @@ impl GbBus for CgbBus {
                 if self.boot_rom_active {
                     self.boot_rom_active = false;
                     self.key0_locked = true;
+                    if has_canonical_nintendo_logo(self.cart.as_ref()) {
+                        self.ppu.seed_boot_logo();
+                    }
                     self.ppu.seed_boot_registered_mark_tile();
 
                     // Apply DMG compatibility palettes for DMG-only games.
@@ -1175,6 +1230,8 @@ impl GbBus for CgbBus {
                             &palette.obj1,
                         );
                         self.ppu.set_dmg_compat(true);
+                    } else {
+                        self.ppu.seed_cgb_boot_fade_bg_palettes();
                     }
                 }
             }
@@ -1209,7 +1266,17 @@ impl GbBus for CgbBus {
             self.tick_after_ppu(1, double);
         } else {
             self.tick(1);
-            self.write(addr, val);
+            if !self.dma_conflict_active(addr) {
+                self.write(addr, val);
+            }
+        }
+    }
+
+    fn read_cpu_m_cycle(&mut self, addr: u16) -> u8 {
+        if self.dma_conflict_active(addr) {
+            self.dma_conflict_byte()
+        } else {
+            self.read(addr)
         }
     }
 
@@ -1364,6 +1431,22 @@ mod tests {
         (CgbBus::new(cart, CgbModel::default(), false), ticks)
     }
 
+    fn cgb_rom_with_bytes(bytes: &[(usize, u8)]) -> Box<dyn GbCartridge> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0143] = 0x80; // CGB compatible
+        rom[0x0147] = 0x00; // ROM only
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x00; // no RAM
+        for &(addr, value) in bytes {
+            rom[addr] = value;
+        }
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        load_cartridge(&rom).expect("valid ROM")
+    }
+
     /// Build a minimal DMG-only ROM cartridge, as used by Mooneye `*-C` tests
     /// when they run on CGB hardware in DMG compatibility mode.
     fn dmg_only_rom_cart() -> Box<dyn GbCartridge> {
@@ -1486,6 +1569,22 @@ mod tests {
         for &(addr, value) in expected {
             assert_eq!(bus.read(addr), value, "read ${addr:04X}");
         }
+    }
+
+    #[test]
+    fn cgb_skip_boot_seeds_cgb_mode_bg_palettes_to_white() {
+        let bus = make_bus_post_boot();
+
+        for color in bus.ppu.bg_palette_ram.chunks_exact(2) {
+            assert_eq!(color, &[0xFF, 0x7F]);
+        }
+    }
+
+    #[test]
+    fn cgb_compatible_skip_boot_uses_cgb_mode_div_phase() {
+        let mut bus = make_bus_post_boot();
+
+        assert_eq!(bus.read(0xFF04), 0x1D);
     }
 
     #[test]
@@ -1691,10 +1790,41 @@ mod tests {
         assert_eq!(dmg_compat_bus.read(0xFF74), 0xFF);
 
         let mut cgb_bus = make_bus_post_boot();
+        assert_eq!(cgb_bus.read(0xFF74), 0x00);
         cgb_bus.write(0xFF74, 0x00);
         assert_eq!(cgb_bus.read(0xFF74), 0x00);
         cgb_bus.write(0xFF74, 0x55);
         assert_eq!(cgb_bus.read(0xFF74), 0x55);
+    }
+
+    #[test]
+    fn oam_dma_from_rom_conflicts_with_cgb_cpu_rom_reads_but_not_wram_reads_or_writes() {
+        let mut bus = CgbBus::new(
+            cgb_rom_with_bytes(&[(0x4000, 0x06), (0x4001, 0x13)]),
+            CgbModel::CgbE,
+            false,
+        );
+        bus.wram[0][0x0100] = 0x42;
+        bus.write(0xFF46, 0x40);
+        bus.tick(2);
+
+        assert_eq!(bus.read_cpu_m_cycle(0x2000), 0x06);
+        assert_eq!(bus.read_cpu_m_cycle(0xC100), 0x42);
+
+        bus.write_cpu_m_cycle(0xC100, 0x99);
+        assert_eq!(bus.wram[0][0x0100], 0x99);
+    }
+
+    #[test]
+    fn oam_dma_from_wram_conflicts_with_cgb_cpu_wram_reads_but_not_rom_reads() {
+        let mut bus = CgbBus::new(cgb_rom_with_bytes(&[(0x2000, 0xAB)]), CgbModel::CgbE, false);
+        bus.wram[0][0] = 0x06;
+        bus.wram[0][1] = 0x13;
+        bus.write(0xFF46, 0xC0);
+        bus.tick(2);
+
+        assert_eq!(bus.read_cpu_m_cycle(0xC100), 0x06);
+        assert_eq!(bus.read_cpu_m_cycle(0x2000), 0xAB);
     }
 
     #[test]

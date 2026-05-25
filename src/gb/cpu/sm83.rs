@@ -251,7 +251,7 @@ impl<B: GbBus> Sm83<B> {
     fn read(&mut self, addr: u16) -> u8 {
         self.cycles += 1;
         self.bus.tick(1);
-        let val = self.bus.read(addr);
+        let val = self.bus.read_cpu_m_cycle(addr);
         trace_cpu!(2; "      read  ${:04X} = ${:02X}", addr, val);
         val
     }
@@ -291,7 +291,7 @@ impl<B: GbBus> Sm83<B> {
     ///
     /// Honors the HALT bug flag identically to [`fetch_byte()`].
     fn fetch_byte_no_tick(&mut self) -> u8 {
-        let val = self.bus.read(self.regs.pc);
+        let val = self.bus.read_cpu_m_cycle(self.regs.pc);
         if self.halt_bug {
             // HALT bug: omit the PC increment so the same byte is fetched again
             // on the next call to fetch_byte().

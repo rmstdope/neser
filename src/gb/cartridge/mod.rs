@@ -9,4 +9,4 @@ mod mbc5;
 mod mbc7;
 
 #[allow(unused_imports)]
-pub use cartridge::{GbCartridge, RomError, load_cartridge};
+pub use cartridge::{GbCartridge, RomError, has_canonical_nintendo_logo, load_cartridge};

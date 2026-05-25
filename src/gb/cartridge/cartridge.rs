@@ -11,6 +11,13 @@ use super::mbc3::Mbc3;
 use super::mbc5::Mbc5;
 use super::mbc7::Mbc7;
 
+/// Canonical 48-byte Nintendo logo stored at ROM header addresses $0104-$0133.
+pub const NINTENDO_LOGO: [u8; 48] = [
+    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+];
+
 pub trait GbCartridge {
     /// Read a byte from the cartridge address space.
     ///
@@ -74,6 +81,14 @@ pub trait GbCartridge {
     /// Used by cartridges with real-time clocks (RTC) like MBC3 to track
     /// elapsed time. Does nothing by default for most cartridge types.
     fn tick(&mut self, _cycles: u32) {}
+}
+
+/// Returns whether the cartridge header contains the canonical Nintendo logo.
+pub fn has_canonical_nintendo_logo(cart: &dyn GbCartridge) -> bool {
+    NINTENDO_LOGO
+        .iter()
+        .enumerate()
+        .all(|(offset, &byte)| cart.read(0x0104 + offset as u16) == byte)
 }
 
 /// Errors returned by [`load_cartridge`].
