@@ -200,9 +200,7 @@ mod tests {
         send_packet(&mut state, &MLT_REQ_1);
 
         assert_eq!(selected_player_id(&state), 0x0F);
-        let mut select = 0x30;
-        write_raw(&mut state, &mut select, 0x10);
-        write_raw(&mut state, &mut select, 0x30);
+        increment(&mut state);
         assert_eq!(selected_player_id(&state), 0x0E);
     }
 
@@ -212,10 +210,8 @@ mod tests {
         send_packet(&mut state, &MLT_REQ_3);
 
         assert_eq!(selected_player_id(&state), 0x0F);
-        let mut select = 0x30;
         for expected in [0x0E, 0x0D, 0x0C, 0x0F] {
-            write_raw(&mut state, &mut select, 0x10);
-            write_raw(&mut state, &mut select, 0x30);
+            increment(&mut state);
             assert_eq!(selected_player_id(&state), expected);
         }
     }

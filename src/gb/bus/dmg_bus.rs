@@ -199,8 +199,8 @@ impl DmgBus {
         self.dma_source = 0xFF;
         self.dma_position = 0;
         self.dma_oam_blocked = false;
-        if self.sgb.is_some() {
-            self.sgb = Some(SgbState::new());
+        if let Some(ref mut sgb) = self.sgb {
+            *sgb = SgbState::default();
         }
     }
 
