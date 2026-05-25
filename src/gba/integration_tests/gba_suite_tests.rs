@@ -2,13 +2,15 @@ use super::gba_suite_runner::{
     ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, VIDEO_TEST_NAMES,
     boot_mgba_suite, run_armwrestler, run_mgba_io_read_diagnostics,
     run_mgba_io_read_diagnostics_after_bios_intro, run_mgba_memory_diagnostics,
-    run_mgba_memory_diagnostics_with_bios_path, run_mgba_suite, run_mgba_video_tests, run_suite,
+    run_mgba_memory_diagnostics_with_bios_path, run_mgba_suite, run_mgba_timing_diagnostics,
+    run_mgba_video_tests, run_suite,
 };
 use crate::gba::bios::EMBEDDED_BIOS;
 use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
 use crate::platform::emulator::Emulator;
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::OnceLock;
 
 const APPROVALS_FILE: &str = "src/gba/integration_tests/gba_suite_crc_approvals.txt";
 const APPROVALS_RAW: &str = include_str!("gba_suite_crc_approvals.txt");
@@ -73,6 +75,12 @@ fn approved_crc_for_suite_key(key: &str) -> u32 {
             key, APPROVALS_FILE, key
         )
     })
+}
+
+fn cached_mgba_timing_diagnostics() -> &'static super::gba_suite_runner::MgbaMemoryDiagnosticResult
+{
+    static RESULT: OnceLock<super::gba_suite_runner::MgbaMemoryDiagnosticResult> = OnceLock::new();
+    RESULT.get_or_init(run_mgba_timing_diagnostics)
 }
 
 fn assert_suite_passes_with_crc(suite: Suite) {
@@ -326,6 +334,153 @@ fn gba_mgba_io_read_diagnostics_passes_after_bios_intro() {
 }
 
 #[test]
+fn gba_mgba_timing_diagnostics_passes_every_timing_case() {
+    let result = cached_mgba_timing_diagnostics();
+
+    assert_eq!(
+        result.total_count,
+        Some(2020),
+        "raw mGBA Timing log:\n{}",
+        result.raw_log
+    );
+    assert!(
+        result.passed_count.is_some(),
+        "mGBA Timing diagnostics should include a parsed pass count"
+    );
+    assert_eq!(
+        result.passed_count, result.total_count,
+        "mGBA Timing diagnostics should pass every timing case with the embedded BIOS.\nfailures: {:?}\nraw log:\n{}",
+        result.failures, result.raw_log
+    );
+    assert!(
+        result.failures.is_empty(),
+        "mGBA Timing diagnostics reported failures with the embedded BIOS: {:?}\nraw log:\n{}",
+        result.failures,
+        result.raw_log
+    );
+}
+
+#[test]
+fn gba_mgba_timing_diagnostics_passes_c_loop_prefetch_cases() {
+    let result = cached_mgba_timing_diagnostics();
+    let c_loop_start = result
+        .raw_log
+        .find("Timing test: C loop")
+        .expect("mGBA Timing log should include the C-loop test section");
+    let c_loop_suffix = &result.raw_log[c_loop_start..];
+    let c_loop_end = c_loop_suffix
+        .find("Timing test: BIOS Division")
+        .unwrap_or(c_loop_suffix.len());
+    let c_loop_log = &c_loop_suffix[..c_loop_end];
+
+    assert!(
+        !c_loop_log.contains("FAIL:"),
+        "mGBA Timing C-loop prefetch cases should pass.\nC-loop log:\n{}",
+        c_loop_log
+    );
+}
+
+#[test]
+fn gba_mgba_timing_diagnostics_passes_trivial_internal_dma_start_cases() {
+    let result = cached_mgba_timing_diagnostics();
+    let failing_cases = [
+        "FAIL: Trivial DMA (16) ARM/IWRAM",
+        "FAIL: Trivial DMA (16) Thumb/IWRAM",
+        "FAIL: Trivial DMA (32) ARM/IWRAM",
+        "FAIL: Trivial DMA (32) Thumb/IWRAM",
+    ];
+
+    for failing_case in failing_cases {
+        assert!(
+            !result.raw_log.contains(failing_case),
+            "mGBA Timing internal DMA start case should pass: {failing_case}\nraw log:\n{}",
+            result.raw_log
+        );
+    }
+}
+
+#[test]
+fn gba_mgba_timing_diagnostics_passes_rom_dma_prefetch_cases() {
+    let result = cached_mgba_timing_diagnostics();
+    let failing_prefixes = [
+        "FAIL: Trivial DMA (16/ROM)",
+        "FAIL: Trivial DMA (16/to ROM)",
+        "FAIL: Trivial DMA (16/ROM to ROM)",
+        "FAIL: Trivial DMA (32/from ROM)",
+        "FAIL: Trivial DMA (32/to ROM)",
+        "FAIL: Trivial DMA (32/ROM to ROM)",
+        "FAIL: Short DMA (16/from ROM)",
+        "FAIL: Short DMA (16/to ROM)",
+        "FAIL: Short DMA (16/ROM to ROM)",
+        "FAIL: Short DMA (32/from ROM)",
+        "FAIL: Short DMA (32/to ROM)",
+        "FAIL: Short DMA (32/ROM to ROM)",
+    ];
+
+    for failing_prefix in failing_prefixes {
+        assert!(
+            !result.raw_log.contains(failing_prefix),
+            "mGBA Timing ROM-DMA prefetch case should pass: {failing_prefix}\nraw log:\n{}",
+            result.raw_log
+        );
+    }
+}
+
+#[test]
+fn gba_mgba_timing_diagnostics_passes_bios_division_cases() {
+    let result = cached_mgba_timing_diagnostics();
+    let failing_prefixes = ["FAIL: BIOS Division ", "FAIL: BIOS Division 2 "];
+
+    for failing_prefix in failing_prefixes {
+        assert!(
+            !result.raw_log.contains(failing_prefix),
+            "mGBA Timing BIOS division case should pass: {failing_prefix}\nraw log:\n{}",
+            result.raw_log
+        );
+    }
+}
+
+#[test]
+fn gba_mgba_timing_diagnostics_passes_bios_sqrt_cases() {
+    let result = cached_mgba_timing_diagnostics();
+    let failing_prefixes = [
+        "FAIL: BIOS Sqrt ",
+        "FAIL: BIOS Sqrt 2 ",
+        "FAIL: BIOS Sqrt 3 ",
+    ];
+
+    for failing_prefix in failing_prefixes {
+        assert!(
+            !result.raw_log.contains(failing_prefix),
+            "mGBA Timing BIOS sqrt case should pass: {failing_prefix}\nraw log:\n{}",
+            result.raw_log
+        );
+    }
+}
+
+#[test]
+fn gba_mgba_timing_diagnostics_passes_bios_arctan_cases() {
+    let result = cached_mgba_timing_diagnostics();
+
+    assert!(
+        !result.raw_log.contains("FAIL: BIOS ArcTan "),
+        "mGBA Timing BIOS ArcTan case should pass.\nraw log:\n{}",
+        result.raw_log
+    );
+}
+
+#[test]
+fn gba_mgba_timing_diagnostics_passes_bios_cpuset_cases() {
+    let result = cached_mgba_timing_diagnostics();
+
+    assert!(
+        !result.raw_log.contains("FAIL: CpuSet "),
+        "mGBA Timing BIOS CpuSet/CpuFastSet case should pass.\nraw log:\n{}",
+        result.raw_log
+    );
+}
+
+#[test]
 fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
     let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
 
@@ -386,13 +541,13 @@ fn approvals_manifest_parses() {
     // mgba-emu/suite keys
     assert_eq!(approvals.get("mgba_memory"), Some(&0x61F6_5500));
     assert_eq!(approvals.get("mgba_io_read"), Some(&0x7D32_0909));
-    assert_eq!(approvals.get("mgba_timing"), Some(&0xDEEF_A167));
+    assert_eq!(approvals.get("mgba_timing"), Some(&0xEABA_32BC));
     assert_eq!(approvals.get("mgba_timers"), Some(&0xCFAB_2DCC));
-    assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xD1FF_FC47));
+    assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xB906_EDAC));
     assert_eq!(approvals.get("mgba_shifter"), Some(&0x8B4A_12AA));
     assert_eq!(approvals.get("mgba_carry"), Some(&0xFD9E_45E6));
     assert_eq!(approvals.get("mgba_multiply_long"), Some(&0x6996_55AB));
-    assert_eq!(approvals.get("mgba_bios_math"), Some(&0xA4E2_450F));
+    assert_eq!(approvals.get("mgba_bios_math"), Some(&0x09E8_2124));
     assert_eq!(approvals.get("mgba_dma"), Some(&0x9090_0973));
     assert_eq!(approvals.get("mgba_sio_read"), Some(&0xF5D9_8687));
     assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));

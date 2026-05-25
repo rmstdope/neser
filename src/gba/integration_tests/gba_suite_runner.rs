@@ -712,10 +712,21 @@ fn mgba_memory_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
 }
 
 fn mgba_io_read_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
+    mgba_named_sub_suite_diagnostic_from_gba(gba, "I/O read tests")
+}
+
+fn mgba_timing_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
+    mgba_named_sub_suite_diagnostic_from_gba(gba, "Timing tests")
+}
+
+fn mgba_named_sub_suite_diagnostic_from_gba(
+    gba: &Gba,
+    suite_name: &str,
+) -> MgbaMemoryDiagnosticResult {
     let log = parse_mgba_sub_suite_log(
         gba.bus().mgba_log_snapshot().as_bytes(),
         gba.bus().sram_snapshot(),
-        "I/O read tests",
+        suite_name,
     );
     mgba_memory_diagnostic_from_log(gba.screen_crc32(), log)
 }
@@ -728,6 +739,11 @@ pub fn run_mgba_memory_diagnostics() -> MgbaMemoryDiagnosticResult {
 pub fn run_mgba_io_read_diagnostics() -> MgbaMemoryDiagnosticResult {
     let (gba, _rom) = boot_mgba_suite();
     run_mgba_sub_suite_diagnostics_from_gba(gba, 1, "I/O read diagnostics")
+}
+
+pub fn run_mgba_timing_diagnostics() -> MgbaMemoryDiagnosticResult {
+    let (gba, _rom) = boot_mgba_suite();
+    run_mgba_sub_suite_diagnostics_from_gba(gba, 2, "Timing diagnostics")
 }
 
 pub fn run_mgba_io_read_diagnostics_after_bios_intro() -> MgbaMemoryDiagnosticResult {
@@ -813,10 +829,10 @@ fn run_mgba_sub_suite_diagnostics_from_gba_with_boot_frames(
         }
     }
 
-    if suite_index == 1 {
-        mgba_io_read_diagnostic_from_gba(&gba)
-    } else {
-        mgba_memory_diagnostic_from_gba(&gba)
+    match suite_index {
+        1 => mgba_io_read_diagnostic_from_gba(&gba),
+        2 => mgba_timing_diagnostic_from_gba(&gba),
+        _ => mgba_memory_diagnostic_from_gba(&gba),
     }
 }
 

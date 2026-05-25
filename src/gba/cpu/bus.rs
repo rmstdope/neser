@@ -37,6 +37,30 @@ pub trait Bus {
     /// Sequential access cycle cost for the given address and width.
     fn s_cycles(&self, addr: u32, width: WidthClass) -> u32;
 
+    /// Whether Game Pak ROM opcode prefetch is enabled in WAITCNT.
+    fn gamepak_prefetch_enabled(&self) -> bool {
+        false
+    }
+
+    /// Whether the instruction that just executed enabled an immediate DMA
+    /// transfer whose Game Pak bus use blocks the opcode prefetcher for one
+    /// extra cycle.
+    fn immediate_gamepak_dma_prefetch_penalty(&self, _code_width: WidthClass) -> bool {
+        false
+    }
+
+    /// Whether the bus is using NESER's embedded BIOS and can safely use CPU
+    /// HLE for BIOS SWIs whose open-source implementation is not cycle exact.
+    fn embedded_bios_hle_enabled(&self) -> bool {
+        false
+    }
+
+    /// Extra cycles for the embedded BIOS HLE SWI entry/return path from the
+    /// current caller region.
+    fn embedded_bios_hle_entry_penalty(&self, _addr: u32, _width: WidthClass) -> u32 {
+        0
+    }
+
     /// Read a 32-bit word for an **instruction fetch**.  The address must
     /// already be aligned to a 4-byte boundary.  Implementations may track
     /// this access separately from data reads so that bus faults can be

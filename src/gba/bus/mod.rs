@@ -50,7 +50,8 @@ thread_local! {
 /// Each region stores `[N16, N32, S16, S32]` — non-sequential and sequential
 /// access times for 16-bit and 32-bit widths. Updated when WAITCNT is written.
 ///
-/// Values match mGBA/GBATek conventions (no +1 adjustment).
+/// Game Pak WAITCNT fields store waitstates; actual access time is one clock
+/// plus the configured waitstate count.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Waitstates {
     /// Per-region cycle lookup: indexed by `(addr >> 24) & 0xF`, then by
@@ -128,7 +129,7 @@ impl Waitstates {
         self.regions[0x7] = oam;
 
         // SRAM wait (bits 0-1)
-        let sram_n16 = WAIT_N_LUT[(waitcnt & 0x3) as usize];
+        let sram_n16 = WAIT_N_LUT[(waitcnt & 0x3) as usize] + 1;
         // SRAM is always non-sequential (8-bit bus), 32-bit = 2×N16 + 1
         let sram_n32 = 2 * sram_n16 + 1;
         let sram = [sram_n16, sram_n32, sram_n16, sram_n32];
@@ -136,28 +137,28 @@ impl Waitstates {
         self.regions[0xF] = sram;
 
         // WS0 (bits 2-4): regions 0x8, 0x9
-        let ws0_n16 = WAIT_N_LUT[((waitcnt >> 2) & 0x3) as usize];
-        let ws0_s16 = WAIT_S0_LUT[((waitcnt >> 4) & 0x1) as usize];
-        let ws0_n32 = ws0_n16 + 1 + ws0_s16;
-        let ws0_s32 = 2 * ws0_s16 + 1;
+        let ws0_n16 = WAIT_N_LUT[((waitcnt >> 2) & 0x3) as usize] + 1;
+        let ws0_s16 = WAIT_S0_LUT[((waitcnt >> 4) & 0x1) as usize] + 1;
+        let ws0_n32 = ws0_n16 + ws0_s16;
+        let ws0_s32 = 2 * ws0_s16;
         let ws0 = [ws0_n16, ws0_n32, ws0_s16, ws0_s32];
         self.regions[0x8] = ws0;
         self.regions[0x9] = ws0;
 
         // WS1 (bits 5-7): regions 0xA, 0xB
-        let ws1_n16 = WAIT_N_LUT[((waitcnt >> 5) & 0x3) as usize];
-        let ws1_s16 = WAIT_S1_LUT[((waitcnt >> 7) & 0x1) as usize];
-        let ws1_n32 = ws1_n16 + 1 + ws1_s16;
-        let ws1_s32 = 2 * ws1_s16 + 1;
+        let ws1_n16 = WAIT_N_LUT[((waitcnt >> 5) & 0x3) as usize] + 1;
+        let ws1_s16 = WAIT_S1_LUT[((waitcnt >> 7) & 0x1) as usize] + 1;
+        let ws1_n32 = ws1_n16 + ws1_s16;
+        let ws1_s32 = 2 * ws1_s16;
         let ws1 = [ws1_n16, ws1_n32, ws1_s16, ws1_s32];
         self.regions[0xA] = ws1;
         self.regions[0xB] = ws1;
 
         // WS2 (bits 8-10): regions 0xC, 0xD
-        let ws2_n16 = WAIT_N_LUT[((waitcnt >> 8) & 0x3) as usize];
-        let ws2_s16 = WAIT_S2_LUT[((waitcnt >> 10) & 0x1) as usize];
-        let ws2_n32 = ws2_n16 + 1 + ws2_s16;
-        let ws2_s32 = 2 * ws2_s16 + 1;
+        let ws2_n16 = WAIT_N_LUT[((waitcnt >> 8) & 0x3) as usize] + 1;
+        let ws2_s16 = WAIT_S2_LUT[((waitcnt >> 10) & 0x1) as usize] + 1;
+        let ws2_n32 = ws2_n16 + ws2_s16;
+        let ws2_s32 = 2 * ws2_s16;
         let ws2 = [ws2_n16, ws2_n32, ws2_s16, ws2_s32];
         self.regions[0xC] = ws2;
         self.regions[0xD] = ws2;
@@ -267,6 +268,12 @@ pub struct GbaBus {
     /// bit 7 clear (halt mode). The owning `Gba` polls this each tick and
     /// calls `cpu.halt()`.
     halt_requested: bool,
+    /// Set when a CPU-visible write enables a timer. The instruction that
+    /// performs the enable write completes before the timer starts ticking.
+    timer_start_delay_pending: bool,
+    /// Remaining CPU cycles before a newly enabled immediate DMA can seize the
+    /// bus. GBATek documents a 2-cycle delay after the DMA enable edge.
+    dma_start_delay_cycles: u32,
 }
 
 impl Default for GbaBus {
@@ -343,6 +350,8 @@ impl GbaBus {
             waitstates: Waitstates::new(),
             undoc_0x410: 0,
             halt_requested: false,
+            timer_start_delay_pending: false,
+            dma_start_delay_cycles: 0,
         }
     }
 
@@ -476,6 +485,7 @@ impl GbaBus {
     /// cycles. Any pending IRQs are routed into [`Self::ic`]. PPU
     /// V-Blank/H-Blank edges are propagated to the DMA controller.
     pub fn step(&mut self, cycles: u32) {
+        self.timer_start_delay_pending = false;
         let overflow_mask = self.timers.step(cycles, &mut self.ic);
         self.handle_timer_overflow_fifo(overflow_mask);
         self.sio.step(cycles, &mut self.ic);
@@ -488,8 +498,32 @@ impl GbaBus {
             self.oam.as_slice(),
         );
         self.handle_ppu_events(events);
-        self.run_pending_dma();
-        self.step_dma_stalls();
+        self.run_pending_dma_after_start_delay(cycles);
+    }
+
+    /// Step peripherals after one CPU instruction. If that instruction enabled
+    /// a timer, the timer starts after the instruction completes, so this
+    /// instruction's cycles are not counted by the newly enabled timer.
+    pub fn step_after_cpu_instruction(&mut self, cycles: u32) {
+        let timer_cycles = if self.timer_start_delay_pending {
+            self.timer_start_delay_pending = false;
+            cycles.saturating_sub(2)
+        } else {
+            cycles
+        };
+        let overflow_mask = self.timers.step(timer_cycles, &mut self.ic);
+        self.handle_timer_overflow_fifo(overflow_mask);
+        self.sio.step(cycles, &mut self.ic);
+        self.apu.tick(cycles);
+        let events = self.ppu.step(
+            cycles,
+            &mut self.ic,
+            self.vram.as_slice(),
+            self.pram.as_slice(),
+            self.oam.as_slice(),
+        );
+        self.handle_ppu_events(events);
+        self.run_pending_dma_after_start_delay(cycles);
     }
 
     fn step_dma_stalls(&mut self) {
@@ -511,6 +545,64 @@ impl GbaBus {
             self.handle_ppu_events(events);
             self.run_pending_dma();
         }
+    }
+
+    fn run_pending_dma_after_start_delay(&mut self, cycles: u32) {
+        if self.dma_start_delay_cycles > 0 {
+            if cycles <= self.dma_start_delay_cycles {
+                self.dma_start_delay_cycles -= cycles;
+                return;
+            }
+            self.dma_start_delay_cycles = 0;
+        }
+        self.run_pending_dma();
+        self.step_dma_stalls();
+    }
+
+    fn mark_timer_start_delay_for_write16(&mut self, addr: u32, value: u16) {
+        let Some(timer) = timer_control_index(addr) else {
+            return;
+        };
+        let was_enabled = self.timers.channels[timer].enabled();
+        let now_enabled = value & 0x0080 != 0;
+        if !was_enabled && now_enabled {
+            self.timer_start_delay_pending = true;
+        }
+    }
+
+    fn mark_timer_start_delay_for_write8(&mut self, addr: u32, value: u8) {
+        let aligned = addr & !1;
+        let Some(timer) = timer_control_index(aligned) else {
+            return;
+        };
+        let old = self.timers.channels[timer].control;
+        let shift = (addr & 1) * 8;
+        let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
+        self.mark_timer_start_delay_for_write16(aligned, merged);
+    }
+
+    fn mark_dma_start_delay_for_write16(&mut self, addr: u32, value: u16) {
+        let Some(channel) = dma_control_index(addr) else {
+            return;
+        };
+        let old = self.dma.channels[channel].cnt_h;
+        let was_enabled = old & 0x8000 != 0;
+        let now_enabled = value & 0x8000 != 0;
+        let immediate = (value >> 12) & 0x3 == 0;
+        if !was_enabled && now_enabled && immediate {
+            self.dma_start_delay_cycles = 2;
+        }
+    }
+
+    fn mark_dma_start_delay_for_write8(&mut self, addr: u32, value: u8) {
+        let aligned = addr & !1;
+        let Some(channel) = dma_control_index(aligned) else {
+            return;
+        };
+        let old = self.dma.channels[channel].cnt_h;
+        let shift = (addr & 1) * 8;
+        let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
+        self.mark_dma_start_delay_for_write16(aligned, merged);
     }
 
     /// Propagate PPU V-Blank / H-Blank edges to DMA-mode hooks. Each
@@ -684,6 +776,8 @@ impl GbaBus {
         self.waitstates = state.waitstates.clone();
         self.undoc_0x410 = state.undoc_0x410;
         self.halt_requested = state.halt_requested;
+        self.timer_start_delay_pending = false;
+        self.dma_start_delay_cycles = 0;
         Ok(())
     }
 
@@ -1282,6 +1376,8 @@ impl Bus for GbaBus {
                             self.halt_requested = true;
                         }
                     }
+                    self.mark_timer_start_delay_for_write16(aligned + 2, (value >> 16) as u16);
+                    self.mark_dma_start_delay_for_write16(aligned + 2, (value >> 16) as u16);
                     self.io.write32(
                         aligned,
                         value,
@@ -1320,7 +1416,7 @@ impl Bus for GbaBus {
             }
             _ => {}
         }
-        if touches_io && self.dma.any_pending() {
+        if touches_io && self.dma.any_pending() && self.dma_start_delay_cycles == 0 {
             self.run_pending_dma();
         }
     }
@@ -1353,6 +1449,8 @@ impl Bus for GbaBus {
                             self.halt_requested = true;
                         }
                     }
+                    self.mark_timer_start_delay_for_write16(aligned, value);
+                    self.mark_dma_start_delay_for_write16(aligned, value);
                     self.io.write16(
                         aligned,
                         value,
@@ -1389,7 +1487,7 @@ impl Bus for GbaBus {
             }
             _ => {}
         }
-        if touches_io && self.dma.any_pending() {
+        if touches_io && self.dma.any_pending() && self.dma_start_delay_cycles == 0 {
             self.run_pending_dma();
         }
     }
@@ -1424,6 +1522,8 @@ impl Bus for GbaBus {
                 } else if (0x0400_0060..=0x0400_00A7).contains(&addr) {
                     self.apu.write8(addr, value);
                 } else {
+                    self.mark_timer_start_delay_for_write8(addr, value);
+                    self.mark_dma_start_delay_for_write8(addr, value);
                     self.io.write8(
                         addr,
                         value,
@@ -1470,7 +1570,7 @@ impl Bus for GbaBus {
             0xE | 0xF => self.cart_write8(addr, value),
             _ => {}
         }
-        if touches_io && self.dma.any_pending() {
+        if touches_io && self.dma.any_pending() && self.dma_start_delay_cycles == 0 {
             self.run_pending_dma();
         }
     }
@@ -1481,6 +1581,48 @@ impl Bus for GbaBus {
 
     fn s_cycles(&self, addr: u32, width: WidthClass) -> u32 {
         self.s_cycles_width(addr, width)
+    }
+
+    fn gamepak_prefetch_enabled(&self) -> bool {
+        self.waitstates.prefetch_enabled
+    }
+
+    fn immediate_gamepak_dma_prefetch_penalty(&self, code_width: WidthClass) -> bool {
+        if self.dma_start_delay_cycles == 0 {
+            return false;
+        }
+        let Some((src, dst)) = self.dma.pending_immediate_src_dst() else {
+            return false;
+        };
+        let src_gamepak = dma_addr_uses_gamepak(src);
+        let dst_gamepak = dma_addr_uses_gamepak(dst);
+        let src_second_fast = gamepak_second_access_fast(self.waitstates.waitcnt, src);
+        let dst_second_fast = gamepak_second_access_fast(self.waitstates.waitcnt, dst);
+
+        // mGBA Timing shows a one-cycle arbitration bubble when immediate
+        // DMA steals the Game Pak bus from the opcode prefetcher.
+        (src_gamepak && code_width == WidthClass::Word && src_second_fast)
+            || (!src_gamepak && dst_gamepak && !dst_second_fast)
+    }
+
+    fn embedded_bios_hle_enabled(&self) -> bool {
+        self.embedded_bios_loaded
+    }
+
+    fn embedded_bios_hle_entry_penalty(&self, addr: u32, width: WidthClass) -> u32 {
+        match (addr >> 24) & 0xF {
+            0x2 => self.n_cycles_width(addr, width) + 2 * self.s_cycles_width(addr, width) - 1,
+            0x8..=0xD => {
+                let n = self.n_cycles_width(addr, width);
+                let s = self.s_cycles_width(addr, width);
+                n + 2 * s
+                    + u32::from(gamepak_nonseq_wait_is_slowest(
+                        self.waitstates.waitcnt,
+                        addr,
+                    ))
+            }
+            _ => 0,
+        }
     }
 }
 
@@ -1526,6 +1668,12 @@ impl dma::DmaBus for GbaBus {
         <Self as Bus>::write32(self, addr, value);
         self.last_bus_value = saved;
     }
+    fn dma_n_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+        self.n_cycles_width(addr, width)
+    }
+    fn dma_s_cycles(&self, addr: u32, width: WidthClass) -> u32 {
+        self.s_cycles_width(addr, width)
+    }
     fn dma_raise_irq(&mut self, sources: u16) {
         self.ic.raise(sources);
     }
@@ -1541,6 +1689,50 @@ fn vram_offset(addr: u32) -> usize {
         // window.
         0x10000 + (local & 0x7FFF)
     }
+}
+
+fn timer_control_index(addr: u32) -> Option<usize> {
+    match addr {
+        0x0400_0102 => Some(0),
+        0x0400_0106 => Some(1),
+        0x0400_010A => Some(2),
+        0x0400_010E => Some(3),
+        _ => None,
+    }
+}
+
+fn dma_control_index(addr: u32) -> Option<usize> {
+    match addr {
+        0x0400_00BA => Some(0),
+        0x0400_00C6 => Some(1),
+        0x0400_00D2 => Some(2),
+        0x0400_00DE => Some(3),
+        _ => None,
+    }
+}
+
+fn dma_addr_uses_gamepak(addr: u32) -> bool {
+    matches!((addr >> 24) & 0xF, 0x8..=0xD)
+}
+
+fn gamepak_second_access_fast(waitcnt: u16, addr: u32) -> bool {
+    let bit = match (addr >> 24) & 0xF {
+        0x8 | 0x9 => 4,
+        0xA | 0xB => 7,
+        0xC | 0xD => 10,
+        _ => return false,
+    };
+    waitcnt & (1 << bit) != 0
+}
+
+fn gamepak_nonseq_wait_is_slowest(waitcnt: u16, addr: u32) -> bool {
+    let shift = match (addr >> 24) & 0xF {
+        0x8 | 0x9 => 2,
+        0xA | 0xB => 5,
+        0xC | 0xD => 8,
+        _ => return false,
+    };
+    ((waitcnt >> shift) & 0x3) == 0
 }
 
 /// Reading from cartridge ROM with no cart inserted returns the lower half of
@@ -1729,7 +1921,7 @@ mod tests {
         bus.notify_hblank();
 
         assert_eq!(bus.read32(0x0300_0020), 0x1122_3344);
-        assert_eq!(bus.take_dma_stall_cycles(), 2);
+        assert_eq!(bus.take_dma_stall_cycles(), 9);
     }
 
     #[test]
@@ -1926,14 +2118,14 @@ mod tests {
             3
         );
         assert_eq!(bus.n_cycles_width(0x0200_0000, WidthClass::Word), 6);
-        // ROM WS0: N16=4, S16=2 (mGBA/GBATek convention)
+        // ROM WS0: N16=5, S16=3 (one clock plus WAITCNT waitstate fields)
         assert_eq!(
             bus.n_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
-            4
+            5
         );
         assert_eq!(
             bus.s_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
-            2
+            3
         );
     }
 
@@ -1955,6 +2147,19 @@ mod tests {
         bus.write16(0x0400_0102, 0x0080);
         bus.step(1024);
         assert_eq!(bus.read16(0x0400_0100), 1024);
+    }
+
+    #[test]
+    fn timer_enable_delays_by_two_cycles_after_enabling_cpu_instruction() {
+        let mut bus = GbaBus::new();
+        bus.write16(0x0400_0100, 0);
+        bus.write16(0x0400_0102, 0x0080);
+
+        bus.step_after_cpu_instruction(3);
+
+        assert_eq!(bus.read16(0x0400_0100), 1);
+        bus.step_after_cpu_instruction(1);
+        assert_eq!(bus.read16(0x0400_0100), 2);
     }
 
     #[test]
@@ -2153,6 +2358,10 @@ mod tests {
         bus.write16(base + 10, cnt_h);
     }
 
+    fn step_past_immediate_dma_start_delay(bus: &mut GbaBus) {
+        bus.step(3);
+    }
+
     #[test]
     fn dma0_source_masks_game_pak_rom_to_internal_memory() {
         let mut bus = GbaBus::new();
@@ -2161,6 +2370,7 @@ mod tests {
         bus.write32(0x0200_0000, 0);
 
         write_dma_registers(&mut bus, 0, 0x0800_0000, 0x0200_0000, 1, 0x8000 | 0x0400);
+        step_past_immediate_dma_start_delay(&mut bus);
 
         assert_eq!(bus.read32(0x0200_0000), 0x1122_3344);
     }
@@ -2192,6 +2402,7 @@ mod tests {
         bus.write8(0x0E00_0000, 0x66);
 
         write_dma_registers(&mut bus, 3, 0x0200_0000, 0x0E00_0000, 1, 0x8000 | 0x0400);
+        step_past_immediate_dma_start_delay(&mut bus);
 
         assert_eq!(bus.read32(0x0E00_0000), 0xD8D8_D8D8);
     }
@@ -2214,16 +2425,36 @@ mod tests {
         bus.write16(REG_IE, irq_bits::DMA0);
         bus.write16(REG_IME, 1);
         bus.write16(0x0400_00BA, 0x8000 | 0x4000 | 0x0400);
+        step_past_immediate_dma_start_delay(&mut bus);
         // Verify destination contains the source data.
         for i in 0..4 {
             assert_eq!(bus.read32(0x0200_1000 + i * 4), 0xAABB_0000 + i);
         }
-        // CPU stall accumulator reflects 4 units × 2 cycles each.
-        assert_eq!(bus.take_dma_stall_cycles(), 8);
+        // CPU stall cycles were drained while stepping through the DMA pause.
+        assert_eq!(bus.take_dma_stall_cycles(), 0);
         // IRQ was raised through the controller.
         assert!(bus.ic.irq_line());
         // Enable bit is cleared after one-shot completion.
         assert_eq!(bus.read16(0x0400_00BA) & 0x8000, 0);
+    }
+
+    #[test]
+    fn dma_immediate_enabled_by_byte_write_waits_start_delay() {
+        let mut bus = GbaBus::new();
+        bus.write32(0x0200_0000, 0xAABB_CCDD);
+        bus.write32(0x0400_00B0, 0x0200_0000);
+        bus.write32(0x0400_00B4, 0x0200_1000);
+        bus.write16(0x0400_00B8, 1);
+
+        bus.write8(0x0400_00BB, 0x84);
+
+        assert_eq!(
+            bus.read32(0x0200_1000),
+            0,
+            "immediate DMA should not run in the same byte write that enables it"
+        );
+        step_past_immediate_dma_start_delay(&mut bus);
+        assert_eq!(bus.read32(0x0200_1000), 0xAABB_CCDD);
     }
 
     #[test]
@@ -2239,9 +2470,9 @@ mod tests {
 
         bus.write16(0x0400_0100, 0);
         bus.write16(0x0400_0102, 0x80);
-        bus.step(1);
+        bus.step(3);
 
-        assert_eq!(bus.read16(0x0400_0100), 9);
+        assert_eq!(bus.read16(0x0400_0100), 53);
         assert_eq!(bus.take_dma_stall_cycles(), 0);
     }
 
@@ -2285,6 +2516,7 @@ mod tests {
         // priority, even though CH1 was armed earlier.
         bus.write16(0x0400_00C6, 0x8000 | 0x0400); // CH1 enable, word
         bus.write16(0x0400_00BA, 0x8000 | 0x0400); // CH0 enable, word
+        step_past_immediate_dma_start_delay(&mut bus);
         // Both transfers must have completed.
         assert_eq!(bus.read32(0x0200_3000), 0xC1_DA);
         assert_eq!(bus.read32(0x0200_2000), 0xC0_DA);
@@ -2552,92 +2784,92 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn waitcnt_default_rom_ws0_n16_is_4() {
+    fn waitcnt_default_rom_ws0_n16_is_5() {
         let bus = GbaBus::new();
-        // ROM WS0 region (0x0800_0000): default N16 = 4 per GBATek/mGBA
+        // ROM WS0 region (0x0800_0000): default N16 = 4 waitstates + 1 cycle
         assert_eq!(
             bus.n_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
-            4
+            5
         );
     }
 
     #[test]
-    fn waitcnt_default_rom_ws0_s16_is_2() {
+    fn waitcnt_default_rom_ws0_s16_is_3() {
         let bus = GbaBus::new();
-        // ROM WS0 region: default S16 = 2
+        // ROM WS0 region: default S16 = 2 waitstates + 1 cycle
         assert_eq!(
             bus.s_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
-            2
+            3
         );
     }
 
     #[test]
-    fn waitcnt_default_rom_ws0_n32_is_7() {
+    fn waitcnt_default_rom_ws0_n32_is_8() {
         let bus = GbaBus::new();
-        // ROM WS0: N32 = N16 + 1 + S16 = 4 + 1 + 2 = 7
-        assert_eq!(bus.n_cycles_width(0x0800_0000, WidthClass::Word), 7);
+        // ROM WS0: N32 = N16 + S16 = (4+1) + (2+1) = 8
+        assert_eq!(bus.n_cycles_width(0x0800_0000, WidthClass::Word), 8);
     }
 
     #[test]
-    fn waitcnt_default_rom_ws0_s32_is_5() {
+    fn waitcnt_default_rom_ws0_s32_is_6() {
         let bus = GbaBus::new();
-        // ROM WS0: S32 = 2×S16 + 1 = 2×2 + 1 = 5
-        assert_eq!(bus.s_cycles_width(0x0800_0000, WidthClass::Word), 5);
+        // ROM WS0: S32 = 2×S16 = 2×(2+1) = 6
+        assert_eq!(bus.s_cycles_width(0x0800_0000, WidthClass::Word), 6);
     }
 
     #[test]
-    fn waitcnt_default_rom_ws1_n16_is_4() {
+    fn waitcnt_default_rom_ws1_n16_is_5() {
         let bus = GbaBus::new();
-        // ROM WS1 region (0x0A00_0000): default N16 = 4
+        // ROM WS1 region (0x0A00_0000): default N16 = 4 waitstates + 1 cycle
         assert_eq!(
             bus.n_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
-            4
+            5
         );
     }
 
     #[test]
-    fn waitcnt_default_rom_ws1_s16_is_4() {
+    fn waitcnt_default_rom_ws1_s16_is_5() {
         let bus = GbaBus::new();
-        // ROM WS1: default S16 = 4 (different from WS0!)
+        // ROM WS1: default S16 = 4 waitstates + 1 cycle
         assert_eq!(
             bus.s_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
-            4
+            5
         );
     }
 
     #[test]
-    fn waitcnt_default_rom_ws2_s16_is_8() {
+    fn waitcnt_default_rom_ws2_s16_is_9() {
         let bus = GbaBus::new();
-        // ROM WS2 (0x0C00_0000): default S16 = 8
+        // ROM WS2 (0x0C00_0000): default S16 = 8 waitstates + 1 cycle
         assert_eq!(
             bus.s_cycles_width(0x0C00_0000, WidthClass::HalfwordOrByte),
-            8
+            9
         );
     }
 
     #[test]
-    fn waitcnt_default_sram_n16_is_4() {
+    fn waitcnt_default_sram_n16_is_5() {
         let bus = GbaBus::new();
-        // SRAM region (0x0E00_0000): default = 4
+        // SRAM region (0x0E00_0000): default = 4 waitstates + 1 cycle
         assert_eq!(
             bus.n_cycles_width(0x0E00_0000, WidthClass::HalfwordOrByte),
-            4
+            5
         );
     }
 
     #[test]
     fn waitcnt_write_changes_rom_ws0_timing() {
         let mut bus = GbaBus::new();
-        // Write WAITCNT: bits 2-3 = 0b10 → WS0 N = 2, bit 4 = 1 → WS0 S = 1
+        // Write WAITCNT: bits 2-3 = 0b10 → WS0 N = 2+1, bit 4 = 1 → WS0 S = 1+1
         let waitcnt: u16 = 0b00_0000_0001_1000; // WS0 N=2(idx 2), WS0 S=1(idx 1)
         bus.write16(0x0400_0204, waitcnt);
         assert_eq!(
             bus.n_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
-            2
+            3
         );
         assert_eq!(
             bus.s_cycles_width(0x0800_0000, WidthClass::HalfwordOrByte),
-            1
+            2
         );
     }
 
@@ -2661,14 +2893,32 @@ mod tests {
         // Set WS0 to fastest (N=2, S=1) but leave WS1/WS2 at defaults
         let waitcnt: u16 = 0b00_0000_0001_1000;
         bus.write16(0x0400_0204, waitcnt);
-        // WS1 should still be at defaults (N=4, S=4)
+        // WS1 should still be at defaults (N=4+1, S=4+1)
         assert_eq!(
             bus.n_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
-            4
+            5
         );
         assert_eq!(
             bus.s_cycles_width(0x0A00_0000, WidthClass::HalfwordOrByte),
-            4
+            5
+        );
+    }
+
+    #[test]
+    fn embedded_bios_hle_entry_penalty_uses_rom_waitstate_region() {
+        let bus = GbaBus::new();
+
+        assert_eq!(
+            bus.embedded_bios_hle_entry_penalty(0x0800_0000, WidthClass::HalfwordOrByte),
+            12
+        );
+        assert_eq!(
+            bus.embedded_bios_hle_entry_penalty(0x0A00_0000, WidthClass::HalfwordOrByte),
+            16
+        );
+        assert_eq!(
+            bus.embedded_bios_hle_entry_penalty(0x0C00_0000, WidthClass::HalfwordOrByte),
+            24
         );
     }
 
