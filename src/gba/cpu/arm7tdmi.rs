@@ -465,8 +465,23 @@ impl Arm7tdmi {
             self.regs.r[15] = exec_pc.wrapping_add(4);
             let raw = self.prefetch_thumb[0];
             let outcome = thumb::execute(&mut self.regs, bus, raw);
+            let hle_swi_cycles = if outcome.swi {
+                self.hle_embedded_bios_swi(
+                    bus,
+                    (raw & 0x00FF) as u8,
+                    exec_pc,
+                    WidthClass::HalfwordOrByte,
+                )
+            } else {
+                None
+            };
             if outcome.undefined {
                 self.dispatch_undefined(exec_pc);
+            } else if hle_swi_cycles.is_some() {
+                self.regs.r[15] = exec_pc.wrapping_add(2);
+                self.prefetch_thumb[0] = self.prefetch_thumb[1];
+                self.prefetch_thumb[1] = self.prefetch_thumb[2];
+                self.prefetch_thumb[2] = bus.fetch16(exec_pc.wrapping_add(6));
             } else if outcome.swi {
                 self.dispatch_swi(exec_pc);
             } else if outcome.branched {
@@ -487,14 +502,31 @@ impl Arm7tdmi {
             } else {
                 WidthClass::HalfwordOrByte
             };
-            self.resolve_outcome_cycles(bus, code_addr, code_width, &outcome)
+            hle_swi_cycles.unwrap_or_else(|| {
+                self.resolve_outcome_cycles(bus, code_addr, code_width, &outcome)
+            })
         } else {
             // PC during ARM execution should read as exec_pc + 8.
             self.regs.r[15] = exec_pc.wrapping_add(8);
             let raw = self.prefetch_arm[0];
             let outcome = arm::execute(&mut self.regs, bus, raw);
+            let hle_swi_cycles = if outcome.swi {
+                self.hle_embedded_bios_swi(
+                    bus,
+                    ((raw >> 16) & 0x00FF) as u8,
+                    exec_pc,
+                    WidthClass::Word,
+                )
+            } else {
+                None
+            };
             if outcome.undefined {
                 self.dispatch_undefined(exec_pc);
+            } else if hle_swi_cycles.is_some() {
+                self.regs.r[15] = exec_pc.wrapping_add(4);
+                self.prefetch_arm[0] = self.prefetch_arm[1];
+                self.prefetch_arm[1] = self.prefetch_arm[2];
+                self.prefetch_arm[2] = bus.fetch32(exec_pc.wrapping_add(12));
             } else if outcome.swi {
                 self.dispatch_swi(exec_pc);
             } else if outcome.branched {
@@ -515,7 +547,9 @@ impl Arm7tdmi {
             } else {
                 WidthClass::Word
             };
-            self.resolve_outcome_cycles(bus, code_addr, code_width, &outcome)
+            hle_swi_cycles.unwrap_or_else(|| {
+                self.resolve_outcome_cycles(bus, code_addr, code_width, &outcome)
+            })
         };
 
         // Data Abort: raised when a load/store instruction caused a bus fault.
@@ -543,6 +577,59 @@ impl Arm7tdmi {
         self.regs.cpsr &= !FLAG_T;
         self.regs.r[15] = ExceptionVector::SoftwareInterrupt as u32;
         self.prefetch_valid = false;
+    }
+
+    fn hle_embedded_bios_swi<B: Bus>(
+        &mut self,
+        bus: &B,
+        swi: u8,
+        exec_pc: u32,
+        code_width: WidthClass,
+    ) -> Option<u32> {
+        if !bus.embedded_bios_hle_enabled() {
+            return None;
+        }
+        let cycles = match swi {
+            0x06 => Some(self.hle_bios_div(false)),
+            0x07 => Some(self.hle_bios_div(true)),
+            _ => None,
+        }?;
+        Some(cycles + bus.embedded_bios_hle_entry_penalty(exec_pc, code_width))
+    }
+
+    fn hle_bios_div(&mut self, div_arm: bool) -> u32 {
+        let numerator = if div_arm {
+            self.regs.r[1] as i32
+        } else {
+            self.regs.r[0] as i32
+        };
+        let denominator = if div_arm {
+            self.regs.r[0] as i32
+        } else {
+            self.regs.r[1] as i32
+        };
+
+        if denominator == 0 {
+            self.regs.r[0] = 0;
+            self.regs.r[1] = 0;
+            self.regs.r[3] = 0;
+            return 70;
+        }
+
+        let quotient = (numerator as i64 / denominator as i64) as i32;
+        let remainder = (numerator as i64 % denominator as i64) as i32;
+        self.regs.r[0] = quotient as u32;
+        self.regs.r[1] = remainder as u32;
+        self.regs.r[3] = quotient.unsigned_abs();
+
+        let abs_numerator = (numerator as i64).unsigned_abs();
+        let abs_denominator = (denominator as i64).unsigned_abs();
+        let quotient_bits = if abs_numerator < abs_denominator {
+            0
+        } else {
+            (abs_numerator / abs_denominator).ilog2()
+        };
+        70 + quotient_bits * 13
     }
 
     /// Dispatch an undefined instruction exception: switch to Undefined mode,

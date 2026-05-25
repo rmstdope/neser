@@ -420,6 +420,20 @@ fn gba_mgba_timing_diagnostics_passes_rom_dma_prefetch_cases() {
 }
 
 #[test]
+fn gba_mgba_timing_diagnostics_passes_bios_division_cases() {
+    let result = run_mgba_timing_diagnostics();
+    let failing_prefixes = ["FAIL: BIOS Division ", "FAIL: BIOS Division 2 "];
+
+    for failing_prefix in failing_prefixes {
+        assert!(
+            !result.raw_log.contains(failing_prefix),
+            "mGBA Timing BIOS division case should pass: {failing_prefix}\nraw log:\n{}",
+            result.raw_log
+        );
+    }
+}
+
+#[test]
 fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
     let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
 

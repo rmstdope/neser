@@ -1604,6 +1604,23 @@ impl Bus for GbaBus {
         (src_gamepak && code_width == WidthClass::Word && src_second_fast)
             || (!src_gamepak && dst_gamepak && !dst_second_fast)
     }
+
+    fn embedded_bios_hle_enabled(&self) -> bool {
+        self.embedded_bios_loaded
+    }
+
+    fn embedded_bios_hle_entry_penalty(&self, addr: u32, width: WidthClass) -> u32 {
+        match (addr >> 24) & 0xF {
+            0x2 => self.n_cycles_width(addr, width) + 2 * self.s_cycles_width(addr, width) - 1,
+            0x8 | 0x9 => {
+                let n = self.n_cycles_width(addr, width);
+                let s = self.s_cycles_width(addr, width);
+                let ws0_n_slow = ((self.waitstates.waitcnt >> 2) & 0x3) == 0;
+                n + 2 * s + u32::from(ws0_n_slow)
+            }
+            _ => 0,
+        }
+    }
 }
 
 /// DMA transfers use the bus' standard read/write paths so that DMA

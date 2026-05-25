@@ -49,6 +49,18 @@ pub trait Bus {
         false
     }
 
+    /// Whether the bus is using NESER's embedded BIOS and can safely use CPU
+    /// HLE for BIOS SWIs whose open-source implementation is not cycle exact.
+    fn embedded_bios_hle_enabled(&self) -> bool {
+        false
+    }
+
+    /// Extra cycles for the embedded BIOS HLE SWI entry/return path from the
+    /// current caller region.
+    fn embedded_bios_hle_entry_penalty(&self, _addr: u32, _width: WidthClass) -> u32 {
+        0
+    }
+
     /// Read a 32-bit word for an **instruction fetch**.  The address must
     /// already be aligned to a 4-byte boundary.  Implementations may track
     /// this access separately from data reads so that bus faults can be
