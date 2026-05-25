@@ -17,6 +17,7 @@ use crate::gb::cpu::{Registers, Sm83};
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::DmgModel;
 use crate::gb::ppu::Ppu;
+use crate::gb::sgb::SgbState;
 use crate::gb::timer::Timer;
 
 /// Current save-state format version for Game Boy.
@@ -95,6 +96,9 @@ pub struct BusState {
     pub serial_bits_remaining: Option<u8>,
     pub serial_master_clock: Option<bool>,
     pub model: Option<DmgModel>,
+    // Optional minimal SGB command/input state (None for normal DMG/CGB and older save states)
+    #[serde(default)]
+    pub sgb: Option<SgbState>,
 }
 
 /// Complete Game Boy emulator state snapshot.
