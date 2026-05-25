@@ -1494,7 +1494,7 @@ mod tests {
         // Given/When: a DMG-only cartridge starts on CGB-E with the boot ROM skipped.
         // Then: production CGB post-boot wave RAM is the alternating 00/FF pattern
         // that the CGB boot ROM leaves behind, allowing hardware probes such as
-        // GBEmulatorShootout's acid/which.gb to distinguish CGB-E from generic CGB.
+        // acid/which.gb to distinguish CGB-E from generic CGB.
         for offset in 0..16 {
             let expected = if offset % 2 == 0 { 0x00 } else { 0xFF };
             assert_eq!(
@@ -1538,7 +1538,7 @@ mod tests {
         let mut bus = CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbD, true);
 
         // Given/When: software writes addresses that CGB-C aliases but CGB-D
-        // keeps distinct. GBEmulatorShootout's acid/which.gb uses this
+        // keeps distinct. acid/which.gb uses this
         // hardware difference to distinguish CGB-D from CGB-C.
         bus.write(0xFEA0, 0x12);
         bus.write(0xFEB8, 0x34);
