@@ -29,6 +29,9 @@ def create_package_tree(root: Path, *, binary_name: str = "neser") -> Path:
     write_text(package_root / "gamecontrollerdb.txt", "controller mappings\n")
     write_text(package_root / "neser.conf.example", "# config\n")
     write_text(package_root / "README.md", "# neser\n")
+    write_text(package_root / "README-NES.md", "# nes\n")
+    write_text(package_root / "README-GB.md", "# gb\n")
+    write_text(package_root / "README-GBA.md", "# gba\n")
     write_text(package_root / "LICENSE", "license\n")
     write_text(package_root / "shaders/stock.slangp", "shader0 = stock.slang\n")
     write_text(package_root / "shaders/stock.slang", "void main() {}\n")
@@ -113,6 +116,26 @@ class VerifyReleasePackageTests(unittest.TestCase):
                         archive_path=archive_path,
                         binary_name="neser",
                         require_unix_executable=True,
+                    )
+                )
+
+    def test_verify_package_reports_missing_system_readme(self) -> None:
+        """Release archives must keep system-specific README links valid."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            package_root = create_package_tree(temp_dir / "src")
+            (package_root / "README-NES.md").unlink()
+            archive_path = temp_dir / "neser-linux-x86_64.tar.gz"
+            create_tar_gz(package_root, archive_path)
+
+            with self.assertRaisesRegex(
+                ReleasePackageVerificationError, "neser/README-NES.md"
+            ):
+                verify_release_package(
+                    VerificationConfig(
+                        archive_path=archive_path,
+                        binary_name="neser",
                     )
                 )
 

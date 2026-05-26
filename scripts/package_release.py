@@ -228,6 +228,9 @@ def _package_files(
         "gamecontrollerdb.txt",
         "neser.conf.example",
         "README.md",
+        "README-NES.md",
+        "README-GB.md",
+        "README-GBA.md",
         "LICENSE",
     ):
         package_files.append((repo_root / required_file, Path("neser") / required_file))
