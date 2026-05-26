@@ -575,6 +575,50 @@ No feedback provided
 
 ---
 
+## 2026-05-26 — PR #2679: Fix GBA mGBA SIO timing diagnostics to 4/4
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2679
+**Linked issues:** none
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `test-driven-development` | Guided the RED/GREEN/REFACTOR/COMMIT/MERGE workflow and phase gates. |
+| Skill | `bug-hunter` | Supported reproducing and reducing the SIO timing failure before implementation. |
+| Skill | `rust-developer` | Guided Rust implementation, save-state compatibility, and validation. |
+| Skill | `gba-hardware-research` | Grounded SIOCNT mode/start/timing behavior against GBA hardware references and mGBA suite expectations. |
+| Skill | `github-administration` | Supported PR creation, review-thread replies/resolution, CI checks, rebase, and merge. |
+| Skill | `self-learning-skills` | Captured post-PR and post-merge feedback and retrospective observations. |
+| Agent | `code-review` | Reviewed the changed SIO-related files before commit; no significant issues found. |
+| Agent | `Iteration Retrospective Gatherer` | Produced this retrospective content after merge; manual append was required. |
+
+### What went well
+
+- The TDD flow kept the fix anchored to focused acceptance diagnostics: SIO timing moved from `0/4` to `4/4`, while SIO read remained `90/90`.
+- The implementation stayed localized to SIO state, bus-level start delay, CPU-visible SIOCNT write routing, save-state persistence, and mGBA diagnostic helpers.
+- Review feedback was addressed before merge by clarifying mode-dependent SIOCNT bit 7 semantics and resolving both review threads.
+- CI caught that `main` had advanced after PR #2678; rebasing onto latest `origin/main` and rerunning the full check set produced a green merge-ready branch.
+
+### What to improve
+
+- The first CI polling loop treated an empty `statusCheckRollup` immediately after force-push as complete. Future GitHub workflows should require at least one check entry before considering CI finished.
+- The branch was not rebased immediately after review feedback before the first CI wait. Future review-fix workflows should fetch/rebase `origin/main` before pushing review updates when another PR has merged.
+- The retrospective agent again produced content but could not write the file directly, so manual append remains necessary when that limitation appears.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided.
+
+#### What to improve
+
+No feedback provided.
+
+---
+
 ## 2026-05-26 — PR #2666: Fix mGBA timer/timing regression
 
 **Repository:** rmstdope/neser
