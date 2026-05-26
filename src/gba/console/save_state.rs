@@ -96,6 +96,9 @@ pub struct BusMemoryState {
     /// Global timer cycle phase used when newly enabling prescaled timers.
     #[serde(default)]
     pub timer_global_cycles: u32,
+    /// Remaining cycles before a newly started SIO transfer begins shifting.
+    #[serde(default)]
+    pub sio_start_delay_cycles: u32,
     /// Remaining cycles before a newly asserted IRQ line reaches the CPU.
     #[serde(default)]
     pub irq_line_delay_cycles: u32,

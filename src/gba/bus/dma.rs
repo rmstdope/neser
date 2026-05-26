@@ -516,6 +516,7 @@ impl DmaController {
     }
 
     /// Perform one read-with-latch / write / address-step unit for channel `idx`.
+    #[allow(clippy::too_many_arguments)]
     fn execute_transfer_unit<B: DmaBus>(
         &mut self,
         idx: usize,
@@ -636,7 +637,16 @@ impl DmaController {
             let dst = fifo_dst.unwrap_or(self.channels[idx].cur_dst);
             self.cpu_stall += dma_unit_cycles(bus, src, dst, active_word, first_unit);
             first_unit = false;
-            self.execute_transfer_unit(idx, src, dst, active_word, src_ctrl, dst_step, fifo_dst, bus);
+            self.execute_transfer_unit(
+                idx,
+                src,
+                dst,
+                active_word,
+                src_ctrl,
+                dst_step,
+                fifo_dst,
+                bus,
+            );
             count -= 1;
         }
 
@@ -675,7 +685,16 @@ impl DmaController {
             let dst = fifo_dst.unwrap_or(self.channels[idx].cur_dst);
             self.cpu_stall += dma_unit_cycles(bus, src, dst, active_word, first_unit);
             first_unit = false;
-            self.execute_transfer_unit(idx, src, dst, active_word, src_ctrl, dst_step, fifo_dst, bus);
+            self.execute_transfer_unit(
+                idx,
+                src,
+                dst,
+                active_word,
+                src_ctrl,
+                dst_step,
+                fifo_dst,
+                bus,
+            );
             count -= 1;
         }
         self.finish_burst(idx, special, irq, repeat, bus);
