@@ -415,9 +415,10 @@ impl GbaBus {
 
     /// IRQ line as observed by the CPU after hardware assertion latency.
     pub fn cpu_irq_line(&self) -> bool {
-        let active_sources = self.ic.active_irq_sources();
+        let active_sources = self.ic.active_pending_sources();
         let immediate_sources = active_sources & !DELAYED_IRQ_SOURCES;
-        immediate_sources != 0 || (active_sources != 0 && self.irq_line_delay_cycles == 0)
+        self.ic.ime
+            && (immediate_sources != 0 || (active_sources != 0 && self.irq_line_delay_cycles == 0))
     }
 
     /// HALT wake line as observed by the CPU after delayed timer IRQ sources.
@@ -597,7 +598,7 @@ impl GbaBus {
     }
 
     fn latch_cpu_irq_line(&mut self) {
-        let active_sources = self.ic.active_irq_sources();
+        let active_sources = self.ic.active_pending_sources();
         let newly_asserted = active_sources & !self.irq_sources_were_asserted;
         let cycles_late = self.ic.take_irq_cycles_late();
         if newly_asserted & DELAYED_IRQ_SOURCES != 0 {
@@ -681,7 +682,11 @@ impl GbaBus {
         let timer = timer_control_index(addr)?;
         let was_enabled = self.timers.channels[timer].enabled();
         let now_enabled = value & 0x0080 != 0;
-        (!was_enabled && now_enabled).then_some((timer, self.timer_global_cycles.wrapping_add(2)))
+        (!was_enabled && now_enabled).then_some((
+            timer,
+            self.timer_global_cycles
+                .wrapping_add(timer_start_delay_cycles()),
+        ))
     }
 
     fn prestep_timer_disable_for_write16(&mut self, addr: u32, value: u16) {
@@ -1659,6 +1664,7 @@ impl Bus for GbaBus {
                     let shift = (addr & 1) * 8;
                     let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
                     let timer_enable_phase = self.timer_enable_phase_for_write16(aligned, merged);
+                    self.prestep_timer_disable_for_write16(aligned, merged);
                     self.mark_timer_start_delay_for_write8(addr, value);
                     self.mark_dma_start_delay_for_write8(addr, value);
                     self.io.write8(
@@ -2330,6 +2336,48 @@ mod tests {
         assert!(!bus.cpu_irq_line(), "CPU observes IRQ after line latency");
         bus.step_after_cpu_instruction(7);
         assert!(bus.cpu_irq_line());
+    }
+
+    #[test]
+    fn timer_irq_delay_counts_down_while_ime_is_disabled() {
+        let mut bus = GbaBus::new();
+        bus.write16(REG_IE, irq_bits::TIMER0);
+        bus.write16(REG_IME, 0);
+        bus.write16(0x0400_0100, 0xFFFF);
+        bus.write16(0x0400_0102, 0x00C0 | 0x0080);
+
+        bus.step(1);
+        assert_ne!(bus.ic.if_flags & irq_bits::TIMER0, 0);
+        assert!(!bus.cpu_irq_line(), "IME still gates CPU IRQ dispatch");
+
+        bus.step(5);
+        bus.write16(REG_IME, 1);
+        bus.step(1);
+
+        assert!(
+            bus.cpu_irq_line(),
+            "enabling IME must not restart delay for an already-pending timer IRQ"
+        );
+    }
+
+    #[test]
+    fn cpu_timer_disable_via_byte_write_samples_before_instruction_cycles_are_applied() {
+        let mut bus = GbaBus::new();
+        bus.write16(0x0400_0100, 0);
+        bus.write16(0x0400_0102, 0x0080);
+        bus.step(0xFFFF);
+
+        bus.begin_cpu_instruction();
+        bus.write8(0x0400_0102, 0);
+        bus.end_cpu_instruction();
+
+        assert_eq!(bus.read16(0x0400_0100), 0);
+        bus.step_after_cpu_instruction(3);
+        assert_eq!(
+            bus.read16(0x0400_0100),
+            0,
+            "disabled timer must not continue ticking for the rest of the instruction"
+        );
     }
 
     #[test]

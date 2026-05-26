@@ -77,10 +77,15 @@ impl InterruptController {
     /// Enabled, pending interrupt sources that are currently requesting an IRQ.
     pub fn active_irq_sources(&self) -> u16 {
         if self.ime {
-            self.ie & self.if_flags & IRQ_MASK
+            self.active_pending_sources()
         } else {
             0
         }
+    }
+
+    /// Enabled, pending interrupt sources independent of the master IME gate.
+    pub fn active_pending_sources(&self) -> u16 {
+        self.ie & self.if_flags & IRQ_MASK
     }
 
     /// Whether the HALT state should exit. On real GBA hardware the CPU
@@ -88,12 +93,12 @@ impl InterruptController {
     /// regardless of `IME`. The `IME` flag only controls whether the CPU
     /// actually vectors to the interrupt handler.
     pub fn halt_exit_line(&self) -> bool {
-        (self.ie & self.if_flags & IRQ_MASK) != 0
+        self.active_pending_sources() != 0
     }
 
     /// Enabled, pending interrupt sources that can exit HALT, independent of IME.
     pub fn active_halt_sources(&self) -> u16 {
-        self.ie & self.if_flags & IRQ_MASK
+        self.active_pending_sources()
     }
 
     /// Raise an interrupt source. The bit is OR-ed into `IF`; whether the
