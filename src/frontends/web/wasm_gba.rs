@@ -121,7 +121,7 @@ impl WasmGba {
 
         self.run_until_frame_ready();
         self.ensure_rgba_buffer();
-        let rgb = self.gba.screen_snapshot();
+        let rgb = self.gba.framebuffer_rgb();
         for (rgba, rgb) in self
             .frame_rgba_buffer
             .chunks_exact_mut(4)
