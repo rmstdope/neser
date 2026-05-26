@@ -972,7 +972,7 @@ fn wasm_gba_frame_rate_hz_is_gba_rate() {
 #[wasm_bindgen_test]
 fn wasm_gba_no_rom_renders_opaque_black_frame() {
     let mut gba = WasmGba::new();
-    let frame = gba.render_frame_rgba();
+    let frame = gba.render_frame_rgba().to_vec();
     let expected_len = 240 * 160 * 4;
     assert_eq!(
         frame.len(),
@@ -1052,4 +1052,13 @@ fn wasm_gba_set_button_accepts_all_gba_buttons() {
         gba.set_button(1, button, true);
         gba.set_button(1, button, false);
     }
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_set_button_ignores_non_player_one_controllers() {
+    let mut gba = WasmGba::new();
+
+    gba.set_button(2, 0, true);
+
+    assert_eq!(gba.joypad_button_states_for_test(), 0);
 }

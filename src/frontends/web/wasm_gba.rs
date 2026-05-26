@@ -57,6 +57,11 @@ impl WasmGba {
         while self.gba.get_sample().is_some() {}
     }
 
+    #[cfg(all(test, target_arch = "wasm32"))]
+    pub(crate) fn joypad_button_states_for_test(&self) -> u8 {
+        self.gba.get_joypad_button_states(1)
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new() -> WasmGba {
         console_error_panic_hook::set_once();
@@ -97,11 +102,21 @@ impl WasmGba {
         self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 
+    /// Step the emulator until a full frame is ready and return the pixel buffer (RGBA8888).
+    ///
+    /// Returns a `Uint8Array` of `240 × 160 × 4` bytes.
+    /// When no ROM is loaded, returns an opaque black frame.
+    ///
+    /// # Safety
+    ///
+    /// The returned `Uint8Array` is a zero-copy view into `self.frame_rgba_buffer` in WASM
+    /// linear memory. The caller must consume it before invoking another WASM function that could
+    /// grow linear memory.
     #[wasm_bindgen]
-    pub fn render_frame_rgba(&mut self) -> Vec<u8> {
+    pub fn render_frame_rgba(&mut self) -> js_sys::Uint8Array {
         if !self.rom_loaded {
             self.fill_opaque_black_frame();
-            return self.frame_rgba_buffer.clone();
+            return unsafe { js_sys::Uint8Array::view(&self.frame_rgba_buffer) };
         }
 
         self.run_until_frame_ready();
@@ -117,7 +132,7 @@ impl WasmGba {
             rgba[2] = rgb[2];
             rgba[3] = 0xFF;
         }
-        self.frame_rgba_buffer.clone()
+        unsafe { js_sys::Uint8Array::view(&self.frame_rgba_buffer) }
     }
 
     #[wasm_bindgen]
@@ -163,7 +178,9 @@ impl WasmGba {
 
     #[wasm_bindgen]
     pub fn set_button(&mut self, controller: u8, button: u8, pressed: bool) {
-        self.gba.set_button(controller, button, pressed);
+        if controller == 1 {
+            self.gba.set_button(controller, button, pressed);
+        }
     }
 
     #[wasm_bindgen]

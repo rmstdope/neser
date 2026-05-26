@@ -47,6 +47,7 @@ async function injectBundledRomOption(page: Page) {
         romSelectId: ROM_SELECT_ID,
         bundledRomName: BUNDLED_ROM_NAME
     });
+    return romDataUrl;
 }
 
 export async function openApp(page: Page) {
@@ -83,19 +84,7 @@ export async function loadGbaRomFromFileInput(page: Page) {
 
 export async function startFromBundledRom(page: Page) {
     await openApp(page);
-    await injectBundledRomOption(page);
-
-    const bundledRomOption = page.locator(`${ROM_SELECT_SELECTOR} option`, {
-        hasText: BUNDLED_ROM_NAME
-    });
-    await expect(bundledRomOption).toHaveCount(1, {
-        timeout: EXPECT_TIMEOUT_MS
-    });
-
-    const romValue = await bundledRomOption.getAttribute("value");
-    if (!romValue) {
-        throw new Error("Expected bundled ROM option to have a value");
-    }
+    const romValue = await injectBundledRomOption(page);
 
     await page.evaluate(({ value, romSelectId }: { value: string; romSelectId: string }) => {
         const romSelect = document.getElementById(romSelectId);
