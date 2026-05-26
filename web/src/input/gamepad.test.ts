@@ -28,6 +28,20 @@ it("maps standard gamepad buttons to NES inputs", () => {
   expect(state.right).toBe(false);
 });
 
+it("maps standard gamepad shoulder buttons to GBA L and R inputs", () => {
+  const gamepad = {
+    buttons: makeButtons([4, 5]),
+    axes: [0, 0, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.l).toBe(true);
+  expect(state.r).toBe(true);
+  expect(state.a).toBe(false);
+  expect(state.b).toBe(false);
+});
+
 it("maps left stick axes to NES directions", () => {
   const gamepad = {
     buttons: makeButtons(),

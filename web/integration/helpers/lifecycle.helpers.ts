@@ -19,6 +19,17 @@ function readMockRomBytes() {
     return readFileSync(path.join(process.cwd(), BUNDLED_ROM_PATH));
 }
 
+function makeMinimalGbaRomBytes() {
+    const rom = Buffer.alloc(0xC0);
+    rom[0xB2] = 0x96;
+    let check = 0;
+    for (let offset = 0xA0; offset <= 0xBC; offset++) {
+        check = (check - rom[offset]) & 0xFF;
+    }
+    rom[0xBD] = (check - 0x19) & 0xFF;
+    return rom;
+}
+
 async function injectBundledRomOption(page: Page) {
     const romDataUrl = `data:application/octet-stream;base64,${readMockRomBytes().toString("base64")}`;
     await page.evaluate(({ value, romSelectId, bundledRomName }: { value: string; romSelectId: string; bundledRomName: string }) => {
@@ -58,6 +69,15 @@ export async function loadRomFromFileInput(page: Page) {
         name: BUNDLED_ROM_NAME,
         mimeType: "application/octet-stream",
         buffer: romBytes
+    });
+}
+
+/** Load a minimal GBA ROM via the file input, setting romFromFile = true. */
+export async function loadGbaRomFromFileInput(page: Page) {
+    await page.locator("#rom").setInputFiles({
+        name: "suite.gba",
+        mimeType: "application/octet-stream",
+        buffer: makeMinimalGbaRomBytes()
     });
 }
 

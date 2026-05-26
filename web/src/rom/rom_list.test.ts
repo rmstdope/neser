@@ -154,6 +154,20 @@ it("parseDirectoryListing includes .gbc and .cgb files", () => {
     expect(roms).toContain("game.gb");
 });
 
+it("parseDirectoryListing includes .gba files", () => {
+    const html = `
+        <html><body>
+            <a href="suite.gba">suite.gba</a>
+            <a href="game.nes">game.nes</a>
+            <a href="notes.txt">notes.txt</a>
+        </body></html>
+    `;
+    const { roms } = parseDirectoryListing(html);
+    expect(roms).toContain("suite.gba");
+    expect(roms).toContain("game.nes");
+    expect(roms).not.toContain("notes.txt");
+});
+
 it("fetchRomList includes .gb entries from directory listing", async () => {
     const base = "https://example.com/roms/";
     const responses = new Map([
@@ -179,6 +193,34 @@ it("fetchRomList includes .gb entries from directory listing", async () => {
     const entries = await fetchRomList(base, fetchFn as any, 4);
     const paths = entries.map((entry: any) => entry.path);
     expect(paths).toContain("gb/tetris.gb");
+    expect(paths).toContain("root.nes");
+});
+
+it("fetchRomList includes .gba entries from directory listing", async () => {
+    const base = "https://example.com/roms/";
+    const responses = new Map([
+        [base, `
+            <a href="../">../</a>
+            <a href="gba/">gba/</a>
+            <a href="root.nes">root.nes</a>
+        `],
+        [`${base}gba/`, `
+            <a href="../">../</a>
+            <a href="suite.gba">suite.gba</a>
+        `]
+    ]);
+
+    const fetchFn = async (url: any) => {
+        const key = url.toString();
+        if (!responses.has(key)) {
+            return { ok: false, status: 404, text: async () => "" };
+        }
+        return { ok: true, text: async () => responses.get(key) };
+    };
+
+    const entries = await fetchRomList(base, fetchFn as any, 4);
+    const paths = entries.map((entry: any) => entry.path);
+    expect(paths).toContain("gba/suite.gba");
     expect(paths).toContain("root.nes");
 });
 
@@ -209,4 +251,32 @@ it("fetchRomList manifest fallback includes .gb entries", async () => {
     expect(paths).toContain("game.nes");
     expect(paths).toContain("color.gbc");
     expect(paths).toContain("camera.cgb");
+});
+
+it("fetchRomList manifest fallback includes .gba entries", async () => {
+    const base = "https://example.com/roms/";
+    const responses = new Map([
+        [base, ""],
+        [`${base}roms.json`, JSON.stringify({
+            roms: ["suite.gba", "game.nes", "notes.txt"]
+        })]
+    ]);
+
+    const fetchFn = async (url: any) => {
+        const key = url.toString();
+        if (!responses.has(key)) {
+            return { ok: false, status: 404, text: async () => "" };
+        }
+        return {
+            ok: true,
+            text: async () => responses.get(key),
+            json: async () => JSON.parse(responses.get(key)!)
+        };
+    };
+
+    const entries = await fetchRomList(base, fetchFn as any, 4);
+    const paths = entries.map((entry: any) => entry.path);
+    expect(paths).toContain("suite.gba");
+    expect(paths).toContain("game.nes");
+    expect(paths).not.toContain("notes.txt");
 });

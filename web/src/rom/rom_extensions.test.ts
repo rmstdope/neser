@@ -13,9 +13,14 @@ it("classifies DMG and CGB Game Boy ROM extensions as Game Boy", () => {
     expect(webRomConsoleKindForName("POKEMON.CGB")).toBe("gb");
 });
 
+it("classifies Game Boy Advance ROM names as GBA", () => {
+    expect(webRomConsoleKindForName("metroid.gba")).toBe("gba");
+    expect(webRomConsoleKindForName("METROID.GBA")).toBe("gba");
+});
+
 it("rejects unsupported web ROM extensions", () => {
     expect(webRomConsoleKindForName("notes.txt")).toBeNull();
-    expect(webRomConsoleKindForName("advance.gba")).toBeNull();
+    expect(webRomConsoleKindForName("advance.agb")).toBeNull();
 });
 
 it("extracts lower-case extensions for messages", () => {
@@ -25,7 +30,7 @@ it("extracts lower-case extensions for messages", () => {
 });
 
 it("lists all supported web ROM extensions for user-facing messages", () => {
-    expect(supportedRomExtensionsText()).toBe(".nes, .gb, .gbc, .cgb");
+    expect(supportedRomExtensionsText()).toBe(".nes, .gb, .gbc, .cgb, .gba");
 });
 
 it("handles edge case: empty string", () => {

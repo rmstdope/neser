@@ -1,4 +1,4 @@
-import init, { WasmNes, WasmGb, gamepad_init_toast_message } from "../pkg/neser";
+import init, { WasmNes, WasmGb, WasmGba, gamepad_init_toast_message } from "../pkg/neser";
 import { mapStandardGamepadState, selectGamepads } from "./input/gamepad";
 import {
     createRomSaveKey,
@@ -20,6 +20,7 @@ import { normalizeGbSample, normalizeNesSample } from "./audio/audio_normalizer"
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { getKeyboardControllerTarget } from "./input/input_routing";
+import { gbaKeyboardButtonForEvent } from "./input/keyboard_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import {
@@ -649,9 +650,12 @@ function cycleFilter() {
     return true;
 }
 
-type ActiveEmulator = { kind: "nes"; inst: WasmNes } | { kind: "gb"; inst: WasmGb };
+type ActiveEmulator =
+    | { kind: "nes"; inst: WasmNes }
+    | { kind: "gb"; inst: WasmGb }
+    | { kind: "gba"; inst: WasmGba };
 
-/** Master emulator state — set to NES or GB depending on the loaded ROM. */
+/** Master emulator state — set by the loaded ROM's console kind. */
 let emulator: ActiveEmulator | null = null;
 /** Convenience alias for NES-specific code paths. Non-null only when emulator.kind === "nes". */
 let nes: WasmNes | null = null;
@@ -726,13 +730,18 @@ function updateEmulationButtons() {
     }
 }
 
-/** Create a fresh NES or GB emulator instance and update kind-dependent UI. */
+/** Create a fresh emulator instance and update kind-dependent UI. */
 function createEmulatorInstance(kind: WebRomConsoleKind): void {
+    resetGamepadState();
     // Free the previous WASM instance to avoid leaking its linear memory.
     emulator?.inst.free();
     if (kind === "gb") {
         const gb = new WasmGb();
         emulator = { kind: "gb", inst: gb };
+        nes = null;
+    } else if (kind === "gba") {
+        const gba = new WasmGba();
+        emulator = { kind: "gba", inst: gba };
         nes = null;
     } else {
         nes = new WasmNes();
@@ -985,7 +994,9 @@ let lastGamepadState1 = {
     up: false,
     down: false,
     left: false,
-    right: false
+    right: false,
+    l: false,
+    r: false
 };
 let lastGamepadState2 = {
     a: false,
@@ -995,7 +1006,9 @@ let lastGamepadState2 = {
     up: false,
     down: false,
     left: false,
-    right: false
+    right: false,
+    l: false,
+    r: false
 };
 
 function setStatus(msg: string, isError = false) {
@@ -1017,7 +1030,7 @@ async function applyRomBytes(bytes: Uint8Array, name: string) {
 }
 
 async function refreshSaveStateController() {
-    // Save states are NES-only (GB save states are not supported in MVP).
+    // Save states are NES-only in the web frontend MVP.
     if (!nes || !romMetadata) {
         saveStateController = null;
         saveStateAvailable = false;
@@ -1139,8 +1152,8 @@ function playAudioSamples(samples: Float32Array) {
     const channelData = buffer.getChannelData(0);
 
     // Normalize and copy samples to the buffer
-    if (emulator?.kind === "gb") {
-        // GB APU outputs bipolar samples in [-1.0, 1.0] — clamp with a safety guard
+    if (emulator?.kind === "gb" || emulator?.kind === "gba") {
+        // Handheld APUs output bipolar samples in [-1.0, 1.0] — clamp with a safety guard.
         for (let i = 0; i < samples.length; i++) {
             channelData[i] = normalizeGbSample(samples[i]);
         }
@@ -2527,6 +2540,15 @@ async function handleKeyDown(event: KeyboardEvent) {
         return;
     }
 
+    if (emulator.kind === "gba") {
+        const button = gbaKeyboardButtonForEvent(event);
+        if (button !== null) {
+            event.preventDefault();
+            emulator.inst.set_button(1, button, true);
+        }
+        return;
+    }
+
     const key = event.key.toLowerCase();
     const targets = getKeyboardControllerTarget(
         connectedGamepads.length,
@@ -2548,6 +2570,15 @@ function handleKeyUp(event: KeyboardEvent) {
 
     // NES-only: block keyboard input while debugger is open.
     if (nes?.is_debugger_open()) {
+        return;
+    }
+
+    if (emulator.kind === "gba") {
+        const button = gbaKeyboardButtonForEvent(event);
+        if (button !== null) {
+            event.preventDefault();
+            emulator.inst.set_button(1, button, false);
+        }
         return;
     }
 
@@ -3015,10 +3046,13 @@ interface GamepadButtonState {
     down: boolean;
     left: boolean;
     right: boolean;
+    l: boolean;
+    r: boolean;
 }
 
 function applyGamepadState(state: GamepadButtonState, controller: number, lastState: GamepadButtonState) {
     if (!emulator) return;
+    if (emulator.kind === "gba" && controller !== 1) return;
     const applyButton = (button: number, pressed: boolean) => {
         if (nes) {
             applyJoypadButtonIfAllowed(nes, controller, button, pressed);
@@ -3034,6 +3068,10 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
     if (state.down !== lastState.down) applyButton(5, state.down);
     if (state.left !== lastState.left) applyButton(6, state.left);
     if (state.right !== lastState.right) applyButton(7, state.right);
+    if (emulator.kind === "gba") {
+        if (state.l !== lastState.l) applyButton(8, state.l);
+        if (state.r !== lastState.r) applyButton(9, state.r);
+    }
 }
 
 function resetGamepadState() {
@@ -3045,7 +3083,9 @@ function resetGamepadState() {
         up: false,
         down: false,
         left: false,
-        right: false
+        right: false,
+        l: false,
+        r: false
     };
     applyGamepadState(emptyState, 1, lastGamepadState1);
     applyGamepadState(emptyState, 2, lastGamepadState2);

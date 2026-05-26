@@ -1,4 +1,4 @@
-export type WebRomConsoleKind = "nes" | "gb";
+export type WebRomConsoleKind = "nes" | "gb" | "gba";
 
 const GAME_BOY_EXTENSIONS = new Set(["gb", "gbc", "cgb"]);
 
@@ -18,6 +18,9 @@ export function webRomConsoleKindForName(name: string): WebRomConsoleKind | null
     if (GAME_BOY_EXTENSIONS.has(extension)) {
         return "gb";
     }
+    if (extension === "gba") {
+        return "gba";
+    }
     return null;
 }
 
@@ -26,5 +29,5 @@ export function isSupportedWebRomName(name: string): boolean {
 }
 
 export function supportedRomExtensionsText(): string {
-    return ".nes, .gb, .gbc, .cgb";
+    return ".nes, .gb, .gbc, .cgb, .gba";
 }

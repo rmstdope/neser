@@ -1,0 +1,173 @@
+use crate::gba::Gba;
+use crate::platform::app_context::{AppContext, SharedAppContext};
+use crate::platform::emulator::Emulator;
+use crate::platform::frontend_toasts::cartridge_load_toast_message;
+use std::cell::RefCell;
+use std::rc::Rc;
+use wasm_bindgen::prelude::*;
+
+/// Provides a minimal WASM bridge for running the Game Boy Advance emulator in the browser.
+#[wasm_bindgen]
+pub struct WasmGba {
+    gba: Gba,
+    audio_muted: bool,
+    rom_loaded: bool,
+    pending_toasts: Vec<String>,
+    frame_rgba_buffer: Vec<u8>,
+}
+
+impl Default for WasmGba {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmGba {
+    fn required_rgba_len() -> usize {
+        (Gba::SCREEN_WIDTH * Gba::SCREEN_HEIGHT * 4) as usize
+    }
+
+    fn ensure_rgba_buffer(&mut self) {
+        let required = Self::required_rgba_len();
+        if self.frame_rgba_buffer.len() != required {
+            self.frame_rgba_buffer.resize(required, 0xFF);
+            for alpha in self.frame_rgba_buffer.iter_mut().skip(3).step_by(4) {
+                *alpha = 0xFF;
+            }
+        }
+    }
+
+    fn fill_opaque_black_frame(&mut self) {
+        self.ensure_rgba_buffer();
+        self.frame_rgba_buffer.fill(0);
+        for alpha in self.frame_rgba_buffer.iter_mut().skip(3).step_by(4) {
+            *alpha = 0xFF;
+        }
+    }
+
+    fn run_until_frame_ready(&mut self) {
+        while !self.gba.is_ready_to_render() {
+            self.gba.run_tick();
+        }
+        self.gba.clear_ready_to_render();
+    }
+
+    fn drain_audio_buffer(&mut self) {
+        while self.gba.get_sample().is_some() {}
+    }
+
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> WasmGba {
+        console_error_panic_hook::set_once();
+        let app_context: SharedAppContext = Rc::new(RefCell::new(AppContext::new_with_config(
+            Default::default(),
+        )));
+        WasmGba {
+            gba: Gba::new(app_context),
+            audio_muted: false,
+            rom_loaded: false,
+            pending_toasts: Vec::new(),
+            frame_rgba_buffer: Vec::new(),
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
+        self.rom_loaded = false;
+        match self.gba.load_rom(rom, rom_name) {
+            Ok(()) => {
+                self.rom_loaded = true;
+                self.gba.set_audio_sample_rate(44_100.0);
+                self.pending_toasts
+                    .push(cartridge_load_toast_message(rom_name, true));
+                web_sys::console::log_1(&JsValue::from_str("GBA ROM loaded successfully"));
+                Ok(())
+            }
+            Err(err) => {
+                self.pending_toasts
+                    .push(cartridge_load_toast_message(rom_name, false));
+                Err(JsValue::from_str(&err))
+            }
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn drain_toasts(&mut self) -> Vec<JsValue> {
+        self.pending_toasts.drain(..).map(JsValue::from).collect()
+    }
+
+    #[wasm_bindgen]
+    pub fn render_frame_rgba(&mut self) -> Vec<u8> {
+        if !self.rom_loaded {
+            self.fill_opaque_black_frame();
+            return self.frame_rgba_buffer.clone();
+        }
+
+        self.run_until_frame_ready();
+        self.ensure_rgba_buffer();
+        let rgb = self.gba.screen_snapshot();
+        for (rgba, rgb) in self
+            .frame_rgba_buffer
+            .chunks_exact_mut(4)
+            .zip(rgb.chunks_exact(3))
+        {
+            rgba[0] = rgb[0];
+            rgba[1] = rgb[1];
+            rgba[2] = rgb[2];
+            rgba[3] = 0xFF;
+        }
+        self.frame_rgba_buffer.clone()
+    }
+
+    #[wasm_bindgen]
+    pub fn screen_width(&self) -> u32 {
+        Gba::SCREEN_WIDTH
+    }
+
+    #[wasm_bindgen]
+    pub fn screen_height(&self) -> u32 {
+        Gba::SCREEN_HEIGHT
+    }
+
+    #[wasm_bindgen]
+    pub fn frame_rate_hz(&self) -> f64 {
+        16_777_216.0 / 280_896.0
+    }
+
+    #[wasm_bindgen]
+    pub fn get_audio_samples(&mut self) -> Vec<f32> {
+        if self.audio_muted {
+            self.drain_audio_buffer();
+            return Vec::new();
+        }
+        let mut samples = Vec::new();
+        while let Some(sample) = self.gba.get_sample() {
+            samples.push(sample);
+        }
+        samples
+    }
+
+    #[wasm_bindgen]
+    pub fn set_audio_muted(&mut self, muted: bool) {
+        self.audio_muted = muted;
+        if muted {
+            self.drain_audio_buffer();
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn is_audio_muted(&self) -> bool {
+        self.audio_muted
+    }
+
+    #[wasm_bindgen]
+    pub fn set_button(&mut self, controller: u8, button: u8, pressed: bool) {
+        self.gba.set_button(controller, button, pressed);
+    }
+
+    #[wasm_bindgen]
+    pub fn reset(&mut self, soft_reset: bool) {
+        self.gba.reset(soft_reset);
+    }
+}

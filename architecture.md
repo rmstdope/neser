@@ -8,7 +8,7 @@ NESER is a cycle-accurate NES (Nintendo Entertainment System) emulator written i
 
 The codebase is roughly 183,000 lines of Rust, with additional JavaScript for the web frontend and Python tooling for ROM management.
 
-As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps both the NES and GameBoy implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
+As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps the NES, Game Boy, and Game Boy Advance implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
 
 ## High-Level Architecture
 
@@ -27,7 +27,7 @@ As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic 
 │  │  (src/platform/emulator.rs)                     │  │
 │  │  Hardware-agnostic interface: run_tick, render, │  │
 │  │  audio, input, save/load state, reset           │  │
-│  │  Variants: Console::Nes(Nes), Console::GameBoy  │  │
+│  │  Variants: Nes, GameBoy, GameBoyAdvance         │  │
 │  └──────────────────────┬─────────────────────────-┘  │
 │                         │                             │
 │                         ▼                             │
@@ -68,7 +68,7 @@ As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic 
 
 The emulator is designed around a **multi-layer architecture**:
 
-- **Emulator trait + Console enum** (`src/platform/emulator.rs`): The `Emulator` trait defines the common interface that every emulated system must implement (run, render, audio, input, save/load state, reset — 22 methods total). `Nes` and `GameBoy` implement the trait in their respective modules. The `Console` enum wraps both systems and delegates common methods through `as_core()`/`as_core_mut()` (which return `&dyn Emulator`), keeping a single pair of match arms instead of one per method. System-specific features (NES debugging, PPU viewer, Zapper) are still accessed by matching on `Console::Nes`.
+- **Emulator trait + Console enum** (`src/platform/emulator.rs`): The `Emulator` trait defines the common interface that every emulated system must implement (run, render, audio, input, save/load state, reset — 22 methods total). `Nes`, `GameBoy`, and `Gba` implement the trait in their respective modules. The `Console` enum wraps all three systems and delegates common methods through `as_core()`/`as_core_mut()` (which return `&dyn Emulator`), keeping a single pair of match arms instead of one per method. System-specific features (NES debugging, PPU viewer, Zapper) are still accessed by matching on `Console::Nes`.
 - **NES emulator** (`src/nes/`): All NES-specific hardware lives under this namespace. The `Nes` struct in `src/nes/console/nes.rs` orchestrates the per-cycle stepping of CPU, PPU, APU, and Bus.
 - **Shared platform** (`src/platform/`): `FrontendConfig` (src/platform/config.rs), `AppContext` (src/platform/app_context.rs), audio infrastructure, and system-agnostic toast formatters are shared across all emulated systems.
 - **Bus-centric hardware**: Within the NES, the `Bus` struct routes memory reads and writes between the CPU, PPU registers, APU registers, RAM, OAM DMA, controller ports, and the cartridge mapper.
@@ -338,7 +338,9 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 | `src/frontends/tui/launcher.rs` | Launches the SDL emulator for a selected ROM. |
 | `src/frontends/tui/action_menu.rs` | Context menu for ROM actions. |
 | `src/frontends/web/` | WebAssembly frontend. |
-| `src/frontends/web/wasm.rs` | `wasm-bindgen` bindings — exposes `NesEmulator` to JavaScript with methods for frame stepping, input, audio sample retrieval, and save states. |
+| `src/frontends/web/wasm.rs` | `wasm-bindgen` bindings — exposes `WasmNes` to JavaScript with methods for frame stepping, input, audio sample retrieval, save states, autorun, and NES debugger support. |
+| `src/frontends/web/wasm_gb.rs` | `wasm-bindgen` bindings for the Game Boy frontend (`WasmGb`) with ROM loading, frame rendering, audio, reset, and joypad input. |
+| `src/frontends/web/wasm_gba.rs` | `wasm-bindgen` bindings for the Game Boy Advance frontend (`WasmGba`) with ROM loading, 240×160 RGBA frame rendering, audio, reset, toast draining, and 10-button keypad input. |
 | `src/frontends/web/wasm_autorun_state.rs` | Autorun state management for the WASM frontend. |
 | `src/frontends/web/wasm_tests.rs` | WASM-specific integration tests (run via `wasm-pack test`). |
 
@@ -402,11 +404,11 @@ The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `we
 | `web/index.html` | Entry point — DaisyUI drawer layout with sidebar, top bar, canvas area, footer, and autorun modal dialog. Loads `./src/app.ts` as the main module. |
 | `web/main.css` | Tailwind CSS entry point with DaisyUI plugin config, neon theme overrides, and custom component styles. |
 | `web/debugger.css` | Debugger panel styling (green-on-black terminal aesthetic). |
-| `web/src/app.ts` | Application bootstrapper — initializes the WASM module, sets up the render loop, and coordinates all subsystems. |
+| `web/src/app.ts` | Application bootstrapper — initializes the WASM module, selects `WasmNes` / `WasmGb` / `WasmGba` by ROM extension, sets up the render loop, and coordinates all subsystems. |
 | `web/src/audio/` | Audio resampling (`audio_resampler.ts`), frame timing (`frame_limiter.ts`, `frame_plan.ts`). |
-| `web/src/input/` | Gamepad API (`gamepad.ts`), keyboard/gamepad routing (`input_routing.ts`), mouse input (`mouse_input.ts`), pointer lock (`pointer_lock.ts`). |
-| `web/src/display/` | Canvas sizing (`canvas_size.ts`), zoom controls (`zoom_controls.ts`), cursor visibility, crosshair overlay. |
-| `web/src/rom/` | ROM file listing (`rom_list.ts`), selection UI (`rom_selection.ts`), autorun context. |
+| `web/src/input/` | Gamepad API (`gamepad.ts`), GBA keyboard mapping (`keyboard_mapping.ts`), keyboard/gamepad routing (`input_routing.ts`), mouse input (`mouse_input.ts`), pointer lock (`pointer_lock.ts`). |
+| `web/src/display/` | Canvas sizing (`canvas_size.ts`), zoom controls (`zoom_controls.ts`), cursor visibility, crosshair overlay, and console-specific filter selection (`filters.ts`; GBA is stock-only in the web frontend). |
+| `web/src/rom/` | ROM file listing (`rom_list.ts`), extension-to-console detection (`rom_extensions.ts` for `.nes`, `.gb`, `.gbc`, `.cgb`, `.gba`), selection UI (`rom_selection.ts`), autorun context. |
 | `web/src/save-state/` | Save state persistence using IndexedDB (`save_state_storage.ts`, `save_state_controller.ts`, `save_state_context.ts`). |
 | `web/src/debugger/` | Browser-based debugger panels — disassembly, OAM viewer, watch expressions, PPU viewer layout/scroll. |
 | `web/src/shortcuts/` | Keyboard shortcut actions and help overlay. |
