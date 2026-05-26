@@ -731,6 +731,14 @@ fn mgba_dma_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
     mgba_named_sub_suite_diagnostic_from_gba(gba, "DMA tests")
 }
 
+fn mgba_sio_read_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
+    mgba_named_sub_suite_diagnostic_from_gba(gba, "SIO register R/W tests")
+}
+
+fn mgba_sio_timing_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
+    mgba_named_sub_suite_diagnostic_from_gba(gba, "SIO timing tests")
+}
+
 fn mgba_bios_math_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
     mgba_named_sub_suite_diagnostic_from_gba(gba, "BIOS math tests")
 }
@@ -775,6 +783,16 @@ pub fn run_mgba_timer_irq_diagnostics() -> MgbaMemoryDiagnosticResult {
 pub fn run_mgba_dma_diagnostics() -> MgbaMemoryDiagnosticResult {
     let (gba, _rom) = boot_mgba_suite();
     run_mgba_sub_suite_diagnostics_from_gba(gba, 9, "DMA diagnostics")
+}
+
+pub fn run_mgba_sio_read_diagnostics() -> MgbaMemoryDiagnosticResult {
+    let (gba, _rom) = boot_mgba_suite();
+    run_mgba_sub_suite_diagnostics_from_gba(gba, 10, "SIO read diagnostics")
+}
+
+pub fn run_mgba_sio_timing_diagnostics() -> MgbaMemoryDiagnosticResult {
+    let (gba, _rom) = boot_mgba_suite();
+    run_mgba_sub_suite_diagnostics_from_gba(gba, 11, "SIO timing diagnostics")
 }
 
 pub fn run_mgba_bios_math_diagnostics() -> MgbaMemoryDiagnosticResult {
@@ -872,6 +890,8 @@ fn run_mgba_sub_suite_diagnostics_from_gba_with_boot_frames(
         4 => mgba_timer_irq_diagnostic_from_gba(&gba),
         8 => mgba_bios_math_diagnostic_from_gba(&gba),
         9 => mgba_dma_diagnostic_from_gba(&gba),
+        10 => mgba_sio_read_diagnostic_from_gba(&gba),
+        11 => mgba_sio_timing_diagnostic_from_gba(&gba),
         _ => mgba_memory_diagnostic_from_gba(&gba),
     }
 }

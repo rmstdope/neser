@@ -41,6 +41,10 @@ fn timer_start_delay_cycles() -> u32 {
     2
 }
 
+fn sio_start_delay_cycles() -> u32 {
+    29
+}
+
 /// GBA memory bus.
 pub struct GbaBus {
     /// 16 KB BIOS ROM at `0x0000_0000`.
@@ -118,6 +122,9 @@ pub struct GbaBus {
     /// Set when a CPU-visible write enables a timer. The instruction that
     /// performs the enable write completes before the timer starts ticking.
     pub(super) timer_start_delay_pending: bool,
+    /// Remaining CPU cycles before a newly started SIO transfer begins
+    /// shifting bits on the serial clock.
+    pub(super) sio_start_delay_cycles: u32,
     /// Remaining CPU cycles before a newly enabled immediate DMA can seize the
     /// bus. GBATek documents a 2-cycle delay after the DMA enable edge.
     pub(super) dma_start_delay_cycles: u32,
@@ -212,6 +219,7 @@ impl GbaBus {
             undoc_0x410: 0,
             halt_requested: false,
             timer_start_delay_pending: false,
+            sio_start_delay_cycles: 0,
             dma_start_delay_cycles: 0,
             timer_global_cycles: 0,
             irq_line_delay_cycles: 0,
@@ -383,7 +391,7 @@ impl GbaBus {
         self.timer_start_delay_pending = false;
         let overflow_mask = self.timers.step(cycles, &mut self.ic);
         self.handle_timer_overflow_fifo(overflow_mask);
-        self.sio.step(cycles, &mut self.ic);
+        self.step_sio(cycles);
         self.apu.tick(cycles);
         let events = self.ppu.step(
             cycles,
@@ -417,7 +425,7 @@ impl GbaBus {
         };
         let overflow_mask = self.timers.step(timer_cycles, &mut self.ic);
         self.handle_timer_overflow_fifo(overflow_mask);
-        self.sio.step(cycles, &mut self.ic);
+        self.step_sio(cycles);
         self.apu.tick(cycles);
         let events = self.ppu.step(
             cycles,
@@ -527,6 +535,27 @@ impl GbaBus {
         }
         self.run_pending_dma();
         self.step_dma_stalls();
+    }
+
+    pub(super) fn step_sio(&mut self, cycles: u32) {
+        let cycles = if self.sio_start_delay_cycles > 0 {
+            if cycles <= self.sio_start_delay_cycles {
+                self.sio_start_delay_cycles -= cycles;
+                return;
+            }
+            let remaining_cycles = cycles - self.sio_start_delay_cycles;
+            self.sio_start_delay_cycles = 0;
+            remaining_cycles
+        } else {
+            cycles
+        };
+        self.sio.step(cycles, &mut self.ic);
+    }
+
+    pub(super) fn write_siocnt(&mut self, value: u16) {
+        if self.sio.write_siocnt(value) {
+            self.sio_start_delay_cycles = sio_start_delay_cycles();
+        }
     }
 
     pub(super) fn mark_timer_start_delay_for_write16(&mut self, addr: u32, value: u16) {
@@ -733,6 +762,7 @@ impl GbaBus {
             undoc_0x410: self.undoc_0x410,
             halt_requested: self.halt_requested,
             timer_global_cycles: self.timer_global_cycles,
+            sio_start_delay_cycles: self.sio_start_delay_cycles,
             irq_line_delay_cycles: self.irq_line_delay_cycles,
             irq_sources_were_asserted: self.irq_sources_were_asserted,
         }
@@ -786,6 +816,7 @@ impl GbaBus {
         self.undoc_0x410 = state.undoc_0x410;
         self.halt_requested = state.halt_requested;
         self.timer_global_cycles = state.timer_global_cycles;
+        self.sio_start_delay_cycles = state.sio_start_delay_cycles;
         self.irq_line_delay_cycles = state.irq_line_delay_cycles;
         self.irq_sources_were_asserted = state.irq_sources_were_asserted;
         self.timer_start_delay_pending = false;
@@ -1323,7 +1354,7 @@ mod tests {
         let mut bus = GbaBus::new();
         bus.write16(0x0400_0200, irq_bits::SERIAL);
         bus.write16(0x0400_0128, 0x4082);
-        bus.step(63);
+        bus.step(92);
 
         let saved = bus.capture_memory_state();
 
@@ -1527,6 +1558,26 @@ mod tests {
         assert_eq!(bus.read16(0x0400_0100), 1);
         bus.step_after_cpu_instruction(1);
         assert_eq!(bus.read16(0x0400_0100), 2);
+    }
+
+    #[test]
+    fn sio_transfer_does_not_tick_during_starting_cpu_instruction() {
+        let mut bus = GbaBus::new();
+        bus.ic.ie = irq_bits::SERIAL;
+        bus.ic.ime = true;
+
+        bus.begin_cpu_instruction();
+        bus.write16(0x0400_0128, 0x4081);
+        bus.end_cpu_instruction();
+        bus.step_after_cpu_instruction(29);
+
+        assert_ne!(bus.read16(0x0400_0128) & 0x0080, 0);
+        bus.step(511);
+        assert_ne!(bus.read16(0x0400_0128) & 0x0080, 0);
+        bus.step(1);
+
+        assert_eq!(bus.read16(0x0400_0128) & 0x0080, 0);
+        assert_ne!(bus.ic.if_flags & irq_bits::SERIAL, 0);
     }
 
     #[test]

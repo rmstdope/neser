@@ -2,7 +2,8 @@ use super::gba_suite_runner::{
     ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, VIDEO_TEST_NAMES,
     boot_mgba_suite, run_armwrestler, run_mgba_bios_math_diagnostics, run_mgba_dma_diagnostics,
     run_mgba_io_read_diagnostics, run_mgba_io_read_diagnostics_after_bios_intro,
-    run_mgba_memory_diagnostics, run_mgba_memory_diagnostics_with_bios_path, run_mgba_suite,
+    run_mgba_memory_diagnostics, run_mgba_memory_diagnostics_with_bios_path,
+    run_mgba_sio_read_diagnostics, run_mgba_sio_timing_diagnostics, run_mgba_suite,
     run_mgba_timer_irq_diagnostics, run_mgba_timers_diagnostics, run_mgba_timing_diagnostics,
     run_mgba_video_tests, run_suite,
 };
@@ -559,6 +560,56 @@ fn gba_mgba_dma_diagnostics_passes_every_case() {
 }
 
 #[test]
+fn gba_mgba_sio_timing_diagnostics_passes_every_counted_case() {
+    let result = run_mgba_sio_timing_diagnostics();
+
+    assert_eq!(
+        result.total_count,
+        Some(4),
+        "raw mGBA SIO timing log:\n{}",
+        result.raw_log
+    );
+    assert!(
+        result.passed_count.is_some(),
+        "mGBA SIO timing diagnostics should include a parsed pass count"
+    );
+    assert_eq!(
+        result.passed_count, result.total_count,
+        "mGBA SIO timing diagnostics should pass every counted case with the embedded BIOS.\nfailures: {:?}\nraw log:\n{}",
+        result.failures, result.raw_log
+    );
+    assert!(
+        result.failures.is_empty(),
+        "mGBA SIO timing diagnostics reported failures with the embedded BIOS: {:?}\nraw log:\n{}",
+        result.failures,
+        result.raw_log
+    );
+}
+
+#[test]
+fn gba_mgba_sio_read_diagnostics_still_passes_every_case() {
+    let result = run_mgba_sio_read_diagnostics();
+
+    assert_eq!(
+        result.total_count,
+        Some(90),
+        "raw mGBA SIO read log:\n{}",
+        result.raw_log
+    );
+    assert_eq!(
+        result.passed_count, result.total_count,
+        "mGBA SIO read diagnostics should still pass every case with the embedded BIOS.\nfailures: {:?}\nraw log:\n{}",
+        result.failures, result.raw_log
+    );
+    assert!(
+        result.failures.is_empty(),
+        "mGBA SIO read diagnostics reported failures with the embedded BIOS: {:?}\nraw log:\n{}",
+        result.failures,
+        result.raw_log
+    );
+}
+
+#[test]
 fn gba_mgba_bios_math_diagnostics_passes_every_case() {
     let result = run_mgba_bios_math_diagnostics();
 
@@ -655,7 +706,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("mgba_bios_math"), Some(&0x3C1B_28DE));
     assert_eq!(approvals.get("mgba_dma"), Some(&0x06A6_24A4));
     assert_eq!(approvals.get("mgba_sio_read"), Some(&0xF5D9_8687));
-    assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));
+    assert_eq!(approvals.get("mgba_sio_timing"), Some(&0x81BB_7F79));
     assert_eq!(approvals.get("mgba_misc_edge"), Some(&0x36EC_DBF9));
     assert_eq!(approvals.get("mgba_video"), Some(&0xAB7E_C249));
 }

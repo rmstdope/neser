@@ -308,7 +308,7 @@ impl Bus for GbaBus {
                     }
                     // SIOCNT is at 0x0400_0128 (low halfword of a 32-bit write).
                     if aligned == 0x0400_0128 {
-                        self.sio.write_siocnt(value as u16);
+                        self.write_siocnt(value as u16);
                     }
                     // RCNT is at 0x0400_0134 (low halfword of a 32-bit write).
                     if aligned == 0x0400_0134 {
@@ -386,7 +386,7 @@ impl Bus for GbaBus {
                         self.waitstates.recalculate(value);
                     }
                     if aligned == 0x0400_0128 {
-                        self.sio.write_siocnt(value);
+                        self.write_siocnt(value);
                     }
                     if aligned == 0x0400_0134 {
                         self.sio.write_rcnt(value);
@@ -472,7 +472,7 @@ impl Bus for GbaBus {
                     // Merge the written byte into the current register value.
                     if aligned == 0x0400_0128 {
                         let merged = self.io.backing_u16(0x0400_0128);
-                        self.sio.write_siocnt(merged);
+                        self.write_siocnt(merged);
                     }
                     if aligned == 0x0400_0134 {
                         let merged = self.io.backing_u16(0x0400_0134);

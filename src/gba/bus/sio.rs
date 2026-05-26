@@ -57,29 +57,48 @@ impl Sio {
     /// Read SIOCNT (0x0400_0128). Bit 7 reflects live transfer state.
     /// Applies the mode-dependent read mask (UART: 0x7FAF, others: 0x7F8F).
     pub fn read_siocnt(&self) -> u16 {
-        let mask = if self.mode() == SioMode::Uart {
+        let mode = self.mode();
+        let mask = if mode == SioMode::Uart {
             0x7FAF
         } else {
             0x7F8F
         };
-        let val = if self.transfer_active {
-            self.siocnt | 0x0080
-        } else {
-            self.siocnt & !0x0080
+        let val = match mode {
+            SioMode::Normal8 | SioMode::Normal32 | SioMode::Multi => {
+                if self.transfer_active {
+                    self.siocnt | 0x0080
+                } else {
+                    self.siocnt & !0x0080
+                }
+            }
+            SioMode::Uart | SioMode::Gpio => self.siocnt,
         };
         val & mask
     }
 
     /// Write SIOCNT (0x0400_0128). A rising edge on bit 7 starts a transfer.
-    pub fn write_siocnt(&mut self, value: u16) {
+    pub fn write_siocnt(&mut self, value: u16) -> bool {
+        let old_mode = self.mode();
+        self.siocnt = value;
+        if self.mode() != old_mode {
+            self.transfer_active = false;
+            self.remaining_cycles = 0;
+        }
+        let mode = self.mode();
+        if matches!(mode, SioMode::Normal8 | SioMode::Normal32 | SioMode::Multi) {
+            self.siocnt &= !0x0080;
+        }
         let was_busy = self.transfer_active;
-        // Store the register value (without bit 7 — that's managed by state)
-        self.siocnt = value & !0x0080;
+        let mut started = false;
 
         // Rising edge on bit 7 starts a transfer
-        if !was_busy && value & 0x0080 != 0 {
+        if !was_busy
+            && value & 0x0080 != 0
+            && matches!(mode, SioMode::Normal8 | SioMode::Normal32 | SioMode::Multi)
+        {
             self.transfer_active = true;
-            match self.mode() {
+            started = true;
+            match mode {
                 SioMode::Normal8 | SioMode::Normal32 => {
                     self.remaining_cycles = self.normal_transfer_cycles();
                 }
@@ -87,12 +106,10 @@ impl Sio {
                     // No slaves connected — transfer never completes
                     self.remaining_cycles = u32::MAX;
                 }
-                _ => {
-                    // UART / GPIO: not implemented, don't start
-                    self.transfer_active = false;
-                }
+                SioMode::Uart | SioMode::Gpio => unreachable!(),
             }
         }
+        started
     }
 
     /// Advance the SIO state by `cycles` CPU cycles.
@@ -237,6 +254,20 @@ mod tests {
         assert_ne!(sio.read_siocnt() & 0x0080, 0);
     }
 
+    #[test]
+    fn switching_from_busy_multi_to_normal_allows_new_normal_transfer() {
+        let mut sio = make_sio();
+
+        sio.write_siocnt(0x6080);
+        assert!(sio.transfer_active);
+
+        sio.write_siocnt(0x4001);
+        sio.write_siocnt(0x4081);
+
+        assert!(sio.transfer_active);
+        assert_eq!(sio.remaining_cycles, 512);
+    }
+
     // --- Transfer completion tests ---
 
     #[test]
@@ -325,5 +356,26 @@ mod tests {
         let val = sio.read_siocnt();
         assert_ne!(val & 0x4000, 0, "bit 14 (IRQ enable) should be preserved");
         assert_ne!(val & 0x0002, 0, "bit 1 (clock) should be preserved");
+    }
+
+    #[test]
+    fn read_siocnt_preserves_written_bit7_in_uart_mode() {
+        let mut sio = make_sio();
+
+        sio.write_siocnt(0xF080);
+
+        assert_ne!(sio.read_siocnt() & 0x0080, 0);
+        assert!(!sio.transfer_active);
+    }
+
+    #[test]
+    fn read_siocnt_preserves_written_bit7_in_gpio_mode() {
+        let mut sio = make_sio();
+        sio.write_rcnt(0x8000);
+
+        sio.write_siocnt(0xC080);
+
+        assert_ne!(sio.read_siocnt() & 0x0080, 0);
+        assert!(!sio.transfer_active);
     }
 }
