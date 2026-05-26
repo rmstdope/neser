@@ -731,6 +731,10 @@ fn mgba_dma_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
     mgba_named_sub_suite_diagnostic_from_gba(gba, "DMA tests")
 }
 
+fn mgba_bios_math_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
+    mgba_named_sub_suite_diagnostic_from_gba(gba, "BIOS math tests")
+}
+
 fn mgba_named_sub_suite_diagnostic_from_gba(
     gba: &Gba,
     suite_name: &str,
@@ -771,6 +775,11 @@ pub fn run_mgba_timer_irq_diagnostics() -> MgbaMemoryDiagnosticResult {
 pub fn run_mgba_dma_diagnostics() -> MgbaMemoryDiagnosticResult {
     let (gba, _rom) = boot_mgba_suite();
     run_mgba_sub_suite_diagnostics_from_gba(gba, 9, "DMA diagnostics")
+}
+
+pub fn run_mgba_bios_math_diagnostics() -> MgbaMemoryDiagnosticResult {
+    let (gba, _rom) = boot_mgba_suite();
+    run_mgba_sub_suite_diagnostics_from_gba(gba, 8, "BIOS math diagnostics")
 }
 
 pub fn run_mgba_io_read_diagnostics_after_bios_intro() -> MgbaMemoryDiagnosticResult {
@@ -861,6 +870,7 @@ fn run_mgba_sub_suite_diagnostics_from_gba_with_boot_frames(
         2 => mgba_timing_diagnostic_from_gba(&gba),
         3 => mgba_timers_diagnostic_from_gba(&gba),
         4 => mgba_timer_irq_diagnostic_from_gba(&gba),
+        8 => mgba_bios_math_diagnostic_from_gba(&gba),
         9 => mgba_dma_diagnostic_from_gba(&gba),
         _ => mgba_memory_diagnostic_from_gba(&gba),
     }
@@ -1003,6 +1013,20 @@ fn extract_ascii_segments(bytes: &[u8]) -> Vec<String> {
 }
 
 fn parse_mgba_score(raw_log: &str) -> (Option<u32>, Option<u32>) {
+    if let Some((_, suffix)) = raw_log.rsplit_once("END:") {
+        for token in suffix.split(|ch: char| !(ch.is_ascii_digit() || ch == '/')) {
+            if let Some((passed, total)) = token.split_once('/') {
+                let Ok(passed) = passed.parse::<u32>() else {
+                    continue;
+                };
+                let Ok(total) = total.parse::<u32>() else {
+                    continue;
+                };
+                return (Some(passed), Some(total));
+            }
+        }
+    }
+
     for token in raw_log.split(|ch: char| !(ch.is_ascii_digit() || ch == '/')) {
         if let Some((passed, total)) = token.split_once('/') {
             let Ok(passed) = passed.parse::<u32>() else {
@@ -1598,6 +1622,17 @@ mod tests {
                 detail: "Got 0xFFFF vs 0xDEAD: FAIL".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn mgba_sub_suite_log_parser_prefers_end_score_over_test_names_with_slashes() {
+        let debug = b"BEGIN: BIOS math testsMath test: Div 00000000/00000000END: 452/615";
+        let sram = b"r0: Got 00000000 vs 00000001: FAIL\0";
+
+        let log = parse_mgba_sub_suite_log(debug, sram, "BIOS math tests");
+
+        assert_eq!(log.passed_count, Some(452));
+        assert_eq!(log.total_count, Some(615));
     }
 
     #[test]

@@ -114,6 +114,55 @@ fn cpu_fast_set_source_requires_bios_execution(addr: u32) -> bool {
     !(0x0200_0000..0x1000_0000).contains(&addr)
 }
 
+fn hle_bios_arctan_values(input: i32) -> (i32, i32, i32) {
+    let intermediate = (input.wrapping_mul(input) >> 14).wrapping_neg();
+    let mut coefficient = 0x00A9i32;
+    for addend in [0x0390, 0x091C, 0x0FB6, 0x16AA, 0x2081, 0x3651, 0xA2F9] {
+        coefficient = (coefficient.wrapping_mul(intermediate) >> 14).wrapping_add(addend);
+    }
+    let result = input.wrapping_mul(coefficient) >> 16;
+    (result, intermediate, coefficient)
+}
+
+fn hle_bios_arctan2_values(x: i32, y: i32) -> (i32, i32) {
+    if y == 0 {
+        return (if x >= 0 { 0 } else { 0x8000 }, y);
+    }
+    if x == 0 {
+        return (if y >= 0 { 0x4000 } else { 0xC000 }, y);
+    }
+
+    if y >= 0 {
+        if x >= 0 {
+            if x >= y {
+                let (angle, intermediate, _) =
+                    hle_bios_arctan_values(y.wrapping_shl(14).wrapping_div(x));
+                return (angle, intermediate);
+            }
+        } else if x.wrapping_neg() >= y {
+            let (angle, intermediate, _) =
+                hle_bios_arctan_values(y.wrapping_shl(14).wrapping_div(x));
+            return (angle.wrapping_add(0x8000), intermediate);
+        }
+        let (angle, intermediate, _) = hle_bios_arctan_values(x.wrapping_shl(14).wrapping_div(y));
+        return (0x4000i32.wrapping_sub(angle), intermediate);
+    }
+
+    if x <= 0 {
+        if x.wrapping_neg() > y.wrapping_neg() {
+            let (angle, intermediate, _) =
+                hle_bios_arctan_values(y.wrapping_shl(14).wrapping_div(x));
+            return (angle.wrapping_add(0x8000), intermediate);
+        }
+    } else if x >= y.wrapping_neg() {
+        let (angle, intermediate, _) = hle_bios_arctan_values(y.wrapping_shl(14).wrapping_div(x));
+        return (angle.wrapping_add(0x10000), intermediate);
+    }
+
+    let (angle, intermediate, _) = hle_bios_arctan_values(x.wrapping_shl(14).wrapping_div(y));
+    (0xC000i32.wrapping_sub(angle), intermediate)
+}
+
 impl Default for Arm7tdmi {
     fn default() -> Self {
         Self::new()
@@ -603,6 +652,7 @@ impl Arm7tdmi {
             0x07 => Some(self.hle_bios_div(true)),
             0x08 => Some(self.hle_bios_sqrt()),
             0x09 => Some(self.hle_bios_arctan()),
+            0x0A => Some(self.hle_bios_arctan2()),
             0x0C => self.hle_bios_cpu_fast_set(bus),
             _ => None,
         }?;
@@ -622,14 +672,14 @@ impl Arm7tdmi {
         };
 
         if denominator == 0 {
-            self.regs.r[0] = 0;
-            self.regs.r[1] = 0;
-            self.regs.r[3] = 0;
+            self.regs.r[0] = if numerator < 0 { u32::MAX } else { 1 };
+            self.regs.r[1] = numerator as u32;
+            self.regs.r[3] = 1;
             return 70;
         }
 
-        let quotient = (numerator as i64 / denominator as i64) as i32;
-        let remainder = (numerator as i64 % denominator as i64) as i32;
+        let quotient = numerator.wrapping_div(denominator);
+        let remainder = numerator.wrapping_rem(denominator);
         self.regs.r[0] = quotient as u32;
         self.regs.r[1] = remainder as u32;
         self.regs.r[3] = quotient.unsigned_abs();
@@ -659,17 +709,21 @@ impl Arm7tdmi {
     }
 
     fn hle_bios_arctan(&mut self) -> u32 {
-        let input = self.regs.r[0] as i32;
-        let square = input as i64 * input as i64;
-        let a = -((square >> 14) as i32);
-        self.regs.r[1] = a as u32;
+        let (result, intermediate, coefficient) = hle_bios_arctan_values(self.regs.r[0] as i32);
+        self.regs.r[0] = result as u32;
+        self.regs.r[1] = intermediate as u32;
+        self.regs.r[3] = coefficient as u32;
 
-        let mut b = 0x00A9i32;
-        for coefficient in [0x0390, 0x091C, 0x0FB6, 0x16AA, 0x2081, 0x3651, 0xA2F9] {
-            b = (((b as i64 * a as i64) >> 14) as i32) + coefficient;
-        }
-        self.regs.r[3] = b as u32;
-        self.regs.r[0] = (((input as i64 * b as i64) >> 16) as i32) as u32;
+        99
+    }
+
+    fn hle_bios_arctan2(&mut self) -> u32 {
+        let x = self.regs.r[0] as i32;
+        let y = self.regs.r[1] as i32;
+        let (result, intermediate) = hle_bios_arctan2_values(x, y);
+        self.regs.r[0] = result as u16 as u32;
+        self.regs.r[1] = intermediate as u32;
+        self.regs.r[3] = 0x170;
 
         99
     }
