@@ -719,6 +719,10 @@ fn mgba_timing_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
     mgba_named_sub_suite_diagnostic_from_gba(gba, "Timing tests")
 }
 
+fn mgba_timers_diagnostic_from_gba(gba: &Gba) -> MgbaMemoryDiagnosticResult {
+    mgba_named_sub_suite_diagnostic_from_gba(gba, "Timer count-up tests")
+}
+
 fn mgba_named_sub_suite_diagnostic_from_gba(
     gba: &Gba,
     suite_name: &str,
@@ -744,6 +748,11 @@ pub fn run_mgba_io_read_diagnostics() -> MgbaMemoryDiagnosticResult {
 pub fn run_mgba_timing_diagnostics() -> MgbaMemoryDiagnosticResult {
     let (gba, _rom) = boot_mgba_suite();
     run_mgba_sub_suite_diagnostics_from_gba(gba, 2, "Timing diagnostics")
+}
+
+pub fn run_mgba_timers_diagnostics() -> MgbaMemoryDiagnosticResult {
+    let (gba, _rom) = boot_mgba_suite();
+    run_mgba_sub_suite_diagnostics_from_gba(gba, 3, "Timers diagnostics")
 }
 
 pub fn run_mgba_io_read_diagnostics_after_bios_intro() -> MgbaMemoryDiagnosticResult {
@@ -832,6 +841,7 @@ fn run_mgba_sub_suite_diagnostics_from_gba_with_boot_frames(
     match suite_index {
         1 => mgba_io_read_diagnostic_from_gba(&gba),
         2 => mgba_timing_diagnostic_from_gba(&gba),
+        3 => mgba_timers_diagnostic_from_gba(&gba),
         _ => mgba_memory_diagnostic_from_gba(&gba),
     }
 }

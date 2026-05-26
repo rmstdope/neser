@@ -93,6 +93,15 @@ pub struct BusMemoryState {
     pub undoc_0x410: u8,
     /// Pending HALTCNT halt request consumed by the CPU wrapper.
     pub halt_requested: bool,
+    /// Global timer cycle phase used when newly enabling prescaled timers.
+    #[serde(default)]
+    pub timer_global_cycles: u32,
+    /// Remaining cycles before a newly asserted IRQ line reaches the CPU.
+    #[serde(default)]
+    pub irq_line_delay_cycles: u32,
+    /// Enabled, pending IRQ sources after the previous CPU/peripheral step.
+    #[serde(default)]
+    pub irq_sources_were_asserted: u16,
 }
 
 /// Complete Game Boy Advance emulator state snapshot.
