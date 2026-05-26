@@ -44,7 +44,7 @@ armwrestler_page7=0x562A5C65
 # 14 sub-suites exercising memory, I/O, timing, shifter, carry, multiply,
 # BIOS math, DMA, SIO, misc edge cases, and video.
 # Scores (passing/total, embedded BIOS): Memory 1552/1552, I/O read 130/130, Timing 2020/2020,
-# Timers 350/936, Timer IRQ 0/90, Shifter 140/140, Carry 93/93,
+# Timers 936/936, Timer IRQ 80/90, Shifter 140/140, Carry 93/93,
 # Multiply long 72/72, BIOS math 427/615, DMA 1116/1256, SIO read 90/90,
 # SIO timing 0/4, Misc. edge 3/12, Video (sub-menu only).
 mgba_memory=0x61F65500
