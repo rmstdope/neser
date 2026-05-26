@@ -250,6 +250,16 @@ fn test_arm_add() {
 
 - Compare S/N cycle output against known emulator traces (mGBA, DeSmuME)
 - Verify instruction prefetch timing matches hardware
+- For timer-driven diagnostics, check both the target diagnostic and any
+  broader timing suites that use timers as measurement instruments.
+- When adding delayed events or global phase counters, include save-state
+  roundtrip coverage for every new timing field that can affect future events.
+- Keep timer register reads side-effect free unless there is source-backed
+  evidence that the read itself advances hardware-visible state; instruction
+  cycle advancement should happen at instruction boundaries.
+- If generated BIOS binaries or suite CRC approvals change as part of timing
+  work, rebuild/update them in the same increment and validate the affected
+  diagnostics before merging.
 
 ### 4. Mode Switching Tests
 
