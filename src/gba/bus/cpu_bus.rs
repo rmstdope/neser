@@ -286,6 +286,7 @@ impl Bus for GbaBus {
                     }
                     let high = (value >> 16) as u16;
                     let timer_enable_phase = self.timer_enable_phase_for_write16(aligned + 2, high);
+                    self.defer_active_timer_reload_write_cycle(aligned);
                     self.prestep_timer_disable_for_write16(aligned + 2, high);
                     self.mark_timer_start_delay_for_write16(aligned + 2, high);
                     self.mark_dma_start_delay_for_write16(aligned + 2, (value >> 16) as u16);
@@ -364,6 +365,7 @@ impl Bus for GbaBus {
                         }
                     }
                     let timer_enable_phase = self.timer_enable_phase_for_write16(aligned, value);
+                    self.defer_active_timer_reload_write_cycle(aligned);
                     self.prestep_timer_disable_for_write16(aligned, value);
                     self.mark_timer_start_delay_for_write16(aligned, value);
                     self.mark_dma_start_delay_for_write16(aligned, value);
