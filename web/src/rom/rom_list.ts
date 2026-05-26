@@ -1,3 +1,5 @@
+import { isSupportedWebRomName } from "./rom_extensions";
+
 export function parseDirectoryListing(html: string) {
     const dirs = [];
     const roms = [];
@@ -8,7 +10,7 @@ export function parseDirectoryListing(html: string) {
         if (!href || href === "../") continue;
         if (href.endsWith("/")) {
             dirs.push(href);
-        } else if (href.toLowerCase().endsWith(".nes") || href.toLowerCase().endsWith(".gb")) {
+        } else if (isSupportedWebRomName(href)) {
             roms.push(href);
         }
     }
@@ -94,7 +96,7 @@ export async function fetchRomList(baseUrl: string, fetchFn: typeof fetch = fetc
     const manifest = await manifestResponse.json();
     const roms = Array.isArray(manifest?.roms) ? manifest.roms : [];
     return roms
-        .filter((rom: string) => typeof rom === "string" && (rom.toLowerCase().endsWith(".nes") || rom.toLowerCase().endsWith(".gb")))
+        .filter((rom: string) => typeof rom === "string" && isSupportedWebRomName(rom))
         .map((rom: string) => ({
             path: rom.replace(/^\//, ""),
             url: new URL(rom.replace(/^\//, ""), baseRoot).toString()

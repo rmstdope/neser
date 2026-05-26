@@ -140,15 +140,17 @@ it("parseDirectoryListing includes .gb files alongside .nes", () => {
     expect(roms).toContain("game.nes");
 });
 
-it("parseDirectoryListing excludes .gbc files", () => {
+it("parseDirectoryListing includes .gbc and .cgb files", () => {
     const html = `
         <html><body>
             <a href="game.gbc">game.gbc</a>
+            <a href="camera.cgb">camera.cgb</a>
             <a href="game.gb">game.gb</a>
         </body></html>
     `;
     const { roms } = parseDirectoryListing(html);
-    expect(roms).not.toContain("game.gbc");
+    expect(roms).toContain("game.gbc");
+    expect(roms).toContain("camera.cgb");
     expect(roms).toContain("game.gb");
 });
 
@@ -185,7 +187,7 @@ it("fetchRomList manifest fallback includes .gb entries", async () => {
     const responses = new Map([
         [base, ""],
         [`${base}roms.json`, JSON.stringify({
-            roms: ["tetris.gb", "game.nes", "color.gbc"]
+            roms: ["tetris.gb", "game.nes", "color.gbc", "camera.cgb"]
         })]
     ]);
 
@@ -205,5 +207,6 @@ it("fetchRomList manifest fallback includes .gb entries", async () => {
     const paths = entries.map((entry: any) => entry.path);
     expect(paths).toContain("tetris.gb");
     expect(paths).toContain("game.nes");
-    expect(paths).not.toContain("color.gbc");
+    expect(paths).toContain("color.gbc");
+    expect(paths).toContain("camera.cgb");
 });

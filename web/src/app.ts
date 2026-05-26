@@ -12,6 +12,7 @@ import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton, isZappe
 import { createSaveStateContext } from "./save-state/save_state_context";
 import { fetchRomList } from "./rom/rom_list";
 import { handleRomSelection } from "./rom/rom_selection";
+import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionForName, type WebRomConsoleKind } from "./rom/rom_extensions";
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
@@ -726,10 +727,10 @@ function updateEmulationButtons() {
 }
 
 /** Create a fresh NES or GB emulator instance and update kind-dependent UI. */
-function createEmulatorInstance(ext: string): void {
+function createEmulatorInstance(kind: WebRomConsoleKind): void {
     // Free the previous WASM instance to avoid leaking its linear memory.
     emulator?.inst.free();
-    if (ext === "gb") {
+    if (kind === "gb") {
         const gb = new WasmGb();
         emulator = { kind: "gb", inst: gb };
         nes = null;
@@ -1189,11 +1190,12 @@ async function start() {
         return;
     }
     const romName = romMetadata?.name ?? "selected-rom.nes";
-    const ext = romName.toLowerCase().split(".").pop() ?? "";
+    const consoleKind = webRomConsoleKindForName(romName);
 
     // Reject unsupported file types before any async work.
-    if (ext !== "nes" && ext !== "gb") {
-        toastOverlay.show(`Unsupported file type .${ext} — only .nes and .gb are supported`);
+    if (!consoleKind) {
+        const ext = webRomExtensionForName(romName);
+        toastOverlay.show(`Unsupported file type .${ext} — only ${supportedRomExtensionsText()} are supported`);
         setStatus(`Unsupported file type .${ext}`, true);
         updateEmulationButtons();
         return;
@@ -1210,10 +1212,10 @@ async function start() {
                 throw new Error("Failed to initialize WebGL");
             }
 
-            createEmulatorInstance(ext);
-        } else if (emulator.kind !== ext) {
+            createEmulatorInstance(consoleKind);
+        } else if (emulator.kind !== consoleKind) {
             // Switching emulator kind (NES ↔ GB).
-            createEmulatorInstance(ext);
+            createEmulatorInstance(consoleKind);
         }
 
         // ── NES-only: Autorun setup (configure before loading ROM) ──────────
