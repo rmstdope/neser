@@ -54,7 +54,8 @@ impl Sio {
         }
     }
 
-    /// Read SIOCNT (0x0400_0128). Bit 7 reflects live transfer state.
+    /// Read SIOCNT (0x0400_0128). In Normal/Multi modes, bit 7 reflects
+    /// live transfer state; in UART/GPIO modes, it reflects the written value.
     /// Applies the mode-dependent read mask (UART: 0x7FAF, others: 0x7F8F).
     pub fn read_siocnt(&self) -> u16 {
         let mode = self.mode();
@@ -76,7 +77,8 @@ impl Sio {
         val & mask
     }
 
-    /// Write SIOCNT (0x0400_0128). A rising edge on bit 7 starts a transfer.
+    /// Write SIOCNT (0x0400_0128). In Normal/Multi modes, a rising edge on
+    /// bit 7 starts a transfer; in UART/GPIO modes, bit 7 is preserved only.
     pub fn write_siocnt(&mut self, value: u16) -> bool {
         let old_mode = self.mode();
         self.siocnt = value;
@@ -91,7 +93,7 @@ impl Sio {
         let was_busy = self.transfer_active;
         let mut started = false;
 
-        // Rising edge on bit 7 starts a transfer
+        // Rising edge on bit 7 starts a transfer in Normal/Multi modes.
         if !was_busy
             && value & 0x0080 != 0
             && matches!(mode, SioMode::Normal8 | SioMode::Normal32 | SioMode::Multi)
