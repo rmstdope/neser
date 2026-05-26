@@ -132,6 +132,9 @@ pub struct GbaBus {
     pub(super) cpu_instruction_active: bool,
     /// Timer cycles already advanced inside the current CPU instruction.
     pub(super) timer_cycles_prestepped_this_instruction: u32,
+    /// Timers whose next IRQ follows an immediate FFFF overflow reload-write
+    /// timing path and needs one cycle of CPU-visible IRQ compensation.
+    pub(super) immediate_overflow_irq_compensation_pending: [bool; 4],
 }
 
 impl Default for GbaBus {
@@ -215,6 +218,7 @@ impl GbaBus {
             irq_sources_were_asserted: 0,
             cpu_instruction_active: false,
             timer_cycles_prestepped_this_instruction: 0,
+            immediate_overflow_irq_compensation_pending: [false; 4],
         }
     }
 
@@ -391,6 +395,7 @@ impl GbaBus {
         self.handle_ppu_events(events);
         self.run_pending_dma_after_start_delay(cycles);
         self.latch_cpu_irq_line();
+        self.clear_immediate_overflow_compensation_for_overflows(overflow_mask);
     }
 
     /// Step peripherals after one CPU instruction. If that instruction enabled
@@ -424,6 +429,7 @@ impl GbaBus {
         self.handle_ppu_events(events);
         self.run_pending_dma_after_start_delay(cycles);
         self.latch_cpu_irq_line();
+        self.clear_immediate_overflow_compensation_for_overflows(overflow_mask);
     }
 
     pub(super) fn advance_cpu_irq_line_delay(&mut self, cycles: u32) {
@@ -437,11 +443,41 @@ impl GbaBus {
         let newly_asserted = active_sources & !self.irq_sources_were_asserted;
         let cycles_late = self.ic.take_irq_cycles_late();
         if newly_asserted & DELAYED_IRQ_SOURCES != 0 {
-            self.irq_line_delay_cycles = irq_line_assert_delay_cycles().saturating_sub(cycles_late);
+            let compensation =
+                u32::from(self.take_immediate_overflow_irq_compensation(newly_asserted));
+            self.irq_line_delay_cycles =
+                irq_line_assert_delay_cycles().saturating_sub(cycles_late + compensation);
         } else if active_sources & DELAYED_IRQ_SOURCES == 0 {
             self.irq_line_delay_cycles = 0;
         }
         self.irq_sources_were_asserted = active_sources;
+    }
+
+    fn take_immediate_overflow_irq_compensation(&mut self, newly_asserted: u16) -> bool {
+        const TIMER_IRQ_BITS: [u16; 4] = [
+            irq_bits::TIMER0,
+            irq_bits::TIMER1,
+            irq_bits::TIMER2,
+            irq_bits::TIMER3,
+        ];
+
+        let mut compensate = false;
+        for (timer, bit) in TIMER_IRQ_BITS.iter().enumerate() {
+            if newly_asserted & bit != 0 && self.immediate_overflow_irq_compensation_pending[timer]
+            {
+                compensate = true;
+                self.immediate_overflow_irq_compensation_pending[timer] = false;
+            }
+        }
+        compensate
+    }
+
+    fn clear_immediate_overflow_compensation_for_overflows(&mut self, overflow_mask: [u32; 4]) {
+        for (timer, overflows) in overflow_mask.iter().enumerate() {
+            if *overflows > 0 {
+                self.immediate_overflow_irq_compensation_pending[timer] = false;
+            }
+        }
     }
 
     pub(super) fn prestep_timers_before_cpu_sample(&mut self, cycles: u32) {
@@ -453,6 +489,7 @@ impl GbaBus {
         let overflow_mask = self.timers.step(cycles, &mut self.ic);
         self.handle_timer_overflow_fifo(overflow_mask);
         self.latch_cpu_irq_line();
+        self.clear_immediate_overflow_compensation_for_overflows(overflow_mask);
         self.timer_cycles_prestepped_this_instruction = self
             .timer_cycles_prestepped_this_instruction
             .saturating_add(cycles);
@@ -466,6 +503,7 @@ impl GbaBus {
             }
             let overflow_mask = self.timers.step(cycles, &mut self.ic);
             self.handle_timer_overflow_fifo(overflow_mask);
+            self.clear_immediate_overflow_compensation_for_overflows(overflow_mask);
             self.apu.tick(cycles);
             let events = self.ppu.step(
                 cycles,
@@ -534,6 +572,21 @@ impl GbaBus {
         };
         if self.timers.channels[timer].enabled() && value & 0x0080 == 0 {
             self.prestep_timers_before_cpu_sample(1);
+            self.immediate_overflow_irq_compensation_pending[timer] = false;
+        }
+    }
+
+    pub(super) fn defer_active_timer_reload_write_cycle(&mut self, addr: u32) {
+        let is_timer_reload = matches!(addr, 0x0400_0100 | 0x0400_0104 | 0x0400_0108 | 0x0400_010C);
+        if !is_timer_reload || !self.cpu_instruction_active {
+            return;
+        }
+        let timer = ((addr - 0x0400_0100) / 4) as usize;
+        if self.timers.channels[timer].enabled() && self.timers.channels[timer].counter == 0xFFFF {
+            self.timer_cycles_prestepped_this_instruction = self
+                .timer_cycles_prestepped_this_instruction
+                .saturating_add(1);
+            self.immediate_overflow_irq_compensation_pending[timer] = true;
         }
     }
 
@@ -739,6 +792,7 @@ impl GbaBus {
         self.dma_start_delay_cycles = 0;
         self.cpu_instruction_active = false;
         self.timer_cycles_prestepped_this_instruction = 0;
+        self.immediate_overflow_irq_compensation_pending = [false; 4];
         Ok(())
     }
 
@@ -1064,7 +1118,9 @@ mod tests {
         clear_gba_bus_trace_lines_for_tests, take_gba_bus_trace_lines_for_tests,
     };
     use crate::gba::bios::EMBEDDED_BIOS;
-    use crate::gba::bus::{REG_IE, REG_IF, REG_IME, WidthClass, irq_bits};
+    use crate::gba::bus::WidthClass;
+    use crate::gba::bus::interrupt::bits as irq_bits;
+    use crate::gba::bus::io::{REG_IE, REG_IF, REG_IME};
     use crate::gba::cartridge::{Flash, SaveBackend};
     use crate::gba::console::config::GbaTraceConfig;
     use crate::gba::cpu::bus::Bus;
@@ -1471,6 +1527,49 @@ mod tests {
         assert_eq!(bus.read16(0x0400_0100), 1);
         bus.step_after_cpu_instruction(1);
         assert_eq!(bus.read16(0x0400_0100), 2);
+    }
+
+    #[test]
+    fn active_timer_reload_from_ffff_defers_current_instruction_tick() {
+        let mut bus = GbaBus::new();
+        bus.write16(0x0400_0100, 0xFFFF);
+        bus.write16(0x0400_0102, 0x00C0 | 0x0080);
+
+        bus.begin_cpu_instruction();
+        bus.write16(0x0400_0100, 0);
+        bus.end_cpu_instruction();
+        bus.step_after_cpu_instruction(1);
+
+        assert_eq!(
+            bus.read16(0x0400_0100),
+            0xFFFF,
+            "the active reload write cycle should not immediately tick TM0 from FFFF"
+        );
+        assert_eq!(bus.ic.if_flags & irq_bits::TIMER0, 0);
+    }
+
+    #[test]
+    fn immediate_ffff_overflow_irq_line_uses_compensated_delay() {
+        let mut bus = GbaBus::new();
+        bus.write16(REG_IE, irq_bits::TIMER0);
+        bus.write16(REG_IME, 1);
+        bus.write16(0x0400_0100, 0xFFFF);
+        bus.write16(0x0400_0102, 0x00C0 | 0x0080);
+
+        bus.begin_cpu_instruction();
+        bus.write16(0x0400_0100, 0);
+        bus.end_cpu_instruction();
+        bus.step_after_cpu_instruction(1);
+        bus.step_after_cpu_instruction(1);
+
+        assert_ne!(bus.ic.if_flags & irq_bits::TIMER0, 0);
+        assert!(!bus.cpu_irq_line());
+        bus.step_after_cpu_instruction(4);
+        assert!(
+            bus.cpu_irq_line(),
+            "immediate FFFF overflow should reach the CPU after the compensated timer IRQ delay"
+        );
+        assert!(!bus.immediate_overflow_irq_compensation_pending[0]);
     }
 
     #[test]

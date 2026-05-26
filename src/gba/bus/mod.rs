@@ -22,9 +22,9 @@ pub mod sio;
 pub mod timer;
 mod waitstates;
 
-pub use dma::{DmaBus, DmaChannel, DmaController};
+pub use dma::DmaController;
 pub use gba_bus::GbaBus;
-pub use interrupt::{InterruptController, bits as irq_bits};
-pub use io::{IoRegisters, REG_IE, REG_IF, REG_IME};
-pub use timer::{Timer, Timers};
+pub use interrupt::InterruptController;
+pub use io::IoRegisters;
+pub use timer::Timers;
 pub use waitstates::{Waitstates, WidthClass};
