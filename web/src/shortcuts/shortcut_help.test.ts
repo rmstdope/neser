@@ -143,12 +143,17 @@ it("buildControllerOverlayText shows only one Game Boy controller with A and B",
 it("buildControllerOverlayText reserves X, Y, and shoulder keys for AGB", () => {
     const text = buildControllerOverlayText(0, "gba");
     expect(text).toMatch(/Controller \(Player 1\)/);
+    expect(text).toMatch(/W\/A\/S\/D: D-Pad/);
     expect(text).toMatch(/R: Y/);
     expect(text).toMatch(/T: X/);
     expect(text).toMatch(/F: B/);
     expect(text).toMatch(/G: A/);
-    expect(text).toMatch(/Q: L/);
-    expect(text).toMatch(/E: R/);
+    expect(text).toMatch(/V: L/);
+    expect(text).toMatch(/B: R/);
+    expect(text).toMatch(/4: Select/);
+    expect(text).toMatch(/5: Start/);
+    expect(text).not.toMatch(/Q: L/);
+    expect(text).not.toMatch(/E: R/);
     expect(text).not.toMatch(/Controller \(Player 2\)/);
 });
 

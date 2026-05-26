@@ -17,7 +17,7 @@ const PLAYER_KEYBOARD_BINDINGS = [
     "I/J/K/L: D-Pad\nO: A\nP: B\n9: Select\n0: Start"
 ];
 
-const AGB_KEYBOARD_BINDINGS = "W/A/S/D: D-Pad\nR: Y\nT: X\nF: B\nG: A\nQ: L\nE: R\n4: Select\n5: Start";
+const AGB_KEYBOARD_BINDINGS = "W/A/S/D: D-Pad\nR: Y\nT: X\nF: B\nG: A\nV: L\nB: R\n4: Select\n5: Start";
 
 export type HelpConsoleKind = "nes" | "gb" | "gba";
 
