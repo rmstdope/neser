@@ -7,14 +7,17 @@ export function gbaKeyboardButtonForEvent(event: Pick<KeyboardEvent, "key" | "co
             return 1;
         case "backspace":
             return 2;
+        case "5":
         case "enter":
             return 3;
         case "arrowup":
             return 4;
         case "arrowdown":
             return 5;
+        case "v":
         case "arrowleft":
             return 6;
+        case "b":
         case "arrowright":
             return 7;
         case "a":

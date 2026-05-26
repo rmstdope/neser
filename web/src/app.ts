@@ -748,6 +748,7 @@ function createEmulatorInstance(kind: WebRomConsoleKind): void {
         emulator = { kind: "nes", inst: nes };
     }
     updateNesDisplayDimensions();
+    resizeCanvasForCurrentDisplayMode();
     updateEmulatorKindUI();
 }
 
@@ -2829,6 +2830,16 @@ function updateHandheldCanvasSize() {
         crosshair.updateCanvasSize();
     }
     updateShortcutHelpScale();
+}
+
+function resizeCanvasForCurrentDisplayMode() {
+    if (isInFullscreen() && !isHandheldDevice()) {
+        updateCanvasSizeForFullscreenViewport();
+    } else if (isHandheldDevice()) {
+        updateHandheldCanvasSize();
+    } else {
+        updateCanvasSize(currentHeight);
+    }
 }
 
 function updateShortcutHelpScale() {

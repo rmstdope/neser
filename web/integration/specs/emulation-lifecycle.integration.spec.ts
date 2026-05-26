@@ -78,4 +78,20 @@ test.describe("Phase 1 critical path lifecycle", () => {
         await waitForRunningState(page);
         await expect(page.locator(START_BUTTON_SELECTOR)).toBeDisabled();
     });
+
+    test("Given a GBA ROM is loaded, when the canvas is resized, then the GBA aspect ratio is preserved", async ({ page }) => {
+        await openApp(page);
+
+        await loadGbaRomFromFileInput(page);
+        await waitForRunningState(page);
+
+        const canvasSize = await page.locator("#screen").evaluate((canvas) => {
+            if (!(canvas instanceof HTMLCanvasElement)) {
+                throw new Error("Expected #screen to be a canvas");
+            }
+            return { width: canvas.width, height: canvas.height };
+        });
+
+        expect(canvasSize.width / canvasSize.height).toBeCloseTo(240 / 160, 2);
+    });
 });
