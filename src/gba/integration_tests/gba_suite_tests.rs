@@ -536,7 +536,7 @@ fn gba_mgba_timer_irq_diagnostics_passes_every_irq_case() {
 }
 
 #[test]
-fn gba_mgba_dma_diagnostics_reports_current_score() {
+fn gba_mgba_dma_diagnostics_passes_every_case() {
     let result = run_mgba_dma_diagnostics();
 
     assert_eq!(
@@ -546,9 +546,14 @@ fn gba_mgba_dma_diagnostics_reports_current_score() {
         result.raw_log
     );
     assert_eq!(
-        result.passed_count,
-        Some(1120),
-        "raw mGBA DMA log:\n{}",
+        result.passed_count, result.total_count,
+        "mGBA DMA diagnostics should pass every case with the embedded BIOS.\nfailures: {:?}\nraw log:\n{}",
+        result.failures, result.raw_log
+    );
+    assert!(
+        result.failures.is_empty(),
+        "mGBA DMA diagnostics reported failures with the embedded BIOS: {:?}\nraw log:\n{}",
+        result.failures,
         result.raw_log
     );
 }
@@ -648,7 +653,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("mgba_carry"), Some(&0xFD9E_45E6));
     assert_eq!(approvals.get("mgba_multiply_long"), Some(&0x6996_55AB));
     assert_eq!(approvals.get("mgba_bios_math"), Some(&0x3C1B_28DE));
-    assert_eq!(approvals.get("mgba_dma"), Some(&0x9090_0973));
+    assert_eq!(approvals.get("mgba_dma"), Some(&0x06A6_24A4));
     assert_eq!(approvals.get("mgba_sio_read"), Some(&0xF5D9_8687));
     assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));
     assert_eq!(approvals.get("mgba_misc_edge"), Some(&0x36EC_DBF9));

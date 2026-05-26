@@ -1868,7 +1868,7 @@ mod tests {
     }
 
     #[test]
-    fn dma0_source_masks_game_pak_rom_to_internal_memory() {
+    fn dma0_game_pak_rom_source_uses_initial_dma_latch_after_internal_mask() {
         let mut bus = GbaBus::new();
         bus.load_bios(&0x1122_3344u32.to_le_bytes());
         bus.load_rom(&0xAABB_CCDDu32.to_le_bytes());
@@ -1877,7 +1877,9 @@ mod tests {
         write_dma_registers(&mut bus, 0, 0x0800_0000, 0x0200_0000, 1, 0x8000 | 0x0400);
         step_past_immediate_dma_start_delay(&mut bus);
 
-        assert_eq!(bus.read32(0x0200_0000), 0x1122_3344);
+        // DMA0 masks Game Pak source addresses into the internal-memory range,
+        // but DMA reads below EWRAM reuse the channel's transfer latch.
+        assert_eq!(bus.read32(0x0200_0000), 0);
     }
 
     #[test]
