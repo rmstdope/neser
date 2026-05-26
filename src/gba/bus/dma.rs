@@ -515,6 +515,47 @@ impl DmaController {
         self.run_burst(idx, bus);
     }
 
+    /// Perform one read-with-latch / write / address-step unit for channel `idx`.
+    fn execute_transfer_unit<B: DmaBus>(
+        &mut self,
+        idx: usize,
+        src: u32,
+        dst: u32,
+        active_word: bool,
+        src_ctrl: AddrControl,
+        dst_step: i64,
+        fifo_dst: Option<u32>,
+        bus: &mut B,
+    ) {
+        if active_word {
+            let v = if dma_source_updates_latch(src) {
+                let v = bus.dma_read32(src & !0x3);
+                self.channels[idx].latch = v;
+                v
+            } else {
+                self.channels[idx].latch
+            };
+            bus.dma_write32(dst & !0x3, v);
+        } else {
+            let v = if dma_source_updates_latch(src) {
+                let v = bus.dma_read16(src & !0x1);
+                self.channels[idx].latch = u32::from(v) | (u32::from(v) << 16);
+                v
+            } else if dst & 0x2 == 0 {
+                self.channels[idx].latch as u16
+            } else {
+                (self.channels[idx].latch >> 16) as u16
+            };
+            bus.dma_write16(dst & !0x1, v);
+        }
+        let active_unit = if active_word { 4u32 } else { 2u32 };
+        let src_step = dma_source_step(src, src_ctrl, active_unit);
+        self.channels[idx].cur_src = (src as i64).wrapping_add(src_step) as u32;
+        if fifo_dst.is_none() {
+            self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
+        }
+    }
+
     fn run_burst<B: DmaBus>(&mut self, idx: usize, bus: &mut B) {
         // Resolve transfer parameters from the channel register snapshot.
         let (is_word, src_ctrl, dst_ctrl, special, irq, repeat) = {
@@ -554,7 +595,6 @@ impl DmaController {
         };
 
         let active_word = is_word || force_word;
-        let active_unit = if active_word { 4u32 } else { 2u32 };
         self.channels[idx].active = true;
         let mut first_unit = true;
         self.cpu_stall += 2;
@@ -596,32 +636,7 @@ impl DmaController {
             let dst = fifo_dst.unwrap_or(self.channels[idx].cur_dst);
             self.cpu_stall += dma_unit_cycles(bus, src, dst, active_word, first_unit);
             first_unit = false;
-            if active_word {
-                let v = if dma_source_updates_latch(src) {
-                    let v = bus.dma_read32(src & !0x3);
-                    self.channels[idx].latch = v;
-                    v
-                } else {
-                    self.channels[idx].latch
-                };
-                bus.dma_write32(dst & !0x3, v);
-            } else {
-                let v = if dma_source_updates_latch(src) {
-                    let v = bus.dma_read16(src & !0x1);
-                    self.channels[idx].latch = u32::from(v) | (u32::from(v) << 16);
-                    v
-                } else if dst & 0x2 == 0 {
-                    self.channels[idx].latch as u16
-                } else {
-                    (self.channels[idx].latch >> 16) as u16
-                };
-                bus.dma_write16(dst & !0x1, v);
-            }
-            let active_src_step = dma_source_step(src, src_ctrl, active_unit);
-            self.channels[idx].cur_src = (src as i64).wrapping_add(active_src_step) as u32;
-            if fifo_dst.is_none() {
-                self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
-            }
+            self.execute_transfer_unit(idx, src, dst, active_word, src_ctrl, dst_step, fifo_dst, bus);
             count -= 1;
         }
 
@@ -660,32 +675,7 @@ impl DmaController {
             let dst = fifo_dst.unwrap_or(self.channels[idx].cur_dst);
             self.cpu_stall += dma_unit_cycles(bus, src, dst, active_word, first_unit);
             first_unit = false;
-            if active_word {
-                let v = if dma_source_updates_latch(src) {
-                    let v = bus.dma_read32(src & !0x3);
-                    self.channels[idx].latch = v;
-                    v
-                } else {
-                    self.channels[idx].latch
-                };
-                bus.dma_write32(dst & !0x3, v);
-            } else {
-                let v = if dma_source_updates_latch(src) {
-                    let v = bus.dma_read16(src & !0x1);
-                    self.channels[idx].latch = u32::from(v) | (u32::from(v) << 16);
-                    v
-                } else if dst & 0x2 == 0 {
-                    self.channels[idx].latch as u16
-                } else {
-                    (self.channels[idx].latch >> 16) as u16
-                };
-                bus.dma_write16(dst & !0x1, v);
-            }
-            let src_step = dma_source_step(src, src_ctrl, if active_word { 4u32 } else { 2u32 });
-            self.channels[idx].cur_src = (src as i64).wrapping_add(src_step) as u32;
-            if fifo_dst.is_none() {
-                self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
-            }
+            self.execute_transfer_unit(idx, src, dst, active_word, src_ctrl, dst_step, fifo_dst, bus);
             count -= 1;
         }
         self.finish_burst(idx, special, irq, repeat, bus);
