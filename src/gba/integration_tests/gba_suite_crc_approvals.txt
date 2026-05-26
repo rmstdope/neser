@@ -45,7 +45,7 @@ armwrestler_page7=0x562A5C65
 # BIOS math, DMA, SIO, misc edge cases, and video.
 # Scores (passing/total, embedded BIOS): Memory 1552/1552, I/O read 130/130, Timing 2020/2020,
 # Timers 936/936, Timer IRQ 90/90, Shifter 140/140, Carry 93/93,
-# Multiply long 72/72, BIOS math 615/615, DMA 1120/1256, SIO read 90/90,
+# Multiply long 72/72, BIOS math 615/615, DMA 1256/1256, SIO read 90/90,
 # SIO timing 0/4, Misc. edge 3/12, Video (sub-menu only).
 mgba_memory=0x61F65500
 mgba_io_read=0x7D320909
@@ -56,7 +56,7 @@ mgba_shifter=0x8B4A12AA
 mgba_carry=0xFD9E45E6
 mgba_multiply_long=0x699655AB
 mgba_bios_math=0x3C1B28DE
-mgba_dma=0x90900973
+mgba_dma=0x06A624A4
 mgba_sio_read=0xF5D98687
 mgba_sio_timing=0xD95ACB03
 mgba_misc_edge=0x36ECDBF9

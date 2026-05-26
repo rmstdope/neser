@@ -134,6 +134,10 @@ pub struct DmaChannel {
     /// Whether the channel is currently running (used so that a
     /// higher-priority channel can preempt mid-transfer).
     active: bool,
+    /// Per-channel DMA transfer latch. Reads from invalid/locked source
+    /// regions reuse this value instead of updating it from the bus.
+    #[serde(default)]
+    latch: u32,
 }
 
 impl DmaChannel {
@@ -438,6 +442,26 @@ fn dma_unit_cycles<B: DmaBus>(bus: &B, src: u32, dst: u32, word: bool, first_uni
     src_cycles + dst_cycles
 }
 
+fn dma_source_updates_latch(src: u32) -> bool {
+    src >= 0x0200_0000
+}
+
+fn dma_source_forces_increment(src: u32) -> bool {
+    matches!((src >> 24) & 0xF, 0x8..=0xD)
+}
+
+fn dma_source_step(src: u32, src_ctrl: AddrControl, unit: u32) -> i64 {
+    if dma_source_forces_increment(src) {
+        return unit as i64;
+    }
+
+    match src_ctrl {
+        AddrControl::Increment => unit as i64,
+        AddrControl::Decrement => -(unit as i64),
+        _ => 0,
+    }
+}
+
 impl DmaController {
     /// Run any pending Immediate-mode transfers, draining the highest-
     /// priority channel first. Higher-priority channels that become
@@ -505,11 +529,6 @@ impl DmaController {
             )
         };
         let unit = if is_word { 4u32 } else { 2u32 };
-        let src_step: i64 = match src_ctrl {
-            AddrControl::Increment => unit as i64,
-            AddrControl::Decrement => -(unit as i64),
-            _ => 0,
-        };
         let dst_step: i64 = match dst_ctrl {
             AddrControl::Increment | AddrControl::IncrementReload => unit as i64,
             AddrControl::Decrement => -(unit as i64),
@@ -536,14 +555,6 @@ impl DmaController {
 
         let active_word = is_word || force_word;
         let active_unit = if active_word { 4u32 } else { 2u32 };
-        let active_src_step = if src_step == 0 {
-            0
-        } else if src_step > 0 {
-            active_unit as i64
-        } else {
-            -(active_unit as i64)
-        };
-
         self.channels[idx].active = true;
         let mut first_unit = true;
         self.cpu_stall += 2;
@@ -570,7 +581,7 @@ impl DmaController {
                         idx,
                         count,
                         active_word,
-                        active_src_step,
+                        src_ctrl,
                         dst_step,
                         special,
                         irq,
@@ -586,12 +597,27 @@ impl DmaController {
             self.cpu_stall += dma_unit_cycles(bus, src, dst, active_word, first_unit);
             first_unit = false;
             if active_word {
-                let v = bus.dma_read32(src & !0x3);
+                let v = if dma_source_updates_latch(src) {
+                    let v = bus.dma_read32(src & !0x3);
+                    self.channels[idx].latch = v;
+                    v
+                } else {
+                    self.channels[idx].latch
+                };
                 bus.dma_write32(dst & !0x3, v);
             } else {
-                let v = bus.dma_read16(src & !0x1);
+                let v = if dma_source_updates_latch(src) {
+                    let v = bus.dma_read16(src & !0x1);
+                    self.channels[idx].latch = u32::from(v) | (u32::from(v) << 16);
+                    v
+                } else if dst & 0x2 == 0 {
+                    self.channels[idx].latch as u16
+                } else {
+                    (self.channels[idx].latch >> 16) as u16
+                };
                 bus.dma_write16(dst & !0x1, v);
             }
+            let active_src_step = dma_source_step(src, src_ctrl, active_unit);
             self.channels[idx].cur_src = (src as i64).wrapping_add(active_src_step) as u32;
             if fifo_dst.is_none() {
                 self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
@@ -608,7 +634,7 @@ impl DmaController {
         idx: usize,
         mut count: u32,
         active_word: bool,
-        src_step: i64,
+        src_ctrl: AddrControl,
         dst_step: i64,
         special: bool,
         irq: bool,
@@ -635,12 +661,27 @@ impl DmaController {
             self.cpu_stall += dma_unit_cycles(bus, src, dst, active_word, first_unit);
             first_unit = false;
             if active_word {
-                let v = bus.dma_read32(src & !0x3);
+                let v = if dma_source_updates_latch(src) {
+                    let v = bus.dma_read32(src & !0x3);
+                    self.channels[idx].latch = v;
+                    v
+                } else {
+                    self.channels[idx].latch
+                };
                 bus.dma_write32(dst & !0x3, v);
             } else {
-                let v = bus.dma_read16(src & !0x1);
+                let v = if dma_source_updates_latch(src) {
+                    let v = bus.dma_read16(src & !0x1);
+                    self.channels[idx].latch = u32::from(v) | (u32::from(v) << 16);
+                    v
+                } else if dst & 0x2 == 0 {
+                    self.channels[idx].latch as u16
+                } else {
+                    (self.channels[idx].latch >> 16) as u16
+                };
                 bus.dma_write16(dst & !0x1, v);
             }
+            let src_step = dma_source_step(src, src_ctrl, if active_word { 4u32 } else { 2u32 });
             self.channels[idx].cur_src = (src as i64).wrapping_add(src_step) as u32;
             if fifo_dst.is_none() {
                 self.channels[idx].cur_dst = (dst as i64).wrapping_add(dst_step) as u32;
@@ -835,6 +876,11 @@ mod tests {
         count: u16,
         cnt: u16,
     ) {
+        let sad = if (0x1000..0x8000).contains(&sad) {
+            0x0200_0000 | sad
+        } else {
+            sad
+        };
         let base = 0x0400_00B0 + (chan as u32) * 12;
         d.write16(base, sad as u16);
         d.write16(base + 2, (sad >> 16) as u16);
@@ -916,6 +962,122 @@ mod tests {
         d.run_pending(&mut bus);
         // Last value wins at 0x2000.
         assert_eq!(bus.read32_at(0x2000), 0xAA02);
+    }
+
+    #[test]
+    fn game_pak_source_addresses_increment_even_when_source_control_is_fixed() {
+        let mut bus = TestBus::new();
+        for i in 0..4 {
+            bus.write32_at(0x0800_0000 + i * 4, 0xDEAD_BEEF + i);
+        }
+
+        let mut d = DmaController::new();
+        write_dma_setup(
+            &mut d,
+            1,
+            0x0800_0000,
+            0x2000,
+            4,
+            cnt_h(true, false, 0, true, false, 2, 0),
+        );
+
+        d.run_pending(&mut bus);
+
+        assert_eq!(bus.read32_at(0x2000), 0xDEAD_BEEF);
+        assert_eq!(bus.read32_at(0x2004), 0xDEAD_BEF0);
+        assert_eq!(bus.read32_at(0x2008), 0xDEAD_BEF1);
+        assert_eq!(bus.read32_at(0x200C), 0xDEAD_BEF2);
+    }
+
+    #[test]
+    fn invalid_source_addresses_reuse_each_channels_dma_latch() {
+        let mut bus = TestBus::new();
+        bus.write32_at(0x0200_0000, 0x1111_1111);
+        bus.write32_at(0x0200_0100, 0x2222_2222);
+
+        let mut d = DmaController::new();
+        write_dma_setup(
+            &mut d,
+            0,
+            0x0200_0000,
+            0x3000,
+            1,
+            cnt_h(true, false, 0, true, false, 0, 0),
+        );
+        d.run_pending(&mut bus);
+
+        write_dma_setup(
+            &mut d,
+            1,
+            0x0200_0100,
+            0x3004,
+            1,
+            cnt_h(true, false, 0, true, false, 0, 0),
+        );
+        d.run_pending(&mut bus);
+
+        write_dma_setup(
+            &mut d,
+            0,
+            0x0000_0010,
+            0x3010,
+            1,
+            cnt_h(true, false, 0, true, false, 0, 0),
+        );
+        d.run_pending(&mut bus);
+
+        write_dma_setup(
+            &mut d,
+            1,
+            0x0000_0010,
+            0x3014,
+            1,
+            cnt_h(true, false, 0, true, false, 0, 0),
+        );
+        d.run_pending(&mut bus);
+
+        assert_eq!(bus.read32_at(0x3010), 0x1111_1111);
+        assert_eq!(bus.read32_at(0x3014), 0x2222_2222);
+    }
+
+    #[test]
+    fn invalid_halfword_source_uses_latch_half_selected_by_destination_alignment() {
+        let mut bus = TestBus::new();
+        bus.write32_at(0x0200_0000, 0xAAAA_BBBB);
+
+        let mut d = DmaController::new();
+        write_dma_setup(
+            &mut d,
+            1,
+            0x0200_0000,
+            0x3000,
+            1,
+            cnt_h(true, false, 0, true, false, 0, 0),
+        );
+        d.run_pending(&mut bus);
+
+        write_dma_setup(
+            &mut d,
+            1,
+            0x0000_0010,
+            0x3010,
+            1,
+            cnt_h(true, false, 0, false, false, 0, 0),
+        );
+        d.run_pending(&mut bus);
+
+        write_dma_setup(
+            &mut d,
+            1,
+            0x0000_0010,
+            0x3012,
+            1,
+            cnt_h(true, false, 0, false, false, 0, 0),
+        );
+        d.run_pending(&mut bus);
+
+        assert_eq!(bus.read16_at(0x3010), 0xBBBB);
+        assert_eq!(bus.read16_at(0x3012), 0xAAAA);
     }
 
     #[test]
