@@ -98,7 +98,7 @@ if (!gl) {
 // NES display dimensions after overscan removal (updated after NES instance is created).
 let width = 256 - 2 * 8; // default: horizontal_overscan=8 → 240
 let height = 240 - 2 * 8; // default: vertical_overscan=8  → 224
-const SCROLLER_TEXT = "April 27, 2026: Version 1.0.0! NES emulator in ok state. Initial version of GB (DMG) emulator. **";
+const SCROLLER_TEXT = "May 26, 2026: Version 1.1.0 - GB (DMG+CGB) emulator in ok state. Initial version of AGB emulator.";
 const SCROLLER_SPEED = 1.6;
 const SCROLLER_AMPLITUDE = 17;
 const SCROLLER_FREQUENCY = 0.0587;
