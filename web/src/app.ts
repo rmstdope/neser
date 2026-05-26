@@ -771,6 +771,7 @@ function updateEmulatorKindUI() {
     }
     filterToggleBtn.disabled = false;
     updateFilterToggleButtonLabel();
+    updateShortcutHelpOverlayText();
 }
 
 /** Update the recording overlay (REC : MM:SS) on the canvas. */
@@ -2441,7 +2442,10 @@ const webShortcutActions = {
 
 function updateShortcutHelpOverlayText() {
     if (shortcutHelpOverlay) {
-        shortcutHelpOverlay.textContent = buildFullHelpOverlayText(connectedGamepads.length);
+        shortcutHelpOverlay.textContent = buildFullHelpOverlayText(
+            connectedGamepads.length,
+            emulator?.kind ?? "nes"
+        );
     }
 }
 

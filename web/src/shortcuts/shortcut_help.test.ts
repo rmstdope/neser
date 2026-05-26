@@ -5,6 +5,7 @@ import {
     buildShortcutOverlayText,
     buildShortcutReferenceText,
     buildControllerOverlayText,
+    buildFullHelpOverlayText,
     computeShortcutHelpFontSizePx,
     toggleShortcutHelpVisibility
 } from "./shortcut_help";
@@ -101,16 +102,18 @@ it("toggleShortcutHelpVisibility hides visible overlay", () => {
 });
 
 // Tests for buildControllerOverlayText
-it("buildControllerOverlayText shows keyboard keys for both players when no gamepads", () => {
-    const text = buildControllerOverlayText(0);
+it("buildControllerOverlayText shows NES keyboard keys for both players when no gamepads", () => {
+    const text = buildControllerOverlayText(0, "nes");
     expect(text).toMatch(/Controller \(Player 1\)/);
     expect(text).toMatch(/W\/A\/S\/D: D-Pad/);
-    expect(text).toMatch(/R: Y/);
-    expect(text).toMatch(/T: X/);
-    expect(text).toMatch(/F: B/);
-    expect(text).toMatch(/G: A/);
-    expect(text).toMatch(/Q: L/);
-    expect(text).toMatch(/E: R/);
+    expect(text).toMatch(/R: A/);
+    expect(text).toMatch(/T: B/);
+    expect(text).not.toMatch(/F: B/);
+    expect(text).not.toMatch(/G: A/);
+    expect(text).not.toMatch(/Q: L/);
+    expect(text).not.toMatch(/E: R/);
+    expect(text).not.toMatch(/X/);
+    expect(text).not.toMatch(/Y/);
     expect(text).toMatch(/4: Select/);
     expect(text).toMatch(/5: Start/);
     expect(text).toMatch(/Controller \(Player 2\)/);
@@ -121,8 +124,36 @@ it("buildControllerOverlayText shows keyboard keys for both players when no game
     expect(text).toMatch(/0: Start/);
 });
 
+it("buildControllerOverlayText shows only one Game Boy controller with A and B", () => {
+    const text = buildControllerOverlayText(0, "gb");
+    expect(text).toMatch(/Controller \(Player 1\)/);
+    expect(text).toMatch(/W\/A\/S\/D: D-Pad/);
+    expect(text).toMatch(/R: A/);
+    expect(text).toMatch(/T: B/);
+    expect(text).toMatch(/4: Select/);
+    expect(text).toMatch(/5: Start/);
+    expect(text).not.toMatch(/Controller \(Player 2\)/);
+    expect(text).not.toMatch(/I\/J\/K\/L/);
+    expect(text).not.toMatch(/X/);
+    expect(text).not.toMatch(/Y/);
+    expect(text).not.toMatch(/Q: L/);
+    expect(text).not.toMatch(/E: R/);
+});
+
+it("buildControllerOverlayText reserves X, Y, and shoulder keys for AGB", () => {
+    const text = buildControllerOverlayText(0, "gba");
+    expect(text).toMatch(/Controller \(Player 1\)/);
+    expect(text).toMatch(/R: Y/);
+    expect(text).toMatch(/T: X/);
+    expect(text).toMatch(/F: B/);
+    expect(text).toMatch(/G: A/);
+    expect(text).toMatch(/Q: L/);
+    expect(text).toMatch(/E: R/);
+    expect(text).not.toMatch(/Controller \(Player 2\)/);
+});
+
 it("buildControllerOverlayText shows Gamepad for player 1 and keyboard for player 2 when one gamepad connected", () => {
-    const text = buildControllerOverlayText(1);
+    const text = buildControllerOverlayText(1, "nes");
     expect(text).toMatch(/Controller \(Player 1\)/);
     expect(text).toMatch(/Gamepad/);
     expect(text).not.toMatch(/W\/A\/S\/D/);
@@ -131,11 +162,18 @@ it("buildControllerOverlayText shows Gamepad for player 1 and keyboard for playe
 });
 
 it("buildControllerOverlayText shows Gamepad for both players when two gamepads connected", () => {
-    const text = buildControllerOverlayText(2);
+    const text = buildControllerOverlayText(2, "nes");
     expect(text).toMatch(/Controller \(Player 1\)/);
     expect(text).toMatch(/Controller \(Player 2\)/);
     expect(text).not.toMatch(/W\/A\/S\/D/);
     expect(text).not.toMatch(/I\/J\/K\/L/);
     const gamepadMatches = [...text.matchAll(/Gamepad/g)];
     expect(gamepadMatches.length).toBe(2);
+});
+
+it("buildFullHelpOverlayText uses the selected emulator controller help", () => {
+    const text = buildFullHelpOverlayText(0, "gb");
+    expect(text).toMatch(/^Shortcuts/m);
+    expect(text).toMatch(/Controller \(Player 1\)/);
+    expect(text).not.toMatch(/Controller \(Player 2\)/);
 });
