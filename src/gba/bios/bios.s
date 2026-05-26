@@ -641,6 +641,12 @@ swi_intr_wait:
     bic     r2, r2, r4
     strh    r2, [r5]
 
+    @ Match the observed BIOS IntrWait return latency after the awaited IRQ.
+    @ Timer phase tests depend on this synchronization point.
+    .rept   25
+    nop
+    .endr
+
     ldmfd   sp!, {r4, r5, lr}
     movs    pc, lr
 
@@ -2115,36 +2121,11 @@ swi_multiboot:
 @ saves context, calls the handler, and returns.
 @ ============================================================================
 irq_handler:
-    @ Save context on IRQ stack
+    @ Match the official BIOS IRQ trampoline documented by GBATek.
     stmfd   sp!, {r0-r3, r12, lr}
-
-    @ --- Update BIOS interrupt flags (IntrCheck at 0x03FFFFF8 = 0x03007FF8) ---
-    @ Per GBATek: BIOS ORs (IE & IF) into IntrCheck before calling the game's
-    @ handler. IntrWait / VBlankIntrWait poll this address to know when to wake.
-    @ NOTE: We do NOT acknowledge (clear) IF here. The user handler (e.g.
-    @ libgba's IntrMain) reads IE & IF to dispatch to the correct ISR and
-    @ clears IF itself. If we cleared IF first, IntrMain would see IF=0 and
-    @ fail to dispatch, breaking timer/DMA/etc. interrupt handlers.
     mov     r0, #0x04000000
-    add     r3, r0, #0x200      @ r3 = 0x04000200 (REG_IE)
-    ldrh    r1, [r3]            @ r1 = REG_IE (enabled interrupts)
-    ldrh    r2, [r3, #2]        @ r2 = REG_IF (pending interrupts, 0x04000202)
-    and     r1, r1, r2          @ fired = IE & IF
-
-    sub     r3, r0, #8          @ r3 = 0x03FFFFF8 (BIOS IntrCheck)
-    ldrh    r2, [r3]            @ read current BIOS IF
-    orr     r2, r2, r1          @ OR in newly fired interrupts
-    strh    r2, [r3]            @ write back
-
-    @ --- Call user IRQ handler from 0x03FFFFFC (= 0x03007FFC mirrored) ---
-    ldr     r1, [r0, #-4]       @ r1 = user handler address
-    cmp     r1, #0
-    beq     .irq_return
-    adr     lr, .irq_return
-    bx      r1
-
-.irq_return:
-    @ Restore context and return from IRQ (SUBS restores CPSR from SPSR)
+    add     lr, pc, #0
+    ldr     pc, [r0, #-4]
     ldmfd   sp!, {r0-r3, r12, lr}
     subs    pc, lr, #4
 

@@ -104,6 +104,11 @@ impl Timers {
         }
     }
 
+    pub fn align_prescaler_phase(&mut self, i: usize, global_phase: u32) {
+        let period = self.channels[i].prescaler();
+        self.channels[i].prescaler_acc = global_phase % period;
+    }
+
     /// Advance all timers by `cycles` CPU cycles. Any overflows are routed to
     /// the supplied [`InterruptController`].
     ///
@@ -125,11 +130,19 @@ impl Timers {
             if i > 0 && t.cascade() {
                 continue;
             }
+            let cycles_to_first_overflow = cycles_to_first_overflow(t, cycles);
             t.prescaler_acc += cycles;
             let period = t.prescaler();
             let ticks = t.prescaler_acc / period;
             t.prescaler_acc %= period;
             overflows[i] = advance_ticks(t, ticks);
+            if overflows[i] > 0
+                && t.irq_on_overflow()
+                && let Some(cycles_to_first_overflow) = cycles_to_first_overflow
+            {
+                let cycles_late = cycles.saturating_sub(cycles_to_first_overflow);
+                ic.raise_late(TIMER_IRQ_BITS[i], cycles_late);
+            }
         }
         // Cascade: feed previous-timer overflow count into next cascade timer.
         for i in 1..4 {
@@ -151,6 +164,21 @@ impl Timers {
         }
         overflows
     }
+}
+
+fn cycles_to_first_overflow(timer: &Timer, cycles: u32) -> Option<u32> {
+    if cycles == 0 {
+        return None;
+    }
+    let period = timer.prescaler();
+    let cycles_to_next_tick = if timer.prescaler_acc == 0 {
+        period
+    } else {
+        period - timer.prescaler_acc
+    };
+    let room = 0x1_0000u32 - u32::from(timer.counter);
+    let cycles_to_overflow = cycles_to_next_tick + (room - 1) * period;
+    (cycles_to_overflow <= cycles).then_some(cycles_to_overflow)
 }
 
 /// Advance `timer` by `ticks` counter increments, reloading from `timer.reload`

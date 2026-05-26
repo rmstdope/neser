@@ -226,11 +226,11 @@ impl Gba {
             return 0;
         }
 
-        if self.bus.ic.halt_exit_line() {
+        if self.bus.cpu_halt_exit_line() {
             self.cpu.signal_halt_exit();
         }
 
-        if self.bus.ic.irq_line() {
+        if self.bus.cpu_irq_line() {
             self.cpu.raise_irq();
         } else {
             self.cpu.clear_irq();
@@ -241,7 +241,9 @@ impl Gba {
             self.bus.clear_halt_request();
         }
 
+        self.bus.begin_cpu_instruction();
         let cycles = self.cpu.step(&mut self.bus);
+        self.bus.end_cpu_instruction();
         self.bus.step_after_cpu_instruction(cycles);
         cycles as u8
     }
@@ -359,11 +361,11 @@ impl Emulator for Gba {
         {
             emit_gba_cpu_trace_line(format!("[GBA SWI] {line}"));
         }
-        if self.bus.ic.halt_exit_line() {
+        if self.bus.cpu_halt_exit_line() {
             self.cpu.signal_halt_exit();
         }
 
-        if self.bus.ic.irq_line() {
+        if self.bus.cpu_irq_line() {
             self.cpu.raise_irq();
         } else {
             self.cpu.clear_irq();
@@ -374,7 +376,9 @@ impl Emulator for Gba {
             self.bus.clear_halt_request();
         }
 
+        self.bus.begin_cpu_instruction();
         let cycles = self.cpu.step(&mut self.bus);
+        self.bus.end_cpu_instruction();
         self.bus.step_after_cpu_instruction(cycles);
         cycles as u8
     }

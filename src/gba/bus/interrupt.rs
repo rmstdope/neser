@@ -54,6 +54,10 @@ pub struct InterruptController {
     pub if_flags: u16,
     /// Interrupt Master Enable (`IME`, 0x04000208) — global IRQ gate.
     pub ime: bool,
+    /// Cycles elapsed since the most recent interrupt source was raised inside
+    /// the current peripheral step.
+    #[serde(default)]
+    irq_cycles_late: u32,
 }
 
 impl InterruptController {
@@ -70,18 +74,51 @@ impl InterruptController {
         self.ime && (self.ie & self.if_flags & IRQ_MASK) != 0
     }
 
+    /// Enabled, pending interrupt sources that are currently requesting an IRQ.
+    pub fn active_irq_sources(&self) -> u16 {
+        if self.ime {
+            self.active_pending_sources()
+        } else {
+            0
+        }
+    }
+
+    /// Enabled, pending interrupt sources independent of the master IME gate.
+    pub fn active_pending_sources(&self) -> u16 {
+        self.ie & self.if_flags & IRQ_MASK
+    }
+
     /// Whether the HALT state should exit. On real GBA hardware the CPU
     /// exits HALT when any interrupt fires that is enabled in `IE`,
     /// regardless of `IME`. The `IME` flag only controls whether the CPU
     /// actually vectors to the interrupt handler.
     pub fn halt_exit_line(&self) -> bool {
-        (self.ie & self.if_flags & IRQ_MASK) != 0
+        self.active_pending_sources() != 0
+    }
+
+    /// Enabled, pending interrupt sources that can exit HALT, independent of IME.
+    pub fn active_halt_sources(&self) -> u16 {
+        self.active_pending_sources()
     }
 
     /// Raise an interrupt source. The bit is OR-ed into `IF`; whether the
     /// line actually asserts depends on `IE`/`IME`.
     pub fn raise(&mut self, sources: u16) {
         self.if_flags |= sources & IRQ_MASK;
+    }
+
+    /// Raise an interrupt source that occurred before the end of the current
+    /// peripheral step.
+    pub fn raise_late(&mut self, sources: u16, cycles_late: u32) {
+        self.raise(sources);
+        self.irq_cycles_late = self.irq_cycles_late.max(cycles_late);
+    }
+
+    /// Consume the latest cycles-late value collected by interrupt sources.
+    pub fn take_irq_cycles_late(&mut self) -> u32 {
+        let cycles_late = self.irq_cycles_late;
+        self.irq_cycles_late = 0;
+        cycles_late
     }
 
     /// Acknowledge interrupt sources — bits set in `value` are cleared in

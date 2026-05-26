@@ -194,6 +194,18 @@ pub enum WidthClass {
     Word,
 }
 
+const IRQ_LINE_ASSERT_DELAY_CYCLES: u32 = 5;
+const DELAYED_IRQ_SOURCES: u16 =
+    irq_bits::TIMER0 | irq_bits::TIMER1 | irq_bits::TIMER2 | irq_bits::TIMER3;
+
+fn irq_line_assert_delay_cycles() -> u32 {
+    IRQ_LINE_ASSERT_DELAY_CYCLES
+}
+
+fn timer_start_delay_cycles() -> u32 {
+    2
+}
+
 /// GBA memory bus.
 pub struct GbaBus {
     /// 16 KB BIOS ROM at `0x0000_0000`.
@@ -274,6 +286,17 @@ pub struct GbaBus {
     /// Remaining CPU cycles before a newly enabled immediate DMA can seize the
     /// bus. GBATek documents a 2-cycle delay after the DMA enable edge.
     dma_start_delay_cycles: u32,
+    timer_global_cycles: u32,
+    /// Remaining cycles before newly asserted timer IRQ sources become visible
+    /// to the CPU core. IF is set immediately; interrupt dispatch is delayed.
+    irq_line_delay_cycles: u32,
+    /// Enabled, pending IRQ sources after the previous CPU/peripheral step.
+    irq_sources_were_asserted: u16,
+    /// Whether memory accesses are currently being made by the CPU core while
+    /// executing an instruction.
+    cpu_instruction_active: bool,
+    /// Timer cycles already advanced inside the current CPU instruction.
+    timer_cycles_prestepped_this_instruction: u32,
 }
 
 impl Default for GbaBus {
@@ -352,6 +375,11 @@ impl GbaBus {
             halt_requested: false,
             timer_start_delay_pending: false,
             dma_start_delay_cycles: 0,
+            timer_global_cycles: 0,
+            irq_line_delay_cycles: 0,
+            irq_sources_were_asserted: 0,
+            cpu_instruction_active: false,
+            timer_cycles_prestepped_this_instruction: 0,
         }
     }
 
@@ -383,6 +411,32 @@ impl GbaBus {
     /// Return captured mGBA debug console output.
     pub fn mgba_log_snapshot(&self) -> &str {
         &self.mgba_log
+    }
+
+    /// IRQ line as observed by the CPU after hardware assertion latency.
+    pub fn cpu_irq_line(&self) -> bool {
+        let active_sources = self.ic.active_pending_sources();
+        let immediate_sources = active_sources & !DELAYED_IRQ_SOURCES;
+        self.ic.ime
+            && (immediate_sources != 0 || (active_sources != 0 && self.irq_line_delay_cycles == 0))
+    }
+
+    /// HALT wake line as observed by the CPU after delayed timer IRQ sources.
+    pub fn cpu_halt_exit_line(&self) -> bool {
+        let active_sources = self.ic.active_halt_sources();
+        let immediate_sources = active_sources & !DELAYED_IRQ_SOURCES;
+        immediate_sources != 0 || (active_sources != 0 && self.irq_line_delay_cycles == 0)
+    }
+
+    /// Mark the start of one CPU instruction for instruction-internal timing.
+    pub fn begin_cpu_instruction(&mut self) {
+        self.cpu_instruction_active = true;
+        self.timer_cycles_prestepped_this_instruction = 0;
+    }
+
+    /// Mark the end of one CPU instruction.
+    pub fn end_cpu_instruction(&mut self) {
+        self.cpu_instruction_active = false;
     }
 
     #[cfg(test)]
@@ -485,6 +539,8 @@ impl GbaBus {
     /// cycles. Any pending IRQs are routed into [`Self::ic`]. PPU
     /// V-Blank/H-Blank edges are propagated to the DMA controller.
     pub fn step(&mut self, cycles: u32) {
+        self.advance_cpu_irq_line_delay(cycles);
+        self.timer_global_cycles = self.timer_global_cycles.wrapping_add(cycles);
         self.timer_start_delay_pending = false;
         let overflow_mask = self.timers.step(cycles, &mut self.ic);
         self.handle_timer_overflow_fifo(overflow_mask);
@@ -499,17 +555,25 @@ impl GbaBus {
         );
         self.handle_ppu_events(events);
         self.run_pending_dma_after_start_delay(cycles);
+        self.latch_cpu_irq_line();
     }
 
     /// Step peripherals after one CPU instruction. If that instruction enabled
     /// a timer, the timer starts after the instruction completes, so this
     /// instruction's cycles are not counted by the newly enabled timer.
     pub fn step_after_cpu_instruction(&mut self, cycles: u32) {
+        let prestepped_cycles = self.timer_cycles_prestepped_this_instruction.min(cycles);
+        self.timer_cycles_prestepped_this_instruction = 0;
+        let remaining_cycles = cycles.saturating_sub(prestepped_cycles);
+        self.advance_cpu_irq_line_delay(remaining_cycles);
+        self.timer_global_cycles = self.timer_global_cycles.wrapping_add(remaining_cycles);
         let timer_cycles = if self.timer_start_delay_pending {
             self.timer_start_delay_pending = false;
-            cycles.saturating_sub(2)
-        } else {
             cycles
+                .saturating_sub(timer_start_delay_cycles())
+                .saturating_sub(prestepped_cycles)
+        } else {
+            remaining_cycles
         };
         let overflow_mask = self.timers.step(timer_cycles, &mut self.ic);
         self.handle_timer_overflow_fifo(overflow_mask);
@@ -524,6 +588,39 @@ impl GbaBus {
         );
         self.handle_ppu_events(events);
         self.run_pending_dma_after_start_delay(cycles);
+        self.latch_cpu_irq_line();
+    }
+
+    fn advance_cpu_irq_line_delay(&mut self, cycles: u32) {
+        if self.irq_sources_were_asserted & DELAYED_IRQ_SOURCES != 0 {
+            self.irq_line_delay_cycles = self.irq_line_delay_cycles.saturating_sub(cycles);
+        }
+    }
+
+    fn latch_cpu_irq_line(&mut self) {
+        let active_sources = self.ic.active_pending_sources();
+        let newly_asserted = active_sources & !self.irq_sources_were_asserted;
+        let cycles_late = self.ic.take_irq_cycles_late();
+        if newly_asserted & DELAYED_IRQ_SOURCES != 0 {
+            self.irq_line_delay_cycles = irq_line_assert_delay_cycles().saturating_sub(cycles_late);
+        } else if active_sources & DELAYED_IRQ_SOURCES == 0 {
+            self.irq_line_delay_cycles = 0;
+        }
+        self.irq_sources_were_asserted = active_sources;
+    }
+
+    fn prestep_timers_before_cpu_sample(&mut self, cycles: u32) {
+        if !self.cpu_instruction_active || cycles == 0 {
+            return;
+        }
+        self.advance_cpu_irq_line_delay(cycles);
+        self.timer_global_cycles = self.timer_global_cycles.wrapping_add(cycles);
+        let overflow_mask = self.timers.step(cycles, &mut self.ic);
+        self.handle_timer_overflow_fifo(overflow_mask);
+        self.latch_cpu_irq_line();
+        self.timer_cycles_prestepped_this_instruction = self
+            .timer_cycles_prestepped_this_instruction
+            .saturating_add(cycles);
     }
 
     fn step_dma_stalls(&mut self) {
@@ -579,6 +676,26 @@ impl GbaBus {
         let shift = (addr & 1) * 8;
         let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
         self.mark_timer_start_delay_for_write16(aligned, merged);
+    }
+
+    fn timer_enable_phase_for_write16(&self, addr: u32, value: u16) -> Option<(usize, u32)> {
+        let timer = timer_control_index(addr)?;
+        let was_enabled = self.timers.channels[timer].enabled();
+        let now_enabled = value & 0x0080 != 0;
+        (!was_enabled && now_enabled).then_some((
+            timer,
+            self.timer_global_cycles
+                .wrapping_add(timer_start_delay_cycles()),
+        ))
+    }
+
+    fn prestep_timer_disable_for_write16(&mut self, addr: u32, value: u16) {
+        let Some(timer) = timer_control_index(addr) else {
+            return;
+        };
+        if self.timers.channels[timer].enabled() && value & 0x0080 == 0 {
+            self.prestep_timers_before_cpu_sample(1);
+        }
     }
 
     fn mark_dma_start_delay_for_write16(&mut self, addr: u32, value: u16) {
@@ -723,6 +840,9 @@ impl GbaBus {
             waitstates: self.waitstates.clone(),
             undoc_0x410: self.undoc_0x410,
             halt_requested: self.halt_requested,
+            timer_global_cycles: self.timer_global_cycles,
+            irq_line_delay_cycles: self.irq_line_delay_cycles,
+            irq_sources_were_asserted: self.irq_sources_were_asserted,
         }
     }
 
@@ -776,8 +896,13 @@ impl GbaBus {
         self.waitstates = state.waitstates.clone();
         self.undoc_0x410 = state.undoc_0x410;
         self.halt_requested = state.halt_requested;
+        self.timer_global_cycles = state.timer_global_cycles;
+        self.irq_line_delay_cycles = state.irq_line_delay_cycles;
+        self.irq_sources_were_asserted = state.irq_sources_were_asserted;
         self.timer_start_delay_pending = false;
         self.dma_start_delay_cycles = 0;
+        self.cpu_instruction_active = false;
+        self.timer_cycles_prestepped_this_instruction = 0;
         Ok(())
     }
 
@@ -1376,7 +1501,10 @@ impl Bus for GbaBus {
                             self.halt_requested = true;
                         }
                     }
-                    self.mark_timer_start_delay_for_write16(aligned + 2, (value >> 16) as u16);
+                    let high = (value >> 16) as u16;
+                    let timer_enable_phase = self.timer_enable_phase_for_write16(aligned + 2, high);
+                    self.prestep_timer_disable_for_write16(aligned + 2, high);
+                    self.mark_timer_start_delay_for_write16(aligned + 2, high);
                     self.mark_dma_start_delay_for_write16(aligned + 2, (value >> 16) as u16);
                     self.io.write32(
                         aligned,
@@ -1387,6 +1515,9 @@ impl Bus for GbaBus {
                         &mut self.ppu,
                         &mut self.keypad,
                     );
+                    if let Some((timer, phase)) = timer_enable_phase {
+                        self.timers.align_prescaler_phase(timer, phase);
+                    }
                     // WAITCNT is at 0x0400_0204; a 32-bit write spans 0x204-0x207.
                     if aligned == 0x0400_0204 {
                         self.waitstates.recalculate(value as u16);
@@ -1449,6 +1580,8 @@ impl Bus for GbaBus {
                             self.halt_requested = true;
                         }
                     }
+                    let timer_enable_phase = self.timer_enable_phase_for_write16(aligned, value);
+                    self.prestep_timer_disable_for_write16(aligned, value);
                     self.mark_timer_start_delay_for_write16(aligned, value);
                     self.mark_dma_start_delay_for_write16(aligned, value);
                     self.io.write16(
@@ -1460,6 +1593,9 @@ impl Bus for GbaBus {
                         &mut self.ppu,
                         &mut self.keypad,
                     );
+                    if let Some((timer, phase)) = timer_enable_phase {
+                        self.timers.align_prescaler_phase(timer, phase);
+                    }
                     self.trace_dma_cnt_h_write(aligned, value);
                     if aligned == 0x0400_0204 {
                         self.waitstates.recalculate(value);
@@ -1522,6 +1658,13 @@ impl Bus for GbaBus {
                 } else if (0x0400_0060..=0x0400_00A7).contains(&addr) {
                     self.apu.write8(addr, value);
                 } else {
+                    let aligned = addr & !1;
+                    let old =
+                        self.timers.channels[timer_control_index(aligned).unwrap_or(0)].control;
+                    let shift = (addr & 1) * 8;
+                    let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
+                    let timer_enable_phase = self.timer_enable_phase_for_write16(aligned, merged);
+                    self.prestep_timer_disable_for_write16(aligned, merged);
                     self.mark_timer_start_delay_for_write8(addr, value);
                     self.mark_dma_start_delay_for_write8(addr, value);
                     self.io.write8(
@@ -1533,9 +1676,11 @@ impl Bus for GbaBus {
                         &mut self.ppu,
                         &mut self.keypad,
                     );
+                    if let Some((timer, phase)) = timer_enable_phase {
+                        self.timers.align_prescaler_phase(timer, phase);
+                    }
                     // Byte writes to SIOCNT/RCNT must update the Sio module.
                     // Merge the written byte into the current register value.
-                    let aligned = addr & !1;
                     if aligned == 0x0400_0128 {
                         let merged = self.io.backing_u16(0x0400_0128);
                         self.sio.write_siocnt(merged);
@@ -1873,10 +2018,11 @@ mod tests {
         bus.write16(0x0400_0204, 0x4018);
         bus.write16(0x0400_0100, 0xFFF0);
         bus.write16(0x0400_0102, 0x0081);
-        bus.step(63);
+        bus.step(61);
         bus.write16(0x0400_0300, 0x8001);
 
         let saved = bus.capture_memory_state();
+        let saved_timer_global_cycles = saved.timer_global_cycles;
 
         bus.write16(0x0400_0200, 0);
         bus.write16(0x0400_0202, irq_bits::TIMER0);
@@ -1885,9 +2031,11 @@ mod tests {
         bus.write16(0x0400_0100, 0);
         bus.write16(0x0400_0102, 0);
         bus.write16(0x0400_0300, 0);
+        bus.step(17);
 
         bus.restore_memory_state(&saved).expect("restore succeeds");
 
+        assert_eq!(bus.timer_global_cycles, saved_timer_global_cycles);
         assert_eq!(bus.read16(0x0400_0200), irq_bits::TIMER0);
         assert_eq!(bus.read16(0x0400_0202), irq_bits::TIMER0);
         assert_eq!(bus.read16(0x0400_0208), 1);
@@ -2176,6 +2324,63 @@ mod tests {
     }
 
     #[test]
+    fn cpu_irq_line_is_delayed_after_if_asserts() {
+        let mut bus = GbaBus::new();
+        bus.write16(REG_IE, irq_bits::TIMER0);
+        bus.write16(REG_IME, 1);
+        bus.ic.raise(irq_bits::TIMER0);
+
+        bus.step_after_cpu_instruction(1);
+
+        assert!(bus.ic.irq_line(), "IF/IE/IME assert immediately");
+        assert!(!bus.cpu_irq_line(), "CPU observes IRQ after line latency");
+        bus.step_after_cpu_instruction(7);
+        assert!(bus.cpu_irq_line());
+    }
+
+    #[test]
+    fn timer_irq_delay_counts_down_while_ime_is_disabled() {
+        let mut bus = GbaBus::new();
+        bus.write16(REG_IE, irq_bits::TIMER0);
+        bus.write16(REG_IME, 0);
+        bus.write16(0x0400_0100, 0xFFFF);
+        bus.write16(0x0400_0102, 0x00C0 | 0x0080);
+
+        bus.step(1);
+        assert_ne!(bus.ic.if_flags & irq_bits::TIMER0, 0);
+        assert!(!bus.cpu_irq_line(), "IME still gates CPU IRQ dispatch");
+
+        bus.step(5);
+        bus.write16(REG_IME, 1);
+        bus.step(1);
+
+        assert!(
+            bus.cpu_irq_line(),
+            "enabling IME must not restart delay for an already-pending timer IRQ"
+        );
+    }
+
+    #[test]
+    fn cpu_timer_disable_via_byte_write_samples_before_instruction_cycles_are_applied() {
+        let mut bus = GbaBus::new();
+        bus.write16(0x0400_0100, 0);
+        bus.write16(0x0400_0102, 0x0080);
+        bus.step(0xFFFF);
+
+        bus.begin_cpu_instruction();
+        bus.write8(0x0400_0102, 0);
+        bus.end_cpu_instruction();
+
+        assert_eq!(bus.read16(0x0400_0100), 0);
+        bus.step_after_cpu_instruction(3);
+        assert_eq!(
+            bus.read16(0x0400_0100),
+            0,
+            "disabled timer must not continue ticking for the rest of the instruction"
+        );
+    }
+
+    #[test]
     fn cascade_test_vector_4() {
         // Acceptance: enable TM0+TM1 cascade; overflow TM0 once → TM1 == 1.
         let mut bus = GbaBus::new();
@@ -2198,6 +2403,26 @@ mod tests {
         bus.step(0x1_0000);
         assert_eq!(bus.read16(0x0400_0100), 0);
         assert!(bus.ic.irq_line());
+    }
+
+    #[test]
+    fn cpu_timer_read_samples_current_counter_before_instruction_cycles_are_applied() {
+        let mut bus = GbaBus::new();
+        bus.write16(REG_IE, irq_bits::TIMER0);
+        bus.write16(REG_IME, 1);
+        bus.write16(0x0400_0100, 0);
+        bus.write16(0x0400_0102, 0x00C0 | 0x0080);
+        bus.step(0xFFFF);
+
+        bus.begin_cpu_instruction();
+        let timer = bus.read32(0x0400_0100);
+        bus.end_cpu_instruction();
+
+        assert_eq!(timer & 0xFFFF, 0xFFFF);
+        assert_eq!(bus.ic.if_flags & irq_bits::TIMER0, 0);
+        bus.step_after_cpu_instruction(3);
+        assert_eq!(bus.read16(0x0400_0100), 2);
+        assert_ne!(bus.ic.if_flags & irq_bits::TIMER0, 0);
     }
 
     #[test]

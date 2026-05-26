@@ -2,8 +2,8 @@ use super::gba_suite_runner::{
     ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, VIDEO_TEST_NAMES,
     boot_mgba_suite, run_armwrestler, run_mgba_io_read_diagnostics,
     run_mgba_io_read_diagnostics_after_bios_intro, run_mgba_memory_diagnostics,
-    run_mgba_memory_diagnostics_with_bios_path, run_mgba_suite, run_mgba_timing_diagnostics,
-    run_mgba_video_tests, run_suite,
+    run_mgba_memory_diagnostics_with_bios_path, run_mgba_suite, run_mgba_timers_diagnostics,
+    run_mgba_timing_diagnostics, run_mgba_video_tests, run_suite,
 };
 use crate::gba::bios::EMBEDDED_BIOS;
 use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
@@ -481,6 +481,33 @@ fn gba_mgba_timing_diagnostics_passes_bios_cpuset_cases() {
 }
 
 #[test]
+fn gba_mgba_timers_diagnostics_passes_every_count_up_case() {
+    let result = run_mgba_timers_diagnostics();
+
+    assert_eq!(
+        result.total_count,
+        Some(936),
+        "raw mGBA Timers log:\n{}",
+        result.raw_log
+    );
+    assert!(
+        result.passed_count.is_some(),
+        "mGBA Timers diagnostics should include a parsed pass count"
+    );
+    assert_eq!(
+        result.passed_count, result.total_count,
+        "mGBA Timer count-up diagnostics should pass every case with the embedded BIOS.\nfailures: {:?}\nraw log:\n{}",
+        result.failures, result.raw_log
+    );
+    assert!(
+        result.failures.is_empty(),
+        "mGBA Timer count-up diagnostics reported failures with the embedded BIOS: {:?}\nraw log:\n{}",
+        result.failures,
+        result.raw_log
+    );
+}
+
+#[test]
 fn gba_mgba_memory_proprietary_diagnostics_skip_without_bios_path() {
     let result = run_mgba_memory_diagnostics_with_bios_path(None).unwrap();
 
@@ -542,13 +569,13 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("mgba_memory"), Some(&0x61F6_5500));
     assert_eq!(approvals.get("mgba_io_read"), Some(&0x7D32_0909));
     assert_eq!(approvals.get("mgba_timing"), Some(&0xEABA_32BC));
-    assert_eq!(approvals.get("mgba_timers"), Some(&0xCFAB_2DCC));
-    assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xB906_EDAC));
+    assert_eq!(approvals.get("mgba_timers"), Some(&0xBAEF_CA7B));
+    assert_eq!(approvals.get("mgba_timer_irq"), Some(&0xDA41_10EF));
     assert_eq!(approvals.get("mgba_shifter"), Some(&0x8B4A_12AA));
     assert_eq!(approvals.get("mgba_carry"), Some(&0xFD9E_45E6));
     assert_eq!(approvals.get("mgba_multiply_long"), Some(&0x6996_55AB));
     assert_eq!(approvals.get("mgba_bios_math"), Some(&0x09E8_2124));
-    assert_eq!(approvals.get("mgba_dma"), Some(&0x9090_0973));
+    assert_eq!(approvals.get("mgba_dma"), Some(&0xADAB_AAA9));
     assert_eq!(approvals.get("mgba_sio_read"), Some(&0xF5D9_8687));
     assert_eq!(approvals.get("mgba_sio_timing"), Some(&0xD95A_CB03));
     assert_eq!(approvals.get("mgba_misc_edge"), Some(&0x36EC_DBF9));
