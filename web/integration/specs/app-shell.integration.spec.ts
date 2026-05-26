@@ -10,4 +10,10 @@ test.describe("web app shell", () => {
             await expect(page.locator(selector)).toBeVisible();
         }
     });
+
+    test("accepts GBA ROM files in the file picker", async ({ page }) => {
+        await page.goto("/");
+
+        await expect(page.locator("#rom")).toHaveAttribute("accept", /(^|,)\.gba(,|$)/);
+    });
 });

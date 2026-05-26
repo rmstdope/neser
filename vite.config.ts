@@ -7,8 +7,8 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** Recursively find all .nes files under a directory, following symlinks safely. */
-function findNesFiles(
+/** Recursively find all supported ROM files under a directory, following symlinks safely. */
+function findRomFiles(
   dir: string,
   base: string,
   visited: Set<string> = new Set(),
@@ -36,8 +36,8 @@ function findNesFiles(
     let stat;
     try { stat = statSync(fullPath); } catch { continue; }
     if (stat.isDirectory()) {
-      results.push(...findNesFiles(fullPath, base, visited, resolvedBase));
-    } else if (entry.name.toLowerCase().endsWith(".nes")) {
+      results.push(...findRomFiles(fullPath, base, visited, resolvedBase));
+    } else if (/\.(nes|gb|gbc|cgb|gba)$/i.test(entry.name)) {
       let resolvedFile: string;
       try { resolvedFile = realpathSync(fullPath); } catch { continue; }
       if (isWithinBase(resolvedFile)) {
@@ -54,7 +54,7 @@ function romManifestPlugin(): Plugin {
   const manifestPath = join(romsDir, "roms.json");
 
   function generate() {
-    const roms = findNesFiles(romsDir, romsDir).sort();
+    const roms = findRomFiles(romsDir, romsDir).sort();
     writeFileSync(manifestPath, JSON.stringify({ roms }, null, 2) + "\n");
     console.log(`[rom-manifest] wrote ${roms.length} entries to web/roms/roms.json`);
   }

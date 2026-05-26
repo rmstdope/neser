@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 import {
+    loadGbaRomFromFileInput,
+    loadRomFromFileInput,
     openApp,
     startFromBundledRom,
     waitForIdleState,
@@ -64,5 +66,16 @@ test.describe("Phase 1 critical path lifecycle", () => {
 
         await expect(page.locator(SAVE_STATE_BUTTON_SELECTOR)).toBeDisabled();
         await expect(page.locator(LOAD_STATE_BUTTON_SELECTOR)).toBeDisabled();
+    });
+
+    test("Given a GBA ROM is loaded, when a NES ROM is loaded afterwards, then both sessions can run without reload", async ({ page }) => {
+        await openApp(page);
+
+        await loadGbaRomFromFileInput(page);
+        await waitForRunningState(page);
+
+        await loadRomFromFileInput(page);
+        await waitForRunningState(page);
+        await expect(page.locator(START_BUTTON_SELECTOR)).toBeDisabled();
     });
 });

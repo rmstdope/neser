@@ -106,6 +106,26 @@ declare module "*/pkg/neser" {
         set_button(controller: number, button: number, pressed: boolean): void;
     }
 
+    /**
+     * Provides a minimal WASM bridge for running the Game Boy Advance emulator in the browser.
+     */
+    export class WasmGba {
+        free(): void;
+        [Symbol.dispose](): void;
+        drain_toasts(): unknown[];
+        frame_rate_hz(): number;
+        get_audio_samples(): Float32Array;
+        is_audio_muted(): boolean;
+        load_rom(rom: Uint8Array, rom_name: string): void;
+        constructor();
+        render_frame_rgba(): Uint8Array;
+        reset(soft_reset: boolean): void;
+        screen_height(): number;
+        screen_width(): number;
+        set_audio_muted(muted: boolean): void;
+        set_button(controller: number, button: number, pressed: boolean): void;
+    }
+
     export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
     export interface InitOutput {

@@ -19,7 +19,9 @@ export function mapStandardGamepadState(gamepad: Gamepad | null, axisThreshold =
         up,
         down,
         left,
-        right
+        right,
+        l: Boolean(buttons[4]?.pressed),
+        r: Boolean(buttons[5]?.pressed)
     };
 }
 

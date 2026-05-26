@@ -19,6 +19,17 @@ function readMockRomBytes() {
     return readFileSync(path.join(process.cwd(), BUNDLED_ROM_PATH));
 }
 
+function makeMinimalGbaRomBytes() {
+    const rom = Buffer.alloc(0xC0);
+    rom[0xB2] = 0x96;
+    let check = 0;
+    for (let offset = 0xA0; offset <= 0xBC; offset++) {
+        check = (check - rom[offset]) & 0xFF;
+    }
+    rom[0xBD] = (check - 0x19) & 0xFF;
+    return rom;
+}
+
 async function injectBundledRomOption(page: Page) {
     const romDataUrl = `data:application/octet-stream;base64,${readMockRomBytes().toString("base64")}`;
     await page.evaluate(({ value, romSelectId, bundledRomName }: { value: string; romSelectId: string; bundledRomName: string }) => {
@@ -36,6 +47,7 @@ async function injectBundledRomOption(page: Page) {
         romSelectId: ROM_SELECT_ID,
         bundledRomName: BUNDLED_ROM_NAME
     });
+    return romDataUrl;
 }
 
 export async function openApp(page: Page) {
@@ -61,21 +73,18 @@ export async function loadRomFromFileInput(page: Page) {
     });
 }
 
+/** Load a minimal GBA ROM via the file input, setting romFromFile = true. */
+export async function loadGbaRomFromFileInput(page: Page) {
+    await page.locator("#rom").setInputFiles({
+        name: "suite.gba",
+        mimeType: "application/octet-stream",
+        buffer: makeMinimalGbaRomBytes()
+    });
+}
+
 export async function startFromBundledRom(page: Page) {
     await openApp(page);
-    await injectBundledRomOption(page);
-
-    const bundledRomOption = page.locator(`${ROM_SELECT_SELECTOR} option`, {
-        hasText: BUNDLED_ROM_NAME
-    });
-    await expect(bundledRomOption).toHaveCount(1, {
-        timeout: EXPECT_TIMEOUT_MS
-    });
-
-    const romValue = await bundledRomOption.getAttribute("value");
-    if (!romValue) {
-        throw new Error("Expected bundled ROM option to have a value");
-    }
+    const romValue = await injectBundledRomOption(page);
 
     await page.evaluate(({ value, romSelectId }: { value: string; romSelectId: string }) => {
         const romSelect = document.getElementById(romSelectId);

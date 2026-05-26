@@ -51,6 +51,10 @@ describe("filterKeysForConsole", () => {
         const nesKeys = filterKeysForConsole(allKeys, filters, "nes");
         expect(nesKeys).not.toContain("gameboy");
     });
+
+    it("returns only stock for GBA", () => {
+        expect(filterKeysForConsole(allKeys, filters, "gba")).toEqual(["stock"]);
+    });
 });
 
 // ===========================================================================
@@ -77,6 +81,10 @@ describe("cycleFilterKey", () => {
 
     it("GB: cycles from gameboy back to stock", () => {
         expect(cycleFilterKey("gameboy", allKeys, filters, "gb")).toBe("stock");
+    });
+
+    it("GBA: stays on stock", () => {
+        expect(cycleFilterKey("stock", allKeys, filters, "gba")).toBe("stock");
     });
 
     it("returns current filter when no filters available", () => {
@@ -128,6 +136,15 @@ describe("filterOnConsoleSwitch", () => {
     it("keeps gameboy when switching from GB to GB (no-op)", () => {
         expect(filterOnConsoleSwitch("gameboy", allKeys, filters, "gb")).toBe(
             "gameboy",
+        );
+    });
+
+    it("falls back to stock when switching to GBA", () => {
+        expect(filterOnConsoleSwitch("ntsc", allKeys, filters, "gba")).toBe(
+            "stock",
+        );
+        expect(filterOnConsoleSwitch("gameboy", allKeys, filters, "gba")).toBe(
+            "stock",
         );
     });
 });

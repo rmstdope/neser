@@ -5,6 +5,7 @@ use crate::nes::console::SaveState;
 use crate::nes::input::ArkanoidState;
 use crate::wasm::{WasmNes, gamepad_init_toast_message};
 use crate::wasm_gb::WasmGb;
+use crate::wasm_gba::WasmGba;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -925,4 +926,139 @@ fn wasm_gb_load_rom_returns_success_toast() {
         toasts.iter().any(|t| t.contains("test.gb")),
         "expected a toast mentioning 'test.gb', got: {toasts:?}"
     );
+}
+
+// ── WasmGba tests ────────────────────────────────────────────────────────────
+
+fn minimal_gba_rom() -> Vec<u8> {
+    use crate::gba::cartridge::header::{
+        COMPLEMENT_CHECK_OFFSET, FIXED_BYTE_OFFSET, FIXED_BYTE_VALUE, HEADER_SIZE,
+        compute_complement_check,
+    };
+
+    let mut rom = vec![0u8; HEADER_SIZE];
+    rom[FIXED_BYTE_OFFSET] = FIXED_BYTE_VALUE;
+    rom[COMPLEMENT_CHECK_OFFSET] = compute_complement_check(&rom);
+    rom
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_constructs() {
+    let _gba = WasmGba::new();
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_screen_width_is_240() {
+    let gba = WasmGba::new();
+    assert_eq!(gba.screen_width(), 240);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_screen_height_is_160() {
+    let gba = WasmGba::new();
+    assert_eq!(gba.screen_height(), 160);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_frame_rate_hz_is_gba_rate() {
+    let gba = WasmGba::new();
+    let hz = gba.frame_rate_hz();
+    assert!(
+        (hz - 59.7275).abs() < 0.01,
+        "expected ~59.7275 Hz but got {hz}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_no_rom_renders_opaque_black_frame() {
+    let mut gba = WasmGba::new();
+    let frame = gba.render_frame_rgba().to_vec();
+    let expected_len = 240 * 160 * 4;
+    assert_eq!(
+        frame.len(),
+        expected_len,
+        "no-ROM frame should be {expected_len} bytes"
+    );
+    for (i, &byte) in frame.iter().enumerate() {
+        if (i + 1) % 4 == 0 {
+            assert_eq!(byte, 0xFF, "alpha byte at index {i} should be 0xFF");
+        } else {
+            assert_eq!(byte, 0x00, "color byte at index {i} should be 0x00");
+        }
+    }
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_load_rom_returns_success_toast() {
+    let mut gba = WasmGba::new();
+    let rom = minimal_gba_rom();
+    gba.load_rom(&rom, "suite.gba")
+        .expect("valid GBA ROM should load successfully");
+    let toasts: Vec<String> = gba
+        .drain_toasts()
+        .into_iter()
+        .filter_map(|v| v.as_string())
+        .collect();
+    assert!(
+        toasts.iter().any(|t| t.contains("suite.gba")),
+        "expected a toast mentioning 'suite.gba', got: {toasts:?}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_load_rom_rejects_invalid_data() {
+    let mut gba = WasmGba::new();
+    let err = gba
+        .load_rom(&[0u8; 8], "broken.gba")
+        .expect_err("invalid GBA ROM should error");
+    assert!(
+        !err.as_string().unwrap_or_default().is_empty(),
+        "invalid GBA ROM should return a message"
+    );
+
+    let toasts: Vec<String> = gba
+        .drain_toasts()
+        .into_iter()
+        .filter_map(|v| v.as_string())
+        .collect();
+    assert!(
+        toasts.iter().any(|t| t.contains("broken.gba")),
+        "expected a failure toast mentioning 'broken.gba', got: {toasts:?}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_audio_mute_state_is_reported() {
+    let mut gba = WasmGba::new();
+    assert!(!gba.is_audio_muted());
+    gba.set_audio_muted(true);
+    assert!(gba.is_audio_muted());
+    assert!(gba.get_audio_samples().is_empty());
+    gba.set_audio_muted(false);
+    assert!(!gba.is_audio_muted());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_reset_without_rom_succeeds() {
+    let mut gba = WasmGba::new();
+    gba.reset(true);
+    gba.reset(false);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_set_button_accepts_all_gba_buttons() {
+    let mut gba = WasmGba::new();
+    for button in 0..=9 {
+        gba.set_button(1, button, true);
+        gba.set_button(1, button, false);
+    }
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_set_button_ignores_non_player_one_controllers() {
+    let mut gba = WasmGba::new();
+
+    gba.set_button(2, 0, true);
+
+    assert_eq!(gba.joypad_button_states_for_test(), 0);
 }
