@@ -572,3 +572,43 @@ No feedback provided
 #### What to improve
 
 No feedback provided
+
+---
+
+## 2026-05-26 — PR #2666: Fix mGBA timer/timing regression
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2666
+**Linked issues:** none
+
+### Customizations used
+
+| Type         | Name                               | Purpose                                                                                  |
+| ------------ | ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| Skill        | `gba-hardware-research`            | Supported GBA timer/timing behavior reasoning, including delayed IRQ and count-up cases. |
+| Skill        | `test-driven-development`          | Kept the regression fix anchored to mGBA suite coverage and updated approvals.           |
+| Skill        | `rust-developer`                   | Supported Rust implementation, state persistence changes, formatting, and clippy-clean validation. |
+| Agent        | `Iteration Retrospective Gatherer` | Captured AI-assisted workflow observations after PR creation.                            |
+| Instructions | `copilot-instructions.md`          | Applied repository expectations for TDD, validation, and retrospective capture.          |
+
+### What went well
+
+- ✅ The GBA-focused customization fit the defect: the fix preserved side-effect-free timer register reads while keeping delayed timer IRQ/count-up behavior intact, avoiding a broad timing rewrite.
+- ✅ The workflow kept generated and approval artifacts aligned with the source change by rebuilding the embedded BIOS and updating the affected mGBA suite approvals in the same iteration.
+- ✅ Validation matched the repository instruction set across targeted GBA tests, full Rust/no-defaults checks, wasm, Python script tests, npm tests, clippy, and formatting.
+
+### What to improve
+
+- ❌ The retrospective had to reconstruct customization usage from the handoff summary and repository conventions. Future PR handoffs should explicitly list which skills/agents/prompts were active and what each contributed.
+- ❌ Timer-global-cycle persistence was an important save/restore detail. Future timer/timing work should use an explicit checklist for state fields that affect delayed events, IRQ scheduling, and count-up propagation.
+- ❌ BIOS rebuilds plus approval updates are easy to miss in emulator timing fixes. Record the exact rebuild/approval sequence in the work notes or PR body whenever generated BIOS artifacts or suite approvals change.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided
+
+#### What to improve
+
+No feedback provided
