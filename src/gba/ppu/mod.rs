@@ -95,10 +95,7 @@ const MODE5_HEIGHT: usize = 128;
 /// CPU cycles per scanline (308 dots × 4 cycles/dot).
 pub const CYCLES_PER_SCANLINE: u32 = 1232;
 /// Cycle within a scanline at which the H-Blank flag becomes set.
-///
-/// Per GBATek, the H-Blank status bit is "0" during the first 1006
-/// cycles and "1" during the last 226 cycles of each scanline.
-pub const HBLANK_START_CYCLE: u32 = 1006;
+pub const HBLANK_START_CYCLE: u32 = 1004;
 /// Number of visible scanlines (lines 0..=159 are rendered).
 pub const VISIBLE_SCANLINES: u32 = 160;
 /// Total scanlines per frame including V-Blank period.
@@ -228,19 +225,14 @@ pub const REG_BLDY: u32 = 0x0400_0054;
 /// `notify_*` paths on the bus that wake DMA channels. Instead it
 /// reports the edges that occurred during the most recent step and the
 /// caller (the bus) routes them. Counts (rather than booleans) are
-/// required because a single `step()` call may span many scanlines —
-/// e.g. a full-frame step crosses 228 H-Blanks and one V-Blank,
-/// and the bus must propagate every one to keep H-Blank-mode DMA
-/// channels firing per scanline.
+/// required because a single `step()` call may span many scanlines.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PpuStepEvents {
     /// Number of V-Blank periods that started during this step
     /// (transitions into scanline 160).
     pub vblank_starts: u32,
-    /// Number of H-Blank periods that started during this step (on any
-    /// scanline, including non-visible scanlines 160–227). Per GBATek,
-    /// H-Blank DMA fires on all 228 scanlines. Only the H-Blank IRQ is
-    /// suppressed during V-Blank (scanlines 160–[`VBLANK_LAST_SCANLINE`]).
+    /// Number of visible-scanline H-Blank periods that started during this
+    /// step. The bus routes these edges to H-Blank DMA channels.
     pub hblank_starts: u32,
     /// Number of complete frames that finished during this step. The
     /// framebuffer is ready for the frontend to read whenever this is
@@ -931,16 +923,14 @@ impl Ppu {
                         aff.increment_reference_points();
                     }
                 }
-                // Per GBATek, H-Blank DMA fires on ALL 228 scanlines
-                // (visible and V-Blank alike). Only the H-Blank IRQ is
-                // suppressed during V-Blank (see comment below).
-                events.hblank_starts = events.hblank_starts.saturating_add(1);
-                // Per GBATek: "no H-Blank interrupts are generated within
-                // V-Blank period." Only raise on visible scanlines (0-159).
-                if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0
-                    && (self.vcount as u32) < VISIBLE_SCANLINES
-                {
-                    ic.raise(irq_bits::HBLANK);
+                if (self.vcount as u32) < VISIBLE_SCANLINES {
+                    events.hblank_starts = events.hblank_starts.saturating_add(1);
+                }
+                if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0 {
+                    ic.raise_late(
+                        irq_bits::HBLANK,
+                        next_cycle.saturating_sub(HBLANK_START_CYCLE),
+                    );
                 }
             }
 
@@ -2255,9 +2245,8 @@ mod tests {
     }
 
     #[test]
-    fn hblank_irq_not_fired_during_vblank() {
-        // Per GBATek: "no H-Blank interrupts are generated within V-Blank period."
-        // The H-Blank IRQ should NOT fire on scanlines 160-227.
+    fn hblank_irq_fires_during_vblank() {
+        // mGBA raises H-Blank IRQs during V-Blank scanlines too.
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let vram = make_vram();
@@ -2278,18 +2267,16 @@ mod tests {
         ic.if_flags = 0;
         // Advance through H-Blank of scanline 160 (V-Blank period).
         ppu.step(HBLANK_START_CYCLE, &mut ic, &vram, &pram, &oam);
-        // H-Blank IRQ must NOT fire during V-Blank.
-        assert_eq!(
+        assert_ne!(
             ic.if_flags & irq_bits::HBLANK,
             0,
-            "H-Blank IRQ must not fire during V-Blank (scanline 160)"
+            "H-Blank IRQ should fire during V-Blank (scanline 160)"
         );
     }
 
     #[test]
-    fn hblank_dma_fires_during_vblank_scanlines() {
-        // Per GBATek, H-Blank DMA should trigger on ALL 228 scanlines,
-        // including the 67 V-Blank scanlines (160–226).
+    fn hblank_dma_skips_vblank_scanlines() {
+        // mGBA's H-Blank DMA scheduler only triggers on visible scanlines.
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let vram = make_vram();
@@ -2298,19 +2285,18 @@ mod tests {
         let cycles = CYCLES_PER_SCANLINE * VISIBLE_SCANLINES;
         ppu.step(cycles, &mut ic, &vram, &pram, &make_oam());
         assert_eq!(ppu.read_vcount(), 160);
-        // Step through H-Blank of scanline 160 — DMA must still fire.
+        // Step through H-Blank of scanline 160 — no H-Blank DMA edge is reported.
         let events = ppu.step(HBLANK_START_CYCLE, &mut ic, &vram, &pram, &make_oam());
         assert_eq!(
-            events.hblank_starts, 1,
-            "H-Blank DMA must fire on VBlank scanlines too (GBATek)"
+            events.hblank_starts, 0,
+            "H-Blank DMA should not fire on VBlank scanlines"
         );
     }
 
     #[test]
     fn step_full_frame_counts_every_hblank() {
-        // A full-frame step must report all 228 H-Blanks (visible + VBlank)
-        // and exactly one V-Blank / completed frame so the bus can
-        // forward each edge to the DMA hooks.
+        // A full-frame step reports visible-scanline H-Blanks for DMA plus
+        // exactly one V-Blank / completed frame.
         let mut ppu = Ppu::new();
         let mut ic = make_ic();
         let vram = make_vram();
@@ -2322,7 +2308,7 @@ mod tests {
             &pram,
             &make_oam(),
         );
-        assert_eq!(events.hblank_starts, SCANLINES_PER_FRAME);
+        assert_eq!(events.hblank_starts, VISIBLE_SCANLINES);
         assert_eq!(events.vblank_starts, 1);
         assert_eq!(events.frames_completed, 1);
     }
@@ -2342,7 +2328,7 @@ mod tests {
         );
         assert_eq!(events.vblank_starts, 2);
         assert_eq!(events.frames_completed, 2);
-        assert_eq!(events.hblank_starts, SCANLINES_PER_FRAME * 2);
+        assert_eq!(events.hblank_starts, VISIBLE_SCANLINES * 2);
     }
 
     #[test]

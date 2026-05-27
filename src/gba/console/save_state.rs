@@ -87,6 +87,18 @@ pub struct BusMemoryState {
     /// Whether the DMA latch has been initialized by a DMA read.
     #[serde(default)]
     pub dma_latch_valid: bool,
+    /// Remaining CPU-instruction window where unused reads see DMA bus value.
+    #[serde(default)]
+    pub dma_open_bus_instructions: u8,
+    /// Last Game Pak opcode-prefetch value used by unused-area CPU reads.
+    #[serde(default)]
+    pub gamepak_prefetch_open_bus_value: u32,
+    /// Whether `gamepak_prefetch_open_bus_value` has been initialized.
+    #[serde(default)]
+    pub gamepak_prefetch_open_bus_valid: bool,
+    /// CPU-visible TM0 sample phase while software polls DISPSTAT H-Blank edges.
+    #[serde(default)]
+    pub hblank_edge_timer_sample_index: u8,
     /// Dynamic wait-state timing derived from WAITCNT.
     pub waitstates: Waitstates,
     /// Undocumented BIOS-written register at 0x04000410.

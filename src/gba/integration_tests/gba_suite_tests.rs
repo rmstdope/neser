@@ -3,9 +3,9 @@ use super::gba_suite_runner::{
     boot_mgba_suite, run_armwrestler, run_mgba_bios_math_diagnostics, run_mgba_dma_diagnostics,
     run_mgba_io_read_diagnostics, run_mgba_io_read_diagnostics_after_bios_intro,
     run_mgba_memory_diagnostics, run_mgba_memory_diagnostics_with_bios_path,
-    run_mgba_sio_read_diagnostics, run_mgba_sio_timing_diagnostics, run_mgba_suite,
-    run_mgba_timer_irq_diagnostics, run_mgba_timers_diagnostics, run_mgba_timing_diagnostics,
-    run_mgba_video_tests, run_suite,
+    run_mgba_misc_edge_diagnostics, run_mgba_sio_read_diagnostics, run_mgba_sio_timing_diagnostics,
+    run_mgba_suite, run_mgba_timer_irq_diagnostics, run_mgba_timers_diagnostics,
+    run_mgba_timing_diagnostics, run_mgba_video_tests, run_suite,
 };
 use crate::gba::bios::EMBEDDED_BIOS;
 use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
@@ -610,6 +610,33 @@ fn gba_mgba_sio_read_diagnostics_still_passes_every_case() {
 }
 
 #[test]
+fn gba_mgba_misc_edge_diagnostics_passes_every_case() {
+    let result = run_mgba_misc_edge_diagnostics();
+
+    assert_eq!(
+        result.total_count,
+        Some(12),
+        "raw mGBA Misc edge log:\n{}",
+        result.raw_log
+    );
+    assert!(
+        result.passed_count.is_some(),
+        "mGBA Misc edge diagnostics should include a parsed pass count"
+    );
+    assert_eq!(
+        result.passed_count, result.total_count,
+        "mGBA Misc edge diagnostics should pass every case with the embedded BIOS.\nfailures: {:?}\nraw log:\n{}",
+        result.failures, result.raw_log
+    );
+    assert!(
+        result.failures.is_empty(),
+        "mGBA Misc edge diagnostics reported failures with the embedded BIOS: {:?}\nraw log:\n{}",
+        result.failures,
+        result.raw_log
+    );
+}
+
+#[test]
 fn gba_mgba_bios_math_diagnostics_passes_every_case() {
     let result = run_mgba_bios_math_diagnostics();
 
@@ -707,7 +734,7 @@ fn approvals_manifest_parses() {
     assert_eq!(approvals.get("mgba_dma"), Some(&0x06A6_24A4));
     assert_eq!(approvals.get("mgba_sio_read"), Some(&0xF5D9_8687));
     assert_eq!(approvals.get("mgba_sio_timing"), Some(&0x81BB_7F79));
-    assert_eq!(approvals.get("mgba_misc_edge"), Some(&0x36EC_DBF9));
+    assert_eq!(approvals.get("mgba_misc_edge"), Some(&0x9D9A_0C18));
     assert_eq!(approvals.get("mgba_video"), Some(&0xAB7E_C249));
 }
 
