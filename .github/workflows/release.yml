@@ -22,7 +22,7 @@ jobs:
             archive_format: tar.gz
             verify_flags: --require-unix-executable
             smoke_binary: ./neser
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             binary: neser
             archive_format: tar.gz
