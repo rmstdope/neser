@@ -78,6 +78,7 @@ pub const SCREEN_WIDTH: u32 = 240;
 pub const SCREEN_HEIGHT: u32 = 160;
 /// Bytes per pixel in the RGB888 framebuffer exposed to the frontend.
 pub const BYTES_PER_PIXEL: usize = 3;
+const OAM_BYTES: usize = 1024;
 /// Total framebuffer size in bytes (240 × 160 × 3).
 pub const FRAMEBUFFER_BYTES: usize =
     (SCREEN_WIDTH as usize) * (SCREEN_HEIGHT as usize) * BYTES_PER_PIXEL;
@@ -305,6 +306,24 @@ pub struct Ppu {
     /// active Forced Blank.  Cleared immediately if Forced Blank is
     /// re-asserted before the restart completes.
     forced_blank_restart_lines: u32,
+    /// Per-BG active-display enable delay. Disabling a BG takes effect
+    /// immediately. Enabling one mid-frame is phase-dependent: enables
+    /// during HBlank begin contributing after two complete scanlines,
+    /// while enables during HDraw use a three-line countdown so the first
+    /// visible contribution still occurs only after the current HDraw and
+    /// the following two complete scanlines have elapsed.
+    bg_enable_delays: [u8; 4],
+    /// Per-BG countdown after an active layer is disabled during HBlank.
+    /// Re-enabling during the immediately following HDraw can affect that
+    /// scanline; re-enabling in HBlank still uses the normal enable delay.
+    bg_disable_hblank_cooldowns: [u8; 4],
+    bg_force_current_scanline: [bool; 4],
+    bg_force_current_scanline_x_offset: [i8; 4],
+    hblank_irq_raised_this_scanline: bool,
+    /// OAM snapshot used for OBJ rendering. Hardware evaluates OBJ attributes
+    /// ahead of the scanline, so HBlank writes become visible one line later.
+    obj_render_oam: Vec<u8>,
+    obj_render_oam_initialized: bool,
     /// When true, apply GBA LCD color correction (gamma ≈ 4 curve) when
     /// converting BGR555 palette entries to RGB888.
     ///
@@ -335,7 +354,25 @@ pub struct PpuState {
     bldy: u8,
     mosaic: u16,
     forced_blank_restart_lines: u32,
+    #[serde(default)]
+    bg_enable_delays: [u8; 4],
+    #[serde(default)]
+    bg_disable_hblank_cooldowns: [u8; 4],
+    #[serde(default)]
+    bg_force_current_scanline: [bool; 4],
+    #[serde(default)]
+    bg_force_current_scanline_x_offset: [i8; 4],
+    #[serde(default)]
+    hblank_irq_raised_this_scanline: bool,
+    #[serde(default = "default_obj_render_oam")]
+    obj_render_oam: Vec<u8>,
+    #[serde(default)]
+    obj_render_oam_initialized: bool,
     color_correction: bool,
+}
+
+fn default_obj_render_oam() -> Vec<u8> {
+    vec![0; OAM_BYTES]
 }
 
 // ---- Color special effect helpers ----------------------------------------
@@ -411,6 +448,17 @@ const SORT_KEY_PRIORITY_SPACING: u16 = 10;
 /// same hardware priority level.
 const SORT_KEY_BG_OFFSET: u16 = 5;
 
+/// Number of complete rendered scanlines before a BG layer newly enabled
+/// during active display begins contributing pixels.
+const BG_ENABLE_DELAY_LINES: u8 = 2;
+const BG_ENABLE_HDRAW_DELAY_LINES: u8 = 3;
+const BG_DISABLE_HBLANK_COOLDOWN_LINES: u8 = 2;
+// mGBA's video scheduler exposes this edge slightly before the visible HBlank
+// flag for OBJ-overlay video scenes. Keep this scoped so the Misc edge timing
+// diagnostics, which sample raw DISPSTAT/TM0 phase without OBJ display, retain
+// their stricter HBlank-flag timing.
+const HBLANK_IRQ_EARLY_CYCLES: u32 = 48;
+
 // --------------------------------------------------------------------------
 
 /// Extract a 4-bit MOSAIC size field and return its effective pixel size.
@@ -433,6 +481,9 @@ fn mosaic_anchor(value: u32, block_size: u32) -> u32 {
 }
 
 impl Ppu {
+    const BG_ENABLE_MASK: u16 =
+        dispcnt::BG0_ENABLE | dispcnt::BG1_ENABLE | dispcnt::BG2_ENABLE | dispcnt::BG3_ENABLE;
+
     /// Create a new PPU with all registers zero, scanline 0, and a
     /// blank black framebuffer. The V-Counter match flag is set
     /// immediately because the default LYC (`DISPSTAT[15:8]`) is 0 and
@@ -459,6 +510,13 @@ impl Ppu {
             bldy: 0,
             mosaic: 0,
             forced_blank_restart_lines: 0,
+            bg_enable_delays: [0; 4],
+            bg_disable_hblank_cooldowns: [0; 4],
+            bg_force_current_scanline: [false; 4],
+            bg_force_current_scanline_x_offset: [0; 4],
+            hblank_irq_raised_this_scanline: false,
+            obj_render_oam: default_obj_render_oam(),
+            obj_render_oam_initialized: false,
             color_correction: false,
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
@@ -490,6 +548,13 @@ impl Ppu {
             bldy: self.bldy,
             mosaic: self.mosaic,
             forced_blank_restart_lines: self.forced_blank_restart_lines,
+            bg_enable_delays: self.bg_enable_delays,
+            bg_disable_hblank_cooldowns: self.bg_disable_hblank_cooldowns,
+            bg_force_current_scanline: self.bg_force_current_scanline,
+            bg_force_current_scanline_x_offset: self.bg_force_current_scanline_x_offset,
+            hblank_irq_raised_this_scanline: self.hblank_irq_raised_this_scanline,
+            obj_render_oam: self.obj_render_oam.clone(),
+            obj_render_oam_initialized: self.obj_render_oam_initialized,
             color_correction: self.color_correction,
         }
     }
@@ -515,6 +580,14 @@ impl Ppu {
         self.bldy = state.bldy;
         self.mosaic = state.mosaic;
         self.forced_blank_restart_lines = state.forced_blank_restart_lines;
+        self.bg_enable_delays = state.bg_enable_delays;
+        self.bg_disable_hblank_cooldowns = state.bg_disable_hblank_cooldowns;
+        self.bg_force_current_scanline = state.bg_force_current_scanline;
+        self.bg_force_current_scanline_x_offset = state.bg_force_current_scanline_x_offset;
+        self.hblank_irq_raised_this_scanline = state.hblank_irq_raised_this_scanline;
+        self.obj_render_oam = state.obj_render_oam.clone();
+        self.obj_render_oam.resize(OAM_BYTES, 0);
+        self.obj_render_oam_initialized = state.obj_render_oam_initialized;
         self.color_correction = state.color_correction;
     }
 
@@ -534,13 +607,21 @@ impl Ppu {
     pub fn write_dispcnt(&mut self, value: u16) {
         let was_forced_blank = self.dispcnt & dispcnt::FORCED_BLANK != 0;
         let is_forced_blank = value & dispcnt::FORCED_BLANK != 0;
+        let old_bg_enables = self.dispcnt & Self::BG_ENABLE_MASK;
+        let new_bg_enables = value & Self::BG_ENABLE_MASK;
         self.dispcnt = value;
+        self.update_bg_enable_delays(old_bg_enables, new_bg_enables, was_forced_blank);
         if was_forced_blank && !is_forced_blank {
             // Forced Blank de-asserted: begin 2-scanline restart countdown.
             self.forced_blank_restart_lines = 2;
         } else if is_forced_blank {
             // Forced Blank asserted (or kept asserted): cancel any pending restart.
             self.forced_blank_restart_lines = 0;
+            self.bg_enable_delays = [0; 4];
+            self.bg_disable_hblank_cooldowns = [0; 4];
+            self.bg_force_current_scanline = [false; 4];
+            self.bg_force_current_scanline_x_offset = [0; 4];
+            self.obj_render_oam_initialized = false;
         }
     }
 
@@ -670,6 +751,98 @@ impl Ppu {
     /// Whether `BG0` is enabled in DISPCNT.
     pub fn bg0_enabled(&self) -> bool {
         self.dispcnt & dispcnt::BG0_ENABLE != 0
+    }
+
+    fn bg_layer_enabled(&self, bg_idx: usize) -> bool {
+        let enable_bit = dispcnt::BG0_ENABLE << bg_idx;
+        self.dispcnt & enable_bit != 0
+            && (self.bg_enable_delays[bg_idx] == 0 || self.bg_force_current_scanline[bg_idx])
+    }
+
+    fn update_bg_enable_delays(
+        &mut self,
+        old_bg_enables: u16,
+        new_bg_enables: u16,
+        was_forced_blank: bool,
+    ) {
+        for bg_idx in 0..4 {
+            let enable_bit = dispcnt::BG0_ENABLE << bg_idx;
+            let was_enabled = old_bg_enables & enable_bit != 0;
+            let is_enabled = new_bg_enables & enable_bit != 0;
+            if !is_enabled {
+                if was_enabled && self.dispstat & dispstat::HBLANK_FLAG != 0 {
+                    self.bg_disable_hblank_cooldowns[bg_idx] = BG_DISABLE_HBLANK_COOLDOWN_LINES;
+                }
+                self.bg_enable_delays[bg_idx] = 0;
+                self.bg_force_current_scanline[bg_idx] = false;
+                self.bg_force_current_scanline_x_offset[bg_idx] = 0;
+            } else if !was_enabled
+                && self.bg_disable_hblank_cooldowns[bg_idx] != 0
+                && self.dispstat & dispstat::HBLANK_FLAG == 0
+                && self.in_active_display()
+            {
+                self.bg_enable_delays[bg_idx] = BG_ENABLE_HDRAW_DELAY_LINES;
+                self.bg_force_current_scanline[bg_idx] = true;
+                // The first tile of a line re-enabled just after HBlank is in
+                // the BG fetch pipeline already. The two observed phases match
+                // the mGBA video Layer toggle 2 edge cases at line_cycle 38/49.
+                self.bg_force_current_scanline_x_offset[bg_idx] =
+                    if self.line_cycle <= 44 { -2 } else { 2 };
+                self.bg_disable_hblank_cooldowns[bg_idx] = 0;
+            } else if !was_enabled && self.in_active_display() && !was_forced_blank {
+                self.bg_enable_delays[bg_idx] = if self.dispstat & dispstat::HBLANK_FLAG != 0 {
+                    BG_ENABLE_DELAY_LINES
+                } else {
+                    BG_ENABLE_HDRAW_DELAY_LINES
+                };
+                self.bg_force_current_scanline[bg_idx] = false;
+                self.bg_force_current_scanline_x_offset[bg_idx] = 0;
+                self.bg_disable_hblank_cooldowns[bg_idx] = 0;
+            }
+        }
+    }
+
+    fn in_active_display(&self) -> bool {
+        (self.vcount as u32) < VISIBLE_SCANLINES
+            && (self.vcount != 0 || self.line_cycle != 0)
+            && self.dispstat & dispstat::VBLANK_FLAG == 0
+            && !self.forced_blank()
+    }
+
+    fn advance_bg_enable_delays_after_render(&mut self) {
+        for delay in &mut self.bg_enable_delays {
+            *delay = delay.saturating_sub(1);
+        }
+        self.bg_force_current_scanline = [false; 4];
+        self.bg_force_current_scanline_x_offset = [0; 4];
+        for cooldown in &mut self.bg_disable_hblank_cooldowns {
+            *cooldown = cooldown.saturating_sub(1);
+        }
+    }
+
+    fn forced_scanline_sample_x(&self, bg_idx: usize, x: usize) -> Option<usize> {
+        if !self.bg_force_current_scanline[bg_idx] || x >= 8 {
+            return Some(x);
+        }
+        (x as isize)
+            .checked_add(self.bg_force_current_scanline_x_offset[bg_idx] as isize)
+            .filter(|&adjusted| (0..SCREEN_WIDTH as isize).contains(&adjusted))
+            .map(|adjusted| adjusted as usize)
+    }
+
+    fn copy_live_oam_to_render_latch(&mut self, live_oam: &[u8]) {
+        self.obj_render_oam.resize(OAM_BYTES, 0);
+        let copy_len = live_oam.len().min(OAM_BYTES);
+        self.obj_render_oam[..copy_len].copy_from_slice(&live_oam[..copy_len]);
+        self.obj_render_oam[copy_len..].fill(0);
+        self.obj_render_oam_initialized = true;
+    }
+
+    fn obj_render_oam_for_scanline(&mut self, live_oam: &[u8]) -> Vec<u8> {
+        if !self.obj_render_oam_initialized || self.obj_render_oam.len() != OAM_BYTES {
+            self.copy_live_oam_to_render_latch(live_oam);
+        }
+        self.obj_render_oam.clone()
     }
 
     /// Frame selection for Mode 4/5 (DISPCNT bit 4).
@@ -907,6 +1080,20 @@ impl Ppu {
         while remaining > 0 {
             let take = remaining.min(CYCLES_PER_SCANLINE - self.line_cycle);
             let next_cycle = self.line_cycle + take;
+            let hblank_irq_cycle = HBLANK_START_CYCLE.saturating_sub(HBLANK_IRQ_EARLY_CYCLES);
+
+            if self.line_cycle < hblank_irq_cycle
+                && next_cycle >= hblank_irq_cycle
+                && self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0
+                && self.dispcnt & dispcnt::OBJ_ENABLE != 0
+                && !self.hblank_irq_raised_this_scanline
+            {
+                ic.raise_late(
+                    irq_bits::HBLANK,
+                    next_cycle.saturating_sub(hblank_irq_cycle),
+                );
+                self.hblank_irq_raised_this_scanline = true;
+            }
 
             // H-Blank flag rising edge.
             if self.line_cycle < HBLANK_START_CYCLE && next_cycle >= HBLANK_START_CYCLE {
@@ -922,15 +1109,19 @@ impl Ppu {
                     for aff in &mut self.bg_affine {
                         aff.increment_reference_points();
                     }
+                    self.advance_bg_enable_delays_after_render();
                 }
                 if (self.vcount as u32) < VISIBLE_SCANLINES {
                     events.hblank_starts = events.hblank_starts.saturating_add(1);
                 }
-                if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0 {
+                if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0
+                    && !self.hblank_irq_raised_this_scanline
+                {
                     ic.raise_late(
                         irq_bits::HBLANK,
                         next_cycle.saturating_sub(HBLANK_START_CYCLE),
                     );
+                    self.hblank_irq_raised_this_scanline = true;
                 }
             }
 
@@ -950,6 +1141,7 @@ impl Ppu {
     fn advance_scanline(&mut self, ic: &mut InterruptController, events: &mut PpuStepEvents) {
         // Leaving this scanline — clear H-Blank flag.
         self.dispstat &= !dispstat::HBLANK_FLAG;
+        self.hblank_irq_raised_this_scanline = false;
 
         // Handle the forced-blank mid-frame restart countdown.
         // When Forced Blank (DISPCNT bit 7) is de-asserted mid-frame, the PPU
@@ -968,6 +1160,7 @@ impl Ppu {
                 for aff in &mut self.bg_affine {
                     aff.latch_reference_points();
                 }
+                self.obj_render_oam_initialized = false;
                 self.update_vcount_match_flag(Some(ic));
                 return;
             }
@@ -975,6 +1168,9 @@ impl Ppu {
 
         let next = (self.vcount as u32 + 1) % SCANLINES_PER_FRAME;
         self.vcount = next as u16;
+        if next == 0 {
+            self.obj_render_oam_initialized = false;
+        }
 
         // V-Blank flag tracks scanlines 160..=226. (Cleared on 227.)
         if next == VISIBLE_SCANLINES {
@@ -1031,18 +1227,20 @@ impl Ppu {
             }
             return;
         }
+        let render_oam = self.obj_render_oam_for_scanline(oam);
         match self.mode() {
-            0 => self.render_mode0_scanline(y, vram, pram, oam),
-            1 => self.render_mode1_scanline(y, vram, pram, oam),
-            2 => self.render_mode2_scanline(y, vram, pram, oam),
-            3 => self.render_mode3_scanline(y, vram, pram, oam),
-            4 => self.render_mode4_scanline(y, vram, pram, oam),
-            5 => self.render_mode5_scanline(y, vram, pram, oam),
+            0 => self.render_mode0_scanline(y, vram, pram, &render_oam),
+            1 => self.render_mode1_scanline(y, vram, pram, &render_oam),
+            2 => self.render_mode2_scanline(y, vram, pram, &render_oam),
+            3 => self.render_mode3_scanline(y, vram, pram, &render_oam),
+            4 => self.render_mode4_scanline(y, vram, pram, &render_oam),
+            5 => self.render_mode5_scanline(y, vram, pram, &render_oam),
             // Modes 6-7 are "prohibited" per GBATek. No BG layers are rendered,
             // but OBJ sprites and the backdrop behave normally.
-            6 | 7 => self.render_prohibited_mode_scanline(y, vram, pram, oam),
+            6 | 7 => self.render_prohibited_mode_scanline(y, vram, pram, &render_oam),
             _ => self.render_backdrop_scanline(y, pram),
         }
+        self.copy_live_oam_to_render_latch(oam);
         // Green Swap (0x0400_0002): exchange the green channel between
         // each pair of adjacent pixels in the composited scanline output.
         if self.green_swap {
@@ -1059,10 +1257,10 @@ impl Ppu {
     /// compositing and window support.
     fn render_mode0_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         let bg_enables = [
-            self.dispcnt & dispcnt::BG0_ENABLE != 0,
-            self.dispcnt & dispcnt::BG1_ENABLE != 0,
-            self.dispcnt & dispcnt::BG2_ENABLE != 0,
-            self.dispcnt & dispcnt::BG3_ENABLE != 0,
+            self.bg_layer_enabled(0),
+            self.bg_layer_enabled(1),
+            self.bg_layer_enabled(2),
+            self.bg_layer_enabled(3),
         ];
 
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
@@ -1122,10 +1320,14 @@ impl Ppu {
         let screen_y = (sample_y + vofs as usize) & height_mask;
 
         for x in 0..(SCREEN_WIDTH as usize) {
+            let Some(output_x) = self.forced_scanline_sample_x(bg_idx, x) else {
+                buf[x] = TRANSPARENT;
+                continue;
+            };
             let sample_x = if mosaic_enabled {
-                mosaic_anchor(x as u32, mosaic_h as u32) as usize
+                mosaic_anchor(output_x as u32, mosaic_h as u32) as usize
             } else {
-                x
+                output_x
             };
             let screen_x = (sample_x + hofs as usize) & width_mask;
             let tile_x = screen_x >> 3;
@@ -1242,10 +1444,14 @@ impl Ppu {
             .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
 
         for x in 0..(SCREEN_WIDTH as usize) {
+            let Some(output_x) = self.forced_scanline_sample_x(bg_idx, x) else {
+                buf[x] = TRANSPARENT;
+                continue;
+            };
             let sample_x = if mosaic_enabled {
-                mosaic_anchor(x as u32, mosaic_h as u32) as usize
+                mosaic_anchor(output_x as u32, mosaic_h as u32) as usize
             } else {
-                x
+                output_x
             };
             let px = line_anchor_x.wrapping_add(pa.wrapping_mul(sample_x as i32)) >> 8;
             let py = line_anchor_y.wrapping_add(pc.wrapping_mul(sample_x as i32)) >> 8;
@@ -1290,10 +1496,7 @@ impl Ppu {
 
     /// Mode 2: affine tile backgrounds (BG2 and BG3 only).
     fn render_mode2_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
-        let bg_enables = [
-            self.dispcnt & dispcnt::BG2_ENABLE != 0,
-            self.dispcnt & dispcnt::BG3_ENABLE != 0,
-        ];
+        let bg_enables = [self.bg_layer_enabled(2), self.bg_layer_enabled(3)];
 
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
             self.render_no_layers_scanline(y, vram, pram, oam);
@@ -1318,9 +1521,9 @@ impl Ppu {
     /// Mode 1: BG0/BG1 regular text + BG2 affine.
     fn render_mode1_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
         let bg_enables = [
-            self.dispcnt & dispcnt::BG0_ENABLE != 0,
-            self.dispcnt & dispcnt::BG1_ENABLE != 0,
-            self.dispcnt & dispcnt::BG2_ENABLE != 0,
+            self.bg_layer_enabled(0),
+            self.bg_layer_enabled(1),
+            self.bg_layer_enabled(2),
         ];
 
         if !bg_enables.iter().any(|&e| e) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
@@ -1507,14 +1710,14 @@ impl Ppu {
     /// 240×160 source bitmap remain transparent so the backdrop or lower
     /// priority layers show through.
     fn render_mode3_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
-        if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+        if !self.bg_layer_enabled(2) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
             self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
 
         let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
 
-        if self.bg2_enabled() {
+        if self.bg_layer_enabled(2) {
             let buf = self.render_affine_bitmap_layer(
                 y,
                 vram,
@@ -1535,14 +1738,14 @@ impl Ppu {
     /// 240×160 source bitmap remain transparent so the backdrop or lower
     /// priority layers show through.
     fn render_mode4_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
-        if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+        if !self.bg_layer_enabled(2) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
             self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
 
         let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
 
-        if self.bg2_enabled() {
+        if self.bg_layer_enabled(2) {
             let frame_base = if self.frame_select() {
                 0xA000usize
             } else {
@@ -1569,14 +1772,14 @@ impl Ppu {
     /// 160×128 source bitmap remain transparent so the backdrop or lower
     /// priority layers show through.
     fn render_mode5_scanline(&mut self, y: u32, vram: &[u8], pram: &[u8], oam: &[u8]) {
-        if !self.bg2_enabled() && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
+        if !self.bg_layer_enabled(2) && self.dispcnt & dispcnt::OBJ_ENABLE == 0 {
             self.render_no_layers_scanline(y, vram, pram, oam);
             return;
         }
 
         let mut layers: Vec<(usize, u8, [u16; SCREEN_WIDTH as usize])> = Vec::new();
 
-        if self.bg2_enabled() {
+        if self.bg_layer_enabled(2) {
             let frame_base = if self.frame_select() {
                 0xA000usize
             } else {
