@@ -78,6 +78,7 @@ pub const SCREEN_WIDTH: u32 = 240;
 pub const SCREEN_HEIGHT: u32 = 160;
 /// Bytes per pixel in the RGB888 framebuffer exposed to the frontend.
 pub const BYTES_PER_PIXEL: usize = 3;
+const OAM_BYTES: usize = 1024;
 /// Total framebuffer size in bytes (240 × 160 × 3).
 pub const FRAMEBUFFER_BYTES: usize =
     (SCREEN_WIDTH as usize) * (SCREEN_HEIGHT as usize) * BYTES_PER_PIXEL;
@@ -319,6 +320,10 @@ pub struct Ppu {
     bg_force_current_scanline: [bool; 4],
     bg_force_current_scanline_x_offset: [i8; 4],
     hblank_irq_raised_this_scanline: bool,
+    /// OAM snapshot used for OBJ rendering. Hardware evaluates OBJ attributes
+    /// ahead of the scanline, so HBlank writes become visible one line later.
+    obj_render_oam: Vec<u8>,
+    obj_render_oam_initialized: bool,
     /// When true, apply GBA LCD color correction (gamma ≈ 4 curve) when
     /// converting BGR555 palette entries to RGB888.
     ///
@@ -359,7 +364,15 @@ pub struct PpuState {
     bg_force_current_scanline_x_offset: [i8; 4],
     #[serde(default)]
     hblank_irq_raised_this_scanline: bool,
+    #[serde(default = "default_obj_render_oam")]
+    obj_render_oam: Vec<u8>,
+    #[serde(default)]
+    obj_render_oam_initialized: bool,
     color_correction: bool,
+}
+
+fn default_obj_render_oam() -> Vec<u8> {
+    vec![0; OAM_BYTES]
 }
 
 // ---- Color special effect helpers ----------------------------------------
@@ -502,6 +515,8 @@ impl Ppu {
             bg_force_current_scanline: [false; 4],
             bg_force_current_scanline_x_offset: [0; 4],
             hblank_irq_raised_this_scanline: false,
+            obj_render_oam: default_obj_render_oam(),
+            obj_render_oam_initialized: false,
             color_correction: false,
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
@@ -538,6 +553,8 @@ impl Ppu {
             bg_force_current_scanline: self.bg_force_current_scanline,
             bg_force_current_scanline_x_offset: self.bg_force_current_scanline_x_offset,
             hblank_irq_raised_this_scanline: self.hblank_irq_raised_this_scanline,
+            obj_render_oam: self.obj_render_oam.clone(),
+            obj_render_oam_initialized: self.obj_render_oam_initialized,
             color_correction: self.color_correction,
         }
     }
@@ -568,6 +585,9 @@ impl Ppu {
         self.bg_force_current_scanline = state.bg_force_current_scanline;
         self.bg_force_current_scanline_x_offset = state.bg_force_current_scanline_x_offset;
         self.hblank_irq_raised_this_scanline = state.hblank_irq_raised_this_scanline;
+        self.obj_render_oam = state.obj_render_oam.clone();
+        self.obj_render_oam.resize(OAM_BYTES, 0);
+        self.obj_render_oam_initialized = state.obj_render_oam_initialized;
         self.color_correction = state.color_correction;
     }
 
@@ -601,6 +621,7 @@ impl Ppu {
             self.bg_disable_hblank_cooldowns = [0; 4];
             self.bg_force_current_scanline = [false; 4];
             self.bg_force_current_scanline_x_offset = [0; 4];
+            self.obj_render_oam_initialized = false;
         }
     }
 
@@ -807,6 +828,21 @@ impl Ppu {
             .checked_add(self.bg_force_current_scanline_x_offset[bg_idx] as isize)
             .filter(|&adjusted| (0..SCREEN_WIDTH as isize).contains(&adjusted))
             .map(|adjusted| adjusted as usize)
+    }
+
+    fn copy_live_oam_to_render_latch(&mut self, live_oam: &[u8]) {
+        self.obj_render_oam.resize(OAM_BYTES, 0);
+        let copy_len = live_oam.len().min(OAM_BYTES);
+        self.obj_render_oam[..copy_len].copy_from_slice(&live_oam[..copy_len]);
+        self.obj_render_oam[copy_len..].fill(0);
+        self.obj_render_oam_initialized = true;
+    }
+
+    fn obj_render_oam_for_scanline(&mut self, live_oam: &[u8]) -> Vec<u8> {
+        if !self.obj_render_oam_initialized || self.obj_render_oam.len() != OAM_BYTES {
+            self.copy_live_oam_to_render_latch(live_oam);
+        }
+        self.obj_render_oam.clone()
     }
 
     /// Frame selection for Mode 4/5 (DISPCNT bit 4).
@@ -1124,6 +1160,7 @@ impl Ppu {
                 for aff in &mut self.bg_affine {
                     aff.latch_reference_points();
                 }
+                self.obj_render_oam_initialized = false;
                 self.update_vcount_match_flag(Some(ic));
                 return;
             }
@@ -1131,6 +1168,9 @@ impl Ppu {
 
         let next = (self.vcount as u32 + 1) % SCANLINES_PER_FRAME;
         self.vcount = next as u16;
+        if next == 0 {
+            self.obj_render_oam_initialized = false;
+        }
 
         // V-Blank flag tracks scanlines 160..=226. (Cleared on 227.)
         if next == VISIBLE_SCANLINES {
@@ -1187,18 +1227,20 @@ impl Ppu {
             }
             return;
         }
+        let render_oam = self.obj_render_oam_for_scanline(oam);
         match self.mode() {
-            0 => self.render_mode0_scanline(y, vram, pram, oam),
-            1 => self.render_mode1_scanline(y, vram, pram, oam),
-            2 => self.render_mode2_scanline(y, vram, pram, oam),
-            3 => self.render_mode3_scanline(y, vram, pram, oam),
-            4 => self.render_mode4_scanline(y, vram, pram, oam),
-            5 => self.render_mode5_scanline(y, vram, pram, oam),
+            0 => self.render_mode0_scanline(y, vram, pram, &render_oam),
+            1 => self.render_mode1_scanline(y, vram, pram, &render_oam),
+            2 => self.render_mode2_scanline(y, vram, pram, &render_oam),
+            3 => self.render_mode3_scanline(y, vram, pram, &render_oam),
+            4 => self.render_mode4_scanline(y, vram, pram, &render_oam),
+            5 => self.render_mode5_scanline(y, vram, pram, &render_oam),
             // Modes 6-7 are "prohibited" per GBATek. No BG layers are rendered,
             // but OBJ sprites and the backdrop behave normally.
-            6 | 7 => self.render_prohibited_mode_scanline(y, vram, pram, oam),
+            6 | 7 => self.render_prohibited_mode_scanline(y, vram, pram, &render_oam),
             _ => self.render_backdrop_scanline(y, pram),
         }
+        self.copy_live_oam_to_render_latch(oam);
         // Green Swap (0x0400_0002): exchange the green channel between
         // each pair of adjacent pixels in the composited scanline output.
         if self.green_swap {
