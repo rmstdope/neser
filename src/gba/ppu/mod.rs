@@ -831,7 +831,6 @@ impl Ppu {
     }
 
     fn copy_live_oam_to_render_latch(&mut self, live_oam: &[u8]) {
-        self.obj_render_oam.resize(OAM_BYTES, 0);
         let copy_len = live_oam.len().min(OAM_BYTES);
         self.obj_render_oam[..copy_len].copy_from_slice(&live_oam[..copy_len]);
         self.obj_render_oam[copy_len..].fill(0);
@@ -839,7 +838,7 @@ impl Ppu {
     }
 
     fn obj_render_oam_for_scanline(&mut self, live_oam: &[u8]) -> Vec<u8> {
-        if !self.obj_render_oam_initialized || self.obj_render_oam.len() != OAM_BYTES {
+        if !self.obj_render_oam_initialized {
             self.copy_live_oam_to_render_latch(live_oam);
         }
         self.obj_render_oam.clone()
