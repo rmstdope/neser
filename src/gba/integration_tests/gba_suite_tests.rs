@@ -1,11 +1,12 @@
 use super::gba_suite_runner::{
-    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, Suite, VIDEO_TEST_NAMES,
-    boot_mgba_suite, run_armwrestler, run_mgba_bios_math_diagnostics, run_mgba_dma_diagnostics,
-    run_mgba_io_read_diagnostics, run_mgba_io_read_diagnostics_after_bios_intro,
-    run_mgba_memory_diagnostics, run_mgba_memory_diagnostics_with_bios_path,
-    run_mgba_misc_edge_diagnostics, run_mgba_sio_read_diagnostics, run_mgba_sio_timing_diagnostics,
-    run_mgba_suite, run_mgba_timer_irq_diagnostics, run_mgba_timers_diagnostics,
-    run_mgba_timing_diagnostics, run_mgba_video_tests, run_suite,
+    ARMWRESTLER_TEST_PAGE_COUNT, MGBA_SUITE_COUNT, MGBA_SUITE_KEYS, MgbaVideoResult, Suite,
+    VIDEO_TEST_NAMES, boot_mgba_suite, run_armwrestler, run_mgba_bios_math_diagnostics,
+    run_mgba_dma_diagnostics, run_mgba_io_read_diagnostics,
+    run_mgba_io_read_diagnostics_after_bios_intro, run_mgba_memory_diagnostics,
+    run_mgba_memory_diagnostics_with_bios_path, run_mgba_misc_edge_diagnostics,
+    run_mgba_sio_read_diagnostics, run_mgba_sio_timing_diagnostics, run_mgba_suite,
+    run_mgba_timer_irq_diagnostics, run_mgba_timers_diagnostics, run_mgba_timing_diagnostics,
+    run_mgba_video_tests, run_suite,
 };
 use crate::gba::bios::EMBEDDED_BIOS;
 use crate::gba::integration_tests::gba_suite_runner::GBA_CYCLES_PER_FRAME;
@@ -801,49 +802,68 @@ fn advance_one_frame(gba: &mut crate::gba::Gba, cycles: &mut u64) {
     panic!("no frame produced within cycle budget");
 }
 
-/// Run the mgba-emu/suite Video sub-tests and compare actual vs expected
-/// framebuffers. Reports which of the 7 video tests produce correct output.
-///
-/// Set `NESER_CAPTURE_SCREEN=1` to save PNG screenshots for visual inspection.
-#[test]
-#[ignore] // Investigation test — run manually to check video correctness.
-fn gba_mgba_video_comparison() {
-    let result = run_mgba_video_tests();
+fn cached_mgba_video_result() -> &'static MgbaVideoResult {
+    static RESULT: OnceLock<MgbaVideoResult> = OnceLock::new();
+    // The runner writes both actual and expected PNGs when NESER_CAPTURE_SCREEN=1.
+    RESULT.get_or_init(run_mgba_video_tests)
+}
+
+fn assert_mgba_video_test_matches_expected(test_idx: usize) {
+    let result = cached_mgba_video_result();
     assert_eq!(
         result.tests.len(),
         7,
         "expected 7 video test results, got {}",
         result.tests.len()
     );
-    println!("\n=== mgba-emu/suite Video Comparison Results ===\n");
-    println!("| # | Test                        | Actual CRC | Expected CRC | Match |");
-    println!("|---|-----------------------------|-----------:|-------------:|:-----:|");
+    let test = &result.tests[test_idx];
+    assert!(
+        test.matches,
+        "mGBA video '{}' (test {}) should match expected output: actual=0x{:08X} expected=0x{:08X}; total matching={}/7; cycles={}",
+        VIDEO_TEST_NAMES[test_idx],
+        test_idx + 1,
+        test.actual_crc,
+        test.expected_crc,
+        result.tests.iter().filter(|test| test.matches).count(),
+        result.cycles,
+    );
+}
 
-    let pass_count = result.tests.iter().filter(|t| t.matches).count();
-    for (i, test) in result.tests.iter().enumerate() {
-        let status = if test.matches { "✓" } else { "✗" };
-        println!(
-            "| {} | {:<27} | 0x{:08X} | 0x{:08X}   | {}    |",
-            i + 1,
-            VIDEO_TEST_NAMES[i],
-            test.actual_crc,
-            test.expected_crc,
-            status
-        );
-    }
-    println!("\nTotal: {pass_count}/7 tests match");
-    println!("Total cycles: {}", result.cycles);
+#[test]
+fn gba_mgba_video_basic_mode_3_matches_expected() {
+    assert_mgba_video_test_matches_expected(0);
+}
 
-    // Assert known-passing tests to catch regressions.
-    let expected_passing = [0, 1, 2, 6]; // Basic Mode 3, Basic Mode 4, Degenerate OBJ transforms, Window offscreen reset
-    for &idx in &expected_passing {
-        assert!(
-            result.tests[idx].matches,
-            "regression: '{}' (test {}) should match but actual=0x{:08X} expected=0x{:08X}",
-            VIDEO_TEST_NAMES[idx],
-            idx + 1,
-            result.tests[idx].actual_crc,
-            result.tests[idx].expected_crc,
-        );
-    }
+#[test]
+fn gba_mgba_video_basic_mode_4_matches_expected() {
+    assert_mgba_video_test_matches_expected(1);
+}
+
+#[test]
+fn gba_mgba_video_degenerate_obj_transforms_matches_expected() {
+    assert_mgba_video_test_matches_expected(2);
+}
+
+#[test]
+#[ignore = "tracked by #2687"]
+fn gba_mgba_video_layer_toggle_matches_expected() {
+    assert_mgba_video_test_matches_expected(3);
+}
+
+#[test]
+#[ignore = "tracked by #2688"]
+fn gba_mgba_video_layer_toggle_2_matches_expected() {
+    assert_mgba_video_test_matches_expected(4);
+}
+
+#[test]
+#[ignore = "tracked by #2689"]
+fn gba_mgba_video_oam_update_delay_matches_expected() {
+    assert_mgba_video_test_matches_expected(5);
+}
+
+#[test]
+#[ignore = "tracked by #2690"]
+fn gba_mgba_video_window_offscreen_reset_matches_expected() {
+    assert_mgba_video_test_matches_expected(6);
 }

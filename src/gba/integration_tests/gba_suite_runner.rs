@@ -1329,6 +1329,7 @@ pub struct MgbaVideoResult {
 /// - For each video test i (0..7):
 ///   - Press DOWN to advance (except test 0)
 ///   - Press A to enter the test → shows "actual" rendering
+///   - Wait for stability, then press START to hide the suite's Actual/Expected overlay text
 ///   - Wait for stability → capture actual CRC
 ///   - Press RIGHT → shows "expected" rendering
 ///   - Wait for stability → capture expected CRC
@@ -1371,7 +1372,9 @@ pub fn run_mgba_video_tests() -> MgbaVideoResult {
         // Press A to enter the test — shows "actual" rendering.
         press_button(&mut gba, &mut cycles, BTN_A);
 
-        // Wait for the actual rendering to stabilise.
+        // Let the actual rendering appear, then hide the suite's overlay before calculating CRCs.
+        wait_for_stability(&mut gba, &mut cycles, test_name);
+        press_button(&mut gba, &mut cycles, BTN_START);
         wait_for_stability(&mut gba, &mut cycles, test_name);
         let actual_crc = gba.screen_crc32();
         maybe_write_video_png(&gba, test_idx, "actual", actual_crc);
