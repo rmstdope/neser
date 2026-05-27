@@ -74,9 +74,9 @@ export async function loadRomFromFileInput(page: Page) {
 }
 
 /** Load a minimal GBA ROM via the file input, setting romFromFile = true. */
-export async function loadGbaRomFromFileInput(page: Page) {
+export async function loadGbaRomFromFileInput(page: Page, name = "suite.gba") {
     await page.locator("#rom").setInputFiles({
-        name: "suite.gba",
+        name,
         mimeType: "application/octet-stream",
         buffer: makeMinimalGbaRomBytes()
     });

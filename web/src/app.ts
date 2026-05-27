@@ -12,6 +12,7 @@ import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton, isZappe
 import { createSaveStateContext } from "./save-state/save_state_context";
 import { fetchRomList } from "./rom/rom_list";
 import { handleRomSelection } from "./rom/rom_selection";
+import { shouldCreateFreshEmulatorForRomStart } from "./rom/emulator_lifecycle";
 import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionForName, type WebRomConsoleKind } from "./rom/rom_extensions";
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
@@ -544,7 +545,7 @@ function setupGbPrograms() {
     return true;
 }
 
-function renderFrameWithCurrentPipeline(frame: Uint8Array, sourceFormat: number): boolean {
+function renderFrameWithCurrentPipeline(frame: Uint8Array, sourceFormat = gl.RGBA): boolean {
     const pipeline = selectRenderPipeline({
         filterType: filters[currentFilter]?.type,
         gbAssetsLoaded,
@@ -978,7 +979,7 @@ function updateNesDisplayDimensions() {
     // Reallocate the texture with the correct dimensions.
     if (nesTexture) {
         gl.bindTexture(gl.TEXTURE_2D, nesTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        allocateFrameTextureStorage();
     }
 }
 let lastFrameTime = 0;
@@ -1236,10 +1237,9 @@ async function start() {
             if (!initWebGL()) {
                 throw new Error("Failed to initialize WebGL");
             }
+        }
 
-            createEmulatorInstance(consoleKind);
-        } else if (emulator.kind !== consoleKind) {
-            // Switching emulator kind (NES ↔ GB).
+        if (shouldCreateFreshEmulatorForRomStart(emulator?.kind ?? null, consoleKind)) {
             createEmulatorInstance(consoleKind);
         }
 
@@ -2376,7 +2376,7 @@ if (!pauseBtn || !stopBtn || !resetBtn) {
 pauseBtn.addEventListener("click", pauseResume);
 stopBtn.addEventListener("click", stop);
 resetBtn.addEventListener("click", () => {
-    resetAction();
+    void resetAction();
 });
 
 async function populateRomSelect() {
@@ -2953,18 +2953,67 @@ async function toggleScreenFullscreen() {
     }
 }
 
-function resetAction() {
+async function resetAction() {
     if (!emulator) return;
     cancelActiveRecording();
+    if (emulator.kind === "gba") {
+        await restartGbaSession("Soft reset");
+        return;
+    }
     emulator.inst.reset(true);
     setStatus("Soft reset", false);
 }
 
-function hardResetAction() {
+async function hardResetAction() {
     if (!emulator) return;
     cancelActiveRecording();
+    if (emulator.kind === "gba") {
+        await restartGbaSession("Hard reset");
+        return;
+    }
     emulator.inst.reset(false);
     setStatus("Hard reset", false);
+}
+
+async function restartGbaSession(status: string) {
+    if (!romBytes || !romMetadata) return;
+    const shouldScheduleFrameLoop = !running || paused;
+    try {
+        createEmulatorInstance("gba");
+        emulator!.inst.load_rom(romBytes, romMetadata.name);
+        drainNesToasts(emulator?.inst ?? null, toastOverlay);
+        frameLimiter.setTargetFps(emulator!.inst.frame_rate_hz());
+        await initAudioContext();
+        if (audioContext) nextAudioTime = audioContext.currentTime;
+        emulator!.inst.set_audio_muted(audioMuted);
+        await refreshSaveStateController();
+        running = true;
+        paused = false;
+        lastFrameTime = 0;
+        fpsFrames = 0;
+        fpsLastTime = 0;
+        fpsWasmTimeAccMs = 0;
+        fpsRenderTimeAccMs = 0;
+        frameLimiter.reset();
+        if (isTouchDevice()) document.body.classList.add("touch-running");
+        if (isHandheldDevice()) updateHandheldCanvasSize();
+        const sidebarToggle = document.getElementById("sidebar-toggle") as HTMLInputElement | null;
+        if (sidebarToggle) sidebarToggle.checked = false;
+        setStatus(status, false);
+        updateMouseCursorState();
+        updateAutorunControls();
+        updateEmulationButtons();
+        updateSaveStateButtons();
+        if (shouldScheduleFrameLoop) {
+            requestAnimationFrame(step);
+        }
+    } catch (err) {
+        drainNesToasts(emulator?.inst ?? null, toastOverlay);
+        running = false;
+        paused = false;
+        setStatus(`Failed to reset GBA: ${err}`, true);
+        updateEmulationButtons();
+    }
 }
 
 /** Cancel an active autorun recording (if any), updating UI and showing a toast. */
