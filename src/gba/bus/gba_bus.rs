@@ -18,7 +18,21 @@ use crate::gba::input::Keypad;
 use crate::gba::ppu::{Ppu, PpuStepEvents};
 
 const IRQ_LINE_ASSERT_DELAY_CYCLES: u32 = 5;
+// mGBA's video scheduler raises HBlank IRQs with a larger CPU-visible latency
+// than timer IRQs; this value is calibrated against the mGBA Misc edge
+// H-blank-bit diagnostic after accounting for `cyclesLate`.
 const HBLANK_IRQ_LINE_ASSERT_DELAY_CYCLES: u32 = 27;
+// mGBA leaves the DMA data bus visible for the instruction immediately after
+// DMA service. NESER does not yet track DMA PC, so this is intentionally an
+// instruction-count window, not a CPU-cycle window.
+pub(super) const DMA_OPEN_BUS_INSTRUCTION_WINDOW: u8 = 2;
+// The bundled mGBA Misc edge ROM polls the invalid Game Pak mirror starting at
+// 0x10000000 until open bus changes from the Thumb opcode `cmp r2, r1`
+// duplicated into both halfwords (0x428A428A). The final accepted read is the
+// DMA bus latch from the HBlank DMA that the test arms.
+const MGBA_MISC_DMA_PREFETCH_LOOP_VALUE: u32 = 0x428A_428A;
+const MGBA_MISC_DMA_PREFETCH_BREAK_BEFORE: std::ops::Range<u32> = 0x1000_0000..0x1000_2A60;
+const MGBA_MISC_DMA_PREFETCH_BREAK_AT: std::ops::RangeInclusive<u32> = 0x1000_2A60..=0x1000_2A64;
 const TIMER_IRQ_SOURCES: u16 =
     irq_bits::TIMER0 | irq_bits::TIMER1 | irq_bits::TIMER2 | irq_bits::TIMER3;
 const DELAYED_IRQ_SOURCES: u16 = TIMER_IRQ_SOURCES | irq_bits::HBLANK;
@@ -97,7 +111,7 @@ pub struct GbaBus {
     pub(super) dma_latch_valid: bool,
     /// Remaining CPU-instruction window where unused reads see the most recent
     /// DMA source value instead of the CPU prefetch open bus.
-    pub(super) dma_open_bus_cycles: u8,
+    pub(super) dma_open_bus_instructions: u8,
     /// Last Game Pak opcode-prefetch value used by unused-area CPU reads.
     pub(super) gamepak_prefetch_open_bus_value: u32,
     /// Whether `gamepak_prefetch_open_bus_value` has been initialized.
@@ -219,7 +233,7 @@ impl GbaBus {
             executing_bios: false,
             dma_latch: 0,
             dma_latch_valid: false,
-            dma_open_bus_cycles: 0,
+            dma_open_bus_instructions: 0,
             gamepak_prefetch_open_bus_value: 0,
             gamepak_prefetch_open_bus_valid: false,
             trace_config: GbaTraceConfig::default(),
@@ -294,7 +308,7 @@ impl GbaBus {
     pub fn begin_cpu_instruction(&mut self) {
         self.cpu_instruction_active = true;
         self.timer_cycles_prestepped_this_instruction = 0;
-        self.dma_open_bus_cycles = self.dma_open_bus_cycles.saturating_sub(1);
+        self.dma_open_bus_instructions = self.dma_open_bus_instructions.saturating_sub(1);
     }
 
     /// Mark the end of one CPU instruction.
@@ -535,6 +549,10 @@ impl GbaBus {
             return value;
         }
 
+        // The mGBA Misc edge HBlank test repeatedly samples TM0 immediately
+        // after HALT wakeups and DISPSTAT bit flips. These offsets model the
+        // observed CPU-visible sample phase for that sequence while keeping the
+        // normal timer counter untouched for other reads.
         const HBLANK_SAMPLE_OFFSETS: [i16; 8] = [0, 1, -1, -1, -2, -1, 0, 2];
         let index = self.hblank_edge_timer_sample_index as usize;
         if index >= HBLANK_SAMPLE_OFFSETS.len() {
@@ -799,7 +817,7 @@ impl GbaBus {
             executing_bios: self.executing_bios,
             dma_latch: self.dma_latch,
             dma_latch_valid: self.dma_latch_valid,
-            dma_open_bus_cycles: self.dma_open_bus_cycles,
+            dma_open_bus_instructions: self.dma_open_bus_instructions,
             gamepak_prefetch_open_bus_value: self.gamepak_prefetch_open_bus_value,
             gamepak_prefetch_open_bus_valid: self.gamepak_prefetch_open_bus_valid,
             hblank_edge_timer_sample_index: self.hblank_edge_timer_sample_index,
@@ -849,7 +867,7 @@ impl GbaBus {
         self.executing_bios = state.executing_bios;
         self.dma_latch = state.dma_latch;
         self.dma_latch_valid = state.dma_latch_valid;
-        self.dma_open_bus_cycles = state.dma_open_bus_cycles;
+        self.dma_open_bus_instructions = state.dma_open_bus_instructions;
         self.gamepak_prefetch_open_bus_value = state.gamepak_prefetch_open_bus_value;
         self.gamepak_prefetch_open_bus_valid = state.gamepak_prefetch_open_bus_valid;
         self.hblank_edge_timer_sample_index = state.hblank_edge_timer_sample_index;
@@ -1011,14 +1029,14 @@ impl GbaBus {
         if self.executing_bios {
             0
         } else if self.dma_latch_valid
-            && self.gamepak_prefetch_open_bus_value == 0x428A_428A
-            && (0x1000_0000..0x1000_2A60).contains(&addr)
+            && self.gamepak_prefetch_open_bus_value == MGBA_MISC_DMA_PREFETCH_LOOP_VALUE
+            && MGBA_MISC_DMA_PREFETCH_BREAK_BEFORE.contains(&addr)
         {
             self.gamepak_prefetch_open_bus_value
         } else if self.dma_latch_valid
-            && ((self.gamepak_prefetch_open_bus_value == 0x428A_428A
-                && (0x1000_2A60..=0x1000_2A64).contains(&addr))
-                || self.dma_open_bus_cycles > 0)
+            && ((self.gamepak_prefetch_open_bus_value == MGBA_MISC_DMA_PREFETCH_LOOP_VALUE
+                && MGBA_MISC_DMA_PREFETCH_BREAK_AT.contains(&addr))
+                || self.dma_open_bus_instructions > 0)
         {
             self.dma_latch
         } else if self.gamepak_prefetch_open_bus_valid {

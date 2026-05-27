@@ -89,7 +89,7 @@ pub struct BusMemoryState {
     pub dma_latch_valid: bool,
     /// Remaining CPU-instruction window where unused reads see DMA bus value.
     #[serde(default)]
-    pub dma_open_bus_cycles: u8,
+    pub dma_open_bus_instructions: u8,
     /// Last Game Pak opcode-prefetch value used by unused-area CPU reads.
     #[serde(default)]
     pub gamepak_prefetch_open_bus_value: u32,

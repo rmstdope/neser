@@ -16,7 +16,7 @@ impl dma::DmaBus for GbaBus {
         let val = <Self as Bus>::read16(self, addr);
         self.dma_latch = self.last_bus_value;
         self.dma_latch_valid = true;
-        self.dma_open_bus_cycles = 2;
+        self.dma_open_bus_instructions = super::gba_bus::DMA_OPEN_BUS_INSTRUCTION_WINDOW;
         self.last_bus_value = saved;
         val
     }
@@ -26,7 +26,7 @@ impl dma::DmaBus for GbaBus {
         let shift = if addr & 0x2 == 0 { 0 } else { 16 };
         self.dma_latch = (self.dma_latch & !(0xFFFFu32 << shift)) | ((value as u32) << shift);
         self.dma_latch_valid = true;
-        self.dma_open_bus_cycles = 2;
+        self.dma_open_bus_instructions = super::gba_bus::DMA_OPEN_BUS_INSTRUCTION_WINDOW;
         self.last_bus_value = saved;
     }
     fn dma_read32(&mut self, addr: u32) -> u32 {
@@ -39,7 +39,7 @@ impl dma::DmaBus for GbaBus {
         let val = <Self as Bus>::read32(self, addr);
         self.dma_latch = self.last_bus_value;
         self.dma_latch_valid = true;
-        self.dma_open_bus_cycles = 2;
+        self.dma_open_bus_instructions = super::gba_bus::DMA_OPEN_BUS_INSTRUCTION_WINDOW;
         self.last_bus_value = saved;
         val
     }
@@ -48,7 +48,7 @@ impl dma::DmaBus for GbaBus {
         <Self as Bus>::write32(self, addr, value);
         self.dma_latch = value;
         self.dma_latch_valid = true;
-        self.dma_open_bus_cycles = 2;
+        self.dma_open_bus_instructions = super::gba_bus::DMA_OPEN_BUS_INSTRUCTION_WINDOW;
         self.last_bus_value = saved;
     }
     fn dma_n_cycles(&self, addr: u32, width: WidthClass) -> u32 {
