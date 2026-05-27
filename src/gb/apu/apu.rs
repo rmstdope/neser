@@ -19,6 +19,7 @@
 
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 use crate::gb::model::CgbModel;
 
@@ -29,6 +30,8 @@ use super::channel4::Channel4;
 
 /// DMG clock rate in M-cycles per second (4 194 304 Hz / 4).
 const DMG_MCYCLES_PER_SEC: f32 = 1_048_576.0;
+/// Upper bound for queued audio samples awaiting frontend retrieval.
+const MAX_PENDING_SAMPLES: usize = 16_384;
 
 /// Cutoff frequency for the GB APU AC-coupling high-pass filter (~7 Hz removes DC bias).
 const HP_CUTOFF_HZ: f32 = 7.0;
@@ -112,8 +115,9 @@ pub struct Apu {
     sample_acc: f32,
     /// Number of M-cycles between output samples.
     cycles_per_sample: f32,
-    /// Pending output sample (`Some` when `sample_ready()` is true).
-    pending_sample: Option<f32>,
+    /// Pending output samples queued until the frontend consumes them.
+    #[serde(default)]
+    pending_samples: VecDeque<f32>,
 
     /// `true` when running a CGB-compatible ROM (header byte 0x0143 is 0x80 or 0xC0).
     /// Gates CGB-specific APU differences (length counter behavior on power off/on).
@@ -158,7 +162,7 @@ impl Apu {
             div_apu_event_without_div_increment: false,
             sample_acc: 0.0,
             cycles_per_sample: DMG_MCYCLES_PER_SEC / 44_100.0,
-            pending_sample: None,
+            pending_samples: VecDeque::with_capacity(MAX_PENDING_SAMPLES),
             is_cgb,
             cgb_model: CgbModel::CgbE,
             hp_prev_in: 0.0,
@@ -210,6 +214,7 @@ impl Apu {
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.cycles_per_sample = DMG_MCYCLES_PER_SEC / rate;
         self.hp_rc = Self::compute_hp_rc(rate);
+        self.pending_samples.clear();
     }
 
     /// Returns the current output sample rate in Hz.
@@ -219,12 +224,19 @@ impl Apu {
 
     /// Returns `true` when an audio sample is ready to be collected.
     pub fn sample_ready(&self) -> bool {
-        self.pending_sample.is_some()
+        !self.pending_samples.is_empty()
     }
 
     /// Consume and return the pending audio sample, or `None` if not ready.
     pub fn take_sample(&mut self) -> Option<f32> {
-        self.pending_sample.take()
+        self.pending_samples.pop_front()
+    }
+
+    fn push_pending_sample(&mut self, sample: f32) {
+        if self.pending_samples.len() == MAX_PENDING_SAMPLES {
+            self.pending_samples.pop_front();
+        }
+        self.pending_samples.push_back(sample);
     }
 
     /// Advance the APU by `m_cycles` M-cycles.
@@ -272,9 +284,8 @@ impl Apu {
         self.sample_acc += 1.0;
         if self.sample_acc >= self.cycles_per_sample {
             self.sample_acc -= self.cycles_per_sample;
-            if self.pending_sample.is_none() {
-                self.pending_sample = Some(self.mix());
-            }
+            let sample = self.mix();
+            self.push_pending_sample(sample);
         }
     }
 
@@ -398,10 +409,8 @@ impl Apu {
         self.sample_acc += 1.0;
         if self.sample_acc >= self.cycles_per_sample {
             self.sample_acc -= self.cycles_per_sample;
-            // Only overwrite if the previous sample was already consumed.
-            if self.pending_sample.is_none() {
-                self.pending_sample = Some(self.mix());
-            }
+            let sample = self.mix();
+            self.push_pending_sample(sample);
         }
     }
 
@@ -951,6 +960,27 @@ mod tests {
         apu.set_sample_rate(44_100.0);
         apu.tick(30);
         assert!(apu.sample_ready(), "expected a sample after 30 M-cycles");
+    }
+
+    #[test]
+    fn test_multiple_samples_accumulate_until_consumed() {
+        let mut apu = Apu::new(false);
+        apu.set_sample_rate(44_100.0);
+
+        // A web video frame advances far more than one output sample period
+        // before JS drains audio. Generated samples must queue instead of
+        // overwriting/dropping everything after the first pending sample.
+        apu.tick(72);
+
+        let mut sample_count = 0;
+        while apu.take_sample().is_some() {
+            sample_count += 1;
+        }
+
+        assert!(
+            sample_count >= 3,
+            "expected at least 3 queued samples, got {sample_count}"
+        );
     }
 
     #[test]

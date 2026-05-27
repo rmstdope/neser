@@ -26,7 +26,15 @@ use crate::gba::ppu::PpuState;
 
 /// Current save-state format version for Game Boy Advance.
 /// Increment this when making breaking changes to the state format.
-pub const GBA_SAVESTATE_VERSION: u32 = 6;
+pub const GBA_SAVESTATE_VERSION: u32 = 7;
+const GBA_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE: u32 = 6;
+
+fn is_supported_savestate_version(version: u32) -> bool {
+    matches!(
+        version,
+        GBA_SAVESTATE_VERSION | GBA_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE
+    )
+}
 
 /// Serializable snapshot of the [`GbaBus`](crate::gba::GbaBus) memory
 /// regions and a small number of associated scalar fields.
@@ -169,12 +177,11 @@ impl GbaSaveState {
     /// Deserialize a save state from JSON-encoded UTF-8 bytes.
     ///
     /// Returns [`GbaSaveStateError::IncompatibleVersion`] when the
-    /// deserialized state's `version` field does not match
-    /// [`GBA_SAVESTATE_VERSION`].
+    /// deserialized state's `version` field is unsupported.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, GbaSaveStateError> {
         let state: Self = serde_json::from_slice(bytes)
             .map_err(|e| GbaSaveStateError::DeserializationFailed(e.to_string()))?;
-        if state.version != GBA_SAVESTATE_VERSION {
+        if !is_supported_savestate_version(state.version) {
             return Err(GbaSaveStateError::IncompatibleVersion {
                 expected: GBA_SAVESTATE_VERSION,
                 found: state.version,
@@ -201,11 +208,11 @@ impl Gba {
     /// Restore the GBA state from a save-state snapshot.
     ///
     /// Returns [`GbaSaveStateError::IncompatibleVersion`] if the snapshot
-    /// version does not match [`GBA_SAVESTATE_VERSION`], or
+    /// version is unsupported, or
     /// [`GbaSaveStateError::RestoreFailed`] if the captured state cannot
     /// be applied to the current bus (e.g. region size mismatch).
     pub fn load_state(&mut self, state: &GbaSaveState) -> Result<(), GbaSaveStateError> {
-        if state.version != GBA_SAVESTATE_VERSION {
+        if !is_supported_savestate_version(state.version) {
             return Err(GbaSaveStateError::IncompatibleVersion {
                 expected: GBA_SAVESTATE_VERSION,
                 found: state.version,
@@ -246,8 +253,33 @@ mod tests {
     // ── Version checks ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_gba_savestate_version_is_6() {
-        assert_eq!(GBA_SAVESTATE_VERSION, 6);
+    fn test_gba_savestate_version_is_7() {
+        assert_eq!(GBA_SAVESTATE_VERSION, 7);
+    }
+
+    #[test]
+    fn test_version_6_save_state_without_pending_apu_samples_loads() {
+        let gba = make_gba();
+        let save = gba.save_state();
+        let mut json = serde_json::to_value(&save).expect("serialize save state");
+        json["version"] =
+            serde_json::json!(GBA_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE);
+        let apu = json["bus"]["apu"]
+            .as_object_mut()
+            .expect("APU state should be an object");
+        apu.remove("pending_samples");
+        apu.insert(
+            "pending_sample".to_string(),
+            serde_json::json!([0.125, 0.5]),
+        );
+        let bytes = serde_json::to_vec(&json).expect("serialize legacy save state");
+
+        let loaded = GbaSaveState::from_bytes(&bytes).expect("legacy save state should load");
+
+        assert_eq!(
+            loaded.version,
+            GBA_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE
+        );
     }
 
     // ── Round-trip ─────────────────────────────────────────────────────────

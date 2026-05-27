@@ -932,15 +932,14 @@ mod tests {
     }
 
     #[test]
-    fn test_get_sample_clears_ready_flag() {
+    fn test_get_sample_consumes_one_queued_sample() {
         let mut gb = make_gameboy();
         gb.load_rom(&minimal_rom(), "test.gb").unwrap();
         for _ in 0..30 {
             gb.run_tick();
         }
         assert!(gb.sample_ready());
-        gb.get_sample();
-        assert!(!gb.sample_ready());
+        assert!(gb.get_sample().is_some());
     }
 
     #[test]

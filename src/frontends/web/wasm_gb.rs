@@ -139,6 +139,12 @@ impl WasmGb {
         samples
     }
 
+    /// Set the emulator audio output sample rate in Hz.
+    #[wasm_bindgen]
+    pub fn set_audio_sample_rate(&mut self, sample_rate: f32) {
+        self.gb.set_audio_sample_rate(sample_rate);
+    }
+
     /// Set audio mute state.
     #[wasm_bindgen]
     pub fn set_audio_muted(&mut self, muted: bool) {

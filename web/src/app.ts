@@ -18,6 +18,7 @@ import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
 import { normalizeGbSample, normalizeNesSample } from "./audio/audio_normalizer";
+import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { getKeyboardControllerTarget } from "./input/input_routing";
@@ -1156,6 +1157,16 @@ async function initAudioContext(): Promise<void> {
     }
 }
 
+function configureActiveEmulatorAudioSampleRate() {
+    if (!emulator || !audioContext) {
+        return;
+    }
+    const configured = configureEmulatorAudioSampleRate(emulator.inst, audioContext.sampleRate);
+    if (!configured) {
+        console.warn("Unable to configure emulator audio sample rate");
+    }
+}
+
 function playAudioSamples(samples: Float32Array) {
     if (!audioContext || audioMuted || samples.length === 0) return;
 
@@ -1280,6 +1291,7 @@ async function start() {
         frameLimiter.setTargetFps(emulator!.inst.frame_rate_hz());
         // Initialize audio context on user interaction (browser requirement)
         await initAudioContext();
+        configureActiveEmulatorAudioSampleRate();
         emulator!.inst.set_audio_muted(audioMuted);
         await refreshSaveStateController();
 
@@ -2985,6 +2997,7 @@ async function restartGbaSession(status: string) {
         frameLimiter.setTargetFps(emulator!.inst.frame_rate_hz());
         await initAudioContext();
         if (audioContext) nextAudioTime = audioContext.currentTime;
+        configureActiveEmulatorAudioSampleRate();
         emulator!.inst.set_audio_muted(audioMuted);
         await refreshSaveStateController();
         running = true;
