@@ -860,7 +860,6 @@ fn gba_mgba_video_oam_update_delay_matches_expected() {
 }
 
 #[test]
-#[ignore = "tracked by #2690"]
 fn gba_mgba_video_window_offscreen_reset_matches_expected() {
     assert_mgba_video_test_matches_expected(6);
 }
