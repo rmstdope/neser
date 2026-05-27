@@ -656,3 +656,39 @@ No feedback provided
 #### What to improve
 
 No feedback provided
+
+---
+
+## 2026-05-27 - #2683 / PR #2692: Automate mGBA video subtests
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2692
+**Linked issues:** #2683, #2687, #2688, #2689, #2690
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `test-driven-development` | Guided RED -> GREEN -> REFACTOR -> COMMIT gates and the mini RED/GREEN loop for the START-overlay runner correction. |
+| Skill | `github-issue-designer` | Structured the parent issue update and per-subtest tracking issues with scoped acceptance criteria. |
+| Skill | `github-administration` | Guided safe `gh` issue/PR mutation with body files and immediate verification. |
+| Skill | `gba-hardware-research` | Kept the work in the GBA test/hardware domain and preserved source-backed behavior assumptions. |
+| Skill | `self-learning-skills` | Triggered retrospectives after issue creation/closure events. |
+| Agent | `code-review` | Reviewed changed GBA runner/test/docs files for correctness and missed edge cases. |
+| Agent | `Iteration Retrospective Gatherer` | Prepared the PR-creation retrospective entry. |
+
+### What went well
+
+- The plan-gathering step resolved the key design choice up front: passing video subtests should assert `actual == expected`, while non-passing subtests should remain individually ignored with tracking issues.
+- Navigator feedback during GREEN caught a real runner issue: the mGBA suite's Actual/Expected overlay had to be hidden with START before CRC and screenshot capture.
+- The START timing fix improved the result from 0/7 to 3/7 passing, letting Basic Mode 3, Basic Mode 4, and Degenerate OBJ transforms run in normal CI.
+- Remaining failures are no longer hidden behind one ignored test; each has a dedicated ignored assertion and tracking issue.
+
+### What to improve
+
+- Tracking sub-issues were created before rechecking the runner's overlay-control assumptions, so three had to be closed immediately after the START fix. Future visual-test automation should validate suite UI controls before splitting follow-up issues.
+- The retrospective gatherer could prepare an entry but could not write the file directly, so the main agent had to append it manually. Future retrospective prompts should include full PR metadata and be ready for manual fallback.
+
+### Navigator feedback
+
+No additional feedback.
