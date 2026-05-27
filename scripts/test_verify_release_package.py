@@ -5,10 +5,12 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.verify_release_package import (
     ReleasePackageVerificationError,
     VerificationConfig,
+    _run_smoke_command,
     main,
     verify_release_package,
 )
@@ -222,6 +224,45 @@ class VerifyReleasePackageTests(unittest.TestCase):
             )
 
             self.assertEqual(exit_code, 0)
+
+    def test_smoke_command_resolves_cwd_relative_executable_before_running(
+        self,
+    ) -> None:
+        """Given a cwd-relative executable, the verifier runs its extracted path."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            package_root = Path(temp_dir_str) / "neser"
+            package_root.mkdir()
+            executable_path = package_root / "neser.exe"
+
+            with patch("scripts.verify_release_package.subprocess.run") as run:
+                run.return_value.returncode = 0
+
+                _run_smoke_command(["./neser.exe", "--version"], package_root)
+
+            run.assert_called_once()
+            command = run.call_args.args[0]
+            self.assertEqual(command[0], str(executable_path))
+            self.assertEqual(command[1:], ["--version"])
+
+    def test_smoke_command_resolves_windows_style_subdirectory_executable(
+        self,
+    ) -> None:
+        """Given a Windows-style cwd-relative executable, separators are normalized."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            package_root = Path(temp_dir_str) / "neser"
+            executable_path = package_root / "bin" / "neser.exe"
+
+            with patch("scripts.verify_release_package.subprocess.run") as run:
+                run.return_value.returncode = 0
+
+                _run_smoke_command([".\\bin\\neser.exe", "--version"], package_root)
+
+            run.assert_called_once()
+            command = run.call_args.args[0]
+            self.assertEqual(command[0], str(executable_path))
+            self.assertEqual(command[1:], ["--version"])
 
 
 if __name__ == "__main__":

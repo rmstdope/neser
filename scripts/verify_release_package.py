@@ -140,8 +140,9 @@ def _verify_tar_members_are_extractable(
 
 
 def _run_smoke_command(smoke_command: list[str], cwd: Path) -> None:
+    command = _resolve_cwd_relative_executable(smoke_command, cwd)
     result = subprocess.run(
-        smoke_command,
+        command,
         cwd=cwd,
         check=False,
         capture_output=True,
@@ -152,6 +153,17 @@ def _run_smoke_command(smoke_command: list[str], cwd: Path) -> None:
         raise ReleasePackageVerificationError(
             f"smoke command failed with exit code {result.returncode}: {output}"
         )
+
+
+def _resolve_cwd_relative_executable(smoke_command: list[str], cwd: Path) -> list[str]:
+    if not smoke_command:
+        return smoke_command
+
+    executable = smoke_command[0]
+    if executable.startswith("./") or executable.startswith(".\\"):
+        relative_parts = executable[2:].replace("\\", "/").split("/")
+        return [str(cwd.joinpath(*relative_parts)), *smoke_command[1:]]
+    return smoke_command
 
 
 if __name__ == "__main__":
