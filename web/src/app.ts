@@ -544,7 +544,7 @@ function setupGbPrograms() {
     return true;
 }
 
-function renderFrameWithCurrentPipeline(frame: Uint8Array): boolean {
+function renderFrameWithCurrentPipeline(frame: Uint8Array, sourceFormat: number): boolean {
     const pipeline = selectRenderPipeline({
         filterType: filters[currentFilter]?.type,
         gbAssetsLoaded,
@@ -559,7 +559,7 @@ function renderFrameWithCurrentPipeline(frame: Uint8Array): boolean {
         return renderGbPass(frame);
     }
 
-    return renderSinglePass(frame);
+    return renderSinglePass(frame, sourceFormat);
 }
 
 function setupFilterPrograms(filterName: string) {
@@ -605,7 +605,7 @@ function initWebGL() {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
     // Allocate texture storage once (we'll update with texSubImage2D per frame)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    allocateFrameTextureStorage();
 
     // Create vertex buffers for a full-screen quad
     positionBuffer = gl.createBuffer();
@@ -659,6 +659,16 @@ type ActiveEmulator =
 let emulator: ActiveEmulator | null = null;
 /** Convenience alias for NES-specific code paths. Non-null only when emulator.kind === "nes". */
 let nes: WasmNes | null = null;
+
+function frameTextureFormat(): number {
+    return emulator?.kind === "gba" ? gl.RGB : gl.RGBA;
+}
+
+function allocateFrameTextureStorage() {
+    const textureFormat = frameTextureFormat();
+    gl.texImage2D(gl.TEXTURE_2D, 0, textureFormat, width, height, 0, textureFormat, gl.UNSIGNED_BYTE, null);
+}
+
 let romBytes: Uint8Array | null = null;
 let romMetadata: { name: string; size: number; bytes: Uint8Array } | null = null;
 let saveStateController: { save(): Promise<boolean>; load(): Promise<boolean> } | null = null;
@@ -2133,7 +2143,7 @@ function renderGbPass(frame: Uint8Array): boolean {
     return true;
 }
 
-function renderSinglePass(frame: Uint8Array) {
+function renderSinglePass(frame: Uint8Array, sourceFormat = gl.RGBA) {
     if (!shaderProgram) {
         console.error("Shader program is null, cannot render");
         return false;
@@ -2141,7 +2151,7 @@ function renderSinglePass(frame: Uint8Array) {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, nesTexture);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, sourceFormat, gl.UNSIGNED_BYTE, frame);
 
     gl.useProgram(shaderProgram);
     if (shaderProgram._uTextureSizeLocation) {
@@ -2253,7 +2263,10 @@ function step(timestamp: number) {
         }
 
         const wasmT0 = performance.now();
-        const frame = emulator!.inst.render_frame_rgba(); // RGBA8888
+        const frame = emulator!.kind === "gba"
+            ? emulator!.inst.render_frame_rgb()
+            : emulator!.inst.render_frame_rgba();
+        const sourceFormat = frameTextureFormat();
         const wasmElapsedMs = performance.now() - wasmT0;
 
         // Stop when pure NES autorun playback has consumed all recorded frames
@@ -2266,7 +2279,7 @@ function step(timestamp: number) {
         let rendered = true;
         const renderT0 = performance.now();
         if (shouldRender) {
-            rendered = renderFrameWithCurrentPipeline(frame);
+            rendered = renderFrameWithCurrentPipeline(frame, sourceFormat);
         }
         const renderElapsedMs = performance.now() - renderT0;
 
