@@ -2003,7 +2003,7 @@ swi_sound_bias:
 @ ============================================================================
 @ SWI 0x1F: MidiKey2Freq
 @ Converts MIDI key + fine-pitch to playback frequency.
-@ r0 = pointer to WaveData struct (freq at offset +8)
+@ r0 = pointer to WaveData struct (freq at offset +4)
 @ r1 = MIDI key (mk), r2 = fine pitch (fp, 0-255)
 @ Returns r0 = freq / 2^((180 - mk - fp/256) / 12)
 @
@@ -2013,8 +2013,8 @@ swi_sound_bias:
 swi_midi_key2freq:
     stmfd   sp!, {r1-r8, lr}
 
-    @ Load base frequency from WaveData struct (offset +8)
-    ldr     r3, [r0, #8]        @ r3 = wa->freq
+    @ Load base frequency from WaveData struct (offset +4)
+    ldr     r3, [r0, #4]        @ r3 = wa->freq
 
     @ Calculate total semitone offset: 180*256 - mk*256 - fp
     @ This gives us the offset in 1/256th semitone units

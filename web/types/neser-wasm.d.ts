@@ -117,6 +117,7 @@ declare module "*/pkg/neser" {
         drain_toasts(): unknown[];
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;
+        get_audio_samples_stereo(): Float32Array;
         is_audio_muted(): boolean;
         load_rom(rom: Uint8Array, rom_name: string): void;
         constructor();

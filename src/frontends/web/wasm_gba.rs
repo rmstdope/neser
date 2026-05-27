@@ -198,6 +198,20 @@ impl WasmGba {
         samples
     }
 
+    #[wasm_bindgen]
+    pub fn get_audio_samples_stereo(&mut self) -> Vec<f32> {
+        if self.audio_muted {
+            self.drain_audio_buffer();
+            return Vec::new();
+        }
+        let mut samples = Vec::new();
+        while let Some((left, right)) = self.gba.get_stereo_sample() {
+            samples.push(left);
+            samples.push(right);
+        }
+        samples
+    }
+
     /// Set the emulator audio output sample rate in Hz.
     #[wasm_bindgen]
     pub fn set_audio_sample_rate(&mut self, sample_rate: f32) {
