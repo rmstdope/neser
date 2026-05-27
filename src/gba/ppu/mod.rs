@@ -2027,8 +2027,11 @@ impl Ppu {
     /// Per GBATek 'LCD I/O Window Feature' and hardware tests:
     /// - If X2 > 240: clamp X2 to 240 (window is X1..240).
     /// - If X1 > X2: window wraps around, covering 0..X2 AND X1..240.
-    /// - If Y2 > 160: clamp Y2 to 160 (window is Y1..160).
-    /// - If Y1 > Y2: window wraps around, covering 0..Y2 AND Y1..160.
+    /// - If Y2 in 161..227: Y2 fires during V-Blank; visible window is Y1..160.
+    /// - If Y2 >= 228: Y2 is beyond all scanlines and never fires.  The window
+    ///   latch stays ON after the first frame, so the steady-state visible result
+    ///   is the entire frame (0..160), provided Y1 < 228 so the ON edge can fire.
+    /// - If Y1 > Y2 (both in 0..160): window wraps around, covering 0..Y2 AND Y1..160.
     fn pixel_in_window(&self, n: usize, x: u32, y: u32) -> bool {
         let h = self.win_h[n];
         let v = self.win_v[n];
@@ -2047,8 +2050,16 @@ impl Ppu {
             x >= x1 && x < x2
         };
 
-        let in_y = if y2 > SCREEN_HEIGHT {
-            // Y2 out of range: clamp to SCREEN_HEIGHT.
+        let in_y = if y2 >= SCANLINES_PER_FRAME {
+            // Y2 exceeds the last GBA scanline (227).  The window's OFF edge is
+            // never reached, so in steady state the window is ON for the entire
+            // visible frame — as long as Y1 is reachable (Y1 < 228) so the ON
+            // edge fires at least once.
+            y1 < SCANLINES_PER_FRAME
+        } else if y2 > SCREEN_HEIGHT {
+            // Y2 is in V-Blank (161..227): fires out of the visible region.
+            // The window turns off during V-Blank, so the next visible frame
+            // starts with the window OFF and it turns ON at Y1.
             y >= y1 && y < SCREEN_HEIGHT
         } else if y1 > y2 {
             // Wraparound: covers 0..Y2 AND Y1..SCREEN_HEIGHT.
@@ -5226,6 +5237,50 @@ mod tests {
         // High range (120..160): should be INSIDE window.
         assert!(ppu.pixel_in_window(0, 100, 120)); // y=120 is start of high range
         assert!(ppu.pixel_in_window(0, 100, 159)); // y=159 is last pixel
+    }
+
+    #[test]
+    fn pixel_in_window_y2_exactly_last_scanline_clamps_to_screen_bottom() {
+        // Y2 = 227 (0xE3) is the last GBA scanline; it IS reached during VBlank.
+        // The window turns off at line 227, so it starts the visible frame OFF and
+        // turns ON at Y1.  Visible result: Y1..160 (same as clamping Y2 to 160).
+        let mut ppu = Ppu::new();
+        ppu.write_win_h(0, 240); // full width
+        // Y1=80, Y2=227 (0xE3) — mirrors WIN0V=0x50E3 from mgba "Window offscreen reset"
+        ppu.write_win_v(0, (80 << 8) | 227);
+        assert!(!ppu.pixel_in_window(0, 100, 79)); // above Y1
+        assert!(ppu.pixel_in_window(0, 100, 80)); // at Y1
+        assert!(ppu.pixel_in_window(0, 100, 159)); // last visible row
+    }
+
+    #[test]
+    fn pixel_in_window_y2_beyond_all_scanlines_covers_entire_frame() {
+        // Y2 = 228 (0xE4) exceeds the total number of GBA scanlines (228).
+        // The window is never turned off by hardware, so in steady state it stays
+        // ON for the entire visible frame regardless of Y1.
+        // This is the "Window offscreen reset" hardware behaviour tested by the
+        // mgba video suite (WIN1V=0x50E4: Y1=80, Y2=228).
+        let mut ppu = Ppu::new();
+        ppu.write_win_h(0, 240); // full width
+        // Y1=80, Y2=228 (0xE4) — mirrors WIN1V=0x50E4 from mgba "Window offscreen reset"
+        ppu.write_win_v(0, (80 << 8) | 228);
+        // Entire visible frame should be inside the window.
+        assert!(ppu.pixel_in_window(0, 100, 0)); // top row
+        assert!(ppu.pixel_in_window(0, 100, 79)); // before Y1 (still in — steady state)
+        assert!(ppu.pixel_in_window(0, 100, 80)); // at Y1
+        assert!(ppu.pixel_in_window(0, 100, 159)); // last visible row
+    }
+
+    #[test]
+    fn pixel_in_window_y2_beyond_all_scanlines_y1_unreachable_covers_nothing() {
+        // When both Y1 and Y2 are beyond the total scanline count, neither boundary
+        // is ever hit.  The window starts OFF and stays OFF.
+        let mut ppu = Ppu::new();
+        ppu.write_win_h(0, 240); // full width
+        ppu.write_win_v(0, (229 << 8) | 230); // Y1=229, Y2=230, both unreachable
+        assert!(!ppu.pixel_in_window(0, 100, 0));
+        assert!(!ppu.pixel_in_window(0, 100, 80));
+        assert!(!ppu.pixel_in_window(0, 100, 159));
     }
 
     #[test]
