@@ -112,6 +112,11 @@ impl Gba {
     /// GBA display height in pixels.
     pub const SCREEN_HEIGHT: u32 = SCREEN_HEIGHT;
 
+    /// Borrow the 240x160 RGB888 framebuffer without cloning it.
+    pub(crate) fn framebuffer_rgb(&self) -> &[u8] {
+        self.bus.ppu.framebuffer()
+    }
+
     /// Create a new GBA emulator instance.
     pub fn new(app_context: impl IntoSharedAppContext) -> Self {
         let app_context = app_context.into_shared();
@@ -544,6 +549,17 @@ mod tests {
         let snapshot = gba.screen_snapshot();
         // 240 × 160 × 3 (RGB888)
         assert_eq!(snapshot.len(), 115200);
+    }
+
+    #[test]
+    fn test_framebuffer_rgb_borrows_full_framebuffer() {
+        let gba = make_gba();
+        let expected_len = (Gba::SCREEN_WIDTH * Gba::SCREEN_HEIGHT * 3) as usize;
+        let snapshot = gba.screen_snapshot();
+        let framebuffer = gba.framebuffer_rgb();
+
+        assert_eq!(framebuffer.len(), expected_len);
+        assert_eq!(framebuffer, snapshot.as_slice());
     }
 
     #[test]

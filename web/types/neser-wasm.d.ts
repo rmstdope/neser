@@ -118,6 +118,7 @@ declare module "*/pkg/neser" {
         is_audio_muted(): boolean;
         load_rom(rom: Uint8Array, rom_name: string): void;
         constructor();
+        render_frame_rgb(): Uint8Array;
         render_frame_rgba(): Uint8Array;
         reset(soft_reset: boolean): void;
         screen_height(): number;

@@ -989,6 +989,22 @@ fn wasm_gba_no_rom_renders_opaque_black_frame() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_gba_no_rom_renders_native_rgb_frame() {
+    let mut gba = WasmGba::new();
+    let frame = gba.render_frame_rgb().to_vec();
+    let expected_len = 240 * 160 * 3;
+    assert_eq!(
+        frame.len(),
+        expected_len,
+        "native RGB frame should be {expected_len} bytes"
+    );
+    assert!(
+        frame.iter().all(|&byte| byte == 0x00),
+        "no-ROM native RGB frame should be black"
+    );
+}
+
+#[wasm_bindgen_test]
 fn wasm_gba_load_rom_returns_success_toast() {
     let mut gba = WasmGba::new();
     let rom = minimal_gba_rom();

@@ -14,6 +14,7 @@ pub struct WasmGba {
     rom_loaded: bool,
     pending_toasts: Vec<String>,
     frame_rgba_buffer: Vec<u8>,
+    frame_rgb_buffer: Vec<u8>,
 }
 
 impl Default for WasmGba {
@@ -35,6 +36,19 @@ impl WasmGba {
             for alpha in self.frame_rgba_buffer.iter_mut().skip(3).step_by(4) {
                 *alpha = 0xFF;
             }
+        }
+    }
+
+    fn required_rgb_len() -> usize {
+        (Gba::SCREEN_WIDTH * Gba::SCREEN_HEIGHT * 3) as usize
+    }
+
+    fn fill_black_rgb_frame(&mut self) {
+        let required = Self::required_rgb_len();
+        if self.frame_rgb_buffer.len() != required {
+            self.frame_rgb_buffer.resize(required, 0);
+        } else {
+            self.frame_rgb_buffer.fill(0);
         }
     }
 
@@ -74,6 +88,7 @@ impl WasmGba {
             rom_loaded: false,
             pending_toasts: Vec::new(),
             frame_rgba_buffer: Vec::new(),
+            frame_rgb_buffer: Vec::new(),
         }
     }
 
@@ -121,7 +136,7 @@ impl WasmGba {
 
         self.run_until_frame_ready();
         self.ensure_rgba_buffer();
-        let rgb = self.gba.screen_snapshot();
+        let rgb = self.gba.framebuffer_rgb();
         for (rgba, rgb) in self
             .frame_rgba_buffer
             .chunks_exact_mut(4)
@@ -133,6 +148,26 @@ impl WasmGba {
             rgba[3] = 0xFF;
         }
         unsafe { js_sys::Uint8Array::view(&self.frame_rgba_buffer) }
+    }
+
+    /// Step the emulator until a full frame is ready and return the native RGB888 pixel buffer.
+    ///
+    /// Returns a `Uint8Array` of `240 × 160 × 3` bytes.
+    /// When no ROM is loaded, returns a black frame.
+    ///
+    /// # Safety
+    ///
+    /// The returned `Uint8Array` is a zero-copy view into WASM linear memory. The caller must
+    /// consume it before invoking another WASM function that could grow linear memory.
+    #[wasm_bindgen]
+    pub fn render_frame_rgb(&mut self) -> js_sys::Uint8Array {
+        if !self.rom_loaded {
+            self.fill_black_rgb_frame();
+            return unsafe { js_sys::Uint8Array::view(&self.frame_rgb_buffer) };
+        }
+
+        self.run_until_frame_ready();
+        unsafe { js_sys::Uint8Array::view(self.gba.framebuffer_rgb()) }
     }
 
     #[wasm_bindgen]

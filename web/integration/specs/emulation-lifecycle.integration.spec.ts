@@ -78,4 +78,61 @@ test.describe("Phase 1 critical path lifecycle", () => {
         await waitForRunningState(page);
         await expect(page.locator(START_BUTTON_SELECTOR)).toBeDisabled();
     });
+
+    test("Given a GBA ROM is running, when Reset is clicked, then emulation remains active", async ({ page }) => {
+        const webGlErrors: string[] = [];
+        page.on("console", (msg) => {
+            const text = msg.text();
+            if (text.includes("GL_INVALID_OPERATION")) {
+                webGlErrors.push(text);
+            }
+        });
+        await openApp(page);
+
+        await loadGbaRomFromFileInput(page);
+        await waitForRunningState(page);
+
+        await page.locator(RESET_BUTTON_SELECTOR).click();
+
+        await waitForRunningState(page);
+        await expect(page.locator(PAUSE_BUTTON_SELECTOR)).toHaveText("Pause");
+        await expect(page.locator(START_BUTTON_SELECTOR)).toBeDisabled();
+        expect(webGlErrors).toHaveLength(0);
+    });
+
+    test("Given a GBA ROM is running, when another GBA ROM is loaded, then the new session runs without page reload", async ({ page }) => {
+        const webGlErrors: string[] = [];
+        page.on("console", (msg) => {
+            const text = msg.text();
+            if (text.includes("GL_INVALID_OPERATION")) {
+                webGlErrors.push(text);
+            }
+        });
+        await openApp(page);
+
+        await loadGbaRomFromFileInput(page, "first.gba");
+        await waitForRunningState(page);
+
+        await loadGbaRomFromFileInput(page, "second.gba");
+        await waitForRunningState(page);
+
+        await expect(page.locator(START_BUTTON_SELECTOR)).toBeDisabled();
+        expect(webGlErrors).toHaveLength(0);
+    });
+
+    test("Given a GBA ROM is loaded, when the canvas is resized, then the GBA aspect ratio is preserved", async ({ page }) => {
+        await openApp(page);
+
+        await loadGbaRomFromFileInput(page);
+        await waitForRunningState(page);
+
+        const canvasSize = await page.locator("#screen").evaluate((canvas) => {
+            if (!(canvas instanceof HTMLCanvasElement)) {
+                throw new Error("Expected #screen to be a canvas");
+            }
+            return { width: canvas.width, height: canvas.height };
+        });
+
+        expect(canvasSize.width / canvasSize.height).toBeCloseTo(240 / 160, 2);
+    });
 });

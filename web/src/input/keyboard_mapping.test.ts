@@ -6,25 +6,26 @@ function event(key: string, code = key): Pick<KeyboardEvent, "key" | "code"> {
     return { key, code };
 }
 
-it("maps GBA keyboard face buttons and shoulders", () => {
-    expect(gbaKeyboardButtonForEvent(event("z", "KeyZ"))).toBe(0);
-    expect(gbaKeyboardButtonForEvent(event("x", "KeyX"))).toBe(1);
-    expect(gbaKeyboardButtonForEvent(event("a", "KeyA"))).toBe(8);
-    expect(gbaKeyboardButtonForEvent(event("s", "KeyS"))).toBe(9);
+it("maps GBA keyboard face buttons", () => {
+    expect(gbaKeyboardButtonForEvent(event("g", "KeyG"))).toBe(0);
+    expect(gbaKeyboardButtonForEvent(event("f", "KeyF"))).toBe(1);
 });
 
 it("maps GBA keyboard system buttons", () => {
-    expect(gbaKeyboardButtonForEvent(event("Enter", "Enter"))).toBe(3);
-    expect(gbaKeyboardButtonForEvent(event("Shift", "ShiftLeft"))).toBe(2);
-    expect(gbaKeyboardButtonForEvent(event("Shift", "ShiftRight"))).toBe(2);
-    expect(gbaKeyboardButtonForEvent(event("Backspace", "Backspace"))).toBe(2);
+    expect(gbaKeyboardButtonForEvent(event("5", "Digit5"))).toBe(3);
+    expect(gbaKeyboardButtonForEvent(event("4", "Digit4"))).toBe(2);
 });
 
-it("maps GBA keyboard d-pad arrows", () => {
-    expect(gbaKeyboardButtonForEvent(event("ArrowUp", "ArrowUp"))).toBe(4);
-    expect(gbaKeyboardButtonForEvent(event("ArrowDown", "ArrowDown"))).toBe(5);
-    expect(gbaKeyboardButtonForEvent(event("ArrowLeft", "ArrowLeft"))).toBe(6);
-    expect(gbaKeyboardButtonForEvent(event("ArrowRight", "ArrowRight"))).toBe(7);
+it("maps GBA keyboard d-pad buttons", () => {
+    expect(gbaKeyboardButtonForEvent(event("w", "KeyW"))).toBe(4);
+    expect(gbaKeyboardButtonForEvent(event("s", "KeyS"))).toBe(5);
+    expect(gbaKeyboardButtonForEvent(event("a", "KeyA"))).toBe(6);
+    expect(gbaKeyboardButtonForEvent(event("d", "KeyD"))).toBe(7);
+});
+
+it("maps GBA keyboard shoulder buttons", () => {
+    expect(gbaKeyboardButtonForEvent(event("v", "KeyV"))).toBe(8);
+    expect(gbaKeyboardButtonForEvent(event("b", "KeyB"))).toBe(9);
 });
 
 it("ignores keys outside the GBA keyboard mapping", () => {
