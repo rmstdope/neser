@@ -2027,8 +2027,12 @@ impl Ppu {
     /// Per GBATek 'LCD I/O Window Feature' and hardware tests:
     /// - If X2 > 240: clamp X2 to 240 (window is X1..240).
     /// - If X1 > X2: window wraps around, covering 0..X2 AND X1..240.
-    /// - If Y2 > 160: clamp Y2 to 160 (window is Y1..160).
-    /// - If Y1 > Y2: window wraps around, covering 0..Y2 AND Y1..160.
+    /// - If Y2 is 161..227: the end is reached during VBlank, so the visible
+    ///   part is Y1..160.
+    /// - If Y2 >= 228 and Y1 is reachable: the end is never reached, so the
+    ///   window remains active into the next visible frame.
+    /// - If Y1 > Y2 before the frame boundary: window state wraps across
+    ///   frames, covering 0..Y2 and any visible part of Y1..160.
     fn pixel_in_window(&self, n: usize, x: u32, y: u32) -> bool {
         let h = self.win_h[n];
         let v = self.win_v[n];
@@ -2047,8 +2051,12 @@ impl Ppu {
             x >= x1 && x < x2
         };
 
-        let in_y = if y2 > SCREEN_HEIGHT {
-            // Y2 out of range: clamp to SCREEN_HEIGHT.
+        let in_y = if y1 >= SCANLINES_PER_FRAME {
+            false
+        } else if y2 >= SCANLINES_PER_FRAME {
+            true
+        } else if y2 > SCREEN_HEIGHT {
+            // Y2 is reached during VBlank, before the next visible scanline 0.
             y >= y1 && y < SCREEN_HEIGHT
         } else if y1 > y2 {
             // Wraparound: covers 0..Y2 AND Y1..SCREEN_HEIGHT.
@@ -5180,6 +5188,35 @@ mod tests {
         assert!(ppu.pixel_in_window(0, 100, 10)); // top edge
         assert!(ppu.pixel_in_window(0, 100, 159)); // last pixel before clamped Y2=160
         assert!(!ppu.pixel_in_window(0, 100, 5)); // above window
+    }
+
+    #[test]
+    fn pixel_in_window_vertical_end_at_frame_end_carries_into_next_visible_frame() {
+        let mut ppu = Ppu::new();
+        // Y1=80, Y2=228. Hardware evaluates window state through VBlank;
+        // because VCOUNT never reaches 228, the window does not reset before
+        // the next visible frame.
+        ppu.write_win_h(0, (120 << 8) | 240);
+        ppu.write_win_v(0, (80 << 8) | (SCANLINES_PER_FRAME as u16));
+
+        assert!(ppu.pixel_in_window(0, 120, 0));
+        assert!(ppu.pixel_in_window(0, 120, 79));
+        assert!(ppu.pixel_in_window(0, 120, 80));
+        assert!(ppu.pixel_in_window(0, 120, 159));
+    }
+
+    #[test]
+    fn pixel_in_window_vertical_end_before_frame_end_resets_before_next_visible_frame() {
+        let mut ppu = Ppu::new();
+        // Y1=80, Y2=227. VCOUNT reaches 227 during VBlank, so the window is
+        // reset before the next visible frame and turns on again at Y1.
+        ppu.write_win_h(0, (120 << 8) | 240);
+        ppu.write_win_v(0, (80 << 8) | ((SCANLINES_PER_FRAME - 1) as u16));
+
+        assert!(!ppu.pixel_in_window(0, 120, 0));
+        assert!(!ppu.pixel_in_window(0, 120, 79));
+        assert!(ppu.pixel_in_window(0, 120, 80));
+        assert!(ppu.pixel_in_window(0, 120, 159));
     }
 
     #[test]
