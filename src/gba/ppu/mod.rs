@@ -306,8 +306,11 @@ pub struct Ppu {
     /// re-asserted before the restart completes.
     forced_blank_restart_lines: u32,
     /// Per-BG active-display enable delay. Disabling a BG takes effect
-    /// immediately; enabling one mid-frame begins contributing after two
-    /// complete scanlines.
+    /// immediately. Enabling one mid-frame is phase-dependent: enables
+    /// during HBlank begin contributing after two complete scanlines,
+    /// while enables during HDraw use a three-line countdown so the first
+    /// visible contribution still occurs only after the current HDraw and
+    /// the following two complete scanlines have elapsed.
     bg_enable_delays: [u8; 4],
     /// Per-BG countdown after an active layer is disabled during HBlank.
     /// Re-enabling during the immediately following HDraw can affect that
