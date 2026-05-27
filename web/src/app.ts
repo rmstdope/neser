@@ -17,7 +17,9 @@ import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionFo
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
-import { normalizeGbSample, normalizeNesSample } from "./audio/audio_normalizer";
+import { normalizeGbSample, normalizeGbaSample, normalizeNesSample } from "./audio/audio_normalizer";
+import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
+import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { getKeyboardControllerTarget } from "./input/input_routing";
@@ -1156,22 +1158,44 @@ async function initAudioContext(): Promise<void> {
     }
 }
 
-function playAudioSamples(samples: Float32Array) {
+function configureActiveEmulatorAudioSampleRate() {
+    if (!emulator || !audioContext) {
+        return;
+    }
+    const configured = configureEmulatorAudioSampleRate(emulator.inst, audioContext.sampleRate);
+    if (!configured) {
+        console.warn("Unable to configure emulator audio sample rate");
+    }
+}
+
+function playAudioSamples(samples: Float32Array, channels = 1) {
     if (!audioContext || audioMuted || samples.length === 0) return;
 
+    const channelCount = channels === 2 ? 2 : 1;
+    const frameCount = channelCount === 2 ? Math.floor(samples.length / 2) : samples.length;
+    if (frameCount === 0) return;
+
     // Create an audio buffer for the samples
-    const buffer = audioContext.createBuffer(1, samples.length, audioContext.sampleRate);
+    const buffer = audioContext.createBuffer(channelCount, frameCount, audioContext.sampleRate);
     const channelData = buffer.getChannelData(0);
 
     // Normalize and copy samples to the buffer
-    if (emulator?.kind === "gb" || emulator?.kind === "gba") {
+    if (channelCount === 2) {
+        const rightChannelData = buffer.getChannelData(1);
+        for (let i = 0; i < frameCount; i++) {
+            channelData[i] = normalizeGbaSample(samples[i * 2]);
+            rightChannelData[i] = normalizeGbaSample(samples[i * 2 + 1]);
+        }
+    } else if (emulator?.kind === "gb" || emulator?.kind === "gba") {
         // Handheld APUs output bipolar samples in [-1.0, 1.0] — clamp with a safety guard.
-        for (let i = 0; i < samples.length; i++) {
-            channelData[i] = normalizeGbSample(samples[i]);
+        for (let i = 0; i < frameCount; i++) {
+            channelData[i] = emulator?.kind === "gba"
+                ? normalizeGbaSample(samples[i])
+                : normalizeGbSample(samples[i]);
         }
     } else {
         // NES APU outputs 0.0 to ~1.177; normalize to the unipolar 0.0 to 1.0 range used by this output path
-        for (let i = 0; i < samples.length; i++) {
+        for (let i = 0; i < frameCount; i++) {
             channelData[i] = normalizeNesSample(samples[i], NES_APU_MAX);
         }
     }
@@ -1280,6 +1304,7 @@ async function start() {
         frameLimiter.setTargetFps(emulator!.inst.frame_rate_hz());
         // Initialize audio context on user interaction (browser requirement)
         await initAudioContext();
+        configureActiveEmulatorAudioSampleRate();
         emulator!.inst.set_audio_muted(audioMuted);
         await refreshSaveStateController();
 
@@ -2294,9 +2319,9 @@ function step(timestamp: number) {
         frameCount = (frameCount + 1) % 3600;
 
         // Get and play audio samples
-        const audioSamples = emulator!.inst.get_audio_samples();
-        if (audioSamples.length > 0) {
-            playAudioSamples(audioSamples);
+        const audio = getPlaybackAudioSamples(emulator!.kind, emulator!.inst);
+        if (audio.samples.length > 0) {
+            playAudioSamples(audio.samples, audio.channels);
         }
 
         updateRecOverlay();
@@ -2985,6 +3010,7 @@ async function restartGbaSession(status: string) {
         frameLimiter.setTargetFps(emulator!.inst.frame_rate_hz());
         await initAudioContext();
         if (audioContext) nextAudioTime = audioContext.currentTime;
+        configureActiveEmulatorAudioSampleRate();
         emulator!.inst.set_audio_muted(audioMuted);
         await refreshSaveStateController();
         running = true;

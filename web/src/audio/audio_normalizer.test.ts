@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeGbSample, normalizeNesSample } from "./audio_normalizer";
+import { normalizeGbSample, normalizeGbaSample, normalizeNesSample } from "./audio_normalizer";
 
 describe("normalizeGbSample", () => {
     it("passes through a sample already in range", () => {
@@ -21,6 +21,13 @@ describe("normalizeGbSample", () => {
     it("preserves negative samples in range (half-cycle not discarded)", () => {
         expect(normalizeGbSample(-0.75)).toBe(-0.75);
         expect(normalizeGbSample(-0.01)).toBeCloseTo(-0.01);
+    });
+});
+
+describe("normalizeGbaSample", () => {
+    it("matches native output gain before clamping direct-sound samples", () => {
+        expect(normalizeGbaSample(1.0)).toBeCloseTo(0.75);
+        expect(normalizeGbaSample(-1.0)).toBeCloseTo(-0.75);
     });
 });
 

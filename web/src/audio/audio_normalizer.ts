@@ -9,6 +9,12 @@ export function normalizeGbSample(sample: number): number {
     return Math.min(1.0, Math.max(-1.0, sample));
 }
 
+const NATIVE_DEFAULT_OUTPUT_GAIN = 0.75;
+
+export function normalizeGbaSample(sample: number): number {
+    return Math.min(1.0, Math.max(-1.0, sample * NATIVE_DEFAULT_OUTPUT_GAIN));
+}
+
 /**
  * Normalize a NES APU sample from its native unipolar range [0, nesApuMax]
  * to [0.0, 1.0].

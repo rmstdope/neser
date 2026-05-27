@@ -720,6 +720,12 @@ impl WasmNes {
         samples
     }
 
+    /// Set the emulator audio output sample rate in Hz.
+    #[wasm_bindgen]
+    pub fn set_audio_sample_rate(&mut self, sample_rate: f32) {
+        self.nes.set_audio_sample_rate(sample_rate);
+    }
+
     /// Serialize the current emulator state to JSON bytes.
     #[wasm_bindgen]
     pub fn save_state_bytes(&self) -> Vec<u8> {

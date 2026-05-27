@@ -1653,14 +1653,9 @@ mod tests {
         // We just need to verify the SWI returns a plausible nonzero value in r0.
         let wa_addr: u32 = 0x0200_0100;
 
-        // WaveData struct: first 4 bytes = type (unused by MidiKey2Freq)
-        //                  next 4 bytes = status (unused)
-        //                  next 4 bytes = freq (base frequency in Hz)
-        //                  next 4 bytes = loop position
-        //                  next 4 bytes = number of samples
         let mut wa_data: Vec<u8> = Vec::new();
-        wa_data.extend_from_slice(&0u32.to_le_bytes()); // type
-        wa_data.extend_from_slice(&0u32.to_le_bytes()); // status
+        wa_data.extend_from_slice(&0u16.to_le_bytes()); // type
+        wa_data.extend_from_slice(&0u16.to_le_bytes()); // status
         wa_data.extend_from_slice(&7040u32.to_le_bytes()); // freq
         wa_data.extend_from_slice(&0u32.to_le_bytes()); // loop
         wa_data.extend_from_slice(&0u32.to_le_bytes()); // nsamples
@@ -1695,8 +1690,8 @@ mod tests {
         let wa_addr: u32 = 0x0200_0100;
 
         let mut wa_data: Vec<u8> = Vec::new();
-        wa_data.extend_from_slice(&0u32.to_le_bytes()); // type
-        wa_data.extend_from_slice(&0u32.to_le_bytes()); // status
+        wa_data.extend_from_slice(&0u16.to_le_bytes()); // type
+        wa_data.extend_from_slice(&0u16.to_le_bytes()); // status
         wa_data.extend_from_slice(&8000u32.to_le_bytes()); // freq
         wa_data.extend_from_slice(&0u32.to_le_bytes()); // loop
         wa_data.extend_from_slice(&0u32.to_le_bytes()); // nsamples

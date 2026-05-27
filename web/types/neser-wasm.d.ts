@@ -40,6 +40,7 @@ declare module "*/pkg/neser" {
         screen_height(): number;
         screen_width(): number;
         set_audio_muted(muted: boolean): void;
+        set_audio_sample_rate(sample_rate: number): void;
         set_button(controller: number, button: number, pressed: boolean): void;
         set_controller_type(port: number, controller_type: string): void;
         set_mouse_left_button(pressed: boolean): void;
@@ -103,6 +104,7 @@ declare module "*/pkg/neser" {
         screen_height(): number;
         screen_width(): number;
         set_audio_muted(muted: boolean): void;
+        set_audio_sample_rate(sample_rate: number): void;
         set_button(controller: number, button: number, pressed: boolean): void;
     }
 
@@ -115,6 +117,7 @@ declare module "*/pkg/neser" {
         drain_toasts(): unknown[];
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;
+        get_audio_samples_stereo(): Float32Array;
         is_audio_muted(): boolean;
         load_rom(rom: Uint8Array, rom_name: string): void;
         constructor();
@@ -124,6 +127,7 @@ declare module "*/pkg/neser" {
         screen_height(): number;
         screen_width(): number;
         set_audio_muted(muted: boolean): void;
+        set_audio_sample_rate(sample_rate: number): void;
         set_button(controller: number, button: number, pressed: boolean): void;
     }
 

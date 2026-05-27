@@ -1,6 +1,7 @@
 //! GBA APU — dual-source audio: 4 DMG-legacy channels + 2 PCM FIFO channels.
 
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 pub use super::channel1::Channel1;
 pub use super::channel2::Channel2;
@@ -12,6 +13,8 @@ pub use super::fifo::FifoChannel;
 
 /// GBA CPU clock rate in Hz.
 const GBA_CLOCK_HZ: f32 = 16_777_216.0;
+/// Upper bound for queued audio samples awaiting frontend retrieval.
+const MAX_PENDING_SAMPLES: usize = 16_384;
 
 /// Frame sequencer period: 512 Hz → one step every 32 768 GBA cycles.
 const FS_PERIOD: u32 = 32_768;
@@ -112,7 +115,7 @@ pub struct Apu {
     // ── Sample generation ────────────────────────────────────────────────
     sample_acc: f32,
     cycles_per_sample: f32,
-    pending_sample: Option<(f32, f32)>,
+    pending_samples: VecDeque<(f32, f32)>,
 
     // ── PSG 262.144kHz internal accumulator ──────────────────────────────
     /// Cycle counter within the current PSG internal period (0..PSG_INTERNAL_PERIOD).
@@ -140,7 +143,8 @@ pub struct ApuState {
     fs_step: u8,
     sample_acc: f32,
     cycles_per_sample: f32,
-    pending_sample: Option<(f32, f32)>,
+    #[serde(default)]
+    pending_samples: VecDeque<(f32, f32)>,
     psg_counter: u32,
     psg_sum: [f32; 4],
     psg_sample_count: u32,
@@ -170,7 +174,7 @@ impl Apu {
             fs_step: 0,
             sample_acc: 0.0,
             cycles_per_sample: GBA_CLOCK_HZ / 44_100.0,
-            pending_sample: None,
+            pending_samples: VecDeque::with_capacity(MAX_PENDING_SAMPLES),
             psg_counter: 0,
             psg_sum: [0.0; 4],
             psg_sample_count: 0,
@@ -191,6 +195,7 @@ impl Apu {
             return;
         }
         self.cycles_per_sample = GBA_CLOCK_HZ / rate;
+        self.pending_samples.clear();
     }
 
     /// Returns the configured output sample rate in Hz.
@@ -215,7 +220,7 @@ impl Apu {
             fs_step: self.fs_step,
             sample_acc: self.sample_acc,
             cycles_per_sample: self.cycles_per_sample,
-            pending_sample: self.pending_sample,
+            pending_samples: self.pending_samples.clone(),
             psg_counter: self.psg_counter,
             psg_sum: self.psg_sum,
             psg_sample_count: self.psg_sample_count,
@@ -244,7 +249,7 @@ impl Apu {
         } else {
             0.0
         };
-        self.pending_sample = state.pending_sample;
+        self.pending_samples = state.pending_samples.clone();
         self.psg_counter = state.psg_counter;
         self.psg_sum = state.psg_sum;
         self.psg_sample_count = state.psg_sample_count;
@@ -276,7 +281,7 @@ impl Apu {
 
     /// Returns `true` when an output sample is ready to be collected.
     pub fn sample_ready(&self) -> bool {
-        self.pending_sample.is_some()
+        !self.pending_samples.is_empty()
     }
 
     /// Consume and return the pending audio sample as a mono downmix.
@@ -286,8 +291,8 @@ impl Apu {
     /// ±1.0 slightly exceeding the range before halving.
     /// Prefer [`take_stereo_sample`](Apu::take_stereo_sample) for true stereo output.
     pub fn take_sample(&mut self) -> Option<f32> {
-        self.pending_sample
-            .take()
+        self.pending_samples
+            .pop_front()
             .map(|(l, r)| ((l + r) / 2.0).clamp(-1.0, 1.0))
     }
 
@@ -295,7 +300,14 @@ impl Apu {
     ///
     /// Returns `None` if no sample is pending.
     pub fn take_stereo_sample(&mut self) -> Option<(f32, f32)> {
-        self.pending_sample.take()
+        self.pending_samples.pop_front()
+    }
+
+    fn push_pending_sample(&mut self, sample: (f32, f32)) {
+        if self.pending_samples.len() == MAX_PENDING_SAMPLES {
+            self.pending_samples.pop_front();
+        }
+        self.pending_samples.push_back(sample);
     }
 
     /// Advance the APU by `cycles` GBA CPU cycles.
@@ -358,9 +370,8 @@ impl Apu {
             self.sample_acc += step as f32;
             if self.sample_acc >= self.cycles_per_sample {
                 self.sample_acc -= self.cycles_per_sample;
-                if self.pending_sample.is_none() {
-                    self.pending_sample = Some(self.mix());
-                }
+                let sample = self.mix();
+                self.push_pending_sample(sample);
             }
 
             remaining -= step;
@@ -1020,7 +1031,7 @@ mod tests {
         apu.fs_counter = FS_PERIOD - 7;
         apu.fs_step = 6;
         apu.sample_acc = apu.cycles_per_sample / 4.0;
-        apu.pending_sample = Some((0.25, -0.5));
+        apu.pending_samples.push_back((0.25, -0.5));
         apu.psg_counter = PSG_INTERNAL_PERIOD - 2;
         apu.psg_sum = [1.0, -2.0, 3.0, -4.0];
         apu.psg_sample_count = 9;
@@ -1033,7 +1044,7 @@ mod tests {
         assert_eq!(restored.fs_counter, FS_PERIOD - 7);
         assert_eq!(restored.fs_step, 6);
         assert!((restored.sample_acc - (restored.cycles_per_sample / 4.0)).abs() < 0.01);
-        assert_eq!(restored.pending_sample, Some((0.25, -0.5)));
+        assert_eq!(restored.pending_samples.front(), Some(&(0.25, -0.5)));
         assert_eq!(restored.psg_counter, PSG_INTERNAL_PERIOD - 2);
         assert_eq!(restored.psg_sum, [1.0, -2.0, 3.0, -4.0]);
         assert_eq!(restored.psg_sample_count, 9);
@@ -1049,7 +1060,7 @@ mod tests {
         apu.write16(0x0400_0080, 0x1177);
         apu.write16(0x0400_0082, 0x030F);
         apu.write16(0x0400_0088, 0x43FE);
-        apu.pending_sample = Some((0.125, 0.5));
+        apu.pending_samples.push_back((0.125, 0.5));
 
         let saved = apu.capture_state();
         let bytes = serde_json::to_vec(&saved).expect("serialize APU state");
@@ -1729,6 +1740,25 @@ mod tests {
             apu.sample_ready(),
             "A sample should be ready after one sample period"
         );
+    }
+
+    #[test]
+    fn test_multiple_samples_accumulate_until_consumed() {
+        let mut apu = Apu::new();
+        apu.set_sample_rate(44_100.0);
+        let cycles = (GBA_CLOCK_HZ / 44_100.0).ceil() as u32;
+
+        // A web video frame advances far more than one output sample period
+        // before JS drains audio. Generated samples must queue instead of
+        // overwriting/dropping everything after the first pending sample.
+        apu.tick(cycles * 3);
+
+        let mut sample_count = 0;
+        while apu.take_sample().is_some() {
+            sample_count += 1;
+        }
+
+        assert_eq!(sample_count, 3, "all generated samples should be queued");
     }
 
     #[test]
