@@ -692,3 +692,43 @@ No feedback provided
 ### Navigator feedback
 
 No additional feedback.
+
+---
+
+## 2026-05-27 — PR #2694: Fix web handheld audio noise
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2694
+**Linked issues:** none
+
+### Customizations used
+
+| Type         | Name                      | Purpose                                                                                |
+| ------------ | ------------------------- | -------------------------------------------------------------------------------------- |
+| Skill        | `bug-hunter`              | Guided diagnostic process to identify audio noise root cause across GB/GBA frontends.  |
+| Skill        | `test-driven-development` | Structured development workflow with test-first approach for audio system changes.     |
+| Skill        | `rust-developer`          | Guided Rust implementation of audio queue architecture and sample rate propagation.    |
+| Instructions | `copilot-instructions.md` | Applied repository workflow rules including small increments and validation gates.     |
+
+### What went well
+
+- ✅ **Cross-platform audio architecture diagnosis**: The fix correctly identified that the underlying issue spanned both GB/CGB and GBA frontends, requiring a unified solution rather than platform-specific patches.
+- ✅ **Bounded queue design**: Changing from single pending sample to a bounded queue architecture addresses the fundamental mismatch between frontend sample rate and APU output rate, preventing both underruns and unbounded buffering.
+- ✅ **Save-state compatibility preservation**: The fix maintained compatibility with the immediately previous save-state version, showing awareness of user impact and migration cost.
+- ✅ **Single-commit delivery**: The entire fix was delivered in one cohesive commit (`7acecac9`), indicating clear understanding of the problem scope and solution architecture before implementation.
+
+### What to improve
+
+- ❌ **PR description could preserve more diagnostic context**: The work did include RED tests for queued GB/GBA audio samples and Vitest coverage for sample-rate propagation, but the PR body summarizes the fix more than the investigation path. Future bug PRs should include a short "root cause" section for knowledge transfer.
+- ❌ **No issue reference**: PR #2694 doesn't reference a GitHub issue number because this was a direct navigator-reported bug. Future similar bugs should either create/link an issue or explicitly note in the PR that the work came from direct navigator feedback.
+- ❌ **TDD evidence is mostly in the conversation, not in persistent artifacts**: The implementation followed RED -> GREEN -> REFACTOR gates, but the single final commit and concise PR body do not show that history. Future PRs should mention the key regression tests added in the PR body.
+
+### Navigator feedback
+
+#### What went well
+
+_Pending: Navigator feedback requested but not yet provided._
+
+#### What to improve
+
+_Pending: Navigator feedback requested but not yet provided._
