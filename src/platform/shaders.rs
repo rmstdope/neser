@@ -30,7 +30,7 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
     ),
     (
         "sp101-color",
-        "vendor/slang-shaders/handheld/color-mod/SP101-color.slangp",
+        "vendor/slang-shaders/handheld/color-mod/sp101-color.slangp",
     ),
     (
         "gba-lcd-grid",
@@ -72,7 +72,7 @@ mod tests {
     fn test_gba_preset_sp101_color_maps_to_expected_path() {
         assert_preset_path(
             "sp101-color",
-            "vendor/slang-shaders/handheld/color-mod/SP101-color.slangp",
+            "vendor/slang-shaders/handheld/color-mod/sp101-color.slangp",
         );
     }
 

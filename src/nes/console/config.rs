@@ -5403,7 +5403,7 @@ nes-filter=invalid-shader
         let config = parse_config(args);
         assert_eq!(
             config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/color-mod/SP101-color.slangp".to_string())
+            Some("vendor/slang-shaders/handheld/color-mod/sp101-color.slangp".to_string())
         );
     }
 
@@ -5467,7 +5467,7 @@ nes-filter=invalid-shader
             .unwrap();
         assert_eq!(
             config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/color-mod/SP101-color.slangp".to_string())
+            Some("vendor/slang-shaders/handheld/color-mod/sp101-color.slangp".to_string())
         );
     }
 

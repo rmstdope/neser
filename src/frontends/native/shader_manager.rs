@@ -459,7 +459,7 @@ mod tests {
             ),
             (
                 "sp101-color",
-                "vendor/slang-shaders/handheld/color-mod/SP101-color.slangp",
+                "vendor/slang-shaders/handheld/color-mod/sp101-color.slangp",
             ),
             ("none", "shaders/stock.slangp"),
             (
@@ -476,7 +476,7 @@ mod tests {
             PathBuf::from("shaders/gba-lcd.slangp"),
             PathBuf::from("vendor/slang-shaders/handheld/agb001.slangp"),
             PathBuf::from("vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp"),
-            PathBuf::from("vendor/slang-shaders/handheld/color-mod/SP101-color.slangp"),
+            PathBuf::from("vendor/slang-shaders/handheld/color-mod/sp101-color.slangp"),
             PathBuf::from("vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp"),
         ];
 

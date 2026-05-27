@@ -9,6 +9,7 @@ from pathlib import Path
 
 from scripts.package_release import (
     ReleasePackageConfig,
+    _read_shader_preset_paths,
     collect_shader_dependencies,
     create_release_archive,
     main,
@@ -29,8 +30,45 @@ def write_bytes(path: Path, data: bytes = b"test") -> None:
     path.write_bytes(data)
 
 
+def path_exists_with_exact_case(repo_root: Path, relative_path: Path) -> bool:
+    """Return whether each path segment matches the directory entry casing exactly."""
+
+    current = repo_root
+    for part in relative_path.parts:
+        if not current.is_dir():
+            return False
+        entries = {entry.name for entry in current.iterdir()}
+        if part not in entries:
+            return False
+        current = current / part
+    return current.exists()
+
+
 class PackageReleaseTests(unittest.TestCase):
     """Behavior tests for release archive creation."""
+
+    def test_repository_shader_dependencies_are_collectable(self) -> None:
+        """Release packaging can collect every shader preset configured by the repository."""
+
+        repo_root = Path(__file__).resolve().parents[1]
+
+        dependencies = collect_shader_dependencies(repo_root)
+
+        self.assertIn(Path("shaders/stock.slangp"), dependencies)
+
+    def test_repository_shader_preset_paths_match_exact_vendor_casing(self) -> None:
+        """Configured shader preset paths match vendored filenames on case-sensitive runners."""
+
+        repo_root = Path(__file__).resolve().parents[1]
+        preset_paths = _read_shader_preset_paths(repo_root / "src/platform/shaders.rs")
+
+        mismatches = [
+            path
+            for path in preset_paths
+            if not path_exists_with_exact_case(repo_root, path)
+        ]
+
+        self.assertEqual(mismatches, [])
 
     def test_collect_shader_dependencies_resolves_configured_preset_graph(self) -> None:
         """Configured shader presets include referenced presets, passes, includes, and LUTs."""
