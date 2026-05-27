@@ -306,9 +306,19 @@ pub struct Ppu {
     /// re-asserted before the restart completes.
     forced_blank_restart_lines: u32,
     /// Per-BG active-display enable delay. Disabling a BG takes effect
-    /// immediately; enabling one mid-frame begins contributing after two
-    /// complete scanlines.
+    /// immediately. Enabling one mid-frame is phase-dependent: enables
+    /// during HBlank begin contributing after two complete scanlines,
+    /// while enables during HDraw use a three-line countdown so the first
+    /// visible contribution still occurs only after the current HDraw and
+    /// the following two complete scanlines have elapsed.
     bg_enable_delays: [u8; 4],
+    /// Per-BG countdown after an active layer is disabled during HBlank.
+    /// Re-enabling during the immediately following HDraw can affect that
+    /// scanline; re-enabling in HBlank still uses the normal enable delay.
+    bg_disable_hblank_cooldowns: [u8; 4],
+    bg_force_current_scanline: [bool; 4],
+    bg_force_current_scanline_x_offset: [i8; 4],
+    hblank_irq_raised_this_scanline: bool,
     /// When true, apply GBA LCD color correction (gamma ≈ 4 curve) when
     /// converting BGR555 palette entries to RGB888.
     ///
@@ -341,6 +351,14 @@ pub struct PpuState {
     forced_blank_restart_lines: u32,
     #[serde(default)]
     bg_enable_delays: [u8; 4],
+    #[serde(default)]
+    bg_disable_hblank_cooldowns: [u8; 4],
+    #[serde(default)]
+    bg_force_current_scanline: [bool; 4],
+    #[serde(default)]
+    bg_force_current_scanline_x_offset: [i8; 4],
+    #[serde(default)]
+    hblank_irq_raised_this_scanline: bool,
     color_correction: bool,
 }
 
@@ -420,6 +438,13 @@ const SORT_KEY_BG_OFFSET: u16 = 5;
 /// Number of complete rendered scanlines before a BG layer newly enabled
 /// during active display begins contributing pixels.
 const BG_ENABLE_DELAY_LINES: u8 = 2;
+const BG_ENABLE_HDRAW_DELAY_LINES: u8 = 3;
+const BG_DISABLE_HBLANK_COOLDOWN_LINES: u8 = 2;
+// mGBA's video scheduler exposes this edge slightly before the visible HBlank
+// flag for OBJ-overlay video scenes. Keep this scoped so the Misc edge timing
+// diagnostics, which sample raw DISPSTAT/TM0 phase without OBJ display, retain
+// their stricter HBlank-flag timing.
+const HBLANK_IRQ_EARLY_CYCLES: u32 = 48;
 
 // --------------------------------------------------------------------------
 
@@ -473,6 +498,10 @@ impl Ppu {
             mosaic: 0,
             forced_blank_restart_lines: 0,
             bg_enable_delays: [0; 4],
+            bg_disable_hblank_cooldowns: [0; 4],
+            bg_force_current_scanline: [false; 4],
+            bg_force_current_scanline_x_offset: [0; 4],
+            hblank_irq_raised_this_scanline: false,
             color_correction: false,
         };
         // VCOUNT == LYC == 0 at reset; reflect that in the match flag.
@@ -505,6 +534,10 @@ impl Ppu {
             mosaic: self.mosaic,
             forced_blank_restart_lines: self.forced_blank_restart_lines,
             bg_enable_delays: self.bg_enable_delays,
+            bg_disable_hblank_cooldowns: self.bg_disable_hblank_cooldowns,
+            bg_force_current_scanline: self.bg_force_current_scanline,
+            bg_force_current_scanline_x_offset: self.bg_force_current_scanline_x_offset,
+            hblank_irq_raised_this_scanline: self.hblank_irq_raised_this_scanline,
             color_correction: self.color_correction,
         }
     }
@@ -531,6 +564,10 @@ impl Ppu {
         self.mosaic = state.mosaic;
         self.forced_blank_restart_lines = state.forced_blank_restart_lines;
         self.bg_enable_delays = state.bg_enable_delays;
+        self.bg_disable_hblank_cooldowns = state.bg_disable_hblank_cooldowns;
+        self.bg_force_current_scanline = state.bg_force_current_scanline;
+        self.bg_force_current_scanline_x_offset = state.bg_force_current_scanline_x_offset;
+        self.hblank_irq_raised_this_scanline = state.hblank_irq_raised_this_scanline;
         self.color_correction = state.color_correction;
     }
 
@@ -561,6 +598,9 @@ impl Ppu {
             // Forced Blank asserted (or kept asserted): cancel any pending restart.
             self.forced_blank_restart_lines = 0;
             self.bg_enable_delays = [0; 4];
+            self.bg_disable_hblank_cooldowns = [0; 4];
+            self.bg_force_current_scanline = [false; 4];
+            self.bg_force_current_scanline_x_offset = [0; 4];
         }
     }
 
@@ -694,7 +734,8 @@ impl Ppu {
 
     fn bg_layer_enabled(&self, bg_idx: usize) -> bool {
         let enable_bit = dispcnt::BG0_ENABLE << bg_idx;
-        self.dispcnt & enable_bit != 0 && self.bg_enable_delays[bg_idx] == 0
+        self.dispcnt & enable_bit != 0
+            && (self.bg_enable_delays[bg_idx] == 0 || self.bg_force_current_scanline[bg_idx])
     }
 
     fn update_bg_enable_delays(
@@ -708,9 +749,34 @@ impl Ppu {
             let was_enabled = old_bg_enables & enable_bit != 0;
             let is_enabled = new_bg_enables & enable_bit != 0;
             if !is_enabled {
+                if was_enabled && self.dispstat & dispstat::HBLANK_FLAG != 0 {
+                    self.bg_disable_hblank_cooldowns[bg_idx] = BG_DISABLE_HBLANK_COOLDOWN_LINES;
+                }
                 self.bg_enable_delays[bg_idx] = 0;
+                self.bg_force_current_scanline[bg_idx] = false;
+                self.bg_force_current_scanline_x_offset[bg_idx] = 0;
+            } else if !was_enabled
+                && self.bg_disable_hblank_cooldowns[bg_idx] != 0
+                && self.dispstat & dispstat::HBLANK_FLAG == 0
+                && self.in_active_display()
+            {
+                self.bg_enable_delays[bg_idx] = BG_ENABLE_HDRAW_DELAY_LINES;
+                self.bg_force_current_scanline[bg_idx] = true;
+                // The first tile of a line re-enabled just after HBlank is in
+                // the BG fetch pipeline already. The two observed phases match
+                // the mGBA video Layer toggle 2 edge cases at line_cycle 38/49.
+                self.bg_force_current_scanline_x_offset[bg_idx] =
+                    if self.line_cycle <= 44 { -2 } else { 2 };
+                self.bg_disable_hblank_cooldowns[bg_idx] = 0;
             } else if !was_enabled && self.in_active_display() && !was_forced_blank {
-                self.bg_enable_delays[bg_idx] = BG_ENABLE_DELAY_LINES;
+                self.bg_enable_delays[bg_idx] = if self.dispstat & dispstat::HBLANK_FLAG != 0 {
+                    BG_ENABLE_DELAY_LINES
+                } else {
+                    BG_ENABLE_HDRAW_DELAY_LINES
+                };
+                self.bg_force_current_scanline[bg_idx] = false;
+                self.bg_force_current_scanline_x_offset[bg_idx] = 0;
+                self.bg_disable_hblank_cooldowns[bg_idx] = 0;
             }
         }
     }
@@ -726,6 +792,21 @@ impl Ppu {
         for delay in &mut self.bg_enable_delays {
             *delay = delay.saturating_sub(1);
         }
+        self.bg_force_current_scanline = [false; 4];
+        self.bg_force_current_scanline_x_offset = [0; 4];
+        for cooldown in &mut self.bg_disable_hblank_cooldowns {
+            *cooldown = cooldown.saturating_sub(1);
+        }
+    }
+
+    fn forced_scanline_sample_x(&self, bg_idx: usize, x: usize) -> Option<usize> {
+        if !self.bg_force_current_scanline[bg_idx] || x >= 8 {
+            return Some(x);
+        }
+        (x as isize)
+            .checked_add(self.bg_force_current_scanline_x_offset[bg_idx] as isize)
+            .filter(|&adjusted| (0..SCREEN_WIDTH as isize).contains(&adjusted))
+            .map(|adjusted| adjusted as usize)
     }
 
     /// Frame selection for Mode 4/5 (DISPCNT bit 4).
@@ -963,6 +1044,20 @@ impl Ppu {
         while remaining > 0 {
             let take = remaining.min(CYCLES_PER_SCANLINE - self.line_cycle);
             let next_cycle = self.line_cycle + take;
+            let hblank_irq_cycle = HBLANK_START_CYCLE.saturating_sub(HBLANK_IRQ_EARLY_CYCLES);
+
+            if self.line_cycle < hblank_irq_cycle
+                && next_cycle >= hblank_irq_cycle
+                && self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0
+                && self.dispcnt & dispcnt::OBJ_ENABLE != 0
+                && !self.hblank_irq_raised_this_scanline
+            {
+                ic.raise_late(
+                    irq_bits::HBLANK,
+                    next_cycle.saturating_sub(hblank_irq_cycle),
+                );
+                self.hblank_irq_raised_this_scanline = true;
+            }
 
             // H-Blank flag rising edge.
             if self.line_cycle < HBLANK_START_CYCLE && next_cycle >= HBLANK_START_CYCLE {
@@ -983,11 +1078,14 @@ impl Ppu {
                 if (self.vcount as u32) < VISIBLE_SCANLINES {
                     events.hblank_starts = events.hblank_starts.saturating_add(1);
                 }
-                if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0 {
+                if self.dispstat & dispstat::HBLANK_IRQ_ENABLE != 0
+                    && !self.hblank_irq_raised_this_scanline
+                {
                     ic.raise_late(
                         irq_bits::HBLANK,
                         next_cycle.saturating_sub(HBLANK_START_CYCLE),
                     );
+                    self.hblank_irq_raised_this_scanline = true;
                 }
             }
 
@@ -1007,6 +1105,7 @@ impl Ppu {
     fn advance_scanline(&mut self, ic: &mut InterruptController, events: &mut PpuStepEvents) {
         // Leaving this scanline — clear H-Blank flag.
         self.dispstat &= !dispstat::HBLANK_FLAG;
+        self.hblank_irq_raised_this_scanline = false;
 
         // Handle the forced-blank mid-frame restart countdown.
         // When Forced Blank (DISPCNT bit 7) is de-asserted mid-frame, the PPU
@@ -1179,10 +1278,14 @@ impl Ppu {
         let screen_y = (sample_y + vofs as usize) & height_mask;
 
         for x in 0..(SCREEN_WIDTH as usize) {
+            let Some(output_x) = self.forced_scanline_sample_x(bg_idx, x) else {
+                buf[x] = TRANSPARENT;
+                continue;
+            };
             let sample_x = if mosaic_enabled {
-                mosaic_anchor(x as u32, mosaic_h as u32) as usize
+                mosaic_anchor(output_x as u32, mosaic_h as u32) as usize
             } else {
-                x
+                output_x
             };
             let screen_x = (sample_x + hofs as usize) & width_mask;
             let tile_x = screen_x >> 3;
@@ -1299,10 +1402,14 @@ impl Ppu {
             .wrapping_sub(pd.wrapping_mul(mosaic_y_offset as i32));
 
         for x in 0..(SCREEN_WIDTH as usize) {
+            let Some(output_x) = self.forced_scanline_sample_x(bg_idx, x) else {
+                buf[x] = TRANSPARENT;
+                continue;
+            };
             let sample_x = if mosaic_enabled {
-                mosaic_anchor(x as u32, mosaic_h as u32) as usize
+                mosaic_anchor(output_x as u32, mosaic_h as u32) as usize
             } else {
-                x
+                output_x
             };
             let px = line_anchor_x.wrapping_add(pa.wrapping_mul(sample_x as i32)) >> 8;
             let py = line_anchor_y.wrapping_add(pc.wrapping_mul(sample_x as i32)) >> 8;

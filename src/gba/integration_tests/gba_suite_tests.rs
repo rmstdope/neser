@@ -850,7 +850,6 @@ fn gba_mgba_video_layer_toggle_matches_expected() {
 }
 
 #[test]
-#[ignore = "tracked by #2688"]
 fn gba_mgba_video_layer_toggle_2_matches_expected() {
     assert_mgba_video_test_matches_expected(4);
 }
