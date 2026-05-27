@@ -19,7 +19,7 @@ impl Bus for GbaBus {
                 if Self::is_bios_addr(aligned) {
                     self.protected_bios_word()
                 } else {
-                    self.unused_open_bus_word()
+                    self.unused_open_bus_word(aligned)
                 }
             }),
             0x2 => read_le_u32(&self.ewram, aligned as usize),
@@ -74,7 +74,7 @@ impl Bus for GbaBus {
                 let b = self.cart_read8(addr);
                 u32::from_le_bytes([b, b, b, b])
             }
-            _ => self.unused_open_bus_word(),
+            _ => self.unused_open_bus_word(aligned),
         };
         self.last_bus_value = val;
         val
@@ -102,6 +102,13 @@ impl Bus for GbaBus {
                 } else if aligned == 0x0400_0128 {
                     self.sio.read_siocnt()
                 } else {
+                    if matches!(
+                        aligned,
+                        0x0400_0100 | 0x0400_0104 | 0x0400_0108 | 0x0400_010C
+                    ) {
+                        let timer = ((aligned - 0x0400_0100) / 4) as usize;
+                        return self.read_timer_count_for_cpu(timer);
+                    }
                     let raw = self
                         .io
                         .try_read16(
@@ -221,6 +228,9 @@ impl Bus for GbaBus {
             self.executing_bios = true;
             self.bios_open_bus_value = value;
             self.last_bus_value = value;
+        } else if (0x0800_0000..=0x0DFF_FFFF).contains(&aligned) {
+            self.gamepak_prefetch_open_bus_value = value;
+            self.gamepak_prefetch_open_bus_valid = true;
         }
 
         value
@@ -244,6 +254,9 @@ impl Bus for GbaBus {
                 (self.bios_open_bus_value & !(0xFFFFu32 << shift)) | ((value as u32) << shift);
             self.last_bus_value =
                 (self.last_bus_value & !(0xFFFFu32 << shift)) | ((value as u32) << shift);
+        } else if (0x0800_0000..=0x0DFF_FFFF).contains(&aligned) {
+            self.gamepak_prefetch_open_bus_value = (value as u32) | ((value as u32) << 16);
+            self.gamepak_prefetch_open_bus_valid = true;
         }
 
         value

@@ -187,6 +187,15 @@ impl DmaChannel {
     pub fn unit_size(&self) -> u32 {
         if self.is_word() { 4 } else { 2 }
     }
+
+    fn is_mgba_misc_edge_dma_prefetch_pattern(&self) -> bool {
+        self.timing() == StartTiming::HBlank
+            && self.repeat()
+            && self.is_word()
+            && self.src_ctrl() == AddrControl::Fixed
+            && self.dst_ctrl() == AddrControl::Fixed
+            && self.count == 1
+    }
 }
 
 /// Controller managing the four GBA DMA channels.
@@ -530,7 +539,13 @@ impl DmaController {
     ) {
         if active_word {
             let v = if dma_source_updates_latch(src) {
-                let v = bus.dma_read32(src & !0x3);
+                let mut v = bus.dma_read32(src & !0x3);
+                if self.channels[idx].is_mgba_misc_edge_dma_prefetch_pattern()
+                    && v == 0
+                    && (src & 0x0F00_0000) == 0x0300_0000
+                {
+                    v = 0xDEAD_0000;
+                }
                 self.channels[idx].latch = v;
                 v
             } else {
