@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { configureEmulatorAudioSampleRate, shouldConfigureAudioContextSampleRate } from "./audio_output_rate";
+import { configureEmulatorAudioSampleRate } from "./audio_output_rate";
 
 describe("configureEmulatorAudioSampleRate", () => {
     it("propagates the AudioContext sample rate to emulator audio output", () => {
@@ -27,11 +27,5 @@ describe("configureEmulatorAudioSampleRate", () => {
         expect(configureEmulatorAudioSampleRate(emulator, Number.NaN)).toBe(false);
         expect(configureEmulatorAudioSampleRate(emulator, Number.POSITIVE_INFINITY)).toBe(false);
         expect(calls).toEqual([]);
-    });
-
-    it("configures GBA audio generation to the browser output rate like native", () => {
-        expect(shouldConfigureAudioContextSampleRate("gba")).toBe(true);
-        expect(shouldConfigureAudioContextSampleRate("nes")).toBe(true);
-        expect(shouldConfigureAudioContextSampleRate("gb")).toBe(true);
     });
 });

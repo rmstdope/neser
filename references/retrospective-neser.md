@@ -695,7 +695,7 @@ No additional feedback.
 
 ---
 
-## 2026-05-27 — PR #2694: Fix web handheld audio noise
+## 2026-05-27 — PR #2694: Fix web handheld audio sample drops
 
 **Repository:** rmstdope/neser
 **PR URL:** https://github.com/rmstdope/neser/pull/2694

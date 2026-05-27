@@ -18,7 +18,7 @@ import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
 import { normalizeGbSample, normalizeGbaSample, normalizeNesSample } from "./audio/audio_normalizer";
-import { configureEmulatorAudioSampleRate, shouldConfigureAudioContextSampleRate } from "./audio/audio_output_rate";
+import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
@@ -1160,9 +1160,6 @@ async function initAudioContext(): Promise<void> {
 
 function configureActiveEmulatorAudioSampleRate() {
     if (!emulator || !audioContext) {
-        return;
-    }
-    if (!shouldConfigureAudioContextSampleRate(emulator.kind)) {
         return;
     }
     const configured = configureEmulatorAudioSampleRate(emulator.inst, audioContext.sampleRate);
