@@ -1,4 +1,5 @@
 use crate::nes::apu::{Apu, ApuState, SharedApu};
+use crate::nes::console::ApuChannels;
 use crate::nes::bus::{Bus, BusState, MapperState, SharedBus};
 #[cfg(test)]
 use crate::nes::cartridge::TimingMode;
@@ -149,11 +150,11 @@ impl Nes {
         {
             let channels = config.nes.apu_channels;
             let mut apu = apu.borrow_mut();
-            apu.set_pulse1_enabled(channels.contains(crate::nes::console::ApuChannels::PULSE1));
-            apu.set_pulse2_enabled(channels.contains(crate::nes::console::ApuChannels::PULSE2));
-            apu.set_triangle_enabled(channels.contains(crate::nes::console::ApuChannels::TRIANGLE));
-            apu.set_noise_enabled(channels.contains(crate::nes::console::ApuChannels::NOISE));
-            apu.set_dmc_enabled(channels.contains(crate::nes::console::ApuChannels::DMC));
+            apu.set_pulse1_enabled(channels.contains(ApuChannels::PULSE1));
+            apu.set_pulse2_enabled(channels.contains(ApuChannels::PULSE2));
+            apu.set_triangle_enabled(channels.contains(ApuChannels::TRIANGLE));
+            apu.set_noise_enabled(channels.contains(ApuChannels::NOISE));
+            apu.set_dmc_enabled(channels.contains(ApuChannels::DMC));
         }
         let memory = Rc::new(RefCell::new(Bus::new(
             ppu.clone(),
@@ -1419,11 +1420,9 @@ mod tests {
     use crate::platform::config::ParseResult;
 
     fn parse_cli_config(mut args: Vec<String>) -> Config {
-        use std::io::Write;
         use tempfile::NamedTempFile;
 
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"").unwrap();
 
         args.push("--config".to_string());
         args.push(file.path().to_string_lossy().to_string());
