@@ -1204,7 +1204,7 @@ mod tests {
         assert_eq!(apu.frame_counter().get_cycle_counter(), 0);
         assert_eq!(apu.pulse1().output(), 0);
         assert_eq!(apu.pulse2().output(), 0);
-        assert_eq!(apu.triangle().output(), 0); // Triangle is muted with zero counters
+        assert_eq!(apu.triangle().output(), 0); // Triangle DAC starts at 0
         assert_eq!(apu.noise().output(), 0); // Noise is muted with zero length counter
     }
 
@@ -1809,6 +1809,7 @@ mod tests {
         triangle_only.triangle_mut().write_linear_counter(0x7F);
         triangle_only.triangle_mut().trigger_linear_counter_reload();
         write_triangle_length(&mut triangle_only, 0b00001_000);
+        triangle_only.triangle_mut().clock_timer();
 
         let baseline = triangle_only.mix();
         assert!(baseline > 0.0, "Expected non-zero triangle-only mix output");
@@ -1828,6 +1829,7 @@ mod tests {
             .triangle_mut()
             .trigger_linear_counter_reload();
         write_triangle_length(&mut loud_but_muted, 0b00001_000);
+        loud_but_muted.triangle_mut().clock_timer();
 
         // Pulse channels (would be non-zero if enabled)
         loud_but_muted.pulse1_mut().write_control(0b1111_1111);

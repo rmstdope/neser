@@ -20,6 +20,8 @@ pub struct TriangleState {
     pub linear_counter_reload_flag: bool,
     pub control_flag: bool,
     pub sequence_position: u8,
+    #[serde(default)]
+    pub output: u8,
 }
 
 pub struct Triangle {
@@ -29,6 +31,7 @@ pub struct Triangle {
 
     // Sequencer fields (32-step triangle wave)
     sequence_position: u8,
+    output: u8,
 
     // Linear counter fields
     linear_counter: u8,
@@ -63,6 +66,7 @@ impl Triangle {
             timer_period: 0,
             timer_counter: 0,
             sequence_position: 0,
+            output: 0,
             linear_counter: 0,
             linear_counter_reload_value: 0,
             linear_counter_reload_flag: false,
@@ -98,6 +102,7 @@ impl Triangle {
     /// Clock the sequencer (advances through triangle wave)
     fn clock_sequencer(&mut self) {
         self.sequence_position = (self.sequence_position + 1) % TRIANGLE_SEQUENCE_LENGTH;
+        self.output = TRIANGLE_SEQUENCE[self.sequence_position as usize];
     }
 
     /// Expose the current sequencer position for integration tests.
@@ -108,11 +113,7 @@ impl Triangle {
 
     /// Get the current output sample from the triangle channel
     pub fn output(&self) -> u8 {
-        // Triangle is muted when either linear counter or length counter is zero
-        if self.linear_counter == 0 || self.length_counter.value() == 0 {
-            return 0;
-        }
-        TRIANGLE_SEQUENCE[self.sequence_position as usize]
+        self.output
     }
 
     /// Write to $4008 register (linear counter control and reload value)
@@ -261,6 +262,7 @@ impl Triangle {
             linear_counter_reload_flag: self.linear_counter_reload_flag,
             control_flag: self.control_flag,
             sequence_position: self.sequence_position,
+            output: self.output,
         }
     }
 
@@ -285,6 +287,7 @@ impl Triangle {
         self.linear_counter_reload_flag = state.linear_counter_reload_flag;
         self.control_flag = state.control_flag;
         self.sequence_position = state.sequence_position;
+        self.output = state.output;
     }
 }
 
@@ -318,6 +321,7 @@ mod tests {
         assert_eq!(triangle.timer_period, 0);
         assert_eq!(triangle.timer_counter, 0);
         assert_eq!(triangle.sequence_position, 0);
+        assert_eq!(triangle.output(), 0);
         assert_eq!(triangle.linear_counter, 0);
         assert_eq!(triangle.get_length_counter(), 0);
     }
@@ -332,14 +336,16 @@ mod tests {
         triangle.set_length_counter_enabled(true);
         load_length(&mut triangle, 0); // 10
 
-        // The triangle wave should produce values 0-15 ascending, then 15-0 descending
-        // Creating a 32-step sequence: 15,14,13,...,1,0,0,1,2,...,14,15
+        // The DAC output starts at 0 and updates only when the sequencer clocks.
+        // The timer advances the sequence before latching the next DAC value.
         let expected_sequence = vec![
-            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, // Descending
+            14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, // Descending
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // Ascending
+            15, // Wrapped to sequence position 0
         ];
 
         for expected_value in expected_sequence {
+            triangle.clock_timer();
             assert_eq!(
                 triangle.output(),
                 expected_value,
@@ -347,7 +353,6 @@ mod tests {
                 expected_value,
                 triangle.sequence_position
             );
-            triangle.clock_timer();
         }
 
         // After 32 steps, should wrap back to start
@@ -518,7 +523,7 @@ mod tests {
     }
 
     #[test]
-    fn test_length_counter_zero_mutes_output_but_linear_counter_still_clocks() {
+    fn test_length_counter_zero_holds_output_but_linear_counter_still_clocks() {
         let mut triangle = Triangle::new();
 
         // Set length to a small value: table index 3 => length 2.
@@ -533,20 +538,22 @@ mod tests {
         triangle.clock_linear_counter_with_reload();
         assert_eq!(triangle.get_linear_counter(), 3);
 
-        // Output is audible while both counters are non-zero.
+        // Output is audible after the timer clocks while both counters are non-zero.
+        triangle.clock_timer();
         assert_ne!(triangle.output(), 0);
+        let held_output = triangle.output();
 
         // Length counter decrements on half-frame clocks.
         triangle.clock_length_counter();
         assert_eq!(triangle.get_length_counter(), 1);
-        assert_ne!(triangle.output(), 0);
+        assert_eq!(triangle.output(), held_output);
 
-        // Output stops exactly when length reaches zero.
+        // Output holds when length reaches zero; only sequencer advancement stops.
         triangle.clock_length_counter();
         assert_eq!(triangle.get_length_counter(), 0);
-        assert_eq!(triangle.output(), 0);
+        assert_eq!(triangle.output(), held_output);
 
-        // Linear counter still behaves internally even while output is muted by length=0.
+        // Linear counter still behaves internally while length=0 halts the sequencer.
         triangle.clock_linear_counter_with_reload();
         assert_eq!(triangle.get_linear_counter(), 2);
         triangle.clock_linear_counter_with_reload();
@@ -558,7 +565,7 @@ mod tests {
         triangle.set_linear_counter_reload_flag();
         triangle.clock_linear_counter_with_reload();
         assert_eq!(triangle.get_linear_counter(), 3);
-        assert_eq!(triangle.output(), 0);
+        assert_eq!(triangle.output(), held_output);
     }
 
     #[test]
@@ -652,65 +659,71 @@ mod tests {
     }
 
     #[test]
-    fn test_output_muted_when_counters_zero() {
+    fn test_output_holds_last_value_when_counters_zero() {
         let mut triangle = Triangle::new();
         triangle.timer_period = 0;
         triangle.set_length_counter_enabled(true);
 
-        // Triangle should be muted when linear counter is 0
+        // With no prior DAC output, halted triangle output remains 0.
         triangle.set_linear_counter_reload(0);
         triangle.trigger_linear_counter_reload();
         load_length(&mut triangle, 1); // Length counter = 254
-        assert_eq!(triangle.output(), 0); // Muted
+        assert_eq!(triangle.output(), 0);
 
-        // Triangle should be muted when length counter is 0
+        // With no prior DAC output, length-gated triangle output remains 0.
         triangle.set_linear_counter_reload(10);
         triangle.trigger_linear_counter_reload();
         triangle.clear_length_counter();
-        assert_eq!(triangle.output(), 0); // Muted
+        assert_eq!(triangle.output(), 0);
 
-        // Triangle should output when both counters are non-zero
+        // Triangle latches a non-zero DAC value once both counters are non-zero
+        // and the timer clocks the sequencer.
         triangle.linear_counter = 5;
         load_length(&mut triangle, 1); // Length counter = 254
-        assert_eq!(triangle.output(), 15); // Not muted, returns sequence value
+        triangle.clock_timer();
+        assert_ne!(triangle.output(), 0);
     }
 
     #[test]
-    fn test_output_mutes_immediately_when_linear_counter_zero_and_recovers() {
+    fn test_output_holds_immediately_when_linear_counter_zero_and_recovers() {
         let mut triangle = Triangle::new();
         triangle.set_length_counter_enabled(true);
         load_length(&mut triangle, 1); // Non-zero length
 
         // Start audible.
         triangle.linear_counter = 5;
+        triangle.clock_timer();
         assert_ne!(triangle.output(), 0);
+        let held_output = triangle.output();
 
-        // Force linear counter to zero: output must go silent immediately.
+        // Force linear counter to zero: output holds its last DAC value.
         triangle.linear_counter = 0;
-        assert_eq!(triangle.output(), 0);
+        assert_eq!(triangle.output(), held_output);
 
         // Recover by restoring linear counter to non-zero.
         triangle.linear_counter = 5;
-        assert_ne!(triangle.output(), 0);
+        assert_eq!(triangle.output(), held_output);
     }
 
     #[test]
-    fn test_output_mutes_immediately_when_length_counter_zero_and_recovers() {
+    fn test_output_holds_immediately_when_length_counter_zero_and_recovers() {
         let mut triangle = Triangle::new();
         triangle.set_length_counter_enabled(true);
 
         // Start audible.
         triangle.linear_counter = 5;
         load_length(&mut triangle, 3); // index 3 => length 2
+        triangle.clock_timer();
         assert_ne!(triangle.output(), 0);
+        let held_output = triangle.output();
 
-        // Force length counter to zero: output must go silent immediately.
+        // Force length counter to zero: output holds its last DAC value.
         triangle.clear_length_counter();
-        assert_eq!(triangle.output(), 0);
+        assert_eq!(triangle.output(), held_output);
 
         // Recover by reloading length to a non-zero value.
         load_length(&mut triangle, 3);
-        assert_ne!(triangle.output(), 0);
+        assert_eq!(triangle.output(), held_output);
     }
 
     #[test]

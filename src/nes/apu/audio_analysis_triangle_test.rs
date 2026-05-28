@@ -161,6 +161,12 @@ mod tests {
         samples.iter().any(|&value| value > 0.0)
     }
 
+    fn all_samples_equal_to(samples: &[f32], expected: f32) -> bool {
+        samples
+            .iter()
+            .all(|&value| value.to_bits() == expected.to_bits())
+    }
+
     fn read_status(device: &mut ApuDevice) -> u8 {
         device.read(0x4015, 0, false).unwrap_or(0)
     }
@@ -188,9 +194,11 @@ mod tests {
         );
 
         let mode = mode_run_length(&runs);
-        let zero_run = runs.iter().find(|(value, _)| *value == 0);
+        let has_double_zero_run = runs
+            .iter()
+            .any(|(value, length)| *value == 0 && *length >= 2 * mode);
         assert!(
-            zero_run.is_some_and(|(_, length)| *length >= 2 * mode),
+            has_double_zero_run,
             "expected double-length run for 0 in 32-step sequence"
         );
     }
@@ -251,6 +259,9 @@ mod tests {
             has_nonzero_output(&initial_outputs),
             "expected audible triangle output before length expires"
         );
+        let held_output = *initial_outputs
+            .last()
+            .expect("expected active triangle samples before halt");
 
         for _ in 0..3 {
             clock_immediate_quarter_and_half(&apu, &mut device);
@@ -258,8 +269,8 @@ mod tests {
 
         let halted_outputs = collect_samples(&apu, 64);
         assert!(
-            halted_outputs.iter().all(|&value| value == 0.0),
-            "expected length counter to gate triangle output"
+            all_samples_equal_to(&halted_outputs, held_output),
+            "expected length counter to halt triangle on its last DAC output"
         );
     }
 
@@ -282,12 +293,15 @@ mod tests {
         clock_immediate_quarter_and_half(&apu, &mut device);
         let outputs = collect_samples(&apu, 32);
         assert!(has_nonzero_output(&outputs), "expected output at counter=1");
+        let held_output = *outputs
+            .last()
+            .expect("expected active triangle samples before linear halt");
 
         clock_immediate_quarter_and_half(&apu, &mut device);
         let outputs = collect_samples(&apu, 32);
         assert!(
-            outputs.iter().all(|&value| value == 0.0),
-            "expected output muted when linear counter reaches 0"
+            all_samples_equal_to(&outputs, held_output),
+            "expected output held when linear counter reaches 0"
         );
     }
 
@@ -357,9 +371,10 @@ mod tests {
         write_triangle_timer_and_length(&mut device, 0x0002, 0x1F);
         clock_immediate_quarter_and_half(&apu, &mut device);
         let outputs = collect_samples(&apu, 32);
+        let held_output = *outputs.first().expect("expected held samples");
         assert!(
-            outputs.iter().all(|&value| value == 0.0),
-            "expected output muted with reload=0"
+            all_samples_equal_to(&outputs, held_output),
+            "expected output held with reload=0"
         );
 
         write_register(&mut device, 0x4008, 0x80 | 0x07); // control on, reload 7
@@ -381,8 +396,8 @@ mod tests {
         let sample_before = collect_samples(&apu, 1)[0];
 
         write_register(&mut device, 0x4015, 0x00);
-        let muted = collect_samples(&apu, 16);
-        assert!(muted.iter().all(|&value| value == 0.0));
+        let halted_outputs = collect_samples(&apu, 16);
+        assert!(all_samples_equal_to(&halted_outputs, sample_before));
 
         write_register(&mut device, 0x4015, 0x04);
         write_triangle_timer_and_length(&mut device, timer, 1);
@@ -407,7 +422,7 @@ mod tests {
         let outputs = collect_samples(&apu, 16);
         assert!(
             outputs.iter().all(|&value| value == 0.0),
-            "expected output muted when linear counter is zero"
+            "expected initial DAC output held at zero when linear counter is zero"
         );
 
         write_register(&mut device, 0x4008, 0x04);
@@ -419,12 +434,15 @@ mod tests {
             has_nonzero_output(&outputs),
             "expected output when both counters are non-zero"
         );
+        let held_output = *outputs
+            .last()
+            .expect("expected active triangle samples before halt");
 
         write_register(&mut device, 0x4015, 0x00);
         let outputs = collect_samples(&apu, 16);
         assert!(
-            outputs.iter().all(|&value| value == 0.0),
-            "expected output muted when length counter is zero"
+            all_samples_equal_to(&outputs, held_output),
+            "expected triangle DAC to hold its last output when length counter is zero"
         );
     }
 
@@ -438,14 +456,17 @@ mod tests {
 
         write_register(&mut device, 0x4015, 0x00);
         assert_eq!(read_status(&mut device) & 0x04, 0);
-        let muted = collect_samples(&apu, 16);
-        assert!(muted.iter().all(|&value| value == 0.0));
+        let held_output = *initial
+            .last()
+            .expect("expected active triangle samples before disable");
+        let halted = collect_samples(&apu, 16);
+        assert!(all_samples_equal_to(&halted, held_output));
 
         write_register(&mut device, 0x4015, 0x04);
-        let still_muted = collect_samples(&apu, 16);
+        let still_halted = collect_samples(&apu, 16);
         assert!(
-            still_muted.iter().all(|&value| value == 0.0),
-            "expected triangle to remain muted until $400B reload"
+            all_samples_equal_to(&still_halted, held_output),
+            "expected triangle to remain halted until $400B reload"
         );
 
         write_triangle_timer_and_length(&mut device, 0x0004, 1);
@@ -497,10 +518,13 @@ mod tests {
             let outputs = collect_samples(&apu, 16);
             assert!(has_nonzero_output(&outputs));
         }
+        let held_output = *collect_samples(&apu, 1)
+            .last()
+            .expect("expected active triangle sample before duration expiry");
 
         clock_immediate_quarter_and_half(&apu, &mut device);
         let outputs = collect_samples(&apu, 16);
-        assert!(outputs.iter().all(|&value| value == 0.0));
+        assert!(all_samples_equal_to(&outputs, held_output));
     }
 
     #[test]
