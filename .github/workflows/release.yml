@@ -92,6 +92,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
 
     steps:
       - uses: actions/checkout@v6
@@ -110,7 +111,9 @@ jobs:
           tool: git-cliff
 
       - name: Generate changelog
-        run: git-cliff -l --strip header --github-repo rmstdope/neser --output RELEASE_NOTES.md
+        run: git-cliff -l --strip header --github-repo "${{ github.repository }}" --output RELEASE_NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Create release
         uses: softprops/action-gh-release@v2
