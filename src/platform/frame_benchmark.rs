@@ -43,6 +43,8 @@ pub struct FrameBenchmarkConfig {
     pub stability_runs: usize,
     /// Whether the GBA BIOS intro should be skipped before benchmark warmup.
     pub skip_gba_bios_intro: bool,
+    /// Whether each stability run should reload the ROM before warmup.
+    pub reset_stability_runs: bool,
 }
 
 /// Errors returned while parsing benchmark command-line options.
@@ -74,6 +76,7 @@ impl FrameBenchmarkConfig {
             warmup_frames: 60,
             stability_runs: 5,
             skip_gba_bios_intro: true,
+            reset_stability_runs: true,
         };
 
         while let Some(arg) = args.next() {
@@ -92,6 +95,9 @@ impl FrameBenchmarkConfig {
                 }
                 "--skip-bios-intro" => {
                     config.skip_gba_bios_intro = true;
+                }
+                "--continue-stability-runs" => {
+                    config.reset_stability_runs = false;
                 }
                 _ => return Err(FrameBenchmarkConfigError::UnknownArgument(arg.clone())),
             }
@@ -258,6 +264,7 @@ mod tests {
         assert_eq!(config.warmup_frames, 60);
         assert_eq!(config.stability_runs, 5);
         assert!(config.skip_gba_bios_intro);
+        assert!(config.reset_stability_runs);
     }
 
     #[test]
@@ -284,8 +291,22 @@ mod tests {
                 warmup_frames: 30,
                 stability_runs: 2,
                 skip_gba_bios_intro: false,
+                reset_stability_runs: true,
             }
         );
+    }
+
+    #[test]
+    fn frame_benchmark_config_can_continue_stability_runs_without_resetting() {
+        let args = vec![
+            "gba_frame_bench".to_string(),
+            "rom.gba".to_string(),
+            "--continue-stability-runs".to_string(),
+        ];
+
+        let config = FrameBenchmarkConfig::parse_args(&args).unwrap();
+
+        assert!(!config.reset_stability_runs);
     }
 
     #[test]

@@ -22,11 +22,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
     let rom_data = std::fs::read(&bench_config.rom_path)
         .map_err(|err| format!("failed to read ROM '{}': {err}", bench_config.rom_path))?;
 
-    let mut gba = create_gba(bench_config.skip_gba_bios_intro);
-    gba.load_rom(&rom_data, &bench_config.rom_path)
-        .map_err(|err| format!("failed to load GBA ROM '{}': {err}", bench_config.rom_path))?;
-    gba.set_audio_sample_rate(44_100.0);
-
+    let mut gba = create_loaded_gba(&rom_data, &bench_config)?;
     for _ in 0..bench_config.warmup_frames {
         run_one_frame(&mut gba);
     }
@@ -43,7 +39,15 @@ fn run(args: Vec<String>) -> Result<(), String> {
             bench_config.stability_runs, bench_config.frames
         );
         for run_index in 1..=bench_config.stability_runs {
-            let samples = run_measured_frames(&mut gba, bench_config.frames);
+            let samples = if bench_config.reset_stability_runs {
+                let mut stability_gba = create_loaded_gba(&rom_data, &bench_config)?;
+                for _ in 0..bench_config.warmup_frames {
+                    run_one_frame(&mut stability_gba);
+                }
+                run_measured_frames(&mut stability_gba, bench_config.frames)
+            } else {
+                run_measured_frames(&mut gba, bench_config.frames)
+            };
             let stats = FrameTimingStats::from_samples(&samples)
                 .map_err(|err| format!("failed to compute benchmark stats: {err:?}"))?;
             println!(
@@ -54,6 +58,14 @@ fn run(args: Vec<String>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn create_loaded_gba(rom_data: &[u8], bench_config: &FrameBenchmarkConfig) -> Result<Gba, String> {
+    let mut gba = create_gba(bench_config.skip_gba_bios_intro);
+    gba.load_rom(rom_data, &bench_config.rom_path)
+        .map_err(|err| format!("failed to load GBA ROM '{}': {err}", bench_config.rom_path))?;
+    gba.set_audio_sample_rate(44_100.0);
+    Ok(gba)
 }
 
 fn create_gba(skip_bios_intro: bool) -> Gba {
@@ -88,6 +100,10 @@ fn print_summary(label: &str, bench_config: &FrameBenchmarkConfig, stats: &Frame
     println!("Frames: {}", stats.frames);
     println!("Warmup frames: {}", bench_config.warmup_frames);
     println!("Skip GBA BIOS intro: {}", bench_config.skip_gba_bios_intro);
+    println!(
+        "Reset stability runs: {}",
+        bench_config.reset_stability_runs
+    );
     println!("Total: {:.1}ms", stats.total.as_secs_f64() * 1000.0);
     println!("Average: {:.3}ms/frame", stats.average_ms);
     println!("P50: {:.3}ms/frame", stats.p50_ms);
@@ -97,10 +113,11 @@ fn print_summary(label: &str, bench_config: &FrameBenchmarkConfig, stats: &Frame
 }
 
 fn usage() -> &'static str {
-    "Usage: gba_frame_bench <rom_path> [--frames N] [--warmup N] [--stability-runs N] [--include-bios-intro]\n\
+    "Usage: gba_frame_bench <rom_path> [--frames N] [--warmup N] [--stability-runs N] [--include-bios-intro] [--continue-stability-runs]\n\
 \n\
 Benchmarks GBA frame execution using the embedded BIOS. By default the GBA BIOS intro is skipped,\n\
-matching the Metroid Zero Mission title/intro benchmark plan."
+matching the Metroid Zero Mission title/intro benchmark plan. Stability runs reload the ROM by\n\
+default so each run measures the same title/intro window."
 }
 
 fn config_error_message(err: FrameBenchmarkConfigError) -> String {
@@ -131,5 +148,6 @@ mod tests {
         assert!(usage.contains("--warmup"));
         assert!(usage.contains("--stability-runs"));
         assert!(usage.contains("--include-bios-intro"));
+        assert!(usage.contains("--continue-stability-runs"));
     }
 }

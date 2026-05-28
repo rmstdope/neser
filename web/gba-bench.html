@@ -126,6 +126,18 @@ function formatStats(label, stats) {
     return `${label}: avg=${stats.averageMs.toFixed(3)}ms p50=${stats.p50Ms.toFixed(3)}ms p95=${stats.p95Ms.toFixed(3)}ms max=${stats.maxMs.toFixed(3)}ms fps=${stats.fps.toFixed(1)}`;
 }
 
+function createLoadedGba(romData, config) {
+    const gba = new WasmGba();
+    gba.load_rom(romData, config.romName);
+    return gba;
+}
+
+function warmup(gba, renderer, frames) {
+    for (let i = 0; i < frames; i++) {
+        runFrame(gba, renderer);
+    }
+}
+
 function runFrame(gba, renderer) {
     const frameStart = performance.now();
 
@@ -160,49 +172,60 @@ async function run() {
     if (!resp.ok) throw new Error(`Failed to fetch ROM: ${resp.status}`);
     const romData = new Uint8Array(await resp.arrayBuffer());
 
-    const gba = new WasmGba();
-    gba.load_rom(romData, config.romName);
-    const renderer = createRenderer(
-        document.getElementById("screen"),
-        gba.screen_width(),
-        gba.screen_height()
-    );
+    const gba = createLoadedGba(romData, config);
+    try {
+        const renderer = createRenderer(
+            document.getElementById("screen"),
+            gba.screen_width(),
+            gba.screen_height()
+        );
 
-    log(`ROM loaded. Warmup=${config.warmupFrames}, frames=${config.frames}, stabilityRuns=${config.stabilityRuns}`);
-    for (let i = 0; i < config.warmupFrames; i++) {
-        runFrame(gba, renderer);
-    }
+        log(`ROM loaded. Warmup=${config.warmupFrames}, frames=${config.frames}, stabilityRuns=${config.stabilityRuns}, resetStabilityRuns=${config.resetStabilityRuns}`);
+        warmup(gba, renderer, config.warmupFrames);
 
-    performance.mark("gba-bench-start");
-    const totals = [];
-    let emuTotal = 0;
-    let audioTotal = 0;
-    let glTotal = 0;
-    let audioSamples = 0;
-    for (let i = 0; i < config.frames; i++) {
-        const frame = runFrame(gba, renderer);
-        totals.push(frame.totalMs);
-        emuTotal += frame.emuMs;
-        audioTotal += frame.audioMs;
-        glTotal += frame.glMs;
-        audioSamples += frame.audioSamples;
-    }
-    performance.mark("gba-bench-end");
-    performance.measure("gba-bench", "gba-bench-start", "gba-bench-end");
-
-    const stats = computeFrameStats(totals);
-    log(formatStats("Primary run", stats));
-    log(`Averages: emu=${(emuTotal / config.frames).toFixed(3)}ms audio=${(audioTotal / config.frames).toFixed(3)}ms gl=${(glTotal / config.frames).toFixed(3)}ms audioSamples=${audioSamples}`);
-
-    if (config.stabilityRuns > 0) {
-        log(`\nStability check (${config.stabilityRuns} run(s) of ${config.frames} frames):`);
-        for (let runIndex = 1; runIndex <= config.stabilityRuns; runIndex++) {
-            const runTotals = [];
-            for (let i = 0; i < config.frames; i++) {
-                runTotals.push(runFrame(gba, renderer).totalMs);
-            }
-            log(`  ${formatStats(`Run ${runIndex}`, computeFrameStats(runTotals))}`);
+        performance.mark("gba-bench-start");
+        const totals = [];
+        let emuTotal = 0;
+        let audioTotal = 0;
+        let glTotal = 0;
+        let audioSamples = 0;
+        for (let i = 0; i < config.frames; i++) {
+            const frame = runFrame(gba, renderer);
+            totals.push(frame.totalMs);
+            emuTotal += frame.emuMs;
+            audioTotal += frame.audioMs;
+            glTotal += frame.glMs;
+            audioSamples += frame.audioSamples;
         }
+        performance.mark("gba-bench-end");
+        performance.measure("gba-bench", "gba-bench-start", "gba-bench-end");
+
+        const stats = computeFrameStats(totals);
+        log(formatStats("Primary run", stats));
+        log(`Averages: emu=${(emuTotal / config.frames).toFixed(3)}ms audio=${(audioTotal / config.frames).toFixed(3)}ms gl=${(glTotal / config.frames).toFixed(3)}ms audioSamples=${audioSamples}`);
+
+        if (config.stabilityRuns > 0) {
+            log(`\nStability check (${config.stabilityRuns} run(s) of ${config.frames} frames):`);
+            for (let runIndex = 1; runIndex <= config.stabilityRuns; runIndex++) {
+                const runGba = config.resetStabilityRuns ? createLoadedGba(romData, config) : gba;
+                try {
+                    if (config.resetStabilityRuns) {
+                        warmup(runGba, renderer, config.warmupFrames);
+                    }
+                    const runTotals = [];
+                    for (let i = 0; i < config.frames; i++) {
+                        runTotals.push(runFrame(runGba, renderer).totalMs);
+                    }
+                    log(`  ${formatStats(`Run ${runIndex}`, computeFrameStats(runTotals))}`);
+                } finally {
+                    if (config.resetStabilityRuns) {
+                        runGba.free();
+                    }
+                }
+            }
+        }
+    } finally {
+        gba.free();
     }
 
     log("\nDone. Capture the 'gba-bench' marker in Chrome DevTools for profiler analysis.");

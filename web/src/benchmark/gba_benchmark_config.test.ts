@@ -9,7 +9,8 @@ describe("parseGbaBenchmarkConfig", () => {
             romName: "metroid-zero-mission.gba",
             frames: 600,
             warmupFrames: 60,
-            stabilityRuns: 5
+            stabilityRuns: 5,
+            resetStabilityRuns: true
         });
     });
 
@@ -22,7 +23,8 @@ describe("parseGbaBenchmarkConfig", () => {
             romName: "test.gba",
             frames: 120,
             warmupFrames: 30,
-            stabilityRuns: 2
+            stabilityRuns: 2,
+            resetStabilityRuns: true
         });
     });
 
@@ -67,5 +69,13 @@ describe("parseGbaBenchmarkConfig", () => {
 
         expect(config.warmupFrames).toBe(0);
         expect(config.stabilityRuns).toBe(0);
+    });
+
+    it("can continue stability runs without resetting", () => {
+        const config = parseGbaBenchmarkConfig(
+            new URLSearchParams("rom=test.gba&continueStabilityRuns=true")
+        );
+
+        expect(config.resetStabilityRuns).toBe(false);
     });
 });

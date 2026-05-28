@@ -3,6 +3,7 @@ export interface GbaBenchmarkConfig {
     frames: number;
     warmupFrames: number;
     stabilityRuns: number;
+    resetStabilityRuns: boolean;
 }
 
 const SAFE_ROM_BASENAME = /^[A-Za-z0-9._-]+$/;
@@ -20,7 +21,8 @@ export function parseGbaBenchmarkConfig(params: URLSearchParams): GbaBenchmarkCo
         romName,
         frames: parsePositiveInteger(params, "frames", 600),
         warmupFrames: parseNonNegativeInteger(params, "warmup", 60),
-        stabilityRuns: parseNonNegativeInteger(params, "stabilityRuns", 5)
+        stabilityRuns: parseNonNegativeInteger(params, "stabilityRuns", 5),
+        resetStabilityRuns: params.get("continueStabilityRuns") !== "true"
     };
 }
 

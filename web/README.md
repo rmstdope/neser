@@ -45,13 +45,15 @@ server, then open the benchmark page:
 bash scripts/build_web.sh
 cp roms/games/metroid-zero-mission.gba web/roms/
 npm run dev
-# open http://localhost:5173/gba-bench.html?rom=metroid-zero-mission.gba
+# open http://localhost:8000/gba-bench.html?rom=metroid-zero-mission.gba
 ```
 
 Optional query parameters:
 - `frames` (default `600`)
 - `warmup` (default `60`)
 - `stabilityRuns` (default `5`)
+- `continueStabilityRuns=true` to keep advancing instead of reloading the ROM
+  before each stability run
 
 ## Project structure
 ```
