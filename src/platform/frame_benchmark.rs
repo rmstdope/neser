@@ -30,6 +30,120 @@ pub enum FrameTimingStatsError {
     ZeroTotal,
 }
 
+/// Command-line configuration for a frame benchmark binary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameBenchmarkConfig {
+    /// ROM path to benchmark.
+    pub rom_path: String,
+    /// Number of frames in each measured run.
+    pub frames: usize,
+    /// Frames to run before measuring.
+    pub warmup_frames: usize,
+    /// Additional measured runs for stability reporting.
+    pub stability_runs: usize,
+    /// Whether the GBA BIOS intro should be skipped before benchmark warmup.
+    pub skip_gba_bios_intro: bool,
+}
+
+/// Errors returned while parsing benchmark command-line options.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrameBenchmarkConfigError {
+    /// The ROM path argument was omitted.
+    MissingRomPath,
+    /// A flag that requires a value was missing that value.
+    MissingValue { name: &'static str },
+    /// A numeric argument could not be parsed.
+    InvalidNumber { name: &'static str, value: String },
+    /// An unsupported argument was provided.
+    UnknownArgument(String),
+}
+
+impl FrameBenchmarkConfig {
+    /// Parse frame benchmark command-line arguments.
+    pub fn parse_args(args: &[String]) -> Result<Self, FrameBenchmarkConfigError> {
+        let mut args = args.iter();
+        let _program = args.next();
+        let rom_path = args
+            .next()
+            .ok_or(FrameBenchmarkConfigError::MissingRomPath)?
+            .clone();
+
+        let mut config = Self {
+            rom_path,
+            frames: 600,
+            warmup_frames: 60,
+            stability_runs: 5,
+            skip_gba_bios_intro: true,
+        };
+
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--frames" => {
+                    config.frames = parse_positive_usize_arg(&mut args, "frames")?;
+                }
+                "--warmup" => {
+                    config.warmup_frames = parse_usize_arg(&mut args, "warmup")?;
+                }
+                "--stability-runs" => {
+                    config.stability_runs = parse_usize_arg(&mut args, "stability-runs")?;
+                }
+                "--include-bios-intro" => {
+                    config.skip_gba_bios_intro = false;
+                }
+                "--skip-bios-intro" => {
+                    config.skip_gba_bios_intro = true;
+                }
+                _ => return Err(FrameBenchmarkConfigError::UnknownArgument(arg.clone())),
+            }
+        }
+
+        Ok(config)
+    }
+}
+
+fn parse_usize_arg<'a, I>(
+    args: &mut I,
+    name: &'static str,
+) -> Result<usize, FrameBenchmarkConfigError>
+where
+    I: Iterator<Item = &'a String>,
+{
+    let value = args
+        .next()
+        .ok_or(FrameBenchmarkConfigError::MissingValue { name })?;
+    value
+        .parse()
+        .map_err(|_| FrameBenchmarkConfigError::InvalidNumber {
+            name,
+            value: value.clone(),
+        })
+}
+
+fn parse_positive_usize_arg<'a, I>(
+    args: &mut I,
+    name: &'static str,
+) -> Result<usize, FrameBenchmarkConfigError>
+where
+    I: Iterator<Item = &'a String>,
+{
+    let value = args
+        .next()
+        .ok_or(FrameBenchmarkConfigError::MissingValue { name })?;
+    let parsed = value
+        .parse()
+        .map_err(|_| FrameBenchmarkConfigError::InvalidNumber {
+            name,
+            value: value.clone(),
+        })?;
+    if parsed == 0 {
+        return Err(FrameBenchmarkConfigError::InvalidNumber {
+            name,
+            value: value.clone(),
+        });
+    }
+    Ok(parsed)
+}
+
 impl FrameTimingStats {
     /// Compute summary statistics for measured frame durations.
     pub fn from_samples(samples: &[Duration]) -> Result<Self, FrameTimingStatsError> {
@@ -125,5 +239,142 @@ mod tests {
             FrameTimingStats::from_samples(&[Duration::ZERO]),
             Err(FrameTimingStatsError::ZeroTotal)
         );
+    }
+
+    #[test]
+    fn frame_benchmark_config_uses_gba_title_intro_defaults() {
+        let args = vec![
+            "gba_frame_bench".to_string(),
+            "roms/games/metroid-zero-mission.gba".to_string(),
+        ];
+
+        let config = FrameBenchmarkConfig::parse_args(&args).unwrap();
+
+        assert_eq!(config.rom_path, "roms/games/metroid-zero-mission.gba");
+        assert_eq!(config.frames, 600);
+        assert_eq!(config.warmup_frames, 60);
+        assert_eq!(config.stability_runs, 5);
+        assert!(config.skip_gba_bios_intro);
+    }
+
+    #[test]
+    fn frame_benchmark_config_parses_overrides() {
+        let args = vec![
+            "gba_frame_bench".to_string(),
+            "rom.gba".to_string(),
+            "--frames".to_string(),
+            "120".to_string(),
+            "--warmup".to_string(),
+            "30".to_string(),
+            "--stability-runs".to_string(),
+            "2".to_string(),
+            "--include-bios-intro".to_string(),
+        ];
+
+        let config = FrameBenchmarkConfig::parse_args(&args).unwrap();
+
+        assert_eq!(
+            config,
+            FrameBenchmarkConfig {
+                rom_path: "rom.gba".to_string(),
+                frames: 120,
+                warmup_frames: 30,
+                stability_runs: 2,
+                skip_gba_bios_intro: false,
+            }
+        );
+    }
+
+    #[test]
+    fn frame_benchmark_config_rejects_invalid_frame_count() {
+        let args = vec![
+            "gba_frame_bench".to_string(),
+            "rom.gba".to_string(),
+            "--frames".to_string(),
+            "abc".to_string(),
+        ];
+
+        assert_eq!(
+            FrameBenchmarkConfig::parse_args(&args),
+            Err(FrameBenchmarkConfigError::InvalidNumber {
+                name: "frames",
+                value: "abc".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn frame_benchmark_config_rejects_missing_rom_path() {
+        let args = vec!["gba_frame_bench".to_string()];
+
+        assert_eq!(
+            FrameBenchmarkConfig::parse_args(&args),
+            Err(FrameBenchmarkConfigError::MissingRomPath)
+        );
+    }
+
+    #[test]
+    fn frame_benchmark_config_rejects_zero_frame_count() {
+        let args = vec![
+            "gba_frame_bench".to_string(),
+            "rom.gba".to_string(),
+            "--frames".to_string(),
+            "0".to_string(),
+        ];
+
+        assert_eq!(
+            FrameBenchmarkConfig::parse_args(&args),
+            Err(FrameBenchmarkConfigError::InvalidNumber {
+                name: "frames",
+                value: "0".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn frame_benchmark_config_rejects_missing_flag_value() {
+        let args = vec![
+            "gba_frame_bench".to_string(),
+            "rom.gba".to_string(),
+            "--frames".to_string(),
+        ];
+
+        assert_eq!(
+            FrameBenchmarkConfig::parse_args(&args),
+            Err(FrameBenchmarkConfigError::MissingValue { name: "frames" })
+        );
+    }
+
+    #[test]
+    fn frame_benchmark_config_rejects_unknown_argument() {
+        let args = vec![
+            "gba_frame_bench".to_string(),
+            "rom.gba".to_string(),
+            "--frame".to_string(),
+        ];
+
+        assert_eq!(
+            FrameBenchmarkConfig::parse_args(&args),
+            Err(FrameBenchmarkConfigError::UnknownArgument(
+                "--frame".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn frame_benchmark_config_allows_zero_warmup_and_stability_runs() {
+        let args = vec![
+            "gba_frame_bench".to_string(),
+            "rom.gba".to_string(),
+            "--warmup".to_string(),
+            "0".to_string(),
+            "--stability-runs".to_string(),
+            "0".to_string(),
+        ];
+
+        let config = FrameBenchmarkConfig::parse_args(&args).unwrap();
+
+        assert_eq!(config.warmup_frames, 0);
+        assert_eq!(config.stability_runs, 0);
     }
 }
