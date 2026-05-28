@@ -178,8 +178,11 @@ fn duration_ms(duration: Duration) -> f64 {
 }
 
 fn percentile(sorted_samples: &[f64], percentile: f64) -> f64 {
-    let rank = (percentile * sorted_samples.len() as f64).ceil() as usize;
-    sorted_samples[rank.saturating_sub(1).min(sorted_samples.len() - 1)]
+    let index = percentile * (sorted_samples.len() - 1) as f64;
+    let lower = index.floor() as usize;
+    let upper = index.ceil() as usize;
+    let fraction = index - lower as f64;
+    sorted_samples[lower] * (1.0 - fraction) + sorted_samples[upper] * fraction
 }
 
 #[cfg(test)]
@@ -207,7 +210,7 @@ mod tests {
         assert_eq!(stats.total, ms(76));
         assert_close(stats.average_ms, 15.2);
         assert_close(stats.p50_ms, 16.0);
-        assert_close(stats.p95_ms, 20.0);
+        assert_close(stats.p95_ms, 19.6);
         assert_close(stats.max_ms, 20.0);
         assert_close(stats.fps, 65.789);
     }

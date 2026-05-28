@@ -37,15 +37,33 @@ npm test
 npm run test:integration:web
 ```
 
+## GBA performance benchmark
+Build the WASM package, copy a local GBA ROM into `web/roms/`, start the dev
+server, then open the benchmark page:
+
+```bash
+bash scripts/build_web.sh
+cp roms/games/metroid-zero-mission.gba web/roms/
+npm run dev
+# open http://localhost:5173/gba-bench.html?rom=metroid-zero-mission.gba
+```
+
+Optional query parameters:
+- `frames` (default `600`)
+- `warmup` (default `60`)
+- `stabilityRuns` (default `5`)
+
 ## Project structure
 ```
 web/
 ├── index.html              # Entry point
+├── gba-bench.html          # GBA WASM frame benchmark
 ├── styles.css              # Custom styles
 ├── pkg/                    # Generated WASM artifacts (git-ignored)
 ├── src/                    # Application modules
 │   ├── app.js              # Main entry point
 │   ├── audio/              # Audio resampling, frame timing
+│   ├── benchmark/          # Benchmark parsing and frame statistics
 │   ├── debugger/           # Debugger UI components
 │   ├── display/            # Canvas, zoom, cursor management
 │   ├── input/              # Gamepad, mouse, keyboard input

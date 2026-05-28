@@ -35,6 +35,9 @@ export function computeFrameStats(samplesMs: readonly number[]): FrameStats {
 }
 
 function percentile(sortedSamples: readonly number[], percentileValue: number): number {
-    const rank = Math.ceil(percentileValue * sortedSamples.length);
-    return sortedSamples[Math.min(Math.max(rank - 1, 0), sortedSamples.length - 1)];
+    const index = percentileValue * (sortedSamples.length - 1);
+    const lower = Math.floor(index);
+    const upper = Math.ceil(index);
+    const fraction = index - lower;
+    return sortedSamples[lower] * (1 - fraction) + sortedSamples[upper] * fraction;
 }

@@ -8,7 +8,7 @@ describe("computeFrameStats", () => {
             totalMs: 76,
             averageMs: 15.2,
             p50Ms: 16,
-            p95Ms: 20,
+            p95Ms: 19.6,
             maxMs: 20,
             fps: 65.78947368421052
         });
