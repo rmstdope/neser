@@ -146,6 +146,15 @@ impl Nes {
             config.nes.hardware_mode == crate::nes::console::HardwareMode::Famicom,
         );
         let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
+        {
+            let channels = config.nes.apu_channels;
+            let mut apu = apu.borrow_mut();
+            apu.set_pulse1_enabled(channels.contains(crate::nes::console::ApuChannels::PULSE1));
+            apu.set_pulse2_enabled(channels.contains(crate::nes::console::ApuChannels::PULSE2));
+            apu.set_triangle_enabled(channels.contains(crate::nes::console::ApuChannels::TRIANGLE));
+            apu.set_noise_enabled(channels.contains(crate::nes::console::ApuChannels::NOISE));
+            apu.set_dmc_enabled(channels.contains(crate::nes::console::ApuChannels::DMC));
+        }
         let memory = Rc::new(RefCell::new(Bus::new(
             ppu.clone(),
             apu.clone(),
@@ -1407,6 +1416,24 @@ pub use savestate_error::SaveStateError;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::config::ParseResult;
+
+    fn parse_cli_config(mut args: Vec<String>) -> Config {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"").unwrap();
+
+        args.push("--config".to_string());
+        args.push(file.path().to_string_lossy().to_string());
+
+        match Config::new(&args).unwrap() {
+            ParseResult::Config(config) => *config,
+            ParseResult::Help => panic!("Expected Config, got Help"),
+            ParseResult::Version => panic!("Expected Config, got Version"),
+        }
+    }
 
     fn load_test_cartridge(rom_data: &[u8]) -> Cartridge {
         Cartridge::load_from_file(rom_data, "nes-test-rom.nes", None)
@@ -1459,6 +1486,38 @@ mod tests {
             (fps - 50.00698).abs() < 0.01,
             "PAL frame rate should be ~50.00698 Hz, got {fps}"
         );
+    }
+
+    #[test]
+    fn test_nes_new_applies_cli_disabled_apu_channels() {
+        let config = parse_cli_config(vec![
+            "neser".to_string(),
+            "--disable-nes-pulse1".to_string(),
+            "--disable-nes-pulse2".to_string(),
+            "--disable-nes-triangle".to_string(),
+            "--disable-nes-noise".to_string(),
+            "--disable-nes-dmc".to_string(),
+        ]);
+
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            config,
+        ));
+        nes.insert_cartridge(load_test_cartridge(&create_minimal_rom()));
+
+        assert_all_apu_channels_disabled(&nes);
+        nes.reset(true);
+        assert_all_apu_channels_disabled(&nes);
+        nes.reset(false);
+        assert_all_apu_channels_disabled(&nes);
+    }
+
+    fn assert_all_apu_channels_disabled(nes: &Nes) {
+        let apu_state = nes.apu.borrow().capture_state();
+        assert!(!apu_state.pulse1_enabled);
+        assert!(!apu_state.pulse2_enabled);
+        assert!(!apu_state.triangle_enabled);
+        assert!(!apu_state.noise_enabled);
+        assert!(!apu_state.dmc_enabled);
     }
 
     #[test]
