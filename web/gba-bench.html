@@ -188,21 +188,21 @@ async function run() {
         let emuTotal = 0;
         let audioTotal = 0;
         let glTotal = 0;
-        let audioSamples = 0;
+        let audioSampleValues = 0;
         for (let i = 0; i < config.frames; i++) {
             const frame = runFrame(gba, renderer);
             totals.push(frame.totalMs);
             emuTotal += frame.emuMs;
             audioTotal += frame.audioMs;
             glTotal += frame.glMs;
-            audioSamples += frame.audioSamples;
+            audioSampleValues += frame.audioSamples;
         }
         performance.mark("gba-bench-end");
         performance.measure("gba-bench", "gba-bench-start", "gba-bench-end");
 
         const stats = computeFrameStats(totals);
         log(formatStats("Primary run", stats));
-        log(`Averages: emu=${(emuTotal / config.frames).toFixed(3)}ms audio=${(audioTotal / config.frames).toFixed(3)}ms gl=${(glTotal / config.frames).toFixed(3)}ms audioSamples=${audioSamples}`);
+        log(`Averages: emu=${(emuTotal / config.frames).toFixed(3)}ms audio=${(audioTotal / config.frames).toFixed(3)}ms gl=${(glTotal / config.frames).toFixed(3)}ms audioSampleValues=${audioSampleValues}`);
 
         if (config.stabilityRuns > 0) {
             log(`\nStability check (${config.stabilityRuns} run(s) of ${config.frames} frames):`);
