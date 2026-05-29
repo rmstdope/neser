@@ -115,9 +115,8 @@ fn print_summary(label: &str, bench_config: &FrameBenchmarkConfig, stats: &Frame
 fn usage() -> &'static str {
     "Usage: gba_frame_bench <rom_path> [--frames N] [--warmup N] [--stability-runs N] [--include-bios-intro] [--continue-stability-runs]\n\
 \n\
-Benchmarks GBA frame execution using the embedded BIOS. By default the GBA BIOS intro is skipped,\n\
-matching the Metroid Zero Mission title/intro benchmark plan. Stability runs reload the ROM by\n\
-default so each run measures the same title/intro window."
+Benchmarks GBA frame execution using the embedded BIOS. By default the GBA BIOS intro is skipped.\n\
+Stability runs reload the ROM by default so each run measures the same title/intro window."
 }
 
 fn config_error_message(err: FrameBenchmarkConfigError) -> String {
