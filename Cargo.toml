@@ -117,6 +117,11 @@ path = "src/bin/frame_bench.rs"
 required-features = ["native"]
 
 [[bin]]
+name = "gba_frame_bench"
+path = "src/bin/gba_frame_bench.rs"
+required-features = ["native"]
+
+[[bin]]
 name = "gamepad_test"
 path = "src/bin/gamepad_test.rs"
 required-features = ["native"]

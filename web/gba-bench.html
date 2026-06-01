@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GBA WASM Frame Benchmark</title>
+    <style>
+        body {
+            background: #111;
+            color: #eee;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+        canvas {
+            image-rendering: pixelated;
+            width: 480px;
+            height: 320px;
+            border: 1px solid #555;
+        }
+    </style>
+</head>
+<body>
+<h2>GBA WASM Frame Benchmark</h2>
+<canvas id="screen" width="240" height="160"></canvas>
+<pre id="out">Loading WASM module...</pre>
+<script type="module">
+import init, { WasmGba } from "./pkg/neser.js";
+import { parseGbaBenchmarkConfig } from "./src/benchmark/gba_benchmark_config.ts";
+import { computeFrameStats } from "./src/benchmark/frame_stats.ts";
+
+const out = document.getElementById("out");
+function log(msg) { out.textContent += "\n" + msg; }
+
+function compileShader(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const message = gl.getShaderInfoLog(shader);
+        gl.deleteShader(shader);
+        throw new Error(`Shader compile failed: ${message}`);
+    }
+    return shader;
+}
+
+function createProgram(gl) {
+    const vertexShader = compileShader(gl, gl.VERTEX_SHADER, `
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        void main() {
+            gl_Position = vec4(a_position, 0.0, 1.0);
+            v_texCoord = a_texCoord;
+        }
+    `);
+    const fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, `
+        precision mediump float;
+        uniform sampler2D u_texture;
+        varying vec2 v_texCoord;
+        void main() {
+            gl_FragColor = texture2D(u_texture, v_texCoord);
+        }
+    `);
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    gl.deleteShader(vertexShader);
+    gl.deleteShader(fragmentShader);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const message = gl.getProgramInfoLog(program);
+        gl.deleteProgram(program);
+        throw new Error(`Program link failed: ${message}`);
+    }
+    return program;
+}
+
+function createRenderer(canvas, width, height) {
+    const gl = canvas.getContext("webgl");
+    if (!gl) throw new Error("WebGL is not available");
+
+    const program = createProgram(gl);
+    gl.useProgram(program);
+
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+        gl.STATIC_DRAW
+    );
+    const positionLocation = gl.getAttribLocation(program, "a_position");
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+    const texCoordBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([0, 1, 1, 1, 0, 0, 1, 0]),
+        gl.STATIC_DRAW
+    );
+    const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+    gl.enableVertexAttribArray(texCoordLocation);
+    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, width, height, 0, gl.RGB, gl.UNSIGNED_BYTE, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+
+    return {
+        draw(frame) {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGB, gl.UNSIGNED_BYTE, frame);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        },
+        finish() {
+            gl.finish();
+        }
+    };
+}
+
+function formatStats(label, stats) {
+    return `${label}: avg=${stats.averageMs.toFixed(3)}ms p50=${stats.p50Ms.toFixed(3)}ms p95=${stats.p95Ms.toFixed(3)}ms max=${stats.maxMs.toFixed(3)}ms fps=${stats.fps.toFixed(1)}`;
+}
+
+function createLoadedGba(romData, config) {
+    const gba = WasmGba.new_with_skip_bios_intro(config.skipBiosIntro);
+    gba.load_rom(romData, config.romName);
+    return gba;
+}
+
+function warmup(gba, renderer, frames) {
+    for (let i = 0; i < frames; i++) {
+        runFrame(gba, renderer);
+    }
+}
+
+function runFrame(gba, renderer) {
+    const frameStart = performance.now();
+
+    const emuStart = performance.now();
+    const frame = gba.render_frame_rgb();
+    const emuMs = performance.now() - emuStart;
+
+    const audioStart = performance.now();
+    const audioSamples = gba.get_audio_samples_stereo();
+    const audioMs = performance.now() - audioStart;
+
+    const glStart = performance.now();
+    renderer.draw(frame);
+    renderer.finish();
+    const glMs = performance.now() - glStart;
+
+    return {
+        totalMs: performance.now() - frameStart,
+        emuMs,
+        audioMs,
+        glMs,
+        audioSamples: audioSamples.length
+    };
+}
+
+async function run() {
+    const config = parseGbaBenchmarkConfig(new URLSearchParams(location.search));
+    await init("./pkg/neser_bg.wasm");
+
+    log(`Fetching ROM: ${config.romName}`);
+    const resp = await fetch(`roms/${encodeURIComponent(config.romName)}`);
+    if (!resp.ok) throw new Error(`Failed to fetch ROM: ${resp.status}`);
+    const romData = new Uint8Array(await resp.arrayBuffer());
+
+    const gba = createLoadedGba(romData, config);
+    try {
+        const renderer = createRenderer(
+            document.getElementById("screen"),
+            gba.screen_width(),
+            gba.screen_height()
+        );
+
+        log(`ROM loaded. Warmup=${config.warmupFrames}, frames=${config.frames}, stabilityRuns=${config.stabilityRuns}, resetStabilityRuns=${config.resetStabilityRuns}, skipBiosIntro=${config.skipBiosIntro}`);
+        warmup(gba, renderer, config.warmupFrames);
+
+        performance.mark("gba-bench-start");
+        const totals = [];
+        let emuTotal = 0;
+        let audioTotal = 0;
+        let glTotal = 0;
+        let audioSampleValues = 0;
+        for (let i = 0; i < config.frames; i++) {
+            const frame = runFrame(gba, renderer);
+            totals.push(frame.totalMs);
+            emuTotal += frame.emuMs;
+            audioTotal += frame.audioMs;
+            glTotal += frame.glMs;
+            audioSampleValues += frame.audioSamples;
+        }
+        performance.mark("gba-bench-end");
+        performance.measure("gba-bench", "gba-bench-start", "gba-bench-end");
+
+        const stats = computeFrameStats(totals);
+        log(formatStats("Primary run", stats));
+        log(`Averages: emu=${(emuTotal / config.frames).toFixed(3)}ms audio=${(audioTotal / config.frames).toFixed(3)}ms gl=${(glTotal / config.frames).toFixed(3)}ms audioSampleValues=${audioSampleValues}`);
+
+        if (config.stabilityRuns > 0) {
+            log(`\nStability check (${config.stabilityRuns} run(s) of ${config.frames} frames):`);
+            for (let runIndex = 1; runIndex <= config.stabilityRuns; runIndex++) {
+                const runGba = config.resetStabilityRuns ? createLoadedGba(romData, config) : gba;
+                try {
+                    if (config.resetStabilityRuns) {
+                        warmup(runGba, renderer, config.warmupFrames);
+                    }
+                    const runTotals = [];
+                    for (let i = 0; i < config.frames; i++) {
+                        runTotals.push(runFrame(runGba, renderer).totalMs);
+                    }
+                    log(`  ${formatStats(`Run ${runIndex}`, computeFrameStats(runTotals))}`);
+                } finally {
+                    if (config.resetStabilityRuns) {
+                        runGba.free();
+                    }
+                }
+            }
+        }
+    } finally {
+        gba.free();
+    }
+
+    log("\nDone. Capture the 'gba-bench' marker in Chrome DevTools for profiler analysis.");
+}
+
+run().catch((err) => log(`ERROR: ${err instanceof Error ? err.message : err}`));
+</script>
+</body>
+</html>
