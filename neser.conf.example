@@ -86,6 +86,12 @@ audio=true
 # Default: 60
 #audio_buffer_ms=60
 
+# Target native audio sample rate in Hz.
+# Supported values: 22050, 44100, 48000, 96000, 192000
+# If the requested rate is not supported by the audio device, the device default is used.
+# Default: 44100
+#audio_sample_rate=44100
+
 # Individual APU channel toggles.
 # Useful for isolating specific sounds or debugging audio issues.
 nes-pulse1=true

@@ -323,17 +323,21 @@ fn run_native_emulator(
     // record/extend have no guaranteed termination condition.
     let headless = autorun_headless && autorun_mode == platform::autorun::AutorunMode::Playback;
 
-    // Create audio output (request 44.1 kHz) unless disabled or headless.
+    // Create audio output unless disabled or headless.
     let mut audio_sample_rate = None;
-    let (audio_enabled, audio_buffer_ms) = {
+    let (audio_enabled, audio_buffer_ms, configured_sample_rate) = {
         let config = app_context.borrow();
         let frontend = &config.config().frontend;
-        (frontend.audio_enabled, frontend.audio_buffer_ms)
+        (
+            frontend.audio_enabled,
+            frontend.audio_buffer_ms,
+            frontend.audio_sample_rate,
+        )
     };
     let audio = if !audio_enabled || headless {
         None
     } else {
-        let audio = NativeAudio::new(44100, audio_buffer_ms)?;
+        let audio = NativeAudio::new(configured_sample_rate as i32, audio_buffer_ms)?;
         audio_sample_rate = Some(audio.actual_sample_rate() as f32);
         Some(audio)
     };

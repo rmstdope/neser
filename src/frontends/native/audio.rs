@@ -82,7 +82,7 @@ impl NativeAudio {
 
         if actual_rate != sample_rate {
             log_info(format!(
-                "Audio: requested {} Hz, got {} Hz from cpal device",
+                "Warning: Audio: requested {} Hz but cpal device only supports {} Hz — using device default",
                 sample_rate, actual_rate
             ));
         }
