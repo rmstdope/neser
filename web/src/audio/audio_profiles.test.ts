@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { AUDIO_PROFILES, resolveAudioProfileName } from "./audio_profiles.js";
+import { AUDIO_PROFILES, resolveAudioProfileName } from "./audio_profiles";
 
 it("resolveAudioProfileName defaults to balanced", () => {
     expect(resolveAudioProfileName(null)).toBe("balanced");

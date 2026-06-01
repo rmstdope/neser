@@ -130,8 +130,10 @@ impl NativeAudio {
     }
 
     fn buffer_samples_for(sample_rate: i32, buffer_ms: u32) -> usize {
-        let sample_rate = sample_rate.max(1) as usize;
-        let requested = ((sample_rate * buffer_ms as usize) + 999) / 1000;
+        let sample_rate = sample_rate.max(1) as u128;
+        let buffer_ms = buffer_ms as u128;
+        let requested = sample_rate.saturating_mul(buffer_ms).saturating_add(999) / 1000;
+        let requested = requested.min(usize::MAX as u128) as usize;
         requested.max(Self::MIN_BUFFER_SAMPLES)
     }
 

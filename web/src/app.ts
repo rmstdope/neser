@@ -17,7 +17,7 @@ import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionFo
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
-import { AUDIO_PROFILES, resolveAudioProfileName } from "./audio/audio_profiles.js";
+import { AUDIO_PROFILES, resolveAudioProfileName } from "./audio/audio_profiles";
 import { normalizeGbSample, normalizeGbaSample, normalizeNesSample } from "./audio/audio_normalizer";
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
