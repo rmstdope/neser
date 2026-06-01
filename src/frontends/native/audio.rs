@@ -82,7 +82,7 @@ impl NativeAudio {
 
         if actual_rate != sample_rate {
             log_info(format!(
-                "Warning: Audio: requested {} Hz but cpal device only supports {} Hz — using device default",
+                "Audio: no mono f32 stream at {} Hz available — falling back to device default at {} Hz",
                 sample_rate, actual_rate
             ));
         }

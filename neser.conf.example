@@ -88,7 +88,7 @@ audio=true
 
 # Target native audio sample rate in Hz.
 # Supported values: 22050, 44100, 48000, 96000, 192000
-# If the requested rate is not supported by the audio device, the device default is used.
+# If no mono f32 stream at the requested rate is available, the device default is used.
 # Default: 44100
 #audio_sample_rate=44100
 
