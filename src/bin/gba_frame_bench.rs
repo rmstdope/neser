@@ -40,11 +40,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         );
         for run_index in 1..=bench_config.stability_runs {
             let samples = if bench_config.reset_stability_runs {
-                let mut stability_gba = create_loaded_gba(&rom_data, &bench_config)?;
-                for _ in 0..bench_config.warmup_frames {
-                    run_one_frame(&mut stability_gba);
-                }
-                run_measured_frames(&mut stability_gba, bench_config.frames)
+                run_fresh_benchmark(&rom_data, &bench_config)?
             } else {
                 run_measured_frames(&mut gba, bench_config.frames)
             };
@@ -74,6 +70,17 @@ fn create_gba(skip_bios_intro: bool) -> Gba {
     config.gba.skip_bios_intro = skip_bios_intro;
     let app_context = Rc::new(RefCell::new(AppContext::new_with_config(config)));
     Gba::new(app_context)
+}
+
+fn run_fresh_benchmark(
+    rom_data: &[u8],
+    bench_config: &FrameBenchmarkConfig,
+) -> Result<Vec<Duration>, String> {
+    let mut gba = create_loaded_gba(rom_data, bench_config)?;
+    for _ in 0..bench_config.warmup_frames {
+        run_one_frame(&mut gba);
+    }
+    Ok(run_measured_frames(&mut gba, bench_config.frames))
 }
 
 fn run_measured_frames(gba: &mut Gba, frames: usize) -> Vec<Duration> {

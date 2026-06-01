@@ -114,15 +114,7 @@ fn parse_usize_arg<'a, I>(
 where
     I: Iterator<Item = &'a String>,
 {
-    let value = args
-        .next()
-        .ok_or(FrameBenchmarkConfigError::MissingValue { name })?;
-    value
-        .parse()
-        .map_err(|_| FrameBenchmarkConfigError::InvalidNumber {
-            name,
-            value: value.clone(),
-        })
+    parse_usize_arg_with_validation(args, name, |_| true)
 }
 
 fn parse_positive_usize_arg<'a, I>(
@@ -131,6 +123,18 @@ fn parse_positive_usize_arg<'a, I>(
 ) -> Result<usize, FrameBenchmarkConfigError>
 where
     I: Iterator<Item = &'a String>,
+{
+    parse_usize_arg_with_validation(args, name, |value| value > 0)
+}
+
+fn parse_usize_arg_with_validation<'a, I, F>(
+    args: &mut I,
+    name: &'static str,
+    validate: F,
+) -> Result<usize, FrameBenchmarkConfigError>
+where
+    I: Iterator<Item = &'a String>,
+    F: Fn(usize) -> bool,
 {
     let value = args
         .next()
@@ -141,7 +145,7 @@ where
             name,
             value: value.clone(),
         })?;
-    if parsed == 0 {
+    if !validate(parsed) {
         return Err(FrameBenchmarkConfigError::InvalidNumber {
             name,
             value: value.clone(),

@@ -17,5 +17,8 @@ export const AUDIO_PROFILES: Record<AudioProfileName, AudioProfile> = {
 };
 
 export function resolveAudioProfileName(value: string | null | undefined): AudioProfileName {
-    return value === "low-latency" ? "low-latency" : "balanced";
+    if (value === "low-latency") {
+        return "low-latency";
+    }
+    return "balanced";
 }
