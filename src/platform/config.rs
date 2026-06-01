@@ -18,6 +18,9 @@ pub(crate) struct CliFlag {
     pub has_value: bool,
 }
 
+const AUDIO_BUFFER_MIN_MS: u32 = 20;
+const AUDIO_BUFFER_MAX_MS: u32 = 500;
+
 /// RAM initialization mode for power-on/hard reset.
 ///
 /// Controls how all emulated RAM (CPU, PRG, CHR, PPU nametable, and palette) is
@@ -54,6 +57,8 @@ pub enum RamInitMode {
 pub struct FrontendConfig {
     /// Whether audio is enabled.
     pub audio_enabled: bool,
+    /// Target native audio buffering in milliseconds.
+    pub audio_buffer_ms: u32,
     /// Whether VSync is enabled.
     pub vsync_enabled: bool,
     /// Whether gamepad support is enabled.
@@ -122,6 +127,7 @@ impl Default for FrontendConfig {
     fn default() -> Self {
         Self {
             audio_enabled: true,
+            audio_buffer_ms: 60,
             vsync_enabled: true,
             gamepads_enabled: true,
             fullscreen: false,
@@ -194,6 +200,10 @@ impl FrontendConfig {
         }
         if has_negation_flag(args, &["--no-audio", "--disable-audio"]) {
             self.audio_enabled = false;
+        }
+
+        if let Some(buffer_ms) = parse_u32_arg(args, "--audio-buffer-ms")? {
+            self.audio_buffer_ms = buffer_ms.clamp(AUDIO_BUFFER_MIN_MS, AUDIO_BUFFER_MAX_MS);
         }
 
         // VSync: --vsync true/false, --no-vsync, --disable-vsync
@@ -383,6 +393,11 @@ impl FrontendConfig {
             "audio" => {
                 if let Ok(b) = parse_bool(value) {
                     self.audio_enabled = b;
+                }
+            }
+            "audio_buffer_ms" => {
+                if let Ok(ms) = value.parse::<u32>() {
+                    self.audio_buffer_ms = ms.clamp(AUDIO_BUFFER_MIN_MS, AUDIO_BUFFER_MAX_MS);
                 }
             }
             "vsync" => {
@@ -691,6 +706,11 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
         flag: "--audio",
         help: Some("Enable audio output (optionally: true/false, default when flag present: true)"),
         has_value: false,
+    },
+    CliFlag {
+        flag: "--audio-buffer-ms",
+        help: Some("Target native audio buffering in milliseconds (20-500, default: 60)"),
+        has_value: true,
     },
     CliFlag {
         flag: "--no-audio",
@@ -1444,6 +1464,14 @@ mod tests {
     }
 
     #[test]
+    fn test_help_text_lists_audio_buffer_ms_flag() {
+        let help = help_text();
+
+        assert!(help.contains("--audio-buffer-ms"));
+        assert!(help.contains("Target native audio buffering in milliseconds"));
+    }
+
+    #[test]
     fn test_help_text_oam_dram_decay_shows_default_and_no_negation_aliases() {
         let help = help_text();
 
@@ -1471,6 +1499,39 @@ mod tests {
         ];
         let config = parse_config(args);
         assert!(!config.frontend.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_audio_buffer_ms_default() {
+        let args = vec!["neser".to_string()];
+        let config = parse_config(args);
+        assert_eq!(config.frontend.audio_buffer_ms, 60);
+    }
+
+    #[test]
+    fn test_config_audio_buffer_ms_from_cli() {
+        let args = vec![
+            "neser".to_string(),
+            "--audio-buffer-ms".to_string(),
+            "75".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.frontend.audio_buffer_ms, 75);
+    }
+
+    #[test]
+    fn test_config_audio_buffer_ms_clamps_from_config_value() {
+        let mut config = FrontendConfig::default();
+
+        config
+            .apply_config_value("audio_buffer_ms", "5")
+            .expect("config value should parse");
+        assert_eq!(config.audio_buffer_ms, AUDIO_BUFFER_MIN_MS);
+
+        config
+            .apply_config_value("audio_buffer_ms", "5000")
+            .expect("config value should parse");
+        assert_eq!(config.audio_buffer_ms, AUDIO_BUFFER_MAX_MS);
     }
 
     #[test]

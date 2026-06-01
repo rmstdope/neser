@@ -1,9 +1,9 @@
 use crate::nes::apu::{Apu, ApuState, SharedApu};
-use crate::nes::console::ApuChannels;
 use crate::nes::bus::{Bus, BusState, MapperState, SharedBus};
 #[cfg(test)]
 use crate::nes::cartridge::TimingMode;
 use crate::nes::cartridge::{Cartridge, RomDb, load_rom_db};
+use crate::nes::console::ApuChannels;
 #[cfg(test)]
 use crate::nes::console::Config;
 #[cfg(test)]

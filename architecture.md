@@ -6,6 +6,8 @@
 
 NESER is a cycle-accurate NES (Nintendo Entertainment System) emulator written in Rust, built on an architecture that supports multiple emulated hardware targets. It supports three frontend targets: a native desktop window (winit + OpenGL), a terminal-based TUI ROM launcher, and a WebAssembly-powered browser frontend. The emulator implements the core NES hardware — CPU, PPU, APU, and bus — as well as over 200 cartridge mappers, multiple input device types, debugging tools, save states, and an autorun recording/playback system.
 
+The native frontend now exposes audio buffering in milliseconds through configuration, while the web frontend uses a small profile selector for balanced and low-latency audio scheduling.
+
 The codebase is roughly 183,000 lines of Rust, with additional JavaScript for the web frontend and Python tooling for ROM management.
 
 As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps the NES, Game Boy, and Game Boy Advance implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.

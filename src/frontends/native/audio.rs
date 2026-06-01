@@ -48,6 +48,8 @@ pub struct NativeAudio {
     stats: Arc<AudioStats>,
     fill_level: Arc<AtomicUsize>,
     actual_sample_rate: i32,
+    buffer_samples: usize,
+    startup_prime_samples: usize,
     paused: Arc<AtomicBool>,
     /// Number of stale ring-buffer samples to discard silently on the next resume.
     ///
@@ -58,18 +60,18 @@ pub struct NativeAudio {
 }
 
 impl NativeAudio {
-    /// Audio buffer size in samples.
-    /// At 44.1kHz, this provides ~0.5 seconds of buffering.
-    const BUFFER_SIZE: usize = 22050;
+    /// Smallest ring buffer we will use, regardless of the configured latency.
+    const MIN_BUFFER_SAMPLES: usize = 2048;
 
     /// Create a new cpal-based audio output handler.
     ///
     /// # Arguments
     /// * `sample_rate` - Target sample rate in Hz (e.g., 44100)
+    /// * `buffer_ms` - Target audio buffering in milliseconds
     ///
     /// # Errors
     /// Returns an error if no audio output device is found or stream creation fails.
-    pub fn new(sample_rate: i32) -> Result<Self, String> {
+    pub fn new(sample_rate: i32, buffer_ms: u32) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -85,7 +87,17 @@ impl NativeAudio {
             ));
         }
 
-        let ring_buffer = HeapRb::<[f32; 2]>::new(Self::BUFFER_SIZE);
+        let buffer_samples = Self::buffer_samples_for(actual_rate, buffer_ms);
+        let startup_prime_samples = Self::startup_prime_samples_for(buffer_samples);
+        log_info(format!(
+            "Audio: using {} ms buffer -> {} samples (~{:.1} ms) at {} Hz",
+            buffer_ms,
+            buffer_samples,
+            buffer_samples as f32 * 1000.0 / actual_rate as f32,
+            actual_rate
+        ));
+
+        let ring_buffer = HeapRb::<[f32; 2]>::new(buffer_samples);
         let (producer, consumer) = ring_buffer.split();
         let shared = StreamSharedState::new();
 
@@ -94,6 +106,7 @@ impl NativeAudio {
             &stream_config,
             channels,
             sample_format,
+            buffer_samples,
             consumer,
             &shared,
         )?;
@@ -109,9 +122,25 @@ impl NativeAudio {
             stats: shared.stats,
             fill_level: shared.fill_level,
             actual_sample_rate: actual_rate,
+            buffer_samples,
+            startup_prime_samples,
             paused: shared.paused,
             drain_stale: shared.drain_stale,
         })
+    }
+
+    fn buffer_samples_for(sample_rate: i32, buffer_ms: u32) -> usize {
+        let sample_rate = sample_rate.max(1) as u128;
+        let buffer_ms = buffer_ms as u128;
+        let requested = sample_rate.saturating_mul(buffer_ms).saturating_add(999) / 1000;
+        let requested = requested.min(usize::MAX as u128) as usize;
+        requested.max(Self::MIN_BUFFER_SAMPLES)
+    }
+
+    fn startup_prime_samples_for(buffer_samples: usize) -> usize {
+        (buffer_samples / 4)
+            .max(256)
+            .min(buffer_samples.saturating_sub(1))
     }
 
     /// Selects the best available stream config for the device.
@@ -168,19 +197,35 @@ impl NativeAudio {
         config: &StreamConfig,
         channels: u16,
         sample_format: SampleFormat,
+        buffer_samples: usize,
         consumer: AudioConsumer,
         shared: &StreamSharedState,
     ) -> Result<cpal::Stream, String> {
         match sample_format {
-            SampleFormat::F32 => {
-                Self::build_typed_stream::<f32>(device, config, channels, consumer, shared)
-            }
-            SampleFormat::I16 => {
-                Self::build_typed_stream::<i16>(device, config, channels, consumer, shared)
-            }
-            SampleFormat::U16 => {
-                Self::build_typed_stream::<u16>(device, config, channels, consumer, shared)
-            }
+            SampleFormat::F32 => Self::build_typed_stream::<f32>(
+                device,
+                config,
+                channels,
+                buffer_samples,
+                consumer,
+                shared,
+            ),
+            SampleFormat::I16 => Self::build_typed_stream::<i16>(
+                device,
+                config,
+                channels,
+                buffer_samples,
+                consumer,
+                shared,
+            ),
+            SampleFormat::U16 => Self::build_typed_stream::<u16>(
+                device,
+                config,
+                channels,
+                buffer_samples,
+                consumer,
+                shared,
+            ),
             _ => Err(format!(
                 "Unsupported audio sample format: {sample_format:?}"
             )),
@@ -196,6 +241,7 @@ impl NativeAudio {
         device: &cpal::Device,
         config: &StreamConfig,
         channels: u16,
+        buffer_samples: usize,
         mut consumer: AudioConsumer,
         shared: &StreamSharedState,
     ) -> Result<cpal::Stream, String> {
@@ -204,7 +250,7 @@ impl NativeAudio {
         let fill_level = Arc::clone(&shared.fill_level);
         let paused = Arc::clone(&shared.paused);
         let drain_stale = Arc::clone(&shared.drain_stale);
-        let mut resampler = AudioResampler::new(Self::BUFFER_SIZE / 2);
+        let mut resampler = AudioResampler::new(buffer_samples / 2);
 
         device
             .build_output_stream(
@@ -299,6 +345,16 @@ impl NativeAudio {
         self.fill_level.load(Ordering::Relaxed)
     }
 
+    pub fn startup_prime_samples(&self) -> usize {
+        debug_assert!(self.startup_prime_samples <= self.buffer_samples);
+        self.startup_prime_samples
+    }
+
+    #[cfg(test)]
+    pub fn buffer_capacity_samples(&self) -> usize {
+        self.buffer_samples
+    }
+
     /// Returns `true` if audio output is currently paused.
     #[cfg(test)]
     pub fn is_paused(&self) -> bool {
@@ -316,8 +372,10 @@ impl NativeAudio {
     /// Intended for unit tests that exercise pure logic (volume, stats, buffering)
     /// without requiring audio hardware.
     #[cfg(test)]
-    fn new_without_stream(sample_rate: i32) -> Self {
-        let ring_buffer = HeapRb::<[f32; 2]>::new(Self::BUFFER_SIZE);
+    fn new_without_stream(sample_rate: i32, buffer_ms: u32) -> Self {
+        let buffer_samples = Self::buffer_samples_for(sample_rate, buffer_ms);
+        let startup_prime_samples = Self::startup_prime_samples_for(buffer_samples);
+        let ring_buffer = HeapRb::<[f32; 2]>::new(buffer_samples);
         let (producer, _consumer) = ring_buffer.split();
         let shared = StreamSharedState::new();
         Self {
@@ -327,6 +385,8 @@ impl NativeAudio {
             stats: shared.stats,
             fill_level: shared.fill_level,
             actual_sample_rate: sample_rate,
+            buffer_samples,
+            startup_prime_samples,
             paused: shared.paused,
             drain_stale: shared.drain_stale,
         }
@@ -421,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_volume_clamping() {
-        let audio = NativeAudio::new_without_stream(44100);
+        let audio = NativeAudio::new_without_stream(44100, 60);
 
         audio.set_volume(0.5);
         assert_eq!(audio.get_volume(), 0.5);
@@ -435,13 +495,13 @@ mod tests {
 
     #[test]
     fn test_default_volume_is_75_percent() {
-        let audio = NativeAudio::new_without_stream(44100);
+        let audio = NativeAudio::new_without_stream(44100, 60);
         assert_eq!(audio.get_volume(), 0.75);
     }
 
     #[test]
     fn test_stats_reset() {
-        let audio = NativeAudio::new_without_stream(44100);
+        let audio = NativeAudio::new_without_stream(44100, 60);
 
         let (received, dropped, underrun) = audio.take_and_reset_stats();
         assert_eq!(received, 0);
@@ -458,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_prime_startup_and_queue_sample() {
-        let mut audio = NativeAudio::new_without_stream(44100);
+        let mut audio = NativeAudio::new_without_stream(44100, 60);
 
         // Prime buffer (bypasses queue_sample, so works regardless of paused state)
         audio.prime_startup(100);
@@ -473,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_resume_and_pause() {
-        let audio = NativeAudio::new_without_stream(44100);
+        let audio = NativeAudio::new_without_stream(44100, 60);
 
         // Starts paused
         assert!(audio.is_paused());
@@ -487,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_queue_sample_does_not_push_when_paused() {
-        let mut audio = NativeAudio::new_without_stream(44100);
+        let mut audio = NativeAudio::new_without_stream(44100, 60);
         assert!(audio.is_paused(), "starts paused");
 
         for i in 0..5 {
@@ -508,7 +568,7 @@ mod tests {
         // drain_stale (so the cpal callback discards those samples silently)
         // WITHOUT changing the paused state, so emulation audio resumes
         // immediately without an explicit resume() call.
-        let mut audio = NativeAudio::new_without_stream(44100);
+        let mut audio = NativeAudio::new_without_stream(44100, 60);
         audio.resume();
 
         for _ in 0..10 {
@@ -538,7 +598,7 @@ mod tests {
         //
         // pause() must snapshot the current fill_level so the callback knows
         // exactly how many samples to discard silently when it resumes.
-        let mut audio = NativeAudio::new_without_stream(44100);
+        let mut audio = NativeAudio::new_without_stream(44100, 60);
         audio.resume();
 
         for _ in 0..10 {
@@ -559,7 +619,7 @@ mod tests {
     fn test_queue_stereo_sample_increments_buffered_count() {
         // queue_stereo_sample() must push one frame into the ring buffer
         // (stereo pair counts as a single "sample" from fill_level's perspective).
-        let mut audio = NativeAudio::new_without_stream(44100);
+        let mut audio = NativeAudio::new_without_stream(44100, 60);
         audio.resume();
 
         audio.queue_stereo_sample(0.5, -0.3);
@@ -580,7 +640,7 @@ mod tests {
     #[test]
     fn test_queue_stereo_sample_does_not_push_when_paused() {
         // Like queue_sample, queue_stereo_sample must be silent while paused.
-        let mut audio = NativeAudio::new_without_stream(44100);
+        let mut audio = NativeAudio::new_without_stream(44100, 60);
         assert!(audio.is_paused());
 
         audio.queue_stereo_sample(0.5, -0.5);
@@ -596,7 +656,7 @@ mod tests {
     fn test_queue_sample_and_queue_stereo_sample_count_together() {
         // Both queue_sample and queue_stereo_sample contribute to the same
         // fill_level counter, and the counts must be consistent.
-        let mut audio = NativeAudio::new_without_stream(44100);
+        let mut audio = NativeAudio::new_without_stream(44100, 60);
         audio.resume();
 
         audio.queue_sample(0.5);
@@ -608,5 +668,25 @@ mod tests {
             3,
             "3 frames (mix of mono and stereo) must register as 3 buffered samples"
         );
+    }
+
+    #[test]
+    fn test_buffer_samples_are_derived_from_ms_and_floor_to_safe_minimum() {
+        assert_eq!(NativeAudio::buffer_samples_for(44100, 60), 2646);
+        assert_eq!(NativeAudio::buffer_samples_for(44100, 20), 2048);
+    }
+
+    #[test]
+    fn test_startup_prime_samples_scale_with_buffer_size() {
+        assert_eq!(NativeAudio::startup_prime_samples_for(2646), 661);
+        assert_eq!(NativeAudio::startup_prime_samples_for(2048), 512);
+    }
+
+    #[test]
+    fn test_new_without_stream_exposes_buffer_metadata() {
+        let audio = NativeAudio::new_without_stream(44100, 60);
+
+        assert_eq!(audio.buffer_capacity_samples(), 2646);
+        assert_eq!(audio.startup_prime_samples(), 661);
     }
 }

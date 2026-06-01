@@ -325,11 +325,15 @@ fn run_native_emulator(
 
     // Create audio output (request 44.1 kHz) unless disabled or headless.
     let mut audio_sample_rate = None;
-    let audio_enabled = app_context.borrow().config().frontend.audio_enabled;
+    let (audio_enabled, audio_buffer_ms) = {
+        let config = app_context.borrow();
+        let frontend = &config.config().frontend;
+        (frontend.audio_enabled, frontend.audio_buffer_ms)
+    };
     let audio = if !audio_enabled || headless {
         None
     } else {
-        let audio = NativeAudio::new(44100)?;
+        let audio = NativeAudio::new(44100, audio_buffer_ms)?;
         audio_sample_rate = Some(audio.actual_sample_rate() as f32);
         Some(audio)
     };

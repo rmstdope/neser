@@ -17,6 +17,7 @@ import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionFo
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
+import { AUDIO_PROFILES, resolveAudioProfileName } from "./audio/audio_profiles";
 import { normalizeGbSample, normalizeGbaSample, normalizeNesSample } from "./audio/audio_normalizer";
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
@@ -996,8 +997,10 @@ let audioContext: AudioContext | null = null;
 let nextAudioTime = 0;
 const AUDIO_SAMPLE_RATE = 44100; // Target output sample rate for Web Audio (NES audio is downsampled to this rate)
 const NES_APU_MAX = 1.177; // Conservative max output from NES APU mixer including expansion audio
-const AUDIO_TARGET_LATENCY = 0.1; // seconds
-const AUDIO_MAX_ADJUST = 0.005; // +/- 0.5% playback rate
+const AUDIO_PROFILE_NAME = resolveAudioProfileName(new URLSearchParams(window.location.search).get("audio-profile"));
+const AUDIO_PROFILE = AUDIO_PROFILES[AUDIO_PROFILE_NAME];
+const AUDIO_TARGET_LATENCY = AUDIO_PROFILE.targetLatencySeconds; // seconds
+const AUDIO_MAX_ADJUST = AUDIO_PROFILE.maxAdjust; // +/- playback rate bound
 const AUDIO_LATENCY_GAIN = 0.1; // scale factor for latency correction
 let audioMuted = false;
 let lastGamepadState1 = {
