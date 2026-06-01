@@ -79,6 +79,13 @@ nes-hardware=nes-ntsc
 # Enable or disable audio output entirely.
 audio=true
 
+# Target native audio buffering in milliseconds.
+# Lower values reduce latency but increase underrun risk.
+# The native frontend rounds this up to a safe internal sample buffer size.
+# Valid range: 20-500
+# Default: 60
+#audio_buffer_ms=60
+
 # Individual APU channel toggles.
 # Useful for isolating specific sounds or debugging audio issues.
 nes-pulse1=true

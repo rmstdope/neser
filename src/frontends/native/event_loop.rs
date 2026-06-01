@@ -184,7 +184,8 @@ impl NativeEventLoop {
 
     fn initialize_audio(&mut self) {
         if let Some(ref mut audio) = self.audio {
-            audio.prime_startup(2048);
+            let startup_prime_samples = audio.startup_prime_samples();
+            audio.prime_startup(startup_prime_samples);
             audio.resume();
         }
     }
