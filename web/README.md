@@ -52,6 +52,7 @@ Optional query parameters:
 - `frames` (default `600`)
 - `warmup` (default `60`)
 - `stabilityRuns` (default `5`)
+- `includeBiosIntro=true` to benchmark from power-on instead of skipping BIOS intro
 - `continueStabilityRuns=true` to keep advancing instead of reloading the ROM
   before each stability run
 

@@ -10,7 +10,8 @@ describe("parseGbaBenchmarkConfig", () => {
             frames: 600,
             warmupFrames: 60,
             stabilityRuns: 5,
-            resetStabilityRuns: true
+            resetStabilityRuns: true,
+            skipBiosIntro: true
         });
     });
 
@@ -24,7 +25,8 @@ describe("parseGbaBenchmarkConfig", () => {
             frames: 120,
             warmupFrames: 30,
             stabilityRuns: 2,
-            resetStabilityRuns: true
+            resetStabilityRuns: true,
+            skipBiosIntro: true
         });
     });
 
@@ -77,5 +79,13 @@ describe("parseGbaBenchmarkConfig", () => {
         );
 
         expect(config.resetStabilityRuns).toBe(false);
+    });
+
+    it("can include BIOS intro in benchmark runs", () => {
+        const config = parseGbaBenchmarkConfig(
+            new URLSearchParams("rom=test.gba&includeBiosIntro=true")
+        );
+
+        expect(config.skipBiosIntro).toBe(false);
     });
 });

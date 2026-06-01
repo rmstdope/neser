@@ -25,6 +25,22 @@ impl Default for WasmGba {
 
 #[wasm_bindgen]
 impl WasmGba {
+    fn create_with_skip_bios_intro(skip_bios_intro: bool) -> WasmGba {
+        console_error_panic_hook::set_once();
+        let mut config = crate::platform::config::Config::default();
+        config.gba.skip_bios_intro = skip_bios_intro;
+        let app_context: SharedAppContext =
+            Rc::new(RefCell::new(AppContext::new_with_config(config)));
+        WasmGba {
+            gba: Gba::new(app_context),
+            audio_muted: false,
+            rom_loaded: false,
+            pending_toasts: Vec::new(),
+            frame_rgba_buffer: Vec::new(),
+            frame_rgb_buffer: Vec::new(),
+        }
+    }
+
     fn required_rgba_len() -> usize {
         (Gba::SCREEN_WIDTH * Gba::SCREEN_HEIGHT * 4) as usize
     }
@@ -78,18 +94,12 @@ impl WasmGba {
 
     #[wasm_bindgen(constructor)]
     pub fn new() -> WasmGba {
-        console_error_panic_hook::set_once();
-        let app_context: SharedAppContext = Rc::new(RefCell::new(AppContext::new_with_config(
-            Default::default(),
-        )));
-        WasmGba {
-            gba: Gba::new(app_context),
-            audio_muted: false,
-            rom_loaded: false,
-            pending_toasts: Vec::new(),
-            frame_rgba_buffer: Vec::new(),
-            frame_rgb_buffer: Vec::new(),
-        }
+        Self::create_with_skip_bios_intro(false)
+    }
+
+    #[wasm_bindgen]
+    pub fn new_with_skip_bios_intro(skip_bios_intro: bool) -> WasmGba {
+        Self::create_with_skip_bios_intro(skip_bios_intro)
     }
 
     #[wasm_bindgen]

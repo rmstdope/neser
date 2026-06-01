@@ -127,7 +127,7 @@ function formatStats(label, stats) {
 }
 
 function createLoadedGba(romData, config) {
-    const gba = new WasmGba();
+    const gba = WasmGba.new_with_skip_bios_intro(config.skipBiosIntro);
     gba.load_rom(romData, config.romName);
     return gba;
 }
@@ -180,7 +180,7 @@ async function run() {
             gba.screen_height()
         );
 
-        log(`ROM loaded. Warmup=${config.warmupFrames}, frames=${config.frames}, stabilityRuns=${config.stabilityRuns}, resetStabilityRuns=${config.resetStabilityRuns}`);
+        log(`ROM loaded. Warmup=${config.warmupFrames}, frames=${config.frames}, stabilityRuns=${config.stabilityRuns}, resetStabilityRuns=${config.resetStabilityRuns}, skipBiosIntro=${config.skipBiosIntro}`);
         warmup(gba, renderer, config.warmupFrames);
 
         performance.mark("gba-bench-start");

@@ -4,6 +4,7 @@ export interface GbaBenchmarkConfig {
     warmupFrames: number;
     stabilityRuns: number;
     resetStabilityRuns: boolean;
+    skipBiosIntro: boolean;
 }
 
 const SAFE_ROM_BASENAME = /^[A-Za-z0-9._-]+$/;
@@ -22,7 +23,8 @@ export function parseGbaBenchmarkConfig(params: URLSearchParams): GbaBenchmarkCo
         frames: parsePositiveInteger(params, "frames", 600),
         warmupFrames: parseNonNegativeInteger(params, "warmup", 60),
         stabilityRuns: parseNonNegativeInteger(params, "stabilityRuns", 5),
-        resetStabilityRuns: params.get("continueStabilityRuns") !== "true"
+        resetStabilityRuns: params.get("continueStabilityRuns") !== "true",
+        skipBiosIntro: params.get("includeBiosIntro") !== "true"
     };
 }
 

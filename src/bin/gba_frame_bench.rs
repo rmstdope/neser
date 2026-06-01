@@ -113,7 +113,7 @@ fn print_summary(label: &str, bench_config: &FrameBenchmarkConfig, stats: &Frame
 }
 
 fn usage() -> &'static str {
-    "Usage: gba_frame_bench <rom_path> [--frames N] [--warmup N] [--stability-runs N] [--include-bios-intro] [--continue-stability-runs]\n\
+    "Usage: gba_frame_bench <rom_path> [--frames N] [--warmup N] [--stability-runs N] [--skip-bios-intro|--include-bios-intro] [--continue-stability-runs]\n\
 \n\
 Benchmarks GBA frame execution using the embedded BIOS. By default the GBA BIOS intro is skipped.\n\
 Stability runs reload the ROM by default so each run measures the same title/intro window."
@@ -146,6 +146,7 @@ mod tests {
         assert!(usage.contains("--frames"));
         assert!(usage.contains("--warmup"));
         assert!(usage.contains("--stability-runs"));
+        assert!(usage.contains("--skip-bios-intro"));
         assert!(usage.contains("--include-bios-intro"));
         assert!(usage.contains("--continue-stability-runs"));
     }
