@@ -153,6 +153,7 @@ All NES-specific hardware and supporting code lives under `src/nes/`.
 | `src/nes/ppu/timing.rs` | Scanline and dot-accurate timing, VBlank/pre-render logic, even/odd frame handling. |
 | `src/nes/ppu/screen_buffer.rs` | Double-buffered 256×240 framebuffer for completed frames. |
 | `src/nes/ppu/color_effects.rs` | Emphasis bits and grayscale color effects. |
+| `src/nes/ppu/system_palettes.rs` | Preset NES system palettes (`NesPalette` enum + RGB tables). Selectable via `nes-palette` config and cycled at runtime with F8. |
 | `src/nes/ppu/status.rs` | PPU status register ($2002) with VBlank, sprite-0 hit, and overflow flags. |
 | `src/nes/apu/` | Audio Processing Unit (2A03) implementation. |
 | `src/nes/apu/apu.rs` | The `Apu` struct — mixer output, frame counter sequencing, sample generation. |

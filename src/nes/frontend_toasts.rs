@@ -1,7 +1,13 @@
 use crate::nes::console::{ExpansionPort, HardwareMode, TimingMode};
+use crate::nes::ppu::NesPalette;
 
 pub fn emulator_timing_toast_message(tv_system: TimingMode) -> String {
     format!("Emulator timing: {}", tv_system_toast_label(tv_system))
+}
+
+/// Toast message shown when the preset system palette changes (F8).
+pub fn palette_toast_message(palette: NesPalette) -> String {
+    format!("Palette: {}", palette.display_name())
 }
 
 pub fn hardware_mode_toast_message(
@@ -54,6 +60,19 @@ mod tests {
     fn emulator_timing_toast_uses_ntsc_label() {
         let message = emulator_timing_toast_message(TimingMode::Ntsc);
         assert_eq!(message, "Emulator timing: NTSC");
+    }
+
+    #[test]
+    fn palette_toast_uses_display_name() {
+        assert_eq!(
+            palette_toast_message(NesPalette::Default),
+            "Palette: Default"
+        );
+        assert_eq!(palette_toast_message(NesPalette::NesDev), "Palette: NesDev");
+        assert_eq!(
+            palette_toast_message(NesPalette::CompositeDirect),
+            "Palette: Composite Direct"
+        );
     }
 
     #[test]

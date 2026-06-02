@@ -150,6 +150,7 @@ Common hotkeys:
 | `F4` | Cycle shader preset |
 | `F5` | Toggle debugger |
 | `F6` / `F7` | Save/load state |
+| `F8` | Cycle NES system palette (NES only) |
 | `F10` / `F11` | Debugger step over/into |
 
 System-specific controls and controller options are documented in:

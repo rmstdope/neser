@@ -15,7 +15,8 @@
  *   toggleHelp: Function,
  *   debuggerToggle: Function,
  *   debuggerStepOver: Function,
- *   debuggerStepInto: Function
+ *   debuggerStepInto: Function,
+ *   cyclePalette: Function
  * }} actions
  * @returns {Promise<boolean>}
  */
@@ -41,6 +42,7 @@ interface ShortcutActions {
     debuggerToggle: () => Promise<void> | void;
     debuggerStepOver: () => Promise<void> | void;
     debuggerStepInto: () => Promise<void> | void;
+    cyclePalette: () => Promise<void> | void;
     [key: string]: (() => Promise<void> | void) | undefined;
 }
 
@@ -65,6 +67,7 @@ const shortcutActionByCode = {
     F5: "debuggerToggle",
     F6: "saveState",
     F7: "loadState",
+    F8: "cyclePalette",
     F10: "debuggerStepOver",
     F11: "debuggerStepInto",
     KeyH: "toggleHelp"

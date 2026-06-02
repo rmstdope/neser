@@ -24,6 +24,26 @@ Or in `neser.conf`:
 nes-hardware=nes-pal
 ```
 
+## System palettes
+
+The NES generates a composite NTSC signal rather than using a fixed RGB
+palette, so NESER ships several well-known reference palettes. Choose one with
+the `nes-palette` config key or `--nes-palette` flag (case-insensitive):
+
+- `default` — Neser's built-in palette (preserves prior behavior)
+- `nesdev` — NESdev wiki 2C02 reference palette
+- `smooth` — FBX "Smooth" NTSC palette
+- `classic` — FBX "Classic" palette
+- `composite-direct` — FBX "Composite Direct" palette
+
+```bash
+neser --nes-palette smooth path/to/game.nes
+```
+
+An unknown value is ignored with a warning and the default palette is kept.
+Press `F8` in the native or web frontend to cycle palettes at runtime (NES
+only); a toast shows the newly selected palette.
+
 ## Running NES ROMs
 
 ```bash

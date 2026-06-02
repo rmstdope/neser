@@ -1539,8 +1539,10 @@ fn update_ppu_viewer_textures(
         &ppu_snap.nametables,
         &ppu_snap.palette,
         ppu_snap.bg_pattern_table,
+        ppu_snap.system_palette,
     );
-    let tiles_pixels = render_pattern_tables_rgba(&ppu_snap.chr, &ppu_snap.palette);
+    let tiles_pixels =
+        render_pattern_tables_rgba(&ppu_snap.chr, &ppu_snap.palette, ppu_snap.system_palette);
     unsafe {
         upload_rgba_texture(
             nt_texture,

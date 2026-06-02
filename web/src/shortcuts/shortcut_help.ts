@@ -6,6 +6,7 @@ export const WEB_SHORTCUT_REFERENCE = [
     { key: "F5", action: "Debugger Toggle" },
     { key: "F6", action: "Save State" },
     { key: "F7", action: "Load State" },
+    { key: "F8", action: "Cycle Palette (NES)" },
     { key: "F10", action: "Debugger Step Over" },
     { key: "F11", action: "Debugger Step Into" },
     { key: "Ctrl+F", action: "Toggle Fullscreen" },

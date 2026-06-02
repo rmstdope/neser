@@ -74,6 +74,23 @@
 nes-hardware=nes-ntsc
 
 # -----------------------------------------------------------------------------
+# Video / Palette
+# -----------------------------------------------------------------------------
+# Preset NES system palette used to convert NES colors to RGB.
+# The NES has no true RGB palette (it generates composite NTSC signals), so
+# several well-known reference palettes are provided. Pick the look you prefer.
+# Allowed values (case-insensitive):
+#   default          - Neser's built-in palette (preserves prior behavior).
+#   nesdev           - NESdev wiki 2C02 reference palette.
+#   smooth           - FBX "Smooth" NTSC palette.
+#   classic          - FBX "Classic" palette.
+#   composite-direct - FBX "Composite Direct" palette.
+# An unknown value is ignored with a warning and the default palette is kept.
+# At runtime, press F8 (NES only) to cycle through these palettes.
+# Default: default
+nes-palette=default
+
+# -----------------------------------------------------------------------------
 # Audio Settings
 # -----------------------------------------------------------------------------
 # Enable or disable audio output entirely.

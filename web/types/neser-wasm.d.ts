@@ -25,6 +25,7 @@ declare module "*/pkg/neser" {
         free(): void;
         [Symbol.dispose](): void;
         drain_toasts(): unknown[];
+        cycle_palette(): string;
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;
         is_audio_muted(): boolean;

@@ -836,6 +836,14 @@ impl ApplicationHandler for NativeEventLoop {
                         KeyOutcome::ToggleFps => {
                             self.state.show_fps = !self.state.show_fps;
                         }
+                        KeyOutcome::CyclePalette => {
+                            if let Console::Nes(nes) = &mut self.console {
+                                let palette = nes.cycle_palette();
+                                let toast =
+                                    crate::nes::frontend_toasts::palette_toast_message(palette);
+                                self.console.app_context().borrow_mut().add_toast(&toast);
+                            }
+                        }
                     }
                 } else {
                     keyboard::handle_key_released(

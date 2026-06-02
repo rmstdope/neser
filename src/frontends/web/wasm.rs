@@ -4,7 +4,9 @@ use crate::nes::debugging::DebuggerViewState;
 use crate::nes::debugging::ppu_viewer::{
     PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
 };
-use crate::nes::frontend_toasts::{emulator_timing_toast_message, hardware_mode_toast_message};
+use crate::nes::frontend_toasts::{
+    emulator_timing_toast_message, hardware_mode_toast_message, palette_toast_message,
+};
 use crate::nes::input::{Button, ControllerType, SnesButton};
 use crate::platform::app_context::{AppContext, SharedAppContext};
 use crate::platform::autorun::crc32;
@@ -143,6 +145,17 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn drain_toasts(&mut self) -> Vec<JsValue> {
         self.pending_toasts.drain(..).map(JsValue::from).collect()
+    }
+
+    /// Cycle to the next preset NES system palette and queue a toast.
+    ///
+    /// Returns the new palette's display name.
+    #[wasm_bindgen]
+    pub fn cycle_palette(&mut self) -> String {
+        let palette = self.nes.cycle_palette();
+        let message = palette_toast_message(palette);
+        self.pending_toasts.push(message);
+        palette.display_name().to_string()
     }
 
     /// Reset the emulator without ejecting the cartridge.
@@ -927,7 +940,7 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn debugger_ppu_pattern_tables_rgba(&mut self) -> Vec<u8> {
         let snapshot = self.ppu_viewer_snapshot();
-        render_pattern_tables_rgba(&snapshot.chr, &snapshot.palette)
+        render_pattern_tables_rgba(&snapshot.chr, &snapshot.palette, snapshot.system_palette)
     }
 
     /// Returns the PPU nametable viewer image as RGBA bytes.
@@ -939,6 +952,7 @@ impl WasmNes {
             &snapshot.nametables,
             &snapshot.palette,
             snapshot.bg_pattern_table,
+            snapshot.system_palette,
         )
     }
 

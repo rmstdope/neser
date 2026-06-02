@@ -33,6 +33,8 @@ pub enum KeyOutcome {
     CloseCartridgeSwitch,
     /// Toggle the FPS counter overlay (F1).
     ToggleFps,
+    /// Cycle to the next preset NES system palette (F8).
+    CyclePalette,
 }
 
 /// Handles a key-press event.
@@ -329,6 +331,7 @@ fn handle_unmodified_key(
                 audio.drain_buffer();
             }
         }
+        KeyCode::F8 => return KeyOutcome::CyclePalette,
         KeyCode::F10 => return KeyOutcome::StepOver,
         KeyCode::F11 => return KeyOutcome::StepInto,
         _ => {
@@ -337,7 +340,6 @@ fn handle_unmodified_key(
             handle_controller_key(console, key_code, true, ports);
         }
     }
-
     KeyOutcome::Continue
 }
 
@@ -980,6 +982,16 @@ mod tests {
         assert_eq!(
             handle_key_pressed(&mut console, KeyCode::F5, &mut state, None),
             KeyOutcome::ToggleDebugger
+        );
+    }
+
+    #[test]
+    fn test_f8_returns_cycle_palette_for_nes() {
+        let mut console = make_nes_console();
+        let mut state = make_state();
+        assert_eq!(
+            handle_key_pressed(&mut console, KeyCode::F8, &mut state, None),
+            KeyOutcome::CyclePalette
         );
     }
 

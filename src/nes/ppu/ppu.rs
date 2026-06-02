@@ -1,5 +1,6 @@
 use crate::nes::cartridge::{Cartridge, NametableLayout, VsPpuType};
-use crate::nes::console::{Nes, TimingMode};
+use crate::nes::console::TimingMode;
+use crate::nes::ppu::NesPalette;
 use crate::nes::ppu::color_effects::apply_grayscale;
 use crate::nes::ppu::sprites::SpritesState;
 use crate::nes::ppu::vs_palettes;
@@ -151,6 +152,8 @@ pub struct Ppu {
     vs_ppu_type: Option<VsPpuType>,
     /// VS System palette override (set from vs_ppu_type).
     vs_palette: Option<&'static [(u8, u8, u8); 64]>,
+    /// Active preset system palette (used when no VS palette is set).
+    system_palette: NesPalette,
     /// Delayed v=t update countdown (3 PPU cycles after second $2006 write).
     /// Based on Visual NES findings, documented in Mesen2 NesPpu.cpp.
     update_vram_addr_delay: u8,
@@ -268,8 +271,26 @@ impl Ppu {
         let index = (color_index & 0x3F) as usize;
         match self.vs_palette {
             Some(palette) => palette[index],
-            None => Nes::lookup_system_palette(color_index),
+            None => self.system_palette.table()[index],
         }
+    }
+
+    /// Returns the active preset system palette.
+    pub fn system_palette(&self) -> NesPalette {
+        self.system_palette
+    }
+
+    /// Sets the active preset system palette.
+    ///
+    /// Has no visible effect while a VS System palette override is active.
+    pub fn set_system_palette(&mut self, palette: NesPalette) {
+        self.system_palette = palette;
+    }
+
+    /// Advances to the next preset system palette and returns the new value.
+    pub fn cycle_system_palette(&mut self) -> NesPalette {
+        self.system_palette = self.system_palette.next();
+        self.system_palette
     }
 
     /// Create a new modular PPU instance
@@ -293,6 +314,7 @@ impl Ppu {
             famicom_emphasis: false,
             vs_ppu_type: None,
             vs_palette: None,
+            system_palette: NesPalette::default(),
             update_vram_addr_delay: 0,
             pending_vram_addr: 0,
         }
@@ -3387,6 +3409,38 @@ mod tests {
         );
         // Standard palette entry $00 is NOT (0xFF, 0xB6, 0xB6) — the VS palette is different
         assert_ne!(ppu.lookup_system_palette(0x00), standard);
+    }
+
+    #[test]
+    fn ppu_default_system_palette_is_default_preset() {
+        let ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        assert_eq!(ppu.system_palette(), NesPalette::Default);
+        assert_eq!(ppu.lookup_system_palette(0x00), (0x54, 0x54, 0x54));
+    }
+
+    #[test]
+    fn set_system_palette_changes_lookup_output() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_system_palette(NesPalette::Smooth);
+        assert_eq!(ppu.system_palette(), NesPalette::Smooth);
+        assert_eq!(ppu.lookup_system_palette(0x00), (0x6A, 0x6A, 0x6A));
+    }
+
+    #[test]
+    fn vs_palette_overrides_active_system_palette() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_system_palette(NesPalette::Smooth);
+        ppu.set_vs_ppu_type(Some(VsPpuType::Rp2c04_0001));
+        // VS palette wins over the selected preset.
+        assert_eq!(ppu.lookup_system_palette(0x00), (0xFF, 0xB6, 0xB6));
+    }
+
+    #[test]
+    fn cycle_system_palette_advances_and_wraps() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        assert_eq!(ppu.cycle_system_palette(), NesPalette::NesDev);
+        ppu.set_system_palette(NesPalette::CompositeDirect);
+        assert_eq!(ppu.cycle_system_palette(), NesPalette::Default);
     }
 
     #[test]
