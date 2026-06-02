@@ -395,6 +395,19 @@ mod tests {
     }
 
     #[test]
+    fn test_scroll_for_debugger_reflects_y_scroll_write() {
+        let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        // X=0, Y=120 → scroll_y = 120.
+        nes.ppu().borrow_mut().write_scroll(0x00, false);
+        nes.ppu().borrow_mut().write_scroll(0x78, false);
+        let (sx, sy) = nes.ppu().borrow().scroll_for_debugger();
+        assert_eq!(sx, 0, "scroll_x should be 0");
+        assert_eq!(sy, 120, "scroll_y should be 120");
+    }
+
+    #[test]
     fn test_render_tile_follows_selected_system_palette() {
         // Same CHR/palette, but render under two different system palettes;
         // the resulting RGB should match each palette's table for the NES color.
