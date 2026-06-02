@@ -37,6 +37,7 @@ function makeActions() {
             debuggerToggle: () => calls.push("debuggerToggle"),
             debuggerStepOver: () => calls.push("debuggerStepOver"),
             debuggerStepInto: () => calls.push("debuggerStepInto"),
+            cyclePalette: () => calls.push("cyclePalette"),
         }
     };
 }
@@ -248,5 +249,16 @@ it("dispatchWebShortcutAction routes F11 to debuggerStepInto", async () => {
 
     expect(handled).toBe(true);
     expect(calls).toEqual(["debuggerStepInto"]);
+    expect(event.defaultPrevented).toBe(true);
+});
+
+it("dispatchWebShortcutAction routes F8 to cyclePalette", async () => {
+    const event = makeKeyboardEvent("F8");
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event as any, actions as any);
+
+    expect(handled).toBe(true);
+    expect(calls).toEqual(["cyclePalette"]);
     expect(event.defaultPrevented).toBe(true);
 });

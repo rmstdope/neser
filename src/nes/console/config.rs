@@ -9,6 +9,7 @@
 use crate::gba::console::config::GBA_FILTER_NAMES;
 use crate::nes::console::TimingMode;
 use crate::nes::input::ControllerType;
+use crate::nes::ppu::NesPalette;
 use crate::platform::config::CliFlag;
 use crate::platform::config::ParseResult;
 use crate::platform::config::{OPTIONAL_BOOL_FLAGS, parse_bool, parse_hex_u8};
@@ -42,6 +43,13 @@ pub(crate) const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--nes-filter",
         help: Some("NES shader filter: crt, ntsc, smooth, pal, or none"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--nes-palette",
+        help: Some(
+            "NES preset palette: default, nesdev, smooth, classic, composite-direct (default: default)",
+        ),
         has_value: true,
     },
     CliFlag {
@@ -366,6 +374,8 @@ pub struct NesConfig {
     pub horizontal_overscan: u8,
     /// Vertical overscan removal in pixels (removed from both top and bottom edges).
     pub vertical_overscan: u8,
+    /// Selected preset system (RGB) palette used for composite NTSC output.
+    pub palette: NesPalette,
 }
 
 impl Default for NesConfig {
@@ -390,6 +400,7 @@ impl Default for NesConfig {
             oam_dram_decay_enabled: false,
             horizontal_overscan: 0,
             vertical_overscan: 8,
+            palette: NesPalette::default(),
         }
     }
 }
@@ -609,6 +620,18 @@ impl NesConfig {
                     self.vertical_overscan = v.min(16);
                 }
             }
+            "nes_palette" => {
+                if let Some(palette) = NesPalette::from_config_id(value) {
+                    self.palette = palette;
+                } else {
+                    eprintln!(
+                        "Warning: invalid value '{}' for 'nes-palette'; keeping default ('{}'). \
+                         Valid values: default, nesdev, smooth, classic, composite-direct",
+                        value,
+                        self.palette.config_id()
+                    );
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -825,6 +848,15 @@ impl Config {
         if let Some(expansion_port) = Self::parse_expansion_port_arg(args)? {
             self.nes.expansion_port = expansion_port;
             self.nes.expansion_port_explicit = true;
+        }
+
+        // Preset system palette
+        if let Some(palette) = Self::parse_string_arg(args, "--nes-palette") {
+            self.nes.palette = NesPalette::from_config_id(&palette).ok_or_else(|| {
+                format!(
+                    "Invalid --nes-palette value: '{palette}'. Valid options are: default, nesdev, smooth, classic, composite-direct"
+                )
+            })?;
         }
 
         // Controller ports (TODO: move to NesConfig in task 8)
@@ -5491,5 +5523,49 @@ nes-filter=invalid-shader
         let msg = result.unwrap_err();
         assert!(msg.contains("bogus"));
         assert!(msg.contains("none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid"));
+    }
+
+    #[test]
+    fn test_default_palette_is_default() {
+        let config = Config::default();
+        assert_eq!(config.nes.palette, NesPalette::Default);
+    }
+
+    #[test]
+    fn test_config_file_nes_palette_valid() {
+        let mut config = Config::default();
+        config.apply_config_value("nes-palette", "smooth").unwrap();
+        assert_eq!(config.nes.palette, NesPalette::Smooth);
+    }
+
+    #[test]
+    fn test_config_file_nes_palette_is_case_insensitive() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("nes-palette", "Composite-Direct")
+            .unwrap();
+        assert_eq!(config.nes.palette, NesPalette::CompositeDirect);
+    }
+
+    #[test]
+    fn test_config_file_nes_palette_invalid_keeps_default() {
+        let mut config = Config::default();
+        config.nes.palette = NesPalette::Classic;
+        // Invalid value should not error from the config-file path; it keeps the current value.
+        config.apply_config_value("nes-palette", "bogus").unwrap();
+        assert_eq!(config.nes.palette, NesPalette::Classic);
+    }
+
+    #[test]
+    fn test_cli_nes_palette_valid() {
+        let config = parse_config(vec!["--nes-palette".to_string(), "nesdev".to_string()]);
+        assert_eq!(config.nes.palette, NesPalette::NesDev);
+    }
+
+    #[test]
+    fn test_cli_nes_palette_invalid_is_error() {
+        let result = config_new(vec!["--nes-palette".to_string(), "bogus".to_string()]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bogus"));
     }
 }

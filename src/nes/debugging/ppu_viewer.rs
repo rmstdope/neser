@@ -1,4 +1,5 @@
 use crate::nes::console::Nes;
+use crate::nes::ppu::NesPalette;
 
 const CHR_SIZE: usize = 8192;
 const NAMETABLE_SIZE: usize = 1024;
@@ -33,6 +34,8 @@ pub struct PpuViewerSnapshot {
     pub bg_pattern_table: u16,
     /// Current scroll position as (scroll_x, scroll_y) into the 512×480 nametable space
     pub scroll: (u16, u16),
+    /// Active preset system palette used to resolve NES colors to RGB.
+    pub system_palette: NesPalette,
 }
 
 impl PpuViewerSnapshot {
@@ -45,6 +48,7 @@ impl PpuViewerSnapshot {
             palette: ppu.palette_for_debugger(),
             bg_pattern_table: ppu.bg_pattern_table_for_debugger(),
             scroll: ppu.scroll_for_debugger(),
+            system_palette: ppu.system_palette(),
         }
     }
 }
@@ -55,8 +59,17 @@ impl PpuViewerSnapshot {
 /// Left 128 × 128: pattern table 0 ($0000), right 128 × 128: pattern table 1 ($1000).
 /// Each table shows 16 × 16 tiles at 8 × 8 pixels each.
 /// Colors are resolved via BG palette 0 and the NES system palette.
-pub fn render_pattern_tables_rgba(chr: &[u8; CHR_SIZE], palette: &[u8; PALETTE_SIZE]) -> Vec<u8> {
+pub fn render_pattern_tables_rgba(
+    chr: &[u8; CHR_SIZE],
+    palette: &[u8; PALETTE_SIZE],
+    system_palette: NesPalette,
+) -> Vec<u8> {
     let mut pixels = vec![0u8; PATTERN_TABLE_OUTPUT_WIDTH * PATTERN_TABLE_OUTPUT_HEIGHT * 4];
+    let ctx = TileContext {
+        chr,
+        palette,
+        system_palette,
+    };
 
     for table in 0u16..2 {
         let table_x_offset = table as usize * PATTERN_TABLE_WIDTH;
@@ -65,8 +78,7 @@ pub fn render_pattern_tables_rgba(chr: &[u8; CHR_SIZE], palette: &[u8; PALETTE_S
                 let tile_index = ty * PATTERN_TABLE_TILES_PER_ROW + tx;
                 let tile_addr = table * 0x1000 + (tile_index as u16) * CHR_BYTES_PER_TILE as u16;
                 render_tile_into(
-                    chr,
-                    palette,
+                    &ctx,
                     tile_addr,
                     0,
                     &mut pixels,
@@ -90,8 +102,14 @@ pub fn render_nametables_rgba(
     nametables: &[[u8; NAMETABLE_SIZE]; NUM_NAMETABLES],
     palette: &[u8; PALETTE_SIZE],
     bg_pattern_table: u16,
+    system_palette: NesPalette,
 ) -> Vec<u8> {
     let mut pixels = vec![0u8; NAMETABLE_OUTPUT_WIDTH * NAMETABLE_OUTPUT_HEIGHT * 4];
+    let ctx = TileContext {
+        chr,
+        palette,
+        system_palette,
+    };
 
     for (nt, nt_data) in nametables.iter().enumerate().take(NUM_NAMETABLES) {
         let nt_x = (nt % 2) * NAMETABLE_WIDTH;
@@ -108,8 +126,7 @@ pub fn render_nametables_rgba(
                 let palette_num = ((attr_byte >> pal_shift) & 0x03) as usize;
 
                 render_tile_into(
-                    chr,
-                    palette,
+                    &ctx,
                     tile_addr,
                     palette_num,
                     &mut pixels,
@@ -123,10 +140,17 @@ pub fn render_nametables_rgba(
     pixels
 }
 
+/// Shared inputs for rendering individual tiles: CHR data, palette RAM, and the
+/// active system palette used to resolve NES colors to RGB.
+struct TileContext<'a> {
+    chr: &'a [u8; CHR_SIZE],
+    palette: &'a [u8; PALETTE_SIZE],
+    system_palette: NesPalette,
+}
+
 /// Render a single 8×8 tile into `pixels` at position (`px`, `py`) with the given `stride`.
 fn render_tile_into(
-    chr: &[u8; CHR_SIZE],
-    palette: &[u8; PALETTE_SIZE],
+    ctx: &TileContext,
     tile_addr: u16,
     palette_num: usize,
     pixels: &mut [u8],
@@ -134,10 +158,11 @@ fn render_tile_into(
     stride: usize,
 ) {
     let (px, py) = position;
+    let table = ctx.system_palette.table();
     for row in 0..TILE_SIZE {
         let base = tile_addr as usize + row;
-        let lo = chr[base];
-        let hi = chr[base + TILE_SIZE];
+        let lo = ctx.chr[base];
+        let hi = ctx.chr[base + TILE_SIZE];
         for col in 0..TILE_SIZE {
             let lo_bit = (lo >> (7 - col)) & 1;
             let hi_bit = (hi >> (7 - col)) & 1;
@@ -148,8 +173,8 @@ fn render_tile_into(
             } else {
                 palette_num * 4 + color_idx as usize
             };
-            let nes_color = palette[palette_ram_idx] & 0x3F;
-            let (r, g, b) = Nes::lookup_system_palette(nes_color);
+            let nes_color = ctx.palette[palette_ram_idx] & 0x3F;
+            let (r, g, b) = table[nes_color as usize];
 
             let offset = ((py + row) * stride + (px + col)) * 4;
             pixels[offset] = r;
@@ -170,7 +195,7 @@ mod tests {
     fn test_render_pattern_tables_rgba_has_correct_dimensions() {
         let chr = [0u8; 8192];
         let palette = [0u8; 32];
-        let pixels = render_pattern_tables_rgba(&chr, &palette);
+        let pixels = render_pattern_tables_rgba(&chr, &palette, NesPalette::Default);
         assert_eq!(pixels.len(), 256 * 128 * 4);
     }
 
@@ -179,7 +204,8 @@ mod tests {
         let chr = [0u8; 8192];
         let nametables = [[0u8; 1024]; 4];
         let palette = [0u8; 32];
-        let pixels = render_nametables_rgba(&chr, &nametables, &palette, 0x0000);
+        let pixels =
+            render_nametables_rgba(&chr, &nametables, &palette, 0x0000, NesPalette::Default);
         assert_eq!(pixels.len(), 512 * 480 * 4);
     }
 
@@ -195,7 +221,7 @@ mod tests {
         palette[0] = 0x0F; // universal BG
         palette[1] = 0x20; // BG palette 0, color 1 → NES color 0x20
 
-        let pixels = render_pattern_tables_rgba(&chr, &palette);
+        let pixels = render_pattern_tables_rgba(&chr, &palette, NesPalette::Default);
 
         let (r, g, b) = Nes::lookup_system_palette(0x20);
         // Pixel at (0,0): top-left corner of tile 0, table 0
@@ -215,7 +241,7 @@ mod tests {
         let mut palette = [0u8; 32];
         palette[1] = 0x11; // BG palette 0, color 1
 
-        let pixels = render_pattern_tables_rgba(&chr, &palette);
+        let pixels = render_pattern_tables_rgba(&chr, &palette, NesPalette::Default);
 
         // Table 1 starts at x=128. Pixel at (128, 0):
         let offset = 128 * 4;
@@ -240,7 +266,8 @@ mod tests {
         palette[0] = 0x0F;
         palette[3] = 0x20; // BG palette 0, color 3
 
-        let pixels = render_nametables_rgba(&chr, &nametables, &palette, 0x0000);
+        let pixels =
+            render_nametables_rgba(&chr, &nametables, &palette, 0x0000, NesPalette::Default);
 
         let (r, g, b) = Nes::lookup_system_palette(0x20);
         // NT0 is at top-left (0,0), so pixel (0,0) of output:
@@ -263,7 +290,8 @@ mod tests {
         let mut palette = [0u8; 32];
         palette[1] = 0x15;
 
-        let pixels = render_nametables_rgba(&chr, &nametables, &palette, 0x0000);
+        let pixels =
+            render_nametables_rgba(&chr, &nametables, &palette, 0x0000, NesPalette::Default);
 
         // NT1 top-left is at pixel (256, 0):
         let offset = 256 * 4;
@@ -287,7 +315,8 @@ mod tests {
         let mut palette = [0u8; 32];
         palette[2] = 0x1A;
 
-        let pixels = render_nametables_rgba(&chr, &nametables, &palette, 0x0000);
+        let pixels =
+            render_nametables_rgba(&chr, &nametables, &palette, 0x0000, NesPalette::Default);
 
         // NT2 top-left is at pixel (0, 240):
         let offset = (240 * 512) * 4;
@@ -309,7 +338,8 @@ mod tests {
         let mut palette = [0u8; 32];
         palette[1] = 0x16;
 
-        let pixels = render_nametables_rgba(&chr, &nametables, &palette, 0x1000);
+        let pixels =
+            render_nametables_rgba(&chr, &nametables, &palette, 0x1000, NesPalette::Default);
 
         let (r, g, b) = Nes::lookup_system_palette(0x16);
         assert_eq!(pixels[0], r);
@@ -375,5 +405,53 @@ mod tests {
         let (sx, sy) = nes.ppu().borrow().scroll_for_debugger();
         assert_eq!(sx, 0, "scroll_x should be 0");
         assert_eq!(sy, 120, "scroll_y should be 120");
+    }
+
+    #[test]
+    fn test_render_tile_follows_selected_system_palette() {
+        // Same CHR/palette, but render under two different system palettes;
+        // the resulting RGB should match each palette's table for the NES color.
+        let mut chr = [0u8; 8192];
+        for byte in chr.iter_mut().take(8) {
+            *byte = 0xFF; // color index 1
+        }
+        let mut palette = [0u8; 32];
+        palette[1] = 0x05; // BG palette 0, color 1 → NES color 0x05
+
+        let default_pixels = render_pattern_tables_rgba(&chr, &palette, NesPalette::Default);
+        let smooth_pixels = render_pattern_tables_rgba(&chr, &palette, NesPalette::Smooth);
+
+        let (dr, dg, db) = NesPalette::Default.table()[0x05];
+        let (sr, sg, sb) = NesPalette::Smooth.table()[0x05];
+        assert_eq!(
+            (default_pixels[0], default_pixels[1], default_pixels[2]),
+            (dr, dg, db)
+        );
+        assert_eq!(
+            (smooth_pixels[0], smooth_pixels[1], smooth_pixels[2]),
+            (sr, sg, sb)
+        );
+        assert_ne!(
+            (default_pixels[0], default_pixels[1], default_pixels[2]),
+            (smooth_pixels[0], smooth_pixels[1], smooth_pixels[2]),
+            "Smooth palette should differ from Default for NES color 0x05"
+        );
+    }
+
+    #[test]
+    fn test_ppu_viewer_snapshot_captures_active_palette() {
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        let prg_rom = vec![0u8; 32 * 1024];
+        let chr_rom = vec![0u8; 8 * 1024];
+        let cart = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
+        nes.insert_cartridge(cart);
+        nes.ppu()
+            .borrow_mut()
+            .set_system_palette(NesPalette::Classic);
+
+        let snap = PpuViewerSnapshot::from_nes(&nes);
+        assert_eq!(snap.system_palette, NesPalette::Classic);
     }
 }

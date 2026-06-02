@@ -1852,6 +1852,12 @@ function debuggerStepInto() {
     showDebuggerPanel();
 }
 
+function cyclePaletteAction() {
+    if (!nes) return;
+    nes.cycle_palette();
+    drainNesToasts(nes, toastOverlay);
+}
+
 function debuggerRunToNextFrame() {
     if (!nes || !running) return;
     nes.debugger_run_to_next_frame();
@@ -2493,6 +2499,7 @@ const webShortcutActions = {
     debuggerToggle,
     debuggerStepOver,
     debuggerStepInto,
+    cyclePalette: cyclePaletteAction,
 };
 
 function updateShortcutHelpOverlayText() {
