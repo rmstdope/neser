@@ -10,7 +10,7 @@ The native frontend now exposes audio buffering in milliseconds through configur
 
 The codebase is roughly 183,000 lines of Rust, with additional JavaScript for the web frontend and Python tooling for ROM management.
 
-As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps the NES, Game Boy, and Game Boy Advance implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
+As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps the NES, Game Boy, Game Boy Advance, and SNES (stub) implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
 
 ## High-Level Architecture
 
@@ -29,7 +29,7 @@ As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic 
 │  │  (src/platform/emulator.rs)                     │  │
 │  │  Hardware-agnostic interface: run_tick, render, │  │
 │  │  audio, input, save/load state, reset           │  │
-│  │  Variants: Nes, GameBoy, GameBoyAdvance         │  │
+│  │  Variants: Nes, GameBoy, GameBoyAdvance, Snes   │  │
 │  └──────────────────────┬─────────────────────────-┘  │
 │                         │                             │
 │                         ▼                             │
@@ -70,7 +70,7 @@ As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic 
 
 The emulator is designed around a **multi-layer architecture**:
 
-- **Emulator trait + Console enum** (`src/platform/emulator.rs`): The `Emulator` trait defines the common interface that every emulated system must implement (run, render, audio, input, save/load state, reset — 22 methods total). `Nes`, `GameBoy`, and `Gba` implement the trait in their respective modules. The `Console` enum wraps all three systems and delegates common methods through `as_core()`/`as_core_mut()` (which return `&dyn Emulator`), keeping a single pair of match arms instead of one per method. System-specific features (NES debugging, PPU viewer, Zapper) are still accessed by matching on `Console::Nes`.
+- **Emulator trait + Console enum** (`src/platform/emulator.rs`): The `Emulator` trait defines the common interface that every emulated system must implement (run, render, audio, input, save/load state, reset — 22 methods total). `Nes`, `GameBoy`, `Gba`, and `Snes` (stub) implement the trait in their respective modules. The `Console` enum wraps all four systems and delegates common methods through `as_core()`/`as_core_mut()` (which return `&dyn Emulator`), keeping a single pair of match arms instead of one per method. System-specific features (NES debugging, PPU viewer, Zapper) are still accessed by matching on `Console::Nes`.
 - **NES emulator** (`src/nes/`): All NES-specific hardware lives under this namespace. The `Nes` struct in `src/nes/console/nes.rs` orchestrates the per-cycle stepping of CPU, PPU, APU, and Bus.
 - **Shared platform** (`src/platform/`): `FrontendConfig` (src/platform/config.rs), `AppContext` (src/platform/app_context.rs), audio infrastructure, and system-agnostic toast formatters are shared across all emulated systems.
 - **Bus-centric hardware**: Within the NES, the `Bus` struct routes memory reads and writes between the CPU, PPU registers, APU registers, RAM, OAM DMA, controller ports, and the cartridge mapper.
@@ -312,6 +312,30 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 | `src/gba/debugging/breakpoints.rs` | `Breakpoints` — `BTreeSet<u32>` wrapper supporting insert/remove/contains/clear and ordered iteration over breakpoint addresses. |
 | `src/gba/debugging/trace.rs` | `CpuTrace` ring buffer of recently retired instructions (`TraceEntry` carrying PC, raw word, Thumb flag, mnemonic, R0–R15 snapshot, CPSR and cumulative cycle count); configurable capacity, default 1024, with enable/disable toggle. |
 | `src/gba/debugging/controller.rs` | `GbaDebuggerController` — glues the breakpoint set, trace ring buffer, optional file logger, and disassembler to `Arm7tdmi`. Provides `step`, `run_until_breakpoint` and trace-to-file hooks. |
+
+#### SNES Emulation (`src/snes/`)
+
+The SNES (Super Nintendo Entertainment System) module provides scaffolding for future SNES emulation. Currently, it contains only stub implementations that allow SNES ROMs (`.sfc`/`.smc` files) to be recognized and dispatched through the platform layer.
+
+| Directory/File | Description |
+| ---------------- | ------------- |
+| `src/snes/mod.rs` | SNES module root. Declares all SNES sub-modules (bus, console, cpu, ppu, apu, cartridge, input, integration_tests). |
+| `src/snes/console/mod.rs` | Console module root. Re-exports `Snes` and `SnesConfig`. |
+| `src/snes/console/snes.rs` | `Snes` — platform-facing SNES wrapper implementing the `Emulator` trait. All methods are currently stubbed but return correct dimensions (256×224) and frame timing (~60.098 Hz). Provides `load_rom`, `system_type`, screen dimensions, and frame duration methods. |
+| `src/snes/console/config.rs` | `SnesConfig` struct for SNES-specific configuration (currently empty, ready for future settings). |
+| `src/snes/bus/mod.rs` | `SnesBus` trait definition and `StubBus` implementation. The trait defines the memory access contract (`read`, `write`, `tick`) mirroring the pattern used in GB and GBA. |
+| `src/snes/cpu/mod.rs` | CPU module stub (65816 processor — future implementation). |
+| `src/snes/ppu/mod.rs` | PPU module stub (SNES Picture Processing Unit — future implementation). |
+| `src/snes/apu/mod.rs` | APU module stub (SPC700 + DSP — future implementation). |
+| `src/snes/cartridge/mod.rs` | Cartridge module stub (SNES ROM parsing and LoROM/HiROM mapping — future implementation). |
+| `src/snes/input/mod.rs` | Input module stub (SNES controller protocol — future implementation). |
+| `src/snes/integration_tests/mod.rs` | Integration tests module stub (SNES validation ROMs — future implementation). |
+
+**Hardware Constants** (defined in `src/snes/console/snes.rs`):
+- Screen resolution: 256×224 pixels (NTSC mode, most common)
+- Pixel aspect ratio: 8:7 (matching NES NTSC)
+- Frame rate: ~60.098 Hz (21.477272 MHz master clock ÷ 357366 cycles per frame)
+- Frame duration: 16.639 ms
 
 #### Frontends
 

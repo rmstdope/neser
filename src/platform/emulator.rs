@@ -16,6 +16,7 @@ use crate::gb::GameBoy;
 use crate::gba::Gba;
 use crate::nes::console::Nes;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
+use crate::snes::console::Snes;
 
 /// Common operations that every emulated system must support.
 ///
@@ -67,6 +68,7 @@ pub enum SystemType {
     Nes,
     GameBoy,
     Gba,
+    Snes,
 }
 
 /// Hardware-agnostic wrapper around system-specific emulators.
@@ -84,6 +86,7 @@ pub enum Console {
     Nes(Box<Nes>),
     GameBoy(Box<GameBoy>),
     GameBoyAdvance(Box<Gba>),
+    Snes(Box<Snes>),
 }
 
 impl Console {
@@ -102,12 +105,18 @@ impl Console {
         Console::GameBoyAdvance(Box::new(Gba::new(app_context)))
     }
 
+    /// Create a new SNES emulator instance.
+    pub fn new_snes(app_context: impl IntoSharedAppContext) -> Self {
+        Console::Snes(Box::new(Snes::new(app_context)))
+    }
+
     /// Access the common emulator interface (immutable).
     pub fn as_core(&self) -> &dyn Emulator {
         match self {
             Console::Nes(nes) => nes.as_ref(),
             Console::GameBoy(gb) => gb.as_ref(),
             Console::GameBoyAdvance(gba) => gba.as_ref(),
+            Console::Snes(snes) => snes.as_ref(),
         }
     }
 
@@ -117,6 +126,7 @@ impl Console {
             Console::Nes(nes) => nes.as_mut(),
             Console::GameBoy(gb) => gb.as_mut(),
             Console::GameBoyAdvance(gba) => gba.as_mut(),
+            Console::Snes(snes) => snes.as_mut(),
         }
     }
 
@@ -255,6 +265,7 @@ impl Console {
             Console::Nes(nes) => nes.state_path(),
             Console::GameBoy(gb) => gb.state_path(),
             Console::GameBoyAdvance(gba) => gba.state_path(),
+            Console::Snes(snes) => snes.state_path(),
         }
     }
 
@@ -284,7 +295,7 @@ impl Console {
     /// Horizontal and vertical overscan in pixels for the current system.
     ///
     /// For NES, values are read from the emulator configuration.
-    /// For Game Boy, overscan is always `(0, 0)` — the GB has no overscan.
+    /// For Game Boy, GBA, and SNES, overscan is always `(0, 0)`.
     pub fn overscan(&self) -> (u32, u32) {
         match self {
             Console::Nes(nes) => {
@@ -295,7 +306,7 @@ impl Console {
                     cfg.nes.vertical_overscan as u32,
                 )
             }
-            Console::GameBoy(_) | Console::GameBoyAdvance(_) => (0, 0),
+            Console::GameBoy(_) | Console::GameBoyAdvance(_) | Console::Snes(_) => (0, 0),
         }
     }
 
@@ -311,8 +322,8 @@ impl Console {
     /// precondition used by the NES cropped snapshot path instead of silently
     /// clamping invalid values.
     ///
-    /// For Game Boy, overscan parameters are ignored and the native 160×144
-    /// resolution is always returned.
+    /// For Game Boy, GBA, and SNES, overscan parameters are ignored and the
+    /// native resolution is always returned.
     pub fn cropped_dims(&self, h_overscan: u32, v_overscan: u32) -> (u32, u32) {
         match self {
             Console::Nes(_) => {
@@ -341,7 +352,7 @@ impl Console {
                     screen_height - 2 * v_overscan,
                 )
             }
-            Console::GameBoy(_) | Console::GameBoyAdvance(_) => {
+            Console::GameBoy(_) | Console::GameBoyAdvance(_) | Console::Snes(_) => {
                 (self.screen_width(), self.screen_height())
             }
         }
@@ -349,12 +360,13 @@ impl Console {
 
     /// Pixel aspect ratio correction factor for the current system.
     ///
-    /// NES pixels are not square: the NTSC hardware maps 256 pixels across the
-    /// same horizontal extent as approximately 280 square pixels (8:7 ratio).
-    /// Game Boy and GBA pixels are square, so the correction factor is 1.0.
+    /// NES and SNES pixels are not square: the NTSC hardware maps 256 pixels
+    /// across the same horizontal extent as approximately 280 square pixels
+    /// (8:7 ratio). Game Boy and GBA pixels are square, so the correction
+    /// factor is 1.0.
     pub fn pixel_aspect(&self) -> f32 {
         match self {
-            Console::Nes(_) => 8.0 / 7.0,
+            Console::Nes(_) | Console::Snes(_) => 8.0 / 7.0,
             Console::GameBoy(_) | Console::GameBoyAdvance(_) => 1.0,
         }
     }
@@ -373,9 +385,9 @@ impl Console {
 impl SystemType {
     /// Computes windowed-mode dimensions that preserve the system's correct aspect ratio.
     ///
-    /// For NES, overscan is read from `app_context` and the NTSC 8:7 pixel aspect
-    /// ratio is applied.  For Game Boy and GBA, square pixels (1:1) are assumed
-    /// and there is no overscan.
+    /// For NES and SNES, overscan is read from `app_context` (NES only) and the
+    /// NTSC 8:7 pixel aspect ratio is applied. For Game Boy and GBA, square pixels
+    /// (1:1) are assumed and there is no overscan.
     pub fn windowed_dimensions(&self, height: u32, app_context: &SharedAppContext) -> (u32, u32) {
         let clamped_height = height.max(1);
         match self {
@@ -398,6 +410,12 @@ impl SystemType {
             SystemType::Gba => {
                 // GBA: 240×160 with square pixels (1:1)
                 let aspect = Gba::SCREEN_WIDTH as f32 / Gba::SCREEN_HEIGHT as f32;
+                let width = (clamped_height as f32 * aspect).round() as u32;
+                (width.max(1), clamped_height)
+            }
+            SystemType::Snes => {
+                // SNES: 256×224 with 8:7 pixel aspect (NTSC)
+                let aspect = (Snes::SCREEN_WIDTH as f32 / Snes::SCREEN_HEIGHT as f32) * (8.0 / 7.0);
                 let width = (clamped_height as f32 * aspect).round() as u32;
                 (width.max(1), clamped_height)
             }
@@ -1033,6 +1051,24 @@ mod tests_console_abstraction {
         let (w, h) = SystemType::Gba.windowed_dimensions(640, &app);
         assert_eq!(h, 640);
         assert_eq!(w, 960);
+    }
+
+    #[test]
+    fn test_snes_windowed_dimensions_height_224() {
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::Snes.windowed_dimensions(224, &app);
+        assert_eq!(h, 224);
+        // 256 × (8/7) = ~293
+        assert_eq!(w, 293);
+    }
+
+    #[test]
+    fn test_snes_windowed_dimensions_height_448() {
+        // 2× scale: 448 × (256/224) × (8/7) = ~586
+        let app = make_app_context_with_overscan(0, 0);
+        let (w, h) = SystemType::Snes.windowed_dimensions(448, &app);
+        assert_eq!(h, 448);
+        assert_eq!(w, 585); // (448 * 256 / 224 * 8 / 7).round() = 585
     }
 
     // --- Console::target_frame_duration() ---

@@ -250,7 +250,9 @@ impl NativeAppState {
                         nes.active_controller_port_type(2) == ControllerType::PowerPad,
                     )
                 }
-                Console::GameBoy(_) | Console::GameBoyAdvance(_) => (false, false),
+                Console::GameBoy(_) | Console::GameBoyAdvance(_) | Console::Snes(_) => {
+                    (false, false)
+                }
             };
             return Some(help_overlay_text(
                 console,
@@ -309,6 +311,10 @@ F6/F7: Save/Load state";
 
     if matches!(console, Console::GameBoy(_)) {
         return format!("{hotkeys}{}", gameboy_keyboard_section(gamepad_count));
+    }
+
+    if matches!(console, Console::Snes(_)) {
+        return format!("{hotkeys}{}", snes_keyboard_section(gamepad_count));
     }
 
     for port in 1..=max_ports {
@@ -404,6 +410,27 @@ Q: L\n\
 E: R\n\
 R: B\n\
 T: A\n\
+4: Select\n\
+5: Start"
+    )
+}
+
+fn snes_keyboard_section(gamepad_count: usize) -> String {
+    let controller = if gamepad_count == 0 {
+        "Keyboard".to_string()
+    } else {
+        "Gamepad + Keyboard shoulders/aliases".to_string()
+    };
+    format!(
+        "\n\nSNES: {controller}\n\
+W/A/S/D: D-Pad\n\
+Arrow keys: D-Pad\n\
+Q: L\n\
+E: R\n\
+R: B\n\
+T: A\n\
+Y: Y\n\
+U: X\n\
 4: Select\n\
 5: Start"
     )

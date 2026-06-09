@@ -65,6 +65,10 @@ pub fn handle_key_pressed(
         }
         Console::GameBoy(_) => handle_gameboy_key_pressed(console, key_code, app_state, audio),
         Console::GameBoyAdvance(_) => handle_gba_key_pressed(console, key_code, app_state, audio),
+        Console::Snes(_) => {
+            // SNES: basic input handling (no debugger yet)
+            KeyOutcome::Continue
+        }
     }
 }
 
@@ -96,6 +100,9 @@ pub fn handle_key_released(
             if let Some(btn_id) = gba_key_to_button_id(key_code) {
                 console.set_button(0, btn_id, false);
             }
+        }
+        Console::Snes(_) => {
+            // SNES: input handling not yet implemented
         }
     }
 }

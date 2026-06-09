@@ -5,6 +5,7 @@ pub mod gb;
 pub mod gba;
 pub mod nes;
 pub mod platform;
+pub mod snes;
 
 #[cfg(feature = "wasm")]
 #[path = "frontends/web/wasm.rs"]

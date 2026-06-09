@@ -2,12 +2,12 @@
 // by the library or test code, producing dead_code warnings in the binary crate.
 #![allow(dead_code)]
 
-mod nes;
-
 mod frontends;
 mod gb;
 mod gba;
+mod nes;
 mod platform;
+mod snes;
 
 use nes::console::{
     CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
@@ -415,6 +415,19 @@ fn run_native_emulator(
                 .add_toast(cartridge_load_toast_message(rom_path, true));
             console
         }
+        platform::emulator::SystemType::Snes => {
+            let mut console = platform::emulator::Console::new_snes(app_context.clone());
+            if let Err(err) = console.load_rom(&rom_bytes, rom_path) {
+                app_context
+                    .borrow_mut()
+                    .add_toast(cartridge_load_toast_message(rom_path, false));
+                return Err(err.into());
+            }
+            app_context
+                .borrow_mut()
+                .add_toast(cartridge_load_toast_message(rom_path, true));
+            console
+        }
     };
     let mut console = console;
 
@@ -473,6 +486,8 @@ fn detect_system_type(path: &str) -> platform::emulator::SystemType {
         platform::emulator::SystemType::GameBoy
     } else if ext.eq_ignore_ascii_case("gba") {
         platform::emulator::SystemType::Gba
+    } else if ext.eq_ignore_ascii_case("sfc") || ext.eq_ignore_ascii_case("smc") {
+        platform::emulator::SystemType::Snes
     } else {
         platform::emulator::SystemType::Nes
     }
@@ -513,6 +528,26 @@ mod tests {
     #[test]
     fn detect_system_type_gba_extension_returns_gba() {
         assert_eq!(detect_system_type("zelda.gba"), SystemType::Gba);
+    }
+
+    #[test]
+    fn detect_system_type_sfc_extension_returns_snes() {
+        assert_eq!(detect_system_type("game.sfc"), SystemType::Snes);
+    }
+
+    #[test]
+    fn detect_system_type_smc_extension_returns_snes() {
+        assert_eq!(detect_system_type("game.smc"), SystemType::Snes);
+    }
+
+    #[test]
+    fn detect_system_type_uppercase_sfc_returns_snes() {
+        assert_eq!(detect_system_type("GAME.SFC"), SystemType::Snes);
+    }
+
+    #[test]
+    fn detect_system_type_uppercase_smc_returns_snes() {
+        assert_eq!(detect_system_type("GAME.SMC"), SystemType::Snes);
     }
 
     #[test]
