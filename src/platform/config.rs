@@ -184,7 +184,8 @@ impl Default for FrontendConfig {
 /// Composed of [`FrontendConfig`] (generic frontend settings),
 /// [`NesConfig`](crate::nes::console::NesConfig) (NES hardware-specific settings),
 /// [`GbConfig`](crate::gb::console::config::GbConfig) (Game Boy-specific settings),
-/// and [`GbaConfig`](crate::gba::console::config::GbaConfig) (GBA-specific settings).
+/// [`GbaConfig`](crate::gba::console::config::GbaConfig) (GBA-specific settings),
+/// and [`SnesConfig`](crate::snes::console::config::SnesConfig) (SNES-specific settings).
 /// Parsing from CLI arguments and config files populates all sub-configs.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -196,6 +197,8 @@ pub struct Config {
     pub gb: crate::gb::console::config::GbConfig,
     /// GBA-specific hardware configuration.
     pub gba: crate::gba::console::config::GbaConfig,
+    /// SNES-specific hardware configuration.
+    pub snes: crate::snes::console::config::SnesConfig,
 }
 
 impl FrontendConfig {

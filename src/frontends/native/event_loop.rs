@@ -194,7 +194,7 @@ impl NativeEventLoop {
         let debugger_paused = match &self.console {
             Console::Nes(_) => self.debugger_controller.is_paused(),
             Console::GameBoy(_) => self.gb_debugger_controller.is_paused(),
-            Console::GameBoyAdvance(_) => false, // GBA debugger not yet implemented
+            Console::GameBoyAdvance(_) | Console::Snes(_) => false, // GBA and SNES debuggers not yet implemented
         };
         if self.state.paused && !debugger_paused {
             // Manually paused (not debugger) — skip frame
@@ -247,6 +247,19 @@ impl NativeEventLoop {
                     }
                 }
             }
+            Console::Snes(snes) => {
+                // SNES: run frame without debugger support
+                while !snes.is_ready_to_render() {
+                    let _ = snes.run_tick();
+                    if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                        while snes.sample_ready() {
+                            if let Some(sample) = snes.get_sample() {
+                                audio.queue_sample(sample);
+                            }
+                        }
+                    }
+                }
+            }
         }
         self.audio = audio_cell.into_inner();
         self.sync_from_controller();
@@ -289,7 +302,7 @@ impl NativeEventLoop {
         let debugger_open = match &self.console {
             Console::Nes(_) => self.debugger_controller.is_debugger_open(),
             Console::GameBoy(_) => self.gb_debugger_controller.is_debugger_open(),
-            Console::GameBoyAdvance(_) => false, // GBA debugger not yet implemented
+            Console::GameBoyAdvance(_) | Console::Snes(_) => false, // GBA and SNES debuggers not yet implemented
         };
 
         if debugger_open {
@@ -782,8 +795,8 @@ impl ApplicationHandler for NativeEventLoop {
                                         &mut self.gb_debugger_controller,
                                     );
                                 }
-                                Console::GameBoyAdvance(_) => {
-                                    // GBA debugger not yet implemented
+                                Console::GameBoyAdvance(_) | Console::Snes(_) => {
+                                    // GBA and SNES debuggers not yet implemented
                                 }
                             }
                             self.sync_from_controller();
@@ -796,8 +809,8 @@ impl ApplicationHandler for NativeEventLoop {
                                 Console::GameBoy(gb) => {
                                     gb.step_over_with_controller(&mut self.gb_debugger_controller);
                                 }
-                                Console::GameBoyAdvance(_) => {
-                                    // GBA debugger not yet implemented
+                                Console::GameBoyAdvance(_) | Console::Snes(_) => {
+                                    // GBA and SNES debuggers not yet implemented
                                 }
                             }
                             self.sync_from_controller();
@@ -810,8 +823,8 @@ impl ApplicationHandler for NativeEventLoop {
                                 Console::GameBoy(gb) => {
                                     gb.step_into_with_controller(&mut self.gb_debugger_controller);
                                 }
-                                Console::GameBoyAdvance(_) => {
-                                    // GBA debugger not yet implemented
+                                Console::GameBoyAdvance(_) | Console::Snes(_) => {
+                                    // GBA and SNES debuggers not yet implemented
                                 }
                             }
                             self.sync_from_controller();
@@ -1012,8 +1025,8 @@ impl ApplicationHandler for NativeEventLoop {
                         Console::GameBoy(_) => {
                             gl.update_gb_breakpoints(self.gb_debugger_controller.breakpoints());
                         }
-                        Console::GameBoyAdvance(_) => {
-                            // GBA debugger breakpoints not yet implemented
+                        Console::GameBoyAdvance(_) | Console::Snes(_) => {
+                            // GBA and SNES debugger breakpoints not yet implemented
                         }
                     }
                     let crosshair =
@@ -1048,8 +1061,8 @@ impl ApplicationHandler for NativeEventLoop {
                             );
                         }
                     }
-                    Console::GameBoyAdvance(_) => {
-                        // GBA debugger UI not yet implemented
+                    Console::GameBoyAdvance(_) | Console::Snes(_) => {
+                        // GBA and SNES debugger UI not yet implemented
                     }
                 }
                 self.sync_from_controller();
