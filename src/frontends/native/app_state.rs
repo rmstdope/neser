@@ -422,7 +422,7 @@ fn snes_keyboard_section(gamepad_count: usize) -> String {
         "Gamepad + Keyboard shoulders/aliases".to_string()
     };
     format!(
-        "\n\nSNES: {controller}\n\
+        "\n\nSNES: {controller} (controller input not yet implemented)\n\
 W/A/S/D: D-Pad\n\
 Arrow keys: D-Pad\n\
 Q: L\n\

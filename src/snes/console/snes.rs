@@ -29,6 +29,7 @@ pub struct Snes {
     app_context: SharedAppContext,
     _bus: StubBus,
     rom_path: Option<PathBuf>,
+    ready_to_render: bool,
 }
 
 impl Snes {
@@ -43,6 +44,7 @@ impl Snes {
             app_context: app_context.into_shared(),
             _bus: StubBus,
             rom_path: None,
+            ready_to_render: false,
         }
     }
 
@@ -74,17 +76,17 @@ impl Emulator for Snes {
 
     fn run_tick(&mut self) -> u8 {
         // TODO: Implement CPU execution
-        // Stub: return 1 cycle
+        // Stub: signal a frame ready after every tick so the platform loop doesn't stall
+        self.ready_to_render = true;
         1
     }
 
     fn is_ready_to_render(&self) -> bool {
-        // TODO: Implement frame ready detection
-        false
+        self.ready_to_render
     }
 
     fn clear_ready_to_render(&mut self) {
-        // TODO: Implement frame ready flag clearing
+        self.ready_to_render = false;
     }
 
     fn screen_width(&self) -> u32 {
@@ -107,8 +109,8 @@ impl Emulator for Snes {
     }
 
     fn screen_crc32(&self) -> u32 {
-        // TODO: Implement screen CRC32
-        0
+        let pixels = self.screen_snapshot();
+        crate::platform::crc32::crc32(&[&pixels])
     }
 
     fn sample_ready(&self) -> bool {
@@ -224,6 +226,31 @@ mod tests {
         let mut snes = make_snes();
         let cycles = snes.run_tick();
         assert!(cycles > 0);
+    }
+
+    #[test]
+    fn run_tick_sets_ready_to_render() {
+        let mut snes = make_snes();
+        assert!(!snes.is_ready_to_render());
+        snes.run_tick();
+        assert!(snes.is_ready_to_render());
+    }
+
+    #[test]
+    fn clear_ready_to_render_clears_flag() {
+        let mut snes = make_snes();
+        snes.run_tick();
+        assert!(snes.is_ready_to_render());
+        snes.clear_ready_to_render();
+        assert!(!snes.is_ready_to_render());
+    }
+
+    #[test]
+    fn screen_crc32_matches_snapshot_crc() {
+        let snes = make_snes();
+        let pixels = snes.screen_snapshot();
+        let expected = crate::platform::crc32::crc32(&[&pixels]);
+        assert_eq!(snes.screen_crc32(), expected);
     }
 
     #[test]

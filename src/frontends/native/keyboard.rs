@@ -65,10 +65,7 @@ pub fn handle_key_pressed(
         }
         Console::GameBoy(_) => handle_gameboy_key_pressed(console, key_code, app_state, audio),
         Console::GameBoyAdvance(_) => handle_gba_key_pressed(console, key_code, app_state, audio),
-        Console::Snes(_) => {
-            // SNES: basic input handling (no debugger yet)
-            KeyOutcome::Continue
-        }
+        Console::Snes(_) => handle_snes_key_pressed(console, key_code, app_state, audio),
     }
 }
 
@@ -243,6 +240,17 @@ fn handle_gba_key_pressed(
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
     handle_single_joypad_key_pressed(console, key_code, app_state, audio, gba_key_to_button_id)
+}
+
+fn handle_snes_key_pressed(
+    console: &mut Console,
+    key_code: KeyCode,
+    app_state: &mut NativeAppState,
+    audio: Option<&dyn EmulatorAudio>,
+) -> KeyOutcome {
+    // SNES controller input mapping not yet implemented; route common hotkeys
+    // (quit, pause, reset, fullscreen, volume, etc.) so the app remains operable.
+    handle_single_joypad_key_pressed(console, key_code, app_state, audio, |_| None)
 }
 
 fn handle_single_joypad_key_pressed(
