@@ -336,6 +336,29 @@ impl<B: SnesBus> Cpu<B> {
         }
     }
 
+    /// SEP - Set Processor Status Bits.
+    /// Sets bits in P specified by the immediate byte.
+    pub fn sep(&mut self, mask: u8) {
+        let old_x = self.x_flag();
+
+        self.p |= mask;
+
+        // Handle width transitions
+        // When X flag transitions from 0→1 (16→8 bit), force high bytes of X/Y to 0
+        if !old_x && self.x_flag() {
+            self.x &= 0x00FF;
+            self.y &= 0x00FF;
+        }
+        // When M flag transitions from 0→1 (16→8 bit), B (high byte of A) is preserved
+        // No action needed - read_a/write_a already handle this
+
+        // Note: M 1→0 transition handled naturally by read_a/write_a
+    }
+}
+
+// Private helpers — suppressed until opcode dispatch is wired up.
+#[allow(dead_code)]
+impl<B: SnesBus> Cpu<B> {
     // -------------------------------------------------------------------------
     // Addressing mode helpers
     // Each returns a 24-bit effective address (u32, upper byte always 0 for
@@ -442,23 +465,72 @@ impl<B: SnesBus> Cpu<B> {
         ((self.dbr as u32) << 16 | ptr).wrapping_add(self.y as u32) & 0xFF_FFFF
     }
 
-    /// SEP - Set Processor Status Bits.
-    /// Sets bits in P specified by the immediate byte.
-    pub fn sep(&mut self, mask: u8) {
-        let old_x = self.x_flag();
+    // -------------------------------------------------------------------------
+    // Width-aware memory access helpers
+    // -------------------------------------------------------------------------
 
-        self.p |= mask;
+    /// Read one byte from the bus.
+    fn read8(&self, addr: u32) -> u8 {
+        self.bus.read(addr & 0xFF_FFFF)
+    }
 
-        // Handle width transitions
-        // When X flag transitions from 0→1 (16→8 bit), force high bytes of X/Y to 0
-        if !old_x && self.x_flag() {
-            self.x &= 0x00FF;
-            self.y &= 0x00FF;
+    /// Write one byte to the bus.
+    fn write8(&mut self, addr: u32, value: u8) {
+        self.bus.write(addr & 0xFF_FFFF, value);
+    }
+
+    /// Read two bytes little-endian; high byte wraps within the same bank.
+    fn read16(&self, addr: u32) -> u16 {
+        let bank = addr & 0xFF_0000;
+        let offset = addr & 0x0000_FFFF;
+        let lo = self.bus.read(bank | offset);
+        let hi = self.bus.read(bank | ((offset + 1) & 0xFFFF));
+        lo as u16 | (hi as u16) << 8
+    }
+
+    /// Write two bytes little-endian; high byte wraps within the same bank.
+    fn write16(&mut self, addr: u32, value: u16) {
+        let bank = addr & 0xFF_0000;
+        let offset = addr & 0x0000_FFFF;
+        self.bus.write(bank | offset, value as u8);
+        self.bus
+            .write(bank | ((offset + 1) & 0xFFFF), (value >> 8) as u8);
+    }
+
+    /// Read M-flag width: 8-bit when M=1, 16-bit when M=0.
+    fn read_m(&self, addr: u32) -> u16 {
+        if self.m_flag() {
+            self.read8(addr) as u16
+        } else {
+            self.read16(addr)
         }
-        // When M flag transitions from 0→1 (16→8 bit), B (high byte of A) is preserved
-        // No action needed - read_a/write_a already handle this
+    }
 
-        // Note: M 1→0 transition handled naturally by read_a/write_a
+    /// Write M-flag width: 8-bit when M=1, 16-bit when M=0.
+    fn write_m(&mut self, addr: u32, value: u16) {
+        if self.m_flag() {
+            self.write8(addr, value as u8);
+        } else {
+            self.write16(addr, value);
+        }
+    }
+
+    /// Read X-flag width: 8-bit when X=1, 16-bit when X=0.
+    fn read_idx(&self, addr: u32) -> u16 {
+        if self.x_flag() {
+            self.read8(addr) as u16
+        } else {
+            self.read16(addr)
+        }
+    }
+
+    /// Write X-flag width: 8-bit when X=1, 16-bit when X=0.
+    fn write_idx(&mut self, addr: u32, value: u16) {
+        if self.x_flag() {
+            self.write8(addr, value as u8);
+        } else {
+            self.write16(addr, value);
+        }
     }
 }
 
@@ -1104,5 +1176,128 @@ mod tests {
             cpu.bus.load(0x0000_0000, &[0x12]);
             assert_eq!(cpu.addr_sr_ind_y(0x00), 0x03_1234);
         }
+    }
+}
+
+#[cfg(test)]
+mod mem_helpers_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn make_cpu() -> Cpu<TestBus> {
+        Cpu::new(TestBus::default())
+    }
+
+    #[test]
+    fn read8_returns_byte_at_address() {
+        let mut cpu = make_cpu();
+        cpu.bus.load(0x01_2000, &[0xAB]);
+        assert_eq!(cpu.read8(0x01_2000), 0xAB);
+    }
+
+    #[test]
+    fn write8_stores_byte_at_address() {
+        let mut cpu = make_cpu();
+        cpu.write8(0x01_3000, 0x55);
+        assert_eq!(cpu.bus.read(0x01_3000), 0x55);
+    }
+
+    #[test]
+    fn read16_little_endian() {
+        let mut cpu = make_cpu();
+        cpu.bus.load(0x02_1000, &[0x34, 0x12]);
+        assert_eq!(cpu.read16(0x02_1000), 0x1234);
+    }
+
+    #[test]
+    fn read16_wraps_high_byte_within_bank() {
+        let mut cpu = make_cpu();
+        cpu.bus.load(0x02_FFFF, &[0x78]);
+        cpu.bus.load(0x02_0000, &[0x56]);
+        assert_eq!(cpu.read16(0x02_FFFF), 0x5678);
+    }
+
+    #[test]
+    fn write16_little_endian() {
+        let mut cpu = make_cpu();
+        cpu.write16(0x03_2000, 0xBEEF);
+        assert_eq!(cpu.bus.read(0x03_2000), 0xEF);
+        assert_eq!(cpu.bus.read(0x03_2001), 0xBE);
+    }
+
+    #[test]
+    fn write16_wraps_high_byte_within_bank() {
+        let mut cpu = make_cpu();
+        cpu.write16(0x04_FFFF, 0xCAFE);
+        assert_eq!(cpu.bus.read(0x04_FFFF), 0xFE);
+        assert_eq!(cpu.bus.read(0x04_0000), 0xCA);
+    }
+
+    #[test]
+    fn read_m_reads_8bit_when_m_flag_set() {
+        let mut cpu = make_cpu(); // reset default: M=1
+        cpu.bus.load(0x00_1000, &[0x42, 0xFF]);
+        assert_eq!(cpu.read_m(0x00_1000), 0x0042);
+    }
+
+    #[test]
+    fn read_m_reads_16bit_when_m_flag_clear() {
+        let mut cpu = make_cpu();
+        cpu.e = false;
+        cpu.rep(FLAG_ACCUM_WIDTH);
+        cpu.bus.load(0x00_1000, &[0x34, 0x12]);
+        assert_eq!(cpu.read_m(0x00_1000), 0x1234);
+    }
+
+    #[test]
+    fn write_m_writes_8bit_when_m_flag_set() {
+        let mut cpu = make_cpu(); // default: M=1
+        cpu.write_m(0x00_2000, 0x1234);
+        assert_eq!(cpu.bus.read(0x00_2000), 0x34);
+        assert_eq!(cpu.bus.read(0x00_2001), 0x00); // high byte not written
+    }
+
+    #[test]
+    fn write_m_writes_16bit_when_m_flag_clear() {
+        let mut cpu = make_cpu();
+        cpu.e = false;
+        cpu.rep(FLAG_ACCUM_WIDTH);
+        cpu.write_m(0x00_3000, 0xABCD);
+        assert_eq!(cpu.bus.read(0x00_3000), 0xCD);
+        assert_eq!(cpu.bus.read(0x00_3001), 0xAB);
+    }
+
+    #[test]
+    fn read_idx_reads_8bit_when_x_flag_set() {
+        let mut cpu = make_cpu(); // reset default: X=1
+        cpu.bus.load(0x00_4000, &[0x77, 0xFF]);
+        assert_eq!(cpu.read_idx(0x00_4000), 0x0077);
+    }
+
+    #[test]
+    fn read_idx_reads_16bit_when_x_flag_clear() {
+        let mut cpu = make_cpu();
+        cpu.e = false;
+        cpu.rep(FLAG_INDEX_WIDTH);
+        cpu.bus.load(0x00_4000, &[0x34, 0x12]);
+        assert_eq!(cpu.read_idx(0x00_4000), 0x1234);
+    }
+
+    #[test]
+    fn write_idx_writes_8bit_when_x_flag_set() {
+        let mut cpu = make_cpu(); // default: X=1
+        cpu.write_idx(0x00_5000, 0x1234);
+        assert_eq!(cpu.bus.read(0x00_5000), 0x34);
+        assert_eq!(cpu.bus.read(0x00_5001), 0x00); // high byte not written
+    }
+
+    #[test]
+    fn write_idx_writes_16bit_when_x_flag_clear() {
+        let mut cpu = make_cpu();
+        cpu.e = false;
+        cpu.rep(FLAG_INDEX_WIDTH);
+        cpu.write_idx(0x00_6000, 0xDEAD);
+        assert_eq!(cpu.bus.read(0x00_6000), 0xAD);
+        assert_eq!(cpu.bus.read(0x00_6001), 0xDE);
     }
 }
