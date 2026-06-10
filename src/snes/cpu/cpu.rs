@@ -354,6 +354,192 @@ impl<B: SnesBus> Cpu<B> {
 
         // Note: M 1→0 transition handled naturally by read_a/write_a
     }
+    /// Execute one instruction: fetch opcode at PBR:PC, advance PC, dispatch.
+    /// Returns the number of master cycles consumed.
+    pub fn step(&mut self) -> u8 {
+        let opcode = self.fetch_byte();
+        match opcode {
+            0x1B => self.op_tcs(),
+            0x3B => self.op_tsc(),
+            0x5B => self.op_tcd(),
+            0x7B => self.op_tdc(),
+            0x8A => self.op_txa(),
+            0x98 => self.op_tya(),
+            0x9A => self.op_txs(),
+            0x9B => self.op_txy(),
+            0xA8 => self.op_tay(),
+            0xAA => self.op_tax(),
+            0xBA => self.op_tsx(),
+            0xBB => self.op_tyx(),
+            0xEA => self.op_nop(),
+            0xEB => self.op_xba(),
+            _ => todo!("opcode {opcode:#04X} not yet implemented"),
+        }
+    }
+
+    /// Fetch the byte at PBR:PC and advance PC by 1.
+    pub fn fetch_byte(&mut self) -> u8 {
+        let addr = (self.pbr as u32) << 16 | self.pc as u32;
+        let byte = self.bus.read(addr);
+        self.pc = self.pc.wrapping_add(1);
+        byte
+    }
+
+    // -------------------------------------------------------------------------
+    // Flag helpers
+    // -------------------------------------------------------------------------
+
+    /// Update N and Z flags based on a value and a bit-width mask.
+    /// `width_mask` is 0x80 for 8-bit mode, 0x8000 for 16-bit mode.
+    fn set_nz(&mut self, value: u16, width_mask: u16) {
+        self.set_flag_n(value & width_mask != 0);
+        let z_mask = if width_mask == 0x80 { 0x00FF } else { 0xFFFF };
+        self.set_flag_z(value & z_mask == 0);
+    }
+
+    fn set_nz_m(&mut self, value: u16) {
+        if self.m_flag() {
+            self.set_nz(value, 0x80);
+        } else {
+            self.set_nz(value, 0x8000);
+        }
+    }
+
+    fn set_nz_x(&mut self, value: u16) {
+        if self.x_flag() {
+            self.set_nz(value, 0x80);
+        } else {
+            self.set_nz(value, 0x8000);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Implied-mode opcodes
+    // -------------------------------------------------------------------------
+
+    fn op_nop(&mut self) -> u8 {
+        2
+    }
+
+    fn op_tax(&mut self) -> u8 {
+        let val = if self.x_flag() {
+            self.a & 0x00FF
+        } else {
+            self.a
+        };
+        self.write_x(val);
+        self.set_nz_x(self.x);
+        2
+    }
+
+    fn op_txa(&mut self) -> u8 {
+        let val = if self.m_flag() {
+            self.x & 0x00FF
+        } else {
+            self.x
+        };
+        self.write_a(val);
+        let a = self.a;
+        self.set_nz_m(a);
+        2
+    }
+
+    fn op_tay(&mut self) -> u8 {
+        let val = if self.x_flag() {
+            self.a & 0x00FF
+        } else {
+            self.a
+        };
+        self.write_y(val);
+        self.set_nz_x(self.y);
+        2
+    }
+
+    fn op_tya(&mut self) -> u8 {
+        let val = if self.m_flag() {
+            self.y & 0x00FF
+        } else {
+            self.y
+        };
+        self.write_a(val);
+        let a = self.a;
+        self.set_nz_m(a);
+        2
+    }
+
+    fn op_txs(&mut self) -> u8 {
+        // TXS does not set flags. In emulation mode write_s forces high byte to $01.
+        let val = self.x;
+        self.write_s(val);
+        2
+    }
+
+    fn op_tsx(&mut self) -> u8 {
+        let val = if self.x_flag() {
+            self.s & 0x00FF
+        } else {
+            self.s
+        };
+        self.write_x(val);
+        self.set_nz_x(self.x);
+        2
+    }
+
+    fn op_txy(&mut self) -> u8 {
+        let val = self.x;
+        self.write_y(val);
+        self.set_nz_x(self.y);
+        2
+    }
+
+    fn op_tyx(&mut self) -> u8 {
+        let val = self.y;
+        self.write_x(val);
+        self.set_nz_x(self.x);
+        2
+    }
+
+    fn op_tcd(&mut self) -> u8 {
+        // Always 16-bit regardless of M flag
+        self.d = self.a;
+        self.set_nz(self.d, 0x8000);
+        2
+    }
+
+    fn op_tdc(&mut self) -> u8 {
+        // Always 16-bit regardless of M flag; loads into full C (A register)
+        self.a = self.d;
+        let a = self.a;
+        self.set_nz(a, 0x8000);
+        2
+    }
+
+    fn op_tcs(&mut self) -> u8 {
+        // Always uses full 16-bit A; no flags set
+        self.s = self.a;
+        // In emulation mode, TCS still stores full 16-bit (unlike write_s which clamps).
+        // The 65816 spec says TCS in native mode transfers C→S; behavior in emulation
+        // is undefined but common implementations store full value.
+        2
+    }
+
+    fn op_tsc(&mut self) -> u8 {
+        // Always 16-bit; loads S into full C (A register)
+        self.a = self.s;
+        let a = self.a;
+        self.set_nz(a, 0x8000);
+        2
+    }
+
+    fn op_xba(&mut self) -> u8 {
+        let lo = (self.a & 0x00FF) as u8;
+        let hi = ((self.a >> 8) & 0xFF) as u8;
+        self.a = (lo as u16) << 8 | hi as u16;
+        // N and Z are set based on the new low byte (hi of original)
+        let new_lo = hi as u16;
+        self.set_nz(new_lo, 0x80);
+        3
+    }
 }
 
 // Private helpers — suppressed until opcode dispatch is wired up.
@@ -1299,5 +1485,439 @@ mod mem_helpers_tests {
         cpu.write_idx(0x00_6000, 0xDEAD);
         assert_eq!(cpu.bus.read(0x00_6000), 0xAD);
         assert_eq!(cpu.bus.read(0x00_6001), 0xDE);
+    }
+}
+
+#[cfg(test)]
+mod step_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn make_native_cpu() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    fn make_8bit_cpu() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu
+    }
+
+    // -------------------------------------------------------------------------
+    // NOP
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn nop_advances_pc_by_1() {
+        let mut cpu = make_native_cpu();
+        cpu.pc = 0x1000;
+        cpu.bus.load(0x1000, &[0xEA]); // NOP
+        let flags_before = cpu.p;
+        cpu.step();
+        assert_eq!(cpu.pc, 0x1001);
+        assert_eq!(cpu.p, flags_before); // no flag changes
+    }
+
+    // -------------------------------------------------------------------------
+    // TAX  ($AA) — A→X, X-width, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn tax_16bit_transfers_a_to_x() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x1234;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xAA]); // TAX
+        cpu.step();
+        assert_eq!(cpu.x, 0x1234);
+    }
+
+    #[test]
+    fn tax_8bit_transfers_low_byte_of_a_to_x() {
+        let mut cpu = make_8bit_cpu();
+        cpu.a = 0x1234;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xAA]); // TAX
+        cpu.step();
+        assert_eq!(cpu.x, 0x0034); // only low byte, high forced to 0
+    }
+
+    #[test]
+    fn tax_sets_n_flag_when_result_negative() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x8001;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xAA]);
+        cpu.step();
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn tax_sets_z_flag_when_result_zero() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x0000;
+        cpu.p |= FLAG_NEGATIVE; // pre-set N to verify it clears
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xAA]);
+        cpu.step();
+        assert!(!cpu.flag_n());
+        assert!(cpu.flag_z());
+    }
+
+    // -------------------------------------------------------------------------
+    // TXA  ($8A) — X→A, M-width, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn txa_16bit_transfers_x_to_a() {
+        let mut cpu = make_native_cpu();
+        cpu.x = 0x5678;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x8A]); // TXA
+        cpu.step();
+        assert_eq!(cpu.a, 0x5678);
+    }
+
+    #[test]
+    fn txa_8bit_transfers_x_to_low_byte_of_a() {
+        let mut cpu = make_8bit_cpu();
+        cpu.a = 0x1200; // B=0x12 preserved
+        cpu.x = 0x0056;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x8A]); // TXA
+        cpu.step();
+        assert_eq!(cpu.a, 0x1256); // B preserved, A=0x56
+    }
+
+    #[test]
+    fn txa_8bit_sets_z_flag_when_low_byte_zero_even_with_nonzero_b() {
+        let mut cpu = make_8bit_cpu();
+        cpu.a = 0x1200; // B=0x12
+        cpu.x = 0x0000; // X low byte = 0
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x8A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x1200); // B preserved, A=0x00
+        assert!(cpu.flag_z()); // Z set because 8-bit result is 0x00
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn txa_sets_n_flag() {
+        let mut cpu = make_native_cpu();
+        cpu.x = 0x8000;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x8A]);
+        cpu.step();
+        assert!(cpu.flag_n());
+    }
+
+    #[test]
+    fn txa_sets_z_flag_when_zero() {
+        let mut cpu = make_native_cpu();
+        cpu.x = 0x0000;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x8A]);
+        cpu.step();
+        assert!(cpu.flag_z());
+    }
+
+    // -------------------------------------------------------------------------
+    // TAY  ($A8) — A→Y, X-width, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn tay_16bit_transfers_a_to_y() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0xABCD;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xA8]); // TAY
+        cpu.step();
+        assert_eq!(cpu.y, 0xABCD);
+    }
+
+    #[test]
+    fn tay_8bit_truncates_to_low_byte() {
+        let mut cpu = make_8bit_cpu();
+        cpu.a = 0x1234;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xA8]);
+        cpu.step();
+        assert_eq!(cpu.y, 0x0034);
+    }
+
+    #[test]
+    fn tay_sets_n_and_z_flags() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x0000;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xA8]);
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(!cpu.flag_n());
+    }
+
+    // -------------------------------------------------------------------------
+    // TYA  ($98) — Y→A, M-width, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn tya_16bit_transfers_y_to_a() {
+        let mut cpu = make_native_cpu();
+        cpu.y = 0x1357;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x98]); // TYA
+        cpu.step();
+        assert_eq!(cpu.a, 0x1357);
+    }
+
+    #[test]
+    fn tya_8bit_transfers_y_to_low_a_preserves_b() {
+        let mut cpu = make_8bit_cpu();
+        cpu.a = 0x2200;
+        cpu.y = 0x0077;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x98]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x2277); // B preserved
+    }
+
+    // -------------------------------------------------------------------------
+    // TXS  ($9A) — X→S, no flags  (in native: full 16-bit; emulation: low byte)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn txs_native_transfers_full_x_to_s_no_flags() {
+        let mut cpu = make_native_cpu();
+        cpu.x = 0x1234;
+        cpu.p = FLAG_NEGATIVE | FLAG_ZERO; // pre-set flags
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x9A]); // TXS
+        cpu.step();
+        assert_eq!(cpu.s, 0x1234);
+        assert_eq!(cpu.p, FLAG_NEGATIVE | FLAG_ZERO); // flags unchanged
+    }
+
+    #[test]
+    fn txs_emulation_forces_high_byte_01() {
+        let mut cpu = Cpu::new(TestBus::default()); // emulation mode
+        cpu.x = 0x0056;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x9A]);
+        cpu.step();
+        assert_eq!(cpu.s, 0x0156); // high byte forced to $01 in emulation
+    }
+
+    // -------------------------------------------------------------------------
+    // TSX  ($BA) — S→X, X-width, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn tsx_16bit_transfers_s_to_x_sets_flags() {
+        let mut cpu = make_native_cpu();
+        cpu.s = 0x8001;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xBA]); // TSX
+        cpu.step();
+        assert_eq!(cpu.x, 0x8001);
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn tsx_8bit_transfers_low_byte_of_s() {
+        let mut cpu = make_8bit_cpu();
+        cpu.s = 0x01AB;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xBA]);
+        cpu.step();
+        assert_eq!(cpu.x, 0x00AB); // only low byte
+    }
+
+    // -------------------------------------------------------------------------
+    // TXY  ($9B) — X→Y, X-width, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn txy_16bit_transfers_x_to_y() {
+        let mut cpu = make_native_cpu();
+        cpu.x = 0x4321;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x9B]); // TXY
+        cpu.step();
+        assert_eq!(cpu.y, 0x4321);
+        assert!(!cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    // -------------------------------------------------------------------------
+    // TYX  ($BB) — Y→X, X-width, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn tyx_16bit_transfers_y_to_x() {
+        let mut cpu = make_native_cpu();
+        cpu.y = 0xFFFF;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xBB]); // TYX
+        cpu.step();
+        assert_eq!(cpu.x, 0xFFFF);
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    // -------------------------------------------------------------------------
+    // TCD  ($5B) — C(16-bit A)→D, always 16-bit, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn tcd_always_16bit_transfers_a_to_d() {
+        let mut cpu = make_8bit_cpu(); // even in 8-bit mode, TCD is always 16-bit
+        cpu.a = 0x1234;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x5B]); // TCD
+        cpu.step();
+        assert_eq!(cpu.d, 0x1234);
+    }
+
+    #[test]
+    fn tcd_sets_n_flag_for_negative_value() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x8000;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x5B]);
+        cpu.step();
+        assert!(cpu.flag_n());
+    }
+
+    #[test]
+    fn tcd_sets_z_flag_for_zero() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x0000;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x5B]);
+        cpu.step();
+        assert!(cpu.flag_z());
+    }
+
+    // -------------------------------------------------------------------------
+    // TDC  ($7B) — D→C(16-bit A), always 16-bit, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn tdc_always_16bit_transfers_d_to_a() {
+        let mut cpu = make_8bit_cpu();
+        cpu.d = 0xABCD;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x7B]); // TDC
+        cpu.step();
+        assert_eq!(cpu.a, 0xABCD);
+    }
+
+    #[test]
+    fn tdc_sets_n_z_flags() {
+        let mut cpu = make_native_cpu();
+        cpu.d = 0x0000;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x7B]);
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(!cpu.flag_n());
+    }
+
+    // -------------------------------------------------------------------------
+    // TCS  ($1B) — C(16-bit A)→S, always 16-bit in native, no flags
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn tcs_native_transfers_a_to_s_no_flags() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x1FFF;
+        cpu.p = FLAG_ZERO; // pre-set flags
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x1B]); // TCS
+        cpu.step();
+        assert_eq!(cpu.s, 0x1FFF);
+        assert_eq!(cpu.p, FLAG_ZERO); // flags unchanged
+    }
+
+    // -------------------------------------------------------------------------
+    // TSC  ($3B) — S→C(16-bit A), always 16-bit, sets N,Z
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn tsc_always_16bit_transfers_s_to_a() {
+        let mut cpu = make_8bit_cpu();
+        cpu.s = 0x01FF;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x3B]); // TSC
+        cpu.step();
+        assert_eq!(cpu.a, 0x01FF);
+    }
+
+    #[test]
+    fn tsc_sets_flags() {
+        let mut cpu = make_native_cpu();
+        cpu.s = 0x8000;
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0x3B]);
+        cpu.step();
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    // -------------------------------------------------------------------------
+    // XBA  ($EB) — exchange B and A bytes, sets N,Z on new low byte
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn xba_swaps_b_and_a_bytes() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x1234; // B=0x12, A=0x34
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xEB]); // XBA
+        cpu.step();
+        assert_eq!(cpu.a, 0x3412); // B=0x34, A=0x12
+    }
+
+    #[test]
+    fn xba_sets_n_z_flags_on_new_low_byte() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x0080; // B=0x00, A=0x80 → after swap: B=0x80, A=0x00
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xEB]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x8000);
+        assert!(cpu.flag_z()); // new low byte (0x00) is zero
+        assert!(!cpu.flag_n()); // new low byte is not negative
+    }
+
+    #[test]
+    fn xba_n_flag_on_new_low_byte_negative() {
+        let mut cpu = make_native_cpu();
+        cpu.a = 0x0090; // B=0x00, A=0x90 → after: B=0x90, A=0x00; wait - swap B and A
+        // A=0x00AB: B=0x00, A=0xAB → after swap: B=0xAB, A=0x00? No.
+        // Actually: B is high byte, A is low byte of the 16-bit register
+        // a = 0xBBAA: BB = high = B, AA = low = A
+        // XBA: swap → a = 0xAABB
+        cpu.a = 0x00AB; // B=0x00, A(low)=0xAB → swap → B=0xAB, A(low)=0x00
+        // Hmm, let me reconsider. In the register: a stores B:A where B=high byte.
+        // XBA swaps high and low bytes.
+        // So 0x00AB → 0xAB00: new low byte = 0x00 (not negative)
+        // Let me use a = 0x3490: low = 0x90 (negative), high = 0x34
+        // After XBA: 0x9034, new low byte = 0x34 (not negative)
+        // Let me use a value where new low byte is >= 0x80
+        cpu.a = 0x9034; // B=0x90, A=0x34 → swap → B=0x34, A=0x90
+        cpu.pc = 0x0000;
+        cpu.bus.load(0x0000, &[0xEB]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x3490);
+        assert!(cpu.flag_n()); // new low byte 0x90 is negative
+        assert!(!cpu.flag_z());
     }
 }
