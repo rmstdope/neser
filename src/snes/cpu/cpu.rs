@@ -62,7 +62,6 @@ pub struct Cpu<B: SnesBus> {
     e: bool,
 
     /// Bus for memory access
-    #[allow(dead_code)] // Will be used in later sub-issues for opcode execution
     bus: B,
 }
 
@@ -335,6 +334,112 @@ impl<B: SnesBus> Cpu<B> {
             // (they were already 0 due to write_x/write_y forcing)
             // No action needed here as write_x/y already enforce this
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Addressing mode helpers
+    // Each returns a 24-bit effective address (u32, upper byte always 0 for
+    // bank-0 modes).  Indirect helpers read pointer bytes via self.bus.
+    // -------------------------------------------------------------------------
+
+    /// Direct Page: EA = (D + offset) & 0xFFFF  [bank 0]
+    fn addr_dp(&self, offset: u8) -> u32 {
+        (self.d as u32 + offset as u32) & 0xFFFF
+    }
+
+    /// Direct Page Indexed X: EA = (D + offset + X) & 0xFFFF  [bank 0]
+    fn addr_dp_x(&self, offset: u8) -> u32 {
+        (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF
+    }
+
+    /// Direct Page Indexed Y: EA = (D + offset + Y) & 0xFFFF  [bank 0]
+    fn addr_dp_y(&self, offset: u8) -> u32 {
+        (self.d as u32 + offset as u32 + self.y as u32) & 0xFFFF
+    }
+
+    /// Absolute: EA = DBR:abs
+    fn addr_abs(&self, abs: u16) -> u32 {
+        (self.dbr as u32) << 16 | abs as u32
+    }
+
+    /// Absolute Indexed X: EA = (DBR:abs + X) & 0xFF_FFFF
+    fn addr_abs_x(&self, abs: u16) -> u32 {
+        ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.x as u32) & 0xFF_FFFF
+    }
+
+    /// Absolute Indexed Y: EA = (DBR:abs + Y) & 0xFF_FFFF
+    fn addr_abs_y(&self, abs: u16) -> u32 {
+        ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.y as u32) & 0xFF_FFFF
+    }
+
+    /// Absolute Long: EA = 24-bit operand (pass-through, masked to 24 bits)
+    fn addr_abs_long(&self, addr: u32) -> u32 {
+        addr & 0xFF_FFFF
+    }
+
+    /// Absolute Long Indexed X: EA = (24-bit operand + X) & 0xFF_FFFF
+    fn addr_abs_long_x(&self, addr: u32) -> u32 {
+        addr.wrapping_add(self.x as u32) & 0xFF_FFFF
+    }
+
+    /// Stack Relative: EA = (S + offset) & 0xFFFF  [bank 0]
+    fn addr_sr(&self, offset: u8) -> u32 {
+        (self.s as u32 + offset as u32) & 0xFFFF
+    }
+
+    /// Direct Page Indirect: pointer at (D+offset), EA = DBR:ptr16
+    fn addr_dp_ind(&self, offset: u8) -> u32 {
+        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let lo = self.bus.read(ptr_addr);
+        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let ptr = lo as u32 | (hi as u32) << 8;
+        (self.dbr as u32) << 16 | ptr
+    }
+
+    /// Direct Page Indirect Long: 24-bit pointer at (D+offset)
+    fn addr_dp_ind_long(&self, offset: u8) -> u32 {
+        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let lo = self.bus.read(ptr_addr);
+        let mid = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let hi = self.bus.read((ptr_addr + 2) & 0xFFFF);
+        lo as u32 | (mid as u32) << 8 | (hi as u32) << 16
+    }
+
+    /// Direct Page Indexed Indirect X: pointer at (D+offset+X), EA = DBR:ptr16
+    fn addr_dp_x_ind(&self, offset: u8) -> u32 {
+        let ptr_addr = (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF;
+        let lo = self.bus.read(ptr_addr);
+        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let ptr = lo as u32 | (hi as u32) << 8;
+        (self.dbr as u32) << 16 | ptr
+    }
+
+    /// Direct Page Indirect Indexed Y: ptr16 at (D+offset), EA = (DBR:ptr16+Y) & 0xFF_FFFF
+    fn addr_dp_ind_y(&self, offset: u8) -> u32 {
+        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let lo = self.bus.read(ptr_addr);
+        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let ptr = lo as u32 | (hi as u32) << 8;
+        ((self.dbr as u32) << 16 | ptr).wrapping_add(self.y as u32) & 0xFF_FFFF
+    }
+
+    /// Direct Page Indirect Long Indexed Y: 24-bit ptr at (D+offset), EA = (ptr+Y) & 0xFF_FFFF
+    fn addr_dp_ind_long_y(&self, offset: u8) -> u32 {
+        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let lo = self.bus.read(ptr_addr);
+        let mid = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let hi = self.bus.read((ptr_addr + 2) & 0xFFFF);
+        let base = lo as u32 | (mid as u32) << 8 | (hi as u32) << 16;
+        base.wrapping_add(self.y as u32) & 0xFF_FFFF
+    }
+
+    /// Stack Relative Indirect Indexed Y: ptr16 at (S+offset), EA = (DBR:ptr16+Y) & 0xFF_FFFF
+    fn addr_sr_ind_y(&self, offset: u8) -> u32 {
+        let ptr_addr = (self.s as u32 + offset as u32) & 0xFFFF;
+        let lo = self.bus.read(ptr_addr);
+        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let ptr = lo as u32 | (hi as u32) << 8;
+        ((self.dbr as u32) << 16 | ptr).wrapping_add(self.y as u32) & 0xFF_FFFF
     }
 
     /// SEP - Set Processor Status Bits.
@@ -721,5 +826,283 @@ mod tests {
         assert!(cpu.m_flag()); // Forced to 1
         assert!(cpu.x_flag()); // Forced to 1
         assert_eq!(cpu.read_s(), 0x0145); // S high byte forced to $01
+    }
+
+    // -------------------------------------------------------------------------
+    // Addressing mode tests
+    // -------------------------------------------------------------------------
+
+    mod addr_modes {
+        use super::*;
+        use crate::snes::bus::TestBus;
+
+        fn cpu_with_bus() -> Cpu<TestBus> {
+            let mut cpu = Cpu::new(TestBus::default());
+            // Switch to native mode, 16-bit A and X/Y by default
+            cpu.e = false;
+            cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+            cpu
+        }
+
+        // -- Direct Page -------------------------------------------------------
+
+        #[test]
+        fn addr_dp_basic() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0x0200);
+            assert_eq!(cpu.addr_dp(0x10), 0x0000_0210);
+        }
+
+        #[test]
+        fn addr_dp_wraps_at_16bit() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0xFF00);
+            assert_eq!(cpu.addr_dp(0xFF), 0x0000_FFFF);
+        }
+
+        #[test]
+        fn addr_dp_x_adds_x_register() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0x0200);
+            cpu.write_x(0x0010);
+            assert_eq!(cpu.addr_dp_x(0x10), 0x0000_0220);
+        }
+
+        #[test]
+        fn addr_dp_x_wraps_at_16bit() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0xFF00);
+            cpu.write_x(0x0001);
+            // 0xFF00 + 0xFF + 0x01 = 0x10000 → wraps to 0x0000
+            assert_eq!(cpu.addr_dp_x(0xFF), 0x0000_0000);
+        }
+
+        #[test]
+        fn addr_dp_y_adds_y_register() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0x0200);
+            cpu.write_y(0x0005);
+            assert_eq!(cpu.addr_dp_y(0x10), 0x0000_0215);
+        }
+
+        // -- Absolute ----------------------------------------------------------
+
+        #[test]
+        fn addr_abs_uses_dbr_as_bank() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_dbr(0x03);
+            assert_eq!(cpu.addr_abs(0x1234), 0x03_1234);
+        }
+
+        #[test]
+        fn addr_abs_x_adds_x_and_can_cross_bank() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_dbr(0x01);
+            cpu.write_x(0x0100);
+            // 0x01_FF00 + 0x100 = 0x02_0000
+            assert_eq!(cpu.addr_abs_x(0xFF00), 0x02_0000);
+        }
+
+        #[test]
+        fn addr_abs_y_adds_y_and_can_cross_bank() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_dbr(0x02);
+            cpu.write_y(0x0050);
+            assert_eq!(cpu.addr_abs_y(0x1200), 0x02_1250);
+        }
+
+        // -- Absolute Long -----------------------------------------------------
+
+        #[test]
+        fn addr_abs_long_passes_through_24bit_addr() {
+            let cpu = cpu_with_bus();
+            assert_eq!(cpu.addr_abs_long(0x12_3456), 0x12_3456);
+        }
+
+        #[test]
+        fn addr_abs_long_x_adds_x() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_x(0x0010);
+            assert_eq!(cpu.addr_abs_long_x(0x12_3456), 0x12_3466);
+        }
+
+        #[test]
+        fn addr_abs_long_x_wraps_at_24bit() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_x(0x0001);
+            assert_eq!(cpu.addr_abs_long_x(0xFF_FFFF), 0x00_0000);
+        }
+
+        // -- Stack Relative ----------------------------------------------------
+
+        #[test]
+        fn addr_sr_adds_offset_to_s() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_s(0x01F0);
+            assert_eq!(cpu.addr_sr(0x10), 0x0000_0200);
+        }
+
+        #[test]
+        fn addr_sr_wraps_at_16bit() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_s(0xFF01);
+            // 0xFF01 + 0xFF = 0x1_0000 → wraps to 0x0000
+            assert_eq!(cpu.addr_sr(0xFF), 0x0000_0000);
+        }
+
+        // -- Direct Page Indirect (dp) -----------------------------------------
+
+        #[test]
+        fn addr_dp_ind_reads_ptr16_and_adds_dbr() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0x0200);
+            cpu.write_dbr(0x05);
+            // Place 16-bit pointer $1234 at DP address $0210
+            cpu.bus.load(0x0000_0210, &[0x34, 0x12]);
+            assert_eq!(cpu.addr_dp_ind(0x10), 0x05_1234);
+        }
+
+        // -- Direct Page Indirect Long [dp] ------------------------------------
+
+        #[test]
+        fn addr_dp_ind_long_reads_ptr24() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0x0200);
+            // Place 24-bit pointer $78_1234 at DP address $0210
+            cpu.bus.load(0x0000_0210, &[0x34, 0x12, 0x78]);
+            assert_eq!(cpu.addr_dp_ind_long(0x10), 0x78_1234);
+        }
+
+        // -- Direct Page Indexed Indirect (dp,X) -------------------------------
+
+        #[test]
+        fn addr_dp_x_ind_adds_x_then_reads_ptr16() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0x0200);
+            cpu.write_x(0x0010);
+            cpu.write_dbr(0x03);
+            // Place pointer $ABCD at D + offset + X = $0200 + $10 + $10 = $0220
+            cpu.bus.load(0x0000_0220, &[0xCD, 0xAB]);
+            assert_eq!(cpu.addr_dp_x_ind(0x10), 0x03_ABCD);
+        }
+
+        // -- Direct Page Indirect Indexed Y (dp),Y -----------------------------
+
+        #[test]
+        fn addr_dp_ind_y_reads_ptr16_then_adds_y() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0x0200);
+            cpu.write_dbr(0x02);
+            cpu.write_y(0x0004);
+            // Place ptr $1000 at D + offset = $0210
+            cpu.bus.load(0x0000_0210, &[0x00, 0x10]);
+            // EA = DBR:$1000 + Y = $02_1004
+            assert_eq!(cpu.addr_dp_ind_y(0x10), 0x02_1004);
+        }
+
+        #[test]
+        fn addr_dp_ind_y_bank_crosses_allowed() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0x0200);
+            cpu.write_dbr(0x01);
+            cpu.write_y(0x0100);
+            // ptr = $FF00, EA = $01_FF00 + $100 = $02_0000
+            cpu.bus.load(0x0000_0210, &[0x00, 0xFF]);
+            assert_eq!(cpu.addr_dp_ind_y(0x10), 0x02_0000);
+        }
+
+        // -- Direct Page Indirect Long Indexed Y [dp],Y ------------------------
+
+        #[test]
+        fn addr_dp_ind_long_y_reads_ptr24_then_adds_y() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0x0200);
+            cpu.write_y(0x0010);
+            // Place 24-bit ptr $05_1200 at $0210
+            cpu.bus.load(0x0000_0210, &[0x00, 0x12, 0x05]);
+            assert_eq!(cpu.addr_dp_ind_long_y(0x10), 0x05_1210);
+        }
+
+        // -- Stack Relative Indirect Indexed Y (sr,S),Y ------------------------
+
+        #[test]
+        fn addr_sr_ind_y_reads_ptr16_at_s_plus_offset_then_adds_y() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_s(0x01F0);
+            cpu.write_dbr(0x04);
+            cpu.write_y(0x0008);
+            // ptr_addr = S + offset = $01F0 + $10 = $0200
+            cpu.bus.load(0x0000_0200, &[0x00, 0x30]);
+            // EA = DBR:$3000 + Y = $04_3008
+            assert_eq!(cpu.addr_sr_ind_y(0x10), 0x04_3008);
+        }
+
+        // -- Pointer byte read wrapping at bank-0 $FFFF boundary ---------------
+
+        #[test]
+        fn addr_dp_ind_ptr_wraps_at_ffff() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0xFFFF);
+            cpu.write_dbr(0x02);
+            // Place low byte at $FFFF, high byte wraps to $0000
+            cpu.bus.load(0x0000_FFFF, &[0xCD]);
+            cpu.bus.load(0x0000_0000, &[0xAB]);
+            assert_eq!(cpu.addr_dp_ind(0x00), 0x02_ABCD);
+        }
+
+        #[test]
+        fn addr_dp_ind_long_ptr_wraps_at_ffff() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0xFFFE);
+            // 3-byte pointer: $FE→lo, $FF→mid, $00→hi (wraps)
+            cpu.bus.load(0x0000_FFFE, &[0x11, 0x22]);
+            cpu.bus.load(0x0000_0000, &[0x33]);
+            assert_eq!(cpu.addr_dp_ind_long(0x00), 0x33_2211);
+        }
+
+        #[test]
+        fn addr_dp_x_ind_ptr_wraps_at_ffff() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0xFF00);
+            cpu.write_x(0x00FF); // D + offset + X = $FF00 + $00 + $FF = $FFFF
+            cpu.write_dbr(0x05);
+            cpu.bus.load(0x0000_FFFF, &[0x78]);
+            cpu.bus.load(0x0000_0000, &[0x56]);
+            assert_eq!(cpu.addr_dp_x_ind(0x00), 0x05_5678);
+        }
+
+        #[test]
+        fn addr_dp_ind_y_ptr_wraps_at_ffff() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0xFFFF);
+            cpu.write_dbr(0x01);
+            cpu.write_y(0x0001);
+            cpu.bus.load(0x0000_FFFF, &[0xFF]);
+            cpu.bus.load(0x0000_0000, &[0x00]);
+            // ptr = $00FF, EA = $01_00FF + 1 = $01_0100
+            assert_eq!(cpu.addr_dp_ind_y(0x00), 0x01_0100);
+        }
+
+        #[test]
+        fn addr_dp_ind_long_y_ptr_wraps_at_ffff() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_d(0xFFFE);
+            cpu.write_y(0x0002);
+            cpu.bus.load(0x0000_FFFE, &[0x00, 0x10]);
+            cpu.bus.load(0x0000_0000, &[0x07]);
+            // base = $07_1000, EA = $07_1002
+            assert_eq!(cpu.addr_dp_ind_long_y(0x00), 0x07_1002);
+        }
+
+        #[test]
+        fn addr_sr_ind_y_ptr_wraps_at_ffff() {
+            let mut cpu = cpu_with_bus();
+            cpu.write_s(0xFFFF);
+            cpu.write_dbr(0x03);
+            cpu.write_y(0x0000);
+            cpu.bus.load(0x0000_FFFF, &[0x34]);
+            cpu.bus.load(0x0000_0000, &[0x12]);
+            assert_eq!(cpu.addr_sr_ind_y(0x00), 0x03_1234);
+        }
     }
 }
