@@ -367,10 +367,35 @@ impl<B: SnesBus> Cpu<B> {
             0x98 => self.op_tya(),
             0x9A => self.op_txs(),
             0x9B => self.op_txy(),
+            0xA0 => self.op_ldy_imm(),
+            0xA2 => self.op_ldx_imm(),
+            0xA3 => self.op_lda_sr(),
+            0xA4 => self.op_ldy_dp(),
+            0xA5 => self.op_lda_dp(),
+            0xA6 => self.op_ldx_dp(),
+            0xA7 => self.op_lda_dp_ind_long(),
             0xA8 => self.op_tay(),
+            0xA9 => self.op_lda_imm(),
             0xAA => self.op_tax(),
+            0xAC => self.op_ldy_abs(),
+            0xAD => self.op_lda_abs(),
+            0xAE => self.op_ldx_abs(),
+            0xAF => self.op_lda_abs_long(),
+            0xB1 => self.op_lda_dp_ind_y(),
+            0xB2 => self.op_lda_dp_ind(),
+            0xB3 => self.op_lda_sr_ind_y(),
+            0xB4 => self.op_ldy_dp_x(),
+            0xB5 => self.op_lda_dp_x(),
+            0xB6 => self.op_ldx_dp_y(),
+            0xB7 => self.op_lda_dp_ind_long_y(),
+            0xB9 => self.op_lda_abs_y(),
             0xBA => self.op_tsx(),
             0xBB => self.op_tyx(),
+            0xBC => self.op_ldy_abs_x(),
+            0xBD => self.op_lda_abs_x(),
+            0xBE => self.op_ldx_abs_y(),
+            0xBF => self.op_lda_abs_long_x(),
+            0xA1 => self.op_lda_dp_x_ind(),
             0xEA => self.op_nop(),
             0xEB => self.op_xba(),
             _ => todo!("opcode {opcode:#04X} not yet implemented"),
@@ -383,6 +408,21 @@ impl<B: SnesBus> Cpu<B> {
         let byte = self.bus.read(addr);
         self.pc = self.pc.wrapping_add(1);
         byte
+    }
+
+    /// Fetch a 16-bit little-endian word at PBR:PC and advance PC by 2.
+    fn fetch_word(&mut self) -> u16 {
+        let lo = self.fetch_byte() as u16;
+        let hi = self.fetch_byte() as u16;
+        lo | hi << 8
+    }
+
+    /// Fetch a 24-bit little-endian address at PBR:PC and advance PC by 3.
+    fn fetch_addr24(&mut self) -> u32 {
+        let lo = self.fetch_byte() as u32;
+        let mid = self.fetch_byte() as u32;
+        let hi = self.fetch_byte() as u32;
+        lo | mid << 8 | hi << 16
     }
 
     // -------------------------------------------------------------------------
@@ -413,6 +453,21 @@ impl<B: SnesBus> Cpu<B> {
         }
     }
 
+    /// Write `val` into A (respecting M width) and update N/Z flags.
+    fn lda_store(&mut self, val: u16) {
+        self.lda_store(val);
+    }
+
+    /// Write `val` into X (respecting X width) and update N/Z flags.
+    fn ldx_store(&mut self, val: u16) {
+        self.ldx_store(val);
+    }
+
+    /// Write `val` into Y (respecting X width) and update N/Z flags.
+    fn ldy_store(&mut self, val: u16) {
+        self.ldy_store(val);
+    }
+
     // -------------------------------------------------------------------------
     // Implied-mode opcodes
     // -------------------------------------------------------------------------
@@ -427,8 +482,7 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             self.a
         };
-        self.write_x(val);
-        self.set_nz_x(self.x);
+        self.ldx_store(val);
         2
     }
 
@@ -438,9 +492,7 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             self.x
         };
-        self.write_a(val);
-        let a = self.a;
-        self.set_nz_m(a);
+        self.lda_store(val);
         2
     }
 
@@ -450,8 +502,7 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             self.a
         };
-        self.write_y(val);
-        self.set_nz_x(self.y);
+        self.ldy_store(val);
         2
     }
 
@@ -461,9 +512,7 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             self.y
         };
-        self.write_a(val);
-        let a = self.a;
-        self.set_nz_m(a);
+        self.lda_store(val);
         2
     }
 
@@ -480,22 +529,19 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             self.s
         };
-        self.write_x(val);
-        self.set_nz_x(self.x);
+        self.ldx_store(val);
         2
     }
 
     fn op_txy(&mut self) -> u8 {
         let val = self.x;
-        self.write_y(val);
-        self.set_nz_x(self.y);
+        self.ldy_store(val);
         2
     }
 
     fn op_tyx(&mut self) -> u8 {
         let val = self.y;
-        self.write_x(val);
-        self.set_nz_x(self.x);
+        self.ldx_store(val);
         2
     }
 
@@ -539,6 +585,224 @@ impl<B: SnesBus> Cpu<B> {
         let new_lo = hi as u16;
         self.set_nz(new_lo, 0x80);
         3
+    }
+
+    // -------------------------------------------------------------------------
+    // LDA — load accumulator
+    // -------------------------------------------------------------------------
+
+    fn op_lda_imm(&mut self) -> u8 {
+        let val = if self.m_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        self.lda_store(val);
+        2
+    }
+
+    fn op_lda_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        3
+    }
+
+    fn op_lda_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        4
+    }
+
+    fn op_lda_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        4
+    }
+
+    fn op_lda_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        4
+    }
+
+    fn op_lda_abs_y(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_y(abs);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        4
+    }
+
+    fn op_lda_abs_long(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let ea = self.addr_abs_long(addr);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        5
+    }
+
+    fn op_lda_abs_long_x(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let ea = self.addr_abs_long_x(addr);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        5
+    }
+
+    fn op_lda_dp_x_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x_ind(off);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        6
+    }
+
+    fn op_lda_dp_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_y(off);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        5
+    }
+
+    fn op_lda_dp_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind(off);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        5
+    }
+
+    fn op_lda_dp_ind_long(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long(off);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        6
+    }
+
+    fn op_lda_dp_ind_long_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long_y(off);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        6
+    }
+
+    fn op_lda_sr(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr(off);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        4
+    }
+
+    fn op_lda_sr_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr_ind_y(off);
+        let val = self.read_m(ea);
+        self.lda_store(val);
+        7
+    }
+
+    // -------------------------------------------------------------------------
+    // LDX — load X index register
+    // -------------------------------------------------------------------------
+
+    fn op_ldx_imm(&mut self) -> u8 {
+        let val = if self.x_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        self.ldx_store(val);
+        2
+    }
+
+    fn op_ldx_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_idx(ea);
+        self.ldx_store(val);
+        3
+    }
+
+    fn op_ldx_dp_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_y(off);
+        let val = self.read_idx(ea);
+        self.ldx_store(val);
+        4
+    }
+
+    fn op_ldx_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_idx(ea);
+        self.ldx_store(val);
+        4
+    }
+
+    fn op_ldx_abs_y(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_y(abs);
+        let val = self.read_idx(ea);
+        self.ldx_store(val);
+        4
+    }
+
+    // -------------------------------------------------------------------------
+    // LDY — load Y index register
+    // -------------------------------------------------------------------------
+
+    fn op_ldy_imm(&mut self) -> u8 {
+        let val = if self.x_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        self.ldy_store(val);
+        2
+    }
+
+    fn op_ldy_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_idx(ea);
+        self.ldy_store(val);
+        3
+    }
+
+    fn op_ldy_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_idx(ea);
+        self.ldy_store(val);
+        4
+    }
+
+    fn op_ldy_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_idx(ea);
+        self.ldy_store(val);
+        4
+    }
+
+    fn op_ldy_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_idx(ea);
+        self.ldy_store(val);
+        4
     }
 }
 
@@ -1919,5 +2183,383 @@ mod step_tests {
         assert_eq!(cpu.a, 0x3490);
         assert!(cpu.flag_n()); // new low byte 0x90 is negative
         assert!(!cpu.flag_z());
+    }
+}
+
+#[cfg(test)]
+mod lda_ldx_ldy_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        // native mode, M=0 (16-bit A), X=0 (16-bit X/Y)
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    fn native8() -> Cpu<TestBus> {
+        // native mode, M=1 (8-bit A), X=1 (8-bit X/Y)
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu
+    }
+
+    // =========================================================================
+    // LDA — all addressing modes
+    // =========================================================================
+
+    #[test]
+    fn lda_immediate_16bit_loads_two_bytes() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA9, 0x34, 0x12]); // LDA #$1234
+        cpu.step();
+        assert_eq!(cpu.a, 0x1234);
+        assert_eq!(cpu.pc, 0x0003);
+    }
+
+    #[test]
+    fn lda_immediate_8bit_loads_one_byte_preserves_b() {
+        let mut cpu = native8();
+        cpu.a = 0xBB00; // B=0xBB
+        cpu.bus.load(0x0000, &[0xA9, 0x42]); // LDA #$42
+        cpu.step();
+        assert_eq!(cpu.a, 0xBB42); // B preserved
+        assert_eq!(cpu.pc, 0x0002);
+    }
+
+    #[test]
+    fn lda_dp_loads_from_direct_page() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x78, 0x56]); // $5678 at DP+$10
+        cpu.bus.load(0x0000, &[0xA5, 0x10]); // LDA $10
+        cpu.step();
+        assert_eq!(cpu.a, 0x5678);
+    }
+
+    #[test]
+    fn lda_dp_x_loads_from_direct_page_indexed() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.x = 0x0004;
+        cpu.bus.load(0x0214, &[0xCD, 0xAB]); // $ABCD at DP+$10+X
+        cpu.bus.load(0x0000, &[0xB5, 0x10]); // LDA $10,X
+        cpu.step();
+        assert_eq!(cpu.a, 0xABCD);
+    }
+
+    #[test]
+    fn lda_abs_uses_dbr() {
+        let mut cpu = native16();
+        cpu.dbr = 0x03;
+        cpu.bus.load(0x03_1234, &[0xEF, 0xBE]); // $BEEF at bank 3
+        cpu.bus.load(0x0000, &[0xAD, 0x34, 0x12]); // LDA $1234
+        cpu.step();
+        assert_eq!(cpu.a, 0xBEEF);
+    }
+
+    #[test]
+    fn lda_abs_x_adds_x_to_absolute_address() {
+        let mut cpu = native16();
+        cpu.dbr = 0x01;
+        cpu.x = 0x0010;
+        cpu.bus.load(0x01_1010, &[0x78, 0x56]);
+        cpu.bus.load(0x0000, &[0xBD, 0x00, 0x10]); // LDA $1000,X
+        cpu.step();
+        assert_eq!(cpu.a, 0x5678);
+    }
+
+    #[test]
+    fn lda_abs_y_adds_y_to_absolute_address() {
+        let mut cpu = native16();
+        cpu.dbr = 0x02;
+        cpu.y = 0x0008;
+        cpu.bus.load(0x02_2008, &[0x21, 0x43]);
+        cpu.bus.load(0x0000, &[0xB9, 0x00, 0x20]); // LDA $2000,Y
+        cpu.step();
+        assert_eq!(cpu.a, 0x4321);
+    }
+
+    #[test]
+    fn lda_abs_long_uses_explicit_bank() {
+        let mut cpu = native16();
+        cpu.bus.load(0x05_4000, &[0x11, 0x22]);
+        cpu.bus.load(0x0000, &[0xAF, 0x00, 0x40, 0x05]); // LDA $054000
+        cpu.step();
+        assert_eq!(cpu.a, 0x2211);
+    }
+
+    #[test]
+    fn lda_abs_long_x_adds_x_to_24bit_addr() {
+        let mut cpu = native16();
+        cpu.x = 0x0002;
+        cpu.bus.load(0x05_4002, &[0x99, 0x88]);
+        cpu.bus.load(0x0000, &[0xBF, 0x00, 0x40, 0x05]); // LDA $054000,X
+        cpu.step();
+        assert_eq!(cpu.a, 0x8899);
+    }
+
+    #[test]
+    fn lda_dp_x_ind_reads_via_pointer() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.x = 0x0004;
+        cpu.dbr = 0x07;
+        // pointer at D+offset+X = $0200+$10+$04 = $0214 → $3456
+        cpu.bus.load(0x0214, &[0x56, 0x34]);
+        cpu.bus.load(0x07_3456, &[0xAA, 0xBB]);
+        cpu.bus.load(0x0000, &[0xA1, 0x10]); // LDA ($10,X)
+        cpu.step();
+        assert_eq!(cpu.a, 0xBBAA);
+    }
+
+    #[test]
+    fn lda_dp_ind_y_reads_via_pointer_plus_y() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.dbr = 0x04;
+        cpu.y = 0x0006;
+        // pointer at D+offset = $0210 → $1000
+        cpu.bus.load(0x0210, &[0x00, 0x10]);
+        cpu.bus.load(0x04_1006, &[0xCC, 0xDD]);
+        cpu.bus.load(0x0000, &[0xB1, 0x10]); // LDA ($10),Y
+        cpu.step();
+        assert_eq!(cpu.a, 0xDDCC);
+    }
+
+    #[test]
+    fn lda_dp_ind_reads_via_dp_pointer() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.dbr = 0x06;
+        cpu.bus.load(0x0210, &[0x00, 0x30]);
+        cpu.bus.load(0x06_3000, &[0xFF, 0x00]);
+        cpu.bus.load(0x0000, &[0xB2, 0x10]); // LDA ($10)
+        cpu.step();
+        assert_eq!(cpu.a, 0x00FF);
+    }
+
+    #[test]
+    fn lda_sr_reads_stack_relative() {
+        let mut cpu = native16();
+        cpu.s = 0x01F0;
+        cpu.bus.load(0x0200, &[0x12, 0x34]); // S+$10 = $0200
+        cpu.bus.load(0x0000, &[0xA3, 0x10]); // LDA $10,S
+        cpu.step();
+        assert_eq!(cpu.a, 0x3412);
+    }
+
+    #[test]
+    fn lda_sr_ind_y_reads_via_sr_pointer_plus_y() {
+        let mut cpu = native16();
+        cpu.s = 0x01F0;
+        cpu.dbr = 0x02;
+        cpu.y = 0x0008;
+        cpu.bus.load(0x0200, &[0x00, 0x50]); // ptr = $5000
+        cpu.bus.load(0x02_5008, &[0x77, 0x66]);
+        cpu.bus.load(0x0000, &[0xB3, 0x10]); // LDA ($10,S),Y
+        cpu.step();
+        assert_eq!(cpu.a, 0x6677);
+    }
+
+    #[test]
+    fn lda_dp_ind_long_reads_24bit_pointer() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x00, 0x60, 0x05]); // 24-bit ptr = $05_6000
+        cpu.bus.load(0x05_6000, &[0x11, 0x22]);
+        cpu.bus.load(0x0000, &[0xA7, 0x10]); // LDA [$10]
+        cpu.step();
+        assert_eq!(cpu.a, 0x2211);
+    }
+
+    #[test]
+    fn lda_dp_ind_long_y_reads_24bit_pointer_plus_y() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.y = 0x0004;
+        cpu.bus.load(0x0210, &[0x00, 0x70, 0x03]); // ptr = $03_7000
+        cpu.bus.load(0x03_7004, &[0x55, 0x44]);
+        cpu.bus.load(0x0000, &[0xB7, 0x10]); // LDA [$10],Y
+        cpu.step();
+        assert_eq!(cpu.a, 0x4455);
+    }
+
+    #[test]
+    fn lda_sets_n_flag() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA9, 0x00, 0x80]); // LDA #$8000
+        cpu.step();
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn lda_sets_z_flag() {
+        let mut cpu = native16();
+        cpu.p |= FLAG_NEGATIVE; // pre-set N
+        cpu.bus.load(0x0000, &[0xA9, 0x00, 0x00]); // LDA #$0000
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(!cpu.flag_n());
+    }
+
+    // =========================================================================
+    // LDX — immediate, dp, dp+Y, abs, abs+Y
+    // =========================================================================
+
+    #[test]
+    fn ldx_immediate_16bit() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA2, 0xCD, 0xAB]); // LDX #$ABCD
+        cpu.step();
+        assert_eq!(cpu.x, 0xABCD);
+    }
+
+    #[test]
+    fn ldx_immediate_8bit() {
+        let mut cpu = native8();
+        cpu.bus.load(0x0000, &[0xA2, 0x77]); // LDX #$77
+        cpu.step();
+        assert_eq!(cpu.x, 0x0077); // high byte forced to 0
+    }
+
+    #[test]
+    fn ldx_dp_loads_from_direct_page() {
+        let mut cpu = native16();
+        cpu.d = 0x0300;
+        cpu.bus.load(0x0310, &[0x34, 0x12]);
+        cpu.bus.load(0x0000, &[0xA6, 0x10]); // LDX $10
+        cpu.step();
+        assert_eq!(cpu.x, 0x1234);
+    }
+
+    #[test]
+    fn ldx_dp_y_loads_from_direct_page_indexed_y() {
+        let mut cpu = native16();
+        cpu.d = 0x0300;
+        cpu.y = 0x0002;
+        cpu.bus.load(0x0312, &[0x56, 0x78]);
+        cpu.bus.load(0x0000, &[0xB6, 0x10]); // LDX $10,Y
+        cpu.step();
+        assert_eq!(cpu.x, 0x7856);
+    }
+
+    #[test]
+    fn ldx_abs_uses_dbr() {
+        let mut cpu = native16();
+        cpu.dbr = 0x02;
+        cpu.bus.load(0x02_5678, &[0xAB, 0xCD]);
+        cpu.bus.load(0x0000, &[0xAE, 0x78, 0x56]); // LDX $5678
+        cpu.step();
+        assert_eq!(cpu.x, 0xCDAB);
+    }
+
+    #[test]
+    fn ldx_abs_y_adds_y() {
+        let mut cpu = native16();
+        cpu.dbr = 0x01;
+        cpu.y = 0x0010;
+        cpu.bus.load(0x01_1010, &[0x22, 0x11]);
+        cpu.bus.load(0x0000, &[0xBE, 0x00, 0x10]); // LDX $1000,Y
+        cpu.step();
+        assert_eq!(cpu.x, 0x1122);
+    }
+
+    #[test]
+    fn ldx_sets_n_flag() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA2, 0x00, 0x80]); // LDX #$8000
+        cpu.step();
+        assert!(cpu.flag_n());
+    }
+
+    #[test]
+    fn ldx_sets_z_flag() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA2, 0x00, 0x00]); // LDX #$0000
+        cpu.step();
+        assert!(cpu.flag_z());
+    }
+
+    // =========================================================================
+    // LDY — immediate, dp, dp+X, abs, abs+X
+    // =========================================================================
+
+    #[test]
+    fn ldy_immediate_16bit() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA0, 0x21, 0x43]); // LDY #$4321
+        cpu.step();
+        assert_eq!(cpu.y, 0x4321);
+    }
+
+    #[test]
+    fn ldy_immediate_8bit() {
+        let mut cpu = native8();
+        cpu.bus.load(0x0000, &[0xA0, 0x55]); // LDY #$55
+        cpu.step();
+        assert_eq!(cpu.y, 0x0055);
+    }
+
+    #[test]
+    fn ldy_dp_loads_from_direct_page() {
+        let mut cpu = native16();
+        cpu.d = 0x0400;
+        cpu.bus.load(0x0420, &[0x78, 0x56]);
+        cpu.bus.load(0x0000, &[0xA4, 0x20]); // LDY $20
+        cpu.step();
+        assert_eq!(cpu.y, 0x5678);
+    }
+
+    #[test]
+    fn ldy_dp_x_loads_from_direct_page_indexed_x() {
+        let mut cpu = native16();
+        cpu.d = 0x0400;
+        cpu.x = 0x0004;
+        cpu.bus.load(0x0424, &[0xEF, 0xCD]);
+        cpu.bus.load(0x0000, &[0xB4, 0x20]); // LDY $20,X
+        cpu.step();
+        assert_eq!(cpu.y, 0xCDEF);
+    }
+
+    #[test]
+    fn ldy_abs_uses_dbr() {
+        let mut cpu = native16();
+        cpu.dbr = 0x04;
+        cpu.bus.load(0x04_ABCD, &[0x12, 0x34]);
+        cpu.bus.load(0x0000, &[0xAC, 0xCD, 0xAB]); // LDY $ABCD
+        cpu.step();
+        assert_eq!(cpu.y, 0x3412);
+    }
+
+    #[test]
+    fn ldy_abs_x_adds_x() {
+        let mut cpu = native16();
+        cpu.dbr = 0x03;
+        cpu.x = 0x0020;
+        cpu.bus.load(0x03_2020, &[0x66, 0x77]);
+        cpu.bus.load(0x0000, &[0xBC, 0x00, 0x20]); // LDY $2000,X
+        cpu.step();
+        assert_eq!(cpu.y, 0x7766);
+    }
+
+    #[test]
+    fn ldy_sets_n_flag() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA0, 0x00, 0xFF]); // LDY #$FF00
+        cpu.step();
+        assert!(cpu.flag_n());
+    }
+
+    #[test]
+    fn ldy_sets_z_flag() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA0, 0x00, 0x00]); // LDY #$0000
+        cpu.step();
+        assert!(cpu.flag_z());
     }
 }
