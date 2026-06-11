@@ -455,17 +455,21 @@ impl<B: SnesBus> Cpu<B> {
 
     /// Write `val` into A (respecting M width) and update N/Z flags.
     fn lda_store(&mut self, val: u16) {
-        self.lda_store(val);
+        self.write_a(val);
+        let a = self.a;
+        self.set_nz_m(a);
     }
 
     /// Write `val` into X (respecting X width) and update N/Z flags.
     fn ldx_store(&mut self, val: u16) {
-        self.ldx_store(val);
+        self.write_x(val);
+        self.set_nz_x(self.x);
     }
 
     /// Write `val` into Y (respecting X width) and update N/Z flags.
     fn ldy_store(&mut self, val: u16) {
-        self.ldy_store(val);
+        self.write_y(val);
+        self.set_nz_x(self.y);
     }
 
     // -------------------------------------------------------------------------
