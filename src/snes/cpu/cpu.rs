@@ -727,38 +727,36 @@ impl<B: SnesBus> Cpu<B> {
     fn op_mvn(&mut self) -> u8 {
         let dst_bank = self.fetch_byte();
         let src_bank = self.fetch_byte();
-        loop {
-            let src_addr = (src_bank as u32) << 16 | self.x as u32;
-            let dst_addr = (dst_bank as u32) << 16 | self.y as u32;
-            let byte = self.read8(src_addr);
-            self.write8(dst_addr, byte);
-            self.x = self.x.wrapping_add(1);
-            self.y = self.y.wrapping_add(1);
-            self.a = self.a.wrapping_sub(1);
-            if self.a == 0xFFFF {
-                break;
-            }
-        }
+        let src_addr = (src_bank as u32) << 16 | self.x as u32;
+        let dst_addr = (dst_bank as u32) << 16 | self.y as u32;
+        let byte = self.read8(src_addr);
+        self.write8(dst_addr, byte);
         self.dbr = dst_bank;
-        7 // base cycles (actual cost is 7 per byte; simplified here)
+        self.x = self.x.wrapping_add(1);
+        self.y = self.y.wrapping_add(1);
+        self.a = self.a.wrapping_sub(1);
+        if self.a != 0xFFFF {
+            // Keep PC at MVN instruction for next byte (back up 3: opcode + 2 operands)
+            self.pc = self.pc.wrapping_sub(3);
+        }
+        7
     }
 
     fn op_mvp(&mut self) -> u8 {
         let dst_bank = self.fetch_byte();
         let src_bank = self.fetch_byte();
-        loop {
-            let src_addr = (src_bank as u32) << 16 | self.x as u32;
-            let dst_addr = (dst_bank as u32) << 16 | self.y as u32;
-            let byte = self.read8(src_addr);
-            self.write8(dst_addr, byte);
-            self.x = self.x.wrapping_sub(1);
-            self.y = self.y.wrapping_sub(1);
-            self.a = self.a.wrapping_sub(1);
-            if self.a == 0xFFFF {
-                break;
-            }
-        }
+        let src_addr = (src_bank as u32) << 16 | self.x as u32;
+        let dst_addr = (dst_bank as u32) << 16 | self.y as u32;
+        let byte = self.read8(src_addr);
+        self.write8(dst_addr, byte);
         self.dbr = dst_bank;
+        self.x = self.x.wrapping_sub(1);
+        self.y = self.y.wrapping_sub(1);
+        self.a = self.a.wrapping_sub(1);
+        if self.a != 0xFFFF {
+            // Keep PC at MVP instruction for next byte
+            self.pc = self.pc.wrapping_sub(3);
+        }
         7
     }
 
@@ -7955,9 +7953,10 @@ mod mvn_mvp_tests {
         cpu.x = 0x0010; // source offset
         cpu.y = 0x0020; // destination offset
         cpu.bus.load(0x0000, &[0x54, 0x02, 0x01]); // MVN dst=$02, src=$01
-        // MVN loops until A==$FFFF, so we need to step 3 times (one per byte) then done
-        // Actually MVN runs in a loop: PC stays at 0x0000 until done
-        cpu.step(); // completes all 3 bytes (A goes 2->1->0->$FFFF)
+        // MVN moves one byte per step(), PC stays at 0x0000 until last byte
+        cpu.step(); // byte 1
+        cpu.step(); // byte 2
+        cpu.step(); // byte 3 (last)
         assert_eq!(cpu.bus.read(0x02_0020), 0xAA);
         assert_eq!(cpu.bus.read(0x02_0021), 0xBB);
         assert_eq!(cpu.bus.read(0x02_0022), 0xCC);
@@ -7980,7 +7979,9 @@ mod mvn_mvp_tests {
         cpu.x = 0x0012; // source start (high end, MVP decrements)
         cpu.y = 0x0022; // destination start (high end)
         cpu.bus.load(0x0000, &[0x44, 0x02, 0x01]); // MVP dst=$02, src=$01
-        cpu.step();
+        cpu.step(); // byte 1
+        cpu.step(); // byte 2
+        cpu.step(); // byte 3 (last)
         assert_eq!(cpu.bus.read(0x02_0022), 0xCC); // last byte first
         assert_eq!(cpu.bus.read(0x02_0021), 0xBB);
         assert_eq!(cpu.bus.read(0x02_0020), 0xAA);
@@ -8967,5 +8968,73 @@ mod emulation_dp_wrap_tests {
             0x77,
             "emulation dp,X indirect: pointer address must wrap to $00"
         );
+    }
+}
+
+#[cfg(test)]
+mod mvn_mvp_per_byte_cycle_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    /// MVN must move exactly one byte per step() call, returning 7 cycles each time.
+    /// PC must remain at the MVN instruction until the last byte is transferred.
+    #[test]
+    fn mvn_moves_one_byte_per_step_7_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x01_0010, &[0xAA, 0xBB]);
+        cpu.a = 0x0001; // 2 bytes to transfer
+        cpu.x = 0x0010;
+        cpu.y = 0x0020;
+        cpu.bus.load(0x0000, &[0x54, 0x02, 0x01]); // MVN dst=$02, src=$01
+
+        // First step: moves 1 byte, returns 7 cycles, PC stays at 0
+        let c1 = cpu.step();
+        assert_eq!(c1, 7, "MVN must return 7 cycles per byte");
+        assert_eq!(
+            cpu.pc, 0x0000,
+            "PC must stay at MVN while transfer is in progress"
+        );
+        assert_eq!(cpu.bus.read(0x02_0020), 0xAA, "first byte transferred");
+        assert_eq!(cpu.a, 0x0000, "A decremented to 0 after first byte");
+
+        // Second (last) step: moves final byte, returns 7 cycles, PC advances
+        let c2 = cpu.step();
+        assert_eq!(c2, 7, "MVN last byte also 7 cycles");
+        assert_eq!(cpu.pc, 0x0003, "PC advances past MVN after last byte");
+        assert_eq!(cpu.bus.read(0x02_0021), 0xBB, "second byte transferred");
+        assert_eq!(cpu.a, 0xFFFF, "A=$FFFF after full transfer");
+    }
+
+    /// MVP must move exactly one byte per step() call, returning 7 cycles each time.
+    #[test]
+    fn mvp_moves_one_byte_per_step_7_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x01_0010, &[0xAA, 0xBB]);
+        cpu.a = 0x0001; // 2 bytes to transfer
+        cpu.x = 0x0011; // high end (MVP decrements)
+        cpu.y = 0x0021;
+        cpu.bus.load(0x0000, &[0x44, 0x02, 0x01]); // MVP dst=$02, src=$01
+
+        let c1 = cpu.step();
+        assert_eq!(c1, 7, "MVP must return 7 cycles per byte");
+        assert_eq!(
+            cpu.pc, 0x0000,
+            "PC must stay at MVP while transfer is in progress"
+        );
+        assert_eq!(cpu.bus.read(0x02_0021), 0xBB, "first byte (from high end)");
+        assert_eq!(cpu.a, 0x0000);
+
+        let c2 = cpu.step();
+        assert_eq!(c2, 7);
+        assert_eq!(cpu.pc, 0x0003, "PC advances past MVP after last byte");
+        assert_eq!(cpu.bus.read(0x02_0020), 0xAA);
+        assert_eq!(cpu.a, 0xFFFF);
     }
 }
