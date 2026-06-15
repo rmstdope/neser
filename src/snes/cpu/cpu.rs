@@ -437,8 +437,9 @@ impl<B: SnesBus> Cpu<B> {
             0x3F => self.op_and_abs_long_x(),
             0x40 => self.op_rti(),
             0x41 => self.op_eor_dp_x_ind(),
-            0x44 => self.op_mvp(),
+            0x42 => self.op_wdm(),
             0x43 => self.op_eor_sr(),
+            0x44 => self.op_mvp(),
             0x45 => self.op_eor_dp(),
             0x46 => self.op_lsr_dp(),
             0x47 => self.op_eor_dp_ind_long(),
@@ -706,6 +707,12 @@ impl<B: SnesBus> Cpu<B> {
     // -------------------------------------------------------------------------
 
     fn op_nop(&mut self) -> u8 {
+        2
+    }
+
+    /// WDM — reserved 2-byte NOP (consumes one operand byte, 2 cycles, no flags).
+    fn op_wdm(&mut self) -> u8 {
+        self.fetch_byte(); // consume operand
         2
     }
 
@@ -8363,5 +8370,36 @@ mod cycle_accuracy_tests {
         cpu.bus.load(0x0000, &[0xB1, 0x00]); // LDA ($00),Y
         let cycles = cpu.step();
         assert_eq!(cycles, 6, "LDA (dp),Y page cross adds 1 cycle");
+    }
+}
+
+#[cfg(test)]
+mod wdm_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    #[test]
+    fn wdm_advances_pc_by_2_and_returns_2_cycles() {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.pc = 0x0000;
+        cpu.pbr = 0x00;
+        cpu.bus.load(0x0000, &[0x42, 0xAB]); // WDM $AB
+        let cycles = cpu.step();
+        assert_eq!(cycles, 2, "WDM is 2 cycles");
+        assert_eq!(cpu.pc, 0x0002, "WDM advances PC by 2 (opcode + operand)");
+    }
+
+    #[test]
+    fn wdm_does_not_alter_flags() {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.pc = 0x0000;
+        cpu.pbr = 0x00;
+        let p_before = 0b1010_1010u8;
+        cpu.p = p_before;
+        cpu.bus.load(0x0000, &[0x42, 0x00]);
+        cpu.step();
+        assert_eq!(cpu.p, p_before, "WDM must not change any flags");
     }
 }
