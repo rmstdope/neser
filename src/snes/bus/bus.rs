@@ -56,14 +56,16 @@ impl TestBus {
     /// # Panics
     /// Panics if `addr + data.len()` exceeds the 24-bit address space.
     pub fn load(&mut self, addr: u32, data: &[u8]) {
-        let start = addr as usize;
-        let end = start + data.len();
+        let addr = (addr & 0xFF_FFFF) as usize;
+        let end = addr
+            .checked_add(data.len())
+            .expect("TestBus::load: address + length overflows");
         assert!(
             end <= self.mem.len(),
             "TestBus::load: addr {addr:#08X} + len {} overflows 24-bit address space",
             data.len()
         );
-        self.mem[start..end].copy_from_slice(data);
+        self.mem[addr..end].copy_from_slice(data);
     }
 }
 
@@ -75,10 +77,18 @@ impl Default for TestBus {
 
 impl SnesBus for TestBus {
     fn read(&self, addr: u32) -> u8 {
+        assert!(
+            addr <= 0xFF_FFFF,
+            "TestBus::read: addr {addr:#08X} out of 24-bit range"
+        );
         self.mem[addr as usize]
     }
 
     fn write(&mut self, addr: u32, value: u8) {
+        assert!(
+            addr <= 0xFF_FFFF,
+            "TestBus::write: addr {addr:#08X} out of 24-bit range"
+        );
         self.mem[addr as usize] = value;
     }
 
