@@ -362,7 +362,11 @@ impl<B: SnesBus> Cpu<B> {
             0x01 => self.op_ora_dp_x_ind(),
             0x03 => self.op_ora_sr(),
             0x05 => self.op_ora_dp(),
+            0x04 => self.op_tsb_dp(),
             0x06 => self.op_asl_dp(),
+            0x0C => self.op_tsb_abs(),
+            0x14 => self.op_trb_dp(),
+            0x1C => self.op_trb_abs(),
             0x07 => self.op_ora_dp_ind_long(),
             0x09 => self.op_ora_imm(),
             0x0A => self.op_asl_acc(),
@@ -2555,6 +2559,60 @@ impl<B: SnesBus> Cpu<B> {
         let result = self.ror_perform(val);
         self.write_m(ea, result);
         7
+    }
+
+    // -------------------------------------------------------------------------
+    // TSB — test and set bits: Z = !(A & mem); mem |= A
+    // TRB — test and reset bits: Z = !(A & mem); mem &= ~A
+    // -------------------------------------------------------------------------
+
+    fn tsb_trb_z(&mut self, a: u16, mem: u16) {
+        let masked = if self.m_flag() {
+            (a & 0xFF) & (mem & 0xFF)
+        } else {
+            a & mem
+        };
+        self.set_flag_z(masked == 0);
+    }
+
+    fn op_tsb_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let mem = self.read_m(ea);
+        let a = self.a;
+        self.tsb_trb_z(a, mem);
+        self.write_m(ea, mem | a);
+        5
+    }
+
+    fn op_tsb_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let mem = self.read_m(ea);
+        let a = self.a;
+        self.tsb_trb_z(a, mem);
+        self.write_m(ea, mem | a);
+        6
+    }
+
+    fn op_trb_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let mem = self.read_m(ea);
+        let a = self.a;
+        self.tsb_trb_z(a, mem);
+        self.write_m(ea, mem & !a);
+        5
+    }
+
+    fn op_trb_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let mem = self.read_m(ea);
+        let a = self.a;
+        self.tsb_trb_z(a, mem);
+        self.write_m(ea, mem & !a);
+        6
     }
 }
 
@@ -5934,5 +5992,145 @@ mod inc_dec_shift_tests {
         cpu.bus.load(0x0000, &[0x66, 0x10]); // ROR $10
         cpu.step();
         assert_eq!(cpu.bus.read(0x0210), 0x02);
+    }
+}
+
+#[cfg(test)]
+mod tsb_trb_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_DECIMAL);
+        cpu
+    }
+
+    fn native8() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.p &= !FLAG_DECIMAL;
+        cpu
+    }
+
+    // =========================================================================
+    //  test and set bits: mem |= A; Z = !(A & old_mem)TSB
+    // =========================================================================
+
+    #[test]
+    fn tsb_dp_16bit_sets_bits_and_clears_z_when_overlap() {
+        let mut cpu = native16();
+        cpu.a = 0x0FF0;
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0xF0, 0x00]); // mem = $00F0
+        cpu.bus.load(0x0000, &[0x04, 0x10]); // TSB $10
+        cpu.step();
+        // mem = $00F0 | $0FF0 = $0FF0
+        assert_eq!(cpu.bus.read(0x0210), 0xF0);
+        assert_eq!(cpu.bus.read(0x0211), 0x0F);
+        // Z = !($0FF0 & $00F0) = !($00F0) = false (overlap exists -> Z clear)
+        assert!(!cpu.flag_z());
+        assert_eq!(cpu.a, 0x0FF0); // A unchanged
+    }
+
+    #[test]
+    fn tsb_dp_16bit_sets_z_when_no_overlap() {
+        let mut cpu = native16();
+        cpu.a = 0x0F00;
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0xF0, 0x00]); // mem = $00F0
+        cpu.bus.load(0x0000, &[0x04, 0x10]); // TSB $10
+        cpu.step();
+        // Z = !($0F00 & $00F0) = !(0) = true
+        assert!(cpu.flag_z());
+        // mem = $00F0 | $0F00 = $0FF0
+        assert_eq!(cpu.bus.read(0x0210), 0xF0);
+        assert_eq!(cpu.bus.read(0x0211), 0x0F);
+    }
+
+    #[test]
+    fn tsb_dp_8bit_sets_bits() {
+        let mut cpu = native8();
+        cpu.a = 0x000F; // only low byte matters
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0xF0]);
+        cpu.bus.load(0x0000, &[0x04, 0x10]); // TSB $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0xFF); // $F0 | $0F
+        assert!(cpu.flag_z()); // $0F & $F0 = 0 -> Z set
+    }
+
+    #[test]
+    fn tsb_abs_16bit_sets_bits() {
+        let mut cpu = native16();
+        cpu.a = 0x00FF;
+        cpu.bus.load(0x3000, &[0xFF, 0x00]); // mem = $00FF
+        cpu.bus.load(0x0000, &[0x0C, 0x00, 0x30]); // TSB $3000
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x3000), 0xFF);
+        assert_eq!(cpu.bus.read(0x3001), 0x00);
+        assert!(!cpu.flag_z()); // overlap: $00FF & $00FF != 0
+    }
+
+    // =========================================================================
+    //  test and reset bits: mem &= ~A; Z = !(A & old_mem)TRB
+    // =========================================================================
+
+    #[test]
+    fn trb_dp_16bit_clears_bits_and_clears_z_when_overlap() {
+        let mut cpu = native16();
+        cpu.a = 0x00FF;
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0xFF, 0xFF]); // mem = $FFFF
+        cpu.bus.load(0x0000, &[0x14, 0x10]); // TRB $10
+        cpu.step();
+        // mem = $FFFF & ~$00FF = $FF00
+        assert_eq!(cpu.bus.read(0x0210), 0x00);
+        assert_eq!(cpu.bus.read(0x0211), 0xFF);
+        // Z = !($00FF & $FFFF) = !(nonzero) = false
+        assert!(!cpu.flag_z());
+        assert_eq!(cpu.a, 0x00FF); // A unchanged
+    }
+
+    #[test]
+    fn trb_dp_16bit_sets_z_when_no_overlap() {
+        let mut cpu = native16();
+        cpu.a = 0x00FF;
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x00, 0xFF]); // mem = $FF00
+        cpu.bus.load(0x0000, &[0x14, 0x10]); // TRB $10
+        cpu.step();
+        // Z = !($00FF & $FF00) = !(0) = true
+        assert!(cpu.flag_z());
+        // mem = $FF00 & ~$00FF = $FF00 (unchanged)
+        assert_eq!(cpu.bus.read(0x0210), 0x00);
+        assert_eq!(cpu.bus.read(0x0211), 0xFF);
+    }
+
+    #[test]
+    fn trb_dp_8bit_clears_bits() {
+        let mut cpu = native8();
+        cpu.a = 0x000F;
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0xFF]);
+        cpu.bus.load(0x0000, &[0x14, 0x10]); // TRB $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0xF0); // $FF & ~$0F = $F0
+        assert!(!cpu.flag_z()); // $0F & $FF != 0
+    }
+
+    #[test]
+    fn trb_abs_16bit_clears_bits() {
+        let mut cpu = native16();
+        cpu.a = 0xF0F0;
+        cpu.bus.load(0x4000, &[0xFF, 0xFF]); // mem = $FFFF
+        cpu.bus.load(0x0000, &[0x1C, 0x00, 0x40]); // TRB $4000
+        cpu.step();
+        // mem = $FFFF & ~$F0F0 = $0F0F
+        assert_eq!(cpu.bus.read(0x4000), 0x0F);
+        assert_eq!(cpu.bus.read(0x4001), 0x0F);
+        assert!(!cpu.flag_z());
     }
 }
