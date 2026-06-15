@@ -1,6 +1,7 @@
 //! WDC 65C816 CPU core.
 
 use crate::snes::bus::SnesBus;
+use crate::snes::cpu::mem_speed::mem_access_cycles;
 
 // Status register P flags (8 bits)
 // Bit 7: N (Negative)
@@ -74,6 +75,14 @@ pub struct Cpu<B: SnesBus> {
     irq_pending: bool,
     abort_pending: bool,
 
+    /// FastROM flag: mirrors MEMSEL $420D bit 0.
+    /// When true, WS2 ROM regions ($80–$BF:$8000–$FFFF, $C0–$FF) run at 6 master clocks.
+    fast_rom: bool,
+
+    /// Count of memory bus accesses (tick_read/tick_write calls) in the current step.
+    /// Reset at the start of each step() call; used to compute internal-cycle tick counts.
+    memory_bus_cycles: u8,
+
     /// Bus for memory access
     bus: B,
 }
@@ -97,6 +106,8 @@ impl<B: SnesBus> Cpu<B> {
             nmi_pending: false,
             irq_pending: false,
             abort_pending: false,
+            fast_rom: false,
+            memory_bus_cycles: 0,
             bus,
         }
     }
@@ -409,10 +420,15 @@ impl<B: SnesBus> Cpu<B> {
     /// Execute one instruction: fetch opcode at PBR:PC, advance PC, dispatch.
     ///
     /// Before fetching the opcode, hardware interrupts are polled in priority order:
-    /// ABORT > NMI > IRQ (masked by I flag).  Returns the number of master cycles consumed.
+    /// ABORT > NMI > IRQ (masked by I flag).  Returns the number of bus cycles consumed.
+    ///
+    /// This method also drives `SnesBus::tick()` for every master clock cycle:
+    /// - Memory accesses tick at the speed of the target address (6/8/12 master clocks).
+    /// - Internal (non-memory) cycles always tick at 6 master clocks.
     pub fn step(&mut self) -> u8 {
         self.extra_cycles = 0;
         self.last_page_crossed = false;
+        self.memory_bus_cycles = 0;
 
         // Poll hardware interrupts (higher priority than opcode fetch)
         if self.abort_pending {
@@ -687,15 +703,51 @@ impl<B: SnesBus> Cpu<B> {
             0xFE => self.op_inc_abs_x(),
             0xFF => self.op_sbc_abs_long_x(),
         };
-        base + self.extra_cycles
+        let total_bus_cycles = base + self.extra_cycles;
+
+        // Tick bus for internal (non-memory-access) cycles.
+        // Internal cycles always consume 6 master clocks (CPU-internal, not a memory access).
+        let internal_cycles = total_bus_cycles.saturating_sub(self.memory_bus_cycles);
+        for _ in 0..internal_cycles {
+            for _ in 0..6u8 {
+                self.bus.tick();
+            }
+        }
+
+        total_bus_cycles
     }
 
     /// Fetch the byte at PBR:PC and advance PC by 1.
     pub fn fetch_byte(&mut self) -> u8 {
         let addr = (self.pbr as u32) << 16 | self.pc as u32;
-        let byte = self.bus.read(addr);
+        let byte = self.tick_read(addr);
         self.pc = self.pc.wrapping_add(1);
         byte
+    }
+
+    /// Advance the master clock N cycles for `addr`, then read one byte.
+    fn tick_read(&mut self, addr: u32) -> u8 {
+        let cycles = mem_access_cycles(addr, self.fast_rom);
+        for _ in 0..cycles {
+            self.bus.tick();
+        }
+        self.memory_bus_cycles += 1;
+        self.bus.read(addr)
+    }
+
+    /// Advance the master clock N cycles for `addr`, then write one byte.
+    /// Also intercepts MEMSEL ($420D) writes to update the fast_rom flag.
+    fn tick_write(&mut self, addr: u32, value: u8) {
+        let cycles = mem_access_cycles(addr, self.fast_rom);
+        for _ in 0..cycles {
+            self.bus.tick();
+        }
+        self.memory_bus_cycles += 1;
+        // MEMSEL $420D: bit 0 controls WS2 ROM speed
+        if addr & 0xFF_FFFF == 0x00_420D || addr & 0xFF_FFFF == 0x80_420D {
+            self.fast_rom = value & 0x01 != 0;
+        }
+        self.bus.write(addr, value);
     }
 
     /// Fetch a 16-bit little-endian word at PBR:PC and advance PC by 2.
@@ -3088,8 +3140,8 @@ impl<B: SnesBus> Cpu<B> {
             self.extra_cycles += 1;
         }
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
-        let lo = self.bus.read(ptr_addr);
-        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let lo = self.tick_read(ptr_addr);
+        let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
         let ptr = lo as u32 | (hi as u32) << 8;
         (self.dbr as u32) << 16 | ptr
     }
@@ -3100,9 +3152,9 @@ impl<B: SnesBus> Cpu<B> {
             self.extra_cycles += 1;
         }
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
-        let lo = self.bus.read(ptr_addr);
-        let mid = self.bus.read((ptr_addr + 1) & 0xFFFF);
-        let hi = self.bus.read((ptr_addr + 2) & 0xFFFF);
+        let lo = self.tick_read(ptr_addr);
+        let mid = self.tick_read((ptr_addr + 1) & 0xFFFF);
+        let hi = self.tick_read((ptr_addr + 2) & 0xFFFF);
         lo as u32 | (mid as u32) << 8 | (hi as u32) << 16
     }
 
@@ -3117,13 +3169,13 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             ptr_addr
         };
-        let lo = self.bus.read(ptr_addr);
+        let lo = self.tick_read(ptr_addr);
         let hi_addr = if self.e && self.d == 0 {
             (ptr_addr + 1) & 0xFF
         } else {
             (ptr_addr + 1) & 0xFFFF
         };
-        let hi = self.bus.read(hi_addr);
+        let hi = self.tick_read(hi_addr);
         let ptr = lo as u32 | (hi as u32) << 8;
         (self.dbr as u32) << 16 | ptr
     }
@@ -3134,8 +3186,8 @@ impl<B: SnesBus> Cpu<B> {
             self.extra_cycles += 1;
         }
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
-        let lo = self.bus.read(ptr_addr);
-        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let lo = self.tick_read(ptr_addr);
+        let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
         let ptr16 = lo as u16 | (hi as u16) << 8;
         self.last_page_crossed =
             !self.x_flag() || (ptr16 & 0xFF00) != (ptr16.wrapping_add(self.y) & 0xFF00);
@@ -3148,18 +3200,18 @@ impl<B: SnesBus> Cpu<B> {
             self.extra_cycles += 1;
         }
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
-        let lo = self.bus.read(ptr_addr);
-        let mid = self.bus.read((ptr_addr + 1) & 0xFFFF);
-        let hi = self.bus.read((ptr_addr + 2) & 0xFFFF);
+        let lo = self.tick_read(ptr_addr);
+        let mid = self.tick_read((ptr_addr + 1) & 0xFFFF);
+        let hi = self.tick_read((ptr_addr + 2) & 0xFFFF);
         let base = lo as u32 | (mid as u32) << 8 | (hi as u32) << 16;
         base.wrapping_add(self.y as u32) & 0xFF_FFFF
     }
 
     /// Stack Relative Indirect Indexed Y: ptr16 at (S+offset), EA = (DBR:ptr16+Y) & 0xFF_FFFF
-    fn addr_sr_ind_y(&self, offset: u8) -> u32 {
+    fn addr_sr_ind_y(&mut self, offset: u8) -> u32 {
         let ptr_addr = (self.s as u32 + offset as u32) & 0xFFFF;
-        let lo = self.bus.read(ptr_addr);
-        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let lo = self.tick_read(ptr_addr);
+        let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
         let ptr = lo as u32 | (hi as u32) << 8;
         ((self.dbr as u32) << 16 | ptr).wrapping_add(self.y as u32) & 0xFF_FFFF
     }
@@ -3168,22 +3220,22 @@ impl<B: SnesBus> Cpu<B> {
     // Width-aware memory access helpers
     // -------------------------------------------------------------------------
 
-    /// Read one byte from the bus.
-    fn read8(&self, addr: u32) -> u8 {
-        self.bus.read(addr & 0xFF_FFFF)
+    /// Read one byte from the bus, ticking the master clock per access speed.
+    fn read8(&mut self, addr: u32) -> u8 {
+        self.tick_read(addr & 0xFF_FFFF)
     }
 
-    /// Write one byte to the bus.
+    /// Write one byte to the bus, ticking the master clock per access speed.
     fn write8(&mut self, addr: u32, value: u8) {
-        self.bus.write(addr & 0xFF_FFFF, value);
+        self.tick_write(addr & 0xFF_FFFF, value);
     }
 
     /// Read two bytes little-endian; high byte wraps within the same bank.
-    fn read16(&self, addr: u32) -> u16 {
+    fn read16(&mut self, addr: u32) -> u16 {
         let bank = addr & 0xFF_0000;
         let offset = addr & 0x0000_FFFF;
-        let lo = self.bus.read(bank | offset);
-        let hi = self.bus.read(bank | ((offset + 1) & 0xFFFF));
+        let lo = self.tick_read(bank | offset);
+        let hi = self.tick_read(bank | ((offset + 1) & 0xFFFF));
         lo as u16 | (hi as u16) << 8
     }
 
@@ -3191,9 +3243,8 @@ impl<B: SnesBus> Cpu<B> {
     fn write16(&mut self, addr: u32, value: u16) {
         let bank = addr & 0xFF_0000;
         let offset = addr & 0x0000_FFFF;
-        self.bus.write(bank | offset, value as u8);
-        self.bus
-            .write(bank | ((offset + 1) & 0xFFFF), (value >> 8) as u8);
+        self.tick_write(bank | offset, value as u8);
+        self.tick_write(bank | ((offset + 1) & 0xFFFF), (value >> 8) as u8);
     }
 
     /// Read M-flag width: 8-bit when M=1, 16-bit when M=0.
@@ -3289,8 +3340,8 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_jmp_abs_ind(&mut self) -> u8 {
         let ptr_addr = self.fetch_word() as u32; // bank 0
-        let lo = self.bus.read(ptr_addr);
-        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let lo = self.tick_read(ptr_addr);
+        let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
         self.pc = lo as u16 | (hi as u16) << 8;
         5
     }
@@ -3311,9 +3362,9 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_jmp_abs_ind_long(&mut self) -> u8 {
         let ptr_addr = self.fetch_word() as u32; // bank 0
-        let lo = self.bus.read(ptr_addr);
-        let mid = self.bus.read((ptr_addr + 1) & 0xFFFF);
-        let hi = self.bus.read((ptr_addr + 2) & 0xFFFF);
+        let lo = self.tick_read(ptr_addr);
+        let mid = self.tick_read((ptr_addr + 1) & 0xFFFF);
+        let hi = self.tick_read((ptr_addr + 2) & 0xFFFF);
         self.pc = lo as u16 | (mid as u16) << 8;
         self.pbr = hi;
         6
@@ -9149,6 +9200,7 @@ mod mvn_mvp_per_byte_cycle_tests {
     }
 }
 
+<<<<<<< HEAD
 // =============================================================================
 // Interrupt dispatch tests (issue #2731)
 // =============================================================================
@@ -9528,5 +9580,160 @@ mod interrupt_dispatch_tests {
         cpu.bus.load(0x0000, &[0x02, 0x00]); // COP
         cpu.step();
         assert!(!cpu.flag_d(), "D cleared by COP in emulation mode");
+=======
+/// Master-clock tick count integration tests.
+///
+/// These verify that `SnesBus::tick()` is called the correct number of master
+/// clock cycles per instruction, based on the memory access speed of each
+/// address region.
+///
+/// All tests load instructions at `$00:$0000` (WRAM mirror → 8 master clocks
+/// per access) unless they are specifically testing a different region.
+#[cfg(test)]
+mod master_clock_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn cpu_at(load_addr: u32, code: &[u8]) -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false; // native mode
+        cpu.p = 0b0011_0000; // M=1, X=1 (8-bit)
+        cpu.write_pbr((load_addr >> 16) as u8);
+        cpu.write_pc(load_addr as u16);
+        cpu.bus.load(load_addr, code);
+        cpu
+    }
+
+    // -------------------------------------------------------------------------
+    // NOP — 2 bus accesses (opcode fetch + internal cycle)
+    // At $00:$0000 (WRAM mirror, 8 clocks each) → 2 × 8 = 16 ticks
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn nop_at_wram_region_produces_16_master_clocks() {
+        let mut cpu = cpu_at(0x00_0000, &[0xEA]); // NOP
+        cpu.step();
+        assert_eq!(cpu.bus.tick_count(), 16);
+    }
+
+    // -------------------------------------------------------------------------
+    // NOP at $80:$8000 with MEMSEL=0 (WS2 ROM, slow) → 2 × 8 = 16
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn nop_at_ws2_rom_slow_produces_16_master_clocks() {
+        let mut cpu = cpu_at(0x80_8000, &[0xEA]); // NOP
+        // fast_rom defaults to false
+        cpu.step();
+        assert_eq!(cpu.bus.tick_count(), 16);
+    }
+
+    // -------------------------------------------------------------------------
+    // NOP at $80:$8000 with MEMSEL=1 (WS2 ROM, fast) → 2 × 6 = 12
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn nop_at_ws2_rom_fast_produces_12_master_clocks() {
+        let mut cpu = cpu_at(0x80_8000, &[0xEA]); // NOP
+        cpu.fast_rom = true;
+        cpu.step();
+        assert_eq!(cpu.bus.tick_count(), 12);
+    }
+
+    // -------------------------------------------------------------------------
+    // NOP at $C0:$0000 with MEMSEL=0 (WS2 HiROM, slow) → 2 × 8 = 16
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn nop_at_ws2_hirom_slow_produces_16_master_clocks() {
+        let mut cpu = cpu_at(0xC0_0000, &[0xEA]); // NOP
+        cpu.step();
+        assert_eq!(cpu.bus.tick_count(), 16);
+    }
+
+    // -------------------------------------------------------------------------
+    // NOP at $C0:$0000 with MEMSEL=1 (WS2 HiROM, fast) → 2 × 6 = 12
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn nop_at_ws2_hirom_fast_produces_12_master_clocks() {
+        let mut cpu = cpu_at(0xC0_0000, &[0xEA]); // NOP
+        cpu.fast_rom = true;
+        cpu.step();
+        assert_eq!(cpu.bus.tick_count(), 12);
+    }
+
+    // -------------------------------------------------------------------------
+    // LDA #imm (8-bit M=1): 2 bus accesses → 2 × 8 = 16 at $00:$0000
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn lda_imm_8bit_at_wram_produces_16_master_clocks() {
+        let mut cpu = cpu_at(0x00_0000, &[0xA9, 0x42]); // LDA #$42
+        cpu.step();
+        assert_eq!(cpu.bus.tick_count(), 16);
+    }
+
+    // -------------------------------------------------------------------------
+    // MEMSEL $420D write toggles fast_rom and affects subsequent tick counts
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn write_to_memsel_420d_enables_fast_rom() {
+        // STA abs → store A to $420D (opcode $8D, addr lo $0D, addr hi $42)
+        // This writes A to MEMSEL and sets fast_rom.
+        // Instruction at $00:$0000 (WRAM, 8 clocks each)
+        // STA abs = 4 bus accesses (opcode + lo + hi + write) → 4 × 8 = 32 ticks
+        // But the write is to $420D which is CPU I/O (6 clocks), so: 3×8 + 6 = 30 ticks
+        let mut cpu = cpu_at(0x00_0000, &[0x8D, 0x0D, 0x42]); // STA $420D
+        cpu.write_a(0x01); // set bit 0 = enable fast_rom
+        cpu.step();
+        assert!(
+            cpu.fast_rom,
+            "fast_rom must be set after writing 1 to $420D"
+        );
+        // tick count: opcode(8) + lo addr(8) + hi addr(8) + write to $420D(6) = 30
+        assert_eq!(cpu.bus.tick_count(), 30);
+    }
+
+    #[test]
+    fn write_to_memsel_420d_disables_fast_rom() {
+        let mut cpu = cpu_at(0x00_0000, &[0x8D, 0x0D, 0x42]); // STA $420D
+        cpu.fast_rom = true;
+        cpu.write_a(0x00); // bit 0 = 0 → disable fast_rom
+        cpu.step();
+        assert!(
+            !cpu.fast_rom,
+            "fast_rom must be cleared after writing 0 to $420D"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // XSlow region: LDA abs accessing $4016 (joypad, 12 clocks)
+    // LDA $4016: opcode(8) + lo(8) + hi(8) + read $4016(12) = 36 ticks
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn lda_from_joypad_region_uses_xslow_access() {
+        // LDA $4016 (abs) = 0xAD 0x16 0x40, code at $00:$0000
+        let mut cpu = cpu_at(0x00_0000, &[0xAD, 0x16, 0x40]); // LDA $4016
+        cpu.step();
+        // opcode at $0000 (WRAM, 8) + lo at $0001 (8) + hi at $0002 (8) + read $4016 (XSlow, 12) = 36
+        assert_eq!(cpu.bus.tick_count(), 36);
+    }
+
+    // -------------------------------------------------------------------------
+    // Fast I/O region: LDA $2140 (APU port, 6 clocks for the read)
+    // opcode(8) + lo(8) + hi(8) + read $2140(6) = 30 ticks
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn lda_from_apu_port_uses_fast_access() {
+        // LDA $2140 (abs) = 0xAD 0x40 0x21
+        let mut cpu = cpu_at(0x00_0000, &[0xAD, 0x40, 0x21]); // LDA $2140
+        cpu.step();
+        // opcode(8) + lo(8) + hi(8) + read at $2140 (B-Bus I/O, 6) = 30
+        assert_eq!(cpu.bus.tick_count(), 30);
+>>>>>>> c149ec38 (feat(snes/cpu): cycle-accurate memory-speed model (issue #2732))
     }
 }
