@@ -359,7 +359,9 @@ impl<B: SnesBus> Cpu<B> {
     pub fn step(&mut self) -> u8 {
         let opcode = self.fetch_byte();
         match opcode {
+            0x00 => self.op_brk(),
             0x01 => self.op_ora_dp_x_ind(),
+            0x02 => self.op_cop(),
             0x03 => self.op_ora_sr(),
             0x05 => self.op_ora_dp(),
             0x04 => self.op_tsb_dp(),
@@ -3096,6 +3098,62 @@ impl<B: SnesBus> Cpu<B> {
             self.pbr = self.pull8();
         }
         6
+    }
+
+    fn op_brk(&mut self) -> u8 {
+        let _sig = self.fetch_byte(); // consume signature byte (BRK is 2-byte instruction)
+        let pc_ret = self.pc;
+        if self.e {
+            // Emulation mode: push PC+2, push P with B flag set, vector $FFFE
+            self.push8((pc_ret >> 8) as u8);
+            self.push8(pc_ret as u8);
+            self.push8(self.p | FLAG_INDEX_WIDTH); // B flag = bit 4 in emulation mode
+            self.set_flag_i(true);
+            let lo = self.read8(0x00FFFE);
+            let hi = self.read8(0x00FFFF);
+            self.pc = lo as u16 | (hi as u16) << 8;
+            7
+        } else {
+            // Native mode: push PBR, push PC+2, push P, set I=1, clear D, vector $FFE6
+            self.push8(self.pbr);
+            self.push8((pc_ret >> 8) as u8);
+            self.push8(pc_ret as u8);
+            self.push8(self.p);
+            self.set_flag_i(true);
+            self.set_flag_d(false);
+            let lo = self.read8(0x00FFE6);
+            let hi = self.read8(0x00FFE7);
+            self.pc = lo as u16 | (hi as u16) << 8;
+            8
+        }
+    }
+
+    fn op_cop(&mut self) -> u8 {
+        let _sig = self.fetch_byte(); // consume signature byte
+        let pc_ret = self.pc;
+        if self.e {
+            // Emulation mode: push PC+2, push P, vector $FFF4
+            self.push8((pc_ret >> 8) as u8);
+            self.push8(pc_ret as u8);
+            self.push8(self.p);
+            self.set_flag_i(true);
+            let lo = self.read8(0x00FFF4);
+            let hi = self.read8(0x00FFF5);
+            self.pc = lo as u16 | (hi as u16) << 8;
+            7
+        } else {
+            // Native mode: push PBR, push PC+2, push P, set I=1, clear D, vector $FFE4
+            self.push8(self.pbr);
+            self.push8((pc_ret >> 8) as u8);
+            self.push8(pc_ret as u8);
+            self.push8(self.p);
+            self.set_flag_i(true);
+            self.set_flag_d(false);
+            let lo = self.read8(0x00FFE4);
+            let hi = self.read8(0x00FFE5);
+            self.pc = lo as u16 | (hi as u16) << 8;
+            8
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -7540,5 +7598,102 @@ mod branch_cycle_tests {
         cpu.bus.load(0x00F0, &[0x90, 0x14]); // BCC +20, lands at 0x0106
         let cycles = cpu.step();
         assert_eq!(cycles, 3);
+    }
+}
+
+#[cfg(test)]
+mod brk_cop_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    // Native mode BRK vector: $00FFE6/$00FFE7
+    // Emulation mode IRQ/BRK vector: $00FFFE/$00FFFF
+
+    fn native() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    // =========================================================================
+    // BRK ( native mode0x00)
+    // Pushes PBR, PC+2, P (with B=1 per 65816), then vectors via $FFE6/$FFE7
+    // =========================================================================
+
+    #[test]
+    fn brk_native_pushes_pbr_pc_p_and_vectors() {
+        let mut cpu = native();
+        cpu.pbr = 0x00;
+        cpu.pc = 0x0000;
+        cpu.s = 0x01FF;
+        // BRK native vector at $FFE6/$FFE7 -> $1234
+        cpu.bus.load(0x00FFE6, &[0x34, 0x12]);
+        cpu.bus.load(0x0000, &[0x00, 0x00]); // BRK (signature byte at +1)
+        cpu.step();
+        assert_eq!(cpu.pc, 0x1234);
+        assert_eq!(cpu.pbr, 0x00);
+        assert_eq!(cpu.s, 0x01FB); // 4 pushes: PBR, PChi, PClo, P
+        // Stack: PBR=0 at 01FF, PChi=0x00 at 01FE, PClo=0x02 at 01FD, P at 01FC
+        assert_eq!(cpu.bus.read(0x01FF), 0x00); // PBR
+        assert_eq!(cpu.bus.read(0x01FE), 0x00); // PC+2 high byte
+        assert_eq!(cpu.bus.read(0x01FD), 0x02); // PC+2 low byte
+        // P on stack should have I=1 (set after push) -- P pushed before I set
+        assert!(cpu.flag_i()); // I set after vectoring
+        assert!(!cpu.flag_d()); // D cleared in native mode BRK
+    }
+
+    #[test]
+    fn brk_native_clears_d_and_sets_i() {
+        let mut cpu = native();
+        cpu.set_flag_d(true);
+        cpu.set_flag_i(false);
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x00FFE6, &[0x00, 0x20]);
+        cpu.bus.load(0x0000, &[0x00, 0x00]);
+        cpu.step();
+        assert!(cpu.flag_i());
+        assert!(!cpu.flag_d());
+    }
+
+    // =========================================================================
+    // BRK ( emulation mode0x00)
+    // Pushes PC+2, P (B flag set), vectors via $FFFE/$FFFF
+    // =========================================================================
+
+    #[test]
+    fn brk_emulation_pushes_pc_p_and_vectors() {
+        let mut cpu = Cpu::new(TestBus::default()); // emulation mode
+        cpu.pc = 0x0000;
+        cpu.s = 0x01FF;
+        // Emulation BRK/IRQ vector at $FFFE -> $5678
+        cpu.bus.load(0x00FFFE, &[0x78, 0x56]);
+        cpu.bus.load(0x0000, &[0x00, 0x00]); // BRK
+        cpu.step();
+        assert_eq!(cpu.pc, 0x5678);
+        assert_eq!(cpu.s, 0x01FC); // pushed PChi, PClo, P (3 bytes, no PBR in emulation)
+        assert_eq!(cpu.bus.read(0x01FF), 0x00); // PChi of PC+2
+        assert_eq!(cpu.bus.read(0x01FE), 0x02); // PClo of PC+2
+        // P on stack should have B flag set
+        assert!(cpu.bus.read(0x01FD) & FLAG_INDEX_WIDTH != 0); // B flag is bit 4 in emulation
+        assert!(cpu.flag_i());
+    }
+
+    // =========================================================================
+    // COP ( native mode0x02)
+    // Like BRK but vectors via $FFE4/$FFE5, no B flag
+    // =========================================================================
+
+    #[test]
+    fn cop_native_pushes_pbr_pc_p_and_vectors() {
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x00FFE4, &[0xCD, 0xAB]); // COP native vector -> $ABCD
+        cpu.bus.load(0x0000, &[0x02, 0x00]); // COP (signature byte at +1)
+        cpu.step();
+        assert_eq!(cpu.pc, 0xABCD);
+        assert_eq!(cpu.s, 0x01FB); // 4 pushes: PBR, PChi, PClo, P
+        assert!(cpu.flag_i());
+        assert!(!cpu.flag_d());
     }
 }
