@@ -743,8 +743,10 @@ impl<B: SnesBus> Cpu<B> {
             self.bus.tick();
         }
         self.memory_bus_cycles += 1;
-        // MEMSEL $420D: bit 0 controls WS2 ROM speed
-        if addr & 0xFF_FFFF == 0x00_420D || addr & 0xFF_FFFF == 0x80_420D {
+        // MEMSEL $420D: bit 0 controls WS2 ROM speed.
+        // The register is mirrored across all banks $00–$3F and $80–$BF.
+        let bank = (addr >> 16) as u8;
+        if (bank <= 0x3F || (0x80..=0xBF).contains(&bank)) && (addr & 0xFFFF) as u16 == 0x420D {
             self.fast_rom = value & 0x01 != 0;
         }
         self.bus.write(addr, value);
@@ -9200,7 +9202,6 @@ mod mvn_mvp_per_byte_cycle_tests {
     }
 }
 
-<<<<<<< HEAD
 // =============================================================================
 // Interrupt dispatch tests (issue #2731)
 // =============================================================================
@@ -9580,7 +9581,9 @@ mod interrupt_dispatch_tests {
         cpu.bus.load(0x0000, &[0x02, 0x00]); // COP
         cpu.step();
         assert!(!cpu.flag_d(), "D cleared by COP in emulation mode");
-=======
+    }
+}
+
 /// Master-clock tick count integration tests.
 ///
 /// These verify that `SnesBus::tick()` is called the correct number of master
@@ -9605,27 +9608,27 @@ mod master_clock_tests {
     }
 
     // -------------------------------------------------------------------------
-    // NOP — 2 bus accesses (opcode fetch + internal cycle)
-    // At $00:$0000 (WRAM mirror, 8 clocks each) → 2 × 8 = 16 ticks
+    // NOP — 2 bus cycles (opcode fetch + internal cycle)
+    // At $00:$0000 (WRAM mirror, 8 clocks fetch + 6 clocks internal) → 14 ticks
     // -------------------------------------------------------------------------
 
     #[test]
-    fn nop_at_wram_region_produces_16_master_clocks() {
+    fn nop_at_wram_region_produces_14_master_clocks() {
         let mut cpu = cpu_at(0x00_0000, &[0xEA]); // NOP
         cpu.step();
-        assert_eq!(cpu.bus.tick_count(), 16);
+        assert_eq!(cpu.bus.tick_count(), 14);
     }
 
     // -------------------------------------------------------------------------
-    // NOP at $80:$8000 with MEMSEL=0 (WS2 ROM, slow) → 2 × 8 = 16
+    // NOP at $80:$8000 with MEMSEL=0 (WS2 ROM, slow) → 8 (fetch) + 6 (internal) = 14
     // -------------------------------------------------------------------------
 
     #[test]
-    fn nop_at_ws2_rom_slow_produces_16_master_clocks() {
+    fn nop_at_ws2_rom_slow_produces_14_master_clocks() {
         let mut cpu = cpu_at(0x80_8000, &[0xEA]); // NOP
         // fast_rom defaults to false
         cpu.step();
-        assert_eq!(cpu.bus.tick_count(), 16);
+        assert_eq!(cpu.bus.tick_count(), 14);
     }
 
     // -------------------------------------------------------------------------
@@ -9641,14 +9644,14 @@ mod master_clock_tests {
     }
 
     // -------------------------------------------------------------------------
-    // NOP at $C0:$0000 with MEMSEL=0 (WS2 HiROM, slow) → 2 × 8 = 16
+    // NOP at $C0:$0000 with MEMSEL=0 (WS2 HiROM, slow) → 8 (fetch) + 6 (internal) = 14
     // -------------------------------------------------------------------------
 
     #[test]
-    fn nop_at_ws2_hirom_slow_produces_16_master_clocks() {
+    fn nop_at_ws2_hirom_slow_produces_14_master_clocks() {
         let mut cpu = cpu_at(0xC0_0000, &[0xEA]); // NOP
         cpu.step();
-        assert_eq!(cpu.bus.tick_count(), 16);
+        assert_eq!(cpu.bus.tick_count(), 14);
     }
 
     // -------------------------------------------------------------------------
@@ -9734,6 +9737,5 @@ mod master_clock_tests {
         cpu.step();
         // opcode(8) + lo(8) + hi(8) + read at $2140 (B-Bus I/O, 6) = 30
         assert_eq!(cpu.bus.tick_count(), 30);
->>>>>>> c149ec38 (feat(snes/cpu): cycle-accurate memory-speed model (issue #2732))
     }
 }
