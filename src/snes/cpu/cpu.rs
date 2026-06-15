@@ -364,9 +364,12 @@ impl<B: SnesBus> Cpu<B> {
             0x05 => self.op_ora_dp(),
             0x04 => self.op_tsb_dp(),
             0x06 => self.op_asl_dp(),
+            0x08 => self.op_php(),
+            0x0B => self.op_phd(),
             0x0C => self.op_tsb_abs(),
             0x14 => self.op_trb_dp(),
             0x1C => self.op_trb_abs(),
+            0x20 => self.op_jsr_abs(),
             0x07 => self.op_ora_dp_ind_long(),
             0x09 => self.op_ora_imm(),
             0x0A => self.op_asl_acc(),
@@ -387,13 +390,16 @@ impl<B: SnesBus> Cpu<B> {
             0x1E => self.op_asl_abs_x(),
             0x1F => self.op_ora_abs_long_x(),
             0x21 => self.op_and_dp_x_ind(),
+            0x22 => self.op_jsl_abs_long(),
             0x23 => self.op_and_sr(),
             0x24 => self.op_bit_dp(),
             0x25 => self.op_and_dp(),
             0x26 => self.op_rol_dp(),
             0x27 => self.op_and_dp_ind_long(),
+            0x28 => self.op_plp(),
             0x29 => self.op_and_imm(),
             0x2A => self.op_rol_acc(),
+            0x2B => self.op_pld(),
             0x2C => self.op_bit_abs(),
             0x2D => self.op_and_abs(),
             0x2E => self.op_rol_abs(),
@@ -413,13 +419,17 @@ impl<B: SnesBus> Cpu<B> {
             0x3D => self.op_and_abs_x(),
             0x3E => self.op_rol_abs_x(),
             0x3F => self.op_and_abs_long_x(),
+            0x40 => self.op_rti(),
             0x41 => self.op_eor_dp_x_ind(),
             0x43 => self.op_eor_sr(),
             0x45 => self.op_eor_dp(),
             0x46 => self.op_lsr_dp(),
             0x47 => self.op_eor_dp_ind_long(),
+            0x48 => self.op_pha(),
             0x49 => self.op_eor_imm(),
             0x4A => self.op_lsr_acc(),
+            0x4B => self.op_phk(),
+            0x4C => self.op_jmp_abs(),
             0x4D => self.op_eor_abs(),
             0x4E => self.op_lsr_abs(),
             0x4F => self.op_eor_abs_long(),
@@ -431,18 +441,25 @@ impl<B: SnesBus> Cpu<B> {
             0x56 => self.op_lsr_dp_x(),
             0x57 => self.op_eor_dp_ind_long_y(),
             0x59 => self.op_eor_abs_y(),
+            0x5A => self.op_phy(),
             0x5B => self.op_tcd(),
+            0x5C => self.op_jmp_abs_long(),
             0x5D => self.op_eor_abs_x(),
             0x5E => self.op_lsr_abs_x(),
             0x5F => self.op_eor_abs_long_x(),
+            0x60 => self.op_rts(),
             0x61 => self.op_adc_dp_x_ind(),
+            0x62 => self.op_per(),
             0x63 => self.op_adc_sr(),
             0x64 => self.op_stz_dp(),
             0x65 => self.op_adc_dp(),
             0x66 => self.op_ror_dp(),
             0x67 => self.op_adc_dp_ind_long(),
+            0x68 => self.op_pla(),
             0x69 => self.op_adc_imm(),
             0x6A => self.op_ror_acc(),
+            0x6B => self.op_rtl(),
+            0x6C => self.op_jmp_abs_ind(),
             0x6D => self.op_adc_abs(),
             0x6E => self.op_ror_abs(),
             0x6F => self.op_adc_abs_long(),
@@ -455,7 +472,9 @@ impl<B: SnesBus> Cpu<B> {
             0x76 => self.op_ror_dp_x(),
             0x77 => self.op_adc_dp_ind_long_y(),
             0x79 => self.op_adc_abs_y(),
+            0x7A => self.op_ply(),
             0x7B => self.op_tdc(),
+            0x7C => self.op_jmp_abs_x_ind(),
             0x7D => self.op_adc_abs_x(),
             0x7E => self.op_ror_abs_x(),
             0x7F => self.op_adc_abs_long_x(),
@@ -470,6 +489,7 @@ impl<B: SnesBus> Cpu<B> {
             0x88 => self.op_dey(),
             0x89 => self.op_bit_imm(),
             0x8A => self.op_txa(),
+            0x8B => self.op_phb(),
             0x8C => self.op_sty_abs(),
             0x8D => self.op_sta_abs(),
             0x8E => self.op_stx_abs(),
@@ -501,6 +521,7 @@ impl<B: SnesBus> Cpu<B> {
             0xA8 => self.op_tay(),
             0xA9 => self.op_lda_imm(),
             0xAA => self.op_tax(),
+            0xAB => self.op_plb(),
             0xAC => self.op_ldy_abs(),
             0xAD => self.op_lda_abs(),
             0xAE => self.op_ldx_abs(),
@@ -538,10 +559,13 @@ impl<B: SnesBus> Cpu<B> {
             0xD1 => self.op_cmp_dp_ind_y(),
             0xD2 => self.op_cmp_dp_ind(),
             0xD3 => self.op_cmp_sr_ind_y(),
+            0xD4 => self.op_pei(),
             0xD5 => self.op_cmp_dp_x(),
             0xD6 => self.op_dec_dp_x(),
             0xD7 => self.op_cmp_dp_ind_long_y(),
             0xD9 => self.op_cmp_abs_y(),
+            0xDA => self.op_phx(),
+            0xDC => self.op_jmp_abs_ind_long(),
             0xDD => self.op_cmp_abs_x(),
             0xDE => self.op_dec_abs_x(),
             0xDF => self.op_cmp_abs_long_x(),
@@ -564,10 +588,13 @@ impl<B: SnesBus> Cpu<B> {
             0xF1 => self.op_sbc_dp_ind_y(),
             0xF2 => self.op_sbc_dp_ind(),
             0xF3 => self.op_sbc_sr_ind_y(),
+            0xF4 => self.op_pea(),
             0xF5 => self.op_sbc_dp_x(),
             0xF6 => self.op_inc_dp_x(),
             0xF7 => self.op_sbc_dp_ind_long_y(),
             0xF9 => self.op_sbc_abs_y(),
+            0xFA => self.op_plx(),
+            0xFC => self.op_jsr_abs_x_ind(),
             0xFD => self.op_sbc_abs_x(),
             0xFE => self.op_inc_abs_x(),
             0xFF => self.op_sbc_abs_long_x(),
@@ -2856,6 +2883,282 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             self.write16(addr, value);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Stack helpers: push/pull respect native vs emulation mode S wrapping.
+    // PUSH: write to S, then decrement S.
+    // PULL: increment S, then read from S.
+    // In emulation mode write_s forces the high byte to $01, but we manipulate
+    // self.s directly for speed; emulation mode constrains S to page 1.
+    // -------------------------------------------------------------------------
+
+    fn push8(&mut self, val: u8) {
+        self.write8(self.s as u32, val);
+        self.s = if self.e {
+            0x0100 | (self.s.wrapping_sub(1) & 0xFF)
+        } else {
+            self.s.wrapping_sub(1)
+        };
+    }
+
+    fn push16(&mut self, val: u16) {
+        self.push8((val >> 8) as u8);
+        self.push8(val as u8);
+    }
+
+    fn pull8(&mut self) -> u8 {
+        self.s = if self.e {
+            0x0100 | (self.s.wrapping_add(1) & 0xFF)
+        } else {
+            self.s.wrapping_add(1)
+        };
+        self.read8(self.s as u32)
+    }
+
+    fn pull16(&mut self) -> u16 {
+        let lo = self.pull8() as u16;
+        let hi = self.pull8() as u16;
+        hi << 8 | lo
+    }
+
+    // -------------------------------------------------------------------------
+    // JMP — jump (no stack change)
+    // -------------------------------------------------------------------------
+
+    fn op_jmp_abs(&mut self) -> u8 {
+        let addr = self.fetch_word();
+        self.pc = addr;
+        3
+    }
+
+    fn op_jmp_abs_ind(&mut self) -> u8 {
+        let ptr_addr = self.fetch_word() as u32; // bank 0
+        let lo = self.bus.read(ptr_addr);
+        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        self.pc = lo as u16 | (hi as u16) << 8;
+        5
+    }
+
+    fn op_jmp_abs_x_ind(&mut self) -> u8 {
+        let base = self.fetch_word();
+        let ptr_addr = (self.pbr as u32) << 16 | base.wrapping_add(self.x) as u32;
+        self.pc = self.read16(ptr_addr);
+        6
+    }
+
+    fn op_jmp_abs_long(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        self.pbr = (addr >> 16) as u8;
+        self.pc = addr as u16;
+        4
+    }
+
+    fn op_jmp_abs_ind_long(&mut self) -> u8 {
+        let ptr_addr = self.fetch_word() as u32; // bank 0
+        let lo = self.bus.read(ptr_addr);
+        let mid = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let hi = self.bus.read((ptr_addr + 2) & 0xFFFF);
+        self.pc = lo as u16 | (mid as u16) << 8;
+        self.pbr = hi;
+        6
+    }
+
+    // -------------------------------------------------------------------------
+    // JSR / JSL — jump to subroutine (push return address - 1)
+    // -------------------------------------------------------------------------
+
+    fn op_jsr_abs(&mut self) -> u8 {
+        let target = self.fetch_word();
+        let ret = self.pc.wrapping_sub(1);
+        self.push16(ret);
+        self.pc = target;
+        6
+    }
+
+    fn op_jsr_abs_x_ind(&mut self) -> u8 {
+        let base = self.fetch_word();
+        let ret = self.pc.wrapping_sub(1);
+        self.push16(ret);
+        let ptr_addr = (self.pbr as u32) << 16 | base.wrapping_add(self.x) as u32;
+        self.pc = self.read16(ptr_addr);
+        8
+    }
+
+    fn op_jsl_abs_long(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let ret = self.pc.wrapping_sub(1);
+        self.push8(self.pbr);
+        self.push16(ret);
+        self.pbr = (addr >> 16) as u8;
+        self.pc = addr as u16;
+        8
+    }
+
+    // -------------------------------------------------------------------------
+    // RTS / RTL / RTI — return from subroutine / interrupt
+    // -------------------------------------------------------------------------
+
+    fn op_rts(&mut self) -> u8 {
+        let addr = self.pull16();
+        self.pc = addr.wrapping_add(1);
+        6
+    }
+
+    fn op_rtl(&mut self) -> u8 {
+        let addr = self.pull16();
+        let bank = self.pull8();
+        self.pc = addr.wrapping_add(1);
+        self.pbr = bank;
+        6
+    }
+
+    fn op_rti(&mut self) -> u8 {
+        let p = self.pull8();
+        self.p = p;
+        if self.e {
+            self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        }
+        let pc = self.pull16();
+        self.pc = pc;
+        if !self.e {
+            self.pbr = self.pull8();
+        }
+        6
+    }
+
+    // -------------------------------------------------------------------------
+    // Stack push / pull opcodes
+    // -------------------------------------------------------------------------
+
+    fn op_pha(&mut self) -> u8 {
+        if self.m_flag() {
+            self.push8(self.a as u8);
+        } else {
+            self.push16(self.a);
+        }
+        3
+    }
+
+    fn op_pla(&mut self) -> u8 {
+        if self.m_flag() {
+            let val = self.pull8() as u16;
+            self.write_a(val);
+            let a = self.a;
+            self.set_nz_m(a);
+        } else {
+            let val = self.pull16();
+            self.write_a(val);
+            let a = self.a;
+            self.set_nz_m(a);
+        }
+        4
+    }
+
+    fn op_phx(&mut self) -> u8 {
+        if self.x_flag() {
+            self.push8(self.x as u8);
+        } else {
+            self.push16(self.x);
+        }
+        3
+    }
+
+    fn op_plx(&mut self) -> u8 {
+        if self.x_flag() {
+            let val = self.pull8() as u16;
+            self.write_x(val);
+        } else {
+            let val = self.pull16();
+            self.write_x(val);
+        }
+        self.set_nz_x(self.x);
+        4
+    }
+
+    fn op_phy(&mut self) -> u8 {
+        if self.x_flag() {
+            self.push8(self.y as u8);
+        } else {
+            self.push16(self.y);
+        }
+        3
+    }
+
+    fn op_ply(&mut self) -> u8 {
+        if self.x_flag() {
+            let val = self.pull8() as u16;
+            self.write_y(val);
+        } else {
+            let val = self.pull16();
+            self.write_y(val);
+        }
+        self.set_nz_x(self.y);
+        4
+    }
+
+    fn op_php(&mut self) -> u8 {
+        self.push8(self.p);
+        3
+    }
+
+    fn op_plp(&mut self) -> u8 {
+        let p = self.pull8();
+        self.p = p;
+        if self.e {
+            self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        }
+        4
+    }
+
+    fn op_phb(&mut self) -> u8 {
+        self.push8(self.dbr);
+        3
+    }
+
+    fn op_plb(&mut self) -> u8 {
+        let val = self.pull8();
+        self.dbr = val;
+        self.set_nz(val as u16, 0x80);
+        4
+    }
+
+    fn op_phd(&mut self) -> u8 {
+        self.push16(self.d);
+        4
+    }
+
+    fn op_pld(&mut self) -> u8 {
+        let val = self.pull16();
+        self.d = val;
+        self.set_nz(val, 0x8000);
+        5
+    }
+
+    fn op_phk(&mut self) -> u8 {
+        self.push8(self.pbr);
+        3
+    }
+
+    fn op_pea(&mut self) -> u8 {
+        let val = self.fetch_word();
+        self.push16(val);
+        5
+    }
+
+    fn op_pei(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read16(ea);
+        self.push16(val);
+        6
+    }
+
+    fn op_per(&mut self) -> u8 {
+        let offset = self.fetch_word() as i16;
+        let ea = self.pc.wrapping_add(offset as u16);
+        self.push16(ea);
+        6
     }
 }
 
@@ -6381,5 +6684,479 @@ mod branch_tests {
         cpu.bus.load(0x0100, &[0x82, 0xFB, 0xFF]); // BRL -5 (0xFFFB = -5 signed)
         cpu.step();
         assert_eq!(cpu.pc, 0x00FE); // 0x0103 + (-5) = 0x00FE
+    }
+}
+
+// =============================================================================
+// Iteration 10: JMP / JSR / RTI / RTS / RTL + stack push/pull ops
+// =============================================================================
+
+#[cfg(test)]
+mod jmp_jsr_rts_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    // =========================================================================
+    // JMP absolute (0x4C)
+    // =========================================================================
+
+    #[test]
+    fn jmp_abs_sets_pc_to_operand() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x4C, 0x34, 0x12]); // JMP $1234
+        cpu.step();
+        assert_eq!(cpu.pc, 0x1234);
+        assert_eq!(cpu.pbr, 0x00); // PBR unchanged
+    }
+
+    // =========================================================================
+    // JMP (abs) indirect (0x6C)
+    // =========================================================================
+
+    #[test]
+    fn jmp_abs_ind_follows_pointer() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x6C, 0x10, 0x20]); // JMP ($2010)
+        cpu.bus.load(0x2010, &[0x78, 0x56]); // pointer -> $5678
+        cpu.step();
+        assert_eq!(cpu.pc, 0x5678);
+    }
+
+    // =========================================================================
+    // JMP (abs,X) indexed indirect (0x7C)
+    // =========================================================================
+
+    #[test]
+    fn jmp_abs_x_ind_uses_x_offset() {
+        let mut cpu = native16();
+        cpu.x = 4;
+        cpu.bus.load(0x0000, &[0x7C, 0x10, 0x20]); // JMP ($2010,X)
+        cpu.bus.load(0x2014, &[0xCD, 0xAB]); // pointer -> $ABCD
+        cpu.step();
+        assert_eq!(cpu.pc, 0xABCD);
+    }
+
+    // =========================================================================
+    // JMP abs_long ( changes PBR0x5C)
+    // =========================================================================
+
+    #[test]
+    fn jmp_abs_long_sets_pbr_and_pc() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x5C, 0x00, 0x30, 0x02]); // JMP $02:3000
+        cpu.step();
+        assert_eq!(cpu.pbr, 0x02);
+        assert_eq!(cpu.pc, 0x3000);
+    }
+
+    // =========================================================================
+    // JMP [abs] indirect long (0xDC)
+    // =========================================================================
+
+    #[test]
+    fn jmp_abs_ind_long_reads_24bit_pointer() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xDC, 0x50, 0x00]); // JMP [$0050]
+        cpu.bus.load(0x0050, &[0x00, 0x40, 0x03]); // pointer -> bank $03, addr $4000
+        cpu.step();
+        assert_eq!(cpu.pbr, 0x03);
+        assert_eq!(cpu.pc, 0x4000);
+    }
+
+    // =========================================================================
+    // JSR absolute ( push return_addr-1, jump0x20)
+    // =========================================================================
+
+    #[test]
+    fn jsr_abs_pushes_return_addr_minus_one_and_jumps() {
+        let mut cpu = native16();
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0x20, 0x00, 0x80]); // JSR $8000
+        cpu.step();
+        assert_eq!(cpu.pc, 0x8000);
+        // Return address on stack = 0x0002 (next instruction) - 1 = 0x0002
+        // Pushed high byte first: $00 at $01FF, low byte $02 at $01FE
+        assert_eq!(cpu.bus.read(0x01FF), 0x00); // high byte of 0x0002
+        assert_eq!(cpu.bus.read(0x01FE), 0x02); // low byte of 0x0002
+        assert_eq!(cpu.s, 0x01FD);
+    }
+
+    // =========================================================================
+    // JSR (abs,X) indexed indirect (0xFC)
+    // =========================================================================
+
+    #[test]
+    fn jsr_abs_x_ind_pushes_and_jumps_indirect() {
+        let mut cpu = native16();
+        cpu.s = 0x01FF;
+        cpu.x = 2;
+        cpu.bus.load(0x0000, &[0xFC, 0x10, 0x20]); // JSR ($2010,X)
+        cpu.bus.load(0x2012, &[0x00, 0x60]); // pointer -> $6000
+        cpu.step();
+        assert_eq!(cpu.pc, 0x6000);
+        assert_eq!(cpu.s, 0x01FD);
+    }
+
+    // =========================================================================
+    // JSL abs_long ( push PBR + return_addr-1 (3 bytes), jump0x22)
+    // =========================================================================
+
+    #[test]
+    fn jsl_abs_long_pushes_pbr_and_addr_minus_one() {
+        let mut cpu = native16();
+        cpu.s = 0x01FF;
+        cpu.pbr = 0x01;
+        cpu.bus.load(0x010000, &[0x22, 0x00, 0x40, 0x02]); // JSL $02:4000
+        cpu.step();
+        assert_eq!(cpu.pbr, 0x02);
+        assert_eq!(cpu.pc, 0x4000);
+        // 4-byte instruction: return-1 = 0x0003; pushed: PBR(0x01), hi(0x00), lo(0x03)
+        assert_eq!(cpu.bus.read(0x01FF), 0x01); // PBR
+        assert_eq!(cpu.bus.read(0x01FE), 0x00); // high byte of 0x0003
+        assert_eq!(cpu.bus.read(0x01FD), 0x03); // low byte of 0x0003
+        assert_eq!(cpu.s, 0x01FC);
+    }
+
+    // =========================================================================
+    // RTS ( pull 16-bit addr, add 1, jump within PBR0x60)
+    // =========================================================================
+
+    #[test]
+    fn rts_pulls_return_addr_and_increments() {
+        let mut cpu = native16();
+        cpu.s = 0x01FD;
+        cpu.bus.load(0x01FE, &[0xFF, 0x3F]); // return addr on stack = $3FFF
+        cpu.bus.load(0x0000, &[0x60]); // RTS
+        cpu.step();
+        assert_eq!(cpu.pc, 0x4000); // $3FFF + 1
+        assert_eq!(cpu.s, 0x01FF);
+    }
+
+    // =========================================================================
+    // RTL ( pull 16-bit addr + PBR, add 10x6B)
+    // =========================================================================
+
+    #[test]
+    fn rtl_pulls_addr_and_pbr_and_increments() {
+        let mut cpu = native16();
+        cpu.s = 0x01FC;
+        // Stack: lo=$00, hi=$3F, bank=$02 (from low to high addr)
+        cpu.bus.load(0x01FD, &[0xFF, 0x3F, 0x02]); // return addr = $3FFF, bank $02
+        cpu.bus.load(0x0000, &[0x6B]); // RTL
+        cpu.step();
+        assert_eq!(cpu.pc, 0x4000); // $3FFF + 1
+        assert_eq!(cpu.pbr, 0x02);
+        assert_eq!(cpu.s, 0x01FF);
+    }
+
+    // =========================================================================
+    // RTI ( pull P, pull PC (native: also pull PBR)0x40)
+    // =========================================================================
+
+    #[test]
+    fn rti_native_pulls_p_pc_pbr() {
+        let mut cpu = native16();
+        cpu.s = 0x01FB;
+        // Stack low-to-high: P=$30, PClo=$00, PChi=$50, PBR=$04
+        cpu.bus.load(0x01FC, &[0x30, 0x00, 0x50, 0x04]);
+        cpu.bus.load(0x0000, &[0x40]); // RTI
+        cpu.step();
+        assert_eq!(cpu.p, 0x30);
+        assert_eq!(cpu.pc, 0x5000);
+        assert_eq!(cpu.pbr, 0x04);
+        assert_eq!(cpu.s, 0x01FF);
+    }
+
+    #[test]
+    fn rti_emulation_pulls_p_and_pc_only() {
+        let mut cpu = Cpu::new(TestBus::default()); // emulation mode
+        cpu.s = 0x01FC;
+        // Stack: P=$20 (no M/X set), PClo=$00, PChi=$60
+        // In emulation mode, RTI must force M=1 and X=1 after pulling P
+        cpu.bus.load(0x01FD, &[0x20, 0x00, 0x60]);
+        cpu.bus.load(0x0000, &[0x40]); // RTI
+        cpu.step();
+        assert_eq!(cpu.p, 0x20 | FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH); // M=1, X=1 forced
+        assert_eq!(cpu.pc, 0x6000);
+        assert_eq!(cpu.s, 0x01FF);
+    }
+}
+
+#[cfg(test)]
+mod stack_ops_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    fn native8() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu
+    }
+
+    // =========================================================================
+    // PHA / PLA (0x48 / 0x68)
+    // =========================================================================
+
+    #[test]
+    fn pha_16bit_pushes_accumulator() {
+        let mut cpu = native16();
+        cpu.a = 0x1234;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0x48]);
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0x12); // high byte
+        assert_eq!(cpu.bus.read(0x01FE), 0x34); // low byte
+        assert_eq!(cpu.s, 0x01FD);
+    }
+
+    #[test]
+    fn pha_8bit_pushes_low_byte_only() {
+        let mut cpu = native8();
+        cpu.a = 0xBB42;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0x48]);
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0x42); // low byte (A)
+        assert_eq!(cpu.s, 0x01FE);
+    }
+
+    #[test]
+    fn pla_16bit_pulls_accumulator_and_sets_nz() {
+        let mut cpu = native16();
+        cpu.s = 0x01FD;
+        cpu.bus.load(0x01FE, &[0x78, 0x56]); // $5678
+        cpu.bus.load(0x0000, &[0x68]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x5678);
+        assert_eq!(cpu.s, 0x01FF);
+        assert!(!cpu.flag_z());
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn pla_8bit_pulls_one_byte_sets_nz() {
+        let mut cpu = native8();
+        cpu.s = 0x01FE;
+        cpu.bus.load(0x01FF, &[0x80]); // $80 -> negative
+        cpu.bus.load(0x0000, &[0x68]);
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x80);
+        assert_eq!(cpu.s, 0x01FF);
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    // =========================================================================
+    // PHX / PLX (0xDA / 0xFA)
+    // =========================================================================
+
+    #[test]
+    fn phx_16bit_pushes_x() {
+        let mut cpu = native16();
+        cpu.x = 0xABCD;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0xDA]);
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0xAB);
+        assert_eq!(cpu.bus.read(0x01FE), 0xCD);
+        assert_eq!(cpu.s, 0x01FD);
+    }
+
+    #[test]
+    fn plx_16bit_pulls_x_and_sets_nz() {
+        let mut cpu = native16();
+        cpu.s = 0x01FD;
+        cpu.bus.load(0x01FE, &[0x00, 0x00]); // $0000 -> zero
+        cpu.bus.load(0x0000, &[0xFA]);
+        cpu.step();
+        assert_eq!(cpu.x, 0x0000);
+        assert_eq!(cpu.s, 0x01FF);
+        assert!(cpu.flag_z());
+    }
+
+    // =========================================================================
+    // PHY / PLY (0x5A / 0x7A)
+    // =========================================================================
+
+    #[test]
+    fn phy_8bit_pushes_y_low_byte() {
+        let mut cpu = native8();
+        cpu.y = 0x0055;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0x5A]);
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0x55);
+        assert_eq!(cpu.s, 0x01FE);
+    }
+
+    #[test]
+    fn ply_8bit_pulls_y_and_sets_nz() {
+        let mut cpu = native8();
+        cpu.s = 0x01FE;
+        cpu.bus.load(0x01FF, &[0x00]); // zero
+        cpu.bus.load(0x0000, &[0x7A]);
+        cpu.step();
+        assert_eq!(cpu.y & 0xFF, 0x00);
+        assert_eq!(cpu.s, 0x01FF);
+        assert!(cpu.flag_z());
+    }
+
+    // =========================================================================
+    // PHP / PLP (0x08 / 0x28)
+    // =========================================================================
+
+    #[test]
+    fn php_pushes_p() {
+        let mut cpu = native16();
+        cpu.p = 0b0011_0001; // some flags
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0x08]);
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0b0011_0001);
+        assert_eq!(cpu.s, 0x01FE);
+    }
+
+    #[test]
+    fn plp_pulls_p() {
+        let mut cpu = native16();
+        cpu.s = 0x01FE;
+        cpu.bus.load(0x01FF, &[0b1100_0000]); // N=1, V=1
+        cpu.bus.load(0x0000, &[0x28]);
+        cpu.step();
+        assert_eq!(cpu.p, 0b1100_0000);
+        assert_eq!(cpu.s, 0x01FF);
+    }
+
+    // =========================================================================
+    // PHB / PLB (0x8B / 0xAB)
+    // =========================================================================
+
+    #[test]
+    fn phb_pushes_dbr() {
+        let mut cpu = native16();
+        cpu.dbr = 0x05;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0x8B]);
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0x05);
+        assert_eq!(cpu.s, 0x01FE);
+    }
+
+    #[test]
+    fn plb_pulls_dbr_and_sets_nz() {
+        let mut cpu = native16();
+        cpu.s = 0x01FE;
+        cpu.bus.load(0x01FF, &[0x80]); // negative
+        cpu.bus.load(0x0000, &[0xAB]);
+        cpu.step();
+        assert_eq!(cpu.dbr, 0x80);
+        assert_eq!(cpu.s, 0x01FF);
+        assert!(cpu.flag_n());
+    }
+
+    // =========================================================================
+    // PHD / PLD (0x0B / 0x2B)
+    // =========================================================================
+
+    #[test]
+    fn phd_pushes_d_16bit() {
+        let mut cpu = native16();
+        cpu.d = 0x1234;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0x0B]);
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0x12);
+        assert_eq!(cpu.bus.read(0x01FE), 0x34);
+        assert_eq!(cpu.s, 0x01FD);
+    }
+
+    #[test]
+    fn pld_pulls_d_and_sets_nz() {
+        let mut cpu = native16();
+        cpu.s = 0x01FD;
+        cpu.bus.load(0x01FE, &[0x00, 0x80]); // $8000 -> negative
+        cpu.bus.load(0x0000, &[0x2B]);
+        cpu.step();
+        assert_eq!(cpu.d, 0x8000);
+        assert_eq!(cpu.s, 0x01FF);
+        assert!(cpu.flag_n());
+    }
+
+    // =========================================================================
+    // PHK ( push PBR0x4B)
+    // =========================================================================
+
+    #[test]
+    fn phk_pushes_pbr() {
+        let mut cpu = native16();
+        cpu.pbr = 0x03;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x030000, &[0x4B]);
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0x03);
+        assert_eq!(cpu.s, 0x01FE);
+    }
+
+    // =========================================================================
+    // PEA ( push absolute (immediate 16-bit value, no indirection)0xF4)
+    // =========================================================================
+
+    #[test]
+    fn pea_pushes_immediate_word() {
+        let mut cpu = native16();
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0xF4, 0x34, 0x12]); // PEA $1234
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0x12); // high byte
+        assert_eq!(cpu.bus.read(0x01FE), 0x34); // low byte
+        assert_eq!(cpu.s, 0x01FD);
+    }
+
+    // =========================================================================
+    // PEI ( push effective indirect (DP indirect, no add)0xD4)
+    // =========================================================================
+
+    #[test]
+    fn pei_pushes_dp_indirect_value() {
+        let mut cpu = native16();
+        cpu.s = 0x01FF;
+        cpu.d = 0x0000;
+        cpu.bus.load(0x0000, &[0xD4, 0x10]); // PEI ($10)
+        cpu.bus.load(0x0010, &[0x78, 0x56]); // value at DP+$10 = $5678
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0x56); // high byte
+        assert_eq!(cpu.bus.read(0x01FE), 0x78); // low byte
+        assert_eq!(cpu.s, 0x01FD);
+    }
+
+    // =========================================================================
+    // PER ( push effective relative (PC + signed 16-bit offset)0x62)
+    // =========================================================================
+
+    #[test]
+    fn per_pushes_pc_plus_offset() {
+        let mut cpu = native16();
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0000, &[0x62, 0x00, 0x01]); // PER +$0100
+        // After fetch PC = 0x0003; effective = 0x0003 + 0x0100 = 0x0103
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01FF), 0x01);
+        assert_eq!(cpu.bus.read(0x01FE), 0x03);
+        assert_eq!(cpu.s, 0x01FD);
     }
 }
