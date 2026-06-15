@@ -2971,19 +2971,23 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Direct Page Indexed X: EA = (D + offset + X) & 0xFFFF  [bank 0]
+    /// In emulation mode with D=$0000, wraps within page 0 (& 0xFF).
     fn addr_dp_x(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF
+        let ea = (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF;
+        if self.e && self.d == 0 { ea & 0xFF } else { ea }
     }
 
     /// Direct Page Indexed Y: EA = (D + offset + Y) & 0xFFFF  [bank 0]
+    /// In emulation mode with D=$0000, wraps within page 0 (& 0xFF).
     fn addr_dp_y(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        (self.d as u32 + offset as u32 + self.y as u32) & 0xFFFF
+        let ea = (self.d as u32 + offset as u32 + self.y as u32) & 0xFFFF;
+        if self.e && self.d == 0 { ea & 0xFF } else { ea }
     }
 
     /// Absolute: EA = DBR:abs
@@ -3052,8 +3056,18 @@ impl<B: SnesBus> Cpu<B> {
             self.extra_cycles += 1;
         }
         let ptr_addr = (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF;
+        let ptr_addr = if self.e && self.d == 0 {
+            ptr_addr & 0xFF
+        } else {
+            ptr_addr
+        };
         let lo = self.bus.read(ptr_addr);
-        let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
+        let hi_addr = if self.e && self.d == 0 {
+            (ptr_addr + 1) & 0xFF
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
+        let hi = self.bus.read(hi_addr);
         let ptr = lo as u32 | (hi as u32) << 8;
         (self.dbr as u32) << 16 | ptr
     }
@@ -8869,6 +8883,89 @@ mod sbc_decimal_v_flag_tests {
         assert!(
             !cpu.flag_v(),
             "V should be clear: $5000 - $3000, no signed overflow"
+        );
+    }
+}
+
+#[cfg(test)]
+mod emulation_dp_wrap_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    // In emulation mode with D=$0000, dp,X and dp,Y addressing wraps
+    // within page 0 ($00-$FF). Overflow beyond $FF wraps back to $00,
+    // not into page 1 ($100+).
+
+    fn emulation_cpu() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = true;
+        cpu.d = 0x0000;
+        cpu.p = FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu
+    }
+
+    fn native_cpu() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.d = 0x0000;
+        cpu.p = FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu
+    }
+
+    /// In emulation mode D=$0000: LDA $FF,X with X=1 loads from $00, not $100
+    #[test]
+    fn emulation_dp_x_wraps_in_page_zero() {
+        let mut cpu = emulation_cpu();
+        cpu.x = 0x01;
+        cpu.bus.load(0x0000, &[0x02]); // value at $0000
+        cpu.bus.load(0x0100, &[0xFF]); // decoy at $0100 (should NOT be read)
+        cpu.bus.load(0x0100, &[0xFF]); // already set
+        // write a known value at $0000
+        cpu.bus.write(0x0000, 0x42);
+        cpu.bus.load(0x8000, &[0xB5, 0xFF]); // LDA $FF,X
+        cpu.pc = 0x8000;
+        cpu.step();
+        assert_eq!(
+            cpu.a & 0xFF,
+            0x42,
+            "emulation dp,X: $FF + X=$01 must wrap to $00 in page 0"
+        );
+    }
+
+    /// In native mode D=$0000: LDA $FF,X with X=1 loads from $100 (no page-0 wrap)
+    #[test]
+    fn native_dp_x_does_not_wrap_in_page_zero() {
+        let mut cpu = native_cpu();
+        cpu.x = 0x01;
+        cpu.bus.write(0x0000, 0x11);
+        cpu.bus.write(0x0100, 0x42);
+        cpu.bus.load(0x8000, &[0xB5, 0xFF]); // LDA $FF,X
+        cpu.pc = 0x8000;
+        cpu.step();
+        assert_eq!(
+            cpu.a & 0xFF,
+            0x42,
+            "native dp,X: $FF + X=$01 must land at $0100 (no page-0 wrap)"
+        );
+    }
+
+    /// In emulation mode D=$0000: LDA ($FF,X) with X=1 reads pointer from $00, not $100
+    #[test]
+    fn emulation_dp_x_ind_wraps_in_page_zero() {
+        let mut cpu = emulation_cpu();
+        cpu.x = 0x01;
+        // pointer at $0000: points to $0300
+        cpu.bus.write(0x0000, 0x00);
+        cpu.bus.write(0x0001, 0x03);
+        // data at $0300
+        cpu.bus.write(0x0300, 0x77);
+        cpu.bus.load(0x8000, &[0xA1, 0xFF]); // LDA ($FF,X)
+        cpu.pc = 0x8000;
+        cpu.step();
+        assert_eq!(
+            cpu.a & 0xFF,
+            0x77,
+            "emulation dp,X indirect: pointer address must wrap to $00"
         );
     }
 }
