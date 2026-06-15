@@ -39,9 +39,11 @@ impl SnesBus for StubBus {
 ///
 /// Backs the full 24-bit address space (16 MB) so addressing modes
 /// and opcodes can be tested by pre-loading specific memory locations.
+/// Also counts `tick()` calls for verifying master-clock timing.
 #[cfg(test)]
 pub struct TestBus {
     mem: Vec<u8>,
+    tick_count: u64,
 }
 
 #[cfg(test)]
@@ -50,7 +52,13 @@ impl TestBus {
     pub fn new() -> Self {
         Self {
             mem: vec![0u8; 0x100_0000], // 16 MB
+            tick_count: 0,
         }
+    }
+
+    /// Returns the total number of master clock ticks recorded.
+    pub fn tick_count(&self) -> u64 {
+        self.tick_count
     }
 
     /// Write a contiguous slice of bytes starting at `addr`.
@@ -97,7 +105,7 @@ impl SnesBus for TestBus {
     }
 
     fn tick(&mut self) {
-        // Intentional no-op in test bus
+        self.tick_count += 1;
     }
 }
 
@@ -171,5 +179,21 @@ mod tests {
         bus.write(0x01_0000, 0x10);
         bus.write(0x01_0000, 0x20);
         assert_eq!(bus.read(0x01_0000), 0x20);
+    }
+
+    #[test]
+    fn test_bus_tick_count_starts_at_zero() {
+        let bus = TestBus::new();
+        assert_eq!(bus.tick_count(), 0);
+    }
+
+    #[test]
+    fn test_bus_tick_increments_count() {
+        let mut bus = TestBus::new();
+        bus.tick();
+        assert_eq!(bus.tick_count(), 1);
+        bus.tick();
+        bus.tick();
+        assert_eq!(bus.tick_count(), 3);
     }
 }
