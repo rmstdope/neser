@@ -3363,7 +3363,7 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             self.push16(self.a);
         }
-        3
+        3 + !self.m_flag() as u8
     }
 
     fn op_pla(&mut self) -> u8 {
@@ -3378,7 +3378,7 @@ impl<B: SnesBus> Cpu<B> {
             let a = self.a;
             self.set_nz_m(a);
         }
-        4
+        4 + !self.m_flag() as u8
     }
 
     fn op_phx(&mut self) -> u8 {
@@ -3387,7 +3387,7 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             self.push16(self.x);
         }
-        3
+        3 + !self.x_flag() as u8
     }
 
     fn op_plx(&mut self) -> u8 {
@@ -3399,7 +3399,7 @@ impl<B: SnesBus> Cpu<B> {
             self.write_x(val);
         }
         self.set_nz_x(self.x);
-        4
+        4 + !self.x_flag() as u8
     }
 
     fn op_phy(&mut self) -> u8 {
@@ -3408,7 +3408,7 @@ impl<B: SnesBus> Cpu<B> {
         } else {
             self.push16(self.y);
         }
-        3
+        3 + !self.x_flag() as u8
     }
 
     fn op_ply(&mut self) -> u8 {
@@ -3420,7 +3420,7 @@ impl<B: SnesBus> Cpu<B> {
             self.write_y(val);
         }
         self.set_nz_x(self.y);
-        4
+        4 + !self.x_flag() as u8
     }
 
     fn op_php(&mut self) -> u8 {
@@ -8528,5 +8528,127 @@ mod imm_width_cycle_tests {
         let mut cpu = native16();
         cpu.bus.load(0x0000, &[0xC0, 0x00, 0x00]);
         assert_eq!(cpu.step(), 3, "CPY # adds 1 cycle when X=0");
+    }
+}
+
+#[cfg(test)]
+mod stack_width_cycle_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native8() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.s = 0x01FF;
+        cpu.pc = 0x0000;
+        cpu.pbr = 0x00;
+        cpu
+    }
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = 0x00;
+        cpu.s = 0x01FF;
+        cpu.pc = 0x0000;
+        cpu.pbr = 0x00;
+        cpu
+    }
+
+    #[test]
+    fn pha_8bit_is_3_cycles() {
+        let mut cpu = native8();
+        cpu.bus.load(0x0000, &[0x48]); // PHA
+        assert_eq!(cpu.step(), 3);
+    }
+
+    #[test]
+    fn pha_16bit_is_4_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x48]); // PHA
+        assert_eq!(cpu.step(), 4, "PHA adds 1 cycle when M=0");
+    }
+
+    #[test]
+    fn pla_8bit_is_4_cycles() {
+        let mut cpu = native8();
+        cpu.s = 0x01FE; // pre-decremented (one value on stack)
+        cpu.bus.load(0x01FF, &[0x42]); // value to pull
+        cpu.bus.load(0x0000, &[0x68]); // PLA
+        assert_eq!(cpu.step(), 4);
+    }
+
+    #[test]
+    fn pla_16bit_is_5_cycles() {
+        let mut cpu = native16();
+        cpu.s = 0x01FD;
+        cpu.bus.load(0x01FE, &[0x42, 0x00]);
+        cpu.bus.load(0x0000, &[0x68]); // PLA
+        assert_eq!(cpu.step(), 5, "PLA adds 1 cycle when M=0");
+    }
+
+    #[test]
+    fn phx_8bit_is_3_cycles() {
+        let mut cpu = native8();
+        cpu.bus.load(0x0000, &[0xDA]); // PHX
+        assert_eq!(cpu.step(), 3);
+    }
+
+    #[test]
+    fn phx_16bit_is_4_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xDA]); // PHX
+        assert_eq!(cpu.step(), 4, "PHX adds 1 cycle when X=0");
+    }
+
+    #[test]
+    fn plx_8bit_is_4_cycles() {
+        let mut cpu = native8();
+        cpu.s = 0x01FE;
+        cpu.bus.load(0x01FF, &[0x42]);
+        cpu.bus.load(0x0000, &[0xFA]); // PLX
+        assert_eq!(cpu.step(), 4);
+    }
+
+    #[test]
+    fn plx_16bit_is_5_cycles() {
+        let mut cpu = native16();
+        cpu.s = 0x01FD;
+        cpu.bus.load(0x01FE, &[0x42, 0x00]);
+        cpu.bus.load(0x0000, &[0xFA]); // PLX
+        assert_eq!(cpu.step(), 5, "PLX adds 1 cycle when X=0");
+    }
+
+    #[test]
+    fn phy_8bit_is_3_cycles() {
+        let mut cpu = native8();
+        cpu.bus.load(0x0000, &[0x5A]); // PHY
+        assert_eq!(cpu.step(), 3);
+    }
+
+    #[test]
+    fn phy_16bit_is_4_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x5A]); // PHY
+        assert_eq!(cpu.step(), 4, "PHY adds 1 cycle when X=0");
+    }
+
+    #[test]
+    fn ply_8bit_is_4_cycles() {
+        let mut cpu = native8();
+        cpu.s = 0x01FE;
+        cpu.bus.load(0x01FF, &[0x42]);
+        cpu.bus.load(0x0000, &[0x7A]); // PLY
+        assert_eq!(cpu.step(), 4);
+    }
+
+    #[test]
+    fn ply_16bit_is_5_cycles() {
+        let mut cpu = native16();
+        cpu.s = 0x01FD;
+        cpu.bus.load(0x01FE, &[0x42, 0x00]);
+        cpu.bus.load(0x0000, &[0x7A]); // PLY
+        assert_eq!(cpu.step(), 5, "PLY adds 1 cycle when X=0");
     }
 }
