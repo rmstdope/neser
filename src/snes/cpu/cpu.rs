@@ -2977,14 +2977,16 @@ impl<B: SnesBus> Cpu<B> {
     /// Absolute Indexed X: EA = (DBR:abs + X) & 0xFF_FFFF
     fn addr_abs_x(&mut self, abs: u16) -> u32 {
         let ea = ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.x as u32) & 0xFF_FFFF;
-        self.last_page_crossed = (abs & 0xFF00) != (abs.wrapping_add(self.x) & 0xFF00);
+        self.last_page_crossed =
+            !self.x_flag() || (abs & 0xFF00) != (abs.wrapping_add(self.x) & 0xFF00);
         ea
     }
 
     /// Absolute Indexed Y: EA = (DBR:abs + Y) & 0xFF_FFFF
     fn addr_abs_y(&mut self, abs: u16) -> u32 {
         let ea = ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.y as u32) & 0xFF_FFFF;
-        self.last_page_crossed = (abs & 0xFF00) != (abs.wrapping_add(self.y) & 0xFF00);
+        self.last_page_crossed =
+            !self.x_flag() || (abs & 0xFF00) != (abs.wrapping_add(self.y) & 0xFF00);
         ea
     }
 
@@ -3048,7 +3050,8 @@ impl<B: SnesBus> Cpu<B> {
         let lo = self.bus.read(ptr_addr);
         let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
         let ptr16 = lo as u16 | (hi as u16) << 8;
-        self.last_page_crossed = (ptr16 & 0xFF00) != (ptr16.wrapping_add(self.y) & 0xFF00);
+        self.last_page_crossed =
+            !self.x_flag() || (ptr16 & 0xFF00) != (ptr16.wrapping_add(self.y) & 0xFF00);
         ((self.dbr as u32) << 16 | ptr16 as u32).wrapping_add(self.y as u32) & 0xFF_FFFF
     }
 
@@ -8650,5 +8653,94 @@ mod stack_width_cycle_tests {
         cpu.bus.load(0x01FE, &[0x42, 0x00]);
         cpu.bus.load(0x0000, &[0x7A]); // PLY
         assert_eq!(cpu.step(), 5, "PLY adds 1 cycle when X=0");
+    }
+}
+
+#[cfg(test)]
+mod abs_idx_x0_cycle_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native8_x16() -> Cpu<TestBus> {
+        // M=1 (8-bit acc), X=0 (16-bit index)
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = FLAG_ACCUM_WIDTH; // M=1, X=0
+        cpu.dbr = 0x00;
+        cpu.pc = 0x0000;
+        cpu.pbr = 0x00;
+        cpu
+    }
+
+    #[test]
+    fn lda_abs_x_no_page_cross_but_x16_adds_cycle() {
+        // X=0 (16-bit), no page crossing -> still +1 cycle
+        let mut cpu = native8_x16();
+        cpu.x = 0x0001; // $0010 + $0001 = $0011 (same page)
+        cpu.bus.load(0x000011, &[0x42]);
+        cpu.bus.load(0x0000, &[0xBD, 0x10, 0x00]); // LDA $0010,X
+        assert_eq!(
+            cpu.step(),
+            5,
+            "LDA abs,X: +1 when X=0 even without page cross"
+        );
+    }
+
+    #[test]
+    fn lda_abs_y_no_page_cross_but_x16_adds_cycle() {
+        let mut cpu = native8_x16();
+        cpu.y = 0x0001;
+        cpu.bus.load(0x000011, &[0x42]);
+        cpu.bus.load(0x0000, &[0xB9, 0x10, 0x00]); // LDA $0010,Y
+        assert_eq!(
+            cpu.step(),
+            5,
+            "LDA abs,Y: +1 when X=0 even without page cross"
+        );
+    }
+
+    #[test]
+    fn lda_abs_x_page_cross_x16_still_only_adds_one_cycle() {
+        // X=0, page crosses: should still be exactly +1 (not +2)
+        let mut cpu = native8_x16();
+        cpu.x = 0x0003;
+        cpu.bus.load(0x000101, &[0x42]);
+        cpu.bus.load(0x0000, &[0xBD, 0xFE, 0x00]); // LDA $00FE,X -> $0101
+        assert_eq!(
+            cpu.step(),
+            5,
+            "LDA abs,X: only +1 cycle when both X=0 and page cross"
+        );
+    }
+
+    #[test]
+    fn lda_dp_ind_y_no_page_cross_but_x16_adds_cycle() {
+        let mut cpu = native8_x16();
+        cpu.d = 0x0200;
+        cpu.y = 0x0001;
+        cpu.bus.load(0x0200, &[0x10, 0x00]); // ptr = $0010
+        cpu.bus.load(0x000011, &[0x42]);
+        cpu.bus.load(0x0000, &[0xB1, 0x00]); // LDA ($00),Y
+        assert_eq!(
+            cpu.step(),
+            6,
+            "LDA (dp),Y: +1 when X=0 even without page cross"
+        );
+    }
+
+    #[test]
+    fn adc_abs_x_no_page_cross_8bit_index_no_x0_penalty() {
+        // M=1, X=1 (8-bit both): no page cross, no X=0 penalty -> 4 cycles
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.x = 0x01;
+        cpu.bus.load(0x000011, &[0x01]);
+        cpu.bus.load(0x0000, &[0x7D, 0x10, 0x00]); // ADC $0010,X
+        assert_eq!(
+            cpu.step(),
+            4,
+            "ADC abs,X: no penalty without page cross and X=1"
+        );
     }
 }
