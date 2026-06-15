@@ -470,6 +470,27 @@ impl<B: SnesBus> Cpu<B> {
             0x5D => self.op_eor_abs_x(),
             0x5F => self.op_eor_abs_long_x(),
             0x89 => self.op_bit_imm(),
+            0xC0 => self.op_cpy_imm(),
+            0xC1 => self.op_cmp_dp_x_ind(),
+            0xC3 => self.op_cmp_sr(),
+            0xC4 => self.op_cpy_dp(),
+            0xC5 => self.op_cmp_dp(),
+            0xC7 => self.op_cmp_dp_ind_long(),
+            0xC9 => self.op_cmp_imm(),
+            0xCC => self.op_cpy_abs(),
+            0xCD => self.op_cmp_abs(),
+            0xCF => self.op_cmp_abs_long(),
+            0xD1 => self.op_cmp_dp_ind_y(),
+            0xD2 => self.op_cmp_dp_ind(),
+            0xD3 => self.op_cmp_sr_ind_y(),
+            0xD5 => self.op_cmp_dp_x(),
+            0xD7 => self.op_cmp_dp_ind_long_y(),
+            0xD9 => self.op_cmp_abs_y(),
+            0xDD => self.op_cmp_abs_x(),
+            0xDF => self.op_cmp_abs_long_x(),
+            0xE0 => self.op_cpx_imm(),
+            0xE4 => self.op_cpx_dp(),
+            0xEC => self.op_cpx_abs(),
             0x61 => self.op_adc_dp_x_ind(),
             0x63 => self.op_adc_sr(),
             0x65 => self.op_adc_dp(),
@@ -1864,6 +1885,246 @@ impl<B: SnesBus> Cpu<B> {
         let val = self.read_m(ea);
         self.bit_mem_perform(val);
         5
+    }
+
+    // -------------------------------------------------------------------------
+    // CMP/CPX/CPY — compare (sets N, Z, C; does not change registers)
+    // Result = reg - operand (discarded). C=1 if reg >= operand (unsigned).
+    // -------------------------------------------------------------------------
+
+    fn cmp_perform(&mut self, reg: u16, operand: u16, wide: bool) {
+        let (result, c) = if wide {
+            let r = (reg as u32).wrapping_sub(operand as u32);
+            (r as u16, reg >= operand)
+        } else {
+            let reg8 = reg & 0xFF;
+            let op8 = operand & 0xFF;
+            let r = (reg8 as u32).wrapping_sub(op8 as u32);
+            (r as u16, reg8 >= op8)
+        };
+        self.set_flag_c(c);
+        self.set_flag_z(result == 0);
+        let n = if wide {
+            result & 0x8000 != 0
+        } else {
+            result & 0x80 != 0
+        };
+        self.set_flag_n(n);
+    }
+
+    fn op_cmp_imm(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let val = if self.m_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        2
+    }
+
+    fn op_cmp_dp(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        3
+    }
+
+    fn op_cmp_dp_x(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        4
+    }
+
+    fn op_cmp_abs(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        4
+    }
+
+    fn op_cmp_abs_x(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        5
+    }
+
+    fn op_cmp_abs_y(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_y(abs);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        5
+    }
+
+    fn op_cmp_abs_long(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let addr = self.fetch_addr24();
+        let val = self.read_m(addr);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        5
+    }
+
+    fn op_cmp_abs_long_x(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let addr = self.fetch_addr24();
+        let ea = self.addr_abs_long_x(addr);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        5
+    }
+
+    fn op_cmp_dp_x_ind(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x_ind(off);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        6
+    }
+
+    fn op_cmp_dp_ind_y(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_y(off);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        6
+    }
+
+    fn op_cmp_dp_ind(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind(off);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        5
+    }
+
+    fn op_cmp_dp_ind_long(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long(off);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        6
+    }
+
+    fn op_cmp_dp_ind_long_y(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long_y(off);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        6
+    }
+
+    fn op_cmp_sr(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_sr(off);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        4
+    }
+
+    fn op_cmp_sr_ind_y(&mut self) -> u8 {
+        let wide = !self.m_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_sr_ind_y(off);
+        let val = self.read_m(ea);
+        let a = self.a;
+        self.cmp_perform(a, val, wide);
+        7
+    }
+
+    fn op_cpx_imm(&mut self) -> u8 {
+        let wide = !self.x_flag();
+        let val = if self.x_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        let x = self.x;
+        self.cmp_perform(x, val, wide);
+        2
+    }
+
+    fn op_cpx_dp(&mut self) -> u8 {
+        let wide = !self.x_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_idx(ea);
+        let x = self.x;
+        self.cmp_perform(x, val, wide);
+        3
+    }
+
+    fn op_cpx_abs(&mut self) -> u8 {
+        let wide = !self.x_flag();
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_idx(ea);
+        let x = self.x;
+        self.cmp_perform(x, val, wide);
+        4
+    }
+
+    fn op_cpy_imm(&mut self) -> u8 {
+        let wide = !self.x_flag();
+        let val = if self.x_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        let y = self.y;
+        self.cmp_perform(y, val, wide);
+        2
+    }
+
+    fn op_cpy_dp(&mut self) -> u8 {
+        let wide = !self.x_flag();
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_idx(ea);
+        let y = self.y;
+        self.cmp_perform(y, val, wide);
+        3
+    }
+
+    fn op_cpy_abs(&mut self) -> u8 {
+        let wide = !self.x_flag();
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_idx(ea);
+        let y = self.y;
+        self.cmp_perform(y, val, wide);
+        4
     }
 }
 
@@ -4642,5 +4903,255 @@ mod and_ora_eor_bit_tests {
         cpu.bus.load(0x0000, &[0x24, 0x10]); // BIT $10
         cpu.step();
         assert_eq!(cpu.a, 0x1234); // A unchanged
+    }
+}
+
+#[cfg(test)]
+mod cmp_cpx_cpy_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_DECIMAL);
+        cpu
+    }
+
+    fn native8() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.p &= !FLAG_DECIMAL;
+        cpu
+    }
+
+    // =========================================================================
+    // CMP  16-bitimmediate
+    // =========================================================================
+
+    #[test]
+    fn cmp_imm_16bit_equal_sets_z_c_clears_n() {
+        let mut cpu = native16();
+        cpu.a = 0x0005;
+        cpu.bus.load(0x0000, &[0xC9, 0x05, 0x00]); // CMP #$0005
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(cpu.flag_c()); // A >= operand
+        assert!(!cpu.flag_n());
+        assert_eq!(cpu.a, 0x0005); // A unchanged
+    }
+
+    #[test]
+    fn cmp_imm_16bit_greater_sets_c_clears_z_n() {
+        let mut cpu = native16();
+        cpu.a = 0x0010;
+        cpu.bus.load(0x0000, &[0xC9, 0x05, 0x00]); // CMP #$0005
+        cpu.step();
+        assert!(!cpu.flag_z());
+        assert!(cpu.flag_c()); // A > operand: no borrow
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn cmp_imm_16bit_less_clears_c_sets_n() {
+        let mut cpu = native16();
+        cpu.a = 0x0001;
+        cpu.bus.load(0x0000, &[0xC9, 0x05, 0x00]); // CMP #$0005: 1-5 = -4
+        cpu.step();
+        assert!(!cpu.flag_z());
+        assert!(!cpu.flag_c()); // A < operand: borrow
+        assert!(cpu.flag_n()); // result is negative
+    }
+
+    #[test]
+    fn cmp_imm_16bit_sets_n_when_high_bit_set_in_result() {
+        // 0x8000 - 0x0001 = 0x7FFF: C=1, N=0
+        let mut cpu = native16();
+        cpu.a = 0x8000;
+        cpu.bus.load(0x0000, &[0xC9, 0x01, 0x00]);
+        cpu.step();
+        assert!(cpu.flag_c());
+        assert!(!cpu.flag_n()); // result 0x7FFF: bit15 = 0
+    }
+
+    // =========================================================================
+    // CMP  8-bitimmediate
+    // =========================================================================
+
+    #[test]
+    fn cmp_imm_8bit_equal_sets_z_c() {
+        let mut cpu = native8();
+        cpu.a = 0x1205; // B=0x12
+        cpu.bus.load(0x0000, &[0xC9, 0x05]); // CMP #$05
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(cpu.flag_c());
+        assert_eq!(cpu.a, 0x1205); // A unchanged
+    }
+
+    #[test]
+    fn cmp_imm_8bit_less_clears_c() {
+        let mut cpu = native8();
+        cpu.a = 0x0001;
+        cpu.bus.load(0x0000, &[0xC9, 0x05]); // CMP #$05
+        cpu.step();
+        assert!(!cpu.flag_c());
+        assert!(cpu.flag_n());
+    }
+
+    // =========================================================================
+    // CMP memory modes
+    // =========================================================================
+
+    #[test]
+    fn cmp_dp_reads_from_direct_page() {
+        let mut cpu = native16();
+        cpu.a = 0x0010;
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x10, 0x00]); // operand = $0010
+        cpu.bus.load(0x0000, &[0xC5, 0x10]); // CMP $10
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(cpu.flag_c());
+    }
+
+    #[test]
+    fn cmp_abs_reads_from_absolute() {
+        let mut cpu = native16();
+        cpu.a = 0x0100;
+        cpu.dbr = 0x00;
+        cpu.bus.load(0x2000, &[0x00, 0x02]); // operand = $0200
+        cpu.bus.load(0x0000, &[0xCD, 0x00, 0x20]); // CMP $2000
+        cpu.step();
+        assert!(!cpu.flag_c()); // 0x0100 < 0x0200
+        assert!(cpu.flag_n());
+    }
+
+    // =========================================================================
+    //  compare X registerCPX
+    // =========================================================================
+
+    #[test]
+    fn cpx_imm_16bit_equal_sets_z_c() {
+        let mut cpu = native16();
+        cpu.x = 0x0042;
+        cpu.bus.load(0x0000, &[0xE0, 0x42, 0x00]); // CPX #$0042
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(cpu.flag_c());
+        assert!(!cpu.flag_n());
+        assert_eq!(cpu.x, 0x0042); // X unchanged
+    }
+
+    #[test]
+    fn cpx_imm_16bit_greater_sets_c() {
+        let mut cpu = native16();
+        cpu.x = 0x0050;
+        cpu.bus.load(0x0000, &[0xE0, 0x42, 0x00]); // CPX #$0042
+        cpu.step();
+        assert!(!cpu.flag_z());
+        assert!(cpu.flag_c());
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn cpx_imm_16bit_less_clears_c_sets_n() {
+        let mut cpu = native16();
+        cpu.x = 0x0001;
+        cpu.bus.load(0x0000, &[0xE0, 0x05, 0x00]); // CPX #$0005
+        cpu.step();
+        assert!(!cpu.flag_c());
+        assert!(cpu.flag_n());
+    }
+
+    #[test]
+    fn cpx_imm_8bit_equal_sets_z_c() {
+        let mut cpu = native8();
+        cpu.x = 0x0042;
+        cpu.bus.load(0x0000, &[0xE0, 0x42]); // CPX #$42
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(cpu.flag_c());
+    }
+
+    #[test]
+    fn cpx_dp_reads_from_direct_page() {
+        let mut cpu = native16();
+        cpu.x = 0x0020;
+        cpu.d = 0x0300;
+        cpu.bus.load(0x0310, &[0x20, 0x00]);
+        cpu.bus.load(0x0000, &[0xE4, 0x10]); // CPX $10
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(cpu.flag_c());
+    }
+
+    #[test]
+    fn cpx_abs_reads_from_absolute() {
+        let mut cpu = native16();
+        cpu.x = 0x0100;
+        cpu.bus.load(0x4000, &[0x00, 0x02]); // operand = $0200
+        cpu.bus.load(0x0000, &[0xEC, 0x00, 0x40]); // CPX $4000
+        cpu.step();
+        assert!(!cpu.flag_c()); // 0x0100 < 0x0200
+    }
+
+    // =========================================================================
+    //  compare Y registerCPY
+    // =========================================================================
+
+    #[test]
+    fn cpy_imm_16bit_equal_sets_z_c() {
+        let mut cpu = native16();
+        cpu.y = 0x00FF;
+        cpu.bus.load(0x0000, &[0xC0, 0xFF, 0x00]); // CPY #$00FF
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(cpu.flag_c());
+        assert_eq!(cpu.y, 0x00FF); // Y unchanged
+    }
+
+    #[test]
+    fn cpy_imm_16bit_less_clears_c_sets_n() {
+        let mut cpu = native16();
+        cpu.y = 0x0001;
+        cpu.bus.load(0x0000, &[0xC0, 0x05, 0x00]); // CPY #$0005
+        cpu.step();
+        assert!(!cpu.flag_c());
+        assert!(cpu.flag_n());
+    }
+
+    #[test]
+    fn cpy_imm_8bit_equal_sets_z_c() {
+        let mut cpu = native8();
+        cpu.y = 0x0077;
+        cpu.bus.load(0x0000, &[0xC0, 0x77]); // CPY #$77
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(cpu.flag_c());
+    }
+
+    #[test]
+    fn cpy_dp_reads_from_direct_page() {
+        let mut cpu = native16();
+        cpu.y = 0x0030;
+        cpu.d = 0x0400;
+        cpu.bus.load(0x0410, &[0x30, 0x00]);
+        cpu.bus.load(0x0000, &[0xC4, 0x10]); // CPY $10
+        cpu.step();
+        assert!(cpu.flag_z());
+        assert!(cpu.flag_c());
+    }
+
+    #[test]
+    fn cpy_abs_reads_from_absolute() {
+        let mut cpu = native16();
+        cpu.y = 0x0200;
+        cpu.bus.load(0x5000, &[0x00, 0x01]); // operand = $0100
+        cpu.bus.load(0x0000, &[0xCC, 0x00, 0x50]); // CPY $5000
+        cpu.step();
+        assert!(cpu.flag_c()); // 0x0200 > 0x0100
+        assert!(!cpu.flag_z());
     }
 }
