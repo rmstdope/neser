@@ -935,7 +935,7 @@ impl<B: SnesBus> Cpu<B> {
             self.fetch_word()
         };
         self.lda_store(val);
-        2
+        2 + !self.m_flag() as u8
     }
 
     fn op_lda_dp(&mut self) -> u8 {
@@ -1061,7 +1061,7 @@ impl<B: SnesBus> Cpu<B> {
             self.fetch_word()
         };
         self.ldx_store(val);
-        2
+        2 + !self.x_flag() as u8
     }
 
     fn op_ldx_dp(&mut self) -> u8 {
@@ -1107,7 +1107,7 @@ impl<B: SnesBus> Cpu<B> {
             self.fetch_word()
         };
         self.ldy_store(val);
-        2
+        2 + !self.x_flag() as u8
     }
 
     fn op_ldy_dp(&mut self) -> u8 {
@@ -1476,7 +1476,7 @@ impl<B: SnesBus> Cpu<B> {
             self.fetch_word()
         };
         self.adc_perform(val);
-        2
+        2 + !self.m_flag() as u8
     }
 
     fn op_adc_dp(&mut self) -> u8 {
@@ -1601,7 +1601,7 @@ impl<B: SnesBus> Cpu<B> {
             self.fetch_word()
         };
         self.sbc_perform(val);
-        2
+        2 + !self.m_flag() as u8
     }
 
     fn op_sbc_dp(&mut self) -> u8 {
@@ -1733,7 +1733,7 @@ impl<B: SnesBus> Cpu<B> {
             self.fetch_word()
         };
         self.and_perform(val);
-        2
+        2 + !self.m_flag() as u8
     }
 
     fn op_and_dp(&mut self) -> u8 {
@@ -1865,7 +1865,7 @@ impl<B: SnesBus> Cpu<B> {
             self.fetch_word()
         };
         self.ora_perform(val);
-        2
+        2 + !self.m_flag() as u8
     }
 
     fn op_ora_dp(&mut self) -> u8 {
@@ -1997,7 +1997,7 @@ impl<B: SnesBus> Cpu<B> {
             self.fetch_word()
         };
         self.eor_perform(val);
-        2
+        2 + !self.m_flag() as u8
     }
 
     fn op_eor_dp(&mut self) -> u8 {
@@ -2150,7 +2150,7 @@ impl<B: SnesBus> Cpu<B> {
             self.fetch_word()
         };
         self.bit_imm_perform(val);
-        2
+        2 + !self.m_flag() as u8
     }
 
     fn op_bit_dp(&mut self) -> u8 {
@@ -2219,7 +2219,7 @@ impl<B: SnesBus> Cpu<B> {
         };
         let a = self.a;
         self.cmp_perform(a, val, wide);
-        2
+        2 + !self.m_flag() as u8
     }
 
     fn op_cmp_dp(&mut self) -> u8 {
@@ -2370,7 +2370,7 @@ impl<B: SnesBus> Cpu<B> {
         };
         let x = self.x;
         self.cmp_perform(x, val, wide);
-        2
+        2 + !self.x_flag() as u8
     }
 
     fn op_cpx_dp(&mut self) -> u8 {
@@ -2402,7 +2402,7 @@ impl<B: SnesBus> Cpu<B> {
         };
         let y = self.y;
         self.cmp_perform(y, val, wide);
-        2
+        2 + !self.x_flag() as u8
     }
 
     fn op_cpy_dp(&mut self) -> u8 {
@@ -8401,5 +8401,132 @@ mod wdm_tests {
         cpu.bus.load(0x0000, &[0x42, 0x00]);
         cpu.step();
         assert_eq!(cpu.p, p_before, "WDM must not change any flags");
+    }
+}
+
+#[cfg(test)]
+mod imm_width_cycle_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native8() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.pc = 0x0000;
+        cpu.pbr = 0x00;
+        cpu
+    }
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = 0x00; // M=0, X=0
+        cpu.pc = 0x0000;
+        cpu.pbr = 0x00;
+        cpu
+    }
+
+    // M-width ops: LDA, ADC, SBC, AND, ORA, EOR, BIT imm, CMP imm
+
+    #[test]
+    fn lda_imm_8bit_is_2_cycles() {
+        let mut cpu = native8();
+        cpu.bus.load(0x0000, &[0xA9, 0x42]);
+        assert_eq!(cpu.step(), 2);
+    }
+
+    #[test]
+    fn lda_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA9, 0x42, 0x00]);
+        assert_eq!(cpu.step(), 3, "LDA # adds 1 cycle when M=0");
+    }
+
+    #[test]
+    fn adc_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x69, 0x01, 0x00]);
+        assert_eq!(cpu.step(), 3, "ADC # adds 1 cycle when M=0");
+    }
+
+    #[test]
+    fn sbc_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0xE9, 0x01, 0x00]);
+        assert_eq!(cpu.step(), 3, "SBC # adds 1 cycle when M=0");
+    }
+
+    #[test]
+    fn and_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x29, 0xFF, 0xFF]);
+        assert_eq!(cpu.step(), 3, "AND # adds 1 cycle when M=0");
+    }
+
+    #[test]
+    fn ora_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x09, 0x00, 0x00]);
+        assert_eq!(cpu.step(), 3, "ORA # adds 1 cycle when M=0");
+    }
+
+    #[test]
+    fn eor_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x49, 0xFF, 0xFF]);
+        assert_eq!(cpu.step(), 3, "EOR # adds 1 cycle when M=0");
+    }
+
+    #[test]
+    fn cmp_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xC9, 0x00, 0x00]);
+        assert_eq!(cpu.step(), 3, "CMP # adds 1 cycle when M=0");
+    }
+
+    #[test]
+    fn bit_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x89, 0xFF, 0xFF]);
+        assert_eq!(cpu.step(), 3, "BIT # adds 1 cycle when M=0");
+    }
+
+    // X-width ops: LDX, LDY, CPX, CPY imm
+
+    #[test]
+    fn ldx_imm_8bit_is_2_cycles() {
+        let mut cpu = native8();
+        cpu.bus.load(0x0000, &[0xA2, 0x42]);
+        assert_eq!(cpu.step(), 2);
+    }
+
+    #[test]
+    fn ldx_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA2, 0x42, 0x00]);
+        assert_eq!(cpu.step(), 3, "LDX # adds 1 cycle when X=0");
+    }
+
+    #[test]
+    fn ldy_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xA0, 0x42, 0x00]);
+        assert_eq!(cpu.step(), 3, "LDY # adds 1 cycle when X=0");
+    }
+
+    #[test]
+    fn cpx_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xE0, 0x00, 0x00]);
+        assert_eq!(cpu.step(), 3, "CPX # adds 1 cycle when X=0");
+    }
+
+    #[test]
+    fn cpy_imm_16bit_is_3_cycles() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0xC0, 0x00, 0x00]);
+        assert_eq!(cpu.step(), 3, "CPY # adds 1 cycle when X=0");
     }
 }
