@@ -732,3 +732,39 @@ _Pending: Navigator feedback requested but not yet provided._
 #### What to improve
 
 _Pending: Navigator feedback requested but not yet provided._
+
+---
+
+## Iteration: 65816 CPU spec-compliance round  PR #27372 
+
+**Date:** 2026-06-17
+**Branch:** `2729-65816-addressing-modes-and-opcodes`
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2737
+**Linked issues:** #2729
+
+### Customizations used
+
+| Type         | Name                        | Purpose                                                                                           |
+| ------------ | --------------------------- | ------------------------------------------------------------------------------------------------- |
+COMMIT cycle for all 8 spec-compliance fixes.                      |
+| Skill        | `snes-hardware-research`    | Grounded edge-case fixes (decimal V flag, DP page wrapping, MVN/MVP) against WDC spec.           |
+| Instructions | `copilot-instructions.md`   | Applied repository workflow rules: TDD, phase gates, pre-merge checks, issue tracking.           |
+
+### What went well
+
+-  **Sub-agent spec review surfaced 8 non-trivial bugs**: A dedicated post-implementation sub-agent review pass against the WDC 65C816 spec found WDM panic, immediate-mode cycles, stack cycles, abs-idx X=0 cycles, RTI native cycles, SBC decimal V flag, DP emulation-mode wrapping, and MVN/MVP per-byte execution. These would not have been caught by functional opcode tests alone.
+-  **TDD kept a massive opcode table tractable**: Red-Green-Refactor-Commit discipline across 256 opcodes and 8 follow-up fixes prevented the "implement everything, test later" drift that commonly causes regressions on large opcode tables.
+COMMIT progression while still stopping at  a good balance between pace and oversight.MERGE 
+-  **Comprehensive pre-merge gate caught an additional issue**: Clippy revealed the unreachable `_` arm in the dispatch table (confirming all 256 opcodes were covered) and the unused TestBus in non-test builds. Both were clean, valuable signals from a full gate run.
+-  **Code review agent correctly validated subtle formula**: The refactor-phase reviewer suggested removing `!` from the SBC V-flag overflow formula, but manual verification showed the current formula (`!(a ^ not_op) & (a ^ bin)`) was  the reviewer's suggestion would have broken the tests. Phase-gate discipline meant the incorrect suggestion was caught before any change was made.correct 
+
+### What to improve
+
+ **Sub-agent review should be a mid-implementation checkpoint, not only post-implementation**: The 8 fixes were found after the full 256-opcode implementation. For work packages this large, a first review pass at the halfway mark (e.g., after addressing modes, before opcode dispatch is complete) would surface architectural corrections while implementation context is still fresh.- 
+ **MVN/MVP per-byte execution is a design assumption, not a detail**: The fix (one byte transfer per `step()` call, PC held at instruction) implies the original loop-all-bytes design was architecturally wrong. Future block-move opcodes in any new CPU core should start with a per-byte test first. Add this as a checklist item in the SNES CPU development skill.- 
+ **No coverage topology summary in the PR**: 11,200 tests passing is strong, but for a 256-opcode core there is no easy way to confirm every opcode has at least one cycle-count test, one flag test, and one addressing-mode test. Future large opcode PRs should include a brief coverage table or note in the PR body.- 
+
+### Navigator feedback
+
+No additional feedback provided beyond driver observations.
