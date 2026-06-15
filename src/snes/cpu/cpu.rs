@@ -561,6 +561,7 @@ impl<B: SnesBus> Cpu<B> {
             0xC8 => self.op_iny(),
             0xC9 => self.op_cmp_imm(),
             0xCA => self.op_dex(),
+            0xCB => self.op_wai(),
             0xCC => self.op_cpy_abs(),
             0xCD => self.op_cmp_abs(),
             0xCE => self.op_dec_abs(),
@@ -576,6 +577,7 @@ impl<B: SnesBus> Cpu<B> {
             0xD8 => self.op_cld(),
             0xD9 => self.op_cmp_abs_y(),
             0xDA => self.op_phx(),
+            0xDB => self.op_stp(),
             0xDC => self.op_jmp_abs_ind_long(),
             0xDD => self.op_cmp_abs_x(),
             0xDE => self.op_dec_abs_x(),
@@ -692,6 +694,14 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_nop(&mut self) -> u8 {
         2
+    }
+
+    fn op_wai(&mut self) -> u8 {
+        3
+    }
+
+    fn op_stp(&mut self) -> u8 {
+        3
     }
 
     fn op_mvn(&mut self) -> u8 {
@@ -7798,5 +7808,32 @@ mod mvn_mvp_tests {
         assert_eq!(cpu.y, 0x001F); // 0x0022 - 3
         assert_eq!(cpu.dbr, 0x02);
         assert_eq!(cpu.pc, 0x0003);
+    }
+}
+
+#[cfg(test)]
+mod wai_stp_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    // WAI (0xCB): halts CPU until interrupt; for emulation purposes,
+    // we model it as a 3-cycle NOP (PC advances, no state change beyond cycles).
+    #[test]
+    fn wai_advances_pc_and_returns_3_cycles() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xCB]);
+        let cycles = cpu.step();
+        assert_eq!(cpu.pc, 0x0001);
+        assert_eq!(cycles, 3);
+    }
+
+    // STP (0xDB): halts CPU until reset; modeled as 3-cycle NOP.
+    #[test]
+    fn stp_advances_pc_and_returns_3_cycles() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xDB]);
+        let cycles = cpu.step();
+        assert_eq!(cpu.pc, 0x0001);
+        assert_eq!(cycles, 3);
     }
 }
