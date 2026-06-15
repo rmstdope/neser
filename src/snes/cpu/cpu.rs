@@ -359,18 +359,106 @@ impl<B: SnesBus> Cpu<B> {
     pub fn step(&mut self) -> u8 {
         let opcode = self.fetch_byte();
         match opcode {
+            0x01 => self.op_ora_dp_x_ind(),
+            0x03 => self.op_ora_sr(),
+            0x05 => self.op_ora_dp(),
+            0x06 => self.op_asl_dp(),
+            0x07 => self.op_ora_dp_ind_long(),
+            0x09 => self.op_ora_imm(),
+            0x0A => self.op_asl_acc(),
+            0x0D => self.op_ora_abs(),
+            0x0E => self.op_asl_abs(),
+            0x0F => self.op_ora_abs_long(),
+            0x11 => self.op_ora_dp_ind_y(),
+            0x12 => self.op_ora_dp_ind(),
+            0x13 => self.op_ora_sr_ind_y(),
+            0x15 => self.op_ora_dp_x(),
+            0x16 => self.op_asl_dp_x(),
+            0x17 => self.op_ora_dp_ind_long_y(),
+            0x19 => self.op_ora_abs_y(),
+            0x1A => self.op_inc_acc(),
             0x1B => self.op_tcs(),
+            0x1D => self.op_ora_abs_x(),
+            0x1E => self.op_asl_abs_x(),
+            0x1F => self.op_ora_abs_long_x(),
+            0x21 => self.op_and_dp_x_ind(),
+            0x23 => self.op_and_sr(),
+            0x24 => self.op_bit_dp(),
+            0x25 => self.op_and_dp(),
+            0x26 => self.op_rol_dp(),
+            0x27 => self.op_and_dp_ind_long(),
+            0x29 => self.op_and_imm(),
+            0x2A => self.op_rol_acc(),
+            0x2C => self.op_bit_abs(),
+            0x2D => self.op_and_abs(),
+            0x2E => self.op_rol_abs(),
+            0x2F => self.op_and_abs_long(),
+            0x31 => self.op_and_dp_ind_y(),
+            0x32 => self.op_and_dp_ind(),
+            0x33 => self.op_and_sr_ind_y(),
+            0x34 => self.op_bit_dp_x(),
+            0x35 => self.op_and_dp_x(),
+            0x36 => self.op_rol_dp_x(),
+            0x37 => self.op_and_dp_ind_long_y(),
+            0x39 => self.op_and_abs_y(),
+            0x3A => self.op_dec_acc(),
             0x3B => self.op_tsc(),
+            0x3C => self.op_bit_abs_x(),
+            0x3D => self.op_and_abs_x(),
+            0x3E => self.op_rol_abs_x(),
+            0x3F => self.op_and_abs_long_x(),
+            0x41 => self.op_eor_dp_x_ind(),
+            0x43 => self.op_eor_sr(),
+            0x45 => self.op_eor_dp(),
+            0x46 => self.op_lsr_dp(),
+            0x47 => self.op_eor_dp_ind_long(),
+            0x49 => self.op_eor_imm(),
+            0x4A => self.op_lsr_acc(),
+            0x4D => self.op_eor_abs(),
+            0x4E => self.op_lsr_abs(),
+            0x4F => self.op_eor_abs_long(),
+            0x51 => self.op_eor_dp_ind_y(),
+            0x52 => self.op_eor_dp_ind(),
+            0x53 => self.op_eor_sr_ind_y(),
+            0x55 => self.op_eor_dp_x(),
+            0x56 => self.op_lsr_dp_x(),
+            0x57 => self.op_eor_dp_ind_long_y(),
+            0x59 => self.op_eor_abs_y(),
             0x5B => self.op_tcd(),
+            0x5D => self.op_eor_abs_x(),
+            0x5E => self.op_lsr_abs_x(),
+            0x5F => self.op_eor_abs_long_x(),
+            0x61 => self.op_adc_dp_x_ind(),
+            0x63 => self.op_adc_sr(),
             0x64 => self.op_stz_dp(),
+            0x65 => self.op_adc_dp(),
+            0x66 => self.op_ror_dp(),
+            0x67 => self.op_adc_dp_ind_long(),
+            0x69 => self.op_adc_imm(),
+            0x6A => self.op_ror_acc(),
+            0x6D => self.op_adc_abs(),
+            0x6E => self.op_ror_abs(),
+            0x6F => self.op_adc_abs_long(),
+            0x71 => self.op_adc_dp_ind_y(),
+            0x72 => self.op_adc_dp_ind(),
+            0x73 => self.op_adc_sr_ind_y(),
             0x74 => self.op_stz_dp_x(),
+            0x75 => self.op_adc_dp_x(),
+            0x76 => self.op_ror_dp_x(),
+            0x77 => self.op_adc_dp_ind_long_y(),
+            0x79 => self.op_adc_abs_y(),
             0x7B => self.op_tdc(),
+            0x7D => self.op_adc_abs_x(),
+            0x7E => self.op_ror_abs_x(),
+            0x7F => self.op_adc_abs_long_x(),
             0x81 => self.op_sta_dp_x_ind(),
             0x83 => self.op_sta_sr(),
             0x84 => self.op_sty_dp(),
             0x85 => self.op_sta_dp(),
             0x86 => self.op_stx_dp(),
             0x87 => self.op_sta_dp_ind_long(),
+            0x88 => self.op_dey(),
+            0x89 => self.op_bit_imm(),
             0x8A => self.op_txa(),
             0x8C => self.op_sty_abs(),
             0x8D => self.op_sta_abs(),
@@ -420,109 +508,55 @@ impl<B: SnesBus> Cpu<B> {
             0xBD => self.op_lda_abs_x(),
             0xBE => self.op_ldx_abs_y(),
             0xBF => self.op_lda_abs_long_x(),
-            0x01 => self.op_ora_dp_x_ind(),
-            0x03 => self.op_ora_sr(),
-            0x05 => self.op_ora_dp(),
-            0x07 => self.op_ora_dp_ind_long(),
-            0x09 => self.op_ora_imm(),
-            0x0D => self.op_ora_abs(),
-            0x0F => self.op_ora_abs_long(),
-            0x11 => self.op_ora_dp_ind_y(),
-            0x12 => self.op_ora_dp_ind(),
-            0x13 => self.op_ora_sr_ind_y(),
-            0x15 => self.op_ora_dp_x(),
-            0x17 => self.op_ora_dp_ind_long_y(),
-            0x19 => self.op_ora_abs_y(),
-            0x1D => self.op_ora_abs_x(),
-            0x1F => self.op_ora_abs_long_x(),
-            0x21 => self.op_and_dp_x_ind(),
-            0x23 => self.op_and_sr(),
-            0x24 => self.op_bit_dp(),
-            0x25 => self.op_and_dp(),
-            0x27 => self.op_and_dp_ind_long(),
-            0x29 => self.op_and_imm(),
-            0x2C => self.op_bit_abs(),
-            0x2D => self.op_and_abs(),
-            0x2F => self.op_and_abs_long(),
-            0x31 => self.op_and_dp_ind_y(),
-            0x32 => self.op_and_dp_ind(),
-            0x33 => self.op_and_sr_ind_y(),
-            0x34 => self.op_bit_dp_x(),
-            0x35 => self.op_and_dp_x(),
-            0x37 => self.op_and_dp_ind_long_y(),
-            0x39 => self.op_and_abs_y(),
-            0x3C => self.op_bit_abs_x(),
-            0x3D => self.op_and_abs_x(),
-            0x3F => self.op_and_abs_long_x(),
-            0x41 => self.op_eor_dp_x_ind(),
-            0x43 => self.op_eor_sr(),
-            0x45 => self.op_eor_dp(),
-            0x47 => self.op_eor_dp_ind_long(),
-            0x49 => self.op_eor_imm(),
-            0x4D => self.op_eor_abs(),
-            0x4F => self.op_eor_abs_long(),
-            0x51 => self.op_eor_dp_ind_y(),
-            0x52 => self.op_eor_dp_ind(),
-            0x53 => self.op_eor_sr_ind_y(),
-            0x55 => self.op_eor_dp_x(),
-            0x57 => self.op_eor_dp_ind_long_y(),
-            0x59 => self.op_eor_abs_y(),
-            0x5D => self.op_eor_abs_x(),
-            0x5F => self.op_eor_abs_long_x(),
-            0x89 => self.op_bit_imm(),
             0xC0 => self.op_cpy_imm(),
             0xC1 => self.op_cmp_dp_x_ind(),
             0xC3 => self.op_cmp_sr(),
             0xC4 => self.op_cpy_dp(),
             0xC5 => self.op_cmp_dp(),
+            0xC6 => self.op_dec_dp(),
             0xC7 => self.op_cmp_dp_ind_long(),
+            0xC8 => self.op_iny(),
             0xC9 => self.op_cmp_imm(),
+            0xCA => self.op_dex(),
             0xCC => self.op_cpy_abs(),
             0xCD => self.op_cmp_abs(),
+            0xCE => self.op_dec_abs(),
             0xCF => self.op_cmp_abs_long(),
             0xD1 => self.op_cmp_dp_ind_y(),
             0xD2 => self.op_cmp_dp_ind(),
             0xD3 => self.op_cmp_sr_ind_y(),
             0xD5 => self.op_cmp_dp_x(),
+            0xD6 => self.op_dec_dp_x(),
             0xD7 => self.op_cmp_dp_ind_long_y(),
             0xD9 => self.op_cmp_abs_y(),
             0xDD => self.op_cmp_abs_x(),
+            0xDE => self.op_dec_abs_x(),
             0xDF => self.op_cmp_abs_long_x(),
             0xE0 => self.op_cpx_imm(),
-            0xE4 => self.op_cpx_dp(),
-            0xEC => self.op_cpx_abs(),
-            0x61 => self.op_adc_dp_x_ind(),
-            0x63 => self.op_adc_sr(),
-            0x65 => self.op_adc_dp(),
-            0x67 => self.op_adc_dp_ind_long(),
-            0x69 => self.op_adc_imm(),
-            0x6D => self.op_adc_abs(),
-            0x6F => self.op_adc_abs_long(),
-            0x71 => self.op_adc_dp_ind_y(),
-            0x72 => self.op_adc_dp_ind(),
-            0x73 => self.op_adc_sr_ind_y(),
-            0x75 => self.op_adc_dp_x(),
-            0x77 => self.op_adc_dp_ind_long_y(),
-            0x79 => self.op_adc_abs_y(),
-            0x7D => self.op_adc_abs_x(),
-            0x7F => self.op_adc_abs_long_x(),
             0xE1 => self.op_sbc_dp_x_ind(),
             0xE3 => self.op_sbc_sr(),
+            0xE4 => self.op_cpx_dp(),
             0xE5 => self.op_sbc_dp(),
+            0xE6 => self.op_inc_dp(),
             0xE7 => self.op_sbc_dp_ind_long(),
+            0xE8 => self.op_inx(),
             0xE9 => self.op_sbc_imm(),
+            0xEA => self.op_nop(),
+            0xEB => self.op_xba(),
+            0xEC => self.op_cpx_abs(),
             0xED => self.op_sbc_abs(),
+            0xEE => self.op_inc_abs(),
             0xEF => self.op_sbc_abs_long(),
             0xF1 => self.op_sbc_dp_ind_y(),
             0xF2 => self.op_sbc_dp_ind(),
             0xF3 => self.op_sbc_sr_ind_y(),
             0xF5 => self.op_sbc_dp_x(),
+            0xF6 => self.op_inc_dp_x(),
             0xF7 => self.op_sbc_dp_ind_long_y(),
             0xF9 => self.op_sbc_abs_y(),
             0xFD => self.op_sbc_abs_x(),
+            0xFE => self.op_inc_abs_x(),
             0xFF => self.op_sbc_abs_long_x(),
-            0xEA => self.op_nop(),
-            0xEB => self.op_xba(),
             _ => todo!("opcode {opcode:#04X} not yet implemented"),
         }
     }
@@ -2125,6 +2159,402 @@ impl<B: SnesBus> Cpu<B> {
         let y = self.y;
         self.cmp_perform(y, val, wide);
         4
+    }
+
+    // -------------------------------------------------------------------------
+    // INC / DEC — increment / decrement memory or accumulator
+    // -------------------------------------------------------------------------
+
+    fn inc_perform_m(&mut self, val: u16) -> u16 {
+        let result = if self.m_flag() {
+            ((val as u8).wrapping_add(1)) as u16
+        } else {
+            val.wrapping_add(1)
+        };
+        self.set_nz_m(result);
+        result
+    }
+
+    fn dec_perform_m(&mut self, val: u16) -> u16 {
+        let result = if self.m_flag() {
+            ((val as u8).wrapping_sub(1)) as u16
+        } else {
+            val.wrapping_sub(1)
+        };
+        self.set_nz_m(result);
+        result
+    }
+
+    fn op_inc_acc(&mut self) -> u8 {
+        let val = self.a;
+        let result = self.inc_perform_m(val);
+        self.write_a(result);
+        2
+    }
+
+    fn op_dec_acc(&mut self) -> u8 {
+        let val = self.a;
+        let result = self.dec_perform_m(val);
+        self.write_a(result);
+        2
+    }
+
+    fn op_inc_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        let result = self.inc_perform_m(val);
+        self.write_m(ea, result);
+        5
+    }
+
+    fn op_inc_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        let result = self.inc_perform_m(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_inc_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        let result = self.inc_perform_m(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_inc_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        let result = self.inc_perform_m(val);
+        self.write_m(ea, result);
+        7
+    }
+
+    fn op_dec_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        let result = self.dec_perform_m(val);
+        self.write_m(ea, result);
+        5
+    }
+
+    fn op_dec_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        let result = self.dec_perform_m(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_dec_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        let result = self.dec_perform_m(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_dec_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        let result = self.dec_perform_m(val);
+        self.write_m(ea, result);
+        7
+    }
+
+    // -------------------------------------------------------------------------
+    // INX / DEX / INY / DEY — implied register increment/decrement
+    // -------------------------------------------------------------------------
+
+    fn inc_perform_x(&mut self, val: u16) -> u16 {
+        let result = if self.x_flag() {
+            ((val as u8).wrapping_add(1)) as u16
+        } else {
+            val.wrapping_add(1)
+        };
+        self.set_nz_x(result);
+        result
+    }
+
+    fn dec_perform_x(&mut self, val: u16) -> u16 {
+        let result = if self.x_flag() {
+            ((val as u8).wrapping_sub(1)) as u16
+        } else {
+            val.wrapping_sub(1)
+        };
+        self.set_nz_x(result);
+        result
+    }
+
+    fn op_inx(&mut self) -> u8 {
+        let val = self.x;
+        self.x = self.inc_perform_x(val);
+        2
+    }
+
+    fn op_dex(&mut self) -> u8 {
+        let val = self.x;
+        self.x = self.dec_perform_x(val);
+        2
+    }
+
+    fn op_iny(&mut self) -> u8 {
+        let val = self.y;
+        self.y = self.inc_perform_x(val);
+        2
+    }
+
+    fn op_dey(&mut self) -> u8 {
+        let val = self.y;
+        self.y = self.dec_perform_x(val);
+        2
+    }
+
+    // -------------------------------------------------------------------------
+    // ASL — arithmetic shift left (C <- [high bit], bit 0 <- 0)
+    // -------------------------------------------------------------------------
+
+    fn asl_perform(&mut self, val: u16) -> u16 {
+        let (result, c) = if self.m_flag() {
+            let v = val & 0xFF;
+            (((v << 1) & 0xFF), v & 0x80 != 0)
+        } else {
+            ((val << 1), val & 0x8000 != 0)
+        };
+        self.set_flag_c(c);
+        self.set_nz_m(result);
+        result
+    }
+
+    fn op_asl_acc(&mut self) -> u8 {
+        let val = self.a;
+        let result = self.asl_perform(val);
+        self.write_a(result);
+        2
+    }
+
+    fn op_asl_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        let result = self.asl_perform(val);
+        self.write_m(ea, result);
+        5
+    }
+
+    fn op_asl_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        let result = self.asl_perform(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_asl_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        let result = self.asl_perform(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_asl_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        let result = self.asl_perform(val);
+        self.write_m(ea, result);
+        7
+    }
+
+    // -------------------------------------------------------------------------
+    // LSR — logical shift right (bit(width-1) <- 0, C <- bit 0)
+    // -------------------------------------------------------------------------
+
+    fn lsr_perform(&mut self, val: u16) -> u16 {
+        let c = val & 0x01 != 0;
+        let result = if self.m_flag() {
+            (val & 0xFF) >> 1
+        } else {
+            val >> 1
+        };
+        self.set_flag_c(c);
+        self.set_nz_m(result);
+        result
+    }
+
+    fn op_lsr_acc(&mut self) -> u8 {
+        let val = self.a;
+        let result = self.lsr_perform(val);
+        self.write_a(result);
+        2
+    }
+
+    fn op_lsr_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        let result = self.lsr_perform(val);
+        self.write_m(ea, result);
+        5
+    }
+
+    fn op_lsr_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        let result = self.lsr_perform(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_lsr_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        let result = self.lsr_perform(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_lsr_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        let result = self.lsr_perform(val);
+        self.write_m(ea, result);
+        7
+    }
+
+    // -------------------------------------------------------------------------
+    // ROL — rotate left through carry (C <- high bit, bit 0 <- old C)
+    // -------------------------------------------------------------------------
+
+    fn rol_perform(&mut self, val: u16) -> u16 {
+        let old_c = self.flag_c() as u16;
+        let (result, c) = if self.m_flag() {
+            let v = val & 0xFF;
+            (((v << 1) & 0xFF) | old_c, v & 0x80 != 0)
+        } else {
+            ((val << 1) | old_c, val & 0x8000 != 0)
+        };
+        self.set_flag_c(c);
+        self.set_nz_m(result);
+        result
+    }
+
+    fn op_rol_acc(&mut self) -> u8 {
+        let val = self.a;
+        let result = self.rol_perform(val);
+        self.write_a(result);
+        2
+    }
+
+    fn op_rol_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        let result = self.rol_perform(val);
+        self.write_m(ea, result);
+        5
+    }
+
+    fn op_rol_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        let result = self.rol_perform(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_rol_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        let result = self.rol_perform(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_rol_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        let result = self.rol_perform(val);
+        self.write_m(ea, result);
+        7
+    }
+
+    // -------------------------------------------------------------------------
+    // ROR — rotate right through carry (C <- bit 0, high bit <- old C)
+    // -------------------------------------------------------------------------
+
+    fn ror_perform(&mut self, val: u16) -> u16 {
+        let old_c = self.flag_c() as u16;
+        let c = val & 0x01 != 0;
+        let result = if self.m_flag() {
+            ((val & 0xFF) >> 1) | (old_c << 7)
+        } else {
+            (val >> 1) | (old_c << 15)
+        };
+        self.set_flag_c(c);
+        self.set_nz_m(result);
+        result
+    }
+
+    fn op_ror_acc(&mut self) -> u8 {
+        let val = self.a;
+        let result = self.ror_perform(val);
+        self.write_a(result);
+        2
+    }
+
+    fn op_ror_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        let result = self.ror_perform(val);
+        self.write_m(ea, result);
+        5
+    }
+
+    fn op_ror_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        let result = self.ror_perform(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_ror_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        let result = self.ror_perform(val);
+        self.write_m(ea, result);
+        6
+    }
+
+    fn op_ror_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        let result = self.ror_perform(val);
+        self.write_m(ea, result);
+        7
     }
 }
 
@@ -5153,5 +5583,356 @@ mod cmp_cpx_cpy_tests {
         cpu.step();
         assert!(cpu.flag_c()); // 0x0200 > 0x0100
         assert!(!cpu.flag_z());
+    }
+}
+
+#[cfg(test)]
+mod inc_dec_shift_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_DECIMAL);
+        cpu
+    }
+
+    fn native8() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.p &= !FLAG_DECIMAL;
+        cpu
+    }
+
+    // =========================================================================
+    // INC accumulator and memory
+    // =========================================================================
+
+    #[test]
+    fn inc_acc_16bit_basic() {
+        let mut cpu = native16();
+        cpu.a = 0x0041;
+        cpu.bus.load(0x0000, &[0x1A]); // INC A
+        cpu.step();
+        assert_eq!(cpu.a, 0x0042);
+        assert!(!cpu.flag_z());
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn inc_acc_16bit_wraps_to_zero() {
+        let mut cpu = native16();
+        cpu.a = 0xFFFF;
+        cpu.bus.load(0x0000, &[0x1A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_z());
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn inc_acc_16bit_sets_n_flag() {
+        let mut cpu = native16();
+        cpu.a = 0x7FFF;
+        cpu.bus.load(0x0000, &[0x1A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x8000);
+        assert!(cpu.flag_n());
+    }
+
+    #[test]
+    fn inc_acc_8bit_preserves_b() {
+        let mut cpu = native8();
+        cpu.a = 0x1200;
+        cpu.bus.load(0x0000, &[0x1A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x1201); // B preserved
+    }
+
+    #[test]
+    fn inc_dp_increments_memory() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x05, 0x00]); // value = $0005
+        cpu.bus.load(0x0000, &[0xE6, 0x10]); // INC $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0x06);
+        assert_eq!(cpu.bus.read(0x0211), 0x00);
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn inc_abs_increments_memory() {
+        let mut cpu = native16();
+        cpu.bus.load(0x3000, &[0xFF, 0x00]); // value = $00FF
+        cpu.bus.load(0x0000, &[0xEE, 0x00, 0x30]); // INC $3000
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x3000), 0x00);
+        assert_eq!(cpu.bus.read(0x3001), 0x01); // $00FF -> $0100
+    }
+
+    // =========================================================================
+    // DEC accumulator and memory
+    // =========================================================================
+
+    #[test]
+    fn dec_acc_16bit_basic() {
+        let mut cpu = native16();
+        cpu.a = 0x0005;
+        cpu.bus.load(0x0000, &[0x3A]); // DEC A
+        cpu.step();
+        assert_eq!(cpu.a, 0x0004);
+        assert!(!cpu.flag_z());
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn dec_acc_16bit_wraps() {
+        let mut cpu = native16();
+        cpu.a = 0x0000;
+        cpu.bus.load(0x0000, &[0x3A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0xFFFF);
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn dec_acc_sets_z_flag() {
+        let mut cpu = native16();
+        cpu.a = 0x0001;
+        cpu.bus.load(0x0000, &[0x3A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn dec_dp_decrements_memory() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x00, 0x01]); // value = $0100
+        cpu.bus.load(0x0000, &[0xC6, 0x10]); // DEC $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0xFF);
+        assert_eq!(cpu.bus.read(0x0211), 0x00); // $0100 -> $00FF
+    }
+
+    // =========================================================================
+    // INX / DEX / INY / DEY
+    // =========================================================================
+
+    #[test]
+    fn inx_16bit_increments_x() {
+        let mut cpu = native16();
+        cpu.x = 0x0041;
+        cpu.bus.load(0x0000, &[0xE8]); // INX
+        cpu.step();
+        assert_eq!(cpu.x, 0x0042);
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn inx_8bit_wraps_and_sets_z() {
+        let mut cpu = native8();
+        cpu.x = 0x00FF;
+        cpu.bus.load(0x0000, &[0xE8]);
+        cpu.step();
+        assert_eq!(cpu.x & 0xFF, 0x00);
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn dex_16bit_decrements_x() {
+        let mut cpu = native16();
+        cpu.x = 0x0001;
+        cpu.bus.load(0x0000, &[0xCA]); // DEX
+        cpu.step();
+        assert_eq!(cpu.x, 0x0000);
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn iny_16bit_increments_y() {
+        let mut cpu = native16();
+        cpu.y = 0x00FF;
+        cpu.bus.load(0x0000, &[0xC8]); // INY
+        cpu.step();
+        assert_eq!(cpu.y, 0x0100);
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn dey_16bit_decrements_y() {
+        let mut cpu = native16();
+        cpu.y = 0x0000;
+        cpu.bus.load(0x0000, &[0x88]); // DEY
+        cpu.step();
+        assert_eq!(cpu.y, 0xFFFF);
+        assert!(cpu.flag_n());
+    }
+
+    // =========================================================================
+    //  arithmetic shift leftASL
+    // =========================================================================
+
+    #[test]
+    fn asl_acc_16bit_shifts_left() {
+        let mut cpu = native16();
+        cpu.a = 0x0001;
+        cpu.bus.load(0x0000, &[0x0A]); // ASL A
+        cpu.step();
+        assert_eq!(cpu.a, 0x0002);
+        assert!(!cpu.flag_c());
+        assert!(!cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn asl_acc_16bit_sets_c_from_high_bit() {
+        let mut cpu = native16();
+        cpu.a = 0x8000;
+        cpu.bus.load(0x0000, &[0x0A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_c());
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn asl_acc_8bit_preserves_b() {
+        let mut cpu = native8();
+        cpu.a = 0x1201; // B=0x12
+        cpu.bus.load(0x0000, &[0x0A]);
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x02);
+        assert_eq!(cpu.a >> 8, 0x12); // B preserved
+        assert!(!cpu.flag_c());
+    }
+
+    #[test]
+    fn asl_dp_shifts_memory() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x01, 0x00]); // value = $0001
+        cpu.bus.load(0x0000, &[0x06, 0x10]); // ASL $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0x02);
+        assert_eq!(cpu.bus.read(0x0211), 0x00);
+    }
+
+    // =========================================================================
+    //  logical shift rightLSR
+    // =========================================================================
+
+    #[test]
+    fn lsr_acc_16bit_shifts_right() {
+        let mut cpu = native16();
+        cpu.a = 0x0004;
+        cpu.bus.load(0x0000, &[0x4A]); // LSR A
+        cpu.step();
+        assert_eq!(cpu.a, 0x0002);
+        assert!(!cpu.flag_c());
+        assert!(!cpu.flag_n()); // high bit is always 0 after LSR
+    }
+
+    #[test]
+    fn lsr_acc_16bit_sets_c_from_low_bit() {
+        let mut cpu = native16();
+        cpu.a = 0x0001;
+        cpu.bus.load(0x0000, &[0x4A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_c());
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn lsr_dp_shifts_memory() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x04, 0x00]); // value = $0004
+        cpu.bus.load(0x0000, &[0x46, 0x10]); // LSR $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0x02);
+    }
+
+    // =========================================================================
+    //  rotate left through carryROL
+    // =========================================================================
+
+    #[test]
+    fn rol_acc_16bit_rotates_with_carry_in() {
+        let mut cpu = native16();
+        cpu.a = 0x0001;
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0x2A]); // ROL A
+        cpu.step();
+        assert_eq!(cpu.a, 0x0003); // shifted left + carry in
+        assert!(!cpu.flag_c()); // old bit 15 = 0
+    }
+
+    #[test]
+    fn rol_acc_16bit_carries_out_high_bit() {
+        let mut cpu = native16();
+        cpu.a = 0x8000;
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x2A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_c()); // old bit 15 -> carry
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn rol_dp_rotates_memory() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x01, 0x00]); // value = $0001
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x26, 0x10]); // ROL $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0x02);
+    }
+
+    // =========================================================================
+    //  rotate right through carryROR
+    // =========================================================================
+
+    #[test]
+    fn ror_acc_16bit_rotates_with_carry_in() {
+        let mut cpu = native16();
+        cpu.a = 0x0002;
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0x6A]); // ROR A
+        cpu.step();
+        assert_eq!(cpu.a, 0x8001); // carry in -> bit 15; bit 0 was 0 -> no carry out
+        assert!(!cpu.flag_c());
+        assert!(cpu.flag_n());
+    }
+
+    #[test]
+    fn ror_acc_16bit_carries_out_low_bit() {
+        let mut cpu = native16();
+        cpu.a = 0x0001;
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x6A]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_c()); // old bit 0 -> carry
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn ror_dp_rotates_memory() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x04, 0x00]); // value = $0004
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x66, 0x10]); // ROR $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0x02);
     }
 }
