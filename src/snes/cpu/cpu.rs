@@ -1422,11 +1422,20 @@ impl<B: SnesBus> Cpu<B> {
 
     fn sbc_perform(&mut self, operand: u16) {
         if self.flag_d() {
-            // BCD subtraction: A - M - (1 - C) = A + ~M + C, then decimal adjust
+            // BCD subtraction: A - M - (1 - C) = A + ~M + C, then decimal adjust.
+            // V is derived from the binary intermediate result (WDC spec).
             if self.m_flag() {
-                let a = (self.a & 0x00FF) as i32;
-                let op = (operand & 0x00FF) as i32;
-                let c = self.flag_c() as i32;
+                let a = (self.a & 0x00FF) as u32;
+                let op = (operand & 0x00FF) as u32;
+                let c = self.flag_c() as u32;
+                let not_op = (!op) & 0xFF;
+                let bin = a + not_op + c;
+                let v = ((!(a ^ not_op) & (a ^ bin)) & 0x80) != 0;
+                self.set_flag_v(v);
+
+                let a = a as i32;
+                let op = op as i32;
+                let c = c as i32;
                 let mut lo = (a & 0x0F) - (op & 0x0F) + c - 1;
                 if lo < 0 {
                     lo = ((lo - 6) & 0x0F) - 0x10;
@@ -1441,9 +1450,17 @@ impl<B: SnesBus> Cpu<B> {
                 let new_a = self.a;
                 self.set_nz_m(new_a);
             } else {
-                let a = self.a as i32;
-                let op = operand as i32;
-                let c = self.flag_c() as i32;
+                let a = self.a as u32;
+                let op = operand as u32;
+                let c = self.flag_c() as u32;
+                let not_op = (!op) & 0xFFFF;
+                let bin = a + not_op + c;
+                let v = ((!(a ^ not_op) & (a ^ bin)) & 0x8000) != 0;
+                self.set_flag_v(v);
+
+                let a = a as i32;
+                let op = op as i32;
+                let c = c as i32;
                 let mut lo = (a & 0x000F) - (op & 0x000F) + c - 1;
                 if lo < 0 {
                     lo = ((lo - 6) & 0x000F) - 0x10;
@@ -8769,5 +8786,89 @@ mod rti_cycle_tests {
         cpu.bus.load(0x01FC, &[0x20, 0x30, 0x00, 0x00]); // P=$20, PCL=$30, PCH=$00, PBR=$00
         cpu.bus.load(0x0000, &[0x40]); // RTI
         assert_eq!(cpu.step(), 7, "RTI native mode is 7 cycles (pulls PBR too)");
+    }
+}
+
+#[cfg(test)]
+mod sbc_decimal_v_flag_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native8_decimal() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.set_flag_d(true);
+        cpu
+    }
+
+    fn native16_decimal() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = 0; // M=0, X=0
+        cpu.set_flag_d(true);
+        cpu
+    }
+
+    /// 8-bit SBC decimal: positive minus large positive value yields negative result, V=1
+    /// A=$50, M=$80, C=1 (no borrow)
+    /// Binary: $50 + ~$80 + 1 = $D0, sign flips, V=1
+    #[test]
+    fn sbc_decimal_8bit_overflow_sets_v_flag() {
+        let mut cpu = native8_decimal();
+        cpu.a = 0x50;
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0xE9, 0x80]); // SBC #$80
+        cpu.step();
+        assert!(
+            cpu.flag_v(),
+            "V should be set: $50 - $80 overflows in 8-bit signed BCD"
+        );
+    }
+
+    /// 8-bit SBC decimal: no overflow when same signs, V=0
+    /// A=$50, M=$30, C=1 result keeps sign, V=0
+    #[test]
+    fn sbc_decimal_8bit_no_overflow_clears_v_flag() {
+        let mut cpu = native8_decimal();
+        cpu.a = 0x50;
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0xE9, 0x30]); // SBC #$30
+        cpu.step();
+        assert!(
+            !cpu.flag_v(),
+            "V should be clear: $50 - $30, no signed overflow"
+        );
+    }
+
+    /// 16-bit SBC decimal: positive minus large value overflows, V=1
+    /// A=$5000, M=$8000, C=1
+    /// Binary: $5000 + ~$8000 + 1 = $D000, sign flips, V=1
+    #[test]
+    fn sbc_decimal_16bit_overflow_sets_v_flag() {
+        let mut cpu = native16_decimal();
+        cpu.a = 0x5000;
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0xE9, 0x00, 0x80]); // SBC #$8000
+        cpu.step();
+        assert!(
+            cpu.flag_v(),
+            "V should be set: $5000 - $8000 overflows in 16-bit signed BCD"
+        );
+    }
+
+    /// 16-bit SBC decimal: no overflow, V=0
+    /// A=$5000, M=$3000, C=1
+    #[test]
+    fn sbc_decimal_16bit_no_overflow_clears_v_flag() {
+        let mut cpu = native16_decimal();
+        cpu.a = 0x5000;
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0xE9, 0x00, 0x30]); // SBC #$3000
+        cpu.step();
+        assert!(
+            !cpu.flag_v(),
+            "V should be clear: $5000 - $3000, no signed overflow"
+        );
     }
 }
