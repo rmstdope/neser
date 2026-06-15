@@ -420,6 +420,56 @@ impl<B: SnesBus> Cpu<B> {
             0xBD => self.op_lda_abs_x(),
             0xBE => self.op_ldx_abs_y(),
             0xBF => self.op_lda_abs_long_x(),
+            0x01 => self.op_ora_dp_x_ind(),
+            0x03 => self.op_ora_sr(),
+            0x05 => self.op_ora_dp(),
+            0x07 => self.op_ora_dp_ind_long(),
+            0x09 => self.op_ora_imm(),
+            0x0D => self.op_ora_abs(),
+            0x0F => self.op_ora_abs_long(),
+            0x11 => self.op_ora_dp_ind_y(),
+            0x12 => self.op_ora_dp_ind(),
+            0x13 => self.op_ora_sr_ind_y(),
+            0x15 => self.op_ora_dp_x(),
+            0x17 => self.op_ora_dp_ind_long_y(),
+            0x19 => self.op_ora_abs_y(),
+            0x1D => self.op_ora_abs_x(),
+            0x1F => self.op_ora_abs_long_x(),
+            0x21 => self.op_and_dp_x_ind(),
+            0x23 => self.op_and_sr(),
+            0x24 => self.op_bit_dp(),
+            0x25 => self.op_and_dp(),
+            0x27 => self.op_and_dp_ind_long(),
+            0x29 => self.op_and_imm(),
+            0x2C => self.op_bit_abs(),
+            0x2D => self.op_and_abs(),
+            0x2F => self.op_and_abs_long(),
+            0x31 => self.op_and_dp_ind_y(),
+            0x32 => self.op_and_dp_ind(),
+            0x33 => self.op_and_sr_ind_y(),
+            0x34 => self.op_bit_dp_x(),
+            0x35 => self.op_and_dp_x(),
+            0x37 => self.op_and_dp_ind_long_y(),
+            0x39 => self.op_and_abs_y(),
+            0x3C => self.op_bit_abs_x(),
+            0x3D => self.op_and_abs_x(),
+            0x3F => self.op_and_abs_long_x(),
+            0x41 => self.op_eor_dp_x_ind(),
+            0x43 => self.op_eor_sr(),
+            0x45 => self.op_eor_dp(),
+            0x47 => self.op_eor_dp_ind_long(),
+            0x49 => self.op_eor_imm(),
+            0x4D => self.op_eor_abs(),
+            0x4F => self.op_eor_abs_long(),
+            0x51 => self.op_eor_dp_ind_y(),
+            0x52 => self.op_eor_dp_ind(),
+            0x53 => self.op_eor_sr_ind_y(),
+            0x55 => self.op_eor_dp_x(),
+            0x57 => self.op_eor_dp_ind_long_y(),
+            0x59 => self.op_eor_abs_y(),
+            0x5D => self.op_eor_abs_x(),
+            0x5F => self.op_eor_abs_long_x(),
+            0x89 => self.op_bit_imm(),
             0x61 => self.op_adc_dp_x_ind(),
             0x63 => self.op_adc_sr(),
             0x65 => self.op_adc_dp(),
@@ -1344,6 +1394,476 @@ impl<B: SnesBus> Cpu<B> {
         let val = self.read_m(ea);
         self.sbc_perform(val);
         7
+    }
+
+    // -------------------------------------------------------------------------
+    // AND — bitwise AND with accumulator
+    // -------------------------------------------------------------------------
+
+    fn and_perform(&mut self, operand: u16) {
+        let result = self.a & operand;
+        self.write_a(result);
+        let a = self.a;
+        self.set_nz_m(a);
+    }
+
+    fn op_and_imm(&mut self) -> u8 {
+        let val = if self.m_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        self.and_perform(val);
+        2
+    }
+
+    fn op_and_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        3
+    }
+
+    fn op_and_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        4
+    }
+
+    fn op_and_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        4
+    }
+
+    fn op_and_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        5
+    }
+
+    fn op_and_abs_y(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_y(abs);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        5
+    }
+
+    fn op_and_abs_long(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let val = self.read_m(addr);
+        self.and_perform(val);
+        5
+    }
+
+    fn op_and_abs_long_x(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let ea = self.addr_abs_long_x(addr);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        5
+    }
+
+    fn op_and_dp_x_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x_ind(off);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        6
+    }
+
+    fn op_and_dp_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_y(off);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        6
+    }
+
+    fn op_and_dp_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind(off);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        5
+    }
+
+    fn op_and_dp_ind_long(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long(off);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        6
+    }
+
+    fn op_and_dp_ind_long_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long_y(off);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        6
+    }
+
+    fn op_and_sr(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr(off);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        4
+    }
+
+    fn op_and_sr_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr_ind_y(off);
+        let val = self.read_m(ea);
+        self.and_perform(val);
+        7
+    }
+
+    // -------------------------------------------------------------------------
+    // ORA — bitwise OR with accumulator
+    // -------------------------------------------------------------------------
+
+    fn ora_perform(&mut self, operand: u16) {
+        let result = self.a | operand;
+        self.write_a(result);
+        let a = self.a;
+        self.set_nz_m(a);
+    }
+
+    fn op_ora_imm(&mut self) -> u8 {
+        let val = if self.m_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        self.ora_perform(val);
+        2
+    }
+
+    fn op_ora_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        3
+    }
+
+    fn op_ora_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        4
+    }
+
+    fn op_ora_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        4
+    }
+
+    fn op_ora_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        5
+    }
+
+    fn op_ora_abs_y(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_y(abs);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        5
+    }
+
+    fn op_ora_abs_long(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let val = self.read_m(addr);
+        self.ora_perform(val);
+        5
+    }
+
+    fn op_ora_abs_long_x(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let ea = self.addr_abs_long_x(addr);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        5
+    }
+
+    fn op_ora_dp_x_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x_ind(off);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        6
+    }
+
+    fn op_ora_dp_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_y(off);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        6
+    }
+
+    fn op_ora_dp_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind(off);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        5
+    }
+
+    fn op_ora_dp_ind_long(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long(off);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        6
+    }
+
+    fn op_ora_dp_ind_long_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long_y(off);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        6
+    }
+
+    fn op_ora_sr(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr(off);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        4
+    }
+
+    fn op_ora_sr_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr_ind_y(off);
+        let val = self.read_m(ea);
+        self.ora_perform(val);
+        7
+    }
+
+    // -------------------------------------------------------------------------
+    // EOR — bitwise XOR with accumulator
+    // -------------------------------------------------------------------------
+
+    fn eor_perform(&mut self, operand: u16) {
+        let result = self.a ^ operand;
+        self.write_a(result);
+        let a = self.a;
+        self.set_nz_m(a);
+    }
+
+    fn op_eor_imm(&mut self) -> u8 {
+        let val = if self.m_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        self.eor_perform(val);
+        2
+    }
+
+    fn op_eor_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        3
+    }
+
+    fn op_eor_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        4
+    }
+
+    fn op_eor_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        4
+    }
+
+    fn op_eor_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        5
+    }
+
+    fn op_eor_abs_y(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_y(abs);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        5
+    }
+
+    fn op_eor_abs_long(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let val = self.read_m(addr);
+        self.eor_perform(val);
+        5
+    }
+
+    fn op_eor_abs_long_x(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let ea = self.addr_abs_long_x(addr);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        5
+    }
+
+    fn op_eor_dp_x_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x_ind(off);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        6
+    }
+
+    fn op_eor_dp_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_y(off);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        6
+    }
+
+    fn op_eor_dp_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind(off);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        5
+    }
+
+    fn op_eor_dp_ind_long(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long(off);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        6
+    }
+
+    fn op_eor_dp_ind_long_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long_y(off);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        6
+    }
+
+    fn op_eor_sr(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr(off);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        4
+    }
+
+    fn op_eor_sr_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr_ind_y(off);
+        let val = self.read_m(ea);
+        self.eor_perform(val);
+        7
+    }
+
+    // -------------------------------------------------------------------------
+    // BIT — test bits
+    // Immediate: Z = !(A & imm); N and V are NOT changed.
+    // Memory:    Z = !(A & mem); N = bit(width-1) of mem; V = bit(width-2) of mem.
+    // -------------------------------------------------------------------------
+
+    fn bit_imm_perform(&mut self, operand: u16) {
+        let masked = if self.m_flag() {
+            (self.a & 0xFF) & (operand & 0xFF)
+        } else {
+            self.a & operand
+        };
+        self.set_flag_z(masked == 0);
+        // N and V flags are NOT updated by BIT immediate
+    }
+
+    fn bit_mem_perform(&mut self, operand: u16) {
+        let (masked, n_bit, v_bit) = if self.m_flag() {
+            let op8 = operand & 0xFF;
+            ((self.a & 0xFF) & op8, op8 & 0x80 != 0, op8 & 0x40 != 0)
+        } else {
+            (
+                self.a & operand,
+                operand & 0x8000 != 0,
+                operand & 0x4000 != 0,
+            )
+        };
+        self.set_flag_z(masked == 0);
+        self.set_flag_n(n_bit);
+        self.set_flag_v(v_bit);
+    }
+
+    fn op_bit_imm(&mut self) -> u8 {
+        let val = if self.m_flag() {
+            self.fetch_byte() as u16
+        } else {
+            self.fetch_word()
+        };
+        self.bit_imm_perform(val);
+        2
+    }
+
+    fn op_bit_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.read_m(ea);
+        self.bit_mem_perform(val);
+        3
+    }
+
+    fn op_bit_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.read_m(ea);
+        self.bit_mem_perform(val);
+        4
+    }
+
+    fn op_bit_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.read_m(ea);
+        self.bit_mem_perform(val);
+        4
+    }
+
+    fn op_bit_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.read_m(ea);
+        self.bit_mem_perform(val);
+        5
     }
 }
 
@@ -3828,5 +4348,299 @@ mod adc_sbc_tests {
         cpu.bus.load(0x0000, &[0xED, 0x00, 0x30]); // SBC $3000
         cpu.step();
         assert_eq!(cpu.a, 0x00B0);
+    }
+}
+
+#[cfg(test)]
+mod and_ora_eor_bit_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_DECIMAL);
+        cpu
+    }
+
+    fn native8() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.p &= !FLAG_DECIMAL;
+        cpu
+    }
+
+    // =========================================================================
+    // AND immediate
+    // =========================================================================
+
+    #[test]
+    fn and_imm_16bit_basic() {
+        let mut cpu = native16();
+        cpu.a = 0xFF0F;
+        cpu.bus.load(0x0000, &[0x29, 0x0F, 0xF0]); // AND #$F00F
+        cpu.step();
+        assert_eq!(cpu.a, 0xF00F);
+        assert!(!cpu.flag_z());
+        assert!(cpu.flag_n());
+    }
+
+    #[test]
+    fn and_imm_16bit_sets_z_flag() {
+        let mut cpu = native16();
+        cpu.a = 0xAAAA;
+        cpu.bus.load(0x0000, &[0x29, 0x55, 0x55]); // AND #$5555
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_z());
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn and_imm_8bit_basic() {
+        let mut cpu = native8();
+        cpu.a = 0x12FF;
+        cpu.bus.load(0x0000, &[0x29, 0x0F]); // AND #$0F
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x0F);
+        assert_eq!(cpu.a >> 8, 0x12); // B preserved
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn and_imm_8bit_sets_z_flag() {
+        let mut cpu = native8();
+        cpu.a = 0x00AA;
+        cpu.bus.load(0x0000, &[0x29, 0x55]); // AND #$55
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x00);
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn and_dp_reads_from_direct_page() {
+        let mut cpu = native16();
+        cpu.a = 0xFF00;
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0xAA, 0xFF]); // operand = $FFAA
+        cpu.bus.load(0x0000, &[0x25, 0x10]); // AND $10
+        cpu.step();
+        assert_eq!(cpu.a, 0xFF00);
+    }
+
+    #[test]
+    fn and_abs_reads_from_absolute() {
+        let mut cpu = native16();
+        cpu.a = 0x0F0F;
+        cpu.dbr = 0x00;
+        cpu.bus.load(0x1000, &[0xF0, 0x0F]);
+        cpu.bus.load(0x0000, &[0x2D, 0x00, 0x10]); // AND $1000
+        cpu.step();
+        assert_eq!(cpu.a, 0x0F00);
+    }
+
+    // =========================================================================
+    // ORA immediate
+    // =========================================================================
+
+    #[test]
+    fn ora_imm_16bit_basic() {
+        let mut cpu = native16();
+        cpu.a = 0x00FF;
+        cpu.bus.load(0x0000, &[0x09, 0x00, 0xFF]); // ORA #$FF00
+        cpu.step();
+        assert_eq!(cpu.a, 0xFFFF);
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn ora_imm_16bit_sets_z_flag() {
+        let mut cpu = native16();
+        cpu.a = 0x0000;
+        cpu.bus.load(0x0000, &[0x09, 0x00, 0x00]); // ORA #$0000
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn ora_imm_8bit_basic() {
+        let mut cpu = native8();
+        cpu.a = 0x1200;
+        cpu.bus.load(0x0000, &[0x09, 0x0F]); // ORA #$0F
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x0F);
+        assert_eq!(cpu.a >> 8, 0x12); // B preserved
+    }
+
+    #[test]
+    fn ora_dp_reads_from_direct_page() {
+        let mut cpu = native16();
+        cpu.a = 0x0000;
+        cpu.d = 0x0300;
+        cpu.bus.load(0x0310, &[0x34, 0x12]);
+        cpu.bus.load(0x0000, &[0x05, 0x10]); // ORA $10
+        cpu.step();
+        assert_eq!(cpu.a, 0x1234);
+    }
+
+    #[test]
+    fn ora_abs_reads_from_absolute() {
+        let mut cpu = native16();
+        cpu.a = 0xFF00;
+        cpu.dbr = 0x00;
+        cpu.bus.load(0x2000, &[0x00, 0x00]);
+        cpu.bus.load(0x0000, &[0x0D, 0x00, 0x20]); // ORA $2000
+        cpu.step();
+        assert_eq!(cpu.a, 0xFF00);
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    // =========================================================================
+    // EOR immediate
+    // =========================================================================
+
+    #[test]
+    fn eor_imm_16bit_basic() {
+        let mut cpu = native16();
+        cpu.a = 0xFFFF;
+        cpu.bus.load(0x0000, &[0x49, 0xFF, 0xFF]); // EOR #$FFFF
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_z());
+        assert!(!cpu.flag_n());
+    }
+
+    #[test]
+    fn eor_imm_16bit_sets_n_flag() {
+        let mut cpu = native16();
+        cpu.a = 0x0000;
+        cpu.bus.load(0x0000, &[0x49, 0x00, 0x80]); // EOR #$8000
+        cpu.step();
+        assert_eq!(cpu.a, 0x8000);
+        assert!(cpu.flag_n());
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn eor_imm_8bit_basic() {
+        let mut cpu = native8();
+        cpu.a = 0x12AA;
+        cpu.bus.load(0x0000, &[0x49, 0xFF]); // EOR #$FF
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x55);
+        assert_eq!(cpu.a >> 8, 0x12); // B preserved
+    }
+
+    #[test]
+    fn eor_dp_reads_from_direct_page() {
+        let mut cpu = native16();
+        cpu.a = 0xFFFF;
+        cpu.d = 0x0400;
+        cpu.bus.load(0x0410, &[0x0F, 0xF0]);
+        cpu.bus.load(0x0000, &[0x45, 0x10]); // EOR $10
+        cpu.step();
+        assert_eq!(cpu.a, 0x0FF0);
+    }
+
+    #[test]
+    fn eor_abs_reads_from_absolute() {
+        let mut cpu = native16();
+        cpu.a = 0x1234;
+        cpu.dbr = 0x00;
+        cpu.bus.load(0x5000, &[0x34, 0x12]);
+        cpu.bus.load(0x0000, &[0x4D, 0x00, 0x50]); // EOR $5000
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_z());
+    }
+
+    // =========================================================================
+    // BIT
+    // =========================================================================
+
+    #[test]
+    fn bit_imm_16bit_sets_z_when_and_is_zero() {
+        // BIT immediate: only Z flag updated (N and V NOT updated by imm mode)
+        let mut cpu = native16();
+        cpu.a = 0x00FF;
+        cpu.bus.load(0x0000, &[0x89, 0x00, 0xFF]); // BIT #$FF00
+        cpu.step();
+        assert!(cpu.flag_z()); // A & imm = 0
+    }
+
+    #[test]
+    fn bit_imm_16bit_clears_z_when_and_nonzero() {
+        let mut cpu = native16();
+        cpu.a = 0x00FF;
+        cpu.bus.load(0x0000, &[0x89, 0xFF, 0x00]); // BIT #$00FF
+        cpu.step();
+        assert!(!cpu.flag_z());
+    }
+
+    #[test]
+    fn bit_imm_does_not_affect_n_or_v() {
+        // In immediate mode BIT does NOT transfer bits 7/6 to N/V
+        let mut cpu = native16();
+        cpu.a = 0xFFFF;
+        cpu.p &= !(FLAG_NEGATIVE | FLAG_OVERFLOW); // N=0, V=0
+        cpu.bus.load(0x0000, &[0x89, 0xFF, 0xFF]); // BIT #$FFFF
+        cpu.step();
+        assert!(!cpu.flag_n()); // N unchanged
+        assert!(!cpu.flag_v()); // V unchanged
+    }
+
+    #[test]
+    fn bit_dp_16bit_sets_n_v_from_operand() {
+        // BIT memory: N = bit15 of operand, V = bit14 of operand (16-bit mode)
+        let mut cpu = native16();
+        cpu.a = 0xFFFF;
+        cpu.d = 0x0500;
+        cpu.bus.load(0x0510, &[0x00, 0xC0]); // operand = $C000 => bit15=1, bit14=1
+        cpu.bus.load(0x0000, &[0x24, 0x10]); // BIT $10
+        cpu.step();
+        assert!(cpu.flag_n()); // bit 15 set
+        assert!(cpu.flag_v()); // bit 14 set
+        assert!(!cpu.flag_z()); // A & $C000 != 0
+    }
+
+    #[test]
+    fn bit_dp_16bit_sets_z_when_and_is_zero() {
+        let mut cpu = native16();
+        cpu.a = 0x00FF;
+        cpu.d = 0x0500;
+        cpu.bus.load(0x0510, &[0x00, 0xFF]); // operand = $FF00
+        cpu.bus.load(0x0000, &[0x24, 0x10]); // BIT $10
+        cpu.step();
+        assert!(cpu.flag_z()); // $00FF & $FF00 = 0
+        assert!(cpu.flag_n()); // bit 15 of $FF00 set
+        assert!(cpu.flag_v()); // bit 14 of $FF00 set ($FF00 & $4000 != 0)
+    }
+
+    #[test]
+    fn bit_abs_8bit_sets_n_v_from_operand() {
+        // 8-bit mode: N = bit7, V = bit6 of memory operand
+        let mut cpu = native8();
+        cpu.a = 0x00FF;
+        cpu.bus.load(0x1000, &[0xC0]); // operand = $C0 => bit7=1, bit6=1
+        cpu.bus.load(0x0000, &[0x2C, 0x00, 0x10]); // BIT $1000
+        cpu.step();
+        assert!(cpu.flag_n());
+        assert!(cpu.flag_v());
+        assert!(!cpu.flag_z()); // $FF & $C0 != 0
+    }
+
+    #[test]
+    fn bit_does_not_change_accumulator() {
+        let mut cpu = native16();
+        cpu.a = 0x1234;
+        cpu.d = 0x0500;
+        cpu.bus.load(0x0510, &[0x00, 0x80]); // operand = $8000
+        cpu.bus.load(0x0000, &[0x24, 0x10]); // BIT $10
+        cpu.step();
+        assert_eq!(cpu.a, 0x1234); // A unchanged
     }
 }
