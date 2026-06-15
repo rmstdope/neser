@@ -61,6 +61,14 @@ pub struct Cpu<B: SnesBus> {
     /// E=0: native mode (full 65816)
     e: bool,
 
+    /// Accumulated extra cycles for the current instruction (DP/M/X/page-cross penalties).
+    /// Reset at the start of each `step()` call.
+    extra_cycles: u8,
+
+    /// Whether the most recent abs,X / abs,Y / (dp),Y address calculation crossed a page.
+    /// Used by read instructions to conditionally add a cycle.
+    last_page_crossed: bool,
+
     /// Bus for memory access
     bus: B,
 }
@@ -79,6 +87,8 @@ impl<B: SnesBus> Cpu<B> {
             pc: 0,
             p: FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_INTERRUPT, // M=1, X=1, I=1
             e: true,                                                 // Start in emulation mode
+            extra_cycles: 0,
+            last_page_crossed: false,
             bus,
         }
     }
@@ -357,8 +367,10 @@ impl<B: SnesBus> Cpu<B> {
     /// Execute one instruction: fetch opcode at PBR:PC, advance PC, dispatch.
     /// Returns the number of master cycles consumed.
     pub fn step(&mut self) -> u8 {
+        self.extra_cycles = 0;
+        self.last_page_crossed = false;
         let opcode = self.fetch_byte();
-        match opcode {
+        let base = match opcode {
             0x00 => self.op_brk(),
             0x01 => self.op_ora_dp_x_ind(),
             0x02 => self.op_cop(),
@@ -615,7 +627,8 @@ impl<B: SnesBus> Cpu<B> {
             0xFE => self.op_inc_abs_x(),
             0xFF => self.op_sbc_abs_long_x(),
             _ => todo!("opcode {opcode:#04X} not yet implemented"),
-        }
+        };
+        base + self.extra_cycles
     }
 
     /// Fetch the byte at PBR:PC and advance PC by 1.
@@ -947,7 +960,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs);
         let val = self.read_m(ea);
         self.lda_store(val);
-        4
+        4 + self.last_page_crossed as u8
     }
 
     fn op_lda_abs_y(&mut self) -> u8 {
@@ -955,7 +968,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_y(abs);
         let val = self.read_m(ea);
         self.lda_store(val);
-        4
+        4 + self.last_page_crossed as u8
     }
 
     fn op_lda_abs_long(&mut self) -> u8 {
@@ -987,7 +1000,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_ind_y(off);
         let val = self.read_m(ea);
         self.lda_store(val);
-        5
+        5 + self.last_page_crossed as u8
     }
 
     fn op_lda_dp_ind(&mut self) -> u8 {
@@ -1073,7 +1086,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_y(abs);
         let val = self.read_idx(ea);
         self.ldx_store(val);
-        4
+        4 + self.last_page_crossed as u8
     }
 
     // -------------------------------------------------------------------------
@@ -1119,7 +1132,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs);
         let val = self.read_idx(ea);
         self.ldy_store(val);
-        4
+        4 + self.last_page_crossed as u8
     }
 
     // -------------------------------------------------------------------------
@@ -1488,7 +1501,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs);
         let val = self.read_m(ea);
         self.adc_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_adc_abs_y(&mut self) -> u8 {
@@ -1496,7 +1509,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_y(abs);
         let val = self.read_m(ea);
         self.adc_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_adc_abs_long(&mut self) -> u8 {
@@ -1527,7 +1540,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_ind_y(off);
         let val = self.read_m(ea);
         self.adc_perform(val);
-        6
+        5 + self.last_page_crossed as u8
     }
 
     fn op_adc_dp_ind(&mut self) -> u8 {
@@ -1613,7 +1626,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs);
         let val = self.read_m(ea);
         self.sbc_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_sbc_abs_y(&mut self) -> u8 {
@@ -1621,7 +1634,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_y(abs);
         let val = self.read_m(ea);
         self.sbc_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_sbc_abs_long(&mut self) -> u8 {
@@ -1652,7 +1665,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_ind_y(off);
         let val = self.read_m(ea);
         self.sbc_perform(val);
-        6
+        5 + self.last_page_crossed as u8
     }
 
     fn op_sbc_dp_ind(&mut self) -> u8 {
@@ -1745,7 +1758,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs);
         let val = self.read_m(ea);
         self.and_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_and_abs_y(&mut self) -> u8 {
@@ -1753,7 +1766,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_y(abs);
         let val = self.read_m(ea);
         self.and_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_and_abs_long(&mut self) -> u8 {
@@ -1784,7 +1797,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_ind_y(off);
         let val = self.read_m(ea);
         self.and_perform(val);
-        6
+        5 + self.last_page_crossed as u8
     }
 
     fn op_and_dp_ind(&mut self) -> u8 {
@@ -1877,7 +1890,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs);
         let val = self.read_m(ea);
         self.ora_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_ora_abs_y(&mut self) -> u8 {
@@ -1885,7 +1898,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_y(abs);
         let val = self.read_m(ea);
         self.ora_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_ora_abs_long(&mut self) -> u8 {
@@ -1916,7 +1929,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_ind_y(off);
         let val = self.read_m(ea);
         self.ora_perform(val);
-        6
+        5 + self.last_page_crossed as u8
     }
 
     fn op_ora_dp_ind(&mut self) -> u8 {
@@ -2009,7 +2022,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs);
         let val = self.read_m(ea);
         self.eor_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_eor_abs_y(&mut self) -> u8 {
@@ -2017,7 +2030,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_y(abs);
         let val = self.read_m(ea);
         self.eor_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_eor_abs_long(&mut self) -> u8 {
@@ -2048,7 +2061,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_ind_y(off);
         let val = self.read_m(ea);
         self.eor_perform(val);
-        6
+        5 + self.last_page_crossed as u8
     }
 
     fn op_eor_dp_ind(&mut self) -> u8 {
@@ -2162,7 +2175,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs);
         let val = self.read_m(ea);
         self.bit_mem_perform(val);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     // -------------------------------------------------------------------------
@@ -2239,7 +2252,7 @@ impl<B: SnesBus> Cpu<B> {
         let val = self.read_m(ea);
         let a = self.a;
         self.cmp_perform(a, val, wide);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_cmp_abs_y(&mut self) -> u8 {
@@ -2249,7 +2262,7 @@ impl<B: SnesBus> Cpu<B> {
         let val = self.read_m(ea);
         let a = self.a;
         self.cmp_perform(a, val, wide);
-        5
+        4 + self.last_page_crossed as u8
     }
 
     fn op_cmp_abs_long(&mut self) -> u8 {
@@ -2288,7 +2301,7 @@ impl<B: SnesBus> Cpu<B> {
         let val = self.read_m(ea);
         let a = self.a;
         self.cmp_perform(a, val, wide);
-        6
+        5 + self.last_page_crossed as u8
     }
 
     fn op_cmp_dp_ind(&mut self) -> u8 {
@@ -2926,17 +2939,26 @@ impl<B: SnesBus> Cpu<B> {
     // -------------------------------------------------------------------------
 
     /// Direct Page: EA = (D + offset) & 0xFFFF  [bank 0]
-    fn addr_dp(&self, offset: u8) -> u32 {
+    fn addr_dp(&mut self, offset: u8) -> u32 {
+        if self.d & 0xFF != 0 {
+            self.extra_cycles += 1;
+        }
         (self.d as u32 + offset as u32) & 0xFFFF
     }
 
     /// Direct Page Indexed X: EA = (D + offset + X) & 0xFFFF  [bank 0]
-    fn addr_dp_x(&self, offset: u8) -> u32 {
+    fn addr_dp_x(&mut self, offset: u8) -> u32 {
+        if self.d & 0xFF != 0 {
+            self.extra_cycles += 1;
+        }
         (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF
     }
 
     /// Direct Page Indexed Y: EA = (D + offset + Y) & 0xFFFF  [bank 0]
-    fn addr_dp_y(&self, offset: u8) -> u32 {
+    fn addr_dp_y(&mut self, offset: u8) -> u32 {
+        if self.d & 0xFF != 0 {
+            self.extra_cycles += 1;
+        }
         (self.d as u32 + offset as u32 + self.y as u32) & 0xFFFF
     }
 
@@ -2946,13 +2968,17 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Absolute Indexed X: EA = (DBR:abs + X) & 0xFF_FFFF
-    fn addr_abs_x(&self, abs: u16) -> u32 {
-        ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.x as u32) & 0xFF_FFFF
+    fn addr_abs_x(&mut self, abs: u16) -> u32 {
+        let ea = ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.x as u32) & 0xFF_FFFF;
+        self.last_page_crossed = (abs & 0xFF00) != (abs.wrapping_add(self.x) & 0xFF00);
+        ea
     }
 
     /// Absolute Indexed Y: EA = (DBR:abs + Y) & 0xFF_FFFF
-    fn addr_abs_y(&self, abs: u16) -> u32 {
-        ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.y as u32) & 0xFF_FFFF
+    fn addr_abs_y(&mut self, abs: u16) -> u32 {
+        let ea = ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.y as u32) & 0xFF_FFFF;
+        self.last_page_crossed = (abs & 0xFF00) != (abs.wrapping_add(self.y) & 0xFF00);
+        ea
     }
 
     /// Absolute Long: EA = 24-bit operand (pass-through, masked to 24 bits)
@@ -2971,7 +2997,10 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Direct Page Indirect: pointer at (D+offset), EA = DBR:ptr16
-    fn addr_dp_ind(&self, offset: u8) -> u32 {
+    fn addr_dp_ind(&mut self, offset: u8) -> u32 {
+        if self.d & 0xFF != 0 {
+            self.extra_cycles += 1;
+        }
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
         let lo = self.bus.read(ptr_addr);
         let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
@@ -2980,7 +3009,10 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Direct Page Indirect Long: 24-bit pointer at (D+offset)
-    fn addr_dp_ind_long(&self, offset: u8) -> u32 {
+    fn addr_dp_ind_long(&mut self, offset: u8) -> u32 {
+        if self.d & 0xFF != 0 {
+            self.extra_cycles += 1;
+        }
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
         let lo = self.bus.read(ptr_addr);
         let mid = self.bus.read((ptr_addr + 1) & 0xFFFF);
@@ -2989,7 +3021,10 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Direct Page Indexed Indirect X: pointer at (D+offset+X), EA = DBR:ptr16
-    fn addr_dp_x_ind(&self, offset: u8) -> u32 {
+    fn addr_dp_x_ind(&mut self, offset: u8) -> u32 {
+        if self.d & 0xFF != 0 {
+            self.extra_cycles += 1;
+        }
         let ptr_addr = (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF;
         let lo = self.bus.read(ptr_addr);
         let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
@@ -2998,16 +3033,23 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Direct Page Indirect Indexed Y: ptr16 at (D+offset), EA = (DBR:ptr16+Y) & 0xFF_FFFF
-    fn addr_dp_ind_y(&self, offset: u8) -> u32 {
+    fn addr_dp_ind_y(&mut self, offset: u8) -> u32 {
+        if self.d & 0xFF != 0 {
+            self.extra_cycles += 1;
+        }
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
         let lo = self.bus.read(ptr_addr);
         let hi = self.bus.read((ptr_addr + 1) & 0xFFFF);
-        let ptr = lo as u32 | (hi as u32) << 8;
-        ((self.dbr as u32) << 16 | ptr).wrapping_add(self.y as u32) & 0xFF_FFFF
+        let ptr16 = lo as u16 | (hi as u16) << 8;
+        self.last_page_crossed = (ptr16 & 0xFF00) != (ptr16.wrapping_add(self.y) & 0xFF00);
+        ((self.dbr as u32) << 16 | ptr16 as u32).wrapping_add(self.y as u32) & 0xFF_FFFF
     }
 
     /// Direct Page Indirect Long Indexed Y: 24-bit ptr at (D+offset), EA = (ptr+Y) & 0xFF_FFFF
-    fn addr_dp_ind_long_y(&self, offset: u8) -> u32 {
+    fn addr_dp_ind_long_y(&mut self, offset: u8) -> u32 {
+        if self.d & 0xFF != 0 {
+            self.extra_cycles += 1;
+        }
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
         let lo = self.bus.read(ptr_addr);
         let mid = self.bus.read((ptr_addr + 1) & 0xFFFF);
@@ -3058,37 +3100,45 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Read M-flag width: 8-bit when M=1, 16-bit when M=0.
-    fn read_m(&self, addr: u32) -> u16 {
+    /// Adds +1 to extra_cycles when M=0 (16-bit mode requires an extra byte fetch).
+    fn read_m(&mut self, addr: u32) -> u16 {
         if self.m_flag() {
             self.read8(addr) as u16
         } else {
+            self.extra_cycles += 1;
             self.read16(addr)
         }
     }
 
     /// Write M-flag width: 8-bit when M=1, 16-bit when M=0.
+    /// Adds +1 to extra_cycles when M=0 (16-bit mode requires an extra byte write).
     fn write_m(&mut self, addr: u32, value: u16) {
         if self.m_flag() {
             self.write8(addr, value as u8);
         } else {
+            self.extra_cycles += 1;
             self.write16(addr, value);
         }
     }
 
     /// Read X-flag width: 8-bit when X=1, 16-bit when X=0.
-    fn read_idx(&self, addr: u32) -> u16 {
+    /// Adds +1 to extra_cycles when X=0 (16-bit index requires an extra byte fetch).
+    fn read_idx(&mut self, addr: u32) -> u16 {
         if self.x_flag() {
             self.read8(addr) as u16
         } else {
+            self.extra_cycles += 1;
             self.read16(addr)
         }
     }
 
     /// Write X-flag width: 8-bit when X=1, 16-bit when X=0.
+    /// Adds +1 to extra_cycles when X=0 (16-bit index requires an extra byte write).
     fn write_idx(&mut self, addr: u32, value: u16) {
         if self.x_flag() {
             self.write8(addr, value as u8);
         } else {
+            self.extra_cycles += 1;
             self.write16(addr, value);
         }
     }
@@ -8045,5 +8095,273 @@ mod decimal_mode_tests {
         assert_eq!(cpu.a, 0x0000);
         assert!(cpu.flag_c());
         assert!(cpu.flag_z());
+    }
+}
+
+// =========================================================================
+// Cycle accuracy tests: DP penalty, M/X width penalty, abs-idx page-cross
+// =========================================================================
+#[cfg(test)]
+mod cycle_accuracy_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn cpu_native8() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH; // M=1, X=1 (8-bit modes)
+        cpu.d = 0x0000;
+        cpu.dbr = 0x00;
+        cpu.pc = 0x0000;
+        cpu.pbr = 0x00;
+        cpu
+    }
+
+    fn cpu_native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = 0x00; // M=0, X=0 (16-bit modes)
+        cpu.d = 0x0000;
+        cpu.dbr = 0x00;
+        cpu.pc = 0x0000;
+        cpu.pbr = 0x00;
+        cpu
+    }
+
+    // DP cycle penalty (+1 when D low byte != 0)
+
+    #[test]
+    fn lda_dp_no_penalty_when_d_low_zero() {
+        let mut cpu = cpu_native8();
+        cpu.d = 0x0100; // low byte = 0
+        cpu.bus.load(0x0100, &[0x55]); // value at DP address
+        cpu.bus.load(0x0000, &[0xA5, 0x00]); // LDA $00 (dp)
+        let cycles = cpu.step();
+        assert_eq!(cycles, 3, "LDA dp base is 3 when D low byte == 0");
+    }
+
+    #[test]
+    fn lda_dp_plus1_cycle_when_d_low_nonzero() {
+        let mut cpu = cpu_native8();
+        cpu.d = 0x0101; // low byte = 1 -> +1 cycle
+        cpu.bus.load(0x0101, &[0x55]); // value at DP+0
+        cpu.bus.load(0x0000, &[0xA5, 0x00]); // LDA $00 (dp)
+        let cycles = cpu.step();
+        assert_eq!(cycles, 4, "LDA dp adds 1 cycle when D low byte != 0");
+    }
+
+    #[test]
+    fn lda_dp_x_ind_no_dp_penalty() {
+        let mut cpu = cpu_native8();
+        cpu.d = 0x0200; // low byte = 0
+        cpu.x = 0x00;
+        // pointer at $0200: points to $0300
+        cpu.bus.load(0x0200, &[0x00, 0x03]);
+        cpu.bus.load(0x000300, &[0x42]); // value
+        cpu.bus.load(0x0000, &[0xA1, 0x00]); // LDA ($00,X)
+        let cycles = cpu.step();
+        assert_eq!(cycles, 6, "LDA (dp,X) base is 6 when D low byte == 0");
+    }
+
+    #[test]
+    fn lda_dp_x_ind_plus1_dp_penalty() {
+        let mut cpu = cpu_native8();
+        cpu.d = 0x0201; // low byte = 1 -> +1 cycle
+        cpu.x = 0x00;
+        cpu.bus.load(0x0201, &[0x00, 0x03]);
+        cpu.bus.load(0x000300, &[0x42]);
+        cpu.bus.load(0x0000, &[0xA1, 0x00]); // LDA ($00,X)
+        let cycles = cpu.step();
+        assert_eq!(cycles, 7, "LDA (dp,X) adds 1 cycle when D low byte != 0");
+    }
+
+    #[test]
+    fn lda_dp_ind_y_no_dp_penalty() {
+        let mut cpu = cpu_native8();
+        cpu.d = 0x0200; // low byte = 0
+        cpu.y = 0x01;
+        cpu.bus.load(0x0200, &[0x00, 0x03]); // ptr -> $0300
+        cpu.bus.load(0x000301, &[0x42]);
+        cpu.bus.load(0x0000, &[0xB1, 0x00]); // LDA ($00),Y
+        let cycles = cpu.step();
+        assert_eq!(
+            cycles, 5,
+            "LDA (dp),Y base is 5 when D low byte == 0, no page cross"
+        );
+    }
+
+    #[test]
+    fn lda_dp_ind_y_plus1_dp_penalty() {
+        let mut cpu = cpu_native8();
+        cpu.d = 0x0201; // low byte = 1 -> +1 cycle
+        cpu.y = 0x01;
+        cpu.bus.load(0x0201, &[0x00, 0x03]); // ptr -> $0300
+        cpu.bus.load(0x000301, &[0x42]);
+        cpu.bus.load(0x0000, &[0xB1, 0x00]); // LDA ($00),Y
+        let cycles = cpu.step();
+        assert_eq!(cycles, 6, "LDA (dp),Y adds 1 cycle when D low byte != 0");
+    }
+
+    // M-width cycle penalty (+1 when M=0)
+
+    #[test]
+    fn lda_abs_no_m_penalty_in_8bit_mode() {
+        let mut cpu = cpu_native8();
+        cpu.bus.load(0x001000, &[0x42]);
+        cpu.bus.load(0x0000, &[0xAD, 0x00, 0x10]); // LDA $1000
+        let cycles = cpu.step();
+        assert_eq!(cycles, 4, "LDA abs is 4 in 8-bit accumulator mode");
+    }
+
+    #[test]
+    fn lda_abs_plus1_cycle_in_16bit_mode() {
+        let mut cpu = cpu_native16();
+        cpu.bus.load(0x001000, &[0x42, 0x00]);
+        cpu.bus.load(0x0000, &[0xAD, 0x00, 0x10]); // LDA $1000
+        let cycles = cpu.step();
+        assert_eq!(
+            cycles, 5,
+            "LDA abs adds 1 cycle when M=0 (16-bit accumulator)"
+        );
+    }
+
+    #[test]
+    fn sta_abs_no_m_penalty_in_8bit_mode() {
+        let mut cpu = cpu_native8();
+        cpu.a = 0x55;
+        cpu.bus.load(0x0000, &[0x8D, 0x00, 0x10]); // STA $1000
+        let cycles = cpu.step();
+        assert_eq!(cycles, 4, "STA abs is 4 in 8-bit accumulator mode");
+    }
+
+    #[test]
+    fn sta_abs_plus1_cycle_in_16bit_mode() {
+        let mut cpu = cpu_native16();
+        cpu.a = 0x1234;
+        cpu.bus.load(0x0000, &[0x8D, 0x00, 0x10]); // STA $1000
+        let cycles = cpu.step();
+        assert_eq!(
+            cycles, 5,
+            "STA abs adds 1 cycle when M=0 (16-bit accumulator)"
+        );
+    }
+
+    #[test]
+    fn lda_dp_combined_dp_and_m_penalty() {
+        // Both D low != 0 AND M=0: +1 +1 on top of base 3 = 5
+        let mut cpu = cpu_native16();
+        cpu.d = 0x0101; // low byte = 1
+        cpu.bus.load(0x0101, &[0x42, 0x00]);
+        cpu.bus.load(0x0000, &[0xA5, 0x00]); // LDA $00 (dp)
+        let cycles = cpu.step();
+        assert_eq!(cycles, 5, "LDA dp with both D low != 0 and M=0 is 5 cycles");
+    }
+
+    // X-width cycle penalty (+1 when X=0)
+
+    #[test]
+    fn ldx_dp_no_x_penalty_in_8bit_mode() {
+        let mut cpu = cpu_native8();
+        cpu.bus.load(0x0010, &[0x42]);
+        cpu.bus.load(0x0000, &[0xA6, 0x10]); // LDX $10 (dp)
+        let cycles = cpu.step();
+        assert_eq!(cycles, 3, "LDX dp is 3 in 8-bit index mode");
+    }
+
+    #[test]
+    fn ldx_dp_plus1_cycle_in_16bit_mode() {
+        let mut cpu = cpu_native16();
+        cpu.bus.load(0x0010, &[0x42, 0x00]);
+        cpu.bus.load(0x0000, &[0xA6, 0x10]); // LDX $10 (dp)
+        let cycles = cpu.step();
+        assert_eq!(cycles, 4, "LDX dp adds 1 cycle when X=0 (16-bit index)");
+    }
+
+    #[test]
+    fn ldy_abs_no_x_penalty_in_8bit_mode() {
+        let mut cpu = cpu_native8();
+        cpu.bus.load(0x001000, &[0x42]);
+        cpu.bus.load(0x0000, &[0xAC, 0x00, 0x10]); // LDY $1000
+        let cycles = cpu.step();
+        assert_eq!(cycles, 4, "LDY abs is 4 in 8-bit index mode");
+    }
+
+    #[test]
+    fn ldy_abs_plus1_cycle_in_16bit_mode() {
+        let mut cpu = cpu_native16();
+        cpu.bus.load(0x001000, &[0x42, 0x00]);
+        cpu.bus.load(0x0000, &[0xAC, 0x00, 0x10]); // LDY $1000
+        let cycles = cpu.step();
+        assert_eq!(cycles, 5, "LDY abs adds 1 cycle when X=0 (16-bit index)");
+    }
+
+    // Absolute indexed page-crossing penalty (+1 for read when crosses page)
+
+    #[test]
+    fn lda_abs_x_no_page_cross() {
+        let mut cpu = cpu_native8();
+        cpu.x = 0x01;
+        // $00FE + 1 = $00FF (same page, no cross)
+        cpu.bus.load(0x0000FF, &[0x42]);
+        cpu.bus.load(0x0000, &[0xBD, 0xFE, 0x00]); // LDA $00FE,X
+        let cycles = cpu.step();
+        assert_eq!(cycles, 4, "LDA abs,X no page cross is 4 cycles");
+    }
+
+    #[test]
+    fn lda_abs_x_page_cross_adds_cycle() {
+        let mut cpu = cpu_native8();
+        cpu.x = 0x03;
+        // $00FE + 3 = $0101 (crosses from page $00 to page $01)
+        cpu.bus.load(0x000101, &[0x42]);
+        cpu.bus.load(0x0000, &[0xBD, 0xFE, 0x00]); // LDA $00FE,X
+        let cycles = cpu.step();
+        assert_eq!(cycles, 5, "LDA abs,X page cross adds 1 cycle");
+    }
+
+    #[test]
+    fn lda_abs_y_no_page_cross() {
+        let mut cpu = cpu_native8();
+        cpu.y = 0x01;
+        cpu.bus.load(0x0000FF, &[0x42]);
+        cpu.bus.load(0x0000, &[0xB9, 0xFE, 0x00]); // LDA $00FE,Y
+        let cycles = cpu.step();
+        assert_eq!(cycles, 4, "LDA abs,Y no page cross is 4 cycles");
+    }
+
+    #[test]
+    fn lda_abs_y_page_cross_adds_cycle() {
+        let mut cpu = cpu_native8();
+        cpu.y = 0x03;
+        cpu.bus.load(0x000101, &[0x42]);
+        cpu.bus.load(0x0000, &[0xB9, 0xFE, 0x00]); // LDA $00FE,Y
+        let cycles = cpu.step();
+        assert_eq!(cycles, 5, "LDA abs,Y page cross adds 1 cycle");
+    }
+
+    #[test]
+    fn lda_dp_ind_y_no_page_cross() {
+        let mut cpu = cpu_native8();
+        cpu.d = 0x0200;
+        cpu.y = 0x01;
+        // ptr at $0200 = $00FE -> EA = $00FE + 1 = $00FF (no cross)
+        cpu.bus.load(0x0200, &[0xFE, 0x00]);
+        cpu.bus.load(0x0000FF, &[0x42]);
+        cpu.bus.load(0x0000, &[0xB1, 0x00]); // LDA ($00),Y
+        let cycles = cpu.step();
+        assert_eq!(cycles, 5, "LDA (dp),Y no page cross is 5 cycles");
+    }
+
+    #[test]
+    fn lda_dp_ind_y_page_cross_adds_cycle() {
+        let mut cpu = cpu_native8();
+        cpu.d = 0x0200;
+        cpu.y = 0x03;
+        // ptr at $0200 = $00FE -> EA = $00FE + 3 = $0101 (cross $00->$01)
+        cpu.bus.load(0x0200, &[0xFE, 0x00]);
+        cpu.bus.load(0x000101, &[0x42]);
+        cpu.bus.load(0x0000, &[0xB1, 0x00]); // LDA ($00),Y
+        let cycles = cpu.step();
+        assert_eq!(cycles, 6, "LDA (dp),Y page cross adds 1 cycle");
     }
 }
