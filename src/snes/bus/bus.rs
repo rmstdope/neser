@@ -39,10 +39,12 @@ impl SnesBus for StubBus {
 ///
 /// Backs the full 24-bit address space (16 MB) so addressing modes
 /// and opcodes can be tested by pre-loading specific memory locations.
+#[cfg(test)]
 pub struct TestBus {
     mem: Vec<u8>,
 }
 
+#[cfg(test)]
 impl TestBus {
     /// Create a new `TestBus` with all memory zeroed.
     pub fn new() -> Self {
@@ -69,12 +71,14 @@ impl TestBus {
     }
 }
 
+#[cfg(test)]
 impl Default for TestBus {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(test)]
 impl SnesBus for TestBus {
     fn read(&self, addr: u32) -> u8 {
         assert!(

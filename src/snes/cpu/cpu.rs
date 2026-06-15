@@ -627,7 +627,6 @@ impl<B: SnesBus> Cpu<B> {
             0xFD => self.op_sbc_abs_x(),
             0xFE => self.op_inc_abs_x(),
             0xFF => self.op_sbc_abs_long_x(),
-            _ => todo!("opcode {opcode:#04X} not yet implemented"),
         };
         base + self.extra_cycles
     }

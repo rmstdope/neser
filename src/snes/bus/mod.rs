@@ -3,4 +3,6 @@
 #[allow(clippy::module_inception)]
 mod bus;
 
-pub use bus::{SnesBus, StubBus, TestBus};
+#[cfg(test)]
+pub use bus::TestBus;
+pub use bus::{SnesBus, StubBus};
