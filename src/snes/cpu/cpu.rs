@@ -362,12 +362,37 @@ impl<B: SnesBus> Cpu<B> {
             0x1B => self.op_tcs(),
             0x3B => self.op_tsc(),
             0x5B => self.op_tcd(),
+            0x64 => self.op_stz_dp(),
+            0x74 => self.op_stz_dp_x(),
             0x7B => self.op_tdc(),
+            0x81 => self.op_sta_dp_x_ind(),
+            0x83 => self.op_sta_sr(),
+            0x84 => self.op_sty_dp(),
+            0x85 => self.op_sta_dp(),
+            0x86 => self.op_stx_dp(),
+            0x87 => self.op_sta_dp_ind_long(),
             0x8A => self.op_txa(),
+            0x8C => self.op_sty_abs(),
+            0x8D => self.op_sta_abs(),
+            0x8E => self.op_stx_abs(),
+            0x8F => self.op_sta_abs_long(),
+            0x91 => self.op_sta_dp_ind_y(),
+            0x92 => self.op_sta_dp_ind(),
+            0x93 => self.op_sta_sr_ind_y(),
+            0x94 => self.op_sty_dp_x(),
+            0x95 => self.op_sta_dp_x(),
+            0x96 => self.op_stx_dp_y(),
+            0x97 => self.op_sta_dp_ind_long_y(),
             0x98 => self.op_tya(),
+            0x99 => self.op_sta_abs_y(),
             0x9A => self.op_txs(),
             0x9B => self.op_txy(),
+            0x9C => self.op_stz_abs(),
+            0x9D => self.op_sta_abs_x(),
+            0x9E => self.op_stz_abs_x(),
+            0x9F => self.op_sta_abs_long_x(),
             0xA0 => self.op_ldy_imm(),
+            0xA1 => self.op_lda_dp_x_ind(),
             0xA2 => self.op_ldx_imm(),
             0xA3 => self.op_lda_sr(),
             0xA4 => self.op_ldy_dp(),
@@ -395,7 +420,6 @@ impl<B: SnesBus> Cpu<B> {
             0xBD => self.op_lda_abs_x(),
             0xBE => self.op_ldx_abs_y(),
             0xBF => self.op_lda_abs_long_x(),
-            0xA1 => self.op_lda_dp_x_ind(),
             0xEA => self.op_nop(),
             0xEB => self.op_xba(),
             _ => todo!("opcode {opcode:#04X} not yet implemented"),
@@ -807,6 +831,210 @@ impl<B: SnesBus> Cpu<B> {
         let val = self.read_idx(ea);
         self.ldy_store(val);
         4
+    }
+
+    // -------------------------------------------------------------------------
+    // STA — store accumulator (no flags affected)
+    // -------------------------------------------------------------------------
+
+    fn op_sta_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.a;
+        self.write_m(ea, val);
+        3
+    }
+
+    fn op_sta_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.a;
+        self.write_m(ea, val);
+        4
+    }
+
+    fn op_sta_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.a;
+        self.write_m(ea, val);
+        4
+    }
+
+    fn op_sta_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        let val = self.a;
+        self.write_m(ea, val);
+        5
+    }
+
+    fn op_sta_abs_y(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_y(abs);
+        let val = self.a;
+        self.write_m(ea, val);
+        5
+    }
+
+    fn op_sta_abs_long(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let ea = self.addr_abs_long(addr);
+        let val = self.a;
+        self.write_m(ea, val);
+        5
+    }
+
+    fn op_sta_abs_long_x(&mut self) -> u8 {
+        let addr = self.fetch_addr24();
+        let ea = self.addr_abs_long_x(addr);
+        let val = self.a;
+        self.write_m(ea, val);
+        5
+    }
+
+    fn op_sta_dp_x_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x_ind(off);
+        let val = self.a;
+        self.write_m(ea, val);
+        6
+    }
+
+    fn op_sta_dp_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_y(off);
+        let val = self.a;
+        self.write_m(ea, val);
+        6
+    }
+
+    fn op_sta_dp_ind(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind(off);
+        let val = self.a;
+        self.write_m(ea, val);
+        5
+    }
+
+    fn op_sta_dp_ind_long(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long(off);
+        let val = self.a;
+        self.write_m(ea, val);
+        6
+    }
+
+    fn op_sta_dp_ind_long_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_ind_long_y(off);
+        let val = self.a;
+        self.write_m(ea, val);
+        6
+    }
+
+    fn op_sta_sr(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr(off);
+        let val = self.a;
+        self.write_m(ea, val);
+        4
+    }
+
+    fn op_sta_sr_ind_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_sr_ind_y(off);
+        let val = self.a;
+        self.write_m(ea, val);
+        7
+    }
+
+    // -------------------------------------------------------------------------
+    // STX — store X index register (no flags affected)
+    // -------------------------------------------------------------------------
+
+    fn op_stx_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.x;
+        self.write_idx(ea, val);
+        3
+    }
+
+    fn op_stx_dp_y(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_y(off);
+        let val = self.x;
+        self.write_idx(ea, val);
+        4
+    }
+
+    fn op_stx_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.x;
+        self.write_idx(ea, val);
+        4
+    }
+
+    // -------------------------------------------------------------------------
+    // STY — store Y index register (no flags affected)
+    // -------------------------------------------------------------------------
+
+    fn op_sty_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        let val = self.y;
+        self.write_idx(ea, val);
+        3
+    }
+
+    fn op_sty_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        let val = self.y;
+        self.write_idx(ea, val);
+        4
+    }
+
+    fn op_sty_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        let val = self.y;
+        self.write_idx(ea, val);
+        4
+    }
+
+    // -------------------------------------------------------------------------
+    // STZ — store zero (no flags affected)
+    // -------------------------------------------------------------------------
+
+    fn op_stz_dp(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp(off);
+        self.write_m(ea, 0);
+        3
+    }
+
+    fn op_stz_dp_x(&mut self) -> u8 {
+        let off = self.fetch_byte();
+        let ea = self.addr_dp_x(off);
+        self.write_m(ea, 0);
+        4
+    }
+
+    fn op_stz_abs(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs(abs);
+        self.write_m(ea, 0);
+        4
+    }
+
+    fn op_stz_abs_x(&mut self) -> u8 {
+        let abs = self.fetch_word();
+        let ea = self.addr_abs_x(abs);
+        self.write_m(ea, 0);
+        5
     }
 }
 
@@ -2565,5 +2793,389 @@ mod lda_ldx_ldy_tests {
         cpu.bus.load(0x0000, &[0xA0, 0x00, 0x00]); // LDY #$0000
         cpu.step();
         assert!(cpu.flag_z());
+    }
+}
+
+#[cfg(test)]
+mod sta_stx_sty_stz_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    fn native8() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu
+    }
+
+    // =========================================================================
+    // STA — store accumulator
+    // =========================================================================
+
+    #[test]
+    fn sta_dp_stores_a_16bit() {
+        let mut cpu = native16();
+        cpu.a = 0xABCD;
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0000, &[0x85, 0x10]); // STA $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0xCD);
+        assert_eq!(cpu.bus.read(0x0211), 0xAB);
+    }
+
+    #[test]
+    fn sta_dp_stores_a_8bit() {
+        let mut cpu = native8();
+        cpu.a = 0x1234; // B=0x12, A=0x34
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0000, &[0x85, 0x10]); // STA $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0x34); // only low byte
+        assert_eq!(cpu.bus.read(0x0211), 0x00); // high byte untouched
+    }
+
+    #[test]
+    fn sta_dp_x_stores_a_indexed() {
+        let mut cpu = native16();
+        cpu.a = 0x1234;
+        cpu.d = 0x0200;
+        cpu.x = 0x0008;
+        cpu.bus.load(0x0000, &[0x95, 0x10]); // STA $10,X
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0218), 0x34);
+        assert_eq!(cpu.bus.read(0x0219), 0x12);
+    }
+
+    #[test]
+    fn sta_abs_stores_a_using_dbr() {
+        let mut cpu = native16();
+        cpu.a = 0xBEEF;
+        cpu.dbr = 0x03;
+        cpu.bus.load(0x0000, &[0x8D, 0x00, 0x10]); // STA $1000
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x03_1000), 0xEF);
+        assert_eq!(cpu.bus.read(0x03_1001), 0xBE);
+    }
+
+    #[test]
+    fn sta_abs_x_stores_a_indexed() {
+        let mut cpu = native16();
+        cpu.a = 0x1111;
+        cpu.dbr = 0x01;
+        cpu.x = 0x0010;
+        cpu.bus.load(0x0000, &[0x9D, 0x00, 0x20]); // STA $2000,X
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x01_2010), 0x11);
+        assert_eq!(cpu.bus.read(0x01_2011), 0x11);
+    }
+
+    #[test]
+    fn sta_abs_y_stores_a_indexed() {
+        let mut cpu = native16();
+        cpu.a = 0x2222;
+        cpu.dbr = 0x02;
+        cpu.y = 0x0004;
+        cpu.bus.load(0x0000, &[0x99, 0x00, 0x30]); // STA $3000,Y
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x02_3004), 0x22);
+        assert_eq!(cpu.bus.read(0x02_3005), 0x22);
+    }
+
+    #[test]
+    fn sta_abs_long_stores_a_24bit_addr() {
+        let mut cpu = native16();
+        cpu.a = 0xCAFE;
+        cpu.bus.load(0x0000, &[0x8F, 0x00, 0x40, 0x05]); // STA $054000
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x05_4000), 0xFE);
+        assert_eq!(cpu.bus.read(0x05_4001), 0xCA);
+    }
+
+    #[test]
+    fn sta_abs_long_x_stores_a_24bit_indexed() {
+        let mut cpu = native16();
+        cpu.a = 0x1234;
+        cpu.x = 0x0002;
+        cpu.bus.load(0x0000, &[0x9F, 0x00, 0x50, 0x06]); // STA $065000,X
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x06_5002), 0x34);
+        assert_eq!(cpu.bus.read(0x06_5003), 0x12);
+    }
+
+    #[test]
+    fn sta_dp_x_ind_stores_via_pointer() {
+        let mut cpu = native16();
+        cpu.a = 0x5678;
+        cpu.d = 0x0200;
+        cpu.x = 0x0004;
+        cpu.dbr = 0x07;
+        cpu.bus.load(0x0214, &[0x56, 0x34]); // pointer $3456 at D+$10+X
+        cpu.bus.load(0x0000, &[0x81, 0x10]); // STA ($10,X)
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x07_3456), 0x78);
+        assert_eq!(cpu.bus.read(0x07_3457), 0x56);
+    }
+
+    #[test]
+    fn sta_dp_ind_y_stores_via_pointer_plus_y() {
+        let mut cpu = native16();
+        cpu.a = 0xDEAD;
+        cpu.d = 0x0200;
+        cpu.dbr = 0x04;
+        cpu.y = 0x0006;
+        cpu.bus.load(0x0210, &[0x00, 0x10]); // pointer $1000
+        cpu.bus.load(0x0000, &[0x91, 0x10]); // STA ($10),Y
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x04_1006), 0xAD);
+        assert_eq!(cpu.bus.read(0x04_1007), 0xDE);
+    }
+
+    #[test]
+    fn sta_dp_ind_stores_via_dp_pointer() {
+        let mut cpu = native16();
+        cpu.a = 0x9999;
+        cpu.d = 0x0200;
+        cpu.dbr = 0x06;
+        cpu.bus.load(0x0210, &[0x00, 0x30]); // pointer $3000
+        cpu.bus.load(0x0000, &[0x92, 0x10]); // STA ($10)
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x06_3000), 0x99);
+        assert_eq!(cpu.bus.read(0x06_3001), 0x99);
+    }
+
+    #[test]
+    fn sta_sr_stores_stack_relative() {
+        let mut cpu = native16();
+        cpu.a = 0x3344;
+        cpu.s = 0x01F0;
+        cpu.bus.load(0x0000, &[0x83, 0x10]); // STA $10,S
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0200), 0x44);
+        assert_eq!(cpu.bus.read(0x0201), 0x33);
+    }
+
+    #[test]
+    fn sta_sr_ind_y_stores_via_sr_pointer_plus_y() {
+        let mut cpu = native16();
+        cpu.a = 0x1122;
+        cpu.s = 0x01F0;
+        cpu.dbr = 0x02;
+        cpu.y = 0x0008;
+        cpu.bus.load(0x0200, &[0x00, 0x50]); // ptr $5000
+        cpu.bus.load(0x0000, &[0x93, 0x10]); // STA ($10,S),Y
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x02_5008), 0x22);
+        assert_eq!(cpu.bus.read(0x02_5009), 0x11);
+    }
+
+    #[test]
+    fn sta_dp_ind_long_stores_via_24bit_pointer() {
+        let mut cpu = native16();
+        cpu.a = 0xABCD;
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0x00, 0x60, 0x05]); // 24-bit ptr $05_6000
+        cpu.bus.load(0x0000, &[0x87, 0x10]); // STA [$10]
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x05_6000), 0xCD);
+        assert_eq!(cpu.bus.read(0x05_6001), 0xAB);
+    }
+
+    #[test]
+    fn sta_dp_ind_long_y_stores_via_24bit_pointer_plus_y() {
+        let mut cpu = native16();
+        cpu.a = 0x1357;
+        cpu.d = 0x0200;
+        cpu.y = 0x0004;
+        cpu.bus.load(0x0210, &[0x00, 0x70, 0x03]); // ptr $03_7000
+        cpu.bus.load(0x0000, &[0x97, 0x10]); // STA [$10],Y
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x03_7004), 0x57);
+        assert_eq!(cpu.bus.read(0x03_7005), 0x13);
+    }
+
+    #[test]
+    fn sta_does_not_affect_flags() {
+        let mut cpu = native16();
+        cpu.a = 0x8000;
+        cpu.p = 0b0000_0000; // no flags set
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0000, &[0x85, 0x10]);
+        let flags_before = cpu.p;
+        cpu.step();
+        assert_eq!(cpu.p, flags_before); // STA does not set flags
+    }
+
+    // =========================================================================
+    // STX — store X index register
+    // =========================================================================
+
+    #[test]
+    fn stx_dp_stores_x_16bit() {
+        let mut cpu = native16();
+        cpu.x = 0x1234;
+        cpu.d = 0x0300;
+        cpu.bus.load(0x0000, &[0x86, 0x10]); // STX $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0310), 0x34);
+        assert_eq!(cpu.bus.read(0x0311), 0x12);
+    }
+
+    #[test]
+    fn stx_dp_stores_x_8bit() {
+        let mut cpu = native8();
+        cpu.x = 0x0056;
+        cpu.d = 0x0300;
+        cpu.bus.load(0x0000, &[0x86, 0x10]); // STX $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0310), 0x56);
+        assert_eq!(cpu.bus.read(0x0311), 0x00); // high byte not written
+    }
+
+    #[test]
+    fn stx_dp_y_stores_x_indexed() {
+        let mut cpu = native16();
+        cpu.x = 0xABCD;
+        cpu.d = 0x0300;
+        cpu.y = 0x0004;
+        cpu.bus.load(0x0000, &[0x96, 0x10]); // STX $10,Y
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0314), 0xCD);
+        assert_eq!(cpu.bus.read(0x0315), 0xAB);
+    }
+
+    #[test]
+    fn stx_abs_stores_x_using_dbr() {
+        let mut cpu = native16();
+        cpu.x = 0x5678;
+        cpu.dbr = 0x04;
+        cpu.bus.load(0x0000, &[0x8E, 0x00, 0x20]); // STX $2000
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x04_2000), 0x78);
+        assert_eq!(cpu.bus.read(0x04_2001), 0x56);
+    }
+
+    #[test]
+    fn stx_does_not_affect_flags() {
+        let mut cpu = native16();
+        cpu.x = 0xFFFF;
+        cpu.p = 0b0000_0000;
+        cpu.bus.load(0x0000, &[0x8E, 0x00, 0x20]);
+        let flags_before = cpu.p;
+        cpu.step();
+        assert_eq!(cpu.p, flags_before);
+    }
+
+    // =========================================================================
+    // STY — store Y index register
+    // =========================================================================
+
+    #[test]
+    fn sty_dp_stores_y_16bit() {
+        let mut cpu = native16();
+        cpu.y = 0xFEDC;
+        cpu.d = 0x0400;
+        cpu.bus.load(0x0000, &[0x84, 0x20]); // STY $20
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0420), 0xDC);
+        assert_eq!(cpu.bus.read(0x0421), 0xFE);
+    }
+
+    #[test]
+    fn sty_dp_x_stores_y_indexed() {
+        let mut cpu = native16();
+        cpu.y = 0x1111;
+        cpu.d = 0x0400;
+        cpu.x = 0x0002;
+        cpu.bus.load(0x0000, &[0x94, 0x20]); // STY $20,X
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0422), 0x11);
+        assert_eq!(cpu.bus.read(0x0423), 0x11);
+    }
+
+    #[test]
+    fn sty_abs_stores_y_using_dbr() {
+        let mut cpu = native16();
+        cpu.y = 0x9876;
+        cpu.dbr = 0x05;
+        cpu.bus.load(0x0000, &[0x8C, 0x00, 0x30]); // STY $3000
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x05_3000), 0x76);
+        assert_eq!(cpu.bus.read(0x05_3001), 0x98);
+    }
+
+    // =========================================================================
+    // STZ — store zero
+    // =========================================================================
+
+    #[test]
+    fn stz_dp_stores_zero_16bit() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0xFF, 0xFF]); // pre-fill with non-zero
+        cpu.bus.load(0x0000, &[0x64, 0x10]); // STZ $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0x00);
+        assert_eq!(cpu.bus.read(0x0211), 0x00);
+    }
+
+    #[test]
+    fn stz_dp_stores_zero_8bit() {
+        let mut cpu = native8();
+        cpu.d = 0x0200;
+        cpu.bus.load(0x0210, &[0xFF, 0xFF]);
+        cpu.bus.load(0x0000, &[0x64, 0x10]); // STZ $10
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0210), 0x00);
+        assert_eq!(cpu.bus.read(0x0211), 0xFF); // 8-bit: high byte untouched
+    }
+
+    #[test]
+    fn stz_dp_x_stores_zero_indexed() {
+        let mut cpu = native16();
+        cpu.d = 0x0200;
+        cpu.x = 0x0004;
+        cpu.bus.load(0x0000, &[0x74, 0x10]); // STZ $10,X
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x0214), 0x00);
+        assert_eq!(cpu.bus.read(0x0215), 0x00);
+    }
+
+    #[test]
+    fn stz_abs_stores_zero_at_absolute() {
+        let mut cpu = native16();
+        cpu.dbr = 0x02;
+        cpu.bus.load(0x02_5000, &[0xFF, 0xFF]);
+        cpu.bus.load(0x0000, &[0x9C, 0x00, 0x50]); // STZ $5000
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x02_5000), 0x00);
+        assert_eq!(cpu.bus.read(0x02_5001), 0x00);
+    }
+
+    #[test]
+    fn stz_abs_x_stores_zero_indexed() {
+        let mut cpu = native16();
+        cpu.dbr = 0x03;
+        cpu.x = 0x0010;
+        cpu.bus.load(0x0000, &[0x9E, 0x00, 0x60]); // STZ $6000,X
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x03_6010), 0x00);
+        assert_eq!(cpu.bus.read(0x03_6011), 0x00);
+    }
+
+    #[test]
+    fn stz_does_not_affect_flags() {
+        let mut cpu = native16();
+        cpu.p = FLAG_NEGATIVE | FLAG_ZERO;
+        cpu.bus.load(0x0000, &[0x64, 0x10]);
+        let flags_before = cpu.p;
+        cpu.step();
+        assert_eq!(cpu.p, flags_before);
     }
 }
