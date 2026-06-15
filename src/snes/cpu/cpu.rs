@@ -425,6 +425,7 @@ impl<B: SnesBus> Cpu<B> {
             0x3F => self.op_and_abs_long_x(),
             0x40 => self.op_rti(),
             0x41 => self.op_eor_dp_x_ind(),
+            0x44 => self.op_mvp(),
             0x43 => self.op_eor_sr(),
             0x45 => self.op_eor_dp(),
             0x46 => self.op_lsr_dp(),
@@ -448,6 +449,7 @@ impl<B: SnesBus> Cpu<B> {
             0x59 => self.op_eor_abs_y(),
             0x5A => self.op_phy(),
             0x5B => self.op_tcd(),
+            0x54 => self.op_mvn(),
             0x5C => self.op_jmp_abs_long(),
             0x5D => self.op_eor_abs_x(),
             0x5E => self.op_lsr_abs_x(),
@@ -690,6 +692,44 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_nop(&mut self) -> u8 {
         2
+    }
+
+    fn op_mvn(&mut self) -> u8 {
+        let dst_bank = self.fetch_byte();
+        let src_bank = self.fetch_byte();
+        loop {
+            let src_addr = (src_bank as u32) << 16 | self.x as u32;
+            let dst_addr = (dst_bank as u32) << 16 | self.y as u32;
+            let byte = self.read8(src_addr);
+            self.write8(dst_addr, byte);
+            self.x = self.x.wrapping_add(1);
+            self.y = self.y.wrapping_add(1);
+            self.a = self.a.wrapping_sub(1);
+            if self.a == 0xFFFF {
+                break;
+            }
+        }
+        self.dbr = dst_bank;
+        7 // base cycles (actual cost is 7 per byte; simplified here)
+    }
+
+    fn op_mvp(&mut self) -> u8 {
+        let dst_bank = self.fetch_byte();
+        let src_bank = self.fetch_byte();
+        loop {
+            let src_addr = (src_bank as u32) << 16 | self.x as u32;
+            let dst_addr = (dst_bank as u32) << 16 | self.y as u32;
+            let byte = self.read8(src_addr);
+            self.write8(dst_addr, byte);
+            self.x = self.x.wrapping_sub(1);
+            self.y = self.y.wrapping_sub(1);
+            self.a = self.a.wrapping_sub(1);
+            if self.a == 0xFFFF {
+                break;
+            }
+        }
+        self.dbr = dst_bank;
+        7
     }
 
     fn op_rep(&mut self) -> u8 {
@@ -7695,5 +7735,68 @@ mod brk_cop_tests {
         assert_eq!(cpu.s, 0x01FB); // 4 pushes: PBR, PChi, PClo, P
         assert!(cpu.flag_i());
         assert!(!cpu.flag_d());
+    }
+}
+
+#[cfg(test)]
+mod mvn_mvp_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    // MVN: Move Negative (src_bank, dst_bank) - increments X and Y
+    // Opcode: 0x54 dst_bank src_bank
+    // Copies A+1 bytes from src_bank:X to dst_bank:Y, incrementing X/Y each
+    // After: A=$FFFF, X/Y point past last transferred bytes, DBR=dst_bank
+
+    #[test]
+    fn mvn_copies_bytes_from_src_to_dst_bank() {
+        let mut cpu = native16();
+        // Source at bank $01:$0010, destination at bank $02:$0020
+        cpu.bus.load(0x01_0010, &[0xAA, 0xBB, 0xCC]); // 3 bytes to move
+        cpu.a = 0x0002; // move 3 bytes (A+1)
+        cpu.x = 0x0010; // source offset
+        cpu.y = 0x0020; // destination offset
+        cpu.bus.load(0x0000, &[0x54, 0x02, 0x01]); // MVN dst=$02, src=$01
+        // MVN loops until A==$FFFF, so we need to step 3 times (one per byte) then done
+        // Actually MVN runs in a loop: PC stays at 0x0000 until done
+        cpu.step(); // completes all 3 bytes (A goes 2->1->0->$FFFF)
+        assert_eq!(cpu.bus.read(0x02_0020), 0xAA);
+        assert_eq!(cpu.bus.read(0x02_0021), 0xBB);
+        assert_eq!(cpu.bus.read(0x02_0022), 0xCC);
+        assert_eq!(cpu.a, 0xFFFF);
+        assert_eq!(cpu.x, 0x0013); // 0x0010 + 3
+        assert_eq!(cpu.y, 0x0023); // 0x0020 + 3
+        assert_eq!(cpu.dbr, 0x02); // DBR set to dst bank
+        assert_eq!(cpu.pc, 0x0003); // advanced past the instruction
+    }
+
+    // MVP: Move Positive (src_bank, dst_bank) - decrements X and Y
+    // Opcode: 0x44 dst_bank src_bank
+
+    #[test]
+    fn mvp_copies_bytes_decrementing_xy() {
+        let mut cpu = native16();
+        // Source at bank $01 starting at $0012 (last byte), destination bank $02 at $0022
+        cpu.bus.load(0x01_0010, &[0xAA, 0xBB, 0xCC]); // source bytes
+        cpu.a = 0x0002; // move 3 bytes (A+1)
+        cpu.x = 0x0012; // source start (high end, MVP decrements)
+        cpu.y = 0x0022; // destination start (high end)
+        cpu.bus.load(0x0000, &[0x44, 0x02, 0x01]); // MVP dst=$02, src=$01
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x02_0022), 0xCC); // last byte first
+        assert_eq!(cpu.bus.read(0x02_0021), 0xBB);
+        assert_eq!(cpu.bus.read(0x02_0020), 0xAA);
+        assert_eq!(cpu.a, 0xFFFF);
+        assert_eq!(cpu.x, 0x000F); // 0x0012 - 3
+        assert_eq!(cpu.y, 0x001F); // 0x0022 - 3
+        assert_eq!(cpu.dbr, 0x02);
+        assert_eq!(cpu.pc, 0x0003);
     }
 }
