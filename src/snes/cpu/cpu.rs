@@ -69,6 +69,11 @@ pub struct Cpu<B: SnesBus> {
     /// Used by read instructions to conditionally add a cycle.
     last_page_crossed: bool,
 
+    /// Pending hardware interrupts — set by external hardware (console / PPU / etc.)
+    nmi_pending: bool,
+    irq_pending: bool,
+    abort_pending: bool,
+
     /// Bus for memory access
     bus: B,
 }
@@ -89,6 +94,9 @@ impl<B: SnesBus> Cpu<B> {
             e: true,                                                 // Start in emulation mode
             extra_cycles: 0,
             last_page_crossed: false,
+            nmi_pending: false,
+            irq_pending: false,
+            abort_pending: false,
             bus,
         }
     }
@@ -210,6 +218,40 @@ impl<B: SnesBus> Cpu<B> {
     /// Check if in emulation mode.
     pub fn emulation_mode(&self) -> bool {
         self.e
+    }
+
+    /// Assert or deassert the NMI line (edge-triggered; pending is cleared after dispatch).
+    pub fn set_nmi(&mut self, pending: bool) {
+        self.nmi_pending = pending;
+    }
+
+    /// Assert or deassert the IRQ line (level-triggered; stays asserted until caller clears it).
+    pub fn set_irq(&mut self, pending: bool) {
+        self.irq_pending = pending;
+    }
+
+    /// Assert or deassert the ABORT line (edge-triggered; pending is cleared after dispatch).
+    pub fn set_abort(&mut self, pending: bool) {
+        self.abort_pending = pending;
+    }
+
+    /// Perform a hardware RESET.
+    ///
+    /// No bytes are pushed. The CPU enters emulation mode, sets I=1, clears D, PBR, DBR,
+    /// forces S to $01FF, clears pending interrupt latches, and loads PC from $FFFC/$FFFD.
+    pub fn do_reset(&mut self) {
+        self.e = true;
+        self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_INTERRUPT;
+        self.p &= !FLAG_DECIMAL;
+        self.pbr = 0x00;
+        self.dbr = 0x00;
+        self.s = 0x01FF;
+        self.nmi_pending = false;
+        self.irq_pending = false;
+        self.abort_pending = false;
+        let lo = self.read8(0x00FFFC) as u16;
+        let hi = self.read8(0x00FFFD) as u16;
+        self.pc = lo | hi << 8;
     }
 
     /// Get M flag (accumulator/memory width: 1=8-bit, 0=16-bit).
@@ -365,10 +407,27 @@ impl<B: SnesBus> Cpu<B> {
         // Note: M 1→0 transition handled naturally by read_a/write_a
     }
     /// Execute one instruction: fetch opcode at PBR:PC, advance PC, dispatch.
-    /// Returns the number of master cycles consumed.
+    ///
+    /// Before fetching the opcode, hardware interrupts are polled in priority order:
+    /// ABORT > NMI > IRQ (masked by I flag).  Returns the number of master cycles consumed.
     pub fn step(&mut self) -> u8 {
         self.extra_cycles = 0;
         self.last_page_crossed = false;
+
+        // Poll hardware interrupts (higher priority than opcode fetch)
+        if self.abort_pending {
+            self.abort_pending = false;
+            return self.dispatch_abort();
+        }
+        if self.nmi_pending {
+            self.nmi_pending = false;
+            return self.dispatch_nmi();
+        }
+        if self.irq_pending && !self.flag_i() {
+            // IRQ is level-triggered: do NOT clear irq_pending here; caller must deassert
+            return self.dispatch_irq();
+        }
+
         let opcode = self.fetch_byte();
         let base = match opcode {
             0x00 => self.op_brk(),
@@ -3332,11 +3391,12 @@ impl<B: SnesBus> Cpu<B> {
         let _sig = self.fetch_byte(); // consume signature byte (BRK is 2-byte instruction)
         let pc_ret = self.pc;
         if self.e {
-            // Emulation mode: push PC+2, push P with B flag set, vector $FFFE
+            // Emulation mode: push PC+2, push P with B flag set, set I=1, clear D, vector $FFFE
             self.push8((pc_ret >> 8) as u8);
             self.push8(pc_ret as u8);
             self.push8(self.p | FLAG_INDEX_WIDTH); // B flag = bit 4 in emulation mode
             self.set_flag_i(true);
+            self.set_flag_d(false);
             let lo = self.read8(0x00FFFE);
             let hi = self.read8(0x00FFFF);
             self.pc = lo as u16 | (hi as u16) << 8;
@@ -3360,11 +3420,12 @@ impl<B: SnesBus> Cpu<B> {
         let _sig = self.fetch_byte(); // consume signature byte
         let pc_ret = self.pc;
         if self.e {
-            // Emulation mode: push PC+2, push P, vector $FFF4
+            // Emulation mode: push PC+2, push P, set I=1, clear D, vector $FFF4
             self.push8((pc_ret >> 8) as u8);
             self.push8(pc_ret as u8);
             self.push8(self.p);
             self.set_flag_i(true);
+            self.set_flag_d(false);
             let lo = self.read8(0x00FFF4);
             let hi = self.read8(0x00FFF5);
             self.pc = lo as u16 | (hi as u16) << 8;
@@ -3382,6 +3443,56 @@ impl<B: SnesBus> Cpu<B> {
             self.pc = lo as u16 | (hi as u16) << 8;
             8
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Hardware interrupt dispatch — NMI, IRQ, ABORT
+    // -------------------------------------------------------------------------
+
+    /// Shared hardware interrupt dispatch sequence.
+    ///
+    /// Native mode (E=0): push PBR, PCH, PCL, P; set PBR=0, I=1, D=0; load `native_vector`.  8 cycles.
+    /// Emulation mode (E=1): push PCH, PCL, P (B=0); set PBR=0, I=1, D=0; load `emu_vector`.  7 cycles.
+    fn dispatch_hw_interrupt(&mut self, native_vector: u32, emu_vector: u32) -> u8 {
+        let pc = self.pc;
+        if self.e {
+            // Emulation mode: 3 pushes, no PBR push, B flag cleared; PBR forced to bank 0
+            self.push8((pc >> 8) as u8);
+            self.push8(pc as u8);
+            self.push8(self.p & !FLAG_INDEX_WIDTH); // B=0 for hardware interrupts
+            self.pbr = 0x00;
+            self.set_flag_i(true);
+            self.set_flag_d(false);
+            let lo = self.read8(emu_vector) as u16;
+            let hi = self.read8(emu_vector + 1) as u16;
+            self.pc = lo | hi << 8;
+            7
+        } else {
+            // Native mode: push PBR then PC then P, clear PBR
+            self.push8(self.pbr);
+            self.push8((pc >> 8) as u8);
+            self.push8(pc as u8);
+            self.push8(self.p);
+            self.pbr = 0x00;
+            self.set_flag_i(true);
+            self.set_flag_d(false);
+            let lo = self.read8(native_vector) as u16;
+            let hi = self.read8(native_vector + 1) as u16;
+            self.pc = lo | hi << 8;
+            8
+        }
+    }
+
+    fn dispatch_nmi(&mut self) -> u8 {
+        self.dispatch_hw_interrupt(0x00FFEA, 0x00FFFA)
+    }
+
+    fn dispatch_irq(&mut self) -> u8 {
+        self.dispatch_hw_interrupt(0x00FFEE, 0x00FFFE)
+    }
+
+    fn dispatch_abort(&mut self) -> u8 {
+        self.dispatch_hw_interrupt(0x00FFE8, 0x00FFF8)
     }
 
     // -------------------------------------------------------------------------
@@ -9035,5 +9146,387 @@ mod mvn_mvp_per_byte_cycle_tests {
         assert_eq!(cpu.pc, 0x0003, "PC advances past MVP after last byte");
         assert_eq!(cpu.bus.read(0x02_0020), 0xAA);
         assert_eq!(cpu.a, 0xFFFF);
+    }
+}
+
+// =============================================================================
+// Interrupt dispatch tests (issue #2731)
+// =============================================================================
+#[cfg(test)]
+mod interrupt_dispatch_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    // =========================================================================
+    // NMI — native mode
+    // Vectors via $FFEA/$FFEB; pushes PBR, PCH, PCL, P; sets I=1, D=0; 8 cycles
+    // =========================================================================
+
+    #[test]
+    fn nmi_native_pushes_pbr_pc_p_sets_i_clears_d_vectors() {
+        let mut cpu = native();
+        cpu.pbr = 0x02;
+        cpu.pc = 0x1234;
+        cpu.s = 0x01FF;
+        cpu.set_flag_d(true);
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFEA, &[0xAB, 0xCD]); // NMI native vector -> $CDAB
+        cpu.set_nmi(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 8, "NMI native: 8 cycles");
+        assert_eq!(cpu.pc, 0xCDAB, "PC loaded from NMI native vector");
+        assert_eq!(cpu.pbr, 0x00, "PBR cleared to 0 on interrupt entry");
+        assert_eq!(cpu.s, 0x01FB, "4 bytes pushed: PBR, PCH, PCL, P");
+        assert_eq!(cpu.bus.read(0x01FF), 0x02, "PBR on stack");
+        assert_eq!(cpu.bus.read(0x01FE), 0x12, "PCH on stack");
+        assert_eq!(cpu.bus.read(0x01FD), 0x34, "PCL on stack");
+        assert!(cpu.flag_i(), "I set on interrupt entry");
+        assert!(!cpu.flag_d(), "D cleared on interrupt entry (native)");
+    }
+
+    #[test]
+    fn nmi_native_8_cycles() {
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.set_nmi(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn nmi_not_masked_by_i_flag() {
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(true); // I=1 normally masks IRQ, but not NMI
+        cpu.bus.load(0x00FFEA, &[0x00, 0x30]); // vector -> $3000
+        cpu.set_nmi(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 8, "NMI fires even with I=1");
+        assert_eq!(cpu.pc, 0x3000);
+    }
+
+    #[test]
+    fn nmi_pending_cleared_after_dispatch() {
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.set_nmi(true);
+        cpu.step(); // dispatch NMI
+        // set a NOP at the NMI vector so next step runs it
+        let vector_pc = cpu.pc;
+        cpu.bus.load(vector_pc as u32, &[0xEA]); // NOP
+        let cycles = cpu.step(); // should execute NOP, not another NMI
+        assert_eq!(cycles, 2, "NMI not re-dispatched after first dispatch");
+    }
+
+    // =========================================================================
+    // NMI — emulation mode
+    // Vectors via $FFFA/$FFFB; pushes PCH, PCL, P (B=0); sets I=1, D=0; 7 cycles
+    // =========================================================================
+
+    #[test]
+    fn nmi_emulation_pushes_pc_p_sets_i_clears_d_vectors() {
+        let mut cpu = Cpu::new(TestBus::default()); // emulation mode
+        cpu.pbr = 0x05; // non-zero to verify it gets cleared
+        cpu.pc = 0x5678;
+        cpu.s = 0x01FF;
+        cpu.set_flag_d(true);
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFFA, &[0xEF, 0xBE]); // NMI emulation vector -> $BEEF
+        cpu.set_nmi(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 7, "NMI emulation: 7 cycles");
+        assert_eq!(cpu.pc, 0xBEEF, "PC loaded from NMI emulation vector");
+        assert_eq!(
+            cpu.pbr, 0x00,
+            "PBR forced to 0 on emulation-mode interrupt entry"
+        );
+        assert_eq!(cpu.s, 0x01FC, "3 bytes pushed: PCH, PCL, P");
+        assert_eq!(cpu.bus.read(0x01FF), 0x56, "PCH on stack");
+        assert_eq!(cpu.bus.read(0x01FE), 0x78, "PCL on stack");
+        // B flag (bit 4) must be 0 for hardware interrupts in emulation mode
+        assert_eq!(
+            cpu.bus.read(0x01FD) & FLAG_INDEX_WIDTH,
+            0,
+            "B=0 on stack for hardware NMI"
+        );
+        assert!(cpu.flag_i(), "I set");
+        assert!(!cpu.flag_d(), "D cleared (emulation mode too on 65C816)");
+    }
+
+    #[test]
+    fn nmi_emulation_7_cycles() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.s = 0x01FF;
+        cpu.set_nmi(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 7);
+    }
+
+    // =========================================================================
+    // IRQ — native mode
+    // Vectors via $FFEE/$FFEF; same push order as NMI; 8 cycles; masked by I=1
+    // =========================================================================
+
+    #[test]
+    fn irq_native_pushes_pbr_pc_p_and_vectors() {
+        let mut cpu = native();
+        cpu.pbr = 0x03;
+        cpu.pc = 0xABCD;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.set_flag_d(true);
+        cpu.bus.load(0x00FFEE, &[0x00, 0x40]); // IRQ native vector -> $4000
+        cpu.set_irq(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 8, "IRQ native: 8 cycles");
+        assert_eq!(cpu.pc, 0x4000);
+        assert_eq!(cpu.pbr, 0x00, "PBR cleared to 0");
+        assert_eq!(cpu.s, 0x01FB, "4 bytes pushed");
+        assert_eq!(cpu.bus.read(0x01FF), 0x03, "PBR on stack");
+        assert_eq!(cpu.bus.read(0x01FE), 0xAB, "PCH on stack");
+        assert_eq!(cpu.bus.read(0x01FD), 0xCD, "PCL on stack");
+        assert!(cpu.flag_i(), "I set");
+        assert!(!cpu.flag_d(), "D cleared");
+    }
+
+    #[test]
+    fn irq_masked_when_i_flag_set() {
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(true);
+        cpu.set_irq(true);
+        // Place a NOP at PC so step() executes it instead
+        cpu.bus.load(cpu.pc as u32, &[0xEA]);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 2, "IRQ masked: NOP executes instead");
+    }
+
+    #[test]
+    fn irq_fires_when_i_flag_clear() {
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFEE, &[0x00, 0x50]);
+        cpu.set_irq(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 8, "IRQ fires with I=0");
+        assert_eq!(cpu.pc, 0x5000);
+    }
+
+    #[test]
+    fn irq_level_triggered_redispatches_while_held() {
+        // Verify that irq_pending is NOT cleared on dispatch (level-triggered):
+        // hold the IRQ line, clear I after the first dispatch, and the next step
+        // should dispatch again rather than execute an opcode.
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFEE, &[0x00, 0x50]); // IRQ native vector -> $5000
+        cpu.set_irq(true);
+
+        // First dispatch: IRQ fires, I becomes 1
+        let cycles1 = cpu.step();
+        assert_eq!(cycles1, 8, "first IRQ dispatch: 8 cycles");
+        assert_eq!(cpu.pc, 0x5000);
+
+        // Manually clear I to allow the held IRQ to fire again
+        cpu.set_flag_i(false);
+        // IRQ is still asserted (level-triggered — not cleared by dispatch)
+        let cycles2 = cpu.step();
+        assert_eq!(cycles2, 8, "IRQ re-dispatches while line held");
+    }
+
+    // =========================================================================
+    // IRQ — emulation mode
+    // Vectors via $FFFE/$FFFF; pushes PCH, PCL, P (B=0); 7 cycles
+    // =========================================================================
+
+    #[test]
+    fn irq_emulation_pushes_pc_p_b0_and_vectors() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.pc = 0x1000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.set_flag_d(true);
+        cpu.bus.load(0x00FFFE, &[0x00, 0x60]); // IRQ emulation vector -> $6000
+        cpu.set_irq(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 7, "IRQ emulation: 7 cycles");
+        assert_eq!(cpu.pc, 0x6000);
+        assert_eq!(cpu.s, 0x01FC, "3 bytes pushed");
+        assert_eq!(cpu.bus.read(0x01FF), 0x10, "PCH");
+        assert_eq!(cpu.bus.read(0x01FE), 0x00, "PCL");
+        assert_eq!(cpu.bus.read(0x01FD) & FLAG_INDEX_WIDTH, 0, "B=0 on stack");
+        assert!(cpu.flag_i());
+        assert!(!cpu.flag_d(), "D cleared in emulation mode too");
+    }
+
+    // =========================================================================
+    // ABORT — native mode
+    // Vectors via $FFE8/$FFE9; same push order as NMI; 8 cycles
+    // =========================================================================
+
+    #[test]
+    fn abort_native_pushes_pbr_pc_p_and_vectors() {
+        let mut cpu = native();
+        cpu.pbr = 0x01;
+        cpu.pc = 0x2000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_d(true);
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFE8, &[0x00, 0x70]); // ABORT native vector -> $7000
+        cpu.set_abort(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 8, "ABORT native: 8 cycles");
+        assert_eq!(cpu.pc, 0x7000);
+        assert_eq!(cpu.pbr, 0x00);
+        assert_eq!(cpu.s, 0x01FB, "4 bytes pushed");
+        assert_eq!(cpu.bus.read(0x01FF), 0x01, "PBR on stack");
+        assert_eq!(cpu.bus.read(0x01FE), 0x20, "PCH on stack");
+        assert_eq!(cpu.bus.read(0x01FD), 0x00, "PCL on stack");
+        assert!(cpu.flag_i());
+        assert!(!cpu.flag_d());
+    }
+
+    #[test]
+    fn abort_pending_cleared_after_dispatch() {
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.set_abort(true);
+        cpu.step();
+        let vector_pc = cpu.pc;
+        cpu.bus.load(vector_pc as u32, &[0xEA]);
+        let cycles = cpu.step(); // should execute NOP
+        assert_eq!(cycles, 2, "ABORT not re-dispatched");
+    }
+
+    // =========================================================================
+    // ABORT — emulation mode
+    // Vectors via $FFF8/$FFF9; pushes PCH, PCL, P (B=0); 7 cycles
+    // =========================================================================
+
+    #[test]
+    fn abort_emulation_pushes_pc_p_and_vectors() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.pc = 0x3000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_d(true);
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFF8, &[0x00, 0x80]); // ABORT emulation vector -> $8000
+        cpu.set_abort(true);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 7, "ABORT emulation: 7 cycles");
+        assert_eq!(cpu.pc, 0x8000);
+        assert_eq!(cpu.s, 0x01FC, "3 bytes pushed");
+        assert_eq!(cpu.bus.read(0x01FF), 0x30, "PCH");
+        assert_eq!(cpu.bus.read(0x01FE), 0x00, "PCL");
+        assert_eq!(cpu.bus.read(0x01FD) & FLAG_INDEX_WIDTH, 0, "B=0 on stack");
+        assert!(cpu.flag_i());
+        assert!(!cpu.flag_d());
+    }
+
+    // =========================================================================
+    // RESET
+    // No stack push; vectors via $FFFC/$FFFD (same in both modes); enters emulation mode
+    // =========================================================================
+
+    #[test]
+    fn reset_loads_vector_and_enters_emulation_mode() {
+        let mut cpu = native(); // start in native mode
+        cpu.pbr = 0x05;
+        cpu.dbr = 0x05;
+        cpu.s = 0x0123;
+        cpu.bus.load(0x00FFFC, &[0x00, 0x90]); // RESET vector -> $9000
+        cpu.do_reset();
+        assert_eq!(cpu.pc, 0x9000, "PC from RESET vector");
+        assert_eq!(cpu.pbr, 0x00, "PBR cleared");
+        assert!(cpu.emulation_mode(), "CPU enters emulation mode on RESET");
+        assert!(cpu.flag_i(), "I=1 after RESET");
+        assert_eq!(
+            cpu.s & 0xFF00,
+            0x0100,
+            "stack high byte forced to $01 in emulation"
+        );
+    }
+
+    #[test]
+    fn reset_does_not_push_to_stack() {
+        let mut cpu = Cpu::new(TestBus::default()); // emulation mode
+        cpu.s = 0x01FF;
+        // Fill stack with sentinel values
+        for i in 0..8u32 {
+            cpu.bus.load(0x01F8 + i, &[0x42]);
+        }
+        cpu.do_reset();
+        // Stack pointer should not have moved down (no pushes)
+        // The RESET vector is at $FFFC/$FFFD (zeroed TestBus → PC=$0000)
+        // All sentinel bytes should be unchanged
+        for i in 0..8u32 {
+            assert_eq!(
+                cpu.bus.read(0x01F8 + i),
+                0x42,
+                "stack not modified at offset {i}"
+            );
+        }
+    }
+
+    // =========================================================================
+    // Interrupt priority: ABORT > NMI > IRQ
+    // =========================================================================
+
+    #[test]
+    fn abort_takes_priority_over_nmi() {
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFE8, &[0x00, 0xA0]); // ABORT native -> $A000
+        cpu.bus.load(0x00FFEA, &[0x00, 0xB0]); // NMI native -> $B000
+        cpu.set_abort(true);
+        cpu.set_nmi(true);
+        cpu.step(); // should dispatch ABORT
+        assert_eq!(cpu.pc, 0xA000, "ABORT takes priority over NMI");
+    }
+
+    #[test]
+    fn nmi_takes_priority_over_irq() {
+        let mut cpu = native();
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFEA, &[0x00, 0xC0]); // NMI native -> $C000
+        cpu.bus.load(0x00FFEE, &[0x00, 0xD0]); // IRQ native -> $D000
+        cpu.set_nmi(true);
+        cpu.set_irq(true);
+        cpu.step(); // should dispatch NMI
+        assert_eq!(cpu.pc, 0xC000, "NMI takes priority over IRQ");
+    }
+
+    // =========================================================================
+    // BRK/COP emulation mode D-flag fix (regression)
+    // Per 65C816 spec, D is cleared in ALL interrupt entries including emulation mode
+    // =========================================================================
+
+    #[test]
+    fn brk_emulation_clears_d_flag() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.set_flag_d(true);
+        cpu.bus.load(0x0000, &[0x00, 0x00]); // BRK
+        cpu.step();
+        assert!(!cpu.flag_d(), "D cleared by BRK in emulation mode");
+    }
+
+    #[test]
+    fn cop_emulation_clears_d_flag() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.set_flag_d(true);
+        cpu.bus.load(0x0000, &[0x02, 0x00]); // COP
+        cpu.step();
+        assert!(!cpu.flag_d(), "D cleared by COP in emulation mode");
     }
 }
