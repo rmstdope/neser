@@ -2721,9 +2721,14 @@ impl<B: SnesBus> Cpu<B> {
     fn branch_if(&mut self, taken: bool) -> u8 {
         let offset = self.fetch_byte() as i8;
         if taken {
+            let old_pc = self.pc;
             self.pc = self.pc.wrapping_add(offset as u16);
+            // +1 cycle for taken; +1 more in emulation mode if page crossed
+            let page_cross = (old_pc ^ self.pc) & 0xFF00 != 0;
+            if self.e && page_cross { 4 } else { 3 }
+        } else {
+            2
         }
-        2
     }
 
     fn op_bcc(&mut self) -> u8 {
@@ -7477,5 +7482,63 @@ mod tcs_fix_tests {
         cpu.bus.load(0x0000, &[0x1B]); // TCS
         cpu.step();
         assert_eq!(cpu.read_s(), 0x0234);
+    }
+}
+
+#[cfg(test)]
+mod branch_cycle_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn emu() -> Cpu<TestBus> {
+        // emulation mode (for page-crossing +1 rule)
+        Cpu::new(TestBus::default())
+    }
+
+    fn native() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu
+    }
+
+    #[test]
+    fn branch_not_taken_is_2_cycles() {
+        let mut cpu = native();
+        cpu.set_flag_c(true); // BCC not taken
+        cpu.bus.load(0x0000, &[0x90, 0x04]); // BCC +4
+        let cycles = cpu.step();
+        assert_eq!(cycles, 2);
+    }
+
+    #[test]
+    fn branch_taken_same_page_is_3_cycles() {
+        let mut cpu = native();
+        cpu.set_flag_c(false); // BCC taken
+        cpu.bus.load(0x0000, &[0x90, 0x04]); // BCC +4, lands at 0x0006 (same page)
+        let cycles = cpu.step();
+        assert_eq!(cycles, 3);
+    }
+
+    #[test]
+    fn branch_taken_page_cross_emulation_is_4_cycles() {
+        let mut cpu = emu(); // emulation mode triggers +1 for page crossing
+        cpu.pc = 0x00F0;
+        cpu.set_flag_c(false); // BCC taken
+        // BCC +20 => lands at 0x00F2 + 20 = 0x0106 (crosses page boundary)
+        cpu.bus.load(0x00F0, &[0x90, 0x14]);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn branch_taken_page_cross_native_is_3_cycles() {
+        // In native mode, no extra cycle for page crossing
+        let mut cpu = native();
+        cpu.pc = 0x00F0;
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x00F0, &[0x90, 0x14]); // BCC +20, lands at 0x0106
+        let cycles = cpu.step();
+        assert_eq!(cycles, 3);
     }
 }
