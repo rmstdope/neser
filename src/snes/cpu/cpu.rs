@@ -543,6 +543,7 @@ impl<B: SnesBus> Cpu<B> {
             0xBF => self.op_lda_abs_long_x(),
             0xC0 => self.op_cpy_imm(),
             0xC1 => self.op_cmp_dp_x_ind(),
+            0xC2 => self.op_rep(),
             0xC3 => self.op_cmp_sr(),
             0xC4 => self.op_cpy_dp(),
             0xC5 => self.op_cmp_dp(),
@@ -571,6 +572,7 @@ impl<B: SnesBus> Cpu<B> {
             0xDF => self.op_cmp_abs_long_x(),
             0xE0 => self.op_cpx_imm(),
             0xE1 => self.op_sbc_dp_x_ind(),
+            0xE2 => self.op_sep(),
             0xE3 => self.op_sbc_sr(),
             0xE4 => self.op_cpx_dp(),
             0xE5 => self.op_sbc_dp(),
@@ -594,6 +596,7 @@ impl<B: SnesBus> Cpu<B> {
             0xF7 => self.op_sbc_dp_ind_long_y(),
             0xF9 => self.op_sbc_abs_y(),
             0xFA => self.op_plx(),
+            0xFB => self.op_xce(),
             0xFC => self.op_jsr_abs_x_ind(),
             0xFD => self.op_sbc_abs_x(),
             0xFE => self.op_inc_abs_x(),
@@ -677,6 +680,23 @@ impl<B: SnesBus> Cpu<B> {
     // -------------------------------------------------------------------------
 
     fn op_nop(&mut self) -> u8 {
+        2
+    }
+
+    fn op_rep(&mut self) -> u8 {
+        let mask = self.fetch_byte();
+        self.rep(mask);
+        3
+    }
+
+    fn op_sep(&mut self) -> u8 {
+        let mask = self.fetch_byte();
+        self.sep(mask);
+        3
+    }
+
+    fn op_xce(&mut self) -> u8 {
+        self.xce();
         2
     }
 
@@ -7158,5 +7178,86 @@ mod stack_ops_tests {
         assert_eq!(cpu.bus.read(0x01FF), 0x01);
         assert_eq!(cpu.bus.read(0x01FE), 0x03);
         assert_eq!(cpu.s, 0x01FD);
+    }
+}
+
+#[cfg(test)]
+mod rep_sep_xce_dispatch_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    // =========================================================================
+    // REP ( Reset Processor Status Bits0xC2)
+    // =========================================================================
+
+    #[test]
+    fn rep_opcode_clears_flags_via_immediate() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false; // native mode
+        cpu.p = 0xFF;
+        cpu.bus.load(0x0000, &[0xC2, 0x30]); // REP #$ clear M and X30 
+        cpu.step();
+        assert!(!cpu.m_flag());
+        assert!(!cpu.x_flag());
+        assert_eq!(cpu.pc, 0x0002);
+    }
+
+    #[test]
+    fn rep_opcode_takes_2_cycles() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p = 0xFF;
+        cpu.bus.load(0x0000, &[0xC2, 0x30]);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 3);
+    }
+
+    // =========================================================================
+    // SEP ( Set Processor Status Bits0xE2)
+    // =========================================================================
+
+    #[test]
+    fn sep_opcode_sets_flags_via_immediate() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p = 0x00;
+        cpu.bus.load(0x0000, &[0xE2, 0x30]); // SEP #$ set M and X30 
+        cpu.step();
+        assert!(cpu.m_flag());
+        assert!(cpu.x_flag());
+        assert_eq!(cpu.pc, 0x0002);
+    }
+
+    #[test]
+    fn sep_opcode_takes_3_cycles() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p = 0x00;
+        cpu.bus.load(0x0000, &[0xE2, 0x30]);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 3);
+    }
+
+    // =========================================================================
+    // XCE ( Exchange Carry with Emulation0xFB)
+    // =========================================================================
+
+    #[test]
+    fn xce_opcode_switches_to_native_mode() {
+        let mut cpu = Cpu::new(TestBus::default()); // emulation mode, C=0
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0xFB]); // XCE: E=1,C=0 -> E=0 (native), C=1
+        cpu.step();
+        assert!(!cpu.emulation_mode()); // now native mode
+        assert!(cpu.flag_c()); // old E=1 now in C
+        assert_eq!(cpu.pc, 0x0001);
+    }
+
+    #[test]
+    fn xce_opcode_takes_2_cycles() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xFB]);
+        let cycles = cpu.step();
+        assert_eq!(cycles, 2);
     }
 }
