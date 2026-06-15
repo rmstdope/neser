@@ -383,6 +383,7 @@ impl<B: SnesBus> Cpu<B> {
             0x15 => self.op_ora_dp_x(),
             0x16 => self.op_asl_dp_x(),
             0x17 => self.op_ora_dp_ind_long_y(),
+            0x18 => self.op_clc(),
             0x19 => self.op_ora_abs_y(),
             0x1A => self.op_inc_acc(),
             0x1B => self.op_tcs(),
@@ -412,6 +413,7 @@ impl<B: SnesBus> Cpu<B> {
             0x35 => self.op_and_dp_x(),
             0x36 => self.op_rol_dp_x(),
             0x37 => self.op_and_dp_ind_long_y(),
+            0x38 => self.op_sec(),
             0x39 => self.op_and_abs_y(),
             0x3A => self.op_dec_acc(),
             0x3B => self.op_tsc(),
@@ -440,6 +442,7 @@ impl<B: SnesBus> Cpu<B> {
             0x55 => self.op_eor_dp_x(),
             0x56 => self.op_lsr_dp_x(),
             0x57 => self.op_eor_dp_ind_long_y(),
+            0x58 => self.op_cli(),
             0x59 => self.op_eor_abs_y(),
             0x5A => self.op_phy(),
             0x5B => self.op_tcd(),
@@ -471,6 +474,7 @@ impl<B: SnesBus> Cpu<B> {
             0x75 => self.op_adc_dp_x(),
             0x76 => self.op_ror_dp_x(),
             0x77 => self.op_adc_dp_ind_long_y(),
+            0x78 => self.op_sei(),
             0x79 => self.op_adc_abs_y(),
             0x7A => self.op_ply(),
             0x7B => self.op_tdc(),
@@ -534,6 +538,7 @@ impl<B: SnesBus> Cpu<B> {
             0xB5 => self.op_lda_dp_x(),
             0xB6 => self.op_ldx_dp_y(),
             0xB7 => self.op_lda_dp_ind_long_y(),
+            0xB8 => self.op_clv(),
             0xB9 => self.op_lda_abs_y(),
             0xBA => self.op_tsx(),
             0xBB => self.op_tyx(),
@@ -564,6 +569,7 @@ impl<B: SnesBus> Cpu<B> {
             0xD5 => self.op_cmp_dp_x(),
             0xD6 => self.op_dec_dp_x(),
             0xD7 => self.op_cmp_dp_ind_long_y(),
+            0xD8 => self.op_cld(),
             0xD9 => self.op_cmp_abs_y(),
             0xDA => self.op_phx(),
             0xDC => self.op_jmp_abs_ind_long(),
@@ -594,6 +600,7 @@ impl<B: SnesBus> Cpu<B> {
             0xF5 => self.op_sbc_dp_x(),
             0xF6 => self.op_inc_dp_x(),
             0xF7 => self.op_sbc_dp_ind_long_y(),
+            0xF8 => self.op_sed(),
             0xF9 => self.op_sbc_abs_y(),
             0xFA => self.op_plx(),
             0xFB => self.op_xce(),
@@ -697,6 +704,41 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_xce(&mut self) -> u8 {
         self.xce();
+        2
+    }
+
+    fn op_clc(&mut self) -> u8 {
+        self.set_flag_c(false);
+        2
+    }
+
+    fn op_sec(&mut self) -> u8 {
+        self.set_flag_c(true);
+        2
+    }
+
+    fn op_cli(&mut self) -> u8 {
+        self.set_flag_i(false);
+        2
+    }
+
+    fn op_sei(&mut self) -> u8 {
+        self.set_flag_i(true);
+        2
+    }
+
+    fn op_clv(&mut self) -> u8 {
+        self.set_flag_v(false);
+        2
+    }
+
+    fn op_cld(&mut self) -> u8 {
+        self.set_flag_d(false);
+        2
+    }
+
+    fn op_sed(&mut self) -> u8 {
+        self.set_flag_d(true);
         2
     }
 
@@ -7258,6 +7300,88 @@ mod rep_sep_xce_dispatch_tests {
         let mut cpu = Cpu::new(TestBus::default());
         cpu.bus.load(0x0000, &[0xFB]);
         let cycles = cpu.step();
+        assert_eq!(cycles, 2);
+    }
+}
+
+#[cfg(test)]
+mod flag_set_clear_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn cpu() -> Cpu<TestBus> {
+        let mut c = Cpu::new(TestBus::default());
+        c.e = false;
+        c
+    }
+
+    #[test]
+    fn clc_clears_carry() {
+        let mut cpu = cpu();
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0x18]); // CLC
+        let cycles = cpu.step();
+        assert!(!cpu.flag_c());
+        assert_eq!(cycles, 2);
+    }
+
+    #[test]
+    fn sec_sets_carry() {
+        let mut cpu = cpu();
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x38]); // SEC
+        let cycles = cpu.step();
+        assert!(cpu.flag_c());
+        assert_eq!(cycles, 2);
+    }
+
+    #[test]
+    fn cli_clears_interrupt_disable() {
+        let mut cpu = cpu();
+        cpu.set_flag_i(true);
+        cpu.bus.load(0x0000, &[0x58]); // CLI
+        let cycles = cpu.step();
+        assert!(!cpu.flag_i());
+        assert_eq!(cycles, 2);
+    }
+
+    #[test]
+    fn sei_sets_interrupt_disable() {
+        let mut cpu = cpu();
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x0000, &[0x78]); // SEI
+        let cycles = cpu.step();
+        assert!(cpu.flag_i());
+        assert_eq!(cycles, 2);
+    }
+
+    #[test]
+    fn clv_clears_overflow() {
+        let mut cpu = cpu();
+        cpu.set_flag_v(true);
+        cpu.bus.load(0x0000, &[0xB8]); // CLV
+        let cycles = cpu.step();
+        assert!(!cpu.flag_v());
+        assert_eq!(cycles, 2);
+    }
+
+    #[test]
+    fn cld_clears_decimal() {
+        let mut cpu = cpu();
+        cpu.set_flag_d(true);
+        cpu.bus.load(0x0000, &[0xD8]); // CLD
+        let cycles = cpu.step();
+        assert!(!cpu.flag_d());
+        assert_eq!(cycles, 2);
+    }
+
+    #[test]
+    fn sed_sets_decimal() {
+        let mut cpu = cpu();
+        cpu.set_flag_d(false);
+        cpu.bus.load(0x0000, &[0xF8]); // SED
+        let cycles = cpu.step();
+        assert!(cpu.flag_d());
         assert_eq!(cycles, 2);
     }
 }
