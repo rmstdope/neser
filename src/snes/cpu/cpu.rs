@@ -3076,10 +3076,15 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_rti(&mut self) -> u8 {
+        let old_x = self.x_flag();
         let p = self.pull8();
         self.p = p;
         if self.e {
             self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        }
+        if !old_x && self.x_flag() {
+            self.x &= 0x00FF;
+            self.y &= 0x00FF;
         }
         let pc = self.pull16();
         self.pc = pc;
@@ -3165,10 +3170,15 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_plp(&mut self) -> u8 {
+        let old_x = self.x_flag();
         let p = self.pull8();
         self.p = p;
         if self.e {
             self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        }
+        if !old_x && self.x_flag() {
+            self.x &= 0x00FF;
+            self.y &= 0x00FF;
         }
         4
     }
@@ -7383,5 +7393,63 @@ mod flag_set_clear_tests {
         let cycles = cpu.step();
         assert!(cpu.flag_d());
         assert_eq!(cycles, 2);
+    }
+}
+
+#[cfg(test)]
+mod plp_rti_x_zeroing_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    // When PLP pulls a P value that sets X=1 (from X=0),
+    // the high bytes of X and Y must be forced to 0.
+    #[test]
+    fn plp_x_transition_zeros_x_high_byte() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_INDEX_WIDTH); // X=0 (16-bit index)
+        cpu.x = 0x1234;
+        cpu.y = 0x5678;
+        cpu.s = 0x01FE;
+        // Pull P with X=1 bit set
+        cpu.bus.load(0x01FF, &[FLAG_INDEX_WIDTH]);
+        cpu.bus.load(0x0000, &[0x28]); // PLP
+        cpu.step();
+        assert!(cpu.x_flag());
+        assert_eq!(cpu.x, 0x0034); // high byte zeroed
+        assert_eq!(cpu.y, 0x0078); // high byte zeroed
+    }
+
+    #[test]
+    fn plp_no_x_transition_preserves_x() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_INDEX_WIDTH; // X=1 already
+        cpu.x = 0x0034;
+        cpu.y = 0x0078;
+        cpu.s = 0x01FE;
+        cpu.bus.load(0x01FF, &[FLAG_INDEX_WIDTH]);
+        cpu.bus.load(0x0000, &[0x28]); // PLP
+        cpu.step();
+        assert_eq!(cpu.x, 0x0034); // unchanged
+        assert_eq!(cpu.y, 0x0078);
+    }
+
+    // RTI in native mode: same X-flag zeroing must apply
+    #[test]
+    fn rti_x_transition_zeros_x_high_byte() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_INDEX_WIDTH); // X=0
+        cpu.x = 0xABCD;
+        cpu.y = 0x1234;
+        cpu.s = 0x01FA;
+        // Stack: P (X=1), PClo, PChi, PBR
+        cpu.bus.load(0x01FB, &[FLAG_INDEX_WIDTH, 0x00, 0x50, 0x00]);
+        cpu.bus.load(0x0000, &[0x40]); // RTI
+        cpu.step();
+        assert!(cpu.x_flag());
+        assert_eq!(cpu.x, 0x00CD); // high byte zeroed
+        assert_eq!(cpu.y, 0x0034); // high byte zeroed
     }
 }
