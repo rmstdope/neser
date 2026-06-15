@@ -237,14 +237,18 @@ impl<B: SnesBus> Cpu<B> {
 
     /// Perform a hardware RESET.
     ///
-    /// No bytes are pushed. The CPU enters emulation mode, sets I=1, clears PBR/DBR,
-    /// forces S high byte to $01, and loads PC from the RESET vector at $FFFC/$FFFD.
+    /// No bytes are pushed. The CPU enters emulation mode, sets I=1, clears D, PBR, DBR,
+    /// forces S to $01FF, clears pending interrupt latches, and loads PC from $FFFC/$FFFD.
     pub fn do_reset(&mut self) {
         self.e = true;
         self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_INTERRUPT;
+        self.p &= !FLAG_DECIMAL;
         self.pbr = 0x00;
         self.dbr = 0x00;
-        self.s = 0x0100 | (self.s & 0x00FF); // force high byte to $01
+        self.s = 0x01FF;
+        self.nmi_pending = false;
+        self.irq_pending = false;
+        self.abort_pending = false;
         let lo = self.read8(0x00FFFC) as u16;
         let hi = self.read8(0x00FFFD) as u16;
         self.pc = lo | hi << 8;
@@ -3448,14 +3452,15 @@ impl<B: SnesBus> Cpu<B> {
     /// Shared hardware interrupt dispatch sequence.
     ///
     /// Native mode (E=0): push PBR, PCH, PCL, P; set PBR=0, I=1, D=0; load `native_vector`.  8 cycles.
-    /// Emulation mode (E=1): push PCH, PCL, P (B=0); set I=1, D=0; load `emu_vector`.  7 cycles.
+    /// Emulation mode (E=1): push PCH, PCL, P (B=0); set PBR=0, I=1, D=0; load `emu_vector`.  7 cycles.
     fn dispatch_hw_interrupt(&mut self, native_vector: u32, emu_vector: u32) -> u8 {
         let pc = self.pc;
         if self.e {
-            // Emulation mode: 3 pushes, no PBR push, B flag cleared
+            // Emulation mode: 3 pushes, no PBR push, B flag cleared; PBR forced to bank 0
             self.push8((pc >> 8) as u8);
             self.push8(pc as u8);
             self.push8(self.p & !FLAG_INDEX_WIDTH); // B=0 for hardware interrupts
+            self.pbr = 0x00;
             self.set_flag_i(true);
             self.set_flag_d(false);
             let lo = self.read8(emu_vector) as u16;
@@ -9228,6 +9233,7 @@ mod interrupt_dispatch_tests {
     #[test]
     fn nmi_emulation_pushes_pc_p_sets_i_clears_d_vectors() {
         let mut cpu = Cpu::new(TestBus::default()); // emulation mode
+        cpu.pbr = 0x05; // non-zero to verify it gets cleared
         cpu.pc = 0x5678;
         cpu.s = 0x01FF;
         cpu.set_flag_d(true);
@@ -9237,6 +9243,10 @@ mod interrupt_dispatch_tests {
         let cycles = cpu.step();
         assert_eq!(cycles, 7, "NMI emulation: 7 cycles");
         assert_eq!(cpu.pc, 0xBEEF, "PC loaded from NMI emulation vector");
+        assert_eq!(
+            cpu.pbr, 0x00,
+            "PBR forced to 0 on emulation-mode interrupt entry"
+        );
         assert_eq!(cpu.s, 0x01FC, "3 bytes pushed: PCH, PCL, P");
         assert_eq!(cpu.bus.read(0x01FF), 0x56, "PCH on stack");
         assert_eq!(cpu.bus.read(0x01FE), 0x78, "PCL on stack");
@@ -9311,20 +9321,26 @@ mod interrupt_dispatch_tests {
     }
 
     #[test]
-    fn irq_level_triggered_not_cleared_after_dispatch() {
+    fn irq_level_triggered_redispatches_while_held() {
+        // Verify that irq_pending is NOT cleared on dispatch (level-triggered):
+        // hold the IRQ line, clear I after the first dispatch, and the next step
+        // should dispatch again rather than execute an opcode.
         let mut cpu = native();
         cpu.s = 0x01FF;
         cpu.set_flag_i(false);
-        cpu.bus.load(0x00FFEE, &[0x00, 0x50]);
+        cpu.bus.load(0x00FFEE, &[0x00, 0x50]); // IRQ native vector -> $5000
         cpu.set_irq(true);
-        cpu.step(); // first IRQ dispatch → sets I=1
-        // Now I=1 so IRQ is masked. Deassert and assert again.
-        cpu.set_irq(false);
-        cpu.set_flag_i(false); // allow another IRQ
-        cpu.bus.load(cpu.pc as u32, &[0xEA]); // NOP at handler address
-        // IRQ deasserted, so NOP should run
-        let cycles = cpu.step();
-        assert_eq!(cycles, 2, "after deassert, IRQ not pending");
+
+        // First dispatch: IRQ fires, I becomes 1
+        let cycles1 = cpu.step();
+        assert_eq!(cycles1, 8, "first IRQ dispatch: 8 cycles");
+        assert_eq!(cpu.pc, 0x5000);
+
+        // Manually clear I to allow the held IRQ to fire again
+        cpu.set_flag_i(false);
+        // IRQ is still asserted (level-triggered — not cleared by dispatch)
+        let cycles2 = cpu.step();
+        assert_eq!(cycles2, 8, "IRQ re-dispatches while line held");
     }
 
     // =========================================================================
