@@ -827,11 +827,10 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_tcs(&mut self) -> u8 {
-        // Always uses full 16-bit A; no flags set
-        self.s = self.a;
-        // In emulation mode, TCS still stores full 16-bit (unlike write_s which clamps).
-        // The 65816 spec says TCS in native mode transfers C→S; behavior in emulation
-        // is undefined but common implementations store full value.
+        // Always uses full 16-bit A; no flags set.
+        // write_s() enforces emulation-mode page-1 clamping (high byte = $01).
+        let val = self.a;
+        self.write_s(val);
         2
     }
 
@@ -7451,5 +7450,32 @@ mod plp_rti_x_zeroing_tests {
         assert!(cpu.x_flag());
         assert_eq!(cpu.x, 0x00CD); // high byte zeroed
         assert_eq!(cpu.y, 0x0034); // high byte zeroed
+    }
+}
+
+#[cfg(test)]
+mod tcs_fix_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    #[test]
+    fn tcs_emulation_mode_clamps_stack_high_byte() {
+        // In emulation mode TCS must force S high byte to $01
+        let mut cpu = Cpu::new(TestBus::default()); // emulation mode
+        cpu.a = 0x0234;
+        cpu.bus.load(0x0000, &[0x1B]); // TCS
+        cpu.step();
+        // write_s() in emulation mode clamps to $01xx
+        assert_eq!(cpu.read_s(), 0x0134);
+    }
+
+    #[test]
+    fn tcs_native_mode_transfers_full_16bit() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.a = 0x0234;
+        cpu.bus.load(0x0000, &[0x1B]); // TCS
+        cpu.step();
+        assert_eq!(cpu.read_s(), 0x0234);
     }
 }
