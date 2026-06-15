@@ -373,6 +373,7 @@ impl<B: SnesBus> Cpu<B> {
             0x0D => self.op_ora_abs(),
             0x0E => self.op_asl_abs(),
             0x0F => self.op_ora_abs_long(),
+            0x10 => self.op_bpl(),
             0x11 => self.op_ora_dp_ind_y(),
             0x12 => self.op_ora_dp_ind(),
             0x13 => self.op_ora_sr_ind_y(),
@@ -397,6 +398,7 @@ impl<B: SnesBus> Cpu<B> {
             0x2D => self.op_and_abs(),
             0x2E => self.op_rol_abs(),
             0x2F => self.op_and_abs_long(),
+            0x30 => self.op_bmi(),
             0x31 => self.op_and_dp_ind_y(),
             0x32 => self.op_and_dp_ind(),
             0x33 => self.op_and_sr_ind_y(),
@@ -421,6 +423,7 @@ impl<B: SnesBus> Cpu<B> {
             0x4D => self.op_eor_abs(),
             0x4E => self.op_lsr_abs(),
             0x4F => self.op_eor_abs_long(),
+            0x50 => self.op_bvc(),
             0x51 => self.op_eor_dp_ind_y(),
             0x52 => self.op_eor_dp_ind(),
             0x53 => self.op_eor_sr_ind_y(),
@@ -443,6 +446,7 @@ impl<B: SnesBus> Cpu<B> {
             0x6D => self.op_adc_abs(),
             0x6E => self.op_ror_abs(),
             0x6F => self.op_adc_abs_long(),
+            0x70 => self.op_bvs(),
             0x71 => self.op_adc_dp_ind_y(),
             0x72 => self.op_adc_dp_ind(),
             0x73 => self.op_adc_sr_ind_y(),
@@ -455,7 +459,9 @@ impl<B: SnesBus> Cpu<B> {
             0x7D => self.op_adc_abs_x(),
             0x7E => self.op_ror_abs_x(),
             0x7F => self.op_adc_abs_long_x(),
+            0x80 => self.op_bra(),
             0x81 => self.op_sta_dp_x_ind(),
+            0x82 => self.op_brl(),
             0x83 => self.op_sta_sr(),
             0x84 => self.op_sty_dp(),
             0x85 => self.op_sta_dp(),
@@ -468,6 +474,7 @@ impl<B: SnesBus> Cpu<B> {
             0x8D => self.op_sta_abs(),
             0x8E => self.op_stx_abs(),
             0x8F => self.op_sta_abs_long(),
+            0x90 => self.op_bcc(),
             0x91 => self.op_sta_dp_ind_y(),
             0x92 => self.op_sta_dp_ind(),
             0x93 => self.op_sta_sr_ind_y(),
@@ -498,6 +505,7 @@ impl<B: SnesBus> Cpu<B> {
             0xAD => self.op_lda_abs(),
             0xAE => self.op_ldx_abs(),
             0xAF => self.op_lda_abs_long(),
+            0xB0 => self.op_bcs(),
             0xB1 => self.op_lda_dp_ind_y(),
             0xB2 => self.op_lda_dp_ind(),
             0xB3 => self.op_lda_sr_ind_y(),
@@ -526,6 +534,7 @@ impl<B: SnesBus> Cpu<B> {
             0xCD => self.op_cmp_abs(),
             0xCE => self.op_dec_abs(),
             0xCF => self.op_cmp_abs_long(),
+            0xD0 => self.op_bne(),
             0xD1 => self.op_cmp_dp_ind_y(),
             0xD2 => self.op_cmp_dp_ind(),
             0xD3 => self.op_cmp_sr_ind_y(),
@@ -551,6 +560,7 @@ impl<B: SnesBus> Cpu<B> {
             0xED => self.op_sbc_abs(),
             0xEE => self.op_inc_abs(),
             0xEF => self.op_sbc_abs_long(),
+            0xF0 => self.op_beq(),
             0xF1 => self.op_sbc_dp_ind_y(),
             0xF2 => self.op_sbc_dp_ind(),
             0xF3 => self.op_sbc_sr_ind_y(),
@@ -2613,6 +2623,61 @@ impl<B: SnesBus> Cpu<B> {
         self.tsb_trb_z(a, mem);
         self.write_m(ea, mem & !a);
         6
+    }
+
+    // -------------------------------------------------------------------------
+    // Branches — 8-bit signed relative offset (BCC/BCS/BEQ/BNE/BMI/BPL/BVC/BVS/BRA)
+    // BRL — 16-bit signed relative offset
+    // -------------------------------------------------------------------------
+
+    fn branch_if(&mut self, taken: bool) -> u8 {
+        let offset = self.fetch_byte() as i8;
+        if taken {
+            self.pc = self.pc.wrapping_add(offset as u16);
+        }
+        2
+    }
+
+    fn op_bcc(&mut self) -> u8 {
+        let c = !self.flag_c();
+        self.branch_if(c)
+    }
+    fn op_bcs(&mut self) -> u8 {
+        let c = self.flag_c();
+        self.branch_if(c)
+    }
+    fn op_beq(&mut self) -> u8 {
+        let z = self.flag_z();
+        self.branch_if(z)
+    }
+    fn op_bne(&mut self) -> u8 {
+        let z = !self.flag_z();
+        self.branch_if(z)
+    }
+    fn op_bmi(&mut self) -> u8 {
+        let n = self.flag_n();
+        self.branch_if(n)
+    }
+    fn op_bpl(&mut self) -> u8 {
+        let n = !self.flag_n();
+        self.branch_if(n)
+    }
+    fn op_bvc(&mut self) -> u8 {
+        let v = !self.flag_v();
+        self.branch_if(v)
+    }
+    fn op_bvs(&mut self) -> u8 {
+        let v = self.flag_v();
+        self.branch_if(v)
+    }
+    fn op_bra(&mut self) -> u8 {
+        self.branch_if(true)
+    }
+
+    fn op_brl(&mut self) -> u8 {
+        let offset = self.fetch_word() as i16;
+        self.pc = self.pc.wrapping_add(offset as u16);
+        4
     }
 }
 
@@ -6132,5 +6197,189 @@ mod tsb_trb_tests {
         assert_eq!(cpu.bus.read(0x4000), 0x0F);
         assert_eq!(cpu.bus.read(0x4001), 0x0F);
         assert!(!cpu.flag_z());
+    }
+}
+
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native16() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_DECIMAL);
+        cpu
+    }
+
+    // =========================================================================
+    // BCC /  branch on carry clear / setBCS
+    // =========================================================================
+
+    #[test]
+    fn bcc_taken_when_carry_clear() {
+        let mut cpu = native16();
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x90, 0x04]); // BCC +4
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0006); // 0x0002 (after fetch) + 4
+    }
+
+    #[test]
+    fn bcc_not_taken_when_carry_set() {
+        let mut cpu = native16();
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0x90, 0x04]); // BCC +4
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0002); // not taken
+    }
+
+    #[test]
+    fn bcs_taken_when_carry_set() {
+        let mut cpu = native16();
+        cpu.set_flag_c(true);
+        cpu.bus.load(0x0000, &[0xB0, 0x06]); // BCS +6
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0008);
+    }
+
+    #[test]
+    fn bcs_not_taken_when_carry_clear() {
+        let mut cpu = native16();
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0xB0, 0x06]);
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0002);
+    }
+
+    // =========================================================================
+    // BEQ /  branch on zero set / clearBNE
+    // =========================================================================
+
+    #[test]
+    fn beq_taken_when_zero_set() {
+        let mut cpu = native16();
+        cpu.p |= FLAG_ZERO;
+        cpu.bus.load(0x0000, &[0xF0, 0x10]); // BEQ +16
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0012);
+    }
+
+    #[test]
+    fn beq_not_taken_when_zero_clear() {
+        let mut cpu = native16();
+        cpu.p &= !FLAG_ZERO;
+        cpu.bus.load(0x0000, &[0xF0, 0x10]);
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0002);
+    }
+
+    #[test]
+    fn bne_taken_when_zero_clear() {
+        let mut cpu = native16();
+        cpu.p &= !FLAG_ZERO;
+        cpu.bus.load(0x0000, &[0xD0, 0x08]); // BNE +8
+        cpu.step();
+        assert_eq!(cpu.pc, 0x000A);
+    }
+
+    #[test]
+    fn bne_not_taken_when_zero_set() {
+        let mut cpu = native16();
+        cpu.p |= FLAG_ZERO;
+        cpu.bus.load(0x0000, &[0xD0, 0x08]);
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0002);
+    }
+
+    // =========================================================================
+    // BMI /  branch on negative set / clearBPL
+    // =========================================================================
+
+    #[test]
+    fn bmi_taken_when_negative_set() {
+        let mut cpu = native16();
+        cpu.p |= FLAG_NEGATIVE;
+        cpu.bus.load(0x0000, &[0x30, 0x02]); // BMI +2
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0004);
+    }
+
+    #[test]
+    fn bpl_taken_when_negative_clear() {
+        let mut cpu = native16();
+        cpu.p &= !FLAG_NEGATIVE;
+        cpu.bus.load(0x0000, &[0x10, 0x05]); // BPL +5
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0007);
+    }
+
+    // =========================================================================
+    // BVC /  branch on overflow clear / setBVS
+    // =========================================================================
+
+    #[test]
+    fn bvc_taken_when_overflow_clear() {
+        let mut cpu = native16();
+        cpu.p &= !FLAG_OVERFLOW;
+        cpu.bus.load(0x0000, &[0x50, 0x03]); // BVC +3
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0005);
+    }
+
+    #[test]
+    fn bvs_taken_when_overflow_set() {
+        let mut cpu = native16();
+        cpu.p |= FLAG_OVERFLOW;
+        cpu.bus.load(0x0000, &[0x70, 0x01]); // BVS +1
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0003);
+    }
+
+    // =========================================================================
+    // Backward branch (negative offset)
+    // =========================================================================
+
+    #[test]
+    fn bne_backward_branch() {
+        // PC starts at 0x0010; BNE $FE = -2 -> 0x0010
+        let mut cpu = native16();
+        cpu.pc = 0x0010;
+        cpu.p &= !FLAG_ZERO;
+        cpu.bus.load(0x0010, &[0xD0, 0xFE]); // BNE -2
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0010); // 0x0012 + (-2) = 0x0010
+    }
+
+    #[test]
+    fn beq_backward_branch_big_offset() {
+        // PC=0x0020, BEQ 0x80 (-128 signed) -> 0x0020+2+(-128) = 0xFFA2
+        let mut cpu = native16();
+        cpu.pc = 0x0020;
+        cpu.p |= FLAG_ZERO;
+        cpu.bus.load(0x0020, &[0xF0, 0x80]); // BEQ -128
+        cpu.step();
+        assert_eq!(cpu.pc, 0xFFA2);
+    }
+
+    // =========================================================================
+    //  branch long (16-bit signed offset)BRL
+    // =========================================================================
+
+    #[test]
+    fn brl_forward_branch() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x82, 0x00, 0x01]); // BRL +256
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0103); // 0x0003 + 0x0100
+    }
+
+    #[test]
+    fn brl_backward_branch() {
+        let mut cpu = native16();
+        cpu.pc = 0x0100;
+        cpu.bus.load(0x0100, &[0x82, 0xFB, 0xFF]); // BRL -5 (0xFFFB = -5 signed)
+        cpu.step();
+        assert_eq!(cpu.pc, 0x00FE); // 0x0103 + (-5) = 0x00FE
     }
 }
