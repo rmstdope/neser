@@ -1335,28 +1335,118 @@ impl<B: SnesBus> Cpu<B> {
             let a = (self.a & 0x00FF) as u32;
             let op = (operand & 0x00FF) as u32;
             let c = self.flag_c() as u32;
-            let result = a + op + c;
-            let v = ((!(a ^ op) & (a ^ result)) & 0x80) != 0;
-            self.set_flag_c(result > 0xFF);
-            self.set_flag_v(v);
-            self.write_a(result as u16);
-            let new_a = self.a;
-            self.set_nz_m(new_a);
+            if self.flag_d() {
+                // BCD adjustment: low nibble first, then high nibble
+                let mut lo = (a & 0x0F) + (op & 0x0F) + c;
+                if lo > 9 {
+                    lo = (lo + 6) & 0x0F | 0x10; // carry into high nibble
+                }
+                let mut result = (a & 0xF0) + (op & 0xF0) + lo;
+                let v = ((!(a ^ op) & (a ^ result)) & 0x80) != 0;
+                self.set_flag_v(v);
+                self.set_flag_n(result & 0x80 != 0);
+                if result > 0x99 {
+                    result += 0x60;
+                }
+                self.set_flag_c(result > 0xFF);
+                self.write_a(result as u16);
+                let new_a = self.a;
+                self.set_flag_z(new_a & 0xFF == 0);
+            } else {
+                let result = a + op + c;
+                let v = ((!(a ^ op) & (a ^ result)) & 0x80) != 0;
+                self.set_flag_c(result > 0xFF);
+                self.set_flag_v(v);
+                self.write_a(result as u16);
+                let new_a = self.a;
+                self.set_nz_m(new_a);
+            }
         } else {
             let a = self.a as u32;
             let op = operand as u32;
             let c = self.flag_c() as u32;
-            let result = a + op + c;
-            let v = ((!(a ^ op) & (a ^ result)) & 0x8000) != 0;
-            self.set_flag_c(result > 0xFFFF);
-            self.set_flag_v(v);
-            self.a = result as u16;
-            self.set_nz_m(self.a);
+            if self.flag_d() {
+                // 16-bit BCD: 4 packed decimal digits
+                let mut lo = (a & 0x000F) + (op & 0x000F) + c;
+                if lo > 9 {
+                    lo = (lo + 6) & 0x000F | 0x0010;
+                }
+                let mut mid_lo = (a & 0x00F0) + (op & 0x00F0) + lo;
+                if mid_lo > 0x99 {
+                    mid_lo = (mid_lo + 0x60) & 0x00FF | 0x0100;
+                }
+                let mut mid_hi = (a & 0x0F00) + (op & 0x0F00) + mid_lo;
+                if (mid_hi & 0x0F00) > 0x0900 {
+                    mid_hi = (mid_hi + 0x0600) & 0x0FFF | 0x1000;
+                }
+                let mut result = (a & 0xF000) + (op & 0xF000) + mid_hi;
+                let v = ((!(a ^ op) & (a ^ result)) & 0x8000) != 0;
+                self.set_flag_v(v);
+                self.set_flag_n(result & 0x8000 != 0);
+                if result > 0x9999 {
+                    result += 0x6000;
+                }
+                self.set_flag_c(result > 0xFFFF);
+                self.a = result as u16;
+                self.set_flag_z(self.a == 0);
+            } else {
+                let result = a + op + c;
+                let v = ((!(a ^ op) & (a ^ result)) & 0x8000) != 0;
+                self.set_flag_c(result > 0xFFFF);
+                self.set_flag_v(v);
+                self.a = result as u16;
+                self.set_nz_m(self.a);
+            }
         }
     }
 
     fn sbc_perform(&mut self, operand: u16) {
-        self.adc_perform(!operand);
+        if self.flag_d() {
+            // BCD subtraction: A - M - (1 - C) = A + ~M + C, then decimal adjust
+            if self.m_flag() {
+                let a = (self.a & 0x00FF) as i32;
+                let op = (operand & 0x00FF) as i32;
+                let c = self.flag_c() as i32;
+                let mut lo = (a & 0x0F) - (op & 0x0F) + c - 1;
+                if lo < 0 {
+                    lo = ((lo - 6) & 0x0F) - 0x10;
+                }
+                let mut result = (a & 0xF0) - (op & 0xF0) + lo;
+                if result < 0 {
+                    result -= 0x60;
+                }
+                self.set_flag_c(result >= 0);
+                let r = result as u16;
+                self.write_a(r);
+                let new_a = self.a;
+                self.set_nz_m(new_a);
+            } else {
+                let a = self.a as i32;
+                let op = operand as i32;
+                let c = self.flag_c() as i32;
+                let mut lo = (a & 0x000F) - (op & 0x000F) + c - 1;
+                if lo < 0 {
+                    lo = ((lo - 6) & 0x000F) - 0x10;
+                }
+                let mut mid_lo = (a & 0x00F0) - (op & 0x00F0) + lo;
+                if (mid_lo & 0xFF) < 0 || mid_lo < 0 {
+                    mid_lo = ((mid_lo - 0x60) & 0x00FF) - 0x100;
+                }
+                let mut mid_hi = (a & 0x0F00) - (op & 0x0F00) + mid_lo;
+                if mid_hi < 0 {
+                    mid_hi = ((mid_hi - 0x0600) & 0x0FFF) - 0x1000;
+                }
+                let mut result = (a & 0xF000) - (op & 0xF000) + mid_hi;
+                if result < 0 {
+                    result -= 0x6000;
+                }
+                self.set_flag_c(result >= 0);
+                self.a = result as u16;
+                self.set_nz_m(self.a);
+            }
+        } else {
+            self.adc_perform(!operand);
+        }
     }
 
     fn op_adc_imm(&mut self) -> u8 {
@@ -7835,5 +7925,125 @@ mod wai_stp_tests {
         let cycles = cpu.step();
         assert_eq!(cpu.pc, 0x0001);
         assert_eq!(cycles, 3);
+    }
+}
+
+#[cfg(test)]
+mod decimal_mode_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    fn native8_decimal() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH; // 8-bit
+        cpu.set_flag_d(true);
+        cpu
+    }
+
+    fn native16_decimal() -> Cpu<TestBus> {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH); // 16-bit
+        cpu.set_flag_d(true);
+        cpu
+    }
+
+    // =========================================================================
+    // ADC decimal 8-bit
+    // =========================================================================
+
+    #[test]
+    fn adc_decimal_8bit_basic_add() {
+        // $09 + $01 = $10 (BCD: 9 + 1 = 10)
+        let mut cpu = native8_decimal();
+        cpu.a = 0x09;
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x69, 0x01]); // ADC #$01
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x10);
+        assert!(!cpu.flag_c()); // no decimal carry
+    }
+
+    #[test]
+    fn adc_decimal_8bit_carry_out() {
+        // $99 + $01 = $00 with carry (BCD: 99 + 01 = 100)
+        let mut cpu = native8_decimal();
+        cpu.a = 0x99;
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x69, 0x01]); // ADC #$01
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x00);
+        assert!(cpu.flag_c());
+        assert!(cpu.flag_z());
+    }
+
+    #[test]
+    fn adc_decimal_8bit_mid_digit_carry() {
+        // $19 + $01 = $20 (BCD: 19 + 1 = 20)
+        let mut cpu = native8_decimal();
+        cpu.a = 0x19;
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x69, 0x01]);
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x20);
+        assert!(!cpu.flag_c());
+    }
+
+    // =========================================================================
+    // SBC decimal 8-bit
+    // =========================================================================
+
+    #[test]
+    fn sbc_decimal_8bit_basic_sub() {
+        // $10 - $01 = $09 (BCD: 10 - 1 = 9, borrow=0 -> C=1)
+        let mut cpu = native8_decimal();
+        cpu.a = 0x10;
+        cpu.set_flag_c(true); // no borrow
+        cpu.bus.load(0x0000, &[0xE9, 0x01]); // SBC #$01
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x09);
+        assert!(cpu.flag_c()); // no borrow out
+    }
+
+    #[test]
+    fn sbc_decimal_8bit_borrow() {
+        // $00 - $01 = $99 with borrow (BCD: 00 - 1 = -1 wraps to 99)
+        let mut cpu = native8_decimal();
+        cpu.a = 0x00;
+        cpu.set_flag_c(true); // no borrow in
+        cpu.bus.load(0x0000, &[0xE9, 0x01]);
+        cpu.step();
+        assert_eq!(cpu.a & 0xFF, 0x99);
+        assert!(!cpu.flag_c()); // borrow out
+    }
+
+    // =========================================================================
+    // ADC decimal 16-bit
+    // =========================================================================
+
+    #[test]
+    fn adc_decimal_16bit_basic_add() {
+        // $0099 + $0001 = $0100 (BCD: 99 + 1 = 100)
+        let mut cpu = native16_decimal();
+        cpu.a = 0x0099;
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x69, 0x01, 0x00]); // ADC #$0001
+        cpu.step();
+        assert_eq!(cpu.a, 0x0100);
+        assert!(!cpu.flag_c());
+    }
+
+    #[test]
+    fn adc_decimal_16bit_carry_out() {
+        // $9999 + $0001 = $0000 with carry
+        let mut cpu = native16_decimal();
+        cpu.a = 0x9999;
+        cpu.set_flag_c(false);
+        cpu.bus.load(0x0000, &[0x69, 0x01, 0x00]);
+        cpu.step();
+        assert_eq!(cpu.a, 0x0000);
+        assert!(cpu.flag_c());
+        assert!(cpu.flag_z());
     }
 }
