@@ -3297,7 +3297,7 @@ impl<B: SnesBus> Cpu<B> {
         if !self.e {
             self.pbr = self.pull8();
         }
-        6
+        6 + (!self.e) as u8
     }
 
     fn op_brk(&mut self) -> u8 {
@@ -8742,5 +8742,32 @@ mod abs_idx_x0_cycle_tests {
             4,
             "ADC abs,X: no penalty without page cross and X=1"
         );
+    }
+}
+
+#[cfg(test)]
+mod rti_cycle_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    #[test]
+    fn rti_emulation_mode_is_6_cycles() {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = true;
+        cpu.s = 0x01FC; // 3 bytes on stack: P, PCL, PCH
+        cpu.bus.load(0x01FD, &[0x00, 0x30, 0x00]); // P=0, PCL=$30, PCH=$00
+        cpu.bus.load(0x0000, &[0x40]); // RTI
+        assert_eq!(cpu.step(), 6, "RTI emulation mode is 6 cycles");
+    }
+
+    #[test]
+    fn rti_native_mode_is_7_cycles() {
+        let mut cpu = Cpu::new(TestBus::new());
+        cpu.e = false;
+        cpu.p = FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.s = 0x01FB; // 4 bytes on stack: P, PCL, PCH, PBR
+        cpu.bus.load(0x01FC, &[0x20, 0x30, 0x00, 0x00]); // P=$20, PCL=$30, PCH=$00, PBR=$00
+        cpu.bus.load(0x0000, &[0x40]); // RTI
+        assert_eq!(cpu.step(), 7, "RTI native mode is 7 cycles (pulls PBR too)");
     }
 }
