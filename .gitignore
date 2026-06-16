@@ -29,6 +29,7 @@ target
 roms/games
 roms/gb/games
 roms/nes/games
+roms/snes/automated_tests/processor_tests/65816/full/
 
 .github/ISSUE_TEMPLATE
 *.log
