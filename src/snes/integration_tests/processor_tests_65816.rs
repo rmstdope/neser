@@ -1,12 +1,14 @@
 use crate::snes::bus::SnesBus;
 use crate::snes::cpu::Cpu;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 const PROCESSOR_TESTS_ROOT: &str = "roms/snes/automated_tests/processor_tests/65816/v1";
+const PROCESSOR_TESTS_FULL_ROOT: &str = "roms/snes/automated_tests/processor_tests/65816/full/v1";
 
 #[derive(Debug, Clone, serde::Deserialize)]
 struct VectorState {
@@ -238,8 +240,38 @@ fn list_vector_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
+fn list_available_vector_files(
+    subset_root: &Path,
+    full_root: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let subset_files = list_vector_files(subset_root)?;
+    let full_files = if full_root.exists() {
+        list_vector_files(full_root)?
+    } else {
+        Vec::new()
+    };
+
+    let mut by_name: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for file in subset_files {
+        let Some(name) = file.file_name() else {
+            continue;
+        };
+        by_name.insert(name.to_string_lossy().to_string(), file);
+    }
+
+    for file in full_files {
+        let Some(name) = file.file_name() else {
+            continue;
+        };
+        by_name.insert(name.to_string_lossy().to_string(), file);
+    }
+
+    Ok(by_name.into_values().collect())
+}
+
 fn run_vectors_from_directory(root: &Path) -> Result<(), VectorFailure> {
-    let files = list_vector_files(root).map_err(|details| VectorFailure { details })?;
+    let files = list_available_vector_files(root, Path::new(PROCESSOR_TESTS_FULL_ROOT))
+        .map_err(|details| VectorFailure { details })?;
     if files.is_empty() {
         return Err(VectorFailure {
             details: format!("no vector files found in {}", root.display()),
@@ -327,12 +359,12 @@ mod tests {
     }
 
     #[test]
-    fn runs_all_pinned_65816_vectors_in_directory() {
+    fn runs_all_available_65816_vectors() {
         let root = Path::new(PROCESSOR_TESTS_ROOT);
         let result = run_vectors_from_directory(root);
         assert!(
             result.is_ok(),
-            "pinned 65816 vectors should pass: {result:?}"
+            "available 65816 vectors should pass: {result:?}"
         );
     }
 
@@ -358,5 +390,33 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let result = run_vectors_from_directory(temp.path());
         assert!(result.is_err(), "empty directory should fail");
+    }
+
+    #[test]
+    fn list_available_vector_files_prefers_full_vectors_when_present() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let subset = temp.path().join("subset");
+        let full = temp.path().join("full");
+        fs::create_dir_all(&subset).expect("create subset dir");
+        fs::create_dir_all(&full).expect("create full dir");
+
+        fs::write(subset.join("00.e.json"), "subset").expect("write subset file");
+        fs::write(subset.join("ea.n.json"), "subset").expect("write subset file");
+        fs::write(full.join("00.e.json"), "full").expect("write full file");
+        fs::write(full.join("01.e.json"), "full").expect("write full file");
+
+        let files =
+            list_available_vector_files(&subset, &full).expect("list available vector files");
+        let names: Vec<String> = files
+            .iter()
+            .filter_map(|path| path.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .collect();
+
+        assert_eq!(names, vec!["00.e.json", "01.e.json", "ea.n.json"]);
+        assert_eq!(
+            fs::read_to_string(&files[0]).expect("read merged 00.e.json"),
+            "full"
+        );
     }
 }

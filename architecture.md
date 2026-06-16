@@ -93,7 +93,7 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | `scripts/build_web.sh` | Builds the WASM target with `cargo build --target wasm32-unknown-unknown --features wasm`, runs `wasm-bindgen` to generate JS glue code into `web/pkg/`, then bundles the web frontend with `npx vite build` into `dist/`. |
 | `scripts/run_web.sh` | Symlinks `web/roms/` into `dist/` for ROM directory browsing, then starts a local HTTP server (`python3 -m http.server`) in `dist/` for testing the browser frontend. |
 | `scripts/test-dir.sh` | Runs Rust tests for specific source directories. Converts directory paths (e.g., `src/nes/cartridge`) to `cargo test` module filters. Supports `--skip-integration` and `--list` flags. Used by CI to conditionally run tests based on changed files. |
-| `scripts/refresh_65816_processor_tests_subset.sh` | Refreshes the pinned SNES 65816 ProcessorTests corpus from upstream (`SingleStepTests/ProcessorTests`) by mirroring all `65816/v1/*.json` vector files. |
+| `scripts/refresh_65816_processor_tests_subset.sh` | Refreshes a local full-corpus cache of SNES 65816 ProcessorTests from upstream (`SingleStepTests/ProcessorTests`) into `roms/snes/automated_tests/processor_tests/65816/full/v1`. This cache is intentionally git-ignored to keep repository size manageable. |
 
 ### Python Tools
 
@@ -331,7 +331,7 @@ The SNES (Super Nintendo Entertainment System) module contains active 65816 CPU 
 | `src/snes/cartridge/mod.rs` | Cartridge module stub (SNES ROM parsing and LoROM/HiROM mapping — future implementation). |
 | `src/snes/input/mod.rs` | Input module stub (SNES controller protocol — future implementation). |
 | `src/snes/integration_tests/mod.rs` | SNES integration test module root. Includes `processor_tests_65816.rs` for vector-based CPU verification. |
-| `src/snes/integration_tests/processor_tests_65816.rs` | Loader and harness for Tom Harte ProcessorTests 65816 JSON vectors. Parses upstream schema (`initial` / `final` / `cycles`), runs single-step CPU checks against a RAM-backed `SnesBus`, compares final CPU+RAM state and vector cycle count, and executes all `*.json` files present in the pinned vector directory. |
+| `src/snes/integration_tests/processor_tests_65816.rs` | Loader and harness for Tom Harte ProcessorTests 65816 JSON vectors. Parses upstream schema (`initial` / `final` / `cycles`), runs single-step CPU checks against a RAM-backed `SnesBus`, compares final CPU+RAM state and vector cycle count, and executes vectors from tracked subset files (`v1/*.json`) with per-filename overrides from local full-cache files (`full/v1/*.json`) when present. |
 
 **Hardware Constants** (defined in `src/snes/console/snes.rs`):
 - Screen resolution: 256×224 pixels (NTSC mode, most common)
@@ -467,7 +467,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 | `roms/gb/automated_tests/daid/` | Vendored daid GB/GBC accuracy ROMs and upstream PNG references from GBEmulatorShootout, used by `src/gb/integration_tests/daid_tests.rs` for screen CRC and reference-PNG auditing. |
 | `roms/gb/automated_tests/rtc3test/` | Vendored ax6 `rtc3test` split MBC3 RTC test ROMs from GBEmulatorShootout, used by `src/gb/integration_tests/ax6_tests.rs` for DMG/CGB result-screen CRC testing. |
 | `roms/gba/automated_tests/gba-tests/` | Git submodule snapshot of jsmolka `gba-tests` (ARM/Thumb GBA CPU validation ROMs) used by `src/gba/integration_tests/gba_suite_tests.rs`. |
-| `roms/snes/automated_tests/processor_tests/65816/` | Pinned Tom Harte ProcessorTests 65816 vectors (`v1/*.json`) plus source metadata. Used by SNES integration tests in `src/snes/integration_tests/processor_tests_65816.rs`. |
+| `roms/snes/automated_tests/processor_tests/65816/` | Pinned subset of Tom Harte ProcessorTests 65816 vectors (`v1/00.{e,n}.json`, `v1/ea.{e,n}.json`) plus source metadata. Optional full-corpus vectors are downloaded into `full/v1/*.json` (git-ignored) and automatically used by the SNES integration harness when available. |
 | `roms/automated_tests/mapper_verification/` | Custom mapper verification ROMs built from assembly source with per-mapper test definitions. |
 | `roms/manual_tests/` | ROMs for manual visual/audio verification (e.g., volume tests). |
 | `roms/games/` | Game ROMs (not checked into version control). Subdirectories organized by mapper number for autorun regression tests. |
