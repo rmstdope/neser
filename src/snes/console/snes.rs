@@ -75,6 +75,10 @@ impl Emulator for Snes {
     }
 
     fn run_tick(&mut self) -> u8 {
+        if self.rom_path.is_none() {
+            return 0;
+        }
+
         // TODO: Implement CPU execution
         // Stub: signal a frame ready after every tick so the platform loop doesn't stall
         self.ready_to_render = true;
@@ -224,13 +228,22 @@ mod tests {
     #[test]
     fn run_tick_returns_nonzero_cycles() {
         let mut snes = make_snes();
+        snes.load_rom(&[], "test.sfc").unwrap();
         let cycles = snes.run_tick();
         assert!(cycles > 0);
     }
 
     #[test]
+    fn run_tick_returns_zero_when_no_rom_loaded() {
+        let mut snes = make_snes();
+        let cycles = snes.run_tick();
+        assert_eq!(cycles, 0);
+    }
+
+    #[test]
     fn run_tick_sets_ready_to_render() {
         let mut snes = make_snes();
+        snes.load_rom(&[], "test.sfc").unwrap();
         assert!(!snes.is_ready_to_render());
         snes.run_tick();
         assert!(snes.is_ready_to_render());
@@ -239,6 +252,7 @@ mod tests {
     #[test]
     fn clear_ready_to_render_clears_flag() {
         let mut snes = make_snes();
+        snes.load_rom(&[], "test.sfc").unwrap();
         snes.run_tick();
         assert!(snes.is_ready_to_render());
         snes.clear_ready_to_render();
