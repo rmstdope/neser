@@ -226,6 +226,43 @@ impl<B: SnesBus> Cpu<B> {
         self.p
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn load_state_for_processor_test(
+        &mut self,
+        a: u16,
+        x: u16,
+        y: u16,
+        d: u16,
+        dbr: u8,
+        pbr: u8,
+        s: u16,
+        pc: u16,
+        p: u8,
+        e: bool,
+    ) {
+        self.a = a;
+        self.x = x;
+        self.y = y;
+        self.d = d;
+        self.dbr = dbr;
+        self.pbr = pbr;
+        self.s = s;
+        self.pc = pc;
+        self.p = p;
+        self.e = e;
+
+        if self.e {
+            self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+            self.s = 0x0100 | (self.s & 0x00FF);
+        }
+
+        if self.x_flag() {
+            self.x &= 0x00FF;
+            self.y &= 0x00FF;
+        }
+    }
+
     /// Check if in emulation mode.
     pub fn emulation_mode(&self) -> bool {
         self.e
@@ -3452,6 +3489,7 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_d(false);
             let lo = self.read8(0x00FFFE);
             let hi = self.read8(0x00FFFF);
+            self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             7
         } else {
@@ -3464,6 +3502,7 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_d(false);
             let lo = self.read8(0x00FFE6);
             let hi = self.read8(0x00FFE7);
+            self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             8
         }
@@ -3481,6 +3520,7 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_d(false);
             let lo = self.read8(0x00FFF4);
             let hi = self.read8(0x00FFF5);
+            self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             7
         } else {
@@ -3493,6 +3533,7 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_d(false);
             let lo = self.read8(0x00FFE4);
             let hi = self.read8(0x00FFE5);
+            self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             8
         }
@@ -8016,7 +8057,7 @@ mod brk_cop_tests {
     #[test]
     fn brk_native_pushes_pbr_pc_p_and_vectors() {
         let mut cpu = native();
-        cpu.pbr = 0x00;
+        cpu.pbr = 0x7A;
         cpu.pc = 0x0000;
         cpu.s = 0x01FF;
         // BRK native vector at $FFE6/$FFE7 -> $1234
@@ -8026,8 +8067,8 @@ mod brk_cop_tests {
         assert_eq!(cpu.pc, 0x1234);
         assert_eq!(cpu.pbr, 0x00);
         assert_eq!(cpu.s, 0x01FB); // 4 pushes: PBR, PChi, PClo, P
-        // Stack: PBR=0 at 01FF, PChi=0x00 at 01FE, PClo=0x02 at 01FD, P at 01FC
-        assert_eq!(cpu.bus.read(0x01FF), 0x00); // PBR
+        // Stack: PBR=0x7A at 01FF, PChi=0x00 at 01FE, PClo=0x02 at 01FD, P at 01FC
+        assert_eq!(cpu.bus.read(0x01FF), 0x7A); // pushed PBR
         assert_eq!(cpu.bus.read(0x01FE), 0x00); // PC+2 high byte
         assert_eq!(cpu.bus.read(0x01FD), 0x02); // PC+2 low byte
         // P on stack should have I=1 (set after push) -- P pushed before I set
