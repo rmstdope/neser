@@ -3265,11 +3265,7 @@ impl<B: SnesBus> Cpu<B> {
         };
 
         let lo = self.tick_read(ptr_addr & 0xFFFF);
-        let hi_addr = if wrap_low_byte {
-            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
-        } else {
-            (ptr_addr + 1) & 0xFFFF
-        };
+        let hi_addr = (ptr_addr + 1) & 0xFFFF;
         let hi = self.tick_read(hi_addr);
         let ptr = lo as u32 | (hi as u32) << 8;
         (self.dbr as u32) << 16 | ptr
