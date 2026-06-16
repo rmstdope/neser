@@ -92,14 +92,14 @@ fn decode_sram_size(ram_size_field: u8) -> usize {
 
     let exp = usize::from(ram_size_field);
     let Some(kib) = 1usize.checked_shl(exp as u32) else {
-        return 1024 * 1024;
+        return 0;
     };
     let size = kib.saturating_mul(1024);
-    size.min(1024 * 1024)
+    if size > 1024 * 1024 { 0 } else { size }
 }
 
 fn has_battery(chipset: u8) -> bool {
-    chipset & 0x02 != 0
+    matches!(chipset & 0x0F, 0x2 | 0x5 | 0x6 | 0x9 | 0xA | 0xD | 0xE)
 }
 
 #[cfg(test)]
@@ -115,8 +115,11 @@ mod tests {
         title: &[u8],
     ) {
         rom[base..base + title.len()].copy_from_slice(title);
+        rom[base + 0x3C] = 0x00;
+        rom[base + 0x3D] = 0x80;
         rom[base + 0xD5] = mode;
         rom[base + 0xD6] = chipset;
+        rom[base + 0xD7] = 0x07;
         rom[base + 0xD8] = ram_size_field;
         rom[base + 0xDC] = 0x34;
         rom[base + 0xDD] = 0x12;
@@ -238,5 +241,16 @@ mod tests {
             .err()
             .expect("should reject garbage");
         assert_eq!(err, CartridgeError::HeaderNotFound);
+    }
+
+    #[test]
+    fn has_battery_uses_chipset_low_nibble_mapping() {
+        assert!(has_battery(0x02));
+        assert!(!has_battery(0x03));
+    }
+
+    #[test]
+    fn decode_sram_size_returns_zero_for_out_of_range_field() {
+        assert_eq!(decode_sram_size(32), 0);
     }
 }

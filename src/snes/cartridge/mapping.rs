@@ -62,8 +62,6 @@ fn score_candidate(rom: &[u8], mapping: Mapping, header_offset: usize) -> i32 {
 
     if mapping_mode_matches(map_mode, mapping) {
         score += 30;
-    } else if map_mode != 0 {
-        score += 5;
     }
 
     if checksum.wrapping_add(checksum_complement) == 0xFFFF {
@@ -94,7 +92,8 @@ fn rom_size_is_sane(rom_size_field: u8, actual_len: usize) -> bool {
     let Some(bytes) = kib.checked_mul(1024) else {
         return false;
     };
-    bytes > 0 && bytes <= actual_len.saturating_mul(2)
+    let lower_bound = actual_len / 8;
+    bytes > 0 && bytes >= lower_bound && bytes <= actual_len.saturating_mul(2)
 }
 
 fn mapping_mode_matches(map_mode: u8, mapping: Mapping) -> bool {
