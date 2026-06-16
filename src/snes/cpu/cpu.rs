@@ -21,6 +21,19 @@ const FLAG_ACCUM_WIDTH: u8 = 0b0010_0000; // M flag
 const FLAG_OVERFLOW: u8 = 0b0100_0000;
 const FLAG_NEGATIVE: u8 = 0b1000_0000;
 
+#[derive(Clone, Copy)]
+enum BlockMoveDirection {
+    Increment,
+    Decrement,
+}
+
+#[derive(Clone, Copy)]
+struct BlockMoveState {
+    dst_bank: u8,
+    src_bank: u8,
+    direction: BlockMoveDirection,
+}
+
 /// WDC 65C816 CPU
 pub struct Cpu<B: SnesBus> {
     /// Accumulator (16-bit: B:A)
@@ -83,6 +96,10 @@ pub struct Cpu<B: SnesBus> {
     /// Reset at the start of each step() call; used to compute internal-cycle tick counts.
     memory_bus_cycles: u8,
 
+    /// In-progress MVN/MVP transfer state. When present, each `step()` performs one
+    /// transfer unit and keeps architectural PC at the post-operand address.
+    block_move_state: Option<BlockMoveState>,
+
     /// Bus for memory access
     bus: B,
 }
@@ -108,6 +125,7 @@ impl<B: SnesBus> Cpu<B> {
             abort_pending: false,
             fast_rom: false,
             memory_bus_cycles: 0,
+            block_move_state: None,
             bus,
         }
     }
@@ -224,6 +242,43 @@ impl<B: SnesBus> Cpu<B> {
     /// Read processor status register.
     pub fn read_p(&self) -> u8 {
         self.p
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn load_state_for_processor_test(
+        &mut self,
+        a: u16,
+        x: u16,
+        y: u16,
+        d: u16,
+        dbr: u8,
+        pbr: u8,
+        s: u16,
+        pc: u16,
+        p: u8,
+        e: bool,
+    ) {
+        self.a = a;
+        self.x = x;
+        self.y = y;
+        self.d = d;
+        self.dbr = dbr;
+        self.pbr = pbr;
+        self.s = s;
+        self.pc = pc;
+        self.p = p;
+        self.e = e;
+
+        if self.e {
+            self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+            self.s = 0x0100 | (self.s & 0x00FF);
+        }
+
+        if self.x_flag() {
+            self.x &= 0x00FF;
+            self.y &= 0x00FF;
+        }
     }
 
     /// Check if in emulation mode.
@@ -377,6 +432,8 @@ impl<B: SnesBus> Cpu<B> {
             // Entering emulation mode (E 0→1)
             self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH; // Force M=1, X=1
             self.s = 0x0100 | (self.s & 0x00FF); // Force S high byte to $01
+            self.x &= 0x00FF; // X/Y become 8-bit in emulation mode
+            self.y &= 0x00FF;
         }
         // Note: When leaving emulation mode (E 1→0), M/X remain 1 until REP clears them
     }
@@ -429,6 +486,10 @@ impl<B: SnesBus> Cpu<B> {
         self.extra_cycles = 0;
         self.last_page_crossed = false;
         self.memory_bus_cycles = 0;
+
+        if let Some(state) = self.block_move_state {
+            return self.step_block_move_unit(state);
+        }
 
         // Poll hardware interrupts (higher priority than opcode fetch)
         if self.abort_pending {
@@ -829,46 +890,59 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_wai(&mut self) -> u8 {
-        3
+        4
     }
 
     fn op_stp(&mut self) -> u8 {
-        3
+        4
     }
 
     fn op_mvn(&mut self) -> u8 {
-        let dst_bank = self.fetch_byte();
-        let src_bank = self.fetch_byte();
-        let src_addr = (src_bank as u32) << 16 | self.x as u32;
-        let dst_addr = (dst_bank as u32) << 16 | self.y as u32;
-        let byte = self.read8(src_addr);
-        self.write8(dst_addr, byte);
-        self.dbr = dst_bank;
-        self.x = self.x.wrapping_add(1);
-        self.y = self.y.wrapping_add(1);
-        self.a = self.a.wrapping_sub(1);
-        if self.a != 0xFFFF {
-            // Keep PC at MVN instruction for next byte (back up 3: opcode + 2 operands)
-            self.pc = self.pc.wrapping_sub(3);
-        }
-        7
+        let state = BlockMoveState {
+            dst_bank: self.fetch_byte(),
+            src_bank: self.fetch_byte(),
+            direction: BlockMoveDirection::Increment,
+        };
+        self.pc = self.pc.wrapping_sub(1);
+        self.block_move_state = Some(state);
+        self.step_block_move_unit(state) + if self.e { 2 } else { 0 }
     }
 
     fn op_mvp(&mut self) -> u8 {
-        let dst_bank = self.fetch_byte();
-        let src_bank = self.fetch_byte();
-        let src_addr = (src_bank as u32) << 16 | self.x as u32;
-        let dst_addr = (dst_bank as u32) << 16 | self.y as u32;
+        let state = BlockMoveState {
+            dst_bank: self.fetch_byte(),
+            src_bank: self.fetch_byte(),
+            direction: BlockMoveDirection::Decrement,
+        };
+        self.pc = self.pc.wrapping_sub(1);
+        self.block_move_state = Some(state);
+        self.step_block_move_unit(state) + if self.e { 2 } else { 0 }
+    }
+
+    fn step_block_move_unit(&mut self, state: BlockMoveState) -> u8 {
+        let src_addr = (state.src_bank as u32) << 16 | self.x as u32;
+        let dst_addr = (state.dst_bank as u32) << 16 | self.y as u32;
         let byte = self.read8(src_addr);
         self.write8(dst_addr, byte);
-        self.dbr = dst_bank;
-        self.x = self.x.wrapping_sub(1);
-        self.y = self.y.wrapping_sub(1);
-        self.a = self.a.wrapping_sub(1);
-        if self.a != 0xFFFF {
-            // Keep PC at MVP instruction for next byte
-            self.pc = self.pc.wrapping_sub(3);
+        self.dbr = state.dst_bank;
+
+        match state.direction {
+            BlockMoveDirection::Increment => {
+                self.write_x(self.read_x().wrapping_add(1));
+                self.write_y(self.read_y().wrapping_add(1));
+            }
+            BlockMoveDirection::Decrement => {
+                self.write_x(self.read_x().wrapping_sub(1));
+                self.write_y(self.read_y().wrapping_sub(1));
+            }
         }
+
+        self.a = self.a.wrapping_sub(1);
+        if self.a == 0xFFFF {
+            self.block_move_state = None;
+            self.pc = self.pc.wrapping_add(1);
+        }
+
         7
     }
 
@@ -1474,14 +1548,12 @@ impl<B: SnesBus> Cpu<B> {
                 let mut result = (a & 0xF0) + (op & 0xF0) + lo;
                 let v = ((!(a ^ op) & (a ^ result)) & 0x80) != 0;
                 self.set_flag_v(v);
-                self.set_flag_n(result & 0x80 != 0);
-                if result > 0x99 {
+                if result > 0x9F {
                     result += 0x60;
                 }
                 self.set_flag_c(result > 0xFF);
                 self.write_a(result as u16);
-                let new_a = self.a;
-                self.set_flag_z(new_a & 0xFF == 0);
+                self.set_nz_m(self.a);
             } else {
                 let result = a + op + c;
                 let v = ((!(a ^ op) & (a ^ result)) & 0x80) != 0;
@@ -1502,23 +1574,22 @@ impl<B: SnesBus> Cpu<B> {
                     lo = (lo + 6) & 0x000F | 0x0010;
                 }
                 let mut mid_lo = (a & 0x00F0) + (op & 0x00F0) + lo;
-                if mid_lo > 0x99 {
+                if mid_lo > 0x9F {
                     mid_lo = (mid_lo + 0x60) & 0x00FF | 0x0100;
                 }
                 let mut mid_hi = (a & 0x0F00) + (op & 0x0F00) + mid_lo;
-                if (mid_hi & 0x0F00) > 0x0900 {
+                if mid_hi > 0x09FF {
                     mid_hi = (mid_hi + 0x0600) & 0x0FFF | 0x1000;
                 }
                 let mut result = (a & 0xF000) + (op & 0xF000) + mid_hi;
                 let v = ((!(a ^ op) & (a ^ result)) & 0x8000) != 0;
                 self.set_flag_v(v);
-                self.set_flag_n(result & 0x8000 != 0);
-                if result > 0x9999 {
+                if result > 0x9FFF {
                     result += 0x6000;
                 }
                 self.set_flag_c(result > 0xFFFF);
                 self.a = result as u16;
-                self.set_flag_z(self.a == 0);
+                self.set_nz_m(self.a);
             } else {
                 let result = a + op + c;
                 let v = ((!(a ^ op) & (a ^ result)) & 0x8000) != 0;
@@ -3081,23 +3152,31 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Direct Page Indexed X: EA = (D + offset + X) & 0xFFFF  [bank 0]
-    /// In emulation mode with D=$0000, wraps within page 0 (& 0xFF).
+    /// In emulation mode with D low byte = $00, wraps offset indexing within D page.
     fn addr_dp_x(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
         let ea = (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF;
-        if self.e && self.d == 0 { ea & 0xFF } else { ea }
+        if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) as u32) | (ea & 0x00FF)
+        } else {
+            ea
+        }
     }
 
     /// Direct Page Indexed Y: EA = (D + offset + Y) & 0xFFFF  [bank 0]
-    /// In emulation mode with D=$0000, wraps within page 0 (& 0xFF).
+    /// In emulation mode with D low byte = $00, wraps offset indexing within D page.
     fn addr_dp_y(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
         let ea = (self.d as u32 + offset as u32 + self.y as u32) & 0xFFFF;
-        if self.e && self.d == 0 { ea & 0xFF } else { ea }
+        if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) as u32) | (ea & 0x00FF)
+        } else {
+            ea
+        }
     }
 
     /// Absolute: EA = DBR:abs
@@ -3141,9 +3220,18 @@ impl<B: SnesBus> Cpu<B> {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | offset as u16) as u32
+        } else {
+            (self.d as u32 + offset as u32) & 0xFFFF
+        };
         let lo = self.tick_read(ptr_addr);
-        let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
+        let hi_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
+        let hi = self.tick_read(hi_addr);
         let ptr = lo as u32 | (hi as u32) << 8;
         (self.dbr as u32) << 16 | ptr
     }
@@ -3155,28 +3243,29 @@ impl<B: SnesBus> Cpu<B> {
         }
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
         let lo = self.tick_read(ptr_addr);
-        let mid = self.tick_read((ptr_addr + 1) & 0xFFFF);
-        let hi = self.tick_read((ptr_addr + 2) & 0xFFFF);
+        let mid_addr = (ptr_addr + 1) & 0xFFFF;
+        let hi_addr = (ptr_addr + 2) & 0xFFFF;
+        let mid = self.tick_read(mid_addr);
+        let hi = self.tick_read(hi_addr);
         lo as u32 | (mid as u32) << 8 | (hi as u32) << 16
     }
 
-    /// Direct Page Indexed Indirect X: pointer at (D+offset+X), EA = DBR:ptr16
+    /// Direct Page Indexed Indirect X: pointer at (D+offset+X), with emulation wrap
+    /// when D low byte is zero (compatible with 6502-style zero-page indexing).
     fn addr_dp_x_ind(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF;
-        let ptr_addr = if self.e && self.d == 0 {
-            ptr_addr & 0xFF
+        let wrap_low_byte = self.e && (self.d & 0x00FF) == 0;
+        let ptr_addr = if wrap_low_byte {
+            let dp_index = (offset as u16).wrapping_add(self.x) & 0x00FF;
+            (self.d & 0xFF00).wrapping_add(dp_index) as u32
         } else {
-            ptr_addr
+            self.d.wrapping_add(offset as u16).wrapping_add(self.x) as u32
         };
-        let lo = self.tick_read(ptr_addr);
-        let hi_addr = if self.e && self.d == 0 {
-            (ptr_addr + 1) & 0xFF
-        } else {
-            (ptr_addr + 1) & 0xFFFF
-        };
+
+        let lo = self.tick_read(ptr_addr & 0xFFFF);
+        let hi_addr = (ptr_addr + 1) & 0xFFFF;
         let hi = self.tick_read(hi_addr);
         let ptr = lo as u32 | (hi as u32) << 8;
         (self.dbr as u32) << 16 | ptr
@@ -3187,9 +3276,18 @@ impl<B: SnesBus> Cpu<B> {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | offset as u16) as u32
+        } else {
+            (self.d as u32 + offset as u32) & 0xFFFF
+        };
         let lo = self.tick_read(ptr_addr);
-        let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
+        let hi_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
+        let hi = self.tick_read(hi_addr);
         let ptr16 = lo as u16 | (hi as u16) << 8;
         self.last_page_crossed =
             !self.x_flag() || (ptr16 & 0xFF00) != (ptr16.wrapping_add(self.y) & 0xFF00);
@@ -3201,10 +3299,24 @@ impl<B: SnesBus> Cpu<B> {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | offset as u16) as u32
+        } else {
+            (self.d as u32 + offset as u32) & 0xFFFF
+        };
         let lo = self.tick_read(ptr_addr);
-        let mid = self.tick_read((ptr_addr + 1) & 0xFFFF);
-        let hi = self.tick_read((ptr_addr + 2) & 0xFFFF);
+        let mid_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
+        let hi_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 2) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 2) & 0xFFFF
+        };
+        let mid = self.tick_read(mid_addr);
+        let hi = self.tick_read(hi_addr);
         let base = lo as u32 | (mid as u32) << 8 | (hi as u32) << 16;
         base.wrapping_add(self.y as u32) & 0xFF_FFFF
     }
@@ -3232,21 +3344,21 @@ impl<B: SnesBus> Cpu<B> {
         self.tick_write(addr & 0xFF_FFFF, value);
     }
 
-    /// Read two bytes little-endian; high byte wraps within the same bank.
+    /// Read two bytes little-endian using linear 24-bit addressing.
     fn read16(&mut self, addr: u32) -> u16 {
-        let bank = addr & 0xFF_0000;
-        let offset = addr & 0x0000_FFFF;
-        let lo = self.tick_read(bank | offset);
-        let hi = self.tick_read(bank | ((offset + 1) & 0xFFFF));
+        let lo_addr = addr & 0xFF_FFFF;
+        let hi_addr = lo_addr.wrapping_add(1) & 0xFF_FFFF;
+        let lo = self.tick_read(lo_addr);
+        let hi = self.tick_read(hi_addr);
         lo as u16 | (hi as u16) << 8
     }
 
-    /// Write two bytes little-endian; high byte wraps within the same bank.
+    /// Write two bytes little-endian using linear 24-bit addressing.
     fn write16(&mut self, addr: u32, value: u16) {
-        let bank = addr & 0xFF_0000;
-        let offset = addr & 0x0000_FFFF;
-        self.tick_write(bank | offset, value as u8);
-        self.tick_write(bank | ((offset + 1) & 0xFFFF), (value >> 8) as u8);
+        let lo_addr = addr & 0xFF_FFFF;
+        let hi_addr = lo_addr.wrapping_add(1) & 0xFF_FFFF;
+        self.tick_write(lo_addr, value as u8);
+        self.tick_write(hi_addr, (value >> 8) as u8);
     }
 
     /// Read M-flag width: 8-bit when M=1, 16-bit when M=0.
@@ -3278,7 +3390,13 @@ impl<B: SnesBus> Cpu<B> {
             self.read8(addr) as u16
         } else {
             self.extra_cycles += 1;
-            self.read16(addr)
+            if addr <= 0xFFFF {
+                let lo = self.tick_read(addr & 0xFFFF);
+                let hi = self.tick_read((addr.wrapping_add(1)) & 0xFFFF);
+                lo as u16 | (hi as u16) << 8
+            } else {
+                self.read16(addr)
+            }
         }
     }
 
@@ -3289,16 +3407,22 @@ impl<B: SnesBus> Cpu<B> {
             self.write8(addr, value as u8);
         } else {
             self.extra_cycles += 1;
-            self.write16(addr, value);
+            if addr <= 0xFFFF {
+                self.tick_write(addr & 0xFFFF, value as u8);
+                self.tick_write((addr.wrapping_add(1)) & 0xFFFF, (value >> 8) as u8);
+            } else {
+                self.write16(addr, value);
+            }
         }
     }
 
     // -------------------------------------------------------------------------
-    // Stack helpers: push/pull respect native vs emulation mode S wrapping.
+    // Stack helpers.
     // PUSH: write to S, then decrement S.
     // PULL: increment S, then read from S.
-    // In emulation mode write_s forces the high byte to $01, but we manipulate
-    // self.s directly for speed; emulation mode constrains S to page 1.
+    // In emulation mode, 8-bit stack operations stay in page 1. 16-bit stack
+    // operations use consecutive addresses based on the current S value and then
+    // normalize the architectural S back to page 1.
     // -------------------------------------------------------------------------
 
     fn push8(&mut self, val: u8) {
@@ -3311,6 +3435,17 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn push16(&mut self, val: u16) {
+        if self.e {
+            self.write8(self.s as u32, (val >> 8) as u8);
+            self.write8(self.s.wrapping_sub(1) as u32, val as u8);
+            self.s = 0x0100 | (self.s.wrapping_sub(2) & 0x00FF);
+        } else {
+            self.push8((val >> 8) as u8);
+            self.push8(val as u8);
+        }
+    }
+
+    fn push16_bytes(&mut self, val: u16) {
         self.push8((val >> 8) as u8);
         self.push8(val as u8);
     }
@@ -3325,9 +3460,29 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn pull16(&mut self) -> u16 {
+        if self.e {
+            let s1 = self.s.wrapping_add(1);
+            let lo = self.read8(s1 as u32) as u16;
+            let s2 = s1.wrapping_add(1);
+            let hi = self.read8(s2 as u32) as u16;
+            self.s = 0x0100 | (s2 & 0x00FF);
+            hi << 8 | lo
+        } else {
+            let lo = self.pull8() as u16;
+            let hi = self.pull8() as u16;
+            hi << 8 | lo
+        }
+    }
+
+    fn pull16_bytes(&mut self) -> u16 {
         let lo = self.pull8() as u16;
         let hi = self.pull8() as u16;
         hi << 8 | lo
+    }
+
+    fn push8_linear_e(&mut self, val: u8) {
+        self.write8(self.s as u32, val);
+        self.s = self.s.wrapping_sub(1);
     }
 
     // -------------------------------------------------------------------------
@@ -3350,8 +3505,11 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_jmp_abs_x_ind(&mut self) -> u8 {
         let base = self.fetch_word();
-        let ptr_addr = (self.pbr as u32) << 16 | base.wrapping_add(self.x) as u32;
-        self.pc = self.read16(ptr_addr);
+        let ptr = base.wrapping_add(self.x);
+        let bank_base = (self.pbr as u32) << 16;
+        let lo = self.tick_read(bank_base | ptr as u32);
+        let hi = self.tick_read(bank_base | ptr.wrapping_add(1) as u32);
+        self.pc = lo as u16 | (hi as u16) << 8;
         6
     }
 
@@ -3379,7 +3537,7 @@ impl<B: SnesBus> Cpu<B> {
     fn op_jsr_abs(&mut self) -> u8 {
         let target = self.fetch_word();
         let ret = self.pc.wrapping_sub(1);
-        self.push16(ret);
+        self.push16_bytes(ret);
         self.pc = target;
         6
     }
@@ -3387,17 +3545,27 @@ impl<B: SnesBus> Cpu<B> {
     fn op_jsr_abs_x_ind(&mut self) -> u8 {
         let base = self.fetch_word();
         let ret = self.pc.wrapping_sub(1);
-        self.push16(ret);
-        let ptr_addr = (self.pbr as u32) << 16 | base.wrapping_add(self.x) as u32;
-        self.pc = self.read16(ptr_addr);
+        self.push16_bytes(ret);
+        let ptr = base.wrapping_add(self.x);
+        let bank_base = (self.pbr as u32) << 16;
+        let lo = self.tick_read(bank_base | ptr as u32);
+        let hi = self.tick_read(bank_base | ptr.wrapping_add(1) as u32);
+        self.pc = lo as u16 | (hi as u16) << 8;
         8
     }
 
     fn op_jsl_abs_long(&mut self) -> u8 {
         let addr = self.fetch_addr24();
         let ret = self.pc.wrapping_sub(1);
-        self.push8(self.pbr);
-        self.push16(ret);
+        if self.e {
+            self.push8_linear_e(self.pbr);
+            self.push8_linear_e((ret >> 8) as u8);
+            self.push8_linear_e(ret as u8);
+            self.s = 0x0100 | (self.s & 0x00FF);
+        } else {
+            self.push8(self.pbr);
+            self.push16_bytes(ret);
+        }
         self.pbr = (addr >> 16) as u8;
         self.pc = addr as u16;
         8
@@ -3408,14 +3576,24 @@ impl<B: SnesBus> Cpu<B> {
     // -------------------------------------------------------------------------
 
     fn op_rts(&mut self) -> u8 {
-        let addr = self.pull16();
+        let addr = self.pull16_bytes();
         self.pc = addr.wrapping_add(1);
         6
     }
 
     fn op_rtl(&mut self) -> u8 {
-        let addr = self.pull16();
-        let bank = self.pull8();
+        let (addr, bank) = if self.e {
+            let s1 = self.s.wrapping_add(1);
+            let lo = self.read8(s1 as u32) as u16;
+            let s2 = s1.wrapping_add(1);
+            let hi = self.read8(s2 as u32) as u16;
+            let s3 = s2.wrapping_add(1);
+            let bank = self.read8(s3 as u32);
+            self.s = 0x0100 | (s3 & 0x00FF);
+            (hi << 8 | lo, bank)
+        } else {
+            (self.pull16_bytes(), self.pull8())
+        };
         self.pc = addr.wrapping_add(1);
         self.pbr = bank;
         6
@@ -3432,7 +3610,7 @@ impl<B: SnesBus> Cpu<B> {
             self.x &= 0x00FF;
             self.y &= 0x00FF;
         }
-        let pc = self.pull16();
+        let pc = self.pull16_bytes();
         self.pc = pc;
         if !self.e {
             self.pbr = self.pull8();
@@ -3452,6 +3630,7 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_d(false);
             let lo = self.read8(0x00FFFE);
             let hi = self.read8(0x00FFFF);
+            self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             7
         } else {
@@ -3464,6 +3643,7 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_d(false);
             let lo = self.read8(0x00FFE6);
             let hi = self.read8(0x00FFE7);
+            self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             8
         }
@@ -3481,6 +3661,7 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_d(false);
             let lo = self.read8(0x00FFF4);
             let hi = self.read8(0x00FFF5);
+            self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             7
         } else {
@@ -3493,6 +3674,7 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_d(false);
             let lo = self.read8(0x00FFE4);
             let hi = self.read8(0x00FFE5);
+            self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             8
         }
@@ -3674,8 +3856,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_pei(&mut self) -> u8 {
         let off = self.fetch_byte();
-        let ea = self.addr_dp(off);
-        let val = self.read16(ea);
+        let val = self.addr_dp_ind(off) as u16;
         self.push16(val);
         6
     }
@@ -3842,6 +4023,8 @@ mod tests {
         cpu.p &= !FLAG_ACCUM_WIDTH; // M=0
         cpu.p &= !FLAG_INDEX_WIDTH; // X=0
         cpu.s = 0x2345; // Full 16-bit stack
+        cpu.x = 0x0335;
+        cpu.y = 0x8FB3;
         cpu.set_flag_c(true); // C=1 (to switch to emulation mode)
 
         // Execute XCE: swap E and C
@@ -3854,6 +4037,8 @@ mod tests {
         assert!(cpu.m_flag()); // M forced to 1
         assert!(cpu.x_flag()); // X forced to 1
         assert_eq!(cpu.read_s(), 0x0145); // S high byte forced to $01
+        assert_eq!(cpu.read_x(), 0x0035);
+        assert_eq!(cpu.read_y(), 0x00B3);
     }
 
     #[test]
@@ -4207,9 +4392,51 @@ mod tests {
             cpu.write_d(0x0200);
             cpu.write_x(0x0010);
             cpu.write_dbr(0x03);
-            // Place pointer $ABCD at D + offset + X = $0200 + $10 + $10 = $0220
+            // Place pointer $ABCD at D + ((offset + X) & $FF) = $0200 + $20 = $0220
             cpu.bus.load(0x0000_0220, &[0xCD, 0xAB]);
             assert_eq!(cpu.addr_dp_x_ind(0x10), 0x03_ABCD);
+        }
+
+        #[test]
+        fn addr_dp_x_wraps_within_d_page_in_emulation_when_d_low_zero() {
+            let mut cpu = cpu_with_bus();
+            cpu.e = true;
+            cpu.write_d(0x8300);
+            cpu.write_x(0x00CC);
+            assert_eq!(cpu.addr_dp_x(0xBC), 0x0000_8388);
+        }
+
+        #[test]
+        fn addr_dp_y_wraps_within_d_page_in_emulation_when_d_low_zero() {
+            let mut cpu = cpu_with_bus();
+            cpu.e = true;
+            cpu.write_d(0x1200);
+            cpu.write_y(0x00F9);
+            assert_eq!(cpu.addr_dp_y(0x80), 0x0000_1279);
+        }
+
+        #[test]
+        fn addr_dp_x_ind_wraps_offset_plus_x_to_8bit() {
+            let mut cpu = cpu_with_bus();
+            cpu.e = true;
+            cpu.write_d(0xB200);
+            cpu.write_x(0x00F9);
+            cpu.write_dbr(0xB8);
+            // (offset + X) wraps: $B6 + $F9 = $1AF -> $AF, pointer read from $B2AF/$B2B0.
+            cpu.bus.load(0x0000_B2AF, &[0x6C, 0x8B]);
+            assert_eq!(cpu.addr_dp_x_ind(0xB6), 0xB8_8B6C);
+        }
+
+        #[test]
+        fn addr_dp_x_ind_uses_full_add_when_d_low_nonzero() {
+            let mut cpu = cpu_with_bus();
+            cpu.e = false;
+            cpu.write_d(0x61D2);
+            cpu.write_x(0x0056);
+            cpu.write_dbr(0xAF);
+            // Full add: $61D2 + $F6 + $56 = $631E.
+            cpu.bus.load(0x0000_631E, &[0x79, 0x14]);
+            assert_eq!(cpu.addr_dp_x_ind(0xF6), 0xAF_1479);
         }
 
         // -- Direct Page Indirect Indexed Y (dp),Y -----------------------------
@@ -4364,10 +4591,10 @@ mod mem_helpers_tests {
     }
 
     #[test]
-    fn read16_wraps_high_byte_within_bank() {
+    fn read16_carries_high_byte_into_next_bank() {
         let mut cpu = make_cpu();
         cpu.bus.load(0x02_FFFF, &[0x78]);
-        cpu.bus.load(0x02_0000, &[0x56]);
+        cpu.bus.load(0x03_0000, &[0x56]);
         assert_eq!(cpu.read16(0x02_FFFF), 0x5678);
     }
 
@@ -4380,11 +4607,22 @@ mod mem_helpers_tests {
     }
 
     #[test]
-    fn write16_wraps_high_byte_within_bank() {
+    fn write16_carries_high_byte_into_next_bank() {
         let mut cpu = make_cpu();
         cpu.write16(0x04_FFFF, 0xCAFE);
         assert_eq!(cpu.bus.read(0x04_FFFF), 0xFE);
-        assert_eq!(cpu.bus.read(0x04_0000), 0xCA);
+        assert_eq!(cpu.bus.read(0x05_0000), 0xCA);
+    }
+
+    #[test]
+    fn read_m_16bit_preserves_bank_for_banked_addresses() {
+        let mut cpu = make_cpu();
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu.dbr = 0x6B;
+        cpu.bus.load(0x6B1234, &[0x78, 0x56]);
+
+        assert_eq!(cpu.read_m(0x6B1234), 0x5678);
     }
 
     #[test]
@@ -7269,6 +7507,22 @@ mod jmp_jsr_rts_tests {
         assert_eq!(cpu.pc, 0xABCD);
     }
 
+    #[test]
+    fn jmp_abs_x_ind_wraps_pointer_read_within_program_bank() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.pbr = 0x20;
+        cpu.x = 0x00C5;
+        cpu.bus.load(0x20113C, &[0x7C, 0x3A, 0xFF]);
+        cpu.bus.load(0x20FFFF, &[0x83]);
+        cpu.bus.load(0x200000, &[0x7E]);
+        cpu.write_pc(0x113C);
+
+        cpu.step();
+
+        assert_eq!(cpu.pbr, 0x20);
+        assert_eq!(cpu.pc, 0x7E83);
+    }
+
     // =========================================================================
     // JMP abs_long ( changes PBR0x5C)
     // =========================================================================
@@ -7330,6 +7584,23 @@ mod jmp_jsr_rts_tests {
         assert_eq!(cpu.s, 0x01FD);
     }
 
+    #[test]
+    fn jsr_abs_x_ind_wraps_pointer_read_within_program_bank() {
+        let mut cpu = native16();
+        cpu.s = 0xD082;
+        cpu.pbr = 0x98;
+        cpu.x = 0x0013;
+        cpu.bus.load(0x983A3D, &[0xFC, 0xEC, 0xFF]);
+        cpu.bus.load(0x98FFFF, &[0x72]);
+        cpu.bus.load(0x980000, &[0x4B]);
+        cpu.write_pc(0x3A3D);
+
+        cpu.step();
+
+        assert_eq!(cpu.pc, 0x4B72);
+        assert_eq!(cpu.s, 0xD080);
+    }
+
     // =========================================================================
     // JSL abs_long ( push PBR + return_addr-1 (3 bytes), jump0x22)
     // =========================================================================
@@ -7348,6 +7619,24 @@ mod jmp_jsr_rts_tests {
         assert_eq!(cpu.bus.read(0x01FE), 0x00); // high byte of 0x0003
         assert_eq!(cpu.bus.read(0x01FD), 0x03); // low byte of 0x0003
         assert_eq!(cpu.s, 0x01FC);
+    }
+
+    #[test]
+    fn jsl_emulation_uses_linear_stack_addresses_then_normalizes_s() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.write_s(0xEC00);
+        cpu.pbr = 0xDD;
+        cpu.bus.load(0xDD1D9F, &[0x22, 0x77, 0xA3, 0xE4]); // JSL $E4:A377
+        cpu.write_pc(0x1D9F);
+
+        cpu.step();
+
+        assert_eq!(cpu.bus.read(0x0100), 0xDD);
+        assert_eq!(cpu.bus.read(0x00FF), 0x1D);
+        assert_eq!(cpu.bus.read(0x00FE), 0xA2);
+        assert_eq!(cpu.s, 0x01FD);
+        assert_eq!(cpu.pbr, 0xE4);
+        assert_eq!(cpu.pc, 0xA377);
     }
 
     // =========================================================================
@@ -7380,6 +7669,25 @@ mod jmp_jsr_rts_tests {
         assert_eq!(cpu.pc, 0x4000); // $3FFF + 1
         assert_eq!(cpu.pbr, 0x02);
         assert_eq!(cpu.s, 0x01FF);
+    }
+
+    #[test]
+    fn rtl_emulation_matches_6b_e_104_vector() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x91976B, &[0x6B]);
+        cpu.bus.load(0x0200, &[0x3A, 0xFE, 0xD0]);
+
+        cpu.load_state_for_processor_test(
+            0xC83D, 0x0040, 0x0031, 0x0B57, 0x13, 0x91, 0x12FF, 0x976B, 0xF5, true,
+        );
+
+        assert_eq!(cpu.read_s(), 0x01FF);
+
+        cpu.step();
+
+        assert_eq!(cpu.read_pc(), 0xFE3B);
+        assert_eq!(cpu.read_pbr(), 0xD0);
+        assert_eq!(cpu.read_s(), 0x0102);
     }
 
     // =========================================================================
@@ -7515,6 +7823,20 @@ mod stack_ops_tests {
         assert!(cpu.flag_z());
     }
 
+    #[test]
+    fn phd_emulation_writes_second_byte_to_00ff() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.d = 0xC825;
+        cpu.write_s(0xDD00);
+        cpu.bus.load(0x0000, &[0x0B]); // PHD
+
+        cpu.step();
+
+        assert_eq!(cpu.bus.read(0x0100), 0xC8);
+        assert_eq!(cpu.bus.read(0x00FF), 0x25);
+        assert_eq!(cpu.s, 0x01FE);
+    }
+
     // =========================================================================
     // PHY / PLY (0x5A / 0x7A)
     // =========================================================================
@@ -7609,6 +7931,21 @@ mod stack_ops_tests {
         assert_eq!(cpu.bus.read(0x01FF), 0x12);
         assert_eq!(cpu.bus.read(0x01FE), 0x34);
         assert_eq!(cpu.s, 0x01FD);
+    }
+
+    #[test]
+    fn phd_in_emulation_crosses_0100_to_00ff_and_keeps_s_in_page_1() {
+        let mut cpu = native16();
+        cpu.e = true;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.d = 0xC825;
+        cpu.s = 0x0100;
+        cpu.bus.load(0x0000, &[0x0B]);
+        cpu.step();
+
+        assert_eq!(cpu.bus.read(0x0100), 0xC8);
+        assert_eq!(cpu.bus.read(0x00FF), 0x25);
+        assert_eq!(cpu.s, 0x01FE);
     }
 
     #[test]
@@ -8016,7 +8353,7 @@ mod brk_cop_tests {
     #[test]
     fn brk_native_pushes_pbr_pc_p_and_vectors() {
         let mut cpu = native();
-        cpu.pbr = 0x00;
+        cpu.pbr = 0x7A;
         cpu.pc = 0x0000;
         cpu.s = 0x01FF;
         // BRK native vector at $FFE6/$FFE7 -> $1234
@@ -8026,8 +8363,8 @@ mod brk_cop_tests {
         assert_eq!(cpu.pc, 0x1234);
         assert_eq!(cpu.pbr, 0x00);
         assert_eq!(cpu.s, 0x01FB); // 4 pushes: PBR, PChi, PClo, P
-        // Stack: PBR=0 at 01FF, PChi=0x00 at 01FE, PClo=0x02 at 01FD, P at 01FC
-        assert_eq!(cpu.bus.read(0x01FF), 0x00); // PBR
+        // Stack: PBR=0x7A at 01FF, PChi=0x00 at 01FE, PClo=0x02 at 01FD, P at 01FC
+        assert_eq!(cpu.bus.read(0x01FF), 0x7A); // pushed PBR
         assert_eq!(cpu.bus.read(0x01FE), 0x00); // PC+2 high byte
         assert_eq!(cpu.bus.read(0x01FD), 0x02); // PC+2 low byte
         // P on stack should have I=1 (set after push) -- P pushed before I set
@@ -8161,25 +8498,51 @@ mod wai_stp_tests {
     use super::*;
     use crate::snes::bus::TestBus;
 
-    // WAI (0xCB): halts CPU until interrupt; for emulation purposes,
-    // we model it as a 3-cycle NOP (PC advances, no state change beyond cycles).
+    // WAI (0xCB): halts CPU until interrupt; for vector conformance,
+    // model as a 4-cycle instruction (PC advances, no state change beyond cycles).
     #[test]
-    fn wai_advances_pc_and_returns_3_cycles() {
+    fn wai_advances_pc_and_returns_4_cycles() {
         let mut cpu = Cpu::new(TestBus::default());
         cpu.bus.load(0x0000, &[0xCB]);
         let cycles = cpu.step();
         assert_eq!(cpu.pc, 0x0001);
-        assert_eq!(cycles, 3);
+        assert_eq!(cycles, 4);
     }
 
-    // STP (0xDB): halts CPU until reset; modeled as 3-cycle NOP.
+    // STP (0xDB): halts CPU until reset; modeled as 4-cycle instruction.
     #[test]
-    fn stp_advances_pc_and_returns_3_cycles() {
+    fn stp_advances_pc_and_returns_4_cycles() {
         let mut cpu = Cpu::new(TestBus::default());
         cpu.bus.load(0x0000, &[0xDB]);
         let cycles = cpu.step();
         assert_eq!(cpu.pc, 0x0001);
-        assert_eq!(cycles, 3);
+        assert_eq!(cycles, 4);
+    }
+}
+
+#[cfg(test)]
+mod processor_vector_regression_tests {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    #[test]
+    fn sbc_dp_x_ind_emulation_matches_e1_e_8669() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0xBA1103, &[0xE1, 0xB0]);
+        cpu.bus.load(0x00F4FF, &[0x2F]);
+        cpu.bus.load(0x00F500, &[0x3E]);
+        cpu.bus.load(0x663E2F, &[0xB3]);
+
+        cpu.load_state_for_processor_test(
+            0x3109, 0x004F, 0x0001, 0xF400, 0x66, 0xBA, 0x0A47, 0x1103, 0xB2, true,
+        );
+
+        cpu.step();
+
+        assert_eq!(cpu.read_pc(), 0x1105);
+        assert_eq!(cpu.read_s(), 0x0147);
+        assert_eq!(cpu.read_p(), 0x30);
+        assert_eq!(cpu.read_a(), 0x3155);
     }
 }
 
@@ -9147,7 +9510,7 @@ mod mvn_mvp_per_byte_cycle_tests {
     }
 
     /// MVN must move exactly one byte per step() call, returning 7 cycles each time.
-    /// PC must remain at the MVN instruction until the last byte is transferred.
+    /// While the transfer is in progress, PC remains on the second operand byte.
     #[test]
     fn mvn_moves_one_byte_per_step_7_cycles() {
         let mut cpu = native16();
@@ -9157,12 +9520,12 @@ mod mvn_mvp_per_byte_cycle_tests {
         cpu.y = 0x0020;
         cpu.bus.load(0x0000, &[0x54, 0x02, 0x01]); // MVN dst=$02, src=$01
 
-        // First step: moves 1 byte, returns 7 cycles, PC stays at 0
+        // First step: moves 1 byte, returns 7 cycles, PC stays on the src-bank operand.
         let c1 = cpu.step();
         assert_eq!(c1, 7, "MVN must return 7 cycles per byte");
         assert_eq!(
-            cpu.pc, 0x0000,
-            "PC must stay at MVN while transfer is in progress"
+            cpu.pc, 0x0002,
+            "PC must stay on the MVN src-bank operand while transfer is in progress"
         );
         assert_eq!(cpu.bus.read(0x02_0020), 0xAA, "first byte transferred");
         assert_eq!(cpu.a, 0x0000, "A decremented to 0 after first byte");
@@ -9188,8 +9551,8 @@ mod mvn_mvp_per_byte_cycle_tests {
         let c1 = cpu.step();
         assert_eq!(c1, 7, "MVP must return 7 cycles per byte");
         assert_eq!(
-            cpu.pc, 0x0000,
-            "PC must stay at MVP while transfer is in progress"
+            cpu.pc, 0x0002,
+            "PC must stay on the MVP src-bank operand while transfer is in progress"
         );
         assert_eq!(cpu.bus.read(0x02_0021), 0xBB, "first byte (from high end)");
         assert_eq!(cpu.a, 0x0000);
@@ -9737,5 +10100,34 @@ mod master_clock_tests {
         cpu.step();
         // opcode(8) + lo(8) + hi(8) + read at $2140 (B-Bus I/O, 6) = 30
         assert_eq!(cpu.bus.tick_count(), 30);
+    }
+}
+
+#[cfg(test)]
+mod processor_vector_regressions {
+    use super::*;
+    use crate::snes::bus::TestBus;
+
+    #[test]
+    fn and_dp_ind_long_emulation_matches_vector_27_e_3341() {
+        let mut cpu = Cpu::new(TestBus::default());
+
+        cpu.bus.load(0xF19E72, &[0x27, 0xFE]);
+        cpu.bus.write(0x002FFE, 0x9C);
+        cpu.bus.write(0x002FFF, 0x6E);
+        cpu.bus.write(0x003000, 0x5E);
+        cpu.bus.write(0x5E6E9C, 0x2B);
+
+        cpu.load_state_for_processor_test(
+            0xBF88, 0x00D9, 0x0073, 0x2F00, 0xEE, 0xF1, 0x88BA, 0x9E72, 0xFC, true,
+        );
+
+        assert!(cpu.m_flag());
+        assert_eq!(cpu.read_a(), 0xBF88);
+
+        cpu.step();
+
+        assert_eq!(cpu.read_a(), 0xBF08);
+        assert_eq!(cpu.read_p() & (FLAG_NEGATIVE | FLAG_ZERO), 0);
     }
 }
