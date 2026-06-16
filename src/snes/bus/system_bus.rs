@@ -14,6 +14,13 @@ pub struct SnesSystemBus {
     rom: Vec<u8>,
     sram: Vec<u8>,
     wram: Vec<u8>,
+    wmadd: Cell<u32>,
+    wrmpya: u8,
+    wrdiv: u16,
+    rddiv: u16,
+    rdmpy: u16,
+    memsel: u8,
+    dma_regs: [u8; 0x80],
     mdr: Cell<u8>,
     ticks: Cell<u64>,
 }
@@ -29,6 +36,13 @@ impl SnesSystemBus {
             rom,
             sram,
             wram: vec![0; WRAM_SIZE],
+            wmadd: Cell::new(0),
+            wrmpya: 0,
+            wrdiv: 0,
+            rddiv: 0,
+            rdmpy: 0,
+            memsel: 0,
+            dma_regs: [0; 0x80],
             mdr: Cell::new(0),
             ticks: Cell::new(0),
         }
@@ -122,10 +136,118 @@ impl SnesSystemBus {
             }
         }
     }
+
+    fn decode_system_offset(addr: u32) -> Option<u16> {
+        let addr = addr & 0xFF_FFFF;
+        let bank = ((addr >> 16) & 0xFF) as u8;
+        let offset = (addr & 0xFFFF) as u16;
+        if matches!(bank, 0x00..=0x3F | 0x80..=0xBF) {
+            Some(offset)
+        } else {
+            None
+        }
+    }
+
+    fn read_mmio(&self, addr: u32) -> Option<u8> {
+        let offset = Self::decode_system_offset(addr)?;
+        let value = match offset {
+            0x2180 => {
+                let wmadd = self.wmadd.get() & 0x1_FFFF;
+                let value = self.wram[(wmadd as usize) & (WRAM_SIZE - 1)];
+                self.wmadd.set((wmadd + 1) & 0x1_FFFF);
+                value
+            }
+            0x2181 => (self.wmadd.get() & 0xFF) as u8,
+            0x2182 => ((self.wmadd.get() >> 8) & 0xFF) as u8,
+            0x2183 => ((self.wmadd.get() >> 16) & 0x01) as u8,
+            0x4214 => (self.rddiv & 0x00FF) as u8,
+            0x4215 => (self.rddiv >> 8) as u8,
+            0x4216 => (self.rdmpy & 0x00FF) as u8,
+            0x4217 => (self.rdmpy >> 8) as u8,
+            0x420D => self.memsel,
+            0x4300..=0x437F => self.dma_regs[(offset - 0x4300) as usize],
+            _ => return None,
+        };
+        Some(value)
+    }
+
+    fn write_mmio(&mut self, addr: u32, value: u8) -> bool {
+        let Some(offset) = Self::decode_system_offset(addr) else {
+            return false;
+        };
+
+        match offset {
+            0x2180 => {
+                let wmadd = self.wmadd.get() & 0x1_FFFF;
+                let index = (wmadd as usize) & (WRAM_SIZE - 1);
+                self.wram[index] = value;
+                self.wmadd.set((wmadd + 1) & 0x1_FFFF);
+                true
+            }
+            0x2181 => {
+                let wmadd = self.wmadd.get();
+                self.wmadd.set((wmadd & !0x0000_00FF) | value as u32);
+                true
+            }
+            0x2182 => {
+                let wmadd = self.wmadd.get();
+                self.wmadd
+                    .set((wmadd & !0x0000_FF00) | ((value as u32) << 8));
+                true
+            }
+            0x2183 => {
+                let wmadd = self.wmadd.get();
+                self.wmadd
+                    .set((wmadd & !0x0001_0000) | (((value & 0x01) as u32) << 16));
+                true
+            }
+            0x4202 => {
+                self.wrmpya = value;
+                true
+            }
+            0x4203 => {
+                self.rdmpy = (self.wrmpya as u16).wrapping_mul(value as u16);
+                true
+            }
+            0x4204 => {
+                self.wrdiv = (self.wrdiv & 0xFF00) | value as u16;
+                true
+            }
+            0x4205 => {
+                self.wrdiv = (self.wrdiv & 0x00FF) | ((value as u16) << 8);
+                true
+            }
+            0x4206 => {
+                let dividend = self.wrdiv;
+                if value == 0 {
+                    self.rddiv = 0xFFFF;
+                    self.rdmpy = dividend;
+                } else {
+                    self.rddiv = dividend / value as u16;
+                    self.rdmpy = dividend % value as u16;
+                }
+                true
+            }
+            0x420D => {
+                self.memsel = value & 0x01;
+                true
+            }
+            0x4300..=0x437F => {
+                self.dma_regs[(offset - 0x4300) as usize] = value;
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 impl SnesBus for SnesSystemBus {
     fn read(&self, addr: u32) -> u8 {
+        if let Some(value) = self.read_mmio(addr) {
+            self.mdr.set(value);
+            return value;
+        }
+
         if let Some(index) = Self::decode_wram_index(addr) {
             let value = self.wram[index];
             self.mdr.set(value);
@@ -152,6 +274,10 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn write(&mut self, addr: u32, value: u8) {
+        if self.write_mmio(addr, value) {
+            return;
+        }
+
         if let Some(index) = Self::decode_wram_index(addr) {
             self.wram[index] = value;
         } else if let Some(index) = self.decode_sram_index(addr) {
@@ -306,5 +432,92 @@ mod tests {
         bus.write(0x700000, 0xA1);
         bus.write(0x700800, 0xB2); // +2 KiB -> wraps to same byte
         assert_eq!(bus.read(0x700000), 0xB2);
+    }
+
+    #[test]
+    fn wram_ports_auto_increment_and_write_through() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        // WMADD = 0x000123
+        bus.write(0x002181, 0x23);
+        bus.write(0x002182, 0x01);
+        bus.write(0x002183, 0x00);
+        bus.write(0x002180, 0xAA); // write at 0x0123, increment
+        bus.write(0x002180, 0xBB); // write at 0x0124
+
+        assert_eq!(bus.read(0x7E0123), 0xAA);
+        assert_eq!(bus.read(0x7E0124), 0xBB);
+    }
+
+    #[test]
+    fn multiply_registers_update_rdmpy() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004202, 6);
+        bus.write(0x004203, 7);
+
+        assert_eq!(bus.read(0x004216), 42);
+        assert_eq!(bus.read(0x004217), 0);
+    }
+
+    #[test]
+    fn divide_registers_update_rddiv_and_remainder() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004204, 0x34);
+        bus.write(0x004205, 0x12);
+        bus.write(0x004206, 0x10);
+
+        assert_eq!(bus.read(0x004214), 0x23);
+        assert_eq!(bus.read(0x004215), 0x01);
+        assert_eq!(bus.read(0x004216), 0x04);
+        assert_eq!(bus.read(0x004217), 0x00);
+    }
+
+    #[test]
+    fn memsel_register_reads_back_last_written_value() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x00420D, 0x01);
+        assert_eq!(bus.read(0x00420D), 0x01);
+        bus.write(0x80420D, 0x00);
+        assert_eq!(bus.read(0x00420D), 0x00);
+    }
+
+    #[test]
+    fn dma_register_file_latches_and_mirrors_across_system_banks() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004300, 0xAB);
+        bus.write(0x00430A, 0x55);
+
+        assert_eq!(bus.read(0x004300), 0xAB);
+        assert_eq!(bus.read(0x804300), 0xAB);
+        assert_eq!(bus.read(0x00430A), 0x55);
+    }
+
+    #[test]
+    fn wram_port_reads_auto_increment_address() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x002181, 0x00);
+        bus.write(0x002182, 0x02);
+        bus.write(0x002183, 0x00);
+        bus.write(0x002180, 0xC1);
+        bus.write(0x002180, 0xD2);
+        // Reset WMADD to the first byte and verify consecutive reads advance.
+        bus.write(0x002181, 0x00);
+        bus.write(0x002182, 0x02);
+        bus.write(0x002183, 0x00);
+        assert_eq!(bus.read(0x002180), 0xC1);
+        assert_eq!(bus.read(0x002180), 0xD2);
+    }
+
+    #[test]
+    fn wrdiv_writes_do_not_change_rddiv_until_divide_trigger() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        assert_eq!(bus.read(0x004214), 0x00);
+        assert_eq!(bus.read(0x004215), 0x00);
+        bus.write(0x004204, 0x34);
+        bus.write(0x004205, 0x12);
+        assert_eq!(bus.read(0x004214), 0x00);
+        assert_eq!(bus.read(0x004215), 0x00);
+        bus.write(0x004206, 0x10);
+        assert_eq!(bus.read(0x004214), 0x23);
+        assert_eq!(bus.read(0x004215), 0x01);
     }
 }
