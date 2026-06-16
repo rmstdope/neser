@@ -3118,23 +3118,31 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Direct Page Indexed X: EA = (D + offset + X) & 0xFFFF  [bank 0]
-    /// In emulation mode with D=$0000, wraps within page 0 (& 0xFF).
+    /// In emulation mode with D low byte = $00, wraps offset indexing within D page.
     fn addr_dp_x(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
         let ea = (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF;
-        if self.e && self.d == 0 { ea & 0xFF } else { ea }
+        if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) as u32) | (ea & 0x00FF)
+        } else {
+            ea
+        }
     }
 
     /// Direct Page Indexed Y: EA = (D + offset + Y) & 0xFFFF  [bank 0]
-    /// In emulation mode with D=$0000, wraps within page 0 (& 0xFF).
+    /// In emulation mode with D low byte = $00, wraps offset indexing within D page.
     fn addr_dp_y(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
         let ea = (self.d as u32 + offset as u32 + self.y as u32) & 0xFFFF;
-        if self.e && self.d == 0 { ea & 0xFF } else { ea }
+        if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) as u32) | (ea & 0x00FF)
+        } else {
+            ea
+        }
     }
 
     /// Absolute: EA = DBR:abs
@@ -3197,20 +3205,24 @@ impl<B: SnesBus> Cpu<B> {
         lo as u32 | (mid as u32) << 8 | (hi as u32) << 16
     }
 
-    /// Direct Page Indexed Indirect X: pointer at (D+offset+X), EA = DBR:ptr16
+    /// Direct Page Indexed Indirect X: pointer at (D+offset+X), with emulation wrap
+    /// when D low byte is zero (compatible with 6502-style zero-page indexing).
     fn addr_dp_x_ind(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF;
-        let ptr_addr = if self.e && self.d == 0 {
-            ptr_addr & 0xFF
+        let wrap_low_byte = self.e && (self.d & 0x00FF) == 0;
+        let ptr_addr = if wrap_low_byte {
+            let dp_index = (offset as u16).wrapping_add(self.x) & 0x00FF;
+            (self.d & 0xFF00).wrapping_add(dp_index) as u32
         } else {
-            ptr_addr
+            self.d.wrapping_add(offset as u16).wrapping_add(self.x) as u32
         };
-        let lo = self.tick_read(ptr_addr);
-        let hi_addr = if self.e && self.d == 0 {
-            (ptr_addr + 1) & 0xFF
+
+        let lo = self.tick_read(ptr_addr & 0xFFFF);
+        let hi_addr = if wrap_low_byte {
+            let low = ((ptr_addr as u16) & 0x00FF).wrapping_add(1) & 0x00FF;
+            ((self.d & 0xFF00) | low) as u32
         } else {
             (ptr_addr + 1) & 0xFFFF
         };
@@ -3331,11 +3343,12 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     // -------------------------------------------------------------------------
-    // Stack helpers: push/pull respect native vs emulation mode S wrapping.
+    // Stack helpers.
     // PUSH: write to S, then decrement S.
     // PULL: increment S, then read from S.
-    // In emulation mode write_s forces the high byte to $01, but we manipulate
-    // self.s directly for speed; emulation mode constrains S to page 1.
+    // In emulation mode, 8-bit stack operations stay in page 1. 16-bit stack
+    // operations use consecutive addresses based on the current S value and then
+    // normalize the architectural S back to page 1.
     // -------------------------------------------------------------------------
 
     fn push8(&mut self, val: u8) {
@@ -3348,8 +3361,14 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn push16(&mut self, val: u16) {
-        self.push8((val >> 8) as u8);
-        self.push8(val as u8);
+        if self.e {
+            self.write8(self.s as u32, (val >> 8) as u8);
+            self.write8(self.s.wrapping_sub(1) as u32, val as u8);
+            self.s = 0x0100 | (self.s.wrapping_sub(2) & 0x00FF);
+        } else {
+            self.push8((val >> 8) as u8);
+            self.push8(val as u8);
+        }
     }
 
     fn pull8(&mut self) -> u8 {
@@ -3362,9 +3381,18 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn pull16(&mut self) -> u16 {
-        let lo = self.pull8() as u16;
-        let hi = self.pull8() as u16;
-        hi << 8 | lo
+        if self.e {
+            let s1 = self.s.wrapping_add(1);
+            let lo = self.read8(s1 as u32) as u16;
+            let s2 = s1.wrapping_add(1);
+            let hi = self.read8(s2 as u32) as u16;
+            self.s = 0x0100 | (s2 & 0x00FF);
+            hi << 8 | lo
+        } else {
+            let lo = self.pull8() as u16;
+            let hi = self.pull8() as u16;
+            hi << 8 | lo
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -4248,9 +4276,51 @@ mod tests {
             cpu.write_d(0x0200);
             cpu.write_x(0x0010);
             cpu.write_dbr(0x03);
-            // Place pointer $ABCD at D + offset + X = $0200 + $10 + $10 = $0220
+            // Place pointer $ABCD at D + ((offset + X) & $FF) = $0200 + $20 = $0220
             cpu.bus.load(0x0000_0220, &[0xCD, 0xAB]);
             assert_eq!(cpu.addr_dp_x_ind(0x10), 0x03_ABCD);
+        }
+
+        #[test]
+        fn addr_dp_x_wraps_within_d_page_in_emulation_when_d_low_zero() {
+            let mut cpu = cpu_with_bus();
+            cpu.e = true;
+            cpu.write_d(0x8300);
+            cpu.write_x(0x00CC);
+            assert_eq!(cpu.addr_dp_x(0xBC), 0x0000_8388);
+        }
+
+        #[test]
+        fn addr_dp_y_wraps_within_d_page_in_emulation_when_d_low_zero() {
+            let mut cpu = cpu_with_bus();
+            cpu.e = true;
+            cpu.write_d(0x1200);
+            cpu.write_y(0x00F9);
+            assert_eq!(cpu.addr_dp_y(0x80), 0x0000_1279);
+        }
+
+        #[test]
+        fn addr_dp_x_ind_wraps_offset_plus_x_to_8bit() {
+            let mut cpu = cpu_with_bus();
+            cpu.e = true;
+            cpu.write_d(0xB200);
+            cpu.write_x(0x00F9);
+            cpu.write_dbr(0xB8);
+            // (offset + X) wraps: $B6 + $F9 = $1AF -> $AF, pointer read from $B2AF/$B2B0.
+            cpu.bus.load(0x0000_B2AF, &[0x6C, 0x8B]);
+            assert_eq!(cpu.addr_dp_x_ind(0xB6), 0xB8_8B6C);
+        }
+
+        #[test]
+        fn addr_dp_x_ind_uses_full_add_when_d_low_nonzero() {
+            let mut cpu = cpu_with_bus();
+            cpu.e = false;
+            cpu.write_d(0x61D2);
+            cpu.write_x(0x0056);
+            cpu.write_dbr(0xAF);
+            // Full add: $61D2 + $F6 + $56 = $631E.
+            cpu.bus.load(0x0000_631E, &[0x79, 0x14]);
+            assert_eq!(cpu.addr_dp_x_ind(0xF6), 0xAF_1479);
         }
 
         // -- Direct Page Indirect Indexed Y (dp),Y -----------------------------
@@ -7650,6 +7720,21 @@ mod stack_ops_tests {
         assert_eq!(cpu.bus.read(0x01FF), 0x12);
         assert_eq!(cpu.bus.read(0x01FE), 0x34);
         assert_eq!(cpu.s, 0x01FD);
+    }
+
+    #[test]
+    fn phd_in_emulation_crosses_0100_to_00ff_and_keeps_s_in_page_1() {
+        let mut cpu = native16();
+        cpu.e = true;
+        cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+        cpu.d = 0xC825;
+        cpu.s = 0x0100;
+        cpu.bus.load(0x0000, &[0x0B]);
+        cpu.step();
+
+        assert_eq!(cpu.bus.read(0x0100), 0xC8);
+        assert_eq!(cpu.bus.read(0x00FF), 0x25);
+        assert_eq!(cpu.s, 0x01FE);
     }
 
     #[test]

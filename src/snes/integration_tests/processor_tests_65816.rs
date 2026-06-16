@@ -187,19 +187,54 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         });
     }
 
-    if cpu.read_pc() != vector.final_state.pc
-        || cpu.read_s() != vector.final_state.s
-        || cpu.read_p() != vector.final_state.p
-        || cpu.read_a() != vector.final_state.a
-        || cpu.read_x() != vector.final_state.x
-        || cpu.read_y() != vector.final_state.y
-        || cpu.read_dbr() != vector.final_state.dbr
-        || cpu.read_d() != vector.final_state.d
-        || cpu.read_pbr() != vector.final_state.pbr
-        || cpu.emulation_mode() != (vector.final_state.e != 0)
+    let actual_pc = cpu.read_pc();
+    let actual_s = cpu.read_s();
+    let actual_p = cpu.read_p();
+    let actual_a = cpu.read_a();
+    let actual_x = cpu.read_x();
+    let actual_y = cpu.read_y();
+    let actual_dbr = cpu.read_dbr();
+    let actual_d = cpu.read_d();
+    let actual_pbr = cpu.read_pbr();
+    let actual_e = cpu.emulation_mode();
+    let expected_e = vector.final_state.e != 0;
+
+    if actual_pc != vector.final_state.pc
+        || actual_s != vector.final_state.s
+        || actual_p != vector.final_state.p
+        || actual_a != vector.final_state.a
+        || actual_x != vector.final_state.x
+        || actual_y != vector.final_state.y
+        || actual_dbr != vector.final_state.dbr
+        || actual_d != vector.final_state.d
+        || actual_pbr != vector.final_state.pbr
+        || actual_e != expected_e
     {
         return Err(VectorFailure {
-            details: format!("{}: CPU final state mismatch", vector.name),
+            details: format!(
+                "{}: CPU final state mismatch\n  PC: expected ${:04X}, got ${:04X}\n  S: expected ${:04X}, got ${:04X}\n  P: expected ${:02X}, got ${:02X}\n  A: expected ${:04X}, got ${:04X}\n  X: expected ${:04X}, got ${:04X}\n  Y: expected ${:04X}, got ${:04X}\n  DBR: expected ${:02X}, got ${:02X}\n  D: expected ${:04X}, got ${:04X}\n  PBR: expected ${:02X}, got ${:02X}\n  E: expected {}, got {}",
+                vector.name,
+                vector.final_state.pc,
+                actual_pc,
+                vector.final_state.s,
+                actual_s,
+                vector.final_state.p,
+                actual_p,
+                vector.final_state.a,
+                actual_a,
+                vector.final_state.x,
+                actual_x,
+                vector.final_state.y,
+                actual_y,
+                vector.final_state.dbr,
+                actual_dbr,
+                vector.final_state.d,
+                actual_d,
+                vector.final_state.pbr,
+                actual_pbr,
+                expected_e,
+                actual_e
+            ),
         });
     }
 
