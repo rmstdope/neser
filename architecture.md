@@ -316,7 +316,7 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 
 #### SNES Emulation (`src/snes/`)
 
-The SNES (Super Nintendo Entertainment System) module contains active 65816 CPU development and verification infrastructure, with additional subsystems still in scaffold/stub form.
+The SNES (Super Nintendo Entertainment System) module contains active 65816 CPU development and verification infrastructure. Platform routing and cartridge loading/header parsing are in place, while bus/PPU/APU/input integration remains incremental.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
@@ -328,7 +328,10 @@ The SNES (Super Nintendo Entertainment System) module contains active 65816 CPU 
 | `src/snes/cpu/mod.rs` | SNES 65816 CPU module root. Re-exports `Cpu` and memory-speed helpers; instruction behavior and timing tests live in `cpu.rs`. |
 | `src/snes/ppu/mod.rs` | PPU module stub (SNES Picture Processing Unit — future implementation). |
 | `src/snes/apu/mod.rs` | APU module stub (SPC700 + DSP — future implementation). |
-| `src/snes/cartridge/mod.rs` | Cartridge module stub (SNES ROM parsing and LoROM/HiROM mapping — future implementation). |
+| `src/snes/cartridge/mod.rs` | Cartridge module root. Re-exports `Cartridge`, `CartridgeError`, `RomSpeed`, and `Mapping`. |
+| `src/snes/cartridge/cartridge.rs` | `Cartridge::from_bytes` loader for `.sfc`/`.smc` data. Handles optional 512-byte copier-header strip, invokes mapping detection/header parsing, and exposes parsed cartridge metadata (`mapping`, `title`, `sram_size`, `has_battery`, `speed`). |
+| `src/snes/cartridge/header.rs` | Internal header parser for SNES candidate header locations. Extracts title, map mode, chipset, ROM/RAM size fields, region/developer/version, and checksum/complement. Public title decoding trims trailing NULs/spaces. |
+| `src/snes/cartridge/mapping.rs` | Score-based mapping detector for LoROM/HiROM/ExHiROM candidates (`$7FC0`, `$FFC0`, `$40FFC0`) with deterministic tie-break priority (ExHiROM > HiROM > LoROM) and plausibility thresholding to reject garbage ROMs. |
 | `src/snes/input/mod.rs` | Input module stub (SNES controller protocol — future implementation). |
 | `src/snes/integration_tests/mod.rs` | SNES integration test module root. Includes `processor_tests_65816.rs` for vector-based CPU verification. |
 | `src/snes/integration_tests/processor_tests_65816.rs` | Loader and harness for Tom Harte ProcessorTests 65816 JSON vectors. Parses upstream schema (`initial` / `final` / `cycles`), runs single-step CPU checks against a RAM-backed `SnesBus`, compares final CPU+RAM state and vector cycle count, and executes vectors from tracked subset files (`v1/*.json`) with per-filename overrides from local full-cache files (`full/v1/*.json`) when present. |
