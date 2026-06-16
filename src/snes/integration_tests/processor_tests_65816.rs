@@ -3,7 +3,7 @@ use crate::snes::cpu::Cpu;
 use std::cell::RefCell;
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 const PROCESSOR_TESTS_ROOT: &str = "roms/snes/automated_tests/processor_tests/65816/v1";
@@ -224,6 +224,35 @@ fn run_vectors_from_file(path: &Path) -> Result<(), VectorFailure> {
     Ok(())
 }
 
+fn list_vector_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = fs::read_dir(root)
+        .map_err(|err| format!("failed to read vector directory {}: {err}", root.display()))?;
+
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+
+    files.sort();
+    Ok(files)
+}
+
+fn run_vectors_from_directory(root: &Path) -> Result<(), VectorFailure> {
+    let files = list_vector_files(root).map_err(|details| VectorFailure { details })?;
+    if files.is_empty() {
+        return Err(VectorFailure {
+            details: format!("no vector files found in {}", root.display()),
+        });
+    }
+
+    for file in files {
+        run_vectors_from_file(&file)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,30 +327,36 @@ mod tests {
     }
 
     #[test]
-    fn runs_pinned_subset_opcode_00_emulation() {
-        let path = Path::new(PROCESSOR_TESTS_ROOT).join("00.e.json");
-        let result = run_vectors_from_file(&path);
-        assert!(result.is_ok(), "00.e subset should pass: {result:?}");
+    fn runs_all_pinned_65816_vectors_in_directory() {
+        let root = Path::new(PROCESSOR_TESTS_ROOT);
+        let result = run_vectors_from_directory(root);
+        assert!(
+            result.is_ok(),
+            "pinned 65816 vectors should pass: {result:?}"
+        );
     }
 
     #[test]
-    fn runs_pinned_subset_opcode_00_native() {
-        let path = Path::new(PROCESSOR_TESTS_ROOT).join("00.n.json");
-        let result = run_vectors_from_file(&path);
-        assert!(result.is_ok(), "00.n subset should pass: {result:?}");
+    fn list_vector_files_only_returns_json_files() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        fs::write(temp.path().join("ea.n.json"), "[]").expect("write ea.n.json");
+        fs::write(temp.path().join("00.e.json"), "[]").expect("write 00.e.json");
+        fs::write(temp.path().join("notes.txt"), "not a vector").expect("write notes.txt");
+
+        let files = list_vector_files(temp.path()).expect("list vector files");
+        let names: Vec<String> = files
+            .iter()
+            .filter_map(|path| path.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .collect();
+
+        assert_eq!(names, vec!["00.e.json", "ea.n.json"]);
     }
 
     #[test]
-    fn runs_pinned_subset_opcode_ea_emulation() {
-        let path = Path::new(PROCESSOR_TESTS_ROOT).join("ea.e.json");
-        let result = run_vectors_from_file(&path);
-        assert!(result.is_ok(), "ea.e subset should pass: {result:?}");
-    }
-
-    #[test]
-    fn runs_pinned_subset_opcode_ea_native() {
-        let path = Path::new(PROCESSOR_TESTS_ROOT).join("ea.n.json");
-        let result = run_vectors_from_file(&path);
-        assert!(result.is_ok(), "ea.n subset should pass: {result:?}");
+    fn run_vectors_from_directory_fails_when_empty() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let result = run_vectors_from_directory(temp.path());
+        assert!(result.is_err(), "empty directory should fail");
     }
 }
