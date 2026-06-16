@@ -315,7 +315,7 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 
 #### SNES Emulation (`src/snes/`)
 
-The SNES (Super Nintendo Entertainment System) module provides scaffolding for future SNES emulation. Currently, it contains only stub implementations that allow SNES ROMs (`.sfc`/`.smc` files) to be recognized and dispatched through the platform layer.
+The SNES (Super Nintendo Entertainment System) module is under active development. Platform routing and the 65816 CPU core are in place; cartridge loading/header parsing now exists, while bus/PPU/APU/input integration remains incremental.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
@@ -327,7 +327,10 @@ The SNES (Super Nintendo Entertainment System) module provides scaffolding for f
 | `src/snes/cpu/mod.rs` | CPU module stub (65816 processor — future implementation). |
 | `src/snes/ppu/mod.rs` | PPU module stub (SNES Picture Processing Unit — future implementation). |
 | `src/snes/apu/mod.rs` | APU module stub (SPC700 + DSP — future implementation). |
-| `src/snes/cartridge/mod.rs` | Cartridge module stub (SNES ROM parsing and LoROM/HiROM mapping — future implementation). |
+| `src/snes/cartridge/mod.rs` | Cartridge module root. Re-exports `Cartridge`, `CartridgeError`, `RomSpeed`, and `Mapping`. |
+| `src/snes/cartridge/cartridge.rs` | `Cartridge::from_bytes` loader for `.sfc`/`.smc` data. Handles optional 512-byte copier-header strip, invokes mapping detection/header parsing, and exposes parsed cartridge metadata (`mapping`, `title`, `sram_size`, `has_battery`, `speed`). |
+| `src/snes/cartridge/header.rs` | Internal header parser for SNES candidate header locations. Extracts title, map mode, chipset, ROM/RAM size fields, region/developer/version, and checksum/complement. Public title decoding trims trailing NULs/spaces. |
+| `src/snes/cartridge/mapping.rs` | Score-based mapping detector for LoROM/HiROM/ExHiROM candidates (`$7FC0`, `$FFC0`, `$40FFC0`) with deterministic tie-break priority (ExHiROM > HiROM > LoROM) and plausibility thresholding to reject garbage ROMs. |
 | `src/snes/input/mod.rs` | Input module stub (SNES controller protocol — future implementation). |
 | `src/snes/integration_tests/mod.rs` | Integration tests module stub (SNES validation ROMs — future implementation). |
 
