@@ -905,7 +905,7 @@ impl<B: SnesBus> Cpu<B> {
         };
         self.pc = self.pc.wrapping_sub(1);
         self.block_move_state = Some(state);
-        self.step_block_move_unit(state)
+        self.step_block_move_unit(state) + if self.e { 2 } else { 0 }
     }
 
     fn op_mvp(&mut self) -> u8 {
@@ -916,7 +916,7 @@ impl<B: SnesBus> Cpu<B> {
         };
         self.pc = self.pc.wrapping_sub(1);
         self.block_move_state = Some(state);
-        self.step_block_move_unit(state)
+        self.step_block_move_unit(state) + if self.e { 2 } else { 0 }
     }
 
     fn step_block_move_unit(&mut self, state: BlockMoveState) -> u8 {
@@ -3241,11 +3241,7 @@ impl<B: SnesBus> Cpu<B> {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
-            ((self.d & 0xFF00) | offset as u16) as u32
-        } else {
-            (self.d as u32 + offset as u32) & 0xFFFF
-        };
+        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
         let lo = self.tick_read(ptr_addr);
         let mid_addr = (ptr_addr + 1) & 0xFFFF;
         let hi_addr = (ptr_addr + 2) & 0xFFFF;
@@ -3269,7 +3265,11 @@ impl<B: SnesBus> Cpu<B> {
         };
 
         let lo = self.tick_read(ptr_addr & 0xFFFF);
-        let hi_addr = (ptr_addr + 1) & 0xFFFF;
+        let hi_addr = if wrap_low_byte {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
         let hi = self.tick_read(hi_addr);
         let ptr = lo as u32 | (hi as u32) << 8;
         (self.dbr as u32) << 16 | ptr
@@ -3372,13 +3372,7 @@ impl<B: SnesBus> Cpu<B> {
             self.read8(addr) as u16
         } else {
             self.extra_cycles += 1;
-            if addr <= 0xFFFF {
-                let lo = self.tick_read(addr & 0xFFFF);
-                let hi = self.tick_read((addr.wrapping_add(1)) & 0xFFFF);
-                lo as u16 | (hi as u16) << 8
-            } else {
-                self.read16(addr)
-            }
+            self.read16(addr)
         }
     }
 
@@ -3389,12 +3383,7 @@ impl<B: SnesBus> Cpu<B> {
             self.write8(addr, value as u8);
         } else {
             self.extra_cycles += 1;
-            if addr <= 0xFFFF {
-                self.tick_write(addr & 0xFFFF, value as u8);
-                self.tick_write((addr.wrapping_add(1)) & 0xFFFF, (value >> 8) as u8);
-            } else {
-                self.write16(addr, value);
-            }
+            self.write16(addr, value);
         }
     }
 
@@ -4606,10 +4595,10 @@ mod mem_helpers_tests {
     }
 
     #[test]
-    fn read16_wraps_high_byte_within_bank() {
+    fn read16_carries_high_byte_into_next_bank() {
         let mut cpu = make_cpu();
         cpu.bus.load(0x02_FFFF, &[0x78]);
-        cpu.bus.load(0x02_0000, &[0x56]);
+        cpu.bus.load(0x03_0000, &[0x56]);
         assert_eq!(cpu.read16(0x02_FFFF), 0x5678);
     }
 
@@ -4622,11 +4611,22 @@ mod mem_helpers_tests {
     }
 
     #[test]
-    fn write16_wraps_high_byte_within_bank() {
+    fn write16_carries_high_byte_into_next_bank() {
         let mut cpu = make_cpu();
         cpu.write16(0x04_FFFF, 0xCAFE);
         assert_eq!(cpu.bus.read(0x04_FFFF), 0xFE);
-        assert_eq!(cpu.bus.read(0x04_0000), 0xCA);
+        assert_eq!(cpu.bus.read(0x05_0000), 0xCA);
+    }
+
+    #[test]
+    fn read_m_16bit_preserves_bank_for_banked_addresses() {
+        let mut cpu = make_cpu();
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu.dbr = 0x6B;
+        cpu.bus.load(0x6B1234, &[0x78, 0x56]);
+
+        assert_eq!(cpu.read_m(0x6B1234), 0x5678);
     }
 
     #[test]
@@ -9514,7 +9514,7 @@ mod mvn_mvp_per_byte_cycle_tests {
     }
 
     /// MVN must move exactly one byte per step() call, returning 7 cycles each time.
-    /// PC must remain at the MVN instruction until the last byte is transferred.
+    /// While the transfer is in progress, PC remains on the second operand byte.
     #[test]
     fn mvn_moves_one_byte_per_step_7_cycles() {
         let mut cpu = native16();
@@ -9524,12 +9524,12 @@ mod mvn_mvp_per_byte_cycle_tests {
         cpu.y = 0x0020;
         cpu.bus.load(0x0000, &[0x54, 0x02, 0x01]); // MVN dst=$02, src=$01
 
-        // First step: moves 1 byte, returns 7 cycles, PC stays at 0
+        // First step: moves 1 byte, returns 7 cycles, PC stays on the src-bank operand.
         let c1 = cpu.step();
         assert_eq!(c1, 7, "MVN must return 7 cycles per byte");
         assert_eq!(
-            cpu.pc, 0x0000,
-            "PC must stay at MVN while transfer is in progress"
+            cpu.pc, 0x0002,
+            "PC must stay on the MVN src-bank operand while transfer is in progress"
         );
         assert_eq!(cpu.bus.read(0x02_0020), 0xAA, "first byte transferred");
         assert_eq!(cpu.a, 0x0000, "A decremented to 0 after first byte");
@@ -9555,8 +9555,8 @@ mod mvn_mvp_per_byte_cycle_tests {
         let c1 = cpu.step();
         assert_eq!(c1, 7, "MVP must return 7 cycles per byte");
         assert_eq!(
-            cpu.pc, 0x0000,
-            "PC must stay at MVP while transfer is in progress"
+            cpu.pc, 0x0002,
+            "PC must stay on the MVP src-bank operand while transfer is in progress"
         );
         assert_eq!(cpu.bus.read(0x02_0021), 0xBB, "first byte (from high end)");
         assert_eq!(cpu.a, 0x0000);
