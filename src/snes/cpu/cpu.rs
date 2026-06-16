@@ -3186,9 +3186,18 @@ impl<B: SnesBus> Cpu<B> {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | offset as u16) as u32
+        } else {
+            (self.d as u32 + offset as u32) & 0xFFFF
+        };
         let lo = self.tick_read(ptr_addr);
-        let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
+        let hi_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
+        let hi = self.tick_read(hi_addr);
         let ptr = lo as u32 | (hi as u32) << 8;
         (self.dbr as u32) << 16 | ptr
     }
@@ -3198,10 +3207,24 @@ impl<B: SnesBus> Cpu<B> {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | offset as u16) as u32
+        } else {
+            (self.d as u32 + offset as u32) & 0xFFFF
+        };
         let lo = self.tick_read(ptr_addr);
-        let mid = self.tick_read((ptr_addr + 1) & 0xFFFF);
-        let hi = self.tick_read((ptr_addr + 2) & 0xFFFF);
+        let mid_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
+        let hi_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 2) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 2) & 0xFFFF
+        };
+        let mid = self.tick_read(mid_addr);
+        let hi = self.tick_read(hi_addr);
         lo as u32 | (mid as u32) << 8 | (hi as u32) << 16
     }
 
@@ -3236,9 +3259,18 @@ impl<B: SnesBus> Cpu<B> {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | offset as u16) as u32
+        } else {
+            (self.d as u32 + offset as u32) & 0xFFFF
+        };
         let lo = self.tick_read(ptr_addr);
-        let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
+        let hi_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
+        let hi = self.tick_read(hi_addr);
         let ptr16 = lo as u16 | (hi as u16) << 8;
         self.last_page_crossed =
             !self.x_flag() || (ptr16 & 0xFF00) != (ptr16.wrapping_add(self.y) & 0xFF00);
@@ -3250,10 +3282,24 @@ impl<B: SnesBus> Cpu<B> {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
+        let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | offset as u16) as u32
+        } else {
+            (self.d as u32 + offset as u32) & 0xFFFF
+        };
         let lo = self.tick_read(ptr_addr);
-        let mid = self.tick_read((ptr_addr + 1) & 0xFFFF);
-        let hi = self.tick_read((ptr_addr + 2) & 0xFFFF);
+        let mid_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
+        let hi_addr = if self.e && (self.d & 0x00FF) == 0 {
+            ((self.d & 0xFF00) | (((ptr_addr as u16) + 2) & 0x00FF)) as u32
+        } else {
+            (ptr_addr + 2) & 0xFFFF
+        };
+        let mid = self.tick_read(mid_addr);
+        let hi = self.tick_read(hi_addr);
         let base = lo as u32 | (mid as u32) << 8 | (hi as u32) << 16;
         base.wrapping_add(self.y as u32) & 0xFF_FFFF
     }
