@@ -232,6 +232,30 @@ impl SnesSystemBus {
         self.dma = dma;
     }
 
+    /// Returns the size of the cartridge SRAM in bytes.
+    pub fn sram_size(&self) -> usize {
+        self._cartridge.sram_size()
+    }
+
+    /// Returns whether the cartridge has battery-backed RAM.
+    pub fn has_battery(&self) -> bool {
+        self._cartridge.has_battery()
+    }
+
+    /// Returns a snapshot of the current SRAM contents.
+    pub fn sram_snapshot(&self) -> Vec<u8> {
+        self.sram.clone()
+    }
+
+    /// Restores SRAM from a byte slice. If the slice is larger than SRAM,
+    /// only the first `sram_size()` bytes are used.
+    pub fn restore_sram(&mut self, data: &[u8]) {
+        let len = self.sram.len().min(data.len());
+        if len > 0 {
+            self.sram[..len].copy_from_slice(&data[..len]);
+        }
+    }
+
     fn read_mmio(&self, addr: u32) -> Option<u8> {
         let offset = Self::decode_system_offset(addr)?;
         let value = match offset {
@@ -429,6 +453,23 @@ mod tests {
     fn lorom_cart_with_sram() -> Cartridge {
         let mut rom = vec![0u8; 0x20000];
         build_cart(&mut rom, 0x7FC0, 0x20, 0x05)
+    }
+
+    fn lorom_cart_with_battery_sram() -> Cartridge {
+        let mut rom = vec![0u8; 0x20000];
+        let base = 0x7FC0;
+        rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
+        rom[base + 0x3C] = 0x00;
+        rom[base + 0x3D] = 0x80;
+        rom[base + 0xD5] = 0x20;
+        rom[base + 0xD6] = 0x02; // Battery-backed RAM chipset
+        rom[base + 0xD7] = 0x07;
+        rom[base + 0xD8] = 0x05; // 32 KB SRAM
+        rom[base + 0xDC] = 0x34;
+        rom[base + 0xDD] = 0x12;
+        rom[base + 0xDE] = 0xCB;
+        rom[base + 0xDF] = 0xED;
+        Cartridge::from_bytes(&rom).expect("valid test cartridge")
     }
 
     fn write_dma_channel(
@@ -946,5 +987,98 @@ mod tests {
         let ticks_after = bus.ticks.get();
 
         assert_eq!(ticks_after - ticks_before, 18 + 8);
+    }
+
+    #[test]
+    fn sram_size_returns_zero_for_cartridge_without_sram() {
+        let bus = SnesSystemBus::new(lorom_test_cart());
+        assert_eq!(bus.sram_size(), 0);
+    }
+
+    #[test]
+    fn sram_size_returns_correct_size_for_cartridge_with_sram() {
+        let bus = SnesSystemBus::new(lorom_cart_with_sram());
+        // ram_size_field = 0x05 → 32 KB
+        assert_eq!(bus.sram_size(), 32 * 1024);
+    }
+
+    #[test]
+    fn has_battery_returns_false_for_cartridge_without_battery() {
+        let bus = SnesSystemBus::new(lorom_test_cart());
+        assert!(!bus.has_battery());
+    }
+
+    #[test]
+    fn has_battery_returns_true_for_cartridge_with_battery() {
+        let bus = SnesSystemBus::new(lorom_cart_with_battery_sram());
+        assert!(bus.has_battery());
+    }
+
+    #[test]
+    fn sram_snapshot_returns_empty_for_cartridge_without_sram() {
+        let bus = SnesSystemBus::new(lorom_test_cart());
+        assert!(bus.sram_snapshot().is_empty());
+    }
+
+    #[test]
+    fn sram_snapshot_returns_current_sram_contents() {
+        let mut bus = SnesSystemBus::new(lorom_cart_with_battery_sram());
+        // Write some values to SRAM directly
+        if bus.sram_size() > 0 {
+            bus.sram[0] = 0xAA;
+            bus.sram[1] = 0xBB;
+            bus.sram[2] = 0xCC;
+        }
+
+        let snapshot = bus.sram_snapshot();
+        assert_eq!(snapshot.len(), 32 * 1024);
+        assert_eq!(snapshot[0], 0xAA);
+        assert_eq!(snapshot[1], 0xBB);
+        assert_eq!(snapshot[2], 0xCC);
+    }
+
+    #[test]
+    fn restore_sram_overwrites_sram_contents() {
+        let mut bus = SnesSystemBus::new(lorom_cart_with_battery_sram());
+        let mut data = vec![0u8; 32 * 1024];
+        data[0] = 0x11;
+        data[1] = 0x22;
+        data[2] = 0x33;
+
+        bus.restore_sram(&data);
+
+        let snapshot = bus.sram_snapshot();
+        assert_eq!(snapshot[0], 0x11);
+        assert_eq!(snapshot[1], 0x22);
+        assert_eq!(snapshot[2], 0x33);
+    }
+
+    #[test]
+    fn restore_sram_handles_partial_data() {
+        let mut bus = SnesSystemBus::new(lorom_cart_with_battery_sram());
+        let data = vec![0x55u8; 100]; // Only 100 bytes
+
+        bus.restore_sram(&data);
+
+        let snapshot = bus.sram_snapshot();
+        // First 100 bytes should match
+        assert_eq!(&snapshot[..100], &data[..100]);
+        // Rest should be zeros
+        assert_eq!(snapshot[100], 0x00);
+    }
+
+    #[test]
+    fn restore_sram_ignores_oversized_data() {
+        let mut bus = SnesSystemBus::new(lorom_cart_with_battery_sram());
+        let mut data = vec![0u8; 64 * 1024]; // 64 KB, larger than SRAM
+        data[0] = 0x77;
+        data[32 * 1024 - 1] = 0x88;
+
+        bus.restore_sram(&data);
+
+        let snapshot = bus.sram_snapshot();
+        assert_eq!(snapshot.len(), 32 * 1024);
+        assert_eq!(snapshot[0], 0x77);
+        assert_eq!(snapshot[32 * 1024 - 1], 0x88);
     }
 }

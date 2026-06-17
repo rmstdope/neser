@@ -58,6 +58,110 @@ impl Snes {
             state_path
         })
     }
+
+    /// Returns the file path where battery-backed SRAM should be stored.
+    fn sav_path(&self) -> Option<PathBuf> {
+        self.rom_path
+            .as_ref()
+            .map(|path| path.with_extension("sav"))
+    }
+
+    /// Load battery-backed cartridge SRAM from a `.sav` file if one exists.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_save_ram_from_disk(&mut self) {
+        let Some(sav_path) = self.sav_path() else {
+            return;
+        };
+
+        let Some(cpu) = self.cpu.as_mut() else {
+            return;
+        };
+
+        if !cpu.has_battery() {
+            return;
+        }
+
+        if !sav_path.exists() {
+            return;
+        }
+
+        match std::fs::read(&sav_path) {
+            Ok(data) => {
+                let expected_len = cpu.sram_size();
+                if data.len() != expected_len {
+                    crate::platform::debugging::log_info(format!(
+                        "Warning: ignoring save file {} due to size mismatch (expected {}, got {})",
+                        sav_path.display(),
+                        expected_len,
+                        data.len()
+                    ));
+                    return;
+                }
+                cpu.restore_sram(&data);
+            }
+            Err(e) => {
+                crate::platform::debugging::log_info(format!(
+                    "Warning: failed to read save file {}: {e}",
+                    sav_path.display()
+                ));
+            }
+        }
+    }
+
+    /// WASM stub: no filesystem operations on WASM.
+    #[cfg(target_arch = "wasm32")]
+    fn load_save_ram_from_disk(&mut self) {
+        // No-op on WASM
+    }
+
+    /// Save battery-backed cartridge RAM to a `.sav` file.
+    ///
+    /// Uses a temp file + rename for atomic writes to prevent corruption.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_ram_to_disk(&self) -> Result<(), String> {
+        let Some(cpu) = self.cpu.as_ref() else {
+            return Ok(());
+        };
+
+        if !cpu.has_battery() {
+            return Ok(());
+        }
+
+        let Some(sav_path) = self.sav_path() else {
+            return Ok(());
+        };
+
+        // Read current SRAM from the CPU
+        let data = cpu.sram_snapshot();
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        // Atomic write: temp file → rename
+        let mut temp_path = sav_path.clone();
+        temp_path.set_extension(format!("sav.tmp.{}", std::process::id()));
+
+        if let Some(parent) = sav_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create dir {}: {e}", parent.display()))?;
+        }
+
+        std::fs::write(&temp_path, &data)
+            .map_err(|e| format!("failed to write {}: {e}", temp_path.display()))?;
+
+        if sav_path.exists() {
+            let _ = std::fs::remove_file(&sav_path);
+        }
+
+        std::fs::rename(&temp_path, &sav_path)
+            .map_err(|e| format!("failed to rename to {}: {e}", sav_path.display()))
+    }
+
+    /// WASM stub: no filesystem operations on WASM.
+    #[cfg(target_arch = "wasm32")]
+    fn save_ram_to_disk(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 impl Emulator for Snes {
@@ -78,6 +182,10 @@ impl Emulator for Snes {
         self.cpu = Some(cpu);
         self.rom_path = Some(PathBuf::from(name));
         self.ready_to_render = false;
+
+        // Load battery-backed save RAM from disk if a .sav file exists.
+        self.load_save_ram_from_disk();
+
         Ok(())
     }
 
@@ -168,8 +276,7 @@ impl Emulator for Snes {
     }
 
     fn save_ram(&self) -> Result<(), String> {
-        // TODO: Implement battery-backed RAM saving
-        Ok(())
+        self.save_ram_to_disk()
     }
 
     fn app_context(&self) -> &SharedAppContext {
@@ -335,5 +442,137 @@ mod tests {
         let snes = make_snes();
         let snapshot = snes.screen_snapshot();
         assert_eq!(snapshot.len(), (256 * 224 * 3) as usize);
+    }
+
+    fn lorom_rom_with_battery_sram(ram_size_field: u8) -> Vec<u8> {
+        let mut rom = vec![0u8; 0x20000];
+        let header = 0x7FC0;
+        rom[header..header + 21].copy_from_slice(b"SNES BATTERY TEST    ");
+        rom[header + 0x3C] = 0x00;
+        rom[header + 0x3D] = 0x80;
+        rom[header + 0xD5] = 0x20;
+        rom[header + 0xD6] = 0x02; // Battery-backed RAM chipset
+        rom[header + 0xD7] = 0x07;
+        rom[header + 0xD8] = ram_size_field;
+        rom[header + 0xDC] = 0x34;
+        rom[header + 0xDD] = 0x12;
+        rom[header + 0xDE] = 0xCB;
+        rom[header + 0xDF] = 0xED;
+        rom[0x0000] = 0xEA; // NOP at $00:8000
+        rom
+    }
+
+    #[test]
+    fn save_ram_is_noop_for_non_battery_cartridge() {
+        let mut snes = make_snes();
+        let rom = valid_lorom_nop_rom(); // No battery
+        snes.load_rom(&rom, "test.sfc").unwrap();
+
+        // Should not fail
+        let result = snes.save_ram();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn save_ram_returns_ok_when_no_rom_loaded() {
+        let snes = make_snes();
+        // save_ram should still return Ok even if no ROM is loaded
+        let result = snes.save_ram();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn sram_round_trip_preserves_contents() {
+        use std::fs;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let rom_path = temp_dir.path().join("test.sfc");
+        let sav_path = temp_dir.path().join("test.sav");
+
+        // Create and write test data
+        let rom = lorom_rom_with_battery_sram(0x05); // 32 KB SRAM
+        fs::write(&rom_path, &rom).expect("failed to write test ROM");
+
+        // Create test SRAM data
+        let mut test_sram = vec![0u8; 32 * 1024];
+        test_sram[0] = 0xAA;
+        test_sram[1] = 0xBB;
+        test_sram[2] = 0xCC;
+        test_sram[100] = 0xDD;
+        test_sram[1000] = 0xEE;
+
+        // First console: load ROM, restore SRAM, save to disk
+        {
+            let mut snes1 = Snes::new(AppContext::new_with_config(Config::default()));
+            snes1
+                .load_rom(&rom, rom_path.to_str().unwrap())
+                .expect("failed to load ROM");
+
+            // Restore test SRAM data
+            if let Some(cpu) = snes1.cpu.as_mut() {
+                cpu.restore_sram(&test_sram);
+            }
+
+            // Save to disk
+            snes1.save_ram().expect("failed to save RAM");
+        }
+
+        // Verify .sav file was created
+        assert!(sav_path.exists(), ".sav file should be created");
+
+        // Read the saved file and verify contents
+        let saved_data = fs::read(&sav_path).expect("failed to read saved .sav file");
+        assert_eq!(saved_data[0], 0xAA);
+        assert_eq!(saved_data[1], 0xBB);
+        assert_eq!(saved_data[2], 0xCC);
+        assert_eq!(saved_data[100], 0xDD);
+        assert_eq!(saved_data[1000], 0xEE);
+
+        // Second console: load ROM (which auto-loads SRAM from .sav), verify contents
+        {
+            let mut snes2 = Snes::new(AppContext::new_with_config(Config::default()));
+            snes2
+                .load_rom(&rom, rom_path.to_str().unwrap())
+                .expect("failed to load ROM");
+
+            // Verify SRAM was loaded via snapshot
+            if let Some(cpu) = snes2.cpu.as_ref() {
+                let snapshot = cpu.sram_snapshot();
+                assert_eq!(snapshot[0], 0xAA, "SRAM byte 0 should be restored");
+                assert_eq!(snapshot[1], 0xBB, "SRAM byte 1 should be restored");
+                assert_eq!(snapshot[2], 0xCC, "SRAM byte 2 should be restored");
+                assert_eq!(snapshot[100], 0xDD, "SRAM byte 100 should be restored");
+                assert_eq!(snapshot[1000], 0xEE, "SRAM byte 1000 should be restored");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_rom_ignores_incompatible_sav_size() {
+        use std::fs;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let rom_path = temp.path().join("test.sfc");
+        let sav_path = temp.path().join("test.sav");
+
+        let rom = lorom_rom_with_battery_sram(0x05); // 32 KB SRAM
+        fs::write(&rom_path, &rom).expect("write rom");
+
+        // Wrong size (should be 32 KB), must be ignored.
+        fs::write(&sav_path, vec![0xAB; 64]).expect("write mismatched sav");
+
+        let mut snes = Snes::new(AppContext::new_with_config(Config::default()));
+        snes.load_rom(&rom, rom_path.to_str().expect("rom path utf8"))
+            .expect("load rom");
+
+        let snapshot = snes.cpu.as_ref().expect("cpu present").sram_snapshot();
+        assert_eq!(snapshot.len(), 32 * 1024);
+        assert_eq!(
+            snapshot[0], 0x00,
+            "mismatched save file should be ignored entirely"
+        );
+        assert_eq!(snapshot[63], 0x00);
     }
 }
