@@ -10,6 +10,10 @@ pub trait DmaABus {
 pub struct DmaController {
     regs: [u8; DMA_REG_BYTES],
     bbus_ports: [u8; B_BUS_PORT_BYTES],
+    hdma_active_mask: u8,
+    hdma_do_transfer: [bool; 8],
+    hdma_repeat_mode: [bool; 8],
+    hdma_lines_left: [u16; 8],
 }
 
 impl DmaController {
@@ -17,6 +21,10 @@ impl DmaController {
         Self {
             regs: [0; DMA_REG_BYTES],
             bbus_ports: [0; B_BUS_PORT_BYTES],
+            hdma_active_mask: 0,
+            hdma_do_transfer: [false; 8],
+            hdma_repeat_mode: [false; 8],
+            hdma_lines_left: [0; 8],
         }
     }
 
@@ -55,6 +63,102 @@ impl DmaController {
 
             ticks += 8;
             ticks += self.run_channel(channel, abus, &mut open_bus);
+        }
+
+        (ticks, open_bus)
+    }
+
+    pub fn hdma_init<B: DmaABus>(
+        &mut self,
+        hdmaen: u8,
+        abus: &mut B,
+        seed_open_bus: u8,
+    ) -> (u64, u8) {
+        self.hdma_active_mask = 0;
+        self.hdma_do_transfer = [false; 8];
+        self.hdma_repeat_mode = [false; 8];
+        self.hdma_lines_left = [0; 8];
+
+        if hdmaen == 0 {
+            return (0, seed_open_bus);
+        }
+
+        let mut ticks = 18u64;
+        let mut open_bus = seed_open_bus;
+
+        for channel in 0u8..8 {
+            if (hdmaen & (1 << channel)) == 0 {
+                continue;
+            }
+
+            let dmap = self.get_reg(channel, 0x0);
+            let indirect = (dmap & 0x40) != 0;
+            ticks += 8;
+
+            let a1t_low = self.get_reg(channel, 0x2);
+            let a1t_high = self.get_reg(channel, 0x3);
+            self.set_reg(channel, 0x8, a1t_low);
+            self.set_reg(channel, 0x9, a1t_high);
+
+            let descriptor = self.read_hdma_table_byte(channel, abus, &mut open_bus);
+            self.set_reg(channel, 0xA, descriptor);
+            if descriptor == 0 {
+                continue;
+            }
+            let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
+            self.hdma_repeat_mode[channel as usize] = repeat_mode;
+            self.hdma_lines_left[channel as usize] = lines_left;
+
+            if indirect {
+                ticks += 16;
+                let indirect_low = self.read_hdma_table_byte(channel, abus, &mut open_bus);
+                let indirect_high = self.read_hdma_table_byte(channel, abus, &mut open_bus);
+                self.set_reg(channel, 0x5, indirect_low);
+                self.set_reg(channel, 0x6, indirect_high);
+            }
+
+            self.hdma_active_mask |= 1 << channel;
+            self.hdma_do_transfer[channel as usize] = true;
+        }
+
+        (ticks, open_bus)
+    }
+
+    pub fn hdma_do_line<B: DmaABus>(&mut self, abus: &mut B, seed_open_bus: u8) -> (u64, u8) {
+        if self.hdma_active_mask == 0 {
+            return (0, seed_open_bus);
+        }
+
+        let mut ticks = 18u64;
+        let mut open_bus = seed_open_bus;
+
+        for channel in 0u8..8 {
+            if (self.hdma_active_mask & (1 << channel)) == 0 {
+                continue;
+            }
+
+            ticks += 8;
+            if self.hdma_do_transfer[channel as usize] {
+                ticks += self.run_hdma_transfer_unit(channel, abus, &mut open_bus);
+            }
+
+            let idx = channel as usize;
+            self.hdma_lines_left[idx] = self.hdma_lines_left[idx].saturating_sub(1);
+            self.set_reg(
+                channel,
+                0xA,
+                Self::encode_hdma_counter(self.hdma_repeat_mode[idx], self.hdma_lines_left[idx]),
+            );
+            self.hdma_do_transfer[idx] = self.hdma_repeat_mode[idx];
+
+            if self.hdma_lines_left[idx] == 0 {
+                if !self.reload_hdma_entry(channel, abus, &mut open_bus, &mut ticks) {
+                    self.hdma_active_mask &= !(1 << channel);
+                    self.hdma_do_transfer[idx] = false;
+                } else {
+                    self.hdma_do_transfer[idx] = true;
+                }
+            }
         }
 
         (ticks, open_bus)
@@ -149,6 +253,138 @@ impl DmaController {
 
     fn set_reg(&mut self, channel: u8, reg: usize, value: u8) {
         self.regs[(channel as usize) * 0x10 + reg] = value;
+    }
+
+    fn decode_hdma_descriptor(descriptor: u8) -> (bool, u16) {
+        if descriptor == 0 {
+            return (false, 0);
+        }
+        if descriptor <= 0x80 {
+            if descriptor == 0x80 {
+                (false, 128)
+            } else {
+                (false, descriptor as u16)
+            }
+        } else {
+            (true, (descriptor - 0x80) as u16)
+        }
+    }
+
+    fn encode_hdma_counter(repeat_mode: bool, lines_left: u16) -> u8 {
+        if lines_left == 0 {
+            0
+        } else if repeat_mode {
+            0x80 | (lines_left as u8)
+        } else if lines_left == 128 {
+            0x80
+        } else {
+            lines_left as u8
+        }
+    }
+
+    fn hdma_table_address(&self, channel: u8) -> u32 {
+        let bank = self.get_reg(channel, 0x4);
+        let low = self.get_reg(channel, 0x8);
+        let high = self.get_reg(channel, 0x9);
+        ((bank as u32) << 16) | u16::from_le_bytes([low, high]) as u32
+    }
+
+    fn read_hdma_table_byte<B: DmaABus>(
+        &mut self,
+        channel: u8,
+        abus: &mut B,
+        open_bus: &mut u8,
+    ) -> u8 {
+        let table_addr = self.hdma_table_address(channel);
+        let value = abus.dma_read_a_bus(table_addr, *open_bus);
+        *open_bus = value;
+
+        let next = u16::from_le_bytes([self.get_reg(channel, 0x8), self.get_reg(channel, 0x9)])
+            .wrapping_add(1);
+        let [next_low, next_high] = next.to_le_bytes();
+        self.set_reg(channel, 0x8, next_low);
+        self.set_reg(channel, 0x9, next_high);
+        value
+    }
+
+    fn run_hdma_transfer_unit<B: DmaABus>(
+        &mut self,
+        channel: u8,
+        abus: &mut B,
+        open_bus: &mut u8,
+    ) -> u64 {
+        let dmap = self.get_reg(channel, 0x0);
+        let bbad = self.get_reg(channel, 0x1);
+        let mode = Self::canonical_mode(dmap & 0x07);
+        let pattern = Self::transfer_offsets(mode);
+        let direction_b_to_a = (dmap & 0x80) != 0;
+        let indirect = (dmap & 0x40) != 0;
+
+        let bank = if indirect {
+            self.get_reg(channel, 0x7)
+        } else {
+            self.get_reg(channel, 0x4)
+        };
+        let mut addr = if indirect {
+            u16::from_le_bytes([self.get_reg(channel, 0x5), self.get_reg(channel, 0x6)])
+        } else {
+            u16::from_le_bytes([self.get_reg(channel, 0x8), self.get_reg(channel, 0x9)])
+        };
+
+        for offset in pattern {
+            let a_addr = ((bank as u32) << 16) | addr as u32;
+            let b_addr = bbad.wrapping_add(*offset);
+            if direction_b_to_a {
+                let value = self.read_b_bus(b_addr);
+                *open_bus = value;
+                abus.dma_write_a_bus(a_addr, value);
+            } else {
+                let value = abus.dma_read_a_bus(a_addr, *open_bus);
+                *open_bus = value;
+                self.write_b_bus(b_addr, value);
+            }
+            addr = addr.wrapping_add(1);
+        }
+
+        let [low, high] = addr.to_le_bytes();
+        if indirect {
+            self.set_reg(channel, 0x5, low);
+            self.set_reg(channel, 0x6, high);
+        } else {
+            self.set_reg(channel, 0x8, low);
+            self.set_reg(channel, 0x9, high);
+        }
+
+        (pattern.len() as u64) * 8
+    }
+
+    fn reload_hdma_entry<B: DmaABus>(
+        &mut self,
+        channel: u8,
+        abus: &mut B,
+        open_bus: &mut u8,
+        ticks: &mut u64,
+    ) -> bool {
+        let descriptor = self.read_hdma_table_byte(channel, abus, open_bus);
+        self.set_reg(channel, 0xA, descriptor);
+        if descriptor == 0 {
+            self.hdma_repeat_mode[channel as usize] = false;
+            self.hdma_lines_left[channel as usize] = 0;
+            return false;
+        }
+        let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
+        self.hdma_repeat_mode[channel as usize] = repeat_mode;
+        self.hdma_lines_left[channel as usize] = lines_left;
+
+        if (self.get_reg(channel, 0x0) & 0x40) != 0 {
+            let low = self.read_hdma_table_byte(channel, abus, open_bus);
+            let high = self.read_hdma_table_byte(channel, abus, open_bus);
+            self.set_reg(channel, 0x5, low);
+            self.set_reg(channel, 0x6, high);
+            *ticks += 16;
+        }
+
+        true
     }
 }
 

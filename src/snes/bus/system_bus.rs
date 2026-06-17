@@ -27,6 +27,7 @@ pub struct SnesSystemBus {
     rddiv: u16,
     rdmpy: u16,
     memsel: u8,
+    hdmaen: u8,
     dma: DmaController,
     mdr: Cell<u8>,
     ticks: Cell<u64>,
@@ -49,6 +50,7 @@ impl SnesSystemBus {
             rddiv: 0,
             rdmpy: 0,
             memsel: 0,
+            hdmaen: 0,
             dma: DmaController::new(),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
@@ -212,6 +214,24 @@ impl SnesSystemBus {
         self.dma = dma;
     }
 
+    pub fn hdma_init(&mut self) {
+        let mut dma = std::mem::take(&mut self.dma);
+        let (consumed_ticks, dma_open_bus) = dma.hdma_init(self.hdmaen, self, self.mdr.get());
+        self.ticks
+            .set(self.ticks.get().wrapping_add(consumed_ticks));
+        self.mdr.set(dma_open_bus);
+        self.dma = dma;
+    }
+
+    pub fn hdma_do_line(&mut self) {
+        let mut dma = std::mem::take(&mut self.dma);
+        let (consumed_ticks, dma_open_bus) = dma.hdma_do_line(self, self.mdr.get());
+        self.ticks
+            .set(self.ticks.get().wrapping_add(consumed_ticks));
+        self.mdr.set(dma_open_bus);
+        self.dma = dma;
+    }
+
     fn read_mmio(&self, addr: u32) -> Option<u8> {
         let offset = Self::decode_system_offset(addr)?;
         let value = match offset {
@@ -229,6 +249,7 @@ impl SnesSystemBus {
             0x4216 => (self.rdmpy & 0x00FF) as u8,
             0x4217 => (self.rdmpy >> 8) as u8,
             0x420D => self.memsel,
+            0x420C => self.hdmaen,
             0x4300..=0x437F => self.dma.read_register(offset)?,
             _ => return None,
         };
@@ -294,6 +315,10 @@ impl SnesSystemBus {
             }
             0x420D => {
                 self.memsel = value & 0x01;
+                true
+            }
+            0x420C => {
+                self.hdmaen = value;
                 true
             }
             0x420B => {
@@ -422,6 +447,15 @@ mod tests {
         bus.write(base + 0x4, ((a_addr >> 16) & 0xFF) as u8);
         bus.write(base + 0x5, (count & 0xFF) as u8);
         bus.write(base + 0x6, (count >> 8) as u8);
+    }
+
+    fn write_hdma_channel(bus: &mut SnesSystemBus, channel: u8, dmap: u8, bbad: u8, a_addr: u32) {
+        let base = 0x004300u32 + (channel as u32) * 0x10;
+        bus.write(base, dmap);
+        bus.write(base + 0x1, bbad);
+        bus.write(base + 0x2, (a_addr & 0xFF) as u8);
+        bus.write(base + 0x3, ((a_addr >> 8) & 0xFF) as u8);
+        bus.write(base + 0x4, ((a_addr >> 16) & 0xFF) as u8);
     }
 
     #[test]
@@ -755,5 +789,162 @@ mod tests {
 
         // Unmapped read returns MDR; after DMA it should be the last transferred byte.
         assert_eq!(bus.read(0x002200), 0x5C);
+    }
+
+    #[test]
+    fn hdmaen_register_latches_written_value() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x00420C, 0x81);
+        assert_eq!(bus.read(0x00420C), 0x81);
+    }
+
+    #[test]
+    fn hdma_init_loads_a2a_and_line_counter_from_table() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        write_hdma_channel(&mut bus, 0, 0x00, 0x20, 0x7E2100);
+        bus.write(0x7E2100, 0x02); // line descriptor (repeat clear, 2 lines)
+        bus.write(0x7E2101, 0xAA); // first direct data byte
+        bus.write(0x00420C, 0x01);
+
+        bus.hdma_init();
+
+        assert_eq!(bus.read(0x004308), 0x01); // table current ptr low advanced past descriptor
+        assert_eq!(bus.read(0x004309), 0x21);
+        assert_eq!(bus.read(0x00430A), 0x02);
+    }
+
+    #[test]
+    fn hdma_do_line_direct_mode_transfers_then_pauses_when_repeat_clear() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        write_hdma_channel(&mut bus, 0, 0x00, 0x30, 0x7E2200); // mode0 direct, A->B
+        bus.write(0x7E2200, 0x02); // transfer once, then pause one line
+        bus.write(0x7E2201, 0x5A); // data for first line
+        bus.write(0x7E2202, 0x01); // next descriptor
+        bus.write(0x7E2203, 0xC3); // second transfer data
+        bus.write(0x7E2204, 0x00); // terminator
+        bus.write(0x00420C, 0x01);
+
+        bus.hdma_init();
+        bus.hdma_do_line(); // transfer 0x5A
+        bus.hdma_do_line(); // pause
+        bus.hdma_do_line(); // transfer 0xC3
+
+        write_dma_channel(&mut bus, 0, 0x80, 0x30, 0x7E2210, 1);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E2210), 0xC3);
+    }
+
+    #[test]
+    fn hdma_do_line_indirect_mode_loads_pointer_and_advances_das() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        write_hdma_channel(&mut bus, 0, 0x40, 0x34, 0x7E2300); // indirect mode, mode0
+        bus.write(0x004307, 0x7E); // DASB
+        bus.write(0x7E2300, 0x81); // repeat set, 1 line
+        bus.write(0x7E2301, 0x20); // indirect low
+        bus.write(0x7E2302, 0x23); // indirect high -> 7E2320
+        bus.write(0x7E2320, 0x9B); // indirect data byte
+        bus.write(0x7E2303, 0x00); // next descriptor terminator
+        bus.write(0x00420C, 0x01);
+
+        bus.hdma_init();
+        bus.hdma_do_line();
+
+        assert_eq!(bus.read(0x004305), 0x21); // DAS advanced after one byte transfer
+        assert_eq!(bus.read(0x004306), 0x23);
+    }
+
+    #[test]
+    fn hdma_do_line_without_explicit_init_does_not_transfer() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        write_hdma_channel(&mut bus, 0, 0x00, 0x50, 0x7E2400);
+        bus.write(0x7E2400, 0x01);
+        bus.write(0x7E2401, 0x99);
+        bus.write(0x00420C, 0x01);
+
+        bus.hdma_do_line();
+
+        write_dma_channel(&mut bus, 0, 0x80, 0x50, 0x7E2410, 1);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E2410), 0x00);
+    }
+
+    #[test]
+    fn hdma_channels_execute_in_ascending_order_each_line() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        write_hdma_channel(&mut bus, 0, 0x00, 0x60, 0x7E2500);
+        write_hdma_channel(&mut bus, 1, 0x00, 0x60, 0x7E2600);
+        bus.write(0x7E2500, 0x01);
+        bus.write(0x7E2501, 0x11);
+        bus.write(0x7E2502, 0x00);
+        bus.write(0x7E2600, 0x01);
+        bus.write(0x7E2601, 0x22);
+        bus.write(0x7E2602, 0x00);
+        bus.write(0x00420C, 0x03);
+
+        bus.hdma_init();
+        bus.hdma_do_line();
+
+        write_dma_channel(&mut bus, 0, 0x80, 0x60, 0x7E2610, 1);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E2610), 0x22);
+    }
+
+    #[test]
+    fn hdma_descriptor_80_transfers_once_then_pauses() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        write_hdma_channel(&mut bus, 0, 0x00, 0x70, 0x7E2700);
+        bus.write(0x7E2700, 0x80);
+        bus.write(0x7E2701, 0x55);
+        bus.write(0x7E2702, 0x01);
+        bus.write(0x7E2703, 0x77);
+        bus.write(0x7E2704, 0x00);
+        bus.write(0x00420C, 0x01);
+
+        bus.hdma_init();
+        bus.hdma_do_line(); // transfer 0x55
+        bus.hdma_do_line(); // should pause, not transfer 0x77
+
+        write_dma_channel(&mut bus, 0, 0x80, 0x70, 0x7E2710, 1);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E2710), 0x55);
+    }
+
+    #[test]
+    fn hdma_init_cycle_accounting_matches_direct_and_indirect_costs() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        write_hdma_channel(&mut bus, 0, 0x00, 0x20, 0x7E2800);
+        bus.write(0x7E2800, 0x01);
+        bus.write(0x7E2801, 0xAA);
+        bus.write(0x7E2802, 0x00);
+
+        write_hdma_channel(&mut bus, 1, 0x40, 0x24, 0x7E2900);
+        bus.write(0x004317, 0x7E);
+        bus.write(0x7E2900, 0x01);
+        bus.write(0x7E2901, 0x40);
+        bus.write(0x7E2902, 0x29);
+        bus.write(0x7E2940, 0xBB);
+        bus.write(0x7E2903, 0x00);
+
+        bus.write(0x00420C, 0x03);
+        let ticks_before = bus.ticks.get();
+        bus.hdma_init();
+        let ticks_after = bus.ticks.get();
+
+        assert_eq!(ticks_after - ticks_before, 18 + 8 + 24);
+    }
+
+    #[test]
+    fn hdma_init_indirect_channel_with_terminator_does_not_charge_pointer_load_cycles() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        write_hdma_channel(&mut bus, 0, 0x40, 0x20, 0x7E2A00);
+        bus.write(0x004307, 0x7E);
+        bus.write(0x7E2A00, 0x00);
+        bus.write(0x00420C, 0x01);
+
+        let ticks_before = bus.ticks.get();
+        bus.hdma_init();
+        let ticks_after = bus.ticks.get();
+
+        assert_eq!(ticks_after - ticks_before, 18 + 8);
     }
 }

@@ -316,7 +316,7 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 
 #### SNES Emulation (`src/snes/`)
 
-The SNES (Super Nintendo Entertainment System) module now includes active 65816 CPU execution wired to a functional `SnesSystemBus`, cartridge parsing/mapping for LoROM/HiROM/ExHiROM, and initial general-purpose DMA channel execution. PPU/APU/input and HDMA remain incremental, but the core CPU↔bus bring-up path for cartridge execution and DMA-backed B-bus transfer plumbing are in place.
+The SNES (Super Nintendo Entertainment System) module now includes active 65816 CPU execution wired to a functional `SnesSystemBus`, cartridge parsing/mapping for LoROM/HiROM/ExHiROM, and both general-purpose DMA and explicit HDMA execution hooks. PPU/APU/input remain incremental; HDMA scanline scheduling is intentionally exposed as bus APIs (`hdma_init` / `hdma_do_line`) until PPU timing wiring lands.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
@@ -325,8 +325,8 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | `src/snes/console/snes.rs` | `Snes` — platform-facing SNES wrapper implementing the `Emulator` trait. Owns `Option<Cpu<SnesSystemBus>>`; `load_rom` parses a `Cartridge`, constructs the system bus, and resets CPU state; `run_tick` executes real CPU steps when a ROM is loaded (returns 0 cycles when not loaded). Screen/audio/input/save-state APIs are still staged for later SNES sub-issues. |
 | `src/snes/console/config.rs` | `SnesConfig` struct for SNES-specific configuration (currently empty, ready for future settings). |
 | `src/snes/bus/mod.rs` | `SnesBus` trait definition plus `StubBus`, `TestBus`, and `SnesSystemBus` exports. The trait defines the memory access contract (`read`, `write`, `tick`) mirroring the pattern used in GB and GBA. |
-| `src/snes/bus/system_bus.rs` | `SnesSystemBus` implementation: WRAM direct/mirror mapping, LoROM/HiROM/ExHiROM ROM decode, SRAM windows with wrap semantics, strict MDR/open-bus reads, scoped MMIO support (`$2180-$2183`, mul/div `$4202-$4206`, MEMSEL `$420D`), and MDMAEN (`$420B`) dispatch into the DMA controller. |
-| `src/snes/bus/dma.rs` | `DmaController` for #2745: `$43x0-$43xB` channel register file, synchronous general-purpose DMA execution for channels 0..7, transfer modes (including aliases 5/6/7 -> 1/2/3), A-bus inc/dec/fixed stepping, per-transfer cycle accounting (8/byte + per-channel/global overhead), and deterministic B-bus stub storage for pre-PPU/APU validation. |
+| `src/snes/bus/system_bus.rs` | `SnesSystemBus` implementation: WRAM direct/mirror mapping, LoROM/HiROM/ExHiROM ROM decode, SRAM windows with wrap semantics, strict MDR/open-bus reads, scoped MMIO support (`$2180-$2183`, mul/div `$4202-$4206`, MEMSEL `$420D`, MDMAEN `$420B`, HDMAEN `$420C`), plus explicit `hdma_init()` / `hdma_do_line()` APIs used by tests and future PPU scanline wiring. |
+| `src/snes/bus/dma.rs` | `DmaController` for #2745/#2746: `$43x0-$43xB` channel register file, synchronous general-purpose DMA execution, HDMA per-frame init and per-line execution (direct+indirect tables, repeat/continue semantics, terminator handling, channel 0→7 ordering), modeled cycle accounting (global + per-channel + per-byte + indirect pointer loads), and deterministic B-bus stub storage for pre-PPU/APU validation. |
 | `src/snes/cpu/mod.rs` | SNES 65816 CPU module root. Re-exports `Cpu` and memory-speed helpers; instruction behavior and timing tests live in `cpu.rs`. |
 | `src/snes/ppu/mod.rs` | PPU module stub (SNES Picture Processing Unit — future implementation). |
 | `src/snes/apu/mod.rs` | APU module stub (SPC700 + DSP — future implementation). |
