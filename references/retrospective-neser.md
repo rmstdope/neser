@@ -5,6 +5,39 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-06-18 - #2747 / PR #2756: SNES battery SRAM persistence review-fix + merge
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2756
+**Linked issues:** #2747 (Sub-issue of #2719)
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `rust-developer` | Guided focused Rust changes around API additions (`sram_size`) and behavior-safe load/save handling. |
+| Skill | `test-driven-development` | Used a RED test for mismatched `.sav` sizing, then GREEN implementation to satisfy acceptance behavior. |
+| Skill | `github-administration` | Structured PR review-thread handling, replies/resolution, CI polling, and merge execution via `gh`. |
+| Skill | `self-learning-skills` | Captured this post-merge retrospective entry. |
+
+### What went well
+
+- Review comments were translated into concrete, minimal fixes with direct tests: `.sav` size compatibility checks, `tempfile::tempdir()` isolation, helper reuse, and naming clarity.
+- Thread hygiene was strong: each inline review comment was replied to and all threads were resolved before merge.
+- CI discipline held: merge happened only after the full check rollup reached completed/successful state.
+
+### What to improve
+
+- The original implementation drifted from one acceptance detail (size-compatible load only). For persistence features, add explicit size-compat tests in the first RED slice, not as follow-up.
+- The TDD phase-gate skill conflicts with autopilot execution. Future sessions should explicitly acknowledge autopilot pre-approval at kickoff to avoid process friction.
+- Keep `sav_path()` as the single source for `.sav` derivation from the start to avoid temporary dead-code suppression and duplicate path logic.
+
+### Navigator feedback
+
+Navigator unavailable; feedback pending.
+
+---
+
 ## 2026-05-24 - #2632 / PR #2639: Capture and restore GBA APU state
 
 **Repository:** rmstdope/neser
@@ -768,3 +801,49 @@ COMMIT progression while still stopping at  a good balance between pace and over
 ### Navigator feedback
 
 No additional feedback provided beyond driver observations.
+
+---
+
+## 2026-06-17 — PR #2755: SNES HDMA per-scanline transfers (#2746)
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2755
+**Linked issues:** #2746 (Sub-issue of #2719)
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `snes-hardware-research` | Researched fullsnes, anomie specs for HDMA descriptor semantics, cycle accounting, direct/indirect table behavior |
+| Skill | `test-driven-development` | RED-GREEN-REFACTOR approach: 9 unit tests written first, minimum implementation to pass, refactored with review |
+| Skill | `rust-developer` | Core Rust patterns: state management in DmaController, error handling, encapsulation of HDMA runtime state |
+| Instructions | SNES development practices | Four-eye principle, pre-merge checkpoints (clippy, fmt, targeted tests, full suite), TDD discipline, small increments |
+
+### What went well
+
+- ✅ **Hardware-research-first approach prevented design mismatches**: Starting with fullsnes/anomie specs via `snes-hardware-research` skill ensured the explicit HDMA timing model (18-cycle init + 8 per channel + 16 per indirect pointer load) was correct from the start, avoiding downstream timing bugs.
+- ✅ **Explicit test-friendly APIs for pre-PPU features**: The `hdma_init()/hdma_do_line()` design on SnesSystemBus decoupled testing from PPU scheduling logic (#2720 deferred). This pattern enables independent HDMA validation before PPU wiring is complete, and should be reused for other timing-sensitive features.
+- ✅ **Cycle accounting tests caught implementation bugs**: Adding cycle-delta assertions in unit tests (e.g., `assert_eq!(ticks, expected)`) caught the indirect-terminator bug early (descriptor 00 incorrectly charging +16 pointer load cycles). This pattern should be standard for all timing-critical emulator code.
+- ✅ **TDD + explicit specification semantics**: Writing descriptor-parsing and state-transition tests before implementation naturally exposed edge cases (descriptor 0x80 as non-repeat 128-line, repeat-mode semantics, channel 0→7 ordering). 9 unit tests cover init behavior, per-line state, direct/indirect transfers, and cycle accounting.
+- ✅ **All CI checks passing before merge**: Pre-merge validation gates (cargo clippy, fmt, targeted SNES tests, full lib/wasm/Python/JS tests) ran green, reducing post-merge regression risk.
+
+### What to improve
+
+- ❌ **Design-rationale documentation is sparse**: The choice of explicit APIs over auto-scheduling in PPU is correct, but the rationale isn't captured in code comments. A "Design Decisions" section in PR or a comment block in system_bus.rs explaining why PPU wiring is deferred would help future maintainers understand the architecture.
+- ❌ **HDMA runtime state lacks lifecycle documentation**: The per-channel arrays (hdma_repeat_mode[], hdma_lines_left[], hdma_do_transfer[]) are initialized in hdma_init(), mutated in hdma_do_line(), and cleared at frame end, but no comment explains this state machine. Future HDMA work (e.g., mid-frame enable, per-channel pause) should include a state-transition table.
+- ❌ **$420C latch vs. hdma_active_mask distinction is implicit**: The implementation uses $420C as a write/read latch (spec-compliant) and hdma_active_mask for per-frame tracking (implementation choice to allow channels to terminate mid-frame independently). A short comment in system_bus.rs or architecture.md explaining this split would prevent future confusion about which field to read.
+
+### Navigator feedback
+
+**What went well (confirmed by navigator):**
+- Hardware-research-first approach was highly effective for getting timing model right
+- TDD with cycle-delta assertions caught subtle bugs naturally
+- Explicit test-friendly APIs are a reusable pattern for future timing-sensitive features
+- Pre-merge validation gates as a quality barrier are reliable
+
+**What to improve (confirmed by navigator):**
+- Design rationale for explicit APIs (vs. auto-scheduling) should be documented in code comments or PR description for future reference
+- HDMA state-machine lifecycle deserves a comment block or brief architecture diagram
+- The $420C latch vs. hdma_active_mask distinction should be documented to prevent future misunderstandings
+
+---
