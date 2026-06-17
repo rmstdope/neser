@@ -35,9 +35,14 @@ impl DmaController {
         true
     }
 
-    pub fn start_dma<B: DmaABus>(&mut self, mdmaen: u8, abus: &mut B, seed_open_bus: u8) -> u64 {
+    pub fn start_dma<B: DmaABus>(
+        &mut self,
+        mdmaen: u8,
+        abus: &mut B,
+        seed_open_bus: u8,
+    ) -> (u64, u8) {
         if mdmaen == 0 {
-            return 0;
+            return (0, seed_open_bus);
         }
 
         let mut ticks = 16u64;
@@ -52,7 +57,7 @@ impl DmaController {
             ticks += self.run_channel(channel, abus, &mut open_bus);
         }
 
-        ticks
+        (ticks, open_bus)
     }
 
     fn run_channel<B: DmaABus>(&mut self, channel: u8, abus: &mut B, open_bus: &mut u8) -> u64 {

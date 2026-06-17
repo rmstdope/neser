@@ -204,10 +204,11 @@ impl SnesSystemBus {
 
     fn start_dma_transfer(&mut self, mdmaen: u8) {
         let mut dma = std::mem::take(&mut self.dma);
-        let consumed_ticks = dma.start_dma(mdmaen, self, self.mdr.get());
+        let (consumed_ticks, dma_open_bus) = dma.start_dma(mdmaen, self, self.mdr.get());
 
         self.ticks
             .set(self.ticks.get().wrapping_add(consumed_ticks));
+        self.mdr.set(dma_open_bus);
         self.dma = dma;
     }
 
@@ -743,5 +744,16 @@ mod tests {
         // Fixed addressing keeps A1T unchanged after a 65536-byte transfer.
         assert_eq!(bus.read(0x004302), 0x00);
         assert_eq!(bus.read(0x004303), 0x17);
+    }
+
+    #[test]
+    fn dma_updates_mdr_with_last_transferred_byte() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x7E1800, 0x5C);
+        write_dma_channel(&mut bus, 0, 0x00, 0x40, 0x7E1800, 1);
+        bus.write(0x00420B, 0x01);
+
+        // Unmapped read returns MDR; after DMA it should be the last transferred byte.
+        assert_eq!(bus.read(0x002200), 0x5C);
     }
 }
