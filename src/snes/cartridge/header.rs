@@ -38,33 +38,18 @@ pub(crate) fn parse_header_at(
 
     let title_bytes = &rom[header_offset..header_offset + TITLE_LEN];
     let title = decode_title(title_bytes);
-    let map_mode = rom[header_offset + HEADER_MODE_OFFSET];
-    let chipset = rom[header_offset + HEADER_CHIPSET_OFFSET];
-    let rom_size_field = rom[header_offset + HEADER_ROM_SIZE_OFFSET];
-    let ram_size_field = rom[header_offset + HEADER_RAM_SIZE_OFFSET];
-    let country = rom[header_offset + HEADER_COUNTRY_OFFSET];
-    let developer_id = rom[header_offset + HEADER_DEVELOPER_OFFSET];
-    let version = rom[header_offset + HEADER_VERSION_OFFSET];
-    let checksum_complement = u16::from_le_bytes([
-        rom[header_offset + HEADER_CHECKSUM_COMPLEMENT_OFFSET],
-        rom[header_offset + HEADER_CHECKSUM_COMPLEMENT_OFFSET + 1],
-    ]);
-    let checksum = u16::from_le_bytes([
-        rom[header_offset + HEADER_CHECKSUM_OFFSET],
-        rom[header_offset + HEADER_CHECKSUM_OFFSET + 1],
-    ]);
 
     Some(SnesHeader {
         title,
-        map_mode,
-        chipset,
-        rom_size_field,
-        ram_size_field,
-        country,
-        developer_id,
-        version,
-        checksum_complement,
-        checksum,
+        map_mode: rom[header_offset + HEADER_MODE_OFFSET],
+        chipset: rom[header_offset + HEADER_CHIPSET_OFFSET],
+        rom_size_field: rom[header_offset + HEADER_ROM_SIZE_OFFSET],
+        ram_size_field: rom[header_offset + HEADER_RAM_SIZE_OFFSET],
+        country: rom[header_offset + HEADER_COUNTRY_OFFSET],
+        developer_id: rom[header_offset + HEADER_DEVELOPER_OFFSET],
+        version: rom[header_offset + HEADER_VERSION_OFFSET],
+        checksum_complement: read_u16_le(rom, header_offset + HEADER_CHECKSUM_COMPLEMENT_OFFSET),
+        checksum: read_u16_le(rom, header_offset + HEADER_CHECKSUM_OFFSET),
         mapping,
     })
 }
@@ -72,6 +57,10 @@ pub(crate) fn parse_header_at(
 fn decode_title(bytes: &[u8]) -> String {
     let raw = String::from_utf8_lossy(bytes);
     raw.trim_end_matches(['\0', ' ']).to_string()
+}
+
+fn read_u16_le(rom: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([rom[offset], rom[offset + 1]])
 }
 
 #[cfg(test)]

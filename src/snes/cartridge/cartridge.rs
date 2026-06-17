@@ -94,8 +94,9 @@ fn decode_sram_size(ram_size_field: u8) -> usize {
     let Some(kib) = 1usize.checked_shl(exp as u32) else {
         return 0;
     };
+
     let size = kib.saturating_mul(1024);
-    if size > 1024 * 1024 { 0 } else { size }
+    if size <= 1024 * 1024 { size } else { 0 }
 }
 
 fn has_battery(chipset: u8) -> bool {

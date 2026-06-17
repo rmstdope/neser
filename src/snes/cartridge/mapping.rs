@@ -20,42 +20,37 @@ const EXHIROM_HEADER_OFFSET: usize = 0x40FFC0;
 const MIN_VALID_SCORE: i32 = 25;
 
 pub(crate) fn detect_mapping(rom: &[u8]) -> Option<MappingCandidate> {
-    let mut best: Option<MappingCandidate> = None;
-    for (mapping, header_offset) in [
+    let candidates = [
         (Mapping::LoRom, LOROM_HEADER_OFFSET),
         (Mapping::HiRom, HIROM_HEADER_OFFSET),
         (Mapping::ExHiRom, EXHIROM_HEADER_OFFSET),
-    ] {
+    ]
+    .iter()
+    .filter_map(|&(mapping, header_offset)| {
         if header_offset + HEADER_SIZE > rom.len() {
-            continue;
+            return None;
         }
         let score = score_candidate(rom, mapping, header_offset);
-        let candidate = MappingCandidate {
+        Some(MappingCandidate {
             mapping,
             header_offset,
             score,
-        };
-        match best {
-            None => best = Some(candidate),
-            Some(current) => {
-                if candidate.score > current.score
-                    || (candidate.score == current.score
-                        && mapping_priority(candidate.mapping) > mapping_priority(current.mapping))
-                {
-                    best = Some(candidate);
-                }
-            }
-        }
-    }
-    best.filter(|candidate| candidate.score >= MIN_VALID_SCORE)
+        })
+    })
+    .max_by(|a, b| {
+        b.score.cmp(&a.score).then_with(|| {
+            mapping_priority(b.mapping).cmp(&mapping_priority(a.mapping))
+        })
+    });
+
+    candidates.filter(|candidate| candidate.score >= MIN_VALID_SCORE)
 }
 
 fn score_candidate(rom: &[u8], mapping: Mapping, header_offset: usize) -> i32 {
     let map_mode = rom[header_offset + 0xD5];
-    let checksum_complement =
-        u16::from_le_bytes([rom[header_offset + 0xDC], rom[header_offset + 0xDD]]);
-    let checksum = u16::from_le_bytes([rom[header_offset + 0xDE], rom[header_offset + 0xDF]]);
-    let reset_vector = u16::from_le_bytes([rom[header_offset + 0x3C], rom[header_offset + 0x3D]]);
+    let checksum_complement = read_u16_le(rom, header_offset + 0xDC);
+    let checksum = read_u16_le(rom, header_offset + 0xDE);
+    let reset_vector = read_u16_le(rom, header_offset + 0x3C);
     let rom_size_field = rom[header_offset + 0xD7];
 
     let mut score = 0;
@@ -79,6 +74,10 @@ fn score_candidate(rom: &[u8], mapping: Mapping, header_offset: usize) -> i32 {
     }
 
     score
+}
+
+fn read_u16_le(rom: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([rom[offset], rom[offset + 1]])
 }
 
 fn rom_size_is_sane(rom_size_field: u8, actual_len: usize) -> bool {
