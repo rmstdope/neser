@@ -2,6 +2,7 @@
 
 #[allow(clippy::module_inception)]
 mod bus;
+mod dma;
 mod system_bus;
 
 #[cfg(test)]

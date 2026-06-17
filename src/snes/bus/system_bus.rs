@@ -1,4 +1,5 @@
 use crate::snes::bus::SnesBus;
+use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::Mapping;
 use std::cell::Cell;
@@ -26,7 +27,7 @@ pub struct SnesSystemBus {
     rddiv: u16,
     rdmpy: u16,
     memsel: u8,
-    dma_regs: [u8; 0x80],
+    dma: DmaController,
     mdr: Cell<u8>,
     ticks: Cell<u64>,
 }
@@ -48,7 +49,7 @@ impl SnesSystemBus {
             rddiv: 0,
             rdmpy: 0,
             memsel: 0,
-            dma_regs: [0; 0x80],
+            dma: DmaController::new(),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
         }
@@ -154,6 +155,62 @@ impl SnesSystemBus {
         }
     }
 
+    fn is_system_bank(bank: u8) -> bool {
+        matches!(bank, 0x00..=0x3F | 0x80..=0xBF)
+    }
+
+    fn is_dma_a_bus_mmio(addr: u32) -> bool {
+        let bank = ((addr >> 16) & 0xFF) as u8;
+        let offset = (addr & 0xFFFF) as u16;
+        Self::is_system_bank(bank)
+            && (matches!(offset, 0x2100..=0x21FF | 0x4000..=0x41FF | 0x4200..=0x421F)
+                || (0x4300..=0x437F).contains(&offset))
+    }
+
+    fn dma_read_a_bus_impl(&self, addr: u32, open_bus: u8) -> u8 {
+        if Self::is_dma_a_bus_mmio(addr) {
+            return open_bus;
+        }
+
+        if let Some(index) = Self::decode_wram_index(addr) {
+            self.wram[index]
+        } else if let Some(index) = self.decode_rom_index(addr) {
+            self.rom.get(index).copied().unwrap_or(open_bus)
+        } else if let Some(index) = self.decode_sram_index(addr) {
+            if self.sram.is_empty() {
+                open_bus
+            } else {
+                self.sram[index % self.sram.len()]
+            }
+        } else {
+            open_bus
+        }
+    }
+
+    fn dma_write_a_bus_impl(&mut self, addr: u32, value: u8) {
+        if Self::is_dma_a_bus_mmio(addr) {
+            return;
+        }
+
+        if let Some(index) = Self::decode_wram_index(addr) {
+            self.wram[index] = value;
+        } else if let Some(index) = self.decode_sram_index(addr) {
+            let len = self.sram.len();
+            if len != 0 {
+                self.sram[index % len] = value;
+            }
+        }
+    }
+
+    fn start_dma_transfer(&mut self, mdmaen: u8) {
+        let mut dma = std::mem::take(&mut self.dma);
+        let consumed_ticks = dma.start_dma(mdmaen, self, self.mdr.get());
+
+        self.ticks
+            .set(self.ticks.get().wrapping_add(consumed_ticks));
+        self.dma = dma;
+    }
+
     fn read_mmio(&self, addr: u32) -> Option<u8> {
         let offset = Self::decode_system_offset(addr)?;
         let value = match offset {
@@ -171,7 +228,7 @@ impl SnesSystemBus {
             0x4216 => (self.rdmpy & 0x00FF) as u8,
             0x4217 => (self.rdmpy >> 8) as u8,
             0x420D => self.memsel,
-            0x4300..=0x437F => self.dma_regs[(offset - 0x4300) as usize],
+            0x4300..=0x437F => self.dma.read_register(offset)?,
             _ => return None,
         };
         Some(value)
@@ -238,12 +295,23 @@ impl SnesSystemBus {
                 self.memsel = value & 0x01;
                 true
             }
-            0x4300..=0x437F => {
-                self.dma_regs[(offset - 0x4300) as usize] = value;
+            0x420B => {
+                self.start_dma_transfer(value);
                 true
             }
+            0x4300..=0x437F => self.dma.write_register(offset, value),
             _ => false,
         }
+    }
+}
+
+impl DmaABus for SnesSystemBus {
+    fn dma_read_a_bus(&mut self, addr: u32, open_bus: u8) -> u8 {
+        self.dma_read_a_bus_impl(addr, open_bus)
+    }
+
+    fn dma_write_a_bus(&mut self, addr: u32, value: u8) {
+        self.dma_write_a_bus_impl(addr, value);
     }
 }
 
@@ -335,6 +403,24 @@ mod tests {
     fn lorom_cart_with_sram() -> Cartridge {
         let mut rom = vec![0u8; 0x20000];
         build_cart(&mut rom, 0x7FC0, 0x20, 0x05)
+    }
+
+    fn write_dma_channel(
+        bus: &mut SnesSystemBus,
+        channel: u8,
+        dmap: u8,
+        bbad: u8,
+        a_addr: u32,
+        count: u16,
+    ) {
+        let base = 0x004300u32 + (channel as u32) * 0x10;
+        bus.write(base, dmap);
+        bus.write(base + 0x1, bbad);
+        bus.write(base + 0x2, (a_addr & 0xFF) as u8);
+        bus.write(base + 0x3, ((a_addr >> 8) & 0xFF) as u8);
+        bus.write(base + 0x4, ((a_addr >> 16) & 0xFF) as u8);
+        bus.write(base + 0x5, (count & 0xFF) as u8);
+        bus.write(base + 0x6, (count >> 8) as u8);
     }
 
     #[test]
@@ -498,6 +584,27 @@ mod tests {
     }
 
     #[test]
+    fn dma_channel_register_blocks_do_not_alias() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        for channel in 0u32..8 {
+            for reg in 0u32..=0x0B {
+                let addr = 0x004300 + channel * 0x10 + reg;
+                let value = (channel as u8).wrapping_mul(0x10).wrapping_add(reg as u8);
+                bus.write(addr, value);
+            }
+        }
+
+        for channel in 0u32..8 {
+            for reg in 0u32..=0x0B {
+                let addr = 0x004300 + channel * 0x10 + reg;
+                let expected = (channel as u8).wrapping_mul(0x10).wrapping_add(reg as u8);
+                assert_eq!(bus.read(addr), expected);
+            }
+        }
+    }
+
+    #[test]
     fn wram_port_reads_auto_increment_address() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x002181, 0x00);
@@ -525,5 +632,116 @@ mod tests {
         bus.write(0x004206, 0x10);
         assert_eq!(bus.read(0x004214), 0x23);
         assert_eq!(bus.read(0x004215), 0x01);
+    }
+
+    #[test]
+    fn mdmaen_runs_dma_synchronously_and_updates_channel_registers() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x7E0100, 0x3A);
+        write_dma_channel(&mut bus, 0, 0x00, 0x00, 0x7E0100, 1);
+        bus.write(0x00420B, 0x01);
+
+        // Read back from B-bus via reverse DMA to verify data landed at $2100.
+        write_dma_channel(&mut bus, 0, 0x80, 0x00, 0x7E0200, 1);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E0200), 0x3A);
+
+        // DAS reaches zero and A1T advances by transfer byte count.
+        assert_eq!(bus.read(0x004305), 0x00);
+        assert_eq!(bus.read(0x004306), 0x00);
+        assert_eq!(bus.read(0x004302), 0x01);
+        assert_eq!(bus.read(0x004303), 0x02);
+    }
+
+    #[test]
+    fn mdmaen_executes_channels_in_priority_order_and_accounts_cycles() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x7E0100, 0x11);
+        bus.write(0x7E0200, 0x22);
+        write_dma_channel(&mut bus, 0, 0x00, 0x10, 0x7E0100, 1);
+        write_dma_channel(&mut bus, 1, 0x00, 0x10, 0x7E0200, 1);
+
+        let ticks_before = bus.ticks.get();
+        bus.write(0x00420B, 0x03);
+        let ticks_after = bus.ticks.get();
+
+        // Channel 1 must run after channel 0, so final B-bus value is from channel 1.
+        write_dma_channel(&mut bus, 0, 0x80, 0x10, 0x7E0300, 1);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E0300), 0x22);
+
+        // 8/byte + 8/channel + fixed 16 global transfer overhead.
+        assert_eq!(ticks_after - ticks_before, 16 + 2 * 8 + 2 * 8);
+    }
+
+    #[test]
+    fn dma_modes_5_6_7_alias_modes_1_2_3() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // mode 5 should alias mode 1 (p, p+1)
+        bus.write(0x7E1000, 0xA1);
+        bus.write(0x7E1001, 0xB2);
+        write_dma_channel(&mut bus, 0, 0x05, 0x20, 0x7E1000, 2);
+        bus.write(0x00420B, 0x01);
+        write_dma_channel(&mut bus, 0, 0x81, 0x20, 0x7E1100, 2);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E1100), 0xA1);
+        assert_eq!(bus.read(0x7E1101), 0xB2);
+
+        // mode 6 should alias mode 2 (p, p)
+        bus.write(0x7E1200, 0xC3);
+        bus.write(0x7E1201, 0xD4);
+        write_dma_channel(&mut bus, 0, 0x06, 0x24, 0x7E1200, 2);
+        bus.write(0x00420B, 0x01);
+        write_dma_channel(&mut bus, 0, 0x82, 0x24, 0x7E1300, 2);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E1300), 0xD4);
+        assert_eq!(bus.read(0x7E1301), 0xD4);
+
+        // mode 7 should alias mode 3 (p, p, p+1, p+1)
+        bus.write(0x7E1400, 0x10);
+        bus.write(0x7E1401, 0x20);
+        bus.write(0x7E1402, 0x30);
+        bus.write(0x7E1403, 0x40);
+        write_dma_channel(&mut bus, 0, 0x07, 0x28, 0x7E1400, 4);
+        bus.write(0x00420B, 0x01);
+        write_dma_channel(&mut bus, 0, 0x83, 0x28, 0x7E1500, 4);
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E1500), 0x20);
+        assert_eq!(bus.read(0x7E1501), 0x20);
+        assert_eq!(bus.read(0x7E1502), 0x40);
+        assert_eq!(bus.read(0x7E1503), 0x40);
+    }
+
+    #[test]
+    fn dma_a_bus_mmio_regions_are_treated_as_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // Prime MDR with a value that differs from DMA register file contents.
+        bus.write(0x7E0010, 0x9A);
+        assert_eq!(bus.read(0x7E0010), 0x9A);
+        bus.write(0x004300, 0x55);
+
+        // A-bus source points to excluded MMIO space ($4300); DMA must read open bus (MDR=0x9A).
+        write_dma_channel(&mut bus, 0, 0x00, 0x30, 0x004300, 1);
+        bus.write(0x00420B, 0x01);
+        write_dma_channel(&mut bus, 0, 0x80, 0x30, 0x7E1600, 1);
+        bus.write(0x00420B, 0x01);
+
+        assert_eq!(bus.read(0x7E1600), 0x9A);
+    }
+
+    #[test]
+    fn dma_byte_count_zero_means_65536_bytes() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x7E1700, 0x6E);
+        write_dma_channel(&mut bus, 0, 0x08, 0x38, 0x7E1700, 0x0000); // fixed A-bus step
+        bus.write(0x00420B, 0x01);
+
+        assert_eq!(bus.read(0x004305), 0x00);
+        assert_eq!(bus.read(0x004306), 0x00);
+        // Fixed addressing keeps A1T unchanged after a 65536-byte transfer.
+        assert_eq!(bus.read(0x004302), 0x00);
+        assert_eq!(bus.read(0x004303), 0x17);
     }
 }
