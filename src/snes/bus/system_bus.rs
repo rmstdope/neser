@@ -5,9 +5,15 @@ use std::cell::Cell;
 
 const WRAM_SIZE: usize = 128 * 1024;
 
-/// SNES system bus (placeholder).
+/// SNES system bus.
 ///
-/// Real memory map/MMIO behavior is implemented incrementally in issue #2744.
+/// This bus currently implements:
+/// - WRAM direct and low-RAM mirror windows
+/// - cartridge ROM mapping (LoROM/HiROM/ExHiROM)
+/// - battery SRAM windows
+/// - open-bus/MDR read semantics
+/// - CPU/MMIO registers needed for early bring-up (`$2180-$2183`, `$4202-$4206`,
+///   `$420D`, and `$4300-$437F` register latches)
 pub struct SnesSystemBus {
     _cartridge: Cartridge,
     mapping: Mapping,

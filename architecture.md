@@ -316,15 +316,16 @@ All Game Boy Advance hardware lives under `src/gba/`. The module currently provi
 
 #### SNES Emulation (`src/snes/`)
 
-The SNES (Super Nintendo Entertainment System) module contains active 65816 CPU development and verification infrastructure. Platform routing and cartridge loading/header parsing are in place, while bus/PPU/APU/input integration remains incremental.
+The SNES (Super Nintendo Entertainment System) module now includes active 65816 CPU execution wired to a functional `SnesSystemBus`, plus cartridge parsing/mapping for LoROM/HiROM/ExHiROM. PPU/APU/input remain incremental, but the core CPU↔bus bring-up path for cartridge execution is in place.
 
 | Directory/File | Description |
 | ---------------- | ------------- |
 | `src/snes/mod.rs` | SNES module root. Declares all SNES sub-modules (bus, console, cpu, ppu, apu, cartridge, input, integration_tests). |
 | `src/snes/console/mod.rs` | Console module root. Re-exports `Snes` and `SnesConfig`. |
-| `src/snes/console/snes.rs` | `Snes` — platform-facing SNES wrapper implementing the `Emulator` trait. All methods are currently stubbed but return correct dimensions (256×224) and frame timing (~60.098 Hz). Provides `load_rom`, `system_type`, screen dimensions, and frame duration methods. |
+| `src/snes/console/snes.rs` | `Snes` — platform-facing SNES wrapper implementing the `Emulator` trait. Owns `Option<Cpu<SnesSystemBus>>`; `load_rom` parses a `Cartridge`, constructs the system bus, and resets CPU state; `run_tick` executes real CPU steps when a ROM is loaded (returns 0 cycles when not loaded). Screen/audio/input/save-state APIs are still staged for later SNES sub-issues. |
 | `src/snes/console/config.rs` | `SnesConfig` struct for SNES-specific configuration (currently empty, ready for future settings). |
-| `src/snes/bus/mod.rs` | `SnesBus` trait definition and `StubBus` implementation. The trait defines the memory access contract (`read`, `write`, `tick`) mirroring the pattern used in GB and GBA. |
+| `src/snes/bus/mod.rs` | `SnesBus` trait definition plus `StubBus`, `TestBus`, and `SnesSystemBus` exports. The trait defines the memory access contract (`read`, `write`, `tick`) mirroring the pattern used in GB and GBA. |
+| `src/snes/bus/system_bus.rs` | `SnesSystemBus` implementation for #2744 bring-up: WRAM direct/mirror mapping, LoROM/HiROM/ExHiROM ROM decode, SRAM windows with wrap semantics, strict MDR/open-bus reads, and scoped MMIO register support (`$2180-$2183`, mul/div `$4202-$4206`, MEMSEL `$420D`, DMA register latches `$4300-$437F`) including mirrors across system banks. |
 | `src/snes/cpu/mod.rs` | SNES 65816 CPU module root. Re-exports `Cpu` and memory-speed helpers; instruction behavior and timing tests live in `cpu.rs`. |
 | `src/snes/ppu/mod.rs` | PPU module stub (SNES Picture Processing Unit — future implementation). |
 | `src/snes/apu/mod.rs` | APU module stub (SPC700 + DSP — future implementation). |
