@@ -8,7 +8,9 @@
 
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
-use crate::snes::bus::StubBus;
+use crate::snes::bus::SnesSystemBus;
+use crate::snes::cartridge::Cartridge;
+use crate::snes::cpu::Cpu;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -27,7 +29,7 @@ const FRAME_DURATION_NANOS: u64 = 16_639_000;
 /// implementation for platform integration.
 pub struct Snes {
     app_context: SharedAppContext,
-    _bus: StubBus,
+    cpu: Option<Cpu<SnesSystemBus>>,
     rom_path: Option<PathBuf>,
     ready_to_render: bool,
 }
@@ -42,7 +44,7 @@ impl Snes {
     pub fn new(app_context: impl IntoSharedAppContext) -> Self {
         Self {
             app_context: app_context.into_shared(),
-            _bus: StubBus,
+            cpu: None,
             rom_path: None,
             ready_to_render: false,
         }
@@ -68,17 +70,25 @@ impl Emulator for Snes {
         &[]
     }
 
-    fn load_rom(&mut self, _bytes: &[u8], name: &str) -> Result<(), String> {
-        // TODO: Implement ROM loading
+    fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
+        let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
+        let bus = SnesSystemBus::new(cartridge);
+        let mut cpu = Cpu::new(bus);
+        cpu.do_reset();
+        self.cpu = Some(cpu);
         self.rom_path = Some(PathBuf::from(name));
+        self.ready_to_render = false;
         Ok(())
     }
 
     fn run_tick(&mut self) -> u8 {
-        // TODO: Implement CPU execution
-        // Stub: signal a frame ready after every tick so the platform loop doesn't stall
+        let Some(cpu) = self.cpu.as_mut() else {
+            return 0;
+        };
+
+        let cycles = cpu.step();
         self.ready_to_render = true;
-        1
+        cycles
     }
 
     fn is_ready_to_render(&self) -> bool {
@@ -151,7 +161,10 @@ impl Emulator for Snes {
     }
 
     fn reset(&mut self, _soft_reset: bool) {
-        // TODO: Implement reset
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.do_reset();
+        }
+        self.ready_to_render = false;
     }
 
     fn save_ram(&self) -> Result<(), String> {
@@ -173,6 +186,24 @@ mod tests {
     use super::*;
     use crate::platform::app_context::AppContext;
     use crate::platform::config::Config;
+
+    fn valid_lorom_nop_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x10000];
+        let header = 0x7FC0;
+        rom[header..header + 21].copy_from_slice(b"SNES TEST ROM        ");
+        rom[header + 0x3C] = 0x00;
+        rom[header + 0x3D] = 0x80;
+        rom[header + 0xD5] = 0x20;
+        rom[header + 0xD6] = 0x00;
+        rom[header + 0xD7] = 0x07;
+        rom[header + 0xD8] = 0x00;
+        rom[header + 0xDC] = 0x34;
+        rom[header + 0xDD] = 0x12;
+        rom[header + 0xDE] = 0xCB;
+        rom[header + 0xDF] = 0xED;
+        rom[0x0000] = 0xEA; // NOP at $00:8000
+        rom
+    }
 
     fn make_snes() -> Snes {
         let app_context = AppContext::new_with_config(Config::default());
@@ -215,7 +246,7 @@ mod tests {
     #[test]
     fn state_path_returns_path_after_rom_loaded() {
         let mut snes = make_snes();
-        snes.load_rom(&[], "test.sfc").unwrap();
+        snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
         let state_path = snes.state_path();
         assert!(state_path.is_some());
         assert_eq!(state_path.unwrap().to_string_lossy(), "test.state");
@@ -224,13 +255,22 @@ mod tests {
     #[test]
     fn run_tick_returns_nonzero_cycles() {
         let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
         let cycles = snes.run_tick();
         assert!(cycles > 0);
     }
 
     #[test]
+    fn run_tick_returns_zero_when_no_rom_loaded() {
+        let mut snes = make_snes();
+        let cycles = snes.run_tick();
+        assert_eq!(cycles, 0);
+    }
+
+    #[test]
     fn run_tick_sets_ready_to_render() {
         let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
         assert!(!snes.is_ready_to_render());
         snes.run_tick();
         assert!(snes.is_ready_to_render());
@@ -239,9 +279,46 @@ mod tests {
     #[test]
     fn clear_ready_to_render_clears_flag() {
         let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
         snes.run_tick();
         assert!(snes.is_ready_to_render());
         snes.clear_ready_to_render();
+        assert!(!snes.is_ready_to_render());
+    }
+
+    #[test]
+    fn load_rom_rejects_invalid_snes_bytes() {
+        let mut snes = make_snes();
+        let result = snes.load_rom(&[0x00, 0x01, 0x02], "bad.sfc");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_tick_after_rom_load_uses_cpu_step_cycles() {
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
+        let cycles = snes.run_tick();
+        assert_ne!(cycles, 1);
+    }
+
+    #[test]
+    fn load_rom_clears_ready_to_render_flag() {
+        let mut snes = make_snes();
+        let rom = valid_lorom_nop_rom();
+        snes.load_rom(&rom, "test.sfc").unwrap();
+        snes.run_tick();
+        assert!(snes.is_ready_to_render());
+        snes.load_rom(&rom, "test.sfc").unwrap();
+        assert!(!snes.is_ready_to_render());
+    }
+
+    #[test]
+    fn reset_clears_ready_to_render_flag() {
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
+        snes.run_tick();
+        assert!(snes.is_ready_to_render());
+        snes.reset(false);
         assert!(!snes.is_ready_to_render());
     }
 
