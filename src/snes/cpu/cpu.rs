@@ -1,6 +1,7 @@
 //! WDC 65C816 CPU core.
 
 use crate::snes::bus::SnesBus;
+use crate::snes::bus::SnesSystemBus;
 use crate::snes::cpu::mem_speed::mem_access_cycles;
 
 // Status register P flags (8 bits)
@@ -474,6 +475,7 @@ impl<B: SnesBus> Cpu<B> {
 
         // Note: M 1→0 transition handled naturally by read_a/write_a
     }
+
     /// Execute one instruction: fetch opcode at PBR:PC, advance PC, dispatch.
     ///
     /// Before fetching the opcode, hardware interrupts are polled in priority order:
@@ -8269,6 +8271,24 @@ mod tcs_fix_tests {
         cpu.bus.load(0x0000, &[0x1B]); // TCS
         cpu.step();
         assert_eq!(cpu.read_s(), 0x0234);
+    }
+}
+
+/// SNES-specific methods on Cpu<SnesSystemBus> for cartridge RAM operations.
+impl Cpu<SnesSystemBus> {
+    /// Returns whether the cartridge has battery-backed RAM.
+    pub fn has_battery(&self) -> bool {
+        self.bus.has_battery()
+    }
+
+    /// Restores SRAM from a byte slice.
+    pub fn restore_sram(&mut self, data: &[u8]) {
+        self.bus.restore_sram(data);
+    }
+
+    /// Returns a snapshot of the current SRAM contents.
+    pub fn sram_snapshot(&self) -> Vec<u8> {
+        self.bus.sram_snapshot()
     }
 }
 
