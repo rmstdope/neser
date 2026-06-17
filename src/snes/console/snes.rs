@@ -60,7 +60,6 @@ impl Snes {
     }
 
     /// Returns the file path where battery-backed SRAM should be stored.
-    #[allow(dead_code)]
     fn sav_path(&self) -> Option<PathBuf> {
         self.rom_path
             .as_ref()
@@ -70,6 +69,10 @@ impl Snes {
     /// Load battery-backed cartridge SRAM from a `.sav` file if one exists.
     #[cfg(not(target_arch = "wasm32"))]
     fn load_save_ram_from_disk(&mut self) {
+        let Some(sav_path) = self.sav_path() else {
+            return;
+        };
+
         let Some(cpu) = self.cpu.as_mut() else {
             return;
         };
@@ -78,18 +81,22 @@ impl Snes {
             return;
         }
 
-        // Get the sav path before borrowing cpu mutably
-        let sav_path = match &self.rom_path {
-            Some(path) => path.with_extension("sav"),
-            None => return,
-        };
-
         if !sav_path.exists() {
             return;
         }
 
         match std::fs::read(&sav_path) {
             Ok(data) => {
+                let expected_len = cpu.sram_size();
+                if data.len() != expected_len {
+                    crate::platform::debugging::log_info(format!(
+                        "Warning: ignoring save file {} due to size mismatch (expected {}, got {})",
+                        sav_path.display(),
+                        expected_len,
+                        data.len()
+                    ));
+                    return;
+                }
                 cpu.restore_sram(&data);
             }
             Err(e) => {
@@ -120,10 +127,8 @@ impl Snes {
             return Ok(());
         }
 
-        // Get the sav path from rom_path
-        let sav_path = match &self.rom_path {
-            Some(path) => path.with_extension("sav"),
-            None => return Ok(()),
+        let Some(sav_path) = self.sav_path() else {
+            return Ok(());
         };
 
         // Read current SRAM from the CPU
@@ -469,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn save_ram_fails_gracefully_when_no_rom_loaded() {
+    fn save_ram_returns_ok_when_no_rom_loaded() {
         let snes = make_snes();
         // save_ram should still return Ok even if no ROM is loaded
         let result = snes.save_ram();
@@ -481,15 +486,9 @@ mod tests {
     fn sram_round_trip_preserves_contents() {
         use std::fs;
 
-        // Create a temporary directory for test files
-        let temp_dir = std::env::temp_dir().join("neser_sram_test");
-        let _ = fs::create_dir_all(&temp_dir);
-
-        let rom_path = temp_dir.join("test.sfc");
-        let sav_path = temp_dir.join("test.sav");
-
-        // Clean up any existing files
-        let _ = fs::remove_file(&sav_path);
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let rom_path = temp_dir.path().join("test.sfc");
+        let sav_path = temp_dir.path().join("test.sav");
 
         // Create and write test data
         let rom = lorom_rom_with_battery_sram(0x05); // 32 KB SRAM
@@ -547,9 +546,33 @@ mod tests {
                 assert_eq!(snapshot[1000], 0xEE, "SRAM byte 1000 should be restored");
             }
         }
+    }
 
-        // Cleanup
-        let _ = fs::remove_file(&rom_path);
-        let _ = fs::remove_file(&sav_path);
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_rom_ignores_incompatible_sav_size() {
+        use std::fs;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let rom_path = temp.path().join("test.sfc");
+        let sav_path = temp.path().join("test.sav");
+
+        let rom = lorom_rom_with_battery_sram(0x05); // 32 KB SRAM
+        fs::write(&rom_path, &rom).expect("write rom");
+
+        // Wrong size (should be 32 KB), must be ignored.
+        fs::write(&sav_path, vec![0xAB; 64]).expect("write mismatched sav");
+
+        let mut snes = Snes::new(AppContext::new_with_config(Config::default()));
+        snes.load_rom(&rom, rom_path.to_str().expect("rom path utf8"))
+            .expect("load rom");
+
+        let snapshot = snes.cpu.as_ref().expect("cpu present").sram_snapshot();
+        assert_eq!(snapshot.len(), 32 * 1024);
+        assert_eq!(
+            snapshot[0], 0x00,
+            "mismatched save file should be ignored entirely"
+        );
+        assert_eq!(snapshot[63], 0x00);
     }
 }

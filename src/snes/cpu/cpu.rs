@@ -8281,6 +8281,11 @@ impl Cpu<SnesSystemBus> {
         self.bus.has_battery()
     }
 
+    /// Returns the SRAM size in bytes.
+    pub fn sram_size(&self) -> usize {
+        self.bus.sram_size()
+    }
+
     /// Restores SRAM from a byte slice.
     pub fn restore_sram(&mut self, data: &[u8]) {
         self.bus.restore_sram(data);
