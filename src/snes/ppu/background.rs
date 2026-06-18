@@ -30,14 +30,54 @@ impl Ppu {
 
     /// Compute the final BGR555 pixel for visible screen coordinate `(x, y)`.
     ///
-    /// Iteration 2: BG1 over the backdrop. Multi-layer priority compositing is added later.
+    /// Iterates the BG layer/priority slots front-to-back per the Modes 0/1 priority chart
+    /// (OBJ slots are not yet populated), returning the first enabled, non-transparent pixel.
     pub(super) fn compute_pixel(&self, x: u16, y: u16) -> u16 {
-        if self.tm & 0x01 != 0 {
-            if let Some(index) = self.bg_pixel(0, x, y) {
-                return self.cgram_color(index);
+        for &(bg, priority) in self.layer_order() {
+            if self.tm & (1 << bg) == 0 {
+                continue;
+            }
+            if let Some((index, pixel_priority)) = self.bg_pixel(bg, x, y) {
+                if pixel_priority == priority {
+                    return self.cgram_color(index);
+                }
             }
         }
         self.backdrop_color()
+    }
+
+    /// Front-to-back BG layer/priority slots for the current mode. Each entry is
+    /// `(bg_index, priority_bit)`; OBJ slots from the full chart are omitted (added in #2763).
+    fn layer_order(&self) -> &'static [(usize, bool)] {
+        match self.bg_mode {
+            0 => &[
+                (0, true),
+                (1, true),
+                (0, false),
+                (1, false),
+                (2, true),
+                (3, true),
+                (2, false),
+                (3, false),
+            ],
+            1 if self.bg3_priority => &[
+                (2, true),
+                (0, true),
+                (1, true),
+                (0, false),
+                (1, false),
+                (2, false),
+            ],
+            1 => &[
+                (0, true),
+                (1, true),
+                (0, false),
+                (1, false),
+                (2, true),
+                (2, false),
+            ],
+            _ => &[],
+        }
     }
 
     /// Bits-per-pixel for a BG layer in the current mode (Modes 0/1 only).
@@ -55,9 +95,18 @@ impl Ppu {
         }
     }
 
-    /// Resolve the CGRAM color index for BG layer `bg` at screen `(x, y)`, or `None` if the pixel
-    /// is transparent (color 0). 8x8 tiles, single 32x32 tilemap (larger maps added later).
-    fn bg_pixel(&self, bg: usize, x: u16, y: u16) -> Option<u8> {
+    /// CGRAM base for a BG layer's palettes. In Mode 0 each BG uses a separate 32-entry region
+    /// (BG1=0, BG2=32, BG3=64, BG4=96); other modes share the low CGRAM.
+    fn bg_palette_base(&self, bg: usize) -> u8 {
+        match self.bg_mode {
+            0 => (bg as u8) * 32,
+            _ => 0,
+        }
+    }
+
+    /// Resolve `(CGRAM index, priority)` for BG layer `bg` at screen `(x, y)`, or `None` if the
+    /// pixel is transparent (color 0). 8x8 tiles, single 32x32 tilemap (larger maps added later).
+    fn bg_pixel(&self, bg: usize, x: u16, y: u16) -> Option<(u8, bool)> {
         let bpp = self.bg_bpp(bg);
         let scrolled_x = x.wrapping_add(self.bg_hofs[bg] & 0x03FF);
         let scrolled_y = y.wrapping_add(self.bg_vofs[bg] & 0x03FF);
@@ -68,6 +117,7 @@ impl Ppu {
 
         let char_num = entry & 0x03FF;
         let palette = ((entry >> 10) & 0x07) as u8;
+        let priority = entry & 0x2000 != 0;
         let hflip = entry & 0x4000 != 0;
         let vflip = entry & 0x8000 != 0;
 
@@ -85,7 +135,8 @@ impl Ppu {
             return None;
         }
         let colors_per_palette = if bpp == 2 { 4 } else { 16 };
-        Some(palette * colors_per_palette + color)
+        let index = self.bg_palette_base(bg) + palette * colors_per_palette + color;
+        Some((index, priority))
     }
 
     /// Read a 16-bit BG map entry from VRAM (32x32 tilemap).
@@ -308,6 +359,114 @@ mod tests {
 
         let rgb = ppu.screen_snapshot_rgb();
         assert_eq!(pixel(&rgb, 0, 0), [255, 255, 255], "scrolled tile at x=0");
+    }
+
+    /// Configure BGnSC for layer `bg` with a 32x32 tilemap at `base` words.
+    fn set_bg_map_base(ppu: &mut Ppu, bg: usize, base_words: u16) {
+        let reg = 0x2107 + bg as u16;
+        ppu.write_register(reg, ((base_words >> 10) << 2) as u8);
+    }
+
+    #[test]
+    fn bg1_draws_over_bg2_at_the_same_priority_in_mode0() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000); // backdrop
+        set_cgram(&mut ppu, 1, 0x7FFF); // BG1 palette 0 color 1 = white
+        set_cgram(&mut ppu, 33, 0x001F); // BG2 region (bg*32=32) palette 0 color 1 = red
+        // BG1 map at word 0, BG2 map at word 0x400.
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(&mut ppu, 0x400, 2); // BG2 entry -> char 2
+        fill_2bpp_tile(&mut ppu, 0, 1, 1); // BG1 tile solid color 1
+        fill_2bpp_tile(&mut ppu, 0, 2, 1); // BG2 tile solid color 1
+
+        ppu.write_register(0x2105, 0x00); // mode 0
+        ppu.write_register(0x212C, 0x03); // TM: BG1 + BG2
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "BG1 wins over BG2 at same priority"
+        );
+    }
+
+    #[test]
+    fn higher_per_tile_priority_wins_across_layers_in_mode0() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // BG1 white
+        set_cgram(&mut ppu, 33, 0x001F); // BG2 red
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry, priority 0
+        set_vram_word(&mut ppu, 0x400, 2 | 0x2000); // BG2 entry, priority 1 (bit 13)
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x03);
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        // BG2.1 sits above BG1.0 in the Mode 0 priority chart.
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 0, 0],
+            "BG2 priority-1 beats BG1 priority-0"
+        );
+    }
+
+    #[test]
+    fn mode0_bg2_uses_its_own_palette_region() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 33, 0x03E0); // BG2 region color 1 = green
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x400, 2);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x02); // TM: BG2 only
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [0, 255, 0],
+            "BG2 resolves CGRAM index 33"
+        );
+    }
+
+    #[test]
+    fn mode1_bg3_high_priority_bit_lifts_bg3_above_bg1() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // BG3 (2bpp, region 0) color 1 = white
+        set_cgram(&mut ppu, 5, 0x001F); // BG1 (4bpp) color 5 = red
+        set_bg_map_base(&mut ppu, 0, 0x000); // BG1 map
+        set_bg_map_base(&mut ppu, 2, 0x400); // BG3 map
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry -> char 1 (4bpp)
+        set_vram_word(&mut ppu, 0x400, 2 | 0x2000); // BG3 entry -> char 2, priority 1
+        fill_4bpp_tile(&mut ppu, 0, 1, 5); // BG1 color 5
+        fill_2bpp_tile(&mut ppu, 0, 2, 1); // BG3 color 1
+
+        ppu.write_register(0x2105, 0x09); // mode 1 + BG3 priority (bit 3)
+        ppu.write_register(0x212C, 0x05); // TM: BG1 + BG3
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "BG3 high-priority lifts above BG1"
+        );
     }
 
     #[test]
