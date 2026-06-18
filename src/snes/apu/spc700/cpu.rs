@@ -193,6 +193,12 @@ impl Spc700 {
                 self.a = imm;
                 self.update_nz8(self.a);
             }
+            // MOV X,#imm — load 8-bit immediate into X, update N/Z.
+            0xCD => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.x = imm;
+                self.update_nz8(self.x);
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -326,6 +332,47 @@ mod tests {
         assert_eq!(cpu.a(), 0x80);
         assert!(!cpu.flag(FLAG_ZERO));
         assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_x_immediate_sets_negative_and_preserves_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0320, &[0xCD, 0x80]); // MOV X,#$80
+        cpu.load_state_for_processor_test(0x12, 0x34, 0x56, 0xEF, 0x0320, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0322);
+        assert_eq!(cpu.x(), 0x80);
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_x_immediate_sets_zero_clears_negative_and_preserves_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0322, &[0xCD, 0x00]); // MOV X,#$00
+        cpu.load_state_for_processor_test(
+            0x12,
+            0x34,
+            0x56,
+            0xEF,
+            0x0322,
+            FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0324);
+        assert_eq!(cpu.x(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
         assert!(cpu.flag(FLAG_CARRY));
     }
 }
