@@ -209,6 +209,8 @@ pub struct SnesPpuState {
     pub bg_old: u8,
     #[serde(default)]
     pub tm: u8,
+    #[serde(default)]
+    pub cgwsel: u8,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]

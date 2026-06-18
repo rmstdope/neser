@@ -120,6 +120,8 @@ pub struct Ppu {
     bg_old: u8,
     /// TM ($212C): main-screen layer enable (bits 0-3 = BG1-4, bit 4 = OBJ).
     tm: u8,
+    /// CGWSEL ($2130): only bit 0 (direct-color enable) is used here; rest is #2764.
+    cgwsel: u8,
 }
 
 impl Default for Ppu {
@@ -170,6 +172,7 @@ impl Ppu {
             bg_vofs: [0; 4],
             bg_old: 0,
             tm: 0,
+            cgwsel: 0,
         }
     }
 

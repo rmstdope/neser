@@ -37,10 +37,10 @@ impl Ppu {
             if self.tm & (1 << bg) == 0 {
                 continue;
             }
-            if let Some((index, pixel_priority)) = self.bg_pixel(bg, x, y)
+            if let Some((color, pixel_priority)) = self.bg_pixel(bg, x, y)
                 && pixel_priority == priority
             {
-                return self.cgram_color(index);
+                return color;
             }
         }
         self.backdrop_color()
@@ -131,9 +131,10 @@ impl Ppu {
         }
     }
 
-    /// Resolve `(CGRAM index, priority)` for BG layer `bg` at screen `(x, y)`, or `None` if the
-    /// pixel is transparent (color 0). Supports 8x8/16x16 tiles and all four tilemap sizes.
-    fn bg_pixel(&self, bg: usize, x: u16, y: u16) -> Option<(u8, bool)> {
+    /// Resolve `(BGR555 color, priority)` for BG layer `bg` at screen `(x, y)`, or `None` if the
+    /// pixel is transparent (color 0). Supports 8x8/16x16 tiles, all four tilemap sizes, 2/4/8 bpp,
+    /// and direct-color mode for 256-color BGs.
+    fn bg_pixel(&self, bg: usize, x: u16, y: u16) -> Option<(u16, bool)> {
         let bpp = self.bg_bpp(bg);
         let size16 = self.bg_tile_size_16[bg];
         let cell_shift = if size16 { 4 } else { 3 };
@@ -177,6 +178,10 @@ impl Ppu {
         if color == 0 {
             return None;
         }
+        // Direct-color mode (CGWSEL.0) resolves 256-color BGs straight to BGR555.
+        if bpp == 8 && self.cgwsel & 0x01 != 0 {
+            return Some((direct_color(color, palette), priority));
+        }
         // 8bpp (256-color) BGs index CGRAM directly; map-entry palette bits are ignored.
         let index = if bpp == 8 {
             color
@@ -184,7 +189,7 @@ impl Ppu {
             let colors_per_palette = if bpp == 2 { 4 } else { 16 };
             self.bg_palette_base(bg) + palette * colors_per_palette + color
         };
-        Some((index, priority))
+        Some((self.cgram_color(index), priority))
     }
 
     /// Read a 16-bit BG map entry, resolving the tilemap size (BGnSC bits 0-1) and the SC0..SC3
@@ -251,6 +256,15 @@ impl Ppu {
             | ((self.cgram[(byte + 1) & (CGRAM_SIZE - 1)] as u16) << 8))
             & 0x7FFF
     }
+}
+
+/// Direct-color conversion for 256-color BGs: combine the 8-bit color index (`BBGGGRRR`) with the
+/// 3-bit BG-map palette (`bgr`) into a 15-bit BGR555 value (per fullsnes Direct Color).
+fn direct_color(color: u8, palette: u8) -> u16 {
+    let red = ((color as u16 & 0x07) << 2) | ((palette as u16 & 0x01) << 1);
+    let green = (((color as u16 >> 3) & 0x07) << 2) | (((palette as u16 >> 1) & 0x01) << 1);
+    let blue = (((color as u16 >> 6) & 0x03) << 3) | (((palette as u16 >> 2) & 0x01) << 2);
+    (blue << 10) | (green << 5) | red
 }
 
 #[cfg(test)]
@@ -829,5 +843,61 @@ mod tests {
             [0, 0, 255],
             "mode 5 BG1 renders at 256-wide"
         );
+    }
+
+    #[test]
+    fn direct_color_computes_color_from_index_bypassing_cgram() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 7, 0x0000); // CGRAM[7] black, to prove direct color bypasses it
+        set_vram_word(&mut ppu, 0, 1); // BG1 entry char 1, palette 0
+        fill_8bpp_tile(&mut ppu, 0, 1, 0x07); // color index 0x07 (RRR=7)
+
+        ppu.write_register(0x2105, 0x03); // mode 3 (BG1 256-color)
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x2130, 0x01); // CGWSEL: direct color on
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        // Direct color of (0x07, palette 0): Red5 = (7<<2)|0 = 28 -> R8 = 231; G=B=0.
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [231, 0, 0],
+            "direct color computed, not CGRAM[7]"
+        );
+    }
+
+    #[test]
+    fn direct_color_off_uses_cgram_lookup() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 7, 0x7FFF); // CGRAM[7] white
+        set_vram_word(&mut ppu, 0, 1);
+        fill_8bpp_tile(&mut ppu, 0, 1, 0x07);
+
+        ppu.write_register(0x2105, 0x03);
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2130, 0x00); // CGWSEL: direct color OFF
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(pixel(&rgb, 0, 0), [255, 255, 255], "direct off -> CGRAM[7]");
+    }
+
+    #[test]
+    fn direct_color_includes_palette_low_bits() {
+        let mut ppu = Ppu::new();
+        set_vram_word(&mut ppu, 0, 1 | (1 << 10)); // BG1 entry char 1, palette 1 (bgr bit0=r=1)
+        fill_8bpp_tile(&mut ppu, 0, 1, 0x01); // color RRR low bit
+
+        ppu.write_register(0x2105, 0x03);
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2130, 0x01); // direct color on
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        // Red5 = (color[2:0]<<2) | (palette[0]<<1) = (1<<2) | (1<<1) = 6 -> R8 = 49.
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(pixel(&rgb, 0, 0), [49, 0, 0], "palette bit0 adds to red");
     }
 }
