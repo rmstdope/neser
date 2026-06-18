@@ -37,10 +37,10 @@ impl Ppu {
             if self.tm & (1 << bg) == 0 {
                 continue;
             }
-            if let Some((index, pixel_priority)) = self.bg_pixel(bg, x, y) {
-                if pixel_priority == priority {
-                    return self.cgram_color(index);
-                }
+            if let Some((index, pixel_priority)) = self.bg_pixel(bg, x, y)
+                && pixel_priority == priority
+            {
+                return self.cgram_color(index);
             }
         }
         self.backdrop_color()
@@ -362,7 +362,7 @@ mod tests {
         set_cgram(&mut ppu, 0, 0x0000);
         set_cgram(&mut ppu, 1, 0x7FFF);
         // Tile 1: only the top-left pixel (row 0, col 0) is color 1.
-        let base = (0 + 1 * 8) * 2;
+        let base = 16; // char 1 at char_base 0: word 8 -> byte 16
         ppu.vram[base] = 0x80; // plane0 row 0, bit7 (left-most) set
         // entry -> char 1 with H-flip + V-flip (bits 14,15).
         set_vram_word(&mut ppu, 0, 1 | 0x4000 | 0x8000);
