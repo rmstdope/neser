@@ -136,17 +136,17 @@ impl Ppu {
                 self.increment_cgram_address();
             }
             // OAMADDL / OAMADDH: OAM word address + high-table select + priority rotation. Each
-            // write also updates the 9-bit reload value (bits 7-1 select the first OBJ for
-            // priority rotation when OAMADDH bit 7 is set).
+            // write updates the 9-bit reload value (bits 7-1 select the first OBJ for priority
+            // rotation) and copies the whole reload to the address register with bit 0 cleared.
             0x2102 => {
-                self.oam_address = (self.oam_address & 0x0200) | ((value as u16) << 1);
                 self.oam_addr_reload = (self.oam_addr_reload & 0x0100) | value as u16;
+                self.oam_address = (self.oam_addr_reload << 1) & 0x03FE;
             }
             0x2103 => {
-                self.oam_address = (self.oam_address & 0x01FE) | (((value & 0x01) as u16) << 9);
                 self.oam_addr_reload =
                     (self.oam_addr_reload & 0x00FF) | (((value & 0x01) as u16) << 8);
                 self.oam_priority_rotation = value & 0x80 != 0;
+                self.oam_address = (self.oam_addr_reload << 1) & 0x03FE;
             }
             // OAMDATA: OAM data write. In the low table ($000-$1FF) an even byte latches and the
             // odd byte commits the word; the high table ($200-$21F) writes each byte directly.
@@ -253,8 +253,13 @@ impl Ppu {
                 self.opvct_read_high = !self.opvct_read_high;
                 value
             }
-            // STAT77: PPU1 status + version (sprite overflow flags added later).
-            0x213E => PPU1_VERSION,
+            // STAT77: PPU1 status + version. Bit 7 = OBJ time over-limit, bit 6 = OBJ range
+            // over-limit (cleared at end of VBlank, not during forced blank).
+            0x213E => {
+                PPU1_VERSION
+                    | ((self.stat77_time_over as u8) << 7)
+                    | ((self.stat77_range_over as u8) << 6)
+            }
             // STAT78: PPU2 status + version. Reports/clears the latch flag and resets the
             // OPHCT/OPVCT read flipflops.
             0x213F => {

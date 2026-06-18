@@ -62,6 +62,8 @@ impl Ppu {
             obsel: self.obsel,
             oam_addr_reload: self.oam_addr_reload,
             oam_priority_rotation: self.oam_priority_rotation,
+            stat77_range_over: self.stat77_range_over,
+            stat77_time_over: self.stat77_time_over,
         }
     }
 
@@ -122,6 +124,8 @@ impl Ppu {
         self.obsel = state.obsel;
         self.oam_addr_reload = state.oam_addr_reload;
         self.oam_priority_rotation = state.oam_priority_rotation;
+        self.stat77_range_over = state.stat77_range_over;
+        self.stat77_time_over = state.stat77_time_over;
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);

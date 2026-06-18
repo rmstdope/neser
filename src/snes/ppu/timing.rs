@@ -32,6 +32,8 @@ impl Ppu {
             }
             self.on_scanline_start();
         }
+        let forced_blank = self.inidisp & 0x80 != 0;
+        self.update_obj_pipeline(forced_blank);
         self.render_dot();
     }
 

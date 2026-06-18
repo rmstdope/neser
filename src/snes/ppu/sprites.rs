@@ -4,7 +4,7 @@
 //! tile name base (8K-word steps), and the name gap inserted between tiles $0FF and $100 (4K-word
 //! steps). See fullsnes "SNES PPU Sprites (OBJs)".
 
-use super::Ppu;
+use super::{Ppu, SCREEN_HEIGHT};
 
 impl Ppu {
     /// Small-OBJ pixel size `(width, height)` selected by OBSEL bits 7-5.
@@ -91,19 +91,97 @@ impl Ppu {
     }
 
     /// Build the composited OBJ pixel line for display scanline `line`: in-range OBJs are drawn
-    /// front-to-back (lowest evaluation order wins), gated only by OBJ opacity.
+    /// front-to-back (lowest evaluation order wins), gated by OBJ opacity and the 34-tile-per-line
+    /// fetch budget (tile columns beyond the budget are dropped, matching the time over-limit).
     pub(super) fn build_obj_line(&self, line: u16) -> ObjLine {
         let eval = self.evaluate_line_objects(line);
         let mut buf = ObjLine::default();
+        let mut tile_budget = 34i32;
         for &i in &eval.indices {
-            self.render_object_into(&mut buf, i as usize, line);
+            if tile_budget <= 0 {
+                break;
+            }
+            self.render_object_into(&mut buf, i as usize, line, &mut tile_budget);
         }
         buf
     }
 
+    /// Count the on-screen 8x8 OBJ tile columns for the given in-range OBJs, reporting whether the
+    /// 34-tile-per-line budget is exceeded (time over-limit). A tile column counts if any of its
+    /// pixels fall within the visible 0..255 region.
+    pub(super) fn count_obj_tiles(&self, indices: &[u8]) -> (u16, bool) {
+        let mut tiles = 0u16;
+        for &i in indices {
+            let i = i as usize;
+            let width = self.obj_size(i).0 as i32;
+            let x9 = self.oam[i * 4] as u16 | (self.obj_x_high(i) << 8);
+            let base_x = if x9 & 0x100 != 0 {
+                x9 as i32 - 0x200
+            } else {
+                x9 as i32
+            };
+            for col in (0..width).step_by(8) {
+                let tile_x = base_x + col;
+                if tile_x + 8 > 0 && tile_x < 256 {
+                    tiles += 1;
+                }
+            }
+        }
+        (tiles, tiles > 34)
+    }
+
+    /// Advance the OBJ evaluation pipeline for the current dot, raising the dot-accurate STAT77
+    /// range/time over-limit flags.
+    ///
+    /// Following fullsnes STAT77: the line shown on the next scanline is evaluated during the
+    /// current scanline, the range over-limit (bit 6) is raised at `H = OAM_index × 2` of the 33rd
+    /// in-range OBJ, and the time over-limit (bit 7) is raised at `H = 0` of the displayed line.
+    /// Both flags are cleared at the end of VBlank (scanline 0) but not during forced blank.
+    pub(super) fn update_obj_pipeline(&mut self, forced_blank: bool) {
+        let scanline = self.position.scanline;
+        let dot = self.position.dot;
+
+        if dot == 0 {
+            if !forced_blank {
+                if scanline == 0 {
+                    self.stat77_range_over = false;
+                    self.stat77_time_over = false;
+                }
+                if self.obj_time_over_pending {
+                    self.stat77_time_over = true;
+                }
+            }
+            self.obj_time_over_pending = false;
+            self.obj_range_over_dot = None;
+
+            // During scanline `s` the PPU evaluates the line displayed on scanline `s + 1`
+            // (OAM line index `s`); skipped during forced blank.
+            if !forced_blank && (scanline as usize) < SCREEN_HEIGHT {
+                let eval = self.evaluate_line_objects(scanline);
+                self.obj_range_over_dot = if eval.range_over {
+                    eval.range_over_index.map(|i| i as u16 * 2)
+                } else {
+                    None
+                };
+                self.obj_time_over_pending = self.count_obj_tiles(&eval.indices).1;
+            }
+        }
+
+        if Some(dot) == self.obj_range_over_dot {
+            self.stat77_range_over = true;
+        }
+    }
+
     /// Render OBJ `index` into the line buffer for display scanline `line`, writing each opaque
-    /// pixel only where no nearer (earlier) OBJ has already drawn.
-    fn render_object_into(&self, buf: &mut ObjLine, index: usize, line: u16) {
+    /// pixel only where no nearer (earlier) OBJ has already drawn. On-screen 8x8 tile columns
+    /// consume `tile_budget`; columns past the 34-tile-per-line limit are dropped.
+    fn render_object_into(
+        &self,
+        buf: &mut ObjLine,
+        index: usize,
+        line: u16,
+        tile_budget: &mut i32,
+    ) {
         let (width, height) = self.obj_size(index);
         let (width, height) = (width as i32, height as i32);
         let y = self.oam[index * 4 + 1] as u16;
@@ -127,24 +205,36 @@ impl Ppu {
             within_y = height - 1 - within_y;
         }
 
-        for col in 0..width {
-            let screen_x = base_x + col;
-            if !(0..256).contains(&screen_x) {
-                continue;
+        // Walk 8x8 tile columns left-to-right; each on-screen column consumes one tile-fetch slot.
+        for tile_col in 0..(width / 8) {
+            let tile_x = base_x + tile_col * 8;
+            let on_screen = tile_x + 8 > 0 && tile_x < 256;
+            if on_screen {
+                if *tile_budget <= 0 {
+                    break;
+                }
+                *tile_budget -= 1;
             }
-            let sx = screen_x as usize;
-            if buf.present[sx] {
-                continue;
+            for sub in 0..8 {
+                let col = tile_col * 8 + sub;
+                let screen_x = base_x + col;
+                if !(0..256).contains(&screen_x) {
+                    continue;
+                }
+                let sx = screen_x as usize;
+                if buf.present[sx] {
+                    continue;
+                }
+                let within_x = if hflip { width - 1 - col } else { col };
+                let color = self.obj_tile_pixel(base_tile, within_x, within_y);
+                if color == 0 {
+                    continue;
+                }
+                let cgindex = 128 + palette * 16 + color;
+                buf.color[sx] = self.cgram_color(cgindex);
+                buf.priority[sx] = priority;
+                buf.present[sx] = true;
             }
-            let within_x = if hflip { width - 1 - col } else { col };
-            let color = self.obj_tile_pixel(base_tile, within_x, within_y);
-            if color == 0 {
-                continue;
-            }
-            let cgindex = 128 + palette * 16 + color;
-            buf.color[sx] = self.cgram_color(cgindex);
-            buf.priority[sx] = priority;
-            buf.present[sx] = true;
         }
     }
 
@@ -432,6 +522,14 @@ mod tests {
         }
     }
 
+    /// Park all OBJs at Y=224 (safe for sizes up to 32 px tall: covers lines 224..255, never wraps
+    /// into the visible 0..223 region).
+    fn park_offscreen_32(ppu: &mut Ppu) {
+        for i in 0..128 {
+            set_obj(ppu, i, 0, 224, 0, 0, false);
+        }
+    }
+
     #[test]
     fn renders_an_8x8_object_at_its_x_position() {
         let mut ppu = Ppu::new();
@@ -625,5 +723,130 @@ mod tests {
         set_obj(&mut ppu, 0, 8, 0, 0, 0, false);
         ppu.obj_line = ppu.build_obj_line(0);
         assert_eq!(ppu.compute_pixel(8, 0), OBJ_COLOR);
+    }
+
+    fn tick_dots(ppu: &mut Ppu, dots: u32) {
+        for _ in 0..(dots * 4) {
+            ppu.tick();
+        }
+    }
+
+    fn stat77(ppu: &mut Ppu) -> u8 {
+        ppu.read_register(0x213E)
+    }
+
+    /// Place `count` 8x8 OBJs all covering OAM line `line`; park the rest off-screen.
+    fn fill_in_range(ppu: &mut Ppu, count: usize, line: u8) {
+        ppu.write_register(0x2101, 0x00);
+        for i in 0..128 {
+            let y = if i < count { line } else { 240 };
+            set_obj(ppu, i, 0, y, 0, 0, false);
+        }
+    }
+
+    #[test]
+    fn range_over_flag_is_raised_at_oam_index_times_two_dot() {
+        let mut ppu = Ppu::new();
+        fill_in_range(&mut ppu, 40, 50); // 40 in range on line 50 -> 33rd is OBJ #32, dot 64
+        tick_dots(&mut ppu, 50 * 341 + 63); // scanline 50, dot 63 (just before)
+        assert_eq!(
+            stat77(&mut ppu) & 0x40,
+            0,
+            "range over not yet set at dot 63"
+        );
+        tick_dots(&mut ppu, 1); // dot 64
+        assert_eq!(stat77(&mut ppu) & 0x40, 0x40, "range over set at dot 64");
+    }
+
+    #[test]
+    fn range_over_flag_stays_clear_with_32_or_fewer_objects() {
+        let mut ppu = Ppu::new();
+        fill_in_range(&mut ppu, 32, 50);
+        tick_dots(&mut ppu, 51 * 341);
+        assert_eq!(
+            stat77(&mut ppu) & 0x40,
+            0,
+            "no range over with exactly 32 OBJs"
+        );
+    }
+
+    #[test]
+    fn time_over_flag_is_raised_when_more_than_34_tiles_on_a_line() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0xA0); // size 5: large = 64x64 (8 tiles wide)
+        for i in 0..128 {
+            let y = if i < 5 { 50 } else { 224 }; // park at 224 (32px tall, no wrap into visible)
+            set_obj(&mut ppu, i, 0, y, 0, 0, i < 5); // 5 large -> 40 tiles > 34
+        }
+        // Time over for line 50 is applied at the start of display scanline 51 (H=0).
+        tick_dots(&mut ppu, 50 * 341 + 200);
+        assert_eq!(
+            stat77(&mut ppu) & 0x80,
+            0,
+            "time over not set during the eval scanline"
+        );
+        tick_dots(&mut ppu, 141); // cross into scanline 51, dot 0
+        assert_eq!(
+            stat77(&mut ppu) & 0x80,
+            0x80,
+            "time over set at H=0 of display line"
+        );
+    }
+
+    #[test]
+    fn over_limit_flags_clear_at_end_of_vblank() {
+        let mut ppu = Ppu::new();
+        fill_in_range(&mut ppu, 40, 50);
+        tick_dots(&mut ppu, 50 * 341 + 100); // raise range over
+        assert_eq!(stat77(&mut ppu) & 0x40, 0x40);
+        // Advance to scanline 0 of the next frame (end of VBlank) -> flags cleared.
+        tick_dots(&mut ppu, (262 - 50) * 341);
+        assert_eq!(ppu.position().scanline, 0);
+        assert_eq!(
+            stat77(&mut ppu) & 0x40,
+            0,
+            "range over cleared at end of VBlank"
+        );
+    }
+
+    #[test]
+    fn over_limit_flags_are_not_cleared_during_forced_blank() {
+        let mut ppu = Ppu::new();
+        fill_in_range(&mut ppu, 40, 50);
+        tick_dots(&mut ppu, 50 * 341 + 100);
+        assert_eq!(stat77(&mut ppu) & 0x40, 0x40);
+        ppu.write_register(0x2100, 0x80); // forced blank
+        tick_dots(&mut ppu, 262 * 341); // a full frame, crossing end of VBlank
+        assert_eq!(
+            stat77(&mut ppu) & 0x40,
+            0x40,
+            "not cleared during forced blank"
+        );
+    }
+
+    #[test]
+    fn tile_columns_beyond_the_34_budget_are_dropped() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0xA0); // size 5 small = 32x32 (4 tiles wide)
+        park_offscreen_32(&mut ppu);
+        // Eight transparent 32x32 OBJs cover x 0..255 on line 0 -> 32 tile slots consumed.
+        for i in 0..8 {
+            set_obj(&mut ppu, i, (i * 32) as u16, 0, 10, 0, false); // tile 10 -> transparent
+        }
+        // A ninth opaque 32x32 OBJ at x=0: only 2 tile slots remain (34 - 32), so columns past
+        // x=15 must be dropped. Make its whole top tile-row opaque (tiles 0..3 solid color 1).
+        for t in 0..4 {
+            set_obj_tile_solid(&mut ppu, t * 16, 1);
+        }
+        set_cgram(&mut ppu, 128 + 1, 0x1357);
+        set_obj(&mut ppu, 8, 0, 0, 0, 0, false);
+
+        let buf = ppu.build_obj_line(0);
+        assert!(
+            buf.present[0] && buf.present[15],
+            "first two tile columns drawn"
+        );
+        assert!(!buf.present[16], "tile columns past the budget are dropped");
+        assert!(!buf.present[31]);
     }
 }

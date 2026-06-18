@@ -153,6 +153,16 @@ pub struct Ppu {
     /// Current scanline's composited OBJ pixels (transient; rebuilt at the start of each visible
     /// line, not serialized in save-states).
     obj_line: sprites::ObjLine,
+    /// STAT77 ($213E) bit 6: OBJ range over-limit (>32 OBJ on a line). Cleared at end of VBlank
+    /// (not during forced blank).
+    stat77_range_over: bool,
+    /// STAT77 ($213E) bit 7: OBJ time over-limit (>34 8x8 tiles on a line).
+    stat77_time_over: bool,
+    /// Scheduled dot within the current scanline at which to raise the range over-limit flag
+    /// (OAM index of the 33rd in-range OBJ × 2), or `None` if no overflow this line.
+    obj_range_over_dot: Option<u16>,
+    /// Time over-limit computed during the current scanline, applied at the next scanline's H=0.
+    obj_time_over_pending: bool,
 }
 
 impl Default for Ppu {
@@ -219,6 +229,10 @@ impl Ppu {
             oam_addr_reload: 0,
             oam_priority_rotation: false,
             obj_line: sprites::ObjLine::default(),
+            stat77_range_over: false,
+            stat77_time_over: false,
+            obj_range_over_dot: None,
+            obj_time_over_pending: false,
         }
     }
 
