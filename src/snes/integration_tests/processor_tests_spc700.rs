@@ -157,10 +157,14 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         && opcode != 0xD9
         && opcode != 0xE5
         && opcode != 0xC5
+        && opcode != 0xF5
+        && opcode != 0xF6
+        && opcode != 0xD5
+        && opcode != 0xD6
     {
         return Err(VectorFailure {
             details: format!(
-                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (supported in this slice: NOP $00, MOV A,#imm $E8, MOV X,#imm $CD, MOV Y,#imm $8D, MOV A,X $7D, MOV X,A $5D, MOV A,Y $DD, MOV Y,A $FD, MOV X,SP $9D, MOV SP,X $BD, MOV A,dp $E4, MOV dp,A $C4, MOV dp,X $D8, MOV dp,Y $CB, MOV A,(X) $E6, MOV A,(X)+ $BF, MOV (X),A $C6, MOV (X)+,A $AF, MOV A,dp+X $F4, MOV dp+X,A $D4, MOV dp+X,Y $DB, MOV dp+Y,X $D9, MOV A,!abs $E5, MOV !abs,A $C5)",
+                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (supported in this slice: NOP $00, MOV A,#imm $E8, MOV X,#imm $CD, MOV Y,#imm $8D, MOV A,X $7D, MOV X,A $5D, MOV A,Y $DD, MOV Y,A $FD, MOV X,SP $9D, MOV SP,X $BD, MOV A,dp $E4, MOV dp,A $C4, MOV dp,X $D8, MOV dp,Y $CB, MOV A,(X) $E6, MOV A,(X)+ $BF, MOV (X),A $C6, MOV (X)+,A $AF, MOV A,dp+X $F4, MOV dp+X,A $D4, MOV dp+X,Y $DB, MOV dp+Y,X $D9, MOV A,!abs $E5, MOV !abs,A $C5, MOV A,!abs+X $F5, MOV A,!abs+Y $F6, MOV !abs+X,A $D5, MOV !abs+Y,A $D6)",
                 vector.name, vector.initial.pc
             ),
         });
@@ -1061,6 +1065,148 @@ mod tests {
         fs::write(path, sample).expect("write sample MOV !abs,A vector JSON");
     }
 
+    fn write_mov_a_abs_plus_x_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "f5 mov a,!abs+x",
+    "initial": {
+      "pc": 922,
+      "sp": 239,
+      "psw": 1,
+      "a": 18,
+      "x": 2,
+      "y": 2,
+      "ram": [[922, 245], [923, 52], [924, 18], [4662, 128]]
+    },
+    "final": {
+      "pc": 925,
+      "sp": 239,
+      "psw": 129,
+      "a": 128,
+      "x": 2,
+      "y": 2,
+      "ram": [[922, 245], [923, 52], [924, 18], [4662, 128]]
+    },
+    "cycles": [
+      [922, 245, "d-r-----"],
+      [923, 52, "d-r-----"],
+      [924, 18, "d-r-----"],
+      [null, null, "--------"],
+      [4662, 128, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample MOV A,!abs+X vector JSON");
+    }
+
+    fn write_mov_a_abs_plus_y_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "f6 mov a,!abs+y",
+    "initial": {
+      "pc": 925,
+      "sp": 239,
+      "psw": 1,
+      "a": 18,
+      "x": 2,
+      "y": 2,
+      "ram": [[925, 246], [926, 52], [927, 18], [4662, 128]]
+    },
+    "final": {
+      "pc": 928,
+      "sp": 239,
+      "psw": 129,
+      "a": 128,
+      "x": 2,
+      "y": 2,
+      "ram": [[925, 246], [926, 52], [927, 18], [4662, 128]]
+    },
+    "cycles": [
+      [925, 246, "d-r-----"],
+      [926, 52, "d-r-----"],
+      [927, 18, "d-r-----"],
+      [null, null, "--------"],
+      [4662, 128, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample MOV A,!abs+Y vector JSON");
+    }
+
+    fn write_mov_abs_plus_x_a_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "d5 mov !abs+x,a",
+    "initial": {
+      "pc": 928,
+      "sp": 239,
+      "psw": 129,
+      "a": 102,
+      "x": 2,
+      "y": 2,
+      "ram": [[928, 213], [929, 52], [930, 18], [4662, 0]]
+    },
+    "final": {
+      "pc": 931,
+      "sp": 239,
+      "psw": 129,
+      "a": 102,
+      "x": 2,
+      "y": 2,
+      "ram": [[928, 213], [929, 52], [930, 18], [4662, 102]]
+    },
+    "cycles": [
+      [928, 213, "d-r-----"],
+      [929, 52, "d-r-----"],
+      [930, 18, "d-r-----"],
+      [null, null, "--------"],
+      [4662, 0, "d-r-----"],
+      [4662, 102, "dwr-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample MOV !abs+X,A vector JSON");
+    }
+
+    fn write_mov_abs_plus_y_a_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "d6 mov !abs+y,a",
+    "initial": {
+      "pc": 931,
+      "sp": 239,
+      "psw": 129,
+      "a": 102,
+      "x": 2,
+      "y": 2,
+      "ram": [[931, 214], [932, 52], [933, 18], [4662, 0]]
+    },
+    "final": {
+      "pc": 934,
+      "sp": 239,
+      "psw": 129,
+      "a": 102,
+      "x": 2,
+      "y": 2,
+      "ram": [[931, 214], [932, 52], [933, 18], [4662, 102]]
+    },
+    "cycles": [
+      [931, 214, "d-r-----"],
+      [932, 52, "d-r-----"],
+      [933, 18, "d-r-----"],
+      [null, null, "--------"],
+      [4662, 0, "d-r-----"],
+      [4662, 102, "dwr-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample MOV !abs+Y,A vector JSON");
+    }
+
     #[test]
     fn given_spc700_vector_json_when_loaded_then_schema_is_parsed() {
         let temp = tempfile::tempdir().expect("create temp dir");
@@ -1315,6 +1461,50 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("c5.json");
         write_mov_abs_a_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_mov_a_abs_plus_x_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("f5.json");
+        write_mov_a_abs_plus_x_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_mov_a_abs_plus_y_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("f6.json");
+        write_mov_a_abs_plus_y_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_mov_abs_plus_x_a_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("d5.json");
+        write_mov_abs_plus_x_a_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_mov_abs_plus_y_a_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("d6.json");
+        write_mov_abs_plus_y_a_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
         let result = run_vector_case(&vectors[0]);
