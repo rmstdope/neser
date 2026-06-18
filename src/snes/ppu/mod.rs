@@ -14,6 +14,11 @@ const VRAM_SIZE: usize = 0x10_000;
 const CGRAM_SIZE: usize = 0x200;
 const OAM_SIZE: usize = 0x220;
 
+/// PPU1 (5C77) version number reported in STAT77 ($213E).
+pub(super) const PPU1_VERSION: u8 = 1;
+/// PPU2 (5C78) version number reported in STAT78 ($213F).
+pub(super) const PPU2_VERSION: u8 = 1;
+
 /// Master clocks per dot (normal-speed dots).
 pub(super) const MASTER_CYCLES_PER_DOT: u32 = 4;
 /// Dots per scanline.
@@ -48,6 +53,20 @@ pub struct Ppu {
     cgram_latch: u8,
     oam_address: u16,
     oam_latch: u8,
+    /// Latched horizontal counter (OPHCT, $213C).
+    ophct_latch: u16,
+    /// Latched vertical counter (OPVCT, $213D).
+    opvct_latch: u16,
+    /// STAT78 ($213F) bit 6: set when H/V counters are latched, cleared on STAT78 read.
+    counter_latch_flag: bool,
+    /// OPHCT read-twice flipflop (false = next read is the low byte).
+    ophct_read_high: bool,
+    /// OPVCT read-twice flipflop (false = next read is the low byte).
+    opvct_read_high: bool,
+    /// Current WRIO ($4201) value; bit 7 gates counter latching.
+    wrio: u8,
+    /// STAT78 ($213F) bit 7: interlace field flag.
+    interlace_field: bool,
 }
 
 impl Default for Ppu {
@@ -76,6 +95,13 @@ impl Ppu {
             cgram_latch: 0,
             oam_address: 0,
             oam_latch: 0,
+            ophct_latch: 0,
+            opvct_latch: 0,
+            counter_latch_flag: false,
+            ophct_read_high: false,
+            opvct_read_high: false,
+            wrio: 0xFF,
+            interlace_field: false,
         }
     }
 

@@ -440,6 +440,10 @@ impl SnesSystemBus {
                 self.ppu.borrow_mut().write_register(offset, value);
                 true
             }
+            0x4201 => {
+                self.ppu.borrow_mut().write_register(offset, value);
+                true
+            }
             0x4300..=0x437F => self.dma.write_register(offset, value),
             _ => false,
         }
@@ -508,6 +512,7 @@ impl SnesBus for SnesSystemBus {
 
     fn tick(&mut self) {
         self.ticks.set(self.ticks.get().wrapping_add(1));
+        self.ppu.get_mut().tick();
     }
 }
 
@@ -1220,5 +1225,19 @@ mod tests {
         bus.write(0x002121, 0x20);
         assert_eq!(bus.read(0x00213B), 0x5A);
         assert_eq!(bus.read(0x00213B), 0x3C);
+    }
+
+    #[test]
+    fn bus_tick_advances_the_ppu_counters() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // 10 dots = 40 master clocks.
+        for _ in 0..40 {
+            bus.tick();
+        }
+
+        // SLHV strobe latches H/V; OPHCT low byte should read the dot counter.
+        let _ = bus.read(0x002137);
+        assert_eq!(bus.read(0x00213C), 10);
     }
 }

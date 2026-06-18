@@ -4,7 +4,7 @@
 //! ports the PPU owns (`$4200` NMITIMEN, `$4210` RDNMI, `$4211` TIMEUP, `$4212` HVBJOY). The bus
 //! passes the bare offset to [`Ppu::write_register`] / [`Ppu::read_register`].
 
-use super::{CGRAM_SIZE, Ppu, VRAM_SIZE};
+use super::{CGRAM_SIZE, PPU1_VERSION, PPU2_VERSION, Ppu, VRAM_SIZE};
 
 impl Ppu {
     /// Write a PPU register by its 16-bit address offset.
@@ -14,6 +14,14 @@ impl Ppu {
             0x2100 => self.inidisp = value,
             // NMITIMEN: VBlank NMI enable (bit 7).
             0x4200 => self.nmi_enable = value & 0x80 != 0,
+            // WRIO: bit 7 gates H/V counter latching; a 1->0 transition latches.
+            0x4201 => {
+                let was_set = self.wrio & 0x80 != 0;
+                self.wrio = value;
+                if was_set && value & 0x80 == 0 {
+                    self.latch_counters();
+                }
+            }
             // VMAIN: VRAM address increment mode/step.
             0x2115 => {
                 self.vram_increment_after_high = value & 0x80 != 0;
@@ -125,6 +133,44 @@ impl Ppu {
             0x4210 => {
                 let value = if self.nmi_pending { 0x80 } else { 0x00 };
                 self.nmi_pending = false;
+                value
+            }
+            // SLHV: software strobe to latch the H/V counters (data value is open bus).
+            0x2137 => {
+                self.latch_strobe();
+                0
+            }
+            // OPHCT: horizontal counter latch, read-twice (low byte then high bit).
+            0x213C => {
+                let value = if !self.ophct_read_high {
+                    (self.ophct_latch & 0x00FF) as u8
+                } else {
+                    ((self.ophct_latch >> 8) & 0x01) as u8
+                };
+                self.ophct_read_high = !self.ophct_read_high;
+                value
+            }
+            // OPVCT: vertical counter latch, read-twice (low byte then high bit).
+            0x213D => {
+                let value = if !self.opvct_read_high {
+                    (self.opvct_latch & 0x00FF) as u8
+                } else {
+                    ((self.opvct_latch >> 8) & 0x01) as u8
+                };
+                self.opvct_read_high = !self.opvct_read_high;
+                value
+            }
+            // STAT77: PPU1 status + version (sprite overflow flags added later).
+            0x213E => PPU1_VERSION,
+            // STAT78: PPU2 status + version. Reports/clears the latch flag and resets the
+            // OPHCT/OPVCT read flipflops.
+            0x213F => {
+                let value = ((self.interlace_field as u8) << 7)
+                    | ((self.counter_latch_flag as u8) << 6)
+                    | PPU2_VERSION;
+                self.counter_latch_flag = false;
+                self.ophct_read_high = false;
+                self.opvct_read_high = false;
                 value
             }
             _ => 0,
