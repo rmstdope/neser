@@ -263,6 +263,20 @@ impl Spc700 {
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
             }
+            // MOV dp,X — store X to direct page; flags unaffected.
+            0xD8 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | dp as u16;
+                self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, self.x, &mut cycles);
+            }
+            // MOV dp,Y — store Y to direct page; flags unaffected.
+            0xCB => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | dp as u16;
+                self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, self.y, &mut cycles);
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -647,6 +661,54 @@ mod tests {
         assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x036A);
         assert_eq!(bus.get(0x0181), 0x42);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_DIRECT_PAGE));
+    }
+
+    #[test]
+    fn mov_dp_x_uses_p_flag_page_1_and_preserves_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x036A, &[0xD8, 0x82]); // MOV $82,X
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x37,
+            0x00,
+            0xEF,
+            0x036A,
+            FLAG_DIRECT_PAGE | FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.pc(), 0x036C);
+        assert_eq!(bus.get(0x0182), 0x37);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_DIRECT_PAGE));
+    }
+
+    #[test]
+    fn mov_dp_y_uses_p_flag_page_1_and_preserves_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x036C, &[0xCB, 0x83]); // MOV $83,Y
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x00,
+            0x91,
+            0xEF,
+            0x036C,
+            FLAG_DIRECT_PAGE | FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.pc(), 0x036E);
+        assert_eq!(bus.get(0x0183), 0x91);
         assert!(cpu.flag(FLAG_CARRY));
         assert!(cpu.flag(FLAG_NEGATIVE));
         assert!(cpu.flag(FLAG_DIRECT_PAGE));
