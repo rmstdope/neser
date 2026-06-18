@@ -6,6 +6,22 @@ use crate::snes::cartridge::Mapping;
 
 pub const SNES_SAVESTATE_VERSION: u32 = 1;
 
+fn default_dma_regs() -> Vec<u8> {
+    vec![0; 0x80]
+}
+
+fn default_dma_bbus_ports() -> Vec<u8> {
+    vec![0; 0x100]
+}
+
+fn default_dma_channel_bools() -> Vec<bool> {
+    vec![false; 8]
+}
+
+fn default_dma_channel_lines_left() -> Vec<u16> {
+    vec![0; 8]
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SnesBlockMoveDirection {
     #[default]
@@ -65,17 +81,17 @@ pub struct SnesCpuState {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct SnesDmaState {
-    #[serde(default)]
+    #[serde(default = "default_dma_regs")]
     pub regs: Vec<u8>,
-    #[serde(default)]
+    #[serde(default = "default_dma_bbus_ports")]
     pub bbus_ports: Vec<u8>,
     #[serde(default)]
     pub hdma_active_mask: u8,
-    #[serde(default)]
+    #[serde(default = "default_dma_channel_bools")]
     pub hdma_do_transfer: Vec<bool>,
-    #[serde(default)]
+    #[serde(default = "default_dma_channel_bools")]
     pub hdma_repeat_mode: Vec<bool>,
-    #[serde(default)]
+    #[serde(default = "default_dma_channel_lines_left")]
     pub hdma_lines_left: Vec<u16>,
 }
 

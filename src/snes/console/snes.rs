@@ -61,6 +61,7 @@ impl Snes {
     }
 
     /// Returns the file path where battery-backed SRAM should be stored.
+    #[cfg(not(target_arch = "wasm32"))]
     fn sav_path(&self) -> Option<PathBuf> {
         self.rom_path
             .as_ref()
@@ -626,7 +627,7 @@ mod tests {
         let restored_cpu = restored.cpu.as_ref().expect("cpu present");
         assert_eq!(restored_cpu.read_pc(), original_pc);
         assert_eq!(restored_cpu.sram_snapshot(), original_sram);
-        assert_eq!(restored_cpu.emulation_mode(), false);
+        assert!(!restored_cpu.emulation_mode());
         assert_eq!(restored_cpu.read_a(), 0xA1B2);
         assert_eq!(restored_cpu.read_x(), 0xC3D4);
         assert_eq!(restored_cpu.read_y(), 0xE5F6);
@@ -690,11 +691,21 @@ mod tests {
 
         let bytes = serde_json::to_vec(&json).expect("serialize compat state");
         let loaded = SnesSaveState::from_bytes(&bytes).expect("compat state should load");
+        let mut restored = make_snes();
+        restored
+            .load_rom(&rom, "compat_restore.sfc")
+            .expect("load ROM");
+        restored
+            .cpu
+            .as_mut()
+            .expect("cpu present")
+            .restore_save_state(&loaded)
+            .expect("restore should succeed");
 
         assert_eq!(
             loaded.version,
             crate::snes::console::save_state::SNES_SAVESTATE_VERSION
         );
-        assert!(loaded.bus.dma.hdma_lines_left.is_empty());
+        assert_eq!(loaded.bus.dma.hdma_lines_left, vec![0; 8]);
     }
 }

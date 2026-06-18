@@ -321,7 +321,7 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | Directory/File | Description |
 | ---------------- | ------------- |
 | `src/snes/mod.rs` | SNES module root. Declares all SNES sub-modules (bus, console, cpu, ppu, apu, cartridge, input, integration_tests). |
-| `src/snes/console/mod.rs` | Console module root. Re-exports `Snes`, `SnesConfig`, and the save-state snapshot module. |
+| `src/snes/console/mod.rs` | Console module root. Re-exports `Snes` and exposes `config` / `save_state` as public modules. |
 | `src/snes/console/save_state.rs` | Versioned JSON SNES save-state serialization. Captures CPU architectural + execution state, full system-bus state, ROM identity (mapping + CRC32), and deterministic restore errors for version/ROM mismatches. |
 | `src/snes/console/snes.rs` | `Snes` — platform-facing SNES wrapper implementing the `Emulator` trait. Owns `Option<Cpu<SnesSystemBus>>`; `load_rom` parses a `Cartridge`, constructs the system bus, and resets CPU state; `run_tick` executes real CPU steps when a ROM is loaded (returns 0 cycles when not loaded); save-state bytes serialize via the versioned snapshot module. |
 | `src/snes/console/config.rs` | `SnesConfig` struct for SNES-specific configuration (currently empty, ready for future settings). |
