@@ -33,6 +33,9 @@ impl Ppu {
     /// Iterates the BG layer/priority slots front-to-back per the Modes 0/1 priority chart
     /// (OBJ slots are not yet populated), returning the first enabled, non-transparent pixel.
     pub(super) fn compute_pixel(&self, x: u16, y: u16) -> u16 {
+        if self.bg_mode == 7 {
+            return self.compute_pixel_mode7(x, y);
+        }
         for &(bg, priority) in self.layer_order() {
             if self.tm & (1 << bg) == 0 {
                 continue;

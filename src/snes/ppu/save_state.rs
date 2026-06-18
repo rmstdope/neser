@@ -48,6 +48,17 @@ impl Ppu {
             bg_old: self.bg_old,
             tm: self.tm,
             cgwsel: self.cgwsel,
+            setini: self.setini,
+            m7a: self.m7a,
+            m7b: self.m7b,
+            m7c: self.m7c,
+            m7d: self.m7d,
+            m7x: self.m7x,
+            m7y: self.m7y,
+            m7hofs: self.m7hofs,
+            m7vofs: self.m7vofs,
+            m7sel: self.m7sel,
+            m7_old: self.m7_old,
         }
     }
 
@@ -94,6 +105,17 @@ impl Ppu {
         self.bg_old = state.bg_old;
         self.tm = state.tm;
         self.cgwsel = state.cgwsel;
+        self.setini = state.setini;
+        self.m7a = state.m7a;
+        self.m7b = state.m7b;
+        self.m7c = state.m7c;
+        self.m7d = state.m7d;
+        self.m7x = state.m7x;
+        self.m7y = state.m7y;
+        self.m7hofs = state.m7hofs;
+        self.m7vofs = state.m7vofs;
+        self.m7sel = state.m7sel;
+        self.m7_old = state.m7_old;
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);

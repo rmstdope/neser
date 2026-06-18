@@ -39,19 +39,41 @@ impl Ppu {
                 self.bg_char_base[2] = ((value & 0x0F) as u16) << 12;
                 self.bg_char_base[3] = ((value >> 4) as u16) << 12;
             }
+            // BG1HOFS / M7HOFS ($210D) and BG1VOFS / M7VOFS ($210E): each write updates BOTH the
+            // BG1 scroll (via BG_old) and the Mode 7 scroll (via the shared M7_old latch).
+            0x210D => {
+                self.write_bg_hofs(0, value);
+                self.m7hofs = self.write_m7_twice(value);
+            }
+            0x210E => {
+                self.write_bg_vofs(0, value);
+                self.m7vofs = self.write_m7_twice(value);
+            }
             // BGnHOFS / BGnVOFS: write-twice scroll via the shared BG_old latch.
-            0x210D | 0x210F | 0x2111 | 0x2113 => {
+            0x210F | 0x2111 | 0x2113 => {
                 let bg = ((addr - 0x210D) / 2) as usize;
                 self.write_bg_hofs(bg, value);
             }
-            0x210E | 0x2110 | 0x2112 | 0x2114 => {
+            0x2110 | 0x2112 | 0x2114 => {
                 let bg = ((addr - 0x210E) / 2) as usize;
                 self.write_bg_vofs(bg, value);
             }
+            // M7SEL: Mode 7 screen-over (bits 6-7) + screen V/H flip (bits 0-1).
+            0x211A => self.m7sel = value,
+            // M7A-M7D: Mode 7 matrix parameters, write-twice via the shared M7_old latch.
+            0x211B => self.m7a = self.write_m7_twice(value),
+            0x211C => self.m7b = self.write_m7_twice(value),
+            0x211D => self.m7c = self.write_m7_twice(value),
+            0x211E => self.m7d = self.write_m7_twice(value),
+            // M7X / M7Y: Mode 7 center coordinates, write-twice via the shared M7_old latch.
+            0x211F => self.m7x = self.write_m7_twice(value),
+            0x2120 => self.m7y = self.write_m7_twice(value),
             // TM: main-screen layer enable.
             0x212C => self.tm = value,
             // CGWSEL: Color Math Control A. Only bit 0 (direct-color enable) is used here.
             0x2130 => self.cgwsel = value,
+            // SETINI: Display Control 2. Only bit 6 (EXTBG enable for Mode 7) is used here.
+            0x2133 => self.setini = value,
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
             // while the VBlank flag is already set raises an edge.
             0x4200 => {
@@ -141,6 +163,12 @@ impl Ppu {
     /// Read a PPU register by its 16-bit address offset.
     pub fn read_register(&mut self, addr: u16) -> u8 {
         match addr {
+            // MPYL/MPYM/MPYH: PPU1 signed multiply result, M7A (16-bit) * M7B (8-bit, most-recent
+            // byte) = 24-bit signed product. We always expose the product (drawing-period
+            // conflicts during Mode 7 are not modeled).
+            0x2134 => (self.mode7_multiply() & 0xFF) as u8,
+            0x2135 => ((self.mode7_multiply() >> 8) & 0xFF) as u8,
+            0x2136 => ((self.mode7_multiply() >> 16) & 0xFF) as u8,
             // RDVRAML: low byte of the prefetch register; reloads/increments per VMAIN mode.
             0x2139 => {
                 let value = (self.vram_prefetch & 0x00FF) as u8;
