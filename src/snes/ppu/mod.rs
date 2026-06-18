@@ -150,6 +150,9 @@ pub struct Ppu {
     oam_addr_reload: u16,
     /// OAMADDH ($2103) bit 7: OBJ priority rotation (0 = OBJ #0 first, 1 = OBJ #N first).
     oam_priority_rotation: bool,
+    /// Current scanline's composited OBJ pixels (transient; rebuilt at the start of each visible
+    /// line, not serialized in save-states).
+    obj_line: sprites::ObjLine,
 }
 
 impl Default for Ppu {
@@ -215,6 +218,7 @@ impl Ppu {
             obsel: 0,
             oam_addr_reload: 0,
             oam_priority_rotation: false,
+            obj_line: sprites::ObjLine::default(),
         }
     }
 

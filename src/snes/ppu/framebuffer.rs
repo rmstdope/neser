@@ -23,6 +23,10 @@ impl Ppu {
         }
         let x = (dot - VISIBLE_DOT_START) as usize;
         let y = (line - VISIBLE_LINE_START) as usize;
+        // Build the composited OBJ line once, at the first visible dot of each visible scanline.
+        if x == 0 {
+            self.obj_line = self.build_obj_line(y as u16);
+        }
         self.framebuffer[y * SCREEN_WIDTH + x] = self.compute_pixel(x as u16, y as u16);
     }
 

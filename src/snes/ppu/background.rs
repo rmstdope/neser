@@ -6,6 +6,14 @@
 
 use super::{CGRAM_SIZE, Ppu, VRAM_SIZE};
 
+/// A front-to-back priority slot in the Background Priority Chart: either a BG layer at a given
+/// tile-priority, or an OBJ priority level (0-3).
+#[derive(Clone, Copy)]
+enum Slot {
+    Bg(usize, bool),
+    Obj(u8),
+}
+
 impl Ppu {
     /// Handle a write to `BGnHOFS` (horizontal scroll, write-twice via the shared BG_old latch):
     /// `hofs = (data << 8) | (bg_old & ~7) | ((hofs >> 8) & 7)`.
@@ -30,59 +38,106 @@ impl Ppu {
 
     /// Compute the final BGR555 pixel for visible screen coordinate `(x, y)`.
     ///
-    /// Iterates the BG layer/priority slots front-to-back per the Modes 0/1 priority chart
-    /// (OBJ slots are not yet populated), returning the first enabled, non-transparent pixel.
+    /// Iterates the front-to-back priority slots for the current mode (per the fullsnes Background
+    /// Priority Chart), returning the first enabled, non-transparent BG or OBJ pixel. OBJ pixels
+    /// come from the cached per-scanline [`Ppu::obj_line`] and require TM bit 4.
     pub(super) fn compute_pixel(&self, x: u16, y: u16) -> u16 {
         if self.bg_mode == 7 {
             return self.compute_pixel_mode7(x, y);
         }
-        for &(bg, priority) in self.layer_order() {
-            if self.tm & (1 << bg) == 0 {
-                continue;
-            }
-            if let Some((color, pixel_priority)) = self.bg_pixel(bg, x, y)
-                && pixel_priority == priority
-            {
-                return color;
+        for &slot in self.layer_order() {
+            match slot {
+                Slot::Bg(bg, priority) => {
+                    if self.tm & (1 << bg) == 0 {
+                        continue;
+                    }
+                    if let Some((color, pixel_priority)) = self.bg_pixel(bg, x, y)
+                        && pixel_priority == priority
+                    {
+                        return color;
+                    }
+                }
+                Slot::Obj(priority) => {
+                    if let Some(color) = self.obj_pixel(x, priority) {
+                        return color;
+                    }
+                }
             }
         }
         self.backdrop_color()
     }
 
-    /// Front-to-back BG layer/priority slots for the current mode. Each entry is
-    /// `(bg_index, priority_bit)`; OBJ slots from the full chart are omitted (added in #2763).
-    fn layer_order(&self) -> &'static [(usize, bool)] {
+    /// Sample the cached OBJ line buffer at `x` for OBJ priority level `priority` (0-3), returning
+    /// the BGR555 color if an opaque OBJ pixel of that priority is present and OBJ output is enabled
+    /// on the main screen (TM bit 4).
+    pub(super) fn obj_pixel(&self, x: u16, priority: u8) -> Option<u16> {
+        if self.tm & 0x10 == 0 {
+            return None;
+        }
+        let x = x as usize;
+        if self.obj_line.present[x] && self.obj_line.priority[x] == priority {
+            Some(self.obj_line.color[x])
+        } else {
+            None
+        }
+    }
+
+    /// Front-to-back priority slots for the current mode per the fullsnes Background Priority Chart.
+    fn layer_order(&self) -> &'static [Slot] {
+        use Slot::{Bg, Obj};
         match self.bg_mode {
             0 => &[
-                (0, true),
-                (1, true),
-                (0, false),
-                (1, false),
-                (2, true),
-                (3, true),
-                (2, false),
-                (3, false),
+                Obj(3),
+                Bg(0, true),
+                Bg(1, true),
+                Obj(2),
+                Bg(0, false),
+                Bg(1, false),
+                Obj(1),
+                Bg(2, true),
+                Bg(3, true),
+                Obj(0),
+                Bg(2, false),
+                Bg(3, false),
             ],
+            // Mode 1 with BG3 high-priority (BGMODE bit 3): BG3.1 moves to the very front (BG3.1a).
             1 if self.bg3_priority => &[
-                (2, true),
-                (0, true),
-                (1, true),
-                (0, false),
-                (1, false),
-                (2, false),
+                Bg(2, true),
+                Obj(3),
+                Bg(0, true),
+                Bg(1, true),
+                Obj(2),
+                Bg(0, false),
+                Bg(1, false),
+                Obj(1),
+                Obj(0),
+                Bg(2, false),
             ],
             1 => &[
-                (0, true),
-                (1, true),
-                (0, false),
-                (1, false),
-                (2, true),
-                (2, false),
+                Obj(3),
+                Bg(0, true),
+                Bg(1, true),
+                Obj(2),
+                Bg(0, false),
+                Bg(1, false),
+                Obj(1),
+                Bg(2, true),
+                Obj(0),
+                Bg(2, false),
             ],
             // Modes 2-5 display BG1 + BG2 (BG3 in modes 2/4 is the offset-per-tile source).
-            2..=5 => &[(0, true), (1, true), (0, false), (1, false)],
+            2..=5 => &[
+                Obj(3),
+                Bg(0, true),
+                Obj(2),
+                Bg(1, true),
+                Obj(1),
+                Bg(0, false),
+                Obj(0),
+                Bg(1, false),
+            ],
             // Mode 6 displays BG1 only (BG3 is the offset source).
-            6 => &[(0, true), (0, false)],
+            6 => &[Obj(3), Bg(0, true), Obj(2), Obj(1), Bg(0, false), Obj(0)],
             _ => &[],
         }
     }

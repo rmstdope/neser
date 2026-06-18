@@ -28,6 +28,7 @@ impl Ppu {
     }
 
     /// Whether OBJ priority rotation (OAMADDH $2103 bit 7) is enabled.
+    #[cfg(test)]
     pub(super) fn obj_priority_rotation_enabled(&self) -> bool {
         self.oam_priority_rotation
     }
@@ -509,11 +510,11 @@ mod tests {
         let mut ppu = Ppu::new();
         ppu.write_register(0x2101, 0x00); // small 8x8, large 16x16
         park_all_offscreen(&mut ppu);
-        // 16x16 OBJ at base tile 0: sub-tiles 0 (TL), 1 (TR), 16 (BL), 17 (BR).
-        set_obj_tile_solid(&mut ppu, 0 * 16, 1); // TL -> color 1
-        set_obj_tile_solid(&mut ppu, 1 * 16, 2); // TR -> color 2
-        set_obj_tile_solid(&mut ppu, 16 * 16, 3); // BL -> color 3
-        set_obj_tile_solid(&mut ppu, 17 * 16, 4); // BR -> color 4
+        // 16x16 OBJ at base tile 0: sub-tiles 0 (TL), 1 (TR), 16 (BL), 17 (BR), 16 words each.
+        set_obj_tile_solid(&mut ppu, 0, 1); // tile 0 (TL) -> color 1
+        set_obj_tile_solid(&mut ppu, 16, 2); // tile 1 (TR) -> color 2
+        set_obj_tile_solid(&mut ppu, 16 * 16, 3); // tile 16 (BL) -> color 3
+        set_obj_tile_solid(&mut ppu, 17 * 16, 4); // tile 17 (BR) -> color 4
         for c in 1..=4 {
             set_cgram(&mut ppu, 128 + c, 0x0100 * c as u16);
         }
@@ -558,5 +559,71 @@ mod tests {
         let buf = ppu.build_obj_line(0);
         assert!(buf.present[0] && buf.present[3]);
         assert!(!buf.present[4]);
+    }
+
+    /// Set up Mode 1 with a single solid BG1 pixel at screen (0,0) and OBJ tiles at a separate
+    /// VRAM name base; returns the BG1 color so tests can distinguish it from the OBJ color.
+    fn setup_bg1_and_obj(
+        ppu: &mut Ppu,
+        bg_high_priority: bool,
+        obj_priority: u8,
+        obj_enable: bool,
+    ) {
+        ppu.write_register(0x2105, 0x01); // BG mode 1
+        ppu.write_register(0x2107, 0x10); // BG1SC: tilemap base word 0x1000
+        ppu.write_register(0x210B, 0x00); // BG12NBA: BG1 char base word 0
+        ppu.write_register(0x2101, 0x02); // OBSEL: 8x8, OBJ name base word 0x4000
+        park_all_offscreen(ppu);
+
+        // BG1 palette 0 color 2 -> CGRAM index 2; tile 1 solid color 2 at char word 16.
+        set_cgram(ppu, 2, 0x0BBB);
+        set_obj_tile_solid(ppu, 16, 2);
+        let entry = 1u16 | if bg_high_priority { 0x2000 } else { 0 };
+        ppu.set_vram_byte(0x2000, (entry & 0xFF) as u8);
+        ppu.set_vram_byte(0x2001, (entry >> 8) as u8);
+
+        // OBJ 0 at (0,0): tile 0 solid color 1, OBJ palette 0 -> CGRAM 129.
+        set_obj_tile_solid(ppu, 0x4000, 1);
+        set_cgram(ppu, 128 + 1, 0x0CCC);
+        set_obj(ppu, 0, 0, 0, 0, obj_priority << 4, false);
+
+        let tm = 0x01 | if obj_enable { 0x10 } else { 0x00 };
+        ppu.write_register(0x212C, tm);
+        ppu.obj_line = ppu.build_obj_line(0);
+    }
+
+    const BG1_COLOR: u16 = 0x0BBB;
+    const OBJ_COLOR: u16 = 0x0CCC;
+
+    #[test]
+    fn obj_priority_3_draws_in_front_of_high_priority_bg1() {
+        let mut ppu = Ppu::new();
+        setup_bg1_and_obj(&mut ppu, true, 3, true);
+        assert_eq!(ppu.compute_pixel(0, 0), OBJ_COLOR);
+    }
+
+    #[test]
+    fn obj_priority_0_draws_behind_bg1() {
+        let mut ppu = Ppu::new();
+        setup_bg1_and_obj(&mut ppu, true, 0, true);
+        assert_eq!(ppu.compute_pixel(0, 0), BG1_COLOR);
+    }
+
+    #[test]
+    fn tm_bit4_disabled_hides_objects() {
+        let mut ppu = Ppu::new();
+        setup_bg1_and_obj(&mut ppu, true, 3, false);
+        assert_eq!(ppu.compute_pixel(0, 0), BG1_COLOR);
+    }
+
+    #[test]
+    fn obj_over_backdrop_when_no_bg_pixel() {
+        let mut ppu = Ppu::new();
+        setup_bg1_and_obj(&mut ppu, true, 0, true);
+        // x=8 has no BG1 tile (only tile (0,0) was mapped) and no OBJ -> backdrop (0).
+        // Move OBJ to x=8 so only the OBJ (priority 0) covers the backdrop there.
+        set_obj(&mut ppu, 0, 8, 0, 0, 0, false);
+        ppu.obj_line = ppu.build_obj_line(0);
+        assert_eq!(ppu.compute_pixel(8, 0), OBJ_COLOR);
     }
 }
