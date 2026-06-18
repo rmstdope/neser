@@ -261,4 +261,10 @@ impl Ppu {
     pub fn oam_byte(&self, index: usize) -> u8 {
         self.oam[index]
     }
+
+    /// Write a raw OAM byte (test helper, bypassing the OAMADD/OAMDATA write path).
+    #[cfg(test)]
+    pub(super) fn set_oam_byte(&mut self, index: usize, value: u8) {
+        self.oam[index] = value;
+    }
 }
