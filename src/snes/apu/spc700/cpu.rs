@@ -417,6 +417,34 @@ impl Spc700 {
                 self.y = self.read_cycle(bus, addr, &mut cycles);
                 self.update_nz8(self.y);
             }
+            // MOV X,dp+Y — load X from direct page indexed by Y, update N/Z.
+            0xF9 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let addr = self.direct_page_base() | dp.wrapping_add(self.y) as u16;
+                self.x = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.x);
+            }
+            // MOV Y,dp+X — load Y from direct page indexed by X, update N/Z.
+            0xFB => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let addr = self.direct_page_base() | dp.wrapping_add(self.x) as u16;
+                self.y = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.y);
+            }
+            // MOV !abs,X — store X to absolute address; flags unchanged.
+            0xC9 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, self.x, &mut cycles);
+            }
+            // MOV !abs,Y — store Y to absolute address; flags unchanged.
+            0xCC => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, self.y, &mut cycles);
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -1263,5 +1291,103 @@ mod tests {
         assert!(cpu.flag(FLAG_NEGATIVE));
         assert!(!cpu.flag(FLAG_ZERO));
         assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_x_dp_plus_y_wraps_within_page_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0396, &[0xF9, 0xFF]); // MOV X,$FF+Y
+        bus.set(0x0101, 0x80); // base=$0100, $FF+2 wraps to $01
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x00,
+            0x02,
+            0xEF,
+            0x0396,
+            FLAG_DIRECT_PAGE | FLAG_CARRY,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.pc(), 0x0398);
+        assert_eq!(cpu.x(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_y_dp_plus_x_wraps_within_page_and_sets_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0398, &[0xFB, 0xFF]); // MOV Y,$FF+X
+        bus.set(0x0101, 0x00); // base=$0100, $FF+2 wraps to $01
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x02,
+            0xFF,
+            0xEF,
+            0x0398,
+            FLAG_DIRECT_PAGE | FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.pc(), 0x039A);
+        assert_eq!(cpu.y(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_abs_x_stores_and_preserves_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x039A, &[0xC9, 0x34, 0x12]); // MOV $1234,X
+        bus.set(0x1234, 0x00);
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x66,
+            0x00,
+            0xEF,
+            0x039A,
+            FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.pc(), 0x039D);
+        assert_eq!(bus.get(0x1234), 0x66);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn mov_abs_y_stores_and_preserves_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x039D, &[0xCC, 0x35, 0x12]); // MOV $1235,Y
+        bus.set(0x1235, 0x00);
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x00,
+            0x77,
+            0xEF,
+            0x039D,
+            FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.pc(), 0x03A0);
+        assert_eq!(bus.get(0x1235), 0x77);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
     }
 }
