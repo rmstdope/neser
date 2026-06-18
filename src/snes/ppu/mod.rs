@@ -18,6 +18,13 @@ const OAM_SIZE: usize = 0x220;
 pub(super) const PPU1_VERSION: u8 = 1;
 /// PPU2 (5C78) version number reported in STAT78 ($213F).
 pub(super) const PPU2_VERSION: u8 = 1;
+/// CPU (5A22) version number reported in RDNMI ($4210).
+pub(super) const CPU_VERSION: u8 = 2;
+
+/// First VBlank scanline (NTSC, 224-line mode): the visible region is lines 1-224.
+pub(super) const VBLANK_START_LINE: u16 = 225;
+/// Dot at which the HBlank flag (HVBJOY bit 6) goes high (approximate; leading edge is a TODO).
+pub(super) const HBLANK_START_DOT: u16 = 274;
 
 /// Master clocks per dot (normal-speed dots).
 pub(super) const MASTER_CYCLES_PER_DOT: u32 = 4;
@@ -44,7 +51,14 @@ pub struct Ppu {
     master_cycle_accumulator: u32,
     inidisp: u8,
     nmi_enable: bool,
-    nmi_pending: bool,
+    /// RDNMI ($4210) bit 7: VBlank NMI flag (set at VBlank start, cleared at VBlank end / read).
+    nmi_flag: bool,
+    /// True during the VBlank period (scanlines >= [`VBLANK_START_LINE`]).
+    vblank_active: bool,
+    /// Previous level of the NMI line (`nmi_enable && nmi_flag`) for rising-edge detection.
+    nmi_line_prev: bool,
+    /// Latched NMI rising edge awaiting delivery to the CPU (consumed by `poll_nmi`).
+    nmi_edge: bool,
     vram_increment_after_high: bool,
     vram_increment_step: u16,
     vram_address: u16,
@@ -86,7 +100,10 @@ impl Ppu {
             master_cycle_accumulator: 0,
             inidisp: 0,
             nmi_enable: false,
-            nmi_pending: false,
+            nmi_flag: false,
+            vblank_active: false,
+            nmi_line_prev: false,
+            nmi_edge: false,
             vram_increment_after_high: false,
             vram_increment_step: 1,
             vram_address: 0,
@@ -110,14 +127,21 @@ impl Ppu {
         self.position
     }
 
-    /// Whether a VBlank NMI is latched and pending delivery to the CPU.
-    pub fn nmi_pending(&self) -> bool {
-        self.nmi_pending
-    }
-
     /// Whether VBlank NMI generation is enabled (NMITIMEN bit 7).
     pub fn nmi_enabled(&self) -> bool {
         self.nmi_enable
+    }
+
+    /// Poll for and consume a pending NMI rising edge (for delivery to the CPU).
+    pub fn poll_nmi(&mut self) -> bool {
+        let edge = self.nmi_edge;
+        self.nmi_edge = false;
+        edge
+    }
+
+    /// Whether the PPU is currently in the VBlank period.
+    pub fn in_vblank(&self) -> bool {
+        self.vblank_active
     }
 
     /// Read a raw VRAM byte (test/inspection helper).

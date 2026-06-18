@@ -514,6 +514,10 @@ impl SnesBus for SnesSystemBus {
         self.ticks.set(self.ticks.get().wrapping_add(1));
         self.ppu.get_mut().tick();
     }
+
+    fn poll_nmi(&mut self) -> bool {
+        self.ppu.get_mut().poll_nmi()
+    }
 }
 
 #[cfg(test)]
@@ -1239,5 +1243,22 @@ mod tests {
         // SLHV strobe latches H/V; OPHCT low byte should read the dot counter.
         let _ = bus.read(0x002137);
         assert_eq!(bus.read(0x00213C), 10);
+    }
+
+    #[test]
+    fn bus_poll_nmi_fires_at_vblank_when_enabled() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004200, 0x80); // enable VBlank NMI
+
+        // Advance to VBlank entry: 225 scanlines * 341 dots * 4 master clocks.
+        for _ in 0..(225 * 341 * 4) {
+            bus.tick();
+        }
+
+        assert!(
+            bus.poll_nmi(),
+            "NMI edge delivered through the bus at VBlank"
+        );
+        assert!(!bus.poll_nmi(), "edge consumed once");
     }
 }

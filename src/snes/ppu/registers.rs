@@ -4,7 +4,9 @@
 //! ports the PPU owns (`$4200` NMITIMEN, `$4210` RDNMI, `$4211` TIMEUP, `$4212` HVBJOY). The bus
 //! passes the bare offset to [`Ppu::write_register`] / [`Ppu::read_register`].
 
-use super::{CGRAM_SIZE, PPU1_VERSION, PPU2_VERSION, Ppu, VRAM_SIZE};
+use super::{
+    CGRAM_SIZE, CPU_VERSION, HBLANK_START_DOT, PPU1_VERSION, PPU2_VERSION, Ppu, VRAM_SIZE,
+};
 
 impl Ppu {
     /// Write a PPU register by its 16-bit address offset.
@@ -12,8 +14,12 @@ impl Ppu {
         match addr {
             // INIDISP: forced blank (bit 7) + master brightness (bits 0-3).
             0x2100 => self.inidisp = value,
-            // NMITIMEN: VBlank NMI enable (bit 7).
-            0x4200 => self.nmi_enable = value & 0x80 != 0,
+            // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
+            // while the VBlank flag is already set raises an edge.
+            0x4200 => {
+                self.nmi_enable = value & 0x80 != 0;
+                self.update_nmi_line();
+            }
             // WRIO: bit 7 gates H/V counter latching; a 1->0 transition latches.
             0x4201 => {
                 let was_set = self.wrio & 0x80 != 0;
@@ -129,11 +135,22 @@ impl Ppu {
                 self.increment_cgram_address();
                 value
             }
-            // RDNMI: VBlank NMI flag (bit 7), read acknowledges/clears it.
+            // RDNMI: VBlank NMI flag (bit 7) + CPU version. Read acknowledges/clears the flag.
             0x4210 => {
-                let value = if self.nmi_pending { 0x80 } else { 0x00 };
-                self.nmi_pending = false;
+                let value = (if self.nmi_flag { 0x80 } else { 0x00 }) | CPU_VERSION;
+                self.nmi_flag = false;
+                self.update_nmi_line();
                 value
+            }
+            // HVBJOY: VBlank flag (bit 7), HBlank flag (bit 6), auto-joypad busy (bit 0).
+            0x4212 => {
+                let vblank = if self.vblank_active { 0x80 } else { 0x00 };
+                let hblank = if self.position.dot >= HBLANK_START_DOT {
+                    0x40
+                } else {
+                    0x00
+                };
+                vblank | hblank
             }
             // SLHV: software strobe to latch the H/V counters (data value is open bus).
             0x2137 => {
