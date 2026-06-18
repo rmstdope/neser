@@ -391,6 +391,32 @@ impl Spc700 {
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
             }
+            // MOV X,dp — load X from direct page, update N/Z.
+            0xF8 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | dp as u16;
+                self.x = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.x);
+            }
+            // MOV Y,dp — load Y from direct page, update N/Z.
+            0xEB => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | dp as u16;
+                self.y = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.y);
+            }
+            // MOV X,!abs — load X from absolute, update N/Z.
+            0xE9 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                self.x = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.x);
+            }
+            // MOV Y,!abs — load Y from absolute, update N/Z.
+            0xEC => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                self.y = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.y);
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -1151,5 +1177,91 @@ mod tests {
         assert_eq!(bus.get(0x1236), 0x66);
         assert!(cpu.flag(FLAG_CARRY));
         assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn mov_x_dp_loads_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x038C, &[0xF8, 0x80]); // MOV X,$80
+        bus.set(0x0180, 0x80);
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x00,
+            0x00,
+            0xEF,
+            0x038C,
+            FLAG_DIRECT_PAGE | FLAG_CARRY,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.pc(), 0x038E);
+        assert_eq!(cpu.x(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_y_dp_loads_and_sets_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x038E, &[0xEB, 0x81]); // MOV Y,$81
+        bus.set(0x0181, 0x00);
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x00,
+            0xFF,
+            0xEF,
+            0x038E,
+            FLAG_DIRECT_PAGE | FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.pc(), 0x0390);
+        assert_eq!(cpu.y(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_x_abs_loads_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0390, &[0xE9, 0x34, 0x12]); // MOV X,$1234
+        bus.set(0x1234, 0x80);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0390, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.pc(), 0x0393);
+        assert_eq!(cpu.x(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_y_abs_loads_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0393, &[0xEC, 0x35, 0x12]); // MOV Y,$1235
+        bus.set(0x1235, 0x80);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0393, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.pc(), 0x0396);
+        assert_eq!(cpu.y(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
     }
 }
