@@ -165,6 +165,13 @@ impl Spc700 {
         byte
     }
 
+    /// Fetch a 16-bit little-endian immediate operand from PC.
+    fn fetch_u16(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) -> u16 {
+        let lo = self.fetch(bus, cycles) as u16;
+        let hi = self.fetch(bus, cycles) as u16;
+        (hi << 8) | lo
+    }
+
     /// Read a byte, consuming one cycle.
     fn read_cycle(&mut self, bus: &mut impl Spc700Bus, addr: u16, cycles: &mut u8) -> u8 {
         *cycles = cycles.wrapping_add(1);
@@ -339,6 +346,18 @@ impl Spc700 {
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.x, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
+            }
+            // MOV A,!abs — load A from 16-bit absolute address, update N/Z.
+            0xE5 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                self.a = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.a);
+            }
+            // MOV !abs,A — store A to 16-bit absolute address; flags unchanged.
+            0xC5 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, self.a, &mut cycles);
             }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
@@ -972,6 +991,48 @@ mod tests {
         assert_eq!(cycles, 5);
         assert_eq!(cpu.pc(), 0x037A);
         assert_eq!(bus.get(0x0100), 0x77);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn mov_a_abs_loads_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x037A, &[0xE5, 0x34, 0x12]); // MOV A,$1234
+        bus.set(0x1234, 0x80);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x037A, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.pc(), 0x037D);
+        assert_eq!(cpu.a(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_abs_a_stores_and_preserves_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x037D, &[0xC5, 0x35, 0x12]); // MOV $1235,A
+        bus.set(0x1235, 0x00);
+        cpu.load_state_for_processor_test(
+            0x66,
+            0x00,
+            0x00,
+            0xEF,
+            0x037D,
+            FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.pc(), 0x0380);
+        assert_eq!(bus.get(0x1235), 0x66);
         assert!(cpu.flag(FLAG_CARRY));
         assert!(cpu.flag(FLAG_NEGATIVE));
     }
