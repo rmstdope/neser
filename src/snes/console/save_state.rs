@@ -189,6 +189,26 @@ pub struct SnesPpuState {
     pub wrio: u8,
     #[serde(default)]
     pub interlace_field: bool,
+    #[serde(default)]
+    pub bg_mode: u8,
+    #[serde(default)]
+    pub bg3_priority: bool,
+    #[serde(default)]
+    pub bg_tile_size_16: [bool; 4],
+    #[serde(default)]
+    pub bg_tilemap_base: [u16; 4],
+    #[serde(default)]
+    pub bg_screen_size: [u8; 4],
+    #[serde(default)]
+    pub bg_char_base: [u16; 4],
+    #[serde(default)]
+    pub bg_hofs: [u16; 4],
+    #[serde(default)]
+    pub bg_vofs: [u16; 4],
+    #[serde(default)]
+    pub bg_old: u8,
+    #[serde(default)]
+    pub tm: u8,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]

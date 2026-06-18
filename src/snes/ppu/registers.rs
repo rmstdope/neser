@@ -15,6 +15,41 @@ impl Ppu {
         match addr {
             // INIDISP: forced blank (bit 7) + master brightness (bits 0-3).
             0x2100 => self.inidisp = value,
+            // BGMODE: BG screen mode (bits 0-2), BG3 high-priority (bit 3), per-BG tile size.
+            0x2105 => {
+                self.bg_mode = value & 0x07;
+                self.bg3_priority = value & 0x08 != 0;
+                for bg in 0..4 {
+                    self.bg_tile_size_16[bg] = value & (0x10 << bg) != 0;
+                }
+            }
+            // BGnSC: tilemap base (bits 2-7, 1K-word steps) + size (bits 0-1).
+            0x2107..=0x210A => {
+                let bg = (addr - 0x2107) as usize;
+                self.bg_tilemap_base[bg] = ((value as u16) >> 2) << 10;
+                self.bg_screen_size[bg] = value & 0x03;
+            }
+            // BG12NBA: BG1 (bits 0-3) + BG2 (bits 4-7) char base (4K-word steps).
+            0x210B => {
+                self.bg_char_base[0] = ((value & 0x0F) as u16) << 12;
+                self.bg_char_base[1] = ((value >> 4) as u16) << 12;
+            }
+            // BG34NBA: BG3 (bits 0-3) + BG4 (bits 4-7) char base (4K-word steps).
+            0x210C => {
+                self.bg_char_base[2] = ((value & 0x0F) as u16) << 12;
+                self.bg_char_base[3] = ((value >> 4) as u16) << 12;
+            }
+            // BGnHOFS / BGnVOFS: write-twice scroll via the shared BG_old latch.
+            0x210D | 0x210F | 0x2111 | 0x2113 => {
+                let bg = ((addr - 0x210D) / 2) as usize;
+                self.write_bg_hofs(bg, value);
+            }
+            0x210E | 0x2110 | 0x2112 | 0x2114 => {
+                let bg = ((addr - 0x210E) / 2) as usize;
+                self.write_bg_vofs(bg, value);
+            }
+            // TM: main-screen layer enable.
+            0x212C => self.tm = value,
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
             // while the VBlank flag is already set raises an edge.
             0x4200 => {

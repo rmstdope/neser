@@ -37,6 +37,16 @@ impl Ppu {
             opvct_read_high: self.opvct_read_high,
             wrio: self.wrio,
             interlace_field: self.interlace_field,
+            bg_mode: self.bg_mode,
+            bg3_priority: self.bg3_priority,
+            bg_tile_size_16: self.bg_tile_size_16,
+            bg_tilemap_base: self.bg_tilemap_base,
+            bg_screen_size: self.bg_screen_size,
+            bg_char_base: self.bg_char_base,
+            bg_hofs: self.bg_hofs,
+            bg_vofs: self.bg_vofs,
+            bg_old: self.bg_old,
+            tm: self.tm,
         }
     }
 
@@ -72,6 +82,16 @@ impl Ppu {
         self.opvct_read_high = state.opvct_read_high;
         self.wrio = state.wrio;
         self.interlace_field = state.interlace_field;
+        self.bg_mode = state.bg_mode;
+        self.bg3_priority = state.bg3_priority;
+        self.bg_tile_size_16 = state.bg_tile_size_16;
+        self.bg_tilemap_base = state.bg_tilemap_base;
+        self.bg_screen_size = state.bg_screen_size;
+        self.bg_char_base = state.bg_char_base;
+        self.bg_hofs = state.bg_hofs;
+        self.bg_vofs = state.bg_vofs;
+        self.bg_old = state.bg_old;
+        self.tm = state.tm;
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);
@@ -115,6 +135,14 @@ mod tests {
         ppu.write_register(0x2119, 0xCD);
         ppu.write_register(0x2100, 0x0F);
         ppu.write_register(0x4200, 0x80);
+        // BG register state (added in #2760).
+        ppu.write_register(0x2105, 0x11); // BGMODE: mode 1, BG1 16x16
+        ppu.write_register(0x2107, 0x14); // BG1SC
+        ppu.write_register(0x210B, 0x23); // BG12NBA
+        ppu.write_register(0x210D, 0x1F); // BG1HOFS (write-twice)
+        ppu.write_register(0x210D, 0x02);
+        ppu.write_register(0x210E, 0x33); // BG1VOFS
+        ppu.write_register(0x212C, 0x13); // TM
         for _ in 0..2000 {
             ppu.tick();
         }

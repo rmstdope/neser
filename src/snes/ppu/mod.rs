@@ -10,6 +10,7 @@
 //! - [`framebuffer`] — backdrop rendering and BGR555 -> RGB888 output.
 //! - [`save_state`] — PPU save-state capture/restore.
 
+mod background;
 mod framebuffer;
 mod registers;
 mod save_state;
@@ -99,6 +100,26 @@ pub struct Ppu {
     framebuffer: Vec<u16>,
     /// Set when the PPU enters VBlank (a full visible frame has been produced).
     frame_complete: bool,
+    /// BGMODE ($2105) bits 0-2: BG screen mode (0-7).
+    bg_mode: u8,
+    /// BGMODE ($2105) bit 3: BG3 high-priority option (Mode 1 only).
+    bg3_priority: bool,
+    /// Per-BG tile size (BGMODE bits 4-7): true = 16x16, false = 8x8.
+    bg_tile_size_16: [bool; 4],
+    /// Per-BG tilemap base address in VRAM words (BGnSC bits 2-7, 1K-word steps).
+    bg_tilemap_base: [u16; 4],
+    /// Per-BG tilemap size (BGnSC bits 0-1): 0=32x32,1=64x32,2=32x64,3=64x64.
+    bg_screen_size: [u8; 4],
+    /// Per-BG character/tile base address in VRAM words (BGxxNBA, 4K-word steps).
+    bg_char_base: [u16; 4],
+    /// Per-BG horizontal scroll (10-bit), built via the shared BG_old write-twice latch.
+    bg_hofs: [u16; 4],
+    /// Per-BG vertical scroll (10-bit), built via the shared BG_old write-twice latch.
+    bg_vofs: [u16; 4],
+    /// Shared write-twice latch (BG_old) for the BGnHOFS/BGnVOFS registers.
+    bg_old: u8,
+    /// TM ($212C): main-screen layer enable (bits 0-3 = BG1-4, bit 4 = OBJ).
+    tm: u8,
 }
 
 impl Default for Ppu {
@@ -139,6 +160,16 @@ impl Ppu {
             interlace_field: false,
             framebuffer: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT],
             frame_complete: false,
+            bg_mode: 0,
+            bg3_priority: false,
+            bg_tile_size_16: [false; 4],
+            bg_tilemap_base: [0; 4],
+            bg_screen_size: [0; 4],
+            bg_char_base: [0; 4],
+            bg_hofs: [0; 4],
+            bg_vofs: [0; 4],
+            bg_old: 0,
+            tm: 0,
         }
     }
 
