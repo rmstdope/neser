@@ -267,4 +267,10 @@ impl Ppu {
     pub(super) fn set_oam_byte(&mut self, index: usize, value: u8) {
         self.oam[index] = value;
     }
+
+    /// Write a raw VRAM byte (test helper, bypassing the VMADD/VMDATA write path).
+    #[cfg(test)]
+    pub(super) fn set_vram_byte(&mut self, index: usize, value: u8) {
+        self.vram[index] = value;
+    }
 }

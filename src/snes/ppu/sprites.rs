@@ -83,6 +83,89 @@ impl Ppu {
         }
         eval
     }
+
+    /// The OAM high-table X bit 8 for OBJ `index`.
+    fn obj_x_high(&self, index: usize) -> u16 {
+        ((self.oam[0x200 + (index >> 2)] >> ((index & 3) * 2)) & 1) as u16
+    }
+
+    /// Build the composited OBJ pixel line for display scanline `line`: in-range OBJs are drawn
+    /// front-to-back (lowest evaluation order wins), gated only by OBJ opacity.
+    pub(super) fn build_obj_line(&self, line: u16) -> ObjLine {
+        let eval = self.evaluate_line_objects(line);
+        let mut buf = ObjLine::default();
+        for &i in &eval.indices {
+            self.render_object_into(&mut buf, i as usize, line);
+        }
+        buf
+    }
+
+    /// Render OBJ `index` into the line buffer for display scanline `line`, writing each opaque
+    /// pixel only where no nearer (earlier) OBJ has already drawn.
+    fn render_object_into(&self, buf: &mut ObjLine, index: usize, line: u16) {
+        let (width, height) = self.obj_size(index);
+        let (width, height) = (width as i32, height as i32);
+        let y = self.oam[index * 4 + 1] as u16;
+        let attr = self.oam[index * 4 + 3];
+        let priority = (attr >> 4) & 0x03;
+        let palette = (attr >> 1) & 0x07;
+        let hflip = attr & 0x40 != 0;
+        let vflip = attr & 0x80 != 0;
+
+        // 9-bit X is sign-extended: 256..511 represent negative on-screen positions.
+        let x9 = self.oam[index * 4] as u16 | (self.obj_x_high(index) << 8);
+        let base_x = if x9 & 0x100 != 0 {
+            x9 as i32 - 0x200
+        } else {
+            x9 as i32
+        };
+        let base_tile = self.oam[index * 4 + 2] as u16 | (((attr & 0x01) as u16) << 8);
+
+        let mut within_y = (line.wrapping_sub(y) & 0xFF) as i32;
+        if vflip {
+            within_y = height - 1 - within_y;
+        }
+
+        for col in 0..width {
+            let screen_x = base_x + col;
+            if !(0..256).contains(&screen_x) {
+                continue;
+            }
+            let sx = screen_x as usize;
+            if buf.present[sx] {
+                continue;
+            }
+            let within_x = if hflip { width - 1 - col } else { col };
+            let color = self.obj_tile_pixel(base_tile, within_x, within_y);
+            if color == 0 {
+                continue;
+            }
+            let cgindex = 128 + palette * 16 + color;
+            buf.color[sx] = self.cgram_color(cgindex);
+            buf.priority[sx] = priority;
+            buf.present[sx] = true;
+        }
+    }
+
+    /// Decode an OBJ pixel color index (0-15) at sprite-relative `(within_x, within_y)`, applying
+    /// non-carrying large-tile composition (right wraps the low nibble, down wraps the high nibble)
+    /// and the OBSEL name base/gap addressing.
+    fn obj_tile_pixel(&self, base_tile: u16, within_x: i32, within_y: i32) -> u8 {
+        let tile_col = (within_x / 8) as u16;
+        let tile_row = (within_y / 8) as u16;
+        let page = base_tile & 0x100;
+        let lo = ((base_tile & 0x0F) + tile_col) & 0x0F;
+        let hi = (((base_tile >> 4) & 0x0F) + tile_row) & 0x0F;
+        let tile = page | (hi << 4) | lo;
+
+        let mut word_addr = self.obj_name_base_word().wrapping_add(tile << 4);
+        if tile & 0x100 != 0 {
+            word_addr = word_addr.wrapping_add(self.obj_name_gap_word());
+        }
+        let fine_x = (within_x & 7) as u8;
+        let fine_y = (within_y & 7) as u8;
+        self.decode_tile_pixel(word_addr, 0, 4, fine_x, fine_y)
+    }
 }
 
 /// Result of per-scanline OAM range evaluation.
@@ -94,6 +177,27 @@ pub(super) struct ObjLineEval {
     pub range_over: bool,
     /// OAM index of the 33rd in-range OBJ that triggered the range over-limit, if any.
     pub range_over_index: Option<u8>,
+}
+
+/// Composited OBJ pixels for one scanline (256 visible pixels).
+#[derive(Debug, Clone)]
+pub(super) struct ObjLine {
+    /// Resolved BGR555 color per pixel (valid only where `present`).
+    pub color: [u16; 256],
+    /// OBJ priority level (0-3, OAM attr bits 5-4) per pixel, for BG compositing.
+    pub priority: [u8; 256],
+    /// Whether an opaque OBJ pixel was written at this x.
+    pub present: [bool; 256],
+}
+
+impl Default for ObjLine {
+    fn default() -> Self {
+        Self {
+            color: [0; 256],
+            priority: [0; 256],
+            present: [false; 256],
+        }
+    }
 }
 
 /// Decode the OBSEL size selection (bits 7-5) into the `(small, large)` `(width, height)` pixel
@@ -287,5 +391,172 @@ mod tests {
         ppu.write_register(0x2102, 6 << 1);
         ppu.write_register(0x2103, 0x80);
         assert_eq!(ppu.evaluate_line_objects(50).indices, vec![6, 7, 5]);
+    }
+
+    /// Fill an 8x8 4bpp OBJ tile (16 words at VRAM word `word_addr`) with a solid color index.
+    fn set_obj_tile_solid(ppu: &mut Ppu, word_addr: u16, color: u8) {
+        let base = (word_addr as usize) << 1;
+        for row in 0..8usize {
+            let r = base + row * 2;
+            ppu.set_vram_byte(r, if color & 1 != 0 { 0xFF } else { 0x00 });
+            ppu.set_vram_byte(r + 1, if color & 2 != 0 { 0xFF } else { 0x00 });
+            ppu.set_vram_byte(r + 16, if color & 4 != 0 { 0xFF } else { 0x00 });
+            ppu.set_vram_byte(r + 17, if color & 8 != 0 { 0xFF } else { 0x00 });
+        }
+    }
+
+    /// Set one pixel (fine_x, fine_y) of an 8x8 4bpp OBJ tile to a color index.
+    fn set_obj_tile_pixel(ppu: &mut Ppu, word_addr: u16, fx: usize, fy: usize, color: u8) {
+        let base = ((word_addr as usize) << 1) + fy * 2;
+        let bit = 7 - fx;
+        for (plane, off) in [(0usize, 0usize), (1, 1), (2, 16), (3, 17)] {
+            let mut b = ppu.vram_byte(base + off);
+            b &= !(1 << bit);
+            if color & (1 << plane) != 0 {
+                b |= 1 << bit;
+            }
+            ppu.set_vram_byte(base + off, b);
+        }
+    }
+
+    fn set_cgram(ppu: &mut Ppu, index: u8, bgr: u16) {
+        ppu.write_register(0x2121, index);
+        ppu.write_register(0x2122, (bgr & 0xFF) as u8);
+        ppu.write_register(0x2122, (bgr >> 8) as u8);
+    }
+
+    fn park_all_offscreen(ppu: &mut Ppu) {
+        for i in 0..128 {
+            set_obj(ppu, i, 0, 240, 0, 0, false);
+        }
+    }
+
+    #[test]
+    fn renders_an_8x8_object_at_its_x_position() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // 8x8, name base 0
+        park_all_offscreen(&mut ppu);
+        set_obj_tile_solid(&mut ppu, 0, 3); // tile 0 solid color index 3
+        set_cgram(&mut ppu, 128 + 3, 0x1234); // OBJ palette 0, color 3
+        set_obj(&mut ppu, 0, 50, 20, 0, 0, false);
+
+        let buf = ppu.build_obj_line(20);
+        for x in 50..58 {
+            assert!(buf.present[x], "pixel {x} opaque");
+            assert_eq!(buf.color[x], 0x1234);
+        }
+        assert!(!buf.present[49]);
+        assert!(!buf.present[58]);
+    }
+
+    #[test]
+    fn transparent_color_zero_is_not_written() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00);
+        park_all_offscreen(&mut ppu);
+        // Tile is all color 0 (transparent) except pixel (2,0)=color 5.
+        set_obj_tile_pixel(&mut ppu, 0, 2, 0, 5);
+        set_cgram(&mut ppu, 128 + 5, 0x7FFF);
+        set_obj(&mut ppu, 0, 10, 0, 0, 0, false);
+
+        let buf = ppu.build_obj_line(0);
+        assert!(buf.present[12], "only the opaque pixel is written");
+        assert_eq!(buf.color[12], 0x7FFF);
+        assert!(!buf.present[10]);
+        assert!(!buf.present[11]);
+    }
+
+    #[test]
+    fn x_and_y_flip_mirror_the_object() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00);
+        park_all_offscreen(&mut ppu);
+        set_obj_tile_pixel(&mut ppu, 0, 0, 0, 6); // top-left pixel
+        set_cgram(&mut ppu, 128 + 6, 0x0AAA);
+
+        // X-flip: top-left pixel moves to the right edge (x+7).
+        set_obj(&mut ppu, 0, 100, 0, 0, 0x40, false);
+        let buf = ppu.build_obj_line(0);
+        assert!(buf.present[107]);
+        assert!(!buf.present[100]);
+
+        // Y-flip: top-left pixel moves to the bottom row (y+7).
+        set_obj(&mut ppu, 0, 100, 0, 0, 0x80, false);
+        let buf = ppu.build_obj_line(7);
+        assert!(buf.present[100]);
+        let buf0 = ppu.build_obj_line(0);
+        assert!(!buf0.present[100]);
+    }
+
+    #[test]
+    fn palette_and_priority_come_from_attributes() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00);
+        park_all_offscreen(&mut ppu);
+        set_obj_tile_solid(&mut ppu, 0, 1);
+        // Palette 5 (attr bits 3-1 = 5 -> attr 0b1010), priority 2 (bits 5-4 -> 0b10_0000).
+        set_cgram(&mut ppu, 128 + 5 * 16 + 1, 0x2222);
+        let attr = (2 << 4) | (5 << 1);
+        set_obj(&mut ppu, 0, 0, 0, 0, attr, false);
+
+        let buf = ppu.build_obj_line(0);
+        assert_eq!(buf.color[0], 0x2222);
+        assert_eq!(buf.priority[0], 2);
+    }
+
+    #[test]
+    fn large_object_uses_non_carrying_tile_composition() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // small 8x8, large 16x16
+        park_all_offscreen(&mut ppu);
+        // 16x16 OBJ at base tile 0: sub-tiles 0 (TL), 1 (TR), 16 (BL), 17 (BR).
+        set_obj_tile_solid(&mut ppu, 0 * 16, 1); // TL -> color 1
+        set_obj_tile_solid(&mut ppu, 1 * 16, 2); // TR -> color 2
+        set_obj_tile_solid(&mut ppu, 16 * 16, 3); // BL -> color 3
+        set_obj_tile_solid(&mut ppu, 17 * 16, 4); // BR -> color 4
+        for c in 1..=4 {
+            set_cgram(&mut ppu, 128 + c, 0x0100 * c as u16);
+        }
+        set_obj(&mut ppu, 0, 0, 0, 0, 0, true);
+
+        let top = ppu.build_obj_line(0);
+        assert_eq!(top.color[0], 0x0100, "top-left tile");
+        assert_eq!(top.color[8], 0x0200, "top-right tile");
+        let bottom = ppu.build_obj_line(8);
+        assert_eq!(bottom.color[0], 0x0300, "bottom-left tile");
+        assert_eq!(bottom.color[8], 0x0400, "bottom-right tile");
+    }
+
+    #[test]
+    fn front_most_object_wins_overlap() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00);
+        park_all_offscreen(&mut ppu);
+        set_obj_tile_solid(&mut ppu, 0, 1); // tile 0 -> color 1 (front obj uses palette 0)
+        set_obj_tile_solid(&mut ppu, 16, 1); // tile 1 -> color 1 (back obj uses palette 1)
+        set_cgram(&mut ppu, 128 + 1, 0x1111); // palette 0 color 1
+        set_cgram(&mut ppu, 128 + 16 + 1, 0x2222); // palette 1 color 1
+        // OBJ 0 (front) palette 0 tile 0; OBJ 1 (back) palette 1 tile 1, same position.
+        set_obj(&mut ppu, 0, 30, 0, 0, 0, false);
+        set_obj(&mut ppu, 1, 30, 0, 1, 1 << 1, false);
+
+        let buf = ppu.build_obj_line(0);
+        assert_eq!(buf.color[30], 0x1111, "front-most OBJ (lower index) wins");
+    }
+
+    #[test]
+    fn object_with_negative_x_is_clipped_to_the_screen() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00);
+        park_all_offscreen(&mut ppu);
+        set_obj_tile_solid(&mut ppu, 0, 7);
+        set_cgram(&mut ppu, 128 + 7, 0x3333);
+        // X = 0x1FC (-4): columns 0..3 off-screen left, columns 4..7 visible at x 0..3.
+        set_obj(&mut ppu, 0, 0xFC, 0, 0, 0, false);
+        ppu.set_oam_byte(0x200, 0b01); // OBJ0 X bit8 = 1 -> X = 0x1FC
+
+        let buf = ppu.build_obj_line(0);
+        assert!(buf.present[0] && buf.present[3]);
+        assert!(!buf.present[4]);
     }
 }

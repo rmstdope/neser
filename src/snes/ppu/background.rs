@@ -275,7 +275,7 @@ impl Ppu {
     }
 
     /// Decode a single pixel's color index (0..2^bpp) from a tile's bit-planes (2/4/8 bpp).
-    fn decode_tile_pixel(
+    pub(super) fn decode_tile_pixel(
         &self,
         char_base: u16,
         char_num: u16,
