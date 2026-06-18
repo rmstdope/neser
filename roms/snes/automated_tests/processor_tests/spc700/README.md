@@ -40,6 +40,10 @@ Tracked subset files:
 - `v1/fb.json`
 - `v1/c9.json`
 - `v1/cc.json`
+- `v1/e7.json`
+- `v1/f7.json`
+- `v1/c7.json`
+- `v1/d7.json`
 
 Optional full corpus location (local, ignored by git):
 

@@ -315,6 +315,64 @@ impl Spc700 {
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
+            // MOV A,[dp+X] — load A via direct-page pointer indexed by X, update N/Z.
+            0xE7 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let ptr = dp.wrapping_add(self.x);
+                let lo = self.read_cycle(bus, self.direct_page_base() | ptr as u16, &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | ptr.wrapping_add(1) as u16,
+                    &mut cycles,
+                );
+                let addr = u16::from(lo) | (u16::from(hi) << 8);
+                self.a = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.a);
+            }
+            // MOV A,[dp]+Y — load A via direct-page pointer plus Y, update N/Z.
+            0xF7 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let lo = self.read_cycle(bus, self.direct_page_base() | dp as u16, &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | dp.wrapping_add(1) as u16,
+                    &mut cycles,
+                );
+                self.idle_cycle(bus, &mut cycles);
+                let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(self.y as u16);
+                self.a = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.a);
+            }
+            // MOV [dp+X],A — store A via direct-page pointer indexed by X; flags unchanged.
+            0xC7 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let ptr = dp.wrapping_add(self.x);
+                let lo = self.read_cycle(bus, self.direct_page_base() | ptr as u16, &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | ptr.wrapping_add(1) as u16,
+                    &mut cycles,
+                );
+                let addr = u16::from(lo) | (u16::from(hi) << 8);
+                self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, self.a, &mut cycles);
+            }
+            // MOV [dp]+Y,A — store A via direct-page pointer plus Y; flags unchanged.
+            0xD7 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let lo = self.read_cycle(bus, self.direct_page_base() | dp as u16, &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | dp.wrapping_add(1) as u16,
+                    &mut cycles,
+                );
+                self.idle_cycle(bus, &mut cycles);
+                let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(self.y as u16);
+                self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, self.a, &mut cycles);
+            }
             // MOV A,dp+X — load A from direct page indexed by X, update N/Z.
             0xF4 => {
                 let dp = self.fetch(bus, &mut cycles);
@@ -1387,6 +1445,112 @@ mod tests {
         assert_eq!(cycles, 5);
         assert_eq!(cpu.pc(), 0x03A0);
         assert_eq!(bus.get(0x1235), 0x77);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn mov_a_indirect_dp_plus_x_loads_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x03A0, &[0xE7, 0x80]); // MOV A,[$80+X]
+        bus.set(0x0182, 0x34); // pointer low ($80 + X=2)
+        bus.set(0x0183, 0x12); // pointer high
+        bus.set(0x1234, 0x80);
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x02,
+            0x00,
+            0xEF,
+            0x03A0,
+            FLAG_DIRECT_PAGE | FLAG_CARRY,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.pc(), 0x03A2);
+        assert_eq!(cpu.a(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_a_indirect_dp_plus_y_loads_and_sets_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x03A2, &[0xF7, 0x84]); // MOV A,[$84]+Y
+        bus.set(0x0184, 0x34);
+        bus.set(0x0185, 0x12);
+        bus.set(0x1236, 0x00); // Y=2
+        cpu.load_state_for_processor_test(
+            0xFF,
+            0x00,
+            0x02,
+            0xEF,
+            0x03A2,
+            FLAG_DIRECT_PAGE | FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.pc(), 0x03A4);
+        assert_eq!(cpu.a(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_indirect_dp_plus_x_a_stores_and_preserves_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x03A4, &[0xC7, 0x88]); // MOV [$88+X],A
+        bus.set(0x018A, 0x40); // $88 + X(2) = $8A
+        bus.set(0x018B, 0x12);
+        bus.set(0x1240, 0x00);
+        cpu.load_state_for_processor_test(
+            0x66,
+            0x02,
+            0x00,
+            0xEF,
+            0x03A4,
+            FLAG_DIRECT_PAGE | FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 7);
+        assert_eq!(cpu.pc(), 0x03A6);
+        assert_eq!(bus.get(0x1240), 0x66);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn mov_indirect_dp_plus_y_a_stores_and_preserves_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x03A6, &[0xD7, 0x8C]); // MOV [$8C]+Y,A
+        bus.set(0x018C, 0x40);
+        bus.set(0x018D, 0x12);
+        bus.set(0x1242, 0x00); // base $1240 + Y(2)
+        cpu.load_state_for_processor_test(
+            0x77,
+            0x00,
+            0x02,
+            0xEF,
+            0x03A6,
+            FLAG_DIRECT_PAGE | FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 7);
+        assert_eq!(cpu.pc(), 0x03A8);
+        assert_eq!(bus.get(0x1242), 0x77);
         assert!(cpu.flag(FLAG_CARRY));
         assert!(cpu.flag(FLAG_NEGATIVE));
     }
