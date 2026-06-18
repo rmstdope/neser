@@ -96,15 +96,25 @@ impl Ppu {
         let tile_y = (pixel_y >> 3) & 127;
         let tile_word = (tile_y * 128 + tile_x) as usize;
         // Screen-over 3 fills outside the field with tile 0; 2 makes it transparent.
-        let tile = if screen_over == 3 && out_of_bounds {
-            0
-        } else {
-            self.vram[(tile_word << 1) & (VRAM_SIZE - 1)]
+        let tile = match screen_over {
+            // fullsnes: modes 0 and 1 both wrap within the 128x128 tile field.
+            0 | 1 => self.vram[(tile_word << 1) & (VRAM_SIZE - 1)],
+            2 => {
+                if out_of_bounds {
+                    return 0;
+                }
+                self.vram[(tile_word << 1) & (VRAM_SIZE - 1)]
+            }
+            // mode 3: outside uses tile 0.
+            3 => {
+                if out_of_bounds {
+                    0
+                } else {
+                    self.vram[(tile_word << 1) & (VRAM_SIZE - 1)]
+                }
+            }
+            _ => unreachable!(),
         };
-
-        if screen_over == 2 && out_of_bounds {
-            return 0;
-        }
         let palette_addr = (((pixel_y & 7) << 3) + (pixel_x & 7)) as usize;
         let pixel_word = ((tile as usize) << 6) | palette_addr;
         self.vram[((pixel_word << 1) | 1) & (VRAM_SIZE - 1)]
@@ -238,6 +248,24 @@ mod tests {
             pixel_at(&mut ppu, 200, 0),
             0x7C00,
             "wraps to the in-field tile"
+        );
+    }
+
+    #[test]
+    fn screen_over_mode1_wraps_like_mode0() {
+        let mut ppu = Ppu::new();
+        setup_identity(&mut ppu);
+        ppu.write_register(0x211A, 0x40); // screen-over = 1 (wrap, same as mode 0)
+        write_m7(&mut ppu, 0x211B, 0x0800); // M7A = 8.0
+        write_m7(&mut ppu, 0x211E, 0x0800); // M7D = 8.0
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 9, 0x7C00);
+        set_map(&mut ppu, 72, 1, 1);
+        set_pixel(&mut ppu, 1, 0, 0, 9);
+        assert_eq!(
+            pixel_at(&mut ppu, 200, 0),
+            0x7C00,
+            "mode 1 wraps to the in-field tile like mode 0"
         );
     }
 
