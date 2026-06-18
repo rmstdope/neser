@@ -7,12 +7,22 @@
 //! - [`registers`] — register read/write dispatch and VRAM/CGRAM/OAM access.
 //! - [`timing`] — dot/scanline counters and frame progression.
 
+mod framebuffer;
 mod registers;
 mod timing;
 
 const VRAM_SIZE: usize = 0x10_000;
 const CGRAM_SIZE: usize = 0x200;
 const OAM_SIZE: usize = 0x220;
+
+/// Visible framebuffer width (NTSC).
+pub(super) const SCREEN_WIDTH: usize = 256;
+/// Visible framebuffer height (NTSC, 224-line mode).
+pub(super) const SCREEN_HEIGHT: usize = 224;
+/// First visible dot within a scanline (active display is dots 22..=277).
+pub(super) const VISIBLE_DOT_START: u16 = 22;
+/// First visible scanline (active display is lines 1..=224).
+pub(super) const VISIBLE_LINE_START: u16 = 1;
 
 /// PPU1 (5C77) version number reported in STAT77 ($213E).
 pub(super) const PPU1_VERSION: u8 = 1;
@@ -81,6 +91,10 @@ pub struct Ppu {
     wrio: u8,
     /// STAT78 ($213F) bit 7: interlace field flag.
     interlace_field: bool,
+    /// Visible framebuffer in 15-bit BGR555 (converted to RGB888 at snapshot time).
+    framebuffer: Vec<u16>,
+    /// Set when the PPU enters VBlank (a full visible frame has been produced).
+    frame_complete: bool,
 }
 
 impl Default for Ppu {
@@ -119,6 +133,8 @@ impl Ppu {
             opvct_read_high: false,
             wrio: 0xFF,
             interlace_field: false,
+            framebuffer: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT],
+            frame_complete: false,
         }
     }
 
@@ -142,6 +158,13 @@ impl Ppu {
     /// Whether the PPU is currently in the VBlank period.
     pub fn in_vblank(&self) -> bool {
         self.vblank_active
+    }
+
+    /// Returns and clears the frame-complete flag (set when the PPU enters VBlank).
+    pub fn take_frame_complete(&mut self) -> bool {
+        let done = self.frame_complete;
+        self.frame_complete = false;
+        done
     }
 
     /// Read a raw VRAM byte (test/inspection helper).

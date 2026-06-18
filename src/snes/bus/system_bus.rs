@@ -255,6 +255,16 @@ impl SnesSystemBus {
         self.sram.clone()
     }
 
+    /// Snapshot the PPU's visible framebuffer as packed RGB888.
+    pub fn ppu_screen_snapshot(&self) -> Vec<u8> {
+        self.ppu.borrow().screen_snapshot_rgb()
+    }
+
+    /// Returns and clears the PPU frame-complete flag (set when the PPU enters VBlank).
+    pub fn take_ppu_frame_complete(&mut self) -> bool {
+        self.ppu.get_mut().take_frame_complete()
+    }
+
     /// Restores SRAM from a byte slice. If the slice is larger than SRAM,
     /// only the first `sram_size()` bytes are used.
     pub fn restore_sram(&mut self, data: &[u8]) {

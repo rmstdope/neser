@@ -8372,6 +8372,16 @@ impl Cpu<SnesSystemBus> {
         self.bus.sram_snapshot()
     }
 
+    /// Snapshot the PPU's visible framebuffer as packed RGB888.
+    pub fn screen_snapshot(&self) -> Vec<u8> {
+        self.bus.ppu_screen_snapshot()
+    }
+
+    /// Returns and clears the PPU frame-complete flag.
+    pub fn take_frame_complete(&mut self) -> bool {
+        self.bus.take_ppu_frame_complete()
+    }
+
     pub(crate) fn capture_save_state(&self) -> SnesSaveState {
         SnesSaveState {
             version: crate::snes::console::save_state::SNES_SAVESTATE_VERSION,

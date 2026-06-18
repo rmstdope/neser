@@ -32,15 +32,17 @@ impl Ppu {
             }
             self.on_scanline_start();
         }
+        self.render_dot();
     }
 
     fn on_scanline_start(&mut self) {
         match self.position.scanline {
             VBLANK_START_LINE => {
-                // Begin VBlank: set the VBlank + RDNMI flags (the flag is set even if NMI is
-                // disabled), then re-evaluate the NMI line for a rising edge.
+                // Begin VBlank: a full visible frame has been produced. Set the VBlank + RDNMI
+                // flags (the flag is set even if NMI is disabled), then re-evaluate the NMI line.
                 self.vblank_active = true;
                 self.nmi_flag = true;
+                self.frame_complete = true;
                 self.update_nmi_line();
             }
             0 => {

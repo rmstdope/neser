@@ -197,7 +197,9 @@ impl Emulator for Snes {
         };
 
         let cycles = cpu.step();
-        self.ready_to_render = true;
+        if cpu.take_frame_complete() {
+            self.ready_to_render = true;
+        }
         cycles
     }
 
@@ -218,9 +220,10 @@ impl Emulator for Snes {
     }
 
     fn screen_snapshot(&self) -> Vec<u8> {
-        // TODO: Implement screen capture
-        // Return black screen for now
-        vec![0; (SCREEN_WIDTH * SCREEN_HEIGHT * 3) as usize]
+        match self.cpu.as_ref() {
+            Some(cpu) => cpu.screen_snapshot(),
+            None => vec![0; (SCREEN_WIDTH * SCREEN_HEIGHT * 3) as usize],
+        }
     }
 
     fn cropped_screen_snapshot(&self, _h_overscan: u32, _v_overscan: u32) -> Vec<u8> {
@@ -387,20 +390,36 @@ mod tests {
     }
 
     #[test]
-    fn run_tick_sets_ready_to_render() {
+    fn run_tick_sets_ready_to_render_after_a_full_frame() {
         let mut snes = make_snes();
         snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
         assert!(!snes.is_ready_to_render());
-        snes.run_tick();
-        assert!(snes.is_ready_to_render());
+
+        // Run until the PPU completes a frame (a frame is ~357k master cycles).
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 1_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
+
+        assert!(
+            snes.is_ready_to_render(),
+            "a frame should complete within the cap"
+        );
     }
 
     #[test]
     fn clear_ready_to_render_clears_flag() {
         let mut snes = make_snes();
         snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
-        snes.run_tick();
+
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 1_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
         assert!(snes.is_ready_to_render());
+
         snes.clear_ready_to_render();
         assert!(!snes.is_ready_to_render());
     }
@@ -425,7 +444,11 @@ mod tests {
         let mut snes = make_snes();
         let rom = valid_lorom_nop_rom();
         snes.load_rom(&rom, "test.sfc").unwrap();
-        snes.run_tick();
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 1_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
         assert!(snes.is_ready_to_render());
         snes.load_rom(&rom, "test.sfc").unwrap();
         assert!(!snes.is_ready_to_render());
@@ -435,7 +458,11 @@ mod tests {
     fn reset_clears_ready_to_render_flag() {
         let mut snes = make_snes();
         snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
-        snes.run_tick();
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 1_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
         assert!(snes.is_ready_to_render());
         snes.reset(false);
         assert!(!snes.is_ready_to_render());
