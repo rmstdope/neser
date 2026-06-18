@@ -12,6 +12,8 @@ Tracked subset files:
 - `v1/e8.json`
 - `v1/7d.json`
 - `v1/fd.json`
+- `v1/9d.json`
+- `v1/bd.json`
 
 Optional full corpus location (local, ignored by git):
 

@@ -229,6 +229,17 @@ impl Spc700 {
                 self.update_nz8(self.y);
                 self.idle_cycle(bus, &mut cycles);
             }
+            // MOV X,SP — copy SP into X, update N/Z.
+            0x9D => {
+                self.x = self.sp;
+                self.update_nz8(self.x);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // MOV SP,X — copy X into SP; flags are unaffected.
+            0xBD => {
+                self.sp = self.x;
+                self.idle_cycle(bus, &mut cycles);
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -527,5 +538,45 @@ mod tests {
         assert!(cpu.flag(FLAG_ZERO));
         assert!(!cpu.flag(FLAG_NEGATIVE));
         assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_x_sp_copies_sp_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0364, &[0x9D]); // MOV X,SP
+        cpu.load_state_for_processor_test(0x12, 0x00, 0x00, 0x80, 0x0364, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0365);
+        assert_eq!(cpu.x(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_sp_x_copies_x_and_preserves_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0365, &[0xBD]); // MOV SP,X
+        cpu.load_state_for_processor_test(
+            0x12,
+            0x34,
+            0x56,
+            0xEF,
+            0x0365,
+            FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0366);
+        assert_eq!(cpu.sp(), 0x34);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
     }
 }
