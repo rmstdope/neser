@@ -198,9 +198,14 @@ impl Default for Spc700 {
 
 #[cfg(test)]
 impl Spc700 {
-    /// Test-only helper to position the program counter.
-    pub fn set_pc_for_test(&mut self, pc: u16) {
+    /// Test-only helper to seed full CPU state from processor-test vectors.
+    pub fn load_state_for_processor_test(&mut self, a: u8, x: u8, y: u8, sp: u8, pc: u16, psw: u8) {
+        self.a = a;
+        self.x = x;
+        self.y = y;
+        self.sp = sp;
         self.pc = pc;
+        self.psw = psw;
     }
 }
 
@@ -271,7 +276,7 @@ mod tests {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
         bus.load(0x0200, &[0x00]); // NOP
-        cpu.set_pc_for_test(0x0200);
+        cpu.load_state_for_processor_test(0, 0, 0, 0, 0x0200, 0);
         let cycles = cpu.step(&mut bus);
         assert_eq!(cpu.pc(), 0x0201);
         assert_eq!(cycles, 2);
