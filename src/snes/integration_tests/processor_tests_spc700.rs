@@ -111,11 +111,30 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         bus.set(*addr, byte);
     }
 
-    let opcode = bus.get(vector.initial.pc);
-    if opcode != 0x00 {
+    if !contains_initial_ram_address(vector, vector.initial.pc) {
         return Err(VectorFailure {
             details: format!(
-                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (only NOP $00 is supported in this slice)",
+                "{}: initial RAM is missing opcode byte at PC ${:04X}",
+                vector.name, vector.initial.pc
+            ),
+        });
+    }
+
+    let opcode = bus.get(vector.initial.pc);
+    if opcode == 0xE8 && !contains_initial_ram_address(vector, vector.initial.pc.wrapping_add(1)) {
+        return Err(VectorFailure {
+            details: format!(
+                "{}: initial RAM is missing immediate byte for E8 at ${:04X}",
+                vector.name,
+                vector.initial.pc.wrapping_add(1)
+            ),
+        });
+    }
+
+    if opcode != 0x00 && opcode != 0xE8 {
+        return Err(VectorFailure {
+            details: format!(
+                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (only NOP $00 and MOV A,#imm $E8 are supported in this slice)",
                 vector.name, vector.initial.pc
             ),
         });
@@ -274,6 +293,10 @@ fn checked_byte(
     Ok(value as u8)
 }
 
+fn contains_initial_ram_address(vector: &ProcessorTestVector, addr: u16) -> bool {
+    vector.initial.ram.iter().any(|entry| entry[0] == addr)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +333,38 @@ mod tests {
         fs::write(path, sample).expect("write sample vector JSON");
     }
 
+    fn write_mov_a_immediate_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "e8 mov a,#imm",
+    "initial": {
+      "pc": 768,
+      "sp": 239,
+      "psw": 1,
+      "a": 18,
+      "x": 52,
+      "y": 86,
+      "ram": [[768, 232], [769, 0]]
+    },
+    "final": {
+      "pc": 770,
+      "sp": 239,
+      "psw": 3,
+      "a": 0,
+      "x": 52,
+      "y": 86,
+      "ram": [[768, 232], [769, 0]]
+    },
+    "cycles": [
+      [768, 232, "d-r-----"],
+      [769, 0, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample MOV A,#imm vector JSON");
+    }
+
     #[test]
     fn given_spc700_vector_json_when_loaded_then_schema_is_parsed() {
         let temp = tempfile::tempdir().expect("create temp dir");
@@ -333,6 +388,17 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("00.json");
         write_sample_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_mov_a_immediate_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("e8.json");
+        write_mov_a_immediate_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
         let result = run_vector_case(&vectors[0]);

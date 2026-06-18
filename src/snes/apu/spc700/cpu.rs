@@ -143,6 +143,12 @@ impl Spc700 {
         }
     }
 
+    /// Update N and Z according to an 8-bit result value.
+    fn update_nz8(&mut self, value: u8) {
+        self.set_flag(FLAG_ZERO, value == 0);
+        self.set_flag(FLAG_NEGATIVE, value & 0x80 != 0);
+    }
+
     /// Read `PC` and advance it, consuming one cycle.
     fn fetch(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) -> u8 {
         let byte = self.read_cycle(bus, self.pc, cycles);
@@ -180,6 +186,12 @@ impl Spc700 {
             // NOP — no operation (2 cycles: opcode fetch + 1 idle).
             0x00 => {
                 self.idle_cycle(bus, &mut cycles);
+            }
+            // MOV A,#imm — load 8-bit immediate into A, update N/Z.
+            0xE8 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.a = imm;
+                self.update_nz8(self.a);
             }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
@@ -281,5 +293,39 @@ mod tests {
         assert_eq!(cpu.pc(), 0x0201);
         assert_eq!(cycles, 2);
         assert_eq!(bus.cycles(), 2);
+    }
+
+    #[test]
+    fn mov_a_immediate_loads_a_sets_zero_and_preserves_other_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0300, &[0xE8, 0x00]); // MOV A,#$00
+        cpu.load_state_for_processor_test(0x12, 0x00, 0x00, 0xEF, 0x0300, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0302);
+        assert_eq!(cpu.a(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_a_immediate_sets_negative_clears_zero_and_preserves_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0310, &[0xE8, 0x80]); // MOV A,#$80
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0310, FLAG_CARRY | FLAG_ZERO);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0312);
+        assert_eq!(cpu.a(), 0x80);
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
     }
 }
