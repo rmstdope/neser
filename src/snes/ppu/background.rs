@@ -76,11 +76,15 @@ impl Ppu {
                 (2, true),
                 (2, false),
             ],
+            // Modes 2-5 display BG1 + BG2 (BG3 in modes 2/4 is the offset-per-tile source).
+            2 | 3 | 4 | 5 => &[(0, true), (1, true), (0, false), (1, false)],
+            // Mode 6 displays BG1 only (BG3 is the offset source).
+            6 => &[(0, true), (0, false)],
             _ => &[],
         }
     }
 
-    /// Bits-per-pixel for a BG layer in the current mode (Modes 0/1 only).
+    /// Bits-per-pixel for a BG layer in the current mode.
     fn bg_bpp(&self, bg: usize) -> u8 {
         match self.bg_mode {
             0 => 2,
@@ -91,6 +95,29 @@ impl Ppu {
                     2
                 }
             }
+            2 => 4,
+            3 => {
+                if bg == 0 {
+                    8
+                } else {
+                    4
+                }
+            }
+            4 => {
+                if bg == 0 {
+                    8
+                } else {
+                    2
+                }
+            }
+            5 => {
+                if bg == 0 {
+                    4
+                } else {
+                    2
+                }
+            }
+            6 => 4,
             _ => 2,
         }
     }
@@ -150,8 +177,13 @@ impl Ppu {
         if color == 0 {
             return None;
         }
-        let colors_per_palette = if bpp == 2 { 4 } else { 16 };
-        let index = self.bg_palette_base(bg) + palette * colors_per_palette + color;
+        // 8bpp (256-color) BGs index CGRAM directly; map-entry palette bits are ignored.
+        let index = if bpp == 8 {
+            color
+        } else {
+            let colors_per_palette = if bpp == 2 { 4 } else { 16 };
+            self.bg_palette_base(bg) + palette * colors_per_palette + color
+        };
         Some((index, priority))
     }
 
@@ -186,7 +218,7 @@ impl Ppu {
         lo | (hi << 8)
     }
 
-    /// Decode a single pixel's color index (0..2^bpp) from a tile's bit-planes.
+    /// Decode a single pixel's color index (0..2^bpp) from a tile's bit-planes (2/4/8 bpp).
     fn decode_tile_pixel(
         &self,
         char_base: u16,
@@ -195,20 +227,19 @@ impl Ppu {
         fine_x: u8,
         fine_y: u8,
     ) -> u8 {
-        let words_per_tile = if bpp == 2 { 8 } else { 16 };
+        // Words per tile: 8 (2bpp), 16 (4bpp), 32 (8bpp).
+        let words_per_tile = (bpp as u16) * 4;
         let tile_word = char_base.wrapping_add(char_num.wrapping_mul(words_per_tile));
         let row_base = ((tile_word as usize) << 1).wrapping_add((fine_y as usize) * 2);
         let bit = 7 - fine_x;
 
-        let plane0 = self.vram[row_base & (VRAM_SIZE - 1)];
-        let plane1 = self.vram[(row_base + 1) & (VRAM_SIZE - 1)];
-        let mut color = ((plane0 >> bit) & 1) | (((plane1 >> bit) & 1) << 1);
-
-        if bpp == 4 {
-            let plane2 = self.vram[(row_base + 16) & (VRAM_SIZE - 1)];
-            let plane3 = self.vram[(row_base + 17) & (VRAM_SIZE - 1)];
-            color |= ((plane2 >> bit) & 1) << 2;
-            color |= ((plane3 >> bit) & 1) << 3;
+        // Each plane pair occupies 16 bytes; the second plane of a pair is at +1.
+        let mut color = 0u8;
+        for plane in 0..bpp {
+            let pair = (plane / 2) as usize;
+            let within = (plane % 2) as usize;
+            let byte = self.vram[(row_base + pair * 16 + within) & (VRAM_SIZE - 1)];
+            color |= ((byte >> bit) & 1) << plane;
         }
         color
     }
@@ -261,6 +292,17 @@ mod tests {
             ppu.vram[base + r * 2 + 1] = if color & 2 != 0 { 0xFF } else { 0x00 };
             ppu.vram[base + 16 + r * 2] = if color & 4 != 0 { 0xFF } else { 0x00 };
             ppu.vram[base + 16 + r * 2 + 1] = if color & 8 != 0 { 0xFF } else { 0x00 };
+        }
+    }
+
+    /// Fill an 8x8 tile with a single 8bpp color (0-255). 32 words/tile; plane pairs at +0/+16/+32/+48.
+    fn fill_8bpp_tile(ppu: &mut Ppu, char_base: usize, char_num: usize, color: u8) {
+        let base = (char_base + char_num * 32) * 2;
+        for r in 0..8 {
+            for p in 0..8usize {
+                let off = base + (p / 2) * 16 + r * 2 + (p % 2);
+                ppu.vram[off] = if color & (1 << p) != 0 { 0xFF } else { 0x00 };
+            }
         }
     }
 
@@ -685,5 +727,107 @@ mod tests {
         let mut ppu = Ppu::new();
         ppu.write_register(0x212C, 0x13);
         assert_eq!(ppu.tm, 0x13);
+    }
+
+    #[test]
+    fn renders_a_mode3_bg1_8bpp_tile() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 200, 0x7FFF); // 8bpp color index 200 -> white
+        set_vram_word(&mut ppu, 0, 1); // BG1 entry -> char 1
+        fill_8bpp_tile(&mut ppu, 0, 1, 200); // solid color 200
+
+        ppu.write_register(0x2105, 0x03); // mode 3
+        ppu.write_register(0x2107, 0x00); // BG1SC base 0
+        ppu.write_register(0x210B, 0x00); // BG1 char base 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "8bpp BG1 resolves CGRAM 200"
+        );
+    }
+
+    #[test]
+    fn mode3_bg2_is_4bpp_over_bg1() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 200, 0x001F); // BG1 8bpp color 200 = red
+        set_cgram(&mut ppu, 1, 0x7FFF); // BG2 4bpp palette 0 color 1 = white
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry char 1 (8bpp, words 32-63)
+        set_vram_word(&mut ppu, 0x400, 4); // BG2 entry char 4 (4bpp, words 64-79; no overlap)
+        fill_8bpp_tile(&mut ppu, 0, 1, 200);
+        fill_4bpp_tile(&mut ppu, 0, 4, 1);
+
+        ppu.write_register(0x2105, 0x03); // mode 3
+        ppu.write_register(0x212C, 0x03); // TM: BG1 + BG2
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        // BG1.0 sits above BG2.0 in modes 2-5; both priority 0 -> BG1 wins.
+        assert_eq!(pixel(&rgb, 0, 0), [255, 0, 0], "BG1 over BG2 in mode 3");
+    }
+
+    #[test]
+    fn mode4_bg2_is_2bpp() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x03E0); // BG2 2bpp palette 0 color 1 = green
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x400, 2);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x04); // mode 4
+        ppu.write_register(0x212C, 0x02); // TM: BG2 only
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(pixel(&rgb, 0, 0), [0, 255, 0], "mode 4 BG2 is 2bpp");
+    }
+
+    #[test]
+    fn mode6_renders_bg1_only() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // BG1 4bpp color 1 = white
+        set_vram_word(&mut ppu, 0, 1);
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x06); // mode 6
+        ppu.write_register(0x212C, 0x03); // TM: BG1 + BG2 (BG2 not displayed in mode 6)
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(pixel(&rgb, 0, 0), [255, 255, 255], "mode 6 BG1 renders");
+    }
+
+    #[test]
+    fn mode5_renders_bg1_4bpp_at_standard_width() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7C00); // BG1 4bpp color 1 = blue
+        set_vram_word(&mut ppu, 0, 1);
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x05); // mode 5
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [0, 0, 255],
+            "mode 5 BG1 renders at 256-wide"
+        );
     }
 }
