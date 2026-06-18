@@ -23,11 +23,11 @@ impl Ppu {
         }
         let x = (dot - VISIBLE_DOT_START) as usize;
         let y = (line - VISIBLE_LINE_START) as usize;
-        self.framebuffer[y * SCREEN_WIDTH + x] = self.backdrop_color();
+        self.framebuffer[y * SCREEN_WIDTH + x] = self.compute_pixel(x as u16, y as u16);
     }
 
     /// The backdrop color (CGRAM entry 0) as a 15-bit BGR555 word.
-    fn backdrop_color(&self) -> u16 {
+    pub(super) fn backdrop_color(&self) -> u16 {
         let low = self.cgram[0] as u16;
         let high = self.cgram[1] as u16;
         (low | (high << 8)) & 0x7FFF

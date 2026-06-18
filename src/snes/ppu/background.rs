@@ -4,7 +4,7 @@
 //! shared across all eight `BGnHOFS`/`BGnVOFS` writes. The 10-bit scroll value is rebuilt on each
 //! write per the fullsnes formula.
 
-use super::Ppu;
+use super::{CGRAM_SIZE, Ppu, VRAM_SIZE};
 
 impl Ppu {
     /// Handle a write to `BGnHOFS` (horizontal scroll, write-twice via the shared BG_old latch):
@@ -27,11 +27,288 @@ impl Ppu {
         self.bg_vofs[bg] = ((value as u16) << 8) | prev;
         self.bg_old = value;
     }
+
+    /// Compute the final BGR555 pixel for visible screen coordinate `(x, y)`.
+    ///
+    /// Iteration 2: BG1 over the backdrop. Multi-layer priority compositing is added later.
+    pub(super) fn compute_pixel(&self, x: u16, y: u16) -> u16 {
+        if self.tm & 0x01 != 0 {
+            if let Some(index) = self.bg_pixel(0, x, y) {
+                return self.cgram_color(index);
+            }
+        }
+        self.backdrop_color()
+    }
+
+    /// Bits-per-pixel for a BG layer in the current mode (Modes 0/1 only).
+    fn bg_bpp(&self, bg: usize) -> u8 {
+        match self.bg_mode {
+            0 => 2,
+            1 => {
+                if bg < 2 {
+                    4
+                } else {
+                    2
+                }
+            }
+            _ => 2,
+        }
+    }
+
+    /// Resolve the CGRAM color index for BG layer `bg` at screen `(x, y)`, or `None` if the pixel
+    /// is transparent (color 0). 8x8 tiles, single 32x32 tilemap (larger maps added later).
+    fn bg_pixel(&self, bg: usize, x: u16, y: u16) -> Option<u8> {
+        let bpp = self.bg_bpp(bg);
+        let scrolled_x = x.wrapping_add(self.bg_hofs[bg] & 0x03FF);
+        let scrolled_y = y.wrapping_add(self.bg_vofs[bg] & 0x03FF);
+
+        let tile_col = (scrolled_x >> 3) & 31;
+        let tile_row = (scrolled_y >> 3) & 31;
+        let entry = self.read_bg_map_entry(bg, tile_col, tile_row);
+
+        let char_num = entry & 0x03FF;
+        let palette = ((entry >> 10) & 0x07) as u8;
+        let hflip = entry & 0x4000 != 0;
+        let vflip = entry & 0x8000 != 0;
+
+        let mut fine_x = (scrolled_x & 7) as u8;
+        let mut fine_y = (scrolled_y & 7) as u8;
+        if hflip {
+            fine_x = 7 - fine_x;
+        }
+        if vflip {
+            fine_y = 7 - fine_y;
+        }
+
+        let color = self.decode_tile_pixel(self.bg_char_base[bg], char_num, bpp, fine_x, fine_y);
+        if color == 0 {
+            return None;
+        }
+        let colors_per_palette = if bpp == 2 { 4 } else { 16 };
+        Some(palette * colors_per_palette + color)
+    }
+
+    /// Read a 16-bit BG map entry from VRAM (32x32 tilemap).
+    fn read_bg_map_entry(&self, bg: usize, col: u16, row: u16) -> u16 {
+        let word_addr = self.bg_tilemap_base[bg].wrapping_add(row * 32 + col);
+        let byte = (word_addr as usize) << 1;
+        let lo = self.vram[byte & (VRAM_SIZE - 1)] as u16;
+        let hi = self.vram[(byte + 1) & (VRAM_SIZE - 1)] as u16;
+        lo | (hi << 8)
+    }
+
+    /// Decode a single pixel's color index (0..2^bpp) from a tile's bit-planes.
+    fn decode_tile_pixel(
+        &self,
+        char_base: u16,
+        char_num: u16,
+        bpp: u8,
+        fine_x: u8,
+        fine_y: u8,
+    ) -> u8 {
+        let words_per_tile = if bpp == 2 { 8 } else { 16 };
+        let tile_word = char_base.wrapping_add(char_num.wrapping_mul(words_per_tile));
+        let row_base = ((tile_word as usize) << 1).wrapping_add((fine_y as usize) * 2);
+        let bit = 7 - fine_x;
+
+        let plane0 = self.vram[row_base & (VRAM_SIZE - 1)];
+        let plane1 = self.vram[(row_base + 1) & (VRAM_SIZE - 1)];
+        let mut color = ((plane0 >> bit) & 1) | (((plane1 >> bit) & 1) << 1);
+
+        if bpp == 4 {
+            let plane2 = self.vram[(row_base + 16) & (VRAM_SIZE - 1)];
+            let plane3 = self.vram[(row_base + 17) & (VRAM_SIZE - 1)];
+            color |= ((plane2 >> bit) & 1) << 2;
+            color |= ((plane3 >> bit) & 1) << 3;
+        }
+        color
+    }
+
+    /// Read a CGRAM color (BGR555) by palette index.
+    pub(super) fn cgram_color(&self, index: u8) -> u16 {
+        let byte = (index as usize) << 1;
+        (self.cgram[byte & (CGRAM_SIZE - 1)] as u16
+            | ((self.cgram[(byte + 1) & (CGRAM_SIZE - 1)] as u16) << 8))
+            & 0x7FFF
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::Ppu;
+    use super::super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu};
+
+    fn render_frame(ppu: &mut Ppu) {
+        let ticks =
+            DOTS_PER_SCANLINE as u32 * NTSC_SCANLINES_PER_FRAME as u32 * MASTER_CYCLES_PER_DOT;
+        for _ in 0..ticks {
+            ppu.tick();
+        }
+    }
+
+    fn set_cgram(ppu: &mut Ppu, index: usize, bgr555: u16) {
+        ppu.cgram[index * 2] = (bgr555 & 0xFF) as u8;
+        ppu.cgram[index * 2 + 1] = (bgr555 >> 8) as u8;
+    }
+
+    fn set_vram_word(ppu: &mut Ppu, word_addr: usize, value: u16) {
+        ppu.vram[word_addr * 2] = (value & 0xFF) as u8;
+        ppu.vram[word_addr * 2 + 1] = (value >> 8) as u8;
+    }
+
+    /// Fill an 8x8 tile (at `char_num`, `char_base` words) with a single 2bpp color (1-3).
+    fn fill_2bpp_tile(ppu: &mut Ppu, char_base: usize, char_num: usize, color: u8) {
+        let base = (char_base + char_num * 8) * 2; // byte address
+        for r in 0..8 {
+            ppu.vram[base + r * 2] = if color & 1 != 0 { 0xFF } else { 0x00 };
+            ppu.vram[base + r * 2 + 1] = if color & 2 != 0 { 0xFF } else { 0x00 };
+        }
+    }
+
+    /// Fill an 8x8 tile with a single 4bpp color (1-15).
+    fn fill_4bpp_tile(ppu: &mut Ppu, char_base: usize, char_num: usize, color: u8) {
+        let base = (char_base + char_num * 16) * 2;
+        for r in 0..8 {
+            ppu.vram[base + r * 2] = if color & 1 != 0 { 0xFF } else { 0x00 };
+            ppu.vram[base + r * 2 + 1] = if color & 2 != 0 { 0xFF } else { 0x00 };
+            ppu.vram[base + 16 + r * 2] = if color & 4 != 0 { 0xFF } else { 0x00 };
+            ppu.vram[base + 16 + r * 2 + 1] = if color & 8 != 0 { 0xFF } else { 0x00 };
+        }
+    }
+
+    fn pixel(rgb: &[u8], x: usize, y: usize) -> [u8; 3] {
+        let i = (y * 256 + x) * 3;
+        [rgb[i], rgb[i + 1], rgb[i + 2]]
+    }
+
+    #[test]
+    fn renders_a_bg1_2bpp_tile_in_mode0() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000); // backdrop black
+        set_cgram(&mut ppu, 1, 0x7FFF); // palette 0 color 1 = white
+        set_vram_word(&mut ppu, 0, 1); // tilemap entry 0 -> char 1, palette 0
+        fill_2bpp_tile(&mut ppu, 0, 1, 1); // tile 1 = solid color 1
+
+        ppu.write_register(0x2105, 0x00); // mode 0
+        ppu.write_register(0x2107, 0x00); // BG1SC base 0
+        ppu.write_register(0x210B, 0x00); // BG1 char base 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1 enabled
+        ppu.write_register(0x2100, 0x0F); // full brightness
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "BG1 tile pixel is white"
+        );
+    }
+
+    #[test]
+    fn transparent_bg1_pixel_falls_back_to_backdrop() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x001F); // backdrop red
+        set_vram_word(&mut ppu, 0, 1); // entry -> char 1
+        fill_2bpp_tile(&mut ppu, 0, 1, 0); // color 0 = transparent everywhere
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 0, 0],
+            "transparent BG1 shows backdrop"
+        );
+    }
+
+    #[test]
+    fn disabled_bg1_in_tm_shows_backdrop() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x7C00); // backdrop blue
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        set_vram_word(&mut ppu, 0, 1);
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x00); // BG1 NOT enabled
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [0, 0, 255],
+            "disabled BG1 shows backdrop"
+        );
+    }
+
+    #[test]
+    fn renders_a_bg1_4bpp_tile_in_mode1() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 5, 0x03E0); // palette 0 color 5 = green
+        set_vram_word(&mut ppu, 0, 2); // entry -> char 2
+        fill_4bpp_tile(&mut ppu, 0, 2, 5); // tile 2 = solid color 5
+
+        ppu.write_register(0x2105, 0x01); // mode 1 -> BG1 is 4bpp
+        ppu.write_register(0x2107, 0x00);
+        ppu.write_register(0x210B, 0x00);
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [0, 255, 0],
+            "BG1 4bpp tile pixel is green"
+        );
+    }
+
+    #[test]
+    fn applies_horizontal_and_vertical_flip() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        // Tile 1: only the top-left pixel (row 0, col 0) is color 1.
+        let base = (0 + 1 * 8) * 2;
+        ppu.vram[base] = 0x80; // plane0 row 0, bit7 (left-most) set
+        // entry -> char 1 with H-flip + V-flip (bits 14,15).
+        set_vram_word(&mut ppu, 0, 1 | 0x4000 | 0x8000);
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        // With both flips, the lit pixel moves to the bottom-right of the tile (7,7).
+        assert_eq!(pixel(&rgb, 7, 7), [255, 255, 255], "flipped pixel at (7,7)");
+        assert_eq!(pixel(&rgb, 0, 0), [0, 0, 0], "top-left now transparent");
+    }
+
+    #[test]
+    fn applies_horizontal_scroll() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        // Tile at map column 1 (chars 0 elsewhere = transparent), solid color 1.
+        set_vram_word(&mut ppu, 1, 1); // entry (0,1) -> char 1
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        // Scroll BG1 right by 8 so tile column 1 lands at screen x=0.
+        ppu.write_register(0x210D, 0x08); // hofs low
+        ppu.write_register(0x210D, 0x00); // hofs high
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(pixel(&rgb, 0, 0), [255, 255, 255], "scrolled tile at x=0");
+    }
 
     #[test]
     fn bgmode_decodes_mode_priority_and_tile_sizes() {
