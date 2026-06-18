@@ -10,6 +10,8 @@ Tracked subset files:
 - `v1/8d.json`
 - `v1/cd.json`
 - `v1/e8.json`
+- `v1/7d.json`
+- `v1/fd.json`
 
 Optional full corpus location (local, ignored by git):
 
