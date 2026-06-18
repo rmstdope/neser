@@ -2,7 +2,7 @@ use crate::snes::bus::SnesBus;
 use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::Mapping;
-use crate::snes::console::save_state::{SnesBusState, SnesRomIdentity};
+use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
 use crate::snes::ppu::Ppu;
 use std::cell::{Cell, RefCell};
 
@@ -263,6 +263,16 @@ impl SnesSystemBus {
     /// Returns and clears the PPU frame-complete flag (set when the PPU enters VBlank).
     pub fn take_ppu_frame_complete(&mut self) -> bool {
         self.ppu.get_mut().take_frame_complete()
+    }
+
+    /// Capture the PPU state for a save-state.
+    pub(crate) fn ppu_capture_state(&self) -> SnesPpuState {
+        self.ppu.borrow().capture_state()
+    }
+
+    /// Restore the PPU state from a save-state.
+    pub(crate) fn ppu_restore_state(&mut self, state: &SnesPpuState) -> Result<(), String> {
+        self.ppu.get_mut().restore_state(state)
     }
 
     /// Restores SRAM from a byte slice. If the slice is larger than SRAM,

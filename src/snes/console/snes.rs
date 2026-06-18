@@ -668,6 +668,32 @@ mod tests {
     }
 
     #[test]
+    fn save_state_round_trips_ppu_state() {
+        let rom = lorom_rom_with_battery_sram(0x05);
+
+        // Source: run a while so the PPU advances past its power-on state, then save.
+        let mut source = make_snes();
+        source
+            .load_rom(&rom, "ppu_source.sfc")
+            .expect("load source ROM");
+        for _ in 0..5000 {
+            source.run_tick();
+        }
+        let bytes = source.save_state_bytes().expect("save state");
+
+        // Restore into a fresh SNES and re-save. If PPU state (position, VRAM/CGRAM/OAM, flags)
+        // were not part of the round-trip, the re-saved bytes would differ from the originals.
+        let mut restored = make_snes();
+        restored
+            .load_rom(&rom, "ppu_restore.sfc")
+            .expect("load restore ROM");
+        restored.load_state_bytes(&bytes).expect("restore");
+        let bytes2 = restored.save_state_bytes().expect("re-save state");
+
+        assert_eq!(bytes, bytes2, "PPU state survives the save/load round-trip");
+    }
+
+    #[test]
     fn load_state_bytes_rejects_version_mismatch() {
         let rom = lorom_rom_with_battery_sram(0x05);
         let mut snes = make_snes();

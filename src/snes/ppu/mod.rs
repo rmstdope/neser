@@ -9,6 +9,7 @@
 
 mod framebuffer;
 mod registers;
+mod save_state;
 mod timing;
 
 const VRAM_SIZE: usize = 0x10_000;

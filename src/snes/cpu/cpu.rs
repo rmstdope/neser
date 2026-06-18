@@ -8388,6 +8388,7 @@ impl Cpu<SnesSystemBus> {
             rom_identity: self.bus.rom_identity(),
             cpu: self.capture_state(),
             bus: self.bus.capture_state(),
+            ppu: self.bus.ppu_capture_state(),
         }
     }
 
@@ -8405,6 +8406,9 @@ impl Cpu<SnesSystemBus> {
 
         self.bus
             .restore_state(&state.bus)
+            .map_err(SnesSaveStateError::RestoreFailed)?;
+        self.bus
+            .ppu_restore_state(&state.ppu)
             .map_err(SnesSaveStateError::RestoreFailed)?;
         self.restore_state(&state.cpu);
         Ok(())
