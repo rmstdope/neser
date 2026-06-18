@@ -50,6 +50,8 @@ impl Ppu {
             }
             // TM: main-screen layer enable.
             0x212C => self.tm = value,
+            // CGWSEL: Color Math Control A. Only bit 0 (direct-color enable) is used here.
+            0x2130 => self.cgwsel = value,
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
             // while the VBlank flag is already set raises an edge.
             0x4200 => {

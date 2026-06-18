@@ -47,6 +47,7 @@ impl Ppu {
             bg_vofs: self.bg_vofs,
             bg_old: self.bg_old,
             tm: self.tm,
+            cgwsel: self.cgwsel,
         }
     }
 
@@ -92,6 +93,7 @@ impl Ppu {
         self.bg_vofs = state.bg_vofs;
         self.bg_old = state.bg_old;
         self.tm = state.tm;
+        self.cgwsel = state.cgwsel;
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);
