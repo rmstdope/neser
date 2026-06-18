@@ -26,6 +26,21 @@ impl Ppu {
     pub(super) fn obj_name_gap_word(&self) -> u16 {
         (((self.obsel >> 3) & 0x03) as u16) << 12
     }
+
+    /// Whether OBJ priority rotation (OAMADDH $2103 bit 7) is enabled.
+    pub(super) fn obj_priority_rotation_enabled(&self) -> bool {
+        self.oam_priority_rotation
+    }
+
+    /// The OBJ index (0-127) evaluated first: OBJ #N (OAMADD reload bits 7-1) when priority
+    /// rotation is enabled, otherwise OBJ #0.
+    pub(super) fn obj_first_sprite_index(&self) -> u8 {
+        if self.oam_priority_rotation {
+            ((self.oam_addr_reload >> 1) & 0x7F) as u8
+        } else {
+            0
+        }
+    }
 }
 
 /// Decode the OBSEL size selection (bits 7-5) into the `(small, large)` `(width, height)` pixel
@@ -87,5 +102,39 @@ mod tests {
             let ppu = ppu_with_obsel((gap as u8) << 3);
             assert_eq!(ppu.obj_name_gap_word(), gap << 12);
         }
+    }
+
+    #[test]
+    fn priority_rotation_is_disabled_at_power_on() {
+        let ppu = Ppu::new();
+        assert!(!ppu.obj_priority_rotation_enabled());
+        assert_eq!(ppu.obj_first_sprite_index(), 0);
+    }
+
+    #[test]
+    fn oamaddh_bit7_enables_priority_rotation() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2103, 0x80);
+        assert!(ppu.obj_priority_rotation_enabled());
+
+        ppu.write_register(0x2103, 0x00);
+        assert!(!ppu.obj_priority_rotation_enabled());
+    }
+
+    #[test]
+    fn first_sprite_index_is_reload_bits_7_1_when_rotation_enabled() {
+        let mut ppu = Ppu::new();
+        // OAMADDL = 0x14 (word reload 0x14 -> OBJ #0x0A from bits 7-1), rotation on.
+        ppu.write_register(0x2102, 0x14);
+        ppu.write_register(0x2103, 0x80);
+        assert_eq!(ppu.obj_first_sprite_index(), 0x0A);
+    }
+
+    #[test]
+    fn first_sprite_index_is_zero_when_rotation_disabled() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2102, 0x14);
+        ppu.write_register(0x2103, 0x00);
+        assert_eq!(ppu.obj_first_sprite_index(), 0);
     }
 }

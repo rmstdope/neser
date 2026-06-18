@@ -235,6 +235,10 @@ pub struct SnesPpuState {
     pub m7_old: u8,
     #[serde(default)]
     pub obsel: u8,
+    #[serde(default)]
+    pub oam_addr_reload: u16,
+    #[serde(default)]
+    pub oam_priority_rotation: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]

@@ -135,10 +135,18 @@ impl Ppu {
                 }
                 self.increment_cgram_address();
             }
-            // OAMADDL / OAMADDH: OAM word address + high-table select.
-            0x2102 => self.oam_address = (self.oam_address & 0x0200) | ((value as u16) << 1),
+            // OAMADDL / OAMADDH: OAM word address + high-table select + priority rotation. Each
+            // write also updates the 9-bit reload value (bits 7-1 select the first OBJ for
+            // priority rotation when OAMADDH bit 7 is set).
+            0x2102 => {
+                self.oam_address = (self.oam_address & 0x0200) | ((value as u16) << 1);
+                self.oam_addr_reload = (self.oam_addr_reload & 0x0100) | value as u16;
+            }
             0x2103 => {
-                self.oam_address = (self.oam_address & 0x01FE) | (((value & 0x01) as u16) << 9)
+                self.oam_address = (self.oam_address & 0x01FE) | (((value & 0x01) as u16) << 9);
+                self.oam_addr_reload =
+                    (self.oam_addr_reload & 0x00FF) | (((value & 0x01) as u16) << 8);
+                self.oam_priority_rotation = value & 0x80 != 0;
             }
             // OAMDATA: OAM data write. In the low table ($000-$1FF) an even byte latches and the
             // odd byte commits the word; the high table ($200-$21F) writes each byte directly.

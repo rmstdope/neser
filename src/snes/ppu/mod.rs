@@ -145,6 +145,11 @@ pub struct Ppu {
     /// OBSEL ($2101) raw value: OBJ size pair (bits 7-5), name gap (bits 4-3, 4K-word steps),
     /// OBJ tile name base (bits 2-0, 8K-word steps).
     obsel: u8,
+    /// OAMADD ($2102/$2103) 9-bit reload value (bit 8 = high-table select, bits 7-0 = low byte).
+    /// Bits 7-1 select the first OBJ (#N) for priority rotation.
+    oam_addr_reload: u16,
+    /// OAMADDH ($2103) bit 7: OBJ priority rotation (0 = OBJ #0 first, 1 = OBJ #N first).
+    oam_priority_rotation: bool,
 }
 
 impl Default for Ppu {
@@ -208,6 +213,8 @@ impl Ppu {
             m7sel: 0,
             m7_old: 0,
             obsel: 0,
+            oam_addr_reload: 0,
+            oam_priority_rotation: false,
         }
     }
 
