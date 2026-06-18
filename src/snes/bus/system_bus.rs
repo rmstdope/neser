@@ -3,7 +3,8 @@ use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesRomIdentity};
-use std::cell::Cell;
+use crate::snes::ppu::Ppu;
+use std::cell::{Cell, RefCell};
 
 const WRAM_SIZE: usize = 128 * 1024;
 
@@ -14,6 +15,8 @@ const WRAM_SIZE: usize = 128 * 1024;
 /// - cartridge ROM mapping (LoROM/HiROM/ExHiROM)
 /// - battery SRAM windows
 /// - open-bus/MDR read semantics
+/// - the PPU register file (`$2100-$213F`, plus `$4200`/`$4210`/`$4211`/`$4212`), routed to the
+///   owned [`Ppu`]
 /// - CPU/MMIO registers needed for early bring-up (`$2180-$2183`, `$4202-$4206`,
 ///   `$420D`, and `$4300-$437F` register latches)
 pub struct SnesSystemBus {
@@ -30,6 +33,9 @@ pub struct SnesSystemBus {
     memsel: u8,
     hdmaen: u8,
     dma: DmaController,
+    /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
+    /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`.
+    ppu: RefCell<Ppu>,
     mdr: Cell<u8>,
     ticks: Cell<u64>,
 }
@@ -53,6 +59,7 @@ impl SnesSystemBus {
             memsel: 0,
             hdmaen: 0,
             dma: DmaController::new(),
+            ppu: RefCell::new(Ppu::new()),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
         }
@@ -348,6 +355,8 @@ impl SnesSystemBus {
             0x4217 => (self.rdmpy >> 8) as u8,
             0x420D => self.memsel,
             0x420C => self.hdmaen,
+            0x2134..=0x213F => self.ppu.borrow_mut().read_register(offset),
+            0x4210..=0x4212 => self.ppu.borrow_mut().read_register(offset),
             0x4300..=0x437F => self.dma.read_register(offset)?,
             _ => return None,
         };
@@ -421,6 +430,14 @@ impl SnesSystemBus {
             }
             0x420B => {
                 self.start_dma_transfer(value);
+                true
+            }
+            0x2100..=0x213F => {
+                self.ppu.borrow_mut().write_register(offset, value);
+                true
+            }
+            0x4200 => {
+                self.ppu.borrow_mut().write_register(offset, value);
                 true
             }
             0x4300..=0x437F => self.dma.write_register(offset, value),
@@ -1154,5 +1171,54 @@ mod tests {
         assert_eq!(snapshot.len(), 32 * 1024);
         assert_eq!(snapshot[0], 0x77);
         assert_eq!(snapshot[32 * 1024 - 1], 0x88);
+    }
+
+    #[test]
+    fn ppu_cgram_round_trips_through_the_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // CGADD = color 0x10, then write low/high CGRAM bytes via CGDATA.
+        bus.write(0x002121, 0x10);
+        bus.write(0x002122, 0x34);
+        bus.write(0x002122, 0x12);
+
+        // Re-point CGADD and read back via RDCGRAM.
+        bus.write(0x002121, 0x10);
+        assert_eq!(bus.read(0x00213B), 0x34);
+        assert_eq!(bus.read(0x00213B), 0x12);
+    }
+
+    #[test]
+    fn ppu_vram_round_trips_through_the_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // VMAIN: increment after high byte, step 1.
+        bus.write(0x002115, 0x80);
+        // VMADD = word $1000.
+        bus.write(0x002116, 0x00);
+        bus.write(0x002117, 0x10);
+        // VMDATA low/high.
+        bus.write(0x002118, 0xAA);
+        bus.write(0x002119, 0xBB);
+
+        // Re-point VMADD and read back (first read returns the prefetched word).
+        bus.write(0x002116, 0x00);
+        bus.write(0x002117, 0x10);
+        assert_eq!(bus.read(0x002139), 0xAA);
+        assert_eq!(bus.read(0x00213A), 0xBB);
+    }
+
+    #[test]
+    fn ppu_register_access_is_mirrored_into_the_high_system_banks() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // Write CGRAM via bank $80 mirror, read back via bank $00.
+        bus.write(0x802121, 0x20);
+        bus.write(0x802122, 0x5A);
+        bus.write(0x802122, 0x3C);
+
+        bus.write(0x002121, 0x20);
+        assert_eq!(bus.read(0x00213B), 0x5A);
+        assert_eq!(bus.read(0x00213B), 0x3C);
     }
 }
