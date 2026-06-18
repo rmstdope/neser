@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::snes::cartridge::Mapping;
 
-pub const SNES_SAVESTATE_VERSION: u32 = 1;
+pub const SNES_SAVESTATE_VERSION: u32 = 2;
 
 fn default_dma_regs() -> Vec<u8> {
     vec![0; 0x80]
@@ -132,6 +132,66 @@ pub struct SnesRomIdentity {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct SnesPpuState {
+    #[serde(default)]
+    pub vram: Vec<u8>,
+    #[serde(default)]
+    pub cgram: Vec<u8>,
+    #[serde(default)]
+    pub oam: Vec<u8>,
+    #[serde(default)]
+    pub scanline: u16,
+    #[serde(default)]
+    pub dot: u16,
+    #[serde(default)]
+    pub master_cycle_accumulator: u32,
+    #[serde(default)]
+    pub inidisp: u8,
+    #[serde(default)]
+    pub nmi_enable: bool,
+    #[serde(default)]
+    pub nmi_flag: bool,
+    #[serde(default)]
+    pub vblank_active: bool,
+    #[serde(default)]
+    pub nmi_line_prev: bool,
+    #[serde(default)]
+    pub nmi_edge: bool,
+    #[serde(default)]
+    pub frame_complete: bool,
+    #[serde(default)]
+    pub vram_increment_after_high: bool,
+    #[serde(default)]
+    pub vram_increment_step: u16,
+    #[serde(default)]
+    pub vram_address: u16,
+    #[serde(default)]
+    pub vram_prefetch: u16,
+    #[serde(default)]
+    pub cgram_address: u16,
+    #[serde(default)]
+    pub cgram_latch: u8,
+    #[serde(default)]
+    pub oam_address: u16,
+    #[serde(default)]
+    pub oam_latch: u8,
+    #[serde(default)]
+    pub ophct_latch: u16,
+    #[serde(default)]
+    pub opvct_latch: u16,
+    #[serde(default)]
+    pub counter_latch_flag: bool,
+    #[serde(default)]
+    pub ophct_read_high: bool,
+    #[serde(default)]
+    pub opvct_read_high: bool,
+    #[serde(default)]
+    pub wrio: u8,
+    #[serde(default)]
+    pub interlace_field: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct SnesSaveState {
     #[serde(default)]
     pub version: u32,
@@ -141,6 +201,8 @@ pub struct SnesSaveState {
     pub cpu: SnesCpuState,
     #[serde(default)]
     pub bus: SnesBusState,
+    #[serde(default)]
+    pub ppu: SnesPpuState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

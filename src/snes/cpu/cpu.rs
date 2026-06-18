@@ -564,6 +564,11 @@ impl<B: SnesBus> Cpu<B> {
             return self.step_block_move_unit(state);
         }
 
+        // Sync hardware NMI edges from the bus (e.g. PPU VBlank NMI) into the pending latch.
+        if self.bus.poll_nmi() {
+            self.nmi_pending = true;
+        }
+
         // Poll hardware interrupts (higher priority than opcode fetch)
         if self.abort_pending {
             self.abort_pending = false;
@@ -8367,12 +8372,23 @@ impl Cpu<SnesSystemBus> {
         self.bus.sram_snapshot()
     }
 
+    /// Snapshot the PPU's visible framebuffer as packed RGB888.
+    pub fn screen_snapshot(&self) -> Vec<u8> {
+        self.bus.ppu_screen_snapshot()
+    }
+
+    /// Returns and clears the PPU frame-complete flag.
+    pub fn take_frame_complete(&mut self) -> bool {
+        self.bus.take_ppu_frame_complete()
+    }
+
     pub(crate) fn capture_save_state(&self) -> SnesSaveState {
         SnesSaveState {
             version: crate::snes::console::save_state::SNES_SAVESTATE_VERSION,
             rom_identity: self.bus.rom_identity(),
             cpu: self.capture_state(),
             bus: self.bus.capture_state(),
+            ppu: self.bus.ppu_capture_state(),
         }
     }
 
@@ -8390,6 +8406,9 @@ impl Cpu<SnesSystemBus> {
 
         self.bus
             .restore_state(&state.bus)
+            .map_err(SnesSaveStateError::RestoreFailed)?;
+        self.bus
+            .ppu_restore_state(&state.ppu)
             .map_err(SnesSaveStateError::RestoreFailed)?;
         self.restore_state(&state.cpu);
         Ok(())
@@ -9702,6 +9721,57 @@ mod interrupt_dispatch_tests {
         cpu.e = false;
         cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
         cpu
+    }
+
+    /// Minimal bus that delivers a single NMI edge via `poll_nmi`, to test the `step()` sync.
+    struct PollNmiBus {
+        mem: Vec<u8>,
+        nmi_once: bool,
+    }
+
+    impl PollNmiBus {
+        fn new() -> Self {
+            Self {
+                mem: vec![0; 0x100_0000],
+                nmi_once: false,
+            }
+        }
+
+        fn load(&mut self, addr: u32, data: &[u8]) {
+            let a = (addr & 0xFF_FFFF) as usize;
+            self.mem[a..a + data.len()].copy_from_slice(data);
+        }
+    }
+
+    impl crate::snes::bus::SnesBus for PollNmiBus {
+        fn read(&self, addr: u32) -> u8 {
+            self.mem[(addr & 0xFF_FFFF) as usize]
+        }
+        fn write(&mut self, addr: u32, value: u8) {
+            self.mem[(addr & 0xFF_FFFF) as usize] = value;
+        }
+        fn tick(&mut self) {}
+        fn poll_nmi(&mut self) -> bool {
+            let n = self.nmi_once;
+            self.nmi_once = false;
+            n
+        }
+    }
+
+    #[test]
+    fn step_polls_the_bus_nmi_edge_and_dispatches_nmi() {
+        let mut cpu = Cpu::new(PollNmiBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x00FFFA, &[0x00, 0x90]); // NMI emulation vector -> $9000
+        cpu.bus.nmi_once = true;
+
+        cpu.step();
+
+        assert_eq!(
+            cpu.pc, 0x9000,
+            "step() polled the bus NMI edge and dispatched NMI"
+        );
     }
 
     // =========================================================================

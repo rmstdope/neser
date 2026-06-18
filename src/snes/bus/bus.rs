@@ -13,6 +13,21 @@ pub trait SnesBus {
 
     /// Advance the bus state by one master clock cycle.
     fn tick(&mut self);
+
+    /// Poll for a pending NMI edge from the bus (e.g. PPU VBlank NMI).
+    ///
+    /// NMI is edge-triggered: this returns `true` once per rising edge and consumes it.
+    /// The default returns `false` for buses without an NMI source (test buses).
+    fn poll_nmi(&mut self) -> bool {
+        false
+    }
+
+    /// Poll the current IRQ line level from the bus (e.g. PPU H/V timer IRQ).
+    ///
+    /// IRQ is level-triggered. The default returns `false` for buses without an IRQ source.
+    fn poll_irq(&self) -> bool {
+        false
+    }
 }
 
 /// Stub bus implementation for unit tests.

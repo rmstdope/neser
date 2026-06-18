@@ -2,8 +2,9 @@ use crate::snes::bus::SnesBus;
 use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::Mapping;
-use crate::snes::console::save_state::{SnesBusState, SnesRomIdentity};
-use std::cell::Cell;
+use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
+use crate::snes::ppu::Ppu;
+use std::cell::{Cell, RefCell};
 
 const WRAM_SIZE: usize = 128 * 1024;
 
@@ -14,6 +15,8 @@ const WRAM_SIZE: usize = 128 * 1024;
 /// - cartridge ROM mapping (LoROM/HiROM/ExHiROM)
 /// - battery SRAM windows
 /// - open-bus/MDR read semantics
+/// - the PPU register file (`$2100-$213F`, plus `$4200`/`$4210`/`$4211`/`$4212`), routed to the
+///   owned [`Ppu`]
 /// - CPU/MMIO registers needed for early bring-up (`$2180-$2183`, `$4202-$4206`,
 ///   `$420D`, and `$4300-$437F` register latches)
 pub struct SnesSystemBus {
@@ -30,6 +33,9 @@ pub struct SnesSystemBus {
     memsel: u8,
     hdmaen: u8,
     dma: DmaController,
+    /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
+    /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`.
+    ppu: RefCell<Ppu>,
     mdr: Cell<u8>,
     ticks: Cell<u64>,
 }
@@ -53,6 +59,7 @@ impl SnesSystemBus {
             memsel: 0,
             hdmaen: 0,
             dma: DmaController::new(),
+            ppu: RefCell::new(Ppu::new()),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
         }
@@ -248,6 +255,26 @@ impl SnesSystemBus {
         self.sram.clone()
     }
 
+    /// Snapshot the PPU's visible framebuffer as packed RGB888.
+    pub fn ppu_screen_snapshot(&self) -> Vec<u8> {
+        self.ppu.borrow().screen_snapshot_rgb()
+    }
+
+    /// Returns and clears the PPU frame-complete flag (set when the PPU enters VBlank).
+    pub fn take_ppu_frame_complete(&mut self) -> bool {
+        self.ppu.get_mut().take_frame_complete()
+    }
+
+    /// Capture the PPU state for a save-state.
+    pub(crate) fn ppu_capture_state(&self) -> SnesPpuState {
+        self.ppu.borrow().capture_state()
+    }
+
+    /// Restore the PPU state from a save-state.
+    pub(crate) fn ppu_restore_state(&mut self, state: &SnesPpuState) -> Result<(), String> {
+        self.ppu.get_mut().restore_state(state)
+    }
+
     /// Restores SRAM from a byte slice. If the slice is larger than SRAM,
     /// only the first `sram_size()` bytes are used.
     pub fn restore_sram(&mut self, data: &[u8]) {
@@ -348,6 +375,8 @@ impl SnesSystemBus {
             0x4217 => (self.rdmpy >> 8) as u8,
             0x420D => self.memsel,
             0x420C => self.hdmaen,
+            0x2134..=0x213F => self.ppu.borrow_mut().read_register(offset),
+            0x4210..=0x4212 => self.ppu.borrow_mut().read_register(offset),
             0x4300..=0x437F => self.dma.read_register(offset)?,
             _ => return None,
         };
@@ -423,6 +452,18 @@ impl SnesSystemBus {
                 self.start_dma_transfer(value);
                 true
             }
+            0x2100..=0x213F => {
+                self.ppu.borrow_mut().write_register(offset, value);
+                true
+            }
+            0x4200 => {
+                self.ppu.borrow_mut().write_register(offset, value);
+                true
+            }
+            0x4201 => {
+                self.ppu.borrow_mut().write_register(offset, value);
+                true
+            }
             0x4300..=0x437F => self.dma.write_register(offset, value),
             _ => false,
         }
@@ -491,6 +532,11 @@ impl SnesBus for SnesSystemBus {
 
     fn tick(&mut self) {
         self.ticks.set(self.ticks.get().wrapping_add(1));
+        self.ppu.get_mut().tick();
+    }
+
+    fn poll_nmi(&mut self) -> bool {
+        self.ppu.get_mut().poll_nmi()
     }
 }
 
@@ -1154,5 +1200,85 @@ mod tests {
         assert_eq!(snapshot.len(), 32 * 1024);
         assert_eq!(snapshot[0], 0x77);
         assert_eq!(snapshot[32 * 1024 - 1], 0x88);
+    }
+
+    #[test]
+    fn ppu_cgram_round_trips_through_the_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // CGADD = color 0x10, then write low/high CGRAM bytes via CGDATA.
+        bus.write(0x002121, 0x10);
+        bus.write(0x002122, 0x34);
+        bus.write(0x002122, 0x12);
+
+        // Re-point CGADD and read back via RDCGRAM.
+        bus.write(0x002121, 0x10);
+        assert_eq!(bus.read(0x00213B), 0x34);
+        assert_eq!(bus.read(0x00213B), 0x12);
+    }
+
+    #[test]
+    fn ppu_vram_round_trips_through_the_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // VMAIN: increment after high byte, step 1.
+        bus.write(0x002115, 0x80);
+        // VMADD = word $1000.
+        bus.write(0x002116, 0x00);
+        bus.write(0x002117, 0x10);
+        // VMDATA low/high.
+        bus.write(0x002118, 0xAA);
+        bus.write(0x002119, 0xBB);
+
+        // Re-point VMADD and read back (first read returns the prefetched word).
+        bus.write(0x002116, 0x00);
+        bus.write(0x002117, 0x10);
+        assert_eq!(bus.read(0x002139), 0xAA);
+        assert_eq!(bus.read(0x00213A), 0xBB);
+    }
+
+    #[test]
+    fn ppu_register_access_is_mirrored_into_the_high_system_banks() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // Write CGRAM via bank $80 mirror, read back via bank $00.
+        bus.write(0x802121, 0x20);
+        bus.write(0x802122, 0x5A);
+        bus.write(0x802122, 0x3C);
+
+        bus.write(0x002121, 0x20);
+        assert_eq!(bus.read(0x00213B), 0x5A);
+        assert_eq!(bus.read(0x00213B), 0x3C);
+    }
+
+    #[test]
+    fn bus_tick_advances_the_ppu_counters() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // 10 dots = 40 master clocks.
+        for _ in 0..40 {
+            bus.tick();
+        }
+
+        // SLHV strobe latches H/V; OPHCT low byte should read the dot counter.
+        let _ = bus.read(0x002137);
+        assert_eq!(bus.read(0x00213C), 10);
+    }
+
+    #[test]
+    fn bus_poll_nmi_fires_at_vblank_when_enabled() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004200, 0x80); // enable VBlank NMI
+
+        // Advance to VBlank entry: 225 scanlines * 341 dots * 4 master clocks.
+        for _ in 0..(225 * 341 * 4) {
+            bus.tick();
+        }
+
+        assert!(
+            bus.poll_nmi(),
+            "NMI edge delivered through the bus at VBlank"
+        );
+        assert!(!bus.poll_nmi(), "edge consumed once");
     }
 }

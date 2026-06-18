@@ -197,7 +197,9 @@ impl Emulator for Snes {
         };
 
         let cycles = cpu.step();
-        self.ready_to_render = true;
+        if cpu.take_frame_complete() {
+            self.ready_to_render = true;
+        }
         cycles
     }
 
@@ -218,9 +220,10 @@ impl Emulator for Snes {
     }
 
     fn screen_snapshot(&self) -> Vec<u8> {
-        // TODO: Implement screen capture
-        // Return black screen for now
-        vec![0; (SCREEN_WIDTH * SCREEN_HEIGHT * 3) as usize]
+        match self.cpu.as_ref() {
+            Some(cpu) => cpu.screen_snapshot(),
+            None => vec![0; (SCREEN_WIDTH * SCREEN_HEIGHT * 3) as usize],
+        }
     }
 
     fn cropped_screen_snapshot(&self, _h_overscan: u32, _v_overscan: u32) -> Vec<u8> {
@@ -387,20 +390,36 @@ mod tests {
     }
 
     #[test]
-    fn run_tick_sets_ready_to_render() {
+    fn run_tick_sets_ready_to_render_after_a_full_frame() {
         let mut snes = make_snes();
         snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
         assert!(!snes.is_ready_to_render());
-        snes.run_tick();
-        assert!(snes.is_ready_to_render());
+
+        // Run until the PPU completes a frame (a frame is ~357k master cycles).
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 1_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
+
+        assert!(
+            snes.is_ready_to_render(),
+            "a frame should complete within the cap"
+        );
     }
 
     #[test]
     fn clear_ready_to_render_clears_flag() {
         let mut snes = make_snes();
         snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
-        snes.run_tick();
+
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 1_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
         assert!(snes.is_ready_to_render());
+
         snes.clear_ready_to_render();
         assert!(!snes.is_ready_to_render());
     }
@@ -425,7 +444,11 @@ mod tests {
         let mut snes = make_snes();
         let rom = valid_lorom_nop_rom();
         snes.load_rom(&rom, "test.sfc").unwrap();
-        snes.run_tick();
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 1_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
         assert!(snes.is_ready_to_render());
         snes.load_rom(&rom, "test.sfc").unwrap();
         assert!(!snes.is_ready_to_render());
@@ -435,7 +458,11 @@ mod tests {
     fn reset_clears_ready_to_render_flag() {
         let mut snes = make_snes();
         snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
-        snes.run_tick();
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 1_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
         assert!(snes.is_ready_to_render());
         snes.reset(false);
         assert!(!snes.is_ready_to_render());
@@ -638,6 +665,32 @@ mod tests {
         let snes = make_snes();
         let result = snes.save_state_bytes();
         assert!(matches!(result, Err(msg) if msg.contains("No ROM loaded")));
+    }
+
+    #[test]
+    fn save_state_round_trips_ppu_state() {
+        let rom = lorom_rom_with_battery_sram(0x05);
+
+        // Source: run a while so the PPU advances past its power-on state, then save.
+        let mut source = make_snes();
+        source
+            .load_rom(&rom, "ppu_source.sfc")
+            .expect("load source ROM");
+        for _ in 0..5000 {
+            source.run_tick();
+        }
+        let bytes = source.save_state_bytes().expect("save state");
+
+        // Restore into a fresh SNES and re-save. If PPU state (position, VRAM/CGRAM/OAM, flags)
+        // were not part of the round-trip, the re-saved bytes would differ from the originals.
+        let mut restored = make_snes();
+        restored
+            .load_rom(&rom, "ppu_restore.sfc")
+            .expect("load restore ROM");
+        restored.load_state_bytes(&bytes).expect("restore");
+        let bytes2 = restored.save_state_bytes().expect("re-save state");
+
+        assert_eq!(bytes, bytes2, "PPU state survives the save/load round-trip");
     }
 
     #[test]
