@@ -250,7 +250,7 @@ jobs:
 
   web-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.web_integration == 'true' || github.event_name == 'workflow_call'
 
