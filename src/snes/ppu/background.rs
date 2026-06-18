@@ -105,32 +105,48 @@ impl Ppu {
     }
 
     /// Resolve `(CGRAM index, priority)` for BG layer `bg` at screen `(x, y)`, or `None` if the
-    /// pixel is transparent (color 0). 8x8 tiles, single 32x32 tilemap (larger maps added later).
+    /// pixel is transparent (color 0). Supports 8x8/16x16 tiles and all four tilemap sizes.
     fn bg_pixel(&self, bg: usize, x: u16, y: u16) -> Option<(u8, bool)> {
         let bpp = self.bg_bpp(bg);
+        let size16 = self.bg_tile_size_16[bg];
+        let cell_shift = if size16 { 4 } else { 3 };
+        let cell_mask = (1u16 << cell_shift) - 1;
+
         let scrolled_x = x.wrapping_add(self.bg_hofs[bg] & 0x03FF);
         let scrolled_y = y.wrapping_add(self.bg_vofs[bg] & 0x03FF);
 
-        let tile_col = (scrolled_x >> 3) & 31;
-        let tile_row = (scrolled_y >> 3) & 31;
-        let entry = self.read_bg_map_entry(bg, tile_col, tile_row);
-
+        let entry = self.read_bg_map_entry(bg, scrolled_x >> cell_shift, scrolled_y >> cell_shift);
         let char_num = entry & 0x03FF;
         let palette = ((entry >> 10) & 0x07) as u8;
         let priority = entry & 0x2000 != 0;
         let hflip = entry & 0x4000 != 0;
         let vflip = entry & 0x8000 != 0;
 
-        let mut fine_x = (scrolled_x & 7) as u8;
-        let mut fine_y = (scrolled_y & 7) as u8;
+        // Cell-relative coordinates (0..cell_size), with flip applied to the whole cell.
+        let mut within_x = scrolled_x & cell_mask;
+        let mut within_y = scrolled_y & cell_mask;
         if hflip {
-            fine_x = 7 - fine_x;
+            within_x = cell_mask - within_x;
         }
         if vflip {
-            fine_y = 7 - fine_y;
+            within_y = cell_mask - within_y;
         }
 
-        let color = self.decode_tile_pixel(self.bg_char_base[bg], char_num, bpp, fine_x, fine_y);
+        // For 16x16 tiles, the cell is a 2x2 block of 8x8 tiles (N, N+1, N+16, N+17).
+        let mut tile = char_num;
+        if size16 {
+            if within_x & 8 != 0 {
+                tile += 1;
+            }
+            if within_y & 8 != 0 {
+                tile += 16;
+            }
+        }
+        let fine_x = (within_x & 7) as u8;
+        let fine_y = (within_y & 7) as u8;
+
+        let color =
+            self.decode_tile_pixel(self.bg_char_base[bg], tile & 0x03FF, bpp, fine_x, fine_y);
         if color == 0 {
             return None;
         }
@@ -139,9 +155,31 @@ impl Ppu {
         Some((index, priority))
     }
 
-    /// Read a 16-bit BG map entry from VRAM (32x32 tilemap).
-    fn read_bg_map_entry(&self, bg: usize, col: u16, row: u16) -> u16 {
-        let word_addr = self.bg_tilemap_base[bg].wrapping_add(row * 32 + col);
+    /// Read a 16-bit BG map entry, resolving the tilemap size (BGnSC bits 0-1) and the SC0..SC3
+    /// sub-screen layout. `entry_col`/`entry_row` are tile indices into the full (up to 64x64) map.
+    fn read_bg_map_entry(&self, bg: usize, entry_col: u16, entry_row: u16) -> u16 {
+        let size = self.bg_screen_size[bg];
+        let (map_w, map_h): (u16, u16) = match size {
+            0 => (32, 32),
+            1 => (64, 32),
+            2 => (32, 64),
+            _ => (64, 64),
+        };
+        let col = entry_col & (map_w - 1);
+        let row = entry_row & (map_h - 1);
+        let sc_x = (col >> 5) & 1;
+        let sc_y = (row >> 5) & 1;
+        let sc_index = match size {
+            0 => 0,
+            1 => sc_x,
+            2 => sc_y,
+            _ => sc_y * 2 + sc_x,
+        };
+
+        let local = (row & 31) * 32 + (col & 31);
+        let word_addr = self.bg_tilemap_base[bg]
+            .wrapping_add(sc_index * 0x400)
+            .wrapping_add(local);
         let byte = (word_addr as usize) << 1;
         let lo = self.vram[byte & (VRAM_SIZE - 1)] as u16;
         let hi = self.vram[(byte + 1) & (VRAM_SIZE - 1)] as u16;
@@ -466,6 +504,113 @@ mod tests {
             pixel(&rgb, 0, 0),
             [255, 255, 255],
             "BG3 high-priority lifts above BG1"
+        );
+    }
+
+    #[test]
+    fn renders_a_16x16_bg1_tile_with_correct_subtiles() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x001F); // color 1 = red   (top-left subtile, char N)
+        set_cgram(&mut ppu, 2, 0x03E0); // color 2 = green (top-right, N+1)
+        set_cgram(&mut ppu, 3, 0x7C00); // color 3 = blue  (bottom-left, N+16)
+        // BG1 map entry 0 -> char 4 (top-left of the 2x2 block), palette 0.
+        set_vram_word(&mut ppu, 0, 4);
+        fill_2bpp_tile(&mut ppu, 0, 4, 1); // N   = red
+        fill_2bpp_tile(&mut ppu, 0, 5, 2); // N+1 = green
+        fill_2bpp_tile(&mut ppu, 0, 20, 3); // N+16 = blue
+
+        ppu.write_register(0x2105, 0x10); // mode 0, BG1 tile size 16x16 (bit 4)
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(pixel(&rgb, 0, 0), [255, 0, 0], "top-left subtile N");
+        assert_eq!(pixel(&rgb, 8, 0), [0, 255, 0], "top-right subtile N+1");
+        assert_eq!(pixel(&rgb, 0, 8), [0, 0, 255], "bottom-left subtile N+16");
+    }
+
+    /// Write a BG map entry into a specific 32x32 sub-screen (SC0..SC3) of layer `bg`.
+    fn set_sc_entry(ppu: &mut Ppu, base_words: usize, sc: usize, col: usize, row: usize, v: u16) {
+        let word = base_words + sc * 0x400 + row * 32 + col;
+        set_vram_word(ppu, word, v);
+    }
+
+    #[test]
+    fn tilemap_size_64x32_selects_sc1_when_scrolled_right() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // white
+        // BG1 map base 0; SC1 entry (col 0,row 0) -> char 1 (solid white).
+        set_sc_entry(&mut ppu, 0x000, 1, 0, 0, 1);
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x00); // mode 0, 8x8
+        ppu.write_register(0x2107, 0x01); // BG1SC: base 0, size 1 (64x32)
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        // Scroll right by 256 px (32 tiles) so screen x=0 reads entry col 32 -> SC1.
+        ppu.write_register(0x210D, 0x00);
+        ppu.write_register(0x210D, 0x01); // hofs = 0x100 = 256
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "SC1 tile visible after H-scroll"
+        );
+    }
+
+    #[test]
+    fn tilemap_size_32x64_selects_sc1_when_scrolled_down() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        set_sc_entry(&mut ppu, 0x000, 1, 0, 0, 1); // SC1 (bottom) entry
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x2107, 0x02); // BG1SC: size 2 (32x64)
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        // Scroll down 256 px (32 tiles) so screen y=0 reads entry row 32 -> SC1.
+        ppu.write_register(0x210E, 0x00);
+        ppu.write_register(0x210E, 0x01); // vofs = 0x100 = 256
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "SC1 tile visible after V-scroll"
+        );
+    }
+
+    #[test]
+    fn tilemap_size_64x64_selects_sc3_when_scrolled_diagonally() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        set_sc_entry(&mut ppu, 0x000, 3, 0, 0, 1); // SC3 (bottom-right) entry
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x2107, 0x03); // BG1SC: size 3 (64x64)
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        ppu.write_register(0x210D, 0x00);
+        ppu.write_register(0x210D, 0x01); // hofs = 256 -> col 32
+        ppu.write_register(0x210E, 0x00);
+        ppu.write_register(0x210E, 0x01); // vofs = 256 -> row 32
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "SC3 tile visible after diagonal scroll"
         );
     }
 
