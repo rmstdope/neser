@@ -121,7 +121,7 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
     }
 
     let opcode = bus.get(vector.initial.pc);
-    if (opcode == 0xE8 || opcode == 0xCD)
+    if (opcode == 0xE8 || opcode == 0xCD || opcode == 0x8D)
         && !contains_initial_ram_address(vector, vector.initial.pc.wrapping_add(1))
     {
         return Err(VectorFailure {
@@ -133,10 +133,10 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         });
     }
 
-    if opcode != 0x00 && opcode != 0xE8 && opcode != 0xCD {
+    if opcode != 0x00 && opcode != 0xE8 && opcode != 0xCD && opcode != 0x8D {
         return Err(VectorFailure {
             details: format!(
-                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (supported in this slice: NOP $00, MOV A,#imm $E8, MOV X,#imm $CD)",
+                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (supported in this slice: NOP $00, MOV A,#imm $E8, MOV X,#imm $CD, MOV Y,#imm $8D)",
                 vector.name, vector.initial.pc
             ),
         });
@@ -399,6 +399,38 @@ mod tests {
         fs::write(path, sample).expect("write sample MOV X,#imm vector JSON");
     }
 
+    fn write_mov_y_immediate_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "8d mov y,#imm",
+    "initial": {
+      "pc": 832,
+      "sp": 239,
+      "psw": 1,
+      "a": 18,
+      "x": 52,
+      "y": 86,
+      "ram": [[832, 141], [833, 0]]
+    },
+    "final": {
+      "pc": 834,
+      "sp": 239,
+      "psw": 3,
+      "a": 18,
+      "x": 52,
+      "y": 0,
+      "ram": [[832, 141], [833, 0]]
+    },
+    "cycles": [
+      [832, 141, "d-r-----"],
+      [833, 0, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample MOV Y,#imm vector JSON");
+    }
+
     #[test]
     fn given_spc700_vector_json_when_loaded_then_schema_is_parsed() {
         let temp = tempfile::tempdir().expect("create temp dir");
@@ -444,6 +476,17 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("cd.json");
         write_mov_x_immediate_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_mov_y_immediate_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("8d.json");
+        write_mov_y_immediate_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
         let result = run_vector_case(&vectors[0]);

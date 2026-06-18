@@ -199,6 +199,12 @@ impl Spc700 {
                 self.x = imm;
                 self.update_nz8(self.x);
             }
+            // MOV Y,#imm — load 8-bit immediate into Y, update N/Z.
+            0x8D => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.y = imm;
+                self.update_nz8(self.y);
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -371,6 +377,47 @@ mod tests {
         assert_eq!(cycles, 2);
         assert_eq!(cpu.pc(), 0x0324);
         assert_eq!(cpu.x(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_y_immediate_sets_negative_and_preserves_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0340, &[0x8D, 0x80]); // MOV Y,#$80
+        cpu.load_state_for_processor_test(0x12, 0x34, 0x56, 0xEF, 0x0340, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0342);
+        assert_eq!(cpu.y(), 0x80);
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_y_immediate_sets_zero_clears_negative_and_preserves_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0342, &[0x8D, 0x00]); // MOV Y,#$00
+        cpu.load_state_for_processor_test(
+            0x12,
+            0x34,
+            0x56,
+            0xEF,
+            0x0342,
+            FLAG_CARRY | FLAG_NEGATIVE,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0344);
+        assert_eq!(cpu.y(), 0x00);
         assert!(cpu.flag(FLAG_ZERO));
         assert!(!cpu.flag(FLAG_NEGATIVE));
         assert!(cpu.flag(FLAG_CARRY));
