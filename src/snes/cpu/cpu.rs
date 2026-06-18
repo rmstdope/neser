@@ -2,6 +2,9 @@
 
 use crate::snes::bus::SnesBus;
 use crate::snes::bus::SnesSystemBus;
+use crate::snes::console::save_state::{
+    SnesBlockMoveDirection, SnesBlockMoveState, SnesCpuState, SnesSaveState, SnesSaveStateError,
+};
 use crate::snes::cpu::mem_speed::mem_access_cycles;
 
 // Status register P flags (8 bits)
@@ -243,6 +246,74 @@ impl<B: SnesBus> Cpu<B> {
     /// Read processor status register.
     pub fn read_p(&self) -> u8 {
         self.p
+    }
+
+    pub(crate) fn capture_state(&self) -> SnesCpuState {
+        SnesCpuState {
+            a: self.a,
+            x: self.x,
+            y: self.y,
+            d: self.d,
+            dbr: self.dbr,
+            pbr: self.pbr,
+            s: self.s,
+            pc: self.pc,
+            p: self.p,
+            e: self.e,
+            extra_cycles: self.extra_cycles,
+            last_page_crossed: self.last_page_crossed,
+            nmi_pending: self.nmi_pending,
+            irq_pending: self.irq_pending,
+            abort_pending: self.abort_pending,
+            fast_rom: self.fast_rom,
+            memory_bus_cycles: self.memory_bus_cycles,
+            block_move_state: self.block_move_state.map(|state| SnesBlockMoveState {
+                dst_bank: state.dst_bank,
+                src_bank: state.src_bank,
+                direction: match state.direction {
+                    BlockMoveDirection::Increment => SnesBlockMoveDirection::Increment,
+                    BlockMoveDirection::Decrement => SnesBlockMoveDirection::Decrement,
+                },
+            }),
+        }
+    }
+
+    pub(crate) fn restore_state(&mut self, state: &SnesCpuState) {
+        self.a = state.a;
+        self.x = state.x;
+        self.y = state.y;
+        self.d = state.d;
+        self.dbr = state.dbr;
+        self.pbr = state.pbr;
+        self.s = state.s;
+        self.pc = state.pc;
+        self.p = state.p;
+        self.e = state.e;
+        self.extra_cycles = state.extra_cycles;
+        self.last_page_crossed = state.last_page_crossed;
+        self.nmi_pending = state.nmi_pending;
+        self.irq_pending = state.irq_pending;
+        self.abort_pending = state.abort_pending;
+        self.fast_rom = state.fast_rom;
+        self.memory_bus_cycles = state.memory_bus_cycles;
+        self.block_move_state = state.block_move_state.map(|state| BlockMoveState {
+            dst_bank: state.dst_bank,
+            src_bank: state.src_bank,
+            direction: match state.direction {
+                SnesBlockMoveDirection::Increment => BlockMoveDirection::Increment,
+                SnesBlockMoveDirection::Decrement => BlockMoveDirection::Decrement,
+            },
+        });
+
+        if self.e {
+            self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+            self.s = 0x0100 | (self.s & 0x00FF);
+        }
+
+        if self.x_flag() {
+            self.x &= 0x00FF;
+            self.y &= 0x00FF;
+        }
     }
 
     #[cfg(test)]
@@ -8294,6 +8365,34 @@ impl Cpu<SnesSystemBus> {
     /// Returns a snapshot of the current SRAM contents.
     pub fn sram_snapshot(&self) -> Vec<u8> {
         self.bus.sram_snapshot()
+    }
+
+    pub(crate) fn capture_save_state(&self) -> SnesSaveState {
+        SnesSaveState {
+            version: crate::snes::console::save_state::SNES_SAVESTATE_VERSION,
+            rom_identity: self.bus.rom_identity(),
+            cpu: self.capture_state(),
+            bus: self.bus.capture_state(),
+        }
+    }
+
+    pub(crate) fn restore_save_state(
+        &mut self,
+        state: &SnesSaveState,
+    ) -> Result<(), SnesSaveStateError> {
+        let current_rom = self.bus.rom_identity();
+        if state.rom_identity != current_rom {
+            return Err(SnesSaveStateError::RomMismatch {
+                expected: state.rom_identity.clone(),
+                found: current_rom,
+            });
+        }
+
+        self.bus
+            .restore_state(&state.bus)
+            .map_err(SnesSaveStateError::RestoreFailed)?;
+        self.restore_state(&state.cpu);
+        Ok(())
     }
 }
 

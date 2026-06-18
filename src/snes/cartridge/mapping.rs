@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 #[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mapping {
     LoRom,
     HiRom,
