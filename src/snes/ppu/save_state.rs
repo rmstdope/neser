@@ -59,6 +59,7 @@ impl Ppu {
             m7vofs: self.m7vofs,
             m7sel: self.m7sel,
             m7_old: self.m7_old,
+            obsel: self.obsel,
         }
     }
 
@@ -116,6 +117,7 @@ impl Ppu {
         self.m7vofs = state.m7vofs;
         self.m7sel = state.m7sel;
         self.m7_old = state.m7_old;
+        self.obsel = state.obsel;
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);

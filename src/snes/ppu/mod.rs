@@ -8,6 +8,7 @@
 //! - [`registers`] — register read/write dispatch and VRAM/CGRAM/OAM access.
 //! - [`timing`] — dot/scanline counters, VBlank/NMI, and H/V counter latching.
 //! - [`framebuffer`] — backdrop rendering and BGR555 -> RGB888 output.
+//! - [`sprites`] — OBJ (sprite) evaluation, line buffer, and over-limit flags.
 //! - [`save_state`] — PPU save-state capture/restore.
 
 mod background;
@@ -15,6 +16,7 @@ mod framebuffer;
 mod mode7;
 mod registers;
 mod save_state;
+mod sprites;
 mod timing;
 
 const VRAM_SIZE: usize = 0x10_000;
@@ -140,6 +142,9 @@ pub struct Ppu {
     m7sel: u8,
     /// Shared write-twice latch (M7_old) for the $210D/$210E and $211B-$2120 registers.
     m7_old: u8,
+    /// OBSEL ($2101) raw value: OBJ size pair (bits 7-5), name gap (bits 4-3, 4K-word steps),
+    /// OBJ tile name base (bits 2-0, 8K-word steps).
+    obsel: u8,
 }
 
 impl Default for Ppu {
@@ -202,6 +207,7 @@ impl Ppu {
             m7vofs: 0,
             m7sel: 0,
             m7_old: 0,
+            obsel: 0,
         }
     }
 

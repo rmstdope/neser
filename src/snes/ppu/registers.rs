@@ -15,6 +15,8 @@ impl Ppu {
         match addr {
             // INIDISP: forced blank (bit 7) + master brightness (bits 0-3).
             0x2100 => self.inidisp = value,
+            // OBSEL: OBJ size pair (bits 7-5), name gap (bits 4-3), OBJ tile name base (bits 2-0).
+            0x2101 => self.obsel = value,
             // BGMODE: BG screen mode (bits 0-2), BG3 high-priority (bit 3), per-BG tile size.
             0x2105 => {
                 self.bg_mode = value & 0x07;
