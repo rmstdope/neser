@@ -10,6 +10,7 @@ use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
 use crate::snes::bus::SnesSystemBus;
 use crate::snes::cartridge::Cartridge;
+use crate::snes::console::save_state::SnesSaveState;
 use crate::snes::cpu::Cpu;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -60,6 +61,7 @@ impl Snes {
     }
 
     /// Returns the file path where battery-backed SRAM should be stored.
+    #[cfg(not(target_arch = "wasm32"))]
     fn sav_path(&self) -> Option<PathBuf> {
         self.rom_path
             .as_ref()
@@ -259,13 +261,23 @@ impl Emulator for Snes {
     }
 
     fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
-        // TODO: Implement save state serialization
-        Err("Save states not yet implemented for SNES".to_string())
+        let Some(cpu) = self.cpu.as_ref() else {
+            return Err("No ROM loaded".to_string());
+        };
+
+        cpu.capture_save_state()
+            .to_bytes()
+            .map_err(|e| format!("save state serialization failed: {e}"))
     }
 
-    fn load_state_bytes(&mut self, _data: &[u8]) -> Result<(), String> {
-        // TODO: Implement save state deserialization
-        Err("Save states not yet implemented for SNES".to_string())
+    fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
+        let Some(cpu) = self.cpu.as_mut() else {
+            return Err("No ROM loaded".to_string());
+        };
+
+        let state = SnesSaveState::from_bytes(data)
+            .map_err(|e| format!("save state deserialization failed: {e}"))?;
+        cpu.restore_save_state(&state).map_err(|e| e.to_string())
     }
 
     fn reset(&mut self, _soft_reset: bool) {
@@ -574,5 +586,126 @@ mod tests {
             "mismatched save file should be ignored entirely"
         );
         assert_eq!(snapshot[63], 0x00);
+    }
+
+    fn dirty_cpu_for_save_state(cpu: &mut Cpu<SnesSystemBus>) {
+        cpu.load_state_for_processor_test(
+            0xA1B2, 0xC3D4, 0xE5F6, 0x1234, 0x56, 0x78, 0x9ABC, 0xDEF0, 0x2D, false,
+        );
+        cpu.set_nmi(true);
+        cpu.set_irq(true);
+        cpu.set_abort(true);
+        cpu.restore_sram(&[0x11, 0x22, 0x33, 0x44, 0x55]);
+    }
+
+    #[test]
+    fn save_state_bytes_round_trips_cpu_and_sram() {
+        let rom = lorom_rom_with_battery_sram(0x05);
+
+        let mut source = make_snes();
+        source
+            .load_rom(&rom, "roundtrip_source.sfc")
+            .expect("load source ROM");
+        dirty_cpu_for_save_state(source.cpu.as_mut().expect("cpu present"));
+        let original_pc = source.cpu.as_ref().expect("cpu present").read_pc();
+        let original_sram = source.cpu.as_ref().expect("cpu present").sram_snapshot();
+
+        let bytes = source
+            .save_state_bytes()
+            .expect("save state serialization should work");
+
+        let mut restored = make_snes();
+        restored
+            .load_rom(&rom, "roundtrip_restored.sfc")
+            .expect("load restore ROM");
+        dirty_cpu_for_save_state(restored.cpu.as_mut().expect("cpu present"));
+
+        restored
+            .load_state_bytes(&bytes)
+            .expect("restore from bytes should work");
+
+        let restored_cpu = restored.cpu.as_ref().expect("cpu present");
+        assert_eq!(restored_cpu.read_pc(), original_pc);
+        assert_eq!(restored_cpu.sram_snapshot(), original_sram);
+        assert!(!restored_cpu.emulation_mode());
+        assert_eq!(restored_cpu.read_a(), 0xA1B2);
+        assert_eq!(restored_cpu.read_x(), 0xC3D4);
+        assert_eq!(restored_cpu.read_y(), 0xE5F6);
+    }
+
+    #[test]
+    fn save_state_bytes_requires_rom_loaded() {
+        let snes = make_snes();
+        let result = snes.save_state_bytes();
+        assert!(matches!(result, Err(msg) if msg.contains("No ROM loaded")));
+    }
+
+    #[test]
+    fn load_state_bytes_rejects_version_mismatch() {
+        let rom = lorom_rom_with_battery_sram(0x05);
+        let mut snes = make_snes();
+        snes.load_rom(&rom, "version_check.sfc").expect("load ROM");
+
+        let result = snes.load_state_bytes(br#"{"version":9999}"#);
+        assert!(matches!(result, Err(msg) if msg.contains("incompatible")));
+    }
+
+    #[test]
+    fn load_state_bytes_rejects_rom_mismatch() {
+        let mut source = make_snes();
+        let source_rom = lorom_rom_with_battery_sram(0x05);
+        source
+            .load_rom(&source_rom, "source.sfc")
+            .expect("load source ROM");
+        let bytes = source
+            .save_state_bytes()
+            .expect("serialize source save state");
+
+        let mut other = make_snes();
+        let mut other_rom = lorom_rom_with_battery_sram(0x05);
+        other_rom[0x0000] = 0xEB;
+        other
+            .load_rom(&other_rom, "other.sfc")
+            .expect("load other ROM");
+
+        let result = other.load_state_bytes(&bytes);
+        assert!(matches!(result, Err(msg) if msg.contains("ROM mismatch")));
+    }
+
+    #[test]
+    fn save_state_from_bytes_allows_missing_newer_fields() {
+        let rom = lorom_rom_with_battery_sram(0x05);
+        let mut snes = make_snes();
+        snes.load_rom(&rom, "compat.sfc").expect("load ROM");
+
+        let save = snes.cpu.as_ref().expect("cpu present").capture_save_state();
+        let mut json = serde_json::to_value(&save).expect("serialize save state");
+        json["bus"]
+            .as_object_mut()
+            .expect("bus object")
+            .get_mut("dma")
+            .expect("dma object")
+            .as_object_mut()
+            .expect("dma map")
+            .remove("hdma_lines_left");
+
+        let bytes = serde_json::to_vec(&json).expect("serialize compat state");
+        let loaded = SnesSaveState::from_bytes(&bytes).expect("compat state should load");
+        let mut restored = make_snes();
+        restored
+            .load_rom(&rom, "compat_restore.sfc")
+            .expect("load ROM");
+        restored
+            .cpu
+            .as_mut()
+            .expect("cpu present")
+            .restore_save_state(&loaded)
+            .expect("restore should succeed");
+
+        assert_eq!(
+            loaded.version,
+            crate::snes::console::save_state::SNES_SAVESTATE_VERSION
+        );
+        assert_eq!(loaded.bus.dma.hdma_lines_left, vec![0; 8]);
     }
 }

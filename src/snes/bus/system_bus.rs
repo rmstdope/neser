@@ -2,6 +2,7 @@ use crate::snes::bus::SnesBus;
 use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::Mapping;
+use crate::snes::console::save_state::{SnesBusState, SnesRomIdentity};
 use std::cell::Cell;
 
 const WRAM_SIZE: usize = 128 * 1024;
@@ -254,6 +255,79 @@ impl SnesSystemBus {
         if len > 0 {
             self.sram[..len].copy_from_slice(&data[..len]);
         }
+    }
+
+    pub(crate) fn rom_identity(&self) -> SnesRomIdentity {
+        SnesRomIdentity {
+            mapping: Some(self.mapping),
+            crc32: crate::platform::crc32::crc32(&[&self.rom]),
+        }
+    }
+
+    pub(crate) fn capture_state(&self) -> SnesBusState {
+        SnesBusState {
+            wram: self.wram.clone(),
+            wmadd: self.wmadd.get(),
+            wrmpya: self.wrmpya,
+            wrdiv: self.wrdiv,
+            rddiv: self.rddiv,
+            rdmpy: self.rdmpy,
+            memsel: self.memsel,
+            hdmaen: self.hdmaen,
+            dma: self.dma.capture_state(),
+            mdr: self.mdr.get(),
+            ticks: self.ticks.get(),
+            sram: self.sram.clone(),
+        }
+    }
+
+    pub(crate) fn restore_state(&mut self, state: &SnesBusState) -> Result<(), String> {
+        if state.wram.len() != self.wram.len() {
+            return Err(format!(
+                "WRAM size mismatch (expected {}, found {})",
+                self.wram.len(),
+                state.wram.len()
+            ));
+        }
+        if state.dma.regs.len() != 0x80 {
+            return Err(format!(
+                "DMA register state size mismatch (expected 128, found {})",
+                state.dma.regs.len()
+            ));
+        }
+        if state.dma.bbus_ports.len() != 0x100 {
+            return Err(format!(
+                "DMA B-bus state size mismatch (expected 256, found {})",
+                state.dma.bbus_ports.len()
+            ));
+        }
+        if state.dma.hdma_do_transfer.len() != 8
+            || state.dma.hdma_repeat_mode.len() != 8
+            || state.dma.hdma_lines_left.len() != 8
+        {
+            return Err("DMA HDMA state size mismatch".to_string());
+        }
+        if state.sram.len() != self.sram.len() {
+            return Err(format!(
+                "SRAM size mismatch (expected {}, found {})",
+                self.sram.len(),
+                state.sram.len()
+            ));
+        }
+
+        self.wram.copy_from_slice(&state.wram);
+        self.wmadd.set(state.wmadd & 0x1_FFFF);
+        self.wrmpya = state.wrmpya;
+        self.wrdiv = state.wrdiv;
+        self.rddiv = state.rddiv;
+        self.rdmpy = state.rdmpy;
+        self.memsel = state.memsel & 0x01;
+        self.hdmaen = state.hdmaen;
+        self.dma.restore_state(&state.dma)?;
+        self.mdr.set(state.mdr);
+        self.ticks.set(state.ticks);
+        self.sram.copy_from_slice(&state.sram);
+        Ok(())
     }
 
     fn read_mmio(&self, addr: u32) -> Option<u8> {

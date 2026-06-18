@@ -1,3 +1,5 @@
+use crate::snes::console::save_state::SnesDmaState;
+
 const DMA_REG_BYTES: usize = 0x80;
 const B_BUS_PORT_BYTES: usize = 0x100;
 
@@ -41,6 +43,48 @@ impl DmaController {
         }
         self.regs[(offset - 0x4300) as usize] = value;
         true
+    }
+
+    pub(crate) fn capture_state(&self) -> SnesDmaState {
+        SnesDmaState {
+            regs: self.regs.to_vec(),
+            bbus_ports: self.bbus_ports.to_vec(),
+            hdma_active_mask: self.hdma_active_mask,
+            hdma_do_transfer: self.hdma_do_transfer.to_vec(),
+            hdma_repeat_mode: self.hdma_repeat_mode.to_vec(),
+            hdma_lines_left: self.hdma_lines_left.to_vec(),
+        }
+    }
+
+    pub(crate) fn restore_state(&mut self, state: &SnesDmaState) -> Result<(), String> {
+        if state.regs.len() != DMA_REG_BYTES {
+            return Err(format!(
+                "DMA register state size mismatch (expected {DMA_REG_BYTES}, found {})",
+                state.regs.len()
+            ));
+        }
+        if state.bbus_ports.len() != B_BUS_PORT_BYTES {
+            return Err(format!(
+                "DMA B-bus state size mismatch (expected {B_BUS_PORT_BYTES}, found {})",
+                state.bbus_ports.len()
+            ));
+        }
+        if state.hdma_do_transfer.len() != 8
+            || state.hdma_repeat_mode.len() != 8
+            || state.hdma_lines_left.len() != 8
+        {
+            return Err("DMA HDMA state size mismatch".to_string());
+        }
+
+        self.regs.copy_from_slice(&state.regs);
+        self.bbus_ports.copy_from_slice(&state.bbus_ports);
+        self.hdma_active_mask = state.hdma_active_mask;
+        self.hdma_do_transfer
+            .copy_from_slice(&state.hdma_do_transfer);
+        self.hdma_repeat_mode
+            .copy_from_slice(&state.hdma_repeat_mode);
+        self.hdma_lines_left.copy_from_slice(&state.hdma_lines_left);
+        Ok(())
     }
 
     pub fn start_dma<B: DmaABus>(
