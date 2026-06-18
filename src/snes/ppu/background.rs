@@ -77,7 +77,7 @@ impl Ppu {
                 (2, false),
             ],
             // Modes 2-5 display BG1 + BG2 (BG3 in modes 2/4 is the offset-per-tile source).
-            2 | 3 | 4 | 5 => &[(0, true), (1, true), (0, false), (1, false)],
+            2..=5 => &[(0, true), (1, true), (0, false), (1, false)],
             // Mode 6 displays BG1 only (BG3 is the offset source).
             6 => &[(0, true), (0, false)],
             _ => &[],
@@ -133,15 +133,14 @@ impl Ppu {
 
     /// Resolve `(BGR555 color, priority)` for BG layer `bg` at screen `(x, y)`, or `None` if the
     /// pixel is transparent (color 0). Supports 8x8/16x16 tiles, all four tilemap sizes, 2/4/8 bpp,
-    /// and direct-color mode for 256-color BGs.
+    /// direct-color mode, and offset-per-tile (modes 2/4/6).
     fn bg_pixel(&self, bg: usize, x: u16, y: u16) -> Option<(u16, bool)> {
         let bpp = self.bg_bpp(bg);
         let size16 = self.bg_tile_size_16[bg];
         let cell_shift = if size16 { 4 } else { 3 };
         let cell_mask = (1u16 << cell_shift) - 1;
 
-        let scrolled_x = x.wrapping_add(self.bg_hofs[bg] & 0x03FF);
-        let scrolled_y = y.wrapping_add(self.bg_vofs[bg] & 0x03FF);
+        let (scrolled_x, scrolled_y) = self.effective_offsets(bg, x, y);
 
         let entry = self.read_bg_map_entry(bg, scrolled_x >> cell_shift, scrolled_y >> cell_shift);
         let char_num = entry & 0x03FF;
@@ -190,6 +189,53 @@ impl Ppu {
             self.bg_palette_base(bg) + palette * colors_per_palette + color
         };
         Some((self.cgram_color(index), priority))
+    }
+
+    /// Compute the effective BG pixel coordinates `(hoffset, voffset)` for layer `bg` at screen
+    /// `(x, y)`, applying offset-per-tile (modes 2/4/6) where BG3 supplies per-column H/V offsets
+    /// to BG1/BG2. Algorithm follows bsnes (non-hires; Mode 5/6 hi-res output is #2766).
+    fn effective_offsets(&self, bg: usize, x: u16, y: u16) -> (u16, u16) {
+        let hscroll = self.bg_hofs[bg] & 0x03FF;
+        let vscroll = self.bg_vofs[bg] & 0x03FF;
+        let mut hoffset = x.wrapping_add(hscroll);
+        let mut voffset = y.wrapping_add(vscroll);
+
+        if matches!(self.bg_mode, 2 | 4 | 6) && bg < 2 {
+            let tile_width = if self.bg_tile_size_16[bg] { 4 } else { 3 };
+            let valid_bit = 0x2000u16 << bg; // BG1 -> bit13, BG2 -> bit14
+            let offset_x = x.wrapping_add(hscroll & 7);
+            // The first tile column is exempt from offset-per-tile.
+            if offset_x >= (1u16 << tile_width) {
+                let lookup_x =
+                    (offset_x - (1u16 << tile_width)).wrapping_add(self.bg_hofs[2] & 0x03F8);
+                let bg3_vscroll = self.bg_vofs[2] & 0x03FF;
+                let hlookup = self.bg3_offset_entry(lookup_x, bg3_vscroll);
+                if self.bg_mode == 4 {
+                    if hlookup & valid_bit != 0 {
+                        if hlookup & 0x8000 == 0 {
+                            hoffset = offset_x.wrapping_add(hlookup & !7);
+                        } else {
+                            voffset = y.wrapping_add(hlookup);
+                        }
+                    }
+                } else {
+                    let vlookup = self.bg3_offset_entry(lookup_x, bg3_vscroll.wrapping_add(8));
+                    if hlookup & valid_bit != 0 {
+                        hoffset = offset_x.wrapping_add(hlookup & !7);
+                    }
+                    if vlookup & valid_bit != 0 {
+                        voffset = y.wrapping_add(vlookup);
+                    }
+                }
+            }
+        }
+        (hoffset, voffset)
+    }
+
+    /// Fetch a BG3 offset-per-tile map entry at BG-pixel coordinates `(h, v)`.
+    fn bg3_offset_entry(&self, h: u16, v: u16) -> u16 {
+        let tile_shift = if self.bg_tile_size_16[2] { 4 } else { 3 };
+        self.read_bg_map_entry(2, h >> tile_shift, v >> tile_shift)
     }
 
     /// Read a 16-bit BG map entry, resolving the tilemap size (BGnSC bits 0-1) and the SC0..SC3
@@ -899,5 +945,86 @@ mod tests {
         // Red5 = (color[2:0]<<2) | (palette[0]<<1) = (1<<2) | (1<<1) = 6 -> R8 = 49.
         let rgb = ppu.screen_snapshot_rgb();
         assert_eq!(pixel(&rgb, 0, 0), [49, 0, 0], "palette bit0 adds to red");
+    }
+
+    #[test]
+    fn offset_per_tile_mode2_h_offset_redirects_bg1() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000); // backdrop black
+        set_cgram(&mut ppu, 1, 0x7FFF); // BG1 4bpp color 1 = white
+        set_bg_map_base(&mut ppu, 0, 0x000); // BG1 map
+        set_vram_word(&mut ppu, 4, 1); // BG1 (col 4, row 0) -> char 1; other columns char 0 (transparent)
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        // BG3 offset map; entry (0,0) = valid-BG1 (0x2000) + H offset 0x18 (=24).
+        set_bg_map_base(&mut ppu, 2, 0x400);
+        set_vram_word(&mut ppu, 0x400, 0x2018);
+
+        ppu.write_register(0x2105, 0x02); // mode 2
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        // Tile column 1 (x=8..15) is redirected to BG1 column 4 -> white.
+        assert_eq!(
+            pixel(&rgb, 8, 0),
+            [255, 255, 255],
+            "H offset redirects BG1 to column 4"
+        );
+        // Column 0 (x=0..7) is exempt from offset -> samples column 0 (transparent) -> backdrop.
+        assert_eq!(pixel(&rgb, 0, 0), [0, 0, 0], "first column is exempt");
+    }
+
+    #[test]
+    fn offset_per_tile_mode2_v_offset_redirects_bg1() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_vram_word(&mut ppu, 4 * 32 + 1, 1); // BG1 (col 1, row 4) -> char 1
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        // BG3: 1st (H) fetch (0,0) = 0 (no H offset); 2nd (V) fetch (0,1) = valid-BG1 + offset 0x18.
+        set_bg_map_base(&mut ppu, 2, 0x400);
+        set_vram_word(&mut ppu, 0x400, 0x0000); // H lookup: no valid bit
+        set_vram_word(&mut ppu, 0x400 + 32, 0x2018); // V lookup (row 1): valid-BG1 + 0x18
+
+        ppu.write_register(0x2105, 0x02); // mode 2
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        // At (x=8,y=8): no H offset (col 1), V offset redirects to row 4 -> BG1 (col1,row4) white.
+        assert_eq!(
+            pixel(&rgb, 8, 8),
+            [255, 255, 255],
+            "V offset redirects BG1 to row 4"
+        );
+    }
+
+    #[test]
+    fn offset_per_tile_mode4_bit15_selects_v_offset() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 5, 0x7FFF); // BG1 8bpp color 5 = white
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_vram_word(&mut ppu, 4 * 32 + 1, 1); // BG1 (col 1, row 4) -> char 1
+        fill_8bpp_tile(&mut ppu, 0, 1, 5);
+        // Mode 4: single BG3 fetch. bit15 set -> apply to V. valid-BG1 (0x2000) + V offset 0x18.
+        set_bg_map_base(&mut ppu, 2, 0x400);
+        set_vram_word(&mut ppu, 0x400, 0x2000 | 0x8000 | 0x18);
+
+        ppu.write_register(0x2105, 0x04); // mode 4
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        // At (x=8,y=8): bit15 -> V offset to row 4; H unchanged (col 1) -> BG1 (col1,row4) white.
+        assert_eq!(
+            pixel(&rgb, 8, 8),
+            [255, 255, 255],
+            "mode4 bit15 applies offset to V"
+        );
     }
 }
