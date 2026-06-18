@@ -213,18 +213,20 @@ impl Ppu {
                 if self.bg_mode == 4 {
                     if hlookup & valid_bit != 0 {
                         if hlookup & 0x8000 == 0 {
-                            hoffset = offset_x.wrapping_add(hlookup & !7);
+                            // H offset: 10-bit field with the low 3 bits ignored (bits 3-9).
+                            hoffset = offset_x.wrapping_add(hlookup & 0x03F8);
                         } else {
-                            voffset = y.wrapping_add(hlookup);
+                            // V offset: full 10-bit field.
+                            voffset = y.wrapping_add(hlookup & 0x03FF);
                         }
                     }
                 } else {
                     let vlookup = self.bg3_offset_entry(lookup_x, bg3_vscroll.wrapping_add(8));
                     if hlookup & valid_bit != 0 {
-                        hoffset = offset_x.wrapping_add(hlookup & !7);
+                        hoffset = offset_x.wrapping_add(hlookup & 0x03F8);
                     }
                     if vlookup & valid_bit != 0 {
-                        voffset = y.wrapping_add(vlookup);
+                        voffset = y.wrapping_add(vlookup & 0x03FF);
                     }
                 }
             }
