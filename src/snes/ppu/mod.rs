@@ -1,11 +1,14 @@
 //! SNES PPU (Picture Processing Unit) emulation.
 //!
 //! The PPU is owned by [`crate::snes::bus::SnesSystemBus`], which advances it one master clock
-//! per `tick()` and routes the `$2100-$213F` register file plus `$4200`/`$4210`/`$4212` to it.
+//! per `tick()` and routes the `$2100-$213F` register file plus the PPU-owned CPU I/O ports
+//! (`$4200` NMITIMEN, `$4201` WRIO, `$4210` RDNMI, `$4211` TIMEUP, `$4212` HVBJOY) to it.
 //!
 //! This module is organized into focused submodules:
 //! - [`registers`] — register read/write dispatch and VRAM/CGRAM/OAM access.
-//! - [`timing`] — dot/scanline counters and frame progression.
+//! - [`timing`] — dot/scanline counters, VBlank/NMI, and H/V counter latching.
+//! - [`framebuffer`] — backdrop rendering and BGR555 -> RGB888 output.
+//! - [`save_state`] — PPU save-state capture/restore.
 
 mod framebuffer;
 mod registers;

@@ -1,8 +1,9 @@
 //! PPU register read/write dispatch and VRAM/CGRAM/OAM access.
 //!
 //! The PPU register file is addressed by its 16-bit offset (`$2100-$213F`), plus the CPU I/O
-//! ports the PPU owns (`$4200` NMITIMEN, `$4210` RDNMI, `$4211` TIMEUP, `$4212` HVBJOY). The bus
-//! passes the bare offset to [`Ppu::write_register`] / [`Ppu::read_register`].
+//! ports the PPU owns (`$4200` NMITIMEN, `$4201` WRIO, `$4210` RDNMI, `$4211` TIMEUP,
+//! `$4212` HVBJOY). The bus passes the bare offset to [`Ppu::write_register`] /
+//! [`Ppu::read_register`].
 
 use super::{
     CGRAM_SIZE, CPU_VERSION, HBLANK_START_DOT, PPU1_VERSION, PPU2_VERSION, Ppu, VRAM_SIZE,

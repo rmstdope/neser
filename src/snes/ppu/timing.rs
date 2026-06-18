@@ -4,8 +4,8 @@
 //! advances one dot every [`MASTER_CYCLES_PER_DOT`] cycles, wrapping the dot counter at
 //! [`DOTS_PER_SCANLINE`] and the scanline counter at [`NTSC_SCANLINES_PER_FRAME`].
 //!
-//! Note: long/short-dot quirks (dot 323/327, 1364-vs-1360 scanlines) are not yet modeled and are
-//! a documented refinement TODO.
+//! Note: long/short-dot quirks (the extra/short dot at 323/327, and the 1364-vs-1360 master
+//! clocks on certain scanlines) are not yet modeled and are a documented refinement TODO.
 
 use super::{
     DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu, VBLANK_START_LINE,
