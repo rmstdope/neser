@@ -211,6 +211,28 @@ pub struct SnesPpuState {
     pub tm: u8,
     #[serde(default)]
     pub cgwsel: u8,
+    #[serde(default)]
+    pub setini: u8,
+    #[serde(default)]
+    pub m7a: u16,
+    #[serde(default)]
+    pub m7b: u16,
+    #[serde(default)]
+    pub m7c: u16,
+    #[serde(default)]
+    pub m7d: u16,
+    #[serde(default)]
+    pub m7x: u16,
+    #[serde(default)]
+    pub m7y: u16,
+    #[serde(default)]
+    pub m7hofs: u16,
+    #[serde(default)]
+    pub m7vofs: u16,
+    #[serde(default)]
+    pub m7sel: u8,
+    #[serde(default)]
+    pub m7_old: u8,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]

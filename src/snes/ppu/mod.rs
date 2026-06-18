@@ -12,6 +12,7 @@
 
 mod background;
 mod framebuffer;
+mod mode7;
 mod registers;
 mod save_state;
 mod timing;
@@ -122,6 +123,23 @@ pub struct Ppu {
     tm: u8,
     /// CGWSEL ($2130): only bit 0 (direct-color enable) is used here; rest is #2764.
     cgwsel: u8,
+    /// SETINI ($2133): only bit 6 (EXTBG enable for Mode 7) is used here.
+    setini: u8,
+    /// Mode 7 matrix parameters A-D ($211B-$211E), signed 1.7.8 fixed point (raw 16-bit).
+    m7a: u16,
+    m7b: u16,
+    m7c: u16,
+    m7d: u16,
+    /// Mode 7 center coordinates X/Y ($211F/$2120), signed 13-bit (raw, sign-extended at use).
+    m7x: u16,
+    m7y: u16,
+    /// Mode 7 scroll offsets ($210D/$210E), signed 13-bit (shared with BG1HOFS/VOFS addresses).
+    m7hofs: u16,
+    m7vofs: u16,
+    /// M7SEL ($211A): screen-over (bits 6-7), V-flip (bit 1), H-flip (bit 0).
+    m7sel: u8,
+    /// Shared write-twice latch (M7_old) for the $210D/$210E and $211B-$2120 registers.
+    m7_old: u8,
 }
 
 impl Default for Ppu {
@@ -173,6 +191,17 @@ impl Ppu {
             bg_old: 0,
             tm: 0,
             cgwsel: 0,
+            setini: 0,
+            m7a: 0,
+            m7b: 0,
+            m7c: 0,
+            m7d: 0,
+            m7x: 0,
+            m7y: 0,
+            m7hofs: 0,
+            m7vofs: 0,
+            m7sel: 0,
+            m7_old: 0,
         }
     }
 
