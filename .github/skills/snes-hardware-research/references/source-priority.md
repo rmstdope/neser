@@ -6,6 +6,7 @@ Use this order when researching SNES / Super Famicom hardware details:
    - Primary source: `https://problemkaputt.de/fullsnes.htm`
    - Start here for the memory map, CPU/PPU/APU registers, DMA/HDMA, timing notes, cartridge mapping, and enhancement-chip documentation.
    - Most comprehensive single-source SNES reference; treat as the primary authority.
+   - **Anchor/pagination tip:** fetching a section anchor (e.g. `#snespictureprocessingunitppu`, `#snespputimersandstatus`) usually returns the top-level I/O map first, not the detailed register text. To reach the deep descriptions (register bit layouts, formulas, access timing), fetch the PPU/APU page with increasing `start_index` values — for the PPU section the detailed text lives roughly around offsets 16000, 28000, 40000, 56000, 72000, 82000. Page forward until you see the specific register name you need.
 
 2. **Direct retrieval with `curl`**
    - If the normal page fetch fails, retrieve fullsnes (or a mirror) directly with `curl -Lsf`.
