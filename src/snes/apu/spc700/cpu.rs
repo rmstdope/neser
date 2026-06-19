@@ -158,6 +158,80 @@ impl Spc700 {
         }
     }
 
+    /// Add immediate to A with carry, updating N/Z/V/C flags.
+    fn add_to_a(&mut self, imm: u8) {
+        let (result, carry) = self.a.overflowing_add(imm);
+        let overflow = (self.a ^ result) & (imm ^ result) & 0x80 != 0;
+        self.a = result;
+        self.set_flag(FLAG_CARRY, carry);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.update_nz8(self.a);
+    }
+
+    /// Add immediate to A with carry bit included, updating N/Z/V/C flags.
+    fn add_with_carry_to_a(&mut self, imm: u8) {
+        let carry_bit = if self.flag(FLAG_CARRY) { 1 } else { 0 };
+        let (temp, carry1) = self.a.overflowing_add(imm);
+        let (result, carry2) = temp.overflowing_add(carry_bit);
+        let overflow = (self.a ^ result) & (imm ^ result) & 0x80 != 0;
+        self.a = result;
+        self.set_flag(FLAG_CARRY, carry1 || carry2);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.update_nz8(self.a);
+    }
+
+    /// Subtract immediate from A, updating N/Z/V/C flags.
+    fn subtract_from_a(&mut self, imm: u8) {
+        let (result, borrow) = self.a.overflowing_sub(imm);
+        let overflow = (self.a ^ result) & (!imm ^ result) & 0x80 != 0;
+        self.a = result;
+        self.set_flag(FLAG_CARRY, !borrow);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.update_nz8(self.a);
+    }
+
+    /// Subtract immediate from A with borrow, updating N/Z/V/C flags.
+    fn subtract_with_borrow_from_a(&mut self, imm: u8) {
+        let carry_bit = if self.flag(FLAG_CARRY) { 0 } else { 1 };
+        let (temp, borrow1) = self.a.overflowing_sub(imm);
+        let (result, borrow2) = temp.overflowing_sub(carry_bit);
+        let overflow = (self.a ^ result) & (!imm ^ result) & 0x80 != 0;
+        self.a = result;
+        self.set_flag(FLAG_CARRY, !(borrow1 || borrow2));
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.update_nz8(self.a);
+    }
+
+    /// Compare A with immediate (subtract without storing), updating N/Z/V/C flags.
+    fn compare_a(&mut self, imm: u8) {
+        let (result, borrow) = self.a.overflowing_sub(imm);
+        let overflow = (self.a ^ result) & (!imm ^ result) & 0x80 != 0;
+        self.set_flag(FLAG_CARRY, !borrow);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.set_flag(FLAG_ZERO, result == 0);
+        self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
+    }
+
+    /// Compare X with immediate, updating N/Z/V/C flags.
+    fn compare_x(&mut self, imm: u8) {
+        let (result, borrow) = self.x.overflowing_sub(imm);
+        let overflow = (self.x ^ result) & (!imm ^ result) & 0x80 != 0;
+        self.set_flag(FLAG_CARRY, !borrow);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.set_flag(FLAG_ZERO, result == 0);
+        self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
+    }
+
+    /// Compare Y with immediate, updating N/Z/V/C flags.
+    fn compare_y(&mut self, imm: u8) {
+        let (result, borrow) = self.y.overflowing_sub(imm);
+        let overflow = (self.y ^ result) & (!imm ^ result) & 0x80 != 0;
+        self.set_flag(FLAG_CARRY, !borrow);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.set_flag(FLAG_ZERO, result == 0);
+        self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
+    }
+
     /// Read `PC` and advance it, consuming one cycle.
     fn fetch(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) -> u8 {
         let byte = self.read_cycle(bus, self.pc, cycles);
@@ -532,6 +606,41 @@ impl Spc700 {
                 let imm = self.fetch(bus, &mut cycles);
                 self.a ^= imm;
                 self.update_nz8(self.a);
+            }
+            // ADD A,#imm — add immediate to A, update N/Z/V/C.
+            0x88 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.add_to_a(imm);
+            }
+            // ADC A,#imm — add immediate to A with carry, update N/Z/V/C.
+            0x84 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.add_with_carry_to_a(imm);
+            }
+            // SUB A,#imm — subtract immediate from A, update N/Z/V/C.
+            0xA8 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.subtract_from_a(imm);
+            }
+            // SBC A,#imm — subtract immediate from A with borrow, update N/Z/V/C.
+            0xA4 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.subtract_with_borrow_from_a(imm);
+            }
+            // CMP A,#imm — compare A with immediate, update N/Z/V/C.
+            0xC8 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.compare_a(imm);
+            }
+            // CMP X,#imm — compare X with immediate, update N/Z/V/C.
+            0xC0 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.compare_x(imm);
+            }
+            // CMP Y,#imm — compare Y with immediate, update N/Z/V/C.
+            0xAD => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.compare_y(imm);
             }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
@@ -1734,5 +1843,160 @@ mod tests {
         assert_eq!(cpu.a(), 0x00);
         assert!(cpu.flag(FLAG_ZERO));
         assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn add_a_imm_simple_no_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x88, 0x10]); // ADD A,#$10
+        cpu.load_state_for_processor_test(0x20, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0202);
+        assert_eq!(cpu.a(), 0x30);
+        assert!(!cpu.flag(FLAG_CARRY));
+        assert!(!cpu.flag(FLAG_OVERFLOW));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn add_a_imm_with_carry_out() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x88, 0x01]); // ADD A,#$01
+        cpu.load_state_for_processor_test(0xFF, 0, 0, 0xEF, 0x0200, 0);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x00);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(!cpu.flag(FLAG_OVERFLOW));
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn add_a_imm_with_overflow() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x88, 0x02]); // ADD A,#$02
+        cpu.load_state_for_processor_test(0x7F, 0, 0, 0xEF, 0x0200, 0);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x81);
+        assert!(!cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_OVERFLOW));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn adc_a_imm_with_carry_flag_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x84, 0x10]); // ADC A,#$10
+        cpu.load_state_for_processor_test(0x20, 0, 0, 0xEF, 0x0200, FLAG_CARRY);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x31);
+        assert!(!cpu.flag(FLAG_CARRY));
+        assert!(!cpu.flag(FLAG_OVERFLOW));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn sub_a_imm_simple_no_borrow() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xA8, 0x10]); // SUB A,#$10
+        cpu.load_state_for_processor_test(0x30, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0202);
+        assert_eq!(cpu.a(), 0x20);
+        assert!(cpu.flag(FLAG_CARRY)); // Carry is set on no borrow
+        assert!(!cpu.flag(FLAG_OVERFLOW));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn sub_a_imm_with_borrow() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xA8, 0x10]); // SUB A,#$10
+        cpu.load_state_for_processor_test(0x05, 0, 0, 0xEF, 0x0200, 0);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0xF5);
+        assert!(!cpu.flag(FLAG_CARRY)); // Carry is clear on borrow
+        assert!(!cpu.flag(FLAG_OVERFLOW));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn cmp_a_imm_equal_sets_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xC8, 0x55]); // CMP A,#$55
+        cpu.load_state_for_processor_test(0x55, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0202);
+        assert_eq!(cpu.a(), 0x55); // A unchanged
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY)); // No borrow
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn cmp_a_imm_less_sets_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xC8, 0x50]); // CMP A,#$50
+        cpu.load_state_for_processor_test(0x40, 0, 0, 0xEF, 0x0200, 0);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x40); // A unchanged
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_CARRY)); // Borrow occurred
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn cmp_x_imm_comparison() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xC0, 0x30]); // CMP X,#$30
+        cpu.load_state_for_processor_test(0x00, 0x30, 0x00, 0xEF, 0x0200, 0);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.x(), 0x30); // X unchanged
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn cmp_y_imm_comparison() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xAD, 0x40]); // CMP Y,#$40
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x40, 0xEF, 0x0200, 0);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.y(), 0x40); // Y unchanged
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
     }
 }

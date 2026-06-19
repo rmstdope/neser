@@ -49,6 +49,13 @@ Tracked subset files:
 - `v1/24.json`
 - `v1/04.json`
 - `v1/44.json`
+- `v1/88.json`
+- `v1/84.json`
+- `v1/a8.json`
+- `v1/a4.json`
+- `v1/c8.json`
+- `v1/c0.json`
+- `v1/ad.json`
 
 Optional full corpus location (local, ignored by git):
 
