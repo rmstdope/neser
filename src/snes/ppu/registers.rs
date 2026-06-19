@@ -77,7 +77,8 @@ impl Ppu {
             // TMW/TSW: window area layer disables.
             0x212E => self.tmw = value,
             0x212F => self.tsw = value,
-            // CGWSEL: Color Math Control A. Only bit 0 (direct-color enable) is used here.
+            // CGWSEL: Color Math Control A. Bit 0 = direct-color mode; bits 1 = sub-screen
+            // BG/OBJ enable; bits 5-4 = color math enable region; bits 7-6 = force-main-black.
             0x2130 => self.cgwsel = value,
             // CGADSUB: color math control B.
             0x2131 => self.cgadsub = value,

@@ -135,7 +135,6 @@ impl Ppu {
                         priority: 3,
                         palette,
                     },
-                    layer_rank: 0,
                 };
             }
             if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, 2) {
@@ -145,7 +144,6 @@ impl Ppu {
                         priority: 2,
                         palette,
                     },
-                    layer_rank: 1,
                 };
             }
         }
@@ -153,7 +151,6 @@ impl Ppu {
             return ScreenPixel {
                 color,
                 source: PixelSource::Bg(1),
-                layer_rank: 2,
             };
         }
         if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y)
@@ -165,14 +162,12 @@ impl Ppu {
                     priority: 1,
                     palette,
                 },
-                layer_rank: 3,
             };
         }
         if let Some(color) = bg1_color {
             return ScreenPixel {
                 color,
                 source: PixelSource::Bg(0),
-                layer_rank: 4,
             };
         }
         if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y)
@@ -184,20 +179,17 @@ impl Ppu {
                     priority: 0,
                     palette,
                 },
-                layer_rank: 5,
             };
         }
         if let Some((color, false)) = bg2_color {
             return ScreenPixel {
                 color,
                 source: PixelSource::Bg(1),
-                layer_rank: 6,
             };
         }
         ScreenPixel {
             color: self.backdrop_color_for(target),
             source: PixelSource::Backdrop,
-            layer_rank: u8::MAX,
         }
     }
 }

@@ -38,7 +38,6 @@ pub(crate) enum WindowLayer {
 pub(crate) struct ScreenPixel {
     pub color: u16,
     pub source: PixelSource,
-    pub layer_rank: u8,
 }
 
 impl Ppu {
@@ -76,7 +75,7 @@ impl Ppu {
     }
 
     fn resolve_screen_pixel(&self, target: ScreenTarget, x: u16, y: u16) -> ScreenPixel {
-        for (rank, &slot) in self.layer_order().iter().enumerate() {
+        for &slot in self.layer_order().iter() {
             match slot {
                 Slot::Bg(bg, priority) => {
                     if self.screen_enable_mask(target) & (1 << bg) == 0 {
@@ -94,7 +93,6 @@ impl Ppu {
                         return ScreenPixel {
                             color,
                             source: PixelSource::Bg(bg),
-                            layer_rank: rank as u8,
                         };
                     }
                 }
@@ -109,7 +107,6 @@ impl Ppu {
                         return ScreenPixel {
                             color,
                             source: PixelSource::Obj { priority, palette },
-                            layer_rank: rank as u8,
                         };
                     }
                 }
@@ -118,7 +115,6 @@ impl Ppu {
         ScreenPixel {
             color: self.backdrop_color_for(target),
             source: PixelSource::Backdrop,
-            layer_rank: u8::MAX,
         }
     }
 
@@ -170,17 +166,15 @@ impl Ppu {
         if !self.color_math_enabled_at(x, y) {
             return main_color;
         }
-        if sub.layer_rank > main.layer_rank && !matches!(sub.source, PixelSource::Backdrop) {
-            return main_color;
-        }
         self.apply_color_math(main_color, sub.color)
     }
 
     pub(super) fn color_math_enabled_at(&self, x: u16, y: u16) -> bool {
         match (self.cgwsel >> 4) & 0x03 {
             0 => true,
-            1 => self.window_area(WindowLayer::Math, x, y),
-            2 => !self.window_area(WindowLayer::Math, x, y),
+            // 01 = outside color window only, 10 = inside color window only.
+            1 => !self.window_area(WindowLayer::Math, x, y),
+            2 => self.window_area(WindowLayer::Math, x, y),
             3 => false,
             _ => unreachable!(),
         }
@@ -238,24 +232,31 @@ impl Ppu {
             _ => unreachable!(),
         };
         let (one_shift, two_shift, logic_shift) = if high_bits { (4, 6, 2) } else { (0, 2, 0) };
-        let one = self.window_select(sel, one_shift, x);
-        let two = self.window_select(sel, two_shift, x);
-        match ((logic >> logic_shift) & 0x03, one, two) {
-            (_, false, false) => false,
-            (_, true, false) => one,
-            (_, false, true) => two,
-            (0, true, true) => one || two,
-            (1, true, true) => one && two,
-            (2, true, true) => one ^ two,
-            (3, true, true) => !(one ^ two),
-            _ => unreachable!(),
+        let one_enabled = (sel >> one_shift) & 0x03 != 0;
+        let two_enabled = (sel >> two_shift) & 0x03 != 0;
+        match (one_enabled, two_enabled) {
+            (false, false) => false,
+            (true, false) => self.window_select(sel, one_shift, x),
+            (false, true) => self.window_select(sel, two_shift, x),
+            (true, true) => {
+                let one = self.window_select(sel, one_shift, x);
+                let two = self.window_select(sel, two_shift, x);
+                match (logic >> logic_shift) & 0x03 {
+                    0 => one || two,
+                    1 => one && two,
+                    2 => one ^ two,
+                    3 => !(one ^ two),
+                    _ => unreachable!(),
+                }
+            }
         }
     }
 
     pub(super) fn window_select(&self, sel: u8, shift: u8, x: u8) -> bool {
         let mode = (sel >> shift) & 0x03;
-        let enable = mode & 0x02 != 0;
-        let invert = mode & 0x01 != 0;
+        // WxxSEL 2-bit encoding: 0=disabled, 1=inside (not inverted), 2=outside (inverted), 3=outside.
+        let enable = mode != 0;
+        let invert = mode & 0x02 != 0;
         if !enable {
             return false;
         }
@@ -1333,7 +1334,7 @@ mod tests {
 
         ppu.write_register(0x2105, 0x00);
         ppu.write_register(0x212C, 0x01); // main screen: BG1
-        ppu.write_register(0x2123, 0x02); // BG1 window1 enabled, not inverted
+        ppu.write_register(0x2123, 0x01); // BG1 window1 enabled, inside (not inverted)
         ppu.write_register(0x2126, 0x00); // WH0 = 0
         ppu.write_register(0x2127, 0x7F); // WH1 = 127
         ppu.write_register(0x212E, 0x01); // disable BG1 inside the window
@@ -1361,7 +1362,7 @@ mod tests {
 
         ppu.write_register(0x2105, 0x00);
         ppu.write_register(0x212C, 0x02); // main screen: BG2
-        ppu.write_register(0x2123, 0x20); // BG2 window1 enabled, not inverted
+        ppu.write_register(0x2123, 0x10); // BG2 window1 enabled, inside (not inverted)
         ppu.write_register(0x2126, 0x00);
         ppu.write_register(0x2127, 0x7F);
         ppu.write_register(0x212E, 0x02); // disable BG2 inside the window
@@ -1404,6 +1405,97 @@ mod tests {
             pixel(&rgb, 0, 0),
             [123, 123, 0],
             "sub-screen fixed color should blend with the main screen"
+        );
+    }
+
+    #[test]
+    fn two_window_or_combination_masks_pixels_in_either_window() {
+        // When both windows are enabled for a layer (WBGLOG mode=OR) any pixel inside
+        // either W1 or W2 is masked; pixels outside both are visible.
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        // Keep tile data at char_base=0 (words 8-15 for tile 1).
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        // Place the BG1 map at 0x400 so it doesn't overlap with tile pixel data.
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        for col in 0..32usize {
+            set_vram_word(&mut ppu, 0x400 + col, 1);
+        }
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x01); // main screen: BG1
+        // W1=[0,40], W2=[60,100]; both enabled as "inside" for BG1 window1 and window2.
+        ppu.write_register(0x2123, 0x05); // BG1 window1=01 (inside), window2=01 (inside) at bits 3-2
+        ppu.write_register(0x2126, 0x00); // WH0=0
+        ppu.write_register(0x2127, 0x28); // WH1=40
+        ppu.write_register(0x2128, 0x3C); // WH2=60
+        ppu.write_register(0x2129, 0x64); // WH3=100
+        ppu.write_register(0x212A, 0x00); // WBGLOG: BG1 uses OR (bits 1-0 = 00)
+        ppu.write_register(0x212E, 0x01); // TMW: mask BG1 inside the window area
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 10, 0),
+            [0, 0, 0],
+            "x=10 is inside W1, should be masked"
+        );
+        assert_eq!(
+            pixel(&rgb, 70, 0),
+            [0, 0, 0],
+            "x=70 is inside W2, should be masked"
+        );
+        assert_eq!(
+            pixel(&rgb, 50, 0),
+            [255, 255, 255],
+            "x=50 is outside both W1 and W2, should be visible"
+        );
+    }
+
+    #[test]
+    fn two_window_and_combination_masks_only_pixels_in_both_windows() {
+        // When both windows are enabled for a layer (WBGLOG mode=AND) only pixels inside
+        // both W1 and W2 are masked; pixels inside only one window remain visible.
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        // Place the BG1 map at 0x400 so it doesn't overlap with tile pixel data.
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        for col in 0..32usize {
+            set_vram_word(&mut ppu, 0x400 + col, 1);
+        }
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x01); // main screen: BG1
+        // W1=[0,80], W2=[40,120]; overlap [40,80]. Only overlap (AND) should be masked.
+        ppu.write_register(0x2123, 0x05); // BG1 window1=01 (inside), window2=01 (inside)
+        ppu.write_register(0x2126, 0x00); // WH0=0
+        ppu.write_register(0x2127, 0x50); // WH1=80
+        ppu.write_register(0x2128, 0x28); // WH2=40
+        ppu.write_register(0x2129, 0x78); // WH3=120
+        ppu.write_register(0x212A, 0x01); // WBGLOG: BG1 uses AND (bits 1-0 = 01)
+        ppu.write_register(0x212E, 0x01); // TMW: mask BG1 inside the window area
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 20, 0),
+            [255, 255, 255],
+            "x=20 inside W1 only, not masked with AND"
+        );
+        assert_eq!(
+            pixel(&rgb, 100, 0),
+            [255, 255, 255],
+            "x=100 inside W2 only, not masked with AND"
+        );
+        assert_eq!(
+            pixel(&rgb, 60, 0),
+            [0, 0, 0],
+            "x=60 inside both W1 and W2, masked with AND"
         );
     }
 }

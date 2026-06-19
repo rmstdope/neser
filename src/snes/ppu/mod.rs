@@ -131,7 +131,8 @@ pub struct Ppu {
     tmw: u8,
     /// TSW ($212F): sub-screen window disable mask.
     tsw: u8,
-    /// CGWSEL ($2130): only bit 0 (direct-color enable) is used here; rest is #2764.
+    /// CGWSEL ($2130): color math control A (direct-color bit 0, sub BG/OBJ enable bit 1,
+    /// color math enable region bits 5-4, force-main-black bits 7-6).
     cgwsel: u8,
     /// CGADSUB ($2131): color math control bits.
     cgadsub: u8,
