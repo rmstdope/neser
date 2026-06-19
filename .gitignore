@@ -30,6 +30,7 @@ roms/games
 roms/gb/games
 roms/nes/games
 roms/snes/automated_tests/processor_tests/65816/full/
+roms/snes/automated_tests/processor_tests/spc700/full/
 
 .github/ISSUE_TEMPLATE
 *.log
