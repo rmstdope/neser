@@ -323,6 +323,31 @@ impl Spc700 {
         self.update_nz8((result >> 8) as u8);
     }
 
+    /// MUL YA — multiply Y * A, store result in YA (9 cycles).
+    /// YA = Y * A; updates N/Z flags based on high byte of result.
+    fn mul_ya(&mut self) {
+        let product = u16::from(self.y) * u16::from(self.a);
+        self.y = (product >> 8) as u8;
+        self.a = product as u8;
+        self.update_nz8(self.y); // Set flags based on high byte
+    }
+
+    /// DIV YA,X — divide YA / X, store quotient in A and remainder in Y (12 cycles).
+    /// A = YA / X; Y = YA mod X. Sets overflow flag if X == 0 (division by zero).
+    fn div_ya(&mut self) {
+        let ya = (u16::from(self.y) << 8) | u16::from(self.a);
+        if self.x == 0 {
+            self.set_flag(FLAG_OVERFLOW, true);
+        } else {
+            let quotient = (ya / u16::from(self.x)) as u8;
+            let remainder = (ya % u16::from(self.x)) as u8;
+            self.a = quotient;
+            self.y = remainder;
+            self.set_flag(FLAG_OVERFLOW, false);
+        }
+        self.update_nz8(self.a); // Set flags based on quotient
+    }
+
     /// Execute a single instruction, returning the number of cycles consumed.
     ///
     /// Only `NOP` is implemented in this first slice; further opcodes are added
@@ -878,6 +903,22 @@ impl Spc700 {
                 let imm = u16::from(lo) | (u16::from(hi) << 8);
                 self.compare_ya(imm);
                 self.idle_cycle(bus, &mut cycles);
+            }
+            // MUL YA — multiply Y * A, store result in YA (9 cycles).
+            0xCF => {
+                self.mul_ya();
+                // MUL takes 9 cycles: 1 fetch + 8 operation/idle
+                for _ in 0..8 {
+                    self.idle_cycle(bus, &mut cycles);
+                }
+            }
+            // DIV YA,X — divide YA / X, quotient in A, remainder in Y (12 cycles).
+            0x9E => {
+                self.div_ya();
+                // DIV takes 12 cycles: 1 fetch + 11 operation/idle
+                for _ in 0..11 {
+                    self.idle_cycle(bus, &mut cycles);
+                }
             }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
@@ -2714,5 +2755,83 @@ mod tests {
 
         assert_eq!(cycles, 4);
         assert!(cpu.flag(FLAG_CARRY)); // Borrow flag (carry) set for unsigned less-than
+    }
+
+    #[test]
+    fn mul_ya_simple_multiplication() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xCF]); // MUL YA
+        // Y = 0x04, A = 0x05, result = 0x0014 (4 * 5 = 20)
+        cpu.load_state_for_processor_test(0x05, 0x00, 0x04, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 9);
+        assert_eq!(cpu.a(), 0x14); // Low byte of product
+        assert_eq!(cpu.y(), 0x00); // High byte of product
+    }
+
+    #[test]
+    fn mul_ya_larger_product() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xCF]); // MUL YA
+        // Y = 0x12, A = 0x34, result = 0x03A8 (18 * 52 = 936)
+        cpu.load_state_for_processor_test(0x34, 0x00, 0x12, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 9);
+        assert_eq!(cpu.a(), 0xA8); // Low byte of product
+        assert_eq!(cpu.y(), 0x03); // High byte of product
+        assert!(!cpu.flag(FLAG_NEGATIVE)); // High byte (0x03) is positive
+        assert!(!cpu.flag(FLAG_ZERO)); // Result is not zero
+    }
+
+    #[test]
+    fn div_ya_simple_division() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x9E]); // DIV YA,X
+        // YA = 0x0014 (20), X = 4, quotient = 5, remainder = 0
+        cpu.load_state_for_processor_test(0x14, 0x04, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 12);
+        assert_eq!(cpu.a(), 0x05); // Quotient
+        assert_eq!(cpu.y(), 0x00); // Remainder
+        assert!(!cpu.flag(FLAG_OVERFLOW)); // No overflow (X != 0)
+    }
+
+    #[test]
+    fn div_ya_with_remainder() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x9E]); // DIV YA,X
+        // YA = 0x0017 (23), X = 5, quotient = 4, remainder = 3
+        cpu.load_state_for_processor_test(0x17, 0x05, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 12);
+        assert_eq!(cpu.a(), 0x04); // Quotient
+        assert_eq!(cpu.y(), 0x03); // Remainder
+        assert!(!cpu.flag(FLAG_OVERFLOW)); // No overflow (X != 0)
+    }
+
+    #[test]
+    fn div_ya_division_by_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x9E]); // DIV YA,X
+        // YA = 0x0100, X = 0 (division by zero)
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x01, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 12);
+        assert!(cpu.flag(FLAG_OVERFLOW)); // Overflow flag set (division by zero error)
     }
 }
