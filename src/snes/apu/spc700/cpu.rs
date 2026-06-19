@@ -775,6 +775,29 @@ impl Spc700 {
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
+            // JSR !abs — jump to subroutine at absolute address (8 cycles).
+            // Pushes return address (PC+2) onto stack, then jumps.
+            0x0F => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                // Return address is PC after operand (PC+2 relative to start of instruction)
+                let return_addr = self.pc;
+                // Push return address (high byte first, then low byte)
+                self.push(bus, (return_addr >> 8) as u8, &mut cycles);
+                self.push(bus, return_addr as u8, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.pc = addr;
+            }
+            // RTS — return from subroutine (5 cycles).
+            // Pops return address from stack and jumps.
+            0x6F => {
+                let lo = self.pop(bus, &mut cycles) as u16;
+                let hi = self.pop(bus, &mut cycles) as u16;
+                self.pc = (hi << 8) | lo;
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -2422,5 +2445,38 @@ mod tests {
         assert_eq!(cpu.sp(), 0xF0); // SP incremented
         assert_eq!(cpu.y(), 0x99); // Y loaded from stack
         assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0x99 is negative)
+    }
+
+    #[test]
+    fn jsr_pushes_return_address_and_jumps() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x0F, 0x34, 0x12]); // JSR $1234
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 8);
+        assert_eq!(cpu.pc(), 0x1234); // Jumped to target
+        assert_eq!(cpu.sp(), 0xEE); // SP decremented by 2
+        // Return address is 0x0203 (PC after fetching operand)
+        assert_eq!(bus.read(0x01F0), 0x02); // High byte of return address
+        assert_eq!(bus.read(0x01EF), 0x03); // Low byte of return address
+    }
+
+    #[test]
+    fn rts_pops_return_address_and_jumps() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x6F]); // RTS
+        bus.write(0x01EF, 0x03); // High byte of return address
+        bus.write(0x01EE, 0x40); // Low byte of return address (0x0340)
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xED, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.pc(), 0x0340); // Returned to stored address
+        assert_eq!(cpu.sp(), 0xEF); // SP incremented by 2
     }
 }
