@@ -66,7 +66,10 @@ impl Ppu {
     /// recorded for dot-accurate flag timing). 8-bit Y wrap yields the 224-line wrap behavior.
     pub(super) fn evaluate_line_objects(&self, line: u16) -> ObjLineEval {
         let first = self.obj_first_sprite_index() as usize;
-        let mut eval = ObjLineEval::default();
+        let mut eval = ObjLineEval {
+            indices: Vec::with_capacity(32),
+            ..ObjLineEval::default()
+        };
         for k in 0..128usize {
             let i = (first + k) % 128;
             let y = self.oam[i * 4 + 1] as u16;
@@ -124,10 +127,13 @@ impl Ppu {
                 let tile_x = base_x + col;
                 if tile_x + 8 > 0 && tile_x < 256 {
                     tiles += 1;
+                    if tiles > 34 {
+                        return (tiles, true);
+                    }
                 }
             }
         }
-        (tiles, tiles > 34)
+        (tiles, false)
     }
 
     /// Advance the OBJ evaluation pipeline for the current dot, raising the dot-accurate STAT77

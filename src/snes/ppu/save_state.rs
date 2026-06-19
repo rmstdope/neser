@@ -127,6 +127,12 @@ impl Ppu {
         self.stat77_range_over = state.stat77_range_over;
         self.stat77_time_over = state.stat77_time_over;
 
+        // Reset the transient OBJ runtime state so stale pipeline data from before the load can't
+        // leak into the first restored frame (the line buffer is rebuilt as rendering resumes).
+        self.obj_line = Default::default();
+        self.obj_range_over_dot = None;
+        self.obj_time_over_pending = false;
+
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);
         debug_assert_eq!(self.framebuffer.len(), SCREEN_WIDTH * SCREEN_HEIGHT);
