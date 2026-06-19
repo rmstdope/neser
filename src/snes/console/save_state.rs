@@ -210,7 +210,29 @@ pub struct SnesPpuState {
     #[serde(default)]
     pub tm: u8,
     #[serde(default)]
+    pub ts: u8,
+    #[serde(default)]
+    pub tmw: u8,
+    #[serde(default)]
+    pub tsw: u8,
+    #[serde(default)]
     pub cgwsel: u8,
+    #[serde(default)]
+    pub cgadsub: u8,
+    #[serde(default)]
+    pub coldata: u16,
+    #[serde(default)]
+    pub w12sel: u8,
+    #[serde(default)]
+    pub w34sel: u8,
+    #[serde(default)]
+    pub wobjsel: u8,
+    #[serde(default)]
+    pub wh: [u8; 4],
+    #[serde(default)]
+    pub wbglog: u8,
+    #[serde(default)]
+    pub wobjlog: u8,
     #[serde(default)]
     pub setini: u8,
     #[serde(default)]

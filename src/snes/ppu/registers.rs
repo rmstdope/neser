@@ -72,8 +72,37 @@ impl Ppu {
             0x2120 => self.m7y = self.write_m7_twice(value),
             // TM: main-screen layer enable.
             0x212C => self.tm = value,
-            // CGWSEL: Color Math Control A. Only bit 0 (direct-color enable) is used here.
+            // TS: sub-screen layer enable.
+            0x212D => self.ts = value,
+            // TMW/TSW: window area layer disables.
+            0x212E => self.tmw = value,
+            0x212F => self.tsw = value,
+            // CGWSEL: Color Math Control A. Bit 0 = direct-color mode; bits 1 = sub-screen
+            // BG/OBJ enable; bits 5-4 = color math enable region; bits 7-6 = force-main-black.
             0x2130 => self.cgwsel = value,
+            // CGADSUB: color math control B.
+            0x2131 => self.cgadsub = value,
+            // COLDATA: sub-screen backdrop selector; each channel bit updates that channel to the
+            // current 5-bit intensity, preserving the others.
+            0x2132 => {
+                let intensity = (value & 0x1F) as u16;
+                if value & 0x20 != 0 {
+                    self.coldata = (self.coldata & !0x001F) | intensity;
+                }
+                if value & 0x40 != 0 {
+                    self.coldata = (self.coldata & !0x03E0) | (intensity << 5);
+                }
+                if value & 0x80 != 0 {
+                    self.coldata = (self.coldata & !0x7C00) | (intensity << 10);
+                }
+            }
+            // Window control registers.
+            0x2123 => self.w12sel = value,
+            0x2124 => self.w34sel = value,
+            0x2125 => self.wobjsel = value,
+            0x2126..=0x2129 => self.wh[(addr - 0x2126) as usize] = value,
+            0x212A => self.wbglog = value,
+            0x212B => self.wobjlog = value,
             // SETINI: Display Control 2. Only bit 6 (EXTBG enable for Mode 7) is used here.
             0x2133 => self.setini = value,
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI

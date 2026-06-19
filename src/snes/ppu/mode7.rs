@@ -9,7 +9,7 @@
 //! Screen Y note: the hardware samples display line `N` (1..224) for framebuffer row `N-1`, so the
 //! per-pixel `y` passed in (0-based row) is offset by +1 to obtain the hardware SCREEN.Y.
 
-use super::{Ppu, VRAM_SIZE};
+use super::{PixelSource, Ppu, ScreenPixel, ScreenTarget, VRAM_SIZE, WindowLayer};
 
 impl Ppu {
     /// Apply the shared Mode 7 write-twice mechanism: `reg = value * 0x100 + M7_old`, then latch
@@ -33,52 +33,9 @@ impl Ppu {
     /// Priority chart (BG only; OBJ is added in #2763): BG2(prio=1) over BG1 over BG2(prio=0) over
     /// backdrop. BG2 exists only when EXTBG (SETINI bit 6) is enabled.
     pub(super) fn compute_pixel_mode7(&self, x: u16, y: u16) -> u16 {
-        let bg1_enabled = self.tm & 0x01 != 0;
-        let bg2_enabled = self.tm & 0x02 != 0;
-        let extbg = self.setini & 0x40 != 0;
-        let value = self.mode7_pixel_value(x, y);
-
-        // EXTBG (Mode 7 BG2) splits the layer by the pixel's high bit into a high/low priority
-        // plane; resolve it once here so it can be slotted into the priority chart below.
-        let bg2_color = if extbg && bg2_enabled && value & 0x7F != 0 {
-            Some((self.cgram_color(value & 0x7F), value & 0x80 != 0))
-        } else {
-            None
-        };
-        let bg1_color = if bg1_enabled && value != 0 {
-            // Direct-color (CGWSEL bit 0) resolves the 8-bit BG1 value straight to BGR555.
-            Some(if self.cgwsel & 0x01 != 0 {
-                mode7_direct_color(value)
-            } else {
-                self.cgram_color(value)
-            })
-        } else {
-            None
-        };
-
-        // Mode 7 chart (front-to-back): OBJ.3, OBJ.2, BG2.1p, OBJ.1, BG1, OBJ.0, BG2.0p, backdrop.
-        if let Some(color) = self.obj_pixel(x, 3) {
-            return color;
-        }
-        if let Some(color) = self.obj_pixel(x, 2) {
-            return color;
-        }
-        if let Some((color, true)) = bg2_color {
-            return color;
-        }
-        if let Some(color) = self.obj_pixel(x, 1) {
-            return color;
-        }
-        if let Some(color) = bg1_color {
-            return color;
-        }
-        if let Some(color) = self.obj_pixel(x, 0) {
-            return color;
-        }
-        if let Some((color, false)) = bg2_color {
-            return color;
-        }
-        self.backdrop_color()
+        let main = self.resolve_mode7_screen_pixel(ScreenTarget::Main, x, y);
+        let sub = self.resolve_mode7_screen_pixel(ScreenTarget::Sub, x, y);
+        self.compose_pixels(x, y, main, sub)
     }
 
     /// Sample the raw 8-bit Mode 7 pixel value at screen `(x, y)`, applying the affine transform,
@@ -126,7 +83,6 @@ impl Ppu {
                 }
                 self.vram[(tile_word << 1) & (VRAM_SIZE - 1)]
             }
-            // mode 3: outside uses tile 0.
             3 => {
                 if out_of_bounds {
                     0
@@ -139,6 +95,102 @@ impl Ppu {
         let palette_addr = (((pixel_y & 7) << 3) + (pixel_x & 7)) as usize;
         let pixel_word = ((tile as usize) << 6) | palette_addr;
         self.vram[((pixel_word << 1) | 1) & (VRAM_SIZE - 1)]
+    }
+
+    fn resolve_mode7_screen_pixel(&self, target: ScreenTarget, x: u16, y: u16) -> ScreenPixel {
+        let bg1_enabled = self.screen_enable_mask(target) & 0x01 != 0;
+        let bg2_enabled = self.screen_enable_mask(target) & 0x02 != 0;
+        let extbg = self.setini & 0x40 != 0;
+        let value = self.mode7_pixel_value(x, y);
+
+        let bg2_color = if extbg && bg2_enabled && value & 0x7F != 0 {
+            if self.layer_disabled_by_window(target, WindowLayer::Bg(1), x, y) {
+                None
+            } else {
+                Some((self.cgram_color(value & 0x7F), value & 0x80 != 0))
+            }
+        } else {
+            None
+        };
+        let bg1_color = if bg1_enabled && value != 0 {
+            if self.layer_disabled_by_window(target, WindowLayer::Bg(0), x, y) {
+                None
+            } else {
+                Some(if self.cgwsel & 0x01 != 0 {
+                    mode7_direct_color(value)
+                } else {
+                    self.cgram_color(value)
+                })
+            }
+        } else {
+            None
+        };
+
+        // Mode 7 chart (front-to-back): OBJ.3, OBJ.2, BG2.1p, OBJ.1, BG1, OBJ.0, BG2.0p, backdrop.
+        if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y) {
+            if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, 3) {
+                return ScreenPixel {
+                    color,
+                    source: PixelSource::Obj {
+                        priority: 3,
+                        palette,
+                    },
+                };
+            }
+            if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, 2) {
+                return ScreenPixel {
+                    color,
+                    source: PixelSource::Obj {
+                        priority: 2,
+                        palette,
+                    },
+                };
+            }
+        }
+        if let Some((color, true)) = bg2_color {
+            return ScreenPixel {
+                color,
+                source: PixelSource::Bg(1),
+            };
+        }
+        if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y)
+            && let Some((color, palette)) = self.obj_pixel_for_screen(target, x, 1)
+        {
+            return ScreenPixel {
+                color,
+                source: PixelSource::Obj {
+                    priority: 1,
+                    palette,
+                },
+            };
+        }
+        if let Some(color) = bg1_color {
+            return ScreenPixel {
+                color,
+                source: PixelSource::Bg(0),
+            };
+        }
+        if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y)
+            && let Some((color, palette)) = self.obj_pixel_for_screen(target, x, 0)
+        {
+            return ScreenPixel {
+                color,
+                source: PixelSource::Obj {
+                    priority: 0,
+                    palette,
+                },
+            };
+        }
+        if let Some((color, false)) = bg2_color {
+            return ScreenPixel {
+                color,
+                source: PixelSource::Bg(1),
+            };
+        }
+        ScreenPixel {
+            color: self.backdrop_color_for(target),
+            source: PixelSource::Backdrop,
+        }
     }
 }
 
