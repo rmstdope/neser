@@ -798,6 +798,26 @@ impl Spc700 {
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
+            // INCW YA — increment 16-bit YA register pair, update N/Z (3 cycles).
+            0x3D => {
+                let ya = (u16::from(self.y) << 8) | u16::from(self.a);
+                let result = ya.wrapping_add(1);
+                self.y = (result >> 8) as u8;
+                self.a = result as u8;
+                self.update_nz8(self.y); // Set flags based on high byte
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // DECW YA — decrement 16-bit YA register pair, update N/Z (3 cycles).
+            0x1A => {
+                let ya = (u16::from(self.y) << 8) | u16::from(self.a);
+                let result = ya.wrapping_sub(1);
+                self.y = (result >> 8) as u8;
+                self.a = result as u8;
+                self.update_nz8(self.y); // Set flags based on high byte
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -2478,5 +2498,66 @@ mod tests {
         assert_eq!(cycles, 5);
         assert_eq!(cpu.pc(), 0x0340); // Returned to stored address
         assert_eq!(cpu.sp(), 0xEF); // SP incremented by 2
+    }
+
+    #[test]
+    fn incw_ya_increments_16bit_register_pair() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x3D]); // INCW YA
+        cpu.load_state_for_processor_test(0xFF, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0x00); // A: 0xFF -> 0x00 (wrapped)
+        assert_eq!(cpu.y(), 0x01); // Y: 0x00 -> 0x01 (carry from A)
+        assert!(!cpu.flag(FLAG_ZERO)); // N/Z based on Y (0x01)
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn incw_ya_sets_flags_on_result() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x3D]); // INCW YA
+        cpu.load_state_for_processor_test(0xFF, 0x00, 0x7F, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0x00); // A: 0xFF -> 0x00 (wrapped)
+        assert_eq!(cpu.y(), 0x80); // Y: 0x7F -> 0x80 (carry from A)
+        assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0x80 is negative)
+    }
+
+    #[test]
+    fn decw_ya_decrements_16bit_register_pair() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x1A]); // DECW YA
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0xFF); // A: 0x00 -> 0xFF (wrapped)
+        assert_eq!(cpu.y(), 0xFF); // Y: 0x00 -> 0xFF (borrow from A)
+        assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0xFF is negative)
+    }
+
+    #[test]
+    fn decw_ya_normal_decrement() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x1A]); // DECW YA
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x80, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0xFF); // A: 0x00 -> 0xFF (wrapped)
+        assert_eq!(cpu.y(), 0x7F); // Y: 0x80 -> 0x7F (borrow from A)
+        assert!(!cpu.flag(FLAG_NEGATIVE)); // N flag clear (0x7F is positive)
     }
 }
