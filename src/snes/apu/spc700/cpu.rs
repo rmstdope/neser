@@ -206,44 +206,35 @@ impl Spc700 {
         self.update_nz8(self.a);
     }
 
-    /// Compare A with immediate (subtract without storing), updating N/Z/V/C flags.
-    fn compare_a(&mut self, imm: u8) {
-        let (result, borrow) = self.a.overflowing_sub(imm);
-        let overflow = (self.a ^ result) & (!imm ^ result) & 0x80 != 0;
-        self.set_flag(FLAG_CARRY, !borrow);
-        self.set_flag(FLAG_OVERFLOW, overflow);
-        self.set_flag(FLAG_ZERO, result == 0);
-        self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
-    }
-
-    /// Compare X with immediate, updating N/Z/V/C flags.
-    fn compare_x(&mut self, imm: u8) {
-        let (result, borrow) = self.x.overflowing_sub(imm);
-        let overflow = (self.x ^ result) & (!imm ^ result) & 0x80 != 0;
-        self.set_flag(FLAG_CARRY, !borrow);
-        self.set_flag(FLAG_OVERFLOW, overflow);
-        self.set_flag(FLAG_ZERO, result == 0);
-        self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
-    }
-
-    /// Compare Y with immediate, updating N/Z/V/C flags.
-    fn compare_y(&mut self, imm: u8) {
-        let (result, borrow) = self.y.overflowing_sub(imm);
-        let overflow = (self.y ^ result) & (!imm ^ result) & 0x80 != 0;
-        self.set_flag(FLAG_CARRY, !borrow);
-        self.set_flag(FLAG_OVERFLOW, overflow);
-        self.set_flag(FLAG_ZERO, result == 0);
-        self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
-    }
-
-    /// Compare two 8-bit values (left - right), updating N/Z/V/C flags.
-    fn compare_values(&mut self, left: u8, right: u8) {
+    /// Update C, V, Z, N flags based on subtraction (left - right).
+    /// Used by CMP instructions.
+    fn update_flags_on_compare(&mut self, left: u8, right: u8) {
         let (result, borrow) = left.overflowing_sub(right);
         let overflow = (left ^ result) & (!right ^ result) & 0x80 != 0;
         self.set_flag(FLAG_CARRY, !borrow);
         self.set_flag(FLAG_OVERFLOW, overflow);
         self.set_flag(FLAG_ZERO, result == 0);
         self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
+    }
+
+    /// Compare A with immediate (subtract without storing), updating N/Z/V/C flags.
+    fn compare_a(&mut self, imm: u8) {
+        self.update_flags_on_compare(self.a, imm);
+    }
+
+    /// Compare X with immediate, updating N/Z/V/C flags.
+    fn compare_x(&mut self, imm: u8) {
+        self.update_flags_on_compare(self.x, imm);
+    }
+
+    /// Compare Y with immediate, updating N/Z/V/C flags.
+    fn compare_y(&mut self, imm: u8) {
+        self.update_flags_on_compare(self.y, imm);
+    }
+
+    /// Compare two 8-bit values (left - right), updating N/Z/V/C flags.
+    fn compare_values(&mut self, left: u8, right: u8) {
+        self.update_flags_on_compare(left, right);
     }
 
     /// Read `PC` and advance it, consuming one cycle.
