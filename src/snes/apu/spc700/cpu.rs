@@ -682,6 +682,34 @@ impl Spc700 {
                     self.branch(offset);
                 }
             }
+            // BVS rel — Branch if Overflow Set (V flag set).
+            0x70 => {
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                if self.flag(FLAG_OVERFLOW) {
+                    self.branch(offset);
+                }
+            }
+            // BVC rel — Branch if Overflow Clear (V flag clear).
+            0x50 => {
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                if !self.flag(FLAG_OVERFLOW) {
+                    self.branch(offset);
+                }
+            }
+            // BMI rel — Branch if Minus (N flag set).
+            0x30 => {
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                if self.flag(FLAG_NEGATIVE) {
+                    self.branch(offset);
+                }
+            }
+            // BPL rel — Branch if Plus (N flag clear).
+            0x10 => {
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                if !self.flag(FLAG_NEGATIVE) {
+                    self.branch(offset);
+                }
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -2142,5 +2170,70 @@ mod tests {
 
         assert_eq!(cycles, 2);
         assert_eq!(cpu.pc(), 0x0502); // Just advance past opcode + operand
+    }
+
+    #[test]
+    fn bvs_branches_when_overflow_flag_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0600, &[0x70, 0x10]); // BVS rel +16
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0600, FLAG_OVERFLOW);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0612); // 0x0600 + 2 + 0x10
+    }
+
+    #[test]
+    fn bvc_branches_when_overflow_flag_clear() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0700, &[0x50, 0x20]); // BVC rel +32
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0700, 0); // Overflow clear
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0722); // 0x0700 + 2 + 0x20
+    }
+
+    #[test]
+    fn bmi_branches_when_negative_flag_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0800, &[0x30, 0x08]); // BMI rel +8
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0800, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x080A); // 0x0800 + 2 + 0x08
+    }
+
+    #[test]
+    fn bpl_branches_when_negative_flag_clear() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0900, &[0x10, 0x40]); // BPL rel +64
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0900, 0); // Negative clear
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0942); // 0x0900 + 2 + 0x40
+    }
+
+    #[test]
+    fn bmi_does_not_branch_when_negative_clear() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0800, &[0x30, 0x08]); // BMI rel +8
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0800, 0); // Negative clear
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0802); // Just advance past opcode + operand
     }
 }

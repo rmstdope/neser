@@ -61,6 +61,10 @@ Tracked subset files:
 - `v1/d0.json` (BNE)
 - `v1/b0.json` (BCS)
 - `v1/90.json` (BCC)
+- `v1/70.json` (BVS)
+- `v1/50.json` (BVC)
+- `v1/30.json` (BMI)
+- `v1/10.json` (BPL)
 
 Optional full corpus location (local, ignored by git):
 

@@ -190,6 +190,10 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         && opcode != 0xD0
         && opcode != 0xB0
         && opcode != 0x90
+        && opcode != 0x70
+        && opcode != 0x50
+        && opcode != 0x30
+        && opcode != 0x10
     {
         return Err(VectorFailure {
             details: format!(
@@ -2198,6 +2202,135 @@ mod tests {
 "#;
         fs::write(path, sample).expect("write sample BCC vector JSON");
     }
+
+    fn write_bvs_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "70 bvs rel",
+    "initial": {
+      "pc": 1792,
+      "sp": 239,
+      "psw": 64,
+      "a": 128,
+      "x": 0,
+      "y": 0,
+      "ram": [[1792, 112], [1793, 32]]
+    },
+    "final": {
+      "pc": 1826,
+      "sp": 239,
+      "psw": 64,
+      "a": 128,
+      "x": 0,
+      "y": 0,
+      "ram": [[1792, 112], [1793, 32]]
+    },
+    "cycles": [
+      [1792, 112, "d-r-----"],
+      [1793, 32, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample BVS vector JSON");
+    }
+
+    fn write_bvc_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "50 bvc rel",
+    "initial": {
+      "pc": 2048,
+      "sp": 239,
+      "psw": 0,
+      "a": 64,
+      "x": 0,
+      "y": 0,
+      "ram": [[2048, 80], [2049, 24]]
+    },
+    "final": {
+      "pc": 2074,
+      "sp": 239,
+      "psw": 0,
+      "a": 64,
+      "x": 0,
+      "y": 0,
+      "ram": [[2048, 80], [2049, 24]]
+    },
+    "cycles": [
+      [2048, 80, "d-r-----"],
+      [2049, 24, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample BVC vector JSON");
+    }
+
+    fn write_bmi_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "30 bmi rel",
+    "initial": {
+      "pc": 2304,
+      "sp": 239,
+      "psw": 128,
+      "a": 255,
+      "x": 0,
+      "y": 0,
+      "ram": [[2304, 48], [2305, 16]]
+    },
+    "final": {
+      "pc": 2322,
+      "sp": 239,
+      "psw": 128,
+      "a": 255,
+      "x": 0,
+      "y": 0,
+      "ram": [[2304, 48], [2305, 16]]
+    },
+    "cycles": [
+      [2304, 48, "d-r-----"],
+      [2305, 16, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample BMI vector JSON");
+    }
+
+    fn write_bpl_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "10 bpl rel",
+    "initial": {
+      "pc": 2560,
+      "sp": 239,
+      "psw": 0,
+      "a": 127,
+      "x": 0,
+      "y": 0,
+      "ram": [[2560, 16], [2561, 40]]
+    },
+    "final": {
+      "pc": 2602,
+      "sp": 239,
+      "psw": 0,
+      "a": 127,
+      "x": 0,
+      "y": 0,
+      "ram": [[2560, 16], [2561, 40]]
+    },
+    "cycles": [
+      [2560, 16, "d-r-----"],
+      [2561, 40, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample BPL vector JSON");
+    }
+    #[test]
     fn given_spc700_vector_json_when_loaded_then_schema_is_parsed() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("00.json");
@@ -2814,6 +2947,50 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("90.json");
         write_bcc_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_bvs_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("70.json");
+        write_bvs_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_bvc_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("50.json");
+        write_bvc_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_bmi_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("30.json");
+        write_bmi_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_bpl_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("10.json");
+        write_bpl_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
         let result = run_vector_case(&vectors[0]);
