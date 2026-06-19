@@ -47,7 +47,18 @@ impl Ppu {
             bg_vofs: self.bg_vofs,
             bg_old: self.bg_old,
             tm: self.tm,
+            ts: self.ts,
+            tmw: self.tmw,
+            tsw: self.tsw,
             cgwsel: self.cgwsel,
+            cgadsub: self.cgadsub,
+            coldata: self.coldata,
+            w12sel: self.w12sel,
+            w34sel: self.w34sel,
+            wobjsel: self.wobjsel,
+            wh: self.wh,
+            wbglog: self.wbglog,
+            wobjlog: self.wobjlog,
             setini: self.setini,
             m7a: self.m7a,
             m7b: self.m7b,
@@ -109,7 +120,18 @@ impl Ppu {
         self.bg_vofs = state.bg_vofs;
         self.bg_old = state.bg_old;
         self.tm = state.tm;
+        self.ts = state.ts;
+        self.tmw = state.tmw;
+        self.tsw = state.tsw;
         self.cgwsel = state.cgwsel;
+        self.cgadsub = state.cgadsub;
+        self.coldata = state.coldata;
+        self.w12sel = state.w12sel;
+        self.w34sel = state.w34sel;
+        self.wobjsel = state.wobjsel;
+        self.wh = state.wh;
+        self.wbglog = state.wbglog;
+        self.wobjlog = state.wobjlog;
         self.setini = state.setini;
         self.m7a = state.m7a;
         self.m7b = state.m7b;

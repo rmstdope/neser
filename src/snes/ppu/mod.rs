@@ -19,6 +19,8 @@ mod save_state;
 mod sprites;
 mod timing;
 
+pub(super) use background::{PixelSource, ScreenPixel, ScreenTarget, WindowLayer};
+
 const VRAM_SIZE: usize = 0x10_000;
 const CGRAM_SIZE: usize = 0x200;
 const OAM_SIZE: usize = 0x220;
@@ -123,8 +125,28 @@ pub struct Ppu {
     bg_old: u8,
     /// TM ($212C): main-screen layer enable (bits 0-3 = BG1-4, bit 4 = OBJ).
     tm: u8,
+    /// TS ($212D): sub-screen layer enable (bits 0-3 = BG1-4, bit 4 = OBJ).
+    ts: u8,
+    /// TMW ($212E): main-screen window disable mask.
+    tmw: u8,
+    /// TSW ($212F): sub-screen window disable mask.
+    tsw: u8,
     /// CGWSEL ($2130): only bit 0 (direct-color enable) is used here; rest is #2764.
     cgwsel: u8,
+    /// CGADSUB ($2131): color math control bits.
+    cgadsub: u8,
+    /// COLDATA ($2132): decoded sub-screen backdrop fixed color (BGR555).
+    coldata: u16,
+    /// W12SEL ($2123), W34SEL ($2124), WOBJSEL ($2125): window enable/area selectors.
+    w12sel: u8,
+    w34sel: u8,
+    wobjsel: u8,
+    /// WH0-WH3 ($2126-$2129): window coordinates.
+    wh: [u8; 4],
+    /// WBGLOG ($212A): window logic for BG1-BG4.
+    wbglog: u8,
+    /// WOBJLOG ($212B): window logic for OBJ/MATH.
+    wobjlog: u8,
     /// SETINI ($2133): only bit 6 (EXTBG enable for Mode 7) is used here.
     setini: u8,
     /// Mode 7 matrix parameters A-D ($211B-$211E), signed 1.7.8 fixed point (raw 16-bit).
@@ -213,7 +235,18 @@ impl Ppu {
             bg_vofs: [0; 4],
             bg_old: 0,
             tm: 0,
+            ts: 0,
+            tmw: 0,
+            tsw: 0,
             cgwsel: 0,
+            cgadsub: 0,
+            coldata: 0,
+            w12sel: 0,
+            w34sel: 0,
+            wobjsel: 0,
+            wh: [0; 4],
+            wbglog: 0,
+            wobjlog: 0,
             setini: 0,
             m7a: 0,
             m7b: 0,

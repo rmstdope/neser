@@ -239,6 +239,7 @@ impl Ppu {
                 let cgindex = 128 + palette * 16 + color;
                 buf.color[sx] = self.cgram_color(cgindex);
                 buf.priority[sx] = priority;
+                buf.palette[sx] = palette;
                 buf.present[sx] = true;
             }
         }
@@ -281,6 +282,8 @@ pub(super) struct ObjLineEval {
 pub(super) struct ObjLine {
     /// Resolved BGR555 color per pixel (valid only where `present`).
     pub color: [u16; 256],
+    /// OBJ palette number (0-7) per pixel, for color math gating.
+    pub palette: [u8; 256],
     /// OBJ priority level (0-3, OAM attr bits 5-4) per pixel, for BG compositing.
     pub priority: [u8; 256],
     /// Whether an opaque OBJ pixel was written at this x.
@@ -291,6 +294,7 @@ impl Default for ObjLine {
     fn default() -> Self {
         Self {
             color: [0; 256],
+            palette: [0; 256],
             priority: [0; 256],
             present: [false; 256],
         }
