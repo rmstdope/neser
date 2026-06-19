@@ -15,6 +15,8 @@ impl Ppu {
         match addr {
             // INIDISP: forced blank (bit 7) + master brightness (bits 0-3).
             0x2100 => self.inidisp = value,
+            // OBSEL: OBJ size pair (bits 7-5), name gap (bits 4-3), OBJ tile name base (bits 2-0).
+            0x2101 => self.obsel = value,
             // BGMODE: BG screen mode (bits 0-2), BG3 high-priority (bit 3), per-BG tile size.
             0x2105 => {
                 self.bg_mode = value & 0x07;
@@ -133,10 +135,18 @@ impl Ppu {
                 }
                 self.increment_cgram_address();
             }
-            // OAMADDL / OAMADDH: OAM word address + high-table select.
-            0x2102 => self.oam_address = (self.oam_address & 0x0200) | ((value as u16) << 1),
+            // OAMADDL / OAMADDH: OAM word address + high-table select + priority rotation. Each
+            // write updates the 9-bit reload value (bits 7-1 select the first OBJ for priority
+            // rotation) and copies the whole reload to the address register with bit 0 cleared.
+            0x2102 => {
+                self.oam_addr_reload = (self.oam_addr_reload & 0x0100) | value as u16;
+                self.oam_address = (self.oam_addr_reload << 1) & 0x03FE;
+            }
             0x2103 => {
-                self.oam_address = (self.oam_address & 0x01FE) | (((value & 0x01) as u16) << 9)
+                self.oam_addr_reload =
+                    (self.oam_addr_reload & 0x00FF) | (((value & 0x01) as u16) << 8);
+                self.oam_priority_rotation = value & 0x80 != 0;
+                self.oam_address = (self.oam_addr_reload << 1) & 0x03FE;
             }
             // OAMDATA: OAM data write. In the low table ($000-$1FF) an even byte latches and the
             // odd byte commits the word; the high table ($200-$21F) writes each byte directly.
@@ -243,8 +253,13 @@ impl Ppu {
                 self.opvct_read_high = !self.opvct_read_high;
                 value
             }
-            // STAT77: PPU1 status + version (sprite overflow flags added later).
-            0x213E => PPU1_VERSION,
+            // STAT77: PPU1 status + version. Bit 7 = OBJ time over-limit, bit 6 = OBJ range
+            // over-limit (cleared at end of VBlank, not during forced blank).
+            0x213E => {
+                PPU1_VERSION
+                    | ((self.stat77_time_over as u8) << 7)
+                    | ((self.stat77_range_over as u8) << 6)
+            }
             // STAT78: PPU2 status + version. Reports/clears the latch flag and resets the
             // OPHCT/OPVCT read flipflops.
             0x213F => {

@@ -8,6 +8,7 @@
 //! - [`registers`] — register read/write dispatch and VRAM/CGRAM/OAM access.
 //! - [`timing`] — dot/scanline counters, VBlank/NMI, and H/V counter latching.
 //! - [`framebuffer`] — backdrop rendering and BGR555 -> RGB888 output.
+//! - [`sprites`] — OBJ (sprite) evaluation, line buffer, and over-limit flags.
 //! - [`save_state`] — PPU save-state capture/restore.
 
 mod background;
@@ -15,6 +16,7 @@ mod framebuffer;
 mod mode7;
 mod registers;
 mod save_state;
+mod sprites;
 mod timing;
 
 const VRAM_SIZE: usize = 0x10_000;
@@ -140,6 +142,27 @@ pub struct Ppu {
     m7sel: u8,
     /// Shared write-twice latch (M7_old) for the $210D/$210E and $211B-$2120 registers.
     m7_old: u8,
+    /// OBSEL ($2101) raw value: OBJ size pair (bits 7-5), name gap (bits 4-3, 4K-word steps),
+    /// OBJ tile name base (bits 2-0, 8K-word steps).
+    obsel: u8,
+    /// OAMADD ($2102/$2103) 9-bit reload value (bit 8 = high-table select, bits 7-0 = low byte).
+    /// Bits 7-1 select the first OBJ (#N) for priority rotation.
+    oam_addr_reload: u16,
+    /// OAMADDH ($2103) bit 7: OBJ priority rotation (0 = OBJ #0 first, 1 = OBJ #N first).
+    oam_priority_rotation: bool,
+    /// Current scanline's composited OBJ pixels (transient; rebuilt at the start of each visible
+    /// line, not serialized in save-states).
+    obj_line: sprites::ObjLine,
+    /// STAT77 ($213E) bit 6: OBJ range over-limit (>32 OBJ on a line). Cleared at end of VBlank
+    /// (not during forced blank).
+    stat77_range_over: bool,
+    /// STAT77 ($213E) bit 7: OBJ time over-limit (>34 8x8 tiles on a line).
+    stat77_time_over: bool,
+    /// Scheduled dot within the current scanline at which to raise the range over-limit flag
+    /// (OAM index of the 33rd in-range OBJ × 2), or `None` if no overflow this line.
+    obj_range_over_dot: Option<u16>,
+    /// Time over-limit computed during the current scanline, applied at the next scanline's H=0.
+    obj_time_over_pending: bool,
 }
 
 impl Default for Ppu {
@@ -202,6 +225,14 @@ impl Ppu {
             m7vofs: 0,
             m7sel: 0,
             m7_old: 0,
+            obsel: 0,
+            oam_addr_reload: 0,
+            oam_priority_rotation: false,
+            obj_line: sprites::ObjLine::default(),
+            stat77_range_over: false,
+            stat77_time_over: false,
+            obj_range_over_dot: None,
+            obj_time_over_pending: false,
         }
     }
 
@@ -247,5 +278,17 @@ impl Ppu {
     /// Read a raw OAM byte (test/inspection helper).
     pub fn oam_byte(&self, index: usize) -> u8 {
         self.oam[index]
+    }
+
+    /// Write a raw OAM byte (test helper, bypassing the OAMADD/OAMDATA write path).
+    #[cfg(test)]
+    pub(super) fn set_oam_byte(&mut self, index: usize, value: u8) {
+        self.oam[index] = value;
+    }
+
+    /// Write a raw VRAM byte (test helper, bypassing the VMADD/VMDATA write path).
+    #[cfg(test)]
+    pub(super) fn set_vram_byte(&mut self, index: usize, value: u8) {
+        self.vram[index] = value;
     }
 }

@@ -38,24 +38,45 @@ impl Ppu {
         let extbg = self.setini & 0x40 != 0;
         let value = self.mode7_pixel_value(x, y);
 
-        if extbg && bg2_enabled {
-            let color = value & 0x7F;
-            if value & 0x80 != 0 && color != 0 {
-                return self.cgram_color(color);
-            }
-        }
-        if bg1_enabled && value != 0 {
+        // EXTBG (Mode 7 BG2) splits the layer by the pixel's high bit into a high/low priority
+        // plane; resolve it once here so it can be slotted into the priority chart below.
+        let bg2_color = if extbg && bg2_enabled && value & 0x7F != 0 {
+            Some((self.cgram_color(value & 0x7F), value & 0x80 != 0))
+        } else {
+            None
+        };
+        let bg1_color = if bg1_enabled && value != 0 {
             // Direct-color (CGWSEL bit 0) resolves the 8-bit BG1 value straight to BGR555.
-            if self.cgwsel & 0x01 != 0 {
-                return mode7_direct_color(value);
-            }
-            return self.cgram_color(value);
+            Some(if self.cgwsel & 0x01 != 0 {
+                mode7_direct_color(value)
+            } else {
+                self.cgram_color(value)
+            })
+        } else {
+            None
+        };
+
+        // Mode 7 chart (front-to-back): OBJ.3, OBJ.2, BG2.1p, OBJ.1, BG1, OBJ.0, BG2.0p, backdrop.
+        if let Some(color) = self.obj_pixel(x, 3) {
+            return color;
         }
-        if extbg && bg2_enabled {
-            let color = value & 0x7F;
-            if value & 0x80 == 0 && color != 0 {
-                return self.cgram_color(color);
-            }
+        if let Some(color) = self.obj_pixel(x, 2) {
+            return color;
+        }
+        if let Some((color, true)) = bg2_color {
+            return color;
+        }
+        if let Some(color) = self.obj_pixel(x, 1) {
+            return color;
+        }
+        if let Some(color) = bg1_color {
+            return color;
+        }
+        if let Some(color) = self.obj_pixel(x, 0) {
+            return color;
+        }
+        if let Some((color, false)) = bg2_color {
+            return color;
         }
         self.backdrop_color()
     }

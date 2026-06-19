@@ -59,6 +59,11 @@ impl Ppu {
             m7vofs: self.m7vofs,
             m7sel: self.m7sel,
             m7_old: self.m7_old,
+            obsel: self.obsel,
+            oam_addr_reload: self.oam_addr_reload,
+            oam_priority_rotation: self.oam_priority_rotation,
+            stat77_range_over: self.stat77_range_over,
+            stat77_time_over: self.stat77_time_over,
         }
     }
 
@@ -116,6 +121,17 @@ impl Ppu {
         self.m7vofs = state.m7vofs;
         self.m7sel = state.m7sel;
         self.m7_old = state.m7_old;
+        self.obsel = state.obsel;
+        self.oam_addr_reload = state.oam_addr_reload;
+        self.oam_priority_rotation = state.oam_priority_rotation;
+        self.stat77_range_over = state.stat77_range_over;
+        self.stat77_time_over = state.stat77_time_over;
+
+        // Reset the transient OBJ runtime state so stale pipeline data from before the load can't
+        // leak into the first restored frame (the line buffer is rebuilt as rendering resumes).
+        self.obj_line = Default::default();
+        self.obj_range_over_dot = None;
+        self.obj_time_over_pending = false;
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);
