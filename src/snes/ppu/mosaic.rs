@@ -40,10 +40,7 @@ impl Ppu {
     ///   `mosaic_vblock_size` a new block starts — reset `mosaic_vcount` to 0 and latch the
     ///   pending size. This implements "finish current block before applying new size" (fullsnes).
     pub(super) fn advance_mosaic_vcount(&mut self, scanline: u16) {
-        if scanline == VISIBLE_LINE_START {
-            self.mosaic_vcount = 0;
-            self.mosaic_vblock_size = self.mosaic >> 4;
-        } else if self.mosaic_vcount == self.mosaic_vblock_size {
+        if scanline == VISIBLE_LINE_START || self.mosaic_vcount == self.mosaic_vblock_size {
             self.mosaic_vcount = 0;
             self.mosaic_vblock_size = self.mosaic >> 4;
         } else {
@@ -66,8 +63,7 @@ mod tests {
 
     #[test]
     fn size_0_means_1x1_no_horizontal_change() {
-        // size=1 (0x1 in bits 7-4), BG1 enabled — kept for reference, not exercised below
-        // Size 0 in the register means block_size 1 (1×1 = no mosaic).
+        // Size 0 in bits 7-4 means block_size 1 (1×1 = no mosaic).
         let ppu0 = ppu_with_mosaic(0x01); // size=0 in bits 7-4, BG1 enabled
         assert_eq!(ppu0.mosaic_h_block_size(), 1);
         // With block_size=1, every x maps to itself.
