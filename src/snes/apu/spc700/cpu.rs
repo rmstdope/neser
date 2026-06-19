@@ -503,6 +503,36 @@ impl Spc700 {
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.y, &mut cycles);
             }
+            // INC A — increment A, update N/Z.
+            0x7C => {
+                self.a = self.a.wrapping_add(1);
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // DEC A — decrement A, update N/Z.
+            0x3C => {
+                self.a = self.a.wrapping_sub(1);
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // AND A,#imm — bitwise AND of immediate into A, update N/Z.
+            0x24 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.a &= imm;
+                self.update_nz8(self.a);
+            }
+            // OR A,#imm — bitwise OR of immediate into A, update N/Z.
+            0x04 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.a |= imm;
+                self.update_nz8(self.a);
+            }
+            // EOR A,#imm — bitwise XOR of immediate into A, update N/Z.
+            0x44 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.a ^= imm;
+                self.update_nz8(self.a);
+            }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
                 self.pc.wrapping_sub(1)
@@ -1553,5 +1583,156 @@ mod tests {
         assert_eq!(bus.get(0x1242), 0x77);
         assert!(cpu.flag(FLAG_CARRY));
         assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn inc_a_increments_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x7C]); // INC A
+        cpu.load_state_for_processor_test(0x7F, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0201);
+        assert_eq!(cpu.a(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn inc_a_wraps_and_sets_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x7C]); // INC A
+        cpu.load_state_for_processor_test(0xFF, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.a(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn dec_a_decrements_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x3C]); // DEC A
+        cpu.load_state_for_processor_test(0x80, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0201);
+        assert_eq!(cpu.a(), 0x7F);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn dec_a_underflows_and_sets_negative() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x3C]); // DEC A
+        cpu.load_state_for_processor_test(0x00, 0, 0, 0xEF, 0x0200, 0);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0xFF);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn and_a_imm_bitwise_and() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x24, 0x0F]); // AND A,#$0F
+        cpu.load_state_for_processor_test(0xFF, 0, 0, 0xEF, 0x0200, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0202);
+        assert_eq!(cpu.a(), 0x0F);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn and_a_imm_results_in_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x24, 0x00]); // AND A,#$00
+        cpu.load_state_for_processor_test(0xFF, 0, 0, 0xEF, 0x0200, 0);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn or_a_imm_bitwise_or() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x04, 0x0F]); // OR A,#$0F
+        cpu.load_state_for_processor_test(0xF0, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0202);
+        assert_eq!(cpu.a(), 0xFF);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn or_a_imm_zero_result() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x04, 0x00]); // OR A,#$00
+        cpu.load_state_for_processor_test(0x00, 0, 0, 0xEF, 0x0200, FLAG_NEGATIVE);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn eor_a_imm_bitwise_xor() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x44, 0xFF]); // EOR A,#$FF
+        cpu.load_state_for_processor_test(0x0F, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0202);
+        assert_eq!(cpu.a(), 0xF0);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn eor_a_imm_zero_result() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x44, 0x55]); // EOR A,#$55
+        cpu.load_state_for_processor_test(0x55, 0, 0, 0xEF, 0x0200, FLAG_NEGATIVE);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
     }
 }
