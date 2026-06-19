@@ -175,6 +175,8 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         && opcode != 0xD7
         && opcode != 0x7C
         && opcode != 0x3C
+        && opcode != 0xBC
+        && opcode != 0x9C
         && opcode != 0x24
         && opcode != 0x04
         && opcode != 0x44
@@ -204,7 +206,12 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         && opcode != 0xEE
         && opcode != 0x0F
         && opcode != 0x6F
+        && opcode != 0x3F
+        && opcode != 0x3A
         && opcode != 0x3D
+        && opcode != 0x1D
+        && opcode != 0xDC
+        && opcode != 0xFC
         && opcode != 0x1A
         && opcode != 0x7A
         && opcode != 0x9A
@@ -214,7 +221,7 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
     {
         return Err(VectorFailure {
             details: format!(
-                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (supported in this slice: NOP $00, MOV A,#imm $E8, MOV X,#imm $CD, MOV Y,#imm $8D, MOV A,X $7D, MOV X,A $5D, MOV A,Y $DD, MOV Y,A $FD, MOV X,SP $9D, MOV SP,X $BD, MOV A,dp $E4, MOV dp,A $C4, MOV dp,X $D8, MOV dp,Y $CB, MOV A,(X) $E6, MOV A,(X)+ $BF, MOV (X),A $C6, MOV (X)+,A $AF, MOV A,dp+X $F4, MOV dp+X,A $D4, MOV dp+X,Y $DB, MOV dp+Y,X $D9, MOV A,!abs $E5, MOV !abs,A $C5, MOV A,!abs+X $F5, MOV A,!abs+Y $F6, MOV !abs+X,A $D5, MOV !abs+Y,A $D6, MOV X,dp $F8, MOV Y,dp $EB, MOV X,!abs $E9, MOV Y,!abs $EC, MOV X,dp+Y $F9, MOV Y,dp+X $FB, MOV !abs,X $C9, MOV !abs,Y $CC, MOV A,[dp+X] $E7, MOV A,[dp]+Y $F7, MOV [dp+X],A $C7, MOV [dp]+Y,A $D7, INC A $7C, DEC A $3C, AND A,#imm $24, OR A,#imm $04, EOR A,#imm $44, ADD A,#imm $88, ADC A,#imm $84, SUB A,#imm $A8, SBC A,#imm $A4, CMP A,#imm $C8, CMP X,#imm $C0, CMP Y,#imm $AD)",
+                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (supported in this slice: NOP $00, MOV A,#imm $E8, MOV X,#imm $CD, MOV Y,#imm $8D, MOV A,X $7D, MOV X,A $5D, MOV A,Y $DD, MOV Y,A $FD, MOV X,SP $9D, MOV SP,X $BD, MOV A,dp $E4, MOV dp,A $C4, MOV dp,X $D8, MOV dp,Y $CB, MOV A,(X) $E6, MOV A,(X)+ $BF, MOV (X),A $C6, MOV (X)+,A $AF, MOV A,dp+X $F4, MOV dp+X,A $D4, MOV dp+X,Y $DB, MOV dp+Y,X $D9, MOV A,!abs $E5, MOV !abs,A $C5, MOV A,!abs+X $F5, MOV A,!abs+Y $F6, MOV !abs+X,A $D5, MOV !abs+Y,A $D6, MOV X,dp $F8, MOV Y,dp $EB, MOV X,!abs $E9, MOV Y,!abs $EC, MOV X,dp+Y $F9, MOV Y,dp+X $FB, MOV !abs,X $C9, MOV !abs,Y $CC, MOV A,[dp+X] $E7, MOV A,[dp]+Y $F7, MOV [dp+X],A $C7, MOV [dp]+Y,A $D7, INC A $BC, DEC A $9C, ROL A $3C, ROR A $7C, AND A,#imm $24, OR A,#imm $04, EOR A,#imm $44, ADD A,#imm $88, ADC A,#imm $84, SUB A,#imm $A8, SBC A,#imm $A4, CMP A,#imm $C8, CMP X,#imm $C0, CMP Y,#imm $AD)",
                 vector.name, vector.initial.pc
             ),
         });
@@ -1678,7 +1685,7 @@ mod tests {
     fn write_inc_a_vector(path: &Path) {
         let sample = r#"[
   {
-    "name": "7c inc a",
+    "name": "bc inc a",
     "initial": {
       "pc": 512,
       "sp": 239,
@@ -1686,7 +1693,7 @@ mod tests {
       "a": 127,
       "x": 0,
       "y": 0,
-      "ram": [[512, 124]]
+      "ram": [[512, 188]]
     },
     "final": {
       "pc": 513,
@@ -1695,10 +1702,10 @@ mod tests {
       "a": 128,
       "x": 0,
       "y": 0,
-      "ram": [[512, 124]]
+      "ram": [[512, 188]]
     },
     "cycles": [
-      [512, 124, "d-r-----"],
+      [512, 188, "d-r-----"],
       [null, null, "--------"]
     ]
   }
@@ -1710,7 +1717,7 @@ mod tests {
     fn write_dec_a_vector(path: &Path) {
         let sample = r#"[
   {
-    "name": "3c dec a",
+    "name": "9c dec a",
     "initial": {
       "pc": 512,
       "sp": 239,
@@ -1718,7 +1725,7 @@ mod tests {
       "a": 128,
       "x": 0,
       "y": 0,
-      "ram": [[512, 60]]
+      "ram": [[512, 156]]
     },
     "final": {
       "pc": 513,
@@ -1727,10 +1734,10 @@ mod tests {
       "a": 127,
       "x": 0,
       "y": 0,
-      "ram": [[512, 60]]
+      "ram": [[512, 156]]
     },
     "cycles": [
-      [512, 60, "d-r-----"],
+      [512, 156, "d-r-----"],
       [null, null, "--------"]
     ]
   }
@@ -2062,7 +2069,7 @@ mod tests {
     fn write_bra_vector(path: &Path) {
         let sample = r#"[
   {
-    "name": "2f bra abs",
+    "name": "2f bra rel",
     "initial": {
       "pc": 512,
       "sp": 239,
@@ -2070,21 +2077,22 @@ mod tests {
       "a": 66,
       "x": 17,
       "y": 34,
-      "ram": [[512, 47], [513, 128], [514, 128]]
+      "ram": [[512, 47], [513, 16]]
     },
     "final": {
-      "pc": 32896,
+      "pc": 530,
       "sp": 239,
       "psw": 0,
       "a": 66,
       "x": 17,
       "y": 34,
-      "ram": [[512, 47], [513, 128], [514, 128]]
+      "ram": [[512, 47], [513, 16]]
     },
     "cycles": [
       [512, 47, "d-r-----"],
-      [513, 128, "d-r-----"],
-      [514, 128, "d-r-----"]
+      [513, 16, "d-r-----"],
+      [null, null, "--------"],
+      [null, null, "--------"]
     ]
   }
 ]
@@ -2116,7 +2124,9 @@ mod tests {
     },
     "cycles": [
       [768, 240, "d-r-----"],
-      [769, 32, "d-r-----"]
+      [769, 32, "d-r-----"],
+      [null, null, "--------"],
+      [null, null, "--------"]
     ]
   }
 ]
@@ -2148,7 +2158,9 @@ mod tests {
     },
     "cycles": [
       [1024, 208, "d-r-----"],
-      [1025, 240, "d-r-----"]
+      [1025, 240, "d-r-----"],
+      [null, null, "--------"],
+      [null, null, "--------"]
     ]
   }
 ]
@@ -2180,7 +2192,9 @@ mod tests {
     },
     "cycles": [
       [1280, 176, "d-r-----"],
-      [1281, 48, "d-r-----"]
+      [1281, 48, "d-r-----"],
+      [null, null, "--------"],
+      [null, null, "--------"]
     ]
   }
 ]
@@ -2212,7 +2226,9 @@ mod tests {
     },
     "cycles": [
       [1536, 144, "d-r-----"],
-      [1537, 32, "d-r-----"]
+      [1537, 32, "d-r-----"],
+      [null, null, "--------"],
+      [null, null, "--------"]
     ]
   }
 ]
@@ -2244,7 +2260,9 @@ mod tests {
     },
     "cycles": [
       [1792, 112, "d-r-----"],
-      [1793, 32, "d-r-----"]
+      [1793, 32, "d-r-----"],
+      [null, null, "--------"],
+      [null, null, "--------"]
     ]
   }
 ]
@@ -2276,7 +2294,9 @@ mod tests {
     },
     "cycles": [
       [2048, 80, "d-r-----"],
-      [2049, 24, "d-r-----"]
+      [2049, 24, "d-r-----"],
+      [null, null, "--------"],
+      [null, null, "--------"]
     ]
   }
 ]
@@ -2308,7 +2328,9 @@ mod tests {
     },
     "cycles": [
       [2304, 48, "d-r-----"],
-      [2305, 16, "d-r-----"]
+      [2305, 16, "d-r-----"],
+      [null, null, "--------"],
+      [null, null, "--------"]
     ]
   }
 ]
@@ -2340,7 +2362,9 @@ mod tests {
     },
     "cycles": [
       [2560, 16, "d-r-----"],
-      [2561, 40, "d-r-----"]
+      [2561, 40, "d-r-----"],
+      [null, null, "--------"],
+      [null, null, "--------"]
     ]
   }
 ]
@@ -2877,7 +2901,7 @@ mod tests {
     #[test]
     fn given_inc_a_vector_when_executed_then_final_state_matches() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let path = temp.path().join("7c.json");
+        let path = temp.path().join("bc.json");
         write_inc_a_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
@@ -2888,7 +2912,7 @@ mod tests {
     #[test]
     fn given_dec_a_vector_when_executed_then_final_state_matches() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let path = temp.path().join("3c.json");
+        let path = temp.path().join("9c.json");
         write_dec_a_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");

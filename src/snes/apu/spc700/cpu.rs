@@ -286,39 +286,69 @@ impl Spc700 {
         self.read_cycle(bus, addr, cycles)
     }
 
-    /// ADDW YA,#imm16 — add 16-bit immediate to YA.
-    /// Updates N/Z/V/C flags based on the result.
-    fn add_to_ya(&mut self, imm: u16) {
-        let ya = (u16::from(self.y) << 8) | u16::from(self.a);
-        let (result, overflow) = ya.overflowing_add(imm);
-        let carry = (ya ^ imm ^ result) & 0x8000 != 0;
-        self.y = (result >> 8) as u8;
-        self.a = result as u8;
-        self.set_flag(FLAG_CARRY, overflow);
-        self.set_flag(FLAG_OVERFLOW, carry);
-        self.update_nz8(self.y);
+    /// Read a 16-bit little-endian word from direct-page address `dp`.
+    fn read_word_direct_page(&mut self, bus: &mut impl Spc700Bus, dp: u8, cycles: &mut u8) -> u16 {
+        let base = self.direct_page_base();
+        let lo = self.read_cycle(bus, base | u16::from(dp), cycles);
+        let hi = self.read_cycle(bus, base | u16::from(dp.wrapping_add(1)), cycles);
+        u16::from(lo) | (u16::from(hi) << 8)
     }
 
-    /// SUBW YA,#imm16 — subtract 16-bit immediate from YA.
-    /// Updates N/Z/V/C flags based on the result.
-    fn subtract_from_ya(&mut self, imm: u16) {
+    /// Write a 16-bit little-endian word to direct-page address `dp`.
+    fn write_word_direct_page(
+        &mut self,
+        bus: &mut impl Spc700Bus,
+        dp: u8,
+        value: u16,
+        cycles: &mut u8,
+    ) {
+        let base = self.direct_page_base();
+        self.write_cycle(bus, base | u16::from(dp), value as u8, cycles);
+        self.write_cycle(
+            bus,
+            base | u16::from(dp.wrapping_add(1)),
+            (value >> 8) as u8,
+            cycles,
+        );
+    }
+
+    /// ADDW YA,[dp] — add 16-bit direct-page word to YA.
+    /// Updates N/Z/V/H/C flags based on the result.
+    fn add_to_ya(&mut self, value: u16) {
         let ya = (u16::from(self.y) << 8) | u16::from(self.a);
-        let (result, borrow) = ya.overflowing_sub(imm);
-        let overflow = (ya ^ imm ^ result) & 0x8000 != 0;
+        let (result, carry) = ya.overflowing_add(value);
+        let overflow = (!(ya ^ value) & (ya ^ result) & 0x8000) != 0;
+        let half_carry = ((ya & 0x0FFF) + (value & 0x0FFF)) > 0x0FFF;
         self.y = (result >> 8) as u8;
         self.a = result as u8;
-        self.set_flag(FLAG_CARRY, borrow);
+        self.set_flag(FLAG_CARRY, carry);
         self.set_flag(FLAG_OVERFLOW, overflow);
+        self.set_flag(FLAG_HALF_CARRY, half_carry);
         self.update_nz8(self.y);
     }
 
-    /// CMPW YA,#imm16 — compare 16-bit immediate with YA.
-    /// Updates N/Z/V/C flags based on the comparison result (YA - imm).
-    fn compare_ya(&mut self, imm: u16) {
+    /// SUBW YA,[dp] — subtract 16-bit direct-page word from YA.
+    /// Updates N/Z/V/H/C flags based on the result.
+    fn subtract_from_ya(&mut self, value: u16) {
         let ya = (u16::from(self.y) << 8) | u16::from(self.a);
-        let (result, borrow) = ya.overflowing_sub(imm);
-        let overflow = (ya ^ imm ^ result) & 0x8000 != 0;
-        self.set_flag(FLAG_CARRY, borrow);
+        let (result, borrow) = ya.overflowing_sub(value);
+        let overflow = ((ya ^ value) & (ya ^ result) & 0x8000) != 0;
+        let half_borrow = (ya & 0x0FFF) < (value & 0x0FFF);
+        self.y = (result >> 8) as u8;
+        self.a = result as u8;
+        self.set_flag(FLAG_CARRY, !borrow);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.set_flag(FLAG_HALF_CARRY, !half_borrow);
+        self.update_nz8(self.y);
+    }
+
+    /// CMPW YA,[dp] — compare 16-bit direct-page word with YA.
+    /// Updates N/Z/V/C flags based on the comparison result (YA - value).
+    fn compare_ya(&mut self, value: u16) {
+        let ya = (u16::from(self.y) << 8) | u16::from(self.a);
+        let (result, borrow) = ya.overflowing_sub(value);
+        let overflow = ((ya ^ value) & (ya ^ result) & 0x8000) != 0;
+        self.set_flag(FLAG_CARRY, !borrow);
         self.set_flag(FLAG_OVERFLOW, overflow);
         self.update_nz8((result >> 8) as u8);
     }
@@ -661,14 +691,70 @@ impl Spc700 {
                 self.write_cycle(bus, addr, self.y, &mut cycles);
             }
             // INC A — increment A, update N/Z.
-            0x7C => {
+            0xBC => {
                 self.a = self.a.wrapping_add(1);
                 self.update_nz8(self.a);
                 self.idle_cycle(bus, &mut cycles);
             }
             // DEC A — decrement A, update N/Z.
-            0x3C => {
+            0x9C => {
                 self.a = self.a.wrapping_sub(1);
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // INC X — increment X, update N/Z.
+            0x3D => {
+                self.x = self.x.wrapping_add(1);
+                self.update_nz8(self.x);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // DEC X — decrement X, update N/Z.
+            0x1D => {
+                self.x = self.x.wrapping_sub(1);
+                self.update_nz8(self.x);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // INC Y — increment Y, update N/Z.
+            0xFC => {
+                self.y = self.y.wrapping_add(1);
+                self.update_nz8(self.y);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // DEC Y — decrement Y, update N/Z.
+            0xDC => {
+                self.y = self.y.wrapping_sub(1);
+                self.update_nz8(self.y);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // ASL A — shift left accumulator, bit 7 to carry.
+            0x1C => {
+                self.set_flag(FLAG_CARRY, self.a & 0x80 != 0);
+                self.a <<= 1;
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // ROL A — rotate left accumulator through carry.
+            0x3C => {
+                let carry_in = if self.flag(FLAG_CARRY) { 1 } else { 0 };
+                let carry_out = self.a & 0x80 != 0;
+                self.a = (self.a << 1) | carry_in;
+                self.set_flag(FLAG_CARRY, carry_out);
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // LSR A — shift right accumulator, bit 0 to carry.
+            0x5C => {
+                self.set_flag(FLAG_CARRY, self.a & 0x01 != 0);
+                self.a >>= 1;
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // ROR A — rotate right accumulator through carry.
+            0x7C => {
+                let carry_in = if self.flag(FLAG_CARRY) { 0x80 } else { 0 };
+                let carry_out = self.a & 0x01 != 0;
+                self.a = (self.a >> 1) | carry_in;
+                self.set_flag(FLAG_CARRY, carry_out);
                 self.update_nz8(self.a);
                 self.idle_cycle(bus, &mut cycles);
             }
@@ -725,16 +811,20 @@ impl Spc700 {
                 let imm = self.fetch(bus, &mut cycles);
                 self.compare_y(imm);
             }
-            // BRA rel — Branch Always (absolute address as 16-bit operand).
+            // BRA rel — Branch Always.
             0x2F => {
-                let addr = self.fetch_u16(bus, &mut cycles);
-                self.pc = addr;
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                self.branch(offset);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
             }
             // BEQ rel — Branch if Equal (Z flag set).
             0xF0 => {
                 let offset = self.fetch(bus, &mut cycles) as i8;
                 if self.flag(FLAG_ZERO) {
                     self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                 }
             }
             // BNE rel — Branch if Not Equal (Z flag clear).
@@ -742,6 +832,8 @@ impl Spc700 {
                 let offset = self.fetch(bus, &mut cycles) as i8;
                 if !self.flag(FLAG_ZERO) {
                     self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                 }
             }
             // BCS rel — Branch if Carry Set (C flag set).
@@ -749,6 +841,8 @@ impl Spc700 {
                 let offset = self.fetch(bus, &mut cycles) as i8;
                 if self.flag(FLAG_CARRY) {
                     self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                 }
             }
             // BCC rel — Branch if Carry Clear (C flag clear).
@@ -756,6 +850,8 @@ impl Spc700 {
                 let offset = self.fetch(bus, &mut cycles) as i8;
                 if !self.flag(FLAG_CARRY) {
                     self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                 }
             }
             // BVS rel — Branch if Overflow Set (V flag set).
@@ -763,6 +859,8 @@ impl Spc700 {
                 let offset = self.fetch(bus, &mut cycles) as i8;
                 if self.flag(FLAG_OVERFLOW) {
                     self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                 }
             }
             // BVC rel — Branch if Overflow Clear (V flag clear).
@@ -770,6 +868,8 @@ impl Spc700 {
                 let offset = self.fetch(bus, &mut cycles) as i8;
                 if !self.flag(FLAG_OVERFLOW) {
                     self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                 }
             }
             // BMI rel — Branch if Minus (N flag set).
@@ -777,6 +877,8 @@ impl Spc700 {
                 let offset = self.fetch(bus, &mut cycles) as i8;
                 if self.flag(FLAG_NEGATIVE) {
                     self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                 }
             }
             // BPL rel — Branch if Plus (N flag clear).
@@ -784,6 +886,8 @@ impl Spc700 {
                 let offset = self.fetch(bus, &mut cycles) as i8;
                 if !self.flag(FLAG_NEGATIVE) {
                     self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                 }
             }
             // PUSH PSW — push flags onto stack (4 cycles).
@@ -837,13 +941,24 @@ impl Spc700 {
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // JSR !abs — jump to subroutine at absolute address (8 cycles).
-            // Pushes return address (PC+2) onto stack, then jumps.
+            // BRK — software interrupt: push PC+1 and PSW; set B, clear I; jump via vector.
             0x0F => {
-                let addr = self.fetch_u16(bus, &mut cycles);
-                // Return address is PC after operand (PC+2 relative to start of instruction)
+                self.read_cycle(bus, self.pc, &mut cycles);
                 let return_addr = self.pc;
-                // Push return address (high byte first, then low byte)
+                self.push(bus, (return_addr >> 8) as u8, &mut cycles);
+                self.push(bus, return_addr as u8, &mut cycles);
+                self.push(bus, self.psw, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.set_flag(FLAG_BREAK, true);
+                self.set_flag(FLAG_INTERRUPT, false);
+                let lo = self.read_cycle(bus, 0xFFDE, &mut cycles);
+                let hi = self.read_cycle(bus, 0xFFDF, &mut cycles);
+                self.pc = u16::from(lo) | (u16::from(hi) << 8);
+            }
+            // CALL !abs — jump to subroutine at absolute address (8 cycles).
+            0x3F => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let return_addr = self.pc;
                 self.push(bus, (return_addr >> 8) as u8, &mut cycles);
                 self.push(bus, return_addr as u8, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
@@ -860,49 +975,41 @@ impl Spc700 {
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // INCW YA — increment 16-bit YA register pair, update N/Z (3 cycles).
-            0x3D => {
-                let ya = (u16::from(self.y) << 8) | u16::from(self.a);
-                let result = ya.wrapping_add(1);
-                self.y = (result >> 8) as u8;
-                self.a = result as u8;
-                self.update_nz8(self.y); // Set flags based on high byte
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
+            // INCW dp — increment 16-bit direct-page word, update N/Z from high byte.
+            0x3A => {
+                let dp = self.fetch(bus, &mut cycles);
+                let value = self.read_word_direct_page(bus, dp, &mut cycles);
+                let result = value.wrapping_add(1);
+                self.write_word_direct_page(bus, dp, result, &mut cycles);
+                self.update_nz8((result >> 8) as u8);
             }
-            // DECW YA — decrement 16-bit YA register pair, update N/Z (3 cycles).
+            // DECW dp — decrement 16-bit direct-page word, update N/Z from high byte.
             0x1A => {
-                let ya = (u16::from(self.y) << 8) | u16::from(self.a);
-                let result = ya.wrapping_sub(1);
-                self.y = (result >> 8) as u8;
-                self.a = result as u8;
-                self.update_nz8(self.y); // Set flags based on high byte
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
+                let dp = self.fetch(bus, &mut cycles);
+                let value = self.read_word_direct_page(bus, dp, &mut cycles);
+                let result = value.wrapping_sub(1);
+                self.write_word_direct_page(bus, dp, result, &mut cycles);
+                self.update_nz8((result >> 8) as u8);
             }
-            // ADDW YA,#imm16 — add 16-bit immediate to YA (4 cycles).
+            // ADDW YA,dp — add 16-bit direct-page word to YA (5 cycles).
             0x7A => {
-                let lo = self.fetch(bus, &mut cycles);
-                let hi = self.fetch(bus, &mut cycles);
-                let imm = u16::from(lo) | (u16::from(hi) << 8);
-                self.add_to_ya(imm);
+                let dp = self.fetch(bus, &mut cycles);
+                let value = self.read_word_direct_page(bus, dp, &mut cycles);
+                self.add_to_ya(value);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // SUBW YA,#imm16 — subtract 16-bit immediate from YA (4 cycles).
+            // SUBW YA,dp — subtract 16-bit direct-page word from YA (5 cycles).
             0x9A => {
-                let lo = self.fetch(bus, &mut cycles);
-                let hi = self.fetch(bus, &mut cycles);
-                let imm = u16::from(lo) | (u16::from(hi) << 8);
-                self.subtract_from_ya(imm);
+                let dp = self.fetch(bus, &mut cycles);
+                let value = self.read_word_direct_page(bus, dp, &mut cycles);
+                self.subtract_from_ya(value);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // CMPW YA,#imm16 — compare 16-bit immediate with YA (4 cycles).
+            // CMPW YA,dp — compare 16-bit direct-page word with YA (4 cycles).
             0x5A => {
-                let lo = self.fetch(bus, &mut cycles);
-                let hi = self.fetch(bus, &mut cycles);
-                let imm = u16::from(lo) | (u16::from(hi) << 8);
-                self.compare_ya(imm);
-                self.idle_cycle(bus, &mut cycles);
+                let dp = self.fetch(bus, &mut cycles);
+                let value = self.read_word_direct_page(bus, dp, &mut cycles);
+                self.compare_ya(value);
             }
             // MUL YA — multiply Y * A, store result in YA (9 cycles).
             0xCF => {
@@ -1976,7 +2083,7 @@ mod tests {
     fn inc_a_increments_and_updates_nz() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x7C]); // INC A
+        bus.load(0x0200, &[0xBC]); // INC A
         cpu.load_state_for_processor_test(0x7F, 0, 0, 0xEF, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
@@ -1992,7 +2099,7 @@ mod tests {
     fn inc_a_wraps_and_sets_zero() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x7C]); // INC A
+        bus.load(0x0200, &[0xBC]); // INC A
         cpu.load_state_for_processor_test(0xFF, 0, 0, 0xEF, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
@@ -2007,7 +2114,7 @@ mod tests {
     fn dec_a_decrements_and_updates_nz() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x3C]); // DEC A
+        bus.load(0x0200, &[0x9C]); // DEC A
         cpu.load_state_for_processor_test(0x80, 0, 0, 0xEF, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
@@ -2023,7 +2130,7 @@ mod tests {
     fn dec_a_underflows_and_sets_negative() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x3C]); // DEC A
+        bus.load(0x0200, &[0x9C]); // DEC A
         cpu.load_state_for_processor_test(0x00, 0, 0, 0xEF, 0x0200, 0);
 
         let _cycles = cpu.step(&mut bus);
@@ -2031,6 +2138,34 @@ mod tests {
         assert_eq!(cpu.a(), 0xFF);
         assert!(cpu.flag(FLAG_NEGATIVE));
         assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn rol_a_rotates_through_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x3C]); // ROL A
+        cpu.load_state_for_processor_test(0x80, 0, 0, 0xEF, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.a(), 0x01);
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn ror_a_rotates_through_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x7C]); // ROR A
+        cpu.load_state_for_processor_test(0x01, 0, 0, 0xEF, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.a(), 0x80);
+        assert!(cpu.flag(FLAG_CARRY));
     }
 
     #[test]
@@ -2279,16 +2414,16 @@ mod tests {
     }
 
     #[test]
-    fn bra_always_branches_to_absolute_address() {
+    fn bra_always_branches_by_relative_offset() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0100, &[0x2F, 0x34, 0x12]); // BRA $1234
+        bus.load(0x0100, &[0x2F, 0x10]); // BRA +$10
         cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0100, 0);
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 3);
-        assert_eq!(cpu.pc(), 0x1234);
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.pc(), 0x0112);
     }
 
     #[test]
@@ -2300,7 +2435,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 2);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0212); // 0x0200 + 2 (pc after fetch) + 0x10
     }
 
@@ -2326,7 +2461,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 2);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0300); // 0x0300 + 2 + (-2) = 0x0300
     }
 
@@ -2352,7 +2487,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 2);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0422); // 0x0400 + 2 + 0x20
     }
 
@@ -2365,7 +2500,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 2);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0532); // 0x0500 + 2 + 0x30
     }
 
@@ -2391,7 +2526,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 2);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0612); // 0x0600 + 2 + 0x10
     }
 
@@ -2404,7 +2539,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 2);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0722); // 0x0700 + 2 + 0x20
     }
 
@@ -2417,7 +2552,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 2);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x080A); // 0x0800 + 2 + 0x08
     }
 
@@ -2430,7 +2565,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 2);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0942); // 0x0900 + 2 + 0x40
     }
 
@@ -2570,10 +2705,10 @@ mod tests {
     }
 
     #[test]
-    fn jsr_pushes_return_address_and_jumps() {
+    fn call_pushes_return_address_and_jumps() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x0F, 0x34, 0x12]); // JSR $1234
+        bus.load(0x0200, &[0x3F, 0x34, 0x12]); // CALL $1234
         cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
@@ -2581,9 +2716,36 @@ mod tests {
         assert_eq!(cycles, 8);
         assert_eq!(cpu.pc(), 0x1234); // Jumped to target
         assert_eq!(cpu.sp(), 0xEE); // SP decremented by 2
-        // Return address is 0x0203 (PC after fetching operand)
         assert_eq!(bus.read(0x01F0), 0x02); // High byte of return address
         assert_eq!(bus.read(0x01EF), 0x03); // Low byte of return address
+    }
+
+    #[test]
+    fn brk_pushes_pc_and_psw_then_jumps_to_vector() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x2000, &[0x0F, 0xAA]); // BRK + padding byte
+        bus.set(0xFFDE, 0x78);
+        bus.set(0xFFDF, 0x56);
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x00,
+            0x00,
+            0xF0,
+            0x2000,
+            FLAG_INTERRUPT | FLAG_CARRY,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 8);
+        assert_eq!(cpu.pc(), 0x5678);
+        assert_eq!(cpu.sp(), 0xED);
+        assert_eq!(bus.read(0x01F0), 0x20); // pushed PCH of return address ($2001)
+        assert_eq!(bus.read(0x01EF), 0x01); // pushed PCL of return address
+        assert_eq!(bus.read(0x01EE), FLAG_INTERRUPT | FLAG_CARRY); // pushed original PSW
+        assert!(cpu.flag(FLAG_BREAK));
+        assert!(!cpu.flag(FLAG_INTERRUPT));
     }
 
     #[test]
@@ -2603,63 +2765,71 @@ mod tests {
     }
 
     #[test]
-    fn incw_ya_increments_16bit_register_pair() {
+    fn incw_dp_increments_16bit_word_in_memory() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x3D]); // INCW YA
-        cpu.load_state_for_processor_test(0xFF, 0x00, 0x00, 0xF0, 0x0200, 0);
+        bus.load(0x0200, &[0x3A, 0x20]); // INCW $20
+        bus.set(0x0020, 0xFF);
+        bus.set(0x0021, 0x00);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 3);
-        assert_eq!(cpu.a(), 0x00); // A: 0xFF -> 0x00 (wrapped)
-        assert_eq!(cpu.y(), 0x01); // Y: 0x00 -> 0x01 (carry from A)
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0020), 0x00);
+        assert_eq!(bus.read(0x0021), 0x01);
         assert!(!cpu.flag(FLAG_ZERO)); // N/Z based on Y (0x01)
         assert!(!cpu.flag(FLAG_NEGATIVE));
     }
 
     #[test]
-    fn incw_ya_sets_flags_on_result() {
+    fn incw_dp_sets_negative_flag_from_high_byte() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x3D]); // INCW YA
-        cpu.load_state_for_processor_test(0xFF, 0x00, 0x7F, 0xF0, 0x0200, 0);
-
-        let cycles = cpu.step(&mut bus);
-
-        assert_eq!(cycles, 3);
-        assert_eq!(cpu.a(), 0x00); // A: 0xFF -> 0x00 (wrapped)
-        assert_eq!(cpu.y(), 0x80); // Y: 0x7F -> 0x80 (carry from A)
-        assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0x80 is negative)
-    }
-
-    #[test]
-    fn decw_ya_decrements_16bit_register_pair() {
-        let mut cpu = Spc700::new();
-        let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x1A]); // DECW YA
+        bus.load(0x0200, &[0x3A, 0x20]); // INCW $20
+        bus.set(0x0020, 0xFF);
+        bus.set(0x0021, 0x7F);
         cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 3);
-        assert_eq!(cpu.a(), 0xFF); // A: 0x00 -> 0xFF (wrapped)
-        assert_eq!(cpu.y(), 0xFF); // Y: 0x00 -> 0xFF (borrow from A)
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0020), 0x00);
+        assert_eq!(bus.read(0x0021), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0x80 is negative)
+    }
+
+    #[test]
+    fn decw_dp_decrements_16bit_word_in_memory() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x1A, 0x20]); // DECW $20
+        bus.set(0x0020, 0x00);
+        bus.set(0x0021, 0x00);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0020), 0xFF);
+        assert_eq!(bus.read(0x0021), 0xFF);
         assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0xFF is negative)
     }
 
     #[test]
-    fn decw_ya_normal_decrement() {
+    fn decw_dp_normal_decrement() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x1A]); // DECW YA
-        cpu.load_state_for_processor_test(0x00, 0x00, 0x80, 0xF0, 0x0200, 0);
+        bus.load(0x0200, &[0x1A, 0x20]); // DECW $20
+        bus.set(0x0020, 0x00);
+        bus.set(0x0021, 0x80);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 3);
-        assert_eq!(cpu.a(), 0xFF); // A: 0x00 -> 0xFF (wrapped)
-        assert_eq!(cpu.y(), 0x7F); // Y: 0x80 -> 0x7F (borrow from A)
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0020), 0xFF);
+        assert_eq!(bus.read(0x0021), 0x7F);
         assert!(!cpu.flag(FLAG_NEGATIVE)); // N flag clear (0x7F is positive)
     }
 
@@ -2667,13 +2837,14 @@ mod tests {
     fn addw_ya_simple_addition() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x7A, 0x34, 0x12]); // ADDW YA,#$1234
-        // YA = 0x0001, imm = 0x1234, result = 0x1235
+        bus.load(0x0200, &[0x7A, 0x20]); // ADDW YA,$20
+        bus.set(0x0020, 0x34);
+        bus.set(0x0021, 0x12);
         cpu.load_state_for_processor_test(0x01, 0x00, 0x00, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 5);
         assert_eq!(cpu.a(), 0x35); // Low byte
         assert_eq!(cpu.y(), 0x12); // High byte
         assert!(!cpu.flag(FLAG_CARRY)); // No carry
@@ -2684,13 +2855,14 @@ mod tests {
     fn addw_ya_with_carry() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x7A, 0x00, 0xFF]); // ADDW YA,#$FF00
-        // YA = 0x0100, imm = 0xFF00, result = 0x0000 (wraps, sets carry)
+        bus.load(0x0200, &[0x7A, 0x20]); // ADDW YA,$20
+        bus.set(0x0020, 0x00);
+        bus.set(0x0021, 0xFF);
         cpu.load_state_for_processor_test(0x00, 0x00, 0x01, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 5);
         assert_eq!(cpu.a(), 0x00); // Low byte wrapped
         assert_eq!(cpu.y(), 0x00); // High byte wrapped
         assert!(cpu.flag(FLAG_CARRY)); // Carry flag set
@@ -2700,61 +2872,65 @@ mod tests {
     fn subw_ya_simple_subtraction() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x9A, 0x01, 0x00]); // SUBW YA,#$0001
-        // YA = 0x0100, imm = 0x0001, result = 0x00FF
+        bus.load(0x0200, &[0x9A, 0x20]); // SUBW YA,$20
+        bus.set(0x0020, 0x01);
+        bus.set(0x0021, 0x00);
         cpu.load_state_for_processor_test(0x00, 0x00, 0x01, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 5);
         assert_eq!(cpu.a(), 0xFF); // Low byte
         assert_eq!(cpu.y(), 0x00); // High byte
-        assert!(!cpu.flag(FLAG_CARRY)); // No borrow
+        assert!(cpu.flag(FLAG_CARRY)); // No borrow
     }
 
     #[test]
     fn subw_ya_with_borrow() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x9A, 0x00, 0x01]); // SUBW YA,#$0100
-        // YA = 0x0000, imm = 0x0100, result = 0xFF00 (borrow)
+        bus.load(0x0200, &[0x9A, 0x20]); // SUBW YA,$20
+        bus.set(0x0020, 0x00);
+        bus.set(0x0021, 0x01);
         cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 5);
         assert_eq!(cpu.a(), 0x00); // Low byte
         assert_eq!(cpu.y(), 0xFF); // High byte wrapped
-        assert!(cpu.flag(FLAG_CARRY)); // Borrow flag (carry) set
+        assert!(!cpu.flag(FLAG_CARRY)); // Borrow occurred
     }
 
     #[test]
     fn cmpw_ya_equal_comparison() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x5A, 0x34, 0x12]); // CMPW YA,#$1234
-        // YA = 0x1234, imm = 0x1234, result = 0 (equal, Z flag set)
+        bus.load(0x0200, &[0x5A, 0x20]); // CMPW YA,$20
+        bus.set(0x0020, 0x34);
+        bus.set(0x0021, 0x12);
         cpu.load_state_for_processor_test(0x34, 0x00, 0x12, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
 
         assert_eq!(cycles, 4);
         assert!(cpu.flag(FLAG_ZERO)); // Zero flag set (result is 0)
-        assert!(!cpu.flag(FLAG_CARRY)); // No borrow
+        assert!(cpu.flag(FLAG_CARRY)); // No borrow
     }
 
     #[test]
     fn cmpw_ya_less_than_comparison() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x5A, 0x00, 0x01]); // CMPW YA,#$0100
-        // YA = 0x0000, imm = 0x0100, result = 0xFF00 (YA < imm, borrow)
+        bus.load(0x0200, &[0x5A, 0x20]); // CMPW YA,$20
+        bus.set(0x0020, 0x00);
+        bus.set(0x0021, 0x01);
         cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
 
         assert_eq!(cycles, 4);
-        assert!(cpu.flag(FLAG_CARRY)); // Borrow flag (carry) set for unsigned less-than
+        assert!(!cpu.flag(FLAG_CARRY)); // Borrow occurred (YA < memory word)
     }
 
     #[test]
