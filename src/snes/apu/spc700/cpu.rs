@@ -437,12 +437,13 @@ impl Spc700 {
         self.update_nz8(self.a); // Set flags based on quotient
     }
 
-    /// Execute a single instruction, returning the number of cycles consumed.
+    /// Execute a single instruction or halted cycle, returning cycles consumed.
     ///
-    /// Only `NOP` is implemented in this first slice; further opcodes are added
-    /// incrementally with their own tests and SingleStepTests coverage.
+    /// Opcode coverage is added incrementally with dedicated tests and
+    /// SingleStepTests coverage.
     pub fn step(&mut self, bus: &mut impl Spc700Bus) -> u8 {
         if self.halted {
+            bus.idle();
             return 1;
         }
         let mut cycles = 0u8;
@@ -5341,6 +5342,7 @@ mod tests {
 
         assert_eq!(first_cycles, 1);
         assert_eq!(second_cycles, 1);
+        assert_eq!(bus.cycles(), 2);
         assert_eq!(pc_after_sleep, cpu.pc());
     }
 
@@ -5357,6 +5359,7 @@ mod tests {
 
         assert_eq!(first_cycles, 1);
         assert_eq!(second_cycles, 1);
+        assert_eq!(bus.cycles(), 2);
         assert_eq!(pc_after_stop, cpu.pc());
     }
 }
