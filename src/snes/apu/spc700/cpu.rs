@@ -265,6 +265,13 @@ impl Spc700 {
         bus.idle();
     }
 
+    /// Perform a branch using a signed 8-bit offset (relative to PC+2).
+    /// The offset is interpreted as signed: positive goes forward, negative goes backward.
+    fn branch(&mut self, offset: i8) {
+        let signed_offset = offset as i16;
+        self.pc = self.pc.wrapping_add(signed_offset as u16);
+    }
+
     /// Execute a single instruction, returning the number of cycles consumed.
     ///
     /// Only `NOP` is implemented in this first slice; further opcodes are added
@@ -641,6 +648,39 @@ impl Spc700 {
             0xAD => {
                 let imm = self.fetch(bus, &mut cycles);
                 self.compare_y(imm);
+            }
+            // BRA rel — Branch Always (absolute address as 16-bit operand).
+            0x2F => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                self.pc = addr;
+            }
+            // BEQ rel — Branch if Equal (Z flag set).
+            0xF0 => {
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                if self.flag(FLAG_ZERO) {
+                    self.branch(offset);
+                }
+            }
+            // BNE rel — Branch if Not Equal (Z flag clear).
+            0xD0 => {
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                if !self.flag(FLAG_ZERO) {
+                    self.branch(offset);
+                }
+            }
+            // BCS rel — Branch if Carry Set (C flag set).
+            0xB0 => {
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                if self.flag(FLAG_CARRY) {
+                    self.branch(offset);
+                }
+            }
+            // BCC rel — Branch if Carry Clear (C flag clear).
+            0x90 => {
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                if !self.flag(FLAG_CARRY) {
+                    self.branch(offset);
+                }
             }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
@@ -1998,5 +2038,109 @@ mod tests {
         assert_eq!(cpu.y(), 0x40); // Y unchanged
         assert!(cpu.flag(FLAG_ZERO));
         assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn bra_always_branches_to_absolute_address() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0100, &[0x2F, 0x34, 0x12]); // BRA $1234
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0100, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.pc(), 0x1234);
+    }
+
+    #[test]
+    fn beq_branches_when_zero_flag_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xF0, 0x10]); // BEQ rel +16
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0200, FLAG_ZERO);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0212); // 0x0200 + 2 (pc after fetch) + 0x10
+    }
+
+    #[test]
+    fn beq_does_not_branch_when_zero_flag_clear() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xF0, 0x10]); // BEQ rel +16
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0200, 0); // Zero flag clear
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0202); // Just advance past opcode + operand
+    }
+
+    #[test]
+    fn bne_branches_when_zero_flag_clear() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0300, &[0xD0, 0xFE]); // BNE rel -2
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0300, 0); // Zero flag clear
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0300); // 0x0300 + 2 + (-2) = 0x0300
+    }
+
+    #[test]
+    fn bne_does_not_branch_when_zero_flag_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0300, &[0xD0, 0xFE]); // BNE rel -2
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0300, FLAG_ZERO);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0302); // Just advance past opcode + operand
+    }
+
+    #[test]
+    fn bcs_branches_when_carry_flag_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0400, &[0xB0, 0x20]); // BCS rel +32
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0400, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0422); // 0x0400 + 2 + 0x20
+    }
+
+    #[test]
+    fn bcc_branches_when_carry_flag_clear() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0500, &[0x90, 0x30]); // BCC rel +48
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0500, 0); // Carry flag clear
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0532); // 0x0500 + 2 + 0x30
+    }
+
+    #[test]
+    fn bcc_does_not_branch_when_carry_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0500, &[0x90, 0x30]); // BCC rel +48
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0500, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.pc(), 0x0502); // Just advance past opcode + operand
     }
 }

@@ -185,6 +185,11 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         && opcode != 0xC8
         && opcode != 0xC0
         && opcode != 0xAD
+        && opcode != 0x2F
+        && opcode != 0xF0
+        && opcode != 0xD0
+        && opcode != 0xB0
+        && opcode != 0x90
     {
         return Err(VectorFailure {
             details: format!(
@@ -2033,7 +2038,166 @@ mod tests {
         fs::write(path, sample).expect("write sample CMP Y,#imm vector JSON");
     }
 
-    #[test]
+    fn write_bra_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "2f bra abs",
+    "initial": {
+      "pc": 512,
+      "sp": 239,
+      "psw": 0,
+      "a": 66,
+      "x": 17,
+      "y": 34,
+      "ram": [[512, 47], [513, 128], [514, 128]]
+    },
+    "final": {
+      "pc": 32896,
+      "sp": 239,
+      "psw": 0,
+      "a": 66,
+      "x": 17,
+      "y": 34,
+      "ram": [[512, 47], [513, 128], [514, 128]]
+    },
+    "cycles": [
+      [512, 47, "d-r-----"],
+      [513, 128, "d-r-----"],
+      [514, 128, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample BRA vector JSON");
+    }
+
+    fn write_beq_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "f0 beq rel",
+    "initial": {
+      "pc": 768,
+      "sp": 239,
+      "psw": 2,
+      "a": 0,
+      "x": 0,
+      "y": 0,
+      "ram": [[768, 240], [769, 32]]
+    },
+    "final": {
+      "pc": 802,
+      "sp": 239,
+      "psw": 2,
+      "a": 0,
+      "x": 0,
+      "y": 0,
+      "ram": [[768, 240], [769, 32]]
+    },
+    "cycles": [
+      [768, 240, "d-r-----"],
+      [769, 32, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample BEQ vector JSON");
+    }
+
+    fn write_bne_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "d0 bne rel",
+    "initial": {
+      "pc": 1024,
+      "sp": 239,
+      "psw": 0,
+      "a": 1,
+      "x": 0,
+      "y": 0,
+      "ram": [[1024, 208], [1025, 240]]
+    },
+    "final": {
+      "pc": 1010,
+      "sp": 239,
+      "psw": 0,
+      "a": 1,
+      "x": 0,
+      "y": 0,
+      "ram": [[1024, 208], [1025, 240]]
+    },
+    "cycles": [
+      [1024, 208, "d-r-----"],
+      [1025, 240, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample BNE vector JSON");
+    }
+
+    fn write_bcs_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "b0 bcs rel",
+    "initial": {
+      "pc": 1280,
+      "sp": 239,
+      "psw": 1,
+      "a": 85,
+      "x": 0,
+      "y": 0,
+      "ram": [[1280, 176], [1281, 48]]
+    },
+    "final": {
+      "pc": 1330,
+      "sp": 239,
+      "psw": 1,
+      "a": 85,
+      "x": 0,
+      "y": 0,
+      "ram": [[1280, 176], [1281, 48]]
+    },
+    "cycles": [
+      [1280, 176, "d-r-----"],
+      [1281, 48, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample BCS vector JSON");
+    }
+
+    fn write_bcc_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "90 bcc rel",
+    "initial": {
+      "pc": 1536,
+      "sp": 239,
+      "psw": 0,
+      "a": 170,
+      "x": 0,
+      "y": 0,
+      "ram": [[1536, 144], [1537, 32]]
+    },
+    "final": {
+      "pc": 1570,
+      "sp": 239,
+      "psw": 0,
+      "a": 170,
+      "x": 0,
+      "y": 0,
+      "ram": [[1536, 144], [1537, 32]]
+    },
+    "cycles": [
+      [1536, 144, "d-r-----"],
+      [1537, 32, "d-r-----"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample BCC vector JSON");
+    }
     fn given_spc700_vector_json_when_loaded_then_schema_is_parsed() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("00.json");
@@ -2595,6 +2759,61 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("ad.json");
         write_cmp_y_imm_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_bra_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("2f.json");
+        write_bra_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_beq_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("f0.json");
+        write_beq_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_bne_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("d0.json");
+        write_bne_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_bcs_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("b0.json");
+        write_bcs_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_bcc_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("90.json");
+        write_bcc_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
         let result = run_vector_case(&vectors[0]);

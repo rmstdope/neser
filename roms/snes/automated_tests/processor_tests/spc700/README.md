@@ -56,6 +56,11 @@ Tracked subset files:
 - `v1/c8.json`
 - `v1/c0.json`
 - `v1/ad.json`
+- `v1/2f.json` (BRA)
+- `v1/f0.json` (BEQ)
+- `v1/d0.json` (BNE)
+- `v1/b0.json` (BCS)
+- `v1/90.json` (BCC)
 
 Optional full corpus location (local, ignored by git):
 
