@@ -1058,6 +1058,28 @@ impl Spc700 {
                     self.idle_cycle(bus, &mut cycles);
                 }
             }
+            // JMP [!abs+X] — jump via absolute indirect indexed by X.
+            0x1F => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let ptr = base.wrapping_add(u16::from(self.x));
+                let lo = self.read_cycle(bus, ptr, &mut cycles);
+                let hi = self.read_cycle(bus, ptr.wrapping_add(1), &mut cycles);
+                self.pc = u16::from(lo) | (u16::from(hi) << 8);
+            }
+            // CBNE dp,rel — compare A with direct-page byte and branch if not equal.
+            0x2E => {
+                let dp = self.fetch(bus, &mut cycles);
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                if self.a != value {
+                    self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
+                }
+            }
             // PUSH PSW — push flags onto stack (4 cycles).
             0x0D => {
                 self.push(bus, self.psw, &mut cycles);
@@ -1142,6 +1164,50 @@ impl Spc700 {
                 self.pc = (hi << 8) | lo;
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
+            }
+            // DBNZ dp,rel — decrement direct-page byte and branch if result is non-zero.
+            0x6E => {
+                let dp = self.fetch(bus, &mut cycles);
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = value.wrapping_sub(1);
+                self.write_cycle(bus, addr, result, &mut cycles);
+                if result != 0 {
+                    self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
+                }
+            }
+            // CBNE dp+X,rel — compare A with direct-page byte indexed by X and branch if not equal.
+            0xDE => {
+                let dp = self.fetch(bus, &mut cycles);
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                self.idle_cycle(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp.wrapping_add(self.x));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                if self.a != value {
+                    self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
+                }
+            }
+            // DBNZ Y,rel — decrement Y and branch if result is non-zero.
+            0xFE => {
+                let offset = self.fetch(bus, &mut cycles) as i8;
+                self.y = self.y.wrapping_sub(1);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                if self.y != 0 {
+                    self.branch(offset);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
+                }
+            }
+            // JMP !abs — jump to absolute address.
+            0x5F => {
+                self.pc = self.fetch_u16(bus, &mut cycles);
             }
             // INCW dp — increment 16-bit direct-page word, update N/Z from high byte.
             0x3A => {
@@ -2856,6 +2922,91 @@ mod tests {
 
         assert_eq!(cycles, 2);
         assert_eq!(cpu.pc(), 0x0802); // Just advance past opcode + operand
+    }
+
+    #[test]
+    fn jmp_abs_loads_pc_from_absolute_operand() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x5F, 0x34, 0x12]); // JMP $1234
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.pc(), 0x1234);
+    }
+
+    #[test]
+    fn jmp_indirect_abs_x_reads_pointer_target() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x1F, 0x00, 0x20]); // JMP [$2000+X]
+        bus.set(0x2002, 0x78);
+        bus.set(0x2003, 0x56);
+        cpu.load_state_for_processor_test(0x00, 0x02, 0x00, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.pc(), 0x5678);
+    }
+
+    #[test]
+    fn cbne_dp_branches_when_a_differs() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x2E, 0x20, 0x10]); // CBNE $20,+$10
+        bus.set(0x0020, 0x33);
+        cpu.load_state_for_processor_test(0x44, 0x00, 0x00, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 7);
+        assert_eq!(cpu.pc(), 0x0213);
+    }
+
+    #[test]
+    fn cbne_dp_x_not_taken_when_equal() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xDE, 0x20, 0x10]); // CBNE $20+X,+$10
+        bus.set(0x0023, 0x44);
+        cpu.load_state_for_processor_test(0x44, 0x03, 0x00, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.pc(), 0x0203);
+    }
+
+    #[test]
+    fn dbnz_y_branches_until_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0300, &[0xFE, 0xFC]); // DBNZ Y,-4
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x02, 0xEF, 0x0300, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.y(), 0x01);
+        assert_eq!(cpu.pc(), 0x02FE);
+    }
+
+    #[test]
+    fn dbnz_dp_not_taken_when_result_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0400, &[0x6E, 0x40, 0x20]); // DBNZ $40,+$20
+        bus.set(0x0040, 0x01);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0400, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.get(0x0040), 0x00);
+        assert_eq!(cpu.pc(), 0x0403);
     }
 
     #[test]
