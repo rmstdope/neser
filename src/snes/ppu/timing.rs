@@ -9,6 +9,7 @@
 
 use super::{
     DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu, VBLANK_START_LINE,
+    VISIBLE_LINE_START,
 };
 
 impl Ppu {
@@ -38,7 +39,12 @@ impl Ppu {
     }
 
     fn on_scanline_start(&mut self) {
-        match self.position.scanline {
+        let scanline = self.position.scanline;
+        // Advance the vertical mosaic block counter for visible scanlines.
+        if (VISIBLE_LINE_START..VBLANK_START_LINE).contains(&scanline) {
+            self.advance_mosaic_vcount(scanline);
+        }
+        match scanline {
             VBLANK_START_LINE => {
                 // Begin VBlank: a full visible frame has been produced. Set the VBlank + RDNMI
                 // flags (the flag is set even if NMI is disabled), then re-evaluate the NMI line.

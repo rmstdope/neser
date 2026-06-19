@@ -25,6 +25,8 @@ impl Ppu {
                     self.bg_tile_size_16[bg] = value & (0x10 << bg) != 0;
                 }
             }
+            // MOSAIC: mosaic size (bits 7-4) and per-BG enable (bits 3-0).
+            0x2106 => self.mosaic = value,
             // BGnSC: tilemap base (bits 2-7, 1K-word steps) + size (bits 0-1).
             0x2107..=0x210A => {
                 let bg = (addr - 0x2107) as usize;
