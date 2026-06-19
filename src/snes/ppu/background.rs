@@ -404,6 +404,13 @@ impl Ppu {
         let cell_shift = if size16 { 4 } else { 3 };
         let cell_mask = (1u16 << cell_shift) - 1;
 
+        // Apply horizontal mosaic: snap x to the left edge of its block when enabled.
+        let x = if self.mosaic_bg_enabled(bg) {
+            self.mosaic_apply_x(x)
+        } else {
+            x
+        };
+
         let (scrolled_x, scrolled_y) = self.effective_offsets(bg, x, y);
 
         let entry = self.read_bg_map_entry(bg, scrolled_x >> cell_shift, scrolled_y >> cell_shift);
@@ -460,7 +467,13 @@ impl Ppu {
     /// to BG1/BG2. Algorithm follows bsnes (non-hires; Mode 5/6 hi-res output is #2766).
     fn effective_offsets(&self, bg: usize, x: u16, y: u16) -> (u16, u16) {
         let hscroll = self.bg_hofs[bg] & 0x03FF;
-        let vscroll = self.bg_vofs[bg] & 0x03FF;
+        // Vertical mosaic: subtract the block-internal scanline index from BGnVOFS before adding
+        // screen Y (fullsnes: "subtract the vertical index from the vertical scroll register").
+        let vscroll = if self.mosaic_bg_enabled(bg) {
+            self.bg_vofs[bg].wrapping_sub(self.mosaic_vcount as u16)
+        } else {
+            self.bg_vofs[bg]
+        } & 0x03FF;
         let mut hoffset = x.wrapping_add(hscroll);
         let mut voffset = y.wrapping_add(vscroll);
 
@@ -629,6 +642,30 @@ mod tests {
                 let off = base + (p / 2) * 16 + r * 2 + (p % 2);
                 ppu.vram[off] = if color & (1 << p) != 0 { 0xFF } else { 0x00 };
             }
+        }
+    }
+
+    /// Set a single pixel in a 2bpp 8×8 tile at (fine_x, fine_y) to `color` (0-3).
+    fn set_2bpp_tile_pixel(
+        ppu: &mut Ppu,
+        char_base: usize,
+        char_num: usize,
+        fine_x: u8,
+        fine_y: u8,
+        color: u8,
+    ) {
+        let base = (char_base + char_num * 8) * 2;
+        let row_offset = base + (fine_y as usize) * 2;
+        let bit = 7 - fine_x; // bit 7 is left-most
+        if color & 1 != 0 {
+            ppu.vram[row_offset] |= 1 << bit;
+        } else {
+            ppu.vram[row_offset] &= !(1 << bit);
+        }
+        if color & 2 != 0 {
+            ppu.vram[row_offset + 1] |= 1 << bit;
+        } else {
+            ppu.vram[row_offset + 1] &= !(1 << bit);
         }
     }
 
@@ -1496,6 +1533,171 @@ mod tests {
             pixel(&rgb, 60, 0),
             [0, 0, 0],
             "x=60 inside both W1 and W2, masked with AND"
+        );
+    }
+
+    // ── Mosaic rendering ─────────────────────────────────────────────────────
+
+    /// Set up a BG1 Mode 0 scene: BG1 enabled, no scroll, tilemap at word 0, char base at 0.
+    fn setup_bg1_mode0(ppu: &mut Ppu) {
+        ppu.write_register(0x2105, 0x00); // Mode 0
+        ppu.write_register(0x2107, 0x00); // BG1SC: tilemap base 0
+        ppu.write_register(0x210B, 0x00); // BG12NBA: char base 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1 only
+        ppu.write_register(0x2100, 0x0F); // INIDISP: full brightness
+    }
+
+    #[test]
+    fn horizontal_mosaic_replicates_leftmost_pixel_of_each_block() {
+        // Tile 1: only column 0 (fine_x=0) is white; all other columns are black (color 0).
+        // With tilemap full of tile 1 and mosaic block_size=4: pixels 0-3 show white (x_mos=0),
+        // pixels 4-7 show black (x_mos=4, fine_x=4), pixels 8-11 show white (fine_x=0), etc.
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000); // color 0 = black (also backdrop)
+        set_cgram(&mut ppu, 1, 0x7FFF); // color 1 = white
+
+        // Tilemap: all entries point to char 1.
+        for col in 0..32usize {
+            set_vram_word(&mut ppu, col, 1);
+        }
+        // Tile 1: only fine_x=0 of every row is white.
+        for fine_y in 0..8 {
+            set_2bpp_tile_pixel(&mut ppu, 0, 1, 0, fine_y, 1); // col 0 = white
+        }
+
+        setup_bg1_mode0(&mut ppu);
+        ppu.write_register(0x2106, 0x31); // size=3 → block_size=4; BG1 enabled
+
+        render_frame(&mut ppu);
+        let rgb = ppu.screen_snapshot_rgb();
+
+        // Block 0 (x=0..3): x_mos=0 → fine_x=0 → white
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "x=0 → leftmost pixel white"
+        );
+        assert_eq!(
+            pixel(&rgb, 1, 0),
+            [255, 255, 255],
+            "x=1 → replicated from x_mos=0"
+        );
+        assert_eq!(
+            pixel(&rgb, 2, 0),
+            [255, 255, 255],
+            "x=2 → replicated from x_mos=0"
+        );
+        assert_eq!(
+            pixel(&rgb, 3, 0),
+            [255, 255, 255],
+            "x=3 → replicated from x_mos=0"
+        );
+        // Block 1 (x=4..7): x_mos=4 → fine_x=4 → black
+        assert_eq!(
+            pixel(&rgb, 4, 0),
+            [0, 0, 0],
+            "x=4 → new block, fine_x=4 is black"
+        );
+        assert_eq!(
+            pixel(&rgb, 5, 0),
+            [0, 0, 0],
+            "x=5 → replicated from x_mos=4"
+        );
+        // Block 2 (x=8..11): x_mos=8 → fine_x=0 → white (new tile, col 0 again)
+        assert_eq!(
+            pixel(&rgb, 8, 0),
+            [255, 255, 255],
+            "x=8 → next-tile col 0, white"
+        );
+        assert_eq!(
+            pixel(&rgb, 9, 0),
+            [255, 255, 255],
+            "x=9 → replicated from x_mos=8"
+        );
+    }
+
+    #[test]
+    fn vertical_mosaic_replicates_top_row_of_each_block() {
+        // Tile 1: only row 0 (fine_y=0) is white; all other rows are black.
+        // With mosaic block_size=4 and no scroll: scanlines 0-3 (vcount=0,1,2,3) all look at
+        // effective_y=0 (the top row), so they all show white. Scanlines 4-7 look at effective_y=4
+        // which is row 4 of the tile (black).
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+
+        // Tilemap: all entries char 1.
+        set_vram_word(&mut ppu, 0, 1);
+        // Tile 1: only fine_y=0 is white for all columns.
+        for fine_x in 0..8 {
+            set_2bpp_tile_pixel(&mut ppu, 0, 1, fine_x, 0, 1); // row 0 = white
+        }
+
+        setup_bg1_mode0(&mut ppu);
+        ppu.write_register(0x2106, 0x31); // size=3 → block_size=4; BG1 enabled
+
+        render_frame(&mut ppu);
+        let rgb = ppu.screen_snapshot_rgb();
+
+        // Scanlines 0-3: top of block (vcount=0,1,2,3 all map effective_y=0 → white row).
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "scanline 0: effective_y=0, white"
+        );
+        assert_eq!(
+            pixel(&rgb, 0, 1),
+            [255, 255, 255],
+            "scanline 1: vcount=1 → effective_y=0"
+        );
+        assert_eq!(
+            pixel(&rgb, 0, 2),
+            [255, 255, 255],
+            "scanline 2: vcount=2 → effective_y=0"
+        );
+        assert_eq!(
+            pixel(&rgb, 0, 3),
+            [255, 255, 255],
+            "scanline 3: vcount=3 → effective_y=0"
+        );
+        // Scanline 4: new block (vcount=0), effective_y=4 → black row.
+        assert_eq!(
+            pixel(&rgb, 0, 4),
+            [0, 0, 0],
+            "scanline 4: new block, effective_y=4, black"
+        );
+        assert_eq!(
+            pixel(&rgb, 0, 5),
+            [0, 0, 0],
+            "scanline 5: vcount=1 → effective_y=4"
+        );
+    }
+
+    #[test]
+    fn no_mosaic_when_bg_bit_not_enabled() {
+        // With mosaic size set but BG1 bit NOT enabled, rendering should be unaffected.
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+
+        set_vram_word(&mut ppu, 0, 1);
+        // Tile 1: only fine_x=0 column is white.
+        for fine_y in 0..8 {
+            set_2bpp_tile_pixel(&mut ppu, 0, 1, 0, fine_y, 1);
+        }
+
+        setup_bg1_mode0(&mut ppu);
+        ppu.write_register(0x2106, 0x30); // size=3 but BG1 NOT enabled (bits 3-0 = 0)
+
+        render_frame(&mut ppu);
+        let rgb = ppu.screen_snapshot_rgb();
+
+        // Without mosaic, x=1 should be black (not replicated from x=0).
+        assert_eq!(pixel(&rgb, 0, 0), [255, 255, 255], "x=0: fine_x=0 → white");
+        assert_eq!(
+            pixel(&rgb, 1, 0),
+            [0, 0, 0],
+            "x=1: fine_x=1 → black (no mosaic)"
         );
     }
 }

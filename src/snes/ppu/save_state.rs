@@ -75,6 +75,9 @@ impl Ppu {
             oam_priority_rotation: self.oam_priority_rotation,
             stat77_range_over: self.stat77_range_over,
             stat77_time_over: self.stat77_time_over,
+            mosaic: self.mosaic,
+            mosaic_vblock_size: self.mosaic_vblock_size,
+            mosaic_vcount: self.mosaic_vcount,
         }
     }
 
@@ -148,6 +151,9 @@ impl Ppu {
         self.oam_priority_rotation = state.oam_priority_rotation;
         self.stat77_range_over = state.stat77_range_over;
         self.stat77_time_over = state.stat77_time_over;
+        self.mosaic = state.mosaic;
+        self.mosaic_vblock_size = state.mosaic_vblock_size;
+        self.mosaic_vcount = state.mosaic_vcount;
 
         // Reset the transient OBJ runtime state so stale pipeline data from before the load can't
         // leak into the first restored frame (the line buffer is rebuilt as rendering resumes).
