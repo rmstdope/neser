@@ -57,6 +57,8 @@ pub struct Spc700 {
     pc: u16,
     /// Program status word (flags).
     psw: u8,
+    /// Halt state entered by SLEEP/STOP.
+    halted: bool,
 }
 
 impl Spc700 {
@@ -74,6 +76,7 @@ impl Spc700 {
             sp: 0,
             pc: 0,
             psw: 0,
+            halted: false,
         }
     }
 
@@ -88,6 +91,7 @@ impl Spc700 {
         self.y = 0;
         self.sp = 0;
         self.psw = 0;
+        self.halted = false;
         let lo = bus.read(Self::RESET_VECTOR) as u16;
         let hi = bus.read(Self::RESET_VECTOR.wrapping_add(1)) as u16;
         self.pc = (hi << 8) | lo;
@@ -232,6 +236,16 @@ impl Spc700 {
         self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
     }
 
+    /// Compare two 8-bit values (left - right), updating N/Z/V/C flags.
+    fn compare_values(&mut self, left: u8, right: u8) {
+        let (result, borrow) = left.overflowing_sub(right);
+        let overflow = (left ^ result) & (!right ^ result) & 0x80 != 0;
+        self.set_flag(FLAG_CARRY, !borrow);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.set_flag(FLAG_ZERO, result == 0);
+        self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
+    }
+
     /// Read `PC` and advance it, consuming one cycle.
     fn fetch(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) -> u8 {
         let byte = self.read_cycle(bus, self.pc, cycles);
@@ -244,6 +258,15 @@ impl Spc700 {
         let lo = self.fetch(bus, cycles) as u16;
         let hi = self.fetch(bus, cycles) as u16;
         (hi << 8) | lo
+    }
+
+    /// Fetch SPC700 mem.bit operand (13-bit address + 3-bit bit index).
+    fn fetch_mem_bit_operand(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) -> (u16, u8) {
+        let lo = self.fetch(bus, cycles);
+        let hi = self.fetch(bus, cycles);
+        let bit_index = hi >> 5;
+        let addr = (u16::from(hi & 0x1F) << 8) | u16::from(lo);
+        (addr, bit_index)
     }
 
     /// Read a byte, consuming one cycle.
@@ -419,6 +442,9 @@ impl Spc700 {
     /// Only `NOP` is implemented in this first slice; further opcodes are added
     /// incrementally with their own tests and SingleStepTests coverage.
     pub fn step(&mut self, bus: &mut impl Spc700Bus) -> u8 {
+        if self.halted {
+            return 1;
+        }
         let mut cycles = 0u8;
         let opcode = self.fetch(bus, &mut cycles);
         match opcode {
@@ -506,6 +532,18 @@ impl Spc700 {
                 let addr = self.direct_page_base() | dp as u16;
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.y, &mut cycles);
+            }
+            // MOV dp,dp — copy source direct-page byte into destination direct-page byte.
+            0xFA => {
+                let src_dp = self.fetch(bus, &mut cycles);
+                let dst_dp = self.fetch(bus, &mut cycles);
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(src_dp),
+                    &mut cycles,
+                );
+                let dst_addr = self.direct_page_base() | u16::from(dst_dp);
+                self.write_cycle(bus, dst_addr, value, &mut cycles);
             }
             // MOV A,(X) — load A from direct-page address in X, update N/Z.
             0xE6 => {
@@ -726,6 +764,41 @@ impl Spc700 {
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.y, &mut cycles);
             }
+            // MOV dp,#imm — store immediate to direct-page address; flags unchanged.
+            0x8F => {
+                let imm = self.fetch(bus, &mut cycles);
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, imm, &mut cycles);
+            }
+            // MOVW YA,dp — load 16-bit direct-page word into YA, update N/Z from high byte.
+            0xBA => {
+                let dp = self.fetch(bus, &mut cycles);
+                let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(1)),
+                    &mut cycles,
+                );
+                self.a = lo;
+                self.y = hi;
+                self.update_nz8(self.y);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // MOVW dp,YA — store YA as 16-bit direct-page word; flags unchanged.
+            0xDA => {
+                let dp = self.fetch(bus, &mut cycles);
+                let base = self.direct_page_base() | u16::from(dp);
+                self.read_cycle(bus, base, &mut cycles);
+                self.write_cycle(bus, base, self.a, &mut cycles);
+                self.write_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(1)),
+                    self.y,
+                    &mut cycles,
+                );
+            }
             // INC A — increment A, update N/Z.
             0xBC => {
                 self.a = self.a.wrapping_add(1);
@@ -932,17 +1005,374 @@ impl Spc700 {
                 self.a &= imm;
                 self.update_nz8(self.a);
             }
+            // AND A,#imm — canonical opcode form.
+            0x28 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.a &= imm;
+                self.update_nz8(self.a);
+            }
+            // AND dp,dp — [dst] &= [src], update N/Z from destination result.
+            0x29 => {
+                let src_dp = self.fetch(bus, &mut cycles);
+                let dst_dp = self.fetch(bus, &mut cycles);
+                let src = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(src_dp),
+                    &mut cycles,
+                );
+                let dst_addr = self.direct_page_base() | u16::from(dst_dp);
+                let dst = self.read_cycle(bus, dst_addr, &mut cycles);
+                let result = dst & src;
+                self.write_cycle(bus, dst_addr, result, &mut cycles);
+                self.update_nz8(result);
+            }
+            // AND dp,#imm — [dp] &= imm, update N/Z from destination result.
+            0x38 => {
+                let imm = self.fetch(bus, &mut cycles);
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = value & imm;
+                self.write_cycle(bus, addr, result, &mut cycles);
+                self.update_nz8(result);
+            }
+            // AND A,(X).
+            0x26 => {
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(self.x),
+                    &mut cycles,
+                );
+                self.a &= value;
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // AND A,dp+X.
+            0x34 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(self.x)),
+                    &mut cycles,
+                );
+                self.a &= value;
+                self.update_nz8(self.a);
+            }
+            // AND A,!abs.
+            0x25 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.a &= value;
+                self.update_nz8(self.a);
+            }
+            // AND A,!abs+X.
+            0x35 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.x)), &mut cycles);
+                self.a &= value;
+                self.update_nz8(self.a);
+            }
+            // AND A,!abs+Y.
+            0x36 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.y)), &mut cycles);
+                self.a &= value;
+                self.update_nz8(self.a);
+            }
+            // AND A,[dp+X].
+            0x27 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let ptr = dp.wrapping_add(self.x);
+                let lo =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(ptr), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(ptr.wrapping_add(1)),
+                    &mut cycles,
+                );
+                let value = self.read_cycle(bus, u16::from(lo) | (u16::from(hi) << 8), &mut cycles);
+                self.a &= value;
+                self.update_nz8(self.a);
+            }
+            // AND A,[dp]+Y.
+            0x37 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(1)),
+                    &mut cycles,
+                );
+                self.idle_cycle(bus, &mut cycles);
+                let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.a &= value;
+                self.update_nz8(self.a);
+            }
+            // AND (X),(Y) — (X) &= (Y).
+            0x39 => {
+                let x_addr = self.direct_page_base() | u16::from(self.x);
+                let y_addr = self.direct_page_base() | u16::from(self.y);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
+                let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let result = x_value & y_value;
+                self.write_cycle(bus, x_addr, result, &mut cycles);
+                self.update_nz8(result);
+                self.idle_cycle(bus, &mut cycles);
+            }
             // OR A,#imm — bitwise OR of immediate into A, update N/Z.
             0x04 => {
                 let imm = self.fetch(bus, &mut cycles);
                 self.a |= imm;
                 self.update_nz8(self.a);
             }
+            // OR A,#imm — canonical opcode form.
+            0x08 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.a |= imm;
+                self.update_nz8(self.a);
+            }
+            // OR dp,dp — [dst] |= [src], update N/Z from destination result.
+            0x09 => {
+                let src_dp = self.fetch(bus, &mut cycles);
+                let dst_dp = self.fetch(bus, &mut cycles);
+                let src = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(src_dp),
+                    &mut cycles,
+                );
+                let dst_addr = self.direct_page_base() | u16::from(dst_dp);
+                let dst = self.read_cycle(bus, dst_addr, &mut cycles);
+                let result = dst | src;
+                self.write_cycle(bus, dst_addr, result, &mut cycles);
+                self.update_nz8(result);
+            }
+            // OR dp,#imm — [dp] |= imm, update N/Z from destination result.
+            0x18 => {
+                let imm = self.fetch(bus, &mut cycles);
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = value | imm;
+                self.write_cycle(bus, addr, result, &mut cycles);
+                self.update_nz8(result);
+            }
+            // OR A,(X).
+            0x06 => {
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(self.x),
+                    &mut cycles,
+                );
+                self.a |= value;
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // OR A,dp+X.
+            0x14 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(self.x)),
+                    &mut cycles,
+                );
+                self.a |= value;
+                self.update_nz8(self.a);
+            }
+            // OR A,!abs.
+            0x05 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.a |= value;
+                self.update_nz8(self.a);
+            }
+            // OR A,!abs+X.
+            0x15 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.x)), &mut cycles);
+                self.a |= value;
+                self.update_nz8(self.a);
+            }
+            // OR A,!abs+Y.
+            0x16 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.y)), &mut cycles);
+                self.a |= value;
+                self.update_nz8(self.a);
+            }
+            // OR A,[dp+X].
+            0x07 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let ptr = dp.wrapping_add(self.x);
+                let lo =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(ptr), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(ptr.wrapping_add(1)),
+                    &mut cycles,
+                );
+                let value = self.read_cycle(bus, u16::from(lo) | (u16::from(hi) << 8), &mut cycles);
+                self.a |= value;
+                self.update_nz8(self.a);
+            }
+            // OR A,[dp]+Y.
+            0x17 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(1)),
+                    &mut cycles,
+                );
+                self.idle_cycle(bus, &mut cycles);
+                let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.a |= value;
+                self.update_nz8(self.a);
+            }
+            // OR (X),(Y) — (X) |= (Y).
+            0x19 => {
+                let x_addr = self.direct_page_base() | u16::from(self.x);
+                let y_addr = self.direct_page_base() | u16::from(self.y);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
+                let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let result = x_value | y_value;
+                self.write_cycle(bus, x_addr, result, &mut cycles);
+                self.update_nz8(result);
+                self.idle_cycle(bus, &mut cycles);
+            }
             // EOR A,#imm — bitwise XOR of immediate into A, update N/Z.
             0x44 => {
                 let imm = self.fetch(bus, &mut cycles);
                 self.a ^= imm;
                 self.update_nz8(self.a);
+            }
+            // EOR A,#imm — canonical opcode form.
+            0x48 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.a ^= imm;
+                self.update_nz8(self.a);
+            }
+            // EOR dp,dp — [dst] ^= [src], update N/Z from destination result.
+            0x49 => {
+                let src_dp = self.fetch(bus, &mut cycles);
+                let dst_dp = self.fetch(bus, &mut cycles);
+                let src = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(src_dp),
+                    &mut cycles,
+                );
+                let dst_addr = self.direct_page_base() | u16::from(dst_dp);
+                let dst = self.read_cycle(bus, dst_addr, &mut cycles);
+                let result = dst ^ src;
+                self.write_cycle(bus, dst_addr, result, &mut cycles);
+                self.update_nz8(result);
+            }
+            // EOR dp,#imm — [dp] ^= imm, update N/Z from destination result.
+            0x58 => {
+                let imm = self.fetch(bus, &mut cycles);
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = value ^ imm;
+                self.write_cycle(bus, addr, result, &mut cycles);
+                self.update_nz8(result);
+            }
+            // EOR A,(X).
+            0x46 => {
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(self.x),
+                    &mut cycles,
+                );
+                self.a ^= value;
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // EOR A,dp+X.
+            0x54 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(self.x)),
+                    &mut cycles,
+                );
+                self.a ^= value;
+                self.update_nz8(self.a);
+            }
+            // EOR A,!abs.
+            0x45 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.a ^= value;
+                self.update_nz8(self.a);
+            }
+            // EOR A,!abs+X.
+            0x55 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.x)), &mut cycles);
+                self.a ^= value;
+                self.update_nz8(self.a);
+            }
+            // EOR A,!abs+Y.
+            0x56 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.y)), &mut cycles);
+                self.a ^= value;
+                self.update_nz8(self.a);
+            }
+            // EOR A,[dp+X].
+            0x47 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let ptr = dp.wrapping_add(self.x);
+                let lo =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(ptr), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(ptr.wrapping_add(1)),
+                    &mut cycles,
+                );
+                let value = self.read_cycle(bus, u16::from(lo) | (u16::from(hi) << 8), &mut cycles);
+                self.a ^= value;
+                self.update_nz8(self.a);
+            }
+            // EOR A,[dp]+Y.
+            0x57 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(1)),
+                    &mut cycles,
+                );
+                self.idle_cycle(bus, &mut cycles);
+                let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.a ^= value;
+                self.update_nz8(self.a);
+            }
+            // EOR (X),(Y) — (X) ^= (Y).
+            0x59 => {
+                let x_addr = self.direct_page_base() | u16::from(self.x);
+                let y_addr = self.direct_page_base() | u16::from(self.y);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
+                let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let result = x_value ^ y_value;
+                self.write_cycle(bus, x_addr, result, &mut cycles);
+                self.update_nz8(result);
+                self.idle_cycle(bus, &mut cycles);
             }
             // ADD A,#imm — add immediate to A, update N/Z/V/C.
             0x88 => {
@@ -954,6 +1384,120 @@ impl Spc700 {
                 let imm = self.fetch(bus, &mut cycles);
                 self.add_with_carry_to_a(imm);
             }
+            // ADC A,(X).
+            0x86 => {
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(self.x),
+                    &mut cycles,
+                );
+                self.add_with_carry_to_a(value);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // ADC A,dp+X.
+            0x94 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(self.x)),
+                    &mut cycles,
+                );
+                self.add_with_carry_to_a(value);
+            }
+            // ADC A,!abs.
+            0x85 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.add_with_carry_to_a(value);
+            }
+            // ADC A,!abs+X.
+            0x95 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.x)), &mut cycles);
+                self.add_with_carry_to_a(value);
+            }
+            // ADC A,!abs+Y.
+            0x96 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.y)), &mut cycles);
+                self.add_with_carry_to_a(value);
+            }
+            // ADC A,[dp+X].
+            0x87 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let ptr = dp.wrapping_add(self.x);
+                let lo =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(ptr), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(ptr.wrapping_add(1)),
+                    &mut cycles,
+                );
+                let value = self.read_cycle(bus, u16::from(lo) | (u16::from(hi) << 8), &mut cycles);
+                self.add_with_carry_to_a(value);
+            }
+            // ADC A,[dp]+Y.
+            0x97 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(1)),
+                    &mut cycles,
+                );
+                self.idle_cycle(bus, &mut cycles);
+                let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.add_with_carry_to_a(value);
+            }
+            // ADC dp,dp — [dst] = [dst] + [src] + C, update N/Z/V/C from result.
+            0x89 => {
+                let src_dp = self.fetch(bus, &mut cycles);
+                let dst_dp = self.fetch(bus, &mut cycles);
+                let src = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(src_dp),
+                    &mut cycles,
+                );
+                let dst_addr = self.direct_page_base() | u16::from(dst_dp);
+                let dst = self.read_cycle(bus, dst_addr, &mut cycles);
+                let saved_a = self.a;
+                self.a = dst;
+                self.add_with_carry_to_a(src);
+                let result = self.a;
+                self.a = saved_a;
+                self.write_cycle(bus, dst_addr, result, &mut cycles);
+            }
+            // ADC dp,#imm — [dp] = [dp] + imm + C, update N/Z/V/C from result.
+            0x98 => {
+                let imm = self.fetch(bus, &mut cycles);
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let saved_a = self.a;
+                self.a = value;
+                self.add_with_carry_to_a(imm);
+                let result = self.a;
+                self.a = saved_a;
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // ADC (X),(Y) — (X) = (X) + (Y) + C.
+            0x99 => {
+                let x_addr = self.direct_page_base() | u16::from(self.x);
+                let y_addr = self.direct_page_base() | u16::from(self.y);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
+                let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let saved_a = self.a;
+                self.a = x_value;
+                self.add_with_carry_to_a(y_value);
+                let result = self.a;
+                self.a = saved_a;
+                self.write_cycle(bus, x_addr, result, &mut cycles);
+            }
             // SUB A,#imm — subtract immediate from A, update N/Z/V/C.
             0xA8 => {
                 let imm = self.fetch(bus, &mut cycles);
@@ -963,6 +1507,120 @@ impl Spc700 {
             0xA4 => {
                 let imm = self.fetch(bus, &mut cycles);
                 self.subtract_with_borrow_from_a(imm);
+            }
+            // SBC A,(X).
+            0xA6 => {
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(self.x),
+                    &mut cycles,
+                );
+                self.subtract_with_borrow_from_a(value);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // SBC A,dp+X.
+            0xB4 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(self.x)),
+                    &mut cycles,
+                );
+                self.subtract_with_borrow_from_a(value);
+            }
+            // SBC A,!abs.
+            0xA5 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.subtract_with_borrow_from_a(value);
+            }
+            // SBC A,!abs+X.
+            0xB5 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.x)), &mut cycles);
+                self.subtract_with_borrow_from_a(value);
+            }
+            // SBC A,!abs+Y.
+            0xB6 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.y)), &mut cycles);
+                self.subtract_with_borrow_from_a(value);
+            }
+            // SBC A,[dp+X].
+            0xA7 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let ptr = dp.wrapping_add(self.x);
+                let lo =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(ptr), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(ptr.wrapping_add(1)),
+                    &mut cycles,
+                );
+                let value = self.read_cycle(bus, u16::from(lo) | (u16::from(hi) << 8), &mut cycles);
+                self.subtract_with_borrow_from_a(value);
+            }
+            // SBC A,[dp]+Y.
+            0xB7 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(1)),
+                    &mut cycles,
+                );
+                self.idle_cycle(bus, &mut cycles);
+                let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.subtract_with_borrow_from_a(value);
+            }
+            // SBC dp,dp — [dst] = [dst] - [src] - !C, update N/Z/V/C from result.
+            0xA9 => {
+                let src_dp = self.fetch(bus, &mut cycles);
+                let dst_dp = self.fetch(bus, &mut cycles);
+                let src = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(src_dp),
+                    &mut cycles,
+                );
+                let dst_addr = self.direct_page_base() | u16::from(dst_dp);
+                let dst = self.read_cycle(bus, dst_addr, &mut cycles);
+                let saved_a = self.a;
+                self.a = dst;
+                self.subtract_with_borrow_from_a(src);
+                let result = self.a;
+                self.a = saved_a;
+                self.write_cycle(bus, dst_addr, result, &mut cycles);
+            }
+            // SBC dp,#imm — [dp] = [dp] - imm - !C, update N/Z/V/C from result.
+            0xB8 => {
+                let imm = self.fetch(bus, &mut cycles);
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let saved_a = self.a;
+                self.a = value;
+                self.subtract_with_borrow_from_a(imm);
+                let result = self.a;
+                self.a = saved_a;
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // SBC (X),(Y) — (X) = (X) - (Y) - !C.
+            0xB9 => {
+                let x_addr = self.direct_page_base() | u16::from(self.x);
+                let y_addr = self.direct_page_base() | u16::from(self.y);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
+                let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let saved_a = self.a;
+                self.a = x_value;
+                self.subtract_with_borrow_from_a(y_value);
+                let result = self.a;
+                self.a = saved_a;
+                self.write_cycle(bus, x_addr, result, &mut cycles);
             }
             // CMP A,#imm — compare A with immediate, update N/Z/V/C.
             0xC8 => {
@@ -978,6 +1636,301 @@ impl Spc700 {
             0xAD => {
                 let imm = self.fetch(bus, &mut cycles);
                 self.compare_y(imm);
+            }
+            // CMP A,#imm — compare A with immediate.
+            0x68 => {
+                let imm = self.fetch(bus, &mut cycles);
+                self.compare_a(imm);
+            }
+            // CMP dp,dp — compare [dst] with [src], update N/Z/V/C.
+            0x69 => {
+                let src_dp = self.fetch(bus, &mut cycles);
+                let dst_dp = self.fetch(bus, &mut cycles);
+                let src = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(src_dp),
+                    &mut cycles,
+                );
+                let dst = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dst_dp),
+                    &mut cycles,
+                );
+                self.compare_values(dst, src);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // CMP dp,#imm — compare [dp] with immediate, update N/Z/V/C.
+            0x78 => {
+                let imm = self.fetch(bus, &mut cycles);
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.compare_values(value, imm);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // CMP A,(X) — compare A with direct-page address in X.
+            0x66 => {
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(self.x),
+                    &mut cycles,
+                );
+                self.compare_a(value);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // CMP A,dp — compare A with direct-page byte.
+            0x64 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.compare_a(value);
+            }
+            // CMP A,dp+X — compare A with direct-page indexed by X.
+            0x74 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(self.x)),
+                    &mut cycles,
+                );
+                self.compare_a(value);
+            }
+            // CMP A,!abs — compare A with absolute byte.
+            0x65 => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.compare_a(value);
+            }
+            // CMP A,!abs+X — compare A with absolute indexed by X.
+            0x75 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.x)), &mut cycles);
+                self.compare_a(value);
+            }
+            // CMP A,!abs+Y — compare A with absolute indexed by Y.
+            0x76 => {
+                let base = self.fetch_u16(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let value = self.read_cycle(bus, base.wrapping_add(u16::from(self.y)), &mut cycles);
+                self.compare_a(value);
+            }
+            // CMP A,[dp+X] — compare A with indirect direct-page pointer indexed by X.
+            0x67 => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let ptr = dp.wrapping_add(self.x);
+                let lo =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(ptr), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(ptr.wrapping_add(1)),
+                    &mut cycles,
+                );
+                let value = self.read_cycle(bus, u16::from(lo) | (u16::from(hi) << 8), &mut cycles);
+                self.compare_a(value);
+            }
+            // CMP A,[dp]+Y — compare A with indirect direct-page pointer plus Y.
+            0x77 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                let hi = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(dp.wrapping_add(1)),
+                    &mut cycles,
+                );
+                self.idle_cycle(bus, &mut cycles);
+                let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.compare_a(value);
+            }
+            // CMP X,dp — compare X with direct-page byte.
+            0x3E => {
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.compare_x(value);
+            }
+            // CMP X,!abs — compare X with absolute byte.
+            0x1E => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.compare_x(value);
+            }
+            // CMP Y,dp — compare Y with direct-page byte.
+            0x7E => {
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.compare_y(value);
+            }
+            // CMP Y,!abs — compare Y with absolute byte.
+            0x5E => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.compare_y(value);
+            }
+            // CMP (X),(Y) — compare direct-page bytes addressed by X and Y.
+            0x79 => {
+                let x_value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(self.x),
+                    &mut cycles,
+                );
+                let y_value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(self.y),
+                    &mut cycles,
+                );
+                self.compare_values(x_value, y_value);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // CLRP — clear direct-page select flag (P=0).
+            0x20 => {
+                self.set_flag(FLAG_DIRECT_PAGE, false);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // SETP — set direct-page select flag (P=1).
+            0x40 => {
+                self.set_flag(FLAG_DIRECT_PAGE, true);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // CLRC — clear carry flag.
+            0x60 => {
+                self.set_flag(FLAG_CARRY, false);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // SETC — set carry flag.
+            0x80 => {
+                self.set_flag(FLAG_CARRY, true);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // CLRV — clear overflow and half-carry flags.
+            0xE0 => {
+                self.set_flag(FLAG_OVERFLOW, false);
+                self.set_flag(FLAG_HALF_CARRY, false);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // EI — set interrupt-enable flag (logical only on SNES APU).
+            0xA0 => {
+                self.set_flag(FLAG_INTERRUPT, true);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // NOTC — complement carry flag.
+            0xED => {
+                self.set_flag(FLAG_CARRY, !self.flag(FLAG_CARRY));
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // AND1 C,mem.bit — C &= bit.
+            0x4A => {
+                let (addr, bit) = self.fetch_mem_bit_operand(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let bit_set = value & (1 << bit) != 0;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) && bit_set);
+            }
+            // AND1 C,/mem.bit — C &= !bit.
+            0x6A => {
+                let (addr, bit) = self.fetch_mem_bit_operand(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let bit_set = value & (1 << bit) != 0;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) && !bit_set);
+            }
+            // OR1 C,mem.bit — C |= bit.
+            0x0A => {
+                let (addr, bit) = self.fetch_mem_bit_operand(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let bit_set = value & (1 << bit) != 0;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) || bit_set);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // OR1 C,/mem.bit — C |= !bit.
+            0x2A => {
+                let (addr, bit) = self.fetch_mem_bit_operand(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let bit_set = value & (1 << bit) != 0;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) || !bit_set);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // EOR1 C,mem.bit — C ^= bit.
+            0x8A => {
+                let (addr, bit) = self.fetch_mem_bit_operand(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let bit_set = value & (1 << bit) != 0;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) ^ bit_set);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // MOV1 C,mem.bit — C = bit.
+            0xAA => {
+                let (addr, bit) = self.fetch_mem_bit_operand(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.set_flag(FLAG_CARRY, value & (1 << bit) != 0);
+            }
+            // MOV1 mem.bit,C — bit = C.
+            0xCA => {
+                let (addr, bit) = self.fetch_mem_bit_operand(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let mask = 1 << bit;
+                let result = if self.flag(FLAG_CARRY) {
+                    value | mask
+                } else {
+                    value & !mask
+                };
+                self.write_cycle(bus, addr, result, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // NOT1 mem.bit — bit = !bit.
+            0xEA => {
+                let (addr, bit) = self.fetch_mem_bit_operand(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, value ^ (1 << bit), &mut cycles);
+            }
+            // SET1 dp.bit — set bit in direct-page byte.
+            op @ (0x02 | 0x22 | 0x42 | 0x62 | 0x82 | 0xA2 | 0xC2 | 0xE2) => {
+                let bit = (op >> 5) & 0x07;
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, value | (1 << bit), &mut cycles);
+            }
+            // CLR1 dp.bit — clear bit in direct-page byte.
+            op @ (0x12 | 0x32 | 0x52 | 0x72 | 0x92 | 0xB2 | 0xD2 | 0xF2) => {
+                let bit = (op >> 5) & 0x07;
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, value & !(1 << bit), &mut cycles);
+            }
+            // BBS dp.bit,rel — branch if direct-page bit is set.
+            op @ (0x03 | 0x23 | 0x43 | 0x63 | 0x83 | 0xA3 | 0xC3 | 0xE3) => {
+                let bit = (op >> 5) & 0x07;
+                let dp = self.fetch(bus, &mut cycles);
+                let rel = self.fetch(bus, &mut cycles) as i8;
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                if value & (1 << bit) != 0 {
+                    self.branch(rel);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
+                }
+            }
+            // BBC dp.bit,rel — branch if direct-page bit is clear.
+            op @ (0x13 | 0x33 | 0x53 | 0x73 | 0x93 | 0xB3 | 0xD3 | 0xF3) => {
+                let bit = (op >> 5) & 0x07;
+                let dp = self.fetch(bus, &mut cycles);
+                let rel = self.fetch(bus, &mut cycles) as i8;
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                if value & (1 << bit) == 0 {
+                    self.branch(rel);
+                    self.idle_cycle(bus, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
+                }
             }
             // BRA rel — Branch Always.
             0x2F => {
@@ -1156,9 +2109,43 @@ impl Spc700 {
                 self.idle_cycle(bus, &mut cycles);
                 self.pc = addr;
             }
+            // PCALL u8 — push return address and jump to $FF00+u.
+            0x4F => {
+                let upage = self.fetch(bus, &mut cycles);
+                let return_addr = self.pc;
+                self.push(bus, (return_addr >> 8) as u8, &mut cycles);
+                self.push(bus, return_addr as u8, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.pc = 0xFF00 | u16::from(upage);
+            }
+            // TCALL n — table call via vector at $FFDE - 2*n.
+            op @ (0x01 | 0x11 | 0x21 | 0x31 | 0x41 | 0x51 | 0x61 | 0x71 | 0x81 | 0x91 | 0xA1
+            | 0xB1 | 0xC1 | 0xD1 | 0xE1 | 0xF1) => {
+                let n = (op >> 4) & 0x0F;
+                let vector = 0xFFDEu16.wrapping_sub(u16::from(n) * 2);
+                let return_addr = self.pc;
+                self.push(bus, (return_addr >> 8) as u8, &mut cycles);
+                self.push(bus, return_addr as u8, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let lo = self.read_cycle(bus, vector, &mut cycles);
+                let hi = self.read_cycle(bus, vector.wrapping_add(1), &mut cycles);
+                self.pc = u16::from(lo) | (u16::from(hi) << 8);
+            }
             // RTS — return from subroutine (5 cycles).
             // Pops return address from stack and jumps.
             0x6F => {
+                let lo = self.pop(bus, &mut cycles) as u16;
+                let hi = self.pop(bus, &mut cycles) as u16;
+                self.pc = (hi << 8) | lo;
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // RETI — return from interrupt: pop PSW, then PC.
+            0x7F => {
+                self.psw = self.pop(bus, &mut cycles);
                 let lo = self.pop(bus, &mut cycles) as u16;
                 let hi = self.pop(bus, &mut cycles) as u16;
                 self.pc = (hi << 8) | lo;
@@ -1208,6 +2195,22 @@ impl Spc700 {
             // JMP !abs — jump to absolute address.
             0x5F => {
                 self.pc = self.fetch_u16(bus, &mut cycles);
+            }
+            // TSET1 !abs — set bits in memory by A; N/Z from A - M.
+            0x0E => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.a.wrapping_sub(value));
+                self.write_cycle(bus, addr, value | self.a, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // TCLR1 !abs — clear bits in memory by A; N/Z from A - M.
+            0x4E => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.update_nz8(self.a.wrapping_sub(value));
+                self.write_cycle(bus, addr, value & !self.a, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
             }
             // INCW dp — increment 16-bit direct-page word, update N/Z from high byte.
             0x3A => {
@@ -1261,10 +2264,52 @@ impl Spc700 {
                     self.idle_cycle(bus, &mut cycles);
                 }
             }
-            other => panic!(
-                "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
-                self.pc.wrapping_sub(1)
-            ),
+            // XCN A — exchange high/low nibbles in A, update N/Z.
+            0x9F => {
+                self.a = self.a.rotate_left(4);
+                self.update_nz8(self.a);
+                for _ in 0..4 {
+                    self.idle_cycle(bus, &mut cycles);
+                }
+            }
+            // DAS A — BCD adjust after subtraction.
+            0xBE => {
+                let mut value = self.a;
+                if !self.flag(FLAG_CARRY) || value > 0x99 {
+                    value = value.wrapping_sub(0x60);
+                    self.set_flag(FLAG_CARRY, false);
+                }
+                if !self.flag(FLAG_HALF_CARRY) || (value & 0x0F) > 0x09 {
+                    value = value.wrapping_sub(0x06);
+                }
+                self.a = value;
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // DAA A — BCD adjust after addition.
+            0xDF => {
+                let mut value = self.a;
+                if self.flag(FLAG_CARRY) || value > 0x99 {
+                    value = value.wrapping_add(0x60);
+                    self.set_flag(FLAG_CARRY, true);
+                }
+                if self.flag(FLAG_HALF_CARRY) || (value & 0x0F) > 0x09 {
+                    value = value.wrapping_add(0x06);
+                }
+                self.a = value;
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // SLEEP — halt CPU until external wakeup source.
+            0xEF => {
+                self.halted = true;
+            }
+            // STOP — halt CPU clock until reset.
+            0xFF => {
+                self.halted = true;
+            }
         }
         cycles
     }
@@ -1286,6 +2331,7 @@ impl Spc700 {
         self.sp = sp;
         self.pc = pc;
         self.psw = psw;
+        self.halted = false;
     }
 }
 
@@ -3436,5 +4482,881 @@ mod tests {
 
         assert_eq!(cycles, 12);
         assert!(cpu.flag(FLAG_OVERFLOW)); // Overflow flag set (division by zero error)
+    }
+
+    #[test]
+    fn clrc_clears_carry_flag() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x60]); // CLRC
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, FLAG_CARRY | FLAG_ZERO);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert!(!cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn notc_flips_carry_flag() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xED]); // NOTC
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn clrv_clears_overflow_and_half_carry_only() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xE0]); // CLRV
+        cpu.load_state_for_processor_test(
+            0x00,
+            0x00,
+            0x00,
+            0xF0,
+            0x0200,
+            FLAG_OVERFLOW | FLAG_HALF_CARRY | FLAG_NEGATIVE | FLAG_CARRY,
+        );
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert!(!cpu.flag(FLAG_OVERFLOW));
+        assert!(!cpu.flag(FLAG_HALF_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn set1_dp3_sets_only_target_bit() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x62, 0x20]); // SET1 $20.3
+        bus.set(0x0020, 0b1000_0001);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, FLAG_ZERO);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(bus.read(0x0020), 0b1000_1001);
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn clr1_dp6_clears_only_target_bit() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xD2, 0x31]); // CLR1 $31.6
+        bus.set(0x0031, 0b1111_1111);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(bus.read(0x0031), 0b1011_1111);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn bbs0_branches_when_bit_is_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x03, 0x40, 0x10]); // BBS0 $40,+$10
+        bus.set(0x0040, 0x01);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 7);
+        assert_eq!(cpu.pc(), 0x0213);
+    }
+
+    #[test]
+    fn bbc7_does_not_branch_when_bit_is_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xF3, 0x40, 0x10]); // BBC7 $40,+$10
+        bus.set(0x0040, 0x80);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.pc(), 0x0203);
+    }
+
+    #[test]
+    fn mov_dp_imm_writes_immediate_value() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x8F, 0x5A, 0x20]); // MOV $20,#$5A
+        bus.set(0x0020, 0x00);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0020), 0x5A);
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn movw_ya_dp_loads_word_and_sets_negative_from_high_byte() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xBA, 0x30]); // MOVW YA,$30
+        bus.set(0x0030, 0x11);
+        bus.set(0x0031, 0x80);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.a(), 0x11);
+        assert_eq!(cpu.y(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn movw_dp_ya_stores_word_low_then_high() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xDA, 0x40]); // MOVW $40,YA
+        cpu.load_state_for_processor_test(0x34, 0x00, 0x12, 0xF0, 0x0200, FLAG_ZERO);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0040), 0x34);
+        assert_eq!(bus.read(0x0041), 0x12);
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn xcn_a_swaps_nibbles_and_updates_nz() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x9F]); // XCN A
+        cpu.load_state_for_processor_test(0xF0, 0x00, 0x00, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.a(), 0x0F);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn ei_sets_interrupt_flag() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xA0]); // EI
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert!(cpu.flag(FLAG_INTERRUPT));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn pcall_pushes_return_address_and_jumps_to_ff_page() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x2000, &[0x4F, 0x34]); // PCALL $34
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x2000, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.pc(), 0xFF34);
+        assert_eq!(cpu.sp(), 0xEE);
+        assert_eq!(bus.read(0x01F0), 0x20); // return PCH ($2002)
+        assert_eq!(bus.read(0x01EF), 0x02); // return PCL
+    }
+
+    #[test]
+    fn tcall0_uses_ffde_vector() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x3000, &[0x01]); // TCALL 0
+        bus.set(0xFFDE, 0x78);
+        bus.set(0xFFDF, 0x56);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x3000, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 8);
+        assert_eq!(cpu.pc(), 0x5678);
+        assert_eq!(cpu.sp(), 0xED);
+        assert_eq!(bus.read(0x01EF), 0x30); // return PCH ($3001)
+        assert_eq!(bus.read(0x01EE), 0x01); // return PCL
+    }
+
+    #[test]
+    fn tcall15_uses_ffc0_vector() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x3000, &[0xF1]); // TCALL 15
+        bus.set(0xFFC0, 0xCD);
+        bus.set(0xFFC1, 0xAB);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x3000, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 8);
+        assert_eq!(cpu.pc(), 0xABCD);
+    }
+
+    #[test]
+    fn reti_restores_psw_and_pc_from_stack() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x4000, &[0x7F]); // RETI
+        bus.write(0x01EE, FLAG_NEGATIVE | FLAG_CARRY); // PSW
+        bus.write(0x01EF, 0x34); // PCL
+        bus.write(0x01F0, 0x12); // PCH
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xED, 0x4000, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.psw(), FLAG_NEGATIVE | FLAG_CARRY);
+        assert_eq!(cpu.pc(), 0x1234);
+        assert_eq!(cpu.sp(), 0xF0);
+    }
+
+    #[test]
+    fn mov1_c_mem_bit_loads_carry_from_selected_bit() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        // MOV1 C,$0123.5 => low=0x23, high=(bit<<5)|(addr>>8)=0xA1
+        bus.load(0x0200, &[0xAA, 0x23, 0xA1]);
+        bus.set(0x0123, 0b0010_0000);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov1_mem_bit_c_writes_selected_bit_from_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        // MOV1 $0456.3,C => low=0x56, high=(3<<5)|0x04 = 0x64
+        bus.load(0x0200, &[0xCA, 0x56, 0x64]);
+        bus.set(0x0456, 0x00);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0456), 0b0000_1000);
+    }
+
+    #[test]
+    fn not1_mem_bit_toggles_selected_bit() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        // NOT1 $0456.0 => low=0x56, high=0x04
+        bus.load(0x0200, &[0xEA, 0x56, 0x04]);
+        bus.set(0x0456, 0xFE);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0456), 0xFF);
+    }
+
+    #[test]
+    fn or1_c_not_mem_bit_sets_carry_when_bit_is_clear() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        // OR1 C,/$0120.2 => low=0x20, high=(2<<5)|0x01 = 0x41
+        bus.load(0x0200, &[0x2A, 0x20, 0x41]);
+        bus.set(0x0120, 0x00);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn tset1_abs_sets_bits_and_updates_nz_from_subtract() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x0E, 0x00, 0x30]); // TSET1 $3000
+        bus.set(0x3000, 0b0000_1111);
+        cpu.load_state_for_processor_test(0b1111_0000, 0, 0, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x3000), 0xFF);
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn tclr1_abs_clears_bits_and_sets_zero_on_equal() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x4E, 0x00, 0x30]); // TCLR1 $3000
+        bus.set(0x3000, 0x12);
+        cpu.load_state_for_processor_test(0x12, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x3000), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn cmp_a_dp_compares_accumulator_with_direct_page_value() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x64, 0x20]); // CMP A,$20
+        bus.set(0x0020, 0x40);
+        cpu.load_state_for_processor_test(0x40, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn cmp_a_abs_y_reads_indexed_address_and_sets_negative_on_borrow() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x76, 0x00, 0x30]); // CMP A,$3000+Y
+        bus.set(0x3002, 0x20);
+        cpu.load_state_for_processor_test(0x10, 0, 0x02, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert!(!cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn cmp_a_indirect_dp_plus_x_follows_pointer() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x67, 0x40]); // CMP A,[$40+X]
+        bus.set(0x0043, 0x00); // ptr low
+        bus.set(0x0044, 0x30); // ptr high -> $3000
+        bus.set(0x3000, 0x22);
+        cpu.load_state_for_processor_test(0x22, 0x03, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn cmp_x_abs_uses_absolute_operand() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x1E, 0x34, 0x12]); // CMP X,$1234
+        bus.set(0x1234, 0x10);
+        cpu.load_state_for_processor_test(0x00, 0x20, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn cmp_y_dp_uses_direct_page_base_flag() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x7E, 0x80]); // CMP Y,$80
+        bus.set(0x0180, 0x10);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x10, 0xF0, 0x0200, FLAG_DIRECT_PAGE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn cmp_indirect_x_y_compares_memory_values() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x79]); // CMP (X),(Y)
+        bus.set(0x0010, 0x44);
+        bus.set(0x0011, 0x44);
+        cpu.load_state_for_processor_test(0x00, 0x10, 0x11, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn or_a_imm_canonical_opcode_08_updates_accumulator() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x08, 0x0F]); // OR A,#$0F
+        cpu.load_state_for_processor_test(0xF0, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.a(), 0xFF);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn and_a_abs_canonical_opcode_25_masks_accumulator() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x25, 0x00, 0x30]); // AND A,$3000
+        bus.set(0x3000, 0x0F);
+        cpu.load_state_for_processor_test(0xF3, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.a(), 0x03);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn eor_a_indirect_dp_plus_y_canonical_opcode_57() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x57, 0x40]); // EOR A,[$40]+Y
+        bus.set(0x0040, 0x00);
+        bus.set(0x0041, 0x30); // pointer = $3000
+        bus.set(0x3002, 0xFF); // +Y
+        cpu.load_state_for_processor_test(0x55, 0x00, 0x02, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.a(), 0xAA);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn or_x_y_memory_opcode_19_writes_back_to_x_location() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x19]); // OR (X),(Y)
+        bus.set(0x0010, 0x0F);
+        bus.set(0x0020, 0xF0);
+        cpu.load_state_for_processor_test(0x00, 0x10, 0x20, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0010), 0xFF);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn and_x_y_memory_opcode_39_writes_back_to_x_location() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x39]); // AND (X),(Y)
+        bus.set(0x0010, 0x3C);
+        bus.set(0x0020, 0x0F);
+        cpu.load_state_for_processor_test(0x00, 0x10, 0x20, 0xF0, 0x0200, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0010), 0x0C);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn eor_x_y_memory_opcode_59_writes_back_to_x_location() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x59]); // EOR (X),(Y)
+        bus.set(0x0010, 0xAA);
+        bus.set(0x0020, 0xFF);
+        cpu.load_state_for_processor_test(0x00, 0x10, 0x20, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0010), 0x55);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn or_dp_dp_opcode_09_combines_source_into_destination() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x09, 0x20, 0x10]); // OR $10,$20
+        bus.set(0x0010, 0x0F);
+        bus.set(0x0020, 0xF0);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0010), 0xFF);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn and_dp_dp_opcode_29_masks_destination_with_source() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x29, 0x20, 0x10]); // AND $10,$20
+        bus.set(0x0010, 0x3C);
+        bus.set(0x0020, 0x0F);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0010), 0x0C);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn eor_dp_dp_opcode_49_xors_source_into_destination() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x49, 0x20, 0x10]); // EOR $10,$20
+        bus.set(0x0010, 0xAA);
+        bus.set(0x0020, 0xFF);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0010), 0x55);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn or_dp_imm_opcode_18_updates_destination_and_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x18, 0xF0, 0x10]); // OR $10,#$F0
+        bus.set(0x0010, 0x0F);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0010), 0xFF);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn and_dp_imm_opcode_38_can_set_zero_flag() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x38, 0x0F, 0x10]); // AND $10,#$0F
+        bus.set(0x0010, 0xF0);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0010), 0x00);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn eor_dp_imm_opcode_58_updates_destination_and_flags() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x58, 0xFF, 0x10]); // EOR $10,#$FF
+        bus.set(0x0010, 0x0F);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0010), 0xF0);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn cmp_dp_dp_opcode_69_compares_destination_against_source() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x69, 0x20, 0x10]); // CMP $10,$20
+        bus.set(0x0010, 0x44);
+        bus.set(0x0020, 0x44);
+        cpu.load_state_for_processor_test(0xAB, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert!(cpu.flag(FLAG_ZERO));
+        assert!(cpu.flag(FLAG_CARRY));
+        assert_eq!(cpu.a(), 0xAB);
+    }
+
+    #[test]
+    fn cmp_dp_imm_opcode_78_sets_negative_when_destination_is_less() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x78, 0x20, 0x10]); // CMP $10,#$20
+        bus.set(0x0010, 0x10);
+        cpu.load_state_for_processor_test(0xAB, 0, 0, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert!(!cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+        assert_eq!(cpu.a(), 0xAB);
+    }
+
+    #[test]
+    fn adc_dp_dp_opcode_89_writes_result_to_destination() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x89, 0x20, 0x10]); // ADC $10,$20
+        bus.set(0x0010, 0x0F);
+        bus.set(0x0020, 0x01);
+        cpu.load_state_for_processor_test(0x80, 0, 0, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0010), 0x11);
+        assert!(!cpu.flag(FLAG_CARRY));
+        assert_eq!(cpu.a(), 0x80);
+    }
+
+    #[test]
+    fn adc_dp_imm_opcode_98_sets_zero_and_carry_on_overflow() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x98, 0x00, 0x10]); // ADC $10,#$00
+        bus.set(0x0010, 0xFF);
+        cpu.load_state_for_processor_test(0x11, 0, 0, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0010), 0x00);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_ZERO));
+        assert_eq!(cpu.a(), 0x11);
+    }
+
+    #[test]
+    fn sbc_dp_dp_opcode_a9_writes_result_to_destination() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xA9, 0x20, 0x10]); // SBC $10,$20
+        bus.set(0x0010, 0x10);
+        bus.set(0x0020, 0x01);
+        cpu.load_state_for_processor_test(0x80, 0, 0, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0010), 0x0F);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert_eq!(cpu.a(), 0x80);
+    }
+
+    #[test]
+    fn sbc_dp_imm_opcode_b8_applies_borrow_when_carry_is_clear() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xB8, 0x00, 0x10]); // SBC $10,#$00
+        bus.set(0x0010, 0x00);
+        cpu.load_state_for_processor_test(0x11, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0010), 0xFF);
+        assert!(!cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert_eq!(cpu.a(), 0x11);
+    }
+
+    #[test]
+    fn adc_a_abs_opcode_85_adds_memory_into_accumulator_with_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x85, 0x00, 0x30]); // ADC A,$3000
+        bus.set(0x3000, 0x0F);
+        cpu.load_state_for_processor_test(0x70, 0, 0, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.a(), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn adc_x_y_memory_opcode_99_writes_sum_back_to_x_location() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x99]); // ADC (X),(Y)
+        bus.set(0x0010, 0x01);
+        bus.set(0x0020, 0x01);
+        cpu.load_state_for_processor_test(0xCC, 0x10, 0x20, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(bus.read(0x0010), 0x03);
+        assert_eq!(cpu.a(), 0xCC);
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn sbc_a_indirect_dp_plus_y_opcode_b7_subtracts_pointed_value() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xB7, 0x40]); // SBC A,[$40]+Y
+        bus.set(0x0040, 0x00);
+        bus.set(0x0041, 0x30); // pointer = $3000
+        bus.set(0x3002, 0x10); // +Y
+        cpu.load_state_for_processor_test(0x22, 0, 0x02, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.a(), 0x12);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn sbc_x_y_memory_opcode_b9_writes_difference_back_to_x_location() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xB9]); // SBC (X),(Y)
+        bus.set(0x0010, 0x10);
+        bus.set(0x0020, 0x01);
+        cpu.load_state_for_processor_test(0xCC, 0x10, 0x20, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(bus.read(0x0010), 0x0F);
+        assert_eq!(cpu.a(), 0xCC);
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn mov_dp_dp_opcode_fa_copies_source_to_destination() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xFA, 0x20, 0x10]); // MOV $10,$20
+        bus.set(0x0010, 0x00);
+        bus.set(0x0020, 0xA5);
+        cpu.load_state_for_processor_test(0x11, 0x22, 0x33, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.read(0x0010), 0xA5);
+        assert_eq!(cpu.a(), 0x11);
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn daa_opcode_df_bcd_adjusts_accumulator_after_addition() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xDF]); // DAA A
+        cpu.load_state_for_processor_test(0x9A, 0, 0, 0xF0, 0x0200, FLAG_HALF_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0x00);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn das_opcode_be_bcd_adjusts_accumulator_after_subtraction() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xBE]); // DAS A
+        cpu.load_state_for_processor_test(0x0F, 0, 0, 0xF0, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0x09);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn sleep_opcode_ef_halts_cpu_and_freezes_pc() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xEF]); // SLEEP
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, 0);
+
+        let first_cycles = cpu.step(&mut bus);
+        let pc_after_sleep = cpu.pc();
+        let second_cycles = cpu.step(&mut bus);
+
+        assert_eq!(first_cycles, 1);
+        assert_eq!(second_cycles, 1);
+        assert_eq!(pc_after_sleep, cpu.pc());
+    }
+
+    #[test]
+    fn stop_opcode_ff_halts_cpu_and_freezes_pc() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xFF]); // STOP
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, 0);
+
+        let first_cycles = cpu.step(&mut bus);
+        let pc_after_stop = cpu.pc();
+        let second_cycles = cpu.step(&mut bus);
+
+        assert_eq!(first_cycles, 1);
+        assert_eq!(second_cycles, 1);
+        assert_eq!(pc_after_stop, cpu.pc());
     }
 }
