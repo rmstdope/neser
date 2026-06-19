@@ -206,6 +206,9 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         && opcode != 0x6F
         && opcode != 0x3D
         && opcode != 0x1A
+        && opcode != 0x7A
+        && opcode != 0x9A
+        && opcode != 0x5A
     {
         return Err(VectorFailure {
             details: format!(

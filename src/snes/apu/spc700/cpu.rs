@@ -286,6 +286,43 @@ impl Spc700 {
         self.read_cycle(bus, addr, cycles)
     }
 
+    /// ADDW YA,#imm16 — add 16-bit immediate to YA.
+    /// Updates N/Z/V/C flags based on the result.
+    fn add_to_ya(&mut self, imm: u16) {
+        let ya = (u16::from(self.y) << 8) | u16::from(self.a);
+        let (result, overflow) = ya.overflowing_add(imm);
+        let carry = (ya ^ imm ^ result) & 0x8000 != 0;
+        self.y = (result >> 8) as u8;
+        self.a = result as u8;
+        self.set_flag(FLAG_CARRY, overflow);
+        self.set_flag(FLAG_OVERFLOW, carry);
+        self.update_nz8(self.y);
+    }
+
+    /// SUBW YA,#imm16 — subtract 16-bit immediate from YA.
+    /// Updates N/Z/V/C flags based on the result.
+    fn subtract_from_ya(&mut self, imm: u16) {
+        let ya = (u16::from(self.y) << 8) | u16::from(self.a);
+        let (result, borrow) = ya.overflowing_sub(imm);
+        let overflow = (ya ^ imm ^ result) & 0x8000 != 0;
+        self.y = (result >> 8) as u8;
+        self.a = result as u8;
+        self.set_flag(FLAG_CARRY, borrow);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.update_nz8(self.y);
+    }
+
+    /// CMPW YA,#imm16 — compare 16-bit immediate with YA.
+    /// Updates N/Z/V/C flags based on the comparison result (YA - imm).
+    fn compare_ya(&mut self, imm: u16) {
+        let ya = (u16::from(self.y) << 8) | u16::from(self.a);
+        let (result, borrow) = ya.overflowing_sub(imm);
+        let overflow = (ya ^ imm ^ result) & 0x8000 != 0;
+        self.set_flag(FLAG_CARRY, borrow);
+        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.update_nz8((result >> 8) as u8);
+    }
+
     /// Execute a single instruction, returning the number of cycles consumed.
     ///
     /// Only `NOP` is implemented in this first slice; further opcodes are added
@@ -816,6 +853,30 @@ impl Spc700 {
                 self.a = result as u8;
                 self.update_nz8(self.y); // Set flags based on high byte
                 self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // ADDW YA,#imm16 — add 16-bit immediate to YA (4 cycles).
+            0x7A => {
+                let lo = self.fetch(bus, &mut cycles);
+                let hi = self.fetch(bus, &mut cycles);
+                let imm = u16::from(lo) | (u16::from(hi) << 8);
+                self.add_to_ya(imm);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // SUBW YA,#imm16 — subtract 16-bit immediate from YA (4 cycles).
+            0x9A => {
+                let lo = self.fetch(bus, &mut cycles);
+                let hi = self.fetch(bus, &mut cycles);
+                let imm = u16::from(lo) | (u16::from(hi) << 8);
+                self.subtract_from_ya(imm);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // CMPW YA,#imm16 — compare 16-bit immediate with YA (4 cycles).
+            0x5A => {
+                let lo = self.fetch(bus, &mut cycles);
+                let hi = self.fetch(bus, &mut cycles);
+                let imm = u16::from(lo) | (u16::from(hi) << 8);
+                self.compare_ya(imm);
                 self.idle_cycle(bus, &mut cycles);
             }
             other => panic!(
@@ -2559,5 +2620,99 @@ mod tests {
         assert_eq!(cpu.a(), 0xFF); // A: 0x00 -> 0xFF (wrapped)
         assert_eq!(cpu.y(), 0x7F); // Y: 0x80 -> 0x7F (borrow from A)
         assert!(!cpu.flag(FLAG_NEGATIVE)); // N flag clear (0x7F is positive)
+    }
+
+    #[test]
+    fn addw_ya_simple_addition() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x7A, 0x34, 0x12]); // ADDW YA,#$1234
+        // YA = 0x0001, imm = 0x1234, result = 0x1235
+        cpu.load_state_for_processor_test(0x01, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.a(), 0x35); // Low byte
+        assert_eq!(cpu.y(), 0x12); // High byte
+        assert!(!cpu.flag(FLAG_CARRY)); // No carry
+        assert!(!cpu.flag(FLAG_OVERFLOW)); // No overflow
+    }
+
+    #[test]
+    fn addw_ya_with_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x7A, 0x00, 0xFF]); // ADDW YA,#$FF00
+        // YA = 0x0100, imm = 0xFF00, result = 0x0000 (wraps, sets carry)
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x01, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.a(), 0x00); // Low byte wrapped
+        assert_eq!(cpu.y(), 0x00); // High byte wrapped
+        assert!(cpu.flag(FLAG_CARRY)); // Carry flag set
+    }
+
+    #[test]
+    fn subw_ya_simple_subtraction() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x9A, 0x01, 0x00]); // SUBW YA,#$0001
+        // YA = 0x0100, imm = 0x0001, result = 0x00FF
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x01, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.a(), 0xFF); // Low byte
+        assert_eq!(cpu.y(), 0x00); // High byte
+        assert!(!cpu.flag(FLAG_CARRY)); // No borrow
+    }
+
+    #[test]
+    fn subw_ya_with_borrow() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x9A, 0x00, 0x01]); // SUBW YA,#$0100
+        // YA = 0x0000, imm = 0x0100, result = 0xFF00 (borrow)
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.a(), 0x00); // Low byte
+        assert_eq!(cpu.y(), 0xFF); // High byte wrapped
+        assert!(cpu.flag(FLAG_CARRY)); // Borrow flag (carry) set
+    }
+
+    #[test]
+    fn cmpw_ya_equal_comparison() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x5A, 0x34, 0x12]); // CMPW YA,#$1234
+        // YA = 0x1234, imm = 0x1234, result = 0 (equal, Z flag set)
+        cpu.load_state_for_processor_test(0x34, 0x00, 0x12, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert!(cpu.flag(FLAG_ZERO)); // Zero flag set (result is 0)
+        assert!(!cpu.flag(FLAG_CARRY)); // No borrow
+    }
+
+    #[test]
+    fn cmpw_ya_less_than_comparison() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x5A, 0x00, 0x01]); // CMPW YA,#$0100
+        // YA = 0x0000, imm = 0x0100, result = 0xFF00 (YA < imm, borrow)
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert!(cpu.flag(FLAG_CARRY)); // Borrow flag (carry) set for unsigned less-than
     }
 }
