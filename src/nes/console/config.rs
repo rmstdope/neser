@@ -910,6 +910,9 @@ impl Config {
         // GBA hardware (parsed by GBA config module)
         self.gba.apply_args(args)?;
 
+        // SNES hardware (parsed by SNES config module)
+        self.snes.apply_args(args)?;
+
         Ok(())
     }
 
@@ -1101,6 +1104,7 @@ impl Config {
         // Delegate to sub-configs first
         self.frontend.apply_config_value(&key, value)?;
         self.nes.apply_config_value(&key, value)?;
+        self.snes.apply_config_value(&key, value)?;
 
         // Handle keys that need Config-level coordination or haven't been moved yet.
         match key.as_str() {

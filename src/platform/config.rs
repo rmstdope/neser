@@ -1150,6 +1150,7 @@ pub(crate) fn all_cli_flags() -> impl Iterator<Item = &'static CliFlag> {
         .chain(crate::nes::console::CLI_FLAGS.iter())
         .chain(crate::gb::console::config::GB_CLI_FLAGS.iter())
         .chain(crate::gba::console::config::GBA_CLI_FLAGS.iter())
+        .chain(crate::snes::console::config::SNES_CLI_FLAGS.iter())
 }
 
 /// Categorize a flag into its help section.

@@ -1,3 +1,4 @@
+use crate::snes::apu::SnesApu;
 use crate::snes::bus::SnesBus;
 use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
@@ -5,6 +6,7 @@ use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
 use crate::snes::ppu::Ppu;
 use std::cell::{Cell, RefCell};
+use std::fs;
 
 const WRAM_SIZE: usize = 128 * 1024;
 
@@ -33,6 +35,7 @@ pub struct SnesSystemBus {
     memsel: u8,
     hdmaen: u8,
     dma: DmaController,
+    apu: RefCell<SnesApu>,
     /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
     /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`.
     ppu: RefCell<Ppu>,
@@ -42,9 +45,14 @@ pub struct SnesSystemBus {
 
 impl SnesSystemBus {
     pub fn new(cartridge: Cartridge) -> Self {
+        Self::new_with_spc_ipl_path(cartridge, None)
+    }
+
+    pub fn new_with_spc_ipl_path(cartridge: Cartridge, spc_ipl_path: Option<&str>) -> Self {
         let mapping = cartridge.mapping();
         let rom = cartridge.rom().to_vec();
         let sram = vec![0; cartridge.sram_size()];
+        let spc_ipl = Self::load_spc_ipl_override(spc_ipl_path);
         Self {
             _cartridge: cartridge,
             mapping,
@@ -59,10 +67,39 @@ impl SnesSystemBus {
             memsel: 0,
             hdmaen: 0,
             dma: DmaController::new(),
+            apu: RefCell::new(SnesApu::new(spc_ipl)),
             ppu: RefCell::new(Ppu::new()),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
         }
+    }
+
+    fn load_spc_ipl_override(path: Option<&str>) -> Option<[u8; 64]> {
+        let path = path?;
+
+        let data = match fs::read(path) {
+            Ok(data) => data,
+            Err(err) => {
+                crate::platform::debugging::log_info(format!(
+                    "Warning: failed to read SNES SPC IPL file {}: {err}",
+                    path
+                ));
+                return None;
+            }
+        };
+
+        if data.len() != 64 {
+            crate::platform::debugging::log_info(format!(
+                "Warning: ignoring SNES SPC IPL file {} due to invalid size {} (expected 64 bytes)",
+                path,
+                data.len()
+            ));
+            return None;
+        }
+
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&data);
+        Some(arr)
     }
 
     fn decode_wram_index(addr: u32) -> Option<usize> {
@@ -305,6 +342,7 @@ impl SnesSystemBus {
             mdr: self.mdr.get(),
             ticks: self.ticks.get(),
             sram: self.sram.clone(),
+            apu: self.apu.borrow().capture_state(),
         }
     }
 
@@ -354,7 +392,23 @@ impl SnesSystemBus {
         self.mdr.set(state.mdr);
         self.ticks.set(state.ticks);
         self.sram.copy_from_slice(&state.sram);
+        self.apu.get_mut().restore_state(&state.apu)?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn apu_read_spc_port_for_test(&self, port: usize) -> u8 {
+        self.apu.borrow().read_spc_port(port)
+    }
+
+    #[cfg(test)]
+    fn apu_write_spc_port_for_test(&mut self, port: usize, value: u8) {
+        self.apu.get_mut().write_spc_port(port, value);
+    }
+
+    #[cfg(test)]
+    fn apu_read_spc_memory_for_test(&mut self, addr: u16) -> u8 {
+        self.apu.get_mut().read_spc_memory_for_test(addr)
     }
 
     fn read_mmio(&self, addr: u32) -> Option<u8> {
@@ -375,6 +429,7 @@ impl SnesSystemBus {
             0x4217 => (self.rdmpy >> 8) as u8,
             0x420D => self.memsel,
             0x420C => self.hdmaen,
+            0x2140..=0x2143 => self.apu.borrow().read_main_port((offset - 0x2140) as usize),
             0x2134..=0x213F => self.ppu.borrow_mut().read_register(offset),
             0x4210..=0x4212 => self.ppu.borrow_mut().read_register(offset),
             0x4300..=0x437F => self.dma.read_register(offset)?,
@@ -446,6 +501,12 @@ impl SnesSystemBus {
             }
             0x420C => {
                 self.hdmaen = value;
+                true
+            }
+            0x2140..=0x2143 => {
+                self.apu
+                    .borrow_mut()
+                    .write_main_port((offset - 0x2140) as usize, value);
                 true
             }
             0x420B => {
@@ -532,6 +593,7 @@ impl SnesBus for SnesSystemBus {
 
     fn tick(&mut self) {
         self.ticks.set(self.ticks.get().wrapping_add(1));
+        self.apu.borrow_mut().tick();
         self.ppu.get_mut().tick();
     }
 
@@ -828,6 +890,30 @@ mod tests {
         bus.write(0x004206, 0x10);
         assert_eq!(bus.read(0x004214), 0x23);
         assert_eq!(bus.read(0x004215), 0x01);
+    }
+
+    #[test]
+    fn apu_port_writes_are_visible_through_the_main_cpu_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        bus.write(0x002140, 0xA5);
+        assert_eq!(bus.apu_read_spc_port_for_test(0), 0xA5);
+
+        bus.apu_write_spc_port_for_test(1, 0x5A);
+        assert_eq!(bus.read(0x002141), 0x5A);
+    }
+
+    #[test]
+    fn custom_spc_ipl_path_overrides_embedded_ipl() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("ipl.bin");
+        std::fs::write(&path, [0xEAu8; 64]).expect("write custom ipl");
+
+        let mut bus = SnesSystemBus::new_with_spc_ipl_path(
+            lorom_test_cart(),
+            Some(path.to_str().expect("utf8 path")),
+        );
+        assert_eq!(bus.apu_read_spc_memory_for_test(0xFFC0), 0xEA);
     }
 
     #[test]
