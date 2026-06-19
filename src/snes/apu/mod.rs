@@ -110,24 +110,30 @@ impl SnesApu {
         }
     }
 
-    pub fn restore_state(&mut self, state: &SnesApuState) -> Result<(), String> {
-        if !state.aram.is_empty() && state.aram.len() != ARAM_SIZE {
-            return Err(format!(
-                "APU ARAM size mismatch (expected {ARAM_SIZE}, found {})",
-                state.aram.len()
-            ));
-        }
-        if state.aram.len() == ARAM_SIZE {
-            self.aram.copy_from_slice(&state.aram);
-        }
-        self.main_to_spc_ports = state.main_to_spc_ports;
-        self.spc_to_main_ports = state.spc_to_main_ports;
+pub fn restore_state(&mut self, state: &SnesApuState) -> Result<(), String> {
+    if state.aram.is_empty() {
+        // Backward-compat: older save-states didn't include APU ARAM/control.
+        self.aram.fill(0);
+        self.control = 0xB0;
+        self.master_ticks = 0;
+        self.spc_cycle_budget = 0;
+    } else if state.aram.len() != ARAM_SIZE {
+        return Err(format!(
+            "APU ARAM size mismatch (expected {ARAM_SIZE}, found {})",
+            state.aram.len()
+        ));
+    } else {
+        self.aram.copy_from_slice(&state.aram);
         self.control = state.control;
         self.master_ticks = state.master_ticks;
         self.spc_cycle_budget = state.spc_cycle_budget;
-        self.reset_spc700();
-        Ok(())
     }
+
+    self.main_to_spc_ports = state.main_to_spc_ports;
+    self.spc_to_main_ports = state.spc_to_main_ports;
+    self.reset_spc700();
+    Ok(())
+}
 
     fn reset_spc700(&mut self) {
         let mut bus_view = SpcBusView {
