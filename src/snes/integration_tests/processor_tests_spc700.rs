@@ -177,6 +177,24 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         && opcode != 0x3C
         && opcode != 0xBC
         && opcode != 0x9C
+        && opcode != 0xAB
+        && opcode != 0xBB
+        && opcode != 0xAC
+        && opcode != 0x8B
+        && opcode != 0x9B
+        && opcode != 0x8C
+        && opcode != 0x0B
+        && opcode != 0x1B
+        && opcode != 0x0C
+        && opcode != 0x2B
+        && opcode != 0x3B
+        && opcode != 0x2C
+        && opcode != 0x4B
+        && opcode != 0x5B
+        && opcode != 0x4C
+        && opcode != 0x6B
+        && opcode != 0x7B
+        && opcode != 0x6C
         && opcode != 0x24
         && opcode != 0x04
         && opcode != 0x44
@@ -221,7 +239,7 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
     {
         return Err(VectorFailure {
             details: format!(
-                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (supported in this slice: NOP $00, MOV A,#imm $E8, MOV X,#imm $CD, MOV Y,#imm $8D, MOV A,X $7D, MOV X,A $5D, MOV A,Y $DD, MOV Y,A $FD, MOV X,SP $9D, MOV SP,X $BD, MOV A,dp $E4, MOV dp,A $C4, MOV dp,X $D8, MOV dp,Y $CB, MOV A,(X) $E6, MOV A,(X)+ $BF, MOV (X),A $C6, MOV (X)+,A $AF, MOV A,dp+X $F4, MOV dp+X,A $D4, MOV dp+X,Y $DB, MOV dp+Y,X $D9, MOV A,!abs $E5, MOV !abs,A $C5, MOV A,!abs+X $F5, MOV A,!abs+Y $F6, MOV !abs+X,A $D5, MOV !abs+Y,A $D6, MOV X,dp $F8, MOV Y,dp $EB, MOV X,!abs $E9, MOV Y,!abs $EC, MOV X,dp+Y $F9, MOV Y,dp+X $FB, MOV !abs,X $C9, MOV !abs,Y $CC, MOV A,[dp+X] $E7, MOV A,[dp]+Y $F7, MOV [dp+X],A $C7, MOV [dp]+Y,A $D7, INC A $BC, DEC A $9C, ROL A $3C, ROR A $7C, AND A,#imm $24, OR A,#imm $04, EOR A,#imm $44, ADD A,#imm $88, ADC A,#imm $84, SUB A,#imm $A8, SBC A,#imm $A4, CMP A,#imm $C8, CMP X,#imm $C0, CMP Y,#imm $AD)",
+                "{}: unsupported opcode ${opcode:02X} at PC ${:04X} (supported in this slice: NOP $00, MOV A,#imm $E8, MOV X,#imm $CD, MOV Y,#imm $8D, MOV A,X $7D, MOV X,A $5D, MOV A,Y $DD, MOV Y,A $FD, MOV X,SP $9D, MOV SP,X $BD, MOV A,dp $E4, MOV dp,A $C4, MOV dp,X $D8, MOV dp,Y $CB, MOV A,(X) $E6, MOV A,(X)+ $BF, MOV (X),A $C6, MOV (X)+,A $AF, MOV A,dp+X $F4, MOV dp+X,A $D4, MOV dp+X,Y $DB, MOV dp+Y,X $D9, MOV A,!abs $E5, MOV !abs,A $C5, MOV A,!abs+X $F5, MOV A,!abs+Y $F6, MOV !abs+X,A $D5, MOV !abs+Y,A $D6, MOV X,dp $F8, MOV Y,dp $EB, MOV X,!abs $E9, MOV Y,!abs $EC, MOV X,dp+Y $F9, MOV Y,dp+X $FB, MOV !abs,X $C9, MOV !abs,Y $CC, MOV A,[dp+X] $E7, MOV A,[dp]+Y $F7, MOV [dp+X],A $C7, MOV [dp]+Y,A $D7, INC A $BC, DEC A $9C, INC dp/dp+X/!abs $AB/$BB/$AC, DEC dp/dp+X/!abs $8B/$9B/$8C, ASL/ROL/LSR/ROR A $1C/$3C/$5C/$7C, ASL/ROL/LSR/ROR dp,dp+X,!abs $0B/$1B/$0C,$2B/$3B/$2C,$4B/$5B/$4C,$6B/$7B/$6C, AND A,#imm $24, OR A,#imm $04, EOR A,#imm $44, ADD A,#imm $88, ADC A,#imm $84, SUB A,#imm $A8, SBC A,#imm $A4, CMP A,#imm $C8, CMP X,#imm $C0, CMP Y,#imm $AD)",
                 vector.name, vector.initial.pc
             ),
         });

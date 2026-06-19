@@ -353,6 +353,42 @@ impl Spc700 {
         self.update_nz8((result >> 8) as u8);
     }
 
+    /// ASL — shift left and update N/Z/C flags.
+    fn asl(&mut self, value: u8) -> u8 {
+        self.set_flag(FLAG_CARRY, value & 0x80 != 0);
+        let result = value << 1;
+        self.update_nz8(result);
+        result
+    }
+
+    /// LSR — shift right and update N/Z/C flags.
+    fn lsr(&mut self, value: u8) -> u8 {
+        self.set_flag(FLAG_CARRY, value & 0x01 != 0);
+        let result = value >> 1;
+        self.update_nz8(result);
+        result
+    }
+
+    /// ROL — rotate left through carry and update N/Z/C flags.
+    fn rol(&mut self, value: u8) -> u8 {
+        let carry_in = if self.flag(FLAG_CARRY) { 1 } else { 0 };
+        let carry_out = value & 0x80 != 0;
+        let result = (value << 1) | carry_in;
+        self.set_flag(FLAG_CARRY, carry_out);
+        self.update_nz8(result);
+        result
+    }
+
+    /// ROR — rotate right through carry and update N/Z/C flags.
+    fn ror(&mut self, value: u8) -> u8 {
+        let carry_in = if self.flag(FLAG_CARRY) { 0x80 } else { 0 };
+        let carry_out = value & 0x01 != 0;
+        let result = (value >> 1) | carry_in;
+        self.set_flag(FLAG_CARRY, carry_out);
+        self.update_nz8(result);
+        result
+    }
+
     /// MUL YA — multiply Y * A, store result in YA (9 cycles).
     /// YA = Y * A; updates N/Z flags based on high byte of result.
     fn mul_ya(&mut self) {
@@ -726,37 +762,169 @@ impl Spc700 {
                 self.update_nz8(self.y);
                 self.idle_cycle(bus, &mut cycles);
             }
+            // INC dp — increment direct-page byte, update N/Z.
+            0xAB => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, value.wrapping_add(1), &mut cycles);
+                self.update_nz8(value.wrapping_add(1));
+            }
+            // INC dp+X — increment direct-page byte indexed by X, update N/Z.
+            0xBB => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp.wrapping_add(self.x));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, value.wrapping_add(1), &mut cycles);
+                self.update_nz8(value.wrapping_add(1));
+            }
+            // INC !abs — increment absolute byte, update N/Z.
+            0xAC => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, value.wrapping_add(1), &mut cycles);
+                self.update_nz8(value.wrapping_add(1));
+            }
+            // DEC dp — decrement direct-page byte, update N/Z.
+            0x8B => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, value.wrapping_sub(1), &mut cycles);
+                self.update_nz8(value.wrapping_sub(1));
+            }
+            // DEC dp+X — decrement direct-page byte indexed by X, update N/Z.
+            0x9B => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp.wrapping_add(self.x));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, value.wrapping_sub(1), &mut cycles);
+                self.update_nz8(value.wrapping_sub(1));
+            }
+            // DEC !abs — decrement absolute byte, update N/Z.
+            0x8C => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                self.write_cycle(bus, addr, value.wrapping_sub(1), &mut cycles);
+                self.update_nz8(value.wrapping_sub(1));
+            }
             // ASL A — shift left accumulator, bit 7 to carry.
             0x1C => {
-                self.set_flag(FLAG_CARRY, self.a & 0x80 != 0);
-                self.a <<= 1;
-                self.update_nz8(self.a);
+                self.a = self.asl(self.a);
                 self.idle_cycle(bus, &mut cycles);
             }
             // ROL A — rotate left accumulator through carry.
             0x3C => {
-                let carry_in = if self.flag(FLAG_CARRY) { 1 } else { 0 };
-                let carry_out = self.a & 0x80 != 0;
-                self.a = (self.a << 1) | carry_in;
-                self.set_flag(FLAG_CARRY, carry_out);
-                self.update_nz8(self.a);
+                self.a = self.rol(self.a);
                 self.idle_cycle(bus, &mut cycles);
             }
             // LSR A — shift right accumulator, bit 0 to carry.
             0x5C => {
-                self.set_flag(FLAG_CARRY, self.a & 0x01 != 0);
-                self.a >>= 1;
-                self.update_nz8(self.a);
+                self.a = self.lsr(self.a);
                 self.idle_cycle(bus, &mut cycles);
             }
             // ROR A — rotate right accumulator through carry.
             0x7C => {
-                let carry_in = if self.flag(FLAG_CARRY) { 0x80 } else { 0 };
-                let carry_out = self.a & 0x01 != 0;
-                self.a = (self.a >> 1) | carry_in;
-                self.set_flag(FLAG_CARRY, carry_out);
-                self.update_nz8(self.a);
+                self.a = self.ror(self.a);
                 self.idle_cycle(bus, &mut cycles);
+            }
+            // ASL dp — shift left direct-page byte.
+            0x0B => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.asl(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // ASL dp+X — shift left direct-page byte indexed by X.
+            0x1B => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp.wrapping_add(self.x));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.asl(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // ASL !abs — shift left absolute byte.
+            0x0C => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.asl(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // ROL dp — rotate left direct-page byte through carry.
+            0x2B => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.rol(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // ROL dp+X — rotate left direct-page byte indexed by X through carry.
+            0x3B => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp.wrapping_add(self.x));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.rol(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // ROL !abs — rotate left absolute byte through carry.
+            0x2C => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.rol(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // LSR dp — shift right direct-page byte.
+            0x4B => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.lsr(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // LSR dp+X — shift right direct-page byte indexed by X.
+            0x5B => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp.wrapping_add(self.x));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.lsr(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // LSR !abs — shift right absolute byte.
+            0x4C => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.lsr(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // ROR dp — rotate right direct-page byte through carry.
+            0x6B => {
+                let dp = self.fetch(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.ror(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // ROR dp+X — rotate right direct-page byte indexed by X through carry.
+            0x7B => {
+                let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                let addr = self.direct_page_base() | u16::from(dp.wrapping_add(self.x));
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.ror(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
+            }
+            // ROR !abs — rotate right absolute byte through carry.
+            0x6C => {
+                let addr = self.fetch_u16(bus, &mut cycles);
+                let value = self.read_cycle(bus, addr, &mut cycles);
+                let result = self.ror(value);
+                self.write_cycle(bus, addr, result, &mut cycles);
             }
             // AND A,#imm — bitwise AND of immediate into A, update N/Z.
             0x24 => {
@@ -2166,6 +2334,114 @@ mod tests {
         assert_eq!(cycles, 2);
         assert_eq!(cpu.a(), 0x80);
         assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn inc_dp_increments_memory_and_sets_zero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xAB, 0x20]); // INC $20
+        bus.set(0x0020, 0xFF);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(bus.get(0x0020), 0x00);
+        assert!(cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn dec_abs_decrements_memory_and_sets_negative() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x8C, 0x00, 0x30]); // DEC $3000
+        bus.set(0x3000, 0x00);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.get(0x3000), 0xFF);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn inc_dp_x_wraps_and_uses_direct_page_flag() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xBB, 0xF0]); // INC $F0+X
+        bus.set(0x0110, 0x7F); // ($F0 + $20) in page 1
+        cpu.load_state_for_processor_test(0x00, 0x20, 0x00, 0xEF, 0x0200, FLAG_DIRECT_PAGE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.get(0x0110), 0x80);
+        assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn asl_dp_shifts_memory_and_sets_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x0B, 0x22]); // ASL $22
+        bus.set(0x0022, 0x81);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(bus.get(0x0022), 0x02);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn rol_dp_x_rotates_memory_through_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x3B, 0x20]); // ROL $20+X
+        bus.set(0x0023, 0x80);
+        cpu.load_state_for_processor_test(0x00, 0x03, 0x00, 0xEF, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.get(0x0023), 0x01);
+        assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn lsr_abs_shifts_memory_right() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x4C, 0x34, 0x12]); // LSR $1234
+        bus.set(0x1234, 0x03);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0200, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(bus.get(0x1234), 0x01);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn ror_dp_rotates_memory_right_through_carry() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x6B, 0x44]); // ROR $44
+        bus.set(0x0044, 0x01);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(bus.get(0x0044), 0x80);
+        assert!(cpu.flag(FLAG_CARRY));
+        assert!(cpu.flag(FLAG_NEGATIVE));
     }
 
     #[test]
