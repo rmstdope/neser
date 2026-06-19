@@ -268,6 +268,12 @@ pub struct SnesPpuState {
     pub stat77_range_over: bool,
     #[serde(default)]
     pub stat77_time_over: bool,
+    #[serde(default)]
+    pub mosaic: u8,
+    #[serde(default)]
+    pub mosaic_vblock_size: u8,
+    #[serde(default)]
+    pub mosaic_vcount: u8,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]

@@ -40,6 +40,10 @@ impl Ppu {
 
     /// Sample the raw 8-bit Mode 7 pixel value at screen `(x, y)`, applying the affine transform,
     /// screen H/V flip, and screen-over handling. Returns 0 (transparent) where appropriate.
+    ///
+    /// Mosaic: when BG1 mosaic is enabled, horizontal x is snapped to the block left edge and
+    /// vertical y is reduced by `mosaic_vcount` before the affine transform (fullsnes; BG2 EXTBG
+    /// vertical mosaic also uses BG1 enable per bsnes evidence).
     fn mode7_pixel_value(&self, x: u16, y: u16) -> u8 {
         let xflip = self.m7sel & 0x01 != 0;
         let yflip = self.m7sel & 0x02 != 0;
@@ -54,9 +58,22 @@ impl Ppu {
         let hoffset = sign_extend_13(self.m7hofs);
         let voffset = sign_extend_13(self.m7vofs);
 
-        let sx = if xflip { 255 - x } else { x } as i32;
+        // Apply mosaic to the affine sampling coordinates (BG1 enable controls both BG1 and
+        // EXTBG BG2 vertical mosaic, matching bsnes behavior).
+        let x_eff = if self.mosaic_bg_enabled(0) {
+            self.mosaic_apply_x(x)
+        } else {
+            x
+        };
+        let y_eff = if self.mosaic_bg_enabled(0) {
+            y.saturating_sub(self.mosaic_vcount as u16)
+        } else {
+            y
+        };
+
+        let sx = if xflip { 255 - x_eff } else { x_eff } as i32;
         // Hardware SCREEN.Y is the display line (1..224); framebuffer row `y` is line `y + 1`.
-        let screen_y = y as i32 + 1;
+        let screen_y = y_eff as i32 + 1;
         let sy = if yflip { 255 - screen_y } else { screen_y };
 
         let clip_h = mode7_clip(hoffset - hcenter);

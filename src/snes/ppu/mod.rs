@@ -14,6 +14,7 @@
 mod background;
 mod framebuffer;
 mod mode7;
+mod mosaic;
 mod registers;
 mod save_state;
 mod sprites;
@@ -186,6 +187,16 @@ pub struct Ppu {
     obj_range_over_dot: Option<u16>,
     /// Time over-limit computed during the current scanline, applied at the next scanline's H=0.
     obj_time_over_pending: bool,
+    /// MOSAIC ($2106) raw register: bits 7-4 = pending vertical block size (0..=15), bits 3-0 =
+    /// per-BG enable (bit 0 = BG1 ... bit 3 = BG4). Horizontal mosaic and bg-enable bits take
+    /// effect immediately; vertical size change only applies at the start of the next block.
+    mosaic: u8,
+    /// Active vertical mosaic block size (0..=15, meaning 1..=16 scanlines). Updated at block
+    /// boundaries from `mosaic >> 4` to implement the "finish current block" hardware behavior.
+    mosaic_vblock_size: u8,
+    /// Number of scanlines elapsed into the current vertical mosaic block (0 = top of block).
+    /// Subtracted from BGnVOFS to produce the effective vertical scroll for mosaic-enabled BGs.
+    mosaic_vcount: u8,
 }
 
 impl Default for Ppu {
@@ -267,6 +278,9 @@ impl Ppu {
             stat77_time_over: false,
             obj_range_over_dot: None,
             obj_time_over_pending: false,
+            mosaic: 0,
+            mosaic_vblock_size: 0,
+            mosaic_vcount: 0,
         }
     }
 
