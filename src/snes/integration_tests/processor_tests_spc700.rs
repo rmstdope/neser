@@ -194,6 +194,14 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         && opcode != 0x50
         && opcode != 0x30
         && opcode != 0x10
+        && opcode != 0x0D
+        && opcode != 0x2D
+        && opcode != 0x4D
+        && opcode != 0x6D
+        && opcode != 0x8E
+        && opcode != 0xAE
+        && opcode != 0xCE
+        && opcode != 0xEE
     {
         return Err(VectorFailure {
             details: format!(
@@ -2330,6 +2338,97 @@ mod tests {
 "#;
         fs::write(path, sample).expect("write sample BPL vector JSON");
     }
+
+    fn write_push_a_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "2d push a",
+    "initial": {
+      "pc": 2560,
+      "sp": 239,
+      "psw": 0,
+      "a": 66,
+      "x": 0,
+      "y": 0,
+      "ram": [[2560, 45]]
+    },
+    "final": {
+      "pc": 2561,
+      "sp": 238,
+      "psw": 0,
+      "a": 66,
+      "x": 0,
+      "y": 0,
+      "ram": [[2560, 45], [495, 66]]
+    },
+    "cycles": [
+      [2560, 45, "d-r-----"],
+      [495, 66, "d-w-----"],
+      [0, 0, "-----i--"],
+      [0, 0, "-----i--"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample PUSH A vector JSON");
+    }
+
+    fn write_pop_a_vector(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "ae pop a",
+    "initial": {
+      "pc": 2560,
+      "sp": 238,
+      "psw": 0,
+      "a": 0,
+      "x": 0,
+      "y": 0,
+      "ram": [[2560, 174], [495, 136]]
+    },
+    "final": {
+      "pc": 2561,
+      "sp": 239,
+      "psw": 128,
+      "a": 136,
+      "x": 0,
+      "y": 0,
+      "ram": [[2560, 174], [495, 136]]
+    },
+    "cycles": [
+      [2560, 174, "d-r-----"],
+      [495, 136, "d-r-----"],
+      [0, 0, "-----i--"],
+      [0, 0, "-----i--"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample POP A vector JSON");
+    }
+
+    #[test]
+    fn given_push_a_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("2d.json");
+        write_push_a_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from file");
+        assert_eq!(vectors.len(), 1);
+        run_vector_case(&vectors[0]).expect("PUSH A vector case should pass");
+    }
+
+    #[test]
+    fn given_pop_a_vector_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("ae.json");
+        write_pop_a_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from file");
+        assert_eq!(vectors.len(), 1);
+        run_vector_case(&vectors[0]).expect("POP A vector case should pass");
+    }
+
     #[test]
     fn given_spc700_vector_json_when_loaded_then_schema_is_parsed() {
         let temp = tempfile::tempdir().expect("create temp dir");

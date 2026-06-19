@@ -272,6 +272,20 @@ impl Spc700 {
         self.pc = self.pc.wrapping_add(signed_offset as u16);
     }
 
+    /// Push a byte onto the stack: write to [SP], then decrement SP.
+    fn push(&mut self, bus: &mut impl Spc700Bus, value: u8, cycles: &mut u8) {
+        let addr = 0x0100u16 | (self.sp as u16);
+        self.write_cycle(bus, addr, value, cycles);
+        self.sp = self.sp.wrapping_sub(1);
+    }
+
+    /// Pop a byte from the stack: increment SP, then read from [SP].
+    fn pop(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        let addr = 0x0100u16 | (self.sp as u16);
+        self.read_cycle(bus, addr, cycles)
+    }
+
     /// Execute a single instruction, returning the number of cycles consumed.
     ///
     /// Only `NOP` is implemented in this first slice; further opcodes are added
@@ -709,6 +723,57 @@ impl Spc700 {
                 if !self.flag(FLAG_NEGATIVE) {
                     self.branch(offset);
                 }
+            }
+            // PUSH PSW — push flags onto stack (4 cycles).
+            0x0D => {
+                self.push(bus, self.psw, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // PUSH A — push accumulator onto stack (4 cycles).
+            0x2D => {
+                self.push(bus, self.a, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // PUSH X — push X register onto stack (4 cycles).
+            0x4D => {
+                self.push(bus, self.x, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // PUSH Y — push Y register onto stack (4 cycles).
+            0x6D => {
+                self.push(bus, self.y, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // POP PSW — pop flags from stack (4 cycles).
+            0x8E => {
+                self.psw = self.pop(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // POP A — pop accumulator from stack (4 cycles).
+            0xAE => {
+                self.a = self.pop(bus, &mut cycles);
+                self.update_nz8(self.a);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // POP X — pop X register from stack (4 cycles).
+            0xCE => {
+                self.x = self.pop(bus, &mut cycles);
+                self.update_nz8(self.x);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
+            }
+            // POP Y — pop Y register from stack (4 cycles).
+            0xEE => {
+                self.y = self.pop(bus, &mut cycles);
+                self.update_nz8(self.y);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
             }
             other => panic!(
                 "SPC700: unimplemented opcode {other:#04X} at PC {:#06X}",
@@ -2235,5 +2300,127 @@ mod tests {
 
         assert_eq!(cycles, 2);
         assert_eq!(cpu.pc(), 0x0802); // Just advance past opcode + operand
+    }
+
+    #[test]
+    fn push_psw_pushes_flags_onto_stack() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x0D]); // PUSH PSW
+        cpu.load_state_for_processor_test(0xAA, 0xBB, 0xCC, 0xF0, 0x0200, FLAG_ZERO | FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.sp(), 0xEF); // SP decremented
+        assert_eq!(bus.read(0x01F0), FLAG_ZERO | FLAG_CARRY); // PSW pushed to stack
+    }
+
+    #[test]
+    fn push_a_pushes_accumulator_onto_stack() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x2D]); // PUSH A
+        cpu.load_state_for_processor_test(0x42, 0xBB, 0xCC, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.sp(), 0xEF); // SP decremented
+        assert_eq!(cpu.a(), 0x42); // A unchanged
+        assert_eq!(bus.read(0x01F0), 0x42); // A pushed to stack
+    }
+
+    #[test]
+    fn push_x_pushes_x_onto_stack() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x4D]); // PUSH X
+        cpu.load_state_for_processor_test(0xAA, 0x55, 0xCC, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.sp(), 0xEF); // SP decremented
+        assert_eq!(cpu.x(), 0x55); // X unchanged
+        assert_eq!(bus.read(0x01F0), 0x55); // X pushed to stack
+    }
+
+    #[test]
+    fn push_y_pushes_y_onto_stack() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x6D]); // PUSH Y
+        cpu.load_state_for_processor_test(0xAA, 0xBB, 0x77, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.sp(), 0xEF); // SP decremented
+        assert_eq!(cpu.y(), 0x77); // Y unchanged
+        assert_eq!(bus.read(0x01F0), 0x77); // Y pushed to stack
+    }
+
+    #[test]
+    fn pop_psw_pops_flags_from_stack() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x8E]); // POP PSW
+        bus.write(0x01F0, FLAG_NEGATIVE | FLAG_OVERFLOW); // Stack contains flags
+        cpu.load_state_for_processor_test(0xAA, 0xBB, 0xCC, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.sp(), 0xF0); // SP incremented
+        assert_eq!(cpu.psw(), FLAG_NEGATIVE | FLAG_OVERFLOW); // PSW loaded from stack
+    }
+
+    #[test]
+    fn pop_a_pops_accumulator_from_stack() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xAE]); // POP A
+        bus.write(0x01F0, 0x88); // Stack contains value
+        cpu.load_state_for_processor_test(0x00, 0xBB, 0xCC, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.sp(), 0xF0); // SP incremented
+        assert_eq!(cpu.a(), 0x88); // A loaded from stack
+        assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0x88 is negative)
+    }
+
+    #[test]
+    fn pop_x_pops_x_from_stack() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xCE]); // POP X
+        bus.write(0x01F0, 0x44); // Stack contains value
+        cpu.load_state_for_processor_test(0xAA, 0x00, 0xCC, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.sp(), 0xF0); // SP incremented
+        assert_eq!(cpu.x(), 0x44); // X loaded from stack
+        assert!(!cpu.flag(FLAG_NEGATIVE)); // N flag clear (0x44 is positive)
+    }
+
+    #[test]
+    fn pop_y_pops_y_from_stack() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xEE]); // POP Y
+        bus.write(0x01F0, 0x99); // Stack contains value
+        cpu.load_state_for_processor_test(0xAA, 0xBB, 0x00, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.sp(), 0xF0); // SP incremented
+        assert_eq!(cpu.y(), 0x99); // Y loaded from stack
+        assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0x99 is negative)
     }
 }
