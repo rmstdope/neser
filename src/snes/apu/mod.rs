@@ -3,6 +3,7 @@
 //! This slice wires the 64 KB ARAM, clean-room IPL boot ROM overlay, SPC700 CPU,
 //! and the four communication ports (`$2140-$2143` <-> `$F4-$F7`).
 
+pub mod dsp;
 pub mod ipl;
 pub mod spc700;
 pub mod timers;
