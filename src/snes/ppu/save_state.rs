@@ -36,6 +36,11 @@ impl Ppu {
             ophct_read_high: self.ophct_read_high,
             opvct_read_high: self.opvct_read_high,
             wrio: self.wrio,
+            irq_mode: self.irq_mode,
+            htime: self.htime,
+            vtime: self.vtime,
+            timeup_flag: self.timeup_flag,
+            irq_line: self.irq_line,
             interlace_field: self.interlace_field,
             bg_mode: self.bg_mode,
             bg3_priority: self.bg3_priority,
@@ -112,6 +117,11 @@ impl Ppu {
         self.ophct_read_high = state.ophct_read_high;
         self.opvct_read_high = state.opvct_read_high;
         self.wrio = state.wrio;
+        self.irq_mode = state.irq_mode & 0x03;
+        self.htime = state.htime & 0x01FF;
+        self.vtime = state.vtime & 0x01FF;
+        self.timeup_flag = state.timeup_flag;
+        self.irq_line = state.irq_line;
         self.interlace_field = state.interlace_field;
         self.bg_mode = state.bg_mode;
         self.bg3_priority = state.bg3_priority;

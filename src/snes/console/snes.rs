@@ -748,6 +748,12 @@ mod tests {
             .as_object_mut()
             .expect("dma map")
             .remove("hdma_lines_left");
+        let ppu = json["ppu"].as_object_mut().expect("ppu object");
+        ppu.remove("irq_mode");
+        ppu.remove("htime");
+        ppu.remove("vtime");
+        ppu.remove("timeup_flag");
+        ppu.remove("irq_line");
 
         let bytes = serde_json::to_vec(&json).expect("serialize compat state");
         let loaded = SnesSaveState::from_bytes(&bytes).expect("compat state should load");
@@ -767,5 +773,10 @@ mod tests {
             crate::snes::console::save_state::SNES_SAVESTATE_VERSION
         );
         assert_eq!(loaded.bus.dma.hdma_lines_left, vec![0; 8]);
+        assert_eq!(loaded.ppu.irq_mode, 0);
+        assert_eq!(loaded.ppu.htime, 0);
+        assert_eq!(loaded.ppu.vtime, 0);
+        assert!(!loaded.ppu.timeup_flag);
+        assert!(!loaded.ppu.irq_line);
     }
 }

@@ -568,6 +568,7 @@ impl<B: SnesBus> Cpu<B> {
         if self.bus.poll_nmi() {
             self.nmi_pending = true;
         }
+        let irq_line_asserted = self.bus.poll_irq() || self.irq_pending;
 
         // Poll hardware interrupts (higher priority than opcode fetch)
         if self.abort_pending {
@@ -578,7 +579,7 @@ impl<B: SnesBus> Cpu<B> {
             self.nmi_pending = false;
             return self.dispatch_nmi();
         }
-        if self.irq_pending && !self.flag_i() {
+        if irq_line_asserted && !self.flag_i() {
             // IRQ is level-triggered: do NOT clear irq_pending here; caller must deassert
             return self.dispatch_irq();
         }
@@ -9763,6 +9764,38 @@ mod interrupt_dispatch_tests {
         }
     }
 
+    struct PollIrqBus {
+        mem: Vec<u8>,
+        irq_level: bool,
+    }
+
+    impl PollIrqBus {
+        fn new() -> Self {
+            Self {
+                mem: vec![0; 0x100_0000],
+                irq_level: false,
+            }
+        }
+
+        fn load(&mut self, addr: u32, data: &[u8]) {
+            let a = (addr & 0xFF_FFFF) as usize;
+            self.mem[a..a + data.len()].copy_from_slice(data);
+        }
+    }
+
+    impl crate::snes::bus::SnesBus for PollIrqBus {
+        fn read(&self, addr: u32) -> u8 {
+            self.mem[(addr & 0xFF_FFFF) as usize]
+        }
+        fn write(&mut self, addr: u32, value: u8) {
+            self.mem[(addr & 0xFF_FFFF) as usize] = value;
+        }
+        fn tick(&mut self) {}
+        fn poll_irq(&self) -> bool {
+            self.irq_level
+        }
+    }
+
     #[test]
     fn step_polls_the_bus_nmi_edge_and_dispatches_nmi() {
         let mut cpu = Cpu::new(PollNmiBus::new()); // emulation mode
@@ -9776,6 +9809,40 @@ mod interrupt_dispatch_tests {
         assert_eq!(
             cpu.pc, 0x9000,
             "step() polled the bus NMI edge and dispatched NMI"
+        );
+    }
+
+    #[test]
+    fn step_polls_bus_irq_level_and_dispatches_irq() {
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
+        cpu.bus.irq_level = true;
+
+        let cycles = cpu.step();
+
+        assert_eq!(cycles, 7, "IRQ dispatch cycles in emulation mode");
+        assert_eq!(cpu.pc, 0x9100, "step() should dispatch IRQ from bus level");
+    }
+
+    #[test]
+    fn bus_irq_deassertion_stops_redispatch() {
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
+        cpu.bus.irq_level = true;
+        assert_eq!(cpu.step(), 7, "first IRQ dispatch");
+
+        cpu.set_flag_i(false);
+        cpu.bus.irq_level = false;
+        cpu.bus.load(cpu.pc as u32, &[0xEA]); // NOP
+        assert_eq!(
+            cpu.step(),
+            2,
+            "IRQ should not redispatch once line is deasserted"
         );
     }
 
