@@ -1,0 +1,328 @@
+//! SNES S-DSP voice pipeline (work in progress).
+
+mod brr;
+mod envelope;
+mod gaussian;
+mod voice;
+
+use serde::{Deserialize, Serialize};
+use voice::{EnvelopeMode, VoiceState};
+
+pub use brr::DecodedBrrBlock;
+pub use brr::decode_brr_block;
+
+const DSP_REGISTER_COUNT: usize = 0x80;
+const KON_REG: u8 = 0x4C;
+const KOFF_REG: u8 = 0x5C;
+const PMON_REG: u8 = 0x2D;
+const NON_REG: u8 = 0x3D;
+const FLG_REG: u8 = 0x6C;
+
+fn default_regs() -> Vec<u8> {
+    vec![0; DSP_REGISTER_COUNT]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Sdsp {
+    #[serde(default)]
+    phase: u8,
+    #[serde(default = "default_regs")]
+    regs: Vec<u8>,
+    #[serde(default)]
+    voices: [VoiceState; 8],
+    #[serde(default)]
+    master_vol_l: i8,
+    #[serde(default)]
+    master_vol_r: i8,
+    #[serde(default = "default_noise_lfsr")]
+    noise_lfsr: u16,
+    #[serde(default)]
+    noise_counter: u16,
+}
+
+impl Default for Sdsp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn default_noise_lfsr() -> u16 {
+    0x4000
+}
+
+impl Sdsp {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            phase: 0,
+            regs: default_regs(),
+            voices: std::array::from_fn(|_| VoiceState::default()),
+            master_vol_l: 0,
+            master_vol_r: 0,
+            noise_lfsr: default_noise_lfsr(),
+            noise_counter: 0,
+        }
+    }
+
+    pub fn normalize_after_restore(&mut self) -> Result<(), String> {
+        self.phase &= 0x1F;
+        if self.regs.is_empty() {
+            self.regs = default_regs();
+        }
+        if self.regs.len() != DSP_REGISTER_COUNT {
+            return Err(format!(
+                "APU DSP register file size mismatch (expected {DSP_REGISTER_COUNT}, found {})",
+                self.regs.len()
+            ));
+        }
+        if self.noise_lfsr == 0 || self.noise_lfsr > 0x7FFF {
+            self.noise_lfsr = default_noise_lfsr();
+        }
+        self.rebuild_cached_fields_from_regs();
+        Ok(())
+    }
+
+    fn rebuild_cached_fields_from_regs(&mut self) {
+        self.master_vol_l = self.regs[0x0C] as i8;
+        self.master_vol_r = self.regs[0x1C] as i8;
+
+        for voice in 0..8usize {
+            let base = voice << 4;
+            let v = &mut self.voices[voice];
+            v.vol_l = self.regs[base] as i8;
+            v.vol_r = self.regs[base + 1] as i8;
+            v.pitch = u16::from(self.regs[base + 2]) | (u16::from(self.regs[base + 3] & 0x3F) << 8);
+            v.adsr1 = self.regs[base + 5];
+            v.adsr2 = self.regs[base + 6];
+            v.gain = self.regs[base + 7];
+            v.envx = self.regs[base + 8];
+            v.outx = self.regs[base + 9] as i8;
+            v.mod_source = v.outx;
+            v.env_level = u16::from(v.envx) << 4;
+            v.mode = if v.env_level == 0 {
+                EnvelopeMode::Release
+            } else {
+                EnvelopeMode::Sustain
+            };
+        }
+    }
+
+    #[must_use]
+    pub fn phase(&self) -> u8 {
+        self.phase
+    }
+
+    pub fn set_voice_pitch(&mut self, voice: usize, pitch: u16) {
+        let idx = voice_index(voice);
+        self.voices[idx].pitch = pitch & 0x3FFF;
+    }
+
+    #[must_use]
+    pub fn voice_sample_pos(&self, voice: usize) -> u32 {
+        self.voices[voice_index(voice)].sample_pos
+    }
+
+    pub fn step_voice_pitch(&mut self, voice: usize) {
+        let idx = voice_index(voice);
+        self.voices[idx].sample_pos = self.voices[idx]
+            .sample_pos
+            .wrapping_add(u32::from(self.voices[idx].pitch));
+    }
+
+    pub fn set_voice_volume(&mut self, voice: usize, left: i8, right: i8) {
+        let idx = voice_index(voice);
+        self.voices[idx].vol_l = left;
+        self.voices[idx].vol_r = right;
+    }
+
+    pub fn set_master_volume(&mut self, left: i8, right: i8) {
+        self.master_vol_l = left;
+        self.master_vol_r = right;
+    }
+
+    #[must_use]
+    pub fn mix_voice_sample(&self, voice: usize, sample: i16) -> (i16, i16) {
+        let idx = voice_index(voice);
+        let left = apply_two_stage_volume(sample, self.voices[idx].vol_l, self.master_vol_l);
+        let right = apply_two_stage_volume(sample, self.voices[idx].vol_r, self.master_vol_r);
+        (left, right)
+    }
+
+    #[must_use]
+    pub fn gaussian_interpolate(&self, s0: i16, s1: i16, s2: i16, s3: i16, frac: u8) -> i16 {
+        gaussian::gaussian_interpolate(s0, s1, s2, s3, frac)
+    }
+
+    pub fn step_phase(&mut self) {
+        self.step_noise_lfsr();
+        let pmon = self.regs[usize::from(PMON_REG)];
+        let non = self.regs[usize::from(NON_REG)];
+
+        for voice in 0..8usize {
+            self.step_voice_envelope(voice);
+            let effective_pitch = self.effective_pitch_for_voice(voice, pmon);
+            self.voices[voice].sample_pos = self.voices[voice]
+                .sample_pos
+                .wrapping_add(u32::from(effective_pitch));
+            let sample = self.voice_sample(voice, non);
+            self.voices[voice].mod_source = (sample >> 8).clamp(-128, 127) as i8;
+            let (left, right) = self.mix_voice_sample(voice, sample);
+            let mixed = (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
+            self.voices[voice].outx = mixed;
+            self.regs[(voice << 4) + 8] = self.voices[voice].envx;
+            self.regs[(voice << 4) + 9] = mixed as u8;
+        }
+
+        self.phase = self.phase.wrapping_add(1) & 0x1F;
+    }
+
+    fn step_noise_lfsr(&mut self) {
+        let divider = noise_clock_divider(self.regs[usize::from(FLG_REG)] & 0x1F);
+        self.noise_counter = self.noise_counter.wrapping_add(1);
+        if self.noise_counter < divider {
+            return;
+        }
+        self.noise_counter = 0;
+        let bit0 = self.noise_lfsr & 1;
+        let bit1 = (self.noise_lfsr >> 1) & 1;
+        let feedback = bit0 ^ bit1;
+        self.noise_lfsr = (self.noise_lfsr >> 1) | (feedback << 14);
+        self.noise_lfsr &= 0x7FFF;
+        if self.noise_lfsr == 0 {
+            self.noise_lfsr = default_noise_lfsr();
+        }
+    }
+
+    fn voice_sample(&self, voice: usize, non: u8) -> i16 {
+        let raw: i16 = if non & (1 << voice) != 0 {
+            if self.noise_lfsr & 1 == 0 {
+                -0x4000
+            } else {
+                0x3FFF
+            }
+        } else {
+            0x3FFF
+        };
+        let env = i32::from(self.voices[voice].envx);
+        ((i32::from(raw) * env) / 0x7F).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+    }
+
+    fn effective_pitch_for_voice(&self, voice: usize, pmon: u8) -> u16 {
+        let base = self.voices[voice].pitch;
+        if voice == 0 || (pmon & (1 << voice)) == 0 {
+            return base;
+        }
+        let prev = i32::from(self.voices[voice - 1].mod_source);
+        let modulated = i32::from(base) + ((i32::from(base) * prev) >> 7);
+        modulated.clamp(0, 0x3FFF) as u16
+    }
+
+    fn step_voice_envelope(&mut self, voice: usize) {
+        let v = &mut self.voices[voice];
+        if v.kon_delay > 0 {
+            v.kon_delay -= 1;
+            if v.kon_delay == 0 {
+                v.mode = EnvelopeMode::Attack;
+                v.env_level = 0;
+            }
+        }
+        envelope::step_voice_envelope(v);
+    }
+
+    pub fn write_reg(&mut self, addr: u8, value: u8) {
+        let reg = addr & 0x7F;
+        let index = usize::from(reg);
+        if index >= self.regs.len() {
+            return;
+        }
+        self.regs[index] = value;
+
+        match reg {
+            0x0C => {
+                self.master_vol_l = value as i8;
+                return;
+            }
+            0x1C => {
+                self.master_vol_r = value as i8;
+                return;
+            }
+            KON_REG => {
+                for voice in 0..8 {
+                    if value & (1 << voice) != 0 {
+                        let v = &mut self.voices[voice];
+                        v.kon_delay = 5;
+                    }
+                }
+                return;
+            }
+            KOFF_REG => {
+                for voice in 0..8 {
+                    if value & (1 << voice) != 0 {
+                        let v = &mut self.voices[voice];
+                        v.kon_delay = 0;
+                        v.mode = EnvelopeMode::Release;
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        let voice = usize::from(reg >> 4);
+        if voice >= 8 {
+            return;
+        }
+        let v = &mut self.voices[voice];
+        match reg & 0x0F {
+            0x00 => v.vol_l = value as i8,
+            0x01 => v.vol_r = value as i8,
+            0x02 => {
+                let prev = v.pitch;
+                v.pitch = (prev & 0x3F00) | u16::from(value);
+            }
+            0x03 => {
+                let prev = v.pitch;
+                v.pitch = (prev & 0x00FF) | (u16::from(value & 0x3F) << 8);
+            }
+            0x05 => v.adsr1 = value,
+            0x06 => v.adsr2 = value,
+            0x07 => v.gain = value,
+            0x08 => {
+                v.envx = value;
+                v.env_level = u16::from(value) << 4;
+            }
+            0x09 => v.outx = value as i8,
+            _ => {}
+        }
+    }
+
+    #[must_use]
+    pub fn read_reg(&self, addr: u8) -> u8 {
+        let index = usize::from(addr & 0x7F);
+        self.regs.get(index).copied().unwrap_or(0)
+    }
+
+    #[must_use]
+    pub fn decode_brr_block(header: u8, data: [u8; 8], prev1: i16, prev2: i16) -> DecodedBrrBlock {
+        decode_brr_block(header, data, prev1, prev2)
+    }
+}
+
+fn voice_index(voice: usize) -> usize {
+    assert!(voice < 8, "voice index out of range: {voice}");
+    voice
+}
+
+fn apply_two_stage_volume(sample: i16, voice_vol: i8, master_vol: i8) -> i16 {
+    let mut scaled = i32::from(sample) * i32::from(voice_vol);
+    scaled >>= 7;
+    scaled = (scaled * i32::from(master_vol)) >> 7;
+    scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+}
+
+fn noise_clock_divider(clock_select: u8) -> u16 {
+    u16::from(clock_select) + 1
+}
+
+#[cfg(test)]
+mod tests;
