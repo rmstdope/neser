@@ -201,9 +201,6 @@ pub struct Ppu {
     oam_addr_reload: u16,
     /// OAMADDH ($2103) bit 7: OBJ priority rotation (0 = OBJ #0 first, 1 = OBJ #N first).
     oam_priority_rotation: bool,
-    /// Current scanline's composited OBJ pixels (transient; rebuilt at the start of each visible
-    /// line, not serialized in save-states).
-    obj_line: sprites::ObjLine,
     /// STAT77 ($213E) bit 6: OBJ range over-limit (>32 OBJ on a line). Cleared at end of VBlank
     /// (not during forced blank).
     stat77_range_over: bool,
@@ -310,7 +307,6 @@ impl Ppu {
             obsel: 0,
             oam_addr_reload: 0,
             oam_priority_rotation: false,
-            obj_line: sprites::ObjLine::default(),
             stat77_range_over: false,
             stat77_time_over: false,
             obj_range_over_dot: None,

@@ -145,7 +145,7 @@ impl Ppu {
 
         // Mode 7 chart (front-to-back): OBJ.3, OBJ.2, BG2.1p, OBJ.1, BG1, OBJ.0, BG2.0p, backdrop.
         if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y) {
-            if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, 3) {
+            if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, y, 3) {
                 return ScreenPixel {
                     color,
                     source: PixelSource::Obj {
@@ -154,7 +154,7 @@ impl Ppu {
                     },
                 };
             }
-            if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, 2) {
+            if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, y, 2) {
                 return ScreenPixel {
                     color,
                     source: PixelSource::Obj {
@@ -171,7 +171,7 @@ impl Ppu {
             };
         }
         if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y)
-            && let Some((color, palette)) = self.obj_pixel_for_screen(target, x, 1)
+            && let Some((color, palette)) = self.obj_pixel_for_screen(target, x, y, 1)
         {
             return ScreenPixel {
                 color,
@@ -188,7 +188,7 @@ impl Ppu {
             };
         }
         if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y)
-            && let Some((color, palette)) = self.obj_pixel_for_screen(target, x, 0)
+            && let Some((color, palette)) = self.obj_pixel_for_screen(target, x, y, 0)
         {
             return ScreenPixel {
                 color,

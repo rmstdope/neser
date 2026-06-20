@@ -103,7 +103,9 @@ impl Ppu {
                     if self.layer_disabled_by_window(target, WindowLayer::Obj, x, y) {
                         continue;
                     }
-                    if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, priority) {
+                    if let Some((color, palette)) =
+                        self.obj_pixel_for_screen(target, x, y, priority)
+                    {
                         return ScreenPixel {
                             color,
                             source: PixelSource::Obj { priority, palette },
@@ -122,17 +124,15 @@ impl Ppu {
         &self,
         target: ScreenTarget,
         x: u16,
+        y: u16,
         priority: u8,
     ) -> Option<(u16, u8)> {
         if self.screen_enable_mask(target) & 0x10 == 0 {
             return None;
         }
-        let x = x as usize;
-        if self.obj_line.present[x] && self.obj_line.priority[x] == priority {
-            Some((self.obj_line.color[x], self.obj_line.palette[x]))
-        } else {
-            None
-        }
+        self.obj_pixel_at(x, y)
+            .filter(|pixel| pixel.priority == priority)
+            .map(|pixel| (pixel.color, pixel.palette))
     }
 
     pub(super) fn screen_enable_mask(&self, target: ScreenTarget) -> u8 {
