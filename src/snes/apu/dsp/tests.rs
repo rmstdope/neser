@@ -15,12 +15,19 @@ fn given_phase_31_when_step_phase_then_wraps_to_0() {
 #[test]
 fn given_all_register_addresses_when_written_then_reads_back_same_value() {
     let mut dsp = Sdsp::new();
+    let is_read_only_status = |addr: u8| -> bool {
+        let voice = addr >> 4;
+        voice < 8 && matches!(addr & 0x0F, 0x08 | 0x09)
+    };
     for addr in 0u8..=0x7F {
         let value = addr.wrapping_mul(3).wrapping_add(1);
         dsp.write_reg(addr, value);
     }
 
     for addr in 0u8..=0x7F {
+        if is_read_only_status(addr) {
+            continue;
+        }
         let value = addr.wrapping_mul(3).wrapping_add(1);
         assert_eq!(dsp.read_reg(addr), value, "addr=0x{addr:02X}");
     }
@@ -72,6 +79,22 @@ fn given_constant_samples_when_gaussian_interpolating_then_output_preserves_leve
     let dsp = Sdsp::new();
     let out = dsp.gaussian_interpolate(100, 100, 100, 100, 64);
     assert!((out - 100).abs() <= 2);
+    assert_eq!(out & 1, 0);
+}
+
+#[test]
+fn given_fraction_endpoints_when_gaussian_interpolating_then_indices_are_safe() {
+    let dsp = Sdsp::new();
+    let out0 = dsp.gaussian_interpolate(-123, 456, -789, 321, 0);
+    let out255 = dsp.gaussian_interpolate(-123, 456, -789, 321, 255);
+    assert_eq!(out0 & 1, 0);
+    assert_eq!(out255 & 1, 0);
+}
+
+#[test]
+fn given_extreme_samples_when_gaussian_interpolating_then_output_is_clamped_and_even() {
+    let dsp = Sdsp::new();
+    let out = dsp.gaussian_interpolate(i16::MIN, i16::MAX, i16::MIN, i16::MAX, 127);
     assert_eq!(out & 1, 0);
 }
 
@@ -181,7 +204,7 @@ fn given_non_voice_when_noise_clock_ticks_then_outx_changes_from_silence() {
     dsp.write_reg(0x01, 127);
     dsp.write_reg(0x07, 0x7F); // direct gain for non-zero envelope
     dsp.write_reg(0x3D, 0x01); // NON voice 0
-    dsp.write_reg(0x6C, 0x00); // fastest noise clock in this implementation
+    dsp.write_reg(0x6C, 0x1F); // fastest noise clock in this implementation
 
     let before = dsp.read_reg(0x09);
     for _ in 0..8 {
@@ -201,7 +224,7 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
     dsp.write_reg(0x1C, 127);
     dsp.write_reg(0x00, 127);
     dsp.write_reg(0x01, 127);
-    dsp.write_reg(0x08, 0x7F);
+    dsp.write_reg(0x07, 0x7F);
     dsp.write_reg(0x12, 0x00); // voice1 pitch low
     dsp.write_reg(0x13, 0x10); // voice1 pitch high => 0x1000
 
@@ -213,7 +236,7 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
     modulated.write_reg(0x1C, 127);
     modulated.write_reg(0x00, 127);
     modulated.write_reg(0x01, 127);
-    modulated.write_reg(0x08, 0x7F);
+    modulated.write_reg(0x07, 0x7F);
     modulated.write_reg(0x12, 0x00);
     modulated.write_reg(0x13, 0x10);
     modulated.write_reg(0x2D, 0x02); // PMON voice 1
@@ -245,11 +268,30 @@ fn given_koff_during_kon_delay_when_latency_would_expire_then_voice_stays_releas
 }
 
 #[test]
+fn given_envx_outx_when_written_then_voice_status_is_not_directly_overridden() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x05, 0x8F);
+    dsp.write_reg(0x06, 0xE0);
+    dsp.write_reg(0x4C, 0x01);
+    for _ in 0..8 {
+        dsp.step_phase();
+    }
+    let env_before = dsp.read_reg(0x08);
+    let out_before = dsp.read_reg(0x09);
+
+    dsp.write_reg(0x08, env_before.wrapping_add(1));
+    dsp.write_reg(0x09, out_before.wrapping_add(1));
+
+    assert_eq!(dsp.read_reg(0x08), env_before);
+    assert_eq!(dsp.read_reg(0x09), out_before);
+}
+
+#[test]
 fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applies() {
     let mut base = Sdsp::new();
     base.write_reg(0x00, 127);
     base.write_reg(0x01, 127);
-    base.write_reg(0x08, 0x7F);
+    base.write_reg(0x07, 0x7F);
     base.write_reg(0x12, 0x00);
     base.write_reg(0x13, 0x10);
     base.step_phase();
@@ -258,7 +300,7 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
     let mut modulated = Sdsp::new();
     modulated.write_reg(0x00, 127);
     modulated.write_reg(0x01, 127);
-    modulated.write_reg(0x08, 0x7F);
+    modulated.write_reg(0x07, 0x7F);
     modulated.write_reg(0x12, 0x00);
     modulated.write_reg(0x13, 0x10);
     modulated.write_reg(0x0C, 0x00);

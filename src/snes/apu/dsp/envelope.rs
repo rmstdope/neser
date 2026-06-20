@@ -2,8 +2,14 @@ use crate::snes::apu::dsp::voice::{EnvelopeMode, VoiceState};
 
 const ENV_MAX: u16 = 0x7FF;
 
-pub fn step_voice_envelope(voice: &mut VoiceState) {
-    if !envelope_tick_due(voice) {
+pub fn step_voice_envelope(voice: &mut VoiceState, global_counter: u16) {
+    if voice.adsr1 & 0x80 == 0 && voice.gain & 0x80 == 0 {
+        voice.env_level = (u16::from(voice.gain) << 4).min(ENV_MAX);
+        voice.envx = (voice.env_level >> 4).min(0x7F) as u8;
+        return;
+    }
+
+    if !envelope_tick_due(global_counter, active_rate(voice)) {
         return;
     }
 
@@ -14,18 +20,18 @@ pub fn step_voice_envelope(voice: &mut VoiceState) {
     }
 
     voice.env_level = voice.env_level.min(ENV_MAX);
-    voice.envx = (voice.env_level >> 4).min(0x7F) as u8;
+    voice.envx = ((voice.env_level >> 4).min(0x7F)) as u8;
 }
 
-fn envelope_tick_due(voice: &mut VoiceState) -> bool {
-    let rate = active_rate(voice);
+fn envelope_tick_due(global_counter: u16, rate: u8) -> bool {
     let divider = rate_to_divider(rate);
-    voice.env_divider_counter = voice.env_divider_counter.wrapping_add(1);
-    if voice.env_divider_counter < divider {
+    if divider == 0 {
         return false;
     }
-    voice.env_divider_counter = 0;
-    true
+    if divider == 1 {
+        return true;
+    }
+    global_counter.is_multiple_of(divider)
 }
 
 fn active_rate(voice: &VoiceState) -> u8 {
@@ -43,7 +49,7 @@ fn active_rate(voice: &VoiceState) -> u8 {
 
 fn rate_to_divider(rate: u8) -> u16 {
     const RATE_TO_DIV: [u16; 32] = [
-        2048, 1536, 1280, 1024, 768, 640, 512, 384, 320, 256, 192, 160, 128, 96, 80, 1, 48, 40, 32,
+        0, 2048, 1536, 1280, 1024, 768, 640, 512, 384, 320, 256, 192, 160, 128, 96, 1, 80, 64, 48,
         24, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1, 1,
     ];
     RATE_TO_DIV[usize::from(rate.min(31))]

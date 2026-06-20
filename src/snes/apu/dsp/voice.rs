@@ -37,6 +37,4 @@ pub struct VoiceState {
     pub mode: EnvelopeMode,
     #[serde(default)]
     pub kon_delay: u8,
-    #[serde(default)]
-    pub env_divider_counter: u16,
 }

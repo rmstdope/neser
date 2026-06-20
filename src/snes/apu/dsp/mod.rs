@@ -38,6 +38,8 @@ pub struct Sdsp {
     noise_lfsr: u16,
     #[serde(default)]
     noise_counter: u16,
+    #[serde(default)]
+    envelope_counter: u16,
 }
 
 impl Default for Sdsp {
@@ -61,6 +63,7 @@ impl Sdsp {
             master_vol_r: 0,
             noise_lfsr: default_noise_lfsr(),
             noise_counter: 0,
+            envelope_counter: 0,
         }
     }
 
@@ -154,6 +157,7 @@ impl Sdsp {
     }
 
     pub fn step_phase(&mut self) {
+        self.envelope_counter = self.envelope_counter.wrapping_add(1);
         self.step_noise_lfsr();
         let pmon = self.regs[usize::from(PMON_REG)];
         let non = self.regs[usize::from(NON_REG)];
@@ -165,12 +169,13 @@ impl Sdsp {
                 .sample_pos
                 .wrapping_add(u32::from(effective_pitch));
             let sample = self.voice_sample(voice, non);
-            self.voices[voice].mod_source = (sample >> 8).clamp(-128, 127) as i8;
+            let out_before_mix = (sample >> 8).clamp(-128, 127) as i8;
+            self.voices[voice].mod_source = out_before_mix;
             let (left, right) = self.mix_voice_sample(voice, sample);
-            let mixed = (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
-            self.voices[voice].outx = mixed;
+            let _mixed = (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
+            self.voices[voice].outx = out_before_mix;
             self.regs[(voice << 4) + 8] = self.voices[voice].envx;
-            self.regs[(voice << 4) + 9] = mixed as u8;
+            self.regs[(voice << 4) + 9] = out_before_mix as u8;
         }
 
         self.phase = self.phase.wrapping_add(1) & 0x1F;
@@ -178,6 +183,9 @@ impl Sdsp {
 
     fn step_noise_lfsr(&mut self) {
         let divider = noise_clock_divider(self.regs[usize::from(FLG_REG)] & 0x1F);
+        if divider == 0 {
+            return;
+        }
         self.noise_counter = self.noise_counter.wrapping_add(1);
         if self.noise_counter < divider {
             return;
@@ -226,13 +234,17 @@ impl Sdsp {
                 v.env_level = 0;
             }
         }
-        envelope::step_voice_envelope(v);
+        envelope::step_voice_envelope(v, self.envelope_counter);
     }
 
     pub fn write_reg(&mut self, addr: u8, value: u8) {
         let reg = addr & 0x7F;
         let index = usize::from(reg);
         if index >= self.regs.len() {
+            return;
+        }
+        let voice = usize::from(reg >> 4);
+        if voice < 8 && matches!(reg & 0x0F, 0x08 | 0x09) {
             return;
         }
         self.regs[index] = value;
@@ -268,7 +280,6 @@ impl Sdsp {
             _ => {}
         }
 
-        let voice = usize::from(reg >> 4);
         if voice >= 8 {
             return;
         }
@@ -287,11 +298,7 @@ impl Sdsp {
             0x05 => v.adsr1 = value,
             0x06 => v.adsr2 = value,
             0x07 => v.gain = value,
-            0x08 => {
-                v.envx = value;
-                v.env_level = u16::from(value) << 4;
-            }
-            0x09 => v.outx = value as i8,
+            0x08 | 0x09 => {}
             _ => {}
         }
     }
@@ -321,7 +328,11 @@ fn apply_two_stage_volume(sample: i16, voice_vol: i8, master_vol: i8) -> i16 {
 }
 
 fn noise_clock_divider(clock_select: u8) -> u16 {
-    u16::from(clock_select) + 1
+    const NOISE_RATE_TO_DIV: [u16; 32] = [
+        0, 2048, 1536, 1280, 1024, 768, 640, 512, 384, 320, 256, 192, 160, 128, 96, 80, 64, 48, 40,
+        32, 24, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1,
+    ];
+    NOISE_RATE_TO_DIV[usize::from(clock_select.min(31))]
 }
 
 #[cfg(test)]
