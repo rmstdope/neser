@@ -104,6 +104,16 @@ pub struct Ppu {
     opvct_read_high: bool,
     /// Current WRIO ($4201) value; bit 7 gates counter latching.
     wrio: u8,
+    /// NMITIMEN ($4200) IRQ mode (bits 5-4): 0=off, 1=H, 2=V, 3=H+V.
+    irq_mode: u8,
+    /// H timer target from HTIME ($4207/$4208), 9-bit.
+    htime: u16,
+    /// V timer target from VTIME ($4209/$420A), 9-bit.
+    vtime: u16,
+    /// TIMEUP ($4211) bit 7 latch.
+    timeup_flag: bool,
+    /// Current IRQ line level delivered to the CPU.
+    irq_line: bool,
     /// STAT78 ($213F) bit 7: interlace field flag.
     interlace_field: bool,
     /// Visible framebuffer in 15-bit BGR555 (converted to RGB888 at snapshot time).
@@ -239,6 +249,11 @@ impl Ppu {
             ophct_read_high: false,
             opvct_read_high: false,
             wrio: 0xFF,
+            irq_mode: 0,
+            htime: 0x01FF,
+            vtime: 0x01FF,
+            timeup_flag: false,
+            irq_line: false,
             interlace_field: false,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
             frame_complete: false,
@@ -304,6 +319,11 @@ impl Ppu {
         let edge = self.nmi_edge;
         self.nmi_edge = false;
         edge
+    }
+
+    /// Poll the current level of the H/V IRQ line.
+    pub fn poll_irq_level(&self) -> bool {
+        self.irq_line
     }
 
     /// Whether the PPU is currently in the VBlank period.

@@ -530,6 +530,10 @@ impl SnesSystemBus {
                 self.ppu.borrow_mut().write_register(offset, value);
                 true
             }
+            0x4207..=0x420A => {
+                self.ppu.borrow_mut().write_register(offset, value);
+                true
+            }
             0x4300..=0x437F => self.dma.write_register(offset, value),
             _ => false,
         }
@@ -604,6 +608,10 @@ impl SnesBus for SnesSystemBus {
 
     fn poll_nmi(&mut self) -> bool {
         self.ppu.get_mut().poll_nmi()
+    }
+
+    fn poll_irq(&self) -> bool {
+        self.ppu.borrow().poll_irq_level()
     }
 
     fn screen_dimensions(&self) -> (u32, u32) {
@@ -1375,5 +1383,25 @@ mod tests {
             "NMI edge delivered through the bus at VBlank"
         );
         assert!(!bus.poll_nmi(), "edge consumed once");
+    }
+
+    #[test]
+    fn bus_poll_irq_reflects_timeup_level_and_read_ack_clears_it() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004207, 0x01);
+        bus.write(0x004208, 0x00);
+        bus.write(0x004200, 0x10); // H-IRQ mode
+
+        assert!(!bus.poll_irq(), "IRQ line starts deasserted");
+        for _ in 0..4 {
+            bus.tick(); // one dot
+        }
+        assert!(bus.poll_irq(), "IRQ line asserted at HTIME");
+
+        assert_ne!(bus.read(0x004211) & 0x80, 0, "TIMEUP read sees pending IRQ");
+        assert!(
+            !bus.poll_irq(),
+            "TIMEUP read acknowledges and deasserts IRQ line"
+        );
     }
 }
