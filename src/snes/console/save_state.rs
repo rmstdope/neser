@@ -281,6 +281,12 @@ pub struct SnesPpuState {
     #[serde(default)]
     pub stat77_time_over: bool,
     #[serde(default)]
+    pub obj_range_over_dot: Option<u16>,
+    #[serde(default)]
+    pub obj_time_over_pending: bool,
+    #[serde(default)]
+    pub obj_eval_dirty: bool,
+    #[serde(default)]
     pub mosaic: u8,
     #[serde(default)]
     pub mosaic_vblock_size: u8,

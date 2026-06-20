@@ -142,24 +142,31 @@ impl Ppu {
         } else {
             None
         };
+        let obj_pixel = if self.screen_enable_mask(target) & 0x10 == 0
+            || (target == ScreenTarget::Sub && self.cgwsel & 0x02 == 0)
+        {
+            None
+        } else {
+            self.obj_pixel_at(x, y)
+        };
 
         // Mode 7 chart (front-to-back): OBJ.3, OBJ.2, BG2.1p, OBJ.1, BG1, OBJ.0, BG2.0p, backdrop.
         if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y) {
-            if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, y, 3) {
+            if let Some(pixel) = obj_pixel.filter(|pixel| pixel.priority == 3) {
                 return ScreenPixel {
-                    color,
+                    color: pixel.color,
                     source: PixelSource::Obj {
                         priority: 3,
-                        palette,
+                        palette: pixel.palette,
                     },
                 };
             }
-            if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, y, 2) {
+            if let Some(pixel) = obj_pixel.filter(|pixel| pixel.priority == 2) {
                 return ScreenPixel {
-                    color,
+                    color: pixel.color,
                     source: PixelSource::Obj {
                         priority: 2,
-                        palette,
+                        palette: pixel.palette,
                     },
                 };
             }
@@ -171,13 +178,13 @@ impl Ppu {
             };
         }
         if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y)
-            && let Some((color, palette)) = self.obj_pixel_for_screen(target, x, y, 1)
+            && let Some(pixel) = obj_pixel.filter(|pixel| pixel.priority == 1)
         {
             return ScreenPixel {
-                color,
+                color: pixel.color,
                 source: PixelSource::Obj {
                     priority: 1,
-                    palette,
+                    palette: pixel.palette,
                 },
             };
         }
@@ -188,13 +195,13 @@ impl Ppu {
             };
         }
         if !self.layer_disabled_by_window(target, WindowLayer::Obj, x, y)
-            && let Some((color, palette)) = self.obj_pixel_for_screen(target, x, y, 0)
+            && let Some(pixel) = obj_pixel.filter(|pixel| pixel.priority == 0)
         {
             return ScreenPixel {
-                color,
+                color: pixel.color,
                 source: PixelSource::Obj {
                     priority: 0,
-                    palette,
+                    palette: pixel.palette,
                 },
             };
         }

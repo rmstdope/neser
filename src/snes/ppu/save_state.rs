@@ -84,6 +84,9 @@ impl Ppu {
             oam_priority_rotation: self.oam_priority_rotation,
             stat77_range_over: self.stat77_range_over,
             stat77_time_over: self.stat77_time_over,
+            obj_range_over_dot: self.obj_range_over_dot,
+            obj_time_over_pending: self.obj_time_over_pending,
+            obj_eval_dirty: self.obj_eval_dirty,
             mosaic: self.mosaic,
             mosaic_vblock_size: self.mosaic_vblock_size,
             mosaic_vcount: self.mosaic_vcount,
@@ -169,14 +172,12 @@ impl Ppu {
         self.oam_priority_rotation = state.oam_priority_rotation;
         self.stat77_range_over = state.stat77_range_over;
         self.stat77_time_over = state.stat77_time_over;
+        self.obj_range_over_dot = state.obj_range_over_dot;
+        self.obj_time_over_pending = state.obj_time_over_pending;
+        self.obj_eval_dirty = state.obj_eval_dirty;
         self.mosaic = state.mosaic;
         self.mosaic_vblock_size = state.mosaic_vblock_size;
         self.mosaic_vcount = state.mosaic_vcount;
-
-        // Reset transient OBJ runtime state so stale pipeline data from before the load can't leak
-        // into the first restored frame.
-        self.obj_range_over_dot = None;
-        self.obj_time_over_pending = false;
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);

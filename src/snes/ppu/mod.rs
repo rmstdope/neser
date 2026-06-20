@@ -211,6 +211,8 @@ pub struct Ppu {
     obj_range_over_dot: Option<u16>,
     /// Time over-limit computed during the current scanline, applied at the next scanline's H=0.
     obj_time_over_pending: bool,
+    /// True when OBJ per-scanline evaluation caches must be recomputed from live state.
+    obj_eval_dirty: bool,
     /// MOSAIC ($2106) raw register: bits 7-4 = pending vertical block size (0..=15), bits 3-0 =
     /// per-BG enable (bit 0 = BG1 ... bit 3 = BG4). Horizontal mosaic and bg-enable bits take
     /// effect immediately; vertical size change only applies at the start of the next block.
@@ -311,6 +313,7 @@ impl Ppu {
             stat77_time_over: false,
             obj_range_over_dot: None,
             obj_time_over_pending: false,
+            obj_eval_dirty: true,
             mosaic: 0,
             mosaic_vblock_size: 0,
             mosaic_vcount: 0,
@@ -386,6 +389,7 @@ impl Ppu {
     #[cfg(test)]
     pub(super) fn set_oam_byte(&mut self, index: usize, value: u8) {
         self.oam[index] = value;
+        self.obj_eval_dirty = true;
     }
 
     /// Write a raw VRAM byte (test helper, bypassing the VMADD/VMDATA write path).

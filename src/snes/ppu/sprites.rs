@@ -84,18 +84,16 @@ impl Ppu {
     /// recorded for dot-accurate flag timing). 8-bit Y wrap yields the 224-line wrap behavior.
     pub(super) fn evaluate_line_objects(&self, line: u16) -> ObjLineEval {
         let first = self.obj_first_sprite_index() as usize;
-        let mut eval = ObjLineEval {
-            indices: Vec::with_capacity(32),
-            ..ObjLineEval::default()
-        };
+        let mut eval = ObjLineEval::default();
         for k in 0..128usize {
             let i = (first + k) % 128;
             let y = self.oam[i * 4 + 1] as u16;
             let height = self.obj_size(i).1 as u16;
             let row = line.wrapping_sub(y) & 0xFF;
             if row < height {
-                if eval.indices.len() < 32 {
-                    eval.indices.push(i as u8);
+                if eval.len < 32 {
+                    eval.indices[eval.len] = i as u8;
+                    eval.len += 1;
                 } else {
                     eval.range_over = true;
                     eval.range_over_index = Some(i as u8);
@@ -120,7 +118,7 @@ impl Ppu {
         let eval = self.evaluate_line_objects(source_line);
         let mut buf = ObjLine::default();
         let mut tile_budget = 34i32;
-        for &i in &eval.indices {
+        for &i in eval.indices() {
             if tile_budget <= 0 {
                 break;
             }
@@ -134,7 +132,7 @@ impl Ppu {
         let source_line = self.obj_source_line(y);
         let eval = self.evaluate_line_objects(source_line);
         let mut tile_budget = 34i32;
-        for &i in &eval.indices {
+        for &i in eval.indices() {
             if tile_budget <= 0 {
                 break;
             }
@@ -196,20 +194,23 @@ impl Ppu {
                 }
             }
             self.obj_time_over_pending = false;
+            self.obj_range_over_dot = None;
         }
 
-        self.obj_range_over_dot = None;
         if !forced_blank && (scanline as usize) < self.active_screen_height() {
             // During scanline `s` the PPU evaluates the line displayed on scanline `s + 1`
-            // (OAM line index `s`). Re-evaluate continuously so mid-scanline OAM/OBSEL changes
-            // affect subsequent timing decisions.
-            let eval = self.evaluate_line_objects(scanline);
-            self.obj_range_over_dot = if eval.range_over {
-                eval.range_over_index.map(|i| i as u16 * 2)
-            } else {
-                None
-            };
-            self.obj_time_over_pending = self.count_obj_tiles(&eval.indices).1;
+            // (OAM line index `s`). Recompute lazily: once per scanline, plus mid-scanline writes
+            // to OBJ-affecting registers/data.
+            if dot == 0 || self.obj_eval_dirty {
+                let eval = self.evaluate_line_objects(scanline);
+                self.obj_range_over_dot = if eval.range_over {
+                    eval.range_over_index.map(|i| i as u16 * 2)
+                } else {
+                    None
+                };
+                self.obj_time_over_pending = self.count_obj_tiles(eval.indices()).1;
+                self.obj_eval_dirty = false;
+            }
             if Some(dot) == self.obj_range_over_dot {
                 self.stat77_range_over = true;
             }
@@ -367,11 +368,19 @@ impl Ppu {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct ObjLineEval {
     /// In-range OBJ indices in evaluation order, truncated to 32.
-    pub indices: Vec<u8>,
+    pub indices: [u8; 32],
+    /// Number of valid entries in `indices`.
+    pub len: usize,
     /// Whether more than 32 OBJs were in range (range over-limit).
     pub range_over: bool,
     /// OAM index of the 33rd in-range OBJ that triggered the range over-limit, if any.
     pub range_over_index: Option<u8>,
+}
+
+impl ObjLineEval {
+    pub(super) fn indices(&self) -> &[u8] {
+        &self.indices[..self.len]
+    }
 }
 
 /// Composited OBJ pixels for one scanline (256 visible pixels).
@@ -516,7 +525,7 @@ mod tests {
         // OAM all zero -> every OBJ has Y=0, size 8x8 (obsel 0): in range only for lines 0..7.
         ppu.write_register(0x2101, 0x00);
         let eval = ppu.evaluate_line_objects(100);
-        assert!(eval.indices.is_empty());
+        assert!(eval.indices().is_empty());
         assert!(!eval.range_over);
     }
 
@@ -530,10 +539,10 @@ mod tests {
         }
         set_obj(&mut ppu, 0, 0, 10, 0, 0, false);
 
-        assert!(ppu.evaluate_line_objects(9).indices.is_empty());
-        assert_eq!(ppu.evaluate_line_objects(10).indices, vec![0]);
-        assert_eq!(ppu.evaluate_line_objects(17).indices, vec![0]);
-        assert!(ppu.evaluate_line_objects(18).indices.is_empty());
+        assert!(ppu.evaluate_line_objects(9).indices().is_empty());
+        assert_eq!(ppu.evaluate_line_objects(10).indices(), [0]);
+        assert_eq!(ppu.evaluate_line_objects(17).indices(), [0]);
+        assert!(ppu.evaluate_line_objects(18).indices().is_empty());
     }
 
     #[test]
@@ -544,8 +553,8 @@ mod tests {
             set_obj(&mut ppu, i, 0, 240, 0, 0, false);
         }
         set_obj(&mut ppu, 0, 0, 10, 0, 0, true); // large -> height 16
-        assert_eq!(ppu.evaluate_line_objects(25).indices, vec![0]); // 10..25 in range
-        assert!(ppu.evaluate_line_objects(26).indices.is_empty());
+        assert_eq!(ppu.evaluate_line_objects(25).indices(), [0]); // 10..25 in range
+        assert!(ppu.evaluate_line_objects(26).indices().is_empty());
     }
 
     #[test]
@@ -556,8 +565,8 @@ mod tests {
             set_obj(&mut ppu, i, 0, 100, 0, 0, false);
         }
         set_obj(&mut ppu, 0, 0, 250, 0, 0, false); // covers 250..255, 0..1 (wrap)
-        assert_eq!(ppu.evaluate_line_objects(1).indices, vec![0]);
-        assert!(ppu.evaluate_line_objects(2).indices.is_empty());
+        assert_eq!(ppu.evaluate_line_objects(1).indices(), [0]);
+        assert!(ppu.evaluate_line_objects(2).indices().is_empty());
     }
 
     #[test]
@@ -570,10 +579,10 @@ mod tests {
             set_obj(&mut ppu, i, 0, y, 0, 0, false);
         }
         let eval = ppu.evaluate_line_objects(50);
-        assert_eq!(eval.indices.len(), 32);
+        assert_eq!(eval.indices().len(), 32);
         assert!(eval.range_over);
         assert_eq!(eval.range_over_index, Some(32)); // 33rd in-range OBJ (index 32)
-        assert_eq!(eval.indices[0], 0);
+        assert_eq!(eval.indices()[0], 0);
     }
 
     #[test]
@@ -590,7 +599,7 @@ mod tests {
         // Rotation starting at OBJ #6: order becomes 6, 7, then wrap to 5.
         ppu.write_register(0x2102, 6 << 1);
         ppu.write_register(0x2103, 0x80);
-        assert_eq!(ppu.evaluate_line_objects(50).indices, vec![6, 7, 5]);
+        assert_eq!(ppu.evaluate_line_objects(50).indices(), [6, 7, 5]);
     }
 
     /// Fill an 8x8 4bpp OBJ tile (16 words at VRAM word `word_addr`) with a solid color index.
