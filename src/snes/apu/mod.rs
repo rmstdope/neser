@@ -251,6 +251,11 @@ impl SnesApu {
         };
         bus_view.write(0x00F1, value);
     }
+
+    #[cfg(test)]
+    pub(crate) fn dsp_phase_for_test(&self) -> u8 {
+        self.dsp.phase()
+    }
 }
 
 struct SpcBusView<'a> {
@@ -287,6 +292,7 @@ impl SpcBusView<'_> {
     fn tick_timers_if_enabled(&mut self) {
         if self.tick_timers {
             self.timers.tick_cycle();
+            self.dsp.step_phase();
         }
     }
 }
@@ -428,6 +434,15 @@ mod tests {
 
         apu.write_spc_memory_for_test(0x00F2, 0x90);
         assert_eq!(apu.read_spc_memory_for_test(0x00F3), 0x34);
+    }
+
+    #[test]
+    fn advancing_spc_bus_cycles_advances_dsp_phase_skeleton() {
+        let mut apu = SnesApu::new(None);
+        assert_eq!(apu.dsp_phase_for_test(), 0);
+
+        apu.advance_spc_bus_cycles_for_test(3);
+        assert_eq!(apu.dsp_phase_for_test(), 3);
     }
 
     #[test]
