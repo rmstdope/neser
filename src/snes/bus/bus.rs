@@ -28,6 +28,13 @@ pub trait SnesBus {
     fn poll_irq(&self) -> bool {
         false
     }
+
+    /// Return the active screen dimensions for the current frame.
+    ///
+    /// Buses without a video source use the default SNES visible size.
+    fn screen_dimensions(&self) -> (u32, u32) {
+        (256, 224)
+    }
 }
 
 /// Stub bus implementation for unit tests.

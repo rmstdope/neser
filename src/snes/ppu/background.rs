@@ -74,7 +74,7 @@ impl Ppu {
         self.compose_pixels(x, y, main, sub)
     }
 
-    fn resolve_screen_pixel(&self, target: ScreenTarget, x: u16, y: u16) -> ScreenPixel {
+    pub(super) fn resolve_screen_pixel(&self, target: ScreenTarget, x: u16, y: u16) -> ScreenPixel {
         for &slot in self.layer_order().iter() {
             match slot {
                 Slot::Bg(bg, priority) => {
@@ -1192,6 +1192,63 @@ mod tests {
             [0, 0, 255],
             "mode 5 BG1 renders at 256-wide"
         );
+    }
+
+    #[test]
+    fn mode5_hi_res_interleaves_main_and_sub_pixels() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // main BG1 color 1 = white
+        set_cgram(&mut ppu, 5, 0x001F); // sub BG2 palette 1 color 1 = red
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(&mut ppu, 0x400, 2 | (1 << 10)); // BG2 entry -> char 2, palette 1
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x05); // mode 5
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(rgb.len(), 512 * 224 * 3);
+        assert_eq!(&rgb[0..3], &[255, 255, 255], "even column uses main screen");
+        assert_eq!(&rgb[3..6], &[255, 0, 0], "odd column uses sub screen");
+    }
+
+    #[test]
+    fn pseudo_hires_shifts_sub_screen_to_the_first_half_pixel() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // main BG1 color 1 = white
+        set_cgram(&mut ppu, 33, 0x001F); // sub BG2 color 1 = red (mode 0 region)
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(&mut ppu, 0x400, 2); // BG2 entry -> char 2
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x00); // mode 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2133, 0x08); // pseudo-hires
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(rgb.len(), 512 * 224 * 3);
+        assert_eq!(
+            &rgb[0..3],
+            &[255, 0, 0],
+            "first half-pixel uses shifted sub"
+        );
+        assert_eq!(&rgb[3..6], &[255, 255, 255], "second half-pixel uses main");
     }
 
     #[test]

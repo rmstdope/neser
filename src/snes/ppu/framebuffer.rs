@@ -23,6 +23,8 @@ impl Ppu {
         }
         let x = (dot - VISIBLE_DOT_START) as usize;
         let y = (line - VISIBLE_LINE_START) as usize;
+        let row = self.framebuffer_row(y);
+        let base_x = self.framebuffer_x(x);
         // Build the composited OBJ line once, at the first visible dot of each visible scanline.
         // The over-limit flags are evaluated one scanline earlier (see `update_obj_pipeline`); a
         // mid-scanline OAM/OBSEL write between the two points could make STAT77 and the displayed
@@ -30,7 +32,22 @@ impl Ppu {
         if x == 0 {
             self.obj_line = self.build_obj_line(y as u16);
         }
-        self.framebuffer[y * SCREEN_WIDTH + x] = self.compute_pixel(x as u16, y as u16);
+        let base = row * self.framebuffer_stride() + base_x;
+        if self.hires_output_enabled() {
+            let main = self.resolve_screen_pixel(super::ScreenTarget::Main, x as u16, y as u16);
+            let sub = self.resolve_screen_pixel(super::ScreenTarget::Sub, x as u16, y as u16);
+            if self.pseudo_hires_enabled() {
+                // Pseudo-hires shifts sub-screen half a dot left: sub lands in the first
+                // half-pixel column, main in the second.
+                self.framebuffer[base] = sub.color;
+                self.framebuffer[base + 1] = main.color;
+            } else {
+                self.framebuffer[base] = main.color;
+                self.framebuffer[base + 1] = sub.color;
+            }
+        } else {
+            self.framebuffer[base] = self.compute_pixel(x as u16, y as u16);
+        }
     }
 
     /// The backdrop color (CGRAM entry 0) as a 15-bit BGR555 word.
@@ -43,7 +60,10 @@ impl Ppu {
     /// Snapshot the visible framebuffer as packed RGB888, applying INIDISP forced-blank and
     /// master brightness. Forced blank or brightness 0 yields a black screen.
     pub fn screen_snapshot_rgb(&self) -> Vec<u8> {
-        let mut out = vec![0u8; SCREEN_WIDTH * SCREEN_HEIGHT * 3];
+        let (width, height) = self.frame_dimensions();
+        let width = width as usize;
+        let height = height as usize;
+        let mut out = vec![0u8; width * height * 3];
         let forced_blank = self.inidisp & 0x80 != 0;
         let brightness = (self.inidisp & 0x0F) as u32;
 
@@ -51,11 +71,16 @@ impl Ppu {
             return out; // already all-black
         }
 
-        for (pixel, &bgr) in self.framebuffer.iter().enumerate() {
-            let (r, g, b) = bgr555_to_rgb888(bgr, brightness);
-            out[pixel * 3] = r;
-            out[pixel * 3 + 1] = g;
-            out[pixel * 3 + 2] = b;
+        let stride = self.framebuffer_stride();
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = self.framebuffer[y * stride + x];
+                let (r, g, b) = bgr555_to_rgb888(pixel, brightness);
+                let idx = (y * width + x) * 3;
+                out[idx] = r;
+                out[idx + 1] = g;
+                out[idx + 2] = b;
+            }
         }
         out
     }

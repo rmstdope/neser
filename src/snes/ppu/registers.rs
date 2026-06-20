@@ -105,7 +105,8 @@ impl Ppu {
             0x2126..=0x2129 => self.wh[(addr - 0x2126) as usize] = value,
             0x212A => self.wbglog = value,
             0x212B => self.wobjlog = value,
-            // SETINI: Display Control 2. Only bit 6 (EXTBG enable for Mode 7) is used here.
+            // SETINI: Display Control 2. Bits used in this core: bit 6 (EXTBG), bit 3
+            // (pseudo-hires), bit 1 (OBJ interlace), bit 0 (interlace).
             0x2133 => self.setini = value,
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
             // while the VBlank flag is already set raises an edge.

@@ -3,7 +3,7 @@
 //! The transient framebuffer is not serialized (it is regenerated each frame); on restore it is
 //! cleared and redrawn over the following frame.
 
-use super::{CGRAM_SIZE, OAM_SIZE, Ppu, SCREEN_HEIGHT, SCREEN_WIDTH, ScanPosition, VRAM_SIZE};
+use super::{CGRAM_SIZE, OAM_SIZE, Ppu, ScanPosition, VRAM_SIZE};
 use crate::snes::console::save_state::SnesPpuState;
 
 impl Ppu {
@@ -163,7 +163,10 @@ impl Ppu {
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);
-        debug_assert_eq!(self.framebuffer.len(), SCREEN_WIDTH * SCREEN_HEIGHT);
+        debug_assert_eq!(
+            self.framebuffer.len(),
+            super::SCREEN_WIDTH_MAX * super::SCREEN_HEIGHT_MAX
+        );
         Ok(())
     }
 }

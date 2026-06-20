@@ -213,11 +213,17 @@ impl Emulator for Snes {
     }
 
     fn screen_width(&self) -> u32 {
-        SCREEN_WIDTH
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.screen_dimensions().0)
+            .unwrap_or(SCREEN_WIDTH)
     }
 
     fn screen_height(&self) -> u32 {
-        SCREEN_HEIGHT
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.screen_dimensions().1)
+            .unwrap_or(SCREEN_HEIGHT)
     }
 
     fn screen_snapshot(&self) -> Vec<u8> {

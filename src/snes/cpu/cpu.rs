@@ -8377,6 +8377,11 @@ impl Cpu<SnesSystemBus> {
         self.bus.ppu_screen_snapshot()
     }
 
+    /// Active screen dimensions for the current frame.
+    pub fn screen_dimensions(&self) -> (u32, u32) {
+        self.bus.screen_dimensions()
+    }
+
     /// Returns and clears the PPU frame-complete flag.
     pub fn take_frame_complete(&mut self) -> bool {
         self.bus.take_ppu_frame_complete()
