@@ -126,6 +126,19 @@ mod tests {
     }
 
     #[test]
+    fn t1_counts_once_every_128_spc_cycles_when_target_is_one() {
+        let mut timers = SpcTimers::default();
+        timers.write_target(1, 1);
+        timers.write_control(0x00, 0x02);
+
+        advance_cycles(&mut timers, 127);
+        assert_eq!(timers.read_counter(1), 0x00);
+
+        advance_cycles(&mut timers, 1);
+        assert_eq!(timers.read_counter(1), 0x01);
+    }
+
+    #[test]
     fn target_zero_means_256_input_clocks() {
         let mut timers = SpcTimers::default();
         timers.write_target(2, 0x00);
