@@ -80,6 +80,11 @@ impl Spc700 {
         }
     }
 
+    /// Force the CPU into the halted state.
+    pub(crate) fn halt(&mut self) {
+        self.halted = true;
+    }
+
     /// Reset the CPU: clear registers/flags and load `PC` from the reset vector.
     ///
     /// On real hardware the boot ROM is mapped at reset, so the vector at
@@ -262,20 +267,20 @@ impl Spc700 {
 
     /// Read a byte, consuming one cycle.
     fn read_cycle(&mut self, bus: &mut impl Spc700Bus, addr: u16, cycles: &mut u8) -> u8 {
-        *cycles = cycles.wrapping_add(1);
+        *cycles = cycles.wrapping_add(bus.read_cycles(addr));
         bus.read(addr)
     }
 
     /// Write a byte, consuming one cycle.
     #[allow(dead_code)] // Used as opcodes are added in subsequent slices.
     fn write_cycle(&mut self, bus: &mut impl Spc700Bus, addr: u16, value: u8, cycles: &mut u8) {
-        *cycles = cycles.wrapping_add(1);
+        *cycles = cycles.wrapping_add(bus.write_cycles(addr));
         bus.write(addr, value);
     }
 
     /// Consume one internal (idle) cycle.
     fn idle_cycle(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) {
-        *cycles = cycles.wrapping_add(1);
+        *cycles = cycles.wrapping_add(bus.idle_cycles());
         bus.idle();
     }
 

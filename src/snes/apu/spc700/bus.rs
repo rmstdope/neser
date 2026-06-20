@@ -14,11 +14,26 @@
 /// Reads take `&mut self` because several SPC700-visible registers (I/O ports,
 /// timer counters) have read side effects in the full APU implementation.
 pub trait Spc700Bus {
+    /// Base cycle cost for reading from the given address.
+    fn read_cycles(&self, _addr: u16) -> u8 {
+        1
+    }
+
     /// Read a byte from the 16-bit SPC700 address space (consumes one cycle).
     fn read(&mut self, addr: u16) -> u8;
 
+    /// Base cycle cost for writing to the given address.
+    fn write_cycles(&self, _addr: u16) -> u8 {
+        1
+    }
+
     /// Write a byte to the 16-bit SPC700 address space (consumes one cycle).
     fn write(&mut self, addr: u16, value: u8);
+
+    /// Base cycle cost for an idle SPC700 cycle.
+    fn idle_cycles(&self) -> u8 {
+        1
+    }
 
     /// Consume one internal (idle) SPC700 cycle with no memory access.
     fn idle(&mut self);
@@ -72,14 +87,26 @@ impl Default for FlatRamBus {
 }
 
 impl Spc700Bus for FlatRamBus {
+    fn read_cycles(&self, _addr: u16) -> u8 {
+        1
+    }
+
     fn read(&mut self, addr: u16) -> u8 {
         self.cycles += 1;
         self.ram[addr as usize]
     }
 
+    fn write_cycles(&self, _addr: u16) -> u8 {
+        1
+    }
+
     fn write(&mut self, addr: u16, value: u8) {
         self.cycles += 1;
         self.ram[addr as usize] = value;
+    }
+
+    fn idle_cycles(&self) -> u8 {
+        1
     }
 
     fn idle(&mut self) {
