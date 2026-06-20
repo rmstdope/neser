@@ -338,8 +338,7 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | `src/snes/ppu/framebuffer.rs` | Per-dot backdrop + composited BG/OBJ rendering into a 256×224 BGR555 framebuffer (the OBJ line buffer is rebuilt at the first visible dot of each scanline) and `screen_snapshot_rgb` (BGR555→RGB888 with INIDISP brightness/forced-blank at output). |
 | `src/snes/ppu/save_state.rs` | PPU save-state capture/restore (`SnesPpuState`); the transient framebuffer is excluded and redrawn after restore. |
 | `src/snes/apu/mod.rs` | `SnesApu` bootstrap path: owns 64 KB ARAM, embedded/override IPL ROM selection, SPC700 CPU stepping via master-clock catch-up, `$2140-$2143` <-> `$F4-$F7` port handshake latches, SPC700 timer register integration (`$F1/$FA-$FF`), and save-state capture/restore of APU bootstrap state (including timers). |
-| `src/snes/apu/ipl/mod.rs` | Embedded clean-room 64-byte SNES IPL binary (`ipl.bin`) loaded via `include_bytes!`. |
-| `src/snes/apu/ipl/ipl.s` | Clean-room IPL source artifact for traceability/future regeneration of `ipl.bin`. |
+| `src/snes/apu/ipl/mod.rs` | Embedded clean-room 64-byte SNES IPL ROM as an in-source byte array with per-instruction SPC700 opcode comments. |
 | `src/snes/apu/spc700/` | SPC700 CPU core + bus trait used by the APU bootstrap implementation and processor-test vectors. |
 | `src/snes/apu/timers.rs` | SPC700 timer subsystem for T0/T1/T2: per-cycle divider logic (T0/T1=128 SPC cycles, T2=16 SPC cycles), target registers (`$FA-$FC`, with `0=>256` clocks), `$F1` enable-edge reset semantics, and read-and-clear 4-bit counters at `$FD-$FF`. |
 | `src/snes/cartridge/mod.rs` | Cartridge module root. Re-exports `Cartridge`, `CartridgeError`, `RomSpeed`, and `Mapping`. |
