@@ -36,8 +36,15 @@ impl Ppu {
         if self.hires_output_enabled() {
             let main = self.resolve_screen_pixel(super::ScreenTarget::Main, x as u16, y as u16);
             let sub = self.resolve_screen_pixel(super::ScreenTarget::Sub, x as u16, y as u16);
-            self.framebuffer[base] = main.color;
-            self.framebuffer[base + 1] = sub.color;
+            if self.pseudo_hires_enabled() {
+                // Pseudo-hires shifts sub-screen half a dot left: sub lands in the first
+                // half-pixel column, main in the second.
+                self.framebuffer[base] = sub.color;
+                self.framebuffer[base + 1] = main.color;
+            } else {
+                self.framebuffer[base] = main.color;
+                self.framebuffer[base + 1] = sub.color;
+            }
         } else {
             self.framebuffer[base] = self.compute_pixel(x as u16, y as u16);
         }

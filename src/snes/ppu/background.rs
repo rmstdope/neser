@@ -1221,6 +1221,37 @@ mod tests {
     }
 
     #[test]
+    fn pseudo_hires_shifts_sub_screen_to_the_first_half_pixel() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // main BG1 color 1 = white
+        set_cgram(&mut ppu, 33, 0x001F); // sub BG2 color 1 = red (mode 0 region)
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(&mut ppu, 0x400, 2); // BG2 entry -> char 2
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x00); // mode 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2133, 0x08); // pseudo-hires
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(rgb.len(), 512 * 224 * 3);
+        assert_eq!(
+            &rgb[0..3],
+            &[255, 0, 0],
+            "first half-pixel uses shifted sub"
+        );
+        assert_eq!(&rgb[3..6], &[255, 255, 255], "second half-pixel uses main");
+    }
+
+    #[test]
     fn direct_color_computes_color_from_index_bypassing_cgram() {
         let mut ppu = Ppu::new();
         set_cgram(&mut ppu, 7, 0x0000); // CGRAM[7] black, to prove direct color bypasses it

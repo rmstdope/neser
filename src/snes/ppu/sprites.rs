@@ -7,6 +7,17 @@
 use super::{Ppu, SCREEN_HEIGHT};
 
 impl Ppu {
+    /// Convert framebuffer row `line` into the OBJ sampling line.
+    ///
+    /// With interlace+OBJ interlace enabled, OBJ fetches alternate source lines per field.
+    fn obj_source_line(&self, line: u16) -> u16 {
+        if self.interlace_enabled() && self.obj_interlace_enabled() {
+            line.saturating_mul(2) + self.interlace_field as u16
+        } else {
+            line
+        }
+    }
+
     /// Small-OBJ pixel size `(width, height)` selected by OBSEL bits 7-5.
     pub(super) fn obj_size_small(&self) -> (u8, u8) {
         obj_size_pair(self.obsel).0
@@ -97,14 +108,15 @@ impl Ppu {
     /// front-to-back (lowest evaluation order wins), gated by OBJ opacity and the 34-tile-per-line
     /// fetch budget (tile columns beyond the budget are dropped, matching the time over-limit).
     pub(super) fn build_obj_line(&self, line: u16) -> ObjLine {
-        let eval = self.evaluate_line_objects(line);
+        let source_line = self.obj_source_line(line);
+        let eval = self.evaluate_line_objects(source_line);
         let mut buf = ObjLine::default();
         let mut tile_budget = 34i32;
         for &i in &eval.indices {
             if tile_budget <= 0 {
                 break;
             }
-            self.render_object_into(&mut buf, i as usize, line, &mut tile_budget);
+            self.render_object_into(&mut buf, i as usize, source_line, &mut tile_budget);
         }
         buf
     }
@@ -595,6 +607,32 @@ mod tests {
         assert!(buf.present[100]);
         let buf0 = ppu.build_obj_line(0);
         assert!(!buf0.present[100]);
+    }
+
+    #[test]
+    fn obj_interlace_uses_alternating_source_lines_per_field() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // 8x8
+        ppu.write_register(0x2133, 0x03); // interlace + OBJ interlace
+        park_all_offscreen(&mut ppu);
+        set_obj_tile_solid(&mut ppu, 0, 0);
+        set_obj_tile_pixel(&mut ppu, 0, 0, 0, 1); // y=0 pixel
+        set_obj_tile_pixel(&mut ppu, 0, 0, 1, 2); // y=1 pixel
+        set_cgram(&mut ppu, 128 + 1, 0x001F); // red
+        set_cgram(&mut ppu, 128 + 2, 0x03E0); // green
+        set_obj(&mut ppu, 0, 10, 0, 0, 0, false);
+
+        // Field 0 samples source line 0 for display line 0.
+        ppu.interlace_field = false;
+        let even = ppu.build_obj_line(0);
+        assert!(even.present[10]);
+        assert_eq!(even.color[10], 0x001F);
+
+        // Field 1 samples source line 1 for display line 0.
+        ppu.interlace_field = true;
+        let odd = ppu.build_obj_line(0);
+        assert!(odd.present[10]);
+        assert_eq!(odd.color[10], 0x03E0);
     }
 
     #[test]

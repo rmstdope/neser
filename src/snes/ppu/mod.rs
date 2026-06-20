@@ -153,7 +153,8 @@ pub struct Ppu {
     wbglog: u8,
     /// WOBJLOG ($212B): window logic for OBJ/MATH.
     wobjlog: u8,
-    /// SETINI ($2133): only bit 6 (EXTBG enable for Mode 7) is used here.
+    /// SETINI ($2133): implemented bits are bit 6 (EXTBG), bit 3 (pseudo-hires),
+    /// bit 1 (OBJ interlace), and bit 0 (interlace enable).
     setini: u8,
     /// Mode 7 matrix parameters A-D ($211B-$211E), signed 1.7.8 fixed point (raw 16-bit).
     m7a: u16,
@@ -359,12 +360,24 @@ impl Ppu {
         self.vram[index] = value;
     }
 
+    pub(super) fn true_hires_enabled(&self) -> bool {
+        self.bg_mode == 5 || self.bg_mode == 6
+    }
+
+    pub(super) fn pseudo_hires_enabled(&self) -> bool {
+        self.setini & 0x08 != 0
+    }
+
     pub(super) fn hires_output_enabled(&self) -> bool {
-        self.bg_mode == 5 || self.bg_mode == 6 || self.setini & 0x08 != 0
+        self.true_hires_enabled() || self.pseudo_hires_enabled()
     }
 
     pub(super) fn interlace_enabled(&self) -> bool {
         self.setini & 0x01 != 0
+    }
+
+    pub(super) fn obj_interlace_enabled(&self) -> bool {
+        self.setini & 0x02 != 0
     }
 
     pub(super) fn framebuffer_stride(&self) -> usize {
@@ -407,7 +420,7 @@ mod tests {
         assert_eq!(ppu.frame_dimensions(), (256, 224));
 
         ppu.write_register(0x2105, 0x05);
-        ppu.write_register(0x2133, 0x07);
+        ppu.write_register(0x2133, 0x01);
 
         assert_eq!(ppu.frame_dimensions(), (512, 448));
     }
