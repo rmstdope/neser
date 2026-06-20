@@ -191,6 +191,16 @@ pub struct SnesPpuState {
     #[serde(default)]
     pub wrio: u8,
     #[serde(default)]
+    pub irq_mode: u8,
+    #[serde(default)]
+    pub htime: u16,
+    #[serde(default)]
+    pub vtime: u16,
+    #[serde(default)]
+    pub timeup_flag: bool,
+    #[serde(default)]
+    pub irq_line: bool,
+    #[serde(default)]
     pub interlace_field: bool,
     #[serde(default)]
     pub bg_mode: u8,

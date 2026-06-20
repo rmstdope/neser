@@ -33,6 +33,7 @@ impl Ppu {
             }
             self.on_scanline_start();
         }
+        self.evaluate_hv_irq();
         let forced_blank = self.inidisp & 0x80 != 0;
         self.update_obj_pipeline(forced_blank);
         self.render_dot();
@@ -86,6 +87,27 @@ impl Ppu {
     pub(super) fn latch_strobe(&mut self) {
         if self.wrio & 0x80 != 0 {
             self.latch_counters();
+        }
+    }
+
+    fn evaluate_hv_irq(&mut self) {
+        let h = self.position.dot;
+        let v = self.position.scanline;
+        let triggered = match self.irq_mode {
+            // H IRQ each scanline at HTIME.
+            1 => h == self.htime,
+            // V IRQ once on matching scanline (current dot model: dot 0 of that line).
+            2 => h == 0 && v == self.vtime,
+            // HV IRQ at HTIME of VTIME line, with HTIME=0 as the dot-0 special case.
+            3 => {
+                v == self.vtime
+                    && ((self.htime == 0 && h == 0) || (self.htime != 0 && h == self.htime))
+            }
+            _ => false,
+        };
+        if triggered {
+            self.timeup_flag = true;
+            self.irq_line = true;
         }
     }
 }
@@ -306,5 +328,114 @@ mod tests {
         let vb = ppu.read_register(0x4212);
         assert_ne!(vb & 0x80, 0, "VBlank flag set");
         assert_eq!(vb & 0x40, 0, "HBlank clear at dot 0");
+    }
+
+    #[test]
+    fn h_irq_sets_timeup_and_4211_read_acknowledges_it() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4207, 0x01);
+        ppu.write_register(0x4208, 0x00);
+        ppu.write_register(0x4200, 0x10);
+
+        tick_dots(&mut ppu, 1);
+
+        let first = ppu.read_register(0x4211);
+        let second = ppu.read_register(0x4211);
+        assert_ne!(first & 0x80, 0, "TIMEUP should be set at the H-IRQ point");
+        assert_eq!(second & 0x80, 0, "reading TIMEUP should acknowledge it");
+    }
+
+    #[test]
+    fn h_irq_triggers_on_every_scanline() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4207, 0x02);
+        ppu.write_register(0x4208, 0x00);
+        ppu.write_register(0x4200, 0x10);
+
+        tick_dots(&mut ppu, 2);
+        assert_ne!(ppu.read_register(0x4211) & 0x80, 0, "line 0 trigger");
+
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32);
+        assert_ne!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "line 1 trigger at same H position"
+        );
+    }
+
+    #[test]
+    fn disabling_irq_mode_clears_timeup_flag() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4207, 0x01);
+        ppu.write_register(0x4208, 0x00);
+        ppu.write_register(0x4200, 0x10);
+        tick_dots(&mut ppu, 1);
+        assert_ne!(ppu.read_register(0x4211) & 0x80, 0);
+
+        ppu.write_register(0x4200, 0x00);
+        assert_eq!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "disabling IRQ mode must clear TIMEUP"
+        );
+    }
+
+    #[test]
+    fn v_irq_triggers_once_on_the_matching_scanline() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4209, 0x02);
+        ppu.write_register(0x420A, 0x00);
+        ppu.write_register(0x4200, 0x20);
+
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 2);
+        assert_ne!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "V-IRQ should trigger at VTIME"
+        );
+
+        tick_dots(&mut ppu, 1);
+        assert_eq!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "V-IRQ must not retrigger on every dot of the same line"
+        );
+    }
+
+    #[test]
+    fn hv_irq_triggers_on_htime_of_vtime_line() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4207, 0x05);
+        ppu.write_register(0x4208, 0x00);
+        ppu.write_register(0x4209, 0x03);
+        ppu.write_register(0x420A, 0x00);
+        ppu.write_register(0x4200, 0x30);
+
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 3 + 4);
+        assert_eq!(ppu.read_register(0x4211) & 0x80, 0);
+
+        tick_dots(&mut ppu, 1);
+        assert_ne!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "HV IRQ should trigger at the programmed H position on the programmed V line"
+        );
+    }
+
+    #[test]
+    fn hv_irq_with_htime_zero_triggers_at_dot_zero_of_vtime_line() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4207, 0x00);
+        ppu.write_register(0x4208, 0x00);
+        ppu.write_register(0x4209, 0x04);
+        ppu.write_register(0x420A, 0x00);
+        ppu.write_register(0x4200, 0x30);
+
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 4);
+        assert_ne!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "HTIME=0 HV mode should trigger at dot 0 of the VTIME line"
+        );
     }
 }

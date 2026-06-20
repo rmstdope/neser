@@ -111,6 +111,12 @@ impl Ppu {
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
             // while the VBlank flag is already set raises an edge.
             0x4200 => {
+                let irq_mode = (value >> 4) & 0x03;
+                if irq_mode == 0 {
+                    self.timeup_flag = false;
+                    self.irq_line = false;
+                }
+                self.irq_mode = irq_mode;
                 self.nmi_enable = value & 0x80 != 0;
                 self.update_nmi_line();
             }
@@ -122,6 +128,12 @@ impl Ppu {
                     self.latch_counters();
                 }
             }
+            // HTIMEL/HTIMEH: H timer compare target.
+            0x4207 => self.htime = (self.htime & 0x0100) | value as u16,
+            0x4208 => self.htime = (self.htime & 0x00FF) | (((value as u16) & 0x01) << 8),
+            // VTIMEL/VTIMEH: V timer compare target.
+            0x4209 => self.vtime = (self.vtime & 0x0100) | value as u16,
+            0x420A => self.vtime = (self.vtime & 0x00FF) | (((value as u16) & 0x01) << 8),
             // VMAIN: VRAM address increment mode/step.
             0x2115 => {
                 self.vram_increment_after_high = value & 0x80 != 0;
@@ -248,6 +260,13 @@ impl Ppu {
                 let value = (if self.nmi_flag { 0x80 } else { 0x00 }) | CPU_VERSION;
                 self.nmi_flag = false;
                 self.update_nmi_line();
+                value
+            }
+            // TIMEUP: H/V IRQ flag. Reading acknowledges.
+            0x4211 => {
+                let value = if self.timeup_flag { 0x80 } else { 0x00 };
+                self.timeup_flag = false;
+                self.irq_line = false;
                 value
             }
             // HVBJOY: VBlank flag (bit 7), HBlank flag (bit 6), auto-joypad busy (bit 0).
