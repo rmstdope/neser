@@ -59,6 +59,15 @@ pub(super) const MASTER_CYCLES_PER_DOT: u32 = 4;
 pub(super) const DOTS_PER_SCANLINE: u16 = 341;
 /// NTSC scanlines per frame.
 pub(super) const NTSC_SCANLINES_PER_FRAME: u16 = 262;
+/// PAL scanlines per frame.
+pub(super) const PAL_SCANLINES_PER_FRAME: u16 = 312;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SnesVideoRegion {
+    #[default]
+    Ntsc,
+    Pal,
+}
 
 /// Current scan position (scanline + dot within the scanline).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -118,6 +127,7 @@ pub struct Ppu {
     irq_line: bool,
     /// STAT78 ($213F) bit 7: interlace field flag.
     interlace_field: bool,
+    video_region: SnesVideoRegion,
     /// Visible framebuffer in 15-bit BGR555 (converted to RGB888 at snapshot time).
     framebuffer: Vec<u16>,
     /// Set when the PPU enters VBlank (a full visible frame has been produced).
@@ -225,6 +235,10 @@ impl Default for Ppu {
 impl Ppu {
     /// Create a new PPU in its power-on state.
     pub fn new() -> Self {
+        Self::new_with_region(SnesVideoRegion::Ntsc)
+    }
+
+    pub fn new_with_region(video_region: SnesVideoRegion) -> Self {
         Self {
             vram: vec![0; VRAM_SIZE],
             cgram: vec![0; CGRAM_SIZE],
@@ -257,6 +271,7 @@ impl Ppu {
             timeup_flag: false,
             irq_line: false,
             interlace_field: false,
+            video_region,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
             frame_complete: false,
             bg_mode: 0,
@@ -416,6 +431,13 @@ impl Ppu {
             (VISIBLE_LINE_START as usize + SCREEN_HEIGHT_TALL) as u16
         } else {
             VBLANK_START_LINE
+        }
+    }
+
+    pub(super) fn scanlines_per_frame(&self) -> u16 {
+        match self.video_region {
+            SnesVideoRegion::Ntsc => NTSC_SCANLINES_PER_FRAME,
+            SnesVideoRegion::Pal => PAL_SCANLINES_PER_FRAME,
         }
     }
 

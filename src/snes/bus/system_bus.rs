@@ -4,7 +4,7 @@ use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
-use crate::snes::ppu::Ppu;
+use crate::snes::ppu::{Ppu, SnesVideoRegion};
 use std::cell::{Cell, RefCell};
 use std::fs;
 
@@ -49,6 +49,14 @@ impl SnesSystemBus {
     }
 
     pub fn new_with_spc_ipl_path(cartridge: Cartridge, spc_ipl_path: Option<&str>) -> Self {
+        Self::new_with_spc_ipl_path_and_region(cartridge, spc_ipl_path, SnesVideoRegion::Ntsc)
+    }
+
+    pub fn new_with_spc_ipl_path_and_region(
+        cartridge: Cartridge,
+        spc_ipl_path: Option<&str>,
+        video_region: SnesVideoRegion,
+    ) -> Self {
         let mapping = cartridge.mapping();
         let rom = cartridge.rom().to_vec();
         let sram = vec![0; cartridge.sram_size()];
@@ -68,7 +76,7 @@ impl SnesSystemBus {
             hdmaen: 0,
             dma: DmaController::new(),
             apu: RefCell::new(SnesApu::new(spc_ipl)),
-            ppu: RefCell::new(Ppu::new()),
+            ppu: RefCell::new(Ppu::new_with_region(video_region)),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
         }

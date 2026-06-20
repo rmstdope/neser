@@ -13,6 +13,7 @@ use crate::snes::cartridge::Cartridge;
 use crate::snes::console::config::SnesHardware;
 use crate::snes::console::save_state::SnesSaveState;
 use crate::snes::cpu::Cpu;
+use crate::snes::ppu::SnesVideoRegion;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -206,7 +207,15 @@ impl Emulator for Snes {
         self.active_hardware = Self::resolve_hardware_mode(config.hardware, cartridge.country());
 
         let spc_ipl_path = config.spc_ipl_path;
-        let bus = SnesSystemBus::new_with_spc_ipl_path(cartridge, spc_ipl_path.as_deref());
+        let video_region = match self.active_hardware {
+            SnesHardware::Ntsc => SnesVideoRegion::Ntsc,
+            SnesHardware::Pal => SnesVideoRegion::Pal,
+        };
+        let bus = SnesSystemBus::new_with_spc_ipl_path_and_region(
+            cartridge,
+            spc_ipl_path.as_deref(),
+            video_region,
+        );
         let mut cpu = Cpu::new(bus);
         cpu.do_reset();
         self.cpu = Some(cpu);
@@ -375,6 +384,35 @@ mod tests {
         Snes::new(app_context)
     }
 
+    fn make_snes_with_hardware(hardware: Option<SnesHardware>) -> Snes {
+        let mut config = Config::default();
+        config.snes.hardware = hardware;
+        let app_context = AppContext::new_with_config(config);
+        Snes::new(app_context)
+    }
+
+    fn ticks_until_ready_to_render(snes: &mut Snes) -> u32 {
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 2_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
+        ticks
+    }
+
+    fn ticks_between_frame_completions(snes: &mut Snes) -> u32 {
+        let _ = ticks_until_ready_to_render(snes);
+        assert!(snes.is_ready_to_render());
+        snes.clear_ready_to_render();
+
+        let mut ticks = 0;
+        while !snes.is_ready_to_render() && ticks < 2_000_000 {
+            snes.run_tick();
+            ticks += 1;
+        }
+        ticks
+    }
+
     #[test]
     fn new_snes_constructs_successfully() {
         let _snes = make_snes();
@@ -490,6 +528,46 @@ mod tests {
         assert!(
             snes.is_ready_to_render(),
             "a frame should complete within the cap"
+        );
+    }
+
+    #[test]
+    fn pal_hardware_mode_takes_more_ticks_per_frame_than_ntsc() {
+        let mut ntsc = make_snes_with_hardware(Some(SnesHardware::Ntsc));
+        ntsc.load_rom(&valid_lorom_nop_rom_with_country(0x00), "ntsc.sfc")
+            .unwrap();
+        let ntsc_ticks = ticks_between_frame_completions(&mut ntsc);
+        assert!(ntsc.is_ready_to_render(), "NTSC frame should complete");
+
+        let mut pal = make_snes_with_hardware(Some(SnesHardware::Pal));
+        pal.load_rom(&valid_lorom_nop_rom_with_country(0x00), "pal.sfc")
+            .unwrap();
+        let pal_ticks = ticks_between_frame_completions(&mut pal);
+        assert!(pal.is_ready_to_render(), "PAL frame should complete");
+
+        assert!(
+            pal_ticks > ntsc_ticks,
+            "PAL should require more CPU steps per frame than NTSC"
+        );
+    }
+
+    #[test]
+    fn pal_country_auto_detect_takes_more_ticks_per_frame_than_ntsc_country() {
+        let mut ntsc = make_snes_with_hardware(None);
+        ntsc.load_rom(&valid_lorom_nop_rom_with_country(0x00), "ntsc-auto.sfc")
+            .unwrap();
+        let ntsc_ticks = ticks_between_frame_completions(&mut ntsc);
+        assert!(ntsc.is_ready_to_render());
+
+        let mut pal = make_snes_with_hardware(None);
+        pal.load_rom(&valid_lorom_nop_rom_with_country(0x02), "pal-auto.sfc")
+            .unwrap();
+        let pal_ticks = ticks_between_frame_completions(&mut pal);
+        assert!(pal.is_ready_to_render());
+
+        assert!(
+            pal_ticks > ntsc_ticks,
+            "PAL auto-detect should produce longer frame timing than NTSC auto-detect"
         );
     }
 

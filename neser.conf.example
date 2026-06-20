@@ -404,6 +404,14 @@ nes-vertical_overscan=8
 # -----------------------------------------------------------------------------
 # Super Nintendo (SNES) Settings
 # -----------------------------------------------------------------------------
+# SNES hardware timing mode.
+# Valid values:
+#   - snes-ntsc: 262 scanlines/frame, ~60 Hz
+#   - snes-pal:  312 scanlines/frame, ~50 Hz
+# Default: auto-detect from cartridge header country (PAL territories -> snes-pal),
+#          with fallback to snes-ntsc.
+#snes-hardware=snes-ntsc
+#
 # Optional path to a custom SPC700 IPL ROM image.
 # The file must be exactly 64 bytes. If missing or invalid, NESER falls back
 # to the built-in clean-room IPL ROM.

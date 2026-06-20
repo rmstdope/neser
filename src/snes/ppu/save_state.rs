@@ -3,7 +3,7 @@
 //! The transient framebuffer is not serialized (it is regenerated each frame); on restore it is
 //! cleared and redrawn over the following frame.
 
-use super::{CGRAM_SIZE, OAM_SIZE, Ppu, ScanPosition, VRAM_SIZE};
+use super::{CGRAM_SIZE, OAM_SIZE, Ppu, ScanPosition, SnesVideoRegion, VRAM_SIZE};
 use crate::snes::console::save_state::SnesPpuState;
 
 impl Ppu {
@@ -42,6 +42,10 @@ impl Ppu {
             timeup_flag: self.timeup_flag,
             irq_line: self.irq_line,
             interlace_field: self.interlace_field,
+            video_region: match self.video_region {
+                SnesVideoRegion::Ntsc => 0,
+                SnesVideoRegion::Pal => 1,
+            },
             bg_mode: self.bg_mode,
             bg3_priority: self.bg3_priority,
             bg_tile_size_16: self.bg_tile_size_16,
@@ -123,6 +127,10 @@ impl Ppu {
         self.timeup_flag = state.timeup_flag;
         self.irq_line = state.irq_line;
         self.interlace_field = state.interlace_field;
+        self.video_region = match state.video_region {
+            1 => SnesVideoRegion::Pal,
+            _ => SnesVideoRegion::Ntsc,
+        };
         self.bg_mode = state.bg_mode;
         self.bg3_priority = state.bg3_priority;
         self.bg_tile_size_16 = state.bg_tile_size_16;
