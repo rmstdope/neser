@@ -158,15 +158,18 @@ impl SnesApu {
         if state.aram.len() == ARAM_SIZE {
             self.aram.copy_from_slice(&state.aram);
         }
+        let mut normalized_dsp = state.dsp.clone();
+        normalized_dsp.normalize_after_restore()?;
+        let normalized_dsp_addr = state.dsp_addr & 0x7F;
+
         self.main_to_spc_ports = state.main_to_spc_ports;
         self.spc_to_main_ports = state.spc_to_main_ports;
         self.control = state.control;
         self.master_ticks = state.master_ticks;
         self.spc_cycle_budget = state.spc_cycle_budget;
         self.timers = state.timers.clone();
-        self.dsp = state.dsp.clone();
-        self.dsp.normalize_after_restore()?;
-        self.dsp_addr = state.dsp_addr & 0x7F;
+        self.dsp = normalized_dsp;
+        self.dsp_addr = normalized_dsp_addr;
         self.reset_spc700();
         Ok(())
     }
@@ -458,7 +461,9 @@ mod tests {
     #[test]
     fn restore_state_rejects_invalid_dsp_register_file_size() {
         let mut apu = SnesApu::new(None);
+        apu.write_main_port(0, 0xCC);
         let mut state = apu.capture_state();
+        state.main_to_spc_ports[0] = 0x12;
         state.dsp = serde_json::from_str(r#"{"phase":0,"regs":[1,2]}"#)
             .expect("deserialize malformed DSP for test");
 
@@ -466,5 +471,10 @@ mod tests {
             .restore_state(&state)
             .expect_err("restore should reject invalid DSP register length");
         assert!(err.contains("APU DSP register file size mismatch"));
+        assert_eq!(
+            apu.read_spc_port(0),
+            0xCC,
+            "failed restore must not partially mutate APU state"
+        );
     }
 }

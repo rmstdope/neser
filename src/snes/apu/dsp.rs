@@ -84,6 +84,7 @@ impl Sdsp {
     }
 
     pub fn normalize_after_restore(&mut self) -> Result<(), String> {
+        self.phase &= 0x1F;
         if self.regs.is_empty() {
             self.regs = default_regs();
         }
@@ -442,5 +443,14 @@ mod tests {
 
         dsp.step_voice_pitch(0);
         assert_eq!(dsp.voice_sample_pos(0), 0x1234);
+    }
+
+    #[test]
+    fn normalize_after_restore_masks_phase_to_5_bits() {
+        let mut dsp = Sdsp::new();
+        dsp.phase = 0xFF;
+        dsp.normalize_after_restore()
+            .expect("normalize should accept default register file");
+        assert_eq!(dsp.phase(), 0x1F);
     }
 }
