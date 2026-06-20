@@ -5,6 +5,39 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-06-20 - #2774 / PR #2786: SNES APU bootstrap review-fix, CI green, merge
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2786
+**Linked issues:** #2774 (Sub-issue of #2721)
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `github-administration` | Drove safe review-thread handling, CI polling via `gh`, and merge/issue-close operations. |
+| Skill | `test-driven-development` | Guided RED -> GREEN fix for legacy save-state compatibility behavior. |
+| Skill | `self-learning-skills` | Triggered post-merge retrospective capture. |
+| Agent | `rubber-duck` | Reviewed changed file for correctness and edge cases in restore-path behavior. |
+| Agent | `Iteration Retrospective Gatherer` | Attempted structured retrospective capture and highlighted missing feedback metadata. |
+
+### What went well
+
+- The review comment was converted into a focused regression test first, then a minimal code fix in `SnesApu::restore_state`.
+- Review hygiene stayed tight: thread reply posted with concrete commit reference and thread confirmed resolved before merge.
+- Merge gate discipline held: waited for full check rollup to complete with successful conclusions before merging.
+
+### What to improve
+
+- Rebase churn occurred because the PR branch advanced during review-fix work. For active PRs, fetch/rebase immediately before committing review fixes to reduce conflict cycles.
+- The retrospective helper required additional metadata/feedback. Keep a small standard template ready so retrospective capture is never blocked by tooling assumptions.
+
+### Navigator feedback
+
+Navigator unavailable; feedback pending.
+
+---
+
 ## 2026-06-18 - #2747 / PR #2756: SNES battery SRAM persistence review-fix + merge
 
 **Repository:** rmstdope/neser
