@@ -8,6 +8,7 @@ pub mod ipl;
 pub mod spc700;
 pub mod timers;
 
+use crate::snes::apu::dsp::Sdsp;
 use serde::{Deserialize, Serialize};
 use spc700::{Spc700, Spc700Bus};
 use timers::SpcTimers;
@@ -32,6 +33,10 @@ pub struct SnesApuState {
     pub spc_cycle_budget: i64,
     #[serde(default)]
     pub timers: SpcTimers,
+    #[serde(default)]
+    pub dsp: Sdsp,
+    #[serde(default)]
+    pub dsp_addr: u8,
 }
 
 /// SNES APU bootstrap model: SPC700 + ARAM + IPL overlay + communication ports.
@@ -48,6 +53,8 @@ pub struct SnesApu {
     master_ticks: u64,
     /// Signed budget in numerator units for fractional SPC catch-up.
     spc_cycle_budget: i64,
+    dsp: Sdsp,
+    dsp_addr: u8,
 }
 
 impl SnesApu {
@@ -62,6 +69,8 @@ impl SnesApu {
             timers: SpcTimers::default(),
             master_ticks: 0,
             spc_cycle_budget: 0,
+            dsp: Sdsp::new(),
+            dsp_addr: 0,
         };
         apu.reset_spc700();
         apu
@@ -96,6 +105,8 @@ impl SnesApu {
                     spc_to_main_ports: &mut self.spc_to_main_ports,
                     control: &mut self.control,
                     timers: &mut self.timers,
+                    dsp: &mut self.dsp,
+                    dsp_addr: &mut self.dsp_addr,
                     tick_timers: true,
                 };
                 i64::from(self.spc700.step(&mut bus_view))
@@ -117,6 +128,8 @@ impl SnesApu {
             master_ticks: self.master_ticks,
             spc_cycle_budget: self.spc_cycle_budget,
             timers: self.timers.clone(),
+            dsp: self.dsp.clone(),
+            dsp_addr: self.dsp_addr,
         }
     }
 
@@ -136,6 +149,8 @@ impl SnesApu {
             self.master_ticks = 0;
             self.spc_cycle_budget = 0;
             self.timers = SpcTimers::default();
+            self.dsp = Sdsp::new();
+            self.dsp_addr = 0;
             self.reset_spc700();
             return Ok(());
         }
@@ -149,6 +164,9 @@ impl SnesApu {
         self.master_ticks = state.master_ticks;
         self.spc_cycle_budget = state.spc_cycle_budget;
         self.timers = state.timers.clone();
+        self.dsp = state.dsp.clone();
+        self.dsp.normalize_after_restore()?;
+        self.dsp_addr = state.dsp_addr & 0x7F;
         self.reset_spc700();
         Ok(())
     }
@@ -161,6 +179,8 @@ impl SnesApu {
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             timers: &mut self.timers,
+            dsp: &mut self.dsp,
+            dsp_addr: &mut self.dsp_addr,
             tick_timers: false,
         };
         self.spc700.reset(&mut bus_view);
@@ -175,6 +195,8 @@ impl SnesApu {
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             timers: &mut self.timers,
+            dsp: &mut self.dsp,
+            dsp_addr: &mut self.dsp_addr,
             tick_timers: true,
         };
         bus_view.read(addr)
@@ -189,6 +211,8 @@ impl SnesApu {
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             timers: &mut self.timers,
+            dsp: &mut self.dsp,
+            dsp_addr: &mut self.dsp_addr,
             tick_timers: true,
         };
         bus_view.write(addr, value);
@@ -203,6 +227,8 @@ impl SnesApu {
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             timers: &mut self.timers,
+            dsp: &mut self.dsp,
+            dsp_addr: &mut self.dsp_addr,
             tick_timers: true,
         };
         for _ in 0..cycles {
@@ -219,6 +245,8 @@ impl SnesApu {
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             timers: &mut self.timers,
+            dsp: &mut self.dsp,
+            dsp_addr: &mut self.dsp_addr,
             tick_timers: true,
         };
         bus_view.write(0x00F1, value);
@@ -232,6 +260,8 @@ struct SpcBusView<'a> {
     spc_to_main_ports: &'a mut [u8; 4],
     control: &'a mut u8,
     timers: &'a mut SpcTimers,
+    dsp: &'a mut Sdsp,
+    dsp_addr: &'a mut u8,
     tick_timers: bool,
 }
 
@@ -265,6 +295,8 @@ impl Spc700Bus for SpcBusView<'_> {
     fn read(&mut self, addr: u16) -> u8 {
         let value = match addr {
             0x00F1 => *self.control,
+            0x00F2 => *self.dsp_addr,
+            0x00F3 => self.dsp.read_reg(*self.dsp_addr),
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
             0x00FD..=0x00FF => self.timers.read_counter((addr - 0x00FD) as usize),
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
@@ -277,6 +309,8 @@ impl Spc700Bus for SpcBusView<'_> {
     fn write(&mut self, addr: u16, value: u8) {
         match addr {
             0x00F1 => self.write_control(value),
+            0x00F2 => *self.dsp_addr = value & 0x7F,
+            0x00F3 => self.dsp.write_reg(*self.dsp_addr, value),
             0x00F4..=0x00F7 => self.spc_to_main_ports[(addr - 0x00F4) as usize] = value,
             0x00FA..=0x00FC => self.timers.write_target((addr - 0x00FA) as usize, value),
             _ => self.aram[addr as usize] = value,
@@ -368,5 +402,54 @@ mod tests {
         apu.restore_state(&state).expect("restore should succeed");
 
         assert_eq!(apu.read_spc_memory_for_test(0x00FD), 0x00);
+    }
+
+    #[test]
+    fn dsp_f2_f3_ports_store_values_per_selected_register() {
+        let mut apu = SnesApu::new(None);
+
+        apu.write_spc_memory_for_test(0x00F2, 0x10);
+        apu.write_spc_memory_for_test(0x00F3, 0xAA);
+        apu.write_spc_memory_for_test(0x00F2, 0x11);
+        apu.write_spc_memory_for_test(0x00F3, 0xBB);
+
+        apu.write_spc_memory_for_test(0x00F2, 0x10);
+        assert_eq!(apu.read_spc_memory_for_test(0x00F3), 0xAA);
+        apu.write_spc_memory_for_test(0x00F2, 0x11);
+        assert_eq!(apu.read_spc_memory_for_test(0x00F3), 0xBB);
+    }
+
+    #[test]
+    fn dsp_f2_address_masks_to_7_bit_register_space() {
+        let mut apu = SnesApu::new(None);
+
+        apu.write_spc_memory_for_test(0x00F2, 0x10);
+        apu.write_spc_memory_for_test(0x00F3, 0x34);
+
+        apu.write_spc_memory_for_test(0x00F2, 0x90);
+        assert_eq!(apu.read_spc_memory_for_test(0x00F3), 0x34);
+    }
+
+    #[test]
+    fn restore_state_masks_dsp_address_to_7_bit() {
+        let mut apu = SnesApu::new(None);
+        let mut state = apu.capture_state();
+        state.dsp_addr = 0xFF;
+
+        apu.restore_state(&state).expect("restore should succeed");
+        assert_eq!(apu.read_spc_memory_for_test(0x00F2), 0x7F);
+    }
+
+    #[test]
+    fn restore_state_rejects_invalid_dsp_register_file_size() {
+        let mut apu = SnesApu::new(None);
+        let mut state = apu.capture_state();
+        state.dsp = serde_json::from_str(r#"{"phase":0,"regs":[1,2]}"#)
+            .expect("deserialize malformed DSP for test");
+
+        let err = apu
+            .restore_state(&state)
+            .expect_err("restore should reject invalid DSP register length");
+        assert!(err.contains("APU DSP register file size mismatch"));
     }
 }

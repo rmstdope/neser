@@ -7,10 +7,19 @@ pub struct DecodedBrrBlock {
     pub end_flag: bool,
 }
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+const DSP_REGISTER_COUNT: usize = 0x80;
+
+fn default_regs() -> Vec<u8> {
+    vec![0; DSP_REGISTER_COUNT]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Sdsp {
+    #[serde(default)]
     phase: u8,
-    regs: [u8; 0x80],
+    #[serde(default = "default_regs")]
+    regs: Vec<u8>,
 }
 
 impl Default for Sdsp {
@@ -24,8 +33,22 @@ impl Sdsp {
     pub fn new() -> Self {
         Self {
             phase: 0,
-            regs: [0; 0x80],
+            regs: default_regs(),
         }
+    }
+
+    pub fn normalize_after_restore(&mut self) -> Result<(), String> {
+        if self.regs.is_empty() {
+            self.regs = default_regs();
+            return Ok(());
+        }
+        if self.regs.len() != DSP_REGISTER_COUNT {
+            return Err(format!(
+                "APU DSP register file size mismatch (expected {DSP_REGISTER_COUNT}, found {})",
+                self.regs.len()
+            ));
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -38,12 +61,15 @@ impl Sdsp {
     }
 
     pub fn write_reg(&mut self, addr: u8, value: u8) {
-        self.regs[usize::from(addr & 0x7F)] = value;
+        let index = usize::from(addr & 0x7F);
+        debug_assert_eq!(self.regs.len(), DSP_REGISTER_COUNT);
+        self.regs[index] = value;
     }
 
     #[must_use]
     pub fn read_reg(&self, addr: u8) -> u8 {
-        self.regs[usize::from(addr & 0x7F)]
+        let index = usize::from(addr & 0x7F);
+        self.regs.get(index).copied().unwrap_or(0)
     }
 
     #[must_use]
