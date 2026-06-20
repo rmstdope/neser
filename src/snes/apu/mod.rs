@@ -5,9 +5,11 @@
 
 pub mod ipl;
 pub mod spc700;
+pub mod timers;
 
 use serde::{Deserialize, Serialize};
 use spc700::{Spc700, Spc700Bus};
+use timers::SpcTimers;
 
 const ARAM_SIZE: usize = 0x1_0000;
 const SPC_PER_MASTER_NUM: i64 = 1_024_000;
@@ -27,6 +29,8 @@ pub struct SnesApuState {
     pub master_ticks: u64,
     #[serde(default)]
     pub spc_cycle_budget: i64,
+    #[serde(default)]
+    pub timers: SpcTimers,
 }
 
 /// SNES APU bootstrap model: SPC700 + ARAM + IPL overlay + communication ports.
@@ -39,6 +43,7 @@ pub struct SnesApu {
     spc_to_main_ports: [u8; 4],
     /// Mirrors `$F1` control bits. Bit 7 toggles IPL overlay at `$FFC0-$FFFF`.
     control: u8,
+    timers: SpcTimers,
     master_ticks: u64,
     /// Signed budget in numerator units for fractional SPC catch-up.
     spc_cycle_budget: i64,
@@ -53,6 +58,7 @@ impl SnesApu {
             main_to_spc_ports: [0; 4],
             spc_to_main_ports: [0; 4],
             control: 0xB0,
+            timers: SpcTimers::default(),
             master_ticks: 0,
             spc_cycle_budget: 0,
         };
@@ -88,6 +94,8 @@ impl SnesApu {
                     main_to_spc_ports: &mut self.main_to_spc_ports,
                     spc_to_main_ports: &mut self.spc_to_main_ports,
                     control: &mut self.control,
+                    timers: &mut self.timers,
+                    tick_timers: true,
                 };
                 i64::from(self.spc700.step(&mut bus_view))
             };
@@ -107,6 +115,7 @@ impl SnesApu {
             control: self.control,
             master_ticks: self.master_ticks,
             spc_cycle_budget: self.spc_cycle_budget,
+            timers: self.timers.clone(),
         }
     }
 
@@ -125,6 +134,7 @@ impl SnesApu {
             self.control = 0xB0;
             self.master_ticks = 0;
             self.spc_cycle_budget = 0;
+            self.timers = SpcTimers::default();
             self.reset_spc700();
             return Ok(());
         }
@@ -137,6 +147,7 @@ impl SnesApu {
         self.control = state.control;
         self.master_ticks = state.master_ticks;
         self.spc_cycle_budget = state.spc_cycle_budget;
+        self.timers = state.timers.clone();
         self.reset_spc700();
         Ok(())
     }
@@ -148,6 +159,8 @@ impl SnesApu {
             main_to_spc_ports: &mut self.main_to_spc_ports,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
+            timers: &mut self.timers,
+            tick_timers: false,
         };
         self.spc700.reset(&mut bus_view);
     }
@@ -160,8 +173,40 @@ impl SnesApu {
             main_to_spc_ports: &mut self.main_to_spc_ports,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
+            timers: &mut self.timers,
+            tick_timers: true,
         };
         bus_view.read(addr)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn write_spc_memory_for_test(&mut self, addr: u16, value: u8) {
+        let mut bus_view = SpcBusView {
+            aram: &mut self.aram,
+            ipl: &self.ipl,
+            main_to_spc_ports: &mut self.main_to_spc_ports,
+            spc_to_main_ports: &mut self.spc_to_main_ports,
+            control: &mut self.control,
+            timers: &mut self.timers,
+            tick_timers: true,
+        };
+        bus_view.write(addr, value);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn advance_spc_bus_cycles_for_test(&mut self, cycles: usize) {
+        let mut bus_view = SpcBusView {
+            aram: &mut self.aram,
+            ipl: &self.ipl,
+            main_to_spc_ports: &mut self.main_to_spc_ports,
+            spc_to_main_ports: &mut self.spc_to_main_ports,
+            control: &mut self.control,
+            timers: &mut self.timers,
+            tick_timers: true,
+        };
+        for _ in 0..cycles {
+            bus_view.idle();
+        }
     }
 
     #[cfg(test)]
@@ -172,6 +217,8 @@ impl SnesApu {
             main_to_spc_ports: &mut self.main_to_spc_ports,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
+            timers: &mut self.timers,
+            tick_timers: true,
         };
         bus_view.write(0x00F1, value);
     }
@@ -183,6 +230,8 @@ struct SpcBusView<'a> {
     main_to_spc_ports: &'a mut [u8; 4],
     spc_to_main_ports: &'a mut [u8; 4],
     control: &'a mut u8,
+    timers: &'a mut SpcTimers,
+    tick_timers: bool,
 }
 
 impl SpcBusView<'_> {
@@ -191,7 +240,9 @@ impl SpcBusView<'_> {
     }
 
     fn write_control(&mut self, value: u8) {
+        let old_control = *self.control;
         *self.control = value;
+        self.timers.write_control(old_control, value);
         if value & 0x10 != 0 {
             self.main_to_spc_ports[0] = 0;
             self.main_to_spc_ports[1] = 0;
@@ -201,27 +252,40 @@ impl SpcBusView<'_> {
             self.main_to_spc_ports[3] = 0;
         }
     }
+
+    fn tick_timers_if_enabled(&mut self) {
+        if self.tick_timers {
+            self.timers.tick_cycle();
+        }
+    }
 }
 
 impl Spc700Bus for SpcBusView<'_> {
     fn read(&mut self, addr: u16) -> u8 {
-        match addr {
+        let value = match addr {
             0x00F1 => *self.control,
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
+            0x00FD..=0x00FF => self.timers.read_counter((addr - 0x00FD) as usize),
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
             _ => self.aram[addr as usize],
-        }
+        };
+        self.tick_timers_if_enabled();
+        value
     }
 
     fn write(&mut self, addr: u16, value: u8) {
         match addr {
             0x00F1 => self.write_control(value),
             0x00F4..=0x00F7 => self.spc_to_main_ports[(addr - 0x00F4) as usize] = value,
+            0x00FA..=0x00FC => self.timers.write_target((addr - 0x00FA) as usize, value),
             _ => self.aram[addr as usize] = value,
         }
+        self.tick_timers_if_enabled();
     }
 
-    fn idle(&mut self) {}
+    fn idle(&mut self) {
+        self.tick_timers_if_enabled();
+    }
 }
 
 #[cfg(test)]
@@ -278,5 +342,30 @@ mod tests {
             apu.read_spc_memory_for_test(0xFFFF),
             super::ipl::EMBEDDED_IPL[0x3F]
         );
+    }
+
+    #[test]
+    fn timer0_counter_is_visible_via_fd_and_clears_on_read() {
+        let mut apu = SnesApu::new(None);
+
+        apu.write_spc_memory_for_test(0x00FA, 0x01);
+        apu.write_spc_control_for_test(0x81);
+        apu.advance_spc_bus_cycles_for_test(128);
+
+        assert_eq!(apu.read_spc_memory_for_test(0x00FD), 0x01);
+        assert_eq!(apu.read_spc_memory_for_test(0x00FD), 0x00);
+    }
+
+    #[test]
+    fn restore_state_does_not_advance_timers_during_spc_reset_vector_reads() {
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00FA, 0x01);
+        apu.write_spc_control_for_test(0x81);
+        apu.advance_spc_bus_cycles_for_test(126);
+
+        let state = apu.capture_state();
+        apu.restore_state(&state).expect("restore should succeed");
+
+        assert_eq!(apu.read_spc_memory_for_test(0x00FD), 0x00);
     }
 }
