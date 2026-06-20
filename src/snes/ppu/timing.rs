@@ -1,9 +1,10 @@
 //! PPU dot/scanline timing.
 //!
 //! The bus calls [`Ppu::tick`] once per master clock. The PPU accumulates master clocks and
-//! advances one dot every [`MASTER_CYCLES_PER_DOT`] cycles, wrapping the dot counter at
-//! [`DOTS_PER_SCANLINE`] and the scanline counter at the active region's
-//! `scanlines_per_frame()` (262 NTSC / 312 PAL).
+//! advances one dot at a time using the active scanline timing profile, which can shorten/lengthen
+//! the line and insert paired long-dot phases. Normal dots are 4 master clocks wide; scanline
+//! totals still wrap the scanline counter at the active region's `scanlines_per_frame()` (262 NTSC
+//! / 312 PAL).
 //!
 //! Note: long/short-dot quirks now use a latched per-scanline profile, including the paired
 //! long-dot phase around H=323/327 and the NTSC/PAL short/long scanline exceptions.
@@ -57,6 +58,10 @@ impl Ppu {
                 _ => MASTER_CYCLES_PER_DOT,
             },
         }
+    }
+
+    pub(super) fn hblank_active(&self) -> bool {
+        self.position.dot == 0 || self.position.dot >= super::HBLANK_START_DOT
     }
 
     fn line_timing_profile_for_scanline(&self) -> PpuLineTimingProfile {
@@ -177,6 +182,34 @@ mod tests {
                 scanline: 0,
                 dot: 1
             }
+        );
+    }
+
+    #[test]
+    fn hblank_is_visible_for_the_entire_first_dot_of_a_scanline() {
+        let mut ppu = Ppu::new();
+        ppu.position.scanline = 6;
+        ppu.position.dot = 0;
+        ppu.line_timing_profile = PpuLineTimingProfile::Normal;
+
+        assert_ne!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "HBlank is set at dot 0"
+        );
+
+        tick_cycles(&mut ppu, 1);
+        assert_ne!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "HBlank is still set on dot 0"
+        );
+
+        tick_cycles(&mut ppu, 3);
+        assert_eq!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "HBlank clears on dot 1"
         );
     }
 
@@ -390,37 +423,20 @@ mod tests {
     #[test]
     fn hblank_flag_stays_set_at_dot_0_and_clears_at_dot_1() {
         let mut ppu = Ppu::new();
-        ppu.position.scanline = 5;
-        ppu.position.dot = 273;
+        ppu.position.scanline = 6;
+        ppu.position.dot = 0;
+        ppu.line_timing_profile = PpuLineTimingProfile::Normal;
 
-        // Enter HBlank at dot 274.
-        tick_dots(&mut ppu, 1);
-        assert_ne!(ppu.read_register(0x4212) & 0x40, 0, "HBlank set at dot 274");
+        assert_ne!(ppu.read_register(0x4212) & 0x40, 0, "HBlank set at dot 0");
 
-        // Advance to next scanline, dot 0: HBlank should still be set.
-        tick_dots(&mut ppu, (DOTS_PER_SCANLINE - 274) as u32);
-        assert_eq!(
-            ppu.position(),
-            ScanPosition {
-                scanline: 6,
-                dot: 0
-            }
-        );
+        tick_cycles(&mut ppu, 1);
         assert_ne!(
             ppu.read_register(0x4212) & 0x40,
             0,
-            "HBlank remains set at dot 0"
+            "HBlank remains set during dot 0"
         );
 
-        // Dot 1 clears HBlank.
-        tick_dots(&mut ppu, 1);
-        assert_eq!(
-            ppu.position(),
-            ScanPosition {
-                scanline: 6,
-                dot: 1
-            }
-        );
+        tick_cycles(&mut ppu, 3);
         assert_eq!(
             ppu.read_register(0x4212) & 0x40,
             0,
