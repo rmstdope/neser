@@ -8,8 +8,7 @@
 //! clocks on certain scanlines) are not yet modeled and are a documented refinement TODO.
 
 use super::{
-    DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu, VBLANK_START_LINE,
-    VISIBLE_LINE_START,
+    DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu, VISIBLE_LINE_START,
 };
 
 impl Ppu {
@@ -41,12 +40,13 @@ impl Ppu {
 
     fn on_scanline_start(&mut self) {
         let scanline = self.position.scanline;
+        let vblank_start_line = self.vblank_start_line();
         // Advance the vertical mosaic block counter for visible scanlines.
-        if (VISIBLE_LINE_START..VBLANK_START_LINE).contains(&scanline) {
+        if (VISIBLE_LINE_START..vblank_start_line).contains(&scanline) {
             self.advance_mosaic_vcount(scanline);
         }
         match scanline {
-            VBLANK_START_LINE => {
+            _ if scanline == vblank_start_line => {
                 // Begin VBlank: a full visible frame has been produced. Set the VBlank + RDNMI
                 // flags (the flag is set even if NMI is disabled), then re-evaluate the NMI line.
                 self.vblank_active = true;
@@ -328,6 +328,19 @@ mod tests {
         let vb = ppu.read_register(0x4212);
         assert_ne!(vb & 0x80, 0, "VBlank flag set");
         assert_eq!(vb & 0x40, 0, "HBlank clear at dot 0");
+    }
+
+    #[test]
+    fn overscan_239_line_mode_moves_vblank_entry_to_scanline_240() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2133, 0x04); // SETINI overscan/tall-screen bit
+
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 239);
+        assert!(!ppu.in_vblank(), "line 239 should still be visible");
+
+        // One additional full scanline reaches scanline 240, where VBlank begins.
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32);
+        assert!(ppu.in_vblank(), "VBlank should begin at scanline 240");
     }
 
     #[test]

@@ -30,10 +30,12 @@ const OAM_SIZE: usize = 0x220;
 pub(super) const SCREEN_WIDTH: usize = 256;
 /// Visible framebuffer height in the common 224-line case.
 pub(super) const SCREEN_HEIGHT: usize = 224;
+/// Visible framebuffer height in tall-screen (239-line) mode.
+pub(super) const SCREEN_HEIGHT_TALL: usize = 239;
 /// Maximum framebuffer width supported by the SNES PPU.
 pub(super) const SCREEN_WIDTH_MAX: usize = 512;
 /// Maximum framebuffer height supported by the SNES PPU.
-pub(super) const SCREEN_HEIGHT_MAX: usize = 448;
+pub(super) const SCREEN_HEIGHT_MAX: usize = 478;
 /// First visible dot within a scanline (active display is dots 22..=277).
 pub(super) const VISIBLE_DOT_START: u16 = 22;
 /// First visible scanline (active display is lines 1..=224).
@@ -360,10 +362,11 @@ impl Ppu {
         } else {
             SCREEN_WIDTH
         };
+        let active_height = self.active_screen_height();
         let height = if self.interlace_enabled() {
-            SCREEN_HEIGHT_MAX
+            active_height * 2
         } else {
-            SCREEN_HEIGHT
+            active_height
         };
         (width as u32, height as u32)
     }
@@ -394,6 +397,26 @@ impl Ppu {
 
     pub(super) fn interlace_enabled(&self) -> bool {
         self.setini & 0x01 != 0
+    }
+
+    pub(super) fn overscan_239_enabled(&self) -> bool {
+        self.setini & 0x04 != 0
+    }
+
+    pub(super) fn active_screen_height(&self) -> usize {
+        if self.overscan_239_enabled() {
+            SCREEN_HEIGHT_TALL
+        } else {
+            SCREEN_HEIGHT
+        }
+    }
+
+    pub(super) fn vblank_start_line(&self) -> u16 {
+        if self.overscan_239_enabled() {
+            (VISIBLE_LINE_START as usize + SCREEN_HEIGHT_TALL) as u16
+        } else {
+            VBLANK_START_LINE
+        }
     }
 
     pub(super) fn obj_interlace_enabled(&self) -> bool {
@@ -452,6 +475,18 @@ mod tests {
         ppu.write_register(0x2133, 0x08);
 
         assert_eq!(ppu.frame_dimensions(), (512, 224));
+    }
+
+    #[test]
+    fn setini_overscan_mode_enables_239_line_output_height() {
+        let mut ppu = Ppu::new();
+        assert_eq!(ppu.frame_dimensions(), (256, 224));
+
+        ppu.write_register(0x2133, 0x04);
+        assert_eq!(ppu.frame_dimensions(), (256, 239));
+
+        ppu.write_register(0x2133, 0x05);
+        assert_eq!(ppu.frame_dimensions(), (256, 478));
     }
 
     #[test]
