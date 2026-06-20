@@ -149,6 +149,8 @@ pub struct SnesPpuState {
     #[serde(default)]
     pub master_cycle_accumulator: u32,
     #[serde(default)]
+    pub line_timing_profile: u8,
+    #[serde(default)]
     pub inidisp: u8,
     #[serde(default)]
     pub nmi_enable: bool,

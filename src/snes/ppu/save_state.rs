@@ -3,7 +3,9 @@
 //! The transient framebuffer is not serialized (it is regenerated each frame); on restore it is
 //! cleared and redrawn over the following frame.
 
-use super::{CGRAM_SIZE, OAM_SIZE, Ppu, ScanPosition, SnesVideoRegion, VRAM_SIZE};
+use super::{
+    CGRAM_SIZE, OAM_SIZE, Ppu, PpuLineTimingProfile, ScanPosition, SnesVideoRegion, VRAM_SIZE,
+};
 use crate::snes::console::save_state::SnesPpuState;
 
 impl Ppu {
@@ -15,6 +17,7 @@ impl Ppu {
             scanline: self.position.scanline,
             dot: self.position.dot,
             master_cycle_accumulator: self.master_cycle_accumulator,
+            line_timing_profile: self.line_timing_profile.as_u8(),
             inidisp: self.inidisp,
             nmi_enable: self.nmi_enable,
             nmi_flag: self.nmi_flag,
@@ -100,6 +103,7 @@ impl Ppu {
             dot: state.dot,
         };
         self.master_cycle_accumulator = state.master_cycle_accumulator;
+        self.line_timing_profile = PpuLineTimingProfile::from_u8(state.line_timing_profile);
         self.inidisp = state.inidisp;
         self.nmi_enable = state.nmi_enable;
         self.nmi_flag = state.nmi_flag;
@@ -208,7 +212,7 @@ fn restore_memory(dst: &mut [u8], src: &[u8], expected: usize, name: &str) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::super::Ppu;
+    use super::super::{Ppu, PpuLineTimingProfile};
 
     #[test]
     fn capture_restore_round_trips_ppu_state() {
@@ -224,6 +228,7 @@ mod tests {
         ppu.write_register(0x2119, 0xCD);
         ppu.write_register(0x2100, 0x0F);
         ppu.write_register(0x4200, 0x80);
+        ppu.line_timing_profile = PpuLineTimingProfile::Long;
         // BG register state (added in #2760).
         ppu.write_register(0x2105, 0x11); // BGMODE: mode 1, BG1 16x16
         ppu.write_register(0x2107, 0x14); // BG1SC
