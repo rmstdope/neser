@@ -75,6 +75,13 @@ impl Ppu {
     }
 
     pub(super) fn resolve_screen_pixel(&self, target: ScreenTarget, x: u16, y: u16) -> ScreenPixel {
+        let obj_pixel = if self.screen_enable_mask(target) & 0x10 == 0
+            || (target == ScreenTarget::Sub && self.cgwsel & 0x02 == 0)
+        {
+            None
+        } else {
+            self.obj_pixel_at(x, y)
+        };
         for &slot in self.layer_order().iter() {
             match slot {
                 Slot::Bg(bg, priority) => {
@@ -97,16 +104,16 @@ impl Ppu {
                     }
                 }
                 Slot::Obj(priority) => {
-                    if target == ScreenTarget::Sub && self.cgwsel & 0x02 == 0 {
-                        continue;
-                    }
                     if self.layer_disabled_by_window(target, WindowLayer::Obj, x, y) {
                         continue;
                     }
-                    if let Some((color, palette)) = self.obj_pixel_for_screen(target, x, priority) {
+                    if let Some(pixel) = obj_pixel.filter(|pixel| pixel.priority == priority) {
                         return ScreenPixel {
-                            color,
-                            source: PixelSource::Obj { priority, palette },
+                            color: pixel.color,
+                            source: PixelSource::Obj {
+                                priority,
+                                palette: pixel.palette,
+                            },
                         };
                     }
                 }
@@ -115,23 +122,6 @@ impl Ppu {
         ScreenPixel {
             color: self.backdrop_color_for(target),
             source: PixelSource::Backdrop,
-        }
-    }
-
-    pub(super) fn obj_pixel_for_screen(
-        &self,
-        target: ScreenTarget,
-        x: u16,
-        priority: u8,
-    ) -> Option<(u16, u8)> {
-        if self.screen_enable_mask(target) & 0x10 == 0 {
-            return None;
-        }
-        let x = x as usize;
-        if self.obj_line.present[x] && self.obj_line.priority[x] == priority {
-            Some((self.obj_line.color[x], self.obj_line.palette[x]))
-        } else {
-            None
         }
     }
 

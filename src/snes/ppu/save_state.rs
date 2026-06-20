@@ -87,6 +87,9 @@ impl Ppu {
             oam_priority_rotation: self.oam_priority_rotation,
             stat77_range_over: self.stat77_range_over,
             stat77_time_over: self.stat77_time_over,
+            obj_range_over_dot: self.obj_range_over_dot,
+            obj_time_over_pending: self.obj_time_over_pending,
+            obj_eval_dirty: self.obj_eval_dirty,
             mosaic: self.mosaic,
             mosaic_vblock_size: self.mosaic_vblock_size,
             mosaic_vcount: self.mosaic_vcount,
@@ -173,15 +176,12 @@ impl Ppu {
         self.oam_priority_rotation = state.oam_priority_rotation;
         self.stat77_range_over = state.stat77_range_over;
         self.stat77_time_over = state.stat77_time_over;
+        self.obj_range_over_dot = state.obj_range_over_dot;
+        self.obj_time_over_pending = state.obj_time_over_pending;
+        self.obj_eval_dirty = state.obj_eval_dirty;
         self.mosaic = state.mosaic;
         self.mosaic_vblock_size = state.mosaic_vblock_size;
         self.mosaic_vcount = state.mosaic_vcount;
-
-        // Reset the transient OBJ runtime state so stale pipeline data from before the load can't
-        // leak into the first restored frame (the line buffer is rebuilt as rendering resumes).
-        self.obj_line = Default::default();
-        self.obj_range_over_dot = None;
-        self.obj_time_over_pending = false;
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);
@@ -270,5 +270,64 @@ mod tests {
 
         ppu.restore_state(&snapshot).unwrap();
         assert_eq!(ppu.cgram_byte(0x00), 0x00);
+    }
+
+    #[test]
+    fn restore_mid_scanline_preserves_per_dot_obj_continuity() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F); // visible output
+        ppu.write_register(0x2101, 0x00); // 8x8 OBJ
+        ppu.write_register(0x212C, 0x10); // enable OBJ on main screen
+
+        // Backdrop red, OBJ color green.
+        ppu.write_register(0x2121, 0);
+        ppu.write_register(0x2122, 0x1F);
+        ppu.write_register(0x2122, 0x00);
+        ppu.write_register(0x2121, 129);
+        ppu.write_register(0x2122, 0xE0);
+        ppu.write_register(0x2122, 0x03);
+
+        // Tile 0: solid color index 1.
+        for row in 0..8usize {
+            let r = row * 2;
+            ppu.set_vram_byte(r, 0xFF);
+            ppu.set_vram_byte(r + 1, 0x00);
+            ppu.set_vram_byte(r + 16, 0x00);
+            ppu.set_vram_byte(r + 17, 0x00);
+        }
+
+        // OBJ0 at x=0,y=0,tile=0,attr=0.
+        ppu.set_oam_byte(0x00, 0);
+        ppu.set_oam_byte(0x01, 0);
+        ppu.set_oam_byte(0x02, 0);
+        ppu.set_oam_byte(0x03, 0);
+        ppu.set_oam_byte(0x200, 0);
+
+        // Enter active display and stop mid-scanline.
+        for _ in 0..((341 + 30) * 4) {
+            ppu.tick();
+        }
+
+        let snapshot = ppu.capture_state();
+        let mut restored = Ppu::new();
+        restored.restore_state(&snapshot).unwrap();
+
+        // Advance both PPUs by the same number of dots and require identical visible output.
+        for _ in 0..(40 * 4) {
+            ppu.tick();
+            restored.tick();
+        }
+
+        let rgb_original = ppu.screen_snapshot_rgb();
+        let rgb_restored = restored.screen_snapshot_rgb();
+        let pixel = |rgb: &[u8], x: usize, y: usize| -> [u8; 3] {
+            let i = (y * 256 + x) * 3;
+            [rgb[i], rgb[i + 1], rgb[i + 2]]
+        };
+
+        assert_eq!(restored.position(), ppu.position());
+        assert_eq!(pixel(&rgb_restored, 20, 0), pixel(&rgb_original, 20, 0));
+        assert_eq!(pixel(&rgb_restored, 40, 0), pixel(&rgb_original, 40, 0));
+        assert_eq!(restored.read_register(0x213E), ppu.read_register(0x213E));
     }
 }
