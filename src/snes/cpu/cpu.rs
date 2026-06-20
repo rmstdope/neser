@@ -248,6 +248,14 @@ impl<B: SnesBus> Cpu<B> {
         self.p
     }
 
+    pub(crate) fn bus(&self) -> &B {
+        &self.bus
+    }
+
+    pub(crate) fn bus_mut(&mut self) -> &mut B {
+        &mut self.bus
+    }
+
     pub(crate) fn capture_state(&self) -> SnesCpuState {
         SnesCpuState {
             a: self.a,

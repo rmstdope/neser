@@ -34,6 +34,28 @@ pub struct Sdsp {
     master_vol_l: i8,
     #[serde(default)]
     master_vol_r: i8,
+    #[serde(default)]
+    echo_vol_l: i8,
+    #[serde(default)]
+    echo_vol_r: i8,
+    #[serde(default)]
+    echo_feedback: i8,
+    #[serde(default)]
+    echo_enable: u8,
+    #[serde(default)]
+    flg: u8,
+    #[serde(default)]
+    dir: u8,
+    #[serde(default)]
+    esa: u8,
+    #[serde(default)]
+    edl: u8,
+    #[serde(default)]
+    fir_coeffs: [i8; 8],
+    #[serde(default)]
+    fir_history: [i16; 8],
+    #[serde(default)]
+    fir_history_pos: usize,
     #[serde(default = "default_noise_lfsr")]
     noise_lfsr: u16,
     #[serde(default)]
@@ -61,6 +83,17 @@ impl Sdsp {
             voices: std::array::from_fn(|_| VoiceState::default()),
             master_vol_l: 0,
             master_vol_r: 0,
+            echo_vol_l: 0,
+            echo_vol_r: 0,
+            echo_feedback: 0,
+            echo_enable: 0,
+            flg: 0,
+            dir: 0,
+            esa: 0,
+            edl: 0,
+            fir_coeffs: [0; 8],
+            fir_history: [0; 8],
+            fir_history_pos: 0,
             noise_lfsr: default_noise_lfsr(),
             noise_counter: 0,
             envelope_counter: 0,
@@ -88,6 +121,14 @@ impl Sdsp {
     fn rebuild_cached_fields_from_regs(&mut self) {
         self.master_vol_l = self.regs[0x0C] as i8;
         self.master_vol_r = self.regs[0x1C] as i8;
+        self.echo_feedback = self.regs[0x0D] as i8;
+        self.echo_vol_l = self.regs[0x2C] as i8;
+        self.echo_vol_r = self.regs[0x3C] as i8;
+        self.echo_enable = self.regs[0x4D];
+        self.dir = self.regs[0x5D];
+        self.flg = self.regs[0x6C];
+        self.esa = self.regs[0x6D];
+        self.edl = self.regs[0x7D];
 
         for voice in 0..8usize {
             let base = voice << 4;
@@ -107,6 +148,7 @@ impl Sdsp {
             } else {
                 EnvelopeMode::Sustain
             };
+            self.fir_coeffs[voice] = self.regs[base + 0x0F] as i8;
         }
     }
 
@@ -141,6 +183,45 @@ impl Sdsp {
     pub fn set_master_volume(&mut self, left: i8, right: i8) {
         self.master_vol_l = left;
         self.master_vol_r = right;
+    }
+
+    #[must_use]
+    pub fn render_stereo_sample(&mut self) -> (f32, f32) {
+        let mut dry_l = 0i32;
+        let mut dry_r = 0i32;
+        let mut echo_input = 0i32;
+
+        for voice in 0..8usize {
+            let sample = i16::from(self.voices[voice].outx) << 8;
+            let (left, right) = self.mix_voice_sample(voice, sample);
+            dry_l += i32::from(left);
+            dry_r += i32::from(right);
+            if self.echo_enable & (1 << voice) != 0 {
+                echo_input += (i32::from(left) + i32::from(right)) >> 1;
+            }
+        }
+
+        let dry_mono =
+            ((dry_l + dry_r) >> 1).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        self.fir_history[self.fir_history_pos] = dry_mono;
+        self.fir_history_pos = (self.fir_history_pos + 1) & 7;
+
+        let mut echo = 0i32;
+        for tap in 0..8usize {
+            let hist_idx = (self.fir_history_pos + 8 - tap - 1) & 7;
+            echo += i32::from(self.fir_coeffs[tap]) * i32::from(self.fir_history[hist_idx]);
+        }
+        echo = (echo >> 7) + ((echo_input * i32::from(self.echo_feedback)) >> 7);
+
+        let mut left = dry_l + ((echo * i32::from(self.echo_vol_l)) >> 7);
+        let mut right = dry_r + ((echo * i32::from(self.echo_vol_r)) >> 7);
+        if self.flg & 0x40 != 0 {
+            left = 0;
+            right = 0;
+        }
+        let left = left.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as f32 / 32768.0;
+        let right = right.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as f32 / 32768.0;
+        (left, right)
     }
 
     #[must_use]
@@ -258,6 +339,38 @@ impl Sdsp {
                 self.master_vol_r = value as i8;
                 return;
             }
+            0x0D => {
+                self.echo_feedback = value as i8;
+                return;
+            }
+            0x2C => {
+                self.echo_vol_l = value as i8;
+                return;
+            }
+            0x3C => {
+                self.echo_vol_r = value as i8;
+                return;
+            }
+            0x4D => {
+                self.echo_enable = value;
+                return;
+            }
+            0x5D => {
+                self.dir = value;
+                return;
+            }
+            0x6C => {
+                self.flg = value;
+                return;
+            }
+            0x6D => {
+                self.esa = value;
+                return;
+            }
+            0x7D => {
+                self.edl = value;
+                return;
+            }
             KON_REG => {
                 for voice in 0..8 {
                     if value & (1 << voice) != 0 {
@@ -299,6 +412,7 @@ impl Sdsp {
             0x06 => v.adsr2 = value,
             0x07 => v.gain = value,
             0x08 | 0x09 => {}
+            0x0F => self.fir_coeffs[voice] = value as i8,
             _ => {}
         }
     }

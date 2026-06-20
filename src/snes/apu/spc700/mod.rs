@@ -14,5 +14,5 @@ pub use bus::{FlatRamBus, Spc700Bus};
 #[allow(unused_imports)] // Wired into the APU in later sub-issues.
 pub use cpu::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DIRECT_PAGE, FLAG_HALF_CARRY, FLAG_INTERRUPT, FLAG_NEGATIVE,
-    FLAG_OVERFLOW, FLAG_ZERO, Spc700,
+    FLAG_OVERFLOW, FLAG_ZERO, Spc700, Spc700State,
 };
