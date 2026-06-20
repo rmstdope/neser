@@ -2,7 +2,8 @@
 //!
 //! The bus calls [`Ppu::tick`] once per master clock. The PPU accumulates master clocks and
 //! advances one dot every [`MASTER_CYCLES_PER_DOT`] cycles, wrapping the dot counter at
-//! [`DOTS_PER_SCANLINE`] and the scanline counter at [`NTSC_SCANLINES_PER_FRAME`].
+//! [`DOTS_PER_SCANLINE`] and the scanline counter at the active region's
+//! `scanlines_per_frame()` (262 NTSC / 312 PAL).
 //!
 //! Note: long/short-dot quirks (the extra/short dot at 323/327, and the 1364-vs-1360 master
 //! clocks on certain scanlines) are not yet modeled and are a documented refinement TODO.
