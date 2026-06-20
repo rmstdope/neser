@@ -21,6 +21,7 @@ pub struct Cartridge {
     has_battery: bool,
     speed: RomSpeed,
     title: String,
+    country: u8,
 }
 
 impl Cartridge {
@@ -49,6 +50,7 @@ impl Cartridge {
                 RomSpeed::Slow
             },
             title: header.title,
+            country: header.country,
         })
     }
 
@@ -74,6 +76,10 @@ impl Cartridge {
 
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    pub fn country(&self) -> u8 {
+        self.country
     }
 }
 

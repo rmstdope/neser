@@ -10,6 +10,7 @@ use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
 use crate::snes::bus::SnesSystemBus;
 use crate::snes::cartridge::Cartridge;
+use crate::snes::console::config::SnesHardware;
 use crate::snes::console::save_state::SnesSaveState;
 use crate::snes::cpu::Cpu;
 use std::path::PathBuf;
@@ -23,6 +24,9 @@ const SCREEN_HEIGHT: u32 = 224;
 /// SNES frame duration (~60.098 Hz refresh rate).
 /// Master clock: 21.477272 MHz, 357366 cycles per frame → 16.639 ms per frame.
 const FRAME_DURATION_NANOS: u64 = 16_639_000;
+/// SNES PAL frame duration (~50.007 Hz refresh rate).
+/// Master clock: 21.28137 MHz, 425568 cycles per frame (341*312*4).
+const FRAME_DURATION_PAL_NANOS: u64 = 19_997_209;
 
 /// Super Nintendo Entertainment System emulator wrapper.
 ///
@@ -33,6 +37,7 @@ pub struct Snes {
     cpu: Option<Cpu<SnesSystemBus>>,
     rom_path: Option<PathBuf>,
     ready_to_render: bool,
+    active_hardware: SnesHardware,
 }
 
 impl Snes {
@@ -48,7 +53,26 @@ impl Snes {
             cpu: None,
             rom_path: None,
             ready_to_render: false,
+            active_hardware: SnesHardware::Ntsc,
         }
+    }
+
+    fn country_implies_pal(country: u8) -> bool {
+        // Fullsnes FFD9 country codes: 0x02..=0x0C are PAL/50Hz territories.
+        (0x02..=0x0C).contains(&country)
+    }
+
+    fn resolve_hardware_mode(
+        config_override: Option<SnesHardware>,
+        cartridge_country: u8,
+    ) -> SnesHardware {
+        config_override.unwrap_or_else(|| {
+            if Self::country_implies_pal(cartridge_country) {
+                SnesHardware::Pal
+            } else {
+                SnesHardware::Ntsc
+            }
+        })
     }
 
     /// Returns the file path where save-state data should be stored.
@@ -178,7 +202,10 @@ impl Emulator for Snes {
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
-        let spc_ipl_path = self.app_context.borrow().config().snes.spc_ipl_path.clone();
+        let config = self.app_context.borrow().config().snes.clone();
+        self.active_hardware = Self::resolve_hardware_mode(config.hardware, cartridge.country());
+
+        let spc_ipl_path = config.spc_ipl_path;
         let bus = SnesSystemBus::new_with_spc_ipl_path(cartridge, spc_ipl_path.as_deref());
         let mut cpu = Cpu::new(bus);
         cpu.do_reset();
@@ -306,7 +333,10 @@ impl Emulator for Snes {
     }
 
     fn target_frame_duration(&self) -> Duration {
-        Duration::from_nanos(FRAME_DURATION_NANOS)
+        match self.active_hardware {
+            SnesHardware::Ntsc => Duration::from_nanos(FRAME_DURATION_NANOS),
+            SnesHardware::Pal => Duration::from_nanos(FRAME_DURATION_PAL_NANOS),
+        }
     }
 }
 
@@ -315,8 +345,13 @@ mod tests {
     use super::*;
     use crate::platform::app_context::AppContext;
     use crate::platform::config::Config;
+    use crate::snes::console::config::SnesHardware;
 
     fn valid_lorom_nop_rom() -> Vec<u8> {
+        valid_lorom_nop_rom_with_country(0x00)
+    }
+
+    fn valid_lorom_nop_rom_with_country(country: u8) -> Vec<u8> {
         let mut rom = vec![0u8; 0x10000];
         let header = 0x7FC0;
         rom[header..header + 21].copy_from_slice(b"SNES TEST ROM        ");
@@ -326,6 +361,7 @@ mod tests {
         rom[header + 0xD6] = 0x00;
         rom[header + 0xD7] = 0x07;
         rom[header + 0xD8] = 0x00;
+        rom[header + 0xD9] = country;
         rom[header + 0xDC] = 0x34;
         rom[header + 0xDD] = 0x12;
         rom[header + 0xDE] = 0xCB;
@@ -364,6 +400,48 @@ mod tests {
         // ~60.098 Hz = ~16.639 ms per frame
         let expected_nanos = 16_639_000u64;
         assert_eq!(duration.as_nanos(), expected_nanos as u128);
+    }
+
+    #[test]
+    fn target_frame_duration_uses_pal_when_forced_by_config() {
+        let mut config = Config::default();
+        config.snes.hardware = Some(SnesHardware::Pal);
+        let app_context = AppContext::new_with_config(config);
+        let mut snes = Snes::new(app_context);
+        snes.load_rom(&valid_lorom_nop_rom_with_country(0x01), "test.sfc")
+            .unwrap();
+
+        assert_eq!(
+            snes.target_frame_duration(),
+            Duration::from_nanos(FRAME_DURATION_PAL_NANOS)
+        );
+    }
+
+    #[test]
+    fn target_frame_duration_auto_detects_pal_from_header_country() {
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom_with_country(0x02), "test.sfc")
+            .unwrap();
+
+        assert_eq!(
+            snes.target_frame_duration(),
+            Duration::from_nanos(FRAME_DURATION_PAL_NANOS)
+        );
+    }
+
+    #[test]
+    fn target_frame_duration_prefers_config_ntsc_over_pal_header_country() {
+        let mut config = Config::default();
+        config.snes.hardware = Some(SnesHardware::Ntsc);
+        let app_context = AppContext::new_with_config(config);
+        let mut snes = Snes::new(app_context);
+        snes.load_rom(&valid_lorom_nop_rom_with_country(0x02), "test.sfc")
+            .unwrap();
+
+        assert_eq!(
+            snes.target_frame_duration(),
+            Duration::from_nanos(FRAME_DURATION_NANOS)
+        );
     }
 
     #[test]
