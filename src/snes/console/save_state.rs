@@ -96,7 +96,7 @@ pub struct SnesDmaState {
     pub hdma_lines_left: Vec<u16>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SnesBusState {
     #[serde(default)]
     pub wram: Vec<u8>,
@@ -288,7 +288,7 @@ pub struct SnesPpuState {
     pub mosaic_vcount: u8,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SnesSaveState {
     #[serde(default)]
     pub version: u32,

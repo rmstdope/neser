@@ -409,6 +409,22 @@ impl SnesSystemBus {
         Ok(())
     }
 
+    pub(crate) fn sample_ready(&self) -> bool {
+        self.apu.borrow().sample_ready()
+    }
+
+    pub(crate) fn take_stereo_sample(&mut self) -> Option<(f32, f32)> {
+        self.apu.get_mut().take_stereo_sample()
+    }
+
+    pub(crate) fn take_sample(&mut self) -> Option<f32> {
+        self.apu.get_mut().take_sample()
+    }
+
+    pub(crate) fn set_audio_sample_rate(&mut self, rate: f32) {
+        self.apu.get_mut().set_sample_rate(rate);
+    }
+
     #[cfg(test)]
     fn apu_read_spc_port_for_test(&self, port: usize) -> u8 {
         self.apu.borrow().read_spc_port(port)

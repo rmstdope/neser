@@ -280,17 +280,27 @@ impl Emulator for Snes {
     }
 
     fn sample_ready(&self) -> bool {
-        // TODO: Implement audio sample ready detection
-        false
+        self.cpu
+            .as_ref()
+            .is_some_and(|cpu| cpu.bus().sample_ready())
     }
 
     fn get_sample(&mut self) -> Option<f32> {
-        // TODO: Implement audio sample retrieval
-        None
+        self.cpu
+            .as_mut()
+            .and_then(|cpu| cpu.bus_mut().take_sample())
     }
 
-    fn set_audio_sample_rate(&mut self, _rate: f32) {
-        // TODO: Implement audio sample rate configuration
+    fn get_stereo_sample(&mut self) -> Option<(f32, f32)> {
+        self.cpu
+            .as_mut()
+            .and_then(|cpu| cpu.bus_mut().take_stereo_sample())
+    }
+
+    fn set_audio_sample_rate(&mut self, rate: f32) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.bus_mut().set_audio_sample_rate(rate);
+        }
     }
 
     fn set_button(&mut self, _port: u8, _button_id: u8, _pressed: bool) {
@@ -510,6 +520,32 @@ mod tests {
         let mut snes = make_snes();
         let cycles = snes.run_tick();
         assert_eq!(cycles, 0);
+    }
+
+    #[test]
+    fn snes_eventually_produces_stereo_audio_after_execution_advances() {
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom(), "audio.sfc")
+            .expect("load ROM");
+        snes.set_audio_sample_rate(32_000.0);
+
+        let mut ticks = 0u32;
+        while !snes.sample_ready() && ticks < 100_000 {
+            let step_cycles = snes.run_tick();
+            assert!(step_cycles > 0, "loaded SNES should keep running");
+            ticks += 1;
+        }
+
+        assert!(
+            snes.sample_ready(),
+            "SNES should eventually expose a ready audio sample once emulation advances"
+        );
+
+        let stereo = snes.get_stereo_sample();
+        assert!(
+            stereo.is_some(),
+            "SNES should provide a stereo sample instead of relying on the mono default"
+        );
     }
 
     #[test]
