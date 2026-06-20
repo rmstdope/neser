@@ -57,6 +57,9 @@ impl Ppu {
                 // End of VBlank / top of a new frame: clear the VBlank + RDNMI flags.
                 self.vblank_active = false;
                 self.nmi_flag = false;
+                if self.interlace_enabled() {
+                    self.interlace_field = !self.interlace_field;
+                }
                 self.update_nmi_line();
             }
             _ => {}

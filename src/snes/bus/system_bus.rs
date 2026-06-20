@@ -260,6 +260,11 @@ impl SnesSystemBus {
         self.ppu.borrow().screen_snapshot_rgb()
     }
 
+    /// Return the active PPU frame dimensions.
+    pub fn ppu_screen_dimensions(&self) -> (u32, u32) {
+        self.ppu.borrow().frame_dimensions()
+    }
+
     /// Returns and clears the PPU frame-complete flag (set when the PPU enters VBlank).
     pub fn take_ppu_frame_complete(&mut self) -> bool {
         self.ppu.get_mut().take_frame_complete()
@@ -537,6 +542,10 @@ impl SnesBus for SnesSystemBus {
 
     fn poll_nmi(&mut self) -> bool {
         self.ppu.get_mut().poll_nmi()
+    }
+
+    fn screen_dimensions(&self) -> (u32, u32) {
+        self.ppu_screen_dimensions()
     }
 }
 

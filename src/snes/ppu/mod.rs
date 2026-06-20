@@ -26,10 +26,14 @@ const VRAM_SIZE: usize = 0x10_000;
 const CGRAM_SIZE: usize = 0x200;
 const OAM_SIZE: usize = 0x220;
 
-/// Visible framebuffer width (NTSC).
+/// Visible framebuffer width in the common non-hires case.
 pub(super) const SCREEN_WIDTH: usize = 256;
-/// Visible framebuffer height (NTSC, 224-line mode).
+/// Visible framebuffer height in the common 224-line case.
 pub(super) const SCREEN_HEIGHT: usize = 224;
+/// Maximum framebuffer width supported by the SNES PPU.
+pub(super) const SCREEN_WIDTH_MAX: usize = 512;
+/// Maximum framebuffer height supported by the SNES PPU.
+pub(super) const SCREEN_HEIGHT_MAX: usize = 448;
 /// First visible dot within a scanline (active display is dots 22..=277).
 pub(super) const VISIBLE_DOT_START: u16 = 22;
 /// First visible scanline (active display is lines 1..=224).
@@ -235,7 +239,7 @@ impl Ppu {
             opvct_read_high: false,
             wrio: 0xFF,
             interlace_field: false,
-            framebuffer: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT],
+            framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
             frame_complete: false,
             bg_mode: 0,
             bg3_priority: false,
@@ -328,6 +332,21 @@ impl Ppu {
         self.oam[index]
     }
 
+    /// Active output geometry for the current frame.
+    pub fn frame_dimensions(&self) -> (u32, u32) {
+        let width = if self.hires_output_enabled() {
+            SCREEN_WIDTH_MAX
+        } else {
+            SCREEN_WIDTH
+        };
+        let height = if self.interlace_enabled() {
+            SCREEN_HEIGHT_MAX
+        } else {
+            SCREEN_HEIGHT
+        };
+        (width as u32, height as u32)
+    }
+
     /// Write a raw OAM byte (test helper, bypassing the OAMADD/OAMDATA write path).
     #[cfg(test)]
     pub(super) fn set_oam_byte(&mut self, index: usize, value: u8) {
@@ -338,5 +357,79 @@ impl Ppu {
     #[cfg(test)]
     pub(super) fn set_vram_byte(&mut self, index: usize, value: u8) {
         self.vram[index] = value;
+    }
+
+    pub(super) fn hires_output_enabled(&self) -> bool {
+        self.bg_mode == 5 || self.bg_mode == 6 || self.setini & 0x08 != 0
+    }
+
+    pub(super) fn interlace_enabled(&self) -> bool {
+        self.setini & 0x01 != 0
+    }
+
+    pub(super) fn framebuffer_stride(&self) -> usize {
+        SCREEN_WIDTH_MAX
+    }
+
+    pub(super) fn framebuffer_row(&self, y: usize) -> usize {
+        if self.interlace_enabled() {
+            y * 2 + self.interlace_field as usize
+        } else {
+            y
+        }
+    }
+
+    pub(super) fn framebuffer_x(&self, x: usize) -> usize {
+        if self.hires_output_enabled() {
+            x * 2
+        } else {
+            x
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu};
+
+    fn render_full_frame(ppu: &mut Ppu) {
+        let ticks =
+            DOTS_PER_SCANLINE as u32 * NTSC_SCANLINES_PER_FRAME as u32 * MASTER_CYCLES_PER_DOT;
+        for _ in 0..ticks {
+            ppu.tick();
+        }
+    }
+
+    #[test]
+    fn frame_dimensions_reflect_hires_and_interlace_settings() {
+        let mut ppu = Ppu::new();
+
+        assert_eq!(ppu.frame_dimensions(), (256, 224));
+
+        ppu.write_register(0x2105, 0x05);
+        ppu.write_register(0x2133, 0x07);
+
+        assert_eq!(ppu.frame_dimensions(), (512, 448));
+    }
+
+    #[test]
+    fn pseudo_hires_enables_512_pixel_width_outside_modes_5_and_6() {
+        let mut ppu = Ppu::new();
+
+        ppu.write_register(0x2133, 0x08);
+
+        assert_eq!(ppu.frame_dimensions(), (512, 224));
+    }
+
+    #[test]
+    fn interlace_toggles_the_field_flag_each_frame() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2133, 0x01);
+
+        assert!(!ppu.interlace_field);
+        render_full_frame(&mut ppu);
+        assert!(ppu.interlace_field);
+        render_full_frame(&mut ppu);
+        assert!(!ppu.interlace_field);
     }
 }
