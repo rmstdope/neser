@@ -74,13 +74,25 @@ impl Sdsp {
 
     #[must_use]
     pub fn decode_brr_block(header: u8, data: [u8; 8], prev1: i16, prev2: i16) -> DecodedBrrBlock {
-        let _ = (data, prev1, prev2);
+        let _ = (header >> 4, prev1, prev2);
+        let mut samples = [0i16; 16];
+        for (i, byte) in data.iter().copied().enumerate() {
+            let hi = ((byte >> 4) & 0x0F) as i8;
+            let lo = (byte & 0x0F) as i8;
+            samples[i * 2] = sign_extend_nibble(hi);
+            samples[i * 2 + 1] = sign_extend_nibble(lo);
+        }
         DecodedBrrBlock {
-            samples: [0; 16],
+            samples,
             loop_flag: header & 0x02 != 0,
             end_flag: header & 0x01 != 0,
         }
     }
+}
+
+fn sign_extend_nibble(value: i8) -> i16 {
+    let widened = (value << 4) >> 4;
+    i16::from(widened)
 }
 
 #[cfg(test)]
@@ -128,5 +140,20 @@ mod tests {
         let decoded = Sdsp::decode_brr_block(header, [0; 8], 0, 0);
         assert!(decoded.loop_flag);
         assert!(decoded.end_flag);
+    }
+
+    #[test]
+    fn given_filter0_shift0_nibbles_when_decoded_then_positive_and_negative_samples_survive() {
+        let header = 0b0000_0000;
+        let mut data = [0u8; 8];
+        data[0] = 0x78;
+        data[1] = 0x0F;
+
+        let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
+
+        assert_eq!(decoded.samples[0], 7);
+        assert_eq!(decoded.samples[1], -8);
+        assert_eq!(decoded.samples[2], 0);
+        assert_eq!(decoded.samples[3], -1);
     }
 }
