@@ -30,10 +30,12 @@ const OAM_SIZE: usize = 0x220;
 pub(super) const SCREEN_WIDTH: usize = 256;
 /// Visible framebuffer height in the common 224-line case.
 pub(super) const SCREEN_HEIGHT: usize = 224;
+/// Visible framebuffer height in tall-screen (239-line) mode.
+pub(super) const SCREEN_HEIGHT_TALL: usize = 239;
 /// Maximum framebuffer width supported by the SNES PPU.
 pub(super) const SCREEN_WIDTH_MAX: usize = 512;
 /// Maximum framebuffer height supported by the SNES PPU.
-pub(super) const SCREEN_HEIGHT_MAX: usize = 448;
+pub(super) const SCREEN_HEIGHT_MAX: usize = 478;
 /// First visible dot within a scanline (active display is dots 22..=277).
 pub(super) const VISIBLE_DOT_START: u16 = 22;
 /// First visible scanline (active display is lines 1..=224).
@@ -57,6 +59,15 @@ pub(super) const MASTER_CYCLES_PER_DOT: u32 = 4;
 pub(super) const DOTS_PER_SCANLINE: u16 = 341;
 /// NTSC scanlines per frame.
 pub(super) const NTSC_SCANLINES_PER_FRAME: u16 = 262;
+/// PAL scanlines per frame.
+pub(super) const PAL_SCANLINES_PER_FRAME: u16 = 312;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SnesVideoRegion {
+    #[default]
+    Ntsc,
+    Pal,
+}
 
 /// Current scan position (scanline + dot within the scanline).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -116,6 +127,7 @@ pub struct Ppu {
     irq_line: bool,
     /// STAT78 ($213F) bit 7: interlace field flag.
     interlace_field: bool,
+    video_region: SnesVideoRegion,
     /// Visible framebuffer in 15-bit BGR555 (converted to RGB888 at snapshot time).
     framebuffer: Vec<u16>,
     /// Set when the PPU enters VBlank (a full visible frame has been produced).
@@ -223,6 +235,10 @@ impl Default for Ppu {
 impl Ppu {
     /// Create a new PPU in its power-on state.
     pub fn new() -> Self {
+        Self::new_with_region(SnesVideoRegion::Ntsc)
+    }
+
+    pub fn new_with_region(video_region: SnesVideoRegion) -> Self {
         Self {
             vram: vec![0; VRAM_SIZE],
             cgram: vec![0; CGRAM_SIZE],
@@ -255,6 +271,7 @@ impl Ppu {
             timeup_flag: false,
             irq_line: false,
             interlace_field: false,
+            video_region,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
             frame_complete: false,
             bg_mode: 0,
@@ -360,10 +377,11 @@ impl Ppu {
         } else {
             SCREEN_WIDTH
         };
+        let active_height = self.active_screen_height();
         let height = if self.interlace_enabled() {
-            SCREEN_HEIGHT_MAX
+            active_height * 2
         } else {
-            SCREEN_HEIGHT
+            active_height
         };
         (width as u32, height as u32)
     }
@@ -394,6 +412,33 @@ impl Ppu {
 
     pub(super) fn interlace_enabled(&self) -> bool {
         self.setini & 0x01 != 0
+    }
+
+    pub(super) fn overscan_239_enabled(&self) -> bool {
+        self.setini & 0x04 != 0
+    }
+
+    pub(super) fn active_screen_height(&self) -> usize {
+        if self.overscan_239_enabled() {
+            SCREEN_HEIGHT_TALL
+        } else {
+            SCREEN_HEIGHT
+        }
+    }
+
+    pub(super) fn vblank_start_line(&self) -> u16 {
+        if self.overscan_239_enabled() {
+            (VISIBLE_LINE_START as usize + SCREEN_HEIGHT_TALL) as u16
+        } else {
+            VBLANK_START_LINE
+        }
+    }
+
+    pub(super) fn scanlines_per_frame(&self) -> u16 {
+        match self.video_region {
+            SnesVideoRegion::Ntsc => NTSC_SCANLINES_PER_FRAME,
+            SnesVideoRegion::Pal => PAL_SCANLINES_PER_FRAME,
+        }
     }
 
     pub(super) fn obj_interlace_enabled(&self) -> bool {
@@ -452,6 +497,18 @@ mod tests {
         ppu.write_register(0x2133, 0x08);
 
         assert_eq!(ppu.frame_dimensions(), (512, 224));
+    }
+
+    #[test]
+    fn setini_overscan_mode_enables_239_line_output_height() {
+        let mut ppu = Ppu::new();
+        assert_eq!(ppu.frame_dimensions(), (256, 224));
+
+        ppu.write_register(0x2133, 0x04);
+        assert_eq!(ppu.frame_dimensions(), (256, 239));
+
+        ppu.write_register(0x2133, 0x05);
+        assert_eq!(ppu.frame_dimensions(), (256, 478));
     }
 
     #[test]

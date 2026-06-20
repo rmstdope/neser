@@ -4,7 +4,7 @@
 //! tile name base (8K-word steps), and the name gap inserted between tiles $0FF and $100 (4K-word
 //! steps). See fullsnes "SNES PPU Sprites (OBJs)".
 
-use super::{Ppu, SCREEN_HEIGHT};
+use super::Ppu;
 
 impl Ppu {
     /// Convert framebuffer row `line` into the OBJ sampling line.
@@ -174,7 +174,7 @@ impl Ppu {
 
             // During scanline `s` the PPU evaluates the line displayed on scanline `s + 1`
             // (OAM line index `s`); skipped during forced blank.
-            if !forced_blank && (scanline as usize) < SCREEN_HEIGHT {
+            if !forced_blank && (scanline as usize) < self.active_screen_height() {
                 let eval = self.evaluate_line_objects(scanline);
                 self.obj_range_over_dot = if eval.range_over {
                     eval.range_over_index.map(|i| i as u16 * 2)

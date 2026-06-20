@@ -5,7 +5,7 @@
 //! [`Ppu::screen_snapshot_rgb`] applies INIDISP forced-blank and master brightness at output,
 //! converting to packed RGB888.
 
-use super::{Ppu, SCREEN_HEIGHT, SCREEN_WIDTH, VISIBLE_DOT_START, VISIBLE_LINE_START};
+use super::{Ppu, SCREEN_WIDTH, VISIBLE_DOT_START, VISIBLE_LINE_START};
 
 impl Ppu {
     /// Render the pixel at the current dot (called once per dot from the timing loop).
@@ -14,7 +14,8 @@ impl Ppu {
     pub(super) fn render_dot(&mut self) {
         let line = self.position.scanline;
         let dot = self.position.dot;
-        if line < VISIBLE_LINE_START || line as usize >= VISIBLE_LINE_START as usize + SCREEN_HEIGHT
+        if line < VISIBLE_LINE_START
+            || line as usize >= VISIBLE_LINE_START as usize + self.active_screen_height()
         {
             return;
         }
@@ -185,6 +186,21 @@ mod tests {
     }
 
     #[test]
+    fn overscan_239_mode_renders_a_239_line_snapshot() {
+        let mut ppu = Ppu::new();
+        set_backdrop(&mut ppu, 0x001F); // full red
+        ppu.write_register(0x2100, 0x0F);
+        ppu.write_register(0x2133, 0x04); // SETINI overscan/tall-screen bit
+        render_full_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(rgb.len(), 256 * 239 * 3);
+        assert_eq!(&rgb[0..3], &[255, 0, 0], "top-left pixel is rendered");
+        let last = (256 * 239 - 1) * 3;
+        assert_eq!(&rgb[last..last + 3], &[255, 0, 0], "line 239 is rendered");
+    }
+
+    #[test]
     fn frame_complete_is_set_once_when_entering_vblank() {
         let mut ppu = Ppu::new();
         assert!(!ppu.take_frame_complete());
@@ -195,6 +211,29 @@ mod tests {
         }
 
         assert!(ppu.take_frame_complete(), "frame complete at VBlank entry");
+        assert!(!ppu.take_frame_complete(), "flag consumed");
+    }
+
+    #[test]
+    fn frame_complete_in_239_line_mode_triggers_at_scanline_240() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2133, 0x04); // SETINI overscan/tall-screen bit
+        assert!(!ppu.take_frame_complete());
+
+        // 239 visible lines are completed, but VBlank has not started yet.
+        for _ in 0..(DOTS_PER_SCANLINE as u32 * 239 * MASTER_CYCLES_PER_DOT) {
+            ppu.tick();
+        }
+        assert!(!ppu.take_frame_complete());
+
+        // One more scanline enters VBlank at line 240.
+        for _ in 0..(DOTS_PER_SCANLINE as u32 * MASTER_CYCLES_PER_DOT) {
+            ppu.tick();
+        }
+        assert!(
+            ppu.take_frame_complete(),
+            "frame complete at overscan VBlank entry"
+        );
         assert!(!ppu.take_frame_complete(), "flag consumed");
     }
 }

@@ -2,15 +2,13 @@
 //!
 //! The bus calls [`Ppu::tick`] once per master clock. The PPU accumulates master clocks and
 //! advances one dot every [`MASTER_CYCLES_PER_DOT`] cycles, wrapping the dot counter at
-//! [`DOTS_PER_SCANLINE`] and the scanline counter at [`NTSC_SCANLINES_PER_FRAME`].
+//! [`DOTS_PER_SCANLINE`] and the scanline counter at the active region's
+//! `scanlines_per_frame()` (262 NTSC / 312 PAL).
 //!
 //! Note: long/short-dot quirks (the extra/short dot at 323/327, and the 1364-vs-1360 master
 //! clocks on certain scanlines) are not yet modeled and are a documented refinement TODO.
 
-use super::{
-    DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu, VBLANK_START_LINE,
-    VISIBLE_LINE_START,
-};
+use super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, VISIBLE_LINE_START};
 
 impl Ppu {
     /// Advance the PPU by one master clock.
@@ -28,7 +26,7 @@ impl Ppu {
         if self.position.dot >= DOTS_PER_SCANLINE {
             self.position.dot = 0;
             self.position.scanline += 1;
-            if self.position.scanline >= NTSC_SCANLINES_PER_FRAME {
+            if self.position.scanline >= self.scanlines_per_frame() {
                 self.position.scanline = 0;
             }
             self.on_scanline_start();
@@ -41,12 +39,13 @@ impl Ppu {
 
     fn on_scanline_start(&mut self) {
         let scanline = self.position.scanline;
+        let vblank_start_line = self.vblank_start_line();
         // Advance the vertical mosaic block counter for visible scanlines.
-        if (VISIBLE_LINE_START..VBLANK_START_LINE).contains(&scanline) {
+        if (VISIBLE_LINE_START..vblank_start_line).contains(&scanline) {
             self.advance_mosaic_vcount(scanline);
         }
         match scanline {
-            VBLANK_START_LINE => {
+            _ if scanline == vblank_start_line => {
                 // Begin VBlank: a full visible frame has been produced. Set the VBlank + RDNMI
                 // flags (the flag is set even if NMI is disabled), then re-evaluate the NMI line.
                 self.vblank_active = true;
@@ -114,7 +113,9 @@ impl Ppu {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, ScanPosition};
+    use super::super::{
+        DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, ScanPosition, SnesVideoRegion,
+    };
 
     #[test]
     fn tick_should_advance_one_dot_every_four_master_clocks() {
@@ -154,6 +155,10 @@ mod tests {
         for _ in 0..(dots * MASTER_CYCLES_PER_DOT) {
             ppu.tick();
         }
+    }
+
+    fn tick_scanlines(ppu: &mut Ppu, scanlines: u32) {
+        tick_dots(ppu, DOTS_PER_SCANLINE as u32 * scanlines);
     }
 
     #[test]
@@ -331,6 +336,19 @@ mod tests {
     }
 
     #[test]
+    fn overscan_239_line_mode_moves_vblank_entry_to_scanline_240() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2133, 0x04); // SETINI overscan/tall-screen bit
+
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 239);
+        assert!(!ppu.in_vblank(), "line 239 should still be visible");
+
+        // One additional full scanline reaches scanline 240, where VBlank begins.
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32);
+        assert!(ppu.in_vblank(), "VBlank should begin at scanline 240");
+    }
+
+    #[test]
     fn h_irq_sets_timeup_and_4211_read_acknowledges_it() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x4207, 0x01);
@@ -436,6 +454,32 @@ mod tests {
             ppu.read_register(0x4211) & 0x80,
             0,
             "HTIME=0 HV mode should trigger at dot 0 of the VTIME line"
+        );
+    }
+
+    #[test]
+    fn ntsc_scanline_counter_wraps_after_262_scanlines() {
+        let mut ppu = Ppu::new();
+        tick_scanlines(&mut ppu, 262);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            }
+        );
+    }
+
+    #[test]
+    fn pal_scanline_counter_wraps_after_312_scanlines() {
+        let mut ppu = Ppu::new_with_region(SnesVideoRegion::Pal);
+        tick_scanlines(&mut ppu, 312);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            }
         );
     }
 }

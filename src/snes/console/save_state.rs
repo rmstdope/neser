@@ -203,6 +203,8 @@ pub struct SnesPpuState {
     #[serde(default)]
     pub interlace_field: bool,
     #[serde(default)]
+    pub video_region: u8,
+    #[serde(default)]
     pub bg_mode: u8,
     #[serde(default)]
     pub bg3_priority: bool,
