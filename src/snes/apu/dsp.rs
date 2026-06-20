@@ -20,6 +20,10 @@ pub struct Sdsp {
     phase: u8,
     #[serde(default = "default_regs")]
     regs: Vec<u8>,
+    #[serde(default)]
+    voice_pitch: [u16; 8],
+    #[serde(default)]
+    voice_sample_pos: [u32; 8],
 }
 
 impl Default for Sdsp {
@@ -34,6 +38,8 @@ impl Sdsp {
         Self {
             phase: 0,
             regs: default_regs(),
+            voice_pitch: [0; 8],
+            voice_sample_pos: [0; 8],
         }
     }
 
@@ -56,6 +62,22 @@ impl Sdsp {
         self.phase
     }
 
+    pub fn set_voice_pitch(&mut self, voice: usize, pitch: u16) {
+        let idx = voice_index(voice);
+        self.voice_pitch[idx] = pitch & 0x3FFF;
+    }
+
+    #[must_use]
+    pub fn voice_sample_pos(&self, voice: usize) -> u32 {
+        self.voice_sample_pos[voice_index(voice)]
+    }
+
+    pub fn step_voice_pitch(&mut self, voice: usize) {
+        let idx = voice_index(voice);
+        self.voice_sample_pos[idx] =
+            self.voice_sample_pos[idx].wrapping_add(u32::from(self.voice_pitch[idx]));
+    }
+
     pub fn step_phase(&mut self) {
         self.phase = self.phase.wrapping_add(1) & 0x1F;
     }
@@ -74,13 +96,23 @@ impl Sdsp {
 
     #[must_use]
     pub fn decode_brr_block(header: u8, data: [u8; 8], prev1: i16, prev2: i16) -> DecodedBrrBlock {
-        let _ = (header >> 4, prev1, prev2);
+        let shift = (header >> 4) & 0x0F;
+        let filter = (header >> 2) & 0x03;
+        let mut hist1 = prev1;
+        let mut hist2 = prev2;
         let mut samples = [0i16; 16];
         for (i, byte) in data.iter().copied().enumerate() {
             let hi = ((byte >> 4) & 0x0F) as i8;
             let lo = (byte & 0x0F) as i8;
-            samples[i * 2] = sign_extend_nibble(hi);
-            samples[i * 2 + 1] = sign_extend_nibble(lo);
+            let s0 = decode_brr_nibble(sign_extend_nibble(hi), shift, filter, hist1, hist2);
+            hist2 = hist1;
+            hist1 = s0;
+            samples[i * 2] = s0;
+
+            let s1 = decode_brr_nibble(sign_extend_nibble(lo), shift, filter, hist1, hist2);
+            hist2 = hist1;
+            hist1 = s1;
+            samples[i * 2 + 1] = s1;
         }
         DecodedBrrBlock {
             samples,
@@ -93,6 +125,26 @@ impl Sdsp {
 fn sign_extend_nibble(value: i8) -> i16 {
     let widened = (value << 4) >> 4;
     i16::from(widened)
+}
+
+fn decode_brr_nibble(raw: i16, shift: u8, filter: u8, prev1: i16, prev2: i16) -> i16 {
+    let base = if shift > 12 {
+        if raw >= 0 { 0 } else { -2048 }
+    } else {
+        i32::from(raw) << shift
+    };
+    let predict = match filter {
+        0 => 0,
+        1 => (i32::from(prev1) * 15) >> 4,
+        2 => ((i32::from(prev1) * 61) >> 5) - ((i32::from(prev2) * 15) >> 4),
+        _ => ((i32::from(prev1) * 115) >> 6) - ((i32::from(prev2) * 13) >> 4),
+    };
+    (base + predict).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+}
+
+fn voice_index(voice: usize) -> usize {
+    assert!(voice < 8, "voice index out of range: {voice}");
+    voice
 }
 
 #[cfg(test)]
@@ -155,5 +207,34 @@ mod tests {
         assert_eq!(decoded.samples[1], -8);
         assert_eq!(decoded.samples[2], 0);
         assert_eq!(decoded.samples[3], -1);
+    }
+
+    #[test]
+    fn given_higher_range_when_decoded_then_sample_magnitude_increases() {
+        let mut data = [0u8; 8];
+        data[0] = 0x10;
+
+        let shift0 = Sdsp::decode_brr_block(0b0000_0000, data, 0, 0);
+        let shift1 = Sdsp::decode_brr_block(0b0001_0000, data, 0, 0);
+
+        assert!(shift1.samples[0].abs() > shift0.samples[0].abs());
+    }
+
+    #[test]
+    fn given_filter1_and_prev_sample_when_decoded_then_history_influences_output() {
+        let mut data = [0u8; 8];
+        data[0] = 0x00;
+
+        let decoded = Sdsp::decode_brr_block(0b0000_0100, data, 16, 0);
+        assert!(decoded.samples[0] > 0);
+    }
+
+    #[test]
+    fn given_voice_pitch_when_step_voice_pitch_then_sample_position_advances() {
+        let mut dsp = Sdsp::new();
+        dsp.set_voice_pitch(2, 0x1234);
+
+        dsp.step_voice_pitch(2);
+        assert_eq!(dsp.voice_sample_pos(2), 0x1234);
     }
 }
