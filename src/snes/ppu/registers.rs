@@ -5,9 +5,7 @@
 //! `$4212` HVBJOY). The bus passes the bare offset to [`Ppu::write_register`] /
 //! [`Ppu::read_register`].
 
-use super::{
-    CGRAM_SIZE, CPU_VERSION, HBLANK_START_DOT, PPU1_VERSION, PPU2_VERSION, Ppu, VRAM_SIZE,
-};
+use super::{CGRAM_SIZE, CPU_VERSION, PPU1_VERSION, PPU2_VERSION, Ppu, VRAM_SIZE};
 
 impl Ppu {
     /// Write a PPU register by its 16-bit address offset.
@@ -272,11 +270,7 @@ impl Ppu {
             // HVBJOY: VBlank flag (bit 7), HBlank flag (bit 6), auto-joypad busy (bit 0).
             0x4212 => {
                 let vblank = if self.vblank_active { 0x80 } else { 0x00 };
-                let hblank = if self.position.dot >= HBLANK_START_DOT {
-                    0x40
-                } else {
-                    0x00
-                };
+                let hblank = if self.hblank_active() { 0x40 } else { 0x00 };
                 vblank | hblank
             }
             // SLHV: software strobe to latch the H/V counters (data value is open bus).

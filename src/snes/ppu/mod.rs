@@ -76,6 +76,32 @@ pub struct ScanPosition {
     pub dot: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PpuLineTimingProfile {
+    #[default]
+    Normal,
+    Short,
+    Long,
+}
+
+impl PpuLineTimingProfile {
+    pub(crate) fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Short,
+            2 => Self::Long,
+            _ => Self::Normal,
+        }
+    }
+
+    pub(crate) fn as_u8(self) -> u8 {
+        match self {
+            Self::Normal => 0,
+            Self::Short => 1,
+            Self::Long => 2,
+        }
+    }
+}
+
 /// SNES Picture Processing Unit.
 #[derive(Debug, Clone)]
 pub struct Ppu {
@@ -85,6 +111,8 @@ pub struct Ppu {
     position: ScanPosition,
     /// Accumulated master clocks not yet converted into dots.
     master_cycle_accumulator: u32,
+    /// Latched timing profile for the active scanline.
+    line_timing_profile: PpuLineTimingProfile,
     inidisp: u8,
     nmi_enable: bool,
     /// RDNMI ($4210) bit 7: VBlank NMI flag (set at VBlank start, cleared at VBlank end / read).
@@ -245,6 +273,7 @@ impl Ppu {
             oam: vec![0; OAM_SIZE],
             position: ScanPosition::default(),
             master_cycle_accumulator: 0,
+            line_timing_profile: PpuLineTimingProfile::Normal,
             inidisp: 0,
             nmi_enable: false,
             nmi_flag: false,

@@ -1,29 +1,33 @@
 //! PPU dot/scanline timing.
 //!
 //! The bus calls [`Ppu::tick`] once per master clock. The PPU accumulates master clocks and
-//! advances one dot every [`MASTER_CYCLES_PER_DOT`] cycles, wrapping the dot counter at
-//! [`DOTS_PER_SCANLINE`] and the scanline counter at the active region's
-//! `scanlines_per_frame()` (262 NTSC / 312 PAL).
+//! advances one dot at a time using the active scanline timing profile, which can shorten/lengthen
+//! the line and insert paired long-dot phases. Normal dots are 4 master clocks wide; scanline
+//! totals still wrap the scanline counter at the active region's `scanlines_per_frame()` (262 NTSC
+//! / 312 PAL).
 //!
-//! Note: long/short-dot quirks (the extra/short dot at 323/327, and the 1364-vs-1360 master
-//! clocks on certain scanlines) are not yet modeled and are a documented refinement TODO.
+//! Note: long/short-dot quirks now use a latched per-scanline profile, including the paired
+//! long-dot phase around H=323/327 and the NTSC/PAL short/long scanline exceptions.
 
-use super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, VISIBLE_LINE_START};
+use super::{
+    DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, PpuLineTimingProfile, VISIBLE_LINE_START,
+};
 
 impl Ppu {
     /// Advance the PPU by one master clock.
     pub fn tick(&mut self) {
         self.master_cycle_accumulator += 1;
-        if self.master_cycle_accumulator < MASTER_CYCLES_PER_DOT {
+        let cycles_per_dot = self.cycles_per_current_dot();
+        if self.master_cycle_accumulator < cycles_per_dot {
             return;
         }
-        self.master_cycle_accumulator -= MASTER_CYCLES_PER_DOT;
+        self.master_cycle_accumulator -= cycles_per_dot;
         self.advance_dot();
     }
 
     fn advance_dot(&mut self) {
         self.position.dot += 1;
-        if self.position.dot >= DOTS_PER_SCANLINE {
+        if self.position.dot >= self.dots_in_current_scanline() {
             self.position.dot = 0;
             self.position.scanline += 1;
             if self.position.scanline >= self.scanlines_per_frame() {
@@ -37,8 +41,54 @@ impl Ppu {
         self.render_dot();
     }
 
+    fn dots_in_current_scanline(&self) -> u16 {
+        match self.line_timing_profile {
+            PpuLineTimingProfile::Short => DOTS_PER_SCANLINE - 1,
+            PpuLineTimingProfile::Long => DOTS_PER_SCANLINE + 1,
+            PpuLineTimingProfile::Normal => DOTS_PER_SCANLINE,
+        }
+    }
+
+    fn cycles_per_current_dot(&self) -> u32 {
+        match self.line_timing_profile {
+            PpuLineTimingProfile::Short => MASTER_CYCLES_PER_DOT,
+            PpuLineTimingProfile::Normal | PpuLineTimingProfile::Long => match self.position.dot {
+                323 | 327 => MASTER_CYCLES_PER_DOT + 2,
+                324 | 328 => MASTER_CYCLES_PER_DOT - 2,
+                _ => MASTER_CYCLES_PER_DOT,
+            },
+        }
+    }
+
+    pub(super) fn hblank_active(&self) -> bool {
+        self.position.dot == 0 || self.position.dot >= super::HBLANK_START_DOT
+    }
+
+    fn line_timing_profile_for_scanline(&self) -> PpuLineTimingProfile {
+        if self.video_region == super::SnesVideoRegion::Ntsc
+            && !self.interlace_enabled()
+            && self.interlace_field
+            && self.position.scanline == 240
+        {
+            PpuLineTimingProfile::Short
+        } else if self.video_region == super::SnesVideoRegion::Pal
+            && self.interlace_enabled()
+            && self.interlace_field
+            && self.position.scanline == 311
+        {
+            PpuLineTimingProfile::Long
+        } else {
+            PpuLineTimingProfile::Normal
+        }
+    }
+
+    fn latch_line_timing_profile(&mut self) {
+        self.line_timing_profile = self.line_timing_profile_for_scanline();
+    }
+
     fn on_scanline_start(&mut self) {
         let scanline = self.position.scanline;
+        self.latch_line_timing_profile();
         let vblank_start_line = self.vblank_start_line();
         // Advance the vertical mosaic block counter for visible scanlines.
         if (VISIBLE_LINE_START..vblank_start_line).contains(&scanline) {
@@ -57,9 +107,9 @@ impl Ppu {
                 // End of VBlank / top of a new frame: clear the VBlank + RDNMI flags.
                 self.vblank_active = false;
                 self.nmi_flag = false;
-                if self.interlace_enabled() {
-                    self.interlace_field = !self.interlace_field;
-                }
+                // The field parity still advances even when interlace output is disabled, because
+                // the short/long scanline exceptions are keyed off the latched field state.
+                self.interlace_field = !self.interlace_field;
                 self.update_nmi_line();
             }
             _ => {}
@@ -114,7 +164,8 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, ScanPosition, SnesVideoRegion,
+        DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, PpuLineTimingProfile, ScanPosition,
+        SnesVideoRegion,
     };
 
     #[test]
@@ -131,6 +182,34 @@ mod tests {
                 scanline: 0,
                 dot: 1
             }
+        );
+    }
+
+    #[test]
+    fn hblank_is_visible_for_the_entire_first_dot_of_a_scanline() {
+        let mut ppu = Ppu::new();
+        ppu.position.scanline = 6;
+        ppu.position.dot = 0;
+        ppu.line_timing_profile = PpuLineTimingProfile::Normal;
+
+        assert_ne!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "HBlank is set at dot 0"
+        );
+
+        tick_cycles(&mut ppu, 1);
+        assert_ne!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "HBlank is still set on dot 0"
+        );
+
+        tick_cycles(&mut ppu, 3);
+        assert_eq!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "HBlank clears on dot 1"
         );
     }
 
@@ -153,6 +232,12 @@ mod tests {
 
     fn tick_dots(ppu: &mut Ppu, dots: u32) {
         for _ in 0..(dots * MASTER_CYCLES_PER_DOT) {
+            ppu.tick();
+        }
+    }
+
+    fn tick_cycles(ppu: &mut Ppu, cycles: u32) {
+        for _ in 0..cycles {
             ppu.tick();
         }
     }
@@ -327,12 +412,36 @@ mod tests {
         assert_eq!(mid & 0x80, 0, "not in VBlank on scanline 0");
         assert_ne!(mid & 0x40, 0, "HBlank set at dot 300");
 
-        // Advance to VBlank entry (scanline 225, dot 0): VBlank set, HBlank clear.
+        // Advance to VBlank entry (scanline 225, dot 0): VBlank set, HBlank still set.
         let mut ppu = Ppu::new();
         tick_to_vblank(&mut ppu);
         let vb = ppu.read_register(0x4212);
         assert_ne!(vb & 0x80, 0, "VBlank flag set");
-        assert_eq!(vb & 0x40, 0, "HBlank clear at dot 0");
+        assert_ne!(vb & 0x40, 0, "HBlank remains set at dot 0");
+    }
+
+    #[test]
+    fn hblank_flag_stays_set_at_dot_0_and_clears_at_dot_1() {
+        let mut ppu = Ppu::new();
+        ppu.position.scanline = 6;
+        ppu.position.dot = 0;
+        ppu.line_timing_profile = PpuLineTimingProfile::Normal;
+
+        assert_ne!(ppu.read_register(0x4212) & 0x40, 0, "HBlank set at dot 0");
+
+        tick_cycles(&mut ppu, 1);
+        assert_ne!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "HBlank remains set during dot 0"
+        );
+
+        tick_cycles(&mut ppu, 3);
+        assert_eq!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "HBlank clears at dot 1"
+        );
     }
 
     #[test]
@@ -478,6 +587,154 @@ mod tests {
             ppu.position(),
             ScanPosition {
                 scanline: 0,
+                dot: 0
+            }
+        );
+    }
+
+    #[test]
+    fn ntsc_short_scanline_240_field_1_is_1360_master_cycles() {
+        let mut ppu = Ppu::new();
+        ppu.position.scanline = 240;
+        ppu.position.dot = 0;
+        ppu.interlace_field = true;
+        ppu.line_timing_profile = PpuLineTimingProfile::Short;
+        ppu.write_register(0x2133, 0x00); // non-interlaced output
+
+        // fullsnes: NTSC short line at V=240, field=1, non-interlace is 1360 cycles.
+        for _ in 0..1360 {
+            ppu.tick();
+        }
+
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 241,
+                dot: 0
+            }
+        );
+    }
+
+    #[test]
+    fn pal_interlace_long_scanline_311_field_1_is_1368_master_cycles() {
+        let mut ppu = Ppu::new_with_region(SnesVideoRegion::Pal);
+        ppu.position.scanline = 311;
+        ppu.position.dot = 0;
+        ppu.interlace_field = true;
+        ppu.line_timing_profile = PpuLineTimingProfile::Long;
+        ppu.write_register(0x2133, 0x01); // interlaced output
+
+        // fullsnes: PAL interlaced line 311 in field=1 is a long 1368-cycle line.
+        for _ in 0..1364 {
+            ppu.tick();
+        }
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 311,
+                dot: 341
+            }
+        );
+
+        for _ in 0..4 {
+            ppu.tick();
+        }
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            }
+        );
+    }
+
+    #[test]
+    fn pal_long_scanline_applies_extra_cycles_at_dot_327_not_line_end() {
+        let mut ppu = Ppu::new_with_region(SnesVideoRegion::Pal);
+        ppu.position.scanline = 311;
+        ppu.position.dot = 327;
+        ppu.interlace_field = true;
+        ppu.line_timing_profile = PpuLineTimingProfile::Long;
+        ppu.write_register(0x2133, 0x01); // interlaced output
+
+        for _ in 0..4 {
+            ppu.tick();
+        }
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 311,
+                dot: 327
+            }
+        );
+
+        for _ in 0..2 {
+            ppu.tick();
+        }
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 311,
+                dot: 328
+            }
+        );
+    }
+
+    #[test]
+    fn ntsc_short_scanline_has_no_extra_cycles_at_dot_327() {
+        let mut ppu = Ppu::new();
+        ppu.position.scanline = 240;
+        ppu.position.dot = 327;
+        ppu.interlace_field = true;
+        ppu.line_timing_profile = PpuLineTimingProfile::Short;
+        ppu.write_register(0x2133, 0x00); // non-interlaced output
+
+        for _ in 0..4 {
+            ppu.tick();
+        }
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 240,
+                dot: 328
+            }
+        );
+    }
+
+    #[test]
+    fn normal_scanline_uses_the_paired_long_dot_phase() {
+        let mut ppu = Ppu::new();
+        ppu.line_timing_profile = PpuLineTimingProfile::Normal;
+        ppu.position.scanline = 10;
+        ppu.position.dot = 323;
+
+        tick_cycles(&mut ppu, 4);
+        assert_eq!(ppu.position().dot, 323);
+        tick_cycles(&mut ppu, 2);
+        assert_eq!(ppu.position().dot, 324);
+
+        ppu.position.dot = 327;
+        tick_cycles(&mut ppu, 4);
+        assert_eq!(ppu.position().dot, 327);
+        tick_cycles(&mut ppu, 2);
+        assert_eq!(ppu.position().dot, 328);
+    }
+
+    #[test]
+    fn interlace_toggle_during_a_scanline_does_not_retime_the_active_line() {
+        let mut ppu = Ppu::new();
+        ppu.position.scanline = 240;
+        ppu.position.dot = 0;
+        ppu.interlace_field = true;
+        ppu.line_timing_profile = PpuLineTimingProfile::Short;
+
+        ppu.write_register(0x2133, 0x01);
+        tick_cycles(&mut ppu, 1360);
+
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 241,
                 dot: 0
             }
         );
