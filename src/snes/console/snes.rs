@@ -178,7 +178,8 @@ impl Emulator for Snes {
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
-        let bus = SnesSystemBus::new(cartridge);
+        let spc_ipl_path = self.app_context.borrow().config().snes.spc_ipl_path.clone();
+        let bus = SnesSystemBus::new_with_spc_ipl_path(cartridge, spc_ipl_path.as_deref());
         let mut cpu = Cpu::new(bus);
         cpu.do_reset();
         self.cpu = Some(cpu);

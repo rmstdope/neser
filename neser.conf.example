@@ -33,6 +33,7 @@
 # NES-specific settings are prefixed with nes- (e.g., nes-hardware, nes-pulse1).
 # Game Boy-specific settings are prefixed with gb- (e.g., gb-hardware, gb-dmg-variant).
 # GBA-specific settings are prefixed with gba- (e.g., gba-hardware, gba-bios-path).
+# SNES-specific settings are prefixed with snes- (e.g., snes-spc-ipl-path).
 # Generic platform settings have no prefix (e.g., audio, ram_init_mode).
 #
 # CLI boolean flags:
@@ -399,3 +400,11 @@ nes-vertical_overscan=8
 #gba-trace-dma=0
 #gba-trace-swi=0
 #gba-trace-mgba-log=0
+
+# -----------------------------------------------------------------------------
+# Super Nintendo (SNES) Settings
+# -----------------------------------------------------------------------------
+# Optional path to a custom SPC700 IPL ROM image.
+# The file must be exactly 64 bytes. If missing or invalid, NESER falls back
+# to the built-in clean-room IPL ROM.
+#snes-spc-ipl-path=/absolute/path/to/spc_ipl.bin
