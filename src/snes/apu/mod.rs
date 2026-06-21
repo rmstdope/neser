@@ -533,7 +533,7 @@ impl SpcBusView<'_> {
     fn tick_timers_if_enabled(&mut self) {
         if self.tick_timers {
             self.timers.tick_cycle();
-            self.dsp.step_phase();
+            self.dsp.step_phase_with_memory(&self.aram[..]);
         }
     }
 

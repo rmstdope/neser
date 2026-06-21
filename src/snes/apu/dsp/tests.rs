@@ -17,7 +17,7 @@ fn given_all_register_addresses_when_written_then_reads_back_same_value() {
     let mut dsp = Sdsp::new();
     let is_read_only_status = |addr: u8| -> bool {
         let voice = addr >> 4;
-        voice < 8 && matches!(addr & 0x0F, 0x08 | 0x09)
+        addr == 0x7C || (voice < 8 && matches!(addr & 0x0F, 0x08 | 0x09))
     };
     for addr in 0u8..=0x7F {
         let value = addr.wrapping_mul(3).wrapping_add(1);
@@ -312,6 +312,119 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
     assert_ne!(
         mod_step, base_step,
         "PMON source must be independent from post-mix master volume"
+    );
+}
+
+#[test]
+fn given_pmon_enabled_with_voice0_output_when_voice1_steps_then_pitch_uses_modulation_formula() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x00, 127);
+    dsp.write_reg(0x01, 127);
+    dsp.write_reg(0x07, 0x7F);
+    dsp.write_reg(0x12, 0x00);
+    dsp.write_reg(0x13, 0x10);
+    dsp.write_reg(0x2D, 0x02);
+
+    dsp.step_phase();
+
+    let voice0_outx = i32::from(dsp.read_reg(0x09) as i8);
+    let expected_step = (0x1000 * ((voice0_outx >> 4) + 0x400)) >> 10;
+    assert_eq!(
+        dsp.voice_sample_pos(1),
+        expected_step as u32,
+        "voice1 pitch should use the previous voice OUTX-derived modulation factor"
+    );
+}
+
+#[test]
+fn given_adsr_attack_rate_15_when_key_on_latency_expires_then_envelope_jumps_by_1024() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x05, 0x8F);
+    dsp.write_reg(0x06, 0xE0);
+    dsp.write_reg(0x4C, 0x01);
+
+    for _ in 0..5 {
+        dsp.step_phase();
+    }
+
+    assert_eq!(
+        dsp.read_reg(0x08),
+        0x40,
+        "attack rate 15 should step the envelope by 1024 at the first active tick"
+    );
+}
+
+#[test]
+fn given_write_to_endx_when_acknowledged_then_all_voice_end_bits_clear() {
+    let mut dsp = Sdsp::new();
+
+    dsp.write_reg(0x7C, 0xFF);
+
+    assert_eq!(
+        dsp.read_reg(0x7C),
+        0x00,
+        "writing ENDX should acknowledge and clear every bit"
+    );
+}
+
+#[test]
+fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sample_data() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    aram[0x0000] = 0x00;
+    aram[0x0001] = 0x01;
+    aram[0x0002] = 0x00;
+    aram[0x0003] = 0x01;
+
+    dsp.write_reg(0x04, 0x00);
+    dsp.write_reg(0x05, 0x8F);
+    dsp.write_reg(0x06, 0xE0);
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x07, 0x7F);
+    dsp.write_reg(0x02, 0x00);
+    dsp.write_reg(0x03, 0x10);
+    dsp.write_reg(0x4C, 0x01);
+
+    for _ in 0..5 {
+        dsp.step_phase_with_memory(&aram);
+    }
+
+    assert_eq!(
+        dsp.read_reg(0x09),
+        0x00,
+        "a decoded zero BRR block should produce a silent OUTX sample"
+    );
+}
+
+#[test]
+fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    aram[0x0000] = 0x00;
+    aram[0x0001] = 0x01;
+    aram[0x0002] = 0x00;
+    aram[0x0003] = 0x01;
+    aram[0x0100] = 0x01;
+
+    dsp.write_reg(0x04, 0x00);
+    dsp.write_reg(0x05, 0x8F);
+    dsp.write_reg(0x06, 0xE0);
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x07, 0x7F);
+    dsp.write_reg(0x02, 0x00);
+    dsp.write_reg(0x03, 0x10);
+    dsp.write_reg(0x4C, 0x01);
+
+    for _ in 0..5 {
+        dsp.step_phase_with_memory(&aram);
+    }
+
+    assert_ne!(
+        dsp.read_reg(0x7C),
+        0x00,
+        "an END BRR block should raise the ENDX voice status bit"
     );
 }
 
