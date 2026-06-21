@@ -99,6 +99,11 @@ impl Spc700 {
         }
     }
 
+    /// Force the CPU into the halted state.
+    pub(crate) fn halt(&mut self) {
+        self.halted = true;
+    }
+
     /// Reset the CPU: clear registers/flags and load `PC` from the reset vector.
     ///
     /// On real hardware the boot ROM is mapped at reset, so the vector at
@@ -278,7 +283,7 @@ impl Spc700 {
         self.update_flags_on_compare(left, right);
     }
 
-    /// Read `PC` and advance it, consuming one cycle.
+    /// Read `PC` and advance it, consuming the bus-defined read cycle cost.
     fn fetch(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) -> u8 {
         let byte = self.read_cycle(bus, self.pc, cycles);
         self.pc = self.pc.wrapping_add(1);
@@ -301,22 +306,22 @@ impl Spc700 {
         (addr, bit_index)
     }
 
-    /// Read a byte, consuming one cycle.
+    /// Read a byte, consuming the bus-defined read cycle cost.
     fn read_cycle(&mut self, bus: &mut impl Spc700Bus, addr: u16, cycles: &mut u8) -> u8 {
-        *cycles = cycles.wrapping_add(1);
+        *cycles = cycles.wrapping_add(bus.read_cycles(addr));
         bus.read(addr)
     }
 
-    /// Write a byte, consuming one cycle.
+    /// Write a byte, consuming the bus-defined write cycle cost.
     #[allow(dead_code)] // Used as opcodes are added in subsequent slices.
     fn write_cycle(&mut self, bus: &mut impl Spc700Bus, addr: u16, value: u8, cycles: &mut u8) {
-        *cycles = cycles.wrapping_add(1);
+        *cycles = cycles.wrapping_add(bus.write_cycles(addr));
         bus.write(addr, value);
     }
 
     /// Consume one internal (idle) cycle.
     fn idle_cycle(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) {
-        *cycles = cycles.wrapping_add(1);
+        *cycles = cycles.wrapping_add(bus.idle_cycles());
         bus.idle();
     }
 
@@ -475,8 +480,9 @@ impl Spc700 {
     /// SingleStepTests coverage.
     pub fn step(&mut self, bus: &mut impl Spc700Bus) -> u8 {
         if self.halted {
+            let cycles = bus.idle_cycles();
             bus.idle();
-            return 1;
+            return cycles;
         }
         let mut cycles = 0u8;
         let opcode = self.fetch(bus, &mut cycles);
@@ -2372,6 +2378,52 @@ impl Spc700 {
 mod tests {
     use super::*;
     use crate::snes::apu::spc700::bus::FlatRamBus;
+
+    struct VariableIdleBus {
+        ram: Box<[u8; 0x1_0000]>,
+        cycles: u64,
+        idle_cost: u8,
+    }
+
+    impl VariableIdleBus {
+        fn new(idle_cost: u8) -> Self {
+            Self {
+                ram: Box::new([0; 0x1_0000]),
+                cycles: 0,
+                idle_cost,
+            }
+        }
+
+        fn load(&mut self, addr: u16, data: &[u8]) {
+            for (i, &byte) in data.iter().enumerate() {
+                self.ram[addr.wrapping_add(i as u16) as usize] = byte;
+            }
+        }
+
+        fn cycles(&self) -> u64 {
+            self.cycles
+        }
+    }
+
+    impl Spc700Bus for VariableIdleBus {
+        fn read(&mut self, addr: u16) -> u8 {
+            self.cycles = self.cycles.wrapping_add(1);
+            self.ram[addr as usize]
+        }
+
+        fn write(&mut self, addr: u16, value: u8) {
+            self.cycles = self.cycles.wrapping_add(1);
+            self.ram[addr as usize] = value;
+        }
+
+        fn idle_cycles(&self) -> u8 {
+            self.idle_cost
+        }
+
+        fn idle(&mut self) {
+            self.cycles = self.cycles.wrapping_add(u64::from(self.idle_cost));
+        }
+    }
 
     #[test]
     fn new_clears_all_registers() {
@@ -5393,5 +5445,20 @@ mod tests {
         assert_eq!(second_cycles, 1);
         assert_eq!(bus.cycles(), 2);
         assert_eq!(pc_after_stop, cpu.pc());
+    }
+
+    #[test]
+    fn halted_step_uses_bus_idle_cycle_cost() {
+        let mut cpu = Spc700::new();
+        let mut bus = VariableIdleBus::new(5);
+        bus.load(0x0200, &[0xFF]); // STOP
+        cpu.load_state_for_processor_test(0, 0, 0, 0xF0, 0x0200, 0);
+
+        let first_cycles = cpu.step(&mut bus);
+        let second_cycles = cpu.step(&mut bus);
+
+        assert_eq!(first_cycles, 1);
+        assert_eq!(second_cycles, 5);
+        assert_eq!(bus.cycles(), 6);
     }
 }

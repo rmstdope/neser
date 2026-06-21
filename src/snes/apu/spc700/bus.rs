@@ -6,21 +6,43 @@
 //! bus-agnostic and testable, mirroring the `SnesBus` pattern used by the 65816.
 //!
 //! Every [`Spc700Bus::read`], [`Spc700Bus::write`], and [`Spc700Bus::idle`] call
-//! represents exactly one ~1.024 MHz SPC700 cycle, which lets the CPU core remain
-//! cycle-accurate and be verified against SingleStepTests `spc700` vectors.
+//! advances SPC700 time by the corresponding bus-defined cycle cost from
+//! [`Spc700Bus::read_cycles`], [`Spc700Bus::write_cycles`], or
+//! [`Spc700Bus::idle_cycles`].
 
 /// Bus interface for the SPC700 CPU core.
 ///
 /// Reads take `&mut self` because several SPC700-visible registers (I/O ports,
 /// timer counters) have read side effects in the full APU implementation.
 pub trait Spc700Bus {
-    /// Read a byte from the 16-bit SPC700 address space (consumes one cycle).
+    /// Base cycle cost for reading from the given address.
+    fn read_cycles(&self, _addr: u16) -> u8 {
+        1
+    }
+
+    /// Read a byte from the 16-bit SPC700 address space.
+    ///
+    /// Timing is represented by [`Self::read_cycles`].
     fn read(&mut self, addr: u16) -> u8;
 
-    /// Write a byte to the 16-bit SPC700 address space (consumes one cycle).
+    /// Base cycle cost for writing to the given address.
+    fn write_cycles(&self, _addr: u16) -> u8 {
+        1
+    }
+
+    /// Write a byte to the 16-bit SPC700 address space.
+    ///
+    /// Timing is represented by [`Self::write_cycles`].
     fn write(&mut self, addr: u16, value: u8);
 
-    /// Consume one internal (idle) SPC700 cycle with no memory access.
+    /// Base cycle cost for an idle SPC700 cycle.
+    fn idle_cycles(&self) -> u8 {
+        1
+    }
+
+    /// Consume one internal SPC700 idle step with no memory access.
+    ///
+    /// Timing is represented by [`Self::idle_cycles`].
     fn idle(&mut self);
 }
 
@@ -72,14 +94,26 @@ impl Default for FlatRamBus {
 }
 
 impl Spc700Bus for FlatRamBus {
+    fn read_cycles(&self, _addr: u16) -> u8 {
+        1
+    }
+
     fn read(&mut self, addr: u16) -> u8 {
         self.cycles += 1;
         self.ram[addr as usize]
     }
 
+    fn write_cycles(&self, _addr: u16) -> u8 {
+        1
+    }
+
     fn write(&mut self, addr: u16, value: u8) {
         self.cycles += 1;
         self.ram[addr as usize] = value;
+    }
+
+    fn idle_cycles(&self) -> u8 {
+        1
     }
 
     fn idle(&mut self) {

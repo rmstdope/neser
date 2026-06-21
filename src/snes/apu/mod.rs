@@ -21,6 +21,10 @@ const NATIVE_AUDIO_SAMPLE_RATE_HZ: f32 = 32_000.0;
 const SPC_PER_MASTER_NUM: i64 = 1_024_000;
 const SPC_PER_MASTER_DEN: i64 = 21_477_272;
 
+fn default_test_reg() -> u8 {
+    0x0A
+}
+
 fn default_pending_samples() -> Vec<(f32, f32)> {
     Vec::new()
 }
@@ -51,6 +55,8 @@ pub struct SnesApuState {
     pub spc_to_main_ports: [u8; 4],
     #[serde(default)]
     pub control: u8,
+    #[serde(default = "default_test_reg")]
+    pub test: u8,
     #[serde(default)]
     pub master_ticks: u64,
     #[serde(default)]
@@ -87,6 +93,8 @@ pub struct SnesApu {
     spc_to_main_ports: [u8; 4],
     /// Mirrors `$F1` control bits. Bit 7 toggles IPL overlay at `$FFC0-$FFFF`.
     control: u8,
+    /// Mirrors `$F0` test bits.
+    test: u8,
     timers: SpcTimers,
     master_ticks: u64,
     /// Signed budget in numerator units for fractional SPC catch-up.
@@ -111,6 +119,7 @@ impl SnesApu {
             main_to_spc_ports: [0; 4],
             spc_to_main_ports: [0; 4],
             control: 0xB0,
+            test: default_test_reg(),
             timers: SpcTimers::default(),
             master_ticks: 0,
             spc_cycle_budget: 0,
@@ -156,6 +165,7 @@ impl SnesApu {
                     main_to_spc_ports: &mut self.main_to_spc_ports,
                     spc_to_main_ports: &mut self.spc_to_main_ports,
                     control: &mut self.control,
+                    test: &mut self.test,
                     timers: &mut self.timers,
                     dsp: &mut self.dsp,
                     dsp_addr: &mut self.dsp_addr,
@@ -163,6 +173,9 @@ impl SnesApu {
                 };
                 i64::from(self.spc700.step(&mut bus_view))
             };
+            if self.test & 0x04 != 0 {
+                self.spc700.halt();
+            }
             self.spc_cycle_budget -= consumed_cycles * SPC_PER_MASTER_DEN;
         }
 
@@ -179,6 +192,7 @@ impl SnesApu {
             main_to_spc_ports: self.main_to_spc_ports,
             spc_to_main_ports: self.spc_to_main_ports,
             control: self.control,
+            test: self.test,
             master_ticks: self.master_ticks,
             spc_cycle_budget: self.spc_cycle_budget,
             timers: self.timers.clone(),
@@ -207,6 +221,7 @@ impl SnesApu {
             self.main_to_spc_ports = [0; 4];
             self.spc_to_main_ports = [0; 4];
             self.control = 0xB0;
+            self.test = default_test_reg();
             self.master_ticks = 0;
             self.spc_cycle_budget = 0;
             self.timers = SpcTimers::default();
@@ -233,6 +248,7 @@ impl SnesApu {
         self.main_to_spc_ports = state.main_to_spc_ports;
         self.spc_to_main_ports = state.spc_to_main_ports;
         self.control = state.control;
+        self.test = state.test;
         self.master_ticks = state.master_ticks;
         self.spc_cycle_budget = state.spc_cycle_budget;
         self.timers = state.timers.clone();
@@ -254,6 +270,9 @@ impl SnesApu {
             .take(MAX_PENDING_SAMPLES)
             .collect();
         self.spc700.restore_state(&state.spc700);
+        if self.test & 0x04 != 0 {
+            self.spc700.halt();
+        }
         Ok(())
     }
 
@@ -264,6 +283,7 @@ impl SnesApu {
             main_to_spc_ports: &mut self.main_to_spc_ports,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
+            test: &mut self.test,
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
@@ -372,6 +392,7 @@ impl SnesApu {
             main_to_spc_ports: &mut self.main_to_spc_ports,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
+            test: &mut self.test,
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
@@ -388,12 +409,16 @@ impl SnesApu {
             main_to_spc_ports: &mut self.main_to_spc_ports,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
+            test: &mut self.test,
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
             tick_timers: true,
         };
         bus_view.write(addr, value);
+        if self.test & 0x04 != 0 {
+            self.spc700.halt();
+        }
     }
 
     #[cfg(test)]
@@ -404,6 +429,7 @@ impl SnesApu {
             main_to_spc_ports: &mut self.main_to_spc_ports,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
+            test: &mut self.test,
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
@@ -422,12 +448,16 @@ impl SnesApu {
             main_to_spc_ports: &mut self.main_to_spc_ports,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
+            test: &mut self.test,
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
             tick_timers: true,
         };
         bus_view.write(0x00F1, value);
+        if self.test & 0x04 != 0 {
+            self.spc700.halt();
+        }
     }
 
     #[cfg(test)]
@@ -442,6 +472,7 @@ struct SpcBusView<'a> {
     main_to_spc_ports: &'a mut [u8; 4],
     spc_to_main_ports: &'a mut [u8; 4],
     control: &'a mut u8,
+    test: &'a mut u8,
     timers: &'a mut SpcTimers,
     dsp: &'a mut Sdsp,
     dsp_addr: &'a mut u8,
@@ -451,6 +482,34 @@ struct SpcBusView<'a> {
 impl SpcBusView<'_> {
     fn ipl_enabled(&self) -> bool {
         *self.control & 0x80 != 0
+    }
+
+    fn test_reg(&self) -> u8 {
+        *self.test
+    }
+
+    fn ram_write_enabled(&self) -> bool {
+        self.test_reg() & 0x02 != 0
+    }
+
+    fn is_internal_wait_address(&self, addr: u16) -> bool {
+        matches!(addr, 0x00F0..=0x00FF) || (0xFFC0..=0xFFFF).contains(&addr) && self.ipl_enabled()
+    }
+
+    fn wait_cycles_for_addr(&self, addr: Option<u16>) -> u8 {
+        let wait_bits = match addr {
+            None => (self.test_reg() >> 6) & 0x03,
+            Some(address) if self.is_internal_wait_address(address) => {
+                (self.test_reg() >> 6) & 0x03
+            }
+            Some(_) => (self.test_reg() >> 4) & 0x03,
+        };
+        match wait_bits {
+            0 => 1,
+            1 => 2,
+            2 => 5,
+            _ => 10,
+        }
     }
 
     fn write_control(&mut self, value: u8) {
@@ -467,17 +526,33 @@ impl SpcBusView<'_> {
         }
     }
 
+    fn write_test(&mut self, value: u8) {
+        *self.test = value;
+    }
+
     fn tick_timers_if_enabled(&mut self) {
         if self.tick_timers {
             self.timers.tick_cycle();
             self.dsp.step_phase();
         }
     }
+
+    fn tick_timers_multiple(&mut self, cycles: u8) {
+        for _ in 0..cycles {
+            self.tick_timers_if_enabled();
+        }
+    }
 }
 
 impl Spc700Bus for SpcBusView<'_> {
+    fn read_cycles(&self, addr: u16) -> u8 {
+        self.wait_cycles_for_addr(Some(addr))
+    }
+
     fn read(&mut self, addr: u16) -> u8 {
+        let cycles = self.read_cycles(addr);
         let value = match addr {
+            0x00F0 => 0x00,
             0x00F1 => *self.control,
             0x00F2 => *self.dsp_addr,
             0x00F3 => self.dsp.read_reg(*self.dsp_addr),
@@ -486,24 +561,41 @@ impl Spc700Bus for SpcBusView<'_> {
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
             _ => self.aram[addr as usize],
         };
-        self.tick_timers_if_enabled();
+        self.tick_timers_multiple(cycles);
         value
     }
 
+    fn write_cycles(&self, addr: u16) -> u8 {
+        self.wait_cycles_for_addr(Some(addr))
+    }
+
     fn write(&mut self, addr: u16, value: u8) {
+        let cycles = self.write_cycles(addr);
         match addr {
+            0x00F0 => {
+                self.write_test(value);
+            }
             0x00F1 => self.write_control(value),
             0x00F2 => *self.dsp_addr = value & 0x7F,
             0x00F3 => self.dsp.write_reg(*self.dsp_addr, value),
             0x00F4..=0x00F7 => self.spc_to_main_ports[(addr - 0x00F4) as usize] = value,
             0x00FA..=0x00FC => self.timers.write_target((addr - 0x00FA) as usize, value),
-            _ => self.aram[addr as usize] = value,
+            _ => {
+                if self.ram_write_enabled() {
+                    self.aram[addr as usize] = value;
+                }
+            }
         }
-        self.tick_timers_if_enabled();
+        self.tick_timers_multiple(cycles);
+    }
+
+    fn idle_cycles(&self) -> u8 {
+        self.wait_cycles_for_addr(None)
     }
 
     fn idle(&mut self) {
-        self.tick_timers_if_enabled();
+        let cycles = self.idle_cycles();
+        self.tick_timers_multiple(cycles);
     }
 }
 
@@ -617,10 +709,21 @@ mod tests {
     #[test]
     fn advancing_spc_bus_cycles_advances_dsp_phase_skeleton() {
         let mut apu = SnesApu::new(None);
+
         assert_eq!(apu.dsp_phase_for_test(), 0);
 
         apu.advance_spc_bus_cycles_for_test(3);
         assert_eq!(apu.dsp_phase_for_test(), 3);
+    }
+
+    #[test]
+    fn writing_test_register_uses_pre_write_waitstate_cycles() {
+        let mut apu = SnesApu::new(None);
+
+        assert_eq!(apu.dsp_phase_for_test(), 0);
+        apu.write_spc_memory_for_test(0x00F0, 0x3A);
+
+        assert_eq!(apu.dsp_phase_for_test(), 1);
     }
 
     #[test]
