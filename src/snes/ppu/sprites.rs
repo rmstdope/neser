@@ -6,6 +6,13 @@
 
 use super::Ppu;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ObjPixel {
+    pub color: u16,
+    pub palette: u8,
+    pub priority: u8,
+}
+
 impl Ppu {
     /// Convert framebuffer row `line` into the OBJ sampling line.
     ///
@@ -77,18 +84,16 @@ impl Ppu {
     /// recorded for dot-accurate flag timing). 8-bit Y wrap yields the 224-line wrap behavior.
     pub(super) fn evaluate_line_objects(&self, line: u16) -> ObjLineEval {
         let first = self.obj_first_sprite_index() as usize;
-        let mut eval = ObjLineEval {
-            indices: Vec::with_capacity(32),
-            ..ObjLineEval::default()
-        };
+        let mut eval = ObjLineEval::default();
         for k in 0..128usize {
             let i = (first + k) % 128;
             let y = self.oam[i * 4 + 1] as u16;
             let height = self.obj_size(i).1 as u16;
             let row = line.wrapping_sub(y) & 0xFF;
             if row < height {
-                if eval.indices.len() < 32 {
-                    eval.indices.push(i as u8);
+                if eval.len < 32 {
+                    eval.indices[eval.len] = i as u8;
+                    eval.len += 1;
                 } else {
                     eval.range_over = true;
                     eval.range_over_index = Some(i as u8);
@@ -107,18 +112,37 @@ impl Ppu {
     /// Build the composited OBJ pixel line for display scanline `line`: in-range OBJs are drawn
     /// front-to-back (lowest evaluation order wins), gated by OBJ opacity and the 34-tile-per-line
     /// fetch budget (tile columns beyond the budget are dropped, matching the time over-limit).
+    #[cfg(test)]
     pub(super) fn build_obj_line(&self, line: u16) -> ObjLine {
         let source_line = self.obj_source_line(line);
         let eval = self.evaluate_line_objects(source_line);
         let mut buf = ObjLine::default();
         let mut tile_budget = 34i32;
-        for &i in &eval.indices {
+        for &i in eval.indices() {
             if tile_budget <= 0 {
                 break;
             }
             self.render_object_into(&mut buf, i as usize, source_line, &mut tile_budget);
         }
         buf
+    }
+
+    /// Resolve the front-most OBJ pixel at visible coordinate `(x, y)` using live state.
+    pub(super) fn obj_pixel_at(&self, x: u16, y: u16) -> Option<ObjPixel> {
+        let source_line = self.obj_source_line(y);
+        let eval = self.evaluate_line_objects(source_line);
+        let mut tile_budget = 34i32;
+        for &i in eval.indices() {
+            if tile_budget <= 0 {
+                break;
+            }
+            if let Some(pixel) =
+                self.render_object_pixel_at(i as usize, source_line, x as i32, &mut tile_budget)
+            {
+                return Some(pixel);
+            }
+        }
+        None
     }
 
     /// Count the on-screen 8x8 OBJ tile columns for the given in-range OBJs, reporting whether the
@@ -171,28 +195,32 @@ impl Ppu {
             }
             self.obj_time_over_pending = false;
             self.obj_range_over_dot = None;
+        }
 
+        if !forced_blank && (scanline as usize) < self.active_screen_height() {
             // During scanline `s` the PPU evaluates the line displayed on scanline `s + 1`
-            // (OAM line index `s`); skipped during forced blank.
-            if !forced_blank && (scanline as usize) < self.active_screen_height() {
+            // (OAM line index `s`). Recompute lazily: once per scanline, plus mid-scanline writes
+            // to OBJ-affecting registers/data.
+            if dot == 0 || self.obj_eval_dirty {
                 let eval = self.evaluate_line_objects(scanline);
                 self.obj_range_over_dot = if eval.range_over {
                     eval.range_over_index.map(|i| i as u16 * 2)
                 } else {
                     None
                 };
-                self.obj_time_over_pending = self.count_obj_tiles(&eval.indices).1;
+                self.obj_time_over_pending = self.count_obj_tiles(eval.indices()).1;
+                self.obj_eval_dirty = false;
             }
-        }
-
-        if Some(dot) == self.obj_range_over_dot {
-            self.stat77_range_over = true;
+            if Some(dot) == self.obj_range_over_dot {
+                self.stat77_range_over = true;
+            }
         }
     }
 
     /// Render OBJ `index` into the line buffer for display scanline `line`, writing each opaque
     /// pixel only where no nearer (earlier) OBJ has already drawn. On-screen 8x8 tile columns
     /// consume `tile_budget`; columns past the 34-tile-per-line limit are dropped.
+    #[cfg(test)]
     fn render_object_into(
         &self,
         buf: &mut ObjLine,
@@ -257,6 +285,64 @@ impl Ppu {
         }
     }
 
+    fn render_object_pixel_at(
+        &self,
+        index: usize,
+        line: u16,
+        x: i32,
+        tile_budget: &mut i32,
+    ) -> Option<ObjPixel> {
+        let (width, height) = self.obj_size(index);
+        let (width, height) = (width as i32, height as i32);
+        let y = self.oam[index * 4 + 1] as u16;
+        let attr = self.oam[index * 4 + 3];
+        let priority = (attr >> 4) & 0x03;
+        let palette = (attr >> 1) & 0x07;
+        let hflip = attr & 0x40 != 0;
+        let vflip = attr & 0x80 != 0;
+
+        let x9 = self.oam[index * 4] as u16 | (self.obj_x_high(index) << 8);
+        let base_x = if x9 & 0x100 != 0 {
+            x9 as i32 - 0x200
+        } else {
+            x9 as i32
+        };
+        let base_tile = self.oam[index * 4 + 2] as u16 | (((attr & 0x01) as u16) << 8);
+
+        let mut within_y = (line.wrapping_sub(y) & 0xFF) as i32;
+        if vflip {
+            within_y = height - 1 - within_y;
+        }
+
+        for tile_col in 0..(width / 8) {
+            let tile_x = base_x + tile_col * 8;
+            let on_screen = tile_x + 8 > 0 && tile_x < 256;
+            if on_screen {
+                if *tile_budget <= 0 {
+                    break;
+                }
+                *tile_budget -= 1;
+            }
+
+            if x < tile_x || x >= tile_x + 8 {
+                continue;
+            }
+            let col = x - base_x;
+            let within_x = if hflip { width - 1 - col } else { col };
+            let color = self.obj_tile_pixel(base_tile, within_x, within_y);
+            if color == 0 {
+                continue;
+            }
+            let cgindex = 128 + palette * 16 + color;
+            return Some(ObjPixel {
+                color: self.cgram_color(cgindex),
+                palette,
+                priority,
+            });
+        }
+        None
+    }
+
     /// Decode an OBJ pixel color index (0-15) at sprite-relative `(within_x, within_y)`, applying
     /// non-carrying large-tile composition (right wraps the low nibble, down wraps the high nibble)
     /// and the OBSEL name base/gap addressing.
@@ -282,14 +368,23 @@ impl Ppu {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct ObjLineEval {
     /// In-range OBJ indices in evaluation order, truncated to 32.
-    pub indices: Vec<u8>,
+    pub indices: [u8; 32],
+    /// Number of valid entries in `indices`.
+    pub len: usize,
     /// Whether more than 32 OBJs were in range (range over-limit).
     pub range_over: bool,
     /// OAM index of the 33rd in-range OBJ that triggered the range over-limit, if any.
     pub range_over_index: Option<u8>,
 }
 
+impl ObjLineEval {
+    pub(super) fn indices(&self) -> &[u8] {
+        &self.indices[..self.len]
+    }
+}
+
 /// Composited OBJ pixels for one scanline (256 visible pixels).
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(super) struct ObjLine {
     /// Resolved BGR555 color per pixel (valid only where `present`).
@@ -302,6 +397,7 @@ pub(super) struct ObjLine {
     pub present: [bool; 256],
 }
 
+#[cfg(test)]
 impl Default for ObjLine {
     fn default() -> Self {
         Self {
@@ -429,7 +525,7 @@ mod tests {
         // OAM all zero -> every OBJ has Y=0, size 8x8 (obsel 0): in range only for lines 0..7.
         ppu.write_register(0x2101, 0x00);
         let eval = ppu.evaluate_line_objects(100);
-        assert!(eval.indices.is_empty());
+        assert!(eval.indices().is_empty());
         assert!(!eval.range_over);
     }
 
@@ -443,10 +539,10 @@ mod tests {
         }
         set_obj(&mut ppu, 0, 0, 10, 0, 0, false);
 
-        assert!(ppu.evaluate_line_objects(9).indices.is_empty());
-        assert_eq!(ppu.evaluate_line_objects(10).indices, vec![0]);
-        assert_eq!(ppu.evaluate_line_objects(17).indices, vec![0]);
-        assert!(ppu.evaluate_line_objects(18).indices.is_empty());
+        assert!(ppu.evaluate_line_objects(9).indices().is_empty());
+        assert_eq!(ppu.evaluate_line_objects(10).indices(), [0]);
+        assert_eq!(ppu.evaluate_line_objects(17).indices(), [0]);
+        assert!(ppu.evaluate_line_objects(18).indices().is_empty());
     }
 
     #[test]
@@ -457,8 +553,8 @@ mod tests {
             set_obj(&mut ppu, i, 0, 240, 0, 0, false);
         }
         set_obj(&mut ppu, 0, 0, 10, 0, 0, true); // large -> height 16
-        assert_eq!(ppu.evaluate_line_objects(25).indices, vec![0]); // 10..25 in range
-        assert!(ppu.evaluate_line_objects(26).indices.is_empty());
+        assert_eq!(ppu.evaluate_line_objects(25).indices(), [0]); // 10..25 in range
+        assert!(ppu.evaluate_line_objects(26).indices().is_empty());
     }
 
     #[test]
@@ -469,8 +565,8 @@ mod tests {
             set_obj(&mut ppu, i, 0, 100, 0, 0, false);
         }
         set_obj(&mut ppu, 0, 0, 250, 0, 0, false); // covers 250..255, 0..1 (wrap)
-        assert_eq!(ppu.evaluate_line_objects(1).indices, vec![0]);
-        assert!(ppu.evaluate_line_objects(2).indices.is_empty());
+        assert_eq!(ppu.evaluate_line_objects(1).indices(), [0]);
+        assert!(ppu.evaluate_line_objects(2).indices().is_empty());
     }
 
     #[test]
@@ -483,10 +579,10 @@ mod tests {
             set_obj(&mut ppu, i, 0, y, 0, 0, false);
         }
         let eval = ppu.evaluate_line_objects(50);
-        assert_eq!(eval.indices.len(), 32);
+        assert_eq!(eval.indices().len(), 32);
         assert!(eval.range_over);
         assert_eq!(eval.range_over_index, Some(32)); // 33rd in-range OBJ (index 32)
-        assert_eq!(eval.indices[0], 0);
+        assert_eq!(eval.indices()[0], 0);
     }
 
     #[test]
@@ -503,7 +599,7 @@ mod tests {
         // Rotation starting at OBJ #6: order becomes 6, 7, then wrap to 5.
         ppu.write_register(0x2102, 6 << 1);
         ppu.write_register(0x2103, 0x80);
-        assert_eq!(ppu.evaluate_line_objects(50).indices, vec![6, 7, 5]);
+        assert_eq!(ppu.evaluate_line_objects(50).indices(), [6, 7, 5]);
     }
 
     /// Fill an 8x8 4bpp OBJ tile (16 words at VRAM word `word_addr`) with a solid color index.
@@ -735,7 +831,6 @@ mod tests {
 
         let tm = 0x01 | if obj_enable { 0x10 } else { 0x00 };
         ppu.write_register(0x212C, tm);
-        ppu.obj_line = ppu.build_obj_line(0);
     }
 
     const BG1_COLOR: u16 = 0x0BBB;
@@ -769,7 +864,6 @@ mod tests {
         // x=8 has no BG1 tile (only tile (0,0) was mapped) and no OBJ -> backdrop (0).
         // Move OBJ to x=8 so only the OBJ (priority 0) covers the backdrop there.
         set_obj(&mut ppu, 0, 8, 0, 0, 0, false);
-        ppu.obj_line = ppu.build_obj_line(0);
         assert_eq!(ppu.compute_pixel(8, 0), OBJ_COLOR);
     }
 
@@ -896,5 +990,157 @@ mod tests {
         );
         assert!(!buf.present[16], "tile columns past the budget are dropped");
         assert!(!buf.present[31]);
+    }
+
+    fn rgb_at(ppu: &Ppu, x: usize, y: usize) -> [u8; 3] {
+        let rgb = ppu.screen_snapshot_rgb();
+        let i = (y * 256 + x) * 3;
+        [rgb[i], rgb[i + 1], rgb[i + 2]]
+    }
+
+    #[test]
+    fn mid_scanline_oamdata_write_moves_obj_for_subsequent_dots_only() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F); // visible output
+        ppu.write_register(0x2101, 0x00); // 8x8
+        ppu.write_register(0x212C, 0x10); // OBJ on main screen
+        park_all_offscreen(&mut ppu);
+
+        set_cgram(&mut ppu, 0, 0x001F); // backdrop red
+        set_obj_tile_solid(&mut ppu, 0, 1);
+        set_cgram(&mut ppu, 128 + 1, 0x03E0); // OBJ green
+        set_obj(&mut ppu, 0, 0, 0, 0, 0, false);
+
+        // Enter visible line 0 and render through x=4.
+        tick_dots(&mut ppu, 341 + 26);
+
+        // Mid-scanline OAMDATA write: move OBJ0 from x=0 to x=40.
+        ppu.write_register(0x2102, 0x00);
+        ppu.write_register(0x2103, 0x00);
+        ppu.write_register(0x2104, 40);
+        ppu.write_register(0x2104, 0);
+
+        // Render past x=40 on the same scanline.
+        tick_dots(&mut ppu, 40);
+
+        assert_eq!(rgb_at(&ppu, 4, 0), [0, 255, 0], "x=4 rendered before write");
+        assert_eq!(
+            rgb_at(&ppu, 6, 0),
+            [255, 0, 0],
+            "x=6 should reflect moved OBJ (backdrop only)"
+        );
+        assert_eq!(
+            rgb_at(&ppu, 40, 0),
+            [0, 255, 0],
+            "x=40 should pick up the moved OBJ on later dots"
+        );
+    }
+
+    #[test]
+    fn mid_scanline_obsel_write_changes_large_obj_width_for_later_dots() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F); // visible output
+        ppu.write_register(0x2101, 0x60); // size pair: small 16x16, large 32x32
+        ppu.write_register(0x212C, 0x10); // OBJ on main screen
+        park_all_offscreen(&mut ppu);
+
+        set_cgram(&mut ppu, 0, 0x001F); // backdrop red
+        for t in 0..4 {
+            set_obj_tile_solid(&mut ppu, t * 16, 1);
+        }
+        set_cgram(&mut ppu, 128 + 1, 0x03E0); // OBJ green
+        set_obj(&mut ppu, 0, 0, 0, 0, 0, true); // large OBJ
+
+        // Render through x=8 with 32x32 sizing.
+        tick_dots(&mut ppu, 341 + 30);
+
+        // Mid-scanline OBSEL write shrinks large size to 16x16.
+        ppu.write_register(0x2101, 0x00);
+
+        // Render far enough to include x=20 on the same scanline.
+        tick_dots(&mut ppu, 20);
+
+        assert_eq!(rgb_at(&ppu, 8, 0), [0, 255, 0], "x=8 rendered before write");
+        assert_eq!(
+            rgb_at(&ppu, 20, 0),
+            [255, 0, 0],
+            "x=20 should be clipped after the width shrink"
+        );
+    }
+
+    #[test]
+    fn mid_scanline_oamadd_rotation_write_reorders_overlap_for_later_dots() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F); // visible output
+        ppu.write_register(0x2101, 0x00); // 8x8
+        ppu.write_register(0x212C, 0x10); // OBJ on main screen
+        park_all_offscreen(&mut ppu);
+
+        set_cgram(&mut ppu, 0, 0x001F); // backdrop red
+        set_obj_tile_solid(&mut ppu, 0, 1);
+        set_cgram(&mut ppu, 128 + 1, 0x03E0); // OBJ0 green
+        set_cgram(&mut ppu, 128 + 16 + 1, 0x7C00); // OBJ1 blue
+        set_obj(&mut ppu, 0, 40, 0, 0, 0, false); // palette 0
+        set_obj(&mut ppu, 1, 40, 0, 0, 1 << 1, false); // palette 1, same position
+
+        // Render through x=18 before the overlap region.
+        tick_dots(&mut ppu, 341 + 40);
+
+        // Mid-scanline OAMADD + rotation write: start eval from OBJ1.
+        ppu.write_register(0x2102, 0x02); // bits 7-1 = 1
+        ppu.write_register(0x2103, 0x80); // rotation enable
+
+        // Render through x=40 on this scanline.
+        tick_dots(&mut ppu, 24);
+
+        assert_eq!(rgb_at(&ppu, 18, 0), [255, 0, 0], "backdrop before overlap");
+        assert_eq!(
+            rgb_at(&ppu, 40, 0),
+            [0, 0, 255],
+            "rotation write should make OBJ1 win for subsequent dots"
+        );
+    }
+
+    #[test]
+    fn mid_scanline_rotation_write_updates_pixels_and_range_over_timing() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F); // visible output
+        ppu.write_register(0x2101, 0x00); // 8x8
+        ppu.write_register(0x212C, 0x10); // OBJ on main screen
+        park_all_offscreen(&mut ppu);
+        set_obj_tile_solid(&mut ppu, 0, 1);
+        set_cgram(&mut ppu, 0, 0x001F); // backdrop red
+        set_cgram(&mut ppu, 128 + 1, 0x03E0); // OBJ0 green
+        set_cgram(&mut ppu, 128 + 16 + 1, 0x7C00); // OBJ1 blue
+
+        // 40 OBJs in range on this line -> range over is active, with timing depending on eval order.
+        for i in 0..40 {
+            set_obj(&mut ppu, i, 0, 0, 0, 0, false);
+        }
+        set_obj(&mut ppu, 0, 40, 0, 0, 0, false); // palette 0
+        set_obj(&mut ppu, 1, 40, 0, 0, 1 << 1, false); // palette 1 at same position
+
+        // Render to line 0, dot 40 (before x=40 and before the old range-over timing at dot 64).
+        tick_dots(&mut ppu, 341 + 40);
+
+        // Rotate start to OBJ1: overlap winner changes and 33rd in-range index shifts 32->33.
+        ppu.write_register(0x2102, 0x02); // bits 7-1 = 1
+        ppu.write_register(0x2103, 0x80); // rotation enable
+
+        // Reach dot 64 (x=42): x=40 has been rendered with the post-write OBJ ordering.
+        tick_dots(&mut ppu, 24);
+        assert_eq!(
+            rgb_at(&ppu, 40, 0),
+            [0, 0, 255],
+            "OBJ1 wins after rotation for later dots"
+        );
+
+        // New 33rd index is OBJ33 -> dot 66.
+        tick_dots(&mut ppu, 2);
+        assert_eq!(
+            stat77(&mut ppu) & 0x40,
+            0x40,
+            "range over asserts at dot 66"
+        );
     }
 }

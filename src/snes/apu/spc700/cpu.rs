@@ -20,6 +20,7 @@
 //! ```
 
 use crate::snes::apu::spc700::bus::Spc700Bus;
+use serde::{Deserialize, Serialize};
 
 /// PSW carry flag (bit 0).
 pub const FLAG_CARRY: u8 = 0b0000_0001;
@@ -61,6 +62,24 @@ pub struct Spc700 {
     halted: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct Spc700State {
+    #[serde(default)]
+    pub a: u8,
+    #[serde(default)]
+    pub x: u8,
+    #[serde(default)]
+    pub y: u8,
+    #[serde(default)]
+    pub sp: u8,
+    #[serde(default)]
+    pub pc: u16,
+    #[serde(default)]
+    pub psw: u8,
+    #[serde(default)]
+    pub halted: bool,
+}
+
 impl Spc700 {
     /// SPC700 reset vector address (low byte at `$FFFE`, high byte at `$FFFF`).
     pub const RESET_VECTOR: u16 = 0xFFFE;
@@ -100,6 +119,28 @@ impl Spc700 {
         let lo = bus.read(Self::RESET_VECTOR) as u16;
         let hi = bus.read(Self::RESET_VECTOR.wrapping_add(1)) as u16;
         self.pc = (hi << 8) | lo;
+    }
+
+    pub fn capture_state(&self) -> Spc700State {
+        Spc700State {
+            a: self.a,
+            x: self.x,
+            y: self.y,
+            sp: self.sp,
+            pc: self.pc,
+            psw: self.psw,
+            halted: self.halted,
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &Spc700State) {
+        self.a = state.a;
+        self.x = state.x;
+        self.y = state.y;
+        self.sp = state.sp;
+        self.pc = state.pc;
+        self.psw = state.psw;
+        self.halted = state.halted;
     }
 
     /// Accumulator register.

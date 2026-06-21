@@ -26,13 +26,6 @@ impl Ppu {
         let y = (line - VISIBLE_LINE_START) as usize;
         let row = self.framebuffer_row(y);
         let base_x = self.framebuffer_x(x);
-        // Build the composited OBJ line once, at the first visible dot of each visible scanline.
-        // The over-limit flags are evaluated one scanline earlier (see `update_obj_pipeline`); a
-        // mid-scanline OAM/OBSEL write between the two points could make STAT77 and the displayed
-        // pixels disagree, which is an accepted limitation of this per-scanline model.
-        if x == 0 {
-            self.obj_line = self.build_obj_line(y as u16);
-        }
         let base = row * self.framebuffer_stride() + base_x;
         if self.hires_output_enabled() {
             let main = self.resolve_screen_pixel(super::ScreenTarget::Main, x as u16, y as u16);

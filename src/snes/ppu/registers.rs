@@ -14,7 +14,10 @@ impl Ppu {
             // INIDISP: forced blank (bit 7) + master brightness (bits 0-3).
             0x2100 => self.inidisp = value,
             // OBSEL: OBJ size pair (bits 7-5), name gap (bits 4-3), OBJ tile name base (bits 2-0).
-            0x2101 => self.obsel = value,
+            0x2101 => {
+                self.obsel = value;
+                self.obj_eval_dirty = true;
+            }
             // BGMODE: BG screen mode (bits 0-2), BG3 high-priority (bit 3), per-BG tile size.
             0x2105 => {
                 self.bg_mode = value & 0x07;
@@ -183,12 +186,14 @@ impl Ppu {
             0x2102 => {
                 self.oam_addr_reload = (self.oam_addr_reload & 0x0100) | value as u16;
                 self.oam_address = (self.oam_addr_reload << 1) & 0x03FE;
+                self.obj_eval_dirty = true;
             }
             0x2103 => {
                 self.oam_addr_reload =
                     (self.oam_addr_reload & 0x00FF) | (((value & 0x01) as u16) << 8);
                 self.oam_priority_rotation = value & 0x80 != 0;
                 self.oam_address = (self.oam_addr_reload << 1) & 0x03FE;
+                self.obj_eval_dirty = true;
             }
             // OAMDATA: OAM data write. In the low table ($000-$1FF) an even byte latches and the
             // odd byte commits the word; the high table ($200-$21F) writes each byte directly.
@@ -207,6 +212,7 @@ impl Ppu {
                     self.oam[index] = value;
                 }
                 self.increment_oam_address();
+                self.obj_eval_dirty = true;
             }
             _ => {}
         }
