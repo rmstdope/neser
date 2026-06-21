@@ -145,6 +145,10 @@ pub trait SnesController {
 /// "ends 4224 master cycles later", with `$4212` bit 0 set during it).
 const AUTO_JOYPAD_BUSY_CYCLES: u32 = 4224;
 
+/// Master clocks between successive auto-joypad bit clocks (16 bits spread over
+/// the busy window; fullsnes notes the read advances in ~256-cycle steps).
+const AUTO_JOYPAD_BIT_INTERVAL: u32 = AUTO_JOYPAD_BUSY_CYCLES / 16;
+
 /// Persisted state for the whole input subsystem.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct InputPortsState {
@@ -159,7 +163,7 @@ pub struct InputPortsState {
     #[serde(default)]
     pub joy: [u16; 4],
     #[serde(default)]
-    pub pending: [u16; 4],
+    pub auto_bits_done: u8,
     #[serde(default)]
     pub strobe: bool,
 }
@@ -172,11 +176,12 @@ pub struct InputPorts {
     auto_enable: bool,
     /// Remaining master cycles of the auto-joypad busy window.
     busy_cycles: u32,
-    /// Committed auto-read results: JOY1-JOY4 (`$4218`-`$421F`).
+    /// Auto-read result registers JOY1-JOY4 (`$4218`-`$421F`). These are shifted
+    /// in progressively over the busy window, so a read mid-window sees an
+    /// incomplete (and possibly manual-read-corrupted) value.
     joy: [u16; 4],
-    /// Values captured at the start of the busy window, committed to [`Self::joy`]
-    /// when the window ends.
-    pending: [u16; 4],
+    /// Number of auto-read bits clocked so far in the current busy window (0-16).
+    auto_bits_done: u8,
     /// Last value written to `$4016` bit 0 (the `OUT0` strobe).
     strobe: bool,
 }
@@ -196,7 +201,7 @@ impl InputPorts {
             auto_enable: false,
             busy_cycles: 0,
             joy: [0; 4],
-            pending: [0; 4],
+            auto_bits_done: 0,
             strobe: false,
         }
     }
@@ -275,41 +280,51 @@ impl InputPorts {
         })
     }
 
-    /// Advance the auto-joypad busy window by one master clock.
+    /// Advance the auto-joypad busy window by one master clock, clocking the
+    /// controller shift registers one bit at a time as the window elapses.
     pub fn tick(&mut self) {
-        if self.busy_cycles > 0 {
-            self.busy_cycles -= 1;
-            if self.busy_cycles == 0 {
-                self.joy = self.pending;
-            }
+        if self.busy_cycles == 0 {
+            return;
+        }
+        self.busy_cycles -= 1;
+        let elapsed = AUTO_JOYPAD_BUSY_CYCLES - self.busy_cycles;
+        while (self.auto_bits_done as u32) < 16
+            && elapsed >= (self.auto_bits_done as u32 + 1) * AUTO_JOYPAD_BIT_INTERVAL
+        {
+            self.shift_auto_bit();
+            self.auto_bits_done += 1;
         }
     }
 
-    /// Begin an auto-joypad read at the start of VBlank. Captures the latched
-    /// controller data into [`Self::pending`] and starts the busy window; the
-    /// data becomes visible in JOY1-JOY4 when the window ends.
+    /// Begin an auto-joypad read at the start of VBlank: latch (parallel load)
+    /// then release both ports, reset the result registers, and start the busy
+    /// window. The 16 data bits are clocked into JOY1-JOY4 progressively over
+    /// the window (see [`Self::tick`]) using the same shift registers as manual
+    /// `$4016`/`$4017` reads, so a manual read mid-window corrupts the result
+    /// exactly as on hardware.
     pub fn trigger_auto_read(&mut self) {
         if !self.auto_enable {
             return;
         }
-        let (joy1, joy3) = Self::latch_and_shift(self.port1.as_mut());
-        let (joy2, joy4) = Self::latch_and_shift(self.port2.as_mut());
-        self.pending = [joy1, joy2, joy3, joy4];
+        self.port1.write_strobe(true);
+        self.port2.write_strobe(true);
+        self.port1.write_strobe(false);
+        self.port2.write_strobe(false);
+        self.strobe = false;
+        self.joy = [0; 4];
+        self.auto_bits_done = 0;
         self.busy_cycles = AUTO_JOYPAD_BUSY_CYCLES;
     }
 
-    /// Strobe a port and shift out 16 bits from both data lines, MSB first.
-    fn latch_and_shift(port: &mut dyn SnesController) -> (u16, u16) {
-        port.write_strobe(true);
-        port.write_strobe(false);
-        let mut data1 = 0u16;
-        let mut data2 = 0u16;
-        for _ in 0..16 {
-            let (d1, d2) = port.read();
-            data1 = (data1 << 1) | d1 as u16;
-            data2 = (data2 << 1) | d2 as u16;
-        }
-        (data1, data2)
+    /// Clock one bit out of both ports and shift it into the JOY registers
+    /// (MSB first). JOY1/JOY2 take pin-4 data; JOY3/JOY4 take pin-5 data.
+    fn shift_auto_bit(&mut self) {
+        let (p1d1, p1d2) = self.port1.read();
+        let (p2d1, p2d2) = self.port2.read();
+        self.joy[0] = (self.joy[0] << 1) | p1d1 as u16;
+        self.joy[1] = (self.joy[1] << 1) | p2d1 as u16;
+        self.joy[2] = (self.joy[2] << 1) | p1d2 as u16;
+        self.joy[3] = (self.joy[3] << 1) | p2d2 as u16;
     }
 
     /// Set a single button on the given port's device.
@@ -366,7 +381,7 @@ impl InputPorts {
             auto_enable: self.auto_enable,
             busy_cycles: self.busy_cycles,
             joy: self.joy,
-            pending: self.pending,
+            auto_bits_done: self.auto_bits_done,
             strobe: self.strobe,
         }
     }
@@ -378,7 +393,7 @@ impl InputPorts {
         self.auto_enable = state.auto_enable;
         self.busy_cycles = state.busy_cycles;
         self.joy = state.joy;
-        self.pending = state.pending;
+        self.auto_bits_done = state.auto_bits_done;
         self.strobe = state.strobe;
     }
 }
@@ -425,7 +440,7 @@ mod tests {
         ports.trigger_auto_read();
 
         assert!(ports.auto_busy(), "busy flag set immediately");
-        // JOY1 still holds the previous (empty) value during the busy window.
+        // Before any bits are clocked, JOY1 reads as the freshly-reset value.
         assert_eq!(ports.read_joy_register(0x4218), Some(0x00));
 
         for _ in 0..AUTO_JOYPAD_BUSY_CYCLES {
@@ -436,6 +451,41 @@ mod tests {
         // JOY1: B = bit 15, Start = bit 12 -> 0x9000.
         assert_eq!(ports.read_joy_register(0x4218), Some(0x00)); // low byte
         assert_eq!(ports.read_joy_register(0x4219), Some(0x90)); // high byte
+    }
+
+    #[test]
+    fn manual_read_during_auto_window_corrupts_the_result() {
+        // Clean reference read (no interference).
+        let mut clean = InputPorts::new();
+        clean.set_auto_enable(true);
+        clean.set_button(0, SnesButton::A, true);
+        clean.trigger_auto_read();
+        for _ in 0..AUTO_JOYPAD_BUSY_CYCLES {
+            clean.tick();
+        }
+        let clean_joy1 = (clean.read_joy_register(0x4219).unwrap() as u16) << 8
+            | clean.read_joy_register(0x4218).unwrap() as u16;
+        assert_eq!(clean_joy1, 0x0080, "A = serial bit 7");
+
+        // Same input, but a manual $4016 read steals a clock from port 1 partway
+        // through the busy window, desyncing the shared shift register.
+        let mut corrupted = InputPorts::new();
+        corrupted.set_auto_enable(true);
+        corrupted.set_button(0, SnesButton::A, true);
+        corrupted.trigger_auto_read();
+        for _ in 0..(AUTO_JOYPAD_BUSY_CYCLES / 4) {
+            corrupted.tick();
+        }
+        corrupted.read_joya(0x00); // stolen clock
+        for _ in 0..(AUTO_JOYPAD_BUSY_CYCLES - AUTO_JOYPAD_BUSY_CYCLES / 4) {
+            corrupted.tick();
+        }
+        let corrupted_joy1 = (corrupted.read_joy_register(0x4219).unwrap() as u16) << 8
+            | corrupted.read_joy_register(0x4218).unwrap() as u16;
+        assert_ne!(
+            corrupted_joy1, clean_joy1,
+            "a manual read during the busy window corrupts the auto-read result"
+        );
     }
 
     #[test]
