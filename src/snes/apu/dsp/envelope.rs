@@ -62,10 +62,10 @@ fn step_adsr(voice: &mut VoiceState) {
         }
         EnvelopeMode::Attack => {
             let attack_rate = voice.adsr1 & 0x0F;
-            let attack_step = if attack_rate == 0x0F { 0x20 } else { 0x08 };
+            let attack_step = if attack_rate == 0x0F { 0x400 } else { 0x20 };
             voice.env_level = voice.env_level.saturating_add(attack_step);
-            if voice.env_level >= ENV_MAX {
-                voice.env_level = ENV_MAX;
+            if voice.env_level >= 0x7E0 {
+                voice.env_level = voice.env_level.min(ENV_MAX);
                 voice.mode = EnvelopeMode::Decay;
             }
         }

@@ -17,6 +17,7 @@ const KOFF_REG: u8 = 0x5C;
 const PMON_REG: u8 = 0x2D;
 const NON_REG: u8 = 0x3D;
 const FLG_REG: u8 = 0x6C;
+const ENDX_REG: u8 = 0x7C;
 
 fn default_regs() -> Vec<u8> {
     vec![0; DSP_REGISTER_COUNT]
@@ -44,6 +45,8 @@ pub struct Sdsp {
     echo_enable: u8,
     #[serde(default)]
     flg: u8,
+    #[serde(default)]
+    endx: u8,
     #[serde(default)]
     dir: u8,
     #[serde(default)]
@@ -88,6 +91,7 @@ impl Sdsp {
             echo_feedback: 0,
             echo_enable: 0,
             flg: 0,
+            endx: 0,
             dir: 0,
             esa: 0,
             edl: 0,
@@ -238,28 +242,11 @@ impl Sdsp {
     }
 
     pub fn step_phase(&mut self) {
-        self.envelope_counter = self.envelope_counter.wrapping_add(1);
-        self.step_noise_lfsr();
-        let pmon = self.regs[usize::from(PMON_REG)];
-        let non = self.regs[usize::from(NON_REG)];
+        self.step_phase_internal(None);
+    }
 
-        for voice in 0..8usize {
-            self.step_voice_envelope(voice);
-            let effective_pitch = self.effective_pitch_for_voice(voice, pmon);
-            self.voices[voice].sample_pos = self.voices[voice]
-                .sample_pos
-                .wrapping_add(u32::from(effective_pitch));
-            let sample = self.voice_sample(voice, non);
-            let out_before_mix = (sample >> 8).clamp(-128, 127) as i8;
-            self.voices[voice].mod_source = out_before_mix;
-            let (left, right) = self.mix_voice_sample(voice, sample);
-            let _mixed = (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
-            self.voices[voice].outx = out_before_mix;
-            self.regs[(voice << 4) + 8] = self.voices[voice].envx;
-            self.regs[(voice << 4) + 9] = out_before_mix as u8;
-        }
-
-        self.phase = self.phase.wrapping_add(1) & 0x1F;
+    pub fn step_phase_with_memory(&mut self, aram: &[u8]) {
+        self.step_phase_internal(Some(aram));
     }
 
     fn step_noise_lfsr(&mut self) {
@@ -282,13 +269,15 @@ impl Sdsp {
         }
     }
 
-    fn voice_sample(&self, voice: usize, non: u8) -> i16 {
+    fn voice_sample(&self, voice: usize, non: u8, aram: Option<&[u8]>) -> i16 {
         let raw: i16 = if non & (1 << voice) != 0 {
             if self.noise_lfsr & 1 == 0 {
                 -0x4000
             } else {
                 0x3FFF
             }
+        } else if aram.is_some() {
+            self.current_voice_brr_sample(voice).unwrap_or(0x3FFF)
         } else {
             0x3FFF
         };
@@ -302,25 +291,162 @@ impl Sdsp {
             return base;
         }
         let prev = i32::from(self.voices[voice - 1].mod_source);
-        let modulated = i32::from(base) + ((i32::from(base) * prev) >> 7);
+        let factor = (prev >> 4) + 0x400;
+        let modulated = (i32::from(base) * factor) >> 10;
         modulated.clamp(0, 0x3FFF) as u16
     }
 
-    fn step_voice_envelope(&mut self, voice: usize) {
+    fn step_voice_envelope(&mut self, voice: usize, aram: Option<&[u8]>) {
+        let mut begin_brr = false;
+        {
+            let v = &mut self.voices[voice];
+            if v.kon_delay > 0 {
+                v.kon_delay -= 1;
+                if v.kon_delay == 0 {
+                    v.mode = EnvelopeMode::Attack;
+                    v.env_level = 0;
+                    begin_brr = aram.is_some();
+                }
+            }
+            envelope::step_voice_envelope(v, self.envelope_counter);
+        }
+        if begin_brr && let Some(aram) = aram {
+            self.begin_voice_brr_stream(voice, aram);
+        }
+    }
+
+    fn step_phase_internal(&mut self, aram: Option<&[u8]>) {
+        self.envelope_counter = self.envelope_counter.wrapping_add(1);
+        self.step_noise_lfsr();
+        let pmon = self.regs[usize::from(PMON_REG)];
+        let non = self.regs[usize::from(NON_REG)];
+
+        for voice in 0..8usize {
+            self.step_voice_envelope(voice, aram);
+            let effective_pitch = self.effective_pitch_for_voice(voice, pmon);
+            self.voices[voice].sample_pos = self.voices[voice]
+                .sample_pos
+                .wrapping_add(u32::from(effective_pitch));
+            if let Some(aram) = aram {
+                self.advance_voice_brr_stream(voice, aram);
+            }
+            let sample = self.voice_sample(voice, non, aram);
+            let out_before_mix = (sample >> 8).clamp(-128, 127) as i8;
+            self.voices[voice].mod_source = out_before_mix;
+            let (left, right) = self.mix_voice_sample(voice, sample);
+            let _mixed = (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
+            self.voices[voice].outx = out_before_mix;
+            self.regs[(voice << 4) + 8] = self.voices[voice].envx;
+            self.regs[(voice << 4) + 9] = out_before_mix as u8;
+        }
+
+        self.phase = self.phase.wrapping_add(1) & 0x1F;
+    }
+
+    fn begin_voice_brr_stream(&mut self, voice: usize, aram: &[u8]) {
+        let (start_addr, loop_addr) = match self.voice_brr_entry(voice, aram) {
+            Some(entry) => entry,
+            None => {
+                self.voices[voice].brr_initialized = false;
+                return;
+            }
+        };
         let v = &mut self.voices[voice];
-        if v.kon_delay > 0 {
-            v.kon_delay -= 1;
-            if v.kon_delay == 0 {
-                v.mode = EnvelopeMode::Attack;
-                v.env_level = 0;
+        v.brr_addr = start_addr;
+        v.brr_next_addr = start_addr.wrapping_add(9);
+        v.brr_loop_addr = loop_addr;
+        v.brr_block_index = 0;
+        v.sample_pos = 0;
+        v.brr_prev1 = 0;
+        v.brr_prev2 = 0;
+        v.brr_initialized = true;
+        self.load_current_voice_brr_block(voice, aram);
+    }
+
+    fn advance_voice_brr_stream(&mut self, voice: usize, aram: &[u8]) {
+        if !self.voices[voice].brr_initialized {
+            return;
+        }
+        let target_block = self.voices[voice].sample_pos >> 16;
+        while self.voices[voice].brr_block_index < target_block {
+            self.load_next_voice_brr_block(voice, aram);
+        }
+    }
+
+    fn load_current_voice_brr_block(&mut self, voice: usize, aram: &[u8]) {
+        let addr = self.voices[voice].brr_addr;
+        self.decode_voice_brr_block_at(voice, aram, addr);
+    }
+
+    fn load_next_voice_brr_block(&mut self, voice: usize, aram: &[u8]) {
+        let next_addr = self.voices[voice].brr_next_addr;
+        self.voices[voice].brr_addr = next_addr;
+        self.voices[voice].brr_block_index = self.voices[voice].brr_block_index.wrapping_add(1);
+        self.decode_voice_brr_block_at(voice, aram, next_addr);
+    }
+
+    fn decode_voice_brr_block_at(&mut self, voice: usize, aram: &[u8], addr: u16) {
+        let Some((header, data)) = read_brr_block_from_aram(aram, addr) else {
+            self.voices[voice].brr_samples = [0; 16];
+            self.voices[voice].brr_prev1 = 0;
+            self.voices[voice].brr_prev2 = 0;
+            return;
+        };
+        let decoded = decode_brr_block(
+            header,
+            data,
+            self.voices[voice].brr_prev1,
+            self.voices[voice].brr_prev2,
+        );
+        self.voices[voice].brr_samples = decoded.samples;
+        self.voices[voice].brr_prev1 = decoded.samples[15];
+        self.voices[voice].brr_prev2 = decoded.samples[14];
+        self.voices[voice].brr_next_addr = if decoded.end_flag {
+            if decoded.loop_flag {
+                self.voices[voice].brr_loop_addr
+            } else {
+                addr.wrapping_add(9)
+            }
+        } else {
+            addr.wrapping_add(9)
+        };
+        if decoded.end_flag {
+            self.endx |= 1 << voice;
+            if header & 0x03 == 0x01 {
+                self.voices[voice].mode = EnvelopeMode::Release;
+                self.voices[voice].env_level = 0;
             }
         }
-        envelope::step_voice_envelope(v, self.envelope_counter);
+    }
+
+    fn voice_brr_entry(&self, voice: usize, aram: &[u8]) -> Option<(u16, u16)> {
+        let srcn = self.regs[(voice << 4) + 4];
+        let table_base = usize::from(self.dir) << 8;
+        let entry = table_base + usize::from(srcn) * 4;
+        let start = read_u16_le(aram, entry)?;
+        let loop_addr = read_u16_le(aram, entry + 2)?;
+        Some((start, loop_addr))
+    }
+
+    fn current_voice_brr_sample(&self, voice: usize) -> Option<i16> {
+        let v = &self.voices[voice];
+        if !v.brr_initialized {
+            return None;
+        }
+        let index = ((v.sample_pos >> 12) & 0x0F) as usize;
+        Some(v.brr_samples[index])
     }
 
     pub fn write_reg(&mut self, addr: u8, value: u8) {
         let reg = addr & 0x7F;
         let index = usize::from(reg);
+        if reg == ENDX_REG {
+            self.endx = 0;
+            if index < self.regs.len() {
+                self.regs[index] = 0;
+            }
+            return;
+        }
         if index >= self.regs.len() {
             return;
         }
@@ -420,6 +546,9 @@ impl Sdsp {
     #[must_use]
     pub fn read_reg(&self, addr: u8) -> u8 {
         let index = usize::from(addr & 0x7F);
+        if index == usize::from(ENDX_REG) {
+            return self.endx;
+        }
         self.regs.get(index).copied().unwrap_or(0)
     }
 
@@ -447,6 +576,20 @@ fn noise_clock_divider(clock_select: u8) -> u16 {
         32, 24, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1,
     ];
     NOISE_RATE_TO_DIV[usize::from(clock_select.min(31))]
+}
+
+fn read_u16_le(data: &[u8], index: usize) -> Option<u16> {
+    let lo = *data.get(index)?;
+    let hi = *data.get(index + 1)?;
+    Some(u16::from(lo) | (u16::from(hi) << 8))
+}
+
+fn read_brr_block_from_aram(aram: &[u8], addr: u16) -> Option<(u8, [u8; 8])> {
+    let start = usize::from(addr);
+    let header = *aram.get(start)?;
+    let mut data = [0u8; 8];
+    data.copy_from_slice(aram.get(start + 1..start + 9)?);
+    Some((header, data))
 }
 
 #[cfg(test)]

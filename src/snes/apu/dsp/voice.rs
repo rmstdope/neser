@@ -16,6 +16,22 @@ pub struct VoiceState {
     #[serde(default)]
     pub sample_pos: u32,
     #[serde(default)]
+    pub brr_addr: u16,
+    #[serde(default)]
+    pub brr_next_addr: u16,
+    #[serde(default)]
+    pub brr_loop_addr: u16,
+    #[serde(default)]
+    pub brr_block_index: u32,
+    #[serde(default)]
+    pub brr_prev1: i16,
+    #[serde(default)]
+    pub brr_prev2: i16,
+    #[serde(default)]
+    pub brr_samples: [i16; 16],
+    #[serde(default)]
+    pub brr_initialized: bool,
+    #[serde(default)]
     pub vol_l: i8,
     #[serde(default)]
     pub vol_r: i8,
