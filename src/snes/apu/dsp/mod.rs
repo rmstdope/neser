@@ -399,10 +399,14 @@ impl Sdsp {
             self.voices[voice].brr_prev2,
         );
         self.voices[voice].brr_samples = decoded.samples;
-        self.voices[voice].brr_prev1 = decoded.samples[14];
-        self.voices[voice].brr_prev2 = decoded.samples[15];
+        self.voices[voice].brr_prev1 = decoded.samples[15];
+        self.voices[voice].brr_prev2 = decoded.samples[14];
         self.voices[voice].brr_next_addr = if decoded.end_flag {
-            self.voices[voice].brr_loop_addr
+            if decoded.loop_flag {
+                self.voices[voice].brr_loop_addr
+            } else {
+                addr.wrapping_add(9)
+            }
         } else {
             addr.wrapping_add(9)
         };
