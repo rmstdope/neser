@@ -298,7 +298,7 @@ impl SnesApu {
     }
 
     fn render_stereo_sample_internal(&mut self) -> (f32, f32) {
-        self.dsp.render_stereo_sample()
+        self.dsp.render_stereo_sample_with_memory(&mut self.aram)
     }
 
     fn step_native_audio_clock(&mut self) {
@@ -727,6 +727,40 @@ mod tests {
     }
 
     #[test]
+    fn native_audio_rendering_uses_aram_backed_echo_path() {
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00F2, 0x2C); // EVOLL
+        apu.write_spc_memory_for_test(0x00F3, 0x7F);
+        apu.write_spc_memory_for_test(0x00F2, 0x3C); // EVOLR
+        apu.write_spc_memory_for_test(0x00F3, 0x7F);
+        apu.write_spc_memory_for_test(0x00F2, 0x7F); // FIR7
+        apu.write_spc_memory_for_test(0x00F3, 0x7F);
+        apu.write_spc_memory_for_test(0x00F2, 0x6D); // ESA
+        apu.write_spc_memory_for_test(0x00F3, 0x10);
+        apu.write_spc_memory_for_test(0x00F2, 0x7D); // EDL
+        apu.write_spc_memory_for_test(0x00F3, 0x01);
+
+        let base = 0x1000usize;
+        apu.aram[base] = 0xFE;
+        apu.aram[base + 1] = 0x7F;
+        apu.aram[base + 2] = 0xFE;
+        apu.aram[base + 3] = 0x7F;
+
+        apu.native_cycles_per_sample = 1.0;
+        apu.step_native_audio_clock();
+
+        let sample = apu
+            .native_samples
+            .back()
+            .copied()
+            .expect("native renderer should enqueue one sample");
+        assert!(
+            sample.0.abs() > 0.01 || sample.1.abs() > 0.01,
+            "echo sample from ARAM should contribute to native output"
+        );
+    }
+
+    #[test]
     fn restore_state_masks_dsp_address_to_7_bit() {
         let mut apu = SnesApu::new(None);
         let mut state = apu.capture_state();
@@ -742,8 +776,22 @@ mod tests {
         apu.write_main_port(0, 0xCC);
         let mut state = apu.capture_state();
         state.main_to_spc_ports[0] = 0x12;
-        state.dsp = serde_json::from_str(r#"{"phase":0,"regs":[1,2]}"#)
-            .expect("deserialize malformed DSP for test");
+        state.dsp = serde_json::from_str(
+            r#"{
+                "phase":0,
+                "regs":[1,2],
+                "echo_state":{
+                    "ring_index":0,
+                    "ring_size":1,
+                    "fir_pos":0,
+                    "fir_left":[0,0,0,0,0,0,0,0],
+                    "fir_right":[0,0,0,0,0,0,0,0],
+                    "esa_latched":0,
+                    "esa_initialized":false
+                }
+            }"#,
+        )
+        .expect("deserialize malformed DSP for test");
 
         let err = apu
             .restore_state(&state)
