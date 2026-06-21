@@ -1,10 +1,12 @@
 //! SNES S-DSP voice pipeline (work in progress).
 
 mod brr;
+mod echo;
 mod envelope;
 mod gaussian;
 mod voice;
 
+use echo::EchoState;
 use serde::{Deserialize, Serialize};
 use voice::{EnvelopeMode, VoiceState};
 
@@ -55,10 +57,8 @@ pub struct Sdsp {
     edl: u8,
     #[serde(default)]
     fir_coeffs: [i8; 8],
-    #[serde(default)]
-    fir_history: [i16; 8],
-    #[serde(default)]
-    fir_history_pos: usize,
+    // TODO(#2801): restore backward-compatible deserialization default for echo_state.
+    echo_state: EchoState,
     #[serde(default = "default_noise_lfsr")]
     noise_lfsr: u16,
     #[serde(default)]
@@ -96,8 +96,7 @@ impl Sdsp {
             esa: 0,
             edl: 0,
             fir_coeffs: [0; 8],
-            fir_history: [0; 8],
-            fir_history_pos: 0,
+            echo_state: EchoState::new(),
             noise_lfsr: default_noise_lfsr(),
             noise_counter: 0,
             envelope_counter: 0,
@@ -118,6 +117,7 @@ impl Sdsp {
         if self.noise_lfsr == 0 || self.noise_lfsr > 0x7FFF {
             self.noise_lfsr = default_noise_lfsr();
         }
+        self.echo_state.normalize_after_restore();
         self.rebuild_cached_fields_from_regs();
         Ok(())
     }
@@ -191,9 +191,20 @@ impl Sdsp {
 
     #[must_use]
     pub fn render_stereo_sample(&mut self) -> (f32, f32) {
+        self.render_stereo_sample_internal(None)
+    }
+
+    #[must_use]
+    pub fn render_stereo_sample_with_memory(&mut self, aram: &mut [u8]) -> (f32, f32) {
+        self.render_stereo_sample_internal(Some(aram))
+    }
+
+    #[must_use]
+    fn render_stereo_sample_internal(&mut self, aram: Option<&mut [u8]>) -> (f32, f32) {
         let mut dry_l = 0i32;
         let mut dry_r = 0i32;
-        let mut echo_input = 0i32;
+        let mut echo_voice_l = 0i32;
+        let mut echo_voice_r = 0i32;
 
         for voice in 0..8usize {
             let sample = i16::from(self.voices[voice].outx) << 8;
@@ -201,28 +212,25 @@ impl Sdsp {
             dry_l += i32::from(left);
             dry_r += i32::from(right);
             if self.echo_enable & (1 << voice) != 0 {
-                echo_input += (i32::from(left) + i32::from(right)) >> 1;
+                echo_voice_l += i32::from(left);
+                echo_voice_r += i32::from(right);
             }
         }
 
-        let dry_mono =
-            ((dry_l + dry_r) >> 1).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
-        self.fir_history[self.fir_history_pos] = dry_mono;
-        self.fir_history_pos = (self.fir_history_pos + 1) & 7;
-
-        let mut echo = 0i32;
-        for tap in 0..8usize {
-            let hist_idx = (self.fir_history_pos + 8 - tap - 1) & 7;
-            echo += i32::from(self.fir_coeffs[tap]) * i32::from(self.fir_history[hist_idx]);
-        }
-        echo = (echo >> 7) + ((echo_input * i32::from(self.echo_feedback)) >> 7);
-
-        let mut left = dry_l + ((echo * i32::from(self.echo_vol_l)) >> 7);
-        let mut right = dry_r + ((echo * i32::from(self.echo_vol_r)) >> 7);
-        if self.flg & 0x40 != 0 {
-            left = 0;
-            right = 0;
-        }
+        let (left, right) = self.echo_state.process_sample(
+            aram,
+            self.esa,
+            self.edl,
+            &self.fir_coeffs,
+            self.echo_feedback,
+            self.echo_vol_l,
+            self.echo_vol_r,
+            self.flg,
+            echo_voice_l,
+            echo_voice_r,
+            dry_l,
+            dry_r,
+        );
         let left = left.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as f32 / 32768.0;
         let right = right.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as f32 / 32768.0;
         (left, right)

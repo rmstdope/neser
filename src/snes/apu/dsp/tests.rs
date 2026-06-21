@@ -429,10 +429,150 @@ fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
 }
 
 #[test]
-fn legacy_deserialization_without_new_voice_fields_uses_defaults() {
-    let mut dsp: Sdsp =
-        serde_json::from_str(r#"{"phase":255,"regs":[]}"#).expect("legacy-compatible decode");
-    dsp.normalize_after_restore()
-        .expect("normalization should accept defaulted new fields");
-    assert_eq!(dsp.phase(), 0x1F);
+fn given_echo_enabled_when_rendering_with_memory_then_echo_ring_buffer_is_written_at_esa_base() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x0C, 0x7F);
+    dsp.write_reg(0x1C, 0x7F);
+    dsp.write_reg(0x4D, 0x01); // EON voice 0
+    dsp.write_reg(0x6D, 0x40); // ESA base 0x4000
+    dsp.write_reg(0x7D, 0x01); // EDL non-zero
+    dsp.voices[0].outx = 64;
+
+    let _ = dsp.render_stereo_sample_with_memory(&mut aram);
+
+    let base = 0x4000usize;
+    let left = i16::from_le_bytes([aram[base], aram[base + 1]]);
+    let right = i16::from_le_bytes([aram[base + 2], aram[base + 3]]);
+    assert_ne!(left, 0, "left echo sample should be written to ARAM");
+    assert_ne!(right, 0, "right echo sample should be written to ARAM");
+}
+
+#[test]
+fn given_echo_write_disabled_when_rendering_with_memory_then_echo_buffer_is_not_overwritten() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0x55u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x0C, 0x7F);
+    dsp.write_reg(0x1C, 0x7F);
+    dsp.write_reg(0x4D, 0x01); // EON voice 0
+    dsp.write_reg(0x6D, 0x20); // ESA base 0x2000
+    dsp.write_reg(0x7D, 0x01); // EDL non-zero
+    dsp.write_reg(0x6C, 0x20); // FLG.5 = echo write disable
+    dsp.voices[0].outx = 64;
+
+    let _ = dsp.render_stereo_sample_with_memory(&mut aram);
+
+    let base = 0x2000usize;
+    assert_eq!(aram[base], 0x55);
+    assert_eq!(aram[base + 1], 0x55);
+    assert_eq!(aram[base + 2], 0x55);
+    assert_eq!(aram[base + 3], 0x55);
+}
+
+#[test]
+fn given_echo_ram_and_fir_coefficients_when_rendering_with_memory_then_echo_is_mixed_to_output() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x2C, 0x7F); // EVOLL
+    dsp.write_reg(0x3C, 0x7F); // EVOLR
+    dsp.write_reg(0x7F, 0x7F); // FIR7 (newest sample tap)
+    dsp.write_reg(0x6D, 0x10); // ESA base 0x1000
+    dsp.write_reg(0x7D, 0x01); // EDL non-zero
+    let base = 0x1000usize;
+    aram[base] = 0xFE;
+    aram[base + 1] = 0x7F; // near +0x7FFF
+    aram[base + 2] = 0xFE;
+    aram[base + 3] = 0x7F;
+
+    let (left, right) = dsp.render_stereo_sample_with_memory(&mut aram);
+
+    assert!(
+        left.abs() > 0.01,
+        "left output should include echo contribution"
+    );
+    assert!(
+        right.abs() > 0.01,
+        "right output should include echo contribution"
+    );
+}
+
+#[test]
+fn given_edl_zero_when_rendering_then_echo_ring_wraps_each_sample() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x0C, 0x7F);
+    dsp.write_reg(0x1C, 0x7F);
+    dsp.write_reg(0x4D, 0x01); // EON voice 0
+    dsp.write_reg(0x6D, 0x30); // ESA base 0x3000
+    dsp.write_reg(0x7D, 0x00); // EDL=0 => 4-byte ring
+    dsp.voices[0].outx = 10;
+    let _ = dsp.render_stereo_sample_with_memory(&mut aram);
+    let first = [aram[0x3000], aram[0x3001], aram[0x3002], aram[0x3003]];
+
+    dsp.voices[0].outx = 64;
+    let _ = dsp.render_stereo_sample_with_memory(&mut aram);
+    let second = [aram[0x3000], aram[0x3001], aram[0x3002], aram[0x3003]];
+
+    assert_ne!(
+        first, second,
+        "EDL=0 should keep overwriting the same 4-byte entry"
+    );
+    assert_eq!(aram[0x3004], 0);
+    assert_eq!(aram[0x3005], 0);
+    assert_eq!(aram[0x3006], 0);
+    assert_eq!(aram[0x3007], 0);
+}
+
+#[test]
+fn given_esa_change_when_rendering_then_write_base_switches_after_one_sample_delay() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x0C, 0x7F);
+    dsp.write_reg(0x1C, 0x7F);
+    dsp.write_reg(0x4D, 0x01); // EON voice 0
+    dsp.write_reg(0x7D, 0x00); // EDL=0 keeps ring index at 0
+    dsp.write_reg(0x6D, 0x10);
+    dsp.voices[0].outx = 24;
+    let _ = dsp.render_stereo_sample_with_memory(&mut aram);
+    let first_base = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
+
+    dsp.write_reg(0x6D, 0x20);
+    dsp.voices[0].outx = 40;
+    let _ = dsp.render_stereo_sample_with_memory(&mut aram);
+    let delayed_base = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
+    let new_base_after_second = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
+
+    dsp.voices[0].outx = 56;
+    let _ = dsp.render_stereo_sample_with_memory(&mut aram);
+    let new_base_after_third = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
+
+    assert_ne!(
+        first_base, delayed_base,
+        "second sample should still target old ESA base"
+    );
+    assert_eq!(new_base_after_second, [0, 0, 0, 0]);
+    assert_ne!(
+        new_base_after_third,
+        [0, 0, 0, 0],
+        "new ESA base should take effect on the following sample"
+    );
+}
+
+#[test]
+fn legacy_deserialization_without_echo_state_is_rejected_until_issue_2801() {
+    // TODO(#2801): restore backward-compatible Sdsp deserialization for older save-states.
+    let err = serde_json::from_str::<Sdsp>(r#"{"phase":255,"regs":[]}"#)
+        .expect_err("legacy payload without echo_state should currently fail");
+    assert!(
+        err.to_string().contains("missing field `echo_state`"),
+        "error should explain missing echo_state field"
+    );
 }
