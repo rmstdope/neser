@@ -6,8 +6,9 @@
 //! bus-agnostic and testable, mirroring the `SnesBus` pattern used by the 65816.
 //!
 //! Every [`Spc700Bus::read`], [`Spc700Bus::write`], and [`Spc700Bus::idle`] call
-//! represents exactly one ~1.024 MHz SPC700 cycle, which lets the CPU core remain
-//! cycle-accurate and be verified against SingleStepTests `spc700` vectors.
+//! advances SPC700 time by the corresponding bus-defined cycle cost from
+//! [`Spc700Bus::read_cycles`], [`Spc700Bus::write_cycles`], or
+//! [`Spc700Bus::idle_cycles`].
 
 /// Bus interface for the SPC700 CPU core.
 ///
@@ -19,7 +20,9 @@ pub trait Spc700Bus {
         1
     }
 
-    /// Read a byte from the 16-bit SPC700 address space (consumes one cycle).
+    /// Read a byte from the 16-bit SPC700 address space.
+    ///
+    /// Timing is represented by [`Self::read_cycles`].
     fn read(&mut self, addr: u16) -> u8;
 
     /// Base cycle cost for writing to the given address.
@@ -27,7 +30,9 @@ pub trait Spc700Bus {
         1
     }
 
-    /// Write a byte to the 16-bit SPC700 address space (consumes one cycle).
+    /// Write a byte to the 16-bit SPC700 address space.
+    ///
+    /// Timing is represented by [`Self::write_cycles`].
     fn write(&mut self, addr: u16, value: u8);
 
     /// Base cycle cost for an idle SPC700 cycle.
@@ -35,7 +40,9 @@ pub trait Spc700Bus {
         1
     }
 
-    /// Consume one internal (idle) SPC700 cycle with no memory access.
+    /// Consume one internal SPC700 idle step with no memory access.
+    ///
+    /// Timing is represented by [`Self::idle_cycles`].
     fn idle(&mut self);
 }
 

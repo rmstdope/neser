@@ -550,6 +550,7 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn read(&mut self, addr: u16) -> u8 {
+        let cycles = self.read_cycles(addr);
         let value = match addr {
             0x00F0 => 0x00,
             0x00F1 => *self.control,
@@ -560,7 +561,7 @@ impl Spc700Bus for SpcBusView<'_> {
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
             _ => self.aram[addr as usize],
         };
-        self.tick_timers_multiple(self.read_cycles(addr));
+        self.tick_timers_multiple(cycles);
         value
     }
 
@@ -569,6 +570,7 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn write(&mut self, addr: u16, value: u8) {
+        let cycles = self.write_cycles(addr);
         match addr {
             0x00F0 => {
                 self.write_test(value);
@@ -584,7 +586,7 @@ impl Spc700Bus for SpcBusView<'_> {
                 }
             }
         }
-        self.tick_timers_multiple(self.write_cycles(addr));
+        self.tick_timers_multiple(cycles);
     }
 
     fn idle_cycles(&self) -> u8 {
@@ -592,7 +594,8 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn idle(&mut self) {
-        self.tick_timers_multiple(self.idle_cycles());
+        let cycles = self.idle_cycles();
+        self.tick_timers_multiple(cycles);
     }
 }
 
@@ -706,10 +709,21 @@ mod tests {
     #[test]
     fn advancing_spc_bus_cycles_advances_dsp_phase_skeleton() {
         let mut apu = SnesApu::new(None);
+
         assert_eq!(apu.dsp_phase_for_test(), 0);
 
         apu.advance_spc_bus_cycles_for_test(3);
         assert_eq!(apu.dsp_phase_for_test(), 3);
+    }
+
+    #[test]
+    fn writing_test_register_uses_pre_write_waitstate_cycles() {
+        let mut apu = SnesApu::new(None);
+
+        assert_eq!(apu.dsp_phase_for_test(), 0);
+        apu.write_spc_memory_for_test(0x00F0, 0x3A);
+
+        assert_eq!(apu.dsp_phase_for_test(), 1);
     }
 
     #[test]
