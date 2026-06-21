@@ -4,6 +4,7 @@ use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
+use crate::snes::input::{InputPorts, SnesButton};
 use crate::snes::ppu::{Ppu, SnesVideoRegion};
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -39,6 +40,10 @@ pub struct SnesSystemBus {
     /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
     /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`.
     ppu: RefCell<Ppu>,
+    /// The controller ports and auto-joypad sequencer. Wrapped in a `RefCell`
+    /// because manual serial reads (`$4016`/`$4017`) clock the shift register
+    /// yet the bus read path takes `&self`.
+    input: RefCell<InputPorts>,
     mdr: Cell<u8>,
     ticks: Cell<u64>,
 }
@@ -77,6 +82,7 @@ impl SnesSystemBus {
             dma: DmaController::new(),
             apu: RefCell::new(SnesApu::new(spc_ipl)),
             ppu: RefCell::new(Ppu::new_with_region(video_region)),
+            input: RefCell::new(InputPorts::new()),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
         }
@@ -315,6 +321,30 @@ impl SnesSystemBus {
         self.ppu.get_mut().take_frame_complete()
     }
 
+    /// Set a controller button on the given port (0 = port 1, 1 = port 2).
+    pub fn set_controller_button(&mut self, port: u8, button: SnesButton, pressed: bool) {
+        self.input.get_mut().set_button(port, button, pressed);
+    }
+
+    /// Configure the device plugged into each controller port.
+    pub fn configure_controllers(
+        &mut self,
+        port1: crate::snes::input::SnesControllerType,
+        port2: crate::snes::input::SnesControllerType,
+    ) {
+        self.input.get_mut().configure(port1, port2);
+    }
+
+    /// Bulk-set the 8 NES-convention buttons on the given port.
+    pub fn set_joypad_button_states(&mut self, port: u8, state: u8) {
+        self.input.get_mut().set_joypad_button_states(port, state);
+    }
+
+    /// Return the 8 NES-convention button states for the given port.
+    pub fn joypad_button_states(&self, port: u8) -> u8 {
+        self.input.borrow().joypad_button_states(port)
+    }
+
     /// Capture the PPU state for a save-state.
     pub(crate) fn ppu_capture_state(&self) -> SnesPpuState {
         self.ppu.borrow().capture_state()
@@ -356,6 +386,7 @@ impl SnesSystemBus {
             ticks: self.ticks.get(),
             sram: self.sram.clone(),
             apu: self.apu.borrow().capture_state(),
+            input: self.input.borrow().capture_state(),
         }
     }
 
@@ -406,6 +437,7 @@ impl SnesSystemBus {
         self.ticks.set(state.ticks);
         self.sram.copy_from_slice(&state.sram);
         self.apu.get_mut().restore_state(&state.apu)?;
+        self.input.get_mut().restore_state(&state.input);
         Ok(())
     }
 
@@ -442,6 +474,7 @@ impl SnesSystemBus {
 
     fn read_mmio(&self, addr: u32) -> Option<u8> {
         let offset = Self::decode_system_offset(addr)?;
+        let open_bus = self.mdr.get();
         let value = match offset {
             0x2180 => {
                 let wmadd = self.wmadd.get() & 0x1_FFFF;
@@ -460,7 +493,15 @@ impl SnesSystemBus {
             0x420C => self.hdmaen,
             0x2140..=0x2143 => self.apu.borrow().read_main_port((offset - 0x2140) as usize),
             0x2134..=0x213F => self.ppu.borrow_mut().read_register(offset),
-            0x4210..=0x4212 => self.ppu.borrow_mut().read_register(offset),
+            // HVBJOY: bit 0 reports auto-joypad busy, owned by the input ports.
+            0x4212 => {
+                let raw = self.ppu.borrow_mut().read_register(offset);
+                (raw & !0x01) | (self.input.borrow().auto_busy() as u8)
+            }
+            0x4210 | 0x4211 => self.ppu.borrow_mut().read_register(offset),
+            0x4016 => self.input.borrow_mut().read_joya(open_bus),
+            0x4017 => self.input.borrow_mut().read_joyb(open_bus),
+            0x4218..=0x421F => self.input.borrow().read_joy_register(offset)?,
             0x4300..=0x437F => self.dma.read_register(offset)?,
             _ => return None,
         };
@@ -546,8 +587,14 @@ impl SnesSystemBus {
                 self.ppu.borrow_mut().write_register(offset, value);
                 true
             }
+            0x4016 => {
+                self.input.get_mut().write_joywr(value);
+                true
+            }
             0x4200 => {
                 self.ppu.borrow_mut().write_register(offset, value);
+                // NMITIMEN bit 0: auto-joypad enable.
+                self.input.get_mut().set_auto_enable(value & 0x01 != 0);
                 true
             }
             0x4201 => {
@@ -628,6 +675,10 @@ impl SnesBus for SnesSystemBus {
         self.ticks.set(self.ticks.get().wrapping_add(1));
         self.apu.borrow_mut().tick();
         self.ppu.get_mut().tick();
+        if self.ppu.get_mut().poll_auto_joypad_latch() {
+            self.input.get_mut().trigger_auto_read();
+        }
+        self.input.get_mut().tick();
     }
 
     fn poll_nmi(&mut self) -> bool {
@@ -1427,5 +1478,114 @@ mod tests {
             !bus.poll_irq(),
             "TIMEUP read acknowledges and deasserts IRQ line"
         );
+    }
+
+    /// Master cycles in one NTSC frame (341 dots * 262 lines * 4 cycles/dot).
+    const FRAME_MASTER_CYCLES: u32 = 341 * 262 * 4;
+
+    #[test]
+    fn auto_joypad_reads_buttons_into_joy1_over_a_frame() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004200, 0x01); // enable auto-joypad
+        bus.set_controller_button(0, SnesButton::B, true);
+        bus.set_controller_button(0, SnesButton::A, true);
+
+        for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
+            bus.tick();
+        }
+
+        let joy1 = (bus.read(0x004219) as u16) << 8 | bus.read(0x004218) as u16;
+        // B = serial bit 15, A = serial bit 7.
+        assert_eq!(joy1, 0x8080);
+    }
+
+    #[test]
+    fn auto_joypad_maps_port2_into_joy2() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004200, 0x01);
+        bus.set_controller_button(1, SnesButton::Start, true);
+
+        for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
+            bus.tick();
+        }
+
+        let joy2 = (bus.read(0x00421B) as u16) << 8 | bus.read(0x00421A) as u16;
+        // Start = serial bit 12.
+        assert_eq!(joy2, 0x1000);
+        let joy1 = (bus.read(0x004219) as u16) << 8 | bus.read(0x004218) as u16;
+        assert_eq!(joy1, 0x0000, "port 1 untouched");
+    }
+
+    #[test]
+    fn hvbjoy_reports_auto_joypad_busy_then_clears() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004200, 0x01);
+
+        let mut saw_busy = false;
+        for _ in 0..FRAME_MASTER_CYCLES {
+            bus.tick();
+            if bus.read(0x004212) & 0x01 != 0 {
+                saw_busy = true;
+                break;
+            }
+        }
+        assert!(saw_busy, "HVBJOY bit 0 set during the auto-joypad window");
+
+        // Run out the busy window and confirm it clears.
+        for _ in 0..4224 {
+            bus.tick();
+        }
+        assert_eq!(bus.read(0x004212) & 0x01, 0, "busy clears after the window");
+    }
+
+    #[test]
+    fn manual_serial_read_matches_auto_joypad_over_the_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004200, 0x01);
+        bus.set_controller_button(0, SnesButton::Y, true);
+        bus.set_controller_button(0, SnesButton::Left, true);
+        bus.set_controller_button(0, SnesButton::L, true);
+
+        for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
+            bus.tick();
+        }
+        let auto = (bus.read(0x004219) as u16) << 8 | bus.read(0x004218) as u16;
+
+        // Manual strobe + 16 serial reads of $4016 bit 0.
+        bus.write(0x004016, 0x01);
+        bus.write(0x004016, 0x00);
+        let mut manual = 0u16;
+        for _ in 0..16 {
+            manual = (manual << 1) | (bus.read(0x004016) & 0x01) as u16;
+        }
+        assert_eq!(manual, auto);
+    }
+
+    #[test]
+    fn joyb_grounded_bits_read_one_over_the_bus() {
+        let bus = SnesSystemBus::new(lorom_test_cart());
+        assert_eq!(bus.read(0x004017) & 0x1C, 0x1C, "$4017 bits 2-4 read 1");
+    }
+
+    #[test]
+    fn save_state_round_trips_input() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004200, 0x01); // auto-joypad enabled
+        bus.set_controller_button(0, SnesButton::X, true);
+        bus.set_controller_button(1, SnesButton::Down, true);
+        let state = bus.capture_state();
+
+        let mut restored = SnesSystemBus::new(lorom_test_cart());
+        restored.restore_state(&state).expect("restore");
+        assert_eq!(
+            restored.joypad_button_states(1),
+            bus.joypad_button_states(1)
+        );
+        // X (serial bit 9) survives a full auto-read after restore.
+        for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
+            restored.tick();
+        }
+        let joy1 = (restored.read(0x004219) as u16) << 8 | restored.read(0x004218) as u16;
+        assert_ne!(joy1 & (1 << 6), 0, "X preserved across save-state");
     }
 }

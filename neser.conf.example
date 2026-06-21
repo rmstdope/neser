@@ -416,3 +416,14 @@ nes-vertical_overscan=8
 # The file must be exactly 64 bytes. If missing or invalid, NESER falls back
 # to the built-in clean-room IPL ROM.
 #snes-spc-ipl-path=/absolute/path/to/spc_ipl.bin
+#
+# Controller device plugged into each SNES port.
+# Valid values:
+#   - standard:   standard 12-button SNES controller (default)
+#   - multitap:   Super Multitap / Multiplayer 5 (4/5-player adaptor)
+#   - mouse:      SNES Mouse
+#   - superscope: Super Scope light gun
+# Note: only 'standard' is currently implemented; the other values fall back to
+# a standard controller until their respective peripherals are added.
+#snes-controller-port1=standard
+#snes-controller-port2=standard

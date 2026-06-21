@@ -8396,6 +8396,35 @@ impl Cpu<SnesSystemBus> {
         self.bus.take_ppu_frame_complete()
     }
 
+    /// Set a controller button on the given port (0 = port 1, 1 = port 2).
+    pub fn set_controller_button(
+        &mut self,
+        port: u8,
+        button: crate::snes::input::SnesButton,
+        pressed: bool,
+    ) {
+        self.bus.set_controller_button(port, button, pressed);
+    }
+
+    /// Bulk-set the 8 NES-convention buttons on the given port.
+    pub fn set_joypad_button_states(&mut self, port: u8, state: u8) {
+        self.bus.set_joypad_button_states(port, state);
+    }
+
+    /// Configure the device plugged into each controller port.
+    pub fn configure_controllers(
+        &mut self,
+        port1: crate::snes::input::SnesControllerType,
+        port2: crate::snes::input::SnesControllerType,
+    ) {
+        self.bus.configure_controllers(port1, port2);
+    }
+
+    /// Return the 8 NES-convention button states for the given port.
+    pub fn joypad_button_states(&self, port: u8) -> u8 {
+        self.bus.joypad_button_states(port)
+    }
+
     pub(crate) fn capture_save_state(&self) -> SnesSaveState {
         SnesSaveState {
             version: crate::snes::console::save_state::SNES_SAVESTATE_VERSION,

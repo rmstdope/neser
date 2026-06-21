@@ -92,6 +92,28 @@ pub fn map_button_to_snes(button: gilrs::Button) -> Option<SnesButton> {
     }
 }
 
+/// Converts a physical [`SnesButton`] to the SNES console platform button id.
+///
+/// Ids match [`crate::snes::input::button_from_id`]:
+/// `0=A, 1=B, 2=Select, 3=Start, 4=Up, 5=Down, 6=Left, 7=Right, 8=L, 9=R,
+/// 10=X, 11=Y`.
+pub fn snes_button_to_id(button: SnesButton) -> u8 {
+    match button {
+        SnesButton::A => 0,
+        SnesButton::B => 1,
+        SnesButton::Select => 2,
+        SnesButton::Start => 3,
+        SnesButton::Up => 4,
+        SnesButton::Down => 5,
+        SnesButton::Left => 6,
+        SnesButton::Right => 7,
+        SnesButton::L => 8,
+        SnesButton::R => 9,
+        SnesButton::X => 10,
+        SnesButton::Y => 11,
+    }
+}
+
 /// Tracks the digital state derived from a single analog axis pair.
 ///
 /// Converts continuous axis values into discrete D-pad presses,
@@ -433,6 +455,10 @@ impl GamepadManager {
             if let Some(nes_btn) = map_button_to_nes(button) {
                 nes.set_button(port, nes_btn, pressed);
             }
+        } else if let Console::Snes(_) = console {
+            if let Some(snes_btn) = map_button_to_snes(button) {
+                console.set_button(0, snes_button_to_id(snes_btn), pressed);
+            }
         } else if let Some(nes_btn) = map_button_to_nes(button) {
             console.set_button(0, nes_btn as u8, pressed);
         }
@@ -479,6 +505,22 @@ impl GamepadManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snes_button_to_id_matches_platform_convention() {
+        assert_eq!(snes_button_to_id(SnesButton::A), 0);
+        assert_eq!(snes_button_to_id(SnesButton::B), 1);
+        assert_eq!(snes_button_to_id(SnesButton::Select), 2);
+        assert_eq!(snes_button_to_id(SnesButton::Start), 3);
+        assert_eq!(snes_button_to_id(SnesButton::Up), 4);
+        assert_eq!(snes_button_to_id(SnesButton::Down), 5);
+        assert_eq!(snes_button_to_id(SnesButton::Left), 6);
+        assert_eq!(snes_button_to_id(SnesButton::Right), 7);
+        assert_eq!(snes_button_to_id(SnesButton::L), 8);
+        assert_eq!(snes_button_to_id(SnesButton::R), 9);
+        assert_eq!(snes_button_to_id(SnesButton::X), 10);
+        assert_eq!(snes_button_to_id(SnesButton::Y), 11);
+    }
 
     // ── nes_dpad_to_snes ──────────────────────────────────────────────────
 

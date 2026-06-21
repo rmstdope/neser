@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::snes::apu::SnesApuState;
 use crate::snes::cartridge::Mapping;
+use crate::snes::input::InputPortsState;
 
 pub const SNES_SAVESTATE_VERSION: u32 = 2;
 
@@ -124,6 +125,8 @@ pub struct SnesBusState {
     pub sram: Vec<u8>,
     #[serde(default)]
     pub apu: SnesApuState,
+    #[serde(default)]
+    pub input: InputPortsState,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]

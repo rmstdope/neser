@@ -52,6 +52,11 @@ pub(super) const CPU_VERSION: u8 = 2;
 pub(super) const VBLANK_START_LINE: u16 = 225;
 /// Dot at which the HBlank flag (HVBJOY bit 6) goes high (approximate; leading edge is a TODO).
 pub(super) const HBLANK_START_DOT: u16 = 274;
+/// Dot on the first VBlank scanline at which the automatic joypad read begins.
+///
+/// fullsnes: auto-joypad reading "begins between H=32.5 and H=95.5 of the first
+/// V-Blank scanline"; we latch at a fixed dot within that range.
+pub(super) const AUTO_JOYPAD_LATCH_DOT: u16 = 32;
 
 /// Master clocks per dot (normal-speed dots).
 pub(super) const MASTER_CYCLES_PER_DOT: u32 = 4;
@@ -160,6 +165,9 @@ pub struct Ppu {
     framebuffer: Vec<u16>,
     /// Set when the PPU enters VBlank (a full visible frame has been produced).
     frame_complete: bool,
+    /// One-shot flag set when the first VBlank scanline reaches
+    /// [`AUTO_JOYPAD_LATCH_DOT`], signalling the bus to start an auto-joypad read.
+    auto_joypad_latch: bool,
     /// BGMODE ($2105) bits 0-2: BG screen mode (0-7).
     bg_mode: u8,
     /// BGMODE ($2105) bit 3: BG3 high-priority option (Mode 1 only).
@@ -302,6 +310,7 @@ impl Ppu {
             video_region,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
             frame_complete: false,
+            auto_joypad_latch: false,
             bg_mode: 0,
             bg3_priority: false,
             bg_tile_size_16: [false; 4],
@@ -381,6 +390,14 @@ impl Ppu {
         let done = self.frame_complete;
         self.frame_complete = false;
         done
+    }
+
+    /// Poll for and consume the one-shot auto-joypad latch signal (set when the
+    /// first VBlank scanline reaches [`AUTO_JOYPAD_LATCH_DOT`]).
+    pub fn poll_auto_joypad_latch(&mut self) -> bool {
+        let latch = self.auto_joypad_latch;
+        self.auto_joypad_latch = false;
+        latch
     }
 
     /// Read a raw VRAM byte (test/inspection helper).
