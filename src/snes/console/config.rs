@@ -1,6 +1,7 @@
 //! SNES-specific configuration.
 
 use crate::platform::config::{CliFlag, parse_cli_string_arg};
+use crate::snes::input::SnesControllerType;
 
 pub(crate) const SNES_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
@@ -15,6 +16,16 @@ pub(crate) const SNES_CLI_FLAGS: &[CliFlag] = &[
         help: Some("SNES hardware timing mode: snes-ntsc or snes-pal"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--snes-controller-port1",
+        help: Some("SNES port 1 controller: standard, multitap, mouse or superscope"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--snes-controller-port2",
+        help: Some("SNES port 2 controller: standard, multitap, mouse or superscope"),
+        has_value: true,
+    },
 ];
 
 /// Configuration options for SNES emulation.
@@ -24,6 +35,10 @@ pub struct SnesConfig {
     pub hardware: Option<SnesHardware>,
     /// Optional path to an external 64-byte SPC IPL ROM.
     pub spc_ipl_path: Option<String>,
+    /// Device plugged into controller port 1.
+    pub controller_port1: SnesControllerType,
+    /// Device plugged into controller port 2.
+    pub controller_port2: SnesControllerType,
 }
 
 /// SNES video hardware timing mode.
@@ -55,6 +70,12 @@ impl SnesConfig {
                 )
             })?);
         }
+        if let Some(value) = parse_cli_string_arg(args, "--snes-controller-port1") {
+            self.controller_port1 = parse_controller_type("--snes-controller-port1", &value)?;
+        }
+        if let Some(value) = parse_cli_string_arg(args, "--snes-controller-port2") {
+            self.controller_port2 = parse_controller_type("--snes-controller-port2", &value)?;
+        }
         Ok(())
     }
 
@@ -75,15 +96,67 @@ impl SnesConfig {
                     )
                 })?);
             }
+            "snes_controller_port1" | "controller_port1" => {
+                self.controller_port1 = parse_controller_type("snes_controller_port1", value)?;
+            }
+            "snes_controller_port2" | "controller_port2" => {
+                self.controller_port2 = parse_controller_type("snes_controller_port2", value)?;
+            }
             _ => {}
         }
         Ok(())
     }
 }
 
+/// Parse a controller-type value, producing a descriptive error on failure.
+fn parse_controller_type(key: &str, value: &str) -> Result<SnesControllerType, String> {
+    SnesControllerType::parse(value).ok_or_else(|| {
+        format!(
+            "Invalid {key} value: '{value}'. Valid options are: standard, multitap, mouse, superscope"
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SnesConfig, SnesHardware};
+    use crate::snes::input::SnesControllerType;
+
+    #[test]
+    fn controller_ports_default_to_standard() {
+        let cfg = SnesConfig::default();
+        assert_eq!(cfg.controller_port1, SnesControllerType::Standard);
+        assert_eq!(cfg.controller_port2, SnesControllerType::Standard);
+    }
+
+    #[test]
+    fn controller_port_parses_from_cli_flag() {
+        let mut cfg = SnesConfig::default();
+        cfg.apply_args(&[
+            "neser".to_string(),
+            "--snes-controller-port2".to_string(),
+            "multitap".to_string(),
+        ])
+        .expect("args parse");
+        assert_eq!(cfg.controller_port2, SnesControllerType::Multitap);
+    }
+
+    #[test]
+    fn controller_port_parses_from_config_key() {
+        let mut cfg = SnesConfig::default();
+        cfg.apply_config_value("snes-controller-port1", "mouse")
+            .expect("config parse");
+        assert_eq!(cfg.controller_port1, SnesControllerType::Mouse);
+    }
+
+    #[test]
+    fn invalid_controller_port_value_is_rejected() {
+        let mut cfg = SnesConfig::default();
+        assert!(
+            cfg.apply_config_value("snes-controller-port1", "bogus")
+                .is_err()
+        );
+    }
 
     #[test]
     fn snes_spc_ipl_path_parses_from_config_key() {

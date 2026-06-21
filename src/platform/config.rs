@@ -1165,6 +1165,8 @@ fn help_section_for_flag(flag: &str) -> &'static str {
             | "--nes-controller-port2"
             | "--nes-expansion-port"
             | "--nes-zapper-detection-size"
+            | "--snes-controller-port1"
+            | "--snes-controller-port2"
             | "--gamepads"
             | "--nes-enable-4-score"
             | "--no-nes-4-score"

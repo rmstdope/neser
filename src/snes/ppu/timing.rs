@@ -35,6 +35,11 @@ impl Ppu {
             }
             self.on_scanline_start();
         }
+        if self.position.scanline == self.vblank_start_line()
+            && self.position.dot == super::AUTO_JOYPAD_LATCH_DOT
+        {
+            self.auto_joypad_latch = true;
+        }
         self.evaluate_hv_irq();
         let forced_blank = self.inidisp & 0x80 != 0;
         self.update_obj_pipeline(forced_blank);
@@ -324,6 +329,26 @@ mod tests {
         ppu.read_register(0x2137); // SLHV with WRIO bit7 clear must not latch.
 
         assert_eq!(ppu.read_register(0x213F) & 0x40, 0);
+    }
+
+    #[test]
+    fn auto_joypad_latch_fires_at_dot_32_of_first_vblank_scanline() {
+        let mut ppu = Ppu::new();
+        tick_to_vblank(&mut ppu);
+        assert!(
+            !ppu.poll_auto_joypad_latch(),
+            "latch should not fire at the very start of VBlank"
+        );
+
+        tick_dots(&mut ppu, super::super::AUTO_JOYPAD_LATCH_DOT as u32);
+        assert!(
+            ppu.poll_auto_joypad_latch(),
+            "latch fires once the first VBlank scanline reaches the latch dot"
+        );
+        assert!(
+            !ppu.poll_auto_joypad_latch(),
+            "the auto-joypad latch signal is one-shot"
+        );
     }
 
     fn tick_to_vblank(ppu: &mut Ppu) {

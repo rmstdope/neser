@@ -217,6 +217,7 @@ impl Emulator for Snes {
             video_region,
         );
         let mut cpu = Cpu::new(bus);
+        cpu.configure_controllers(config.controller_port1, config.controller_port2);
         cpu.do_reset();
         self.cpu = Some(cpu);
         self.rom_path = Some(PathBuf::from(name));
@@ -303,17 +304,26 @@ impl Emulator for Snes {
         }
     }
 
-    fn set_button(&mut self, _port: u8, _button_id: u8, _pressed: bool) {
-        // TODO: Implement button state setting
+    fn set_button(&mut self, port: u8, button_id: u8, pressed: bool) {
+        let Some(cpu) = self.cpu.as_mut() else {
+            return;
+        };
+        if let Some(button) = crate::snes::input::button_from_id(button_id) {
+            cpu.set_controller_button(port, button, pressed);
+        }
     }
 
-    fn set_joypad_button_states(&mut self, _port: u8, _state: u8) {
-        // TODO: Implement joypad state setting
+    fn set_joypad_button_states(&mut self, port: u8, state: u8) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.set_joypad_button_states(port, state);
+        }
     }
 
-    fn get_joypad_button_states(&self, _port: u8) -> u8 {
-        // TODO: Implement joypad state retrieval
-        0
+    fn get_joypad_button_states(&self, port: u8) -> u8 {
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.joypad_button_states(port))
+            .unwrap_or(0)
     }
 
     fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
@@ -520,6 +530,36 @@ mod tests {
         let mut snes = make_snes();
         let cycles = snes.run_tick();
         assert_eq!(cycles, 0);
+    }
+
+    #[test]
+    fn set_button_round_trips_through_joypad_states() {
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
+        // ids: 0=A, 4=Up.
+        snes.set_button(0, 0, true);
+        snes.set_button(0, 4, true);
+        let states = snes.get_joypad_button_states(0);
+        assert_ne!(states & 0x01, 0, "A pressed (bit 0)");
+        assert_ne!(states & 0x10, 0, "Up pressed (bit 4)");
+
+        snes.set_button(0, 0, false);
+        assert_eq!(snes.get_joypad_button_states(0) & 0x01, 0, "A released");
+    }
+
+    #[test]
+    fn bulk_joypad_states_round_trip() {
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
+        snes.set_joypad_button_states(1, 0b1010_0101);
+        assert_eq!(snes.get_joypad_button_states(1), 0b1010_0101);
+    }
+
+    #[test]
+    fn set_button_without_rom_is_a_no_op() {
+        let mut snes = make_snes();
+        snes.set_button(0, 0, true);
+        assert_eq!(snes.get_joypad_button_states(0), 0);
     }
 
     #[test]

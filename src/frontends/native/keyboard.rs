@@ -99,7 +99,9 @@ pub fn handle_key_released(
             }
         }
         Console::Snes(_) => {
-            // SNES: input handling not yet implemented
+            if let Some(btn_id) = snes_key_to_button_id(key_code) {
+                console.set_button(0, btn_id, false);
+            }
         }
     }
 }
@@ -168,6 +170,23 @@ fn gba_key_to_button_id(key_code: KeyCode) -> Option<u8> {
     match key_code {
         KeyCode::KeyQ => Some(8), // L
         KeyCode::KeyE => Some(9), // R
+        _ => gameboy_key_to_button_id(key_code),
+    }
+}
+
+/// Maps a key code to a SNES button ID.
+///
+/// Extends the Game Boy/NES-style keyboard layout with the SNES face and
+/// shoulder buttons. Button IDs follow the platform convention plus the
+/// SNES-only `X`/`Y` (see [`crate::snes::input::button_from_id`]):
+/// `0=A, 1=B, 2=Select, 3=Start, 4=Up, 5=Down, 6=Left, 7=Right, 8=L, 9=R,
+/// 10=X, 11=Y`.
+fn snes_key_to_button_id(key_code: KeyCode) -> Option<u8> {
+    match key_code {
+        KeyCode::KeyQ => Some(8),  // L
+        KeyCode::KeyE => Some(9),  // R
+        KeyCode::KeyY => Some(10), // X
+        KeyCode::KeyG => Some(11), // Y
         _ => gameboy_key_to_button_id(key_code),
     }
 }
@@ -248,9 +267,7 @@ fn handle_snes_key_pressed(
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
-    // SNES controller input mapping not yet implemented; route common hotkeys
-    // (quit, pause, reset, fullscreen, volume, etc.) so the app remains operable.
-    handle_single_joypad_key_pressed(console, key_code, app_state, audio, |_| None)
+    handle_single_joypad_key_pressed(console, key_code, app_state, audio, snes_key_to_button_id)
 }
 
 fn handle_single_joypad_key_pressed(
@@ -644,6 +661,21 @@ mod tests {
     use winit::keyboard::ModifiersState;
 
     // ── Test helpers ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn snes_key_mapping_covers_face_and_shoulder_buttons() {
+        // Base GB-style keys still map.
+        assert_eq!(snes_key_to_button_id(KeyCode::KeyT), Some(0)); // A
+        assert_eq!(snes_key_to_button_id(KeyCode::KeyR), Some(1)); // B
+        assert_eq!(snes_key_to_button_id(KeyCode::Digit4), Some(2)); // Select
+        assert_eq!(snes_key_to_button_id(KeyCode::Digit5), Some(3)); // Start
+        // SNES additions.
+        assert_eq!(snes_key_to_button_id(KeyCode::KeyQ), Some(8)); // L
+        assert_eq!(snes_key_to_button_id(KeyCode::KeyE), Some(9)); // R
+        assert_eq!(snes_key_to_button_id(KeyCode::KeyY), Some(10)); // X
+        assert_eq!(snes_key_to_button_id(KeyCode::KeyG), Some(11)); // Y
+        assert_eq!(snes_key_to_button_id(KeyCode::F1), None);
+    }
 
     fn make_nes() -> Nes {
         Nes::new(AppContext::new_with_config(Config::default()))
