@@ -1091,9 +1091,9 @@ fn minimal_snes_rom() -> Vec<u8> {
     // Reset vector low/high → $8000 (at header + 0x3C/0x3D = $7FFC/$7FFD)
     rom[header + 0x3C] = 0x00;
     rom[header + 0x3D] = 0x80;
-    // Map mode (LoROM, SlowROM) at header + 0xD5 = $8095
+    // Map mode (LoROM, SlowROM) at header + 0xD5 = ROM file offset 0x8095
     rom[header + 0xD5] = 0x20;
-    // ROM size: 7 = 64 KB at header + 0xD7 = $8097
+    // ROM size: 7 = 64 KB at header + 0xD7 = ROM file offset 0x8097
     rom[header + 0xD7] = 0x07;
     // Checksum complement / checksum at header + 0xDC–0xDF
     rom[header + 0xDC] = 0x34;
