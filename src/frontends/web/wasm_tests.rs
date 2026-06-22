@@ -1283,3 +1283,45 @@ fn wasm_snes_mouse_methods_do_not_panic_without_rom() {
     snes.set_mouse_left_button(1, true);
     snes.set_mouse_right_button(1, false);
 }
+
+#[wasm_bindgen_test]
+fn wasm_snes_has_superscope_returns_false_without_rom() {
+    let snes = WasmSnes::new();
+    assert!(!snes.has_superscope());
+    assert!(!snes.has_superscope_on_port(1));
+    assert!(!snes.has_superscope_on_port(2));
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_superscope_methods_do_not_panic_without_rom() {
+    let mut snes = WasmSnes::new();
+    snes.set_superscope_position(2, 128, 112);
+    snes.set_superscope_trigger(2, true);
+    snes.set_superscope_cursor(2, false);
+    snes.set_superscope_turbo(2, true);
+    snes.set_superscope_pause(2, false);
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_superscope_methods_ignore_invalid_port() {
+    let mut snes = WasmSnes::new();
+    // Port 0 and 3 are out of range — must not panic.
+    snes.set_superscope_position(0, 100, 100);
+    snes.set_superscope_position(3, 100, 100);
+    snes.set_superscope_trigger(0, true);
+    snes.set_superscope_trigger(3, true);
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_is_multitap_on_port_returns_false_without_rom() {
+    let snes = WasmSnes::new();
+    assert!(!snes.is_multitap_on_port(1));
+    assert!(!snes.is_multitap_on_port(2));
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_is_multitap_on_port_returns_false_for_invalid_port() {
+    let snes = WasmSnes::new();
+    assert!(!snes.is_multitap_on_port(0));
+    assert!(!snes.is_multitap_on_port(3));
+}

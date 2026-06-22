@@ -400,6 +400,11 @@ impl SnesSystemBus {
         self.input.borrow().has_superscope_on_port(port)
     }
 
+    /// Returns true if the given physical SNES port currently hosts a multitap.
+    pub fn is_multitap_on_port(&self, port: u8) -> bool {
+        self.input.borrow().is_multitap_on_port(port)
+    }
+
     /// Return the 8 NES-convention button states for the given port.
     pub fn joypad_button_states(&self, port: u8) -> u8 {
         self.input.borrow().joypad_button_states(port)

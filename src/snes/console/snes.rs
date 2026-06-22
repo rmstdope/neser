@@ -269,6 +269,13 @@ impl Snes {
             .as_ref()
             .is_some_and(|cpu| cpu.has_superscope_on_port(port))
     }
+
+    /// Returns true if the given physical SNES port currently hosts a multitap.
+    pub fn is_multitap_on_port(&self, port: u8) -> bool {
+        self.cpu
+            .as_ref()
+            .is_some_and(|cpu| cpu.is_multitap_on_port(port))
+    }
 }
 
 impl Emulator for Snes {

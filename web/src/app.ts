@@ -9,6 +9,14 @@ import {
 } from "./save-state/save_state_storage";
 import { createSaveStateController } from "./save-state/save_state_controller";
 import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton, isZapperActive } from "./input/mouse_input";
+import {
+    isSnesMouseActive,
+    isSnesSuperScopeActive,
+    applySnesMouseDelta,
+    applySnesMouseButton,
+    applySnesSuperScopePosition,
+    applySnesSuperScopeButton,
+} from "./input/snes_input";
 import { createSaveStateContext } from "./save-state/save_state_context";
 import { fetchRomList } from "./rom/rom_list";
 import { handleRomSelection } from "./rom/rom_selection";
@@ -2696,6 +2704,35 @@ if (touchControlsContainer) {
 }
 
 function handleMouseMotion(event: MouseEvent) {
+    // SNES peripherals: handle mouse and superscope for the standalone SNES emulator.
+    if (emulator?.kind === "snes") {
+        const snesInst = emulator.inst;
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width <= 1 || rect.height <= 1) return;
+
+        if (isSnesMouseActive(snesInst)) {
+            // SNES mouse uses relative (delta) motion.
+            for (const port of [1, 2]) {
+                if (snesInst.has_mouse_on_port(port)) {
+                    applySnesMouseDelta(snesInst, port, event.movementX, event.movementY);
+                }
+            }
+        } else if (isSnesSuperScopeActive(snesInst)) {
+            // Super Scope uses absolute canvas position.
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            for (const port of [1, 2]) {
+                if (snesInst.has_superscope_on_port(port)) {
+                    applySnesSuperScopePosition(snesInst, port, x, y, rect.width, rect.height);
+                }
+            }
+            if (crosshair && crosshair.visible) {
+                crosshair.updatePosition(x, y);
+            }
+        }
+        return;
+    }
+
     if (!nes) return;
 
     const mouseControllerActive = isMouseControllerActive(nes);
@@ -2772,6 +2809,22 @@ function setCrosshairVisible(visible: boolean) {
 }
 
 function updateMouseCursorState() {
+    // SNES emulator: show crosshair for superscope; hide cursor for SNES mouse.
+    if (emulator?.kind === "snes") {
+        const snesInst = emulator.inst;
+        if (isSnesSuperScopeActive(snesInst)) {
+            setCrosshairVisible(true);
+            document.body.style.cursor = "none";
+        } else if (isSnesMouseActive(snesInst)) {
+            setCrosshairVisible(false);
+            document.body.style.cursor = "none";
+        } else {
+            setCrosshairVisible(false);
+            document.body.style.cursor = "";
+        }
+        return;
+    }
+
     if (!nes) {
         // No NES active (GB or no emulator): ensure any NES-specific cursor state is cleared.
         setCrosshairVisible(false);
@@ -2811,6 +2864,25 @@ function updateMouseCursorState() {
 }
 
 function handleMouseButton(event: MouseEvent, pressed: boolean) {
+    // SNES peripherals: handle mouse and superscope buttons.
+    if (emulator?.kind === "snes") {
+        const snesInst = emulator.inst;
+        if (isSnesMouseActive(snesInst)) {
+            for (const port of [1, 2]) {
+                if (snesInst.has_mouse_on_port(port)) {
+                    applySnesMouseButton(snesInst, port, event.button, pressed);
+                }
+            }
+        } else if (isSnesSuperScopeActive(snesInst)) {
+            for (const port of [1, 2]) {
+                if (snesInst.has_superscope_on_port(port)) {
+                    applySnesSuperScopeButton(snesInst, port, event.button, pressed);
+                }
+            }
+        }
+        return;
+    }
+
     if (!nes) return;
 
     const mouseControllerActive = isMouseControllerActive(nes);
