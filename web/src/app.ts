@@ -2724,6 +2724,7 @@ function handleMouseMotion(event: MouseEvent) {
                     applySnesMouseDelta(snesInst, port, event.movementX, event.movementY);
                 }
             }
+        }
         if (isSnesSuperScopeActive(snesInst)) {
             // Super Scope uses absolute canvas position.
             const x = event.clientX - rect.left;
@@ -2880,6 +2881,7 @@ function handleMouseButton(event: MouseEvent, pressed: boolean) {
                     applySnesMouseButton(snesInst, port, event.button, pressed);
                 }
             }
+        }
         if (isSnesSuperScopeActive(snesInst)) {
             for (const port of [1, 2]) {
                 if (snesInst.has_superscope_on_port(port)) {
