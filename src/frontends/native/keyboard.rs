@@ -744,10 +744,10 @@ mod tests {
         rom
     }
 
-    fn make_snes_console() -> Console {
+    fn make_snes_console(rom_name: &str) -> Console {
         let mut console = Console::new_snes(AppContext::new_with_config(Config::default()));
         console
-            .load_rom(&minimal_snes_rom(), "test.sfc")
+            .load_rom(&minimal_snes_rom(), rom_name)
             .expect("minimal SNES ROM should load");
         console
     }
@@ -1895,7 +1895,7 @@ mod tests {
 
     #[test]
     fn snes_f6_save_state_returns_continue() {
-        let mut console = make_snes_console();
+        let mut console = make_snes_console("snes-f6-hotkey-test.sfc");
         let mut state = make_state();
         assert_eq!(
             handle_key_pressed(&mut console, KeyCode::F6, &mut state, None),
@@ -1906,7 +1906,7 @@ mod tests {
 
     #[test]
     fn snes_f7_load_state_returns_continue() {
-        let mut console = make_snes_console();
+        let mut console = make_snes_console("snes-f7-hotkey-test.sfc");
         let mut state = make_state();
         assert_eq!(
             handle_key_pressed(&mut console, KeyCode::F7, &mut state, None),
@@ -1917,7 +1917,7 @@ mod tests {
 
     #[test]
     fn snes_f4_cycle_shader_returns_cycle_shader() {
-        let mut console = make_snes_console();
+        let mut console = make_snes_console("snes-f4-hotkey-test.sfc");
         let mut state = make_state();
         assert_eq!(
             handle_key_pressed(&mut console, KeyCode::F4, &mut state, None),
