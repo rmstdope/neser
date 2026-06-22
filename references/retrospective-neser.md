@@ -5,6 +5,60 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-06-22 - #2807 / PR #2815: Super Scope light gun controller implementation + merge
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2815
+**Linked issues:** #2807
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `test-driven-development` | Guided edge-triggered action handling (turbo toggle, trigger/pause locking) via unit tests for serial bit sequence. |
+| Skill | `snes-hardware-research` | Informed implementation of fullsnes Super Scope serial protocol and bit-field ordering. |
+| Skill | `rust-developer` | Guided state machine design with latch-processed edge detection and counter saturation. |
+| Skill | `github-administration` | Managed issue workflow, PR reviews, and merge coordination via `gh`. |
+| Skill | `self-learning-skills` | Captured this post-merge retrospective entry. |
+
+### What went well
+
+- **State machine clarity:** The turbo-toggle locking pattern (`if turbo_pressed && !turbo_lock`) avoids accidental re-triggers on held button, and the edge-triggered per-strobe processing (`latch_processed` flag) mirrors proven patterns from standard controller implementations.
+- **Test-driven design:** The unit test `serial_sequence_matches_the_documented_field_order` validates both the bit ordering (trigger → cursor → turbo_enabled → pause → filler bits → offscreen) and the interaction of offscreen state with trigger output, catching early if position/state synchronization breaks.
+- **State persistence:** The `capture_state`/`restore_state` methods follow established patterns for save-state support, correctly mapping all ephemeral state (locks, toggle state) and positional data.
+- **Hardware accuracy:** The implementation correctly handles the documented Super Scope protocol—offscreen suppresses trigger output at bit 0, turbo gating affects trigger output, and cursor/pause/offscreen are independent bit fields.
+
+### What to improve
+
+- **Missing position validation tests:** While the code correctly bounds offscreen detection (`x < 0 || y < 0 || x >= 256 || y >= 224`), no unit tests verify edge cases (x/y at boundary transitions, negative coordinates). Add explicit boundary tests to the existing test suite.
+- **No integration test for actual game behavior:** The unit test covers protocol compliance in isolation; an integration test running a Super Scope game ROM (e.g., *Super Scope 6* or *Terminator 2*) would validate that the emulator correctly interprets the serial stream in full context. This is a pattern issue across input device tests.
+- **Assumption about counter saturation:** The code uses `saturating_add(1)` on the counter, which gracefully prevents overflow. However, there's no explicit test documenting when/how the counter should saturate (if ever during normal 8-bit reads). Document or test this assumption.
+- **No documentation on turbo timing:** The turbo logic updates state on every read cycle when turbo is pressed; real hardware turbo is typically a timer-based oscillation (e.g., every N frames). The current approach may not match hardware timing if games depend on specific turbo frequency.
+
+### Navigator feedback
+
+#### What went well
+
+Effective workflow guidance. Communication and decision-making were very efficient.
+
+#### What to improve
+
+No additional feedback provided.
+
+### Skill Recommendations for Update
+
+1. **test-driven-development** — Add a guideline: "For input device state machines, prioritize edge-triggered action tests (locking, toggle toggles, strobe synchronization) before testing data fields. This catches subtle state-machine bugs early."
+
+2. **snes-hardware-research** — Create a checklist for light gun / pointer input devices: verify (a) position bounding/offscreen detection, (b) button locking/edge-trigger patterns, (c) turbo oscillation frequency if applicable, (d) integration with auto-joypad read timing.
+
+3. **Controller/Input Implementation Pattern** — Consider creating a new optional guidance document (`src/snes/input/IMPLEMENTATION_PATTERNS.md`) capturing:
+   - Standard state-machine patterns for controllers (edge triggers, locking, per-strobe processing).
+   - Checklist for save-state support (capture/restore completeness, ephemeral vs. persistent state).
+   - Testing strategy: unit tests for protocol/serial order, integration tests for actual game ROMs.
+   - This could reduce friction for future input devices (e.g., trackball, paddle, justifier).
+
+---
+
 ## 2026-06-20 - #2774 / PR #2786: SNES APU bootstrap review-fix, CI green, merge
 
 **Repository:** rmstdope/neser
