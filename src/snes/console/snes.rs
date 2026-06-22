@@ -1011,4 +1011,45 @@ mod tests {
         assert!(!loaded.ppu.timeup_flag);
         assert!(!loaded.ppu.irq_line);
     }
+
+    #[test]
+    fn save_state_from_bytes_allows_partial_apu_echo_state_and_normalizes_it_on_restore() {
+        let rom = lorom_rom_with_battery_sram(0x05);
+        let mut snes = make_snes();
+        snes.load_rom(&rom, "apu_echo_compat.sfc")
+            .expect("load ROM");
+
+        let save = snes.cpu.as_ref().expect("cpu present").capture_save_state();
+        let mut json = serde_json::to_value(&save).expect("serialize save state");
+        json["bus"]["apu"]["dsp"]["echo_state"] = serde_json::json!({
+            "ring_index": 9,
+            "ring_size": 0
+        });
+
+        let bytes = serde_json::to_vec(&json).expect("serialize compatibility payload");
+        let loaded = SnesSaveState::from_bytes(&bytes).expect("compat state should load");
+
+        let mut restored = make_snes();
+        restored
+            .load_rom(&rom, "apu_echo_compat_restore.sfc")
+            .expect("load ROM");
+        restored
+            .cpu
+            .as_mut()
+            .expect("cpu present")
+            .restore_save_state(&loaded)
+            .expect("restore should succeed");
+
+        let restored_bytes = restored.save_state_bytes().expect("re-save state");
+        let restored_json: serde_json::Value =
+            serde_json::from_slice(&restored_bytes).expect("parse re-saved state");
+        assert_eq!(
+            restored_json["bus"]["apu"]["dsp"]["echo_state"]["ring_size"],
+            1
+        );
+        assert_eq!(
+            restored_json["bus"]["apu"]["dsp"]["echo_state"]["ring_index"],
+            0
+        );
+    }
 }
