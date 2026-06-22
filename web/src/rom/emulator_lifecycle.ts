@@ -4,5 +4,5 @@ export function shouldCreateFreshEmulatorForRomStart(
     currentKind: WebRomConsoleKind | null,
     nextKind: WebRomConsoleKind,
 ) {
-    return currentKind !== nextKind || nextKind === "gba";
+    return currentKind !== nextKind || nextKind === "gba" || nextKind === "snes";
 }

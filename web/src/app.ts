@@ -1,4 +1,4 @@
-import init, { WasmNes, WasmGb, WasmGba, gamepad_init_toast_message } from "../pkg/neser";
+import init, { WasmNes, WasmGb, WasmGba, WasmSnes, gamepad_init_toast_message } from "../pkg/neser";
 import { mapStandardGamepadState, selectGamepads } from "./input/gamepad";
 import {
     createRomSaveKey,
@@ -25,6 +25,7 @@ import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { getKeyboardControllerTarget } from "./input/input_routing";
 import { gbaKeyboardButtonForEvent } from "./input/keyboard_mapping";
+import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import {
@@ -657,7 +658,8 @@ function cycleFilter() {
 type ActiveEmulator =
     | { kind: "nes"; inst: WasmNes }
     | { kind: "gb"; inst: WasmGb }
-    | { kind: "gba"; inst: WasmGba };
+    | { kind: "gba"; inst: WasmGba }
+    | { kind: "snes"; inst: WasmSnes };
 
 /** Master emulator state — set by the loaded ROM's console kind. */
 let emulator: ActiveEmulator | null = null;
@@ -749,14 +751,16 @@ function createEmulatorInstance(kind: WebRomConsoleKind): void {
     resetGamepadState();
     // Free the previous WASM instance to avoid leaking its linear memory.
     emulator?.inst.free();
+    nes = null;
     if (kind === "gb") {
         const gb = new WasmGb();
         emulator = { kind: "gb", inst: gb };
-        nes = null;
     } else if (kind === "gba") {
         const gba = new WasmGba();
         emulator = { kind: "gba", inst: gba };
-        nes = null;
+    } else if (kind === "snes") {
+        const snes = new WasmSnes();
+        emulator = { kind: "snes", inst: snes };
     } else {
         nes = new WasmNes();
         emulator = { kind: "nes", inst: nes };
@@ -1189,12 +1193,13 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
             channelData[i] = normalizeGbaSample(samples[i * 2]);
             rightChannelData[i] = normalizeGbaSample(samples[i * 2 + 1]);
         }
-    } else if (emulator?.kind === "gb" || emulator?.kind === "gba") {
-        // Handheld APUs output bipolar samples in [-1.0, 1.0] — clamp with a safety guard.
+    } else if (emulator?.kind === "gb" || emulator?.kind === "gba" || emulator?.kind === "snes") {
+        // GB, GBA, and SNES APUs all output bipolar samples in [-1.0, 1.0].
+        // GBA and SNES share normalizeGbaSample (clamp to [-1, 1]); GB uses its own normalizer.
         for (let i = 0; i < frameCount; i++) {
-            channelData[i] = emulator?.kind === "gba"
-                ? normalizeGbaSample(samples[i])
-                : normalizeGbSample(samples[i]);
+            channelData[i] = emulator?.kind === "gb"
+                ? normalizeGbSample(samples[i])
+                : normalizeGbaSample(samples[i]);
         }
     } else {
         // NES APU outputs 0.0 to ~1.177; normalize to the unipolar 0.0 to 1.0 range used by this output path
@@ -2531,12 +2536,16 @@ function applyKeyboardMapping(event: KeyboardEvent, mapping: { button?: number; 
     }
     event.preventDefault();
 
-    // NES-specific: try SNES button mapping first.
+    // Try SNES button mapping first when available.
     if (nes && mapping.snesButton !== undefined) {
         const handledAsSnes = nes.set_snes_button(controller, mapping.snesButton, pressed);
         if (handledAsSnes) {
             return;
         }
+    }
+    if (emulator?.kind === "snes" && mapping.snesButton !== undefined) {
+        emulator.inst.set_button(controller, remapLegacySnesButtonId(mapping.snesButton), pressed);
+        return;
     }
 
     if (mapping.button !== undefined) {
@@ -3177,7 +3186,7 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
     if (state.down !== lastState.down) applyButton(5, state.down);
     if (state.left !== lastState.left) applyButton(6, state.left);
     if (state.right !== lastState.right) applyButton(7, state.right);
-    if (emulator.kind === "gba") {
+    if (emulator.kind === "gba" || emulator.kind === "snes") {
         if (state.l !== lastState.l) applyButton(8, state.l);
         if (state.r !== lastState.r) applyButton(9, state.r);
     }

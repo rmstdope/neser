@@ -15,7 +15,7 @@ export interface FilterDef {
     params?: Record<string, number>;
 }
 
-export type ConsoleKind = "nes" | "gb" | "gba";
+export type ConsoleKind = "nes" | "gb" | "gba" | "snes";
 
 /** Return the ordered list of filter keys available for a given console. */
 export function filterKeysForConsole(
@@ -26,7 +26,7 @@ export function filterKeysForConsole(
     return allFilterKeys.filter((key) => {
         const f = filters[key];
         if (!f) return false;
-        if (console === "gba") {
+        if (console === "gba" || console === "snes") {
             return f.type === "single" && key === "stock";
         }
         if (console === "gb") {
@@ -76,7 +76,7 @@ export function defaultFilterForConsole(console: ConsoleKind): string {
     if (console === "gb") {
         return "gameboy";
     }
-    if (console === "gba") {
+    if (console === "gba" || console === "snes") {
         return "stock";
     }
     return "ntsc";

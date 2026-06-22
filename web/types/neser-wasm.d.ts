@@ -132,6 +132,28 @@ declare module "*/pkg/neser" {
         set_button(controller: number, button: number, pressed: boolean): void;
     }
 
+    /**
+     * Provides a minimal WASM bridge for running the Super Nintendo emulator in the browser.
+     */
+    export class WasmSnes {
+        free(): void;
+        [Symbol.dispose](): void;
+        drain_toasts(): unknown[];
+        frame_rate_hz(): number;
+        get_audio_samples(): Float32Array;
+        get_audio_samples_stereo(): Float32Array;
+        is_audio_muted(): boolean;
+        load_rom(rom: Uint8Array, rom_name: string): void;
+        constructor();
+        render_frame_rgba(): Uint8Array;
+        reset(soft_reset: boolean): void;
+        screen_height(): number;
+        screen_width(): number;
+        set_audio_muted(muted: boolean): void;
+        set_audio_sample_rate(sample_rate: number): void;
+        set_button(controller: number, button: number, pressed: boolean): void;
+    }
+
     export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
     export interface InitOutput {

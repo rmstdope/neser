@@ -18,6 +18,13 @@ it("classifies Game Boy Advance ROM names as GBA", () => {
     expect(webRomConsoleKindForName("METROID.GBA")).toBe("gba");
 });
 
+it("classifies SNES ROM names as SNES", () => {
+    expect(webRomConsoleKindForName("zelda.sfc")).toBe("snes");
+    expect(webRomConsoleKindForName("mario.smc")).toBe("snes");
+    expect(webRomConsoleKindForName("GAME.SFC")).toBe("snes");
+    expect(webRomConsoleKindForName("GAME.SMC")).toBe("snes");
+});
+
 it("rejects unsupported web ROM extensions", () => {
     expect(webRomConsoleKindForName("notes.txt")).toBeNull();
     expect(webRomConsoleKindForName("advance.agb")).toBeNull();
@@ -30,7 +37,7 @@ it("extracts lower-case extensions for messages", () => {
 });
 
 it("lists all supported web ROM extensions for user-facing messages", () => {
-    expect(supportedRomExtensionsText()).toBe(".nes, .gb, .gbc, .cgb, .gba");
+    expect(supportedRomExtensionsText()).toBe(".nes, .gb, .gbc, .cgb, .gba, .sfc, .smc");
 });
 
 it("handles edge case: empty string", () => {
