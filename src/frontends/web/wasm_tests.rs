@@ -6,6 +6,7 @@ use crate::nes::input::ArkanoidState;
 use crate::wasm::{WasmNes, gamepad_init_toast_message};
 use crate::wasm_gb::WasmGb;
 use crate::wasm_gba::WasmGba;
+use crate::wasm_snes::WasmSnes;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -1077,4 +1078,208 @@ fn wasm_gba_set_button_ignores_non_player_one_controllers() {
     gba.set_button(2, 0, true);
 
     assert_eq!(gba.joypad_button_states_for_test(), 0);
+}
+
+// ── WasmSnes tests ───────────────────────────────────────────────────────────
+
+/// Minimal valid LoROM cartridge: 64 KB with a NOP at $8000 and a valid
+/// header at $7FC0.  Mirrors the helper used in `src/snes/console/snes.rs`.
+fn minimal_snes_rom() -> Vec<u8> {
+    let mut rom = vec![0u8; 0x10000];
+    let header = 0x7FC0;
+    rom[header..header + 21].copy_from_slice(b"SNES TEST ROM        ");
+    // Reset vector low/high → $8000 (at header + 0x3C/0x3D = $7FFC/$7FFD)
+    rom[header + 0x3C] = 0x00;
+    rom[header + 0x3D] = 0x80;
+    // Map mode (LoROM, SlowROM) at header + 0xD5
+    rom[header + 0xD5] = 0x20;
+    // ROM size: 7 = 64 KB at header + 0xD7
+    rom[header + 0xD7] = 0x07;
+    // Checksum complement / checksum at header + 0xDC–0xDF
+    rom[header + 0xDC] = 0x34;
+    rom[header + 0xDD] = 0x12;
+    rom[header + 0xDE] = 0xCB;
+    rom[header + 0xDF] = 0xED;
+    // NOP at $8000 in LoROM bank 0 (ROM file offset 0)
+    rom[0x0000] = 0xEA;
+    rom
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_constructs() {
+    let _snes = WasmSnes::new();
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_screen_width_is_256() {
+    let snes = WasmSnes::new();
+    assert_eq!(snes.screen_width(), 256);
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_screen_height_is_224() {
+    let snes = WasmSnes::new();
+    assert_eq!(snes.screen_height(), 224);
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_frame_rate_hz_is_ntsc_rate() {
+    let snes = WasmSnes::new();
+    let hz = snes.frame_rate_hz();
+    // NTSC SNES: 21,477,272 / 357,366 ≈ 60.098 Hz
+    assert!(
+        (hz - 60.098).abs() < 0.01,
+        "expected ~60.098 Hz but got {hz}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_no_rom_renders_opaque_black_frame() {
+    let mut snes = WasmSnes::new();
+    let frame = snes.render_frame_rgba().to_vec();
+    let expected_len = 256 * 224 * 4;
+    assert_eq!(
+        frame.len(),
+        expected_len,
+        "no-ROM frame should be {expected_len} bytes"
+    );
+    for (i, &byte) in frame.iter().enumerate() {
+        if (i + 1) % 4 == 0 {
+            assert_eq!(byte, 0xFF, "alpha byte at index {i} should be 0xFF");
+        } else {
+            assert_eq!(byte, 0x00, "color byte at index {i} should be 0x00");
+        }
+    }
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_load_rom_returns_success_toast() {
+    let mut snes = WasmSnes::new();
+    let rom = minimal_snes_rom();
+    snes.load_rom(&rom, "test.sfc")
+        .expect("valid SNES ROM should load successfully");
+    let toasts: Vec<String> = snes
+        .drain_toasts()
+        .into_iter()
+        .filter_map(|v| v.as_string())
+        .collect();
+    assert!(
+        toasts.iter().any(|t| t.contains("test.sfc")),
+        "expected a toast mentioning 'test.sfc', got: {toasts:?}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_load_rom_rejects_invalid_data() {
+    let mut snes = WasmSnes::new();
+    let err = snes
+        .load_rom(&[0u8; 8], "broken.sfc")
+        .expect_err("invalid SNES ROM should error");
+    assert!(
+        !err.as_string().unwrap_or_default().is_empty(),
+        "invalid SNES ROM should return a message"
+    );
+
+    let toasts: Vec<String> = snes
+        .drain_toasts()
+        .into_iter()
+        .filter_map(|v| v.as_string())
+        .collect();
+    assert!(
+        toasts.iter().any(|t| t.contains("broken.sfc")),
+        "expected a failure toast mentioning 'broken.sfc', got: {toasts:?}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_audio_mute_state_is_reported() {
+    let mut snes = WasmSnes::new();
+    assert!(!snes.is_audio_muted());
+    snes.set_audio_muted(true);
+    assert!(snes.is_audio_muted());
+    assert!(snes.get_audio_samples().is_empty());
+    snes.set_audio_muted(false);
+    assert!(!snes.is_audio_muted());
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_reset_without_rom_succeeds() {
+    let mut snes = WasmSnes::new();
+    snes.reset(true);
+    snes.reset(false);
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_set_button_does_not_panic() {
+    let mut snes = WasmSnes::new();
+    // `button` IDs are defined by `crate::snes::input::button_from_id`.
+    for button in 0u8..=11 {
+        snes.set_button(1, button, true);
+        snes.set_button(1, button, false);
+    }
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_set_button_updates_controller_one_state() {
+    let mut snes = WasmSnes::new();
+    let rom = minimal_snes_rom();
+    snes.load_rom(&rom, "test.sfc")
+        .expect("valid SNES ROM should load successfully");
+
+    snes.set_button(1, 0, true);
+    assert_eq!(snes.joypad_button_states_for_test() & 0x01, 0x01);
+
+    snes.set_button(1, 0, false);
+    assert_eq!(snes.joypad_button_states_for_test() & 0x01, 0x00);
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_save_state_bytes_without_rom_returns_empty() {
+    let snes = WasmSnes::new();
+    let bytes = snes.save_state_bytes();
+    assert!(bytes.is_empty(), "expected empty save state without ROM");
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_load_state_bytes_without_rom_returns_error() {
+    let mut snes = WasmSnes::new();
+    let err = snes
+        .load_state_bytes(&[0u8; 32])
+        .expect_err("load_state_bytes without ROM should fail");
+    assert!(!err.as_string().unwrap_or_default().is_empty());
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_save_state_round_trip_with_rom_succeeds() {
+    let mut snes = WasmSnes::new();
+    let rom = minimal_snes_rom();
+    snes.load_rom(&rom, "test.sfc")
+        .expect("valid SNES ROM should load successfully");
+
+    let bytes = snes.save_state_bytes();
+    assert!(!bytes.is_empty(), "expected non-empty save state with ROM");
+
+    let mut restored = WasmSnes::new();
+    restored
+        .load_rom(&rom, "test.sfc")
+        .expect("valid SNES ROM should load successfully");
+    restored
+        .load_state_bytes(&bytes)
+        .expect("load_state_bytes with ROM should succeed");
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_has_mouse_returns_false_without_rom() {
+    let snes = WasmSnes::new();
+    assert!(!snes.has_mouse());
+    assert!(!snes.has_mouse_on_port(1));
+    assert!(!snes.has_mouse_on_port(2));
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_mouse_methods_do_not_panic_without_rom() {
+    let mut snes = WasmSnes::new();
+    snes.add_mouse_delta(1, 10, -5);
+    snes.set_mouse_left_button(1, true);
+    snes.set_mouse_right_button(1, false);
 }
