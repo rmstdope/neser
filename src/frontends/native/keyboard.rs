@@ -725,6 +725,33 @@ mod tests {
         Console::new_gba(AppContext::new_with_config(Config::default()))
     }
 
+    fn minimal_snes_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x10000];
+        let header = 0x7FC0;
+        rom[header..header + 21].copy_from_slice(b"SNES TEST ROM        ");
+        rom[header + 0x3C] = 0x00;
+        rom[header + 0x3D] = 0x80;
+        rom[header + 0xD5] = 0x20;
+        rom[header + 0xD6] = 0x00;
+        rom[header + 0xD7] = 0x07;
+        rom[header + 0xD8] = 0x00;
+        rom[header + 0xD9] = 0x00;
+        rom[header + 0xDC] = 0x34;
+        rom[header + 0xDD] = 0x12;
+        rom[header + 0xDE] = 0xCB;
+        rom[header + 0xDF] = 0xED;
+        rom[0x0000] = 0xEA;
+        rom
+    }
+
+    fn make_snes_console() -> Console {
+        let mut console = Console::new_snes(AppContext::new_with_config(Config::default()));
+        console
+            .load_rom(&minimal_snes_rom(), "test.sfc")
+            .expect("minimal SNES ROM should load");
+        console
+    }
+
     fn gba_keyinput(console: &Console) -> u16 {
         let Console::GameBoyAdvance(gba) = console else {
             panic!("expected GBA console");
@@ -1863,6 +1890,39 @@ mod tests {
             handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None),
             KeyOutcome::Continue,
             "Ctrl+Shift+R should return Continue in GB mode"
+        );
+    }
+
+    #[test]
+    fn snes_f6_save_state_returns_continue() {
+        let mut console = make_snes_console();
+        let mut state = make_state();
+        assert_eq!(
+            handle_key_pressed(&mut console, KeyCode::F6, &mut state, None),
+            KeyOutcome::Continue,
+            "F6 should return Continue in SNES mode"
+        );
+    }
+
+    #[test]
+    fn snes_f7_load_state_returns_continue() {
+        let mut console = make_snes_console();
+        let mut state = make_state();
+        assert_eq!(
+            handle_key_pressed(&mut console, KeyCode::F7, &mut state, None),
+            KeyOutcome::Continue,
+            "F7 should return Continue in SNES mode"
+        );
+    }
+
+    #[test]
+    fn snes_f4_cycle_shader_returns_cycle_shader() {
+        let mut console = make_snes_console();
+        let mut state = make_state();
+        assert_eq!(
+            handle_key_pressed(&mut console, KeyCode::F4, &mut state, None),
+            KeyOutcome::CycleShader,
+            "F4 should request shader cycling in SNES mode"
         );
     }
 
