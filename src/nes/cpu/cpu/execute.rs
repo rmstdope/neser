@@ -429,7 +429,7 @@ impl Cpu {
             Mnemonic::RTS => {
                 // Return from subroutine - 6 cycles:
                 // Cycle 1: Fetch opcode (already done)
-                // Cycle 2: Dummy read from current S
+                // Cycle 2: Dummy read from current SP
                 self.dummy_read(0x0100 | (self.sp as u16));
 
                 // Cycle 3-4: Pull return address from stack
@@ -804,11 +804,11 @@ impl Cpu {
             AddrMode::ABS => self.read_word_from_pc(),
 
             // Absolute,X - return address + X
-            // Note: Page crossing dummy read i
+            // Note: the page-crossing dummy read is performed inline below.
             AddrMode::ABSX => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
-                // Always do dummy read at base + X with wrong high byte if page crossed
+                // Dummy read at base + X with the wrong high byte when a page is crossed.
                 if Self::page_crossed(base, addr) {
                     let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
                     self.dummy_read(dummy_addr);
@@ -828,11 +828,11 @@ impl Cpu {
             }
 
             // Absolute,Y - return address + Y
-            // Note: Page crossing dummy read is handled by instruction for reads
+            // Note: the page-crossing dummy read is performed inline below.
             AddrMode::ABSY => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
-                // Always do dummy read at base + T with wrong high byte if page crossed
+                // Dummy read at base + Y with the wrong high byte when a page is crossed.
                 if Self::page_crossed(base, addr) {
                     let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
                     self.dummy_read(dummy_addr);
