@@ -9,10 +9,10 @@ export interface PlaybackAudioSamples {
 }
 
 export function getPlaybackAudioSamples(
-    consoleKind: "nes" | "gb" | "gba",
+    consoleKind: "nes" | "gb" | "gba" | "snes",
     source: AudioPlaybackSampleSource
 ): PlaybackAudioSamples {
-    if (consoleKind === "gba" && typeof source.get_audio_samples_stereo === "function") {
+    if ((consoleKind === "gba" || consoleKind === "snes") && typeof source.get_audio_samples_stereo === "function") {
         return {
             channels: 2,
             samples: source.get_audio_samples_stereo()

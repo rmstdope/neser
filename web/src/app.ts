@@ -1,4 +1,4 @@
-import init, { WasmNes, WasmGb, WasmGba, gamepad_init_toast_message } from "../pkg/neser";
+import init, { WasmNes, WasmGb, WasmGba, WasmSnes, gamepad_init_toast_message } from "../pkg/neser";
 import { mapStandardGamepadState, selectGamepads } from "./input/gamepad";
 import {
     createRomSaveKey,
@@ -657,7 +657,8 @@ function cycleFilter() {
 type ActiveEmulator =
     | { kind: "nes"; inst: WasmNes }
     | { kind: "gb"; inst: WasmGb }
-    | { kind: "gba"; inst: WasmGba };
+    | { kind: "gba"; inst: WasmGba }
+    | { kind: "snes"; inst: WasmSnes };
 
 /** Master emulator state — set by the loaded ROM's console kind. */
 let emulator: ActiveEmulator | null = null;
@@ -756,6 +757,10 @@ function createEmulatorInstance(kind: WebRomConsoleKind): void {
     } else if (kind === "gba") {
         const gba = new WasmGba();
         emulator = { kind: "gba", inst: gba };
+        nes = null;
+    } else if (kind === "snes") {
+        const snes = new WasmSnes();
+        emulator = { kind: "snes", inst: snes };
         nes = null;
     } else {
         nes = new WasmNes();
@@ -1189,12 +1194,12 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
             channelData[i] = normalizeGbaSample(samples[i * 2]);
             rightChannelData[i] = normalizeGbaSample(samples[i * 2 + 1]);
         }
-    } else if (emulator?.kind === "gb" || emulator?.kind === "gba") {
-        // Handheld APUs output bipolar samples in [-1.0, 1.0] — clamp with a safety guard.
+    } else if (emulator?.kind === "gb" || emulator?.kind === "gba" || emulator?.kind === "snes") {
+        // Handheld/SNES APUs output bipolar samples in [-1.0, 1.0] — clamp with a safety guard.
         for (let i = 0; i < frameCount; i++) {
-            channelData[i] = emulator?.kind === "gba"
-                ? normalizeGbaSample(samples[i])
-                : normalizeGbSample(samples[i]);
+            channelData[i] = emulator?.kind === "gb"
+                ? normalizeGbSample(samples[i])
+                : normalizeGbaSample(samples[i]);
         }
     } else {
         // NES APU outputs 0.0 to ~1.177; normalize to the unipolar 0.0 to 1.0 range used by this output path

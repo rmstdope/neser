@@ -55,6 +55,10 @@ describe("filterKeysForConsole", () => {
     it("returns only stock for GBA", () => {
         expect(filterKeysForConsole(allKeys, filters, "gba")).toEqual(["stock"]);
     });
+
+    it("returns only stock for SNES", () => {
+        expect(filterKeysForConsole(allKeys, filters, "snes")).toEqual(["stock"]);
+    });
 });
 
 // ===========================================================================
@@ -85,6 +89,10 @@ describe("cycleFilterKey", () => {
 
     it("GBA: stays on stock", () => {
         expect(cycleFilterKey("stock", allKeys, filters, "gba")).toBe("stock");
+    });
+
+    it("SNES: stays on stock", () => {
+        expect(cycleFilterKey("stock", allKeys, filters, "snes")).toBe("stock");
     });
 
     it("returns current filter when no filters available", () => {
@@ -144,6 +152,15 @@ describe("filterOnConsoleSwitch", () => {
             "stock",
         );
         expect(filterOnConsoleSwitch("gameboy", allKeys, filters, "gba")).toBe(
+            "stock",
+        );
+    });
+
+    it("falls back to stock when switching to SNES", () => {
+        expect(filterOnConsoleSwitch("ntsc", allKeys, filters, "snes")).toBe(
+            "stock",
+        );
+        expect(filterOnConsoleSwitch("gameboy", allKeys, filters, "snes")).toBe(
             "stock",
         );
     });

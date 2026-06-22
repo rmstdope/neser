@@ -20,3 +20,19 @@ it("creates a fresh GBA emulator when starting another GBA ROM", () => {
     // instance keeps lifecycle restarts away from partially reset core state.
     expect(shouldCreateFreshEmulatorForRomStart("gba", "gba")).toBe(true);
 });
+
+it("creates a fresh SNES emulator when starting another SNES ROM", () => {
+    expect(shouldCreateFreshEmulatorForRomStart("snes", "snes")).toBe(true);
+});
+
+it("creates a fresh emulator when switching to SNES from another console", () => {
+    expect(shouldCreateFreshEmulatorForRomStart("nes", "snes")).toBe(true);
+    expect(shouldCreateFreshEmulatorForRomStart("gb", "snes")).toBe(true);
+    expect(shouldCreateFreshEmulatorForRomStart("gba", "snes")).toBe(true);
+});
+
+it("creates a fresh emulator when switching from SNES to another console", () => {
+    expect(shouldCreateFreshEmulatorForRomStart("snes", "nes")).toBe(true);
+    expect(shouldCreateFreshEmulatorForRomStart("snes", "gb")).toBe(true);
+    expect(shouldCreateFreshEmulatorForRomStart("snes", "gba")).toBe(true);
+});
