@@ -196,6 +196,20 @@ impl SnesController for MouseController {
             mouse_accum_dy: self.accum_dy,
             mouse_report_dx: self.report_dx,
             mouse_report_dy: self.report_dy,
+            superscope_x: 0,
+            superscope_y: 0,
+            superscope_trigger: false,
+            superscope_cursor: false,
+            superscope_turbo: false,
+            superscope_pause: false,
+            superscope_offscreen: false,
+            superscope_turbo_enabled: false,
+            superscope_turbo_lock: false,
+            superscope_trigger_output: false,
+            superscope_pause_output: false,
+            superscope_trigger_lock: false,
+            superscope_pause_lock: false,
+            superscope_latched: false,
         }
     }
 

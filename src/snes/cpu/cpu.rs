@@ -8426,6 +8426,34 @@ impl Cpu<SnesSystemBus> {
         self.bus.set_mouse_right_button(port, pressed);
     }
 
+    pub fn set_superscope_position(&mut self, port: u8, x: i16, y: i16) {
+        self.bus.set_superscope_position(port, x, y);
+    }
+
+    pub fn set_superscope_trigger(&mut self, port: u8, pressed: bool) {
+        self.bus.set_superscope_trigger(port, pressed);
+    }
+
+    pub fn set_superscope_cursor(&mut self, port: u8, pressed: bool) {
+        self.bus.set_superscope_cursor(port, pressed);
+    }
+
+    pub fn set_superscope_turbo(&mut self, port: u8, pressed: bool) {
+        self.bus.set_superscope_turbo(port, pressed);
+    }
+
+    pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
+        self.bus.set_superscope_pause(port, pressed);
+    }
+
+    pub fn has_superscope(&self) -> bool {
+        self.bus.has_superscope()
+    }
+
+    pub fn has_superscope_on_port(&self, port: u8) -> bool {
+        self.bus.has_superscope_on_port(port)
+    }
+
     /// Returns true if any SNES controller port currently hosts a mouse.
     pub fn has_mouse(&self) -> bool {
         self.bus.has_mouse()

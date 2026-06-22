@@ -17,12 +17,14 @@
 mod mouse_controller;
 mod multitap;
 mod standard_controller;
+mod super_scope;
 
 use serde::{Deserialize, Serialize};
 
 pub use mouse_controller::MouseController;
 pub use multitap::{Multitap, MultitapState};
 pub use standard_controller::StandardController;
+pub use super_scope::SuperScopeController;
 
 /// The 12 logical buttons of a standard SNES controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +89,34 @@ pub struct SnesControllerState {
     pub mouse_report_dx: i16,
     #[serde(default)]
     pub mouse_report_dy: i16,
+    #[serde(default)]
+    pub superscope_x: i16,
+    #[serde(default)]
+    pub superscope_y: i16,
+    #[serde(default)]
+    pub superscope_trigger: bool,
+    #[serde(default)]
+    pub superscope_cursor: bool,
+    #[serde(default)]
+    pub superscope_turbo: bool,
+    #[serde(default)]
+    pub superscope_pause: bool,
+    #[serde(default)]
+    pub superscope_offscreen: bool,
+    #[serde(default)]
+    pub superscope_turbo_enabled: bool,
+    #[serde(default)]
+    pub superscope_turbo_lock: bool,
+    #[serde(default)]
+    pub superscope_trigger_output: bool,
+    #[serde(default)]
+    pub superscope_pause_output: bool,
+    #[serde(default)]
+    pub superscope_trigger_lock: bool,
+    #[serde(default)]
+    pub superscope_pause_lock: bool,
+    #[serde(default)]
+    pub superscope_latched: bool,
 }
 
 /// The kind of device plugged into a controller port.
@@ -122,13 +152,7 @@ impl SnesControllerType {
             Self::Standard => Box::new(StandardController::new()),
             Self::Multitap => Box::new(Multitap::new()),
             Self::Mouse => Box::new(MouseController::new()),
-            other => {
-                crate::platform::debugging::log_info(format!(
-                    "SNES controller type {other:?} is not yet implemented; \
-                     using a standard controller"
-                ));
-                Box::new(StandardController::new())
-            }
+            Self::SuperScope => Box::new(SuperScopeController::new()),
         }
     }
 }
@@ -173,6 +197,36 @@ pub trait SnesController {
 
     /// Set the right mouse button state.
     fn set_mouse_right_button(&mut self, _pressed: bool) -> bool {
+        false
+    }
+
+    /// Set the Super Scope aiming coordinates.
+    fn set_superscope_position(&mut self, _x: i16, _y: i16) -> bool {
+        false
+    }
+
+    /// Set the Super Scope trigger button state.
+    fn set_superscope_trigger(&mut self, _pressed: bool) -> bool {
+        false
+    }
+
+    /// Set the Super Scope cursor button state.
+    fn set_superscope_cursor(&mut self, _pressed: bool) -> bool {
+        false
+    }
+
+    /// Set the Super Scope turbo switch state.
+    fn set_superscope_turbo(&mut self, _pressed: bool) -> bool {
+        false
+    }
+
+    /// Set the Super Scope pause button state.
+    fn set_superscope_pause(&mut self, _pressed: bool) -> bool {
+        false
+    }
+
+    /// Whether this device is a Super Scope.
+    fn is_superscope(&self) -> bool {
         false
     }
 
@@ -495,9 +549,79 @@ impl InputPorts {
         }
     }
 
+    /// Set Super Scope aiming coordinates on the configured device.
+    pub fn set_superscope_position(&mut self, port: u8, x: i16, y: i16) {
+        match port {
+            0 => {
+                let _ = self.port1.set_superscope_position(x, y);
+            }
+            1..=4 => {
+                let _ = self.port2.set_superscope_position(x, y);
+            }
+            _ => {}
+        }
+    }
+
+    /// Set Super Scope trigger button state on the configured device.
+    pub fn set_superscope_trigger(&mut self, port: u8, pressed: bool) {
+        match port {
+            0 => {
+                let _ = self.port1.set_superscope_trigger(pressed);
+            }
+            1..=4 => {
+                let _ = self.port2.set_superscope_trigger(pressed);
+            }
+            _ => {}
+        }
+    }
+
+    /// Set Super Scope cursor button state on the configured device.
+    pub fn set_superscope_cursor(&mut self, port: u8, pressed: bool) {
+        match port {
+            0 => {
+                let _ = self.port1.set_superscope_cursor(pressed);
+            }
+            1..=4 => {
+                let _ = self.port2.set_superscope_cursor(pressed);
+            }
+            _ => {}
+        }
+    }
+
+    /// Set Super Scope turbo switch state on the configured device.
+    pub fn set_superscope_turbo(&mut self, port: u8, pressed: bool) {
+        match port {
+            0 => {
+                let _ = self.port1.set_superscope_turbo(pressed);
+            }
+            1..=4 => {
+                let _ = self.port2.set_superscope_turbo(pressed);
+            }
+            _ => {}
+        }
+    }
+
+    /// Set Super Scope pause button state on the configured device.
+    pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
+        match port {
+            0 => {
+                let _ = self.port1.set_superscope_pause(pressed);
+            }
+            1..=4 => {
+                let _ = self.port2.set_superscope_pause(pressed);
+            }
+            _ => {}
+        }
+    }
+
     /// Returns true if any controller port currently hosts an SNES mouse.
     pub fn has_mouse(&self) -> bool {
         self.port1.is_mouse() || self.port2.is_mouse()
+    }
+
+    /// Returns true if any controller port currently hosts a Super Scope.
+    pub fn has_superscope(&self) -> bool {
+        self.port1.is_superscope() || self.port2.is_superscope()
     }
 
     /// Returns true if the given physical SNES port hosts a mouse.
@@ -505,6 +629,15 @@ impl InputPorts {
         match port {
             0 => self.port1.is_mouse(),
             1 => self.port2.is_mouse(),
+            _ => false,
+        }
+    }
+
+    /// Returns true if the given physical SNES port currently hosts a Super Scope.
+    pub fn has_superscope_on_port(&self, port: u8) -> bool {
+        match port {
+            0 => self.port1.is_superscope(),
+            1 => self.port2.is_superscope(),
             _ => false,
         }
     }
@@ -753,6 +886,30 @@ mod tests {
         ports.write_wrio(0x40);
         ports.trigger_auto_read();
         ports.tick();
+        let state = ports.capture_state();
+
+        let mut restored = InputPorts::new();
+        restored.restore_state(&state);
+        assert_eq!(restored.capture_state(), state);
+    }
+
+    #[test]
+    fn superscope_controller_type_builds_superscope_device() {
+        let mut ports = InputPorts::new();
+        ports.configure(SnesControllerType::SuperScope, SnesControllerType::Standard);
+        assert!(ports.has_superscope_on_port(0));
+    }
+
+    #[test]
+    fn superscope_state_round_trips() {
+        let mut ports = InputPorts::new();
+        ports.configure(SnesControllerType::SuperScope, SnesControllerType::Standard);
+        ports.set_superscope_position(0, 42, 84);
+        ports.set_superscope_trigger(0, true);
+        ports.set_superscope_cursor(0, true);
+        ports.set_superscope_turbo(0, true);
+        ports.set_superscope_pause(0, true);
+
         let state = ports.capture_state();
 
         let mut restored = InputPorts::new();

@@ -105,7 +105,7 @@ pub fn apply_snes_mouse_relative_motion(
         Console::Snes(snes) => {
             for (port, enabled) in snes_ports.into_iter().enumerate() {
                 if enabled {
-                    snes.add_mouse_delta(port as u8, dx as i16, dy as i16);
+                    snes.add_mouse_delta(port as u8, dx, dy);
                 }
             }
         }
