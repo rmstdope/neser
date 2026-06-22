@@ -19,7 +19,7 @@ const PLAYER_KEYBOARD_BINDINGS = [
 ];
 
 const AGB_KEYBOARD_BINDINGS = "W/A/S/D: D-Pad\nR: Y\nT: X\nF: B\nG: A\nV: L\nB: R\n4: Select\n5: Start";
-const SNES_KEYBOARD_BINDINGS = "W/A/S/D: D-Pad\nR: Y\nT: X\nF: B\nG: A\nQ: L\nE: R\n4: Select\n5: Start";
+const SNES_KEYBOARD_BINDINGS = "W/A/S/D: D-Pad\nR: B\nT: A\nY: X\nG: Y\nQ: L\nE: R\n4: Select\n5: Start";
 
 export type HelpConsoleKind = "nes" | "gb" | "gba" | "snes";
 

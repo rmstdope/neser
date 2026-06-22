@@ -14,6 +14,8 @@ export function mapStandardGamepadState(gamepad: Gamepad | null, axisThreshold =
     return {
         a: Boolean(buttons[0]?.pressed),
         b: Boolean(buttons[1]?.pressed),
+        y: Boolean(buttons[2]?.pressed),
+        x: Boolean(buttons[3]?.pressed),
         select: Boolean(buttons[8]?.pressed),
         start: Boolean(buttons[9]?.pressed),
         up,

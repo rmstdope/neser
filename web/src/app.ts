@@ -1010,6 +1010,8 @@ let audioMuted = false;
 let lastGamepadState1 = {
     a: false,
     b: false,
+    x: false,
+    y: false,
     select: false,
     start: false,
     up: false,
@@ -1022,6 +1024,8 @@ let lastGamepadState1 = {
 let lastGamepadState2 = {
     a: false,
     b: false,
+    x: false,
+    y: false,
     select: false,
     start: false,
     up: false,
@@ -1031,6 +1035,21 @@ let lastGamepadState2 = {
     l: false,
     r: false
 };
+
+const SNES_LEGACY_BUTTON = {
+    B: 0,
+    Y: 1,
+    SELECT: 2,
+    START: 3,
+    UP: 4,
+    DOWN: 5,
+    LEFT: 6,
+    RIGHT: 7,
+    A: 8,
+    X: 9,
+    L: 10,
+    R: 11
+} as const;
 
 function setStatus(msg: string, isError = false) {
     statusEl!.textContent = isError ? msg : "";
@@ -2439,16 +2458,16 @@ populateRomSelect();
 updateEmulationButtons();
 
 // Keyboard input mappings for both controllers
-// Controller 1: W=Up, S=Down, A=Left, D=Right, R=Y, T=X, F=B, G=A, Q=L, E=R, 4=Select, 5=Start
+// Controller 1: W=Up, S=Down, A=Left, D=Right, R=B, T=A, Y=X, G=Y, Q=L, E=R, 4=Select, 5=Start
 const keyToButtonController1: Record<string, { button?: number; snesButton?: number; name: string }> = {
     'w': { button: 4, snesButton: 4, name: 'Up' },        // NES Up / SNES Up
     's': { button: 5, snesButton: 5, name: 'Down' },      // NES Down / SNES Down
     'a': { button: 6, snesButton: 6, name: 'Left' },      // NES Left / SNES Left
     'd': { button: 7, snesButton: 7, name: 'Right' },     // NES Right / SNES Right
-    'r': { button: 0, snesButton: 1, name: 'Y' },         // NES A fallback / SNES Y
-    't': { button: 1, snesButton: 9, name: 'X' },         // NES B fallback / SNES X
-    'f': { snesButton: 0, name: 'B' },                    // SNES B only
-    'g': { snesButton: 8, name: 'A' },                    // SNES A only
+    'r': { button: 0, snesButton: 0, name: 'B' },         // NES A fallback / SNES B
+    't': { button: 1, snesButton: 8, name: 'A' },         // NES B fallback / SNES A
+    'y': { snesButton: 9, name: 'X' },                    // SNES X only
+    'g': { snesButton: 1, name: 'Y' },                    // SNES Y only
     'q': { snesButton: 10, name: 'L' },                   // SNES L only
     'e': { snesButton: 11, name: 'R' },                   // SNES R only
     '4': { button: 2, snesButton: 2, name: 'Select' },    // NES Select / SNES Select
@@ -3158,6 +3177,8 @@ function pollGamepad() {
 interface GamepadButtonState {
     a: boolean;
     b: boolean;
+    x: boolean;
+    y: boolean;
     select: boolean;
     start: boolean;
     up: boolean;
@@ -3171,24 +3192,59 @@ interface GamepadButtonState {
 function applyGamepadState(state: GamepadButtonState, controller: number, lastState: GamepadButtonState) {
     if (!emulator) return;
     if (emulator.kind === "gba" && controller !== 1) return;
+    const nesRuntime = nes;
     const applyButton = (button: number, pressed: boolean) => {
-        if (nes) {
-            applyJoypadButtonIfAllowed(nes, controller, button, pressed);
+        if (nesRuntime) {
+            applyJoypadButtonIfAllowed(nesRuntime, controller, button, pressed);
         } else {
             emulator!.inst.set_button(controller, button, pressed);
         }
     };
-    if (state.a !== lastState.a) applyButton(0, state.a);
-    if (state.b !== lastState.b) applyButton(1, state.b);
-    if (state.select !== lastState.select) applyButton(2, state.select);
-    if (state.start !== lastState.start) applyButton(3, state.start);
-    if (state.up !== lastState.up) applyButton(4, state.up);
-    if (state.down !== lastState.down) applyButton(5, state.down);
-    if (state.left !== lastState.left) applyButton(6, state.left);
-    if (state.right !== lastState.right) applyButton(7, state.right);
-    if (emulator.kind === "gba" || emulator.kind === "snes") {
+    const applySnesButton = (
+        changed: boolean,
+        pressed: boolean,
+        snesButtonId: number,
+        fallbackNesButton?: number
+    ) => {
+        if (!changed) return;
+
+        if (nesRuntime?.set_snes_button(controller, snesButtonId, pressed)) {
+            return;
+        }
+
+        if (emulator!.kind === "snes") {
+            emulator!.inst.set_button(
+                controller,
+                // WasmNes expects legacy SNES ids (B/Y/.../R), while WasmSnes set_button
+                // uses platform ids (A/B/.../Y), so remap for direct SNES runtime.
+                remapLegacySnesButtonId(snesButtonId),
+                pressed
+            );
+            return;
+        }
+
+        if (fallbackNesButton !== undefined) {
+            applyButton(fallbackNesButton, pressed);
+        }
+    };
+
+    applySnesButton(state.a !== lastState.a, state.a, SNES_LEGACY_BUTTON.B, 0); // South -> SNES B, NES A
+    applySnesButton(state.b !== lastState.b, state.b, SNES_LEGACY_BUTTON.A, 1); // East -> SNES A, NES B
+    applySnesButton(state.y !== lastState.y, state.y, SNES_LEGACY_BUTTON.Y); // West -> SNES Y
+    applySnesButton(state.x !== lastState.x, state.x, SNES_LEGACY_BUTTON.X); // North -> SNES X
+    applySnesButton(state.select !== lastState.select, state.select, SNES_LEGACY_BUTTON.SELECT, 2);
+    applySnesButton(state.start !== lastState.start, state.start, SNES_LEGACY_BUTTON.START, 3);
+    applySnesButton(state.up !== lastState.up, state.up, SNES_LEGACY_BUTTON.UP, 4);
+    applySnesButton(state.down !== lastState.down, state.down, SNES_LEGACY_BUTTON.DOWN, 5);
+    applySnesButton(state.left !== lastState.left, state.left, SNES_LEGACY_BUTTON.LEFT, 6);
+    applySnesButton(state.right !== lastState.right, state.right, SNES_LEGACY_BUTTON.RIGHT, 7);
+
+    if (emulator.kind === "gba") {
         if (state.l !== lastState.l) applyButton(8, state.l);
         if (state.r !== lastState.r) applyButton(9, state.r);
+    } else {
+        applySnesButton(state.l !== lastState.l, state.l, SNES_LEGACY_BUTTON.L);
+        applySnesButton(state.r !== lastState.r, state.r, SNES_LEGACY_BUTTON.R);
     }
 }
 
@@ -3196,6 +3252,8 @@ function resetGamepadState() {
     const emptyState = {
         a: false,
         b: false,
+        x: false,
+        y: false,
         select: false,
         start: false,
         up: false,

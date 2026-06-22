@@ -42,6 +42,20 @@ it("maps standard gamepad shoulder buttons to GBA L and R inputs", () => {
   expect(state.b).toBe(false);
 });
 
+it("maps standard gamepad west/north buttons to SNES Y/X inputs", () => {
+  const gamepad = {
+    buttons: makeButtons([2, 3]),
+    axes: [0, 0, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.y).toBe(true);
+  expect(state.x).toBe(true);
+  expect(state.a).toBe(false);
+  expect(state.b).toBe(false);
+});
+
 it("maps left stick axes to NES directions", () => {
   const gamepad = {
     buttons: makeButtons(),
