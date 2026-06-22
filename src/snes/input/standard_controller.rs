@@ -121,6 +121,7 @@ impl SnesController for StandardController {
             pressed: self.pressed,
             shift: self.shift,
             strobe: self.strobe,
+            ..Default::default()
         }
     }
 

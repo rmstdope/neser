@@ -189,6 +189,39 @@ impl Snes {
     fn save_ram_to_disk(&self) -> Result<(), String> {
         Ok(())
     }
+
+    /// Returns true if any SNES controller port currently hosts a mouse.
+    pub fn has_mouse(&self) -> bool {
+        self.cpu.as_ref().is_some_and(|cpu| cpu.has_mouse())
+    }
+
+    /// Returns true if the given physical SNES port currently hosts a mouse.
+    pub fn has_mouse_on_port(&self, port: u8) -> bool {
+        self.cpu
+            .as_ref()
+            .is_some_and(|cpu| cpu.has_mouse_on_port(port))
+    }
+
+    /// Add relative mouse motion for the given SNES controller port.
+    pub fn add_mouse_delta(&mut self, port: u8, dx: i16, dy: i16) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.add_mouse_delta(port, dx, dy);
+        }
+    }
+
+    /// Set SNES mouse left button state for the given port.
+    pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.set_mouse_left_button(port, pressed);
+        }
+    }
+
+    /// Set SNES mouse right button state for the given port.
+    pub fn set_mouse_right_button(&mut self, port: u8, pressed: bool) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.set_mouse_right_button(port, pressed);
+        }
+    }
 }
 
 impl Emulator for Snes {
@@ -375,6 +408,7 @@ mod tests {
     use crate::platform::app_context::AppContext;
     use crate::platform::config::Config;
     use crate::snes::console::config::SnesHardware;
+    use crate::snes::input::SnesControllerType;
 
     fn valid_lorom_nop_rom() -> Vec<u8> {
         valid_lorom_nop_rom_with_country(0x00)
@@ -560,6 +594,17 @@ mod tests {
         let mut snes = make_snes();
         snes.set_button(0, 0, true);
         assert_eq!(snes.get_joypad_button_states(0), 0);
+    }
+
+    #[test]
+    fn has_mouse_reflects_controller_config() {
+        let mut config = Config::default();
+        config.snes.controller_port1 = SnesControllerType::Mouse;
+        let app_context = AppContext::new_with_config(config);
+        let mut snes = Snes::new(app_context);
+        snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
+
+        assert!(snes.has_mouse());
     }
 
     #[test]
