@@ -153,7 +153,7 @@ pub struct RomBrowserApp {
     filter_panel_anim: f32,
     /// Cursor position within the current filter panel column.
     filter_panel_cursor: usize,
-    /// Active column in filter panel (0 = Platform, 1 = Genre, 2 = Players).
+    /// Active column in filter panel (0 = Platform, 1 = Players, 2 = Genre).
     filter_panel_column: usize,
     /// Active platform filter (`None` = show all platforms).
     active_platform: Option<crate::platform::catalog::Platform>,
@@ -303,8 +303,7 @@ impl RomBrowserApp {
     /// Maximum number of textures to keep in memory.
     const MAX_CACHED_TEXTURES: usize = 200;
 
-    /// Total number of selectable items in the filter panel
-    /// (platform options + genre options).
+    /// Available platform options shown in the filter panel (Platform column).
     const PLATFORMS: [Platform; 3] = [Platform::Nes, Platform::Gb, Platform::Gbc];
 
     const PLAYER_OPTIONS: [(Option<u32>, &'static str); 3] =
