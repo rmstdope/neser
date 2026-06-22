@@ -116,7 +116,7 @@ it("applySnesMouseDelta sends delta to port 2", () => {
     expect(calls.addMouseDelta).toEqual([{ port: 2, dx: 10, dy: 20 }]);
 });
 
-it("applySnesMouseDelta auto-routes to mouse port when no port given", () => {
+it("applySnesMouseDelta does nothing when called with default port (0)", () => {
     const { snes, calls } = makeSnesStub({ mousePorts: [2] });
     applySnesMouseDelta(snes);
     expect(calls.addMouseDelta).toHaveLength(0);

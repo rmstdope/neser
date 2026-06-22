@@ -16,6 +16,7 @@ import {
     applySnesMouseButton,
     applySnesSuperScopePosition,
     applySnesSuperScopeButton,
+    shouldSuppressSnesJoypadInput,
 } from "./input/snes_input";
 import { createSaveStateContext } from "./save-state/save_state_context";
 import { fetchRomList } from "./rom/rom_list";
@@ -2571,7 +2572,9 @@ function applyKeyboardMapping(event: KeyboardEvent, mapping: { button?: number; 
         }
     }
     if (emulator?.kind === "snes" && mapping.snesButton !== undefined) {
-        emulator.inst.set_button(controller, remapLegacySnesButtonId(mapping.snesButton), pressed);
+        if (!shouldSuppressSnesJoypadInput(emulator.inst, controller)) {
+            emulator.inst.set_button(controller, remapLegacySnesButtonId(mapping.snesButton), pressed);
+        }
         return;
     }
 
@@ -2694,6 +2697,10 @@ function handleTouchButton(button: number, pressed: boolean) {
     if (!emulator) return;
     if (nes) {
         applyJoypadButtonIfAllowed(nes, 1, button, pressed);
+    } else if (emulator.kind === "snes") {
+        if (!shouldSuppressSnesJoypadInput(emulator.inst, 1)) {
+            emulator.inst.set_button(1, button, pressed);
+        }
     } else {
         emulator.inst.set_button(1, button, pressed);
     }
@@ -2717,7 +2724,7 @@ function handleMouseMotion(event: MouseEvent) {
                     applySnesMouseDelta(snesInst, port, event.movementX, event.movementY);
                 }
             }
-        } else if (isSnesSuperScopeActive(snesInst)) {
+        if (isSnesSuperScopeActive(snesInst)) {
             // Super Scope uses absolute canvas position.
             const x = event.clientX - rect.left;
             const y = event.clientY - rect.top;
@@ -2873,7 +2880,7 @@ function handleMouseButton(event: MouseEvent, pressed: boolean) {
                     applySnesMouseButton(snesInst, port, event.button, pressed);
                 }
             }
-        } else if (isSnesSuperScopeActive(snesInst)) {
+        if (isSnesSuperScopeActive(snesInst)) {
             for (const port of [1, 2]) {
                 if (snesInst.has_superscope_on_port(port)) {
                     applySnesSuperScopeButton(snesInst, port, event.button, pressed);
@@ -3285,13 +3292,15 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
         }
 
         if (emulator!.kind === "snes") {
-            emulator!.inst.set_button(
-                controller,
-                // WasmNes expects legacy SNES ids (B/Y/.../R), while WasmSnes set_button
-                // uses platform ids (A/B/.../Y), so remap for direct SNES runtime.
-                remapLegacySnesButtonId(snesButtonId),
-                pressed
-            );
+            if (!shouldSuppressSnesJoypadInput(emulator!.inst, controller)) {
+                emulator!.inst.set_button(
+                    controller,
+                    // WasmNes expects legacy SNES ids (B/Y/.../R), while WasmSnes set_button
+                    // uses platform ids (A/B/.../Y), so remap for direct SNES runtime.
+                    remapLegacySnesButtonId(snesButtonId),
+                    pressed
+                );
+            }
             return;
         }
 
