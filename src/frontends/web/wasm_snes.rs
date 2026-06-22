@@ -224,7 +224,7 @@ impl WasmSnes {
     /// Set button state for a SNES controller.
     ///
     /// `controller` is the 1-based port number (1 or 2).
-    /// `button` is the button ID as defined by `crate::snes::input::button_from_id`.
+    /// `button` uses the SNES button order `A, B, Select, Start, Up, Down, Left, Right, L, R, X, Y`.
     #[wasm_bindgen]
     pub fn set_button(&mut self, controller: u8, button: u8, pressed: bool) {
         if let Some(port) = Self::physical_port(controller) {
