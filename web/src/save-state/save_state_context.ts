@@ -1,5 +1,7 @@
+import type { SaveStateRuntime } from "./save_state_runtime";
+
 export async function createSaveStateContext({
-    nes,
+    runtime,
     romMetadata,
     openDb,
     createRomSaveKey,
@@ -8,16 +10,23 @@ export async function createSaveStateContext({
     loadStateFn,
     setStatus
 }: {
-    nes: { save_state_bytes(): Uint8Array; load_state_bytes(bytes: Uint8Array): void } | null;
+    runtime: SaveStateRuntime | null;
     romMetadata: { name: string; size: number; bytes: Uint8Array } | null;
     openDb: () => Promise<IDBDatabase>;
     createRomSaveKey: (meta: { name: string; size: number; bytes: Uint8Array }) => Promise<string>;
-    createSaveStateController: (opts: any) => { save(): Promise<boolean>; load(): Promise<boolean> };
+    createSaveStateController: (opts: {
+        runtime: SaveStateRuntime;
+        db: IDBDatabase;
+        key: string;
+        saveStateFn: (db: IDBDatabase, key: string, bytes: Uint8Array) => Promise<void>;
+        loadStateFn: (db: IDBDatabase, key: string) => Promise<Uint8Array | null>;
+        setStatus: (message: string, isError: boolean) => void;
+    }) => { save(): Promise<boolean>; load(): Promise<boolean> };
     saveStateFn: (db: IDBDatabase, key: string, bytes: Uint8Array) => Promise<void>;
     loadStateFn: (db: IDBDatabase, key: string) => Promise<Uint8Array | null>;
     setStatus: (message: string, isError: boolean) => void;
 }) {
-    if (!nes || !romMetadata) {
+    if (!runtime || !romMetadata) {
         return null;
     }
 
@@ -29,7 +38,7 @@ export async function createSaveStateContext({
     });
 
     return createSaveStateController({
-        nes,
+        runtime,
         db,
         key,
         saveStateFn,

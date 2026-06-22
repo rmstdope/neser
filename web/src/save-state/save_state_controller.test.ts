@@ -4,7 +4,7 @@ import { createSaveStateController } from "./save_state_controller";
 it("save handler stores bytes and sets status", async () => {
     const calls: any[] = [];
     const controller = createSaveStateController({
-        nes: {
+        runtime: {
             save_state_bytes() {
                 return new Uint8Array([1, 2, 3]);
             }
@@ -34,7 +34,7 @@ it("save handler stores bytes and sets status", async () => {
 it("load handler loads bytes into nes and sets status", async () => {
     const calls: any[] = [];
     const controller = createSaveStateController({
-        nes: {
+        runtime: {
             load_state_bytes(bytes: any) {
                 calls.push({ loaded: Array.from(bytes) });
                 return undefined;
@@ -59,7 +59,7 @@ it("load handler loads bytes into nes and sets status", async () => {
 it("load handler reports missing state", async () => {
     const calls: any[] = [];
     const controller = createSaveStateController({
-        nes: {
+        runtime: {
             load_state_bytes() {
                 throw new Error("should not be called");
             }
@@ -85,7 +85,7 @@ it("save handler logs errors", async () => {
     console.error = (...args: any[]) => calls.push(args);
 
     const controller = createSaveStateController({
-        nes: {
+        runtime: {
             save_state_bytes() {
                 throw new Error("boom");
             }
@@ -110,7 +110,7 @@ it("load handler logs errors", async () => {
     console.error = (...args: any[]) => calls.push(args);
 
     const controller = createSaveStateController({
-        nes: {
+        runtime: {
             load_state_bytes() {
                 throw new Error("boom");
             }

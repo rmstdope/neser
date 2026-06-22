@@ -9,6 +9,7 @@ import {
 } from "./save-state/save_state_storage";
 import { createSaveStateController } from "./save-state/save_state_controller";
 import { supportsWebSaveState } from "./save-state/save_state_support";
+import type { SaveStateRuntime } from "./save-state/save_state_runtime";
 import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton, isZapperActive } from "./input/mouse_input";
 import {
     isSnesMouseActive,
@@ -1071,8 +1072,11 @@ async function applyRomBytes(bytes: Uint8Array, name: string) {
 }
 
 async function refreshSaveStateController() {
-    const saveStateEmulator = emulator && supportsWebSaveState(emulator.kind) ? emulator.inst : null;
-    if (!saveStateEmulator || !romMetadata) {
+    let saveStateRuntime: SaveStateRuntime | null = null;
+    if (emulator?.kind === "nes" || emulator?.kind === "snes") {
+        saveStateRuntime = emulator.inst;
+    }
+    if (!saveStateRuntime || !romMetadata) {
         saveStateController = null;
         saveStateAvailable = false;
         updateSaveStateButtons();
@@ -1080,7 +1084,7 @@ async function refreshSaveStateController() {
     }
     try {
         saveStateController = await createSaveStateContext({
-            nes: saveStateEmulator,
+            runtime: saveStateRuntime,
             romMetadata,
             openDb: openSaveStateDb,
             createRomSaveKey,
