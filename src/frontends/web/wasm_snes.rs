@@ -23,10 +23,40 @@ impl Default for WasmSnes {
 
 #[wasm_bindgen]
 impl WasmSnes {
-    fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
-        rgb.chunks_exact(3)
-            .flat_map(|p| [p[0], p[1], p[2], 0xFF])
-            .collect()
+    fn physical_port(port: u8) -> Option<u8> {
+        match port {
+            1 => Some(0),
+            2 => Some(1),
+            _ => None,
+        }
+    }
+
+    fn rgba_frame_from_snapshot(
+        rgb: &[u8],
+        src_width: u32,
+        src_height: u32,
+        dst_width: u32,
+        dst_height: u32,
+    ) -> Vec<u8> {
+        let mut rgba = vec![0u8; (dst_width * dst_height * 4) as usize];
+        for alpha in rgba.iter_mut().skip(3).step_by(4) {
+            *alpha = 0xFF;
+        }
+
+        let copy_width = src_width.min(dst_width) as usize;
+        let copy_height = src_height.min(dst_height) as usize;
+        let src_width = src_width as usize;
+        let dst_width = dst_width as usize;
+
+        for y in 0..copy_height {
+            for x in 0..copy_width {
+                let src_index = (y * src_width + x) * 3;
+                let dst_index = (y * dst_width + x) * 4;
+                rgba[dst_index..dst_index + 3].copy_from_slice(&rgb[src_index..src_index + 3]);
+            }
+        }
+
+        rgba
     }
 
     fn opaque_black_rgba_frame() -> Vec<u8> {
@@ -51,7 +81,7 @@ impl WasmSnes {
 
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn joypad_button_states_for_test(&self) -> u8 {
-        self.snes.get_joypad_button_states(1)
+        self.snes.get_joypad_button_states(0)
     }
 
     #[wasm_bindgen(constructor)]
@@ -105,8 +135,16 @@ impl WasmSnes {
             return Self::opaque_black_rgba_frame();
         }
         self.run_until_frame_ready();
+        let screen_width = self.snes.screen_width();
+        let screen_height = self.snes.screen_height();
         let rgb = self.snes.screen_snapshot();
-        Self::rgb_to_rgba(&rgb)
+        Self::rgba_frame_from_snapshot(
+            &rgb,
+            screen_width,
+            screen_height,
+            Snes::SCREEN_WIDTH,
+            Snes::SCREEN_HEIGHT,
+        )
     }
 
     /// Returns the display width in pixels (always 256 for SNES).
@@ -189,7 +227,9 @@ impl WasmSnes {
     /// `button` is the button ID as defined by `crate::snes::input::button_from_id`.
     #[wasm_bindgen]
     pub fn set_button(&mut self, controller: u8, button: u8, pressed: bool) {
-        self.snes.set_button(controller, button, pressed);
+        if let Some(port) = Self::physical_port(controller) {
+            self.snes.set_button(port, button, pressed);
+        }
     }
 
     /// Reset the emulator.
@@ -218,27 +258,65 @@ impl WasmSnes {
         self.snes.has_mouse()
     }
 
-    /// Returns `true` if a SNES mouse peripheral is attached on the given port.
+    /// Returns `true` if a SNES mouse peripheral is attached on the given 1-based port.
     #[wasm_bindgen]
     pub fn has_mouse_on_port(&self, port: u8) -> bool {
-        self.snes.has_mouse_on_port(port)
+        Self::physical_port(port).is_some_and(|port| self.snes.has_mouse_on_port(port))
     }
 
-    /// Report mouse movement delta to the SNES mouse peripheral on the given port.
+    /// Report mouse movement delta to the SNES mouse peripheral on the given 1-based port.
     #[wasm_bindgen]
     pub fn add_mouse_delta(&mut self, port: u8, dx: i16, dy: i16) {
-        self.snes.add_mouse_delta(port, dx, dy);
+        if let Some(port) = Self::physical_port(port) {
+            self.snes.add_mouse_delta(port, dx, dy);
+        }
     }
 
-    /// Set the left mouse button state for the given port.
+    /// Set the left mouse button state for the given 1-based port.
     #[wasm_bindgen]
     pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
-        self.snes.set_mouse_left_button(port, pressed);
+        if let Some(port) = Self::physical_port(port) {
+            self.snes.set_mouse_left_button(port, pressed);
+        }
     }
 
-    /// Set the right mouse button state for the given port.
+    /// Set the right mouse button state for the given 1-based port.
     #[wasm_bindgen]
     pub fn set_mouse_right_button(&mut self, port: u8, pressed: bool) {
-        self.snes.set_mouse_right_button(port, pressed);
+        if let Some(port) = Self::physical_port(port) {
+            self.snes.set_mouse_right_button(port, pressed);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WasmSnes;
+
+    #[test]
+    fn js_ports_map_to_physical_snes_ports() {
+        assert_eq!(WasmSnes::physical_port(1), Some(0));
+        assert_eq!(WasmSnes::physical_port(2), Some(1));
+        assert_eq!(WasmSnes::physical_port(0), None);
+        assert_eq!(WasmSnes::physical_port(3), None);
+    }
+
+    #[test]
+    fn rgba_frame_from_snapshot_crops_and_pads_to_target_size() {
+        let rgb = vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 9, //
+            10, 11, 12, 13, 14, 15, 16, 17, 18,
+        ];
+
+        let rgba = WasmSnes::rgba_frame_from_snapshot(&rgb, 3, 2, 2, 3);
+
+        assert_eq!(
+            rgba,
+            vec![
+                1, 2, 3, 0xFF, 4, 5, 6, 0xFF, //
+                10, 11, 12, 0xFF, 13, 14, 15, 0xFF, //
+                0, 0, 0, 0xFF, 0, 0, 0, 0xFF,
+            ]
+        );
     }
 }

@@ -1212,11 +1212,25 @@ fn wasm_snes_reset_without_rom_succeeds() {
 #[wasm_bindgen_test]
 fn wasm_snes_set_button_does_not_panic() {
     let mut snes = WasmSnes::new();
-    // SNES has 12 buttons (B, Y, Select, Start, Up, Down, Left, Right, A, X, L, R)
+    // `crate::snes::input::button_from_id`: A, B, Select, Start, Up, Down, Left, Right, L, R, X, Y
     for button in 0u8..=11 {
         snes.set_button(1, button, true);
         snes.set_button(1, button, false);
     }
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_set_button_updates_controller_one_state() {
+    let mut snes = WasmSnes::new();
+    let rom = minimal_snes_rom();
+    snes.load_rom(&rom, "test.sfc")
+        .expect("valid SNES ROM should load successfully");
+
+    snes.set_button(1, 0, true);
+    assert_eq!(snes.joypad_button_states_for_test() & 0x01, 0x01);
+
+    snes.set_button(1, 0, false);
+    assert_eq!(snes.joypad_button_states_for_test() & 0x01, 0x00);
 }
 
 #[wasm_bindgen_test]
@@ -1233,6 +1247,25 @@ fn wasm_snes_load_state_bytes_without_rom_returns_error() {
         .load_state_bytes(&[0u8; 32])
         .expect_err("load_state_bytes without ROM should fail");
     assert!(!err.as_string().unwrap_or_default().is_empty());
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_save_state_round_trip_with_rom_succeeds() {
+    let mut snes = WasmSnes::new();
+    let rom = minimal_snes_rom();
+    snes.load_rom(&rom, "test.sfc")
+        .expect("valid SNES ROM should load successfully");
+
+    let bytes = snes.save_state_bytes();
+    assert!(!bytes.is_empty(), "expected non-empty save state with ROM");
+
+    let mut restored = WasmSnes::new();
+    restored
+        .load_rom(&rom, "test.sfc")
+        .expect("valid SNES ROM should load successfully");
+    restored
+        .load_state_bytes(&bytes)
+        .expect("load_state_bytes with ROM should succeed");
 }
 
 #[wasm_bindgen_test]
