@@ -355,6 +355,31 @@ impl SnesSystemBus {
         self.input.get_mut().set_mouse_right_button(port, pressed);
     }
 
+    /// Set Super Scope aiming coordinates for the given port.
+    pub fn set_superscope_position(&mut self, port: u8, x: i16, y: i16) {
+        self.input.get_mut().set_superscope_position(port, x, y);
+    }
+
+    /// Set Super Scope trigger button state for the given port.
+    pub fn set_superscope_trigger(&mut self, port: u8, pressed: bool) {
+        self.input.get_mut().set_superscope_trigger(port, pressed);
+    }
+
+    /// Set Super Scope cursor button state for the given port.
+    pub fn set_superscope_cursor(&mut self, port: u8, pressed: bool) {
+        self.input.get_mut().set_superscope_cursor(port, pressed);
+    }
+
+    /// Set Super Scope turbo switch state for the given port.
+    pub fn set_superscope_turbo(&mut self, port: u8, pressed: bool) {
+        self.input.get_mut().set_superscope_turbo(port, pressed);
+    }
+
+    /// Set Super Scope pause button state for the given port.
+    pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
+        self.input.get_mut().set_superscope_pause(port, pressed);
+    }
+
     /// Returns true if any SNES controller port currently hosts a mouse.
     pub fn has_mouse(&self) -> bool {
         self.input.borrow().has_mouse()
@@ -363,6 +388,16 @@ impl SnesSystemBus {
     /// Returns true if the given physical SNES port currently hosts a mouse.
     pub fn has_mouse_on_port(&self, port: u8) -> bool {
         self.input.borrow().has_mouse_on_port(port)
+    }
+
+    /// Returns true if any SNES controller port currently hosts a Super Scope.
+    pub fn has_superscope(&self) -> bool {
+        self.input.borrow().has_superscope()
+    }
+
+    /// Returns true if the given physical SNES port currently hosts a Super Scope.
+    pub fn has_superscope_on_port(&self, port: u8) -> bool {
+        self.input.borrow().has_superscope_on_port(port)
     }
 
     /// Return the 8 NES-convention button states for the given port.

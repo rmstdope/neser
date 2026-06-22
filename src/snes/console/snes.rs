@@ -222,6 +222,53 @@ impl Snes {
             cpu.set_mouse_right_button(port, pressed);
         }
     }
+
+    /// Set the Super Scope aiming coordinates for the given port.
+    pub fn set_superscope_position(&mut self, port: u8, x: i16, y: i16) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.set_superscope_position(port, x, y);
+        }
+    }
+
+    /// Set the Super Scope trigger state for the given port.
+    pub fn set_superscope_trigger(&mut self, port: u8, pressed: bool) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.set_superscope_trigger(port, pressed);
+        }
+    }
+
+    /// Set the Super Scope cursor state for the given port.
+    pub fn set_superscope_cursor(&mut self, port: u8, pressed: bool) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.set_superscope_cursor(port, pressed);
+        }
+    }
+
+    /// Set the Super Scope turbo switch state for the given port.
+    pub fn set_superscope_turbo(&mut self, port: u8, pressed: bool) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.set_superscope_turbo(port, pressed);
+        }
+    }
+
+    /// Set the Super Scope pause button state for the given port.
+    pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
+        if let Some(cpu) = self.cpu.as_mut() {
+            cpu.set_superscope_pause(port, pressed);
+        }
+    }
+
+    /// Returns true if any SNES controller port currently hosts a Super Scope.
+    pub fn has_superscope(&self) -> bool {
+        self.cpu.as_ref().is_some_and(|cpu| cpu.has_superscope())
+    }
+
+    /// Returns true if the given physical SNES port currently hosts a Super Scope.
+    pub fn has_superscope_on_port(&self, port: u8) -> bool {
+        self.cpu
+            .as_ref()
+            .is_some_and(|cpu| cpu.has_superscope_on_port(port))
+    }
 }
 
 impl Emulator for Snes {
