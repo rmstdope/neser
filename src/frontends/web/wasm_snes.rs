@@ -23,6 +23,8 @@ impl Default for WasmSnes {
 
 #[wasm_bindgen]
 impl WasmSnes {
+    /// Map the 1-based JavaScript controller/mouse port numbers to the SNES core's
+    /// 0-based physical ports.
     fn physical_port(port: u8) -> Option<u8> {
         match port {
             1 => Some(0),
@@ -31,6 +33,11 @@ impl WasmSnes {
         }
     }
 
+    /// Convert an RGB888 snapshot into a fixed-size RGBA8888 frame for the WASM API.
+    ///
+    /// Source pixels are copied into the top-left of the destination. Extra source
+    /// pixels are cropped, and any destination area beyond the source dimensions is
+    /// left opaque black.
     fn rgba_frame_from_snapshot(
         rgb: &[u8],
         src_width: u32,
