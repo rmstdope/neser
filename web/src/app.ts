@@ -750,18 +750,16 @@ function createEmulatorInstance(kind: WebRomConsoleKind): void {
     resetGamepadState();
     // Free the previous WASM instance to avoid leaking its linear memory.
     emulator?.inst.free();
+    nes = null;
     if (kind === "gb") {
         const gb = new WasmGb();
         emulator = { kind: "gb", inst: gb };
-        nes = null;
     } else if (kind === "gba") {
         const gba = new WasmGba();
         emulator = { kind: "gba", inst: gba };
-        nes = null;
     } else if (kind === "snes") {
         const snes = new WasmSnes();
         emulator = { kind: "snes", inst: snes };
-        nes = null;
     } else {
         nes = new WasmNes();
         emulator = { kind: "nes", inst: nes };
@@ -1195,7 +1193,8 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
             rightChannelData[i] = normalizeGbaSample(samples[i * 2 + 1]);
         }
     } else if (emulator?.kind === "gb" || emulator?.kind === "gba" || emulator?.kind === "snes") {
-        // Handheld/SNES APUs output bipolar samples in [-1.0, 1.0] — clamp with a safety guard.
+        // GB, GBA, and SNES APUs all output bipolar samples in [-1.0, 1.0].
+        // GBA and SNES share normalizeGbaSample (clamp to [-1, 1]); GB uses its own normalizer.
         for (let i = 0; i < frameCount; i++) {
             channelData[i] = emulator?.kind === "gb"
                 ? normalizeGbSample(samples[i])
