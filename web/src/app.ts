@@ -1007,34 +1007,25 @@ const AUDIO_TARGET_LATENCY = AUDIO_PROFILE.targetLatencySeconds; // seconds
 const AUDIO_MAX_ADJUST = AUDIO_PROFILE.maxAdjust; // +/- playback rate bound
 const AUDIO_LATENCY_GAIN = 0.1; // scale factor for latency correction
 let audioMuted = false;
-let lastGamepadState1 = {
-    a: false,
-    b: false,
-    x: false,
-    y: false,
-    select: false,
-    start: false,
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    l: false,
-    r: false
-};
-let lastGamepadState2 = {
-    a: false,
-    b: false,
-    x: false,
-    y: false,
-    select: false,
-    start: false,
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    l: false,
-    r: false
-};
+function createEmptyGamepadState(): GamepadButtonState {
+    return {
+        a: false,
+        b: false,
+        x: false,
+        y: false,
+        select: false,
+        start: false,
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        l: false,
+        r: false
+    };
+}
+
+let lastGamepadState1 = createEmptyGamepadState();
+let lastGamepadState2 = createEmptyGamepadState();
 
 const SNES_LEGACY_BUTTON = {
     B: 0,
@@ -3228,16 +3219,23 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
         }
     };
 
-    applySnesButton(state.a !== lastState.a, state.a, SNES_LEGACY_BUTTON.B, 0); // South -> SNES B, NES A
-    applySnesButton(state.b !== lastState.b, state.b, SNES_LEGACY_BUTTON.A, 1); // East -> SNES A, NES B
-    applySnesButton(state.y !== lastState.y, state.y, SNES_LEGACY_BUTTON.Y); // West -> SNES Y
-    applySnesButton(state.x !== lastState.x, state.x, SNES_LEGACY_BUTTON.X); // North -> SNES X
-    applySnesButton(state.select !== lastState.select, state.select, SNES_LEGACY_BUTTON.SELECT, 2);
-    applySnesButton(state.start !== lastState.start, state.start, SNES_LEGACY_BUTTON.START, 3);
-    applySnesButton(state.up !== lastState.up, state.up, SNES_LEGACY_BUTTON.UP, 4);
-    applySnesButton(state.down !== lastState.down, state.down, SNES_LEGACY_BUTTON.DOWN, 5);
-    applySnesButton(state.left !== lastState.left, state.left, SNES_LEGACY_BUTTON.LEFT, 6);
-    applySnesButton(state.right !== lastState.right, state.right, SNES_LEGACY_BUTTON.RIGHT, 7);
+    // Button mappings: [state key, SNES button ID, fallback NES button]
+    const buttonMappings: Array<[keyof GamepadButtonState, number, number | undefined]> = [
+        ["a", SNES_LEGACY_BUTTON.B, 0],        // South -> SNES B, NES A
+        ["b", SNES_LEGACY_BUTTON.A, 1],        // East -> SNES A, NES B
+        ["y", SNES_LEGACY_BUTTON.Y, undefined], // West -> SNES Y
+        ["x", SNES_LEGACY_BUTTON.X, undefined], // North -> SNES X
+        ["select", SNES_LEGACY_BUTTON.SELECT, 2],
+        ["start", SNES_LEGACY_BUTTON.START, 3],
+        ["up", SNES_LEGACY_BUTTON.UP, 4],
+        ["down", SNES_LEGACY_BUTTON.DOWN, 5],
+        ["left", SNES_LEGACY_BUTTON.LEFT, 6],
+        ["right", SNES_LEGACY_BUTTON.RIGHT, 7],
+    ];
+
+    for (const [key, snesId, nesFallback] of buttonMappings) {
+        applySnesButton(state[key] !== lastState[key], state[key], snesId, nesFallback);
+    }
 
     if (emulator.kind === "gba") {
         if (state.l !== lastState.l) applyButton(8, state.l);
@@ -3249,24 +3247,11 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
 }
 
 function resetGamepadState() {
-    const emptyState = {
-        a: false,
-        b: false,
-        x: false,
-        y: false,
-        select: false,
-        start: false,
-        up: false,
-        down: false,
-        left: false,
-        right: false,
-        l: false,
-        r: false
-    };
+    const emptyState = createEmptyGamepadState();
     applyGamepadState(emptyState, 1, lastGamepadState1);
     applyGamepadState(emptyState, 2, lastGamepadState2);
-    lastGamepadState1 = { ...emptyState };
-    lastGamepadState2 = { ...emptyState };
+    lastGamepadState1 = createEmptyGamepadState();
+    lastGamepadState2 = createEmptyGamepadState();
 }
 
 function onGamepadConnectionChanged() {

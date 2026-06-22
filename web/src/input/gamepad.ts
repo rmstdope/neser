@@ -45,15 +45,5 @@ export function selectPrimaryGamepad(gamepads: (Gamepad | null)[]) {
  */
 export function selectGamepads(gamepads: (Gamepad | null)[]) {
     if (!gamepads) return [];
-    
-    const connected = [];
-    for (const gamepad of gamepads) {
-        if (gamepad && gamepad.connected) {
-            connected.push(gamepad);
-            if (connected.length >= 2) {
-                break;
-            }
-        }
-    }
-    return connected;
+    return gamepads.filter((gamepad): gamepad is Gamepad => gamepad?.connected ?? false).slice(0, 2);
 }
