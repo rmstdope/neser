@@ -3188,7 +3188,6 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
         changed: boolean,
         pressed: boolean,
         legacyButton: number,
-        snesCoreButton: number,
         fallbackNesButton?: number
     ) => {
         if (!changed) return;
@@ -3198,7 +3197,11 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
         }
 
         if (emulator!.kind === "snes") {
-            emulator!.inst.set_button(controller, snesCoreButton, pressed);
+            emulator!.inst.set_button(
+                controller,
+                remapLegacySnesButtonId(legacyButton),
+                pressed
+            );
             return;
         }
 
@@ -3207,23 +3210,23 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
         }
     };
 
-    applySnesButton(state.a !== lastState.a, state.a, 0, 1, 0); // South -> SNES B, NES A
-    applySnesButton(state.b !== lastState.b, state.b, 8, 0, 1); // East -> SNES A, NES B
-    applySnesButton(state.y !== lastState.y, state.y, 1, 11); // West -> SNES Y
-    applySnesButton(state.x !== lastState.x, state.x, 9, 10); // North -> SNES X
-    applySnesButton(state.select !== lastState.select, state.select, 2, 2, 2);
-    applySnesButton(state.start !== lastState.start, state.start, 3, 3, 3);
-    applySnesButton(state.up !== lastState.up, state.up, 4, 4, 4);
-    applySnesButton(state.down !== lastState.down, state.down, 5, 5, 5);
-    applySnesButton(state.left !== lastState.left, state.left, 6, 6, 6);
-    applySnesButton(state.right !== lastState.right, state.right, 7, 7, 7);
+    applySnesButton(state.a !== lastState.a, state.a, 0, 0); // South -> SNES B, NES A
+    applySnesButton(state.b !== lastState.b, state.b, 8, 1); // East -> SNES A, NES B
+    applySnesButton(state.y !== lastState.y, state.y, 1); // West -> SNES Y
+    applySnesButton(state.x !== lastState.x, state.x, 9); // North -> SNES X
+    applySnesButton(state.select !== lastState.select, state.select, 2, 2);
+    applySnesButton(state.start !== lastState.start, state.start, 3, 3);
+    applySnesButton(state.up !== lastState.up, state.up, 4, 4);
+    applySnesButton(state.down !== lastState.down, state.down, 5, 5);
+    applySnesButton(state.left !== lastState.left, state.left, 6, 6);
+    applySnesButton(state.right !== lastState.right, state.right, 7, 7);
 
     if (emulator.kind === "gba") {
         if (state.l !== lastState.l) applyButton(8, state.l);
         if (state.r !== lastState.r) applyButton(9, state.r);
     } else {
-        applySnesButton(state.l !== lastState.l, state.l, 10, 8);
-        applySnesButton(state.r !== lastState.r, state.r, 11, 9);
+        applySnesButton(state.l !== lastState.l, state.l, 10);
+        applySnesButton(state.r !== lastState.r, state.r, 11);
     }
 }
 
