@@ -9,7 +9,10 @@ use std::path::Path;
 impl NesConfig {
     /// Apply a single config file key-value pair to NES configuration.
     ///
-    /// Handles NES-specific config keys (nes_hardware, nes_controller_port1, etc.).
+    /// Handles NES-specific config keys: APU channel toggles (`nes-pulse1`, `nes-pulse2`,
+    /// `nes-triangle`, `nes-noise`, `nes-dmc`), `nes-zapper_detection_size`, overscan
+    /// (`nes-horizontal_overscan`, `nes-vertical_overscan`), `nes-palette`,
+    /// `nes-oam_dram_decay`, and `nes-enable_4_score`.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         use crate::platform::config::parse_bool;
         let key = key.replace('-', "_");
@@ -138,10 +141,10 @@ impl Config {
     /// # Example config file:
     /// ```text
     /// # Hardware mode: nes-ntsc, nes-pal, famicom, or dendy
-    /// hardware=nes-ntsc
+    /// nes-hardware=nes-ntsc
     ///
     /// # Expansion port: none or famicom-four-players
-    /// expansion_port=none
+    /// nes-expansion-port=none
     ///
     /// # Audio settings
     /// audio=true
@@ -161,11 +164,11 @@ impl Config {
     /// gb-filter=dmg
     ///
     /// # APU channel toggles
-    /// pulse1=true
-    /// pulse2=true
-    /// triangle=true
-    /// noise=true
-    /// dmc=true
+    /// nes-pulse1=true
+    /// nes-pulse2=true
+    /// nes-triangle=true
+    /// nes-noise=true
+    /// nes-dmc=true
     /// ```
     pub(crate) fn load_from_file(&mut self, path: &Path) -> Result<(), String> {
         let content = match fs::read_to_string(path) {
