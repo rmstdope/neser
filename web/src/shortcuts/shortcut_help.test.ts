@@ -162,10 +162,10 @@ it("buildControllerOverlayText shows SNES keyboard mapping including shoulder ke
     const text = buildControllerOverlayText(0, "snes");
     expect(text).toMatch(/Controller \(Player 1\)/);
     expect(text).toMatch(/W\/A\/S\/D: D-Pad/);
-    expect(text).toMatch(/R: Y/);
-    expect(text).toMatch(/T: X/);
-    expect(text).toMatch(/F: B/);
-    expect(text).toMatch(/G: A/);
+    expect(text).toMatch(/R: B/);
+    expect(text).toMatch(/T: A/);
+    expect(text).toMatch(/Y: X/);
+    expect(text).toMatch(/G: Y/);
     expect(text).toMatch(/Q: L/);
     expect(text).toMatch(/E: R/);
     expect(text).toMatch(/4: Select/);

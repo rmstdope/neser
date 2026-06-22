@@ -1010,6 +1010,8 @@ let audioMuted = false;
 let lastGamepadState1 = {
     a: false,
     b: false,
+    x: false,
+    y: false,
     select: false,
     start: false,
     up: false,
@@ -1022,6 +1024,8 @@ let lastGamepadState1 = {
 let lastGamepadState2 = {
     a: false,
     b: false,
+    x: false,
+    y: false,
     select: false,
     start: false,
     up: false,
@@ -2439,16 +2443,16 @@ populateRomSelect();
 updateEmulationButtons();
 
 // Keyboard input mappings for both controllers
-// Controller 1: W=Up, S=Down, A=Left, D=Right, R=Y, T=X, F=B, G=A, Q=L, E=R, 4=Select, 5=Start
+// Controller 1: W=Up, S=Down, A=Left, D=Right, R=B, T=A, Y=X, G=Y, Q=L, E=R, 4=Select, 5=Start
 const keyToButtonController1: Record<string, { button?: number; snesButton?: number; name: string }> = {
     'w': { button: 4, snesButton: 4, name: 'Up' },        // NES Up / SNES Up
     's': { button: 5, snesButton: 5, name: 'Down' },      // NES Down / SNES Down
     'a': { button: 6, snesButton: 6, name: 'Left' },      // NES Left / SNES Left
     'd': { button: 7, snesButton: 7, name: 'Right' },     // NES Right / SNES Right
-    'r': { button: 0, snesButton: 1, name: 'Y' },         // NES A fallback / SNES Y
-    't': { button: 1, snesButton: 9, name: 'X' },         // NES B fallback / SNES X
-    'f': { snesButton: 0, name: 'B' },                    // SNES B only
-    'g': { snesButton: 8, name: 'A' },                    // SNES A only
+    'r': { button: 0, snesButton: 0, name: 'B' },         // NES A fallback / SNES B
+    't': { button: 1, snesButton: 8, name: 'A' },         // NES B fallback / SNES A
+    'y': { snesButton: 9, name: 'X' },                    // SNES X only
+    'g': { snesButton: 1, name: 'Y' },                    // SNES Y only
     'q': { snesButton: 10, name: 'L' },                   // SNES L only
     'e': { snesButton: 11, name: 'R' },                   // SNES R only
     '4': { button: 2, snesButton: 2, name: 'Select' },    // NES Select / SNES Select
@@ -3158,6 +3162,8 @@ function pollGamepad() {
 interface GamepadButtonState {
     a: boolean;
     b: boolean;
+    x: boolean;
+    y: boolean;
     select: boolean;
     start: boolean;
     up: boolean;
@@ -3178,17 +3184,46 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
             emulator!.inst.set_button(controller, button, pressed);
         }
     };
-    if (state.a !== lastState.a) applyButton(0, state.a);
-    if (state.b !== lastState.b) applyButton(1, state.b);
-    if (state.select !== lastState.select) applyButton(2, state.select);
-    if (state.start !== lastState.start) applyButton(3, state.start);
-    if (state.up !== lastState.up) applyButton(4, state.up);
-    if (state.down !== lastState.down) applyButton(5, state.down);
-    if (state.left !== lastState.left) applyButton(6, state.left);
-    if (state.right !== lastState.right) applyButton(7, state.right);
-    if (emulator.kind === "gba" || emulator.kind === "snes") {
+    const applySnesButton = (
+        changed: boolean,
+        pressed: boolean,
+        legacyButton: number,
+        snesCoreButton: number,
+        fallbackNesButton?: number
+    ) => {
+        if (!changed) return;
+
+        if (nes?.set_snes_button(controller, legacyButton, pressed)) {
+            return;
+        }
+
+        if (emulator!.kind === "snes") {
+            emulator!.inst.set_button(controller, snesCoreButton, pressed);
+            return;
+        }
+
+        if (fallbackNesButton !== undefined) {
+            applyButton(fallbackNesButton, pressed);
+        }
+    };
+
+    applySnesButton(state.a !== lastState.a, state.a, 0, 1, 0); // South -> SNES B, NES A
+    applySnesButton(state.b !== lastState.b, state.b, 8, 0, 1); // East -> SNES A, NES B
+    applySnesButton(state.y !== lastState.y, state.y, 1, 11); // West -> SNES Y
+    applySnesButton(state.x !== lastState.x, state.x, 9, 10); // North -> SNES X
+    applySnesButton(state.select !== lastState.select, state.select, 2, 2, 2);
+    applySnesButton(state.start !== lastState.start, state.start, 3, 3, 3);
+    applySnesButton(state.up !== lastState.up, state.up, 4, 4, 4);
+    applySnesButton(state.down !== lastState.down, state.down, 5, 5, 5);
+    applySnesButton(state.left !== lastState.left, state.left, 6, 6, 6);
+    applySnesButton(state.right !== lastState.right, state.right, 7, 7, 7);
+
+    if (emulator.kind === "gba") {
         if (state.l !== lastState.l) applyButton(8, state.l);
         if (state.r !== lastState.r) applyButton(9, state.r);
+    } else {
+        applySnesButton(state.l !== lastState.l, state.l, 10, 8);
+        applySnesButton(state.r !== lastState.r, state.r, 11, 9);
     }
 }
 
@@ -3196,6 +3231,8 @@ function resetGamepadState() {
     const emptyState = {
         a: false,
         b: false,
+        x: false,
+        y: false,
         select: false,
         start: false,
         up: false,
