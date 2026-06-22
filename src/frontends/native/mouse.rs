@@ -40,10 +40,11 @@ pub fn has_zapper(console: &Console) -> bool {
 }
 
 pub fn has_snes_mouse(console: &Console) -> bool {
-    let Console::Nes(nes) = console else {
-        return false;
-    };
-    nes.has_snes_mouse()
+    match console {
+        Console::Nes(nes) => nes.has_snes_mouse(),
+        Console::Snes(snes) => snes.has_mouse(),
+        _ => false,
+    }
 }
 
 // ── Coordinate routing ───────────────────────────────────────────────────────
@@ -89,26 +90,37 @@ pub fn apply_snes_mouse_relative_motion(
     window_width: u32,
     window_height: u32,
 ) {
-    let Console::Nes(nes) = console else {
-        return;
-    };
     let dx = mouse_mapping::map_relative_mouse_delta_to_axis_delta(xrel, window_width);
     let dy = mouse_mapping::map_relative_mouse_delta_to_axis_delta(yrel, window_height);
-    nes.add_mouse_delta(dx, dy);
+    match console {
+        Console::Nes(nes) => nes.add_mouse_delta(dx, dy),
+        Console::Snes(snes) => snes.add_mouse_delta(0, dx as i16, dy as i16),
+        _ => {}
+    }
 }
 
 /// Forwards a mouse button press/release to the appropriate NES controller.
 ///
 /// No-op for non-NES consoles.
 pub fn update_mouse_button(console: &mut Console, button: MouseButton, pressed: bool) {
-    let Console::Nes(nes) = console else {
-        return;
-    };
-    if has_any_mouse_controller_nes(nes) {
-        match button {
-            MouseButton::Left => nes.set_mouse_left_button(pressed),
-            MouseButton::Right => nes.set_mouse_right_button(pressed),
+    match console {
+        Console::Nes(nes) => {
+            if has_any_mouse_controller_nes(nes) {
+                match button {
+                    MouseButton::Left => nes.set_mouse_left_button(pressed),
+                    MouseButton::Right => nes.set_mouse_right_button(pressed),
+                }
+            }
         }
+        Console::Snes(snes) => {
+            if snes.has_mouse() {
+                match button {
+                    MouseButton::Left => snes.set_mouse_left_button(0, pressed),
+                    MouseButton::Right => snes.set_mouse_right_button(0, pressed),
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -188,7 +200,9 @@ mod tests {
     use super::*;
     use crate::nes::console::Config;
     use crate::platform::app_context::AppContext;
+    use crate::platform::config::Config as PlatformConfig;
     use crate::platform::emulator::Console;
+    use crate::snes::input::SnesControllerType;
 
     fn make_console() -> Console {
         Console::new_nes(AppContext::new_with_config(Config::default()))
@@ -205,6 +219,36 @@ mod tests {
         nes.bus()
             .borrow_mut()
             .set_controller_type(port, controller_type);
+        console
+    }
+
+    fn valid_snes_lorom_nop_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x10000];
+        let header = 0x7FC0;
+        rom[header..header + 21].copy_from_slice(b"SNES TEST ROM        ");
+        rom[header + 0x3C] = 0x00;
+        rom[header + 0x3D] = 0x80;
+        rom[header + 0xD5] = 0x20;
+        rom[header + 0xD6] = 0x00;
+        rom[header + 0xD7] = 0x07;
+        rom[header + 0xD8] = 0x00;
+        rom[header + 0xD9] = 0x00;
+        rom[header + 0xDC] = 0x34;
+        rom[header + 0xDD] = 0x12;
+        rom[header + 0xDE] = 0xCB;
+        rom[header + 0xDF] = 0xED;
+        rom[0x0000] = 0xEA;
+        rom
+    }
+
+    fn make_snes_console_with_mouse() -> Console {
+        let mut config = PlatformConfig::default();
+        config.snes.controller_port1 = SnesControllerType::Mouse;
+        let app_context = AppContext::new_with_config(config);
+        let mut console = Console::new_snes(app_context);
+        console
+            .load_rom(&valid_snes_lorom_nop_rom(), "mouse.sfc")
+            .expect("load snes rom");
         console
     }
 
@@ -232,6 +276,12 @@ mod tests {
     fn detects_snes_mouse_as_mouse_controller() {
         let console = make_console_with_controller(1, crate::nes::input::ControllerType::SnesMouse);
         assert!(has_any_mouse_controller(&console));
+    }
+
+    #[test]
+    fn detects_snes_mouse_on_snes_console() {
+        let console = make_snes_console_with_mouse();
+        assert!(has_snes_mouse(&console));
     }
 
     #[test]

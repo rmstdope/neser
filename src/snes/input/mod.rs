@@ -14,11 +14,13 @@
 //! so the documented "manual read during auto-joypad corrupts state" behaviour
 //! falls out naturally.
 
+mod mouse_controller;
 mod multitap;
 mod standard_controller;
 
 use serde::{Deserialize, Serialize};
 
+pub use mouse_controller::MouseController;
 pub use multitap::{Multitap, MultitapState};
 pub use standard_controller::StandardController;
 
@@ -71,13 +73,27 @@ pub struct SnesControllerState {
     pub shift: u8,
     #[serde(default)]
     pub strobe: bool,
+    #[serde(default)]
+    pub mouse_speed: u8,
+    #[serde(default)]
+    pub mouse_left_button: bool,
+    #[serde(default)]
+    pub mouse_right_button: bool,
+    #[serde(default)]
+    pub mouse_accum_dx: i16,
+    #[serde(default)]
+    pub mouse_accum_dy: i16,
+    #[serde(default)]
+    pub mouse_report_dx: i16,
+    #[serde(default)]
+    pub mouse_report_dy: i16,
 }
 
 /// The kind of device plugged into a controller port.
 ///
 /// Selectable per port via `--snes-controller-port1` / `--snes-controller-port2`.
-/// Only [`Standard`](Self::Standard) is implemented today; the remaining
-/// variants are placeholders for the peripheral sub-issues and currently fall
+/// [`Standard`](Self::Standard), [`Multitap`](Self::Multitap), and
+/// [`Mouse`](Self::Mouse) are implemented; remaining variants currently fall
 /// back to a standard controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SnesControllerType {
@@ -105,6 +121,7 @@ impl SnesControllerType {
         match self {
             Self::Standard => Box::new(StandardController::new()),
             Self::Multitap => Box::new(Multitap::new()),
+            Self::Mouse => Box::new(MouseController::new()),
             other => {
                 crate::platform::debugging::log_info(format!(
                     "SNES controller type {other:?} is not yet implemented; \
@@ -142,6 +159,26 @@ pub trait SnesController {
         } else {
             false
         }
+    }
+
+    /// Add relative mouse motion in host-space units.
+    fn add_mouse_delta(&mut self, _dx: i16, _dy: i16) -> bool {
+        false
+    }
+
+    /// Set the left mouse button state.
+    fn set_mouse_left_button(&mut self, _pressed: bool) -> bool {
+        false
+    }
+
+    /// Set the right mouse button state.
+    fn set_mouse_right_button(&mut self, _pressed: bool) -> bool {
+        false
+    }
+
+    /// Whether this device is an SNES mouse.
+    fn is_mouse(&self) -> bool {
+        false
     }
 
     /// Return the raw pressed-state mask in serial-bit order (bit 0 = B,
@@ -419,6 +456,50 @@ impl InputPorts {
         }
     }
 
+    /// Add relative mouse motion to the configured device on the given port.
+    pub fn add_mouse_delta(&mut self, port: u8, dx: i16, dy: i16) {
+        match port {
+            0 => {
+                let _ = self.port1.add_mouse_delta(dx, dy);
+            }
+            1..=4 => {
+                let _ = self.port2.add_mouse_delta(dx, dy);
+            }
+            _ => {}
+        }
+    }
+
+    /// Set left mouse button state on the configured device on the given port.
+    pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
+        match port {
+            0 => {
+                let _ = self.port1.set_mouse_left_button(pressed);
+            }
+            1..=4 => {
+                let _ = self.port2.set_mouse_left_button(pressed);
+            }
+            _ => {}
+        }
+    }
+
+    /// Set right mouse button state on the configured device on the given port.
+    pub fn set_mouse_right_button(&mut self, port: u8, pressed: bool) {
+        match port {
+            0 => {
+                let _ = self.port1.set_mouse_right_button(pressed);
+            }
+            1..=4 => {
+                let _ = self.port2.set_mouse_right_button(pressed);
+            }
+            _ => {}
+        }
+    }
+
+    /// Returns true if any controller port currently hosts an SNES mouse.
+    pub fn has_mouse(&self) -> bool {
+        self.port1.is_mouse() || self.port2.is_mouse()
+    }
+
     /// Return the 8 NES-convention button states for the given port.
     pub fn joypad_button_states(&self, port: u8) -> u8 {
         match port {
@@ -484,6 +565,7 @@ fn pressed_mask_to_joypad_state(pressed: u16) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    use super::mouse_controller::MouseController;
     use super::*;
 
     #[test]
@@ -676,5 +758,56 @@ mod tests {
         let state = ports.capture_state();
         assert_eq!(state.port1_type, SnesControllerType::Standard);
         assert_eq!(state.port2_type, SnesControllerType::Standard);
+    }
+
+    #[test]
+    fn mouse_controller_type_builds_mouse_device() {
+        let mut ports = InputPorts::new();
+        ports.configure(SnesControllerType::Mouse, SnesControllerType::Standard);
+        assert!(ports.has_mouse());
+    }
+
+    #[test]
+    fn mouse_relative_delta_and_buttons_affect_serial_report() {
+        let mut mouse = MouseController::new();
+        mouse.set_mouse_left_button(true);
+        mouse.set_mouse_right_button(true);
+        mouse.add_mouse_delta(-3, 4);
+        mouse.write_strobe(false);
+
+        let mut bits = 0u32;
+        for i in 0..32 {
+            let (bit, _) = mouse.read();
+            if bit {
+                bits |= 1 << i;
+            }
+        }
+
+        assert_eq!((bits >> 16) & 1, 1, "right button bit");
+        assert_eq!((bits >> 17) & 1, 1, "left button bit");
+        assert_eq!((bits >> 20) & 1, 0, "Y direction positive");
+        assert_eq!((bits >> 21) & 0x7F, 4, "Y magnitude");
+        assert_eq!((bits >> 28) & 1, 1, "X direction negative");
+        assert_eq!((bits >> 29) & 0x7F, 3, "X magnitude");
+    }
+
+    #[test]
+    fn mouse_speed_cycles_on_strobe_high_edges() {
+        let mut mouse = MouseController::new();
+
+        mouse.write_strobe(true);
+        mouse.write_strobe(false);
+        let slow = mouse.capture_state();
+        assert_eq!(slow.mouse_speed, 1);
+
+        mouse.write_strobe(true);
+        mouse.write_strobe(false);
+        let fast = mouse.capture_state();
+        assert_eq!(fast.mouse_speed, 2);
+
+        mouse.write_strobe(true);
+        mouse.write_strobe(false);
+        let normal = mouse.capture_state();
+        assert_eq!(normal.mouse_speed, 0);
     }
 }

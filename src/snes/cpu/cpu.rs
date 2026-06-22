@@ -8411,6 +8411,26 @@ impl Cpu<SnesSystemBus> {
         self.bus.set_joypad_button_states(port, state);
     }
 
+    /// Add relative mouse motion for the given SNES controller port.
+    pub fn add_mouse_delta(&mut self, port: u8, dx: i16, dy: i16) {
+        self.bus.add_mouse_delta(port, dx, dy);
+    }
+
+    /// Set SNES mouse left button state for the given port.
+    pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
+        self.bus.set_mouse_left_button(port, pressed);
+    }
+
+    /// Set SNES mouse right button state for the given port.
+    pub fn set_mouse_right_button(&mut self, port: u8, pressed: bool) {
+        self.bus.set_mouse_right_button(port, pressed);
+    }
+
+    /// Returns true if any SNES controller port currently hosts a mouse.
+    pub fn has_mouse(&self) -> bool {
+        self.bus.has_mouse()
+    }
+
     /// Configure the device plugged into each controller port.
     pub fn configure_controllers(
         &mut self,
