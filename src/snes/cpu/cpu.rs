@@ -8454,6 +8454,10 @@ impl Cpu<SnesSystemBus> {
         self.bus.has_superscope_on_port(port)
     }
 
+    pub fn is_multitap_on_port(&self, port: u8) -> bool {
+        self.bus.is_multitap_on_port(port)
+    }
+
     /// Returns true if any SNES controller port currently hosts a mouse.
     pub fn has_mouse(&self) -> bool {
         self.bus.has_mouse()

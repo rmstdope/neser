@@ -152,6 +152,24 @@ declare module "*/pkg/neser" {
         set_audio_muted(muted: boolean): void;
         set_audio_sample_rate(sample_rate: number): void;
         set_button(controller: number, button: number, pressed: boolean): void;
+        save_state_bytes(): Uint8Array;
+        load_state_bytes(bytes: Uint8Array): void;
+        // Mouse peripheral methods
+        has_mouse(): boolean;
+        has_mouse_on_port(port: number): boolean;
+        add_mouse_delta(port: number, dx: number, dy: number): void;
+        set_mouse_left_button(port: number, pressed: boolean): void;
+        set_mouse_right_button(port: number, pressed: boolean): void;
+        // Super Scope peripheral methods
+        has_superscope(): boolean;
+        has_superscope_on_port(port: number): boolean;
+        set_superscope_position(port: number, x: number, y: number): void;
+        set_superscope_trigger(port: number, pressed: boolean): void;
+        set_superscope_cursor(port: number, pressed: boolean): void;
+        set_superscope_turbo(port: number, pressed: boolean): void;
+        set_superscope_pause(port: number, pressed: boolean): void;
+        // Multitap
+        is_multitap_on_port(port: number): boolean;
     }
 
     export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
