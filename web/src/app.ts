@@ -8,6 +8,7 @@ import {
     saveState
 } from "./save-state/save_state_storage";
 import { createSaveStateController } from "./save-state/save_state_controller";
+import { supportsWebSaveState } from "./save-state/save_state_support";
 import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton, isZapperActive } from "./input/mouse_input";
 import {
     isSnesMouseActive,
@@ -780,8 +781,8 @@ function createEmulatorInstance(kind: WebRomConsoleKind): void {
 }
 
 /**
- * Show or hide NES-only UI elements depending on which emulator is active.
- * Called whenever the emulator kind changes (NES ↔ GB).
+ * Show or hide emulator-specific UI elements depending on which emulator is active.
+ * Called whenever the emulator kind changes.
  */
 function updateEmulatorKindUI() {
     const isNes = emulator?.kind === "nes";
@@ -794,10 +795,10 @@ function updateEmulatorKindUI() {
     if (autorunSection) {
         autorunSection.style.display = isNes ? "" : "none";
     }
-    // Save-state buttons are NES-only
+    // Save-state buttons are shown for consoles with browser save/load support.
     const saveStateSection = document.getElementById("save-state-section");
     if (saveStateSection) {
-        saveStateSection.style.display = isNes ? "" : "none";
+        saveStateSection.style.display = supportsWebSaveState(emulator?.kind ?? null) ? "" : "none";
     }
     // Switch to a console-appropriate filter if the current one isn't valid
     const kind = emulator?.kind ?? "nes";
@@ -1070,8 +1071,8 @@ async function applyRomBytes(bytes: Uint8Array, name: string) {
 }
 
 async function refreshSaveStateController() {
-    // Save states are NES-only in the web frontend MVP.
-    if (!nes || !romMetadata) {
+    const saveStateEmulator = emulator && supportsWebSaveState(emulator.kind) ? emulator.inst : null;
+    if (!saveStateEmulator || !romMetadata) {
         saveStateController = null;
         saveStateAvailable = false;
         updateSaveStateButtons();
@@ -1079,7 +1080,7 @@ async function refreshSaveStateController() {
     }
     try {
         saveStateController = await createSaveStateContext({
-            nes,
+            nes: saveStateEmulator,
             romMetadata,
             openDb: openSaveStateDb,
             createRomSaveKey,
