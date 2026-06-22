@@ -16,6 +16,7 @@ pub struct SuperScopeController {
     trigger_lock: bool,
     pause_lock: bool,
     latched: bool,
+    latch_processed: bool,
     counter: u8,
 }
 
@@ -56,12 +57,17 @@ impl SnesController for SuperScopeController {
     fn write_strobe(&mut self, high: bool) {
         self.latched = high;
         if high {
+            // Clear the processed flag when strobe goes high to allow processing on the next read.
+            self.latch_processed = false;
             self.counter = 0;
         }
     }
 
     fn read(&mut self) -> (bool, bool) {
-        if self.counter == 0 {
+        // Only process edge-triggered actions once per strobe cycle when counter is 0.
+        if self.counter == 0 && !self.latch_processed {
+            self.latch_processed = true;
+
             if self.turbo_pressed && !self.turbo_lock {
                 self.turbo_enabled = !self.turbo_enabled;
             }
@@ -164,9 +170,9 @@ impl SnesController for SuperScopeController {
         self.pause_output = state.superscope_pause_output;
         self.trigger_lock = state.superscope_trigger_lock;
         self.pause_lock = state.superscope_pause_lock;
-        self.latched = state.superscope_latched;
-        self.counter = state.shift;
         self.latched = state.strobe;
+        self.latch_processed = state.strobe;
+        self.counter = state.shift;
     }
 }
 
