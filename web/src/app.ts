@@ -3192,9 +3192,10 @@ interface GamepadButtonState {
 function applyGamepadState(state: GamepadButtonState, controller: number, lastState: GamepadButtonState) {
     if (!emulator) return;
     if (emulator.kind === "gba" && controller !== 1) return;
+    const nesRuntime = nes;
     const applyButton = (button: number, pressed: boolean) => {
-        if (nes) {
-            applyJoypadButtonIfAllowed(nes, controller, button, pressed);
+        if (nesRuntime) {
+            applyJoypadButtonIfAllowed(nesRuntime, controller, button, pressed);
         } else {
             emulator!.inst.set_button(controller, button, pressed);
         }
@@ -3207,13 +3208,15 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
     ) => {
         if (!changed) return;
 
-        if (nes?.set_snes_button(controller, snesButtonId, pressed)) {
+        if (nesRuntime?.set_snes_button(controller, snesButtonId, pressed)) {
             return;
         }
 
         if (emulator!.kind === "snes") {
             emulator!.inst.set_button(
                 controller,
+                // WasmNes expects legacy SNES ids (B/Y/.../R), while WasmSnes set_button
+                // uses platform ids (A/B/.../Y), so remap for direct SNES runtime.
                 remapLegacySnesButtonId(snesButtonId),
                 pressed
             );
