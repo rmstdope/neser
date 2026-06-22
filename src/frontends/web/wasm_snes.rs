@@ -161,7 +161,7 @@ impl WasmSnes {
 
     /// Returns the nominal SNES NTSC refresh rate in Hz.
     ///
-    /// Master clock: 21.477272 MHz, 357366 cycles per frame ≈ 60.098 Hz.
+    /// Master clock: 21.477272 MHz, 357,366 cycles per frame ≈ 60.098 Hz.
     #[wasm_bindgen]
     pub fn frame_rate_hz(&self) -> f64 {
         21_477_272.0 / 357_366.0
