@@ -567,12 +567,11 @@ fn given_esa_change_when_rendering_then_write_base_switches_after_one_sample_del
 }
 
 #[test]
-fn legacy_deserialization_without_echo_state_is_rejected_until_issue_2801() {
-    // TODO(#2801): restore backward-compatible Sdsp deserialization for older save-states.
-    let err = serde_json::from_str::<Sdsp>(r#"{"phase":255,"regs":[]}"#)
-        .expect_err("legacy payload without echo_state should currently fail");
-    assert!(
-        err.to_string().contains("missing field `echo_state`"),
-        "error should explain missing echo_state field"
-    );
+fn legacy_deserialization_without_echo_state_uses_default_echo_state() {
+    let legacy = serde_json::from_str::<Sdsp>(r#"{"phase":255,"regs":[]}"#)
+        .expect("legacy payload without echo_state should deserialize with defaults");
+    assert_eq!(legacy.phase(), 255);
+    let serialized = serde_json::to_value(legacy).expect("serialize loaded legacy state");
+    assert_eq!(serialized["echo_state"]["ring_size"], 1);
+    assert_eq!(serialized["echo_state"]["ring_index"], 0);
 }

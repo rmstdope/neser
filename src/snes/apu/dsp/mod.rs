@@ -57,7 +57,7 @@ pub struct Sdsp {
     edl: u8,
     #[serde(default)]
     fir_coeffs: [i8; 8],
-    // TODO(#2801): restore backward-compatible deserialization default for echo_state.
+    #[serde(default)]
     echo_state: EchoState,
     #[serde(default = "default_noise_lfsr")]
     noise_lfsr: u16,
