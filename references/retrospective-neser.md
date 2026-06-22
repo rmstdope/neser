@@ -5,6 +5,40 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-06-22 - #2801 / PR #2812: APU save-state compatibility review-fix, CI green, merge
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2812
+**Linked issues:** #2797, #2801
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `github-administration` | Drove safe review-thread handling, PR metadata updates, CI polling, and merge/cleanup via `gh`. |
+| Skill | `rust-developer` | Guided Rust-side compatibility fix decisions in save-state versioning/tests. |
+| Skill | `test-driven-development` | Kept the review fix behavior-focused through targeted regression tests. |
+| Skill | `self-learning-skills` | Triggered this post-merge retrospective capture. |
+| Agent | `Iteration Retrospective Gatherer` | Produced retrospective structure and follow-up prompts for missing feedback. |
+
+### What went well
+
+- The unresolved review comment was addressed directly by restoring v2 save-state compatibility (`SNES_SAVESTATE_VERSION` back to 2) and removing the conflicting test.
+- PR hygiene stayed strong: PR body was updated to match final behavior, thread reply was posted, and the thread was resolved.
+- CI was explicitly re-triggered on the final head SHA and waited through to full green check rollup before merge.
+
+### What to improve
+
+- CI did not auto-start on the first review-fix push; a dedicated trigger commit was required. Add an explicit “confirm new check suite exists for latest head SHA” step immediately after pushing review fixes.
+- Merge command encountered the known multi-worktree local cleanup failure mode; keep the verify-merged + explicit remote/local branch cleanup sequence as standard.
+- Retrospective capture should not depend on a single helper agent; if unavailable/blocked, write the entry directly without delay.
+
+### Navigator feedback
+
+Navigator unavailable; feedback pending.
+
+---
+
 ## 2026-06-20 - #2774 / PR #2786: SNES APU bootstrap review-fix, CI green, merge
 
 **Repository:** rmstdope/neser
