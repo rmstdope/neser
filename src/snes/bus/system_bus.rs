@@ -599,6 +599,7 @@ impl SnesSystemBus {
             }
             0x4201 => {
                 self.ppu.borrow_mut().write_register(offset, value);
+                self.input.get_mut().write_wrio(value);
                 true
             }
             0x4207..=0x420A => {
@@ -697,6 +698,7 @@ impl SnesBus for SnesSystemBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::snes::input::SnesControllerType;
 
     fn build_cart(
         rom: &mut [u8],
@@ -771,6 +773,20 @@ mod tests {
         bus.write(base + 0x2, (a_addr & 0xFF) as u8);
         bus.write(base + 0x3, ((a_addr >> 8) & 0xFF) as u8);
         bus.write(base + 0x4, ((a_addr >> 16) & 0xFF) as u8);
+    }
+
+    fn read_joyb_pair_words(bus: &mut SnesSystemBus) -> (u16, u16) {
+        bus.write(0x004016, 0x01);
+        bus.write(0x004016, 0x00);
+
+        let mut joy2 = 0u16;
+        let mut joy4 = 0u16;
+        for _ in 0..16 {
+            let value = bus.read(0x004017);
+            joy2 = (joy2 << 1) | (value & 0x01) as u16;
+            joy4 = (joy4 << 1) | ((value >> 1) & 0x01) as u16;
+        }
+        (joy2, joy4)
     }
 
     #[test]
@@ -1559,6 +1575,92 @@ mod tests {
             manual = (manual << 1) | (bus.read(0x004016) & 0x01) as u16;
         }
         assert_eq!(manual, auto);
+    }
+
+    #[test]
+    fn multitap_pair_select_switches_between_the_two_controller_pairs() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.configure_controllers(SnesControllerType::Standard, SnesControllerType::Multitap);
+
+        // Given four controllers plugged into the multitap on port 2.
+        bus.set_controller_button(1, SnesButton::B, true);
+        bus.set_controller_button(2, SnesButton::A, true);
+        bus.set_controller_button(3, SnesButton::Start, true);
+        bus.set_controller_button(4, SnesButton::L, true);
+
+        // When the select line is high, the first pair should be visible.
+        bus.write(0x004201, 0x80);
+        let high = read_joyb_pair_words(&mut bus);
+        assert_eq!(high, (0x8000, 0x0080), "selected pair 2/3 should read back");
+
+        // When the select line is low, the second pair should be visible instead.
+        bus.write(0x004201, 0x00);
+        let low = read_joyb_pair_words(&mut bus);
+        assert_eq!(low, (0x1000, 0x0020), "selected pair 4/5 should read back");
+    }
+
+    #[test]
+    fn multitap_on_port1_is_rejected_and_falls_back_to_standard() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.configure_controllers(SnesControllerType::Multitap, SnesControllerType::Standard);
+
+        let state = bus.capture_state();
+        assert_eq!(state.input.port1_type, SnesControllerType::Standard);
+        assert_eq!(state.input.port2_type, SnesControllerType::Standard);
+    }
+
+    #[test]
+    fn multitap_save_state_round_trips_all_subcontrollers() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.configure_controllers(SnesControllerType::Standard, SnesControllerType::Multitap);
+        bus.write(0x004201, 0x80);
+        bus.set_controller_button(1, SnesButton::B, true);
+        bus.set_controller_button(2, SnesButton::A, true);
+        bus.set_controller_button(3, SnesButton::Start, true);
+        bus.set_controller_button(4, SnesButton::L, true);
+
+        let state = bus.capture_state();
+
+        let mut restored = SnesSystemBus::new(lorom_test_cart());
+        restored.restore_state(&state).expect("restore");
+        restored.write(0x004201, 0x80);
+        assert_eq!(read_joyb_pair_words(&mut restored), (0x8000, 0x0080));
+
+        restored.write(0x004201, 0x00);
+        assert_eq!(read_joyb_pair_words(&mut restored), (0x1000, 0x0020));
+    }
+
+    #[test]
+    fn multitap_auto_read_uses_the_selected_pair() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.configure_controllers(SnesControllerType::Standard, SnesControllerType::Multitap);
+        bus.write(0x004200, 0x01); // enable auto-joypad
+
+        bus.set_controller_button(1, SnesButton::B, true);
+        bus.set_controller_button(2, SnesButton::A, true);
+        bus.write(0x004201, 0x80);
+
+        for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
+            bus.tick();
+        }
+
+        let joy2 = (bus.read(0x00421B) as u16) << 8 | bus.read(0x00421A) as u16;
+        let joy4 = (bus.read(0x00421F) as u16) << 8 | bus.read(0x00421E) as u16;
+        assert_eq!(joy2, 0x8000, "player 2 should be latched into JOY2");
+        assert_eq!(joy4, 0x0080, "player 3 should be latched into JOY4");
+
+        bus.write(0x004201, 0x00);
+        bus.set_controller_button(3, SnesButton::Start, true);
+        bus.set_controller_button(4, SnesButton::L, true);
+
+        for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
+            bus.tick();
+        }
+
+        let joy2 = (bus.read(0x00421B) as u16) << 8 | bus.read(0x00421A) as u16;
+        let joy4 = (bus.read(0x00421F) as u16) << 8 | bus.read(0x00421E) as u16;
+        assert_eq!(joy2, 0x1000, "player 4 should be latched into JOY2");
+        assert_eq!(joy4, 0x0020, "player 5 should be latched into JOY4");
     }
 
     #[test]

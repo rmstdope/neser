@@ -14,10 +14,12 @@
 //! so the documented "manual read during auto-joypad corrupts state" behaviour
 //! falls out naturally.
 
+mod multitap;
 mod standard_controller;
 
 use serde::{Deserialize, Serialize};
 
+pub use multitap::{Multitap, MultitapState};
 pub use standard_controller::StandardController;
 
 /// The 12 logical buttons of a standard SNES controller.
@@ -77,7 +79,7 @@ pub struct SnesControllerState {
 /// Only [`Standard`](Self::Standard) is implemented today; the remaining
 /// variants are placeholders for the peripheral sub-issues and currently fall
 /// back to a standard controller.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SnesControllerType {
     #[default]
     Standard,
@@ -102,6 +104,7 @@ impl SnesControllerType {
     fn build(self) -> Box<dyn SnesController> {
         match self {
             Self::Standard => Box::new(StandardController::new()),
+            Self::Multitap => Box::new(Multitap::new()),
             other => {
                 crate::platform::debugging::log_info(format!(
                     "SNES controller type {other:?} is not yet implemented; \
@@ -119,6 +122,9 @@ pub trait SnesController {
     /// bit 0). While high the shift register is held reloaded.
     fn write_strobe(&mut self, high: bool);
 
+    /// Update the controller-port PIO select line (`$4201` bit 7).
+    fn write_select(&mut self, _high: bool) {}
+
     /// Return the current serial bit pair `(data1, data2)` exposed on the
     /// port's pin 4 / pin 5 data lines and advance the shift register by one
     /// clock (unless the strobe line is held high).
@@ -128,10 +134,29 @@ pub trait SnesController {
     /// supports the button.
     fn set_button(&mut self, button: SnesButton, pressed: bool) -> bool;
 
+    /// Set a button on a logical player slot. The default implementation maps
+    /// slot 0 to [`Self::set_button`] and ignores the rest.
+    fn set_player_button(&mut self, player: u8, button: SnesButton, pressed: bool) -> bool {
+        if player == 0 {
+            self.set_button(button, pressed)
+        } else {
+            false
+        }
+    }
+
     /// Return the raw pressed-state mask in serial-bit order (bit 0 = B,
     /// bit 1 = Y, ..., bit 11 = R). Devices without buttons return `0`.
     fn button_states(&self) -> u16 {
         0
+    }
+
+    /// Return the 8-bit NES-convention joypad state for a logical player slot.
+    fn player_joypad_button_states(&self, player: u8) -> u8 {
+        if player == 0 {
+            pressed_mask_to_joypad_state(self.button_states())
+        } else {
+            0
+        }
     }
 
     /// Capture the device's shift-register state for a save-state.
@@ -139,6 +164,15 @@ pub trait SnesController {
 
     /// Restore the device's shift-register state from a save-state.
     fn restore_state(&mut self, state: &SnesControllerState);
+
+    /// Capture extended state for multi-controller devices such as multitaps.
+    fn capture_multitap_state(&self) -> Option<MultitapState> {
+        let _ = self;
+        None
+    }
+
+    /// Restore extended state for multi-controller devices such as multitaps.
+    fn restore_multitap_state(&mut self, _state: &MultitapState) {}
 }
 
 /// Master-clock duration of the auto-joypad busy window (fullsnes: the read
@@ -153,9 +187,17 @@ const AUTO_JOYPAD_BIT_INTERVAL: u32 = AUTO_JOYPAD_BUSY_CYCLES / 16;
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct InputPortsState {
     #[serde(default)]
+    pub port1_type: SnesControllerType,
+    #[serde(default)]
+    pub port2_type: SnesControllerType,
+    #[serde(default)]
     pub port1: SnesControllerState,
     #[serde(default)]
     pub port2: SnesControllerState,
+    #[serde(default)]
+    pub port1_multitap: Option<MultitapState>,
+    #[serde(default)]
+    pub port2_multitap: Option<MultitapState>,
     #[serde(default)]
     pub auto_enable: bool,
     #[serde(default)]
@@ -164,12 +206,16 @@ pub struct InputPortsState {
     pub joy: [u16; 4],
     #[serde(default)]
     pub auto_bits_done: u8,
+    #[serde(default = "default_wrio")]
+    pub wrio: u8,
     #[serde(default)]
     pub strobe: bool,
 }
 
 /// The pair of SNES controller ports and the auto-joypad sequencer.
 pub struct InputPorts {
+    port1_type: SnesControllerType,
+    port2_type: SnesControllerType,
     port1: Box<dyn SnesController>,
     port2: Box<dyn SnesController>,
     /// Auto-joypad enable (`$4200` bit 0).
@@ -182,6 +228,8 @@ pub struct InputPorts {
     joy: [u16; 4],
     /// Number of auto-read bits clocked so far in the current busy window (0-16).
     auto_bits_done: u8,
+    /// Last WRIO ($4201) value written by the CPU.
+    wrio: u8,
     /// Last value written to `$4016` bit 0 (the `OUT0` strobe).
     strobe: bool,
 }
@@ -196,36 +244,34 @@ impl InputPorts {
     /// Create a pair of ports, each holding a standard controller.
     pub fn new() -> Self {
         Self {
+            port1_type: SnesControllerType::Standard,
+            port2_type: SnesControllerType::Standard,
             port1: Box::new(StandardController::new()),
             port2: Box::new(StandardController::new()),
             auto_enable: false,
             busy_cycles: 0,
             joy: [0; 4],
             auto_bits_done: 0,
+            wrio: default_wrio(),
             strobe: false,
         }
     }
 
     /// Replace the port devices according to the configured controller types.
     pub fn configure(&mut self, port1: SnesControllerType, port2: SnesControllerType) {
-        self.port1 = port1.build();
+        let resolved_port1 = if port1 == SnesControllerType::Multitap {
+            crate::platform::debugging::log_info(
+                "SNES multitap on port 1 is not supported; using a standard controller".to_string(),
+            );
+            SnesControllerType::Standard
+        } else {
+            port1
+        };
+        self.port1_type = resolved_port1;
+        self.port2_type = port2;
+        self.port1 = resolved_port1.build();
         self.port2 = port2.build();
-    }
-
-    fn port_mut(&mut self, port: u8) -> Option<&mut dyn SnesController> {
-        match port {
-            0 => Some(self.port1.as_mut()),
-            1 => Some(self.port2.as_mut()),
-            _ => None,
-        }
-    }
-
-    fn port(&self, port: u8) -> Option<&dyn SnesController> {
-        match port {
-            0 => Some(self.port1.as_ref()),
-            1 => Some(self.port2.as_ref()),
-            _ => None,
-        }
+        self.write_wrio(self.wrio);
     }
 
     /// `$4016` write (JOYWR): drive the `OUT0` strobe line of both gameports.
@@ -234,6 +280,14 @@ impl InputPorts {
         self.strobe = strobe;
         self.port1.write_strobe(strobe);
         self.port2.write_strobe(strobe);
+    }
+
+    /// Write WRIO ($4201) and fan out the per-port select bits:
+    /// bit 6 -> port 1 pin 6, bit 7 -> port 2 pin 6.
+    pub fn write_wrio(&mut self, value: u8) {
+        self.wrio = value;
+        self.port1.write_select(value & 0x40 != 0);
+        self.port2.write_select(value & 0x80 != 0);
     }
 
     /// `$4016` read (JOYA): bit 0 = gameport 1 pin 4 (JOY1), bit 1 = gameport 1
@@ -329,8 +383,14 @@ impl InputPorts {
 
     /// Set a single button on the given port's device.
     pub fn set_button(&mut self, port: u8, button: SnesButton, pressed: bool) {
-        if let Some(device) = self.port_mut(port) {
-            device.set_button(button, pressed);
+        match port {
+            0 => {
+                let _ = self.port1.set_player_button(0, button, pressed);
+            }
+            1..=4 => {
+                let _ = self.port2.set_player_button(port - 1, button, pressed);
+            }
+            _ => {}
         }
     }
 
@@ -347,55 +407,79 @@ impl InputPorts {
             SnesButton::Left,
             SnesButton::Right,
         ];
-        let Some(device) = self.port_mut(port) else {
-            return;
+        let apply = |device: &mut dyn SnesController, player: u8| {
+            for (bit, button) in BUTTONS.into_iter().enumerate() {
+                let _ = device.set_player_button(player, button, state & (1 << bit) != 0);
+            }
         };
-        for (bit, button) in BUTTONS.into_iter().enumerate() {
-            device.set_button(button, state & (1 << bit) != 0);
+        match port {
+            0 => apply(self.port1.as_mut(), 0),
+            1..=4 => apply(self.port2.as_mut(), port - 1),
+            _ => {}
         }
     }
 
     /// Return the 8 NES-convention button states for the given port.
     pub fn joypad_button_states(&self, port: u8) -> u8 {
-        let Some(device) = self.port(port) else {
-            return 0;
-        };
-        let pressed = device.button_states();
-        // serial-bit order -> NES-convention byte order.
-        let bit = |i: u8| ((pressed >> i) & 1) as u8;
-        bit(8)            // A   -> bit 0
-            | (bit(0) << 1) // B   -> bit 1
-            | (bit(2) << 2) // Sel -> bit 2
-            | (bit(3) << 3) // Sta -> bit 3
-            | (bit(4) << 4) // Up  -> bit 4
-            | (bit(5) << 5) // Dn  -> bit 5
-            | (bit(6) << 6) // Lf  -> bit 6
-            | (bit(7) << 7) // Rt  -> bit 7
+        match port {
+            0 => self.port1.player_joypad_button_states(0),
+            1..=4 => self.port2.player_joypad_button_states(port - 1),
+            _ => 0,
+        }
     }
 
     /// Capture the input subsystem state for a save-state.
     pub fn capture_state(&self) -> InputPortsState {
         InputPortsState {
+            port1_type: self.port1_type,
+            port2_type: self.port2_type,
             port1: self.port1.capture_state(),
             port2: self.port2.capture_state(),
+            port1_multitap: self.port1.capture_multitap_state(),
+            port2_multitap: self.port2.capture_multitap_state(),
             auto_enable: self.auto_enable,
             busy_cycles: self.busy_cycles,
             joy: self.joy,
             auto_bits_done: self.auto_bits_done,
+            wrio: self.wrio,
             strobe: self.strobe,
         }
     }
 
     /// Restore the input subsystem state from a save-state.
     pub fn restore_state(&mut self, state: &InputPortsState) {
+        self.configure(state.port1_type, state.port2_type);
         self.port1.restore_state(&state.port1);
         self.port2.restore_state(&state.port2);
+        if let Some(multitap_state) = &state.port1_multitap {
+            self.port1.restore_multitap_state(multitap_state);
+        }
+        if let Some(multitap_state) = &state.port2_multitap {
+            self.port2.restore_multitap_state(multitap_state);
+        }
         self.auto_enable = state.auto_enable;
         self.busy_cycles = state.busy_cycles;
         self.joy = state.joy;
         self.auto_bits_done = state.auto_bits_done;
+        self.write_wrio(state.wrio);
         self.strobe = state.strobe;
     }
+}
+
+fn default_wrio() -> u8 {
+    0xFF
+}
+
+fn pressed_mask_to_joypad_state(pressed: u16) -> u8 {
+    let bit = |i: u8| ((pressed >> i) & 1) as u8;
+    bit(8)            // A   -> bit 0
+        | (bit(0) << 1) // B   -> bit 1
+        | (bit(2) << 2) // Sel -> bit 2
+        | (bit(3) << 3) // Sta -> bit 3
+        | (bit(4) << 4) // Up  -> bit 4
+        | (bit(5) << 5) // Dn  -> bit 5
+        | (bit(6) << 6) // Lf  -> bit 6
+        | (bit(7) << 7) // Rt  -> bit 7
 }
 
 #[cfg(test)]
@@ -575,6 +659,7 @@ mod tests {
         let mut ports = InputPorts::new();
         ports.set_auto_enable(true);
         ports.set_button(0, SnesButton::Y, true);
+        ports.write_wrio(0x40);
         ports.trigger_auto_read();
         ports.tick();
         let state = ports.capture_state();
@@ -582,5 +667,14 @@ mod tests {
         let mut restored = InputPorts::new();
         restored.restore_state(&state);
         assert_eq!(restored.capture_state(), state);
+    }
+
+    #[test]
+    fn configuring_multitap_on_port1_falls_back_to_standard() {
+        let mut ports = InputPorts::new();
+        ports.configure(SnesControllerType::Multitap, SnesControllerType::Standard);
+        let state = ports.capture_state();
+        assert_eq!(state.port1_type, SnesControllerType::Standard);
+        assert_eq!(state.port2_type, SnesControllerType::Standard);
     }
 }

@@ -423,7 +423,8 @@ nes-vertical_overscan=8
 #   - multitap:   Super Multitap / Multiplayer 5 (4/5-player adaptor)
 #   - mouse:      SNES Mouse
 #   - superscope: Super Scope light gun
-# Note: only 'standard' is currently implemented; the other values fall back to
-# a standard controller until their respective peripherals are added.
+# Note: multitap is currently supported on port 2. Configuring multitap on port 1
+# falls back to a standard controller. Mouse and Super Scope still fall back to
+# standard until implemented.
 #snes-controller-port1=standard
 #snes-controller-port2=standard
