@@ -6,7 +6,7 @@ use crate::snes::apu::SnesApuState;
 use crate::snes::cartridge::Mapping;
 use crate::snes::input::InputPortsState;
 
-pub const SNES_SAVESTATE_VERSION: u32 = 3;
+pub const SNES_SAVESTATE_VERSION: u32 = 2;
 
 fn default_dma_regs() -> Vec<u8> {
     vec![0; 0x80]

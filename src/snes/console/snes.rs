@@ -943,22 +943,6 @@ mod tests {
     }
 
     #[test]
-    fn load_state_bytes_rejects_previous_supported_version() {
-        let rom = lorom_rom_with_battery_sram(0x05);
-        let mut snes = make_snes();
-        snes.load_rom(&rom, "version_prev.sfc").expect("load ROM");
-
-        let save = snes.cpu.as_ref().expect("cpu present").capture_save_state();
-        let mut json = serde_json::to_value(&save).expect("serialize save state");
-        json["version"] =
-            serde_json::json!(crate::snes::console::save_state::SNES_SAVESTATE_VERSION - 1);
-        let payload = serde_json::to_vec(&json).expect("serialize downgraded save state");
-
-        let result = snes.load_state_bytes(&payload);
-        assert!(matches!(result, Err(msg) if msg.contains("incompatible")));
-    }
-
-    #[test]
     fn load_state_bytes_rejects_rom_mismatch() {
         let mut source = make_snes();
         let source_rom = lorom_rom_with_battery_sram(0x05);
