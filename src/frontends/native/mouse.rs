@@ -47,6 +47,13 @@ pub fn has_snes_mouse(console: &Console) -> bool {
     }
 }
 
+fn snes_mouse_ports(console: &Console) -> [bool; 2] {
+    match console {
+        Console::Snes(snes) => [snes.has_mouse_on_port(0), snes.has_mouse_on_port(1)],
+        _ => [false, false],
+    }
+}
+
 // ── Coordinate routing ───────────────────────────────────────────────────────
 
 /// Routes absolute mouse coordinates to the appropriate NES controller.
@@ -82,7 +89,7 @@ pub fn update_mouse_motion(
 
 /// Applies relative mouse deltas (from locked cursor mode) to the SNES Mouse.
 ///
-/// No-op for non-NES consoles.
+/// No-op for consoles without an SNES mouse.
 pub fn apply_snes_mouse_relative_motion(
     console: &mut Console,
     xrel: i32,
@@ -90,19 +97,27 @@ pub fn apply_snes_mouse_relative_motion(
     window_width: u32,
     window_height: u32,
 ) {
+    let snes_ports = snes_mouse_ports(console);
     let dx = mouse_mapping::map_relative_mouse_delta_to_axis_delta(xrel, window_width);
     let dy = mouse_mapping::map_relative_mouse_delta_to_axis_delta(yrel, window_height);
     match console {
         Console::Nes(nes) => nes.add_mouse_delta(dx, dy),
-        Console::Snes(snes) => snes.add_mouse_delta(0, dx as i16, dy as i16),
+        Console::Snes(snes) => {
+            for (port, enabled) in snes_ports.into_iter().enumerate() {
+                if enabled {
+                    snes.add_mouse_delta(port as u8, dx as i16, dy as i16);
+                }
+            }
+        }
         _ => {}
     }
 }
 
 /// Forwards a mouse button press/release to the appropriate NES controller.
 ///
-/// No-op for non-NES consoles.
+/// No-op for consoles without a mouse-driven controller.
 pub fn update_mouse_button(console: &mut Console, button: MouseButton, pressed: bool) {
+    let snes_ports = snes_mouse_ports(console);
     match console {
         Console::Nes(nes) => {
             if has_any_mouse_controller_nes(nes) {
@@ -113,10 +128,12 @@ pub fn update_mouse_button(console: &mut Console, button: MouseButton, pressed: 
             }
         }
         Console::Snes(snes) => {
-            if snes.has_mouse() {
-                match button {
-                    MouseButton::Left => snes.set_mouse_left_button(0, pressed),
-                    MouseButton::Right => snes.set_mouse_right_button(0, pressed),
+            for (port, enabled) in snes_ports.into_iter().enumerate() {
+                if enabled {
+                    match button {
+                        MouseButton::Left => snes.set_mouse_left_button(port as u8, pressed),
+                        MouseButton::Right => snes.set_mouse_right_button(port as u8, pressed),
+                    }
                 }
             }
         }
@@ -252,6 +269,17 @@ mod tests {
         console
     }
 
+    fn make_snes_console_with_mouse_on_port2() -> Console {
+        let mut config = PlatformConfig::default();
+        config.snes.controller_port2 = SnesControllerType::Mouse;
+        let app_context = AppContext::new_with_config(config);
+        let mut console = Console::new_snes(app_context);
+        console
+            .load_rom(&valid_snes_lorom_nop_rom(), "mouse-port2.sfc")
+            .expect("load snes rom");
+        console
+    }
+
     // ── Device detection ─────────────────────────────────────────────────
 
     #[test]
@@ -282,6 +310,13 @@ mod tests {
     fn detects_snes_mouse_on_snes_console() {
         let console = make_snes_console_with_mouse();
         assert!(has_snes_mouse(&console));
+    }
+
+    #[test]
+    fn detects_snes_mouse_on_snes_console_port2() {
+        let console = make_snes_console_with_mouse_on_port2();
+        assert!(has_snes_mouse(&console));
+        assert_eq!(snes_mouse_ports(&console), [false, true]);
     }
 
     #[test]

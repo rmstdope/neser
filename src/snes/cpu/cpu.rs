@@ -8431,6 +8431,11 @@ impl Cpu<SnesSystemBus> {
         self.bus.has_mouse()
     }
 
+    /// Returns true if the given physical SNES port currently hosts a mouse.
+    pub fn has_mouse_on_port(&self, port: u8) -> bool {
+        self.bus.has_mouse_on_port(port)
+    }
+
     /// Configure the device plugged into each controller port.
     pub fn configure_controllers(
         &mut self,

@@ -195,6 +195,13 @@ impl Snes {
         self.cpu.as_ref().is_some_and(|cpu| cpu.has_mouse())
     }
 
+    /// Returns true if the given physical SNES port currently hosts a mouse.
+    pub fn has_mouse_on_port(&self, port: u8) -> bool {
+        self.cpu
+            .as_ref()
+            .is_some_and(|cpu| cpu.has_mouse_on_port(port))
+    }
+
     /// Add relative mouse motion for the given SNES controller port.
     pub fn add_mouse_delta(&mut self, port: u8, dx: i16, dy: i16) {
         if let Some(cpu) = self.cpu.as_mut() {

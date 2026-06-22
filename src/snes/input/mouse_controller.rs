@@ -1,31 +1,27 @@
 //! SNES Mouse controller.
 //!
 //! Serial output format follows the SNES mouse protocol:
-//! - first 16 bits: fixed signature/header
-//! - next bits: right button, left button, speed bits, Y sign, Y magnitude,
-//!   X sign, X magnitude
-//! - then ones for open-bus style tail bits
+//! - bits 1..=8: unused, always 0
+//! - bit 9: right button
+//! - bit 10: left button
+//! - bits 11..=12: sensitivity
+//! - bits 13..=16: hardware ID (0001b)
+//! - bit 17: vertical direction (1=up, 0=down)
+//! - bits 18..=24: vertical 7-bit magnitude
+//! - bit 25: horizontal direction (1=left, 0=right)
+//! - bits 26..=32: horizontal 7-bit magnitude
+//!
+//! Each byte is shifted MSB-first, matching the rest of the SNES controller stack.
 
 use super::{SnesController, SnesControllerState};
 
-const REPORT_BITS: usize = 32;
+const REPORT_BITS: u8 = 32;
 const MAGNITUDE_MAX: i16 = 127;
 
 const SPEED_NORMAL: u8 = 0;
-const SPEED_SLOW: u8 = 1;
+const SPEED_NORMAL_ACCEL: u8 = 1;
 const SPEED_FAST: u8 = 2;
 const SPEED_WRAP: u8 = 3;
-
-const HEADER_MASK: u32 = 0x0001;
-const REPORT_HEADER: u32 = 0x0001;
-const RIGHT_BUTTON_BIT: usize = 16;
-const LEFT_BUTTON_BIT: usize = 17;
-const SPEED_BIT_0: usize = 18;
-const SPEED_BIT_1: usize = 19;
-const Y_SIGN_BIT: usize = 20;
-const Y_MAG_START: usize = 21;
-const X_SIGN_BIT: usize = 28;
-const X_MAG_START: usize = 29;
 
 #[derive(Debug, Clone)]
 pub struct MouseController {
@@ -36,7 +32,8 @@ pub struct MouseController {
     accum_dy: i16,
     report_dx: i16,
     report_dy: i16,
-    shift_index: usize,
+    packet: [u8; 4],
+    shift_index: u8,
     strobe: bool,
 }
 
@@ -56,6 +53,7 @@ impl MouseController {
             accum_dy: 0,
             report_dx: 0,
             report_dy: 0,
+            packet: [0; 4],
             shift_index: 0,
             strobe: false,
         }
@@ -73,6 +71,15 @@ impl MouseController {
         }
     }
 
+    fn sensitivity_multiplier(speed: u8) -> i16 {
+        match speed & 0x03 {
+            SPEED_NORMAL => 1,
+            SPEED_NORMAL_ACCEL => 2,
+            SPEED_FAST => 3,
+            _ => 1,
+        }
+    }
+
     fn add_clamped_with_remainder(accum: &mut i16, delta: i16) {
         let next = *accum as i32 + delta as i32;
         let clamped = next.clamp(-(MAGNITUDE_MAX as i32), MAGNITUDE_MAX as i32) as i16;
@@ -84,79 +91,70 @@ impl MouseController {
         self.report_dy = Self::clamp_i16(self.accum_dy, -MAGNITUDE_MAX, MAGNITUDE_MAX);
         self.accum_dx = 0;
         self.accum_dy = 0;
+        self.packet = self.build_packet();
         self.shift_index = 0;
     }
 
     fn cycle_speed(&mut self) {
         self.speed = match self.speed {
-            SPEED_NORMAL => SPEED_SLOW,
-            SPEED_SLOW => SPEED_FAST,
+            SPEED_NORMAL => SPEED_NORMAL_ACCEL,
+            SPEED_NORMAL_ACCEL => SPEED_FAST,
             SPEED_FAST => SPEED_NORMAL,
             _ => SPEED_NORMAL,
         };
     }
 
-    fn build_report_word(&self) -> u32 {
-        let mut word = REPORT_HEADER & HEADER_MASK;
+    fn build_packet(&self) -> [u8; 4] {
+        let (vertical_negative, vertical_magnitude) = Self::sign_and_magnitude(self.report_dy);
+        let (horizontal_negative, horizontal_magnitude) = Self::sign_and_magnitude(self.report_dx);
 
-        if self.right_button {
-            word |= 1 << RIGHT_BUTTON_BIT;
-        }
-        if self.left_button {
-            word |= 1 << LEFT_BUTTON_BIT;
-        }
-        if self.speed & 0x01 != 0 {
-            word |= 1 << SPEED_BIT_0;
-        }
-        if self.speed & 0x02 != 0 {
-            word |= 1 << SPEED_BIT_1;
+        let right_button = if self.right_button { 0x80 } else { 0x00 };
+        let left_button = if self.left_button { 0x40 } else { 0x00 };
+        let sensitivity = (self.speed & 0x03) << 4;
+        let mouse_id = 0x01;
+
+        let vertical_direction = if vertical_negative { 0x80 } else { 0x00 };
+        let horizontal_direction = if horizontal_negative { 0x80 } else { 0x00 };
+
+        [
+            0x00,
+            right_button | left_button | sensitivity | mouse_id,
+            vertical_direction | (vertical_magnitude & 0x7F),
+            horizontal_direction | (horizontal_magnitude & 0x7F),
+        ]
+    }
+
+    fn current_bit(&self) -> bool {
+        if self.shift_index >= REPORT_BITS {
+            return true;
         }
 
-        let (y_sign, y_mag) = Self::sign_and_magnitude(self.report_dy);
-        if y_sign {
-            word |= 1 << Y_SIGN_BIT;
-        }
-        word |= ((y_mag as u32) & 0x7F) << Y_MAG_START;
-
-        let (x_sign, x_mag) = Self::sign_and_magnitude(self.report_dx);
-        if x_sign {
-            word |= 1 << X_SIGN_BIT;
-        }
-        word |= ((x_mag as u32) & 0x7F) << X_MAG_START;
-
-        word
+        let byte = self.packet[(self.shift_index / 8) as usize];
+        let bit_in_byte = self.shift_index % 8;
+        ((byte >> (7 - bit_in_byte)) & 1) != 0
     }
 }
 
 impl SnesController for MouseController {
     fn write_strobe(&mut self, high: bool) {
-        let prev = self.strobe;
         self.strobe = high;
 
         if high {
-            if !prev {
-                self.cycle_speed();
-            }
             self.shift_index = 0;
-            return;
-        }
-
-        if prev {
+        } else {
             self.latch_report();
         }
     }
 
     fn read(&mut self) -> (bool, bool) {
-        let report = self.build_report_word();
-        let bit = if self.shift_index < REPORT_BITS {
-            ((report >> self.shift_index) & 1) != 0
+        let bit = if self.strobe {
+            self.cycle_speed();
+            self.current_bit()
         } else {
-            true
-        };
-
-        if !self.strobe {
+            let current = self.current_bit();
             self.shift_index = self.shift_index.saturating_add(1);
-        }
+            current
+        };
 
         (bit, false)
     }
@@ -166,8 +164,9 @@ impl SnesController for MouseController {
     }
 
     fn add_mouse_delta(&mut self, dx: i16, dy: i16) -> bool {
-        Self::add_clamped_with_remainder(&mut self.accum_dx, dx);
-        Self::add_clamped_with_remainder(&mut self.accum_dy, dy);
+        let multiplier = Self::sensitivity_multiplier(self.speed);
+        Self::add_clamped_with_remainder(&mut self.accum_dx, dx.saturating_mul(multiplier));
+        Self::add_clamped_with_remainder(&mut self.accum_dy, dy.saturating_mul(multiplier));
         true
     }
 
@@ -188,7 +187,7 @@ impl SnesController for MouseController {
     fn capture_state(&self) -> SnesControllerState {
         SnesControllerState {
             pressed: 0,
-            shift: 0,
+            shift: self.shift_index,
             strobe: self.strobe,
             mouse_speed: self.speed,
             mouse_left_button: self.left_button,
@@ -213,7 +212,8 @@ impl SnesController for MouseController {
         self.report_dx = Self::clamp_i16(state.mouse_report_dx, -MAGNITUDE_MAX, MAGNITUDE_MAX);
         self.report_dy = Self::clamp_i16(state.mouse_report_dy, -MAGNITUDE_MAX, MAGNITUDE_MAX);
         self.strobe = state.strobe;
-        self.shift_index = 0;
+        self.packet = self.build_packet();
+        self.shift_index = state.shift.min(REPORT_BITS);
     }
 }
 
@@ -221,47 +221,64 @@ impl SnesController for MouseController {
 mod tests {
     use super::*;
 
-    fn read_bits(mouse: &mut MouseController, count: usize) -> u32 {
-        let mut out = 0u32;
-        for i in 0..count {
+    fn latch(mouse: &mut MouseController) {
+        mouse.write_strobe(true);
+        mouse.write_strobe(false);
+    }
+
+    fn read_bits(mouse: &mut MouseController, count: usize) -> Vec<bool> {
+        let mut out = Vec::with_capacity(count);
+        for _ in 0..count {
             let (bit, _io) = mouse.read();
-            if bit {
-                out |= 1u32 << i;
-            }
+            out.push(bit);
         }
         out
+    }
+
+    fn bits_to_byte(bits: &[bool]) -> u8 {
+        bits.iter()
+            .fold(0u8, |acc, bit| (acc << 1) | u8::from(*bit))
+    }
+
+    fn read_packet(mouse: &mut MouseController) -> [u8; 4] {
+        let bits = read_bits(mouse, 32);
+        [
+            bits_to_byte(&bits[0..8]),
+            bits_to_byte(&bits[8..16]),
+            bits_to_byte(&bits[16..24]),
+            bits_to_byte(&bits[24..32]),
+        ]
     }
 
     #[test]
     fn default_speed_is_normal_after_first_latch() {
         let mut mouse = MouseController::new();
-        mouse.write_strobe(false);
-        let report = read_bits(&mut mouse, 32);
-        assert_eq!((report >> SPEED_BIT_0) & 1, 0);
-        assert_eq!((report >> SPEED_BIT_1) & 1, 0);
+        latch(&mut mouse);
+        let packet = read_packet(&mut mouse);
+        assert_eq!(packet[1] & 0x30, 0x00);
     }
 
     #[test]
-    fn strobe_high_cycles_speed_mode() {
+    fn clock_while_strobe_high_cycles_speed_mode() {
         let mut mouse = MouseController::new();
 
         mouse.write_strobe(true);
+        let _ = mouse.read();
         mouse.write_strobe(false);
-        let slow = read_bits(&mut mouse, 32);
-        assert_eq!((slow >> SPEED_BIT_0) & 1, 1);
-        assert_eq!((slow >> SPEED_BIT_1) & 1, 0);
+        let slow = read_packet(&mut mouse);
+        assert_eq!(slow[1] & 0x30, 0x10);
 
         mouse.write_strobe(true);
+        let _ = mouse.read();
         mouse.write_strobe(false);
-        let fast = read_bits(&mut mouse, 32);
-        assert_eq!((fast >> SPEED_BIT_0) & 1, 0);
-        assert_eq!((fast >> SPEED_BIT_1) & 1, 1);
+        let fast = read_packet(&mut mouse);
+        assert_eq!(fast[1] & 0x30, 0x20);
 
         mouse.write_strobe(true);
+        let _ = mouse.read();
         mouse.write_strobe(false);
-        let normal = read_bits(&mut mouse, 32);
-        assert_eq!((normal >> SPEED_BIT_0) & 1, 0);
-        assert_eq!((normal >> SPEED_BIT_1) & 1, 0);
+        let normal = read_packet(&mut mouse);
+        assert_eq!(normal[1] & 0x30, 0x00);
     }
 
     #[test]
@@ -271,17 +288,12 @@ mod tests {
         mouse.set_mouse_right_button(true);
         mouse.add_mouse_delta(-5, 6);
 
-        mouse.write_strobe(false);
-        let report = read_bits(&mut mouse, 32);
+        latch(&mut mouse);
+        let packet = read_packet(&mut mouse);
 
-        assert_eq!((report >> RIGHT_BUTTON_BIT) & 1, 1);
-        assert_eq!((report >> LEFT_BUTTON_BIT) & 1, 1);
-
-        assert_eq!((report >> Y_SIGN_BIT) & 1, 0);
-        assert_eq!((report >> Y_MAG_START) & 0x7F, 6);
-
-        assert_eq!((report >> X_SIGN_BIT) & 1, 1);
-        assert_eq!((report >> X_MAG_START) & 0x7F, 5);
+        assert_eq!(packet[1], 0xC1);
+        assert_eq!(packet[2], 0x06);
+        assert_eq!(packet[3], 0x85);
     }
 
     #[test]
@@ -289,19 +301,17 @@ mod tests {
         let mut mouse = MouseController::new();
         mouse.add_mouse_delta(300, -300);
 
-        mouse.write_strobe(false);
-        let report = read_bits(&mut mouse, 32);
+        latch(&mut mouse);
+        let packet = read_packet(&mut mouse);
 
-        assert_eq!((report >> X_MAG_START) & 0x7F, 127);
-        assert_eq!((report >> Y_MAG_START) & 0x7F, 127);
-        assert_eq!((report >> X_SIGN_BIT) & 1, 0);
-        assert_eq!((report >> Y_SIGN_BIT) & 1, 1);
+        assert_eq!(packet[2], 0xFF);
+        assert_eq!(packet[3], 0x7F);
     }
 
     #[test]
     fn tail_bits_read_back_as_ones_after_32_bits() {
         let mut mouse = MouseController::new();
-        mouse.write_strobe(false);
+        latch(&mut mouse);
         let _ = read_bits(&mut mouse, 32);
         for _ in 0..8 {
             let (bit, _io) = mouse.read();
@@ -315,19 +325,32 @@ mod tests {
         mouse.set_mouse_left_button(true);
         mouse.set_mouse_right_button(true);
         mouse.add_mouse_delta(12, -9);
-        mouse.write_strobe(true);
-        mouse.write_strobe(false);
+        latch(&mut mouse);
+        let _ = mouse.read();
+        let _ = mouse.read();
 
         let state = mouse.capture_state();
+        let expected_remaining_bits = read_bits(&mut mouse, 30);
         let mut restored = MouseController::new();
         restored.restore_state(&state);
 
-        let report = read_bits(&mut restored, 32);
-        assert_eq!((report >> RIGHT_BUTTON_BIT) & 1, 1);
-        assert_eq!((report >> LEFT_BUTTON_BIT) & 1, 1);
-        assert_eq!((report >> Y_SIGN_BIT) & 1, 1);
-        assert_eq!((report >> Y_MAG_START) & 0x7F, 9);
-        assert_eq!((report >> X_SIGN_BIT) & 1, 0);
-        assert_eq!((report >> X_MAG_START) & 0x7F, 12);
+        let restored_remaining_bits = read_bits(&mut restored, 30);
+        assert_eq!(restored_remaining_bits, expected_remaining_bits);
+    }
+
+    #[test]
+    fn sensitivity_scales_motion_before_latch() {
+        let mut mouse = MouseController::new();
+        mouse.write_strobe(true);
+        let _ = mouse.read();
+        mouse.write_strobe(false);
+        mouse.add_mouse_delta(4, 3);
+
+        latch(&mut mouse);
+        let packet = read_packet(&mut mouse);
+
+        assert_eq!(packet[1] & 0x30, 0x10);
+        assert_eq!(packet[2] & 0x7F, 6);
+        assert_eq!(packet[3] & 0x7F, 8);
     }
 }

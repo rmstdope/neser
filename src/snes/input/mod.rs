@@ -500,6 +500,15 @@ impl InputPorts {
         self.port1.is_mouse() || self.port2.is_mouse()
     }
 
+    /// Returns true if the given physical SNES port hosts a mouse.
+    pub fn has_mouse_on_port(&self, port: u8) -> bool {
+        match port {
+            0 => self.port1.is_mouse(),
+            1 => self.port2.is_mouse(),
+            _ => false,
+        }
+    }
+
     /// Return the 8 NES-convention button states for the given port.
     pub fn joypad_button_states(&self, port: u8) -> u8 {
         match port {
@@ -773,39 +782,40 @@ mod tests {
         mouse.set_mouse_left_button(true);
         mouse.set_mouse_right_button(true);
         mouse.add_mouse_delta(-3, 4);
+        mouse.write_strobe(true);
         mouse.write_strobe(false);
 
-        let mut bits = 0u32;
-        for i in 0..32 {
-            let (bit, _) = mouse.read();
-            if bit {
-                bits |= 1 << i;
+        let mut packet = [0u8; 4];
+        for byte in &mut packet {
+            for _ in 0..8 {
+                let (bit, _) = mouse.read();
+                *byte = (*byte << 1) | u8::from(bit);
             }
         }
 
-        assert_eq!((bits >> 16) & 1, 1, "right button bit");
-        assert_eq!((bits >> 17) & 1, 1, "left button bit");
-        assert_eq!((bits >> 20) & 1, 0, "Y direction positive");
-        assert_eq!((bits >> 21) & 0x7F, 4, "Y magnitude");
-        assert_eq!((bits >> 28) & 1, 1, "X direction negative");
-        assert_eq!((bits >> 29) & 0x7F, 3, "X magnitude");
+        assert_eq!(packet[1], 0xC1, "header/button byte");
+        assert_eq!(packet[2], 0x04, "vertical byte");
+        assert_eq!(packet[3], 0x83, "horizontal byte");
     }
 
     #[test]
-    fn mouse_speed_cycles_on_strobe_high_edges() {
+    fn mouse_speed_cycles_on_reads_while_strobe_high() {
         let mut mouse = MouseController::new();
 
         mouse.write_strobe(true);
+        let _ = mouse.read();
         mouse.write_strobe(false);
         let slow = mouse.capture_state();
         assert_eq!(slow.mouse_speed, 1);
 
         mouse.write_strobe(true);
+        let _ = mouse.read();
         mouse.write_strobe(false);
         let fast = mouse.capture_state();
         assert_eq!(fast.mouse_speed, 2);
 
         mouse.write_strobe(true);
+        let _ = mouse.read();
         mouse.write_strobe(false);
         let normal = mouse.capture_state();
         assert_eq!(normal.mouse_speed, 0);
