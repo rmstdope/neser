@@ -1212,7 +1212,7 @@ fn wasm_snes_reset_without_rom_succeeds() {
 #[wasm_bindgen_test]
 fn wasm_snes_set_button_does_not_panic() {
     let mut snes = WasmSnes::new();
-    // `crate::snes::input::button_from_id`: A, B, Select, Start, Up, Down, Left, Right, L, R, X, Y
+    // `button` IDs are defined by `crate::snes::input::button_from_id`.
     for button in 0u8..=11 {
         snes.set_button(1, button, true);
         snes.set_button(1, button, false);
