@@ -114,6 +114,37 @@ pub fn snes_button_to_id(button: SnesButton) -> u8 {
     }
 }
 
+fn snes_port_for_player(player_num: u8) -> Option<u8> {
+    match player_num {
+        1 => Some(0),
+        2..=4 => Some(player_num - 1),
+        _ => None,
+    }
+}
+
+fn release_snes_buttons_for_player(console: &mut Console, player_num: u8) {
+    let Some(port) = snes_port_for_player(player_num) else {
+        return;
+    };
+    use SnesButton as S;
+    for snes_btn in [
+        S::A,
+        S::B,
+        S::X,
+        S::Y,
+        S::L,
+        S::R,
+        S::Start,
+        S::Select,
+        S::Up,
+        S::Down,
+        S::Left,
+        S::Right,
+    ] {
+        console.set_button(port, snes_button_to_id(snes_btn), false);
+    }
+}
+
 /// Tracks the digital state derived from a single analog axis pair.
 ///
 /// Converts continuous axis values into discrete D-pad presses,
@@ -333,30 +364,34 @@ impl GamepadManager {
     ) -> Option<GamepadChange> {
         if let Some(player_num) = self.player_map.get(&id).copied() {
             // Release all held buttons for this gamepad's port before removing.
-            if let Console::Nes(nes) = console
-                && let Some(port) = Self::assigned_port(nes, &self.player_map, player_num)
-            {
-                use Button::{A, B, Down, Left, Right, Select, Start, Up};
-                for button in [A, B, Select, Start, Up, Down, Left, Right] {
-                    nes.set_button(port, button, false);
+            match console {
+                Console::Nes(nes) => {
+                    if let Some(port) = Self::assigned_port(nes, &self.player_map, player_num) {
+                        use Button::{A, B, Down, Left, Right, Select, Start, Up};
+                        for button in [A, B, Select, Start, Up, Down, Left, Right] {
+                            nes.set_button(port, button, false);
+                        }
+                        use SnesButton as S;
+                        for snes_btn in [
+                            S::A,
+                            S::B,
+                            S::X,
+                            S::Y,
+                            S::L,
+                            S::R,
+                            S::Start,
+                            S::Select,
+                            S::Up,
+                            S::Down,
+                            S::Left,
+                            S::Right,
+                        ] {
+                            nes.set_snes_button(port, snes_btn, false);
+                        }
+                    }
                 }
-                use SnesButton as S;
-                for snes_btn in [
-                    S::A,
-                    S::B,
-                    S::X,
-                    S::Y,
-                    S::L,
-                    S::R,
-                    S::Start,
-                    S::Select,
-                    S::Up,
-                    S::Down,
-                    S::Left,
-                    S::Right,
-                ] {
-                    nes.set_snes_button(port, snes_btn, false);
-                }
+                Console::Snes(_) => release_snes_buttons_for_player(console, player_num),
+                _ => {}
             }
 
             self.player_map.remove(&id);
@@ -456,8 +491,14 @@ impl GamepadManager {
                 nes.set_button(port, nes_btn, pressed);
             }
         } else if let Console::Snes(_) = console {
+            let Some(&player_num) = self.player_map.get(&id) else {
+                return;
+            };
+            let Some(port) = snes_port_for_player(player_num) else {
+                return;
+            };
             if let Some(snes_btn) = map_button_to_snes(button) {
-                console.set_button(0, snes_button_to_id(snes_btn), pressed);
+                console.set_button(port, snes_button_to_id(snes_btn), pressed);
             }
         } else if let Some(nes_btn) = map_button_to_nes(button) {
             console.set_button(0, nes_btn as u8, pressed);
@@ -492,6 +533,18 @@ impl GamepadManager {
                 }
                 nes.set_button(port, button, pressed);
             }
+        } else if let Console::Snes(_) = console {
+            let Some(&player_num) = self.player_map.get(&id) else {
+                return;
+            };
+            let Some(port) = snes_port_for_player(player_num) else {
+                return;
+            };
+            for (btn, pressed) in changes {
+                if let Some(snes_btn) = nes_dpad_to_snes(btn) {
+                    console.set_button(port, snes_button_to_id(snes_btn), pressed);
+                }
+            }
         } else {
             for (btn, pressed) in changes {
                 console.set_button(0, btn as u8, pressed);
@@ -505,6 +558,30 @@ impl GamepadManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::app_context::AppContext;
+    use crate::platform::config::Config;
+    use crate::platform::emulator::Emulator;
+    use crate::snes::console::Snes;
+    use crate::snes::input::SnesControllerType;
+
+    fn valid_lorom_nop_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x10000];
+        let header = 0x7FC0;
+        rom[header..header + 21].copy_from_slice(b"SNES TEST ROM        ");
+        rom[header + 0x3C] = 0x00;
+        rom[header + 0x3D] = 0x80;
+        rom[header + 0xD5] = 0x20;
+        rom[header + 0xD6] = 0x00;
+        rom[header + 0xD7] = 0x07;
+        rom[header + 0xD8] = 0x00;
+        rom[header + 0xD9] = 0x00;
+        rom[header + 0xDC] = 0x34;
+        rom[header + 0xDD] = 0x12;
+        rom[header + 0xDE] = 0xCB;
+        rom[header + 0xDF] = 0xED;
+        rom[0x0000] = 0xEA;
+        rom
+    }
 
     #[test]
     fn snes_button_to_id_matches_platform_convention() {
@@ -520,6 +597,39 @@ mod tests {
         assert_eq!(snes_button_to_id(SnesButton::R), 9);
         assert_eq!(snes_button_to_id(SnesButton::X), 10);
         assert_eq!(snes_button_to_id(SnesButton::Y), 11);
+    }
+
+    #[test]
+    fn snes_port_for_player_routes_players_to_expected_ports() {
+        assert_eq!(snes_port_for_player(1), Some(0));
+        assert_eq!(snes_port_for_player(2), Some(1));
+        assert_eq!(snes_port_for_player(3), Some(2));
+        assert_eq!(snes_port_for_player(4), Some(3));
+    }
+
+    #[test]
+    fn snes_port_for_player_rejects_out_of_range_players() {
+        assert_eq!(snes_port_for_player(0), None);
+        assert_eq!(snes_port_for_player(5), None);
+    }
+
+    #[test]
+    fn release_snes_buttons_for_player_clears_only_the_targeted_port() {
+        let mut config = Config::default();
+        config.snes.controller_port2 = SnesControllerType::Multitap;
+        let mut snes = Snes::new(AppContext::new_with_config(config));
+        snes.load_rom(&valid_lorom_nop_rom(), "snes.sfc").unwrap();
+        let mut console = Console::Snes(Box::new(snes));
+
+        console.set_button(0, snes_button_to_id(SnesButton::A), true);
+        console.set_button(2, snes_button_to_id(SnesButton::A), true);
+        assert_ne!(console.get_joypad_button_states(0) & 0x01, 0);
+        assert_ne!(console.get_joypad_button_states(2) & 0x01, 0);
+
+        release_snes_buttons_for_player(&mut console, 3);
+
+        assert_ne!(console.get_joypad_button_states(0) & 0x01, 0);
+        assert_eq!(console.get_joypad_button_states(2) & 0x01, 0);
     }
 
     // ── nes_dpad_to_snes ──────────────────────────────────────────────────

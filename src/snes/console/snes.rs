@@ -277,8 +277,7 @@ impl Emulator for Snes {
     }
 
     fn allowed_shaders(&self) -> &'static [&'static str] {
-        // TODO: Define SNES-specific shader presets
-        &[]
+        &["none", "crt", "smooth", "ntsc", "pal"]
     }
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
@@ -523,6 +522,15 @@ mod tests {
     fn system_type_returns_snes() {
         let snes = make_snes();
         assert_eq!(snes.system_type(), SystemType::Snes);
+    }
+
+    #[test]
+    fn allowed_shaders_match_native_snes_target_set() {
+        let snes = make_snes();
+        assert_eq!(
+            snes.allowed_shaders(),
+            ["none", "crt", "smooth", "ntsc", "pal"]
+        );
     }
 
     #[test]
