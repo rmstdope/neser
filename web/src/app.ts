@@ -2535,12 +2535,16 @@ function applyKeyboardMapping(event: KeyboardEvent, mapping: { button?: number; 
     }
     event.preventDefault();
 
-    // NES-specific: try SNES button mapping first.
+    // Try SNES button mapping first when available.
     if (nes && mapping.snesButton !== undefined) {
         const handledAsSnes = nes.set_snes_button(controller, mapping.snesButton, pressed);
         if (handledAsSnes) {
             return;
         }
+    }
+    if (emulator?.kind === "snes" && mapping.snesButton !== undefined) {
+        emulator.inst.set_button(controller, remapLegacySnesButtonId(mapping.snesButton), pressed);
+        return;
     }
 
     if (mapping.button !== undefined) {
@@ -2550,6 +2554,24 @@ function applyKeyboardMapping(event: KeyboardEvent, mapping: { button?: number; 
             // GB: direct button routing (no mouse/zapper suppression needed).
             emulator.inst.set_button(controller, mapping.button, pressed);
         }
+    }
+}
+
+function remapLegacySnesButtonId(button: number) {
+    switch (button) {
+        case 0: return 1; // B
+        case 1: return 11; // Y
+        case 2: return 2; // Select
+        case 3: return 3; // Start
+        case 4: return 4; // Up
+        case 5: return 5; // Down
+        case 6: return 6; // Left
+        case 7: return 7; // Right
+        case 8: return 0; // A
+        case 9: return 10; // X
+        case 10: return 8; // L
+        case 11: return 9; // R
+        default: return button;
     }
 }
 
@@ -3181,7 +3203,7 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
     if (state.down !== lastState.down) applyButton(5, state.down);
     if (state.left !== lastState.left) applyButton(6, state.left);
     if (state.right !== lastState.right) applyButton(7, state.right);
-    if (emulator.kind === "gba") {
+    if (emulator.kind === "gba" || emulator.kind === "snes") {
         if (state.l !== lastState.l) applyButton(8, state.l);
         if (state.r !== lastState.r) applyButton(9, state.r);
     }

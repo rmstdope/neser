@@ -158,6 +158,21 @@ it("buildControllerOverlayText reserves X, Y, and shoulder keys for AGB", () => 
     expect(text).not.toMatch(/Controller \(Player 2\)/);
 });
 
+it("buildControllerOverlayText shows SNES keyboard mapping including shoulder keys", () => {
+    const text = buildControllerOverlayText(0, "snes");
+    expect(text).toMatch(/Controller \(Player 1\)/);
+    expect(text).toMatch(/W\/A\/S\/D: D-Pad/);
+    expect(text).toMatch(/R: Y/);
+    expect(text).toMatch(/T: X/);
+    expect(text).toMatch(/F: B/);
+    expect(text).toMatch(/G: A/);
+    expect(text).toMatch(/Q: L/);
+    expect(text).toMatch(/E: R/);
+    expect(text).toMatch(/4: Select/);
+    expect(text).toMatch(/5: Start/);
+    expect(text).not.toMatch(/Controller \(Player 2\)/);
+});
+
 it("buildControllerOverlayText shows Gamepad for player 1 and keyboard for player 2 when one gamepad connected", () => {
     const text = buildControllerOverlayText(1, "nes");
     expect(text).toMatch(/Controller \(Player 1\)/);
@@ -178,8 +193,10 @@ it("buildControllerOverlayText shows Gamepad for both players when two gamepads 
 });
 
 it("buildFullHelpOverlayText uses the selected emulator controller help", () => {
-    const text = buildFullHelpOverlayText(0, "gb");
+    const text = buildFullHelpOverlayText(0, "snes");
     expect(text).toMatch(/^Shortcuts/m);
     expect(text).toMatch(/Controller \(Player 1\)/);
     expect(text).not.toMatch(/Controller \(Player 2\)/);
+    expect(text).toMatch(/Q: L/);
+    expect(text).toMatch(/E: R/);
 });
