@@ -1036,6 +1036,21 @@ let lastGamepadState2 = {
     r: false
 };
 
+const SNES_LEGACY_BUTTON = {
+    B: 0,
+    Y: 1,
+    SELECT: 2,
+    START: 3,
+    UP: 4,
+    DOWN: 5,
+    LEFT: 6,
+    RIGHT: 7,
+    A: 8,
+    X: 9,
+    L: 10,
+    R: 11
+} as const;
+
 function setStatus(msg: string, isError = false) {
     statusEl!.textContent = isError ? msg : "";
     statusEl!.style.color = isError ? "#f88" : "";
@@ -3177,20 +3192,6 @@ interface GamepadButtonState {
 function applyGamepadState(state: GamepadButtonState, controller: number, lastState: GamepadButtonState) {
     if (!emulator) return;
     if (emulator.kind === "gba" && controller !== 1) return;
-    const SNES_LEGACY_BUTTON = {
-        B: 0,
-        Y: 1,
-        SELECT: 2,
-        START: 3,
-        UP: 4,
-        DOWN: 5,
-        LEFT: 6,
-        RIGHT: 7,
-        A: 8,
-        X: 9,
-        L: 10,
-        R: 11
-    } as const;
     const applyButton = (button: number, pressed: boolean) => {
         if (nes) {
             applyJoypadButtonIfAllowed(nes, controller, button, pressed);
