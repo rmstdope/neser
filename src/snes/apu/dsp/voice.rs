@@ -30,6 +30,8 @@ pub struct VoiceState {
     #[serde(default)]
     pub brr_samples: [i16; 16],
     #[serde(default)]
+    pub brr_history: [i16; 3],
+    #[serde(default)]
     pub brr_initialized: bool,
     #[serde(default)]
     pub vol_l: i8,

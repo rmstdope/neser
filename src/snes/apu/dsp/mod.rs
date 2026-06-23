@@ -371,6 +371,7 @@ impl Sdsp {
         v.sample_pos = 0;
         v.brr_prev1 = 0;
         v.brr_prev2 = 0;
+        v.brr_history = [0; 3];
         v.brr_initialized = true;
         self.load_current_voice_brr_block(voice, aram);
     }
@@ -392,6 +393,11 @@ impl Sdsp {
 
     fn load_next_voice_brr_block(&mut self, voice: usize, aram: &[u8]) {
         let next_addr = self.voices[voice].brr_next_addr;
+        self.voices[voice].brr_history = [
+            self.voices[voice].brr_samples[13],
+            self.voices[voice].brr_samples[14],
+            self.voices[voice].brr_samples[15],
+        ];
         self.voices[voice].brr_addr = next_addr;
         self.voices[voice].brr_block_index = self.voices[voice].brr_block_index.wrapping_add(1);
         self.decode_voice_brr_block_at(voice, aram, next_addr);
@@ -446,7 +452,14 @@ impl Sdsp {
             return None;
         }
         let index = ((v.sample_pos >> 12) & 0x0F) as usize;
-        Some(v.brr_samples[index])
+        let frac = ((v.sample_pos >> 4) & 0xFF) as u8;
+        Some(gaussian::gaussian_interpolate(
+            voice_interpolation_sample(v, index, 3),
+            voice_interpolation_sample(v, index, 2),
+            voice_interpolation_sample(v, index, 1),
+            voice_interpolation_sample(v, index, 0),
+            frac,
+        ))
     }
 
     pub fn write_reg(&mut self, addr: u8, value: u8) {
@@ -573,6 +586,13 @@ impl Sdsp {
 fn voice_index(voice: usize) -> usize {
     assert!(voice < 8, "voice index out of range: {voice}");
     voice
+}
+
+fn voice_interpolation_sample(voice: &VoiceState, index: usize, previous: usize) -> i16 {
+    if index >= previous {
+        return voice.brr_samples[index - previous];
+    }
+    voice.brr_history[voice.brr_history.len() - (previous - index)]
 }
 
 fn apply_two_stage_volume(sample: i16, voice_vol: i8, master_vol: i8) -> i16 {

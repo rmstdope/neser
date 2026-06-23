@@ -99,6 +99,48 @@ fn given_voice_pitch_when_step_voice_pitch_then_sample_position_advances() {
 }
 
 #[test]
+fn given_fractional_brr_position_when_sampling_voice_then_gaussian_interpolation_is_used() {
+    let mut dsp = Sdsp::new();
+    dsp.voices[0].brr_initialized = true;
+    dsp.voices[0].envx = 0x7F;
+    dsp.voices[0].sample_pos = 0x3800;
+    dsp.voices[0].brr_samples[0] = 0;
+    dsp.voices[0].brr_samples[1] = 0;
+    dsp.voices[0].brr_samples[2] = 0;
+    dsp.voices[0].brr_samples[3] = 0x3000;
+
+    let expected = dsp.gaussian_interpolate(0, 0, 0, 0x3000, 0x80);
+    let sample = dsp.voice_sample(0, 0, Some(&[]));
+
+    assert_eq!(
+        sample, expected,
+        "fractional BRR positions should use S-DSP gaussian interpolation"
+    );
+    assert_ne!(
+        sample, dsp.voices[0].brr_samples[3],
+        "playback must not point-sample the selected BRR entry"
+    );
+}
+
+#[test]
+fn given_brr_position_at_block_start_when_sampling_voice_then_previous_block_history_is_used() {
+    let mut dsp = Sdsp::new();
+    dsp.voices[0].brr_initialized = true;
+    dsp.voices[0].envx = 0x7F;
+    dsp.voices[0].sample_pos = 0x0800;
+    dsp.voices[0].brr_history = [0x1000, 0x2000, 0x3000];
+    dsp.voices[0].brr_samples[0] = 0x4000;
+
+    let expected = dsp.gaussian_interpolate(0x1000, 0x2000, 0x3000, 0x4000, 0x80);
+    let sample = dsp.voice_sample(0, 0, Some(&[]));
+
+    assert_eq!(
+        sample, expected,
+        "gaussian interpolation at a block boundary should include the previous block tail"
+    );
+}
+
+#[test]
 fn given_constant_samples_when_gaussian_interpolating_then_output_preserves_level() {
     let dsp = Sdsp::new();
     let out = dsp.gaussian_interpolate(100, 100, 100, 100, 64);
