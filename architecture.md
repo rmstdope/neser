@@ -8,7 +8,7 @@ NESER is a Nintendo emulator suite written in Rust, built on an architecture tha
 
 The native frontend now exposes audio buffering in milliseconds through configuration, while the web frontend uses a small profile selector for balanced and low-latency audio scheduling.
 
-The codebase is roughly 183,000 lines of Rust, with additional JavaScript for the web frontend and Python tooling for ROM management.
+The codebase is roughly 383,000 lines of Rust, with additional JavaScript for the web frontend and Python tooling for ROM management.
 
 As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps the NES, Game Boy, Game Boy Advance, and SNES implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
 
@@ -382,7 +382,7 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | `src/frontends/tui/app.rs` | TUI application state and event loop. |
 | `src/frontends/tui/rom_list.rs` | Scrollable ROM list widget. |
 | `src/frontends/tui/catalog.rs` | Integration with the cartridge catalog for ROM discovery. |
-| `src/frontends/tui/launcher.rs` | Launches the SDL emulator for a selected ROM. |
+| `src/frontends/tui/launcher.rs` | Launches the native emulator for a selected ROM. |
 | `src/frontends/tui/action_menu.rs` | Context menu for ROM actions. |
 | `src/frontends/web/` | WebAssembly frontend. |
 | `src/frontends/web/wasm.rs` | `wasm-bindgen` bindings — exposes `WasmNes` to JavaScript with methods for frame stepping, input, audio sample retrieval, save states, autorun, and NES debugger support. |
@@ -524,13 +524,13 @@ Shader presets using the Slang shading language, loaded via librashader:
 | File | Description |
 |------|-------------|
 | `neser.conf.example` | Annotated example configuration file documenting all settings: hardware mode (NES + GB + GBA + SNES), audio, video (VSync, window size, fullscreen, shaders), input (gamepads, Four Score, NES + SNES controller types, Zapper detection), debugging, RAM initialization, OAM DRAM decay, overscan, and SNES SPC IPL override path. |
-| `gamecontrollerdb.txt` | SDL2 game controller mapping database for broad gamepad compatibility. |
+| `gamecontrollerdb.txt` | Community game controller mapping database (SDL_GameControllerDB format, consumed by gilrs) for broad gamepad compatibility. |
 
 ### Build Configuration
 
 | File | Description |
 | ------ | ------------- |
-| `Cargo.toml` | Rust project manifest. Defines three feature flags: `sdl` (default — desktop frontend), `wasm` (WebAssembly frontend), `tui` (terminal ROM launcher). The library crate type is both `rlib` (for tests) and `cdylib` (for WASM). Debug builds use `opt-level = 1` to keep audio smooth; dependencies use `opt-level = 3`. |
+| `Cargo.toml` | Rust project manifest. Defines the feature flags `native` (default — desktop frontend), `wasm` (WebAssembly frontend), and `tui` (terminal ROM launcher), plus an internal `frontend` meta-feature. The library crate type is both `rlib` (for tests) and `cdylib` (for WASM). Debug builds use `opt-level = 1` to keep audio smooth; dependencies use `opt-level = 3`. |
 | `build.rs` | Compile-time code generation — scans for `.autorun` files and generates Rust test functions for each. |
 | `playwright.config.mjs` | Playwright configuration for web integration tests. |
 | `vite.config.js` | Vite bundler configuration — root: `web/`, build output: `dist/`, dev/preview server on port 8000, Vitest test pattern. |
@@ -540,11 +540,11 @@ Shader presets using the Slang shading language, loaded via librashader:
 
 - **Bus-centric architecture**: All memory access goes through the `Bus`, enabling accurate mapper intercepts and DMA behavior.
 - **Cycle-accurate timing**: CPU, PPU, and APU are synchronized via a master clock divider. PPU runs 3 cycles per CPU cycle (NTSC) or 3.2 (PAL).
-- **Feature-gated frontends**: SDL, WASM, and TUI frontends are behind Cargo features, so the core emulation library has no platform dependencies.
+- **Feature-gated frontends**: Native, WASM, and TUI frontends are behind Cargo features, so the core emulation library has no platform dependencies.
 - **Interior mutability via `Rc<RefCell<>>`**: Components that need shared ownership (Bus, PPU, APU) use reference-counted cells rather than unsafe code.
 - **Mapper trait pattern**: All mappers implement the `Mapper` trait with a standard interface for PRG/CHR reads/writes, IRQ management, and state snapshots. Common banking logic is provided by `BaseMapper`.
 - **Deterministic testing**: RAM initialization modes and autorun recordings enable fully deterministic regression testing against reference CRC checksums.
-- **Save state serialization**: Uses JSON (via serde) with a versioned format. Mapper state is serialized as opaque byte vectors to keep the format flexible.
+- **Save state serialization**: The primary save-state path uses JSON (via serde) with a versioned format; mapper state is serialized as opaque byte vectors to keep the format flexible. NES autorun recordings and the NES compact-binary save path use postcard.
 - **ROM browser architecture**: The native frontend includes a console-style graphical ROM browser as the default landing screen. It uses the shared `platform/catalog` module for ROM discovery, `platform/metadata` for TheGamesDB fuzzy matching via `rusqlite` + `strsim`, and `platform/image_cache` for cover art downloading via `reqwest`. The browser renders a cover art grid with egui (`egui_glow` + `egui_winit`), supports real-time search, genre filtering, a detail view overlay, and persistent favorites. When launched without a ROM path, the browser opens first; selecting a ROM transitions to emulation mode via an application state machine.
 
 ## Testing Strategy
