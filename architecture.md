@@ -72,7 +72,7 @@ The emulator is designed around a **multi-layer architecture**:
 
 - **Emulator trait + Console enum** (`src/platform/emulator.rs`): The `Emulator` trait defines the common interface that every emulated system must implement (run, render, audio, input, save/load state, reset — 22 methods total). `Nes`, `GameBoy`, `Gba`, and `Snes` (stub) implement the trait in their respective modules. The `Console` enum wraps all four systems and delegates common methods through `as_core()`/`as_core_mut()` (which return `&dyn Emulator`), keeping a single pair of match arms instead of one per method. System-specific features (NES debugging, PPU viewer, Zapper) are still accessed by matching on `Console::Nes`.
 - **NES emulator** (`src/nes/`): All NES-specific hardware lives under this namespace. The `Nes` struct in `src/nes/console/nes.rs` orchestrates the per-cycle stepping of CPU, PPU, APU, and Bus.
-- **Shared platform** (`src/platform/`): `FrontendConfig` (src/platform/config.rs), `AppContext` (src/platform/app_context.rs), audio infrastructure, and system-agnostic toast formatters are shared across all emulated systems.
+- **Shared platform** (`src/platform/`): `FrontendConfig` (src/platform/config/), `AppContext` (src/platform/app_context.rs), audio infrastructure, and system-agnostic toast formatters are shared across all emulated systems.
 - **Bus-centric hardware**: Within the NES, the `Bus` struct routes memory reads and writes between the CPU, PPU registers, APU registers, RAM, OAM DMA, controller ports, and the cartridge mapper.
 
 ## Binaries and Scripts
@@ -116,7 +116,7 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | File | Description |
 | ------ | ------------- |
 | `src/platform/emulator.rs` | `Emulator` trait — defines the common interface (22 methods) for all emulated systems: `run_tick`, `is_ready_to_render`, `screen_snapshot`, `get_sample`, `set_button`, `save_state_bytes`/`load_state_bytes`, `reset`, etc. `Console` enum wraps `Box<Nes>` and `Box<GameBoy>`, delegating common methods through `as_core()`/`as_core_mut()`. System-specific features accessed via variant matching (`Console::Nes`). |
-| `src/platform/config.rs` | `FrontendConfig` struct — generic frontend settings (audio, video, autorun, debugger, window, metadata paths) shared across all emulated systems. Includes `resolved_metadata_db_path()`, `resolved_image_cache_path()`, and `resolved_favorites_path()` helpers. |
+| `src/platform/config/` | `FrontendConfig` struct — generic frontend settings shared across all emulated systems — split into per-domain modules: `mod.rs` (data structs + thin `apply_args`/`apply_config_value` orchestrators), `cli.rs` (shared CLI machinery: flag table, parse helpers, validation, help text), and `audio`/`video`/`autorun`/`debugger`/`cartridge` (per-domain flag parsing). The `cartridge` module holds the `resolved_metadata_db_path()`, `resolved_image_cache_path()`, and `resolved_favorites_path()` helpers. |
 | `src/platform/app_context.rs` | `AppContext` — shared application state including configuration, ROM database, and toast notification manager. Wrapped in `Rc<RefCell<>>` for interior mutability. |
 | `src/platform/catalog/` | Shared ROM catalog module — discovers ROMs, parses headers, enriches entries with metadata and cover art. Used by both TUI and native graphical frontends. |
 | `src/platform/catalog/mod.rs` | `load_catalog()` builds sorted `Vec<RomEntry>` from disk scan; `enrich_catalog()` integrates metadata matching and cover art downloading. |
