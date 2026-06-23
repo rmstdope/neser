@@ -33,6 +33,9 @@ it("classifies SNES ROM names as SNES", () => {
 it("supports SNES ROM names", () => {
     expect(isSupportedWebRomName("zelda.sfc")).toBe(true);
     expect(isSupportedWebRomName("mario.smc")).toBe(true);
+    expect(isSupportedWebRomName("GAME.SFC")).toBe(true);
+    expect(isSupportedWebRomName("GAME.SMC")).toBe(true);
+    expect(isSupportedWebRomName("notes.txt")).toBe(false);
 });
 
 it("rejects unsupported web ROM extensions", () => {
