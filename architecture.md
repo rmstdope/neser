@@ -4,13 +4,13 @@
 
 ## Overview
 
-NESER is a cycle-accurate NES (Nintendo Entertainment System) emulator written in Rust, built on an architecture that supports multiple emulated hardware targets. It supports three frontend targets: a native desktop window (winit + OpenGL), a terminal-based TUI ROM launcher, and a WebAssembly-powered browser frontend. The emulator implements the core NES hardware — CPU, PPU, APU, and bus — as well as over 200 cartridge mappers, multiple input device types, debugging tools, save states, and an autorun recording/playback system.
+NESER is a Nintendo emulator suite written in Rust, built on an architecture that supports multiple emulated hardware targets. It supports three frontend targets: a native desktop window (winit + OpenGL), a terminal-based TUI ROM launcher, and a WebAssembly-powered browser frontend. The emulator implements full NES hardware (CPU, PPU, APU, bus, and over 200 cartridge mappers), plus GB/GBC, GBA, and SNES runtimes with shared input, audio/video frontend plumbing, configuration, save states, and debugging infrastructure.
 
 The native frontend now exposes audio buffering in milliseconds through configuration, while the web frontend uses a small profile selector for balanced and low-latency audio scheduling.
 
 The codebase is roughly 183,000 lines of Rust, with additional JavaScript for the web frontend and Python tooling for ROM management.
 
-As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps the NES, Game Boy, Game Boy Advance, and SNES (stub) implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
+As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps the NES, Game Boy, Game Boy Advance, and SNES implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
 
 ## High-Level Architecture
 
@@ -388,6 +388,7 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | `src/frontends/web/wasm.rs` | `wasm-bindgen` bindings — exposes `WasmNes` to JavaScript with methods for frame stepping, input, audio sample retrieval, save states, autorun, and NES debugger support. |
 | `src/frontends/web/wasm_gb.rs` | `wasm-bindgen` bindings for the Game Boy frontend (`WasmGb`) with ROM loading, frame rendering, audio, reset, and joypad input. |
 | `src/frontends/web/wasm_gba.rs` | `wasm-bindgen` bindings for the Game Boy Advance frontend (`WasmGba`) with ROM loading, 240×160 RGBA frame rendering, audio, reset, toast draining, and 10-button keypad input. |
+| `src/frontends/web/wasm_snes.rs` | `wasm-bindgen` bindings for the SNES frontend (`WasmSnes`) with ROM loading (`.sfc`/`.smc`), 256×224 RGBA frame rendering, stereo audio sample draining, save/load state bytes, toast draining, and SNES peripherals (mouse, Super Scope, multitap-port detection). |
 | `src/frontends/web/wasm_autorun_state.rs` | Autorun state management for the WASM frontend. |
 | `src/frontends/web/wasm_tests.rs` | WASM-specific integration tests (run via `wasm-pack test`). |
 
@@ -522,7 +523,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 
 | File | Description |
 |------|-------------|
-| `neser.conf.example` | Annotated example configuration file documenting all settings: hardware mode (NES + SNES), audio, video (VSync, window size, fullscreen, shaders), input (gamepads, Four Score, controller types, Zapper detection), debugging, RAM initialization, OAM DRAM decay, and overscan. |
+| `neser.conf.example` | Annotated example configuration file documenting all settings: hardware mode (NES + GB + GBA + SNES), audio, video (VSync, window size, fullscreen, shaders), input (gamepads, Four Score, NES + SNES controller types, Zapper detection), debugging, RAM initialization, OAM DRAM decay, overscan, and SNES SPC IPL override path. |
 | `gamecontrollerdb.txt` | SDL2 game controller mapping database for broad gamepad compatibility. |
 
 ### Build Configuration
