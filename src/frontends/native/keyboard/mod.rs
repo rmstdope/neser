@@ -152,12 +152,227 @@ pub fn keyboard_target_ports(gamepad_count: usize, four_score: bool) -> &'static
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use crate::frontends::native::app_state::NativeAppState;
+    use crate::nes::console::{Config, Nes, NesConfig};
+    use crate::nes::input::Button;
+    use crate::platform::app_context::AppContext;
+    use crate::platform::audio::EmulatorAudio;
+    use crate::platform::emulator::Console;
+    use winit::keyboard::ModifiersState;
+
+    pub(crate) fn make_nes() -> Nes {
+        Nes::new(AppContext::new_with_config(Config::default()))
+    }
+
+    pub(crate) fn make_nes_four_score() -> Nes {
+        Nes::new(AppContext::new_with_config(Config {
+            nes: NesConfig {
+                four_score_enabled: true,
+                ..Default::default()
+            },
+            ..Config::default()
+        }))
+    }
+
+    pub(crate) fn make_nes_with_cartridge() -> Nes {
+        let mut nes = make_nes();
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFA] = 0x00;
+        prg_rom[0x7FFB] = 0x80;
+        prg_rom[0x7FFE] = 0x00;
+        prg_rom[0x7FFF] = 0x80;
+        let cartridge = crate::nes::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::nes::cartridge::NametableLayout::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes
+    }
+
+    pub(crate) fn make_nes_console() -> Console {
+        Console::Nes(Box::new(make_nes()))
+    }
+
+    pub(crate) fn make_nes_console_with_cart() -> Console {
+        Console::Nes(Box::new(make_nes_with_cartridge()))
+    }
+
+    pub(crate) fn make_nes_console_four_score() -> Console {
+        Console::Nes(Box::new(make_nes_four_score()))
+    }
+
+    pub(crate) fn make_gba_console() -> Console {
+        Console::new_gba(AppContext::new_with_config(Config::default()))
+    }
+
+    pub(crate) fn minimal_snes_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x10000];
+        let header = 0x7FC0;
+        rom[header..header + 21].copy_from_slice(b"SNES TEST ROM        ");
+        rom[header + 0x3C] = 0x00;
+        rom[header + 0x3D] = 0x80;
+        rom[header + 0xD5] = 0x20;
+        rom[header + 0xD6] = 0x00;
+        rom[header + 0xD7] = 0x07;
+        rom[header + 0xD8] = 0x00;
+        rom[header + 0xD9] = 0x00;
+        rom[header + 0xDC] = 0x34;
+        rom[header + 0xDD] = 0x12;
+        rom[header + 0xDE] = 0xCB;
+        rom[header + 0xDF] = 0xED;
+        rom[0x0000] = 0xEA;
+        rom
+    }
+
+    pub(crate) fn make_snes_console(rom_name: &str) -> Console {
+        let mut console = Console::new_snes(AppContext::new_with_config(Config::default()));
+        console
+            .load_rom(&minimal_snes_rom(), rom_name)
+            .expect("minimal SNES ROM should load");
+        console
+    }
+
+    pub(crate) fn gba_keyinput(console: &Console) -> u16 {
+        let Console::GameBoyAdvance(gba) = console else {
+            panic!("expected GBA console");
+        };
+        gba.bus().keypad.read_keyinput()
+    }
+
+    pub(crate) fn make_state() -> NativeAppState {
+        NativeAppState::default()
+    }
+
+    pub(crate) fn with_ctrl(state: &mut NativeAppState) {
+        state.modifiers = ModifiersState::CONTROL;
+    }
+
+    pub(crate) fn with_ctrl_shift(state: &mut NativeAppState) {
+        state.modifiers = ModifiersState::CONTROL | ModifiersState::SHIFT;
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn buttons(nes: &Nes, port: u8) -> u8 {
+        nes.get_joypad_button_states(port)
+    }
+
+    pub(crate) const BIT_A: u8 = 1 << Button::A as u8;
+    pub(crate) const BIT_B: u8 = 1 << Button::B as u8;
+    pub(crate) const BIT_SELECT: u8 = 1 << Button::Select as u8;
+    pub(crate) const BIT_START: u8 = 1 << Button::Start as u8;
+    pub(crate) const BIT_UP: u8 = 1 << Button::Up as u8;
+    pub(crate) const BIT_DOWN: u8 = 1 << Button::Down as u8;
+    pub(crate) const BIT_LEFT: u8 = 1 << Button::Left as u8;
+    pub(crate) const BIT_RIGHT: u8 = 1 << Button::Right as u8;
+
+    pub(crate) const GBA_KEY_A: u16 = 1 << 0;
+    pub(crate) const GBA_KEY_B: u16 = 1 << 1;
+    pub(crate) const GBA_KEY_SELECT: u16 = 1 << 2;
+    pub(crate) const GBA_KEY_START: u16 = 1 << 3;
+    pub(crate) const GBA_KEY_RIGHT: u16 = 1 << 4;
+    pub(crate) const GBA_KEY_LEFT: u16 = 1 << 5;
+    pub(crate) const GBA_KEY_UP: u16 = 1 << 6;
+    pub(crate) const GBA_KEY_DOWN: u16 = 1 << 7;
+    pub(crate) const GBA_KEY_R: u16 = 1 << 8;
+    pub(crate) const GBA_KEY_L: u16 = 1 << 9;
+
+    // ── Mock audio ────────────────────────────────────────────────────────────
+
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    pub(crate) struct MockAudio {
+        volume: Arc<AtomicU32>,
+    }
+
+    /// Mock audio that tracks whether pause(), resume(), and drain_buffer() have been called.
+    pub(crate) struct TrackingMockAudio {
+        pause_called: Arc<AtomicBool>,
+        resume_called: Arc<AtomicBool>,
+        drain_buffer_called: Arc<AtomicBool>,
+    }
+
+    impl TrackingMockAudio {
+        pub(crate) fn new() -> (Self, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
+            let pause_called = Arc::new(AtomicBool::new(false));
+            let resume_called = Arc::new(AtomicBool::new(false));
+            let drain_buffer_called = Arc::new(AtomicBool::new(false));
+            let audio = Self {
+                pause_called: Arc::clone(&pause_called),
+                resume_called: Arc::clone(&resume_called),
+                drain_buffer_called: Arc::clone(&drain_buffer_called),
+            };
+            (audio, pause_called, resume_called, drain_buffer_called)
+        }
+    }
+
+    impl EmulatorAudio for TrackingMockAudio {
+        fn queue_sample(&mut self, _sample: f32) {}
+        fn resume(&self) {
+            self.resume_called.store(true, Ordering::Relaxed);
+        }
+        fn pause(&self) {
+            self.pause_called.store(true, Ordering::Relaxed);
+        }
+        fn drain_buffer(&self) {
+            self.drain_buffer_called.store(true, Ordering::Relaxed);
+        }
+        fn set_volume(&self, _volume: f32) {}
+        fn get_volume(&self) -> f32 {
+            0.0
+        }
+        fn prime_startup(&mut self, _samples: usize) {}
+        fn take_and_reset_stats(&self) -> (u64, u64, u64) {
+            (0, 0, 0)
+        }
+        fn actual_sample_rate(&self) -> i32 {
+            44100
+        }
+    }
+
+    impl MockAudio {
+        pub(crate) fn new_with_volume(vol: f32) -> Self {
+            Self {
+                volume: Arc::new(AtomicU32::new(f32::to_bits(vol))),
+            }
+        }
+    }
+
+    impl EmulatorAudio for MockAudio {
+        fn queue_sample(&mut self, _sample: f32) {}
+        fn resume(&self) {}
+        fn pause(&self) {}
+        fn set_volume(&self, volume: f32) {
+            self.volume
+                .store(f32::to_bits(volume.clamp(0.0, 1.0)), Ordering::Relaxed);
+        }
+        fn get_volume(&self) -> f32 {
+            f32::from_bits(self.volume.load(Ordering::Relaxed))
+        }
+        fn prime_startup(&mut self, _samples: usize) {}
+        fn take_and_reset_stats(&self) -> (u64, u64, u64) {
+            (0, 0, 0)
+        }
+        fn actual_sample_rate(&self) -> i32 {
+            44100
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::test_support::*;
     use super::*;
     use crate::nes::console::{Config, Nes, NesConfig};
     use crate::nes::input::{Button, PowerPadButton, SnesButton};
     use crate::platform::app_context::AppContext;
     use crate::platform::emulator::Console;
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use winit::keyboard::ModifiersState;
 
     // ── Test helpers ──────────────────────────────────────────────────────────
@@ -199,207 +414,6 @@ mod tests {
             Some(11)
         ); // Y
         assert_eq!(controller_mapping::snes_key_to_button_id(KeyCode::F1), None);
-    }
-
-    fn make_nes() -> Nes {
-        Nes::new(AppContext::new_with_config(Config::default()))
-    }
-
-    fn make_nes_four_score() -> Nes {
-        Nes::new(AppContext::new_with_config(Config {
-            nes: NesConfig {
-                four_score_enabled: true,
-                ..Default::default()
-            },
-            ..Config::default()
-        }))
-    }
-
-    fn make_nes_with_cartridge() -> Nes {
-        let mut nes = make_nes();
-        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
-        prg_rom[0x7FFC] = 0x00;
-        prg_rom[0x7FFD] = 0x80;
-        prg_rom[0x7FFA] = 0x00;
-        prg_rom[0x7FFB] = 0x80;
-        prg_rom[0x7FFE] = 0x00;
-        prg_rom[0x7FFF] = 0x80;
-        let cartridge = crate::nes::cartridge::Cartridge::from_parts(
-            prg_rom,
-            vec![],
-            crate::nes::cartridge::NametableLayout::Horizontal,
-        );
-        nes.insert_cartridge(cartridge);
-        nes
-    }
-
-    fn make_nes_console() -> Console {
-        Console::Nes(Box::new(make_nes()))
-    }
-
-    fn make_nes_console_with_cart() -> Console {
-        Console::Nes(Box::new(make_nes_with_cartridge()))
-    }
-
-    fn make_nes_console_four_score() -> Console {
-        Console::Nes(Box::new(make_nes_four_score()))
-    }
-
-    fn make_gba_console() -> Console {
-        Console::new_gba(AppContext::new_with_config(Config::default()))
-    }
-
-    fn minimal_snes_rom() -> Vec<u8> {
-        let mut rom = vec![0u8; 0x10000];
-        let header = 0x7FC0;
-        rom[header..header + 21].copy_from_slice(b"SNES TEST ROM        ");
-        rom[header + 0x3C] = 0x00;
-        rom[header + 0x3D] = 0x80;
-        rom[header + 0xD5] = 0x20;
-        rom[header + 0xD6] = 0x00;
-        rom[header + 0xD7] = 0x07;
-        rom[header + 0xD8] = 0x00;
-        rom[header + 0xD9] = 0x00;
-        rom[header + 0xDC] = 0x34;
-        rom[header + 0xDD] = 0x12;
-        rom[header + 0xDE] = 0xCB;
-        rom[header + 0xDF] = 0xED;
-        rom[0x0000] = 0xEA;
-        rom
-    }
-
-    fn make_snes_console(rom_name: &str) -> Console {
-        let mut console = Console::new_snes(AppContext::new_with_config(Config::default()));
-        console
-            .load_rom(&minimal_snes_rom(), rom_name)
-            .expect("minimal SNES ROM should load");
-        console
-    }
-
-    fn gba_keyinput(console: &Console) -> u16 {
-        let Console::GameBoyAdvance(gba) = console else {
-            panic!("expected GBA console");
-        };
-        gba.bus().keypad.read_keyinput()
-    }
-
-    fn make_state() -> NativeAppState {
-        NativeAppState::default()
-    }
-
-    fn with_ctrl(state: &mut NativeAppState) {
-        state.modifiers = ModifiersState::CONTROL;
-    }
-
-    fn with_ctrl_shift(state: &mut NativeAppState) {
-        state.modifiers = ModifiersState::CONTROL | ModifiersState::SHIFT;
-    }
-
-    #[allow(dead_code)]
-    fn buttons(nes: &Nes, port: u8) -> u8 {
-        nes.get_joypad_button_states(port)
-    }
-
-    const BIT_A: u8 = 1 << Button::A as u8;
-    const BIT_B: u8 = 1 << Button::B as u8;
-    const BIT_SELECT: u8 = 1 << Button::Select as u8;
-    const BIT_START: u8 = 1 << Button::Start as u8;
-    const BIT_UP: u8 = 1 << Button::Up as u8;
-    const BIT_DOWN: u8 = 1 << Button::Down as u8;
-    const BIT_LEFT: u8 = 1 << Button::Left as u8;
-    const BIT_RIGHT: u8 = 1 << Button::Right as u8;
-
-    const GBA_KEY_A: u16 = 1 << 0;
-    const GBA_KEY_B: u16 = 1 << 1;
-    const GBA_KEY_SELECT: u16 = 1 << 2;
-    const GBA_KEY_START: u16 = 1 << 3;
-    const GBA_KEY_RIGHT: u16 = 1 << 4;
-    const GBA_KEY_LEFT: u16 = 1 << 5;
-    const GBA_KEY_UP: u16 = 1 << 6;
-    const GBA_KEY_DOWN: u16 = 1 << 7;
-    const GBA_KEY_R: u16 = 1 << 8;
-    const GBA_KEY_L: u16 = 1 << 9;
-
-    // ── Mock audio ────────────────────────────────────────────────────────────
-
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-
-    struct MockAudio {
-        volume: Arc<AtomicU32>,
-    }
-
-    /// Mock audio that tracks whether pause(), resume(), and drain_buffer() have been called.
-    struct TrackingMockAudio {
-        pause_called: Arc<AtomicBool>,
-        resume_called: Arc<AtomicBool>,
-        drain_buffer_called: Arc<AtomicBool>,
-    }
-
-    impl TrackingMockAudio {
-        fn new() -> (Self, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
-            let pause_called = Arc::new(AtomicBool::new(false));
-            let resume_called = Arc::new(AtomicBool::new(false));
-            let drain_buffer_called = Arc::new(AtomicBool::new(false));
-            let audio = Self {
-                pause_called: Arc::clone(&pause_called),
-                resume_called: Arc::clone(&resume_called),
-                drain_buffer_called: Arc::clone(&drain_buffer_called),
-            };
-            (audio, pause_called, resume_called, drain_buffer_called)
-        }
-    }
-
-    impl EmulatorAudio for TrackingMockAudio {
-        fn queue_sample(&mut self, _sample: f32) {}
-        fn resume(&self) {
-            self.resume_called.store(true, Ordering::Relaxed);
-        }
-        fn pause(&self) {
-            self.pause_called.store(true, Ordering::Relaxed);
-        }
-        fn drain_buffer(&self) {
-            self.drain_buffer_called.store(true, Ordering::Relaxed);
-        }
-        fn set_volume(&self, _volume: f32) {}
-        fn get_volume(&self) -> f32 {
-            0.0
-        }
-        fn prime_startup(&mut self, _samples: usize) {}
-        fn take_and_reset_stats(&self) -> (u64, u64, u64) {
-            (0, 0, 0)
-        }
-        fn actual_sample_rate(&self) -> i32 {
-            44100
-        }
-    }
-
-    impl MockAudio {
-        fn new_with_volume(vol: f32) -> Self {
-            Self {
-                volume: Arc::new(AtomicU32::new(f32::to_bits(vol))),
-            }
-        }
-    }
-
-    impl EmulatorAudio for MockAudio {
-        fn queue_sample(&mut self, _sample: f32) {}
-        fn resume(&self) {}
-        fn pause(&self) {}
-        fn set_volume(&self, volume: f32) {
-            self.volume
-                .store(f32::to_bits(volume.clamp(0.0, 1.0)), Ordering::Relaxed);
-        }
-        fn get_volume(&self) -> f32 {
-            f32::from_bits(self.volume.load(Ordering::Relaxed))
-        }
-        fn prime_startup(&mut self, _samples: usize) {}
-        fn take_and_reset_stats(&self) -> (u64, u64, u64) {
-            (0, 0, 0)
-        }
-        fn actual_sample_rate(&self) -> i32 {
-            44100
-        }
     }
 
     // ── Hotkey tests ──────────────────────────────────────────────────────────
