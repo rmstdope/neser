@@ -592,7 +592,15 @@ impl Spc700Bus for SpcBusView<'_> {
             }
             0x00F1 => self.write_control(value),
             0x00F2 => *self.dsp_addr = value & 0x7F,
-            0x00F3 => self.dsp.write_reg(*self.dsp_addr, value),
+            0x00F3 => {
+                trace_apu!(
+                    3;
+                    "SPC writes DSP[${:02X}] = ${:02X}",
+                    *self.dsp_addr,
+                    value
+                );
+                self.dsp.write_reg(*self.dsp_addr, value)
+            }
             0x00F4..=0x00F7 => {
                 let port_idx = (addr - 0x00F4) as usize;
                 trace_apu!(2; "SPC writes port[{}] = ${:02X}", port_idx, value);

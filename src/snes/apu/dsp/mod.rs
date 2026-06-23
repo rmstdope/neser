@@ -147,6 +147,7 @@ impl Sdsp {
             v.gain = self.regs[base + 7];
             v.envx = self.regs[base + 8];
             v.outx = self.regs[base + 9] as i8;
+            v.current_output = i16::from(v.outx) << 8;
             v.mod_source = v.outx;
             v.env_level = u16::from(v.envx) << 4;
             v.mode = if v.env_level == 0 {
@@ -209,7 +210,7 @@ impl Sdsp {
         let mut echo_voice_r = 0i32;
 
         for voice in 0..8usize {
-            let sample = i16::from(self.voices[voice].outx) << 8;
+            let sample = self.voices[voice].current_output;
             let (left, right) = self.mix_voice_sample(voice, sample);
             dry_l += i32::from(left);
             dry_r += i32::from(right);
@@ -343,6 +344,7 @@ impl Sdsp {
             let sample = self.voice_sample(voice, non, aram);
             let out_before_mix = (sample >> 8).clamp(-128, 127) as i8;
             self.voices[voice].mod_source = out_before_mix;
+            self.voices[voice].current_output = sample;
             let (left, right) = self.mix_voice_sample(voice, sample);
             let _mixed = (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
             self.voices[voice].outx = out_before_mix;

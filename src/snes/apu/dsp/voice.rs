@@ -48,6 +48,8 @@ pub struct VoiceState {
     #[serde(default)]
     pub outx: i8,
     #[serde(default)]
+    pub current_output: i16,
+    #[serde(default)]
     pub mod_source: i8,
     #[serde(default)]
     pub mode: EnvelopeMode,

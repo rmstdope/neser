@@ -218,6 +218,30 @@ fn given_non_voice_when_noise_clock_ticks_then_outx_changes_from_silence() {
 }
 
 #[test]
+fn given_full_scale_voice_when_rendering_then_mixer_uses_full_resolution_sample_not_outx_register()
+{
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x0C, 0x7F);
+    dsp.write_reg(0x1C, 0x7F);
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x07, 0x7F); // direct gain => ENVX=0x7F
+    dsp.write_reg(0x6C, 0x00); // unmute
+
+    dsp.step_phase();
+    let (left, right) = dsp.render_stereo_sample();
+
+    assert!(
+        (0.45..0.55).contains(&left),
+        "left channel should use full-resolution voice sample before OUTX quantization"
+    );
+    assert!(
+        (0.45..0.55).contains(&right),
+        "right channel should use full-resolution voice sample before OUTX quantization"
+    );
+}
+
+#[test]
 fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step_is_modulated() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x0C, 127);
@@ -441,6 +465,7 @@ fn given_echo_enabled_when_rendering_with_memory_then_echo_ring_buffer_is_writte
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
     dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     dsp.voices[0].outx = 64;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
 
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
 
@@ -464,6 +489,7 @@ fn given_echo_write_disabled_when_rendering_with_memory_then_echo_buffer_is_not_
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
     dsp.write_reg(0x6C, 0x20); // FLG.5 = echo write disable
     dsp.voices[0].outx = 64;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
 
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
 
@@ -515,10 +541,12 @@ fn given_edl_zero_when_rendering_then_echo_ring_wraps_each_sample() {
     dsp.write_reg(0x7D, 0x00); // EDL=0 => 4-byte ring
     dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     dsp.voices[0].outx = 10;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let first = [aram[0x3000], aram[0x3001], aram[0x3002], aram[0x3003]];
 
     dsp.voices[0].outx = 64;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let second = [aram[0x3000], aram[0x3001], aram[0x3002], aram[0x3003]];
 
@@ -545,16 +573,19 @@ fn given_esa_change_when_rendering_then_write_base_switches_after_one_sample_del
     dsp.write_reg(0x6D, 0x10);
     dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     dsp.voices[0].outx = 24;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let first_base = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
 
     dsp.write_reg(0x6D, 0x20);
     dsp.voices[0].outx = 40;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let delayed_base = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
     let new_base_after_second = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
 
     dsp.voices[0].outx = 56;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let new_base_after_third = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
 
