@@ -110,6 +110,28 @@ fn given_filter3_negative_history_when_decoded_then_fullsnes_signed_rounding_is_
 }
 
 #[test]
+fn given_filter_output_exceeds_positive_15_bit_range_when_decoded_then_sample_wraps_to_negative() {
+    let header = 0b1100_0100;
+    let mut data = [0u8; 8];
+    data[0] = 0x70;
+
+    let decoded = Sdsp::decode_brr_block(header, data, 0x3FFF, 0);
+
+    assert_eq!(decoded.samples[0], -0x0C01);
+}
+
+#[test]
+fn given_filter_output_exceeds_negative_15_bit_range_when_decoded_then_sample_wraps_to_positive() {
+    let header = 0b1100_0100;
+    let mut data = [0u8; 8];
+    data[0] = 0x80;
+
+    let decoded = Sdsp::decode_brr_block(header, data, -1, 0);
+
+    assert_eq!(decoded.samples[0], 0x3FFF);
+}
+
+#[test]
 fn given_voice_pitch_when_step_voice_pitch_then_sample_position_advances() {
     let mut dsp = Sdsp::new();
     dsp.set_voice_pitch(2, 0x1234);
