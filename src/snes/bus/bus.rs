@@ -8,6 +8,14 @@ pub trait SnesBus {
     /// Read a byte from the given address.
     fn read(&self, addr: u32) -> u8;
 
+    /// Read a byte for debugging without mutating bus-visible state.
+    ///
+    /// Implementations should avoid side effects such as MDR updates, register
+    /// acknowledgements, or address latching. The default falls back to `read`.
+    fn read_for_debugger(&self, addr: u32) -> u8 {
+        self.read(addr)
+    }
+
     /// Write a byte to the given address.
     fn write(&mut self, addr: u32, value: u8);
 

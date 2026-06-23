@@ -123,14 +123,14 @@ mod tests {
         rom[base..base + title.len()].copy_from_slice(title);
         rom[base + 0x3C] = 0x00;
         rom[base + 0x3D] = 0x80;
-        rom[base + 0xD5] = mode;
-        rom[base + 0xD6] = chipset;
-        rom[base + 0xD7] = 0x07;
-        rom[base + 0xD8] = ram_size_field;
-        rom[base + 0xDC] = 0x34;
-        rom[base + 0xDD] = 0x12;
-        rom[base + 0xDE] = 0xCB;
-        rom[base + 0xDF] = 0xED;
+        rom[base + 0x15] = mode;
+        rom[base + 0x16] = chipset;
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = ram_size_field;
+        rom[base + 0x1C] = 0x34;
+        rom[base + 0x1D] = 0x12;
+        rom[base + 0x1E] = 0xCB;
+        rom[base + 0x1F] = 0xED;
     }
 
     #[test]
@@ -198,10 +198,10 @@ mod tests {
             0x00,
             b"BAD SUM TEST       \0\0",
         );
-        rom[0x7FC0 + 0xDC] = 0x00;
-        rom[0x7FC0 + 0xDD] = 0x00;
-        rom[0x7FC0 + 0xDE] = 0x00;
-        rom[0x7FC0 + 0xDF] = 0x00;
+        rom[0x7FC0 + 0x1C] = 0x00;
+        rom[0x7FC0 + 0x1D] = 0x00;
+        rom[0x7FC0 + 0x1E] = 0x00;
+        rom[0x7FC0 + 0x1F] = 0x00;
 
         let cart = Cartridge::from_bytes(&rom).expect("cart");
         assert_eq!(cart.mapping(), Mapping::LoRom);
@@ -247,6 +247,15 @@ mod tests {
             .err()
             .expect("should reject garbage");
         assert_eq!(err, CartridgeError::HeaderNotFound);
+    }
+
+    #[test]
+    fn from_bytes_loads_super_mario_kart_rom() {
+        let rom = include_bytes!("../../../roms/games/snes/Super Mario Kart (USA).sfc");
+
+        let cart = Cartridge::from_bytes(rom).expect("cart");
+        assert_eq!(cart.mapping(), Mapping::HiRom);
+        assert_eq!(cart.title(), "SUPER MARIO KART");
     }
 
     #[test]

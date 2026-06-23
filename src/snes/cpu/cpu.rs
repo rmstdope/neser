@@ -6,6 +6,7 @@ use crate::snes::console::save_state::{
     SnesBlockMoveDirection, SnesBlockMoveState, SnesCpuState, SnesSaveState, SnesSaveStateError,
 };
 use crate::snes::cpu::mem_speed::mem_access_cycles;
+use crate::trace_cpu;
 
 // Status register P flags (8 bits)
 // Bit 7: N (Negative)
@@ -592,7 +593,20 @@ impl<B: SnesBus> Cpu<B> {
             return self.dispatch_irq();
         }
 
+        let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
         let opcode = self.fetch_byte();
+        let operands = [
+            opcode,
+            self.bus
+                .read_for_debugger(pc_before.wrapping_add(1) & 0xFF_FFFF),
+            self.bus
+                .read_for_debugger(pc_before.wrapping_add(2) & 0xFF_FFFF),
+            self.bus
+                .read_for_debugger(pc_before.wrapping_add(3) & 0xFF_FFFF),
+        ];
+        if crate::platform::debugging::cpu_trace_level() >= 1 {
+            trace_cpu!(1; "{}", self.format_exec_trace_line(pc_before, &operands));
+        }
         let base = match opcode {
             0x00 => self.op_brk(),
             0x01 => self.op_ora_dp_x_ind(),
@@ -857,9 +871,7 @@ impl<B: SnesBus> Cpu<B> {
         // Internal cycles always consume 6 master clocks (CPU-internal, not a memory access).
         let internal_cycles = total_bus_cycles.saturating_sub(self.memory_bus_cycles);
         for _ in 0..internal_cycles {
-            for _ in 0..6u8 {
-                self.bus.tick();
-            }
+            self.tick_internal_cycle();
         }
 
         total_bus_cycles
@@ -876,6 +888,7 @@ impl<B: SnesBus> Cpu<B> {
     /// Advance the master clock N cycles for `addr`, then read one byte.
     fn tick_read(&mut self, addr: u32) -> u8 {
         let cycles = mem_access_cycles(addr, self.fast_rom);
+        trace_cpu!(2; "      read  ${:06X}", addr);
         for _ in 0..cycles {
             self.bus.tick();
         }
@@ -887,6 +900,7 @@ impl<B: SnesBus> Cpu<B> {
     /// Also intercepts MEMSEL ($420D) writes to update the fast_rom flag.
     fn tick_write(&mut self, addr: u32, value: u8) {
         let cycles = mem_access_cycles(addr, self.fast_rom);
+        trace_cpu!(2; "      write ${:06X} = ${:02X}", addr, value);
         for _ in 0..cycles {
             self.bus.tick();
         }
@@ -3431,6 +3445,13 @@ impl<B: SnesBus> Cpu<B> {
         self.tick_write(addr & 0xFF_FFFF, value);
     }
 
+    fn tick_internal_cycle(&mut self) {
+        trace_cpu!(2; "      internal");
+        for _ in 0..6u8 {
+            self.bus.tick();
+        }
+    }
+
     /// Read two bytes little-endian using linear 24-bit addressing.
     fn read16(&mut self, addr: u32) -> u16 {
         let lo_addr = addr & 0xFF_FFFF;
@@ -3446,6 +3467,97 @@ impl<B: SnesBus> Cpu<B> {
         let hi_addr = lo_addr.wrapping_add(1) & 0xFF_FFFF;
         self.tick_write(lo_addr, value as u8);
         self.tick_write(hi_addr, (value >> 8) as u8);
+    }
+
+    fn format_exec_trace_line(&self, pc: u32, bytes: &[u8; 4]) -> String {
+        let disassembly = self.format_exec_disassembly(pc, bytes);
+        format!(
+            "exec PC={:02X}:{:04X} {:<18} A={:04X} X={:04X} Y={:04X} D={:04X} DBR={:02X} S={:04X} P={:02X} E={}",
+            self.pbr,
+            pc as u16,
+            disassembly,
+            self.a,
+            self.x,
+            self.y,
+            self.d,
+            self.dbr,
+            self.s,
+            self.p,
+            self.e as u8,
+        )
+    }
+
+    fn format_exec_disassembly(&self, pc: u32, bytes: &[u8; 4]) -> String {
+        let opcode = bytes[0];
+        let operand8 = bytes[1];
+        let operand16 = u16::from_le_bytes([bytes[1], bytes[2]]);
+        let operand24 = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], 0]);
+
+        match opcode {
+            0x00 => "BRK".to_string(),
+            0x08 => "PHP".to_string(),
+            0x10 => format!("BPL ${:04X}", Self::branch_target(pc, operand8)),
+            0x18 => "CLC".to_string(),
+            0x20 => format!("JSR ${:04X}", operand16),
+            0x22 => format!("JSL ${:06X}", operand24),
+            0x28 => "PLP".to_string(),
+            0x38 => "SEC".to_string(),
+            0x40 => "RTI".to_string(),
+            0x48 => "PHA".to_string(),
+            0x4C => format!("JMP ${:04X}", operand16),
+            0x5C => format!("JMP ${:06X}", operand24),
+            0x60 => "RTS".to_string(),
+            0x68 => "PLA".to_string(),
+            0x69 => {
+                if self.m_flag() {
+                    format!("ADC #${:02X}", operand8)
+                } else {
+                    format!("ADC #${:04X}", operand16)
+                }
+            }
+            0x6B => "RTL".to_string(),
+            0x7A => "PLY".to_string(),
+            0x8D => format!("STA ${:04X}", operand16),
+            0x8F => format!("STA ${:06X}", operand24),
+            0x90 => format!("BCC ${:04X}", Self::branch_target(pc, operand8)),
+            0xA0 => {
+                if self.x_flag() {
+                    format!("LDY #${:02X}", operand8)
+                } else {
+                    format!("LDY #${:04X}", operand16)
+                }
+            }
+            0xA2 => {
+                if self.x_flag() {
+                    format!("LDX #${:02X}", operand8)
+                } else {
+                    format!("LDX #${:04X}", operand16)
+                }
+            }
+            0xA9 => {
+                if self.m_flag() {
+                    format!("LDA #${:02X}", operand8)
+                } else {
+                    format!("LDA #${:04X}", operand16)
+                }
+            }
+            0xAD => format!("LDA ${:04X}", operand16),
+            0xAF => format!("LDA ${:06X}", operand24),
+            0xB0 => format!("BCS ${:04X}", Self::branch_target(pc, operand8)),
+            0xC2 => format!("REP #${:02X}", operand8),
+            0xD0 => format!("BNE ${:04X}", Self::branch_target(pc, operand8)),
+            0xE2 => format!("SEP #${:02X}", operand8),
+            0xEA => "NOP".to_string(),
+            0xF0 => format!("BEQ ${:04X}", Self::branch_target(pc, operand8)),
+            0xFB => "XCE".to_string(),
+            _ => format!("OP{:02X}", opcode),
+        }
+    }
+
+    fn branch_target(pc: u32, offset: u8) -> u16 {
+        let displacement = (offset as i8) as i16 as u16;
+        let pc = pc as u16;
+        pc.wrapping_add(2).wrapping_add(displacement)
     }
 
     /// Read M-flag width: 8-bit when M=1, 16-bit when M=0.
@@ -3806,15 +3918,27 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn dispatch_nmi(&mut self) -> u8 {
-        self.dispatch_hw_interrupt(0x00FFEA, 0x00FFFA)
+        let cycles = self.dispatch_hw_interrupt(0x00FFEA, 0x00FFFA);
+        if crate::platform::debugging::cpu_trace_level() >= 1 {
+            trace_cpu!(1; "NMI -> PC={:02X}:{:04X}", self.pbr, self.pc);
+        }
+        cycles
     }
 
     fn dispatch_irq(&mut self) -> u8 {
-        self.dispatch_hw_interrupt(0x00FFEE, 0x00FFFE)
+        let cycles = self.dispatch_hw_interrupt(0x00FFEE, 0x00FFFE);
+        if crate::platform::debugging::cpu_trace_level() >= 1 {
+            trace_cpu!(1; "IRQ -> PC={:02X}:{:04X}", self.pbr, self.pc);
+        }
+        cycles
     }
 
     fn dispatch_abort(&mut self) -> u8 {
-        self.dispatch_hw_interrupt(0x00FFE8, 0x00FFF8)
+        let cycles = self.dispatch_hw_interrupt(0x00FFE8, 0x00FFF8);
+        if crate::platform::debugging::cpu_trace_level() >= 1 {
+            trace_cpu!(1; "ABORT -> PC={:02X}:{:04X}", self.pbr, self.pc);
+        }
+        cycles
     }
 
     // -------------------------------------------------------------------------
@@ -4043,6 +4167,39 @@ mod tests {
         cpu.e = false; // Native mode
         cpu.write_s(0x5678);
         assert_eq!(cpu.read_s(), 0x5678); // Full 16-bit
+    }
+
+    #[test]
+    fn exec_trace_line_formats_registers_and_pc() {
+        let mut cpu = Cpu::new(StubBus);
+        cpu.pbr = 0x80;
+        cpu.pc = 0x1234;
+        cpu.a = 0xABCD;
+        cpu.x = 0x1111;
+        cpu.y = 0x2222;
+        cpu.d = 0x3333;
+        cpu.dbr = 0x44;
+        cpu.s = 0x5555;
+        cpu.p = 0x66;
+        cpu.e = false;
+
+        let line = cpu.format_exec_trace_line(0x801234, &[0xEA, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            line,
+            "exec PC=80:1234 NOP                A=ABCD X=1111 Y=2222 D=3333 DBR=44 S=5555 P=66 E=0"
+        );
+    }
+
+    #[test]
+    fn exec_trace_line_formats_immediate_instruction() {
+        let mut cpu = Cpu::new(StubBus);
+        cpu.pbr = 0x80;
+        cpu.pc = 0x1234;
+        cpu.e = false;
+        cpu.p &= !FLAG_ACCUM_WIDTH;
+
+        let line = cpu.format_exec_trace_line(0x801234, &[0xA9, 0x34, 0x12, 0x00]);
+        assert!(line.contains("LDA #$1234"));
     }
 
     #[test]

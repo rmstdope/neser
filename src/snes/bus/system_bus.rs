@@ -248,6 +248,26 @@ impl SnesSystemBus {
         }
     }
 
+    fn read_for_debugger_impl(&self, addr: u32) -> u8 {
+        if let Some(index) = Self::decode_wram_index(addr) {
+            return self.wram[index];
+        }
+
+        if let Some(index) = self.decode_rom_index(addr) {
+            return self.rom.get(index).copied().unwrap_or(self.mdr.get());
+        }
+
+        if let Some(index) = self.decode_sram_index(addr) {
+            return if self.sram.is_empty() {
+                self.mdr.get()
+            } else {
+                self.sram[index % self.sram.len()]
+            };
+        }
+
+        self.read(addr)
+    }
+
     fn dma_write_a_bus_impl(&mut self, addr: u32, value: u8) {
         if Self::is_dma_a_bus_mmio(addr) {
             return;
@@ -719,6 +739,10 @@ impl SnesBus for SnesSystemBus {
         }
     }
 
+    fn read_for_debugger(&self, addr: u32) -> u8 {
+        self.read_for_debugger_impl(addr)
+    }
+
     fn write(&mut self, addr: u32, value: u8) {
         if self.write_mmio(addr, value) {
             return;
@@ -775,14 +799,14 @@ mod tests {
         rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
         rom[base + 0x3C] = 0x00;
         rom[base + 0x3D] = 0x80;
-        rom[base + 0xD5] = map_mode;
-        rom[base + 0xD6] = 0x00;
-        rom[base + 0xD7] = 0x07;
-        rom[base + 0xD8] = ram_size_field;
-        rom[base + 0xDC] = 0x34;
-        rom[base + 0xDD] = 0x12;
-        rom[base + 0xDE] = 0xCB;
-        rom[base + 0xDF] = 0xED;
+        rom[base + 0x15] = map_mode;
+        rom[base + 0x16] = 0x00;
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = ram_size_field;
+        rom[base + 0x1C] = 0x34;
+        rom[base + 0x1D] = 0x12;
+        rom[base + 0x1E] = 0xCB;
+        rom[base + 0x1F] = 0xED;
         Cartridge::from_bytes(rom).expect("valid test cartridge")
     }
 
@@ -802,14 +826,14 @@ mod tests {
         rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
         rom[base + 0x3C] = 0x00;
         rom[base + 0x3D] = 0x80;
-        rom[base + 0xD5] = 0x20;
-        rom[base + 0xD6] = 0x02; // Battery-backed RAM chipset
-        rom[base + 0xD7] = 0x07;
-        rom[base + 0xD8] = 0x05; // 32 KB SRAM
-        rom[base + 0xDC] = 0x34;
-        rom[base + 0xDD] = 0x12;
-        rom[base + 0xDE] = 0xCB;
-        rom[base + 0xDF] = 0xED;
+        rom[base + 0x15] = 0x20;
+        rom[base + 0x16] = 0x02; // Battery-backed RAM chipset
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = 0x05; // 32 KB SRAM
+        rom[base + 0x1C] = 0x34;
+        rom[base + 0x1D] = 0x12;
+        rom[base + 0x1E] = 0xCB;
+        rom[base + 0x1F] = 0xED;
         Cartridge::from_bytes(&rom).expect("valid test cartridge")
     }
 
