@@ -13,6 +13,7 @@ pub mod cli;
 
 mod audio;
 mod autorun;
+mod cartridge;
 mod debugger;
 mod video;
 
@@ -218,7 +219,7 @@ impl FrontendConfig {
         }
 
         // Cartridge catalog arguments
-        self.apply_cartridge_catalog_args(args)?;
+        cartridge::apply_args(self, args)?;
 
         // TUI mode
         #[cfg(feature = "tui")]
@@ -249,6 +250,9 @@ impl FrontendConfig {
             return Ok(());
         }
         if debugger::apply_config_value(self, &key, value)? {
+            return Ok(());
+        }
+        if cartridge::apply_config_value(self, &key, value)? {
             return Ok(());
         }
         match key.as_str() {
@@ -285,103 +289,9 @@ impl FrontendConfig {
                     }
                 }
             },
-            "cartridge_search_paths" => {
-                self.cartridge_search_paths = cli::parse_search_paths(value);
-            }
-            "scan_cartridges" => {
-                if let Ok(scan) = parse_bool(value) {
-                    self.scan_cartridges = scan;
-                }
-            }
-            "rebuild_cartridge_catalog" => {
-                if let Ok(rebuild) = parse_bool(value) {
-                    self.rebuild_cartridge_catalog = rebuild;
-                }
-            }
-            "metadata_db_path" => {
-                self.metadata_db_path = Some(value.to_string());
-            }
-            "image_cache_path" => {
-                self.image_cache_path = Some(value.to_string());
-            }
-            "include_unofficial_roms" => {
-                if let Ok(include) = parse_bool(value) {
-                    self.include_unofficial_roms = include;
-                }
-            }
             _ => {}
         }
         Ok(())
-    }
-
-    /// Parse and apply cartridge catalog arguments.
-    fn apply_cartridge_catalog_args(&mut self, args: &[String]) -> Result<(), String> {
-        if let Some(paths) = parse_cli_string_arg(args, "--cartridge-search-paths") {
-            self.cartridge_search_paths = cli::parse_search_paths(&paths);
-        }
-
-        if let Some(scan) = parse_bool_arg(args, "--scan-cartridges")? {
-            self.scan_cartridges = scan;
-        }
-        if has_negation_flag(args, &["--no-scan-cartridges"]) {
-            self.scan_cartridges = false;
-        }
-
-        if args.iter().any(|arg| arg == "--rebuild-cartridge-catalog") {
-            self.rebuild_cartridge_catalog = true;
-        }
-
-        if let Some(path) = parse_cli_string_arg(args, "--metadata-db-path") {
-            self.metadata_db_path = Some(path);
-        }
-
-        if let Some(path) = parse_cli_string_arg(args, "--image-cache-path") {
-            self.image_cache_path = Some(path);
-        }
-
-        if let Some(include) = parse_bool_arg(args, "--include-unofficial-roms")? {
-            self.include_unofficial_roms = include;
-        }
-
-        Ok(())
-    }
-
-    /// Resolve the metadata database path, falling back to the default.
-    ///
-    /// Returns the configured path, or `~/.neser/metadata.db` if not set.
-    pub fn resolved_metadata_db_path(&self) -> std::path::PathBuf {
-        if let Some(ref p) = self.metadata_db_path {
-            std::path::PathBuf::from(p)
-        } else {
-            let home = std::env::var_os("HOME")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_default();
-            home.join(".neser").join("metadata.db")
-        }
-    }
-
-    /// Resolve the image cache directory path, falling back to the default.
-    ///
-    /// Returns the configured path, or `~/.neser/image_cache/` if not set.
-    pub fn resolved_image_cache_path(&self) -> std::path::PathBuf {
-        if let Some(ref p) = self.image_cache_path {
-            std::path::PathBuf::from(p)
-        } else {
-            let home = std::env::var_os("HOME")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_default();
-            home.join(".neser").join("image_cache")
-        }
-    }
-
-    /// Resolve the favorites file path.
-    ///
-    /// Returns `~/.neser/favorites.json`.
-    pub fn resolved_favorites_path(&self) -> std::path::PathBuf {
-        let home = std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_default();
-        home.join(".neser").join("favorites.json")
     }
 }
 
