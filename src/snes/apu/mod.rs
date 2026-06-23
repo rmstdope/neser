@@ -518,6 +518,12 @@ impl SpcBusView<'_> {
     fn write_control(&mut self, value: u8) {
         let old_control = *self.control;
         *self.control = value;
+        trace_apu!(
+            4;
+            "SPC write $F1 control ${:02X} -> ${:02X}",
+            old_control,
+            value
+        );
         self.timers.write_control(old_control, value);
         if value & 0x10 != 0 {
             self.main_to_spc_ports[0] = 0;
@@ -592,7 +598,10 @@ impl Spc700Bus for SpcBusView<'_> {
                 trace_apu!(2; "SPC writes port[{}] = ${:02X}", port_idx, value);
                 self.spc_to_main_ports[port_idx] = value;
             }
-            0x00FA..=0x00FC => self.timers.write_target((addr - 0x00FA) as usize, value),
+            0x00FA..=0x00FC => {
+                trace_apu!(4; "SPC write timer target ${:04X} = ${:02X}", addr, value);
+                self.timers.write_target((addr - 0x00FA) as usize, value);
+            }
             _ => {
                 if self.ram_write_enabled() {
                     self.aram[addr as usize] = value;

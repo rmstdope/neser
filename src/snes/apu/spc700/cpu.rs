@@ -209,16 +209,6 @@ impl Spc700 {
         }
     }
 
-    /// Add immediate to A with carry, updating N/Z/V/C flags.
-    fn add_to_a(&mut self, imm: u8) {
-        let (result, carry) = self.a.overflowing_add(imm);
-        let overflow = (self.a ^ result) & (imm ^ result) & 0x80 != 0;
-        self.a = result;
-        self.set_flag(FLAG_CARRY, carry);
-        self.set_flag(FLAG_OVERFLOW, overflow);
-        self.update_nz8(self.a);
-    }
-
     /// Add immediate to A with carry bit included, updating N/Z/V/C flags.
     fn add_with_carry_to_a(&mut self, imm: u8) {
         let carry_bit = if self.flag(FLAG_CARRY) { 1 } else { 0 };
@@ -488,6 +478,16 @@ impl Spc700 {
         let mut cycles = 0u8;
         let opcode_pc = self.pc;
         let opcode = self.fetch(bus, &mut cycles);
+        trace_apu!(
+            6;
+            "SPC exec ${:04X}: op=${:02X} A=${:02X} X=${:02X} Y=${:02X} PSW=${:02X}",
+            opcode_pc,
+            opcode,
+            self.a,
+            self.x,
+            self.y,
+            self.psw
+        );
         if (0xFFDA..=0xFFFF).contains(&opcode_pc) {
             trace_apu!(
                 4;
@@ -1440,15 +1440,17 @@ impl Spc700 {
                 self.update_nz8(result);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // ADD A,#imm — add immediate to A, update N/Z/V/C.
+            // ADC A,#imm — add immediate and carry to A, update N/Z/V/C/H.
             0x88 => {
                 let imm = self.fetch(bus, &mut cycles);
-                self.add_to_a(imm);
-            }
-            // ADC A,#imm — add immediate to A with carry, update N/Z/V/C.
-            0x84 => {
-                let imm = self.fetch(bus, &mut cycles);
                 self.add_with_carry_to_a(imm);
+            }
+            // ADC A,dp — add direct-page byte and carry to A, update N/Z/V/C/H.
+            0x84 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.add_with_carry_to_a(value);
             }
             // ADC A,(X).
             0x86 => {
@@ -2380,10 +2382,12 @@ impl Spc700 {
             }
             // SLEEP — halt CPU until external wakeup source.
             0xEF => {
+                trace_apu!(1; "SPC entered SLEEP at ${:04X}", opcode_pc);
                 self.halted = true;
             }
             // STOP — halt CPU clock until reset.
             0xFF => {
+                trace_apu!(1; "SPC entered STOP at ${:04X}", opcode_pc);
                 self.halted = true;
             }
         }
@@ -3820,7 +3824,7 @@ mod tests {
     fn adc_a_imm_with_carry_flag_set() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x84, 0x10]); // ADC A,#$10
+        bus.load(0x0200, &[0x88, 0x10]); // ADC A,#$10
         cpu.load_state_for_processor_test(0x20, 0, 0, 0xEF, 0x0200, FLAG_CARRY);
 
         let _cycles = cpu.step(&mut bus);
@@ -3828,6 +3832,21 @@ mod tests {
         assert_eq!(cpu.a(), 0x31);
         assert!(!cpu.flag(FLAG_CARRY));
         assert!(!cpu.flag(FLAG_OVERFLOW));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn adc_a_dp_uses_direct_page_operand_not_immediate() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x84, 0x10]); // ADC A,$10
+        bus.set(0x0010, 0x05);
+        cpu.load_state_for_processor_test(0x01, 0, 0, 0xEF, 0x0200, FLAG_CARRY);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x07);
+        assert!(!cpu.flag(FLAG_CARRY));
         assert!(!cpu.flag(FLAG_ZERO));
     }
 

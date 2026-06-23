@@ -577,7 +577,12 @@ impl SnesSystemBus {
             0x4217 => (self.rdmpy >> 8) as u8,
             0x420D => self.memsel,
             0x420C => self.hdmaen,
-            0x2140..=0x2143 => self.apu.borrow().read_main_port((offset - 0x2140) as usize),
+            0x2140..=0x2143 => {
+                let port = (offset - 0x2140) as usize;
+                let value = self.apu.borrow().read_main_port(port);
+                trace_apu!(3; "CPU reads port[{}] -> ${:02X}", port, value);
+                value
+            }
             0x2134..=0x213F => self.ppu.borrow_mut().read_register(offset),
             // HVBJOY: bit 0 reports auto-joypad busy, owned by the input ports.
             0x4212 => {
