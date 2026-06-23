@@ -146,3 +146,138 @@ fn parse_breakpoint_list(spec: &str) -> Result<Vec<BreakpointKind>, String> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::platform::config::test_support::parse_config;
+
+    #[test]
+    fn test_config_load_state_flag() {
+        let args = vec!["neser".to_string(), "--load-state".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.load_state);
+    }
+
+    #[test]
+    fn test_config_debugger_enabled() {
+        let args = vec![
+            "neser".to_string(),
+            "--debugger".to_string(),
+            "true".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(config.frontend.debugger_enabled);
+    }
+
+    #[test]
+    fn test_config_tracing_enabled() {
+        let args = vec!["neser".to_string(), "--trace".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 1); // --trace enables CPU tracing at level 1
+    }
+
+    #[test]
+    fn test_config_tracing_nestest() {
+        let args = vec!["neser".to_string(), "--trace-nestest".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert!(config.frontend.tracing.nestest);
+    }
+
+    #[test]
+    fn test_config_tracing_cpu() {
+        let args = vec!["neser".to_string(), "--trace-cpu".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 1);
+    }
+
+    #[test]
+    fn test_config_tracing_ppu() {
+        let args = vec!["neser".to_string(), "--trace-ppu".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.ppu, 1);
+    }
+
+    #[test]
+    fn test_config_tracing_apu() {
+        let args = vec!["neser".to_string(), "--trace-apu".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.apu, 1);
+    }
+
+    #[test]
+    fn test_config_tracing_mapper() {
+        let args = vec!["neser".to_string(), "--trace-mapper".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.mapper, 1);
+    }
+
+    #[test]
+    fn test_config_tracing_cpu_with_level() {
+        let args = vec!["neser".to_string(), "--trace-cpu=2".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 2);
+    }
+
+    #[test]
+    fn test_config_tracing_ppu_with_level() {
+        let args = vec!["neser".to_string(), "--trace-ppu=3".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.ppu, 3);
+    }
+
+    #[test]
+    fn test_config_tracing_ppu_level_is_capped_at_five() {
+        let args = vec!["neser".to_string(), "--trace-ppu=9".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.ppu, 5);
+    }
+
+    #[test]
+    fn test_config_tracing_apu_with_level() {
+        let args = vec!["neser".to_string(), "--trace-apu=4".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.apu, 4);
+    }
+
+    #[test]
+    fn test_config_tracing_mapper_with_level() {
+        let args = vec!["neser".to_string(), "--trace-mapper=5".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.mapper, 5);
+    }
+
+    #[test]
+    fn test_config_tracing_mapper_level_is_capped_at_five() {
+        let args = vec!["neser".to_string(), "--trace-mapper=9".to_string()];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.mapper, 5);
+    }
+
+    #[test]
+    fn test_config_tracing_with_multiple_levels() {
+        let args = vec![
+            "neser".to_string(),
+            "--trace-cpu=3".to_string(),
+            "--trace-ppu=2".to_string(),
+            "--trace-apu=1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(config.frontend.tracing.enabled);
+        assert_eq!(config.frontend.tracing.cpu, 3);
+        assert_eq!(config.frontend.tracing.ppu, 2);
+        assert_eq!(config.frontend.tracing.apu, 1);
+        assert_eq!(config.frontend.tracing.mapper, 0);
+    }
+}

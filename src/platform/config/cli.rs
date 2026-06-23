@@ -730,3 +730,139 @@ pub(crate) fn validate_args(args: &[String]) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ParseResult, help_text};
+    use crate::nes::console::Config;
+    use crate::platform::config::test_support::{config_new, parse_config};
+
+    #[test]
+    fn test_config_help_flag() {
+        let args = vec!["neser".to_string(), "--help".to_string()];
+        match config_new(args).unwrap() {
+            ParseResult::Help => {}
+            ParseResult::Version => panic!("Expected Help, got Version"),
+            ParseResult::Config(_) => panic!("Expected Help"),
+        }
+    }
+
+    #[test]
+    fn test_config_help_flag_short() {
+        let args = vec!["neser".to_string(), "-h".to_string()];
+        match config_new(args).unwrap() {
+            ParseResult::Help => {}
+            ParseResult::Version => panic!("Expected Help, got Version"),
+            ParseResult::Config(_) => panic!("Expected Help"),
+        }
+    }
+
+    #[test]
+    fn test_config_version_flag_returns_version_before_validation() {
+        let args = vec![
+            "neser".to_string(),
+            "--version".to_string(),
+            "--not-a-real-flag".to_string(),
+        ];
+
+        match Config::new(&args).unwrap() {
+            ParseResult::Version => {}
+            ParseResult::Help => panic!("Expected Version, got Help"),
+            ParseResult::Config(_) => panic!("Expected Version, got Config"),
+        }
+    }
+
+    #[test]
+    fn test_help_text_lists_version_flag() {
+        let help = help_text();
+
+        assert!(help.contains("--version"));
+        assert!(help.contains("Print version information and exit"));
+    }
+
+    #[test]
+    fn test_help_text_groups_flags_into_readable_sections() {
+        let help = help_text();
+
+        assert!(help.contains("\nInput:"));
+        assert!(help.contains("\nTrace and Debugging:"));
+        assert!(help.contains("\nSound:"));
+        assert!(help.contains("\nVideo and Display:"));
+        assert!(help.contains("\nAutorun:"));
+        assert!(help.contains("\nCartridge Catalog:"));
+
+        let input_section = help.find("\nInput:").unwrap();
+        let input_flag = help.find("--nes-controller-port1").unwrap();
+        assert!(input_section < input_flag);
+
+        let trace_section = help.find("\nTrace and Debugging:").unwrap();
+        let trace_flag = help.find("--trace-cpu").unwrap();
+        assert!(trace_section < trace_flag);
+
+        let sound_section = help.find("\nSound:").unwrap();
+        let sound_flag = help.find("--audio").unwrap();
+        assert!(sound_section < sound_flag);
+    }
+
+    #[test]
+    fn test_help_text_load_state_is_presence_only_flag() {
+        let help = help_text();
+
+        assert!(help.contains("--load-state"));
+        assert!(!help.contains("--no-load-state"));
+        assert!(!help.contains("--disable-load-state"));
+    }
+
+    #[test]
+    fn test_help_text_lists_audio_buffer_ms_flag() {
+        let help = help_text();
+
+        assert!(help.contains("--audio-buffer-ms"));
+        assert!(help.contains("Target native audio buffering in milliseconds"));
+    }
+
+    #[test]
+    fn test_help_text_lists_audio_sample_rate_flag() {
+        let help = help_text();
+
+        assert!(help.contains("--audio-sample-rate"));
+        assert!(help.contains("Target native audio sample rate in Hz"));
+        assert!(help.contains("22050, 44100, 48000, 96000, 192000"));
+        assert!(help.contains("default: 44100"));
+    }
+
+    #[test]
+    fn test_help_text_oam_dram_decay_shows_default_and_no_negation_aliases() {
+        let help = help_text();
+
+        assert!(help.contains("--nes-oam-dram-decay"));
+        assert!(help.contains("default: false"));
+        assert!(!help.contains("--no-oam-dram-decay"));
+        assert!(!help.contains("--disable-oam-dram-decay"));
+    }
+
+    #[test]
+    fn test_help_text_examples_use_hardware_flag() {
+        let help = help_text();
+
+        assert!(help.contains("neser --nes-hardware nes-pal game.nes"));
+        assert!(!help.contains("--tv-system"));
+    }
+
+    #[test]
+    fn test_config_unknown_argument_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--definitely-not-a-real-flag".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_positional_argument_is_rom_path() {
+        let args = vec!["neser".to_string(), "somefile.nes".to_string()];
+        let config = parse_config(args);
+        assert_eq!(config.frontend.rom_path.as_deref(), Some("somefile.nes"));
+    }
+}

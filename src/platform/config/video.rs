@@ -58,3 +58,114 @@ pub(super) fn apply_config_value(
     }
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::platform::config::test_support::{config_new, parse_config};
+
+    #[test]
+    fn test_config_vsync_false() {
+        let args = vec![
+            "neser".to_string(),
+            "--vsync".to_string(),
+            "false".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(!config.frontend.vsync_enabled);
+    }
+
+    #[test]
+    fn test_config_fullscreen_true() {
+        let args = vec![
+            "neser".to_string(),
+            "--fullscreen".to_string(),
+            "true".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(config.frontend.fullscreen);
+        assert_eq!(config.frontend.fullscreen_display, None);
+    }
+
+    #[test]
+    fn test_config_fullscreen_with_display() {
+        let args = vec![
+            "neser".to_string(),
+            "--fullscreen".to_string(),
+            "true".to_string(),
+            "--display".to_string(),
+            "1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(config.frontend.fullscreen);
+        assert_eq!(config.frontend.fullscreen_display, Some(1));
+    }
+
+    #[test]
+    fn test_config_display_without_fullscreen_is_ignored() {
+        let args = vec![
+            "neser".to_string(),
+            "--display".to_string(),
+            "1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(!config.frontend.fullscreen);
+        assert_eq!(config.frontend.fullscreen_display, None);
+    }
+
+    #[test]
+    fn test_config_display_missing_value_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--fullscreen".to_string(),
+            "--display".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_display_invalid_value_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--fullscreen".to_string(),
+            "--display".to_string(),
+            "abc".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_display_negative_value_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--fullscreen".to_string(),
+            "--display".to_string(),
+            "-1".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_window_height() {
+        let args = vec![
+            "neser".to_string(),
+            "--window-height".to_string(),
+            "720".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.frontend.window_height, 720);
+    }
+
+    #[test]
+    fn test_config_window_height_invalid_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--window-height".to_string(),
+            "not_a_number".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err());
+    }
+}
