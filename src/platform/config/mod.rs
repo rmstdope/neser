@@ -194,12 +194,12 @@ pub struct Config {
 impl FrontendConfig {
     /// Apply command-line arguments to frontend configuration.
     ///
-    /// Parses platform-level CLI flags (audio, vsync, fullscreen, display, window,
-    /// debugger, gamepads, load-state, ram-init, breakpoints, TUI, cartridge discovery,
-    /// autorun, tracing).
+    /// Delegates to the per-domain modules to parse platform-level CLI flags
+    /// (audio; video/window; debugger, tracing and breakpoints; autorun;
+    /// cartridge discovery) plus the general gamepads, ram-init, and TUI flags.
     ///
-    /// Note: ROM path and shader path parsing remain in Config::apply_args() for now
-    /// (they require complex flag validation logic).
+    /// Note: ROM path, shader path, and `--display` parsing remain in
+    /// `Config::apply_args()` (they require complex flag validation logic).
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
         // Boolean flags (support both value-based and prefix negation)
         audio::apply_args(self, args)?;
@@ -239,8 +239,9 @@ impl FrontendConfig {
 
     /// Apply a single config file key-value pair to frontend configuration.
     ///
-    /// Handles platform-level config keys (audio, vsync, fullscreen, display,
-    /// window_height, debugger_alpha, tracing keys, ram_init_mode, etc.).
+    /// Normalizes dashed keys to underscores, then delegates to the per-domain
+    /// modules (audio, video, debugger, cartridge). The general `gamepads` and
+    /// `ram_init_mode` keys are handled here. Unknown keys are ignored.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
         if audio::apply_config_value(self, &key, value)? {
