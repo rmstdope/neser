@@ -13,6 +13,7 @@ pub mod cli;
 
 mod audio;
 mod autorun;
+mod debugger;
 mod video;
 
 pub use cli::ParseResult;
@@ -208,23 +209,7 @@ impl FrontendConfig {
             self.gamepads_enabled = gamepads;
         }
 
-        // Debugger: --debugger true/false
-        if let Some(debugger) = parse_bool_arg(args, "--debugger")? {
-            self.debugger_enabled = debugger;
-        }
-
-        // Load state: --load-state true/false
-        if let Some(load_state) = parse_bool_arg(args, "--load-state")? {
-            self.load_state = load_state;
-        }
-
-        // Tracing (merge with existing config file values)
-        self.tracing.apply_args(args);
-
-        // Debugger alpha
-        if let Some(alpha) = cli::parse_f32_arg(args, "--debugger-alpha")? {
-            self.debugger_alpha = alpha.clamp(0.1, 1.0);
-        }
+        debugger::apply_args(self, args)?;
 
         // RAM initialization mode
         let cli_ram_init_mode = parse_cli_string_arg(args, "--ram-init-mode");
@@ -248,12 +233,6 @@ impl FrontendConfig {
 
         autorun::apply_args(self, args, cli_ram_init_mode.as_deref())?;
 
-        // Breakpoints from --breakpoint flag (comma-separated list)
-        if let Some(value) = parse_cli_string_arg(args, "--breakpoint") {
-            self.breakpoints =
-                parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
-        }
-
         Ok(())
     }
 
@@ -269,65 +248,13 @@ impl FrontendConfig {
         if video::apply_config_value(self, &key, value)? {
             return Ok(());
         }
+        if debugger::apply_config_value(self, &key, value)? {
+            return Ok(());
+        }
         match key.as_str() {
             "gamepads" => {
                 if let Ok(b) = parse_bool(value) {
                     self.gamepads_enabled = b;
-                }
-            }
-            "debugger" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.debugger_enabled = b;
-                }
-            }
-            "load_state" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.load_state = b;
-                }
-            }
-            "debugger_alpha" => {
-                if let Ok(v) = value.parse::<f32>() {
-                    self.debugger_alpha = v.clamp(0.1, 1.0);
-                }
-            }
-            "trace_cpu" => {
-                if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.cpu = level;
-                    if level > 0 {
-                        self.tracing.enabled = true;
-                    }
-                }
-            }
-            "trace_ppu" => {
-                if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.ppu = Tracing::clamp_ppu_level(level);
-                    if level > 0 {
-                        self.tracing.enabled = true;
-                    }
-                }
-            }
-            "trace_apu" => {
-                if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.apu = level;
-                    if level > 0 {
-                        self.tracing.enabled = true;
-                    }
-                }
-            }
-            "trace_mapper" => {
-                if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.mapper = Tracing::clamp_mapper_level(level);
-                    if level > 0 {
-                        self.tracing.enabled = true;
-                    }
-                }
-            }
-            "trace_nestest" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.tracing.nestest = b;
-                    if b {
-                        self.tracing.enabled = true;
-                    }
                 }
             }
             "ram_init_mode" => match value.to_lowercase().as_str() {
@@ -456,53 +383,6 @@ impl FrontendConfig {
             .unwrap_or_default();
         home.join(".neser").join("favorites.json")
     }
-}
-
-/// Parse a 16-bit hex address (with or without `0x` prefix).
-pub(crate) fn parse_hex_addr(s: &str) -> Option<u16> {
-    let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
-    u16::from_str_radix(s, 16).ok()
-}
-
-/// Parse a comma-separated breakpoint specification string into a list of [`BreakpointKind`].
-///
-/// Each entry is in the format `type=value`:
-/// - `pc=ADDR` — PC breakpoint (hex address, e.g. `C000` or `0xC000`)
-/// - `cycle=N` — Cycle breakpoint (decimal number)
-/// - `frame=N` — Frame breakpoint (decimal number)
-/// - `write=ADDR` — Write-address breakpoint (hex address)
-///
-/// Returns an error string if any entry is unrecognised or malformed.
-pub(crate) fn parse_breakpoint_list(spec: &str) -> Result<Vec<BreakpointKind>, String> {
-    spec.split(',')
-        .map(|entry| {
-            let entry = entry.trim();
-            let (kind, value) = entry
-                .split_once('=')
-                .ok_or_else(|| format!("invalid breakpoint '{entry}': expected format type=value (e.g. pc=C000, cycle=100, frame=60, write=2006)"))?;
-            match kind.trim() {
-                "pc" => parse_hex_addr(value)
-                    .map(BreakpointKind::Pc)
-                    .ok_or_else(|| format!("invalid breakpoint address '{value}': expected a hex address (e.g. C000)")),
-                "cycle" => value
-                    .trim()
-                    .parse::<u64>()
-                    .map(BreakpointKind::Cycle)
-                    .map_err(|_| format!("invalid breakpoint cycle '{value}': expected a decimal number")),
-                "frame" => value
-                    .trim()
-                    .parse::<u64>()
-                    .map(BreakpointKind::Frame)
-                    .map_err(|_| format!("invalid breakpoint frame '{value}': expected a decimal number")),
-                "write" => parse_hex_addr(value)
-                    .map(BreakpointKind::WriteAddress)
-                    .ok_or_else(|| format!("invalid breakpoint address '{value}': expected a hex address (e.g. 2006)")),
-                other => Err(format!(
-                    "invalid breakpoint type '{other}': expected pc, cycle, frame, or write"
-                )),
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
