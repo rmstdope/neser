@@ -51,7 +51,7 @@ fn given_brr_header_with_loop_and_end_bits_when_decoded_then_flags_are_exposed()
 }
 
 #[test]
-fn given_filter0_shift0_nibbles_when_decoded_then_positive_and_negative_samples_survive() {
+fn given_filter0_shift0_nibbles_when_decoded_then_samples_are_halved_to_15_bit_scale() {
     let header = 0b0000_0000;
     let mut data = [0u8; 8];
     data[0] = 0x78;
@@ -59,10 +59,34 @@ fn given_filter0_shift0_nibbles_when_decoded_then_positive_and_negative_samples_
 
     let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
 
-    assert_eq!(decoded.samples[0], 7);
-    assert_eq!(decoded.samples[1], -8);
+    assert_eq!(decoded.samples[0], 3);
+    assert_eq!(decoded.samples[1], -4);
     assert_eq!(decoded.samples[2], 0);
     assert_eq!(decoded.samples[3], -1);
+}
+
+#[test]
+fn given_filter0_shift12_nibbles_when_decoded_then_samples_are_15_bit_scaled() {
+    let header = 0b1100_0000;
+    let mut data = [0u8; 8];
+    data[0] = 0x78;
+
+    let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
+
+    assert_eq!(decoded.samples[0], 0x3800);
+    assert_eq!(decoded.samples[1], -0x4000);
+}
+
+#[test]
+fn given_reserved_shift_nibbles_when_decoded_then_negative_samples_use_shift12_sign_fill() {
+    let header = 0b1111_0000;
+    let mut data = [0u8; 8];
+    data[0] = 0x78;
+
+    let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
+
+    assert_eq!(decoded.samples[0], 0);
+    assert_eq!(decoded.samples[1], -2048);
 }
 
 #[test]

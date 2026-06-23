@@ -41,7 +41,7 @@ fn decode_brr_nibble(raw: i16, shift: u8, filter: u8, prev1: i16, prev2: i16) ->
     let base = if shift > 12 {
         if raw >= 0 { 0 } else { -2048 }
     } else {
-        i32::from(raw) << shift
+        (i32::from(raw) << shift) >> 1
     };
     let predict = match filter {
         0 => 0,
