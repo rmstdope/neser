@@ -5,6 +5,42 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-06-23 - #2831 / PR #2866: Split native keyboard.rs into hotkeys/dispatch/mapping + merge
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2866
+**Linked issues:** #2831 (epic #2825, item I1.5)
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Prompt/instruction | `[[PLAN]]` mode + "interview relentlessly" directive | Resolved the design forks (minimal-move vs extract-and-separate, module map, test placement) before coding. |
+| Instruction | Repo custom instructions (TDD, four-eye, incremental, validation gate, `gh`) | Governed the small-increment loop and the issue/branch/PR/merge workflow. |
+| Skill (implicit) | `rust-code-refactoring` / `clean-coder` | Guided the behavior-preserving file split into cohesive `hotkeys`/`console_keyboard`/`controller_mapping` modules. |
+| Skill (implicit) | `test-driven-development` | Used the existing 88 keyboard tests as the safety net validated after each extraction. |
+| Skill | `self-learning-skills` | Captured this post-merge retrospective entry. |
+
+### What went well
+
+- **Minimal-move decision paid off:** Confirming "relocate whole free functions, no body restructuring" up front made every extraction a pure move — public entry points stayed in `mod.rs`, so the `keyboard::{...}` paths needed **no re-exports** (simpler than the #2830 config split).
+- **Incremental extract→build→test→commit loop:** Moving one submodule at a time (controller_mapping → hotkeys → console_keyboard) with the 88-test safety net caught a script bug immediately (the hotkeys extraction over-grabbed 4 lines of `handle_gameboy_key_pressed`'s doc comment).
+- **Section-based test redistribution:** The pre-existing `// ──` section comments grouped tests by domain, so the ~1,400-line test block split cleanly into modules; `cargo fix --lib --tests` removed the resulting unused imports in one pass.
+- **Disciplined CI handling:** When `web-integration` failed, I proved it was a flaky, newly-added SNES **web** Playwright test unrelated to a native-Rust change (same web build passed earlier; failed/passed inconsistently on its own PR #2823), documented the evidence on the PR, and did **not** override a red check — it went green on retry and was merged legitimately.
+
+### What to improve
+
+- **Range-based extraction is fragile:** The doc-comment over-grab happened because a hard-coded line range straddled an adjacent item. Prefer anchoring on item boundaries (function signature / matching brace) over absolute line numbers when scripting moves, and always diff the extracted file for stray leading/trailing lines.
+- **Native frontend tests aren't in the default `test-dir.sh` path:** `./scripts/test-dir.sh src/frontends` runs `--no-default-features`, which excludes the `native` feature → 0 keyboard tests. Validate native frontend changes with default/`--features native` (e.g. `cargo test --lib frontends::native`) and note this in the PR.
+- **Flaky `web-integration` (snes-frontend-flow) costs cycles:** The pause/resume Playwright test (`BrokenPipeError`) failed ~5× before passing. Worth quarantining/stabilizing it separately so unrelated PRs aren't blocked.
+- **Shared-env disk pressure recurred:** `target/` hit 100% again mid-task; pruning `target/**/incremental` (safe) unblocked it. Consider doing this proactively on long build-heavy sessions.
+
+### Navigator feedback
+
+- Directives: "address the review comments, then ensure ci runs green and then merge" and (when unavailable) "work autonomously and make good decisions; if unresolvable, stop and summarize." Addressed both Copilot doc-accuracy comments (`handle_controller_key` P2 routing, `handle_common_hotkey` F1/F2/F3), pursued genuine green CI rather than overriding the flaky red check, and merged once all checks passed.
+
+---
+
 ## 2026-06-23 - #2830 / PR #2863: Split platform/config.rs into per-domain modules + merge
 
 **Repository:** rmstdope/neser
