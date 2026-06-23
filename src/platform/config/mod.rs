@@ -12,6 +12,7 @@ use crate::platform::debugging::breakpoints::BreakpointKind;
 pub mod cli;
 
 mod audio;
+mod autorun;
 mod video;
 
 pub use cli::ParseResult;
@@ -245,112 +246,7 @@ impl FrontendConfig {
             return Err("--tui requires the `tui` feature (build with --features tui)".to_string());
         }
 
-        // Autorun mode flags
-        let has_create_recording = args.iter().any(|arg| arg == "--create-recording");
-        let has_extend_recording = args.iter().any(|arg| arg == "--extend-recording");
-        let has_playback = args.iter().any(|arg| arg == "--playback");
-        let has_playback_headless = args.iter().any(|arg| arg == "--playback-headless");
-
-        if has_create_recording && has_extend_recording {
-            return Err(
-                "Cannot specify both --create-recording and --extend-recording".to_string(),
-            );
-        }
-        if (has_create_recording || has_extend_recording) && (has_playback || has_playback_headless)
-        {
-            return Err("Cannot specify both a recording flag and a playback flag".to_string());
-        }
-
-        if has_create_recording {
-            self.autorun_mode = AutorunMode::Record;
-            self.autorun_overwrite = true;
-        } else if has_extend_recording {
-            self.autorun_mode = AutorunMode::Record;
-            self.autorun_extend = true;
-        } else if has_playback || has_playback_headless {
-            self.autorun_mode = AutorunMode::Playback;
-            self.autorun_headless = has_playback_headless;
-        }
-
-        if let Some(v) = cli::parse_i64_arg(args, "--playback-from-checkpoint")? {
-            self.autorun_from_checkpoint = Some(v);
-            // Implies playback mode if no explicit mode was set
-            if self.autorun_mode == AutorunMode::None {
-                self.autorun_mode = AutorunMode::Playback;
-            }
-        }
-
-        if let Some(v) = cli::parse_i64_arg(args, "--playback-headless-from-checkpoint")? {
-            self.autorun_from_checkpoint = Some(v);
-            self.autorun_mode = AutorunMode::Playback;
-            self.autorun_headless = true;
-        }
-
-        if let Some(v) = parse_u32_arg(args, "--trim-checkpoints")? {
-            self.autorun_trim_checkpoints = Some(v as usize);
-        }
-
-        if let Some(convert_autorun_requested) = parse_bool_arg(args, "--convert-autorun")? {
-            self.autorun_convert = convert_autorun_requested;
-        }
-
-        if let Some(recalculate_autorun_requested) = parse_bool_arg(args, "--recalculate-autorun")?
-        {
-            self.autorun_recalculate = recalculate_autorun_requested;
-        }
-
-        if let Some(format_str) = parse_cli_string_arg(args, "--autorun-format") {
-            self.autorun_format = match format_str.as_str() {
-                "binary" => AutorunFormat::Binary,
-                "json" => AutorunFormat::Json,
-                other => {
-                    return Err(format!(
-                        "Unknown autorun format '{other}': expected 'binary' or 'json'"
-                    ));
-                }
-            };
-        }
-
-        // Autorun validation
-        if self.autorun_trim_checkpoints.is_some() && self.autorun_convert {
-            return Err("Cannot specify both --trim-checkpoints and --convert-autorun".to_string());
-        }
-
-        if self.autorun_trim_checkpoints.is_some() && self.autorun_recalculate {
-            return Err(
-                "Cannot specify both --trim-checkpoints and --recalculate-autorun".to_string(),
-            );
-        }
-
-        if self.autorun_convert && self.autorun_recalculate {
-            return Err(
-                "Cannot specify both --convert-autorun and --recalculate-autorun".to_string(),
-            );
-        }
-
-        if self.autorun_recalculate && self.autorun_mode != AutorunMode::None {
-            return Err(
-                "Cannot combine --recalculate-autorun with recording/playback flags".to_string(),
-            );
-        }
-
-        if self.autorun_recalculate && self.autorun_from_checkpoint.is_some() {
-            return Err(
-                "Cannot combine --recalculate-autorun with checkpoint playback flags".to_string(),
-            );
-        }
-
-        // Autorun recording/playback must be deterministic.
-        // Force zero-initialized RAM when autorun is active, and reject an explicit
-        // non-zero CLI --ram-init-mode for these modes.
-        if self.autorun_mode != AutorunMode::None || self.autorun_recalculate {
-            if let Some(value) = cli_ram_init_mode.as_ref()
-                && !value.eq_ignore_ascii_case("zero")
-            {
-                return Err("Autorun recording/playback requires --ram-init-mode zero".to_string());
-            }
-            self.ram_init_mode = RamInitMode::Zero;
-        }
+        autorun::apply_args(self, args, cli_ram_init_mode.as_deref())?;
 
         // Breakpoints from --breakpoint flag (comma-separated list)
         if let Some(value) = parse_cli_string_arg(args, "--breakpoint") {
