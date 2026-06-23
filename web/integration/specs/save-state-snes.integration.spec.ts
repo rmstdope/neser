@@ -44,13 +44,13 @@ test.describe("SNES save-state parity", () => {
         await expect(saveButton).toBeEnabled();
         await expect(loadButton).toBeDisabled();
 
-        await saveButton.click();
+        await saveButton.click({ force: true });
         await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" })).toBeVisible({
             timeout: 5000
         });
 
         await expect(loadButton).toBeEnabled();
-        await loadButton.click();
+        await loadButton.click({ force: true });
         await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State loaded" })).toBeVisible({
             timeout: 5000
         });

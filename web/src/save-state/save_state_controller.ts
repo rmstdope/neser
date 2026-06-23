@@ -1,12 +1,14 @@
+import type { SaveStateRuntime } from "./save_state_runtime";
+
 export function createSaveStateController({
-    nes,
+    runtime,
     db,
     key,
     saveStateFn,
     loadStateFn,
     setStatus
 }: {
-    nes: { save_state_bytes(): Uint8Array; load_state_bytes(bytes: Uint8Array): void };
+    runtime: SaveStateRuntime;
     db: IDBDatabase;
     key: string;
     saveStateFn: (db: IDBDatabase, key: string, bytes: Uint8Array) => Promise<void>;
@@ -15,7 +17,7 @@ export function createSaveStateController({
 }) {
     async function save() {
         try {
-            const bytes = nes.save_state_bytes();
+            const bytes = runtime.save_state_bytes();
             if (!bytes || bytes.length === 0) {
                 setStatus("Failed to save state", true);
                 return false;
@@ -37,7 +39,7 @@ export function createSaveStateController({
                 setStatus("No save state found", true);
                 return false;
             }
-            nes.load_state_bytes(bytes);
+            runtime.load_state_bytes(bytes);
             setStatus("State loaded", false);
             return true;
         } catch (error) {
