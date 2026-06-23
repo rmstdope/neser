@@ -12,6 +12,7 @@ use crate::platform::debugging::breakpoints::BreakpointKind;
 pub mod cli;
 
 mod audio;
+mod video;
 
 pub use cli::ParseResult;
 pub(crate) use cli::{
@@ -199,14 +200,7 @@ impl FrontendConfig {
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
         // Boolean flags (support both value-based and prefix negation)
         audio::apply_args(self, args)?;
-
-        // VSync: --vsync true/false, --no-vsync, --disable-vsync
-        if let Some(vsync) = parse_bool_arg(args, "--vsync")? {
-            self.vsync_enabled = vsync;
-        }
-        if has_negation_flag(args, &["--no-vsync", "--disable-vsync"]) {
-            self.vsync_enabled = false;
-        }
+        video::apply_args(self, args)?;
 
         // Gamepads: --gamepads true/false
         if let Some(gamepads) = parse_bool_arg(args, "--gamepads")? {
@@ -223,18 +217,8 @@ impl FrontendConfig {
             self.load_state = load_state;
         }
 
-        // Fullscreen (value-based)
-        if let Some(fullscreen) = parse_bool_arg(args, "--fullscreen")? {
-            self.fullscreen = fullscreen;
-        }
-
         // Tracing (merge with existing config file values)
         self.tracing.apply_args(args);
-
-        // Window height
-        if let Some(height) = parse_u32_arg(args, "--window-height")? {
-            self.window_height = height;
-        }
 
         // Debugger alpha
         if let Some(alpha) = cli::parse_f32_arg(args, "--debugger-alpha")? {
@@ -386,27 +370,13 @@ impl FrontendConfig {
         if audio::apply_config_value(self, &key, value)? {
             return Ok(());
         }
+        if video::apply_config_value(self, &key, value)? {
+            return Ok(());
+        }
         match key.as_str() {
-            "vsync" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.vsync_enabled = b;
-                }
-            }
             "gamepads" => {
                 if let Ok(b) = parse_bool(value) {
                     self.gamepads_enabled = b;
-                }
-            }
-            "fullscreen" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.fullscreen = b;
-                }
-            }
-            "display" => {
-                if let Ok(d) = value.parse::<i32>()
-                    && d >= 0
-                {
-                    self.fullscreen_display = Some(d);
                 }
             }
             "debugger" => {
@@ -417,11 +387,6 @@ impl FrontendConfig {
             "load_state" => {
                 if let Ok(b) = parse_bool(value) {
                     self.load_state = b;
-                }
-            }
-            "window_height" => {
-                if let Ok(s) = value.parse::<u32>() {
-                    self.window_height = s;
                 }
             }
             "debugger_alpha" => {
