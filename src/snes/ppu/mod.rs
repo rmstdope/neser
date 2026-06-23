@@ -510,6 +510,22 @@ impl Ppu {
             x
         }
     }
+
+    pub(super) fn format_trace_tick_line(&self) -> String {
+        format!(
+            "tick y={} x={} inidisp={:02X} nmi={} vblank={} irq={} frame={} mode={} tm={:02X} ts={:02X}",
+            self.position.scanline,
+            self.position.dot,
+            self.inidisp,
+            self.nmi_enable as u8,
+            self.vblank_active as u8,
+            self.irq_line as u8,
+            self.frame_complete as u8,
+            self.bg_mode,
+            self.tm,
+            self.ts,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -522,6 +538,26 @@ mod tests {
         for _ in 0..ticks {
             ppu.tick();
         }
+    }
+
+    #[test]
+    fn trace_tick_line_includes_key_ppu_state() {
+        let mut ppu = Ppu::new();
+        ppu.position.scanline = 240;
+        ppu.position.dot = 2;
+        ppu.inidisp = 0x8F;
+        ppu.nmi_enable = true;
+        ppu.vblank_active = true;
+        ppu.irq_line = true;
+        ppu.frame_complete = true;
+        ppu.bg_mode = 7;
+        ppu.tm = 0x1F;
+        ppu.ts = 0x10;
+
+        assert_eq!(
+            ppu.format_trace_tick_line(),
+            "tick y=240 x=2 inidisp=8F nmi=1 vblank=1 irq=1 frame=1 mode=7 tm=1F ts=10"
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
 use crate::snes::input::{InputPorts, SnesButton};
 use crate::snes::ppu::{Ppu, SnesVideoRegion};
+use crate::trace_apu;
 use std::cell::{Cell, RefCell};
 use std::fs;
 
@@ -659,6 +660,7 @@ impl SnesSystemBus {
                 true
             }
             0x2140..=0x2143 => {
+                trace_apu!(2; "CPU writes port[{}] = ${:02X}", offset - 0x2140, value);
                 self.apu
                     .borrow_mut()
                     .write_main_port((offset - 0x2140) as usize, value);

@@ -3,6 +3,8 @@
 //! This slice wires the 64 KB ARAM, clean-room IPL boot ROM overlay, SPC700 CPU,
 //! and the four communication ports (`$2140-$2143` <-> `$F4-$F7`).
 
+use crate::trace_apu;
+
 pub mod dsp;
 pub mod ipl;
 pub mod spc700;
@@ -578,7 +580,11 @@ impl Spc700Bus for SpcBusView<'_> {
             0x00F1 => self.write_control(value),
             0x00F2 => *self.dsp_addr = value & 0x7F,
             0x00F3 => self.dsp.write_reg(*self.dsp_addr, value),
-            0x00F4..=0x00F7 => self.spc_to_main_ports[(addr - 0x00F4) as usize] = value,
+            0x00F4..=0x00F7 => {
+                let port_idx = (addr - 0x00F4) as usize;
+                trace_apu!(2; "SPC writes port[{}] = ${:02X}", port_idx, value);
+                self.spc_to_main_ports[port_idx] = value;
+            }
             0x00FA..=0x00FC => self.timers.write_target((addr - 0x00FA) as usize, value),
             _ => {
                 if self.ram_write_enabled() {
