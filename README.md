@@ -7,12 +7,14 @@ Supported emulation targets:
 - Nintendo Entertainment System / Famicom / related variants
 - Game Boy and Game Boy Color
 - Game Boy Advance
+- Super Nintendo Entertainment System (SNES)
 
 For emulator-specific options and notes, see:
 
 - [NES-specific documentation](README-NES.md)
 - [Game Boy-specific documentation](README-GB.md)
 - [Game Boy Advance-specific documentation](README-GBA.md)
+- [SNES-specific documentation](README-SNES.md)
 
 ## Installation
 
@@ -67,6 +69,7 @@ cargo run --release --bin neser --
 cargo run --release --bin neser -- path/to/game.nes
 cargo run --release --bin neser -- path/to/game.gb
 cargo run --release --bin neser -- path/to/game.gba
+cargo run --release --bin neser -- path/to/game.sfc
 ```
 
 The repository contains multiple binaries, so include `--bin neser` when using `cargo run`.
@@ -99,6 +102,8 @@ neser --config path/to/neser.conf path/to/rom
 ## Web frontend
 
 The browser frontend is built from the Rust WASM target and the JavaScript frontend under `web/`.
+
+Supported ROM extensions in the web frontend include `.nes`, `.gb`/`.gbc`/`.cgb`, `.gba`, and SNES `.sfc`/`.smc`.
 
 See [web/README.md](web/README.md) for detailed prerequisites, build, run, and test commands.
 
@@ -158,6 +163,7 @@ System-specific controls and controller options are documented in:
 - [README-NES.md](README-NES.md)
 - [README-GB.md](README-GB.md)
 - [README-GBA.md](README-GBA.md)
+- [README-SNES.md](README-SNES.md)
 
 ## Development
 

@@ -424,7 +424,6 @@ nes-vertical_overscan=8
 #   - mouse:      SNES Mouse
 #   - superscope: Super Scope light gun
 # Note: multitap is currently supported on port 2. Configuring multitap on port 1
-# falls back to a standard controller. Mouse and Super Scope still fall back to
-# standard until implemented.
+# falls back to a standard controller.
 #snes-controller-port1=standard
 #snes-controller-port2=standard
