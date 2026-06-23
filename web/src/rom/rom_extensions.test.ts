@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionForName } from "./rom_extensions";
+import {
+    isSupportedWebRomName,
+    supportedRomExtensionsText,
+    webRomConsoleKindForName,
+    webRomExtensionForName
+} from "./rom_extensions";
 
 it("classifies NES ROM names as NES", () => {
     expect(webRomConsoleKindForName("mario.nes")).toBe("nes");
@@ -23,6 +28,14 @@ it("classifies SNES ROM names as SNES", () => {
     expect(webRomConsoleKindForName("mario.smc")).toBe("snes");
     expect(webRomConsoleKindForName("GAME.SFC")).toBe("snes");
     expect(webRomConsoleKindForName("GAME.SMC")).toBe("snes");
+});
+
+it("supports SNES ROM names", () => {
+    expect(isSupportedWebRomName("zelda.sfc")).toBe(true);
+    expect(isSupportedWebRomName("mario.smc")).toBe(true);
+    expect(isSupportedWebRomName("GAME.SFC")).toBe(true);
+    expect(isSupportedWebRomName("GAME.SMC")).toBe(true);
+    expect(isSupportedWebRomName("notes.txt")).toBe(false);
 });
 
 it("rejects unsupported web ROM extensions", () => {
