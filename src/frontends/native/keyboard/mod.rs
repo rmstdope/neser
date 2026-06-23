@@ -1,14 +1,17 @@
 //! Keyboard input and hotkey handling for the native frontend.
 //!
-//! This module maps winit [`KeyCode`]s to NES controller buttons, SNES
-//! buttons, and Power Pad buttons, and dispatches system hotkeys such as
-//! Ctrl+Q (quit), Ctrl+R (reset), Space (pause), and so on.
+//! Exposes the entry points ([`handle_key_pressed`], [`handle_key_released`],
+//! [`keyboard_target_ports`], [`KeyOutcome`]) and delegates to per-domain
+//! submodules: [`hotkeys`] (system/debugger/cartridge-switch hotkeys),
+//! [`console_keyboard`] (per-console press dispatch), and [`controller_mapping`]
+//! (key→button mapping tables).
 
 use crate::frontends::native::app_state::NativeAppState;
 use crate::platform::audio::EmulatorAudio;
 use crate::platform::emulator::Console;
 use winit::keyboard::KeyCode;
 
+mod console_keyboard;
 mod controller_mapping;
 mod hotkeys;
 
@@ -63,11 +66,17 @@ pub fn handle_key_pressed(
             if app_state.modifiers.control_key() {
                 return hotkeys::handle_ctrl_hotkey(console, key_code, app_state);
             }
-            handle_unmodified_key(console, key_code, app_state, audio)
+            console_keyboard::handle_unmodified_key(console, key_code, app_state, audio)
         }
-        Console::GameBoy(_) => handle_gameboy_key_pressed(console, key_code, app_state, audio),
-        Console::GameBoyAdvance(_) => handle_gba_key_pressed(console, key_code, app_state, audio),
-        Console::Snes(_) => handle_snes_key_pressed(console, key_code, app_state, audio),
+        Console::GameBoy(_) => {
+            console_keyboard::handle_gameboy_key_pressed(console, key_code, app_state, audio)
+        }
+        Console::GameBoyAdvance(_) => {
+            console_keyboard::handle_gba_key_pressed(console, key_code, app_state, audio)
+        }
+        Console::Snes(_) => {
+            console_keyboard::handle_snes_key_pressed(console, key_code, app_state, audio)
+        }
     }
 }
 
@@ -138,141 +147,6 @@ pub fn keyboard_target_ports(gamepad_count: usize, four_score: bool) -> &'static
             _ => &[],
         }
     }
-}
-
-/// Handles a key-press event for a [`Console::GameBoy`].
-///
-/// Dispatches generic hotkeys (pause, fullscreen, Ctrl+Q, Ctrl+R, shader cycling,
-/// debugger controls, save/load state) and maps standard button keys to Game Boy
-/// buttons on port 0.
-fn handle_gameboy_key_pressed(
-    console: &mut Console,
-    key_code: KeyCode,
-    app_state: &mut NativeAppState,
-    audio: Option<&dyn EmulatorAudio>,
-) -> KeyOutcome {
-    handle_single_joypad_key_pressed(
-        console,
-        key_code,
-        app_state,
-        audio,
-        controller_mapping::gameboy_key_to_button_id,
-    )
-}
-
-fn handle_gba_key_pressed(
-    console: &mut Console,
-    key_code: KeyCode,
-    app_state: &mut NativeAppState,
-    audio: Option<&dyn EmulatorAudio>,
-) -> KeyOutcome {
-    handle_single_joypad_key_pressed(
-        console,
-        key_code,
-        app_state,
-        audio,
-        controller_mapping::gba_key_to_button_id,
-    )
-}
-
-fn handle_snes_key_pressed(
-    console: &mut Console,
-    key_code: KeyCode,
-    app_state: &mut NativeAppState,
-    audio: Option<&dyn EmulatorAudio>,
-) -> KeyOutcome {
-    handle_single_joypad_key_pressed(
-        console,
-        key_code,
-        app_state,
-        audio,
-        controller_mapping::snes_key_to_button_id,
-    )
-}
-
-fn handle_single_joypad_key_pressed(
-    console: &mut Console,
-    key_code: KeyCode,
-    app_state: &mut NativeAppState,
-    audio: Option<&dyn EmulatorAudio>,
-    key_to_button_id: fn(KeyCode) -> Option<u8>,
-) -> KeyOutcome {
-    // Generic hotkeys that work for any system.
-    if app_state.modifiers.control_key() {
-        return match key_code {
-            KeyCode::KeyQ => KeyOutcome::Quit,
-            KeyCode::KeyR => {
-                console.reset(!app_state.modifiers.shift_key());
-                KeyOutcome::Continue
-            }
-            KeyCode::KeyF => {
-                app_state.fullscreen = !app_state.fullscreen;
-                KeyOutcome::Continue
-            }
-            _ => KeyOutcome::Continue,
-        };
-    }
-
-    if let Some(outcome) = hotkeys::handle_common_hotkey(key_code, app_state, audio) {
-        return outcome;
-    }
-
-    match key_code {
-        KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
-        KeyCode::F5 => return KeyOutcome::ToggleDebugger,
-        KeyCode::F6 => {
-            crate::nes::console::save_state_io::save_state_to_disk(console);
-        }
-        KeyCode::F7 => {
-            crate::nes::console::save_state_io::load_state_from_disk(console);
-            if let Some(audio) = audio {
-                audio.drain_buffer();
-            }
-        }
-        KeyCode::F10 => return KeyOutcome::StepOver,
-        KeyCode::F11 => return KeyOutcome::StepInto,
-        _ => {
-            if let Some(btn_id) = key_to_button_id(key_code) {
-                console.set_button(0, btn_id, true);
-            }
-        }
-    }
-
-    KeyOutcome::Continue
-}
-
-fn handle_unmodified_key(
-    console: &mut Console,
-    key_code: KeyCode,
-    app_state: &mut NativeAppState,
-    audio: Option<&dyn EmulatorAudio>,
-) -> KeyOutcome {
-    if let Some(outcome) = hotkeys::handle_common_hotkey(key_code, app_state, audio) {
-        return outcome;
-    }
-
-    match key_code {
-        KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
-        KeyCode::F5 => return KeyOutcome::ToggleDebugger,
-        KeyCode::F6 => {
-            crate::nes::console::save_state_io::save_state_to_disk(console);
-        }
-        KeyCode::F7 => {
-            crate::nes::console::save_state_io::load_state_from_disk(console);
-            if let Some(audio) = audio {
-                audio.drain_buffer();
-            }
-        }
-        KeyCode::F8 => return KeyOutcome::CyclePalette,
-        KeyCode::F10 => return KeyOutcome::StepOver,
-        KeyCode::F11 => return KeyOutcome::StepInto,
-        _ => {
-            let ports =
-                keyboard_target_ports(app_state.gamepad_count, app_state.four_score_enabled);
-            controller_mapping::handle_controller_key(console, key_code, true, ports);
-        }
-    }
-    KeyOutcome::Continue
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
