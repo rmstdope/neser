@@ -327,6 +327,12 @@ impl Sdsp {
     }
 
     fn step_phase_internal(&mut self, aram: Option<&[u8]>) {
+        let sample_tick = self.phase == 31;
+        self.phase = self.phase.wrapping_add(1) & 0x1F;
+        if !sample_tick {
+            return;
+        }
+
         self.envelope_counter = self.envelope_counter.wrapping_add(1);
         self.step_noise_lfsr();
         let pmon = self.regs[usize::from(PMON_REG)];
@@ -351,8 +357,6 @@ impl Sdsp {
             self.regs[(voice << 4) + 8] = self.voices[voice].envx;
             self.regs[(voice << 4) + 9] = out_before_mix as u8;
         }
-
-        self.phase = self.phase.wrapping_add(1) & 0x1F;
     }
 
     fn begin_voice_brr_stream(&mut self, voice: usize, aram: &[u8]) {
