@@ -11,26 +11,13 @@ use crate::platform::debugging::breakpoints::BreakpointKind;
 
 pub mod cli;
 
+mod audio;
+
 pub use cli::ParseResult;
 pub(crate) use cli::{
     CliFlag, OPTIONAL_BOOL_FLAGS, all_cli_flags, has_negation_flag, parse_bool, parse_bool_arg,
     parse_cli_string_arg, parse_hex_u8, parse_u32_arg, print_help, validate_args,
 };
-
-const AUDIO_BUFFER_MIN_MS: u32 = 20;
-const AUDIO_BUFFER_MAX_MS: u32 = 500;
-const ALLOWED_AUDIO_SAMPLE_RATES: [u32; 5] = [22_050, 44_100, 48_000, 96_000, 192_000];
-
-fn validate_audio_sample_rate(rate: u32) -> Result<u32, String> {
-    if ALLOWED_AUDIO_SAMPLE_RATES.contains(&rate) {
-        Ok(rate)
-    } else {
-        Err(format!(
-            "Unsupported audio sample rate '{}'. Supported values are: {:?}",
-            rate, ALLOWED_AUDIO_SAMPLE_RATES
-        ))
-    }
-}
 
 /// RAM initialization mode for power-on/hard reset.
 ///
@@ -211,22 +198,7 @@ impl FrontendConfig {
     /// (they require complex flag validation logic).
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
         // Boolean flags (support both value-based and prefix negation)
-        // Audio: --audio true/false, --no-audio, --disable-audio
-        if let Some(audio) = parse_bool_arg(args, "--audio")? {
-            self.audio_enabled = audio;
-        }
-        if has_negation_flag(args, &["--no-audio", "--disable-audio"]) {
-            self.audio_enabled = false;
-        }
-
-        if let Some(buffer_ms) = parse_u32_arg(args, "--audio-buffer-ms")? {
-            self.audio_buffer_ms = buffer_ms.clamp(AUDIO_BUFFER_MIN_MS, AUDIO_BUFFER_MAX_MS);
-        }
-
-        if let Some(rate) = parse_u32_arg(args, "--audio-sample-rate")? {
-            self.audio_sample_rate = validate_audio_sample_rate(rate)
-                .map_err(|e| format!("--audio-sample-rate: {e}"))?;
-        }
+        audio::apply_args(self, args)?;
 
         // VSync: --vsync true/false, --no-vsync, --disable-vsync
         if let Some(vsync) = parse_bool_arg(args, "--vsync")? {
@@ -411,28 +383,10 @@ impl FrontendConfig {
     /// window_height, debugger_alpha, tracing keys, ram_init_mode, etc.).
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
+        if audio::apply_config_value(self, &key, value)? {
+            return Ok(());
+        }
         match key.as_str() {
-            "audio" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.audio_enabled = b;
-                }
-            }
-            "audio_buffer_ms" => {
-                if let Ok(ms) = value.parse::<u32>() {
-                    self.audio_buffer_ms = ms.clamp(AUDIO_BUFFER_MIN_MS, AUDIO_BUFFER_MAX_MS);
-                }
-            }
-            "audio_sample_rate" => match value.parse::<u32>() {
-                Ok(rate) => {
-                    self.audio_sample_rate = validate_audio_sample_rate(rate)?;
-                }
-                Err(_) => {
-                    return Err(format!(
-                        "Invalid value for audio_sample_rate '{}'. Expected a positive integer",
-                        value
-                    ));
-                }
-            },
             "vsync" => {
                 if let Ok(b) = parse_bool(value) {
                     self.vsync_enabled = b;
@@ -691,11 +645,11 @@ pub(crate) fn parse_breakpoint_list(spec: &str) -> Result<Vec<BreakpointKind>, S
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::nes::console::{Config, HardwareModel};
+pub(crate) mod test_support {
+    use super::ParseResult;
+    use crate::nes::console::Config;
 
-    fn config_new(mut args: Vec<String>) -> Result<ParseResult, String> {
+    pub(crate) fn config_new(mut args: Vec<String>) -> Result<ParseResult, String> {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
@@ -712,13 +666,20 @@ mod tests {
         Config::new(&args)
     }
 
-    fn parse_config(args: Vec<String>) -> Config {
+    pub(crate) fn parse_config(args: Vec<String>) -> Config {
         match config_new(args).unwrap() {
             ParseResult::Config(c) => *c,
             ParseResult::Help => panic!("Expected Config, got Help"),
             ParseResult::Version => panic!("Expected Config, got Version"),
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{config_new, parse_config};
+    use super::*;
+    use crate::nes::console::{Config, HardwareModel};
 
     // Help tests
     #[test]
@@ -834,110 +795,6 @@ mod tests {
     }
 
     // Audio/Video/Input CLI tests
-    #[test]
-    fn test_config_audio_false() {
-        let args = vec![
-            "neser".to_string(),
-            "--audio".to_string(),
-            "false".to_string(),
-        ];
-        let config = parse_config(args);
-        assert!(!config.frontend.audio_enabled);
-    }
-
-    #[test]
-    fn test_config_audio_buffer_ms_default() {
-        let args = vec!["neser".to_string()];
-        let config = parse_config(args);
-        assert_eq!(config.frontend.audio_buffer_ms, 60);
-    }
-
-    #[test]
-    fn test_config_audio_buffer_ms_from_cli() {
-        let args = vec![
-            "neser".to_string(),
-            "--audio-buffer-ms".to_string(),
-            "75".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(config.frontend.audio_buffer_ms, 75);
-    }
-
-    #[test]
-    fn test_config_audio_buffer_ms_clamps_from_config_value() {
-        let mut config = FrontendConfig::default();
-
-        config
-            .apply_config_value("audio_buffer_ms", "5")
-            .expect("config value should parse");
-        assert_eq!(config.audio_buffer_ms, AUDIO_BUFFER_MIN_MS);
-
-        config
-            .apply_config_value("audio_buffer_ms", "5000")
-            .expect("config value should parse");
-        assert_eq!(config.audio_buffer_ms, AUDIO_BUFFER_MAX_MS);
-    }
-
-    #[test]
-    fn test_config_audio_sample_rate_default() {
-        let args = vec!["neser".to_string()];
-        let config = parse_config(args);
-        assert_eq!(config.frontend.audio_sample_rate, 44100);
-    }
-
-    #[test]
-    fn test_config_audio_sample_rate_from_cli() {
-        let args = vec![
-            "neser".to_string(),
-            "--audio-sample-rate".to_string(),
-            "48000".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(config.frontend.audio_sample_rate, 48000);
-    }
-
-    #[test]
-    fn test_config_audio_sample_rate_from_config_value() {
-        let mut config = FrontendConfig::default();
-
-        config
-            .apply_config_value("audio_sample_rate", "96000")
-            .expect("config value should parse");
-        assert_eq!(config.audio_sample_rate, 96000);
-    }
-
-    #[test]
-    fn test_config_audio_sample_rate_rejects_unsupported_rates() {
-        let mut config = FrontendConfig::default();
-
-        assert!(
-            config
-                .apply_config_value("audio_sample_rate", "12345")
-                .is_err()
-        );
-        assert!(config.apply_config_value("audio-sample-rate", "0").is_err());
-        assert!(
-            config
-                .apply_config_value("audio_sample_rate", "-44100")
-                .is_err()
-        );
-        assert!(
-            config
-                .apply_config_value("audio_sample_rate", "not_a_number")
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn test_config_audio_sample_rate_cli_rejects_invalid_values() {
-        let args = vec![
-            "neser".to_string(),
-            "--audio-sample-rate".to_string(),
-            "12345".to_string(),
-        ];
-        assert!(Config::new(&args).is_err());
-    }
-
     #[test]
     fn test_config_vsync_false() {
         let args = vec![
