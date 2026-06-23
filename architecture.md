@@ -364,7 +364,7 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | `src/frontends/native/` | Desktop frontend using winit + OpenGL. |
 | `src/frontends/native/event_loop.rs` | Main event loop — holds `Console` enum, handles input events, frame timing, VSync, autorun integration, pause/resume, and hot-reload of ROMs. NES-specific features (debugger, Zapper, SNES mouse) accessed by extracting the inner `Nes` via pattern match. |
 | `src/frontends/native/audio.rs` | Native audio device setup and sample queuing. |
-| `src/frontends/native/keyboard.rs` | Keyboard input handling — maps physical keys to NES buttons, debugger hotkeys, and system commands. |
+| `src/frontends/native/keyboard/` | Keyboard input handling, split into focused modules: `mod.rs` (entry points `handle_key_pressed`/`handle_key_released`/`keyboard_target_ports` + `KeyOutcome`), `hotkeys.rs` (system/debugger/cartridge-switch hotkeys), `console_keyboard.rs` (per-console press dispatch), and `controller_mapping.rs` (key→button mapping tables). |
 | `src/frontends/native/gamepad.rs` | Gamepad input using gilrs — maps controller axes/buttons to NES joypads. |
 | `src/frontends/native/mouse.rs` | Mouse input — Zapper light gun, SNES mouse, and Arkanoid paddle coordinate mapping. |
 | `src/frontends/native/gl_wrapper.rs` | OpenGL context management for native windows. |
