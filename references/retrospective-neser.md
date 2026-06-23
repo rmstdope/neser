@@ -5,6 +5,43 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-06-23 - #2830 / PR #2863: Split platform/config.rs into per-domain modules + merge
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2863
+**Linked issues:** #2830 (epic #2825, item I1.4)
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Prompt/instruction | `[[PLAN]]` mode + "interview relentlessly" directive | Drove a design-tree interview that resolved every fork (per-domain vs functional split, decomposition pattern, test placement, flag-table location, re-export strategy) before any code changed. |
+| Instruction | Repo custom instructions (TDD, four-eye, incremental, validation gate, `gh` conventions) | Governed the small-increment loop, the pre-merge checkpoint, and the issue/branch/PR workflow. |
+| Skill (implicit) | `rust-code-refactoring` / `clean-coder` | Guided behavior-preserving decomposition into cohesive per-domain modules with thin orchestrators. |
+| Skill (implicit) | `test-driven-development` | Used the existing 339-test platform suite as the safety net validated after every extraction. |
+| Skill | `self-learning-skills` | Captured this post-merge retrospective entry. |
+
+### What went well
+
+- **Front-loaded design interview:** Resolving all major forks up front (per-domain split, "handled-bool" config-value dispatch, autorun↔ram-init coupling kept in the orchestrator, central flag table to protect help-text ordering, explicit re-exports) meant the implementation was mechanical with no mid-flight redesign.
+- **Codebase-grounded recommendations:** Decisions were anchored in evidence — the just-merged NES split (#2860) as precedent, `grep` counts of external symbol usage to set the exact re-export list, and the 24 `FrontendConfig` struct-literal sites that fixed the "keep it flat" constraint.
+- **Tight increment loop:** "extract one domain → build → `test-dir.sh src/platform` → commit" caught issues immediately (an audio white-box test referencing moved constants; an unused `Config` import after test redistribution) while keeping each commit independently green (339 tests throughout).
+- **Behavior preservation discipline:** The one real cross-domain dependency (autorun forcing zero-init RAM) was preserved by passing the captured `--ram-init-mode` value into `autorun::apply_args`; the central flag table eliminated help-text ordering risk.
+- **Full gate before PR:** clippy `-D warnings`, fmt, 11,898 lib tests, wasm (87), Python (346), and npm (411) all green prior to opening the PR.
+
+### What to improve
+
+- **Explicit skill invocation:** The repo instruction says to explicitly announce which skills are in use; this task applied refactoring/TDD principles but never invoked or named a skill in-chat. For refactors, explicitly engage `rust-code-refactoring` / `test-driven-development` up front.
+- **Self-review of touched doc comments:** A pre-existing `--display` doc inaccuracy on `apply_args` was only caught by the automated reviewer. When reorganizing code, do a dedicated pass over the doc comments on the moved/edited items.
+- **Error-precedence nuance left untested:** Grouping `apply_args` by domain changes which error wins when *multiple* flags are simultaneously malformed (untested, still rejected). Either preserve exact statement order or add a test documenting the chosen precedence.
+- **Shared-environment disk hygiene:** `target/` reached 100% disk mid-task and interrupted the wasm test; proactively prune `target/**/incremental` (safe, regenerates) on long build-heavy tasks in shared environments.
+
+### Navigator feedback
+
+- Directive: "address the review comments, ensure ci runs green and then merge." The navigator reviewed, authorized the merge after the Copilot review comment was addressed and CI was confirmed green (four-eye principle satisfied), and the PR was merged with the branch deleted and epic #2825 updated.
+
+---
+
 ## 2026-06-22 - #2807 / PR #2815: Super Scope light gun controller implementation + merge
 
 **Repository:** rmstdope/neser
