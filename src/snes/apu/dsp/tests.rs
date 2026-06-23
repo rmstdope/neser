@@ -90,6 +90,26 @@ fn given_reserved_shift_nibbles_when_decoded_then_negative_samples_use_shift12_s
 }
 
 #[test]
+fn given_filter2_negative_history_when_decoded_then_fullsnes_signed_rounding_is_used() {
+    let header = 0b0000_1000;
+    let data = [0u8; 8];
+
+    let decoded = Sdsp::decode_brr_block(header, data, -64, -63);
+
+    assert_eq!(decoded.samples[0], -63);
+}
+
+#[test]
+fn given_filter3_negative_history_when_decoded_then_fullsnes_signed_rounding_is_used() {
+    let header = 0b0000_1100;
+    let data = [0u8; 8];
+
+    let decoded = Sdsp::decode_brr_block(header, data, -64, -63);
+
+    assert_eq!(decoded.samples[0], -64);
+}
+
+#[test]
 fn given_voice_pitch_when_step_voice_pitch_then_sample_position_advances() {
     let mut dsp = Sdsp::new();
     dsp.set_voice_pitch(2, 0x1234);

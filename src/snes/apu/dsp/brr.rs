@@ -45,9 +45,15 @@ fn decode_brr_nibble(raw: i16, shift: u8, filter: u8, prev1: i16, prev2: i16) ->
     };
     let predict = match filter {
         0 => 0,
-        1 => (i32::from(prev1) * 15) >> 4,
-        2 => ((i32::from(prev1) * 61) >> 5) - ((i32::from(prev2) * 15) >> 4),
-        _ => ((i32::from(prev1) * 115) >> 6) - ((i32::from(prev2) * 13) >> 4),
+        1 => i32::from(prev1) + ((-i32::from(prev1)) >> 4),
+        2 => {
+            i32::from(prev1) * 2 + ((-i32::from(prev1) * 3) >> 5) - i32::from(prev2)
+                + (i32::from(prev2) >> 4)
+        }
+        _ => {
+            i32::from(prev1) * 2 + ((-i32::from(prev1) * 13) >> 6) - i32::from(prev2)
+                + ((i32::from(prev2) * 3) >> 4)
+        }
     };
     (base + predict).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
 }
