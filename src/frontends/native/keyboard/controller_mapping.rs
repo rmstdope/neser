@@ -63,9 +63,9 @@ pub(super) fn snes_key_to_button_id(key_code: KeyCode) -> Option<u8> {
 /// Maps a [`KeyCode`] to NES/SNES/Power Pad button presses or releases.
 ///
 /// `ports` is the set of NES ports keyboard input should be routed to,
-/// determined by [`keyboard_target_ports`].  P1 keys (WASD etc.) are sent to the first
-/// port in `ports` (ports.first()); P2-specific keys (IJKL etc.) are sent to port 2
-/// only if 2 is in `ports`.
+/// determined by [`keyboard_target_ports`].  P1 keys (WASD etc.) are sent to the
+/// first port in `ports` (`ports.first()`); P2-specific keys (IJKL etc.) are sent
+/// to the second port in `ports` (`ports.get(1)`), if present.
 pub(super) fn handle_controller_key(
     console: &mut Console,
     key_code: KeyCode,

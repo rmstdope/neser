@@ -12,9 +12,10 @@ use winit::keyboard::KeyCode;
 
 /// Attempts to handle a key press that is identical for all console types.
 ///
-/// Returns `Some(KeyOutcome::Continue)` for Escape and Space (which mutate
-/// `app_state` / `audio`), `Some(KeyOutcome::CycleShader)` for F4, and
-/// `None` for keys that need system-specific handling.
+/// Handles Escape and Space (which mutate `app_state` / `audio`) and F2/F3
+/// (volume adjust), returning `Some(KeyOutcome::Continue)`; returns
+/// `Some(KeyOutcome::ToggleFps)` for F1 and `Some(KeyOutcome::CycleShader)` for
+/// F4. Returns `None` for keys that need system-specific handling.
 pub(super) fn handle_common_hotkey(
     key_code: KeyCode,
     app_state: &mut NativeAppState,
