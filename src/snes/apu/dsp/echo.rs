@@ -1,3 +1,4 @@
+use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -82,6 +83,9 @@ impl EchoState {
         if flg & 0x20 == 0
             && let Some(aram) = aram
         {
+            if addr < 0x0010 {
+                trace_apu!(4; "DSP echo writes addr=${:04X} flg=${:02X}", addr, flg);
+            }
             write_echo_entry(aram, addr, write_l, write_r);
         }
 

@@ -707,6 +707,20 @@ impl DmaABus for SnesSystemBus {
     fn dma_write_a_bus(&mut self, addr: u32, value: u8) {
         self.dma_write_a_bus_impl(addr, value);
     }
+
+    fn dma_write_b_bus(&mut self, addr: u8, value: u8) {
+        match addr {
+            0x00..=0x3F => self
+                .ppu
+                .borrow_mut()
+                .write_register(0x2100 + u16::from(addr), value),
+            0x40..=0x43 => self
+                .apu
+                .borrow_mut()
+                .write_main_port((addr - 0x40) as usize, value),
+            _ => {}
+        }
+    }
 }
 
 impl SnesBus for SnesSystemBus {
@@ -790,6 +804,7 @@ impl SnesBus for SnesSystemBus {
 mod tests {
     use super::*;
     use crate::snes::input::SnesControllerType;
+    use crate::snes::ppu::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME};
 
     fn build_cart(
         rom: &mut [u8],
@@ -864,6 +879,14 @@ mod tests {
         bus.write(base + 0x2, (a_addr & 0xFF) as u8);
         bus.write(base + 0x3, ((a_addr >> 8) & 0xFF) as u8);
         bus.write(base + 0x4, ((a_addr >> 16) & 0xFF) as u8);
+    }
+
+    fn tick_one_ppu_frame(bus: &mut SnesSystemBus) {
+        let ticks =
+            DOTS_PER_SCANLINE as u32 * NTSC_SCANLINES_PER_FRAME as u32 * MASTER_CYCLES_PER_DOT;
+        for _ in 0..ticks {
+            bus.ppu.borrow_mut().tick();
+        }
     }
 
     fn read_joyb_pair_words(bus: &mut SnesSystemBus) -> (u16, u16) {
@@ -1132,6 +1155,21 @@ mod tests {
         assert_eq!(bus.read(0x004306), 0x00);
         assert_eq!(bus.read(0x004302), 0x01);
         assert_eq!(bus.read(0x004303), 0x02);
+    }
+
+    #[test]
+    fn dma_a_to_b_to_cgram_updates_backdrop_color_visible_output() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x002100, 0x0F); // visible output
+        bus.write(0x002121, 0x00); // CGADD = color 0
+        bus.write(0x7E0190, 0x1F); // BGR555 low byte (red)
+        bus.write(0x7E0191, 0x00); // high byte
+        write_dma_channel(&mut bus, 0, 0x00, 0x22, 0x7E0190, 2);
+        bus.write(0x00420B, 0x01);
+        tick_one_ppu_frame(&mut bus);
+
+        let rgb = bus.ppu_screen_snapshot();
+        assert_eq!(&rgb[0..3], &[255, 0, 0]);
     }
 
     #[test]

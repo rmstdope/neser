@@ -1,5 +1,6 @@
 use crate::snes::cartridge::header::parse_header_at;
 use crate::snes::cartridge::mapping::{Mapping, detect_mapping};
+use std::fmt;
 const MIN_LOROM_HEADER_END: usize = 0x80C0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +15,52 @@ pub enum CartridgeError {
     HeaderNotFound,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnhancementChip {
+    Dsp,
+    SuperFx,
+    Obc1,
+    Sa1,
+    Sdd1,
+    Srtc,
+    Spc7110,
+    St010St011,
+    St018,
+    Cx4,
+    SuperGameBoy,
+    Satellaview,
+    UnknownCustom { chipset: u8, subtype: Option<u8> },
+}
+
+impl fmt::Display for EnhancementChip {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dsp => write!(f, "DSP"),
+            Self::SuperFx => write!(f, "Super FX / GSU"),
+            Self::Obc1 => write!(f, "OBC1"),
+            Self::Sa1 => write!(f, "SA-1"),
+            Self::Sdd1 => write!(f, "S-DD1"),
+            Self::Srtc => write!(f, "S-RTC"),
+            Self::Spc7110 => write!(f, "SPC7110"),
+            Self::St010St011 => write!(f, "ST010/ST011"),
+            Self::St018 => write!(f, "ST018"),
+            Self::Cx4 => write!(f, "CX4"),
+            Self::SuperGameBoy => write!(f, "Super Game Boy"),
+            Self::Satellaview => write!(f, "Satellaview"),
+            Self::UnknownCustom { chipset, subtype } => {
+                if let Some(subtype) = subtype {
+                    write!(
+                        f,
+                        "unknown custom coprocessor (chipset ${chipset:02X}, subtype ${subtype:02X})"
+                    )
+                } else {
+                    write!(f, "unknown custom coprocessor (chipset ${chipset:02X})")
+                }
+            }
+        }
+    }
+}
+
 pub struct Cartridge {
     rom: Vec<u8>,
     mapping: Mapping,
@@ -22,6 +69,7 @@ pub struct Cartridge {
     speed: RomSpeed,
     title: String,
     country: u8,
+    enhancement_chip: Option<EnhancementChip>,
 }
 
 impl Cartridge {
@@ -51,6 +99,7 @@ impl Cartridge {
             },
             title: header.title,
             country: header.country,
+            enhancement_chip: detect_enhancement_chip(header.chipset, header.chipset_subtype),
         })
     }
 
@@ -81,6 +130,10 @@ impl Cartridge {
     pub fn country(&self) -> u8 {
         self.country
     }
+
+    pub fn enhancement_chip(&self) -> Option<EnhancementChip> {
+        self.enhancement_chip
+    }
 }
 
 fn strip_copier_header(bytes: &[u8]) -> &[u8] {
@@ -106,6 +159,31 @@ fn decode_sram_size(ram_size_field: u8) -> usize {
 
 fn has_battery(chipset: u8) -> bool {
     matches!(chipset & 0x0F, 0x2 | 0x5 | 0x6 | 0x9 | 0xA | 0xD | 0xE)
+}
+
+fn detect_enhancement_chip(chipset: u8, subtype: Option<u8>) -> Option<EnhancementChip> {
+    match chipset {
+        0x00..=0x02 => None,
+        0x03..=0x06 => Some(EnhancementChip::Dsp),
+        0x13..=0x1A => Some(EnhancementChip::SuperFx),
+        0x25 => Some(EnhancementChip::Obc1),
+        0x32 | 0x34 | 0x35 => Some(EnhancementChip::Sa1),
+        0x43 | 0x45 => Some(EnhancementChip::Sdd1),
+        0x55 => Some(EnhancementChip::Srtc),
+        0xE3 => Some(EnhancementChip::SuperGameBoy),
+        0xE5 => Some(EnhancementChip::Satellaview),
+        value if value & 0xF0 == 0xF0 => match subtype {
+            Some(0x00) => Some(EnhancementChip::Spc7110),
+            Some(0x01) => Some(EnhancementChip::St010St011),
+            Some(0x02) => Some(EnhancementChip::St018),
+            Some(0x10) => Some(EnhancementChip::Cx4),
+            other => Some(EnhancementChip::UnknownCustom {
+                chipset,
+                subtype: other,
+            }),
+        },
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -256,6 +334,7 @@ mod tests {
         let cart = Cartridge::from_bytes(rom).expect("cart");
         assert_eq!(cart.mapping(), Mapping::HiRom);
         assert_eq!(cart.title(), "SUPER MARIO KART");
+        assert_eq!(cart.enhancement_chip(), Some(EnhancementChip::Dsp));
     }
 
     #[test]
@@ -267,5 +346,36 @@ mod tests {
     #[test]
     fn decode_sram_size_returns_zero_for_out_of_range_field() {
         assert_eq!(decode_sram_size(32), 0);
+    }
+
+    #[test]
+    fn detects_cx4_from_custom_subtype() {
+        let mut rom = vec![0u8; 0x10000];
+        write_header(
+            &mut rom,
+            0x7FC0,
+            0x20,
+            0xF3,
+            0x00,
+            b"CX4 TEST           \0\0",
+        );
+        rom[0x7FBF] = 0x10;
+        let cart = Cartridge::from_bytes(&rom).expect("cart");
+        assert_eq!(cart.enhancement_chip(), Some(EnhancementChip::Cx4));
+    }
+
+    #[test]
+    fn plain_rom_has_no_enhancement_chip() {
+        let mut rom = vec![0u8; 0x10000];
+        write_header(
+            &mut rom,
+            0x7FC0,
+            0x20,
+            0x02,
+            0x00,
+            b"PLAIN ROM TEST     \0\0",
+        );
+        let cart = Cartridge::from_bytes(&rom).expect("cart");
+        assert_eq!(cart.enhancement_chip(), None);
     }
 }

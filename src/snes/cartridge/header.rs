@@ -16,6 +16,7 @@ pub(crate) struct SnesHeader {
     pub title: String,
     pub map_mode: u8,
     pub chipset: u8,
+    pub chipset_subtype: Option<u8>,
     pub rom_size_field: u8,
     pub ram_size_field: u8,
     pub country: u8,
@@ -40,6 +41,7 @@ pub(crate) fn parse_header_at(
     let title = decode_title(title_bytes);
     let map_mode = rom[header_offset + HEADER_MODE_OFFSET];
     let chipset = rom[header_offset + HEADER_CHIPSET_OFFSET];
+    let chipset_subtype = header_offset.checked_sub(1).map(|idx| rom[idx]);
     let rom_size_field = rom[header_offset + HEADER_ROM_SIZE_OFFSET];
     let ram_size_field = rom[header_offset + HEADER_RAM_SIZE_OFFSET];
     let country = rom[header_offset + HEADER_COUNTRY_OFFSET];
@@ -58,6 +60,7 @@ pub(crate) fn parse_header_at(
         title,
         map_mode,
         chipset,
+        chipset_subtype,
         rom_size_field,
         ram_size_field,
         country,

@@ -144,6 +144,7 @@ impl SnesApu {
     }
 
     pub fn write_main_port(&mut self, port: usize, value: u8) {
+        trace_apu!(3; "CPU->SPC port[{}] <= ${:02X}", port, value);
         self.main_to_spc_ports[port] = value;
     }
 
@@ -563,6 +564,12 @@ impl Spc700Bus for SpcBusView<'_> {
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
             _ => self.aram[addr as usize],
         };
+        if addr <= 0x0001 {
+            trace_apu!(4; "SPC reads ARAM[${:04X}] -> ${:02X}", addr, value);
+        }
+        if (0x00F4..=0x00F7).contains(&addr) {
+            trace_apu!(3; "SPC reads port[{}] -> ${:02X}", addr - 0x00F4, value);
+        }
         self.tick_timers_multiple(cycles);
         value
     }
@@ -589,6 +596,17 @@ impl Spc700Bus for SpcBusView<'_> {
             _ => {
                 if self.ram_write_enabled() {
                     self.aram[addr as usize] = value;
+                    if addr <= 0x0001 {
+                        trace_apu!(4; "SPC writes ARAM[${:04X}] = ${:02X}", addr, value);
+                    }
+                } else if addr < 0x0100 {
+                    trace_apu!(
+                        4;
+                        "SPC RAM write blocked addr=${:04X} value=${:02X} test=${:02X}",
+                        addr,
+                        value,
+                        self.test_reg()
+                    );
                 }
             }
         }
@@ -745,6 +763,8 @@ mod tests {
         apu.write_spc_memory_for_test(0x00F3, 0x10);
         apu.write_spc_memory_for_test(0x00F2, 0x7D); // EDL
         apu.write_spc_memory_for_test(0x00F3, 0x01);
+        apu.write_spc_memory_for_test(0x00F2, 0x6C); // FLG
+        apu.write_spc_memory_for_test(0x00F3, 0x00); // unmute + echo write enable
 
         let base = 0x1000usize;
         apu.aram[base] = 0xFE;

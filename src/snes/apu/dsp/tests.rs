@@ -439,6 +439,7 @@ fn given_echo_enabled_when_rendering_with_memory_then_echo_ring_buffer_is_writte
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x40); // ESA base 0x4000
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     dsp.voices[0].outx = 64;
 
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
@@ -482,6 +483,7 @@ fn given_echo_ram_and_fir_coefficients_when_rendering_with_memory_then_echo_is_m
     dsp.write_reg(0x7F, 0x7F); // FIR7 (newest sample tap)
     dsp.write_reg(0x6D, 0x10); // ESA base 0x1000
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     let base = 0x1000usize;
     aram[base] = 0xFE;
     aram[base + 1] = 0x7F; // near +0x7FFF
@@ -511,6 +513,7 @@ fn given_edl_zero_when_rendering_then_echo_ring_wraps_each_sample() {
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x30); // ESA base 0x3000
     dsp.write_reg(0x7D, 0x00); // EDL=0 => 4-byte ring
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     dsp.voices[0].outx = 10;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let first = [aram[0x3000], aram[0x3001], aram[0x3002], aram[0x3003]];
@@ -540,6 +543,7 @@ fn given_esa_change_when_rendering_then_write_base_switches_after_one_sample_del
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x7D, 0x00); // EDL=0 keeps ring index at 0
     dsp.write_reg(0x6D, 0x10);
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     dsp.voices[0].outx = 24;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let first_base = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];

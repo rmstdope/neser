@@ -7,6 +7,7 @@
 //! [`Console`]: crate::platform::emulator::Console
 
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
+use crate::platform::debugging::log_info;
 use crate::platform::emulator::{Emulator, SystemType};
 use crate::snes::bus::SnesSystemBus;
 use crate::snes::cartridge::Cartridge;
@@ -289,6 +290,13 @@ impl Emulator for Snes {
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
+        if let Some(chip) = cartridge.enhancement_chip() {
+            let warning = format!(
+                "Warning: ROM requires SNES enhancement hardware ({chip}) which is not implemented yet; gameplay may be incorrect"
+            );
+            log_info(warning.clone());
+            self.app_context.borrow_mut().add_toast(warning);
+        }
         let config = self.app_context.borrow().config().snes.clone();
         self.active_hardware = Self::resolve_hardware_mode(config.hardware, cartridge.country());
 
@@ -457,19 +465,24 @@ mod tests {
     use crate::platform::config::Config;
     use crate::snes::console::config::SnesHardware;
     use crate::snes::input::SnesControllerType;
+    use std::time::Instant;
 
     fn valid_lorom_nop_rom() -> Vec<u8> {
         valid_lorom_nop_rom_with_country(0x00)
     }
 
     fn valid_lorom_nop_rom_with_country(country: u8) -> Vec<u8> {
+        valid_lorom_nop_rom_with_header(country, 0x00)
+    }
+
+    fn valid_lorom_nop_rom_with_header(country: u8, chipset: u8) -> Vec<u8> {
         let mut rom = vec![0u8; 0x10000];
         let header = 0x7FC0;
         rom[header..header + 21].copy_from_slice(b"SNES TEST ROM        ");
         rom[header + 0x3C] = 0x00;
         rom[header + 0x3D] = 0x80;
         rom[header + 0x15] = 0x20;
-        rom[header + 0x16] = 0x00;
+        rom[header + 0x16] = chipset;
         rom[header + 0x17] = 0x07;
         rom[header + 0x18] = 0x00;
         rom[header + 0x19] = country;
@@ -770,6 +783,22 @@ mod tests {
         let mut snes = make_snes();
         let result = snes.load_rom(&[0x00, 0x01, 0x02], "bad.sfc");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_rom_adds_warning_toast_when_enhancement_chip_is_required() {
+        let mut snes = make_snes();
+        let rom = valid_lorom_nop_rom_with_header(0x00, 0x03); // DSP
+
+        snes.load_rom(&rom, "dsp.sfc").expect("load ROM");
+
+        let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.contains("enhancement hardware (DSP)")),
+            "expected unsupported enhancement warning toast, got: {toasts:?}"
+        );
     }
 
     #[test]

@@ -80,9 +80,11 @@ fn default_noise_lfsr() -> u16 {
 impl Sdsp {
     #[must_use]
     pub fn new() -> Self {
+        let mut regs = default_regs();
+        regs[usize::from(FLG_REG)] = 0xE0;
         Self {
             phase: 0,
-            regs: default_regs(),
+            regs,
             voices: std::array::from_fn(|_| VoiceState::default()),
             master_vol_l: 0,
             master_vol_r: 0,
@@ -90,7 +92,7 @@ impl Sdsp {
             echo_vol_r: 0,
             echo_feedback: 0,
             echo_enable: 0,
-            flg: 0,
+            flg: 0xE0,
             endx: 0,
             dir: 0,
             esa: 0,

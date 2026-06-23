@@ -7,6 +7,6 @@ mod mapping;
 pub mod cartridge;
 
 #[allow(unused_imports)]
-pub use cartridge::{Cartridge, CartridgeError, RomSpeed};
+pub use cartridge::{Cartridge, CartridgeError, EnhancementChip, RomSpeed};
 #[allow(unused_imports)]
 pub use mapping::Mapping;
