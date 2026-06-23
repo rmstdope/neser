@@ -5,7 +5,8 @@ import {
     openApp,
     startFromBundledRom,
     waitForIdleState,
-    waitForRunningState
+    waitForRunningState,
+    waitForPausedState
 } from "../helpers/lifecycle.helpers";
 
 const ESSENTIAL_CONTROL_SELECTORS = ["#screen", "#start", "#pause", "#stop", "#reset", "#status"];
@@ -38,7 +39,7 @@ test.describe("Phase 1 critical path lifecycle", () => {
         await startFromBundledRom(page);
 
         await page.locator(PAUSE_BUTTON_SELECTOR).click();
-        await expect(page.locator(PAUSE_BUTTON_SELECTOR)).toHaveText("Resume");
+        await waitForPausedState(page);
 
         await page.locator(PAUSE_BUTTON_SELECTOR).click();
         await waitForRunningState(page);

@@ -63,6 +63,10 @@ export async function waitForIdleState(page: Page) {
     await expect(page.locator("#stop")).toBeDisabled({ timeout: EXPECT_TIMEOUT_MS });
 }
 
+export async function waitForPausedState(page: Page) {
+    await expect(page.locator("#pause")).toHaveText("Resume", { timeout: EXPECT_TIMEOUT_MS });
+}
+
 /** Load a NES ROM via the file input, setting romFromFile = true. */
 export async function loadRomFromFileInput(page: Page) {
     const romBytes = readMockRomBytes();
