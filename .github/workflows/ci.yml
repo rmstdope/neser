@@ -161,6 +161,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: nextest-archive
+          path: .
       - name: Compute test filter from changed paths
         id: test-filter
         env:
