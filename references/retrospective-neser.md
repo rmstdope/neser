@@ -41,6 +41,44 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-06-23 — PR #2865: Add SNES web frontend flow coverage
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2865
+**Linked issues:** #2823
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `test-driven-development` | Kept the SNES frontend work anchored in test-first slices: ROM support assertion, browser flow coverage, then edge-case tightening. |
+| Skill | `snes-hardware-research` | Helped with SNES ROM fixture expectations and minimal header/extension assumptions for the browser test helper. |
+| Instructions | `copilot-instructions.md` | Applied the repo workflow rules for incremental changes, review/CI discipline, and retrospective capture. |
+
+### What went well
+
+- ✅ The work was split into a fast unit-level ROM extension assertion and a Playwright flow spec, giving both quick regression signal and end-to-end coverage.
+- ✅ Tightening the tests with case-insensitive and negative SNES cases, plus extracting a shared SNES ROM helper, reduced duplication and made the coverage easier to extend.
+- ✅ The Playwright flow was stabilized before merge, which is the right call for browser coverage that otherwise tends to be CI-flaky.
+
+### What to improve
+
+- ❌ When adding a new supported console in `rom_extensions`, include the case-insensitive and unsupported-extension cases in the first pass so the coverage matrix is complete before review.
+- ❌ The browser-flow spec needed a later flake-reduction pass; front-load a reusable wait/stability helper for Playwright frontend tests so timing assumptions don’t leak into the first version.
+- ❌ If review comments or CI reruns are part of the workflow, record the exact `gh`/verification sequence in the PR notes so future frontend test work can reuse the stabilization steps without rediscovery.
+
+### Navigator feedback
+
+#### What went well
+
+No additional feedback.
+
+#### What to improve
+
+No additional feedback.
+
+---
+
 ## 2026-06-23 - #2830 / PR #2863: Split platform/config.rs into per-domain modules + merge
 
 **Repository:** rmstdope/neser

@@ -20,6 +20,7 @@
 //! ```
 
 use crate::snes::apu::spc700::bus::Spc700Bus;
+use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
 /// PSW carry flag (bit 0).
@@ -206,16 +207,6 @@ impl Spc700 {
         } else {
             0x0000
         }
-    }
-
-    /// Add immediate to A with carry, updating N/Z/V/C flags.
-    fn add_to_a(&mut self, imm: u8) {
-        let (result, carry) = self.a.overflowing_add(imm);
-        let overflow = (self.a ^ result) & (imm ^ result) & 0x80 != 0;
-        self.a = result;
-        self.set_flag(FLAG_CARRY, carry);
-        self.set_flag(FLAG_OVERFLOW, overflow);
-        self.update_nz8(self.a);
     }
 
     /// Add immediate to A with carry bit included, updating N/Z/V/C flags.
@@ -485,7 +476,30 @@ impl Spc700 {
             return cycles;
         }
         let mut cycles = 0u8;
+        let opcode_pc = self.pc;
         let opcode = self.fetch(bus, &mut cycles);
+        trace_apu!(
+            6;
+            "SPC exec ${:04X}: op=${:02X} A=${:02X} X=${:02X} Y=${:02X} PSW=${:02X}",
+            opcode_pc,
+            opcode,
+            self.a,
+            self.x,
+            self.y,
+            self.psw
+        );
+        if (0xFFDA..=0xFFFF).contains(&opcode_pc) {
+            trace_apu!(
+                4;
+                "SPC exec ${:04X}: op=${:02X} A=${:02X} X=${:02X} Y=${:02X} PSW=${:02X}",
+                opcode_pc,
+                opcode,
+                self.a,
+                self.x,
+                self.y,
+                self.psw
+            );
+        }
         match opcode {
             // NOP — no operation (2 cycles: opcode fetch + 1 idle).
             0x00 => {
@@ -670,6 +684,19 @@ impl Spc700 {
                 );
                 self.idle_cycle(bus, &mut cycles);
                 let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(self.y as u16);
+                if dp == 0x00 && (0xFFDA..=0xFFFF).contains(&opcode_pc) {
+                    trace_apu!(
+                        4;
+                        "SPC D7 base=${:04X} ptr=${:02X}{:02X} Y=${:02X} -> addr=${:04X} A=${:02X} PSW=${:02X}",
+                        self.direct_page_base(),
+                        hi,
+                        lo,
+                        self.y,
+                        addr,
+                        self.a,
+                        self.psw
+                    );
+                }
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
             }
@@ -1413,15 +1440,17 @@ impl Spc700 {
                 self.update_nz8(result);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // ADD A,#imm — add immediate to A, update N/Z/V/C.
+            // ADC A,#imm — add immediate and carry to A, update N/Z/V/C/H.
             0x88 => {
                 let imm = self.fetch(bus, &mut cycles);
-                self.add_to_a(imm);
-            }
-            // ADC A,#imm — add immediate to A with carry, update N/Z/V/C.
-            0x84 => {
-                let imm = self.fetch(bus, &mut cycles);
                 self.add_with_carry_to_a(imm);
+            }
+            // ADC A,dp — add direct-page byte and carry to A, update N/Z/V/C/H.
+            0x84 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.add_with_carry_to_a(value);
             }
             // ADC A,(X).
             0x86 => {
@@ -1661,15 +1690,16 @@ impl Spc700 {
                 self.a = saved_a;
                 self.write_cycle(bus, x_addr, result, &mut cycles);
             }
-            // CMP A,#imm — compare A with immediate, update N/Z/V/C.
+            // CMP X,#imm — compare X with immediate, update N/Z/V/C.
             0xC8 => {
                 let imm = self.fetch(bus, &mut cycles);
-                self.compare_a(imm);
-            }
-            // CMP X,#imm — compare X with immediate, update N/Z/V/C.
-            0xC0 => {
-                let imm = self.fetch(bus, &mut cycles);
                 self.compare_x(imm);
+            }
+            // DI — clear interrupt-enable flag (logical only on SNES APU).
+            0xC0 => {
+                self.set_flag(FLAG_INTERRUPT, false);
+                self.idle_cycle(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
             }
             // CMP Y,#imm — compare Y with immediate, update N/Z/V/C.
             0xAD => {
@@ -1802,6 +1832,15 @@ impl Spc700 {
                 let dp = self.fetch(bus, &mut cycles);
                 let value =
                     self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                if dp == 0xF4 {
+                    trace_apu!(
+                        3;
+                        "SPC CMP Y,$F4 at ${:04X}: Y=${:02X} F4=${:02X}",
+                        opcode_pc,
+                        self.y,
+                        value
+                    );
+                }
                 self.compare_y(value);
             }
             // CMP Y,!abs — compare Y with absolute byte.
@@ -2343,10 +2382,12 @@ impl Spc700 {
             }
             // SLEEP — halt CPU until external wakeup source.
             0xEF => {
+                trace_apu!(1; "SPC entered SLEEP at ${:04X}", opcode_pc);
                 self.halted = true;
             }
             // STOP — halt CPU clock until reset.
             0xFF => {
+                trace_apu!(1; "SPC entered STOP at ${:04X}", opcode_pc);
                 self.halted = true;
             }
         }
@@ -3783,7 +3824,7 @@ mod tests {
     fn adc_a_imm_with_carry_flag_set() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x84, 0x10]); // ADC A,#$10
+        bus.load(0x0200, &[0x88, 0x10]); // ADC A,#$10
         cpu.load_state_for_processor_test(0x20, 0, 0, 0xEF, 0x0200, FLAG_CARRY);
 
         let _cycles = cpu.step(&mut bus);
@@ -3791,6 +3832,21 @@ mod tests {
         assert_eq!(cpu.a(), 0x31);
         assert!(!cpu.flag(FLAG_CARRY));
         assert!(!cpu.flag(FLAG_OVERFLOW));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn adc_a_dp_uses_direct_page_operand_not_immediate() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x84, 0x10]); // ADC A,$10
+        bus.set(0x0010, 0x05);
+        cpu.load_state_for_processor_test(0x01, 0, 0, 0xEF, 0x0200, FLAG_CARRY);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x07);
+        assert!(!cpu.flag(FLAG_CARRY));
         assert!(!cpu.flag(FLAG_ZERO));
     }
 
@@ -3830,7 +3886,7 @@ mod tests {
     fn cmp_a_imm_equal_sets_zero() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0xC8, 0x55]); // CMP A,#$55
+        bus.load(0x0200, &[0x68, 0x55]); // CMP A,#$55
         cpu.load_state_for_processor_test(0x55, 0, 0, 0xEF, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
@@ -3847,7 +3903,7 @@ mod tests {
     fn cmp_a_imm_less_sets_carry() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0xC8, 0x50]); // CMP A,#$50
+        bus.load(0x0200, &[0x68, 0x50]); // CMP A,#$50
         cpu.load_state_for_processor_test(0x40, 0, 0, 0xEF, 0x0200, 0);
 
         let _cycles = cpu.step(&mut bus);
@@ -3862,7 +3918,7 @@ mod tests {
     fn cmp_x_imm_comparison() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0xC0, 0x30]); // CMP X,#$30
+        bus.load(0x0200, &[0xC8, 0x30]); // CMP X,#$30
         cpu.load_state_for_processor_test(0x00, 0x30, 0x00, 0xEF, 0x0200, 0);
 
         let _cycles = cpu.step(&mut bus);
@@ -3870,6 +3926,20 @@ mod tests {
         assert_eq!(cpu.x(), 0x30); // X unchanged
         assert!(cpu.flag(FLAG_ZERO));
         assert!(cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn di_opcode_clears_interrupt_flag() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xC0]); // DI
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xEF, 0x0200, FLAG_INTERRUPT);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.pc(), 0x0201);
+        assert!(!cpu.flag(FLAG_INTERRUPT));
     }
 
     #[test]

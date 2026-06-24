@@ -6,6 +6,7 @@ use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
 use crate::snes::input::{InputPorts, SnesButton};
 use crate::snes::ppu::{Ppu, SnesVideoRegion};
+use crate::trace_apu;
 use std::cell::{Cell, RefCell};
 use std::fs;
 
@@ -246,6 +247,26 @@ impl SnesSystemBus {
         } else {
             open_bus
         }
+    }
+
+    fn read_for_debugger_impl(&self, addr: u32) -> u8 {
+        if let Some(index) = Self::decode_wram_index(addr) {
+            return self.wram[index];
+        }
+
+        if let Some(index) = self.decode_rom_index(addr) {
+            return self.rom.get(index).copied().unwrap_or(self.mdr.get());
+        }
+
+        if let Some(index) = self.decode_sram_index(addr) {
+            return if self.sram.is_empty() {
+                self.mdr.get()
+            } else {
+                self.sram[index % self.sram.len()]
+            };
+        }
+
+        self.mdr.get()
     }
 
     fn dma_write_a_bus_impl(&mut self, addr: u32, value: u8) {
@@ -556,7 +577,12 @@ impl SnesSystemBus {
             0x4217 => (self.rdmpy >> 8) as u8,
             0x420D => self.memsel,
             0x420C => self.hdmaen,
-            0x2140..=0x2143 => self.apu.borrow().read_main_port((offset - 0x2140) as usize),
+            0x2140..=0x2143 => {
+                let port = (offset - 0x2140) as usize;
+                let value = self.apu.borrow().read_main_port(port);
+                trace_apu!(3; "CPU reads port[{}] -> ${:02X}", port, value);
+                value
+            }
             0x2134..=0x213F => self.ppu.borrow_mut().read_register(offset),
             // HVBJOY: bit 0 reports auto-joypad busy, owned by the input ports.
             0x4212 => {
@@ -639,6 +665,7 @@ impl SnesSystemBus {
                 true
             }
             0x2140..=0x2143 => {
+                trace_apu!(2; "CPU writes port[{}] = ${:02X}", offset - 0x2140, value);
                 self.apu
                     .borrow_mut()
                     .write_main_port((offset - 0x2140) as usize, value);
@@ -685,6 +712,20 @@ impl DmaABus for SnesSystemBus {
     fn dma_write_a_bus(&mut self, addr: u32, value: u8) {
         self.dma_write_a_bus_impl(addr, value);
     }
+
+    fn dma_write_b_bus(&mut self, addr: u8, value: u8) {
+        match addr {
+            0x00..=0x3F => self
+                .ppu
+                .borrow_mut()
+                .write_register(0x2100 + u16::from(addr), value),
+            0x40..=0x43 => self
+                .apu
+                .borrow_mut()
+                .write_main_port((addr - 0x40) as usize, value),
+            _ => {}
+        }
+    }
 }
 
 impl SnesBus for SnesSystemBus {
@@ -717,6 +758,10 @@ impl SnesBus for SnesSystemBus {
         } else {
             self.mdr.get()
         }
+    }
+
+    fn read_for_debugger(&self, addr: u32) -> u8 {
+        self.read_for_debugger_impl(addr)
     }
 
     fn write(&mut self, addr: u32, value: u8) {
@@ -764,6 +809,7 @@ impl SnesBus for SnesSystemBus {
 mod tests {
     use super::*;
     use crate::snes::input::SnesControllerType;
+    use crate::snes::ppu::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME};
 
     fn build_cart(
         rom: &mut [u8],
@@ -775,14 +821,14 @@ mod tests {
         rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
         rom[base + 0x3C] = 0x00;
         rom[base + 0x3D] = 0x80;
-        rom[base + 0xD5] = map_mode;
-        rom[base + 0xD6] = 0x00;
-        rom[base + 0xD7] = 0x07;
-        rom[base + 0xD8] = ram_size_field;
-        rom[base + 0xDC] = 0x34;
-        rom[base + 0xDD] = 0x12;
-        rom[base + 0xDE] = 0xCB;
-        rom[base + 0xDF] = 0xED;
+        rom[base + 0x15] = map_mode;
+        rom[base + 0x16] = 0x00;
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = ram_size_field;
+        rom[base + 0x1C] = 0x34;
+        rom[base + 0x1D] = 0x12;
+        rom[base + 0x1E] = 0xCB;
+        rom[base + 0x1F] = 0xED;
         Cartridge::from_bytes(rom).expect("valid test cartridge")
     }
 
@@ -802,14 +848,14 @@ mod tests {
         rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
         rom[base + 0x3C] = 0x00;
         rom[base + 0x3D] = 0x80;
-        rom[base + 0xD5] = 0x20;
-        rom[base + 0xD6] = 0x02; // Battery-backed RAM chipset
-        rom[base + 0xD7] = 0x07;
-        rom[base + 0xD8] = 0x05; // 32 KB SRAM
-        rom[base + 0xDC] = 0x34;
-        rom[base + 0xDD] = 0x12;
-        rom[base + 0xDE] = 0xCB;
-        rom[base + 0xDF] = 0xED;
+        rom[base + 0x15] = 0x20;
+        rom[base + 0x16] = 0x02; // Battery-backed RAM chipset
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = 0x05; // 32 KB SRAM
+        rom[base + 0x1C] = 0x34;
+        rom[base + 0x1D] = 0x12;
+        rom[base + 0x1E] = 0xCB;
+        rom[base + 0x1F] = 0xED;
         Cartridge::from_bytes(&rom).expect("valid test cartridge")
     }
 
@@ -840,6 +886,14 @@ mod tests {
         bus.write(base + 0x4, ((a_addr >> 16) & 0xFF) as u8);
     }
 
+    fn tick_one_ppu_frame(bus: &mut SnesSystemBus) {
+        let ticks =
+            DOTS_PER_SCANLINE as u32 * NTSC_SCANLINES_PER_FRAME as u32 * MASTER_CYCLES_PER_DOT;
+        for _ in 0..ticks {
+            bus.ppu.borrow_mut().tick();
+        }
+    }
+
     fn read_joyb_pair_words(bus: &mut SnesSystemBus) -> (u16, u16) {
         bus.write(0x004016, 0x01);
         bus.write(0x004016, 0x00);
@@ -859,6 +913,20 @@ mod tests {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x7E0000, 0x5A);
         assert_eq!(bus.read(0x7E0000), 0x5A);
+    }
+
+    #[test]
+    fn read_for_debugger_on_mmio_returns_mdr_without_side_effects() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x002181, 0x00);
+        bus.write(0x002182, 0x00);
+        bus.write(0x002183, 0x00);
+        bus.write(0x7E0000, 0x42);
+        bus.mdr.set(0xA5);
+
+        assert_eq!(bus.read_for_debugger(0x002180), 0xA5);
+        assert_eq!(bus.wmadd.get(), 0);
+        assert_eq!(bus.mdr.get(), 0xA5);
     }
 
     #[test]
@@ -1106,6 +1174,21 @@ mod tests {
         assert_eq!(bus.read(0x004306), 0x00);
         assert_eq!(bus.read(0x004302), 0x01);
         assert_eq!(bus.read(0x004303), 0x02);
+    }
+
+    #[test]
+    fn dma_a_to_b_to_cgram_updates_backdrop_color_visible_output() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x002100, 0x0F); // visible output
+        bus.write(0x002121, 0x00); // CGADD = color 0
+        bus.write(0x7E0190, 0x1F); // BGR555 low byte (red)
+        bus.write(0x7E0191, 0x00); // high byte
+        write_dma_channel(&mut bus, 0, 0x00, 0x22, 0x7E0190, 2);
+        bus.write(0x00420B, 0x01);
+        tick_one_ppu_frame(&mut bus);
+
+        let rgb = bus.ppu_screen_snapshot();
+        assert_eq!(&rgb[0..3], &[255, 0, 0]);
     }
 
     #[test]

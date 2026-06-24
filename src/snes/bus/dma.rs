@@ -6,6 +6,7 @@ const B_BUS_PORT_BYTES: usize = 0x100;
 pub trait DmaABus {
     fn dma_read_a_bus(&mut self, addr: u32, open_bus: u8) -> u8;
     fn dma_write_a_bus(&mut self, addr: u32, value: u8);
+    fn dma_write_b_bus(&mut self, addr: u8, value: u8);
 }
 
 #[derive(Clone)]
@@ -238,6 +239,7 @@ impl DmaController {
                 let value = abus.dma_read_a_bus(a_addr, *open_bus);
                 *open_bus = value;
                 self.write_b_bus(b_addr, value);
+                abus.dma_write_b_bus(b_addr, value);
             }
 
             ticks += 8;
@@ -386,6 +388,7 @@ impl DmaController {
                 let value = abus.dma_read_a_bus(a_addr, *open_bus);
                 *open_bus = value;
                 self.write_b_bus(b_addr, value);
+                abus.dma_write_b_bus(b_addr, value);
             }
             addr = addr.wrapping_add(1);
         }

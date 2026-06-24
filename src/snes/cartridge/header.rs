@@ -1,21 +1,22 @@
 use crate::snes::cartridge::mapping::Mapping;
 
 pub(crate) const TITLE_LEN: usize = 21;
-pub(crate) const HEADER_MODE_OFFSET: usize = 0xD5;
-pub(crate) const HEADER_CHIPSET_OFFSET: usize = 0xD6;
-pub(crate) const HEADER_ROM_SIZE_OFFSET: usize = 0xD7;
-pub(crate) const HEADER_RAM_SIZE_OFFSET: usize = 0xD8;
-pub(crate) const HEADER_COUNTRY_OFFSET: usize = 0xD9;
-pub(crate) const HEADER_DEVELOPER_OFFSET: usize = 0xDA;
-pub(crate) const HEADER_VERSION_OFFSET: usize = 0xDB;
-pub(crate) const HEADER_CHECKSUM_COMPLEMENT_OFFSET: usize = 0xDC;
-pub(crate) const HEADER_CHECKSUM_OFFSET: usize = 0xDE;
+pub(crate) const HEADER_MODE_OFFSET: usize = 0x15;
+pub(crate) const HEADER_CHIPSET_OFFSET: usize = 0x16;
+pub(crate) const HEADER_ROM_SIZE_OFFSET: usize = 0x17;
+pub(crate) const HEADER_RAM_SIZE_OFFSET: usize = 0x18;
+pub(crate) const HEADER_COUNTRY_OFFSET: usize = 0x19;
+pub(crate) const HEADER_DEVELOPER_OFFSET: usize = 0x1A;
+pub(crate) const HEADER_VERSION_OFFSET: usize = 0x1B;
+pub(crate) const HEADER_CHECKSUM_COMPLEMENT_OFFSET: usize = 0x1C;
+pub(crate) const HEADER_CHECKSUM_OFFSET: usize = 0x1E;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SnesHeader {
     pub title: String,
     pub map_mode: u8,
     pub chipset: u8,
+    pub chipset_subtype: Option<u8>,
     pub rom_size_field: u8,
     pub ram_size_field: u8,
     pub country: u8,
@@ -40,6 +41,7 @@ pub(crate) fn parse_header_at(
     let title = decode_title(title_bytes);
     let map_mode = rom[header_offset + HEADER_MODE_OFFSET];
     let chipset = rom[header_offset + HEADER_CHIPSET_OFFSET];
+    let chipset_subtype = header_offset.checked_sub(1).map(|idx| rom[idx]);
     let rom_size_field = rom[header_offset + HEADER_ROM_SIZE_OFFSET];
     let ram_size_field = rom[header_offset + HEADER_RAM_SIZE_OFFSET];
     let country = rom[header_offset + HEADER_COUNTRY_OFFSET];
@@ -58,6 +60,7 @@ pub(crate) fn parse_header_at(
         title,
         map_mode,
         chipset,
+        chipset_subtype,
         rom_size_field,
         ram_size_field,
         country,

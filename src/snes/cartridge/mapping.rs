@@ -53,12 +53,12 @@ pub(crate) fn detect_mapping(rom: &[u8]) -> Option<MappingCandidate> {
 }
 
 fn score_candidate(rom: &[u8], mapping: Mapping, header_offset: usize) -> i32 {
-    let map_mode = rom[header_offset + 0xD5];
+    let map_mode = rom[header_offset + 0x15];
     let checksum_complement =
-        u16::from_le_bytes([rom[header_offset + 0xDC], rom[header_offset + 0xDD]]);
-    let checksum = u16::from_le_bytes([rom[header_offset + 0xDE], rom[header_offset + 0xDF]]);
+        u16::from_le_bytes([rom[header_offset + 0x1C], rom[header_offset + 0x1D]]);
+    let checksum = u16::from_le_bytes([rom[header_offset + 0x1E], rom[header_offset + 0x1F]]);
     let reset_vector = u16::from_le_bytes([rom[header_offset + 0x3C], rom[header_offset + 0x3D]]);
-    let rom_size_field = rom[header_offset + 0xD7];
+    let rom_size_field = rom[header_offset + 0x17];
 
     let mut score = 0;
 
@@ -125,11 +125,11 @@ mod tests {
     #[test]
     fn detect_mapping_prefers_hirom_when_header_only_exists_at_ffc0() {
         let mut rom = vec![0u8; 0x20000];
-        rom[0xFFC0 + 0xD5] = 0x21;
-        rom[0xFFC0 + 0xDC] = 0x34;
-        rom[0xFFC0 + 0xDD] = 0x12;
-        rom[0xFFC0 + 0xDE] = 0xCB;
-        rom[0xFFC0 + 0xDF] = 0xED;
+        rom[0xFFC0 + 0x15] = 0x21;
+        rom[0xFFC0 + 0x1C] = 0x34;
+        rom[0xFFC0 + 0x1D] = 0x12;
+        rom[0xFFC0 + 0x1E] = 0xCB;
+        rom[0xFFC0 + 0x1F] = 0xED;
         rom[0xFFFC] = 0x00;
         rom[0xFFFD] = 0x80;
 
@@ -141,10 +141,10 @@ mod tests {
     #[test]
     fn detect_mapping_prefers_exhirom_when_exhirom_and_hirom_scores_tie() {
         let mut rom = vec![0u8; 0x500000];
-        rom[0xFFC0 + 0xD5] = 0x21;
+        rom[0xFFC0 + 0x15] = 0x21;
         rom[0xFFFC] = 0x00;
         rom[0xFFFD] = 0x80;
-        rom[0x40FFC0 + 0xD5] = 0x35;
+        rom[0x40FFC0 + 0x15] = 0x35;
         rom[0x40FFFC] = 0x00;
         rom[0x40FFFD] = 0x80;
 

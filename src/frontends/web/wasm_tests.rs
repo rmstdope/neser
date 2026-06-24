@@ -1091,15 +1091,15 @@ fn minimal_snes_rom() -> Vec<u8> {
     // Reset vector low/high → $8000 (at header + 0x3C/0x3D = $7FFC/$7FFD)
     rom[header + 0x3C] = 0x00;
     rom[header + 0x3D] = 0x80;
-    // Map mode (LoROM, SlowROM) at header + 0xD5
-    rom[header + 0xD5] = 0x20;
-    // ROM size: 7 = 64 KB at header + 0xD7
-    rom[header + 0xD7] = 0x07;
-    // Checksum complement / checksum at header + 0xDC–0xDF
-    rom[header + 0xDC] = 0x34;
-    rom[header + 0xDD] = 0x12;
-    rom[header + 0xDE] = 0xCB;
-    rom[header + 0xDF] = 0xED;
+    // Map mode (LoROM, SlowROM) at $FFD5 (header + 0x15).
+    rom[header + 0x15] = 0x20;
+    // ROM size: 7 = 64 KB at $FFD7 (header + 0x17).
+    rom[header + 0x17] = 0x07;
+    // Checksum complement / checksum at $FFDC-$FFDF (header + 0x1C..0x1F).
+    rom[header + 0x1C] = 0x34;
+    rom[header + 0x1D] = 0x12;
+    rom[header + 0x1E] = 0xCB;
+    rom[header + 0x1F] = 0xED;
     // NOP at $8000 in LoROM bank 0 (ROM file offset 0)
     rom[0x0000] = 0xEA;
     rom
@@ -1422,10 +1422,14 @@ fn wasm_snes_save_state_round_trip_preserves_emulator_state() {
     assert!(!state1.is_empty());
 
     // Create new instance, load the same ROM, and save immediately
-    let snes2 = WasmSnes::new();
+    let mut snes2 = WasmSnes::new();
+    snes2
+        .load_rom(&rom, "test.sfc")
+        .expect("valid rom should load");
+    let state2 = snes2.save_state_bytes();
     // States should be roughly similar in size (both represent fresh post-load state)
     // Note: Not testing exact equality due to audio buffer variations
-    assert!(!state1.is_empty());
+    assert_eq!(state1.len(), state2.len());
 }
 
 #[wasm_bindgen_test]

@@ -113,6 +113,7 @@ impl Gba {
     pub const SCREEN_HEIGHT: u32 = SCREEN_HEIGHT;
 
     /// Borrow the 240x160 RGB888 framebuffer without cloning it.
+    #[cfg(any(test, feature = "wasm"))]
     pub(crate) fn framebuffer_rgb(&self) -> &[u8] {
         self.bus.ppu.framebuffer()
     }

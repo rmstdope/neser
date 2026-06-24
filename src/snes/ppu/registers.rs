@@ -6,10 +6,29 @@
 //! [`Ppu::read_register`].
 
 use super::{CGRAM_SIZE, CPU_VERSION, PPU1_VERSION, PPU2_VERSION, Ppu, VRAM_SIZE};
+use crate::platform::debugging::ppu_trace_level;
+use crate::trace_ppu;
 
 impl Ppu {
     /// Write a PPU register by its 16-bit address offset.
     pub fn write_register(&mut self, addr: u16, value: u8) {
+        let trace = ppu_trace_level() >= 3;
+        if trace {
+            trace_ppu!(3; "write {:04X}={:02X} y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X} nmi={} vblank={} irq={} frame={}",
+                addr,
+                value,
+                self.position.scanline,
+                self.position.dot,
+                self.inidisp,
+                self.bg_mode,
+                self.tm,
+                self.ts,
+                self.nmi_enable as u8,
+                self.vblank_active as u8,
+                self.irq_line as u8,
+                self.frame_complete as u8,
+            );
+        }
         match addr {
             // INIDISP: forced blank (bit 7) + master brightness (bits 0-3).
             0x2100 => self.inidisp = value,
@@ -216,11 +235,28 @@ impl Ppu {
             }
             _ => {}
         }
+        if trace {
+            trace_ppu!(3; "after {:04X}={:02X} y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X} nmi={} vblank={} irq={} frame={}",
+                addr,
+                value,
+                self.position.scanline,
+                self.position.dot,
+                self.inidisp,
+                self.bg_mode,
+                self.tm,
+                self.ts,
+                self.nmi_enable as u8,
+                self.vblank_active as u8,
+                self.irq_line as u8,
+                self.frame_complete as u8,
+            );
+        }
     }
 
     /// Read a PPU register by its 16-bit address offset.
     pub fn read_register(&mut self, addr: u16) -> u8 {
-        match addr {
+        let trace = ppu_trace_level() >= 3;
+        let value = match addr {
             // MPYL/MPYM/MPYH: PPU1 signed multiply result, M7A (16-bit) * M7B (8-bit, most-recent
             // byte) = 24-bit signed product. We always expose the product (drawing-period
             // conflicts during Mode 7 are not modeled).
@@ -323,7 +359,24 @@ impl Ppu {
                 value
             }
             _ => 0,
+        };
+        if trace {
+            trace_ppu!(3; "read {:04X} -> {:02X} y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X} nmi={} vblank={} irq={} frame={}",
+                addr,
+                value,
+                self.position.scanline,
+                self.position.dot,
+                self.inidisp,
+                self.bg_mode,
+                self.tm,
+                self.ts,
+                self.nmi_enable as u8,
+                self.vblank_active as u8,
+                self.irq_line as u8,
+                self.frame_complete as u8,
+            );
         }
+        value
     }
 
     fn vram_index(&self) -> usize {

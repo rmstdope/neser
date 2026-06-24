@@ -80,9 +80,11 @@ fn default_noise_lfsr() -> u16 {
 impl Sdsp {
     #[must_use]
     pub fn new() -> Self {
+        let mut regs = default_regs();
+        regs[usize::from(FLG_REG)] = 0xE0;
         Self {
             phase: 0,
-            regs: default_regs(),
+            regs,
             voices: std::array::from_fn(|_| VoiceState::default()),
             master_vol_l: 0,
             master_vol_r: 0,
@@ -90,7 +92,7 @@ impl Sdsp {
             echo_vol_r: 0,
             echo_feedback: 0,
             echo_enable: 0,
-            flg: 0,
+            flg: 0xE0,
             endx: 0,
             dir: 0,
             esa: 0,
@@ -145,6 +147,7 @@ impl Sdsp {
             v.gain = self.regs[base + 7];
             v.envx = self.regs[base + 8];
             v.outx = self.regs[base + 9] as i8;
+            v.current_output = i16::from(v.outx) << 8;
             v.mod_source = v.outx;
             v.env_level = u16::from(v.envx) << 4;
             v.mode = if v.env_level == 0 {
@@ -207,13 +210,13 @@ impl Sdsp {
         let mut echo_voice_r = 0i32;
 
         for voice in 0..8usize {
-            let sample = i16::from(self.voices[voice].outx) << 8;
+            let sample = self.voices[voice].current_output;
             let (left, right) = self.mix_voice_sample(voice, sample);
-            dry_l += i32::from(left);
-            dry_r += i32::from(right);
+            dry_l = clamp_i16_i32(dry_l + i32::from(left));
+            dry_r = clamp_i16_i32(dry_r + i32::from(right));
             if self.echo_enable & (1 << voice) != 0 {
-                echo_voice_l += i32::from(left);
-                echo_voice_r += i32::from(right);
+                echo_voice_l = clamp_i16_i32(echo_voice_l + i32::from(left));
+                echo_voice_r = clamp_i16_i32(echo_voice_r + i32::from(right));
             }
         }
 
@@ -225,6 +228,8 @@ impl Sdsp {
             self.echo_feedback,
             self.echo_vol_l,
             self.echo_vol_r,
+            self.master_vol_l,
+            self.master_vol_r,
             self.flg,
             echo_voice_l,
             echo_voice_r,
@@ -239,8 +244,8 @@ impl Sdsp {
     #[must_use]
     pub fn mix_voice_sample(&self, voice: usize, sample: i16) -> (i16, i16) {
         let idx = voice_index(voice);
-        let left = apply_two_stage_volume(sample, self.voices[idx].vol_l, self.master_vol_l);
-        let right = apply_two_stage_volume(sample, self.voices[idx].vol_r, self.master_vol_r);
+        let left = apply_voice_volume(sample, self.voices[idx].vol_l);
+        let right = apply_voice_volume(sample, self.voices[idx].vol_r);
         (left, right)
     }
 
@@ -289,8 +294,8 @@ impl Sdsp {
         } else {
             0x3FFF
         };
-        let env = i32::from(self.voices[voice].envx);
-        ((i32::from(raw) * env) / 0x7F).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+        let env = i32::from(self.voices[voice].env_level);
+        (((i32::from(raw) * env) >> 11).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16) & !1
     }
 
     fn effective_pitch_for_voice(&self, voice: usize, pmon: u8) -> u16 {
@@ -324,6 +329,12 @@ impl Sdsp {
     }
 
     fn step_phase_internal(&mut self, aram: Option<&[u8]>) {
+        let sample_tick = self.phase == 31;
+        self.phase = self.phase.wrapping_add(1) & 0x1F;
+        if !sample_tick {
+            return;
+        }
+
         self.envelope_counter = self.envelope_counter.wrapping_add(1);
         self.step_noise_lfsr();
         let pmon = self.regs[usize::from(PMON_REG)];
@@ -341,14 +352,13 @@ impl Sdsp {
             let sample = self.voice_sample(voice, non, aram);
             let out_before_mix = (sample >> 8).clamp(-128, 127) as i8;
             self.voices[voice].mod_source = out_before_mix;
+            self.voices[voice].current_output = sample;
             let (left, right) = self.mix_voice_sample(voice, sample);
             let _mixed = (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
             self.voices[voice].outx = out_before_mix;
             self.regs[(voice << 4) + 8] = self.voices[voice].envx;
             self.regs[(voice << 4) + 9] = out_before_mix as u8;
         }
-
-        self.phase = self.phase.wrapping_add(1) & 0x1F;
     }
 
     fn begin_voice_brr_stream(&mut self, voice: usize, aram: &[u8]) {
@@ -367,6 +377,7 @@ impl Sdsp {
         v.sample_pos = 0;
         v.brr_prev1 = 0;
         v.brr_prev2 = 0;
+        v.brr_history = [0; 3];
         v.brr_initialized = true;
         self.load_current_voice_brr_block(voice, aram);
     }
@@ -388,6 +399,11 @@ impl Sdsp {
 
     fn load_next_voice_brr_block(&mut self, voice: usize, aram: &[u8]) {
         let next_addr = self.voices[voice].brr_next_addr;
+        self.voices[voice].brr_history = [
+            self.voices[voice].brr_samples[13],
+            self.voices[voice].brr_samples[14],
+            self.voices[voice].brr_samples[15],
+        ];
         self.voices[voice].brr_addr = next_addr;
         self.voices[voice].brr_block_index = self.voices[voice].brr_block_index.wrapping_add(1);
         self.decode_voice_brr_block_at(voice, aram, next_addr);
@@ -442,7 +458,14 @@ impl Sdsp {
             return None;
         }
         let index = ((v.sample_pos >> 12) & 0x0F) as usize;
-        Some(v.brr_samples[index])
+        let frac = ((v.sample_pos >> 4) & 0xFF) as u8;
+        Some(gaussian::gaussian_interpolate(
+            voice_interpolation_sample(v, index, 3),
+            voice_interpolation_sample(v, index, 2),
+            voice_interpolation_sample(v, index, 1),
+            voice_interpolation_sample(v, index, 0),
+            frac,
+        ))
     }
 
     pub fn write_reg(&mut self, addr: u8, value: u8) {
@@ -571,11 +594,19 @@ fn voice_index(voice: usize) -> usize {
     voice
 }
 
-fn apply_two_stage_volume(sample: i16, voice_vol: i8, master_vol: i8) -> i16 {
-    let mut scaled = i32::from(sample) * i32::from(voice_vol);
-    scaled >>= 7;
-    scaled = (scaled * i32::from(master_vol)) >> 7;
-    scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+fn voice_interpolation_sample(voice: &VoiceState, index: usize, previous: usize) -> i16 {
+    if index >= previous {
+        return voice.brr_samples[index - previous];
+    }
+    voice.brr_history[voice.brr_history.len() - (previous - index)]
+}
+
+fn apply_voice_volume(sample: i16, voice_vol: i8) -> i16 {
+    clamp_i16_i32((i32::from(sample) * i32::from(voice_vol)) >> 6) as i16
+}
+
+fn clamp_i16_i32(value: i32) -> i32 {
+    value.clamp(i32::from(i16::MIN), i32::from(i16::MAX))
 }
 
 fn noise_clock_divider(clock_select: u8) -> u16 {

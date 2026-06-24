@@ -1,3 +1,4 @@
+use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -52,6 +53,8 @@ impl EchoState {
         echo_feedback: i8,
         echo_vol_l: i8,
         echo_vol_r: i8,
+        master_vol_l: i8,
+        master_vol_r: i8,
         flg: u8,
         echo_voice_l: i32,
         echo_voice_r: i32,
@@ -71,8 +74,12 @@ impl EchoState {
         let fir_l = self.fir_sum(&self.fir_left, fir_coeffs);
         let fir_r = self.fir_sum(&self.fir_right, fir_coeffs);
 
-        let mut out_l = dry_l + ((fir_l * i32::from(echo_vol_l)) >> 7);
-        let mut out_r = dry_r + ((fir_r * i32::from(echo_vol_r)) >> 7);
+        let mut out_l =
+            ((dry_l * i32::from(master_vol_l)) >> 7) + ((fir_l * i32::from(echo_vol_l)) >> 7);
+        let mut out_r =
+            ((dry_r * i32::from(master_vol_r)) >> 7) + ((fir_r * i32::from(echo_vol_r)) >> 7);
+        out_l = clamp_i16_i32(out_l);
+        out_r = clamp_i16_i32(out_r);
 
         let write_l =
             clamp_i16_and_clear_bit0(echo_voice_l + ((fir_l * i32::from(echo_feedback)) >> 7));
@@ -82,6 +89,9 @@ impl EchoState {
         if flg & 0x20 == 0
             && let Some(aram) = aram
         {
+            if addr < 0x0010 {
+                trace_apu!(4; "DSP echo writes addr=${:04X} flg=${:02X}", addr, flg);
+            }
             write_echo_entry(aram, addr, write_l, write_r);
         }
 
@@ -161,6 +171,10 @@ fn write_i16_wrap(aram: &mut [u8], addr: u16, value: i16) {
 }
 
 fn clamp_i16_and_clear_bit0(value: i32) -> i16 {
-    let clamped = value.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+    let clamped = clamp_i16_i32(value) as i16;
     clamped & !1
+}
+
+fn clamp_i16_i32(value: i32) -> i32 {
+    value.clamp(i32::from(i16::MIN), i32::from(i16::MAX))
 }

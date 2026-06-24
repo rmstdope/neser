@@ -1,5 +1,17 @@
 use super::Sdsp;
 
+fn step_sample_ticks(dsp: &mut Sdsp, ticks: usize) {
+    for _ in 0..ticks * 32 {
+        dsp.step_phase();
+    }
+}
+
+fn step_sample_ticks_with_memory(dsp: &mut Sdsp, aram: &[u8], ticks: usize) {
+    for _ in 0..ticks * 32 {
+        dsp.step_phase_with_memory(aram);
+    }
+}
+
 #[test]
 fn given_phase_31_when_step_phase_then_wraps_to_0() {
     let mut dsp = Sdsp::new();
@@ -51,7 +63,7 @@ fn given_brr_header_with_loop_and_end_bits_when_decoded_then_flags_are_exposed()
 }
 
 #[test]
-fn given_filter0_shift0_nibbles_when_decoded_then_positive_and_negative_samples_survive() {
+fn given_filter0_shift0_nibbles_when_decoded_then_samples_are_halved_to_15_bit_scale() {
     let header = 0b0000_0000;
     let mut data = [0u8; 8];
     data[0] = 0x78;
@@ -59,10 +71,76 @@ fn given_filter0_shift0_nibbles_when_decoded_then_positive_and_negative_samples_
 
     let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
 
-    assert_eq!(decoded.samples[0], 7);
-    assert_eq!(decoded.samples[1], -8);
+    assert_eq!(decoded.samples[0], 3);
+    assert_eq!(decoded.samples[1], -4);
     assert_eq!(decoded.samples[2], 0);
     assert_eq!(decoded.samples[3], -1);
+}
+
+#[test]
+fn given_filter0_shift12_nibbles_when_decoded_then_samples_are_15_bit_scaled() {
+    let header = 0b1100_0000;
+    let mut data = [0u8; 8];
+    data[0] = 0x78;
+
+    let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
+
+    assert_eq!(decoded.samples[0], 0x3800);
+    assert_eq!(decoded.samples[1], -0x4000);
+}
+
+#[test]
+fn given_reserved_shift_nibbles_when_decoded_then_negative_samples_use_shift12_sign_fill() {
+    let header = 0b1111_0000;
+    let mut data = [0u8; 8];
+    data[0] = 0x78;
+
+    let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
+
+    assert_eq!(decoded.samples[0], 0);
+    assert_eq!(decoded.samples[1], -2048);
+}
+
+#[test]
+fn given_filter2_negative_history_when_decoded_then_fullsnes_signed_rounding_is_used() {
+    let header = 0b0000_1000;
+    let data = [0u8; 8];
+
+    let decoded = Sdsp::decode_brr_block(header, data, -64, -63);
+
+    assert_eq!(decoded.samples[0], -63);
+}
+
+#[test]
+fn given_filter3_negative_history_when_decoded_then_fullsnes_signed_rounding_is_used() {
+    let header = 0b0000_1100;
+    let data = [0u8; 8];
+
+    let decoded = Sdsp::decode_brr_block(header, data, -64, -63);
+
+    assert_eq!(decoded.samples[0], -64);
+}
+
+#[test]
+fn given_filter_output_exceeds_positive_15_bit_range_when_decoded_then_sample_wraps_to_negative() {
+    let header = 0b1100_0100;
+    let mut data = [0u8; 8];
+    data[0] = 0x70;
+
+    let decoded = Sdsp::decode_brr_block(header, data, 0x3FFF, 0);
+
+    assert_eq!(decoded.samples[0], -0x0C01);
+}
+
+#[test]
+fn given_filter_output_exceeds_negative_15_bit_range_when_decoded_then_sample_wraps_to_positive() {
+    let header = 0b1100_0100;
+    let mut data = [0u8; 8];
+    data[0] = 0x80;
+
+    let decoded = Sdsp::decode_brr_block(header, data, -1, 0);
+
+    assert_eq!(decoded.samples[0], 0x3FFF);
 }
 
 #[test]
@@ -72,6 +150,64 @@ fn given_voice_pitch_when_step_voice_pitch_then_sample_position_advances() {
 
     dsp.step_voice_pitch(2);
     assert_eq!(dsp.voice_sample_pos(2), 0x1234);
+}
+
+#[test]
+fn given_voice_pitch_when_dsp_phase_steps_then_pitch_advances_once_per_32_phases() {
+    let mut dsp = Sdsp::new();
+    dsp.set_voice_pitch(0, 0x1000);
+
+    for _ in 0..31 {
+        dsp.step_phase();
+    }
+    assert_eq!(
+        dsp.voice_sample_pos(0),
+        0,
+        "S-DSP pitch counters should not advance before the 32 kHz sample tick"
+    );
+
+    dsp.step_phase();
+    assert_eq!(dsp.voice_sample_pos(0), 0x1000);
+}
+
+#[test]
+fn given_fractional_brr_position_when_sampling_voice_then_gaussian_interpolation_is_used() {
+    let mut dsp = Sdsp::new();
+    dsp.voices[0].brr_initialized = true;
+    dsp.voices[0].env_level = 0x7FF;
+    dsp.voices[0].sample_pos = 0x3800;
+    dsp.voices[0].brr_samples[0] = 0;
+    dsp.voices[0].brr_samples[1] = 0;
+    dsp.voices[0].brr_samples[2] = 0;
+    dsp.voices[0].brr_samples[3] = 0x3000;
+
+    let sample = dsp.voice_sample(0, 0, Some(&[]));
+
+    assert_eq!(
+        sample, 346,
+        "fractional BRR positions should use S-DSP gaussian interpolation"
+    );
+    assert_ne!(
+        sample, dsp.voices[0].brr_samples[3],
+        "playback must not point-sample the selected BRR entry"
+    );
+}
+
+#[test]
+fn given_brr_position_at_block_start_when_sampling_voice_then_previous_block_history_is_used() {
+    let mut dsp = Sdsp::new();
+    dsp.voices[0].brr_initialized = true;
+    dsp.voices[0].env_level = 0x7FF;
+    dsp.voices[0].sample_pos = 0x0800;
+    dsp.voices[0].brr_history = [0x1000, 0x2000, 0x3000];
+    dsp.voices[0].brr_samples[0] = 0x4000;
+
+    let sample = dsp.voice_sample(0, 0, Some(&[]));
+
+    assert_eq!(
+        sample, 10244,
+        "gaussian interpolation at a block boundary should include the previous block tail"
+    );
 }
 
 #[test]
@@ -99,14 +235,32 @@ fn given_extreme_samples_when_gaussian_interpolating_then_output_is_clamped_and_
 }
 
 #[test]
-fn given_voice_and_master_volume_when_mixing_then_both_are_applied() {
+fn given_voice_volume_when_mixing_then_voice_volume_uses_15_bit_sample_scale() {
     let mut dsp = Sdsp::new();
     dsp.set_voice_volume(0, 64, 32);
-    dsp.set_master_volume(127, 127);
 
     let (left, right) = dsp.mix_voice_sample(0, 1000);
-    assert_eq!(left, 496);
-    assert_eq!(right, 248);
+    assert_eq!(left, 1000);
+    assert_eq!(right, 500);
+}
+
+#[test]
+fn given_many_loud_voices_when_rendering_then_main_sum_clamps_before_master_volume() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x0C, 0x01);
+    dsp.write_reg(0x1C, 0x01);
+    dsp.write_reg(0x6C, 0x00);
+    for voice in 0..8usize {
+        let base = voice << 4;
+        dsp.write_reg(base as u8, 0x7F);
+        dsp.write_reg((base + 1) as u8, 0x7F);
+        dsp.voices[voice].current_output = 0x3FFF;
+    }
+
+    let (left, right) = dsp.render_stereo_sample();
+
+    assert_eq!(left, 255.0 / 32768.0);
+    assert_eq!(right, 255.0 / 32768.0);
 }
 
 #[test]
@@ -128,8 +282,8 @@ fn normalize_after_restore_rebuilds_cached_pitch_and_volume_fields() {
     dsp.normalize_after_restore()
         .expect("normalize should rebuild cached fields");
     let (left, right) = dsp.mix_voice_sample(0, 1000);
-    assert_eq!(left, 496);
-    assert_eq!(right, 248);
+    assert_eq!(left, 1000);
+    assert_eq!(right, 500);
 
     dsp.step_voice_pitch(0);
     assert_eq!(dsp.voice_sample_pos(0), 0x1234);
@@ -151,18 +305,14 @@ fn given_kon_for_adsr_voice_when_latency_passes_then_envx_becomes_non_zero() {
     dsp.write_reg(0x06, 0xE0); // ADSR2: high sustain level, slow sustain
     dsp.write_reg(0x4C, 0x01); // KON voice 0
 
-    for _ in 0..4 {
-        dsp.step_phase();
-    }
+    step_sample_ticks(&mut dsp, 4);
     assert_eq!(
         dsp.read_reg(0x08),
         0x00,
         "ENVX must still be zero before KON latency elapses"
     );
 
-    for _ in 0..8 {
-        dsp.step_phase();
-    }
+    step_sample_ticks(&mut dsp, 8);
     assert!(
         dsp.read_reg(0x08) > 0,
         "ENVX should rise after KON latency and attack progression"
@@ -175,9 +325,7 @@ fn given_active_adsr_voice_when_koff_then_envx_decreases() {
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
-    for _ in 0..20 {
-        dsp.step_phase();
-    }
+    step_sample_ticks(&mut dsp, 20);
     let before = dsp.read_reg(0x08);
     assert!(
         before > 0,
@@ -185,9 +333,7 @@ fn given_active_adsr_voice_when_koff_then_envx_decreases() {
     );
 
     dsp.write_reg(0x5C, 0x01); // KOFF voice 0
-    for _ in 0..8 {
-        dsp.step_phase();
-    }
+    step_sample_ticks(&mut dsp, 8);
     let after = dsp.read_reg(0x08);
     assert!(
         after < before,
@@ -207,13 +353,50 @@ fn given_non_voice_when_noise_clock_ticks_then_outx_changes_from_silence() {
     dsp.write_reg(0x6C, 0x1F); // fastest noise clock in this implementation
 
     let before = dsp.read_reg(0x09);
-    for _ in 0..8 {
-        dsp.step_phase();
-    }
+    step_sample_ticks(&mut dsp, 8);
     let after = dsp.read_reg(0x09);
     assert_ne!(
         after, before,
         "noise-routed OUTX should evolve as LFSR advances"
+    );
+}
+
+#[test]
+fn given_sub_envx_envelope_level_when_sampling_voice_then_internal_11_bit_envelope_is_used() {
+    let mut dsp = Sdsp::new();
+    dsp.noise_lfsr = 1;
+    dsp.voices[0].env_level = 8;
+    dsp.voices[0].envx = 0;
+
+    let sample = dsp.voice_sample(0, 0x01, None);
+
+    assert_eq!(
+        sample, 62,
+        "voice output should use the 11-bit envelope, not the truncated ENVX monitor value"
+    );
+}
+
+#[test]
+fn given_full_scale_voice_when_rendering_then_mixer_uses_full_resolution_sample_not_outx_register()
+{
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x0C, 0x7F);
+    dsp.write_reg(0x1C, 0x7F);
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x07, 0x7F); // direct gain => ENVX=0x7F
+    dsp.write_reg(0x6C, 0x00); // unmute
+
+    step_sample_ticks(&mut dsp, 1);
+    let (left, right) = dsp.render_stereo_sample();
+
+    assert!(
+        (0.95..1.0).contains(&left),
+        "left channel should use full-resolution voice sample before OUTX quantization"
+    );
+    assert!(
+        (0.95..1.0).contains(&right),
+        "right channel should use full-resolution voice sample before OUTX quantization"
     );
 }
 
@@ -228,7 +411,7 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
     dsp.write_reg(0x12, 0x00); // voice1 pitch low
     dsp.write_reg(0x13, 0x10); // voice1 pitch high => 0x1000
 
-    dsp.step_phase();
+    step_sample_ticks(&mut dsp, 1);
     let base_step = dsp.voice_sample_pos(1);
 
     let mut modulated = Sdsp::new();
@@ -240,7 +423,7 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
     modulated.write_reg(0x12, 0x00);
     modulated.write_reg(0x13, 0x10);
     modulated.write_reg(0x2D, 0x02); // PMON voice 1
-    modulated.step_phase();
+    step_sample_ticks(&mut modulated, 1);
     let mod_step = modulated.voice_sample_pos(1);
 
     assert_ne!(
@@ -257,9 +440,7 @@ fn given_koff_during_kon_delay_when_latency_would_expire_then_voice_stays_releas
     dsp.write_reg(0x4C, 0x01);
     dsp.write_reg(0x5C, 0x01);
 
-    for _ in 0..16 {
-        dsp.step_phase();
-    }
+    step_sample_ticks(&mut dsp, 16);
     assert_eq!(
         dsp.read_reg(0x08),
         0,
@@ -273,9 +454,7 @@ fn given_envx_outx_when_written_then_voice_status_is_not_directly_overridden() {
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
-    for _ in 0..8 {
-        dsp.step_phase();
-    }
+    step_sample_ticks(&mut dsp, 8);
     let env_before = dsp.read_reg(0x08);
     let out_before = dsp.read_reg(0x09);
 
@@ -294,7 +473,7 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
     base.write_reg(0x07, 0x7F);
     base.write_reg(0x12, 0x00);
     base.write_reg(0x13, 0x10);
-    base.step_phase();
+    step_sample_ticks(&mut base, 1);
     let base_step = base.voice_sample_pos(1);
 
     let mut modulated = Sdsp::new();
@@ -306,7 +485,7 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
     modulated.write_reg(0x0C, 0x00);
     modulated.write_reg(0x1C, 0x00);
     modulated.write_reg(0x2D, 0x02);
-    modulated.step_phase();
+    step_sample_ticks(&mut modulated, 1);
     let mod_step = modulated.voice_sample_pos(1);
 
     assert_ne!(
@@ -325,7 +504,7 @@ fn given_pmon_enabled_with_voice0_output_when_voice1_steps_then_pitch_uses_modul
     dsp.write_reg(0x13, 0x10);
     dsp.write_reg(0x2D, 0x02);
 
-    dsp.step_phase();
+    step_sample_ticks(&mut dsp, 1);
 
     let voice0_outx = i32::from(dsp.read_reg(0x09) as i8);
     let expected_step = (0x1000 * ((voice0_outx >> 4) + 0x400)) >> 10;
@@ -343,9 +522,7 @@ fn given_adsr_attack_rate_15_when_key_on_latency_expires_then_envelope_jumps_by_
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
 
-    for _ in 0..5 {
-        dsp.step_phase();
-    }
+    step_sample_ticks(&mut dsp, 5);
 
     assert_eq!(
         dsp.read_reg(0x08),
@@ -386,9 +563,7 @@ fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sam
     dsp.write_reg(0x03, 0x10);
     dsp.write_reg(0x4C, 0x01);
 
-    for _ in 0..5 {
-        dsp.step_phase_with_memory(&aram);
-    }
+    step_sample_ticks_with_memory(&mut dsp, &aram, 5);
 
     assert_eq!(
         dsp.read_reg(0x09),
@@ -417,9 +592,7 @@ fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
     dsp.write_reg(0x03, 0x10);
     dsp.write_reg(0x4C, 0x01);
 
-    for _ in 0..5 {
-        dsp.step_phase_with_memory(&aram);
-    }
+    step_sample_ticks_with_memory(&mut dsp, &aram, 5);
 
     assert_ne!(
         dsp.read_reg(0x7C),
@@ -439,7 +612,9 @@ fn given_echo_enabled_when_rendering_with_memory_then_echo_ring_buffer_is_writte
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x40); // ESA base 0x4000
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     dsp.voices[0].outx = 64;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
 
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
 
@@ -463,6 +638,7 @@ fn given_echo_write_disabled_when_rendering_with_memory_then_echo_buffer_is_not_
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
     dsp.write_reg(0x6C, 0x20); // FLG.5 = echo write disable
     dsp.voices[0].outx = 64;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
 
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
 
@@ -482,6 +658,7 @@ fn given_echo_ram_and_fir_coefficients_when_rendering_with_memory_then_echo_is_m
     dsp.write_reg(0x7F, 0x7F); // FIR7 (newest sample tap)
     dsp.write_reg(0x6D, 0x10); // ESA base 0x1000
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     let base = 0x1000usize;
     aram[base] = 0xFE;
     aram[base + 1] = 0x7F; // near +0x7FFF
@@ -511,11 +688,14 @@ fn given_edl_zero_when_rendering_then_echo_ring_wraps_each_sample() {
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x30); // ESA base 0x3000
     dsp.write_reg(0x7D, 0x00); // EDL=0 => 4-byte ring
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     dsp.voices[0].outx = 10;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let first = [aram[0x3000], aram[0x3001], aram[0x3002], aram[0x3003]];
 
     dsp.voices[0].outx = 64;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let second = [aram[0x3000], aram[0x3001], aram[0x3002], aram[0x3003]];
 
@@ -540,17 +720,21 @@ fn given_esa_change_when_rendering_then_write_base_switches_after_one_sample_del
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x7D, 0x00); // EDL=0 keeps ring index at 0
     dsp.write_reg(0x6D, 0x10);
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
     dsp.voices[0].outx = 24;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let first_base = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
 
     dsp.write_reg(0x6D, 0x20);
     dsp.voices[0].outx = 40;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let delayed_base = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
     let new_base_after_second = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
 
     dsp.voices[0].outx = 56;
+    dsp.voices[0].current_output = i16::from(dsp.voices[0].outx) << 8;
     let _ = dsp.render_stereo_sample_with_memory(&mut aram);
     let new_base_after_third = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
 

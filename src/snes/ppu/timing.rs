@@ -12,10 +12,15 @@
 use super::{
     DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, PpuLineTimingProfile, VISIBLE_LINE_START,
 };
+use crate::platform::debugging::ppu_trace_level;
+use crate::trace_ppu;
 
 impl Ppu {
     /// Advance the PPU by one master clock.
     pub fn tick(&mut self) {
+        if ppu_trace_level() >= 5 {
+            trace_ppu!(5; "{}", self.format_trace_tick_line());
+        }
         self.master_cycle_accumulator += 1;
         let cycles_per_dot = self.cycles_per_current_dot();
         if self.master_cycle_accumulator < cycles_per_dot {
@@ -106,6 +111,14 @@ impl Ppu {
                 self.vblank_active = true;
                 self.nmi_flag = true;
                 self.frame_complete = true;
+                trace_ppu!(1; "vblank enter y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X}",
+                    self.position.scanline,
+                    self.position.dot,
+                    self.inidisp,
+                    self.bg_mode,
+                    self.tm,
+                    self.ts,
+                );
                 self.update_nmi_line();
             }
             0 => {
@@ -115,6 +128,15 @@ impl Ppu {
                 // The field parity still advances even when interlace output is disabled, because
                 // the short/long scanline exceptions are keyed off the latched field state.
                 self.interlace_field = !self.interlace_field;
+                trace_ppu!(1; "frame wrap y={} x={} field={} inidisp={:02X} mode={} tm={:02X} ts={:02X}",
+                    self.position.scanline,
+                    self.position.dot,
+                    self.interlace_field as u8,
+                    self.inidisp,
+                    self.bg_mode,
+                    self.tm,
+                    self.ts,
+                );
                 self.update_nmi_line();
             }
             _ => {}
@@ -125,6 +147,13 @@ impl Ppu {
     pub(super) fn update_nmi_line(&mut self) {
         let line = self.nmi_enable && self.nmi_flag;
         if line && !self.nmi_line_prev {
+            trace_ppu!(2; "nmi edge y={} x={} inidisp={:02X} nmi={} vblank={}",
+                self.position.scanline,
+                self.position.dot,
+                self.inidisp,
+                self.nmi_enable as u8,
+                self.vblank_active as u8,
+            );
             self.nmi_edge = true;
         }
         self.nmi_line_prev = line;
@@ -159,6 +188,15 @@ impl Ppu {
             }
             _ => false,
         };
+        if triggered && !self.timeup_flag {
+            trace_ppu!(2; "timeup y={} x={} irq_mode={} htime={:03X} vtime={:03X}",
+                h,
+                self.position.dot,
+                self.irq_mode,
+                self.htime,
+                self.vtime,
+            );
+        }
         if triggered {
             self.timeup_flag = true;
             self.irq_line = true;
