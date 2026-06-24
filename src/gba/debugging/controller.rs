@@ -26,10 +26,10 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use super::breakpoints::Breakpoints;
 use super::disasm::{disasm_arm, disasm_thumb};
 use super::trace::{CpuTrace, TraceEntry};
 use crate::gba::cpu::{Arm7tdmi, Bus};
+use crate::platform::debugging::breakpoints::{BreakpointKind, BreakpointList};
 
 /// Result of attempting to advance emulation under debugger control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +42,7 @@ pub enum BreakpointHit {
 
 /// Combined breakpoint + trace state for the GBA debugger.
 pub struct GbaDebuggerController {
-    breakpoints: Breakpoints,
+    breakpoints: BreakpointList<u32>,
     trace: CpuTrace,
     trace_file: Option<BufWriter<File>>,
 }
@@ -57,7 +57,7 @@ impl GbaDebuggerController {
     /// Create a new controller with default trace capacity and no breakpoints.
     pub fn new() -> Self {
         Self {
-            breakpoints: Breakpoints::new(),
+            breakpoints: BreakpointList::new(),
             trace: CpuTrace::default(),
             trace_file: None,
         }
@@ -66,23 +66,34 @@ impl GbaDebuggerController {
     // ── Breakpoints ────────────────────────────────────────────────────────
 
     /// Mutable access to the breakpoint set.
-    pub fn breakpoints_mut(&mut self) -> &mut Breakpoints {
+    pub fn breakpoints_mut(&mut self) -> &mut BreakpointList<u32> {
         &mut self.breakpoints
     }
 
     /// Read-only access to the breakpoint set.
-    pub fn breakpoints(&self) -> &Breakpoints {
+    pub fn breakpoints(&self) -> &BreakpointList<u32> {
         &self.breakpoints
     }
 
-    /// Convenience: set a breakpoint at `addr`.
+    /// Convenience: set a PC breakpoint at `addr`. Returns `true` if it was
+    /// newly added, `false` if one already existed there.
     pub fn add_breakpoint(&mut self, addr: u32) -> bool {
-        self.breakpoints.insert(addr)
+        if self.breakpoints.has_pc_breakpoint_at(addr) {
+            return false;
+        }
+        self.breakpoints.add(BreakpointKind::Pc(addr));
+        true
     }
 
-    /// Convenience: clear a breakpoint at `addr`.
+    /// Convenience: clear the PC breakpoint at `addr`. Returns `true` if one
+    /// was present.
     pub fn remove_breakpoint(&mut self, addr: u32) -> bool {
-        self.breakpoints.remove(addr)
+        if !self.breakpoints.has_pc_breakpoint_at(addr) {
+            return false;
+        }
+        self.breakpoints
+            .remove_first_matching(&BreakpointKind::Pc(addr));
+        true
     }
 
     // ── Trace buffer ──────────────────────────────────────────────────────
@@ -174,7 +185,7 @@ impl GbaDebuggerController {
     ) -> BreakpointHit {
         for _ in 0..max_steps {
             let new_pc = self.step(cpu, bus);
-            if self.breakpoints.contains(new_pc) {
+            if self.breakpoints.has_pc_breakpoint_at(new_pc) {
                 return BreakpointHit::At(new_pc);
             }
         }
@@ -258,9 +269,9 @@ mod tests {
     fn breakpoint_helpers_delegate_to_set() {
         let mut dbg = GbaDebuggerController::new();
         assert!(dbg.add_breakpoint(0x100));
-        assert!(dbg.breakpoints().contains(0x100));
+        assert!(dbg.breakpoints().has_pc_breakpoint_at(0x100));
         assert!(dbg.remove_breakpoint(0x100));
-        assert!(!dbg.breakpoints().contains(0x100));
+        assert!(!dbg.breakpoints().has_pc_breakpoint_at(0x100));
     }
 
     #[test]

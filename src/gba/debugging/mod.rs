@@ -6,18 +6,16 @@
 //! do not reference any of these symbols (satisfying the WASM-build
 //! acceptance criterion of issue #2218).
 //!
-//! See [`disasm`] for instruction formatting, [`breakpoints`] for the
-//! address-breakpoint set, and [`trace`] for the execution ring buffer.
-//! [`controller::GbaDebuggerController`] glues them together for the
-//! upcoming debugger UI.
+//! See [`disasm`] for instruction formatting and [`trace`] for the execution
+//! ring buffer. Address breakpoints use the shared
+//! [`crate::platform::debugging::breakpoints::BreakpointList`] (parameterized
+//! over the 32-bit ARM address space). [`controller::GbaDebuggerController`]
+//! glues them together for the upcoming debugger UI.
 
-pub mod breakpoints;
 pub mod controller;
 pub mod disasm;
 pub mod trace;
 
-#[allow(unused_imports)]
-pub use breakpoints::Breakpoints;
 #[allow(unused_imports)]
 pub use controller::{BreakpointHit, GbaDebuggerController};
 #[allow(unused_imports)]
