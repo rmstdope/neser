@@ -87,6 +87,11 @@ SNES integration tests live under `src/snes/integration_tests/`.
   `.smc` bytes through the SNES console, runs with explicit tick/frame budgets,
   detects pass/fail through a reserved WRAM marker at `$7E1FF0`, records
   diagnostics, and computes a screen CRC.
+- Asset provenance is tracked in
+  `roms/snes/automated_tests/manifest.json` and validated by
+  `python -m scripts.validate_snes_test_assets`.
+- Intake policy and baseline-approval rules are documented in
+  [docs/SNES_TEST_ASSET_POLICY.md](docs/SNES_TEST_ASSET_POLICY.md).
 - Set `NESER_CAPTURE_SCREEN=1` to write optional runner screenshots under
   `target/snes_test_captures/`.
 
