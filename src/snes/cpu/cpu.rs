@@ -595,16 +595,8 @@ impl<B: SnesBus> Cpu<B> {
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
         let opcode = self.fetch_byte();
-        let operands = [
-            opcode,
-            self.bus
-                .read_for_debugger(pc_before.wrapping_add(1) & 0xFF_FFFF),
-            self.bus
-                .read_for_debugger(pc_before.wrapping_add(2) & 0xFF_FFFF),
-            self.bus
-                .read_for_debugger(pc_before.wrapping_add(3) & 0xFF_FFFF),
-        ];
         if crate::platform::debugging::cpu_trace_level() >= 1 {
+            let operands = self.exec_trace_operands(opcode);
             trace_cpu!(1; "{}", self.format_exec_trace_line(pc_before, &operands));
         }
         let base = match opcode {
@@ -875,6 +867,18 @@ impl<B: SnesBus> Cpu<B> {
         }
 
         total_bus_cycles
+    }
+
+    fn exec_trace_operands(&self, opcode: u8) -> [u8; 4] {
+        let bank = (self.pbr as u32) << 16;
+        [
+            opcode,
+            self.bus.read_for_debugger(bank | u32::from(self.pc)),
+            self.bus
+                .read_for_debugger(bank | u32::from(self.pc.wrapping_add(1))),
+            self.bus
+                .read_for_debugger(bank | u32::from(self.pc.wrapping_add(2))),
+        ]
     }
 
     /// Fetch the byte at PBR:PC and advance PC by 1.
@@ -4084,6 +4088,63 @@ impl<B: SnesBus> Cpu<B> {
 mod tests {
     use super::*;
     use crate::snes::bus::StubBus;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+
+    #[derive(Default)]
+    struct TraceProbeBus {
+        mem: BTreeMap<u32, u8>,
+        debugger_reads: RefCell<Vec<u32>>,
+    }
+
+    impl TraceProbeBus {
+        fn load(&mut self, addr: u32, data: &[u8]) {
+            for (offset, byte) in data.iter().enumerate() {
+                self.mem.insert((addr + offset as u32) & 0xFF_FFFF, *byte);
+            }
+        }
+
+        fn debugger_reads(&self) -> Vec<u32> {
+            self.debugger_reads.borrow().clone()
+        }
+    }
+
+    impl SnesBus for TraceProbeBus {
+        fn read(&self, addr: u32) -> u8 {
+            *self.mem.get(&(addr & 0xFF_FFFF)).unwrap_or(&0)
+        }
+
+        fn read_for_debugger(&self, addr: u32) -> u8 {
+            let addr = addr & 0xFF_FFFF;
+            self.debugger_reads.borrow_mut().push(addr);
+            self.read(addr)
+        }
+
+        fn write(&mut self, addr: u32, value: u8) {
+            self.mem.insert(addr & 0xFF_FFFF, value);
+        }
+
+        fn tick(&mut self) {}
+    }
+
+    struct TraceReset;
+
+    impl TraceReset {
+        fn cpu_enabled() -> Self {
+            crate::platform::debugging::init_tracing(crate::platform::debugging::Tracing {
+                enabled: true,
+                cpu: 1,
+                ..Default::default()
+            });
+            Self
+        }
+    }
+
+    impl Drop for TraceReset {
+        fn drop(&mut self) {
+            crate::platform::debugging::init_tracing(Default::default());
+        }
+    }
 
     #[test]
     fn reset_state_is_emulation_mode() {
@@ -4093,6 +4154,38 @@ mod tests {
         assert!(cpu.x_flag());
         assert_eq!(cpu.read_s(), 0x01FF);
         assert!(cpu.flag_i());
+    }
+
+    #[test]
+    fn step_does_not_fetch_trace_operands_when_cpu_tracing_is_disabled() {
+        crate::platform::debugging::init_tracing(Default::default());
+        let mut bus = TraceProbeBus::default();
+        bus.load(0x12_8000, &[0xEA]);
+        let mut cpu = Cpu::new(bus);
+        cpu.pbr = 0x12;
+        cpu.pc = 0x8000;
+
+        cpu.step();
+
+        assert_eq!(cpu.bus.debugger_reads(), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn step_trace_operand_reads_wrap_pc_within_current_program_bank() {
+        let _trace_reset = TraceReset::cpu_enabled();
+        let mut bus = TraceProbeBus::default();
+        bus.load(0x12_FFFF, &[0xEA]);
+        bus.load(0x12_0000, &[0x11, 0x22, 0x33]);
+        let mut cpu = Cpu::new(bus);
+        cpu.pbr = 0x12;
+        cpu.pc = 0xFFFF;
+
+        cpu.step();
+
+        assert_eq!(
+            cpu.bus.debugger_reads(),
+            vec![0x12_0000, 0x12_0001, 0x12_0002]
+        );
     }
 
     #[test]

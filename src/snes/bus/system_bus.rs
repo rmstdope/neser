@@ -266,7 +266,7 @@ impl SnesSystemBus {
             };
         }
 
-        self.read(addr)
+        self.mdr.get()
     }
 
     fn dma_write_a_bus_impl(&mut self, addr: u32, value: u8) {
@@ -913,6 +913,20 @@ mod tests {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x7E0000, 0x5A);
         assert_eq!(bus.read(0x7E0000), 0x5A);
+    }
+
+    #[test]
+    fn read_for_debugger_on_mmio_returns_mdr_without_side_effects() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x002181, 0x00);
+        bus.write(0x002182, 0x00);
+        bus.write(0x002183, 0x00);
+        bus.write(0x7E0000, 0x42);
+        bus.mdr.set(0xA5);
+
+        assert_eq!(bus.read_for_debugger(0x002180), 0xA5);
+        assert_eq!(bus.wmadd.get(), 0);
+        assert_eq!(bus.mdr.get(), 0xA5);
     }
 
     #[test]
