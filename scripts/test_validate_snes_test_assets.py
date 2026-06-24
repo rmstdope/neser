@@ -72,6 +72,68 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         self.assertTrue(any("not_vendored integrity" in error for error in errors))
 
+    def test_not_vendored_requires_zero_file_count_and_size(self) -> None:
+        """Non-vendored variants must report zero file count and size."""
+
+        manifest = load_manifest()
+        modified = copy.deepcopy(manifest)
+        modified["assets"][1]["variants"][1]["integrity"]["file_count"] = 1
+        modified["assets"][1]["variants"][1]["integrity"]["total_size_bytes"] = 5
+
+        errors = validate_manifest(modified)
+
+        self.assertTrue(any("file_count == 0" in error for error in errors))
+        self.assertTrue(any("total_size_bytes == 0" in error for error in errors))
+
+    def test_committed_ci_requires_tree_sha256_integrity(self) -> None:
+        """Committed CI variants must use tree_sha256 integrity."""
+
+        manifest = load_manifest()
+        modified = copy.deepcopy(manifest)
+        modified["assets"][0]["variants"][0]["integrity"]["kind"] = "not_vendored"
+
+        errors = validate_manifest(modified)
+
+        self.assertTrue(any("committed_ci variants must use tree_sha256 integrity" in error for error in errors))
+
+    def test_optional_local_requires_not_vendored_integrity(self) -> None:
+        """Optional local variants must use not_vendored integrity."""
+
+        manifest = load_manifest()
+        modified = copy.deepcopy(manifest)
+        modified["assets"][0]["variants"][1]["integrity"]["kind"] = "tree_sha256"
+        modified["assets"][0]["variants"][1]["integrity"]["sha256"] = (
+            "45b59ac39b56eaa777f8599bd125323444757bcb2d417669fa053708868c16d7"
+        )
+        modified["assets"][0]["variants"][1]["integrity"]["file_count"] = 1
+        modified["assets"][0]["variants"][1]["integrity"]["total_size_bytes"] = 1
+
+        errors = validate_manifest(modified)
+
+        self.assertTrue(any("optional_local variants must use not_vendored integrity" in error for error in errors))
+
+    def test_variant_path_must_be_repository_relative(self) -> None:
+        """Absolute variant paths are rejected."""
+
+        manifest = load_manifest()
+        modified = copy.deepcopy(manifest)
+        modified["assets"][0]["variants"][0]["path"] = "/tmp/outside"
+
+        errors = validate_manifest(modified)
+
+        self.assertTrue(any("path must be repository-relative" in error for error in errors))
+
+    def test_variant_path_must_not_contain_parent_segments(self) -> None:
+        """Parent-directory traversal segments are rejected."""
+
+        manifest = load_manifest()
+        modified = copy.deepcopy(manifest)
+        modified["assets"][0]["variants"][0]["path"] = "roms/snes/../outside"
+
+        errors = validate_manifest(modified)
+
+        self.assertTrue(any("must not contain '..'" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

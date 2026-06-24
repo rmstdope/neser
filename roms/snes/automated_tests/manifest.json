@@ -48,7 +48,7 @@
       "platform": "snes",
       "source": {
         "url": "https://github.com/SingleStepTests/ProcessorTests",
-        "ref": "main"
+        "ref": "bb11756436da8fd16cce86aef63dc6725f48836f"
       },
       "license": "unknown",
       "oracle_type": "vector_state",
@@ -71,7 +71,7 @@
           "id": "optional_full_corpus",
           "status": "optional_local",
           "path": "roms/snes/automated_tests/processor_tests/spc700/full/v1",
-          "refresh_command": "manual upstream fetch",
+          "refresh_command": "bash scripts/refresh_spc700_processor_tests_subset.sh",
           "integrity": {
             "kind": "not_vendored",
             "sha256": "not_applicable",

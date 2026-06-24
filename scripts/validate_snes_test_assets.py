@@ -67,6 +67,44 @@ def _validate_integrity(
     if kind == "not_vendored":
         if sha256 != "not_applicable":
             errors.append(f"{prefix}: not_vendored integrity must use sha256='not_applicable'")
+        if isinstance(file_count, int) and file_count != 0:
+            errors.append(f"{prefix}: not_vendored integrity requires file_count == 0")
+        if isinstance(total_size, int) and total_size != 0:
+            errors.append(f"{prefix}: not_vendored integrity requires total_size_bytes == 0")
+
+
+def _validate_variant_path(
+    path_value: Any,
+    repo_root: Path,
+    errors: list[str],
+    asset_id: str,
+    variant_id: str,
+) -> Path | None:
+    prefix = f"asset '{asset_id}' variant '{variant_id}'"
+
+    if not _is_non_empty_string(path_value):
+        errors.append(f"{prefix}: path must be non-empty")
+        return None
+
+    path_str = str(path_value)
+    path_obj = Path(path_str)
+    if path_obj.is_absolute():
+        errors.append(f"{prefix}: path must be repository-relative")
+        return None
+
+    if ".." in path_obj.parts:
+        errors.append(f"{prefix}: path must not contain '..'")
+        return None
+
+    resolved_root = repo_root.resolve()
+    resolved_path = (repo_root / path_obj).resolve(strict=False)
+    try:
+        resolved_path.relative_to(resolved_root)
+    except ValueError:
+        errors.append(f"{prefix}: path escapes repository root")
+        return None
+
+    return path_obj
 
 
 def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> list[str]:
@@ -142,8 +180,9 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
                     f"asset '{asset_id}' variant '{variant_id}': status must be one of {sorted(ALLOWED_STATUS)}"
                 )
 
-            if not _is_non_empty_string(variant.get("path")):
-                errors.append(f"asset '{asset_id}' variant '{variant_id}': path must be non-empty")
+            path_obj = _validate_variant_path(
+                variant.get("path"), repo_root, errors, asset_id, variant_id
+            )
 
             if not _is_non_empty_string(variant.get("notes")):
                 errors.append(f"asset '{asset_id}' variant '{variant_id}': notes must be non-empty")
@@ -156,8 +195,20 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
 
             _validate_integrity(variant, errors, asset_id, variant_id)
 
-            if variant.get("status") == "committed_ci" and _is_non_empty_string(variant.get("path")):
-                variant_dir = repo_root / str(variant["path"])
+            integrity = variant.get("integrity")
+            integrity_kind = integrity.get("kind") if isinstance(integrity, dict) else None
+            status = variant.get("status")
+            if status == "committed_ci" and integrity_kind != "tree_sha256":
+                errors.append(
+                    f"asset '{asset_id}' variant '{variant_id}': committed_ci variants must use tree_sha256 integrity"
+                )
+            if status == "optional_local" and integrity_kind != "not_vendored":
+                errors.append(
+                    f"asset '{asset_id}' variant '{variant_id}': optional_local variants must use not_vendored integrity"
+                )
+
+            if variant.get("status") == "committed_ci" and path_obj is not None:
+                variant_dir = repo_root / path_obj
                 if not variant_dir.exists() or not variant_dir.is_dir():
                     errors.append(
                         f"asset '{asset_id}' variant '{variant_id}': committed_ci path does not exist: {variant['path']}"
