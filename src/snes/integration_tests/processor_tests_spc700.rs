@@ -2043,10 +2043,10 @@ mod tests {
         fs::write(path, sample).expect("write sample ADD A,#imm vector JSON");
     }
 
-    fn write_adc_a_imm_vector(path: &Path) {
+    fn write_adc_a_dp_vector(path: &Path) {
         let sample = r#"[
   {
-    "name": "84 adc a,#imm",
+    "name": "84 adc a,dp",
     "initial": {
       "pc": 512,
       "sp": 239,
@@ -2054,7 +2054,7 @@ mod tests {
       "a": 32,
       "x": 0,
       "y": 0,
-      "ram": [[512, 132], [513, 16]]
+      "ram": [[16, 16], [512, 132], [513, 16]]
     },
     "final": {
       "pc": 514,
@@ -2063,16 +2063,17 @@ mod tests {
       "a": 49,
       "x": 0,
       "y": 0,
-      "ram": [[512, 132], [513, 16]]
+      "ram": [[16, 16], [512, 132], [513, 16]]
     },
     "cycles": [
       [512, 132, "d-r-----"],
-      [513, 16, "d-r-----"]
+      [513, 16, "d-r-----"],
+      [16, 16, "d-r-----"]
     ]
   }
 ]
 "#;
-        fs::write(path, sample).expect("write sample ADC A,#imm vector JSON");
+        fs::write(path, sample).expect("write sample ADC A,dp vector JSON");
     }
 
     fn write_sub_a_imm_vector(path: &Path) {
@@ -2142,7 +2143,7 @@ mod tests {
     fn write_cmp_a_imm_vector(path: &Path) {
         let sample = r#"[
   {
-    "name": "c8 cmp a,#imm",
+    "name": "68 cmp a,#imm",
     "initial": {
       "pc": 512,
       "sp": 239,
@@ -2150,7 +2151,7 @@ mod tests {
       "a": 85,
       "x": 0,
       "y": 0,
-      "ram": [[512, 200], [513, 85]]
+      "ram": [[512, 104], [513, 85]]
     },
     "final": {
       "pc": 514,
@@ -2159,10 +2160,10 @@ mod tests {
       "a": 85,
       "x": 0,
       "y": 0,
-      "ram": [[512, 200], [513, 85]]
+      "ram": [[512, 104], [513, 85]]
     },
     "cycles": [
-      [512, 200, "d-r-----"],
+      [512, 104, "d-r-----"],
       [513, 85, "d-r-----"]
     ]
   }
@@ -2174,7 +2175,7 @@ mod tests {
     fn write_cmp_x_imm_vector(path: &Path) {
         let sample = r#"[
   {
-    "name": "c0 cmp x,#imm",
+    "name": "c8 cmp x,#imm",
     "initial": {
       "pc": 512,
       "sp": 239,
@@ -2182,7 +2183,7 @@ mod tests {
       "a": 0,
       "x": 48,
       "y": 0,
-      "ram": [[512, 192], [513, 48]]
+      "ram": [[512, 200], [513, 48]]
     },
     "final": {
       "pc": 514,
@@ -2191,10 +2192,10 @@ mod tests {
       "a": 0,
       "x": 48,
       "y": 0,
-      "ram": [[512, 192], [513, 48]]
+      "ram": [[512, 200], [513, 48]]
     },
     "cycles": [
-      [512, 192, "d-r-----"],
+      [512, 200, "d-r-----"],
       [513, 48, "d-r-----"]
     ]
   }
@@ -3134,10 +3135,10 @@ mod tests {
     }
 
     #[test]
-    fn given_adc_a_imm_vector_when_executed_then_final_state_matches() {
+    fn given_adc_a_dp_vector_when_executed_then_final_state_matches() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("84.json");
-        write_adc_a_imm_vector(&path);
+        write_adc_a_dp_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
         let result = run_vector_case(&vectors[0]);
@@ -3169,7 +3170,7 @@ mod tests {
     #[test]
     fn given_cmp_a_imm_vector_when_executed_then_final_state_matches() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let path = temp.path().join("c8.json");
+        let path = temp.path().join("68.json");
         write_cmp_a_imm_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
@@ -3180,7 +3181,7 @@ mod tests {
     #[test]
     fn given_cmp_x_imm_vector_when_executed_then_final_state_matches() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let path = temp.path().join("c0.json");
+        let path = temp.path().join("c8.json");
         write_cmp_x_imm_vector(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
