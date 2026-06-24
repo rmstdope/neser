@@ -44,7 +44,8 @@ pub trait Emulator {
     /// The default implementation ignores overscan and returns the full
     /// [`screen_snapshot`](Self::screen_snapshot).  Consoles that support
     /// overscan (e.g. the NES) override this to crop the frame.
-    fn cropped_screen_snapshot(&self, _h_overscan: u32, _v_overscan: u32) -> Vec<u8> {
+    fn cropped_screen_snapshot(&self, h_overscan: u32, v_overscan: u32) -> Vec<u8> {
+        let _ = (h_overscan, v_overscan);
         self.screen_snapshot()
     }
     fn screen_crc32(&self) -> u32;
