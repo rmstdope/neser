@@ -98,7 +98,10 @@ jobs:
           python -m unittest discover -s scripts/metadata-scraper -t scripts/metadata-scraper -p "test_*.py" &&
           python -m unittest discover -s scripts/nes-rom-db-scraper -t scripts/nes-rom-db-scraper -p "test_*.py"
 
-  rust-tests:
+  # Build the test binaries once and archive them so the sharded run jobs below
+  # can execute partitions of the suite in parallel without recompiling the
+  # ~382k-line crate four times (canonical cargo-nextest archive pattern).
+  rust-test-build:
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_call'
@@ -115,8 +118,50 @@ jobs:
           done
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Build and archive tests
+        run: cargo nextest archive --lib --all-features --archive-file nextest-archive.tar.zst
+      - name: Upload test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive
+          path: nextest-archive.tar.zst
+          retention-days: 1
 
-      - name: Build test filter from changed paths
+  # Run the archived tests across 4 parallel shards. Path-based filtering is
+  # preserved exactly (validated locally against the previous cargo-test
+  # filters) so partial-change PRs still skip unrelated suites.
+  rust-test-run:
+    runs-on: ubuntu-latest
+    needs: [changes, rust-test-build]
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_call'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Install native frontend system dependencies
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev && break
+            echo "apt attempt $i failed (transient network); retrying after 15s..." && sleep 15
+          done
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Download test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: nextest-archive
+      - name: Compute test filter from changed paths
         id: test-filter
         env:
           CHANGED_NES: ${{ needs.changes.outputs.nes }}
@@ -126,51 +171,47 @@ jobs:
           CHANGED_PLATFORM: ${{ needs.changes.outputs.platform }}
           CHANGED_ROOT: ${{ needs.changes.outputs.root_rust }}
         run: |
-          # If platform or root files changed, run all tests (cross-cutting deps)
+          # platform or root changes are cross-cutting: run the whole suite.
           if [[ "$CHANGED_PLATFORM" == "true" || "$CHANGED_ROOT" == "true" ]]; then
+            echo "mode=all" >> "$GITHUB_OUTPUT"
             echo "filter=" >> "$GITHUB_OUTPUT"
-            echo "run_nes_integration=true" >> "$GITHUB_OUTPUT"
-            echo "run_gba_integration=true" >> "$GITHUB_OUTPUT"
             echo "Running all tests (platform or root change detected)"
           else
             FILTER=""
-            RUN_NES_INTEGRATION=false
-            RUN_GBA_INTEGRATION=false
-            if [[ "$CHANGED_NES" == "true" ]]; then
-              FILTER="${FILTER} nes::"
-              RUN_NES_INTEGRATION=true
+            [[ "$CHANGED_NES" == "true" ]] && FILTER="${FILTER} nes::"
+            [[ "$CHANGED_GB" == "true" ]] && FILTER="${FILTER} gb::"
+            [[ "$CHANGED_GBA" == "true" || "$CHANGED_GBA_TEST_ASSETS" == "true" ]] && FILTER="${FILTER} gba::"
+            FILTER="$(echo "$FILTER" | xargs)"
+            if [[ -n "$FILTER" ]]; then
+              echo "mode=filter" >> "$GITHUB_OUTPUT"
+              echo "filter=${FILTER}" >> "$GITHUB_OUTPUT"
+              echo "Filtered run: '${FILTER}' (includes those areas' integration tests)"
+            else
+              # Rust changed but no area filter matched (e.g. snes/frontends):
+              # run all unit tests but skip NES/GBA integration, mirroring the
+              # previous `--skip nes::integration_tests --skip gba::integration_tests`.
+              echo "mode=unit" >> "$GITHUB_OUTPUT"
+              echo "filter=" >> "$GITHUB_OUTPUT"
+              echo "Running all unit tests (excluding NES/GBA integration)"
             fi
-            if [[ "$CHANGED_GB" == "true" ]]; then
-              FILTER="${FILTER} gb::"
-            fi
-            if [[ "$CHANGED_GBA" == "true" || "$CHANGED_GBA_TEST_ASSETS" == "true" ]]; then
-              FILTER="${FILTER} gba::"
-              RUN_GBA_INTEGRATION=true
-            fi
-            echo "filter=${FILTER}" >> "$GITHUB_OUTPUT"
-            echo "run_nes_integration=${RUN_NES_INTEGRATION}" >> "$GITHUB_OUTPUT"
-            echo "run_gba_integration=${RUN_GBA_INTEGRATION}" >> "$GITHUB_OUTPUT"
-            echo "Test filter: '${FILTER}', nes_integration: ${RUN_NES_INTEGRATION}, gba_integration: ${RUN_GBA_INTEGRATION}"
           fi
-
-      - name: Run unit tests
+      - name: Run tests (shard ${{ matrix.shard }}/4)
+        env:
+          MODE: ${{ steps.test-filter.outputs.mode }}
+          FILTER: ${{ steps.test-filter.outputs.filter }}
+          SHARD: ${{ matrix.shard }}
         run: |
-          FILTER="${{ steps.test-filter.outputs.filter }}"
-          if [[ -z "$FILTER" ]]; then
-            echo "Running all unit tests (no filter)"
-            cargo test --lib --examples --all-features -- --skip 'nes::integration_tests' --skip 'gba::integration_tests'
+          PARTITION="count:${SHARD}/4"
+          ARCHIVE="--archive-file nextest-archive.tar.zst --workspace-remap ."
+          if [[ "$MODE" == "all" ]]; then
+            cargo nextest run $ARCHIVE --partition "$PARTITION"
+          elif [[ "$MODE" == "filter" ]]; then
+            # $FILTER intentionally word-splits into positional substring filters.
+            cargo nextest run $ARCHIVE --partition "$PARTITION" $FILTER
           else
-            echo "Running filtered unit tests: $FILTER"
-            cargo test --lib --examples --all-features -- $FILTER --skip 'nes::integration_tests' --skip 'gba::integration_tests'
+            cargo nextest run $ARCHIVE --partition "$PARTITION" \
+              -E 'not (test(nes::integration_tests) | test(gba::integration_tests))'
           fi
-
-      - name: Run NES integration tests
-        if: steps.test-filter.outputs.run_nes_integration == 'true'
-        run: cargo test --lib --all-features -- 'nes::integration_tests::'
-
-      - name: Run GBA integration tests
-        if: steps.test-filter.outputs.run_gba_integration == 'true'
-        run: cargo test --lib --all-features -- 'gba::integration_tests::'
 
   rust-lint-pr:
     runs-on: ubuntu-latest
@@ -271,7 +312,9 @@ jobs:
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Install wasm-bindgen CLI
-        run: cargo install wasm-bindgen-cli --version 0.2.108 --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.108
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@v4
