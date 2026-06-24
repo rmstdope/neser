@@ -41,7 +41,7 @@ jobs:
               - 'web/**'
               - 'package.json'
               - 'package-lock.json'
-              - '.github/workflows/rust.yml'
+              - '.github/workflows/ci.yml'
             web_integration:
               - 'web/**'
               - 'src/**'
@@ -52,7 +52,7 @@ jobs:
               - 'playwright.config.ts'
               - 'package.json'
               - 'package-lock.json'
-              - '.github/workflows/rust.yml'
+              - '.github/workflows/ci.yml'
             python:
               - 'scripts/**/*.py'
             rust:
