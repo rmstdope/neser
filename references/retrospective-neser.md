@@ -41,6 +41,45 @@ Each entry captures what went well, what to improve, and which skills were used.
 
 ---
 
+## 2026-06-24 — PR #2894: Sub-issue (2724): Add shared SNES ROM integration runner and baseline helpers
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2894
+**Linked issues:** #2872, #2724
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Skill | `github-issue-designer` | Helped identify #2872 as a dependency-free next slice of #2724. |
+| Skill | `test-driven-development` | Guided the generated pass/fail/timeout ROM fixtures and runner behavior tests. |
+| Skill | `rust-developer` | Supported idiomatic Rust implementation of the shared SNES runner and test-only probes. |
+| Skill | `snes-hardware-research` | Grounded LoROM fixtures, WRAM marker `$7E1FF0`, idle-loop PCs, and SNES header fixes. |
+| Skill | `self-learning-skills` | Supported capturing this retrospective after merge. |
+| Agent | `rubber-duck reviewer` | Helped review assumptions and reason through CI/review feedback. |
+| Prompt | `autopilot plan mode` | Supported autonomous planning, execution, validation, and merge follow-through. |
+| Instructions | `repository custom instructions` | Applied the repo's TDD, validation, review, and documentation expectations. |
+
+### What went well
+
+- **Dependency-aware issue choice:** Planning selected a dependency-free #2724 sub-issue (#2872), avoiding blocked follow-up suite work before the shared runner existed.
+- **Spec-grounded generated fixtures:** The SNES hardware research + TDD pairing produced in-Rust LoROM pass/fail/timeout fixtures with corrected header offsets, WRAM markers, idle-loop PC detection, tick/frame budgets, and screen CRC diagnostics without adding external ROM assets.
+- **CI feedback improved the branch:** CI exposed stale native SNES fixture header offsets that local no-default-feature runs missed; fixing them made the test fixtures consistent across native, web, WASM, and the new runner.
+- **Review feedback tightened API semantics:** The Copilot review comment improved `RunConfig` by making `max_ticks == 0` disable the tick budget, matching the existing zero-frame-budget behavior.
+
+### What to improve
+
+- **Centralize generated SNES test ROM helpers:** Stale fixture header offsets existed in several frontend test helpers. Future SNES test work should prefer a shared helper or explicit invariant tests so generated ROM headers cannot drift.
+- **Define edge-case runner semantics during RED:** The initial TDD pass covered pass/fail/timeout and frame limits, but not zero/unlimited tick semantics. Future runner APIs should define and test zero/unlimited budget behavior up front.
+- **Record active customizations as they are invoked:** The retrospective had to reconstruct the skill/agent list after merge. During future autopilot work, keep the active customization list current as the workflow proceeds.
+- **Document fixture conventions close to code:** Future SNES test authors should not need to rediscover the marker address, idle-loop PCs, and header-relative offsets; keep those conventions visible near the fixture builder.
+
+### Navigator feedback
+
+Feedback pending; navigator was unavailable during the post-merge retrospective.
+
+---
+
 ## 2026-06-23 — PR #2865: Add SNES web frontend flow coverage
 
 **Repository:** rmstdope/neser
