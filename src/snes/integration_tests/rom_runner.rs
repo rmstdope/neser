@@ -126,7 +126,7 @@ fn run_rom_with_capture(
             );
         }
 
-        if ticks >= config.max_ticks {
+        if config.max_ticks != 0 && ticks >= config.max_ticks {
             return finish_result(
                 &snes,
                 name,
@@ -342,6 +342,16 @@ mod tests {
         assert!(!result.passed);
         assert_eq!(result.exit_reason, RunExitReason::FrameLimit);
         assert_eq!(result.frames, 1);
+    }
+
+    #[test]
+    fn zero_tick_limit_is_disabled_like_zero_frame_limit() {
+        let result = run_rom(&timeout_rom(), "timeout.sfc", RunConfig::new(0, 1));
+
+        assert!(!result.passed);
+        assert_eq!(result.exit_reason, RunExitReason::FrameLimit);
+        assert_eq!(result.frames, 1);
+        assert!(result.ticks > 0);
     }
 
     #[test]
