@@ -212,11 +212,11 @@ impl Sdsp {
         for voice in 0..8usize {
             let sample = self.voices[voice].current_output;
             let (left, right) = self.mix_voice_sample(voice, sample);
-            dry_l += i32::from(left);
-            dry_r += i32::from(right);
+            dry_l = clamp_i16_i32(dry_l + i32::from(left));
+            dry_r = clamp_i16_i32(dry_r + i32::from(right));
             if self.echo_enable & (1 << voice) != 0 {
-                echo_voice_l += i32::from(left);
-                echo_voice_r += i32::from(right);
+                echo_voice_l = clamp_i16_i32(echo_voice_l + i32::from(left));
+                echo_voice_r = clamp_i16_i32(echo_voice_r + i32::from(right));
             }
         }
 
@@ -228,6 +228,8 @@ impl Sdsp {
             self.echo_feedback,
             self.echo_vol_l,
             self.echo_vol_r,
+            self.master_vol_l,
+            self.master_vol_r,
             self.flg,
             echo_voice_l,
             echo_voice_r,
@@ -242,8 +244,8 @@ impl Sdsp {
     #[must_use]
     pub fn mix_voice_sample(&self, voice: usize, sample: i16) -> (i16, i16) {
         let idx = voice_index(voice);
-        let left = apply_two_stage_volume(sample, self.voices[idx].vol_l, self.master_vol_l);
-        let right = apply_two_stage_volume(sample, self.voices[idx].vol_r, self.master_vol_r);
+        let left = apply_voice_volume(sample, self.voices[idx].vol_l);
+        let right = apply_voice_volume(sample, self.voices[idx].vol_r);
         (left, right)
     }
 
@@ -599,11 +601,12 @@ fn voice_interpolation_sample(voice: &VoiceState, index: usize, previous: usize)
     voice.brr_history[voice.brr_history.len() - (previous - index)]
 }
 
-fn apply_two_stage_volume(sample: i16, voice_vol: i8, master_vol: i8) -> i16 {
-    let mut scaled = i32::from(sample) * i32::from(voice_vol);
-    scaled >>= 7;
-    scaled = (scaled * i32::from(master_vol)) >> 7;
-    scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+fn apply_voice_volume(sample: i16, voice_vol: i8) -> i16 {
+    clamp_i16_i32((i32::from(sample) * i32::from(voice_vol)) >> 6) as i16
+}
+
+fn clamp_i16_i32(value: i32) -> i32 {
+    value.clamp(i32::from(i16::MIN), i32::from(i16::MAX))
 }
 
 fn noise_clock_divider(clock_select: u8) -> u16 {

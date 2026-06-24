@@ -235,14 +235,32 @@ fn given_extreme_samples_when_gaussian_interpolating_then_output_is_clamped_and_
 }
 
 #[test]
-fn given_voice_and_master_volume_when_mixing_then_both_are_applied() {
+fn given_voice_volume_when_mixing_then_voice_volume_uses_15_bit_sample_scale() {
     let mut dsp = Sdsp::new();
     dsp.set_voice_volume(0, 64, 32);
-    dsp.set_master_volume(127, 127);
 
     let (left, right) = dsp.mix_voice_sample(0, 1000);
-    assert_eq!(left, 496);
-    assert_eq!(right, 248);
+    assert_eq!(left, 1000);
+    assert_eq!(right, 500);
+}
+
+#[test]
+fn given_many_loud_voices_when_rendering_then_main_sum_clamps_before_master_volume() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x0C, 0x01);
+    dsp.write_reg(0x1C, 0x01);
+    dsp.write_reg(0x6C, 0x00);
+    for voice in 0..8usize {
+        let base = voice << 4;
+        dsp.write_reg(base as u8, 0x7F);
+        dsp.write_reg((base + 1) as u8, 0x7F);
+        dsp.voices[voice].current_output = 0x3FFF;
+    }
+
+    let (left, right) = dsp.render_stereo_sample();
+
+    assert_eq!(left, 255.0 / 32768.0);
+    assert_eq!(right, 255.0 / 32768.0);
 }
 
 #[test]
@@ -264,8 +282,8 @@ fn normalize_after_restore_rebuilds_cached_pitch_and_volume_fields() {
     dsp.normalize_after_restore()
         .expect("normalize should rebuild cached fields");
     let (left, right) = dsp.mix_voice_sample(0, 1000);
-    assert_eq!(left, 496);
-    assert_eq!(right, 248);
+    assert_eq!(left, 1000);
+    assert_eq!(right, 500);
 
     dsp.step_voice_pitch(0);
     assert_eq!(dsp.voice_sample_pos(0), 0x1234);
@@ -373,11 +391,11 @@ fn given_full_scale_voice_when_rendering_then_mixer_uses_full_resolution_sample_
     let (left, right) = dsp.render_stereo_sample();
 
     assert!(
-        (0.45..0.55).contains(&left),
+        (0.95..1.0).contains(&left),
         "left channel should use full-resolution voice sample before OUTX quantization"
     );
     assert!(
-        (0.45..0.55).contains(&right),
+        (0.95..1.0).contains(&right),
         "right channel should use full-resolution voice sample before OUTX quantization"
     );
 }
