@@ -408,11 +408,6 @@ impl Emulator for Gba {
         self.bus.ppu.framebuffer().to_vec()
     }
 
-    fn cropped_screen_snapshot(&self, _h_overscan: u32, _v_overscan: u32) -> Vec<u8> {
-        // GBA has no overscan, return full screen
-        self.screen_snapshot()
-    }
-
     fn screen_crc32(&self) -> u32 {
         crate::platform::crc32::crc32(&[self.bus.ppu.framebuffer()])
     }

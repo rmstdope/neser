@@ -280,11 +280,6 @@ impl GameBoy {
         self.gb.as_ref().map_or(0, |gb| gb.screen_crc32())
     }
 
-    /// Snapshot with no overscan (Game Boy has no overscan).
-    pub fn cropped_screen_snapshot(&self) -> Vec<u8> {
-        self.screen_snapshot()
-    }
-
     /// Set a single button state.
     ///
     /// Uses NES-convention IDs: A=0, B=1, Select=2, Start=3, Up=4, Down=5,
@@ -632,10 +627,6 @@ impl Emulator for GameBoy {
 
     fn screen_snapshot(&self) -> Vec<u8> {
         GameBoy::screen_snapshot(self)
-    }
-
-    fn cropped_screen_snapshot(&self, _h_overscan: u32, _v_overscan: u32) -> Vec<u8> {
-        GameBoy::cropped_screen_snapshot(self)
     }
 
     fn screen_crc32(&self) -> u32 {
