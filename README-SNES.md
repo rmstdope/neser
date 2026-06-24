@@ -74,3 +74,24 @@ SNES web behavior:
 - Uses the stock filter only for SNES (`F4` does not cycle through NES/GB shader sets in SNES mode).
 
 For browser build/run/test commands, see [web/README.md](web/README.md).
+
+## SNES automated verification
+
+SNES integration tests live under `src/snes/integration_tests/`.
+
+- `processor_tests_65816.rs` and `processor_tests_spc700.rs` run pinned
+  Tom Harte ProcessorTests vector subsets, with optional local full-corpus
+  caches under `roms/snes/automated_tests/processor_tests/*/full/v1`.
+- `rom_runner.rs` provides the shared headless ROM runner used by future
+  ROM-based SNES verification suites. It loads generated or vendored `.sfc` /
+  `.smc` bytes through the SNES console, runs with explicit tick/frame budgets,
+  detects pass/fail through a reserved WRAM marker at `$7E1FF0`, records
+  diagnostics, and computes a screen CRC.
+- Set `NESER_CAPTURE_SCREEN=1` to write optional runner screenshots under
+  `target/snes_test_captures/`.
+
+Run SNES tests during development with:
+
+```bash
+./scripts/test-dir.sh src/snes
+```

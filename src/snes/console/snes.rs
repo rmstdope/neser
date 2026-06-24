@@ -9,6 +9,8 @@
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::debugging::log_info;
 use crate::platform::emulator::{Emulator, SystemType};
+#[cfg(test)]
+use crate::snes::bus::SnesBus;
 use crate::snes::bus::SnesSystemBus;
 use crate::snes::cartridge::Cartridge;
 use crate::snes::console::config::SnesHardware;
@@ -92,6 +94,18 @@ impl Snes {
         self.rom_path
             .as_ref()
             .map(|path| path.with_extension("sav"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cpu_pc_for_tests(&self) -> Option<u16> {
+        self.cpu.as_ref().map(|cpu| cpu.read_pc())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_bus_for_debugger_for_tests(&self, addr: u32) -> Option<u8> {
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.bus().read_for_debugger(addr))
     }
 
     /// Load battery-backed cartridge SRAM from a `.sav` file if one exists.
