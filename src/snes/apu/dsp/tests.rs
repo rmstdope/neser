@@ -174,18 +174,17 @@ fn given_voice_pitch_when_dsp_phase_steps_then_pitch_advances_once_per_32_phases
 fn given_fractional_brr_position_when_sampling_voice_then_gaussian_interpolation_is_used() {
     let mut dsp = Sdsp::new();
     dsp.voices[0].brr_initialized = true;
-    dsp.voices[0].envx = 0x7F;
+    dsp.voices[0].env_level = 0x7FF;
     dsp.voices[0].sample_pos = 0x3800;
     dsp.voices[0].brr_samples[0] = 0;
     dsp.voices[0].brr_samples[1] = 0;
     dsp.voices[0].brr_samples[2] = 0;
     dsp.voices[0].brr_samples[3] = 0x3000;
 
-    let expected = dsp.gaussian_interpolate(0, 0, 0, 0x3000, 0x80);
     let sample = dsp.voice_sample(0, 0, Some(&[]));
 
     assert_eq!(
-        sample, expected,
+        sample, 346,
         "fractional BRR positions should use S-DSP gaussian interpolation"
     );
     assert_ne!(
@@ -198,16 +197,15 @@ fn given_fractional_brr_position_when_sampling_voice_then_gaussian_interpolation
 fn given_brr_position_at_block_start_when_sampling_voice_then_previous_block_history_is_used() {
     let mut dsp = Sdsp::new();
     dsp.voices[0].brr_initialized = true;
-    dsp.voices[0].envx = 0x7F;
+    dsp.voices[0].env_level = 0x7FF;
     dsp.voices[0].sample_pos = 0x0800;
     dsp.voices[0].brr_history = [0x1000, 0x2000, 0x3000];
     dsp.voices[0].brr_samples[0] = 0x4000;
 
-    let expected = dsp.gaussian_interpolate(0x1000, 0x2000, 0x3000, 0x4000, 0x80);
     let sample = dsp.voice_sample(0, 0, Some(&[]));
 
     assert_eq!(
-        sample, expected,
+        sample, 10244,
         "gaussian interpolation at a block boundary should include the previous block tail"
     );
 }
@@ -342,6 +340,21 @@ fn given_non_voice_when_noise_clock_ticks_then_outx_changes_from_silence() {
     assert_ne!(
         after, before,
         "noise-routed OUTX should evolve as LFSR advances"
+    );
+}
+
+#[test]
+fn given_sub_envx_envelope_level_when_sampling_voice_then_internal_11_bit_envelope_is_used() {
+    let mut dsp = Sdsp::new();
+    dsp.noise_lfsr = 1;
+    dsp.voices[0].env_level = 8;
+    dsp.voices[0].envx = 0;
+
+    let sample = dsp.voice_sample(0, 0x01, None);
+
+    assert_eq!(
+        sample, 62,
+        "voice output should use the 11-bit envelope, not the truncated ENVX monitor value"
     );
 }
 

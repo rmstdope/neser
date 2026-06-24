@@ -292,8 +292,8 @@ impl Sdsp {
         } else {
             0x3FFF
         };
-        let env = i32::from(self.voices[voice].envx);
-        ((i32::from(raw) * env) / 0x7F).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+        let env = i32::from(self.voices[voice].env_level);
+        (((i32::from(raw) * env) >> 11).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16) & !1
     }
 
     fn effective_pitch_for_voice(&self, voice: usize, pmon: u8) -> u16 {
