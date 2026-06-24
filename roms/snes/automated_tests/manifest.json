@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "platform": "snes",
+  "assets": [
+    {
+      "id": "snes-processor-tests-65816",
+      "suite": "processor_tests",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/SingleStepTests/ProcessorTests",
+        "ref": "bb11756436da8fd16cce86aef63dc6725f48836f"
+      },
+      "license": "unknown",
+      "oracle_type": "vector_state",
+      "notes": "Tracked subset is vendored in-repo. Optional full corpus is local-only and refreshed with the helper script.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/processor_tests/65816/v1",
+          "refresh_command": null,
+          "integrity": {
+            "kind": "tree_sha256",
+            "sha256": "45b59ac39b56eaa777f8599bd125323444757bcb2d417669fa053708868c16d7",
+            "file_count": 4,
+            "total_size_bytes": 145521
+          },
+          "notes": "Tree hash is calculated from sorted per-file sha256 records for all tracked JSON vectors."
+        },
+        {
+          "id": "optional_full_corpus",
+          "status": "optional_local",
+          "path": "roms/snes/automated_tests/processor_tests/65816/full/v1",
+          "refresh_command": "bash scripts/refresh_65816_processor_tests_subset.sh",
+          "integrity": {
+            "kind": "not_vendored",
+            "sha256": "not_applicable",
+            "file_count": 0,
+            "total_size_bytes": 0
+          },
+          "notes": "Local-only cache. Materialized files are intentionally git-ignored to keep repository size manageable."
+        }
+      ]
+    },
+    {
+      "id": "snes-processor-tests-spc700",
+      "suite": "processor_tests",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/SingleStepTests/ProcessorTests",
+        "ref": "bb11756436da8fd16cce86aef63dc6725f48836f"
+      },
+      "license": "unknown",
+      "oracle_type": "vector_state",
+      "notes": "Tracked subset is vendored in-repo. Optional full corpus is supported as a local-only path.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/processor_tests/spc700/v1",
+          "refresh_command": null,
+          "integrity": {
+            "kind": "tree_sha256",
+            "sha256": "0bf4c7c900c8a1c84cc32e5b831cb2ce9470790eaf5ecd1660a58843b5c439c8",
+            "file_count": 86,
+            "total_size_bytes": 57453
+          },
+          "notes": "Tree hash is calculated from sorted per-file sha256 records for all tracked JSON vectors."
+        },
+        {
+          "id": "optional_full_corpus",
+          "status": "optional_local",
+          "path": "roms/snes/automated_tests/processor_tests/spc700/full/v1",
+          "refresh_command": "bash scripts/refresh_spc700_processor_tests_subset.sh",
+          "integrity": {
+            "kind": "not_vendored",
+            "sha256": "not_applicable",
+            "file_count": 0,
+            "total_size_bytes": 0
+          },
+          "notes": "Local-only cache path. No repository-owned fetch helper exists yet for SPC700 full corpus."
+        }
+      ]
+    }
+  ]
+}
