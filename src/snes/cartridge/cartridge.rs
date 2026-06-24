@@ -328,12 +328,22 @@ mod tests {
     }
 
     #[test]
-    fn from_bytes_loads_super_mario_kart_rom() {
-        let rom = include_bytes!("../../../roms/games/snes/Super Mario Kart (USA).sfc");
+    fn from_bytes_detects_hirom_dsp_fixture() {
+        let mut rom = vec![0u8; 0x20000];
+        write_header(
+            &mut rom,
+            0xFFC0,
+            0x21,
+            0x03,
+            0x00,
+            b"DSP HIROM TEST      \0",
+        );
+        rom[0xFFFC] = 0x00;
+        rom[0xFFFD] = 0x80;
 
-        let cart = Cartridge::from_bytes(rom).expect("cart");
+        let cart = Cartridge::from_bytes(&rom).expect("cart");
         assert_eq!(cart.mapping(), Mapping::HiRom);
-        assert_eq!(cart.title(), "SUPER MARIO KART");
+        assert_eq!(cart.title(), "DSP HIROM TEST");
         assert_eq!(cart.enhancement_chip(), Some(EnhancementChip::Dsp));
     }
 
