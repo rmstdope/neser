@@ -77,8 +77,14 @@ impl GbaDebuggerController {
 
     /// Convenience: set a PC breakpoint at `addr`. Returns `true` if it was
     /// newly added, `false` if one already existed there.
+    ///
+    /// If a breakpoint already exists at `addr` it is (re-)enabled: the previous
+    /// `BTreeSet`-based set had no disabled state, so an existing GBA breakpoint
+    /// must remain active even if it had been disabled via the shared list APIs
+    /// or loaded disabled from a `.debug` file.
     pub fn add_breakpoint(&mut self, addr: u32) -> bool {
         if self.breakpoints.has_pc_breakpoint_at(addr) {
+            self.breakpoints.set_pc_breakpoint_enabled(addr, true);
             return false;
         }
         self.breakpoints.add(BreakpointKind::Pc(addr));
@@ -185,7 +191,7 @@ impl GbaDebuggerController {
     ) -> BreakpointHit {
         for _ in 0..max_steps {
             let new_pc = self.step(cpu, bus);
-            if self.breakpoints.has_pc_breakpoint_at(new_pc) {
+            if self.breakpoints.has_enabled_pc_breakpoint_at(new_pc) {
                 return BreakpointHit::At(new_pc);
             }
         }
@@ -255,6 +261,33 @@ mod tests {
         let hit = dbg.run_until_breakpoint(&mut cpu, &mut bus, 3);
         assert_eq!(hit, BreakpointHit::None);
         assert_eq!(cpu.regs.r[15], 6);
+    }
+
+    #[test]
+    fn run_until_breakpoint_ignores_a_disabled_breakpoint() {
+        let (mut cpu, mut bus) =
+            make_thumb_cpu(&[0x2000u16, 0x2000u16, 0x2000u16, 0x2000u16, 0x2000u16]);
+        let mut dbg = GbaDebuggerController::new();
+        dbg.add_breakpoint(0x4);
+        // Disabling it via the shared list API must prevent the run loop from
+        // halting (it only stops on active breakpoints).
+        dbg.breakpoints_mut().set_pc_breakpoint_enabled(0x4, false);
+        let hit = dbg.run_until_breakpoint(&mut cpu, &mut bus, 3);
+        assert_eq!(hit, BreakpointHit::None);
+        assert_eq!(cpu.regs.r[15], 6);
+    }
+
+    #[test]
+    fn add_breakpoint_re_enables_an_existing_disabled_breakpoint() {
+        let mut dbg = GbaDebuggerController::new();
+        assert!(dbg.add_breakpoint(0x100));
+        dbg.breakpoints_mut()
+            .set_pc_breakpoint_enabled(0x100, false);
+        assert!(!dbg.breakpoints().has_enabled_pc_breakpoint_at(0x100));
+        // Re-adding does not insert a duplicate, but must re-enable it so the
+        // breakpoint stays active (matching the old set's present == active).
+        assert!(!dbg.add_breakpoint(0x100));
+        assert!(dbg.breakpoints().has_enabled_pc_breakpoint_at(0x100));
     }
 
     #[test]
