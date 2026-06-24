@@ -38,7 +38,15 @@ pub trait Emulator {
     fn screen_width(&self) -> u32;
     fn screen_height(&self) -> u32;
     fn screen_snapshot(&self) -> Vec<u8>;
-    fn cropped_screen_snapshot(&self, h_overscan: u32, v_overscan: u32) -> Vec<u8>;
+    /// Returns the screen with `h_overscan`/`v_overscan` pixels cropped from
+    /// each edge.
+    ///
+    /// The default implementation ignores overscan and returns the full
+    /// [`screen_snapshot`](Self::screen_snapshot).  Consoles that support
+    /// overscan (e.g. the NES) override this to crop the frame.
+    fn cropped_screen_snapshot(&self, _h_overscan: u32, _v_overscan: u32) -> Vec<u8> {
+        self.screen_snapshot()
+    }
     fn screen_crc32(&self) -> u32;
     fn sample_ready(&self) -> bool;
     fn get_sample(&mut self) -> Option<f32>;
@@ -875,6 +883,10 @@ mod tests_console_abstraction {
         Console::new_gba(AppContext::new_with_config(Config::default()))
     }
 
+    fn make_snes_console() -> Console {
+        Console::new_snes(AppContext::new_with_config(Config::default()))
+    }
+
     fn make_app_context_with_overscan(h: u8, v: u8) -> SharedAppContext {
         let mut config = Config::default();
         config.nes.horizontal_overscan = h;
@@ -1106,6 +1118,59 @@ mod tests_console_abstraction {
         assert!(
             (16.5..=17.0).contains(&ms),
             "GB frame duration should be ~16.74ms, got {ms:.2}ms"
+        );
+    }
+
+    // --- Console::cropped_screen_snapshot() byte output ---
+    // Locks the contract that consoles without overscan return the full frame,
+    // so the shared `Emulator::cropped_screen_snapshot` default (which simply
+    // returns `screen_snapshot()`) is behavior-preserving for GB/GBA/SNES, while
+    // the NES still honors its real overscan crop.
+
+    #[test]
+    fn test_gb_cropped_screen_snapshot_equals_full_snapshot() {
+        let console = make_gb_console();
+        assert_eq!(
+            console.cropped_screen_snapshot(8, 8),
+            console.screen_snapshot(),
+            "GB ignores overscan: cropped snapshot must equal the full snapshot"
+        );
+    }
+
+    #[test]
+    fn test_gba_cropped_screen_snapshot_equals_full_snapshot() {
+        let console = make_gba_console();
+        assert_eq!(
+            console.cropped_screen_snapshot(8, 8),
+            console.screen_snapshot(),
+            "GBA ignores overscan: cropped snapshot must equal the full snapshot"
+        );
+    }
+
+    #[test]
+    fn test_snes_cropped_screen_snapshot_equals_full_snapshot() {
+        let console = make_snes_console();
+        assert_eq!(
+            console.cropped_screen_snapshot(8, 8),
+            console.screen_snapshot(),
+            "SNES ignores overscan: cropped snapshot must equal the full snapshot"
+        );
+    }
+
+    #[test]
+    fn test_nes_cropped_screen_snapshot_honors_overscan() {
+        let console = make_nes_console_with_overscan(0, 0);
+        let full = console.screen_snapshot();
+        let cropped = console.cropped_screen_snapshot(8, 8);
+        let (cw, ch) = console.cropped_dims(8, 8);
+        assert_eq!(
+            cropped.len(),
+            (cw * ch * 3) as usize,
+            "NES cropped snapshot length must match the cropped RGB dimensions"
+        );
+        assert!(
+            cropped.len() < full.len(),
+            "NES must truly crop when overscan > 0, unlike the default"
         );
     }
 }

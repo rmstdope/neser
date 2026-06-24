@@ -356,11 +356,6 @@ impl Emulator for Snes {
         }
     }
 
-    fn cropped_screen_snapshot(&self, _h_overscan: u32, _v_overscan: u32) -> Vec<u8> {
-        // SNES has no overscan, return full screen
-        self.screen_snapshot()
-    }
-
     fn screen_crc32(&self) -> u32 {
         let pixels = self.screen_snapshot();
         crate::platform::crc32::crc32(&[&pixels])
