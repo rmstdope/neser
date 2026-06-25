@@ -13,6 +13,16 @@ pub(crate) const FAIL_IDLE_PC: u16 = 0x8110;
 pub(crate) const TIMEOUT_IDLE_PC: u16 = 0x8120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunOracle {
+    Marker,
+    BusByte {
+        addr: u32,
+        pass_value: u8,
+        fail_value: u8,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RunConfig {
     pub max_ticks: u64,
     pub max_frames: u32,
@@ -48,10 +58,26 @@ pub(crate) struct RunResult {
 }
 
 pub(crate) fn run_rom(rom: &[u8], name: &str, config: RunConfig) -> RunResult {
-    run_rom_with_capture(
+    run_rom_with_oracle_and_capture(
         rom,
         name,
         config,
+        RunOracle::Marker,
+        std::env::var_os("NESER_CAPTURE_SCREEN").is_some(),
+    )
+}
+
+pub(crate) fn run_rom_with_oracle(
+    rom: &[u8],
+    name: &str,
+    config: RunConfig,
+    oracle: RunOracle,
+) -> RunResult {
+    run_rom_with_oracle_and_capture(
+        rom,
+        name,
+        config,
+        oracle,
         std::env::var_os("NESER_CAPTURE_SCREEN").is_some(),
     )
 }
@@ -60,6 +86,16 @@ fn run_rom_with_capture(
     rom: &[u8],
     name: &str,
     config: RunConfig,
+    capture_screen: bool,
+) -> RunResult {
+    run_rom_with_oracle_and_capture(rom, name, config, RunOracle::Marker, capture_screen)
+}
+
+fn run_rom_with_oracle_and_capture(
+    rom: &[u8],
+    name: &str,
+    config: RunConfig,
+    oracle: RunOracle,
     capture_screen: bool,
 ) -> RunResult {
     let mut snes = Snes::new(AppContext::default());
@@ -80,36 +116,18 @@ fn run_rom_with_capture(
 
         let pc = snes.cpu_pc_for_tests().unwrap_or(0);
         let marker = read_marker(&snes);
-        if marker[..4] == MARKER_MAGIC {
-            match (marker[4], pc) {
-                (PASS_STATUS, PASS_IDLE_PC) => {
-                    return finish_result(
-                        &snes,
-                        name,
-                        RunExitReason::PassMarker,
-                        true,
-                        ticks,
-                        frames,
-                        pc,
-                        marker,
-                        capture_screen,
-                    );
-                }
-                (FAIL_STATUS, FAIL_IDLE_PC) => {
-                    return finish_result(
-                        &snes,
-                        name,
-                        RunExitReason::FailMarker,
-                        false,
-                        ticks,
-                        frames,
-                        pc,
-                        marker,
-                        capture_screen,
-                    );
-                }
-                _ => {}
-            }
+        if let Some((exit_reason, passed)) = evaluate_oracle(&snes, oracle, pc, marker) {
+            return finish_result(
+                &snes,
+                name,
+                exit_reason,
+                passed,
+                ticks,
+                frames,
+                pc,
+                marker,
+                capture_screen,
+            );
         }
 
         if config.max_frames != 0 && frames >= config.max_frames {
@@ -138,6 +156,41 @@ fn run_rom_with_capture(
                 marker,
                 capture_screen,
             );
+        }
+    }
+}
+
+fn evaluate_oracle(
+    snes: &Snes,
+    oracle: RunOracle,
+    pc: u16,
+    marker: [u8; 5],
+) -> Option<(RunExitReason, bool)> {
+    match oracle {
+        RunOracle::Marker => {
+            if marker[..4] == MARKER_MAGIC {
+                match (marker[4], pc) {
+                    (PASS_STATUS, PASS_IDLE_PC) => Some((RunExitReason::PassMarker, true)),
+                    (FAIL_STATUS, FAIL_IDLE_PC) => Some((RunExitReason::FailMarker, false)),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+        RunOracle::BusByte {
+            addr,
+            pass_value,
+            fail_value,
+        } => {
+            let value = snes.read_bus_for_debugger_for_tests(addr).unwrap_or(0);
+            if value == pass_value && pc == PASS_IDLE_PC {
+                Some((RunExitReason::PassMarker, true))
+            } else if value == fail_value && pc == FAIL_IDLE_PC {
+                Some((RunExitReason::FailMarker, false))
+            } else {
+                None
+            }
         }
     }
 }
@@ -234,6 +287,17 @@ mod tests {
 
     fn timeout_rom() -> Vec<u8> {
         fixture_rom(None, TIMEOUT_IDLE_PC)
+    }
+
+    fn pass_bus_byte_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x10000];
+        write_lorom_header(&mut rom);
+
+        let mut cursor = 0usize;
+        emit_write_long(&mut rom, &mut cursor, 0x7E_1FE0, PASS_STATUS);
+        emit_jmp_abs(&mut rom, &mut cursor, PASS_IDLE_PC);
+        write_idle_loop(&mut rom, PASS_IDLE_PC);
+        rom
     }
 
     fn fixture_rom(status: Option<u8>, idle_pc: u16) -> Vec<u8> {
@@ -352,6 +416,25 @@ mod tests {
         assert_eq!(result.exit_reason, RunExitReason::FrameLimit);
         assert_eq!(result.frames, 1);
         assert!(result.ticks > 0);
+    }
+
+    #[test]
+    fn bus_byte_oracle_can_mark_pass_without_wram_marker() {
+        let result = run_rom_with_oracle(
+            &pass_bus_byte_rom(),
+            "bus-byte-pass.sfc",
+            short_config(),
+            RunOracle::BusByte {
+                addr: 0x7E_1FE0,
+                pass_value: PASS_STATUS,
+                fail_value: FAIL_STATUS,
+            },
+        );
+
+        assert!(result.passed);
+        assert_eq!(result.exit_reason, RunExitReason::PassMarker);
+        assert_eq!(result.pc, PASS_IDLE_PC);
+        assert_eq!(result.marker, [0; 5]);
     }
 
     #[test]
