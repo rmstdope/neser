@@ -1,5 +1,18 @@
 # Architecture Diagrams: Current vs Proposed
 
+> **Implementation status (#2834 / I2.1):** The `Stateful` trait described below is
+> **implemented** in [`src/platform/save_state.rs`](../src/platform/save_state.rs) (not the
+> hypothetical `src/console/savestate.rs` used in the diagrams). The shipped design:
+> - `Stateful` is a component-level trait with an associated `State: Serialize + DeserializeOwned`
+>   and an **infallible** `restore_state`; fallible validation (format version, NES mapper / SNES
+>   ROM identity, memory-region sizes) lives at the console boundary.
+> - A shared, console-agnostic `SaveStateError` plus generic `to_bytes` / `from_bytes` and a
+>   `check_version` helper replace the four hand-rolled per-console error/serialize/version blocks.
+> - All four cores assemble their top-level save-state through the trait: NES `Cpu`/`Ppu`/`Apu`/`Bus`,
+>   GB `Sm83`, GBA `Arm7tdmi`, and SNES `Cpu`. Console-specific errors (NES `MapperMismatch`, SNES
+>   `RomMismatch`) remain in slim per-console enums that convert `From<SaveStateError>`.
+> - The on-disk format is unchanged (still JSON); a postcard migration is tracked separately (I2.2).
+
 ## Current Architecture
 
 ```
