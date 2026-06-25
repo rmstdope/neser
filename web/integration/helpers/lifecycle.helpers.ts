@@ -64,7 +64,10 @@ export async function waitForIdleState(page: Page) {
 }
 
 export async function waitForPausedState(page: Page) {
+    // Wait for both the button text and the enabled state to ensure deterministic paused state
     await expect(page.locator("#pause")).toHaveText("Resume", { timeout: EXPECT_TIMEOUT_MS });
+    // Also verify stop button is still enabled (emulation is paused, not stopped)
+    await expect(page.locator("#stop")).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
 }
 
 /** Load a NES ROM via the file input, setting romFromFile = true. */
