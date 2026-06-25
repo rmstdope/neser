@@ -21,8 +21,7 @@ class TestRefreshSnesBlarggSpcApuTests(unittest.TestCase):
 
     def test_default_dest_root_is_repository_relative_optional_path(self) -> None:
         expected = (
-            REPO_ROOT
-            / "roms/snes/automated_tests/rom_pass_fail/blargg_spc_apu/full/v1"
+            REPO_ROOT / "roms/snes/automated_tests/rom_pass_fail/blargg_spc_apu/full/v1"
         )
 
         self.assertEqual(DEFAULT_DEST_ROOT, expected)
