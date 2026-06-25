@@ -3,6 +3,36 @@ use super::rom_runner::{
     run_rom_with_oracle,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum BehaviorCategory {
+    Timers,
+    Ports,
+    Dsp,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingCatalogEntry {
+    category: BehaviorCategory,
+    name: &'static str,
+}
+
+fn pending_catalog() -> Vec<PendingCatalogEntry> {
+    vec![
+        PendingCatalogEntry {
+            category: BehaviorCategory::Timers,
+            name: "blargg-spc-timer-baseline",
+        },
+        PendingCatalogEntry {
+            category: BehaviorCategory::Ports,
+            name: "blargg-apu-port-handshake",
+        },
+        PendingCatalogEntry {
+            category: BehaviorCategory::Dsp,
+            name: "blargg-dsp-register-baseline",
+        },
+    ]
+}
+
 #[derive(Debug, Clone, Copy)]
 struct RomPassFailCase {
     name: &'static str,
@@ -193,5 +223,30 @@ mod tests {
         assert_eq!(outcomes.len(), 2);
         assert!(outcomes[0].passed());
         assert!(outcomes[1].failed_with_marker());
+    }
+
+    #[test]
+    fn pending_catalog_covers_required_behavior_categories() {
+        let entries = pending_catalog();
+        let categories: std::collections::BTreeSet<BehaviorCategory> =
+            entries.iter().map(|entry| entry.category).collect();
+
+        for required in [
+            BehaviorCategory::Timers,
+            BehaviorCategory::Ports,
+            BehaviorCategory::Dsp,
+        ] {
+            assert!(
+                categories.contains(&required),
+                "pending catalog missing required category {required:?}"
+            );
+        }
+
+        for entry in &entries {
+            assert!(
+                !entry.name.is_empty(),
+                "pending catalog entry must have a non-empty name"
+            );
+        }
     }
 }
