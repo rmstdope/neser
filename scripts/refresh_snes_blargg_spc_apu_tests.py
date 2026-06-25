@@ -10,6 +10,7 @@ and CI can exercise the helper without depending on external services.
 from __future__ import annotations
 
 import argparse
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,19 +25,41 @@ class RefreshPlan:
     """Description of a planned ROM refresh action."""
 
     dest_root: Path
+    source_dir: Path | None
     dry_run: bool
     fetched_files: list[Path] = field(default_factory=list)
 
 
-def plan_refresh(dest_root: Path, dry_run: bool) -> RefreshPlan:
+def _discover_rom_files(source_dir: Path) -> list[Path]:
+    files = [
+        path
+        for path in source_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in {".sfc", ".smc"}
+    ]
+    files.sort()
+    return files
+
+
+def plan_refresh(dest_root: Path, source_dir: Path | None, dry_run: bool) -> RefreshPlan:
     """Return a plan that summarizes the intended refresh action.
 
-    The current implementation only describes the plan and does not fetch
-    anything yet. Network fetching is intentionally deferred to a later
-    iteration once licensed sources are confirmed.
+    This helper performs local intake only: it discovers ROMs from source_dir
+    (when provided) and plans copies into dest_root. Network fetching remains
+    intentionally out-of-scope until licensed sources are confirmed.
     """
 
-    return RefreshPlan(dest_root=dest_root, dry_run=dry_run)
+    fetched_files: list[Path] = []
+    if source_dir is not None:
+        if not source_dir.exists() or not source_dir.is_dir():
+            raise ValueError(f"source_dir does not exist or is not a directory: {source_dir}")
+        fetched_files = _discover_rom_files(source_dir)
+
+    return RefreshPlan(
+        dest_root=dest_root,
+        source_dir=source_dir,
+        dry_run=dry_run,
+        fetched_files=fetched_files,
+    )
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -46,6 +69,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         type=Path,
         default=DEFAULT_DEST_ROOT,
         help="Destination directory for fetched ROMs.",
+    )
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        default=None,
+        help="Local source directory containing .sfc/.smc files to copy.",
     )
     parser.add_argument(
         "--dry-run",
@@ -59,19 +88,43 @@ def run_refresh(argv: list[str]) -> int:
     """Entry point used by CLI and tests. Returns a process exit code."""
 
     args = _parse_args(argv)
-    plan = plan_refresh(dest_root=args.dest_root, dry_run=args.dry_run)
+    try:
+        plan = plan_refresh(
+            dest_root=args.dest_root,
+            source_dir=args.source_dir,
+            dry_run=args.dry_run,
+        )
+    except ValueError as err:
+        print(f"error: {err}")
+        return 1
 
     if plan.dry_run:
-        print(
-            f"dry-run: would refresh SNES SPC/APU corpus into {plan.dest_root}",
-        )
+        print(f"dry-run: would refresh SNES SPC/APU corpus into {plan.dest_root}")
+        if plan.source_dir is None:
+            print("dry-run: no source directory provided; no files would be copied")
+        else:
+            print(
+                f"dry-run: discovered {len(plan.fetched_files)} ROM file(s) in {plan.source_dir}",
+            )
         return 0
 
+    if plan.source_dir is None:
+        print(
+            "error: --source-dir is required for non-dry-run local intake",
+        )
+        return 1
+
+    plan.dest_root.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for rom_path in plan.fetched_files:
+        target = plan.dest_root / rom_path.name
+        shutil.copy2(rom_path, target)
+        copied += 1
+
     print(
-        "error: network fetching is not yet implemented; "
-        "rerun with --dry-run to preview the planned destination.",
+        f"copied {copied} ROM file(s) from {plan.source_dir} into {plan.dest_root}",
     )
-    return 1
+    return 0
 
 
 def main() -> int:

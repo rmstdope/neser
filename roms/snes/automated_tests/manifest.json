@@ -98,7 +98,7 @@
           "id": "optional_full_suite",
           "status": "optional_local",
           "path": "roms/snes/automated_tests/rom_pass_fail/blargg_spc_apu/full/v1",
-          "refresh_command": "bash scripts/refresh_snes_blargg_spc_apu_tests.sh",
+          "refresh_command": "python -m scripts.refresh_snes_blargg_spc_apu_tests --source-dir <local-rom-dir>",
           "integrity": {
             "kind": "not_vendored",
             "sha256": "not_applicable",

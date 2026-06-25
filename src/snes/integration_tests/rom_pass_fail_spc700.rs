@@ -2,6 +2,12 @@ use super::rom_runner::{
     FAIL_STATUS, PASS_IDLE_PC, PASS_STATUS, RunConfig, RunExitReason, RunOracle, RunResult,
     run_rom_with_oracle,
 };
+use std::fs;
+use std::path::{Path, PathBuf};
+
+const ROM_PASS_FAIL_SUBSET_ROOT: &str = "roms/snes/automated_tests/rom_pass_fail/blargg_spc_apu/v1";
+const ROM_PASS_FAIL_FULL_ROOT: &str =
+    "roms/snes/automated_tests/rom_pass_fail/blargg_spc_apu/full/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum BehaviorCategory {
@@ -78,8 +84,84 @@ fn run_catalog<'a>(catalog: &'a [(RomPassFailCase, &'a [u8])]) -> Vec<RomPassFai
         .collect()
 }
 
+fn list_rom_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = fs::read_dir(root)
+        .map_err(|err| format!("failed to read ROM directory {}: {err}", root.display()))?;
+
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("sfc") || ext.eq_ignore_ascii_case("smc")
+                })
+        })
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+fn list_available_rom_files(subset_root: &Path, full_root: &Path) -> Result<Vec<PathBuf>, String> {
+    let subset_files = if subset_root.exists() {
+        list_rom_files(subset_root)?
+    } else {
+        Vec::new()
+    };
+
+    if !subset_files.is_empty() {
+        return Ok(subset_files);
+    }
+
+    if full_root.exists() {
+        return list_rom_files(full_root);
+    }
+
+    Ok(Vec::new())
+}
+
+fn default_case_for_rom_path(path: &Path) -> Option<RomPassFailCase> {
+    let stem = path.file_stem()?.to_str()?;
+
+    let case_name = match stem {
+        "blargg-spc-timer-baseline" => "blargg-spc-timer-baseline",
+        "blargg-apu-port-handshake" => "blargg-apu-port-handshake",
+        "blargg-dsp-register-baseline" => "blargg-dsp-register-baseline",
+        _ => return None,
+    };
+
+    Some(RomPassFailCase {
+        name: case_name,
+        oracle: RunOracle::Marker,
+        max_ticks: 2_000_000,
+        max_frames: 240,
+    })
+}
+
+fn run_available_roms(
+    subset_root: &Path,
+    full_root: &Path,
+) -> Result<Vec<RomPassFailOutcome>, String> {
+    let files = list_available_rom_files(subset_root, full_root)?;
+
+    let mut outcomes = Vec::new();
+    for path in files {
+        let Some(case) = default_case_for_rom_path(&path) else {
+            continue;
+        };
+
+        let rom = fs::read(&path)
+            .map_err(|err| format!("failed to read ROM file {}: {err}", path.display()))?;
+        outcomes.push(run_case(&rom, &case));
+    }
+
+    Ok(outcomes)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::rom_runner::{FAIL_IDLE_PC, MARKER_ADDR, MARKER_MAGIC};
     use super::*;
 
     fn pass_bus_byte_rom() -> Vec<u8> {
@@ -94,8 +176,6 @@ mod tests {
     }
 
     fn fail_marker_rom() -> Vec<u8> {
-        use super::super::rom_runner::{FAIL_IDLE_PC, MARKER_ADDR, MARKER_MAGIC};
-
         let mut rom = vec![0u8; 0x10000];
         write_lorom_header(&mut rom);
 
@@ -107,6 +187,20 @@ mod tests {
         emit_jmp_abs(&mut rom, &mut cursor, FAIL_IDLE_PC);
         write_idle_loop(&mut rom, PASS_IDLE_PC);
         write_idle_loop(&mut rom, FAIL_IDLE_PC);
+        rom
+    }
+
+    fn pass_marker_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x10000];
+        write_lorom_header(&mut rom);
+
+        let mut cursor = 0usize;
+        for (offset, byte) in MARKER_MAGIC.iter().copied().enumerate() {
+            emit_write_long(&mut rom, &mut cursor, MARKER_ADDR + offset as u32, byte);
+        }
+        emit_write_long(&mut rom, &mut cursor, MARKER_ADDR + 4, PASS_STATUS);
+        emit_jmp_abs(&mut rom, &mut cursor, PASS_IDLE_PC);
+        write_idle_loop(&mut rom, PASS_IDLE_PC);
         rom
     }
 
@@ -262,6 +356,46 @@ mod tests {
                 manifest_text.contains(entry.name),
                 "expected manifest notes to include pending catalog entry '{}'",
                 entry.name
+            );
+        }
+    }
+
+    #[test]
+    fn given_full_root_contains_baseline_rom_when_running_available_roms_then_it_executes() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let full_root = temp.path().join("full");
+        fs::create_dir_all(&full_root).expect("create full root");
+
+        let rom_path = full_root.join("blargg-spc-timer-baseline.sfc");
+        fs::write(&rom_path, pass_marker_rom()).expect("write baseline ROM");
+
+        let outcomes =
+            run_available_roms(temp.path().join("subset").as_path(), full_root.as_path())
+                .expect("run available ROMs");
+
+        assert_eq!(outcomes.len(), 1);
+        assert!(
+            outcomes[0].passed(),
+            "expected discovered baseline ROM to pass"
+        );
+    }
+
+    #[test]
+    fn runs_available_spc_apu_rom_pass_fail_cases() {
+        let subset_root = Path::new(ROM_PASS_FAIL_SUBSET_ROOT);
+        let full_root = Path::new(ROM_PASS_FAIL_FULL_ROOT);
+        if !subset_root.exists() && !full_root.exists() {
+            return;
+        }
+
+        let outcomes = run_available_roms(subset_root, full_root).expect("run available ROMs");
+
+        for outcome in outcomes {
+            assert!(
+                outcome.passed(),
+                "expected {} to pass with marker oracle: {:?}",
+                outcome.name,
+                outcome.result
             );
         }
     }
