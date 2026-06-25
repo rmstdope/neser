@@ -19,6 +19,7 @@ use crate::gba::cpu::{Arm7tdmi, Arm7tdmiState};
 use crate::gba::debugging::{disasm_arm, disasm_thumb};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
+use crate::platform::save_state::Stateful;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;

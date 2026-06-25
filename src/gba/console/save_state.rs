@@ -11,7 +11,9 @@
 //! backend state, and a few simple bus scalars. Because every save-state
 //! carries a `version` field, breaking changes to the captured shape will bump
 //! [`GBA_SAVESTATE_VERSION`] and the loader will reject older states with
-//! a clear [`GbaSaveStateError::IncompatibleVersion`] error.
+//! a clear [`SaveStateError::IncompatibleVersion`] error.
+//!
+//! [`SaveStateError::IncompatibleVersion`]: crate::platform::save_state::SaveStateError::IncompatibleVersion
 
 use serde::{Deserialize, Serialize};
 
@@ -23,18 +25,18 @@ use crate::gba::cartridge::SaveBackendState;
 use crate::gba::cpu::Arm7tdmiState;
 use crate::gba::input::Keypad;
 use crate::gba::ppu::PpuState;
+use crate::platform::save_state::SaveStateError;
 
 /// Current save-state format version for Game Boy Advance.
 /// Increment this when making breaking changes to the state format.
 pub const GBA_SAVESTATE_VERSION: u32 = 7;
 const GBA_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE: u32 = 6;
 
-fn is_supported_savestate_version(version: u32) -> bool {
-    matches!(
-        version,
-        GBA_SAVESTATE_VERSION | GBA_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE
-    )
-}
+/// Save-state format versions this build can load (current plus legacy).
+const SUPPORTED_SAVESTATE_VERSIONS: [u32; 2] = [
+    GBA_SAVESTATE_VERSION,
+    GBA_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE,
+];
 
 /// Serializable snapshot of the [`GbaBus`](crate::gba::GbaBus) memory
 /// regions and a small number of associated scalar fields.
@@ -138,55 +140,19 @@ pub struct GbaSaveState {
     pub bus: BusMemoryState,
 }
 
-/// Errors that can occur when (de)serializing a GBA save-state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GbaSaveStateError {
-    /// The save-state format version is incompatible.
-    IncompatibleVersion { expected: u32, found: u32 },
-    /// Deserialization failed.
-    DeserializationFailed(String),
-    /// Serialization failed.
-    SerializationFailed(String),
-    /// Restoring the captured state into the running emulator failed
-    /// (e.g. region size mismatch).
-    RestoreFailed(String),
-}
-
-impl std::fmt::Display for GbaSaveStateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::IncompatibleVersion { expected, found } => write!(
-                f,
-                "incompatible save-state version (expected {expected}, found {found})"
-            ),
-            Self::DeserializationFailed(msg) => write!(f, "deserialization failed: {msg}"),
-            Self::SerializationFailed(msg) => write!(f, "serialization failed: {msg}"),
-            Self::RestoreFailed(msg) => write!(f, "restore failed: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for GbaSaveStateError {}
-
 impl GbaSaveState {
     /// Serialize the save state to JSON-encoded UTF-8 bytes.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, GbaSaveStateError> {
-        serde_json::to_vec(self).map_err(|e| GbaSaveStateError::SerializationFailed(e.to_string()))
+    pub fn to_bytes(&self) -> Result<Vec<u8>, SaveStateError> {
+        crate::platform::save_state::to_bytes(self)
     }
 
     /// Deserialize a save state from JSON-encoded UTF-8 bytes.
     ///
-    /// Returns [`GbaSaveStateError::IncompatibleVersion`] when the
-    /// deserialized state's `version` field is unsupported.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, GbaSaveStateError> {
-        let state: Self = serde_json::from_slice(bytes)
-            .map_err(|e| GbaSaveStateError::DeserializationFailed(e.to_string()))?;
-        if !is_supported_savestate_version(state.version) {
-            return Err(GbaSaveStateError::IncompatibleVersion {
-                expected: GBA_SAVESTATE_VERSION,
-                found: state.version,
-            });
-        }
+    /// Returns [`SaveStateError::IncompatibleVersion`] when the deserialized
+    /// state's `version` field is unsupported.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SaveStateError> {
+        let state: Self = crate::platform::save_state::from_bytes(bytes)?;
+        crate::platform::save_state::check_version(state.version, &SUPPORTED_SAVESTATE_VERSIONS)?;
         Ok(state)
     }
 }
@@ -207,21 +173,16 @@ impl Gba {
 
     /// Restore the GBA state from a save-state snapshot.
     ///
-    /// Returns [`GbaSaveStateError::IncompatibleVersion`] if the snapshot
+    /// Returns [`SaveStateError::IncompatibleVersion`] if the snapshot
     /// version is unsupported, or
-    /// [`GbaSaveStateError::RestoreFailed`] if the captured state cannot
+    /// [`SaveStateError::RestoreFailed`] if the captured state cannot
     /// be applied to the current bus (e.g. region size mismatch).
-    pub fn load_state(&mut self, state: &GbaSaveState) -> Result<(), GbaSaveStateError> {
-        if !is_supported_savestate_version(state.version) {
-            return Err(GbaSaveStateError::IncompatibleVersion {
-                expected: GBA_SAVESTATE_VERSION,
-                found: state.version,
-            });
-        }
+    pub fn load_state(&mut self, state: &GbaSaveState) -> Result<(), SaveStateError> {
+        crate::platform::save_state::check_version(state.version, &SUPPORTED_SAVESTATE_VERSIONS)?;
         let current_input = self.bus().keypad.pressed_mask();
         self.bus_mut()
             .restore_memory_state(&state.bus)
-            .map_err(GbaSaveStateError::RestoreFailed)?;
+            .map_err(SaveStateError::RestoreFailed)?;
         let bus = self.bus_mut();
         bus.keypad.set_pressed_mask(current_input, &mut bus.ic);
         self.restore_cpu_state(&state.cpu);
@@ -449,9 +410,9 @@ mod tests {
         let bytes = serde_json::to_vec(&save).expect("raw serialization succeeds");
         let result = GbaSaveState::from_bytes(&bytes);
         match result {
-            Err(GbaSaveStateError::IncompatibleVersion { expected, found }) => {
-                assert_eq!(expected, GBA_SAVESTATE_VERSION);
+            Err(SaveStateError::IncompatibleVersion { found, supported }) => {
                 assert_eq!(found, 9999);
+                assert_eq!(supported, SUPPORTED_SAVESTATE_VERSIONS.to_vec());
             }
             other => panic!("Expected IncompatibleVersion error, got {other:?}"),
         }
@@ -465,9 +426,9 @@ mod tests {
 
         let result = gba.load_state(&save);
         match result {
-            Err(GbaSaveStateError::IncompatibleVersion { expected, found }) => {
-                assert_eq!(expected, GBA_SAVESTATE_VERSION);
+            Err(SaveStateError::IncompatibleVersion { found, supported }) => {
                 assert_eq!(found, 9999);
+                assert_eq!(supported, SUPPORTED_SAVESTATE_VERSIONS.to_vec());
             }
             other => panic!("Expected IncompatibleVersion error, got {other:?}"),
         }
@@ -480,7 +441,7 @@ mod tests {
         let result = GbaSaveState::from_bytes(b"not valid json");
         assert!(matches!(
             result,
-            Err(GbaSaveStateError::DeserializationFailed(_))
+            Err(SaveStateError::DeserializationFailed(_))
         ));
     }
 
@@ -492,26 +453,47 @@ mod tests {
         save.bus.ewram.truncate(16);
 
         let result = gba.load_state(&save);
-        assert!(matches!(result, Err(GbaSaveStateError::RestoreFailed(_))));
+        assert!(matches!(result, Err(SaveStateError::RestoreFailed(_))));
     }
 
-    // ── Display impl ───────────────────────────────────────────────────────
+    #[test]
+    fn test_main_components_implement_stateful() {
+        // The CPU snapshot is captured through the `Stateful` trait.
+        fn assert_stateful<T: crate::platform::save_state::Stateful>() {}
+        assert_stateful::<crate::gba::cpu::Arm7tdmi>();
+    }
+
+    /// Regenerates the committed golden save-state fixture used by
+    /// `test_golden_save_state_v7_loads`. Run manually only after an
+    /// intentional, reviewed change to the save-state format:
+    /// `cargo test --no-default-features --lib \
+    ///   gba::console::save_state::tests::regenerate_golden_save_state_fixture -- --ignored`
+    #[test]
+    #[ignore = "regenerates a committed fixture; run manually"]
+    fn regenerate_golden_save_state_fixture() {
+        let mut gba = make_gba();
+        for _ in 0..1000 {
+            gba.run_tick_for_tests();
+        }
+        let bytes = gba.save_state().to_bytes().expect("serialize save state");
+        let compressed = crate::platform::save_state::gzip_compress(&bytes);
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gba/console/testdata");
+        std::fs::create_dir_all(&dir).expect("create testdata dir");
+        std::fs::write(dir.join("savestate_golden_v7.json.gz"), compressed).expect("write fixture");
+    }
 
     #[test]
-    fn test_error_display_formatting() {
-        let e = GbaSaveStateError::IncompatibleVersion {
-            expected: 1,
-            found: 2,
-        };
-        assert!(format!("{e}").contains("incompatible save-state version"));
+    fn test_golden_save_state_v7_loads() {
+        // A save-state captured from a previous build must still load, proving
+        // the on-disk format stayed backward-compatible across the
+        // shared-helper refactor.
+        let compressed = include_bytes!("testdata/savestate_golden_v7.json.gz");
+        let bytes = crate::platform::save_state::gzip_decompress(compressed);
+        let state = GbaSaveState::from_bytes(&bytes).expect("golden save state should deserialize");
+        assert_eq!(state.version, GBA_SAVESTATE_VERSION);
 
-        let e = GbaSaveStateError::DeserializationFailed("oops".into());
-        assert!(format!("{e}").contains("deserialization failed"));
-
-        let e = GbaSaveStateError::SerializationFailed("oops".into());
-        assert!(format!("{e}").contains("serialization failed"));
-
-        let e = GbaSaveStateError::RestoreFailed("oops".into());
-        assert!(format!("{e}").contains("restore failed"));
+        let mut gba = make_gba();
+        gba.load_state(&state)
+            .expect("golden save state should load");
     }
 }

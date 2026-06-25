@@ -2,13 +2,14 @@ use crate::gba::Gba;
 use crate::gba::cartridge::header::{
     COMPLEMENT_CHECK_OFFSET, FIXED_BYTE_OFFSET, FIXED_BYTE_VALUE, compute_complement_check,
 };
-use crate::gba::console::save_state::{GBA_SAVESTATE_VERSION, GbaSaveStateError};
+use crate::gba::console::save_state::GBA_SAVESTATE_VERSION;
 use crate::gba::cpu::bus::Bus;
 use crate::gba::ppu;
 use crate::gba::ppu::{CYCLES_PER_SCANLINE, SCANLINES_PER_FRAME};
 use crate::platform::app_context::AppContext;
 use crate::platform::config::Config;
 use crate::platform::emulator::Emulator;
+use crate::platform::save_state::SaveStateError;
 
 fn make_gba() -> Gba {
     let mut config = Config::default();
@@ -78,6 +79,6 @@ fn gba_save_state_rejects_incompatible_version_without_crashing() {
 
     assert!(matches!(
         result,
-        Err(GbaSaveStateError::IncompatibleVersion { .. })
+        Err(SaveStateError::IncompatibleVersion { .. })
     ));
 }
