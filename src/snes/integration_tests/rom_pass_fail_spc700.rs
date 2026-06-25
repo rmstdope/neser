@@ -1,8 +1,9 @@
 use super::rom_runner::{
-    FAIL_STATUS, PASS_IDLE_PC, PASS_STATUS, RunConfig, RunExitReason, RunOracle,
+    FAIL_STATUS, PASS_IDLE_PC, PASS_STATUS, RunConfig, RunExitReason, RunOracle, RunResult,
     run_rom_with_oracle,
 };
 
+#[derive(Debug, Clone, Copy)]
 struct RomPassFailCase {
     name: &'static str,
     oracle: RunOracle,
@@ -10,7 +11,23 @@ struct RomPassFailCase {
     max_frames: u32,
 }
 
-fn run_case(rom: &[u8], case: &RomPassFailCase) -> bool {
+#[derive(Debug, Clone)]
+struct RomPassFailOutcome {
+    name: &'static str,
+    result: RunResult,
+}
+
+impl RomPassFailOutcome {
+    fn passed(&self) -> bool {
+        self.result.passed && self.result.exit_reason == RunExitReason::PassMarker
+    }
+
+    fn failed_with_marker(&self) -> bool {
+        !self.result.passed && self.result.exit_reason == RunExitReason::FailMarker
+    }
+}
+
+fn run_case(rom: &[u8], case: &RomPassFailCase) -> RomPassFailOutcome {
     let result = run_rom_with_oracle(
         rom,
         case.name,
@@ -18,7 +35,17 @@ fn run_case(rom: &[u8], case: &RomPassFailCase) -> bool {
         case.oracle,
     );
 
-    result.passed && result.exit_reason == RunExitReason::PassMarker
+    RomPassFailOutcome {
+        name: case.name,
+        result,
+    }
+}
+
+fn run_catalog<'a>(catalog: &'a [(RomPassFailCase, &'a [u8])]) -> Vec<RomPassFailOutcome> {
+    catalog
+        .iter()
+        .map(|(case, rom)| run_case(rom, case))
+        .collect()
 }
 
 #[cfg(test)]
@@ -33,6 +60,23 @@ mod tests {
         emit_write_long(&mut rom, &mut cursor, 0x7E_1FE1, PASS_STATUS);
         emit_jmp_abs(&mut rom, &mut cursor, PASS_IDLE_PC);
         write_idle_loop(&mut rom, PASS_IDLE_PC);
+        rom
+    }
+
+    fn fail_marker_rom() -> Vec<u8> {
+        use super::super::rom_runner::{FAIL_IDLE_PC, MARKER_ADDR, MARKER_MAGIC};
+
+        let mut rom = vec![0u8; 0x10000];
+        write_lorom_header(&mut rom);
+
+        let mut cursor = 0usize;
+        for (offset, byte) in MARKER_MAGIC.iter().copied().enumerate() {
+            emit_write_long(&mut rom, &mut cursor, MARKER_ADDR + offset as u32, byte);
+        }
+        emit_write_long(&mut rom, &mut cursor, MARKER_ADDR + 4, FAIL_STATUS);
+        emit_jmp_abs(&mut rom, &mut cursor, FAIL_IDLE_PC);
+        write_idle_loop(&mut rom, PASS_IDLE_PC);
+        write_idle_loop(&mut rom, FAIL_IDLE_PC);
         rom
     }
 
@@ -88,6 +132,66 @@ mod tests {
             max_frames: 2,
         };
 
-        assert!(run_case(&pass_bus_byte_rom(), &case));
+        let outcome = run_case(&pass_bus_byte_rom(), &case);
+
+        assert!(
+            outcome.passed(),
+            "expected pass outcome for {}",
+            outcome.name
+        );
+    }
+
+    #[test]
+    fn given_marker_oracle_fail_rom_when_run_case_then_reports_marker_fail() {
+        let case = RomPassFailCase {
+            name: "fixture-marker-fail",
+            oracle: RunOracle::Marker,
+            max_ticks: 10_000,
+            max_frames: 2,
+        };
+
+        let outcome = run_case(&fail_marker_rom(), &case);
+
+        assert!(
+            outcome.failed_with_marker(),
+            "expected marker fail outcome for {}",
+            outcome.name
+        );
+    }
+
+    #[test]
+    fn given_mixed_catalog_when_run_catalog_then_reports_each_case_outcome() {
+        let pass_rom = pass_bus_byte_rom();
+        let fail_rom = fail_marker_rom();
+        let catalog: Vec<(RomPassFailCase, &[u8])> = vec![
+            (
+                RomPassFailCase {
+                    name: "catalog-bus-pass",
+                    oracle: RunOracle::BusByte {
+                        addr: 0x7E_1FE1,
+                        pass_value: PASS_STATUS,
+                        fail_value: FAIL_STATUS,
+                    },
+                    max_ticks: 10_000,
+                    max_frames: 2,
+                },
+                pass_rom.as_slice(),
+            ),
+            (
+                RomPassFailCase {
+                    name: "catalog-marker-fail",
+                    oracle: RunOracle::Marker,
+                    max_ticks: 10_000,
+                    max_frames: 2,
+                },
+                fail_rom.as_slice(),
+            ),
+        ];
+
+        let outcomes = run_catalog(&catalog);
+
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes[0].passed());
+        assert!(outcomes[1].failed_with_marker());
     }
 }
