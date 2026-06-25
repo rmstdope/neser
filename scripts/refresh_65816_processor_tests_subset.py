@@ -6,8 +6,10 @@ import argparse
 import hashlib
 import json
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FULL_ROOT = REPO_ROOT / "roms/snes/automated_tests/processor_tests/65816/full/v1"
@@ -173,9 +175,18 @@ def write_subset(
 def build_report(
     selected: list[VectorFile],
     max_vectors_per_file: int | None = None,
-) -> dict[str, object]:
-    families: dict[str, dict[str, object]] = {}
-    for item in selected:
+) -> dict[str, Any]:
+    # Build family coverage and compute payload integrity in one pass
+    families: dict[str, dict[str, Any]] = {}
+    per_file_records: list[str] = []
+    total_size_bytes = 0
+
+    sorted_selected = sorted(selected, key=lambda item: item.filename)
+    for item in sorted_selected:
+        payload = _materialize_payload(item, max_vectors_per_file)
+        total_size_bytes += len(payload)
+        per_file_records.append(f"{hashlib.sha256(payload).hexdigest()}  {item.filename}")
+
         family = _family_for_opcode(item.opcode)
         bucket = families.setdefault(
             family,
@@ -187,7 +198,8 @@ def build_report(
         bucket["opcodes"].add(f"{item.opcode:02x}")
         bucket["files"].append(item.filename)
 
-    normalized_families: dict[str, dict[str, object]] = {}
+    # Normalize family data for JSON serialization
+    normalized_families: dict[str, dict[str, Any]] = {}
     for family, data in sorted(families.items()):
         normalized_families[family] = {
             "opcode_count": len(data["opcodes"]),
@@ -195,13 +207,6 @@ def build_report(
             "files": sorted(data["files"]),
         }
 
-    sorted_selected = sorted(selected, key=lambda item: item.filename)
-    per_file_records: list[str] = []
-    total_size_bytes = 0
-    for item in sorted_selected:
-        payload = _materialize_payload(item, max_vectors_per_file)
-        total_size_bytes += len(payload)
-        per_file_records.append(f"{hashlib.sha256(payload).hexdigest()}  {item.filename}")
     tree_payload = "\n".join(per_file_records) + "\n"
 
     return {
