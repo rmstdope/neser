@@ -118,6 +118,36 @@ pub fn check_version(found: u32, supported: &[u32]) -> Result<(), SaveStateError
     }
 }
 
+/// Gzip-compress bytes.
+///
+/// Test-only helper used by the per-console golden-fixture regeneration tests so
+/// that committed save-state fixtures stay small.
+#[cfg(test)]
+pub(crate) fn gzip_compress(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder
+        .write_all(bytes)
+        .expect("gzip compression should not fail on an in-memory buffer");
+    encoder
+        .finish()
+        .expect("gzip finalize should not fail on an in-memory buffer")
+}
+
+/// Gzip-decompress bytes produced by [`gzip_compress`].
+///
+/// Test-only helper used by the per-console golden-fixture loading tests.
+#[cfg(test)]
+pub(crate) fn gzip_decompress(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let mut decoder = flate2::read::GzDecoder::new(bytes);
+    let mut out = Vec::new();
+    decoder
+        .read_to_end(&mut out)
+        .expect("decompressing a committed fixture should not fail");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

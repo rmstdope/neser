@@ -11,6 +11,7 @@ use crate::nes::apu::noise::NoiseState;
 use crate::nes::apu::pulse::PulseState;
 use crate::nes::apu::triangle::TriangleState;
 use crate::nes::console::TimingMode;
+use crate::platform::save_state::Stateful;
 use crate::trace_apu;
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, RingBuffer};
@@ -742,7 +743,7 @@ impl Apu {
     }
 
     /// Capture the current APU state for save-state.
-    pub fn capture_state(&self) -> ApuState {
+    fn capture_state_inner(&self) -> ApuState {
         ApuState {
             frame_counter: FrameCounterState {
                 cycle_counter: self.frame_counter.get_cycle_counter(),
@@ -778,7 +779,7 @@ impl Apu {
     }
 
     /// Restore APU state from a save-state.
-    pub fn restore_state(&mut self, state: &ApuState) {
+    fn restore_state_inner(&mut self, state: &ApuState) {
         // Restore frame counter
         self.frame_counter.restore_state(
             state.frame_counter.cycle_counter,
@@ -818,6 +819,18 @@ impl Apu {
         self.triangle_enabled = state.triangle_enabled;
         self.noise_enabled = state.noise_enabled;
         self.dmc_enabled = state.dmc_enabled;
+    }
+}
+
+impl Stateful for Apu {
+    type State = ApuState;
+
+    fn capture_state(&self) -> ApuState {
+        self.capture_state_inner()
+    }
+
+    fn restore_state(&mut self, state: &ApuState) {
+        self.restore_state_inner(state);
     }
 }
 

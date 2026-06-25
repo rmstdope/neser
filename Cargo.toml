@@ -127,6 +127,7 @@ path = "src/bin/gamepad_test.rs"
 required-features = ["native"]
 
 [dev-dependencies]
+flate2 = "1"
 hound = "3.5"
 serial_test = "3.2"
 tempfile = "3.24.0"

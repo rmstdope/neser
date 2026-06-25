@@ -2879,6 +2879,7 @@ dependencies = [
  "egui",
  "egui-winit",
  "egui_glow",
+ "flate2",
  "getrandom 0.3.4",
  "gilrs",
  "gl",
