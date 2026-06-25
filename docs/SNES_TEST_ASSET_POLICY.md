@@ -53,6 +53,10 @@ v1 supports two integrity strategies:
 
 - `committed_ci` assets are versioned in Git and run in CI.
 - `optional_local` assets are intentionally not vendored and should be materialized locally with the documented refresh command.
+- For SPC700 ProcessorTests, use a two-step local refresh flow: first fetch the
+  optional full corpus, then run
+  `python -m scripts.refresh_spc700_processor_tests_subset` to regenerate the
+  committed subset and coverage report deterministically.
 
 ## Baseline Approval Policy
 

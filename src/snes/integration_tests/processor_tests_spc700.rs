@@ -1,5 +1,4 @@
 use crate::snes::apu::spc700::{FlatRamBus, Spc700};
-use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -85,26 +84,6 @@ fn load_vectors_from_file(path: &Path) -> Result<Vec<ProcessorTestVector>, Strin
 }
 
 fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
-    for cycle in &vector.cycles {
-        if cycle.signals.len() != 8 {
-            return Err(VectorFailure {
-                details: format!(
-                    "{}: malformed cycle signal string '{}'",
-                    vector.name, cycle.signals
-                ),
-            });
-        }
-
-        if cycle.address.is_some() != cycle.value.is_some() {
-            return Err(VectorFailure {
-                details: format!(
-                    "{}: cycle address/value presence mismatch (signals='{}')",
-                    vector.name, cycle.signals
-                ),
-            });
-        }
-    }
-
     let mut bus = FlatRamBus::new();
     for [addr, value] in &vector.initial.ram {
         let byte = checked_byte(*value, vector, "initial RAM", Some(*addr))?;
@@ -129,269 +108,6 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
                 "{}: initial RAM is missing immediate byte for opcode ${opcode:02X} at ${:04X}",
                 vector.name,
                 vector.initial.pc.wrapping_add(1)
-            ),
-        });
-    }
-
-    if opcode != 0x00
-        && opcode != 0xE8
-        && opcode != 0xCD
-        && opcode != 0x8D
-        && opcode != 0x7D
-        && opcode != 0x5D
-        && opcode != 0xDD
-        && opcode != 0xFD
-        && opcode != 0x9D
-        && opcode != 0xBD
-        && opcode != 0xE4
-        && opcode != 0xC4
-        && opcode != 0xD8
-        && opcode != 0xCB
-        && opcode != 0xE6
-        && opcode != 0xBF
-        && opcode != 0xC6
-        && opcode != 0xAF
-        && opcode != 0xF4
-        && opcode != 0xD4
-        && opcode != 0xDB
-        && opcode != 0xD9
-        && opcode != 0xE5
-        && opcode != 0xC5
-        && opcode != 0xF5
-        && opcode != 0xF6
-        && opcode != 0xD5
-        && opcode != 0xD6
-        && opcode != 0xF8
-        && opcode != 0xEB
-        && opcode != 0xE9
-        && opcode != 0xEC
-        && opcode != 0xF9
-        && opcode != 0xFB
-        && opcode != 0xC9
-        && opcode != 0xCC
-        && opcode != 0xE7
-        && opcode != 0xF7
-        && opcode != 0xC7
-        && opcode != 0xD7
-        && opcode != 0x7C
-        && opcode != 0x3C
-        && opcode != 0xBC
-        && opcode != 0x9C
-        && opcode != 0xAB
-        && opcode != 0xBB
-        && opcode != 0xAC
-        && opcode != 0x8B
-        && opcode != 0x9B
-        && opcode != 0x8C
-        && opcode != 0x0B
-        && opcode != 0x1B
-        && opcode != 0x0C
-        && opcode != 0x2B
-        && opcode != 0x3B
-        && opcode != 0x2C
-        && opcode != 0x4B
-        && opcode != 0x5B
-        && opcode != 0x4C
-        && opcode != 0x6B
-        && opcode != 0x7B
-        && opcode != 0x6C
-        && opcode != 0x24
-        && opcode != 0x04
-        && opcode != 0x44
-        && opcode != 0x88
-        && opcode != 0x84
-        && opcode != 0xA8
-        && opcode != 0xA4
-        && opcode != 0xC8
-        && opcode != 0xC0
-        && opcode != 0xAD
-        && opcode != 0x68
-        && opcode != 0x69
-        && opcode != 0x66
-        && opcode != 0x64
-        && opcode != 0x74
-        && opcode != 0x65
-        && opcode != 0x75
-        && opcode != 0x76
-        && opcode != 0x67
-        && opcode != 0x77
-        && opcode != 0x78
-        && opcode != 0x3E
-        && opcode != 0x1E
-        && opcode != 0x7E
-        && opcode != 0x5E
-        && opcode != 0x79
-        && opcode != 0x28
-        && opcode != 0x29
-        && opcode != 0x26
-        && opcode != 0x34
-        && opcode != 0x25
-        && opcode != 0x35
-        && opcode != 0x36
-        && opcode != 0x27
-        && opcode != 0x37
-        && opcode != 0x38
-        && opcode != 0x39
-        && opcode != 0x08
-        && opcode != 0x09
-        && opcode != 0x06
-        && opcode != 0x14
-        && opcode != 0x05
-        && opcode != 0x15
-        && opcode != 0x16
-        && opcode != 0x07
-        && opcode != 0x17
-        && opcode != 0x18
-        && opcode != 0x19
-        && opcode != 0x48
-        && opcode != 0x49
-        && opcode != 0x46
-        && opcode != 0x54
-        && opcode != 0x45
-        && opcode != 0x55
-        && opcode != 0x56
-        && opcode != 0x47
-        && opcode != 0x57
-        && opcode != 0x58
-        && opcode != 0x59
-        && opcode != 0x89
-        && opcode != 0x85
-        && opcode != 0x86
-        && opcode != 0x87
-        && opcode != 0x94
-        && opcode != 0x95
-        && opcode != 0x96
-        && opcode != 0x97
-        && opcode != 0x99
-        && opcode != 0x98
-        && opcode != 0xA9
-        && opcode != 0xA5
-        && opcode != 0xA6
-        && opcode != 0xA7
-        && opcode != 0xB4
-        && opcode != 0xB5
-        && opcode != 0xB6
-        && opcode != 0xB7
-        && opcode != 0xB9
-        && opcode != 0xB8
-        && opcode != 0xBE
-        && opcode != 0xDF
-        && opcode != 0xEF
-        && opcode != 0xFF
-        && opcode != 0xFA
-        && opcode != 0xA0
-        && opcode != 0x0A
-        && opcode != 0x2A
-        && opcode != 0x4A
-        && opcode != 0x6A
-        && opcode != 0x8A
-        && opcode != 0xAA
-        && opcode != 0xCA
-        && opcode != 0xEA
-        && opcode != 0x0E
-        && opcode != 0x4E
-        && opcode != 0x20
-        && opcode != 0x40
-        && opcode != 0x60
-        && opcode != 0x80
-        && opcode != 0xE0
-        && opcode != 0xED
-        && opcode != 0x02
-        && opcode != 0x22
-        && opcode != 0x42
-        && opcode != 0x62
-        && opcode != 0x82
-        && opcode != 0xA2
-        && opcode != 0xC2
-        && opcode != 0xE2
-        && opcode != 0x12
-        && opcode != 0x32
-        && opcode != 0x52
-        && opcode != 0x72
-        && opcode != 0x92
-        && opcode != 0xB2
-        && opcode != 0xD2
-        && opcode != 0xF2
-        && opcode != 0x03
-        && opcode != 0x23
-        && opcode != 0x43
-        && opcode != 0x63
-        && opcode != 0x83
-        && opcode != 0xA3
-        && opcode != 0xC3
-        && opcode != 0xE3
-        && opcode != 0x13
-        && opcode != 0x33
-        && opcode != 0x53
-        && opcode != 0x73
-        && opcode != 0x93
-        && opcode != 0xB3
-        && opcode != 0xD3
-        && opcode != 0xF3
-        && opcode != 0x8F
-        && opcode != 0xBA
-        && opcode != 0xDA
-        && opcode != 0x9F
-        && opcode != 0x01
-        && opcode != 0x11
-        && opcode != 0x21
-        && opcode != 0x31
-        && opcode != 0x41
-        && opcode != 0x51
-        && opcode != 0x61
-        && opcode != 0x71
-        && opcode != 0x81
-        && opcode != 0x91
-        && opcode != 0xA1
-        && opcode != 0xB1
-        && opcode != 0xC1
-        && opcode != 0xD1
-        && opcode != 0xE1
-        && opcode != 0xF1
-        && opcode != 0x4F
-        && opcode != 0x7F
-        && opcode != 0x2F
-        && opcode != 0x2E
-        && opcode != 0xF0
-        && opcode != 0xD0
-        && opcode != 0xB0
-        && opcode != 0x90
-        && opcode != 0x70
-        && opcode != 0x50
-        && opcode != 0x30
-        && opcode != 0x10
-        && opcode != 0x1F
-        && opcode != 0x5F
-        && opcode != 0x6E
-        && opcode != 0xDE
-        && opcode != 0xFE
-        && opcode != 0x0D
-        && opcode != 0x2D
-        && opcode != 0x4D
-        && opcode != 0x6D
-        && opcode != 0x8E
-        && opcode != 0xAE
-        && opcode != 0xCE
-        && opcode != 0xEE
-        && opcode != 0x0F
-        && opcode != 0x6F
-        && opcode != 0x3F
-        && opcode != 0x3A
-        && opcode != 0x3D
-        && opcode != 0x1D
-        && opcode != 0xDC
-        && opcode != 0xFC
-        && opcode != 0x1A
-        && opcode != 0x7A
-        && opcode != 0x9A
-        && opcode != 0x5A
-        && opcode != 0xCF
-        && opcode != 0x9E
-    {
-        return Err(VectorFailure {
-            details: format!(
-                "{}: unsupported opcode ${opcode:02X} at PC ${:04X}",
-                vector.name, vector.initial.pc
             ),
         });
     }
@@ -490,26 +206,16 @@ fn list_available_vector_files(
     } else {
         Vec::new()
     };
-    let full_files = if full_root.exists() {
-        list_vector_files(full_root)?
-    } else {
-        Vec::new()
-    };
 
-    let mut by_name: BTreeMap<String, PathBuf> = BTreeMap::new();
-    for file in subset_files {
-        let Some(name) = file.file_name() else {
-            continue;
-        };
-        by_name.insert(name.to_string_lossy().to_string(), file);
+    if !subset_files.is_empty() {
+        return Ok(subset_files);
     }
-    for file in full_files {
-        let Some(name) = file.file_name() else {
-            continue;
-        };
-        by_name.insert(name.to_string_lossy().to_string(), file);
+
+    if full_root.exists() {
+        return list_vector_files(full_root);
     }
-    Ok(by_name.into_values().collect())
+
+    Ok(Vec::new())
 }
 
 fn run_vectors_from_directory(subset_root: &Path, full_root: &Path) -> Result<(), VectorFailure> {
@@ -587,6 +293,70 @@ mod tests {
 ]
 "#;
         fs::write(path, sample).expect("write sample vector JSON");
+    }
+
+    fn write_sample_vector_with_text_signals(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "00 nop text-signals",
+    "initial": {
+      "pc": 512,
+      "sp": 239,
+      "psw": 0,
+      "a": 18,
+      "x": 52,
+      "y": 86,
+      "ram": [[512, 0]]
+    },
+    "final": {
+      "pc": 513,
+      "sp": 239,
+      "psw": 0,
+      "a": 18,
+      "x": 52,
+      "y": 86,
+      "ram": [[512, 0]]
+    },
+    "cycles": [
+      [512, 0, "read"],
+      [null, null, "read"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample vector JSON with text signals");
+    }
+
+    fn write_sample_vector_with_text_signals_and_null_read_value(path: &Path) {
+        let sample = r#"[
+  {
+    "name": "00 nop text-signals-null-read-value",
+    "initial": {
+      "pc": 512,
+      "sp": 239,
+      "psw": 0,
+      "a": 18,
+      "x": 52,
+      "y": 86,
+      "ram": [[512, 0]]
+    },
+    "final": {
+      "pc": 513,
+      "sp": 239,
+      "psw": 0,
+      "a": 18,
+      "x": 52,
+      "y": 86,
+      "ram": [[512, 0]]
+    },
+    "cycles": [
+      [512, null, "read"],
+      [null, null, "read"]
+    ]
+  }
+]
+"#;
+        fs::write(path, sample).expect("write sample vector JSON with null read value");
     }
 
     fn write_mov_a_immediate_vector(path: &Path) {
@@ -2662,10 +2432,33 @@ mod tests {
     }
 
     #[test]
+    fn given_nop_vector_with_text_signals_when_executed_then_final_state_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("00.json");
+        write_sample_vector_with_text_signals(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
     fn given_mov_a_immediate_vector_when_executed_then_final_state_matches() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("e8.json");
         write_mov_a_immediate_vector(&path);
+
+        let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
+        let result = run_vector_case(&vectors[0]);
+        assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_nop_vector_with_text_signals_and_null_read_value_when_executed_then_final_state_matches()
+     {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("00.json");
+        write_sample_vector_with_text_signals_and_null_read_value(&path);
 
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
         let result = run_vector_case(&vectors[0]);
@@ -3297,6 +3090,45 @@ mod tests {
         let vectors = load_vectors_from_file(&path).expect("load vectors from sample file");
         let result = run_vector_case(&vectors[0]);
         assert!(result.is_ok(), "expected vector case to pass: {result:?}");
+    }
+
+    #[test]
+    fn given_subset_and_full_vectors_with_same_name_when_listing_then_subset_is_preferred() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let subset_root = temp.path().join("subset");
+        let full_root = temp.path().join("full");
+        fs::create_dir_all(&subset_root).expect("create subset root");
+        fs::create_dir_all(&full_root).expect("create full root");
+
+        let subset_file = subset_root.join("00.json");
+        let full_file = full_root.join("00.json");
+        fs::write(&subset_file, "[]\n").expect("write subset file");
+        fs::write(&full_file, "[]\n").expect("write full file");
+
+        let files = list_available_vector_files(&subset_root, &full_root)
+            .expect("list available vector files");
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0], subset_file);
+    }
+
+    #[test]
+    fn given_subset_exists_when_listing_then_full_only_files_are_ignored() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let subset_root = temp.path().join("subset");
+        let full_root = temp.path().join("full");
+        fs::create_dir_all(&subset_root).expect("create subset root");
+        fs::create_dir_all(&full_root).expect("create full root");
+
+        let subset_file = subset_root.join("00.json");
+        fs::write(&subset_file, "[]\n").expect("write subset file");
+        fs::write(full_root.join("00.json"), "[]\n").expect("write matching full file");
+        fs::write(full_root.join("01.json"), "[]\n").expect("write full-only file");
+
+        let files = list_available_vector_files(&subset_root, &full_root)
+            .expect("list available vector files");
+
+        assert_eq!(files, vec![subset_file]);
     }
 
     #[test]

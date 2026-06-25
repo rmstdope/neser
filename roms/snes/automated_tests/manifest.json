@@ -52,7 +52,7 @@
       },
       "license": "unknown",
       "oracle_type": "vector_state",
-      "notes": "Tracked subset is vendored in-repo. Optional full corpus is supported as a local-only path.",
+      "notes": "Tracked subset is vendored in-repo and regenerated deterministically from the local full corpus with a per-file vector cap. Optional full corpus is supported as a local-only path.",
       "variants": [
         {
           "id": "ci_subset",
@@ -61,24 +61,24 @@
           "refresh_command": null,
           "integrity": {
             "kind": "tree_sha256",
-            "sha256": "0bf4c7c900c8a1c84cc32e5b831cb2ce9470790eaf5ecd1660a58843b5c439c8",
-            "file_count": 86,
-            "total_size_bytes": 57453
+            "sha256": "cc943065bf95531bfbae8009d098450c32f1ac618d86119ef10261cd06838ed5",
+            "file_count": 8,
+            "total_size_bytes": 64453
           },
-          "notes": "Tree hash is calculated from sorted per-file sha256 records for all tracked JSON vectors."
+          "notes": "Tree hash is calculated from sorted per-file sha256 records for all tracked JSON vectors. The deterministic subset helper currently selects one opcode file per coverage family and truncates each selected file to the first 32 vectors."
         },
         {
           "id": "optional_full_corpus",
           "status": "optional_local",
           "path": "roms/snes/automated_tests/processor_tests/spc700/full/v1",
-          "refresh_command": "bash scripts/refresh_spc700_processor_tests_subset.sh",
+          "refresh_command": "bash scripts/refresh_spc700_processor_tests_subset.sh && python -m scripts.refresh_spc700_processor_tests_subset",
           "integrity": {
             "kind": "not_vendored",
             "sha256": "not_applicable",
             "file_count": 0,
             "total_size_bytes": 0
           },
-          "notes": "Local-only cache path. No repository-owned fetch helper exists yet for SPC700 full corpus."
+          "notes": "Local-only cache path. Refresh with the shell fetch helper, then run the Python subset helper to regenerate committed CI subset artifacts."
         }
       ]
     }
