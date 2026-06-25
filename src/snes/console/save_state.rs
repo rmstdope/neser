@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::platform::save_state::SaveStateError;
 use crate::snes::apu::SnesApuState;
 use crate::snes::cartridge::Mapping;
 use crate::snes::input::InputPortsState;
@@ -315,56 +316,51 @@ pub struct SnesSaveState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnesSaveStateError {
-    IncompatibleVersion {
-        expected: u32,
-        found: u32,
-    },
+    /// A shared save-state error (version, (de)serialization, or restore).
+    Common(SaveStateError),
+    /// The save-state was captured from a different ROM than the one loaded.
     RomMismatch {
         expected: SnesRomIdentity,
         found: SnesRomIdentity,
     },
-    DeserializationFailed(String),
-    SerializationFailed(String),
-    RestoreFailed(String),
 }
 
 impl std::fmt::Display for SnesSaveStateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::IncompatibleVersion { expected, found } => {
-                write!(
-                    f,
-                    "incompatible save-state version (expected {expected}, found {found})"
-                )
-            }
+            Self::Common(err) => write!(f, "{err}"),
             Self::RomMismatch { expected, found } => write!(
                 f,
                 "save-state ROM mismatch (expected {:?}, found {:?})",
                 expected, found
             ),
-            Self::DeserializationFailed(msg) => write!(f, "deserialization failed: {msg}"),
-            Self::SerializationFailed(msg) => write!(f, "serialization failed: {msg}"),
-            Self::RestoreFailed(msg) => write!(f, "restore failed: {msg}"),
         }
     }
 }
 
-impl std::error::Error for SnesSaveStateError {}
+impl std::error::Error for SnesSaveStateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Common(err) => Some(err),
+            Self::RomMismatch { .. } => None,
+        }
+    }
+}
+
+impl From<SaveStateError> for SnesSaveStateError {
+    fn from(err: SaveStateError) -> Self {
+        Self::Common(err)
+    }
+}
 
 impl SnesSaveState {
-    pub fn to_bytes(&self) -> Result<Vec<u8>, SnesSaveStateError> {
-        serde_json::to_vec(self).map_err(|e| SnesSaveStateError::SerializationFailed(e.to_string()))
+    pub fn to_bytes(&self) -> Result<Vec<u8>, SaveStateError> {
+        crate::platform::save_state::to_bytes(self)
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SnesSaveStateError> {
-        let state: Self = serde_json::from_slice(bytes)
-            .map_err(|e| SnesSaveStateError::DeserializationFailed(e.to_string()))?;
-        if state.version != SNES_SAVESTATE_VERSION {
-            return Err(SnesSaveStateError::IncompatibleVersion {
-                expected: SNES_SAVESTATE_VERSION,
-                found: state.version,
-            });
-        }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SaveStateError> {
+        let state: Self = crate::platform::save_state::from_bytes(bytes)?;
+        crate::platform::save_state::check_version(state.version, &[SNES_SAVESTATE_VERSION])?;
         Ok(state)
     }
 }

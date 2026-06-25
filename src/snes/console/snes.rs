@@ -1157,6 +1157,55 @@ mod tests {
         assert!(!loaded.ppu.irq_line);
     }
 
+    /// Regenerates the committed golden save-state fixture used by
+    /// `test_golden_save_state_v2_loads`. Run manually only after an
+    /// intentional, reviewed change to the save-state format:
+    /// `cargo test --no-default-features --lib \
+    ///   snes::console::snes::tests::regenerate_golden_save_state_fixture -- --ignored`
+    #[test]
+    #[ignore = "regenerates a committed fixture; run manually"]
+    fn regenerate_golden_save_state_fixture() {
+        let rom = lorom_rom_with_battery_sram(0x05);
+        let mut snes = make_snes();
+        snes.load_rom(&rom, "golden.sfc").expect("load ROM");
+        let bytes = snes
+            .cpu
+            .as_ref()
+            .expect("cpu present")
+            .capture_save_state()
+            .to_bytes()
+            .expect("serialize save state");
+        let compressed = crate::platform::save_state::gzip_compress(&bytes);
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/snes/console/testdata");
+        std::fs::create_dir_all(&dir).expect("create testdata dir");
+        std::fs::write(dir.join("savestate_golden_v2.json.gz"), compressed).expect("write fixture");
+    }
+
+    #[test]
+    fn test_golden_save_state_v2_loads() {
+        // A save-state captured from a previous build must still load, proving
+        // the on-disk format stayed backward-compatible across the
+        // shared-helper refactor.
+        let compressed = include_bytes!("testdata/savestate_golden_v2.json.gz");
+        let bytes = crate::platform::save_state::gzip_decompress(compressed);
+        let state =
+            SnesSaveState::from_bytes(&bytes).expect("golden save state should deserialize");
+        assert_eq!(
+            state.version,
+            crate::snes::console::save_state::SNES_SAVESTATE_VERSION
+        );
+
+        let rom = lorom_rom_with_battery_sram(0x05);
+        let mut snes = make_snes();
+        snes.load_rom(&rom, "golden_restore.sfc").expect("load ROM");
+        snes.cpu
+            .as_mut()
+            .expect("cpu present")
+            .restore_save_state(&state)
+            .expect("golden save state should load");
+    }
+
     #[test]
     fn save_state_from_bytes_allows_partial_apu_echo_state_and_normalizes_it_on_restore() {
         let rom = lorom_rom_with_battery_sram(0x05);

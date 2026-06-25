@@ -1,5 +1,6 @@
 //! WDC 65C816 CPU core.
 
+use crate::platform::save_state::{SaveStateError, Stateful};
 use crate::snes::bus::SnesBus;
 use crate::snes::bus::SnesSystemBus;
 use crate::snes::console::save_state::{
@@ -257,7 +258,7 @@ impl<B: SnesBus> Cpu<B> {
         &mut self.bus
     }
 
-    pub(crate) fn capture_state(&self) -> SnesCpuState {
+    pub(crate) fn capture_state_inner(&self) -> SnesCpuState {
         SnesCpuState {
             a: self.a,
             x: self.x,
@@ -287,7 +288,7 @@ impl<B: SnesBus> Cpu<B> {
         }
     }
 
-    pub(crate) fn restore_state(&mut self, state: &SnesCpuState) {
+    pub(crate) fn restore_state_inner(&mut self, state: &SnesCpuState) {
         self.a = state.a;
         self.x = state.x;
         self.y = state.y;
@@ -8756,12 +8757,24 @@ impl Cpu<SnesSystemBus> {
 
         self.bus
             .restore_state(&state.bus)
-            .map_err(SnesSaveStateError::RestoreFailed)?;
+            .map_err(SaveStateError::RestoreFailed)?;
         self.bus
             .ppu_restore_state(&state.ppu)
-            .map_err(SnesSaveStateError::RestoreFailed)?;
+            .map_err(SaveStateError::RestoreFailed)?;
         self.restore_state(&state.cpu);
         Ok(())
+    }
+}
+
+impl<B: SnesBus> Stateful for Cpu<B> {
+    type State = SnesCpuState;
+
+    fn capture_state(&self) -> SnesCpuState {
+        self.capture_state_inner()
+    }
+
+    fn restore_state(&mut self, state: &SnesCpuState) {
+        self.restore_state_inner(state);
     }
 }
 
@@ -8773,6 +8786,13 @@ mod branch_cycle_tests {
     fn emu() -> Cpu<TestBus> {
         // emulation mode (for page-crossing +1 rule)
         Cpu::new(TestBus::default())
+    }
+
+    #[test]
+    fn cpu_implements_stateful() {
+        // The CPU snapshot is captured through the `Stateful` trait.
+        fn assert_stateful<T: Stateful>() {}
+        assert_stateful::<Cpu<TestBus>>();
     }
 
     fn native() -> Cpu<TestBus> {
