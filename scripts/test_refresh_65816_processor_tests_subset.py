@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from scripts.refresh_65816_processor_tests_subset import (
+    DEFAULT_REPORT_JSON,
+    REPO_ROOT,
     _materialize_payload,
     build_report,
     discover_vector_files,
@@ -212,6 +216,59 @@ class TestRefresh65816ProcessorTestsSubset(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 _materialize_payload(files[0], max_vectors_per_file=-1)
+
+    def test_default_report_path_targets_committed_report_file(self) -> None:
+        expected = REPO_ROOT / "roms/snes/automated_tests/processor_tests/65816/subset_coverage_report.json"
+        self.assertEqual(DEFAULT_REPORT_JSON, expected)
+
+    def test_dry_run_does_not_write_report_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            full = Path(tmp) / "full"
+            subset = Path(tmp) / "subset"
+            report = Path(tmp) / "subset_coverage_report.json"
+
+            for name in (
+                "ea.e.json",
+                "ea.n.json",
+                "d0.e.json",
+                "d0.n.json",
+                "48.e.json",
+                "48.n.json",
+                "a9.e.json",
+                "a9.n.json",
+                "3b.e.json",
+                "3b.n.json",
+                "4a.e.json",
+                "4a.n.json",
+                "58.e.json",
+                "58.n.json",
+                "44.e.json",
+                "44.n.json",
+            ):
+                _write_vectors(full / name, 2)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "scripts.refresh_65816_processor_tests_subset",
+                    "--full-root",
+                    str(full),
+                    "--subset-root",
+                    str(subset),
+                    "--report-json",
+                    str(report),
+                    "--dry-run",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertFalse(report.exists())
+            self.assertFalse(subset.exists())
 
 
 if __name__ == "__main__":

@@ -12,6 +12,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FULL_ROOT = REPO_ROOT / "roms/snes/automated_tests/processor_tests/65816/full/v1"
 DEFAULT_SUBSET_ROOT = REPO_ROOT / "roms/snes/automated_tests/processor_tests/65816/v1"
+DEFAULT_REPORT_JSON = (
+    REPO_ROOT / "roms/snes/automated_tests/processor_tests/65816/subset_coverage_report.json"
+)
 
 VECTOR_FILE_RE = re.compile(r"^(?P<opcode>[0-9a-f]{2})\.(?P<mode>[en])\.json$")
 MODE_ORDER = ("e", "n")
@@ -218,7 +221,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--full-root", type=Path, default=DEFAULT_FULL_ROOT)
     parser.add_argument("--subset-root", type=Path, default=DEFAULT_SUBSET_ROOT)
-    parser.add_argument("--report-json", type=Path)
+    parser.add_argument("--report-json", type=Path, default=DEFAULT_REPORT_JSON)
     parser.add_argument("--opcodes-per-family", type=int, default=1)
     parser.add_argument("--max-vectors-per-file", type=int, default=32)
     parser.add_argument("--dry-run", action="store_true")
@@ -237,7 +240,7 @@ def main() -> int:
     report = build_report(selected, max_vectors_per_file=args.max_vectors_per_file)
     print(json.dumps(report, indent=2, sort_keys=True))
 
-    if args.report_json is not None:
+    if args.report_json is not None and not args.dry_run:
         args.report_json.parent.mkdir(parents=True, exist_ok=True)
         args.report_json.write_text(
             json.dumps(report, indent=2, sort_keys=True) + "\n",

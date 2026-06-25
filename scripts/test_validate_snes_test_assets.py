@@ -139,7 +139,7 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         manifest = load_manifest()
         modified = copy.deepcopy(manifest)
-        modified["assets"][1]["source"]["ref"] = "deadbeef"
+        modified["assets"][1]["source"]["ref"] = "1111111111111111111111111111111111111111"
 
         errors = validate_manifest(modified)
 
@@ -153,7 +153,7 @@ class TestValidateSnesTestAssets(unittest.TestCase):
         manifest = load_manifest()
         modified = copy.deepcopy(manifest)
         modified["assets"][1]["source"]["url"] = "https://example.invalid/alternate"
-        modified["assets"][1]["source"]["ref"] = "deadbeef"
+        modified["assets"][1]["source"]["ref"] = "1111111111111111111111111111111111111111"
 
         errors = validate_manifest(modified)
 
