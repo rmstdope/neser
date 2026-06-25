@@ -95,6 +95,7 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | `scripts/test-dir.sh` | Runs Rust tests for specific source directories. Converts directory paths (e.g., `src/nes/cartridge`) to `cargo test` module filters. Supports `--skip-integration` and `--list` flags. Used by CI to conditionally run tests based on changed files. |
 | `scripts/refresh_65816_processor_tests_subset.sh` | Refreshes a local full-corpus cache of SNES 65816 ProcessorTests from upstream (`SingleStepTests/ProcessorTests`) into `roms/snes/automated_tests/processor_tests/65816/full/v1`. This cache is intentionally git-ignored to keep repository size manageable. |
 | `scripts/refresh_65816_processor_tests_subset.py` | Deterministically selects a committed 65816 CI subset from the local full corpus, requires paired emulation/native vectors for selected opcodes when available, truncates selected files to a configurable per-file vector cap (default 32) to keep committed assets compact, writes `v1/*.json`, and emits a machine-readable coverage report with tree-integrity metadata. |
+| `scripts/refresh_spc700_processor_tests_subset.py` | Deterministically selects a committed SPC700 CI subset from the local full corpus, truncates selected files to a configurable per-file vector cap (default 32) to keep committed assets compact, writes `v1/*.json`, and emits a machine-readable coverage report with tree-integrity metadata. |
 
 ### Python Tools
 

@@ -88,6 +88,12 @@ SNES integration tests live under `src/snes/integration_tests/`.
   with selected-opcode family coverage and tree-integrity metadata. By default,
   it also truncates each selected opcode file to the first 32 vectors to keep
   committed CI assets compact (`--max-vectors-per-file 0` disables truncation).
+- `scripts/refresh_spc700_processor_tests_subset.py` regenerates the committed
+  SPC700 CI subset deterministically from the local full corpus and writes
+  `roms/snes/automated_tests/processor_tests/spc700/subset_coverage_report.json`
+  with selected-opcode family coverage and tree-integrity metadata. By default,
+  it truncates selected opcode files to the first 32 vectors
+  (`--max-vectors-per-file 0` disables truncation).
 - `rom_runner.rs` provides the shared headless ROM runner used by future
   ROM-based SNES verification suites. It loads generated or vendored `.sfc` /
   `.smc` bytes through the SNES console, runs with explicit tick/frame budgets,
