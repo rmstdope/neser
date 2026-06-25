@@ -14,6 +14,7 @@ ALLOWED_STATUS = {"committed_ci", "optional_local"}
 ALLOWED_ORACLE_TYPES = {"vector_state", "rom_pass_fail", "screen_crc", "audio_sample"}
 ALLOWED_INTEGRITY_KINDS = {"tree_sha256", "not_vendored"}
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _is_non_empty_string(value: Any) -> bool:
@@ -163,6 +164,10 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
             and _is_non_empty_string(source_url)
             and _is_non_empty_string(source_ref)
         ):
+            if not SHA40_RE.fullmatch(str(source_ref)):
+                errors.append(
+                    f"asset '{asset_id}': processor_tests assets must use a 40-char lowercase commit SHA in source.ref"
+                )
             refs_by_asset = processor_tests_refs_by_source.setdefault(str(source_url), {})
             refs_by_asset[str(asset_id)] = str(source_ref)
 
