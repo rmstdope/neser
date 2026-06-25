@@ -7,6 +7,7 @@ pub mod interrupt;
 mod logging;
 #[cfg(feature = "native")]
 pub mod snapshot;
+pub mod trace_ring;
 mod tracing;
 pub mod traits;
 

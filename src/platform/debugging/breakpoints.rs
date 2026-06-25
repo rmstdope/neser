@@ -57,28 +57,65 @@ impl GbInterruptKind {
     }
 }
 
+/// Address types usable as breakpoint targets.
+///
+/// Implemented for `u16` (NES / Game Boy 16-bit address space) and `u32`
+/// (Game Boy Advance ARM7TDMI 32-bit address space). Provides the hex width
+/// used for display/serialization and a hex-or-decimal parser, so the
+/// breakpoint types can be shared across consoles of different address widths.
+pub trait BreakpointAddr: Copy + Eq + fmt::UpperHex {
+    /// Number of hex digits used when formatting an address of this width.
+    const HEX_DIGITS: usize;
+    /// Parse from a hex (`0x`/`0X` prefix) or decimal string.
+    fn parse(s: &str) -> Option<Self>;
+}
+
+impl BreakpointAddr for u16 {
+    const HEX_DIGITS: usize = 4;
+    fn parse(s: &str) -> Option<Self> {
+        if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+            u16::from_str_radix(hex, 16).ok()
+        } else {
+            s.parse().ok()
+        }
+    }
+}
+
+impl BreakpointAddr for u32 {
+    const HEX_DIGITS: usize = 8;
+    fn parse(s: &str) -> Option<Self> {
+        if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+            u32::from_str_radix(hex, 16).ok()
+        } else {
+            s.parse().ok()
+        }
+    }
+}
+
 /// The condition that triggers a breakpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BreakpointKind {
+pub enum BreakpointKind<A = u16> {
     /// Break when the program counter reaches the given address.
-    Pc(u16),
+    Pc(A),
     /// Break when the CPU cycle count equals the given value.
     Cycle(u64),
     /// Break when execution reaches the first instruction boundary on the given frame.
     Frame(u64),
     /// Break when the CPU writes to the given address (non-dummy write).
-    WriteAddress(u16),
+    WriteAddress(A),
     /// Break when a specific GB interrupt is about to fire (GB only).
     GbInterrupt(GbInterruptKind),
 }
 
-impl fmt::Display for BreakpointKind {
+impl<A: BreakpointAddr> fmt::Display for BreakpointKind<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BreakpointKind::Pc(addr) => write!(f, "PC={:04X}", addr),
+            BreakpointKind::Pc(addr) => write!(f, "PC={:0width$X}", addr, width = A::HEX_DIGITS),
             BreakpointKind::Cycle(n) => write!(f, "CYC={}", n),
             BreakpointKind::Frame(n) => write!(f, "FRM={}", n),
-            BreakpointKind::WriteAddress(addr) => write!(f, "WR={:04X}", addr),
+            BreakpointKind::WriteAddress(addr) => {
+                write!(f, "WR={:0width$X}", addr, width = A::HEX_DIGITS)
+            }
             BreakpointKind::GbInterrupt(kind) => write!(f, "INT={}", kind),
         }
     }
@@ -86,13 +123,13 @@ impl fmt::Display for BreakpointKind {
 
 /// A single breakpoint with a condition and an enabled state.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Breakpoint {
-    pub kind: BreakpointKind,
+pub struct Breakpoint<A = u16> {
+    pub kind: BreakpointKind<A>,
     pub enabled: bool,
 }
 
-impl Breakpoint {
-    pub fn new(kind: BreakpointKind) -> Self {
+impl<A: BreakpointAddr> Breakpoint<A> {
+    pub fn new(kind: BreakpointKind<A>) -> Self {
         Self {
             kind,
             enabled: true,
@@ -100,7 +137,7 @@ impl Breakpoint {
     }
 
     /// Returns true if this breakpoint is enabled and its condition matches `ctx`.
-    pub fn is_hit(&self, ctx: &EvalContext) -> bool {
+    pub fn is_hit(&self, ctx: &EvalContext<A>) -> bool {
         if !self.enabled {
             return false;
         }
@@ -128,10 +165,14 @@ impl Breakpoint {
     pub fn serialize(&self) -> String {
         let state = if self.enabled { "enabled" } else { "disabled" };
         match self.kind {
-            BreakpointKind::Pc(addr) => format!("pc {:#06X} {}", addr, state),
+            BreakpointKind::Pc(addr) => {
+                format!("pc 0x{:0width$X} {}", addr, state, width = A::HEX_DIGITS)
+            }
             BreakpointKind::Cycle(n) => format!("cycle {} {}", n, state),
             BreakpointKind::Frame(n) => format!("frame {} {}", n, state),
-            BreakpointKind::WriteAddress(addr) => format!("write {:#06X} {}", addr, state),
+            BreakpointKind::WriteAddress(addr) => {
+                format!("write 0x{:0width$X} {}", addr, state, width = A::HEX_DIGITS)
+            }
             BreakpointKind::GbInterrupt(kind) => {
                 let name = match kind {
                     GbInterruptKind::VBlank => "vblank",
@@ -158,7 +199,7 @@ impl Breakpoint {
         let enabled = parts[2] != "disabled";
         let kind = match parts[0] {
             "pc" => {
-                let addr = parse_u16(parts[1])?;
+                let addr = A::parse(parts[1])?;
                 BreakpointKind::Pc(addr)
             }
             "cycle" => {
@@ -170,7 +211,7 @@ impl Breakpoint {
                 BreakpointKind::Frame(n)
             }
             "write" => {
-                let addr = parse_u16(parts[1])?;
+                let addr = A::parse(parts[1])?;
                 BreakpointKind::WriteAddress(addr)
             }
             "gbinterrupt" => {
@@ -194,9 +235,9 @@ fn parse_u16(s: &str) -> Option<u16> {
 
 /// Execution context passed to breakpoint evaluation after each CPU instruction.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct EvalContext {
+pub struct EvalContext<A = u16> {
     /// Current program counter value.
-    pub pc: u16,
+    pub pc: A,
     /// Total CPU cycles before this instruction executed.
     pub prev_cpu_cycles: u64,
     /// Total CPU cycles after this instruction executed.
@@ -206,7 +247,7 @@ pub struct EvalContext {
     /// PPU frame counter value after this instruction executed.
     pub frame: u64,
     /// Address written during this instruction (non-dummy write), if any.
-    pub write_addr: Option<u16>,
+    pub write_addr: Option<A>,
     /// GB interrupt enable register (IE at $FFFF) - for GB interrupt breakpoints.
     pub gb_ie: Option<u8>,
     /// GB interrupt flag register (IF at $FF0F) - for GB interrupt breakpoints.
@@ -217,13 +258,13 @@ pub struct EvalContext {
 
 /// An ordered list of persistent breakpoints.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct BreakpointList {
-    items: Vec<Breakpoint>,
+pub struct BreakpointList<A = u16> {
+    items: Vec<Breakpoint<A>>,
 }
 
-impl BreakpointList {
+impl<A: BreakpointAddr> BreakpointList<A> {
     pub fn new() -> Self {
-        Self::default()
+        Self { items: Vec::new() }
     }
 
     /// Returns the number of breakpoints.
@@ -237,7 +278,7 @@ impl BreakpointList {
     }
 
     /// Add a breakpoint. Deduplicates by kind — if the kind already exists, the add is a no-op.
-    pub fn add(&mut self, kind: BreakpointKind) {
+    pub fn add(&mut self, kind: BreakpointKind<A>) {
         if !self.items.iter().any(|b| b.kind == kind) {
             self.items.push(Breakpoint::new(kind));
         }
@@ -251,7 +292,7 @@ impl BreakpointList {
     }
 
     /// Remove the first breakpoint that matches the given kind. No-op if not found.
-    pub fn remove_first_matching(&mut self, kind: &BreakpointKind) {
+    pub fn remove_first_matching(&mut self, kind: &BreakpointKind<A>) {
         if let Some(index) = self.items.iter().position(|b| &b.kind == kind) {
             self.items.remove(index);
         }
@@ -274,20 +315,20 @@ impl BreakpointList {
     }
 
     /// Returns an iterator over all breakpoints.
-    pub fn iter(&self) -> std::slice::Iter<'_, Breakpoint> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Breakpoint<A>> {
         self.items.iter()
     }
 
     /// Returns `true` if there is any PC breakpoint at `addr`, regardless of enabled state.
     /// Useful for checking pre-existence before conditionally adding a temporary breakpoint.
-    pub fn has_pc_breakpoint_at(&self, addr: u16) -> bool {
+    pub fn has_pc_breakpoint_at(&self, addr: A) -> bool {
         self.items
             .iter()
             .any(|b| b.kind == BreakpointKind::Pc(addr))
     }
 
     /// Returns `true` if there is an enabled PC breakpoint at `addr`.
-    pub fn has_enabled_pc_breakpoint_at(&self, addr: u16) -> bool {
+    pub fn has_enabled_pc_breakpoint_at(&self, addr: A) -> bool {
         self.items
             .iter()
             .any(|b| b.kind == BreakpointKind::Pc(addr) && b.enabled)
@@ -295,7 +336,7 @@ impl BreakpointList {
 
     /// Force-enables the PC breakpoint at `addr` and returns its previous enabled state.
     /// Returns `None` if no PC breakpoint exists at `addr`.
-    pub fn force_enable_pc_breakpoint_at(&mut self, addr: u16) -> Option<bool> {
+    pub fn force_enable_pc_breakpoint_at(&mut self, addr: A) -> Option<bool> {
         self.items
             .iter_mut()
             .find(|b| b.kind == BreakpointKind::Pc(addr))
@@ -307,7 +348,7 @@ impl BreakpointList {
     }
 
     /// Sets the enabled state of the PC breakpoint at `addr`.
-    pub fn set_pc_breakpoint_enabled(&mut self, addr: u16, enabled: bool) {
+    pub fn set_pc_breakpoint_enabled(&mut self, addr: A, enabled: bool) {
         if let Some(b) = self
             .items
             .iter_mut()
@@ -360,6 +401,14 @@ pub fn parse_watch_addresses(text: &str) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // These tests target the 16-bit (NES / Game Boy) instantiation. The local
+    // aliases shadow the generic types from `super::*` so the existing tests
+    // read unchanged; dedicated 32-bit coverage lives in `tests_u32` below.
+    type BreakpointKind = super::BreakpointKind<u16>;
+    type Breakpoint = super::Breakpoint<u16>;
+    type BreakpointList = super::BreakpointList<u16>;
+    type EvalContext = super::EvalContext<u16>;
 
     // --- BreakpointKind display ---
 
@@ -1042,5 +1091,67 @@ mod tests {
         let text = "pc 0x8000 enabled\nwatch 0x0300\nframe 5 disabled";
         let list = BreakpointList::load_from_str(text);
         assert_eq!(list.len(), 2, "only the two breakpoints should be loaded");
+    }
+}
+
+#[cfg(test)]
+mod tests_u32 {
+    //! 32-bit (Game Boy Advance) coverage for the generic breakpoint types.
+    use super::{Breakpoint, BreakpointKind, BreakpointList};
+
+    #[test]
+    fn pc_breakpoint_displays_as_8_hex_digits() {
+        let kind: BreakpointKind<u32> = BreakpointKind::Pc(0x0800_0000);
+        assert_eq!(format!("{kind}"), "PC=08000000");
+    }
+
+    #[test]
+    fn write_breakpoint_displays_as_8_hex_digits() {
+        let kind: BreakpointKind<u32> = BreakpointKind::WriteAddress(0x0300_1234);
+        assert_eq!(format!("{kind}"), "WR=03001234");
+    }
+
+    #[test]
+    fn pc_breakpoint_serialize_roundtrip_preserves_u32_address() {
+        let bp = Breakpoint::<u32>::new(BreakpointKind::Pc(0xFFFF_FFFC));
+        let line = bp.serialize();
+        assert_eq!(line, "pc 0xFFFFFFFC enabled");
+        let parsed = Breakpoint::<u32>::parse(&line).expect("parse");
+        assert_eq!(parsed, bp);
+    }
+
+    #[test]
+    fn parses_hex_and_decimal_u32_addresses() {
+        let hex = Breakpoint::<u32>::parse("pc 0x08000000 enabled").expect("hex");
+        assert_eq!(hex.kind, BreakpointKind::Pc(0x0800_0000));
+        let dec = Breakpoint::<u32>::parse("pc 134217728 enabled").expect("dec");
+        assert_eq!(dec.kind, BreakpointKind::Pc(0x0800_0000));
+    }
+
+    #[test]
+    fn has_pc_breakpoint_at_matches_u32_addresses() {
+        let mut list: BreakpointList<u32> = BreakpointList::new();
+        list.add(BreakpointKind::Pc(0x0800_0000));
+        list.add(BreakpointKind::Pc(0x0800_0004));
+        assert!(list.has_pc_breakpoint_at(0x0800_0000));
+        assert!(list.has_pc_breakpoint_at(0x0800_0004));
+        assert!(!list.has_pc_breakpoint_at(0x0800_0008));
+    }
+
+    #[test]
+    fn add_deduplicates_by_kind() {
+        let mut list: BreakpointList<u32> = BreakpointList::new();
+        list.add(BreakpointKind::Pc(0x0800_0000));
+        list.add(BreakpointKind::Pc(0x0800_0000));
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn remove_first_matching_removes_the_pc_breakpoint() {
+        let mut list: BreakpointList<u32> = BreakpointList::new();
+        list.add(BreakpointKind::Pc(0x0300_1234));
+        assert!(list.has_pc_breakpoint_at(0x0300_1234));
+        list.remove_first_matching(&BreakpointKind::Pc(0x0300_1234));
+        assert!(!list.has_pc_breakpoint_at(0x0300_1234));
     }
 }
