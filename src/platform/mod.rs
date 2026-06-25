@@ -10,6 +10,7 @@ pub mod frontend_toasts;
 pub mod image_cache;
 pub mod metadata;
 pub mod png_utils;
+pub mod save_state;
 pub mod shaders;
 
 #[cfg(feature = "native")]
