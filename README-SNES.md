@@ -82,6 +82,12 @@ SNES integration tests live under `src/snes/integration_tests/`.
 - `processor_tests_65816.rs` and `processor_tests_spc700.rs` run pinned
   Tom Harte ProcessorTests vector subsets, with optional local full-corpus
   caches under `roms/snes/automated_tests/processor_tests/*/full/v1`.
+- `scripts/refresh_65816_processor_tests_subset.py` regenerates the committed
+  65816 CI subset deterministically from the local full corpus and writes
+  `roms/snes/automated_tests/processor_tests/65816/subset_coverage_report.json`
+  with selected-opcode family coverage and tree-integrity metadata. By default,
+  it also truncates each selected opcode file to the first 32 vectors to keep
+  committed CI assets compact.
 - `rom_runner.rs` provides the shared headless ROM runner used by future
   ROM-based SNES verification suites. It loads generated or vendored `.sfc` /
   `.smc` bytes through the SNES console, runs with explicit tick/frame budgets,
