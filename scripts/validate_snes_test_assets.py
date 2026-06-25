@@ -124,6 +124,7 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
         return errors
 
     seen_asset_ids: set[str] = set()
+    processor_tests_refs_by_source: dict[str, dict[str, str]] = {}
 
     for index, asset in enumerate(assets):
         if not isinstance(asset, dict):
@@ -152,6 +153,18 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
             )
 
         _validate_source(asset, errors, asset_id)
+
+        source = asset.get("source")
+        source_url = source.get("url") if isinstance(source, dict) else None
+        source_ref = source.get("ref") if isinstance(source, dict) else None
+        if (
+            asset.get("suite") == "processor_tests"
+            and asset.get("platform") == "snes"
+            and _is_non_empty_string(source_url)
+            and _is_non_empty_string(source_ref)
+        ):
+            refs_by_asset = processor_tests_refs_by_source.setdefault(str(source_url), {})
+            refs_by_asset[str(asset_id)] = str(source_ref)
 
         variants = asset.get("variants")
         if not isinstance(variants, list) or not variants:
@@ -213,6 +226,19 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
                     errors.append(
                         f"asset '{asset_id}' variant '{variant_id}': committed_ci path does not exist: {variant['path']}"
                     )
+
+    for source_url, refs_by_asset in sorted(processor_tests_refs_by_source.items()):
+        unique_refs = sorted(set(refs_by_asset.values()))
+        if len(unique_refs) <= 1:
+            continue
+
+        details = ", ".join(
+            f"{asset_id}={asset_ref}" for asset_id, asset_ref in sorted(refs_by_asset.items())
+        )
+        errors.append(
+            "processor_tests assets sharing source.url must use the same source.ref: "
+            f"url={source_url}; assets={details}"
+        )
 
     return errors
 

@@ -134,6 +134,33 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         self.assertTrue(any("must not contain '..'" in error for error in errors))
 
+    def test_processor_tests_assets_with_same_source_url_require_shared_ref(self) -> None:
+        """SNES processor_tests entries should pin one shared upstream ref per source URL."""
+
+        manifest = load_manifest()
+        modified = copy.deepcopy(manifest)
+        modified["assets"][1]["source"]["ref"] = "deadbeef"
+
+        errors = validate_manifest(modified)
+
+        self.assertTrue(
+            any("processor_tests assets sharing source.url" in error for error in errors)
+        )
+
+    def test_processor_tests_assets_with_different_source_urls_may_use_different_refs(self) -> None:
+        """The shared-ref rule is scoped per source URL, not globally."""
+
+        manifest = load_manifest()
+        modified = copy.deepcopy(manifest)
+        modified["assets"][1]["source"]["url"] = "https://example.invalid/alternate"
+        modified["assets"][1]["source"]["ref"] = "deadbeef"
+
+        errors = validate_manifest(modified)
+
+        self.assertFalse(
+            any("processor_tests assets sharing source.url" in error for error in errors)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
