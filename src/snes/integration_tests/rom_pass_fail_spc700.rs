@@ -249,4 +249,20 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn pending_catalog_entries_are_documented_in_manifest_notes() {
+        let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("roms/snes/automated_tests/manifest.json");
+        let manifest_text = std::fs::read_to_string(&manifest_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", manifest_path.display()));
+
+        for entry in pending_catalog() {
+            assert!(
+                manifest_text.contains(entry.name),
+                "expected manifest notes to include pending catalog entry '{}'",
+                entry.name
+            );
+        }
+    }
 }

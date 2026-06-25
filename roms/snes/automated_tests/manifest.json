@@ -92,7 +92,7 @@
       },
       "license": "unknown",
       "oracle_type": "rom_pass_fail",
-      "notes": "Initial intake entry for #2876. Source URL/ref are explicit placeholders pending provenance and license confirmation; this suite remains optional_local until committed subset decisions are finalized. Candidate failures/deferred ROMs must be recorded in README-SNES and manifest notes.",
+      "notes": "Initial intake entry for #2876. Source URL/ref are explicit placeholders pending provenance and license confirmation; this suite remains optional_local until committed subset decisions are finalized. Candidate failures/deferred ROMs must be recorded in README-SNES and manifest notes. Pending behavior baseline candidates: blargg-spc-timer-baseline, blargg-apu-port-handshake, blargg-dsp-register-baseline.",
       "variants": [
         {
           "id": "optional_full_suite",
