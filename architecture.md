@@ -94,6 +94,7 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | `scripts/run_web.sh` | Symlinks `web/roms/` into `dist/` for ROM directory browsing, then starts a local HTTP server (`python3 -m http.server`) in `dist/` for testing the browser frontend. |
 | `scripts/test-dir.sh` | Runs Rust tests for specific source directories. Converts directory paths (e.g., `src/nes/cartridge`) to `cargo test` module filters. Supports `--skip-integration` and `--list` flags. Used by CI to conditionally run tests based on changed files. |
 | `scripts/refresh_65816_processor_tests_subset.sh` | Refreshes a local full-corpus cache of SNES 65816 ProcessorTests from upstream (`SingleStepTests/ProcessorTests`) into `roms/snes/automated_tests/processor_tests/65816/full/v1`. This cache is intentionally git-ignored to keep repository size manageable. |
+| `scripts/refresh_65816_processor_tests_subset.py` | Deterministically selects a committed 65816 CI subset from the local full corpus, requires paired emulation/native vectors for selected opcodes when available, truncates selected files to a configurable per-file vector cap (default 32) to keep committed assets compact, writes `v1/*.json`, and emits a machine-readable coverage report with tree-integrity metadata. |
 
 ### Python Tools
 
@@ -489,7 +490,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 | `roms/gb/automated_tests/daid/` | Vendored daid GB/GBC accuracy ROMs and upstream PNG references from GBEmulatorShootout, used by `src/gb/integration_tests/daid_tests.rs` for screen CRC and reference-PNG auditing. |
 | `roms/gb/automated_tests/rtc3test/` | Vendored ax6 `rtc3test` split MBC3 RTC test ROMs from GBEmulatorShootout, used by `src/gb/integration_tests/ax6_tests.rs` for DMG/CGB result-screen CRC testing. |
 | `roms/gba/automated_tests/gba-tests/` | Git submodule snapshot of jsmolka `gba-tests` (ARM/Thumb GBA CPU validation ROMs) used by `src/gba/integration_tests/gba_suite_tests.rs`. |
-| `roms/snes/automated_tests/processor_tests/65816/` | Pinned subset of Tom Harte ProcessorTests 65816 vectors (`v1/00.{e,n}.json`, `v1/ea.{e,n}.json`) plus source metadata. Optional full-corpus vectors are downloaded into `full/v1/*.json` (git-ignored) and automatically used by the SNES integration harness when available. |
+| `roms/snes/automated_tests/processor_tests/65816/` | Pinned subset of Tom Harte ProcessorTests 65816 vectors (`v1/*.json`) selected by deterministic family-aware rules and paired emulation/native mode coverage, plus `subset_coverage_report.json` documenting selected opcodes and integrity metadata. Optional full-corpus vectors are downloaded into `full/v1/*.json` (git-ignored) and automatically used by the SNES integration harness when available. |
 | `roms/snes/automated_tests/manifest.json` | Canonical SNES automated-test asset provenance manifest. Tracks source URL/ref, license status, oracle type, integrity metadata, and CI-subset vs optional-local corpus variants for each SNES suite. Validated by `python -m scripts.validate_snes_test_assets`. |
 | `roms/automated_tests/mapper_verification/` | Custom mapper verification ROMs built from assembly source with per-mapper test definitions. |
 | `roms/manual_tests/` | ROMs for manual visual/audio verification (e.g., volume tests). |

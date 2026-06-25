@@ -25,6 +25,11 @@ Each asset family entry must define:
 - Human-readable `notes`
 - One or more `variants`
 
+Additional rule for SNES `processor_tests` assets:
+
+- `source.ref` must be a pinned 40-character lowercase Git commit SHA (not a moving branch name)
+- Assets that share the same `source.url` must also share the same `source.ref`
+
 Each variant must define:
 
 - Stable `id` (for example `ci_subset`, `optional_full_corpus`)
@@ -64,6 +69,7 @@ Changes to SNES automated-test assets should include:
 - Manifest updates in `roms/snes/automated_tests/manifest.json`
 - Passing validator tests (`python -m unittest discover -s scripts -t scripts -p "test_*.py"`)
 - Updated source/provenance notes when asset intake changes
+- `processor_tests` source refs that remain immutable and consistent for shared upstream URLs
 
 ## Future Expansion
 

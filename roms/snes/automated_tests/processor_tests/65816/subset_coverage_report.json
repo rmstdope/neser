@@ -1,0 +1,109 @@
+{
+  "family_coverage": {
+    "alu": {
+      "files": [
+        "3b.e.json",
+        "3b.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "3b"
+      ]
+    },
+    "block_move": {
+      "files": [
+        "44.e.json",
+        "44.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "44"
+      ]
+    },
+    "branch": {
+      "files": [
+        "d0.e.json",
+        "d0.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "d0"
+      ]
+    },
+    "flag_control": {
+      "files": [
+        "58.e.json",
+        "58.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "58"
+      ]
+    },
+    "load_store": {
+      "files": [
+        "a9.e.json",
+        "a9.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "a9"
+      ]
+    },
+    "shift_rotate": {
+      "files": [
+        "4a.e.json",
+        "4a.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "4a"
+      ]
+    },
+    "stack": {
+      "files": [
+        "48.e.json",
+        "48.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "48"
+      ]
+    },
+    "system_control": {
+      "files": [
+        "ea.e.json",
+        "ea.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "ea"
+      ]
+    }
+  },
+  "integrity": {
+    "file_count": 16,
+    "kind": "tree_sha256",
+    "sha256": "f3e363dbe1f0d3abfafc639440349609b17d68ef13cbe3e036c229b5818766dd",
+    "total_size_bytes": 373505
+  },
+  "selected_file_count": 16,
+  "selected_files": [
+    "ea.e.json",
+    "ea.n.json",
+    "d0.e.json",
+    "d0.n.json",
+    "48.e.json",
+    "48.n.json",
+    "a9.e.json",
+    "a9.n.json",
+    "3b.e.json",
+    "3b.n.json",
+    "4a.e.json",
+    "4a.n.json",
+    "58.e.json",
+    "58.n.json",
+    "44.e.json",
+    "44.n.json"
+  ]
+}

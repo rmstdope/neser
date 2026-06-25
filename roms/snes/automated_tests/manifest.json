@@ -12,7 +12,7 @@
       },
       "license": "unknown",
       "oracle_type": "vector_state",
-      "notes": "Tracked subset is vendored in-repo. Optional full corpus is local-only and refreshed with the helper script.",
+      "notes": "Tracked subset is vendored in-repo and generated deterministically from the full corpus with a per-file vector cap. Optional full corpus is local-only and refreshed with the helper script.",
       "variants": [
         {
           "id": "ci_subset",
@@ -21,11 +21,11 @@
           "refresh_command": null,
           "integrity": {
             "kind": "tree_sha256",
-            "sha256": "45b59ac39b56eaa777f8599bd125323444757bcb2d417669fa053708868c16d7",
-            "file_count": 4,
-            "total_size_bytes": 145521
+            "sha256": "f3e363dbe1f0d3abfafc639440349609b17d68ef13cbe3e036c229b5818766dd",
+            "file_count": 16,
+            "total_size_bytes": 373505
           },
-          "notes": "Tree hash is calculated from sorted per-file sha256 records for all tracked JSON vectors."
+          "notes": "Tree hash is calculated from sorted per-file sha256 records for all tracked JSON vectors. Each selected opcode file is truncated to the first 32 vectors for compact CI assets."
         },
         {
           "id": "optional_full_corpus",
