@@ -15,6 +15,7 @@ use crate::gb::console::save_state::{GB_SAVESTATE_VERSION, GbSaveState};
 use crate::gb::model::GbHardware;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
+use crate::platform::save_state::Stateful;
 use std::path::PathBuf;
 
 /// Wraps either a DMG or CGB console, dispatching all platform operations.
