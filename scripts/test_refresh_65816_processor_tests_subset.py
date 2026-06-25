@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from scripts.refresh_65816_processor_tests_subset import (
+    _materialize_payload,
     build_report,
     discover_vector_files,
     select_subset_files,
@@ -185,6 +186,32 @@ class TestRefresh65816ProcessorTestsSubset(unittest.TestCase):
                 truncated_report["integrity"]["total_size_bytes"],
                 full_report["integrity"]["total_size_bytes"],
             )
+
+    def test_max_vectors_zero_disables_truncation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            full = Path(tmp) / "full"
+            path = full / "00.e.json"
+            _write_vectors(path, 5)
+
+            files = discover_vector_files(full)
+            self.assertEqual(len(files), 1)
+
+            payload = _materialize_payload(files[0], max_vectors_per_file=0)
+            vectors = json.loads(payload.decode("utf-8"))
+
+            self.assertEqual(len(vectors), 5)
+
+    def test_negative_max_vectors_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            full = Path(tmp) / "full"
+            path = full / "00.e.json"
+            _write_vectors(path, 5)
+
+            files = discover_vector_files(full)
+            self.assertEqual(len(files), 1)
+
+            with self.assertRaises(ValueError):
+                _materialize_payload(files[0], max_vectors_per_file=-1)
 
 
 if __name__ == "__main__":

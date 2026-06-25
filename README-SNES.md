@@ -87,7 +87,7 @@ SNES integration tests live under `src/snes/integration_tests/`.
   `roms/snes/automated_tests/processor_tests/65816/subset_coverage_report.json`
   with selected-opcode family coverage and tree-integrity metadata. By default,
   it also truncates each selected opcode file to the first 32 vectors to keep
-  committed CI assets compact.
+  committed CI assets compact (`--max-vectors-per-file 0` disables truncation).
 - `rom_runner.rs` provides the shared headless ROM runner used by future
   ROM-based SNES verification suites. It loads generated or vendored `.sfc` /
   `.smc` bytes through the SNES console, runs with explicit tick/frame budgets,
@@ -96,6 +96,9 @@ SNES integration tests live under `src/snes/integration_tests/`.
 - Asset provenance is tracked in
   `roms/snes/automated_tests/manifest.json` and validated by
   `python -m scripts.validate_snes_test_assets`.
+- For SNES `processor_tests` entries, `source.ref` must be a pinned 40-char
+  lowercase commit SHA, and assets sharing a `source.url` must share the same
+  pinned ref.
 - Intake policy and baseline-approval rules are documented in
   [docs/SNES_TEST_ASSET_POLICY.md](docs/SNES_TEST_ASSET_POLICY.md).
 - Set `NESER_CAPTURE_SCREEN=1` to write optional runner screenshots under

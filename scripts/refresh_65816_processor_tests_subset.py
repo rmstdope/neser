@@ -138,11 +138,11 @@ def select_subset_files(files: list[VectorFile], opcodes_per_family: int) -> lis
 
 def _materialize_payload(item: VectorFile, max_vectors_per_file: int | None) -> bytes:
     payload = item.path.read_bytes()
-    if max_vectors_per_file is None:
+    if max_vectors_per_file is None or max_vectors_per_file == 0:
         return payload
 
-    if max_vectors_per_file <= 0:
-        raise ValueError("max_vectors_per_file must be > 0")
+    if max_vectors_per_file < 0:
+        raise ValueError("max_vectors_per_file must be >= 0")
 
     vectors = json.loads(payload)
     if not isinstance(vectors, list):
