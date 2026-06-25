@@ -27,14 +27,13 @@ test.describe("SNES save-state parity", () => {
         await expect(loadButton).toBeDisabled();
 
         await saveButton.click({ force: true });
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" })).toBeVisible({
-            timeout: 10_000
-        });
+        // Wait for load button to become enabled — this is a durable signal that the save
+        // completed successfully (saveStateAvailable becomes true and buttons are updated).
+        await expect(loadButton).toBeEnabled({ timeout: 10_000 });
 
-        await expect(loadButton).toBeEnabled();
         await loadButton.click({ force: true });
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State loaded" })).toBeVisible({
-            timeout: 10_000
-        });
+        // Wait for the save-state button's data-save-state-status attribute to become "loaded"
+        // — this is a durable, non-racy signal set after the load operation completes.
+        await expect(saveButton).toHaveAttribute("data-save-state-status", "loaded", { timeout: 10_000 });
     });
 });

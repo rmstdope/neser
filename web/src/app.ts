@@ -3171,16 +3171,20 @@ function cancelActiveRecording() {
 
 async function saveStateAction() {
     if (!saveStateController) return;
+    if (saveStateBtn) delete saveStateBtn.dataset.saveStateStatus;
     const ok = await saveStateController.save();
     if (ok) {
         saveStateAvailable = true;
         updateSaveStateButtons();
+        if (saveStateBtn) saveStateBtn.dataset.saveStateStatus = "saved";
     }
 }
 
 async function loadStateAction() {
     if (!saveStateController) return;
-    await saveStateController.load();
+    if (saveStateBtn) delete saveStateBtn.dataset.saveStateStatus;
+    const ok = await saveStateController.load();
+    if (ok && saveStateBtn) saveStateBtn.dataset.saveStateStatus = "loaded";
 }
 
 function updateSaveStateButtons() {
