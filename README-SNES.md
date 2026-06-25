@@ -99,6 +99,9 @@ SNES integration tests live under `src/snes/integration_tests/`.
   `.smc` bytes through the SNES console, runs with explicit tick/frame budgets,
   detects pass/fail through a reserved WRAM marker at `$7E1FF0`, records
   diagnostics, and computes a screen CRC.
+- `rom_pass_fail` suite intake for #2876 is now tracked in the SNES manifest
+  as `snes-rom-pass-fail-blargg-spc-apu` with optional-local status while
+  committed subset and per-ROM oracle mapping are implemented.
 - Asset provenance is tracked in
   `roms/snes/automated_tests/manifest.json` and validated by
   `python -m scripts.validate_snes_test_assets`.
@@ -109,6 +112,12 @@ SNES integration tests live under `src/snes/integration_tests/`.
   [docs/SNES_TEST_ASSET_POLICY.md](docs/SNES_TEST_ASSET_POLICY.md).
 - Set `NESER_CAPTURE_SCREEN=1` to write optional runner screenshots under
   `target/snes_test_captures/`.
+
+### Candidate ROM tracking (#2876)
+
+| Suite id | Status | Notes |
+| --- | --- | --- |
+| `snes-rom-pass-fail-blargg-spc-apu` | optional_local | Initial intake complete in manifest. Candidate failures/deferred ROMs will be tracked here as the committed suite is enabled. |
 
 Run SNES tests during development with:
 
