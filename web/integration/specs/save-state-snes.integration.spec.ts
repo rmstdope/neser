@@ -26,13 +26,13 @@ test.describe("SNES save-state parity", () => {
         await expect(saveButton).toBeEnabled();
         await expect(loadButton).toBeDisabled();
 
-        await saveButton.click({ force: true });
+        await saveButton.evaluate((button) => (button as HTMLButtonElement).click());
         // Wait for load button to become enabled (non-racy signal of successful save)
         // instead of relying on transient toast visibility
         await expect(loadButton).toBeEnabled({
             timeout: 10_000
         });
-        await loadButton.click({ force: true });
+        await loadButton.evaluate((button) => (button as HTMLButtonElement).click());
         // Wait a brief moment for the load operation to complete
         // (no UI state change indicates load completion)
         await page.waitForTimeout(500);
