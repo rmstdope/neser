@@ -25,14 +25,14 @@ test.describe("SNES save-state parity", () => {
         await expect(saveButton).toBeEnabled();
         await expect(loadButton).toBeDisabled();
 
-        await saveButton.click({ force: true });
+        await saveButton.evaluate((button: HTMLButtonElement) => button.click());
         // Wait for the save button's data-save-state-status attribute to become "saved".
         // This is a durable signal set after a successful save, and is independent of the
         // emulator's running state (unlike the load button's enabled state which requires
         // running=true and would flake when a frame completes during the async IDB write).
         await expect(saveButton).toHaveAttribute("data-save-state-status", "saved", { timeout: 10_000 });
 
-        await loadButton.click({ force: true });
+        await loadButton.evaluate((button: HTMLButtonElement) => button.click());
         // Wait for the save-state button's data-save-state-status attribute to become "loaded"
         // — this is a durable, non-racy signal set after the load operation completes.
         await expect(saveButton).toHaveAttribute("data-save-state-status", "loaded", { timeout: 10_000 });
