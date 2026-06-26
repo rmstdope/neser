@@ -5,7 +5,6 @@ import { makeMinimalSnesRomBytes } from "../helpers/snes_rom.helpers";
 const SAVE_STATE_SECTION_SELECTOR = "#save-state-section";
 const SAVE_STATE_BUTTON_SELECTOR = "#save-state";
 const LOAD_STATE_BUTTON_SELECTOR = "#load-state";
-const TOAST_SELECTOR = ".neser-toast";
 
 test.describe("SNES save-state parity", () => {
     test("Given a SNES ROM is running, when save and load are used, then state persists", async ({ page }) => {
@@ -26,15 +25,16 @@ test.describe("SNES save-state parity", () => {
         await expect(saveButton).toBeEnabled();
         await expect(loadButton).toBeDisabled();
 
-        await saveButton.click({ force: true });
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" })).toBeVisible({
-            timeout: 10_000
-        });
+        await saveButton.evaluate((button: HTMLButtonElement) => button.click());
+        // Wait for the save button's data-save-state-status attribute to become "saved".
+        // This is a durable signal set after a successful save, and is independent of the
+        // emulator's running state (unlike the load button's enabled state which requires
+        // running=true and would flake when a frame completes during the async IDB write).
+        await expect(saveButton).toHaveAttribute("data-save-state-status", "saved", { timeout: 10_000 });
 
-        await expect(loadButton).toBeEnabled();
-        await loadButton.click({ force: true });
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State loaded" })).toBeVisible({
-            timeout: 10_000
-        });
+        await loadButton.evaluate((button: HTMLButtonElement) => button.click());
+        // Wait for the save-state button's data-save-state-status attribute to become "loaded"
+        // — this is a durable, non-racy signal set after the load operation completes.
+        await expect(saveButton).toHaveAttribute("data-save-state-status", "loaded", { timeout: 10_000 });
     });
 });

@@ -13,6 +13,12 @@ export function makeMinimalSnesRomBytes() {
     rom[header + 0x1D] = 0x12;
     rom[header + 0x1E] = 0xCB;
     rom[header + 0x1F] = 0xED;
-    rom[0x0000] = 0xEA;
+    // NOP at $8000, then BRA -2 at $8001 to create a stable infinite loop.
+    // Without this, the CPU falls through to BRK at $8002 which recursively
+    // reads the zero-filled BRK vector ($FFFE/$FFFF = $0000) and loops through
+    // RAM, potentially interfering with save-state timing during tests.
+    rom[0x0000] = 0xEA; // NOP
+    rom[0x0001] = 0x80; // BRA (relative branch, always taken on 65816)
+    rom[0x0002] = 0xFE; // offset -2: PC after fetch = $8003; $8003 + (-2) = $8001 → infinite loop
     return rom;
 }

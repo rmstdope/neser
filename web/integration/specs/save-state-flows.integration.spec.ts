@@ -15,6 +15,7 @@ test.describe("Phase 2 save-state flows", () => {
         await startFromBundledRom(page);
 
         const saveButton = page.locator(SAVE_STATE_BUTTON_SELECTOR);
+        const loadButton = page.locator(LOAD_STATE_BUTTON_SELECTOR);
 
         // Save button should be enabled after starting
         await expect(saveButton).toBeEnabled();
@@ -22,13 +23,11 @@ test.describe("Phase 2 save-state flows", () => {
         // Click save state
         await saveButton.click();
 
-        // Verify success via toast notification
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" })).toBeVisible({
-            timeout: 5000
-        });
+        // Verify success: load button becomes enabled — durable signal that save completed
+        await expect(loadButton).toBeEnabled({ timeout: 5000 });
 
         // Verify the save completed without errors
-        // The fact that we see a toast confirms persistence occurred
+        // The load button becoming enabled confirms persistence occurred
     });
 
     test("Given state has been saved, when load state is clicked in same session, then state restores successfully", async ({ page }) => {
@@ -37,22 +36,15 @@ test.describe("Phase 2 save-state flows", () => {
         const saveButton = page.locator(SAVE_STATE_BUTTON_SELECTOR);
         const loadButton = page.locator(LOAD_STATE_BUTTON_SELECTOR);
 
-        // Save state first
+        // Save state first; wait for load button to be enabled — durable signal that save completed
         await saveButton.click();
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" })).toBeVisible({
-            timeout: 5000
-        });
-
-        // Load button should now be enabled (state exists)
-        await expect(loadButton).toBeEnabled();
+        await expect(loadButton).toBeEnabled({ timeout: 5000 });
 
         // Click load state
         await loadButton.click();
 
-        // Verify success via toast notification
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State loaded" })).toBeVisible({
-            timeout: 5000
-        });
+        // Verify success: data-save-state-status becomes "loaded" — durable, non-racy signal
+        await expect(saveButton).toHaveAttribute("data-save-state-status", "loaded", { timeout: 5000 });
     });
 
     test("Given no saved state exists, when page loads, then load button is disabled", async ({ page }) => {
@@ -73,14 +65,9 @@ test.describe("Phase 2 save-state flows", () => {
         const saveButton = page.locator(SAVE_STATE_BUTTON_SELECTOR);
         const loadButton = page.locator(LOAD_STATE_BUTTON_SELECTOR);
 
-        // First save
+        // First save; wait for load button to become enabled — durable sync signal
         await saveButton.click();
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" }).first()).toBeVisible({
-            timeout: 5000
-        });
-
-        // Wait a moment for the save to complete
-        await page.waitForTimeout(200);
+        await expect(loadButton).toBeEnabled({ timeout: 5000 });
 
         // Second save (should overwrite)
         await saveButton.click();
@@ -88,11 +75,9 @@ test.describe("Phase 2 save-state flows", () => {
             timeout: 5000
         });
 
-        // Load should still work
+        // Load should still work; wait for durable loaded signal
         await loadButton.click();
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State loaded" }).first()).toBeVisible({
-            timeout: 5000
-        });
+        await expect(saveButton).toHaveAttribute("data-save-state-status", "loaded", { timeout: 5000 });
     });
 
     test("Given emulator has started, when save state is clicked, then a toast notification is shown", async ({ page }) => {
@@ -113,10 +98,9 @@ test.describe("Phase 2 save-state flows", () => {
         const saveButton = page.locator(SAVE_STATE_BUTTON_SELECTOR);
         const loadButton = page.locator(LOAD_STATE_BUTTON_SELECTOR);
 
+        // Save first; use durable signal to confirm save completed before clicking load
         await saveButton.click();
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" })).toBeVisible({
-            timeout: 5000
-        });
+        await expect(loadButton).toBeEnabled({ timeout: 5000 });
 
         await loadButton.click();
 
