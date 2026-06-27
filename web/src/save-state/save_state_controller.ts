@@ -35,7 +35,7 @@ export function createSaveStateController({
     async function load() {
         try {
             const bytes = await loadStateFn(db, key);
-            if (!bytes || bytes.length === 0) {
+            if (!bytes?.length) {
                 setStatus("No save state found", true);
                 return false;
             }
@@ -49,8 +49,5 @@ export function createSaveStateController({
         }
     }
 
-    return {
-        save,
-        load
-    };
+    return { save, load };
 }

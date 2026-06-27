@@ -17,35 +17,41 @@ function findRomFiles(
   const results: string[] = [];
   if (!existsSync(dir)) return results;
 
-  let resolvedBase = baseReal;
-  try { resolvedBase ??= realpathSync(base); } catch { return results; }
+  let resolvedBase = baseReal ?? tryResolvePath(base);
+  if (!resolvedBase) return results;
 
   const isWithinBase = (targetReal: string) => {
     const rel = relative(resolvedBase!, targetReal);
     return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
   };
 
-  let resolvedDir: string;
-  try { resolvedDir = realpathSync(dir); } catch { return results; }
-
-  if (!isWithinBase(resolvedDir) || visited.has(resolvedDir)) return results;
+  const resolvedDir = tryResolvePath(dir);
+  if (!resolvedDir || !isWithinBase(resolvedDir) || visited.has(resolvedDir)) return results;
   visited.add(resolvedDir);
 
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const fullPath = join(dir, entry.name);
-    let stat;
-    try { stat = statSync(fullPath); } catch { continue; }
+    const stat = tryStatPath(fullPath);
+    if (!stat) continue;
+
     if (stat.isDirectory()) {
       results.push(...findRomFiles(fullPath, base, visited, resolvedBase));
     } else if (/\.(nes|gb|gbc|cgb|gba)$/i.test(entry.name)) {
-      let resolvedFile: string;
-      try { resolvedFile = realpathSync(fullPath); } catch { continue; }
-      if (isWithinBase(resolvedFile)) {
+      const resolvedFile = tryResolvePath(fullPath);
+      if (resolvedFile && isWithinBase(resolvedFile)) {
         results.push(relative(base, fullPath));
       }
     }
   }
   return results;
+}
+
+function tryResolvePath(path: string): string | undefined {
+  try { return realpathSync(path); } catch { return undefined; }
+}
+
+function tryStatPath(path: string): import("fs").Stats | undefined {
+  try { return statSync(path); } catch { return undefined; }
 }
 
 /** Vite plugin that generates web/roms/roms.json so the ROM picker works. */
