@@ -69,11 +69,9 @@ test.describe("Phase 2 save-state flows", () => {
         await saveButton.click();
         await expect(loadButton).toBeEnabled({ timeout: 5000 });
 
-        // Second save (should overwrite)
+        // Second save (should overwrite); wait for durable saved signal
         await saveButton.click();
-        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "State saved" }).first()).toBeVisible({
-            timeout: 5000
-        });
+        await expect(saveButton).toHaveAttribute("data-save-state-status", "saved", { timeout: 5000 });
 
         // Load should still work; wait for durable loaded signal
         await loadButton.click();
