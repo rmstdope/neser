@@ -66,10 +66,18 @@ impl SpcTimers {
             let now_enabled = new_control & mask != 0;
             let timer = &mut self.timers[timer_index];
             timer.enabled = now_enabled;
-            // Spec ($F1): "0=Disable, set TnOUT=0 & reload divider"
-            // Reset happens on the 1→0 (disable) transition, not 0→1.
-            if was_enabled && !now_enabled {
+            // Spec ($F1): "0=Disable, [1=]Enable: set TnOUT=0 & reload divider"
+            // The "set TnOUT=0 & reload divider" side-effect applies to the
+            // 0→1 (ENABLE) transition: the timer starts fresh.
+            // The 1→0 (DISABLE) transition only stops the timer;
+            // TnOUT is preserved so the program can still read the last value.
+            if !was_enabled && now_enabled {
+                // Enable: clear TnOUT and reload dividers
                 timer.reset_progress();
+            } else if was_enabled && !now_enabled {
+                // Disable: stop but preserve TnOUT; only reload dividers
+                timer.input_divider_counter = 0;
+                timer.target_counter = 0;
             }
         }
     }
@@ -203,39 +211,50 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Spec: $F1 bit0-2 = "0=Disable, set TnOUT=0 & reload divider, 1=Enable"
-    // The reset must happen on the 1→0 (disable) transition, not 0→1.
+    // Spec ($F1 bit0-2): "1=Enable: set TnOUT=0 & reload divider"
+    //   - ENABLE  (0→1): TnOUT is cleared and dividers are reloaded.
+    //   - DISABLE (1→0): timer stops but TnOUT is preserved so the program
+    //                    can still read the last accumulated value.
     // -----------------------------------------------------------------------
 
     #[test]
-    fn disabling_a_running_timer_clears_tout_immediately() {
+    fn disabling_a_running_timer_preserves_tout() {
         let mut timers = SpcTimers::default();
         timers.write_target(2, 1);
-        timers.write_control(0x00, 0x04); // enable T2
+        timers.write_control(0x00, 0x04); // enable T2 (clears TnOUT)
         advance_cycles(&mut timers, 48); // 3 full periods → TnOUT = 3 (unread)
 
-        timers.write_control(0x04, 0x00); // disable T2 → spec: TnOUT = 0
+        timers.write_control(0x04, 0x00); // disable T2 → TnOUT must be preserved
 
-        // TnOUT must be 0 immediately after disable — NOT after re-enable.
         assert_eq!(
             timers.read_counter(2),
-            0x00,
-            "disabling must clear TnOUT immediately per spec"
+            0x03,
+            "disabling must preserve TnOUT so the program can read the last value"
         );
     }
 
     #[test]
-    fn reading_tout_while_disabled_always_returns_zero_even_if_it_accumulated() {
+    fn enabling_a_timer_clears_tout_and_reloads_dividers() {
         let mut timers = SpcTimers::default();
         timers.write_target(2, 1);
         timers.write_control(0x00, 0x04); // enable T2
-        advance_cycles(&mut timers, 32); // 2 full periods
+        advance_cycles(&mut timers, 32); // 2 full periods → TnOUT = 2 (unread)
 
-        timers.write_control(0x04, 0x00); // disable T2
+        timers.write_control(0x04, 0x00); // disable: TnOUT preserved (=2)
+        timers.write_control(0x00, 0x04); // re-enable: TnOUT must be cleared
 
-        // Two consecutive reads must both be zero.
-        assert_eq!(timers.read_counter(2), 0x00);
-        assert_eq!(timers.read_counter(2), 0x00);
+        // Immediately after enable, TnOUT must be 0
+        assert_eq!(timers.read_counter(2), 0x00, "enable must clear TnOUT");
+
+        // And the divider must have been reloaded (no stale partial period)
+        advance_cycles(&mut timers, 15);
+        assert_eq!(timers.read_counter(2), 0x00, "divider reloaded on enable");
+        advance_cycles(&mut timers, 1);
+        assert_eq!(
+            timers.read_counter(2),
+            0x01,
+            "one fire after full fresh period"
+        );
     }
 
     // -----------------------------------------------------------------------
