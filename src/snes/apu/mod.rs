@@ -539,8 +539,16 @@ impl SpcBusView<'_> {
         *self.test = value;
     }
 
+    fn test_allows_timers(&self) -> bool {
+        // fullsnes TEST $F0:
+        //   bit 0 = Timer-Enable  (0=Normal/timers work, 1=Timers don't work)
+        //   bit 3 = Timer-Disable (0=Timers don't work,  1=Normal/timers work)
+        // Both must be in the "Normal" state for timers to tick.
+        (self.test_reg() & 0x01 == 0) && (self.test_reg() & 0x08 != 0)
+    }
+
     fn tick_timers_if_enabled(&mut self) {
-        if self.tick_timers {
+        if self.tick_timers && self.test_allows_timers() {
             self.timers.tick_cycle();
             self.dsp.step_phase_with_memory(&self.aram[..]);
         }
@@ -891,6 +899,61 @@ mod tests {
             apu.read_spc_memory_for_test(0x00F0),
             0x3A,
             "$F0 TEST register must be readable and return the last-written value"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec: $F0 TEST bits 0 and 3 gate whether timers tick at all.
+    //   bit 0 = Timer-Enable  (0=Normal, 1=Timers don't work)
+    //   bit 3 = Timer-Disable (0=Timers don't work, 1=Normal)
+    // Default TEST=0x0A keeps both in "Normal" state.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn timers_tick_normally_with_default_test_register() {
+        let mut apu = SnesApu::new(None);
+        // TEST = 0x0A by default; enable T2 with target=1
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2)
+        apu.advance_spc_bus_cycles_for_test(16);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x01,
+            "T2 should fire once after 16 cycles with default TEST=0x0A"
+        );
+    }
+
+    #[test]
+    fn setting_test_bit0_stops_timer_ticking() {
+        let mut apu = SnesApu::new(None);
+        // Enable T2 with target=1
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2)
+        // Set TEST bit 0 = 1 to stop timers (Timer-Enable = "don't work")
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // 0x0A | 0x01
+        // Run many cycles — timer should not tick
+        apu.advance_spc_bus_cycles_for_test(100);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x00,
+            "Timer must not tick when TEST bit 0 = 1 (Timer-Enable = don't work)"
+        );
+    }
+
+    #[test]
+    fn clearing_test_bit3_stops_timer_ticking() {
+        let mut apu = SnesApu::new(None);
+        // Enable T2 with target=1
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2)
+        // Clear TEST bit 3 to stop timers (Timer-Disable = "don't work")
+        apu.write_spc_memory_for_test(0x00F0, 0x02); // 0x0A & ~0x08
+        // Run many cycles — timer should not tick
+        apu.advance_spc_bus_cycles_for_test(100);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x00,
+            "Timer must not tick when TEST bit 3 = 0 (Timer-Disable = don't work)"
         );
     }
 }
