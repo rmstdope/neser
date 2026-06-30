@@ -84,6 +84,12 @@ impl SpcTimers {
         value
     }
 
+    pub fn clear_all_tout(&mut self) {
+        for timer in &mut self.timers {
+            timer.readable_counter = 0;
+        }
+    }
+
     pub fn tick_cycle(&mut self) {
         for (timer_index, timer) in self.timers.iter_mut().enumerate() {
             if !timer.enabled {

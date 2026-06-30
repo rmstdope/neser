@@ -536,7 +536,15 @@ impl SpcBusView<'_> {
     }
 
     fn write_test(&mut self, value: u8) {
+        let old_test = *self.test;
         *self.test = value;
+        // If TEST transitions from "timers allowed" to "timers stopped",
+        // clear TnOUT on all timers (analogous to CONTROL disable clearing TnOUT).
+        let old_allows = (old_test & 0x01 == 0) && (old_test & 0x08 != 0);
+        let new_allows = (value & 0x01 == 0) && (value & 0x08 != 0);
+        if old_allows && !new_allows {
+            self.timers.clear_all_tout();
+        }
     }
 
     fn test_allows_timers(&self) -> bool {
@@ -954,6 +962,32 @@ mod tests {
             apu.read_spc_memory_for_test(0x00FF),
             0x00,
             "Timer must not tick when TEST bit 3 = 0 (Timer-Disable = don't work)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // When TEST transitions from "timers allowed" to "timers stopped", TnOUT
+    // must be cleared to 0.  The test_timer_stop ROM fires T2 four times
+    // before calling STOP via TEST, and the test expects TnOUT = 0 afterwards
+    // — consistent with TEST stop behaving analogously to CONTROL disable
+    // ("set TnOUT=0") for the accumulated-but-unread counter.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn writing_test_to_stop_timers_clears_accumulated_tout() {
+        let mut apu = SnesApu::new(None);
+        // Enable T2 with target=1 (fires every 16 cycles)
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2)
+        // Let T2 fire 4 times (4 × 16 = 64 cycles; do NOT read TnOUT yet)
+        apu.advance_spc_bus_cycles_for_test(64);
+        // Now stop timers via TEST bit 0 = 1 (Timer-Enable = "don't work")
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // 0x0A | 0x01
+        // TnOUT must be 0 immediately after the TEST stop
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x00,
+            "TnOUT must be cleared when TEST transitions to stop state"
         );
     }
 }

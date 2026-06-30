@@ -17,6 +17,7 @@ mod tests {
         ("test_speed.smc", 600, 0x5085_D88F),
         ("test_timer_speed_2.smc", 600, 0x471F_26BD),
         ("test_timer_speed3.smc", 600, 0x0BBB_12C6),
+        ("test_timer_stop.smc", 600, 0x7CC2_B76B),
     ];
 
     #[test]
@@ -146,12 +147,6 @@ mod tests {
     #[ignore = "fails: timer speed — fix emulator then update CRC"]
     fn blargg_test_timer_speed2_passes() {
         run_failing_rom("test_timer_speed2.smc");
-    }
-
-    #[test]
-    #[ignore = "fails: timer stop — fix emulator then update CRC"]
-    fn blargg_test_timer_stop_passes() {
-        run_failing_rom("test_timer_stop.smc");
     }
 
     #[test]
