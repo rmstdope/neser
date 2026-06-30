@@ -31,11 +31,7 @@ export async function createSaveStateContext({
     }
 
     const db = await openDb();
-    const key = await createRomSaveKey({
-        name: romMetadata.name,
-        size: romMetadata.size,
-        bytes: romMetadata.bytes
-    });
+    const key = await createRomSaveKey(romMetadata);
 
     return createSaveStateController({
         runtime,
