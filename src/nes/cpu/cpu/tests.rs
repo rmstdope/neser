@@ -2,6 +2,7 @@ use super::*;
 use crate::nes::cartridge::{Cartridge, NametableLayout};
 use crate::nes::cpu::opcode;
 use crate::nes::cpu::opcode::*;
+use crate::platform::save_state::Stateful;
 use std::cell::RefCell;
 use std::rc::Rc;
 

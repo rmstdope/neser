@@ -5,6 +5,7 @@ use crate::nes::ppu::color_effects::apply_grayscale;
 use crate::nes::ppu::sprites::SpritesState;
 use crate::nes::ppu::vs_palettes;
 use crate::nes::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
+use crate::platform::save_state::Stateful;
 use crate::trace_ppu;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -985,7 +986,7 @@ impl Ppu {
     }
 
     /// Capture the current PPU state for save-state.
-    pub fn capture_state(&self) -> PpuState {
+    fn capture_state_inner(&self) -> PpuState {
         let (rendering_enabled_d1, rendering_enabled_d2) = self.timing.rendering_enabled_delays();
         let bg_state = self.background.capture_state();
         let sprites_state = self.sprites.capture_state();
@@ -1064,7 +1065,7 @@ impl Ppu {
     }
 
     /// Restore PPU state from a save-state.
-    pub fn restore_state(&mut self, state: &PpuState) {
+    fn restore_state_inner(&mut self, state: &PpuState) {
         // Restore timing
         self.timing.restore_state(
             state.timing.scanline,
@@ -1171,6 +1172,18 @@ impl Ppu {
     #[allow(dead_code)]
     pub fn scroll_state(&self) -> (u16, u16, u8, bool) {
         self.registers.scroll_state()
+    }
+}
+
+impl Stateful for Ppu {
+    type State = PpuState;
+
+    fn capture_state(&self) -> PpuState {
+        self.capture_state_inner()
+    }
+
+    fn restore_state(&mut self, state: &PpuState) {
+        self.restore_state_inner(state);
     }
 }
 

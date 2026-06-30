@@ -19,6 +19,7 @@ use super::bus::Bus;
 use super::registers::{CpuMode, FLAG_F, FLAG_I, FLAG_T, Registers};
 use super::thumb;
 use crate::gba::bus::WidthClass;
+use crate::platform::save_state::Stateful;
 use serde::{Deserialize, Serialize};
 
 /// Address of each ARM exception vector in the BIOS region.
@@ -166,6 +167,18 @@ fn hle_bios_arctan2_values(x: i32, y: i32) -> (i32, i32) {
 impl Default for Arm7tdmi {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Stateful for Arm7tdmi {
+    type State = Arm7tdmiState;
+
+    fn capture_state(&self) -> Arm7tdmiState {
+        self.capture_state_inner()
+    }
+
+    fn restore_state(&mut self, state: &Arm7tdmiState) {
+        self.restore_state_inner(state);
     }
 }
 
@@ -375,7 +388,7 @@ impl Arm7tdmi {
     }
 
     /// Capture CPU state for save-state serialization.
-    pub fn capture_state(&self) -> Arm7tdmiState {
+    fn capture_state_inner(&self) -> Arm7tdmiState {
         Arm7tdmiState {
             regs: self.regs.clone(),
             cycles: self.cycles,
@@ -393,7 +406,7 @@ impl Arm7tdmi {
     }
 
     /// Restore CPU state from a save-state snapshot.
-    pub fn restore_state(&mut self, state: &Arm7tdmiState) {
+    fn restore_state_inner(&mut self, state: &Arm7tdmiState) {
         self.regs = state.regs.clone();
         self.cycles = state.cycles;
         self.irq_pending = state.irq_pending;

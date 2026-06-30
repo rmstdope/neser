@@ -19,12 +19,20 @@ use crate::gb::model::DmgModel;
 use crate::gb::ppu::Ppu;
 use crate::gb::sgb::SgbState;
 use crate::gb::timer::Timer;
+use crate::platform::save_state::{SaveStateError, Stateful};
 
 /// Current save-state format version for Game Boy.
 /// Increment this when making breaking changes to the state format.
 pub const GB_SAVESTATE_VERSION: u32 = 6;
 const GB_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE: u32 = 5;
 const GB_LEGACY_SAVESTATE_VERSION_WITHOUT_CGB_RTC_PHASE: u32 = 4;
+
+/// Save-state format versions this build can load (current plus legacy).
+const SUPPORTED_SAVESTATE_VERSIONS: [u32; 3] = [
+    GB_SAVESTATE_VERSION,
+    GB_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE,
+    GB_LEGACY_SAVESTATE_VERSION_WITHOUT_CGB_RTC_PHASE,
+];
 
 /// Identifies which bus variant was active when the state was saved.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,53 +125,16 @@ pub struct GbSaveState {
     pub mbc_state: Vec<u8>,
 }
 
-/// Errors that can occur when loading a GB save-state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GbSaveStateError {
-    /// The save-state format version is incompatible.
-    IncompatibleVersion { expected: u32, found: u32 },
-    /// Deserialization failed.
-    DeserializationFailed(String),
-    /// Serialization failed.
-    SerializationFailed(String),
-}
-
-impl std::fmt::Display for GbSaveStateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::IncompatibleVersion { expected, found } => write!(
-                f,
-                "incompatible save-state version (expected {expected}, found {found})"
-            ),
-            Self::DeserializationFailed(msg) => write!(f, "deserialization failed: {msg}"),
-            Self::SerializationFailed(msg) => write!(f, "serialization failed: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for GbSaveStateError {}
-
 impl GbSaveState {
     /// Serialize the save state to JSON-encoded UTF-8 bytes.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, GbSaveStateError> {
-        serde_json::to_vec(self).map_err(|e| GbSaveStateError::SerializationFailed(e.to_string()))
+    pub fn to_bytes(&self) -> Result<Vec<u8>, SaveStateError> {
+        crate::platform::save_state::to_bytes(self)
     }
 
     /// Deserialize a save state from JSON-encoded UTF-8 bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, GbSaveStateError> {
-        let state: Self = serde_json::from_slice(bytes)
-            .map_err(|e| GbSaveStateError::DeserializationFailed(e.to_string()))?;
-        if !matches!(
-            state.version,
-            GB_SAVESTATE_VERSION
-                | GB_LEGACY_SAVESTATE_VERSION_WITH_SINGLE_PENDING_APU_SAMPLE
-                | GB_LEGACY_SAVESTATE_VERSION_WITHOUT_CGB_RTC_PHASE
-        ) {
-            return Err(GbSaveStateError::IncompatibleVersion {
-                expected: GB_SAVESTATE_VERSION,
-                found: state.version,
-            });
-        }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SaveStateError> {
+        let state: Self = crate::platform::save_state::from_bytes(bytes)?;
+        crate::platform::save_state::check_version(state.version, &SUPPORTED_SAVESTATE_VERSIONS)?;
         Ok(state)
     }
 }
@@ -186,9 +157,12 @@ impl Gb<DmgBus> {
     }
 
     /// Restore state from a save-state snapshot.
-    pub fn load_state(&mut self, state: &GbSaveState) -> Result<(), String> {
+    pub fn load_state(&mut self, state: &GbSaveState) -> Result<(), SaveStateError> {
         self.cpu.restore_state(&state.cpu);
-        self.cpu.bus.restore_bus_state(&state.bus)?;
+        self.cpu
+            .bus
+            .restore_bus_state(&state.bus)
+            .map_err(SaveStateError::RestoreFailed)?;
         self.reconcile_stop_display_after_state_load();
         self.cpu.bus.restore_cart_ram(&state.cart_ram);
         self.cpu.bus.restore_mbc_state(&state.mbc_state);
@@ -198,9 +172,11 @@ impl Gb<DmgBus> {
 
 // ── Capture / Restore helpers for SM83 CPU ─────────────────────────────────
 
-impl<B: crate::gb::bus::GbBus> Sm83<B> {
+impl<B: crate::gb::bus::GbBus> Stateful for Sm83<B> {
+    type State = Sm83State;
+
     /// Capture the CPU state for serialization.
-    pub fn capture_state(&self) -> Sm83State {
+    fn capture_state(&self) -> Sm83State {
         Sm83State {
             regs: self.regs,
             ime: self.ime,
@@ -213,7 +189,7 @@ impl<B: crate::gb::bus::GbBus> Sm83<B> {
     }
 
     /// Restore CPU state from a deserialized snapshot.
-    pub fn restore_state(&mut self, state: &Sm83State) {
+    fn restore_state(&mut self, state: &Sm83State) {
         self.regs = state.regs;
         self.ime = state.ime;
         self.halted = state.halted;
@@ -392,9 +368,9 @@ mod tests {
         let result = GbSaveState::from_bytes(&bytes);
         assert!(result.is_err());
         match result {
-            Err(GbSaveStateError::IncompatibleVersion { expected, found }) => {
-                assert_eq!(expected, GB_SAVESTATE_VERSION);
+            Err(SaveStateError::IncompatibleVersion { found, supported }) => {
                 assert_eq!(found, 9999);
+                assert_eq!(supported, SUPPORTED_SAVESTATE_VERSIONS.to_vec());
             }
             _ => panic!("Expected IncompatibleVersion error"),
         }
@@ -407,7 +383,7 @@ mod tests {
         let result = GbSaveState::from_bytes(b"not valid json");
         assert!(matches!(
             result,
-            Err(GbSaveStateError::DeserializationFailed(_))
+            Err(SaveStateError::DeserializationFailed(_))
         ));
     }
 
@@ -549,5 +525,47 @@ mod tests {
         let result = cgb.cpu.bus.restore_bus_state(&dmg_state);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("bus type mismatch"));
+    }
+
+    #[test]
+    fn test_main_components_implement_stateful() {
+        // The CPU snapshot is captured through the `Stateful` trait.
+        fn assert_stateful<T: Stateful>() {}
+        assert_stateful::<Sm83<DmgBus>>();
+        assert_stateful::<Sm83<CgbBus>>();
+    }
+
+    /// Regenerates the committed golden save-state fixture used by
+    /// `test_golden_save_state_v6_loads`. Run manually only after an
+    /// intentional, reviewed change to the save-state format:
+    /// `cargo test --no-default-features --lib \
+    ///   gb::console::save_state::tests::regenerate_golden_save_state_fixture -- --ignored`
+    #[test]
+    #[ignore = "regenerates a committed fixture; run manually"]
+    fn regenerate_golden_save_state_fixture() {
+        let mut gb = make_dmg();
+        for _ in 0..1000 {
+            gb.step();
+        }
+        let bytes = gb.save_state().to_bytes().expect("serialize save state");
+        let compressed = crate::platform::save_state::gzip_compress(&bytes);
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gb/console/testdata");
+        std::fs::create_dir_all(&dir).expect("create testdata dir");
+        std::fs::write(dir.join("savestate_golden_v6.json.gz"), compressed).expect("write fixture");
+    }
+
+    #[test]
+    fn test_golden_save_state_v6_loads() {
+        // A save-state captured from a previous build must still load, proving
+        // the on-disk format stayed backward-compatible across the
+        // shared-helper refactor.
+        let compressed = include_bytes!("testdata/savestate_golden_v6.json.gz");
+        let bytes = crate::platform::save_state::gzip_decompress(compressed);
+        let state = GbSaveState::from_bytes(&bytes).expect("golden save state should deserialize");
+        assert_eq!(state.version, GB_SAVESTATE_VERSION);
+
+        let mut gb = make_dmg();
+        gb.load_state(&state)
+            .expect("golden save state should load");
     }
 }

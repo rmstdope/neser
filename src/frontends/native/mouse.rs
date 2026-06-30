@@ -219,6 +219,7 @@ mod tests {
     use crate::platform::app_context::AppContext;
     use crate::platform::config::Config as PlatformConfig;
     use crate::platform::emulator::Console;
+    use crate::platform::save_state::Stateful;
     use crate::snes::input::SnesControllerType;
 
     fn make_console() -> Console {

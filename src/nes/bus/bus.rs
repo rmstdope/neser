@@ -17,6 +17,7 @@ use crate::nes::input::{
 use crate::nes::ppu::{self, SharedPpu};
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::debugging::log_info;
+use crate::platform::save_state::Stateful;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::io;
@@ -961,7 +962,7 @@ impl Bus {
     }
 
     /// Capture bus state for save-state.
-    pub fn capture_state(&self) -> BusState {
+    fn capture_state_inner(&self) -> BusState {
         let port1_state = self.controllers[0].borrow().capture_state();
         let port2_state = self.controllers[1].borrow().capture_state();
 
@@ -1013,7 +1014,7 @@ impl Bus {
     }
 
     /// Restore bus state from a save-state.
-    pub fn restore_state(&mut self, state: &BusState) {
+    fn restore_state_inner(&mut self, state: &BusState) {
         self.open_bus = state.open_bus;
         *self.oam_dma_page.borrow_mut() = state.oam_dma_page;
         self.dma_triggered.replace(false);
@@ -1137,6 +1138,18 @@ impl Bus {
                 .borrow_mut()
                 .restore_state(power_pad_state);
         }
+    }
+}
+
+impl Stateful for Bus {
+    type State = BusState;
+
+    fn capture_state(&self) -> BusState {
+        self.capture_state_inner()
+    }
+
+    fn restore_state(&mut self, state: &BusState) {
+        self.restore_state_inner(state);
     }
 }
 

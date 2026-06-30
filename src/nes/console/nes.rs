@@ -16,6 +16,7 @@ use crate::nes::ppu::{Ppu, PpuState, SharedPpu};
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::debugging::{Tracing, log_info};
 use crate::platform::emulator::{Emulator, SystemType};
+use crate::platform::save_state::{SaveStateError, Stateful};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -80,13 +81,13 @@ impl SaveState {
     }
 
     /// Serialize the save state to JSON-encoded UTF-8 bytes.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
-        serde_json::to_vec(self)
+    pub fn to_bytes(&self) -> Result<Vec<u8>, SaveStateError> {
+        crate::platform::save_state::to_bytes(self)
     }
 
     /// Deserialize a save state from JSON-encoded UTF-8 bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
-        serde_json::from_slice(bytes)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SaveStateError> {
+        crate::platform::save_state::from_bytes(bytes)
     }
 
     /// Serialize the save state to compact binary (postcard) bytes.
@@ -1156,19 +1157,14 @@ impl Nes {
     ///
     /// Returns an error if the save-state version is incompatible or if
     /// the mapper number doesn't match the currently loaded cartridge.
-    pub fn load_state(&mut self, state: &SaveState) -> Result<(), SaveStateError> {
+    pub fn load_state(&mut self, state: &SaveState) -> Result<(), NesSaveStateError> {
         // Check version compatibility
-        if state.version != SAVESTATE_VERSION {
-            return Err(SaveStateError::IncompatibleVersion {
-                expected: SAVESTATE_VERSION,
-                found: state.version,
-            });
-        }
+        crate::platform::save_state::check_version(state.version, &[SAVESTATE_VERSION])?;
 
         // Check mapper compatibility
         let current_mapper = self.bus.borrow().capture_mapper_state().mapper_number;
         if state.mapper.mapper_number != current_mapper {
-            return Err(SaveStateError::MapperMismatch {
+            return Err(NesSaveStateError::MapperMismatch {
                 expected: current_mapper,
                 found: state.mapper.mapper_number,
             });
@@ -1386,26 +1382,22 @@ fn format_compact_trace_instruction(
 }
 
 mod savestate_error {
-    /// Errors that can occur when loading a save-state.
+    use crate::platform::save_state::SaveStateError;
+
+    /// Errors that can occur when loading an NES save-state.
     #[derive(Debug, Clone, PartialEq, Eq)]
-    pub enum SaveStateError {
-        /// The save-state format version is incompatible.
-        IncompatibleVersion { expected: u32, found: u32 },
+    pub enum NesSaveStateError {
+        /// A shared save-state error (version, (de)serialization, or restore).
+        Common(SaveStateError),
         /// The mapper number doesn't match the currently loaded cartridge.
         MapperMismatch { expected: u16, found: u16 },
     }
 
-    impl std::fmt::Display for SaveStateError {
+    impl std::fmt::Display for NesSaveStateError {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
-                SaveStateError::IncompatibleVersion { expected, found } => {
-                    write!(
-                        f,
-                        "Incompatible save-state version: expected {}, found {}",
-                        expected, found
-                    )
-                }
-                SaveStateError::MapperMismatch { expected, found } => {
+                NesSaveStateError::Common(err) => write!(f, "{err}"),
+                NesSaveStateError::MapperMismatch { expected, found } => {
                     write!(
                         f,
                         "Mapper mismatch: cartridge uses mapper {}, but save-state is for mapper {}",
@@ -1416,10 +1408,23 @@ mod savestate_error {
         }
     }
 
-    impl std::error::Error for SaveStateError {}
+    impl std::error::Error for NesSaveStateError {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            match self {
+                NesSaveStateError::Common(err) => Some(err),
+                NesSaveStateError::MapperMismatch { .. } => None,
+            }
+        }
+    }
+
+    impl From<SaveStateError> for NesSaveStateError {
+        fn from(err: SaveStateError) -> Self {
+            NesSaveStateError::Common(err)
+        }
+    }
 }
 
-pub use savestate_error::SaveStateError;
+pub use savestate_error::NesSaveStateError;
 
 #[cfg(test)]
 mod tests {
@@ -2394,9 +2399,12 @@ mod tests {
         let result = nes.load_state(&state);
         assert!(result.is_err());
 
-        if let Err(super::SaveStateError::IncompatibleVersion { expected, found }) = result {
-            assert_eq!(expected, SAVESTATE_VERSION);
+        if let Err(super::NesSaveStateError::Common(
+            crate::platform::save_state::SaveStateError::IncompatibleVersion { found, supported },
+        )) = result
+        {
             assert_eq!(found, 9999);
+            assert_eq!(supported, vec![SAVESTATE_VERSION]);
         } else {
             panic!("Expected IncompatibleVersion error");
         }
@@ -2421,12 +2429,69 @@ mod tests {
         let result = nes.load_state(&state);
         assert!(result.is_err());
 
-        if let Err(super::SaveStateError::MapperMismatch { expected, found }) = result {
+        if let Err(super::NesSaveStateError::MapperMismatch { expected, found }) = result {
             assert_eq!(expected, 0); // NROM
             assert_eq!(found, 4); // MMC3
         } else {
             panic!("Expected MapperMismatch error");
         }
+    }
+
+    /// Regenerates the committed golden save-state fixture used by
+    /// `test_golden_save_state_v8_loads`. Run manually only after an
+    /// intentional, reviewed change to the save-state format:
+    /// `cargo test --no-default-features --lib \
+    ///   nes::console::nes::tests::regenerate_golden_save_state_fixture -- --ignored`
+    #[test]
+    #[ignore = "regenerates a committed fixture; run manually"]
+    fn regenerate_golden_save_state_fixture() {
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        for _ in 0..1000 {
+            nes.run_cpu_tick();
+        }
+        let bytes = nes.save_state().to_bytes().expect("serialize save state");
+        let compressed = crate::platform::save_state::gzip_compress(&bytes);
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/nes/console/testdata");
+        std::fs::create_dir_all(&dir).expect("create testdata dir");
+        std::fs::write(dir.join("savestate_golden_v8.json.gz"), compressed).expect("write fixture");
+    }
+
+    #[test]
+    fn test_golden_save_state_v8_loads() {
+        // A save-state captured from a previous build must still load, proving
+        // the on-disk format stayed backward-compatible across the
+        // shared-helper refactor.
+        let compressed = include_bytes!("testdata/savestate_golden_v8.json.gz");
+        let bytes = crate::platform::save_state::gzip_decompress(compressed);
+        let state = SaveState::from_bytes(&bytes).expect("golden save state should deserialize");
+        assert_eq!(state.version, SAVESTATE_VERSION);
+
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = load_test_cartridge(&rom_data);
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        nes.load_state(&state)
+            .expect("golden save state should load");
+    }
+
+    #[test]
+    fn test_main_components_implement_stateful() {
+        // The top-level save-state is assembled through the `Stateful` trait, so
+        // every main state-owning component must implement it.
+        fn assert_stateful<T: crate::platform::save_state::Stateful>() {}
+        assert_stateful::<Cpu>();
+        assert_stateful::<Ppu>();
+        assert_stateful::<Apu>();
+        assert_stateful::<Bus>();
     }
 
     #[test]

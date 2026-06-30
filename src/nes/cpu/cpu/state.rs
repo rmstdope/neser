@@ -1,4 +1,5 @@
 use super::*;
+use crate::platform::save_state::Stateful;
 
 impl Cpu {
     #[allow(dead_code)]
@@ -134,7 +135,7 @@ impl Cpu {
     }
 
     /// Capture the current CPU state for save-state.
-    pub fn capture_state(&self) -> CpuState {
+    fn capture_state_inner(&self) -> CpuState {
         CpuState {
             a: self.a,
             x: self.x,
@@ -161,7 +162,7 @@ impl Cpu {
     }
 
     /// Restore CPU state from a save-state.
-    pub fn restore_state(&mut self, state: &CpuState) {
+    fn restore_state_inner(&mut self, state: &CpuState) {
         self.a = state.a;
         self.x = state.x;
         self.y = state.y;
@@ -183,5 +184,17 @@ impl Cpu {
         self.dmc_dma_phase = state.dmc_dma_phase;
         self.interrupt_stack = state.interrupt_stack.clone();
         self.current_tick_info = state.current_tick_info;
+    }
+}
+
+impl Stateful for Cpu {
+    type State = CpuState;
+
+    fn capture_state(&self) -> CpuState {
+        self.capture_state_inner()
+    }
+
+    fn restore_state(&mut self, state: &CpuState) {
+        self.restore_state_inner(state);
     }
 }
