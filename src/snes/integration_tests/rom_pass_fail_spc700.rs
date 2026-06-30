@@ -107,7 +107,11 @@ struct RomPassFailOutcome {
 
 impl RomPassFailOutcome {
     fn passed(&self) -> bool {
-        self.result.passed && self.result.exit_reason == RunExitReason::PassMarker
+        self.result.passed
+            && matches!(
+                self.result.exit_reason,
+                RunExitReason::PassMarker | RunExitReason::ScreenCrcFrame
+            )
     }
 
     fn failed_with_marker(&self) -> bool {
@@ -490,5 +494,27 @@ mod tests {
                 result.exit_reason
             );
         }
+    }
+
+    #[test]
+    fn outcome_passed_accepts_screen_crc_frame() {
+        let outcome = RomPassFailOutcome {
+            name: "screen-crc",
+            result: RunResult {
+                passed: true,
+                exit_reason: RunExitReason::ScreenCrcFrame,
+                ticks: 1,
+                frames: 1,
+                pc: 0,
+                marker: [0; 5],
+                screen_crc32: 0x1234_5678,
+                capture_path: None,
+            },
+        };
+
+        assert!(
+            outcome.passed(),
+            "a screen-CRC frame match with result.passed=true must count as a pass"
+        );
     }
 }
