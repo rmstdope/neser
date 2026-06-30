@@ -40,6 +40,23 @@ pub const FLAG_OVERFLOW: u8 = 0b0100_0000;
 /// PSW negative/sign flag (bit 7).
 pub const FLAG_NEGATIVE: u8 = 0b1000_0000;
 
+/// In-progress opcode state used by [`Spc700::step_one_cycle`].
+///
+/// When the per-cycle stepper starts a new instruction it stores the opcode
+/// and a cycle-since-opcode-fetch counter here; subsequent calls advance the
+/// counter and dispatch into a per-opcode cycle handler that consumes one bus
+/// operation (read / write / idle) per call. When the last cycle of the
+/// opcode runs, the handler clears this slot back to `None`.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct InProgressOp {
+    pub(crate) opcode: u8,
+    /// Cycle index within the instruction. Cycle 1 is the opcode fetch (done
+    /// when this struct is created); per-opcode handlers run for cycles 2..N.
+    pub(crate) cycle: u8,
+    /// Scratch operand byte fetched mid-instruction.
+    pub(crate) operand: u8,
+}
+
 /// SPC700 CPU core.
 ///
 /// The core is generic over an [`Spc700Bus`] so it can be unit-tested with a
@@ -61,6 +78,12 @@ pub struct Spc700 {
     psw: u8,
     /// Halt state entered by SLEEP/STOP.
     halted: bool,
+    /// In-progress per-cycle opcode state (used by [`Self::step_one_cycle`]).
+    ///
+    /// `None` between instructions; `Some` while a cycle-scripted opcode is
+    /// mid-execution. Not part of `Spc700State` (transient between ticks); a
+    /// save state taken mid-instruction would lose this.
+    pub(crate) in_progress: Option<InProgressOp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -97,6 +120,7 @@ impl Spc700 {
             pc: 0,
             psw: 0,
             halted: false,
+            in_progress: None,
         }
     }
 
@@ -117,6 +141,7 @@ impl Spc700 {
         self.sp = 0;
         self.psw = 0;
         self.halted = false;
+        self.in_progress = None;
         let lo = bus.read(Self::RESET_VECTOR) as u16;
         let hi = bus.read(Self::RESET_VECTOR.wrapping_add(1)) as u16;
         self.pc = (hi << 8) | lo;
@@ -142,6 +167,8 @@ impl Spc700 {
         self.pc = state.pc;
         self.psw = state.psw;
         self.halted = state.halted;
+        // restore_state always lands on an instruction boundary.
+        self.in_progress = None;
     }
 
     /// Accumulator register.
@@ -463,6 +490,115 @@ impl Spc700 {
             self.set_flag(FLAG_OVERFLOW, false);
         }
         self.update_nz8(self.a); // Set flags based on quotient
+    }
+
+    /// Return `true` if the given opcode has a per-cycle script and should be
+    /// driven by [`Self::step_one_cycle`] instead of the atomic [`Self::step`].
+    ///
+    /// Only opcodes critical for the blargg IPL-hack trampoline test
+    /// reproducer are cycle-scripted in this commit; the remainder still run
+    /// atomically via `step`. Subsequent commits in #2908 expand coverage to
+    /// the full instruction set.
+    pub fn opcode_is_cycle_scripted(opcode: u8) -> bool {
+        matches!(
+            opcode,
+            // BRA rel — the trampoline wait-loop opcode. Cycle-scripted so the
+            // operand byte (port-3 in the trampoline) is read at the correct
+            // sub-cycle, observing brief host pulses.
+            0x2F
+            // MOV A,#imm — the queued micro-op behind the trampoline. Cycle-
+            // scripted so the operand byte (port-1 in the trampoline) is read
+            // when the host expects.
+            | 0xE8
+        )
+    }
+
+    /// `true` while a cycle-scripted opcode is mid-execution.
+    pub fn has_in_progress_op(&self) -> bool {
+        self.in_progress.is_some()
+    }
+
+    /// Advance the CPU by exactly one SPC700 cycle.
+    ///
+    /// Caller is responsible for ensuring the next opcode is cycle-scripted
+    /// (see [`Self::opcode_is_cycle_scripted`]) before calling this when no
+    /// instruction is in progress; the dispatcher in `SnesApu::tick` checks
+    /// this and falls back to atomic [`Self::step`] otherwise.
+    pub fn step_one_cycle(&mut self, bus: &mut impl Spc700Bus) {
+        if self.halted {
+            bus.idle();
+            return;
+        }
+
+        if self.in_progress.is_none() {
+            // Cycle 1: opcode fetch. Triggers a bus read at PC and bumps PC.
+            let opcode_pc = self.pc;
+            let opcode = bus.read(opcode_pc);
+            self.pc = opcode_pc.wrapping_add(1);
+            debug_assert!(
+                Self::opcode_is_cycle_scripted(opcode),
+                "step_one_cycle called for non-cycle-scripted opcode ${:02X}",
+                opcode
+            );
+            self.in_progress = Some(InProgressOp {
+                opcode,
+                cycle: 1,
+                operand: 0,
+            });
+            return;
+        }
+
+        let mut op = self.in_progress.take().expect("checked above");
+        op.cycle = op.cycle.wrapping_add(1);
+        let done = match op.opcode {
+            0x2F => self.bra_cycle(bus, &mut op),
+            0xE8 => self.mov_a_imm_cycle(bus, &mut op),
+            _ => unreachable!(
+                "in_progress holds non-cycle-scripted opcode ${:02X}",
+                op.opcode
+            ),
+        };
+        if !done {
+            self.in_progress = Some(op);
+        }
+    }
+
+    /// BRA rel cycle handler. 4 cycles total (cycle 1 = opcode fetch elsewhere).
+    fn bra_cycle(&mut self, bus: &mut impl Spc700Bus, op: &mut InProgressOp) -> bool {
+        match op.cycle {
+            2 => {
+                // Operand fetch.
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                false
+            }
+            3 => {
+                // First idle + take branch.
+                self.branch(op.operand as i8);
+                bus.idle();
+                false
+            }
+            4 => {
+                // Second idle. Done.
+                bus.idle();
+                true
+            }
+            _ => unreachable!("BRA cycle {} out of range", op.cycle),
+        }
+    }
+
+    /// MOV A,#imm cycle handler. 2 cycles total (cycle 1 = opcode fetch elsewhere).
+    fn mov_a_imm_cycle(&mut self, bus: &mut impl Spc700Bus, op: &mut InProgressOp) -> bool {
+        match op.cycle {
+            2 => {
+                let imm = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                self.a = imm;
+                self.update_nz8(self.a);
+                true
+            }
+            _ => unreachable!("MOV A,#imm cycle {} out of range", op.cycle),
+        }
     }
 
     /// Execute a single instruction or halted cycle, returning cycles consumed.
