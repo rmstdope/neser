@@ -81,6 +81,33 @@
           "notes": "Local-only cache path. Refresh with the shell fetch helper, then run the Python subset helper to regenerate committed CI subset artifacts."
         }
       ]
+    },
+    {
+      "id": "snes-rom-pass-fail-blargg-spc-apu",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "http://www.slack.net/~ant/",
+        "ref": "blargg-snes-spc700-apu-tests"
+      },
+      "license": "unknown",
+      "oracle_type": "screen_crc",
+      "notes": "blargg (Shay Green) SNES SPC700/APU test ROMs. They report results via blargg's standard text shell (Passed / Failed #N / Internal error), so the committed subset is verified by comparing the rendered screen CRC32 at a fixed frame against a human-approved PASS capture (NESER_CAPTURE_SCREEN). License is informal: these are freely-redistributable test binaries with no formal license file, recorded as unknown; author site http://www.slack.net/~ant/. All 18 ROMs are committed. Six currently PASS in this emulator (verified goldens): 1-test_exec_from_io, 2-test_single_instr, 3-test_write_disable, test_speed, test_timer_speed_2, test_timer_speed3. Twelve are committed with #[ignore]'d tests pending emulator accuracy improvements: 4-test_ram_disable (code CC), test_ram_disable_ipl, spc_smp (Failed 02), spc_mem_access_times, spc_dsp6 (Failed 03), spc_timer (Failed 02), test_timer_speed, test_timer_speed2, test_timer_stop, test_timer_stop2, timer_at_power_reset, speed_2_freezes2. See README-SNES for details.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/rom_pass_fail/blargg_spc_apu/v1",
+          "refresh_command": null,
+          "integrity": {
+            "kind": "tree_sha256",
+            "sha256": "f45642df854fc858cffadde0d4d85900b53144cc2cf351772f9445fdfe10d44d",
+            "file_count": 18,
+            "total_size_bytes": 1681408
+          },
+          "notes": "All 18 blargg SPC700/APU ROMs. Six have visually-approved PASS goldens run by snes::integration_tests::rom_pass_fail_spc700 with the screen-CRC oracle (frame 600). Twelve are committed with #[ignore]'d tests that will be promoted to regular tests once the emulator produces Passed results. tree_sha256 is the sorted per-file sha256 record hash; regenerate with scripts/compute_snes_rom_asset_integrity.py."
+        }
+      ]
     }
   ]
 }

@@ -48,7 +48,12 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         errors = validate_manifest(modified)
 
-        self.assertTrue(any("optional_local variants require refresh_command" in error for error in errors))
+        self.assertTrue(
+            any(
+                "optional_local variants require refresh_command" in error
+                for error in errors
+            )
+        )
 
     def test_tree_integrity_requires_hex_sha256(self) -> None:
         """Committed tree hashes must use full 64-hex SHA-256 values."""
@@ -94,7 +99,12 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         errors = validate_manifest(modified)
 
-        self.assertTrue(any("committed_ci variants must use tree_sha256 integrity" in error for error in errors))
+        self.assertTrue(
+            any(
+                "committed_ci variants must use tree_sha256 integrity" in error
+                for error in errors
+            )
+        )
 
     def test_optional_local_requires_not_vendored_integrity(self) -> None:
         """Optional local variants must use not_vendored integrity."""
@@ -110,7 +120,12 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         errors = validate_manifest(modified)
 
-        self.assertTrue(any("optional_local variants must use not_vendored integrity" in error for error in errors))
+        self.assertTrue(
+            any(
+                "optional_local variants must use not_vendored integrity" in error
+                for error in errors
+            )
+        )
 
     def test_variant_path_must_be_repository_relative(self) -> None:
         """Absolute variant paths are rejected."""
@@ -121,7 +136,9 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         errors = validate_manifest(modified)
 
-        self.assertTrue(any("path must be repository-relative" in error for error in errors))
+        self.assertTrue(
+            any("path must be repository-relative" in error for error in errors)
+        )
 
     def test_variant_path_must_not_contain_parent_segments(self) -> None:
         """Parent-directory traversal segments are rejected."""
@@ -134,31 +151,43 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         self.assertTrue(any("must not contain '..'" in error for error in errors))
 
-    def test_processor_tests_assets_with_same_source_url_require_shared_ref(self) -> None:
+    def test_processor_tests_assets_with_same_source_url_require_shared_ref(
+        self,
+    ) -> None:
         """SNES processor_tests entries should pin one shared upstream ref per source URL."""
 
         manifest = load_manifest()
         modified = copy.deepcopy(manifest)
-        modified["assets"][1]["source"]["ref"] = "1111111111111111111111111111111111111111"
+        modified["assets"][1]["source"]["ref"] = (
+            "1111111111111111111111111111111111111111"
+        )
 
         errors = validate_manifest(modified)
 
         self.assertTrue(
-            any("processor_tests assets sharing source.url" in error for error in errors)
+            any(
+                "processor_tests assets sharing source.url" in error for error in errors
+            )
         )
 
-    def test_processor_tests_assets_with_different_source_urls_may_use_different_refs(self) -> None:
+    def test_processor_tests_assets_with_different_source_urls_may_use_different_refs(
+        self,
+    ) -> None:
         """The shared-ref rule is scoped per source URL, not globally."""
 
         manifest = load_manifest()
         modified = copy.deepcopy(manifest)
         modified["assets"][1]["source"]["url"] = "https://example.invalid/alternate"
-        modified["assets"][1]["source"]["ref"] = "1111111111111111111111111111111111111111"
+        modified["assets"][1]["source"]["ref"] = (
+            "1111111111111111111111111111111111111111"
+        )
 
         errors = validate_manifest(modified)
 
         self.assertFalse(
-            any("processor_tests assets sharing source.url" in error for error in errors)
+            any(
+                "processor_tests assets sharing source.url" in error for error in errors
+            )
         )
 
     def test_processor_tests_source_ref_must_be_40_char_lowercase_sha(self) -> None:
@@ -171,7 +200,11 @@ class TestValidateSnesTestAssets(unittest.TestCase):
         errors = validate_manifest(modified)
 
         self.assertTrue(
-            any("processor_tests assets must use a 40-char lowercase commit SHA" in error for error in errors)
+            any(
+                "processor_tests assets must use a 40-char lowercase commit SHA"
+                in error
+                for error in errors
+            )
         )
 
     def test_non_processor_tests_assets_do_not_require_sha_ref_format(self) -> None:
@@ -185,7 +218,24 @@ class TestValidateSnesTestAssets(unittest.TestCase):
         errors = validate_manifest(modified)
 
         self.assertFalse(
-            any("processor_tests assets must use a 40-char lowercase commit SHA" in error for error in errors)
+            any(
+                "processor_tests assets must use a 40-char lowercase commit SHA"
+                in error
+                for error in errors
+            )
+        )
+
+    def test_manifest_contains_at_least_one_rom_pass_fail_asset(self) -> None:
+        """SNES manifest should track at least one ROM pass/fail suite entry."""
+
+        manifest = load_manifest()
+
+        self.assertTrue(
+            any(
+                asset.get("suite") == "rom_pass_fail"
+                for asset in manifest.get("assets", [])
+            ),
+            "expected at least one rom_pass_fail asset in SNES manifest",
         )
 
 

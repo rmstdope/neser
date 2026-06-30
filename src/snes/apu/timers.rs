@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 
 const TIMER_INPUT_DIVIDERS: [u16; 3] = [128, 128, 16];
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Timer {
     #[serde(default)]
     enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_timer_target")]
     target: u8,
     #[serde(default)]
     input_divider_counter: u16,
@@ -18,6 +18,22 @@ struct Timer {
     target_counter: u16,
     #[serde(default)]
     readable_counter: u8,
+}
+
+fn default_timer_target() -> u8 {
+    0xFF
+}
+
+impl Default for Timer {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            target: 0xFF, // hardware power-on default (fullsnes: T0DIV/T1DIV/T2DIV = FFh)
+            input_divider_counter: 0,
+            target_counter: 0,
+            readable_counter: 0,
+        }
+    }
 }
 
 impl Timer {
@@ -50,8 +66,18 @@ impl SpcTimers {
             let now_enabled = new_control & mask != 0;
             let timer = &mut self.timers[timer_index];
             timer.enabled = now_enabled;
+            // Spec ($F1): "0=Disable, [1=]Enable: set TnOUT=0 & reload divider"
+            // The "set TnOUT=0 & reload divider" side-effect applies to the
+            // 0→1 (ENABLE) transition: the timer starts fresh.
+            // The 1→0 (DISABLE) transition only stops the timer;
+            // TnOUT is preserved so the program can still read the last value.
             if !was_enabled && now_enabled {
+                // Enable: clear TnOUT and reload dividers
                 timer.reset_progress();
+            } else if was_enabled && !now_enabled {
+                // Disable: stop but preserve TnOUT; only reload dividers
+                timer.input_divider_counter = 0;
+                timer.target_counter = 0;
             }
         }
     }
@@ -64,6 +90,12 @@ impl SpcTimers {
         let value = self.timers[timer].readable_counter & 0x0F;
         self.timers[timer].readable_counter = 0;
         value
+    }
+
+    pub fn clear_all_tout(&mut self) {
+        for timer in &mut self.timers {
+            timer.readable_counter = 0;
+        }
     }
 
     pub fn tick_cycle(&mut self) {
@@ -176,5 +208,92 @@ mod tests {
 
         advance_cycles(&mut timers, 1);
         assert_eq!(timers.read_counter(2), 0x01);
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec ($F1 bit0-2): "1=Enable: set TnOUT=0 & reload divider"
+    //   - ENABLE  (0→1): TnOUT is cleared and dividers are reloaded.
+    //   - DISABLE (1→0): timer stops but TnOUT is preserved so the program
+    //                    can still read the last accumulated value.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn disabling_a_running_timer_preserves_tout() {
+        let mut timers = SpcTimers::default();
+        timers.write_target(2, 1);
+        timers.write_control(0x00, 0x04); // enable T2 (clears TnOUT)
+        advance_cycles(&mut timers, 48); // 3 full periods → TnOUT = 3 (unread)
+
+        timers.write_control(0x04, 0x00); // disable T2 → TnOUT must be preserved
+
+        assert_eq!(
+            timers.read_counter(2),
+            0x03,
+            "disabling must preserve TnOUT so the program can read the last value"
+        );
+    }
+
+    #[test]
+    fn enabling_a_timer_clears_tout_and_reloads_dividers() {
+        let mut timers = SpcTimers::default();
+        timers.write_target(2, 1);
+        timers.write_control(0x00, 0x04); // enable T2
+        advance_cycles(&mut timers, 32); // 2 full periods → TnOUT = 2 (unread)
+
+        timers.write_control(0x04, 0x00); // disable: TnOUT preserved (=2)
+        timers.write_control(0x00, 0x04); // re-enable: TnOUT must be cleared
+
+        // Immediately after enable, TnOUT must be 0
+        assert_eq!(timers.read_counter(2), 0x00, "enable must clear TnOUT");
+
+        // And the divider must have been reloaded (no stale partial period)
+        advance_cycles(&mut timers, 15);
+        assert_eq!(timers.read_counter(2), 0x00, "divider reloaded on enable");
+        advance_cycles(&mut timers, 1);
+        assert_eq!(
+            timers.read_counter(2),
+            0x01,
+            "one fire after full fresh period"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec: T0DIV/T1DIV/T2DIV power-on default is 0xFF.
+    // A fresh (never-written) timer should fire after 255 prescaler ticks,
+    // not 256 (which is what a zero-initialised target would give).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fresh_t2_uses_hardware_default_target_0xff_period_255() {
+        let mut timers = SpcTimers::default();
+        // No write_target → hardware default 0xFF → period = 255 × 16 = 4080 cycles
+        timers.write_control(0x00, 0x04); // enable T2
+
+        advance_cycles(&mut timers, 4079); // one cycle before the first fire
+        assert_eq!(
+            timers.read_counter(2),
+            0x00,
+            "TnOUT should still be 0 at 4079 cycles with default target 0xFF"
+        );
+
+        advance_cycles(&mut timers, 1); // cycle 4080 → first fire
+        assert_eq!(
+            timers.read_counter(2),
+            0x01,
+            "TnOUT should be 1 at 4080 cycles with default target 0xFF"
+        );
+    }
+
+    #[test]
+    fn fresh_t0_uses_hardware_default_target_0xff_period_255() {
+        let mut timers = SpcTimers::default();
+        // No write_target → hardware default 0xFF → period = 255 × 128 = 32640 cycles
+        timers.write_control(0x00, 0x01); // enable T0
+
+        advance_cycles(&mut timers, 32639);
+        assert_eq!(timers.read_counter(0), 0x00);
+
+        advance_cycles(&mut timers, 1);
+        assert_eq!(timers.read_counter(0), 0x01);
     }
 }

@@ -15,7 +15,11 @@ pub(crate) struct MappingCandidate {
     pub score: i32,
 }
 
-const HEADER_SIZE: usize = 0x100;
+// The SNES internal header occupies 0x40 bytes (e.g. 0x7FC0..0x8000 for LoROM,
+// 0xFFC0..0x10000 for HiROM), ending with the interrupt vectors. A 64 KiB HiROM
+// places this header flush against the end of the image, so the bounds check
+// must require only these 0x40 bytes — not a full extra page.
+const HEADER_SIZE: usize = 0x40;
 const LOROM_HEADER_OFFSET: usize = 0x7FC0;
 const HIROM_HEADER_OFFSET: usize = 0xFFC0;
 const EXHIROM_HEADER_OFFSET: usize = 0x40FFC0;
@@ -134,6 +138,26 @@ mod tests {
         rom[0xFFFD] = 0x80;
 
         let detected = detect_mapping(&rom).expect("candidate");
+        assert_eq!(detected.mapping, Mapping::HiRom);
+        assert_eq!(detected.header_offset, 0xFFC0);
+    }
+
+    #[test]
+    fn detect_mapping_detects_64kb_hirom_with_header_at_ffc0() {
+        // A 64 KiB HiROM places its header at 0xFFC0, so the header's last byte
+        // sits at 0xFFFF — exactly at the end of the image. Detection must not
+        // require more than the 0x40-byte SNES header to be present, otherwise
+        // small HiROM test ROMs are wrongly rejected as HeaderNotFound.
+        let mut rom = vec![0u8; 0x10000];
+        rom[0xFFC0 + 0x15] = 0x21; // map_mode: HiROM (0x20 | 0x1)
+        rom[0xFFC0 + 0x1C] = 0x34; // checksum complement
+        rom[0xFFC0 + 0x1D] = 0x12;
+        rom[0xFFC0 + 0x1E] = 0xCB; // checksum
+        rom[0xFFC0 + 0x1F] = 0xED;
+        rom[0xFFFC] = 0x00; // reset vector -> 0x8000
+        rom[0xFFFD] = 0x80;
+
+        let detected = detect_mapping(&rom).expect("64 KiB HiROM should be detected");
         assert_eq!(detected.mapping, Mapping::HiRom);
         assert_eq!(detected.header_offset, 0xFFC0);
     }

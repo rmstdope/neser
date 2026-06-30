@@ -536,11 +536,27 @@ impl SpcBusView<'_> {
     }
 
     fn write_test(&mut self, value: u8) {
+        let old_test = *self.test;
         *self.test = value;
+        // If TEST transitions from "timers allowed" to "timers stopped",
+        // clear TnOUT on all timers (analogous to CONTROL disable clearing TnOUT).
+        let old_allows = (old_test & 0x01 == 0) && (old_test & 0x08 != 0);
+        let new_allows = (value & 0x01 == 0) && (value & 0x08 != 0);
+        if old_allows && !new_allows {
+            self.timers.clear_all_tout();
+        }
+    }
+
+    fn test_allows_timers(&self) -> bool {
+        // fullsnes TEST $F0:
+        //   bit 0 = Timer-Enable  (0=Normal/timers work, 1=Timers don't work)
+        //   bit 3 = Timer-Disable (0=Timers don't work,  1=Normal/timers work)
+        // Both must be in the "Normal" state for timers to tick.
+        (self.test_reg() & 0x01 == 0) && (self.test_reg() & 0x08 != 0)
     }
 
     fn tick_timers_if_enabled(&mut self) {
-        if self.tick_timers {
+        if self.tick_timers && self.test_allows_timers() {
             self.timers.tick_cycle();
             self.dsp.step_phase_with_memory(&self.aram[..]);
         }
@@ -561,7 +577,7 @@ impl Spc700Bus for SpcBusView<'_> {
     fn read(&mut self, addr: u16) -> u8 {
         let cycles = self.read_cycles(addr);
         let value = match addr {
-            0x00F0 => 0x00,
+            0x00F0 => self.test_reg(), // TEST is readable; returns current register value (fullsnes: default 0x0A)
             0x00F1 => *self.control,
             0x00F2 => *self.dsp_addr,
             0x00F3 => self.dsp.read_reg(*self.dsp_addr),
@@ -866,5 +882,112 @@ mod tests {
         assert_eq!(apu.spc700.sp(), 0x78);
         assert_eq!(apu.spc700.pc(), 0x2468);
         assert_eq!(apu.spc700.psw(), 0xAF);
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec: $F0 TEST register — power-on default is 0Ah, and blargg's
+    // timer_at_power_reset / test_timer_stop tests verify the value by
+    // reading $F0. The register must return its current written value.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_register_at_f0_power_on_default_is_0a() {
+        let apu = SnesApu::new(None);
+        assert_eq!(
+            apu.test, 0x0A,
+            "power-on TEST register must be 0x0A per fullsnes spec"
+        );
+    }
+
+    #[test]
+    fn test_register_at_f0_reads_back_written_value() {
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00F0, 0x3A);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00F0),
+            0x3A,
+            "$F0 TEST register must be readable and return the last-written value"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec: $F0 TEST bits 0 and 3 gate whether timers tick at all.
+    //   bit 0 = Timer-Enable  (0=Normal, 1=Timers don't work)
+    //   bit 3 = Timer-Disable (0=Timers don't work, 1=Normal)
+    // Default TEST=0x0A keeps both in "Normal" state.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn timers_tick_normally_with_default_test_register() {
+        let mut apu = SnesApu::new(None);
+        // TEST = 0x0A by default; enable T2 with target=1
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2)
+        apu.advance_spc_bus_cycles_for_test(16);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x01,
+            "T2 should fire once after 16 cycles with default TEST=0x0A"
+        );
+    }
+
+    #[test]
+    fn setting_test_bit0_stops_timer_ticking() {
+        let mut apu = SnesApu::new(None);
+        // Enable T2 with target=1
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2)
+        // Set TEST bit 0 = 1 to stop timers (Timer-Enable = "don't work")
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // 0x0A | 0x01
+        // Run many cycles — timer should not tick
+        apu.advance_spc_bus_cycles_for_test(100);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x00,
+            "Timer must not tick when TEST bit 0 = 1 (Timer-Enable = don't work)"
+        );
+    }
+
+    #[test]
+    fn clearing_test_bit3_stops_timer_ticking() {
+        let mut apu = SnesApu::new(None);
+        // Enable T2 with target=1
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2)
+        // Clear TEST bit 3 to stop timers (Timer-Disable = "don't work")
+        apu.write_spc_memory_for_test(0x00F0, 0x02); // 0x0A & ~0x08
+        // Run many cycles — timer should not tick
+        apu.advance_spc_bus_cycles_for_test(100);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x00,
+            "Timer must not tick when TEST bit 3 = 0 (Timer-Disable = don't work)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // When TEST transitions from "timers allowed" to "timers stopped", TnOUT
+    // must be cleared to 0.  The test_timer_stop ROM fires T2 four times
+    // before calling STOP via TEST, and the test expects TnOUT = 0 afterwards
+    // — consistent with TEST stop behaving analogously to CONTROL disable
+    // ("set TnOUT=0") for the accumulated-but-unread counter.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn writing_test_to_stop_timers_clears_accumulated_tout() {
+        let mut apu = SnesApu::new(None);
+        // Enable T2 with target=1 (fires every 16 cycles)
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2)
+        // Let T2 fire 4 times (4 × 16 = 64 cycles; do NOT read TnOUT yet)
+        apu.advance_spc_bus_cycles_for_test(64);
+        // Now stop timers via TEST bit 0 = 1 (Timer-Enable = "don't work")
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // 0x0A | 0x01
+        // TnOUT must be 0 immediately after the TEST stop
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x00,
+            "TnOUT must be cleared when TEST transitions to stop state"
+        );
     }
 }
