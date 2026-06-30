@@ -20,6 +20,13 @@ pub(crate) enum RunOracle {
         pass_value: u8,
         fail_value: u8,
     },
+    /// Run to a fixed frame, then compare the rendered screen CRC32 against a
+    /// human-approved golden value. Used for blargg-style ROMs that only report
+    /// pass/fail by drawing text to the screen.
+    ScreenCrc {
+        frames: u32,
+        expected_crc: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +50,8 @@ pub(crate) enum RunExitReason {
     FailMarker,
     TickLimit,
     FrameLimit,
+    /// The screen-CRC oracle reached its target frame and compared the screen.
+    ScreenCrcFrame,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,7 +125,7 @@ fn run_rom_with_oracle_and_capture(
 
         let pc = snes.cpu_pc_for_tests().unwrap_or(0);
         let marker = read_marker(&snes);
-        if let Some((exit_reason, passed)) = evaluate_oracle(&snes, oracle, pc, marker) {
+        if let Some((exit_reason, passed)) = evaluate_oracle(&snes, oracle, pc, marker, frames) {
             return finish_result(
                 &snes,
                 name,
@@ -165,6 +174,7 @@ fn evaluate_oracle(
     oracle: RunOracle,
     pc: u16,
     marker: [u8; 5],
+    frames: u32,
 ) -> Option<(RunExitReason, bool)> {
     match oracle {
         RunOracle::Marker => {
@@ -188,6 +198,17 @@ fn evaluate_oracle(
                 Some((RunExitReason::PassMarker, true))
             } else if value == fail_value && pc == FAIL_IDLE_PC {
                 Some((RunExitReason::FailMarker, false))
+            } else {
+                None
+            }
+        }
+        RunOracle::ScreenCrc {
+            frames: target_frames,
+            expected_crc,
+        } => {
+            if frames >= target_frames {
+                let actual_crc = snes.screen_crc32();
+                Some((RunExitReason::ScreenCrcFrame, actual_crc == expected_crc))
             } else {
                 None
             }
@@ -416,6 +437,59 @@ mod tests {
         assert_eq!(result.exit_reason, RunExitReason::FrameLimit);
         assert_eq!(result.frames, 1);
         assert!(result.ticks > 0);
+    }
+
+    #[test]
+    fn screen_crc_oracle_runs_to_target_frame_and_passes_on_matching_crc() {
+        let rom = pass_marker_rom();
+
+        // Probe with a deliberately-wrong expected CRC to discover the actual
+        // screen CRC at the target frame without hard-coding it.
+        let probe = run_rom_with_oracle(
+            &rom,
+            "screen-crc-probe.sfc",
+            RunConfig::new(20_000_000, 0),
+            RunOracle::ScreenCrc {
+                frames: 3,
+                expected_crc: 0xDEAD_BEEF,
+            },
+        );
+        assert_eq!(probe.exit_reason, RunExitReason::ScreenCrcFrame);
+        assert_eq!(probe.frames, 3);
+        assert!(!probe.passed, "probe with a wrong CRC must not pass");
+        let actual_crc = probe.screen_crc32;
+
+        // Replaying with the discovered CRC must pass at the same frame.
+        let result = run_rom_with_oracle(
+            &rom,
+            "screen-crc-match.sfc",
+            RunConfig::new(20_000_000, 0),
+            RunOracle::ScreenCrc {
+                frames: 3,
+                expected_crc: actual_crc,
+            },
+        );
+        assert!(result.passed, "matching CRC must pass");
+        assert_eq!(result.exit_reason, RunExitReason::ScreenCrcFrame);
+        assert_eq!(result.frames, 3);
+        assert_eq!(result.screen_crc32, actual_crc);
+    }
+
+    #[test]
+    fn screen_crc_oracle_reports_failure_on_crc_mismatch() {
+        let result = run_rom_with_oracle(
+            &pass_marker_rom(),
+            "screen-crc-mismatch.sfc",
+            RunConfig::new(20_000_000, 0),
+            RunOracle::ScreenCrc {
+                frames: 2,
+                expected_crc: 0x0000_0001,
+            },
+        );
+
+        assert!(!result.passed);
+        assert_eq!(result.exit_reason, RunExitReason::ScreenCrcFrame);
+        assert_eq!(result.frames, 2);
     }
 
     #[test]
