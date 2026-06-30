@@ -32,7 +32,10 @@ pub(crate) fn parse_header_at(
     mapping: Mapping,
     header_offset: usize,
 ) -> Option<SnesHeader> {
-    let header_end = header_offset.checked_add(0x100)?;
+    // The SNES header spans 0x40 bytes ending at the interrupt vectors. A
+    // 64 KiB HiROM places it flush against the end of the image, so only these
+    // 0x40 bytes need to be present.
+    let header_end = header_offset.checked_add(0x40)?;
     if header_end > rom.len() {
         return None;
     }

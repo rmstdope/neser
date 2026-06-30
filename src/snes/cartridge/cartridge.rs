@@ -248,6 +248,27 @@ mod tests {
     }
 
     #[test]
+    fn from_bytes_detects_64kb_hirom_mapping() {
+        // A 64 KiB HiROM has its header flush against the end of the image
+        // (0xFFC0..0x10000). The full from_bytes path (detection + header
+        // parse) must accept it instead of rejecting it as HeaderNotFound.
+        let mut rom = vec![0u8; 0x10000];
+        write_header(
+            &mut rom,
+            0xFFC0,
+            0x21,
+            0x00,
+            0x00,
+            b"HIROM 64K TEST     \0\0",
+        );
+        rom[0xFFFC] = 0x00;
+        rom[0xFFFD] = 0x80;
+
+        let cart = Cartridge::from_bytes(&rom).expect("64 KiB HiROM should load");
+        assert_eq!(cart.mapping(), Mapping::HiRom);
+    }
+
+    #[test]
     fn from_bytes_detects_exhirom_mapping() {
         let mut rom = vec![0u8; 0x500000];
         write_header(
