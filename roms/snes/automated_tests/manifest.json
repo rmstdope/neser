@@ -87,13 +87,26 @@
       "suite": "rom_pass_fail",
       "platform": "snes",
       "source": {
-        "url": "https://example.invalid/snes-blargg-spc-apu-pending-review",
-        "ref": "0000000000000000000000000000000000000000"
+        "url": "http://www.slack.net/~ant/",
+        "ref": "blargg-snes-spc700-apu-tests"
       },
       "license": "unknown",
-      "oracle_type": "rom_pass_fail",
-      "notes": "Initial intake entry for #2876. Source URL/ref are explicit placeholders pending provenance and license confirmation; this suite remains optional_local until committed subset decisions are finalized. Candidate failures/deferred ROMs must be recorded in README-SNES and manifest notes. Pending behavior baseline candidates: blargg-spc-timer-baseline, blargg-apu-port-handshake, blargg-dsp-register-baseline.",
+      "oracle_type": "screen_crc",
+      "notes": "blargg (Shay Green) SNES SPC700/APU test ROMs. They report results via blargg's standard text shell (Passed / Failed #N / Internal error), so the committed subset is verified by comparing the rendered screen CRC32 at a fixed frame against a human-approved PASS capture (NESER_CAPTURE_SCREEN). License is informal: these are freely-redistributable test binaries with no formal license file, recorded as unknown; author site http://www.slack.net/~ant/. Committed PASS subset (screen_crc goldens): 1-test_exec_from_io, 2-test_single_instr, 3-test_write_disable, test_speed, test_timer_speed_2, test_timer_speed3. Deferred candidates that currently FAIL in this emulator (tracked per #2876, not committed and not run as ignored tests): 4-test_ram_disable (code CC), test_ram_disable_ipl, spc_smp (Failed 02), spc_mem_access_times (screen unstable), spc_dsp6 (Failed 03), spc_timer (Failed 02), test_timer_speed, test_timer_speed2, test_timer_stop, test_timer_stop2, timer_at_power_reset, speed_2_freezes2. See the README-SNES candidate table for reasons.",
       "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/rom_pass_fail/blargg_spc_apu/v1",
+          "refresh_command": null,
+          "integrity": {
+            "kind": "tree_sha256",
+            "sha256": "a52f648e16d023c670cc6f43fdb0b0ee7908c6183eec7b237c06b3a888165aeb",
+            "file_count": 6,
+            "total_size_bytes": 393216
+          },
+          "notes": "Six visually-approved PASS ROMs, run by snes::integration_tests::rom_pass_fail_spc700 with the screen-CRC oracle (fixed frame 600 golden). tree_sha256 is the sorted per-file sha256 record hash; regenerate with scripts/compute_snes_rom_asset_integrity.py."
+        },
         {
           "id": "optional_full_suite",
           "status": "optional_local",
