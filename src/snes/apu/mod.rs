@@ -561,7 +561,7 @@ impl Spc700Bus for SpcBusView<'_> {
     fn read(&mut self, addr: u16) -> u8 {
         let cycles = self.read_cycles(addr);
         let value = match addr {
-            0x00F0 => 0x00,
+            0x00F0 => self.test_reg(), // TEST is readable; returns current register value (fullsnes: default 0x0A)
             0x00F1 => *self.control,
             0x00F2 => *self.dsp_addr,
             0x00F3 => self.dsp.read_reg(*self.dsp_addr),
@@ -866,5 +866,31 @@ mod tests {
         assert_eq!(apu.spc700.sp(), 0x78);
         assert_eq!(apu.spc700.pc(), 0x2468);
         assert_eq!(apu.spc700.psw(), 0xAF);
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec: $F0 TEST register — power-on default is 0Ah, and blargg's
+    // timer_at_power_reset / test_timer_stop tests verify the value by
+    // reading $F0. The register must return its current written value.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_register_at_f0_power_on_default_is_0a() {
+        let apu = SnesApu::new(None);
+        assert_eq!(
+            apu.test, 0x0A,
+            "power-on TEST register must be 0x0A per fullsnes spec"
+        );
+    }
+
+    #[test]
+    fn test_register_at_f0_reads_back_written_value() {
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00F0, 0x3A);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00F0),
+            0x3A,
+            "$F0 TEST register must be readable and return the last-written value"
+        );
     }
 }

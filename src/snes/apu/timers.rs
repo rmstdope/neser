@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 
 const TIMER_INPUT_DIVIDERS: [u16; 3] = [128, 128, 16];
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Timer {
     #[serde(default)]
     enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_timer_target")]
     target: u8,
     #[serde(default)]
     input_divider_counter: u16,
@@ -18,6 +18,22 @@ struct Timer {
     target_counter: u16,
     #[serde(default)]
     readable_counter: u8,
+}
+
+fn default_timer_target() -> u8 {
+    0xFF
+}
+
+impl Default for Timer {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            target: 0xFF, // hardware power-on default (fullsnes: T0DIV/T1DIV/T2DIV = FFh)
+            input_divider_counter: 0,
+            target_counter: 0,
+            readable_counter: 0,
+        }
+    }
 }
 
 impl Timer {
@@ -50,7 +66,9 @@ impl SpcTimers {
             let now_enabled = new_control & mask != 0;
             let timer = &mut self.timers[timer_index];
             timer.enabled = now_enabled;
-            if !was_enabled && now_enabled {
+            // Spec ($F1): "0=Disable, set TnOUT=0 & reload divider"
+            // Reset happens on the 1→0 (disable) transition, not 0→1.
+            if was_enabled && !now_enabled {
                 timer.reset_progress();
             }
         }
@@ -176,5 +194,81 @@ mod tests {
 
         advance_cycles(&mut timers, 1);
         assert_eq!(timers.read_counter(2), 0x01);
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec: $F1 bit0-2 = "0=Disable, set TnOUT=0 & reload divider, 1=Enable"
+    // The reset must happen on the 1→0 (disable) transition, not 0→1.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn disabling_a_running_timer_clears_tout_immediately() {
+        let mut timers = SpcTimers::default();
+        timers.write_target(2, 1);
+        timers.write_control(0x00, 0x04); // enable T2
+        advance_cycles(&mut timers, 48); // 3 full periods → TnOUT = 3 (unread)
+
+        timers.write_control(0x04, 0x00); // disable T2 → spec: TnOUT = 0
+
+        // TnOUT must be 0 immediately after disable — NOT after re-enable.
+        assert_eq!(
+            timers.read_counter(2),
+            0x00,
+            "disabling must clear TnOUT immediately per spec"
+        );
+    }
+
+    #[test]
+    fn reading_tout_while_disabled_always_returns_zero_even_if_it_accumulated() {
+        let mut timers = SpcTimers::default();
+        timers.write_target(2, 1);
+        timers.write_control(0x00, 0x04); // enable T2
+        advance_cycles(&mut timers, 32); // 2 full periods
+
+        timers.write_control(0x04, 0x00); // disable T2
+
+        // Two consecutive reads must both be zero.
+        assert_eq!(timers.read_counter(2), 0x00);
+        assert_eq!(timers.read_counter(2), 0x00);
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec: T0DIV/T1DIV/T2DIV power-on default is 0xFF.
+    // A fresh (never-written) timer should fire after 255 prescaler ticks,
+    // not 256 (which is what a zero-initialised target would give).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fresh_t2_uses_hardware_default_target_0xff_period_255() {
+        let mut timers = SpcTimers::default();
+        // No write_target → hardware default 0xFF → period = 255 × 16 = 4080 cycles
+        timers.write_control(0x00, 0x04); // enable T2
+
+        advance_cycles(&mut timers, 4079); // one cycle before the first fire
+        assert_eq!(
+            timers.read_counter(2),
+            0x00,
+            "TnOUT should still be 0 at 4079 cycles with default target 0xFF"
+        );
+
+        advance_cycles(&mut timers, 1); // cycle 4080 → first fire
+        assert_eq!(
+            timers.read_counter(2),
+            0x01,
+            "TnOUT should be 1 at 4080 cycles with default target 0xFF"
+        );
+    }
+
+    #[test]
+    fn fresh_t0_uses_hardware_default_target_0xff_period_255() {
+        let mut timers = SpcTimers::default();
+        // No write_target → hardware default 0xFF → period = 255 × 128 = 32640 cycles
+        timers.write_control(0x00, 0x01); // enable T0
+
+        advance_cycles(&mut timers, 32639);
+        assert_eq!(timers.read_counter(0), 0x00);
+
+        advance_cycles(&mut timers, 1);
+        assert_eq!(timers.read_counter(0), 0x01);
     }
 }
