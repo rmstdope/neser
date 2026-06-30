@@ -990,4 +990,122 @@ mod tests {
             "TnOUT must be cleared when TEST transitions to stop state"
         );
     }
+
+    // Reproducer for #2908. Several blargg SPC test ROMs (4-test_ram_disable,
+    // spc_smp, spc_timer, ...) skip the regular IPL upload and instead use the
+    // "IPL-hack trampoline": after the standard $AA/$BB/$CC handshake, the
+    // host loads $00F5 into the IPL entry-point ports, the IPL's
+    // `jmp [$0000+x]` lands the SPC PC at $00F5 (= port-1 register itself),
+    // and the SPC sits at $00F6 in a `BRA $FE` (-2) wait loop reading the BRA
+    // operand from port-3.
+    //
+    // The host releases one micro-op at a time by:
+    //   1. loading port-0 (opcode) and port-1 (operand)
+    //   2. briefly writing port-3 = $FC (BRA operand $FC = -4 = branch to $00F4)
+    //   3. writing port-3 = $FE again
+    //
+    // SPC must observe port-3 = $FC during the BRA's operand-fetch sub-cycle
+    // (one SPC cycle after the opcode fetch), then branch to $00F4 and execute
+    // the micro-op (port-0 = opcode, port-1 = operand).
+    //
+    // This is cycle-precise: the host's port-3 = $FC write window can be just
+    // a few master cycles wide -- shorter than one SPC instruction. With
+    // current atomic per-instruction SPC stepping, the SPC samples port-3 at
+    // each instruction boundary -- which is mostly $FE because the host
+    // restores it before the SPC's next boundary arrives. Result: SPC never
+    // branches, micro-ops are not executed.
+    //
+    // EXPECTED with cycle-accurate per-SPC-cycle stepping:
+    //   A receives the operand value from each release in turn.
+    // CURRENT (atomic) behavior: A stays at the sentinel.
+    fn ipl_hack_trampoline_state() -> SnesApuState {
+        let mut state = SnesApuState {
+            aram: vec![0u8; super::ARAM_SIZE],
+            // control bit 7 (= 0x80) gates IPL overlay -- clear so PC=$00F5..
+            // reads come from the I/O port region, not boot ROM.
+            control: 0x00,
+            // Default TEST: internal 1 cycle, external 1 cycle (no wait
+            // states). This is what the failing ROMs use.
+            test: super::default_test_reg(),
+            ..SnesApuState::default()
+        };
+        // port-0/1 = opcode/operand (set per release).
+        // port-2 = $2F = BRA opcode.
+        // port-3 = $FE = -2 operand (loop forever at $00F6 without help).
+        state.main_to_spc_ports = [0xE8, 0x00, 0x2F, 0xFE];
+        // SPC PC at $00F6 (BRA opcode lives in port-2). Sentinel A=$CC so any
+        // executed `MOV A,#imm` micro-op is detectable.
+        state.spc700.pc = 0x00F6;
+        state.spc700.a = 0xCC;
+        state.spc700.sp = 0xEF;
+        state
+    }
+
+    #[test]
+    fn trampoline_idles_in_bra_wait_loop_when_port3_holds_fe() {
+        // Smoke check: without any host release pulses, the SPC must NOT
+        // execute any queued micro-op. A must remain at the sentinel.
+        let mut apu = SnesApu::new(None);
+        apu.restore_state(&ipl_hack_trampoline_state())
+            .expect("restore trampoline state");
+
+        for _ in 0..10_000 {
+            apu.tick();
+        }
+
+        assert_eq!(
+            apu.spc700.a(),
+            0xCC,
+            "SPC must idle in BRA $FE wait loop and not consume the queued micro-op"
+        );
+    }
+
+    #[test]
+    #[ignore = "Pending #2908: cycle-accurate SPC↔CPU sync"]
+    fn trampoline_executes_one_micro_op_per_brief_port3_pulse() {
+        // Discriminating reproducer for #2908. Releases 10 distinct
+        // `MOV A,#imm` micro-ops via the blargg-style brief port-3 pulse and
+        // asserts the final A == the last operand released.
+        //
+        // The pulse window (4 master cycles, ≈ 20% of one SPC sub-cycle) is
+        // intentionally narrow: the host writes port-3 = $FE again well before
+        // the next atomic SPC instruction boundary, so atomic stepping samples
+        // port-3 = $FE and never branches. Cycle-accurate stepping samples
+        // port-3 at the BRA's operand-fetch sub-cycle, which falls inside the
+        // pulse window with high probability across 10 pulses.
+        let mut apu = SnesApu::new(None);
+        apu.restore_state(&ipl_hack_trampoline_state())
+            .expect("restore trampoline state");
+
+        // Let the SPC settle in the BRA wait loop.
+        for _ in 0..500 {
+            apu.tick();
+        }
+
+        // 10 distinct micro-ops, each loading a unique value into A.
+        let releases = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA];
+        for &imm in &releases {
+            // Stage the next micro-op while SPC is in the wait loop.
+            apu.write_main_port(0, 0xE8); // MOV A,#imm
+            apu.write_main_port(1, imm);
+            // Brief release pulse: $FC for 4 master cycles, then $FE.
+            apu.write_main_port(3, 0xFC);
+            for _ in 0..4 {
+                apu.tick();
+            }
+            apu.write_main_port(3, 0xFE);
+            // Wait long enough for the SPC to execute the micro-op and return
+            // to the BRA wait loop before the next release.
+            for _ in 0..2_000 {
+                apu.tick();
+            }
+        }
+
+        assert_eq!(
+            apu.spc700.a(),
+            0xAA,
+            "SPC must execute the queued MOV A,#imm micro-op at every release pulse; \
+             final A should match the last operand"
+        );
+    }
 }
