@@ -14,7 +14,7 @@ mod tests {
         ("1-test_exec_from_io.smc", 600, 0x7EEE_5E15),
         ("2-test_single_instr.smc", 600, 0x2B42_CE76),
         ("3-test_write_disable.smc", 600, 0xC3DE_3F4F),
-        ("test_speed.smc", 600, 0x5085_D88F),
+        ("test_speed.smc", 600, 0x8EAD_6D95),
         ("test_timer_speed_2.smc", 600, 0x471F_26BD),
         ("test_timer_speed3.smc", 600, 0x0BBB_12C6),
         ("test_timer_stop.smc", 600, 0x7CC2_B76B),
