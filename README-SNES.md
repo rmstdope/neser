@@ -99,10 +99,11 @@ SNES integration tests live under `src/snes/integration_tests/`.
   `.smc` bytes through the SNES console, runs with explicit tick/frame budgets,
   detects pass/fail through a reserved WRAM marker at `$7E1FF0`, records
   diagnostics, and computes a screen CRC.
-- `rom_pass_fail` suite for #2876 vendors blargg's SNES SPC700/APU test ROMs as
-  `snes-rom-pass-fail-blargg-spc-apu`. The committed subset is verified by the
-  `rom_runner` screen-CRC oracle (run to a fixed frame, then compare the screen
-  CRC32 against a human-approved PASS capture); see the candidate table below.
+- `rom_pass_fail` suite for #2876 vendors all 18 blargg SNES SPC700/APU test ROMs as
+  `snes-rom-pass-fail-blargg-spc-apu`. Six are verified by the `rom_runner`
+  screen-CRC oracle (run to a fixed frame, compare the screen CRC32 against a
+  human-approved PASS capture). The remaining 12 are committed with `#[ignore]`'d
+  tests pending emulator accuracy improvements.
 - Asset provenance is tracked in
   `roms/snes/automated_tests/manifest.json` and validated by
   `python -m scripts.validate_snes_test_assets`.
@@ -116,17 +117,18 @@ SNES integration tests live under `src/snes/integration_tests/`.
 
 ### blargg SPC700/APU ROM suite (#2876)
 
-The `snes-rom-pass-fail-blargg-spc-apu` asset vendors blargg's SNES SPC700/APU
-test ROMs. They report results through blargg's text shell, so each committed
-ROM is verified by the `rom_runner` **screen-CRC oracle**: run to a fixed frame,
-then compare the rendered screen CRC32 against a human-approved PASS capture. To
-approve a new golden, run with `NESER_CAPTURE_SCREEN=1`, visually confirm the
-capture under `target/snes_test_captures/` shows a PASS screen, record the
-`(frame, CRC)` in `src/snes/integration_tests/rom_pass_fail_spc700.rs`, and
-recompute the committed integrity with
+All 18 blargg SNES SPC700/APU test ROMs are committed under
+`roms/snes/automated_tests/rom_pass_fail/blargg_spc_apu/v1/`. They report
+results through blargg's text shell, so each ROM is verified by the `rom_runner`
+**screen-CRC oracle**: run to a fixed frame, then compare the rendered screen
+CRC32 against a human-approved PASS capture. To approve a new golden, run with
+`NESER_CAPTURE_SCREEN=1`, visually confirm the capture under
+`target/snes_test_captures/` shows a PASS screen, record the `(frame, CRC)` in
+`src/snes/integration_tests/rom_pass_fail_spc700.rs`, and recompute the
+committed integrity with
 `python -m scripts.compute_snes_rom_asset_integrity <dir>`.
 
-Committed ROMs (visually-approved PASS, screen-CRC goldens at frame 600):
+**Passing (6) — visually-approved screen-CRC goldens at frame 600:**
 
 | ROM | Category | Golden CRC |
 | --- | --- | --- |
@@ -137,24 +139,26 @@ Committed ROMs (visually-approved PASS, screen-CRC goldens at frame 600):
 | `test_timer_speed_2` | Timers | `0x471F26BD` |
 | `test_timer_speed3` | Timers | `0x0BBB12C6` |
 
-Deferred candidates currently fail in this emulator (real APU/SPC700 accuracy
-gaps); they are tracked here and in the manifest notes, but not committed and
-not run as ignored tests:
+**Currently failing (12) — committed with `#[ignore]`'d tests:**
 
-| ROM | Category | Reason |
+When the emulator is improved to produce a Passed screen, run
+`NESER_CAPTURE_SCREEN=1 cargo test … -- --ignored` to capture the golden,
+replace the `0x0000_0000` placeholder CRC in the test, and remove `#[ignore]`.
+
+| ROM | Category | Known failure |
 | --- | --- | --- |
-| `4-test_ram_disable` | SMP | fails: reports code CC |
-| `test_ram_disable_ipl` | SMP | fails: APU RAM/IPL disable |
-| `spc_smp` | SMP | fails 02: SMP behavior |
-| `spc_mem_access_times` | SMP | fails: memory access timing (screen not yet stable) |
-| `spc_dsp6` | DSP | fails 03: DSP echo/basics |
-| `spc_timer` | Timers | fails 02: SPC timer |
-| `test_timer_speed` | Timers | fails: timer speed |
-| `test_timer_speed2` | Timers | fails: timer speed |
-| `test_timer_stop` | Timers | fails: timer stop |
-| `test_timer_stop2` | Timers | fails: timer stop |
-| `timer_at_power_reset` | Timers | fails: timer at power/reset |
-| `speed_2_freezes2` | Timers | fails: speed/freeze |
+| `4-test_ram_disable` | SMP | reports code CC |
+| `test_ram_disable_ipl` | SMP | APU RAM/IPL disable |
+| `spc_smp` | SMP | Failed 02: SMP behavior |
+| `spc_mem_access_times` | SMP | memory access timing |
+| `spc_dsp6` | DSP | Failed 03: DSP echo/basics |
+| `spc_timer` | Timers | Failed 02: SPC timer |
+| `test_timer_speed` | Timers | timer speed |
+| `test_timer_speed2` | Timers | timer speed |
+| `test_timer_stop` | Timers | timer stop |
+| `test_timer_stop2` | Timers | timer stop |
+| `timer_at_power_reset` | Timers | timer at power/reset |
+| `speed_2_freezes2` | Timers | SPC speed/freeze |
 
 Run SNES tests during development with:
 
