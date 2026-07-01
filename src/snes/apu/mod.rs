@@ -195,9 +195,6 @@ impl SnesApu {
                     i64::from(self.spc700.step(&mut bus_view))
                 }
             };
-            if self.test & 0x04 != 0 {
-                self.spc700.halt();
-            }
             self.spc_cycle_budget -= consumed_cycles * SPC_PER_MASTER_DEN;
         }
 
@@ -223,6 +220,26 @@ impl SnesApu {
             0xFFC0..=0xFFFF if self.control & 0x80 != 0 => self.ipl[(addr - 0xFFC0) as usize],
             _ => self.aram[addr as usize],
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spc_pc_for_debug(&self) -> u16 {
+        self.spc700.pc()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn peek_spc_memory_for_debug(&self, addr: u16) -> u8 {
+        self.peek_opcode_at(addr)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn main_to_spc_ports_for_debug(&self) -> [u8; 4] {
+        self.main_to_spc_ports
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spc_to_main_ports_for_debug(&self) -> [u8; 4] {
+        self.spc_to_main_ports
     }
 
     pub fn master_ticks(&self) -> u64 {
@@ -313,9 +330,6 @@ impl SnesApu {
             .take(MAX_PENDING_SAMPLES)
             .collect();
         self.spc700.restore_state(&state.spc700);
-        if self.test & 0x04 != 0 {
-            self.spc700.halt();
-        }
         Ok(())
     }
 
@@ -459,9 +473,6 @@ impl SnesApu {
             tick_timers: true,
         };
         bus_view.write(addr, value);
-        if self.test & 0x04 != 0 {
-            self.spc700.halt();
-        }
     }
 
     #[cfg(test)]
@@ -498,9 +509,6 @@ impl SnesApu {
             tick_timers: true,
         };
         bus_view.write(0x00F1, value);
-        if self.test & 0x04 != 0 {
-            self.spc700.halt();
-        }
     }
 
     #[cfg(test)]
@@ -532,7 +540,16 @@ impl SpcBusView<'_> {
     }
 
     fn ram_write_enabled(&self) -> bool {
-        self.test_reg() & 0x02 != 0
+        // Per bsnes smp/memory.cpp `writeRAM`: a write only lands when
+        // RAM-Writable (bit 1) is set AND RAM-Disable (bit 2) is clear.
+        self.test_reg() & 0x02 != 0 && self.test_reg() & 0x04 == 0
+    }
+
+    fn ram_disabled(&self) -> bool {
+        // Per bsnes smp/memory.cpp `readRAM`: when bit 2 is set, ARAM reads
+        // return 0x5A (0xFF on mini-SNES). IPL ROM reads and I/O reads are
+        // unaffected (the I/O range is handled by an explicit override path).
+        self.test_reg() & 0x04 != 0
     }
 
     fn is_internal_wait_address(&self, addr: u16) -> bool {
@@ -617,13 +634,20 @@ impl Spc700Bus for SpcBusView<'_> {
     fn read(&mut self, addr: u16) -> u8 {
         let cycles = self.read_cycles(addr);
         let value = match addr {
-            0x00F0 => self.test_reg(), // TEST is readable; returns current register value (fullsnes: default 0x0A)
+            // I/O register reads ($F0-$FF) always return I/O values, not the RAM-disable
+            // sentinel. Per bsnes smp/memory.cpp: readRAM is called first (returns $5A when
+            // RAM-disabled), but readIO overrides for the entire $F0-$FF range.
+            0x00F0 => self.test_reg(), // TEST is readable; per fullsnes default 0x0A
             0x00F1 => *self.control,
             0x00F2 => *self.dsp_addr,
             0x00F3 => self.dsp.read_reg(*self.dsp_addr),
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
+            // $F8-$F9 = AUXIO4/AUXIO5 (general-purpose I/O, stores value in ARAM)
+            // $FA-$FC = T0/T1/T2 targets (write-only; return underlying ARAM bytes, per bsnes)
+            0x00F8..=0x00FC => self.aram[addr as usize],
             0x00FD..=0x00FF => self.timers.read_counter((addr - 0x00FD) as usize),
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
+            _ if self.ram_disabled() => 0x5A,
             _ => self.aram[addr as usize],
         };
         if addr <= 0x0001 {
@@ -947,6 +971,62 @@ mod tests {
             apu.read_spc_memory_for_test(0x00F0),
             0x3A,
             "$F0 TEST register must be readable and return the last-written value"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Reproducer for #2911. Per bsnes `smp/io.cpp` + `smp/memory.cpp`:
+    //   $F0 bit 1 = RAM-Writable (1 = writes go to ARAM)
+    //   $F0 bit 2 = RAM-Disable  (1 = reads return 0x5A, writes blocked)
+    // Our previous code interpreted bit 2 as a "Crash/Halt SPC" sentinel, so
+    // blargg's 4-test_ram_disable.smc hung after the micro-op trampoline
+    // wrote $0E to $F0. After the fix, bit 2 simply gates ARAM reads/writes.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ram_disable_bit_makes_aram_reads_return_5a() {
+        let mut apu = SnesApu::new(None);
+        // Seed an ARAM byte we can distinguish from the 0x5A sentinel.
+        apu.aram[0x0200] = 0x37;
+        // Default test = 0x0A (bit 1 = RAM-Writable, bit 3 = Timer-Normal).
+        assert_eq!(apu.read_spc_memory_for_test(0x0200), 0x37);
+        // Set bit 2 (RAM-Disable). Keep bit 1 and bit 3 as before.
+        apu.write_spc_memory_for_test(0x00F0, 0x0E);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x0200),
+            0x5A,
+            "ARAM reads must return 0x5A while TEST bit 2 (RAM-Disable) is set",
+        );
+        // Clear bit 2 again: real ARAM data is visible.
+        apu.write_spc_memory_for_test(0x00F0, 0x0A);
+        assert_eq!(apu.read_spc_memory_for_test(0x0200), 0x37);
+    }
+
+    #[test]
+    fn ram_disable_bit_blocks_aram_writes_even_when_ram_writable_is_set() {
+        let mut apu = SnesApu::new(None);
+        apu.aram[0x0200] = 0x11;
+        // Set bit 1 (RAM-Writable) AND bit 2 (RAM-Disable). Writes must drop.
+        apu.write_spc_memory_for_test(0x00F0, 0x0E);
+        apu.write_spc_memory_for_test(0x0200, 0xAB);
+        // Disable the disable bit so reads expose underlying ARAM.
+        apu.write_spc_memory_for_test(0x00F0, 0x0A);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x0200),
+            0x11,
+            "writes must be blocked while RAM-Disable bit is set",
+        );
+    }
+
+    #[test]
+    fn setting_ram_disable_bit_does_not_halt_spc700() {
+        let mut apu = SnesApu::new(None);
+        // Halt-status hasn't changed before the write.
+        assert!(!apu.spc700.is_halted());
+        apu.write_spc_memory_for_test(0x00F0, 0x0E);
+        assert!(
+            !apu.spc700.is_halted(),
+            "writing $F0 with bit 2 set must NOT halt the SPC700 (#2911)",
         );
     }
 

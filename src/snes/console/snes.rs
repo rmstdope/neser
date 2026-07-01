@@ -108,6 +108,34 @@ impl Snes {
             .map(|cpu| cpu.bus().read_for_debugger(addr))
     }
 
+    #[cfg(test)]
+    pub(crate) fn apu_spc_pc_for_debug(&self) -> Option<u16> {
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.bus().apu_spc_pc_for_debug())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apu_peek_spc_memory_for_debug(&self, addr: u16) -> Option<u8> {
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.bus().apu_peek_spc_memory_for_debug(addr))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apu_main_to_spc_ports_for_debug(&self) -> Option<[u8; 4]> {
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.bus().apu_main_to_spc_ports_for_debug())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apu_spc_to_main_ports_for_debug(&self) -> Option<[u8; 4]> {
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.bus().apu_spc_to_main_ports_for_debug())
+    }
+
     /// Load battery-backed cartridge SRAM from a `.sav` file if one exists.
     #[cfg(not(target_arch = "wasm32"))]
     fn load_save_ram_from_disk(&mut self) {

@@ -124,9 +124,9 @@ impl Spc700 {
         }
     }
 
-    /// Force the CPU into the halted state.
-    pub(crate) fn halt(&mut self) {
-        self.halted = true;
+    #[cfg(test)]
+    pub(crate) fn is_halted(&self) -> bool {
+        self.halted
     }
 
     /// Reset the CPU: clear registers/flags and load `PC` from the reset vector.

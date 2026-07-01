@@ -14,6 +14,8 @@ mod tests {
         ("1-test_exec_from_io.smc", 600, 0x7EEE_5E15),
         ("2-test_single_instr.smc", 600, 0x2B42_CE76),
         ("3-test_write_disable.smc", 600, 0xC3DE_3F4F),
+        ("4-test_ram_disable.smc", 600, 0x85F1_D154),
+        ("test_ram_disable_ipl.smc", 600, 0xD001_765E),
         ("test_speed.smc", 600, 0x8EAD_6D95),
         ("test_timer_speed_2.smc", 600, 0x471F_26BD),
         ("test_timer_speed3.smc", 600, 0x0BBB_12C6),
@@ -102,18 +104,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: APU RAM disable reports code CC — fix emulator then update CRC"]
-    fn blargg_4_test_ram_disable_passes() {
-        run_failing_rom("4-test_ram_disable.smc");
-    }
-
-    #[test]
-    #[ignore = "fails: APU RAM/IPL disable — fix emulator then update CRC"]
-    fn blargg_test_ram_disable_ipl_passes() {
-        run_failing_rom("test_ram_disable_ipl.smc");
-    }
-
-    #[test]
     #[ignore = "fails: SMP behavior (Failed 02) — fix emulator then update CRC"]
     fn blargg_spc_smp_passes() {
         run_failing_rom("spc_smp.sfc");
@@ -165,5 +155,152 @@ mod tests {
     #[ignore = "fails: SPC speed/freeze — fix emulator then update CRC"]
     fn blargg_speed_2_freezes2_passes() {
         run_failing_rom("speed_2_freezes2.smc");
+    }
+
+    // -------------------------------------------------------------------------
+    // Debug helper for #2911 (RAM-disable) and other open sub-issues of #2908.
+    // Runs a failing ROM for a short period, then samples SPC PC at a stride
+    // and prints the most-frequent regions plus a small ARAM dump around them.
+    // Marked #[ignore] — only run manually with `--include-ignored`.
+    // -------------------------------------------------------------------------
+
+    fn investigate_failing_rom_spc_pc(file: &str, sample_stride_ticks: u64, samples: usize) {
+        use crate::platform::app_context::AppContext;
+        use crate::platform::debugging::{Tracing, init_tracing};
+        use crate::platform::emulator::Emulator;
+        use crate::snes::console::Snes;
+        use std::collections::HashMap;
+
+        // Enable APU port-write tracing for the first ~2M ticks of execution,
+        // then disable so the output isn't drowned by the post-hang quiet.
+        init_tracing(Tracing {
+            enabled: true,
+            apu: 3,
+            ..Default::default()
+        });
+
+        let root = Path::new(ROM_PASS_FAIL_ROOT);
+        let path = root.join(file);
+        let rom = fs::read(&path)
+            .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
+
+        let mut snes = Snes::new(AppContext::default());
+        snes.load_rom(&rom, file)
+            .unwrap_or_else(|err| panic!("load failed: {err}"));
+
+        // Sample SPC PC + host CPU PC + ports at fixed intervals from t=0.
+        let mut spc_hist: HashMap<u16, u32> = HashMap::new();
+        let mut cpu_hist: HashMap<u16, u32> = HashMap::new();
+        let mut last_ports_combined: ([u8; 4], [u8; 4]) = ([0; 4], [0; 4]);
+        let mut port_changes: Vec<(u64, [u8; 4], [u8; 4])> = Vec::new();
+        let mut ticks: u64 = 0;
+        let mut trace_disabled = false;
+
+        for sample_idx in 0..samples {
+            let target = ticks.saturating_add(sample_stride_ticks);
+            while ticks < target {
+                ticks = ticks.saturating_add(u64::from(snes.run_tick()));
+            }
+            if !trace_disabled && ticks > 2_000_000 {
+                init_tracing(Tracing::default());
+                trace_disabled = true;
+                eprintln!("--- APU trace disabled at ticks={ticks} ---");
+            }
+            if let Some(pc) = snes.apu_spc_pc_for_debug() {
+                *spc_hist.entry(pc).or_insert(0) += 1;
+            }
+            if let Some(pc) = snes.cpu_pc_for_tests() {
+                *cpu_hist.entry(pc).or_insert(0) += 1;
+            }
+            // Read both directions of the 4 APU ports.
+            let spc_to_cpu = snes.apu_spc_to_main_ports_for_debug().unwrap_or([0; 4]);
+            let cpu_to_spc = snes.apu_main_to_spc_ports_for_debug().unwrap_or([0; 4]);
+            let combined = (spc_to_cpu, cpu_to_spc);
+            if combined != last_ports_combined {
+                port_changes.push((ticks, spc_to_cpu, cpu_to_spc));
+                last_ports_combined = combined;
+            }
+            // Print a progress marker every 10% of samples.
+            if sample_idx > 0 && samples >= 10 && sample_idx % (samples / 10) == 0 {
+                eprintln!(
+                    "  [progress sample {sample_idx}/{samples}] ticks={ticks} \
+                     spc_pc={:04X} cpu_pc={:04X} CPU->SPC={:02X?} SPC->CPU={:02X?}",
+                    snes.apu_spc_pc_for_debug().unwrap_or(0),
+                    snes.cpu_pc_for_tests().unwrap_or(0),
+                    cpu_to_spc,
+                    spc_to_cpu,
+                );
+            }
+        }
+
+        let mut top_spc: Vec<(u16, u32)> = spc_hist.into_iter().collect();
+        top_spc.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut top_cpu: Vec<(u16, u32)> = cpu_hist.into_iter().collect();
+        top_cpu.sort_by(|a, b| b.1.cmp(&a.1));
+
+        eprintln!("\n=== SPC PC hotspots for {file} ({samples} samples) ===");
+        for (pc, count) in top_spc.iter().take(10) {
+            eprint!("  PC=${pc:04X}  hits={count:>4}  bytes:");
+            for off in 0..8u16 {
+                let b = snes
+                    .apu_peek_spc_memory_for_debug(pc.wrapping_add(off))
+                    .unwrap_or(0);
+                eprint!(" {b:02X}");
+            }
+            eprintln!();
+        }
+        eprintln!("=== CPU PC hotspots ===");
+        for (pc, count) in top_cpu.iter().take(10) {
+            eprint!("  CPU PC=${pc:04X}  hits={count}  bytes:");
+            let pc_full = *pc as u32;
+            for off in 0..16u32 {
+                let b = snes
+                    .read_bus_for_debugger_for_tests(pc_full.wrapping_add(off))
+                    .unwrap_or(0);
+                eprint!(" {b:02X}");
+            }
+            eprintln!();
+        }
+        eprintln!("=== Port change timeline (last 30) ===");
+        let start = port_changes.len().saturating_sub(30);
+        for (t, spc_out, cpu_out) in &port_changes[start..] {
+            eprintln!("  t={t:>12}  SPC->CPU={spc_out:02X?}  CPU->SPC={cpu_out:02X?}");
+        }
+        eprintln!("=== CPU code dump $8800-$8830 ===");
+        for base in (0x8800u32..0x8830).step_by(8) {
+            eprint!("  ${base:04X}:");
+            for off in 0..8u32 {
+                let b = snes
+                    .read_bus_for_debugger_for_tests(base + off)
+                    .unwrap_or(0);
+                eprint!(" {b:02X}");
+            }
+            eprintln!();
+        }
+        eprintln!("=== CPU code dump $8200-$8330 ===");
+        for base in (0x8200u32..0x8330).step_by(8) {
+            eprint!("  ${base:04X}:");
+            for off in 0..8u32 {
+                let b = snes
+                    .read_bus_for_debugger_for_tests(base + off)
+                    .unwrap_or(0);
+                eprint!(" {b:02X}");
+            }
+            eprintln!();
+        }
+        eprintln!("Total port changes: {}", port_changes.len());
+        eprintln!("=== end ===\n");
+    }
+
+    #[test]
+    #[ignore = "debug helper: run with --include-ignored to print SPC PC hotspots"]
+    fn debug_spc_pc_hotspots_4_test_ram_disable() {
+        investigate_failing_rom_spc_pc("4-test_ram_disable.smc", 50_000, 1000);
+    }
+
+    #[test]
+    #[ignore = "debug helper: run with --include-ignored to print SPC PC hotspots"]
+    fn debug_spc_pc_hotspots_test_ram_disable_ipl() {
+        investigate_failing_rom_spc_pc("test_ram_disable_ipl.smc", 50_000, 1000);
     }
 }
