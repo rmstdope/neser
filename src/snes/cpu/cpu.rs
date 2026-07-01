@@ -9170,7 +9170,10 @@ mod wai_stp_tests {
         let mut restored = Cpu::new(TestBus::default());
         restored.restore_state_inner(&state);
 
-        assert!(restored.waiting, "restored CPU must remain in WAI wait state");
+        assert!(
+            restored.waiting,
+            "restored CPU must remain in WAI wait state"
+        );
         let cycles = restored.step();
         assert_eq!(cycles, 1, "without interrupt, WAI wait should idle");
         assert_eq!(restored.pc, 0x0001, "PC must stay frozen while waiting");
