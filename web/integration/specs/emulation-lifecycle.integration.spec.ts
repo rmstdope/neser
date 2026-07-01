@@ -38,10 +38,10 @@ test.describe("Phase 1 critical path lifecycle", () => {
     test("Given emulator is running, when Pause/Resume is toggled, then paused and running states alternate", async ({ page }) => {
         await startFromBundledRom(page);
 
-        await page.locator(PAUSE_BUTTON_SELECTOR).click();
+        await page.locator(PAUSE_BUTTON_SELECTOR).evaluate((button: HTMLButtonElement) => button.click());
         await waitForPausedState(page);
 
-        await page.locator(PAUSE_BUTTON_SELECTOR).click();
+        await page.locator(PAUSE_BUTTON_SELECTOR).evaluate((button: HTMLButtonElement) => button.click());
         await waitForRunningState(page);
     });
 

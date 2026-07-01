@@ -2,8 +2,8 @@
 //!
 //! The [`Console`] enum wraps system-specific emulators (currently only NES)
 //! and provides a common interface that frontends can program against.
-//! NES-specific features (debugging, PPU viewer, etc.) are accessed by
-//! matching on the [`Console::Nes`] variant directly.
+//! NES-specific features (debugging, PPU viewer, etc.) are accessed through
+//! optional capability accessors on [`Console`].
 //!
 //! The [`Emulator`] trait defines the common operations every emulated system
 //! must support.  `Console` delegates its common methods through
@@ -13,8 +13,13 @@
 use std::path::PathBuf;
 
 use crate::gb::GameBoy;
+#[cfg(feature = "native")]
+use crate::gb::debugging::ppu_viewer::GbPpuViewerSnapshot;
 use crate::gba::Gba;
 use crate::nes::console::Nes;
+#[cfg(feature = "native")]
+use crate::nes::debugging::ppu_viewer::PpuViewerSnapshot as NesPpuViewerSnapshot;
+use crate::nes::input::ControllerInput;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::snes::console::Snes;
 
@@ -69,6 +74,137 @@ pub trait Emulator {
     fn save_ram(&self) -> Result<(), String>;
     fn app_context(&self) -> &SharedAppContext;
     fn target_frame_duration(&self) -> std::time::Duration;
+}
+
+/// Mouse button identifier for capability-based mouse routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseInputButton {
+    Left,
+    Right,
+}
+
+/// Optional mouse-related capability surface exposed by consoles.
+pub trait MouseInputCapability {
+    fn has_any_mouse_controller(&self) -> bool;
+    fn has_zapper(&self) -> bool;
+    fn has_snes_mouse(&self) -> bool;
+    fn has_snes_mouse_on_port(&self, port: u8) -> bool;
+    fn set_mouse_position(&mut self, x: u8, y: u8);
+    fn set_paddle_position(&mut self, x: u8);
+    fn add_mouse_delta(&mut self, dx: i16, dy: i16);
+    fn set_mouse_button(&mut self, button: MouseInputButton, pressed: bool);
+}
+
+#[cfg(feature = "native")]
+/// PPU viewer snapshot kind exposed through a console capability.
+#[allow(clippy::large_enum_variant)]
+pub enum PpuViewerSnapshotKind {
+    Nes(NesPpuViewerSnapshot),
+    GameBoy(Box<GbPpuViewerSnapshot>),
+}
+
+#[cfg(feature = "native")]
+/// Optional PPU viewer capability surface exposed by consoles.
+pub trait PpuViewerCapability {
+    fn create_ppu_viewer_snapshot(&self) -> PpuViewerSnapshotKind;
+}
+
+impl MouseInputCapability for Nes {
+    fn has_any_mouse_controller(&self) -> bool {
+        (1..=2).any(|port| self.controller_input_type(port) == Some(ControllerInput::Mouse))
+            || self.has_expansion_mouse_controller()
+    }
+
+    fn has_zapper(&self) -> bool {
+        (1..=2).any(|port| self.is_zapper_active(port)) || self.has_expansion_zapper()
+    }
+
+    fn has_snes_mouse(&self) -> bool {
+        Nes::has_snes_mouse(self)
+    }
+
+    fn has_snes_mouse_on_port(&self, _port: u8) -> bool {
+        false
+    }
+
+    fn set_mouse_position(&mut self, x: u8, y: u8) {
+        self.set_mouse_x_position(x);
+        self.set_mouse_y_position(y);
+    }
+
+    fn set_paddle_position(&mut self, x: u8) {
+        self.set_mouse_x_position(x);
+    }
+
+    fn add_mouse_delta(&mut self, dx: i16, dy: i16) {
+        Nes::add_mouse_delta(self, dx, dy);
+    }
+
+    fn set_mouse_button(&mut self, button: MouseInputButton, pressed: bool) {
+        match button {
+            MouseInputButton::Left => self.set_mouse_left_button(pressed),
+            MouseInputButton::Right => self.set_mouse_right_button(pressed),
+        }
+    }
+}
+
+impl MouseInputCapability for Snes {
+    fn has_any_mouse_controller(&self) -> bool {
+        self.has_mouse()
+    }
+
+    fn has_zapper(&self) -> bool {
+        false
+    }
+
+    fn has_snes_mouse(&self) -> bool {
+        self.has_mouse()
+    }
+
+    fn has_snes_mouse_on_port(&self, port: u8) -> bool {
+        self.has_mouse_on_port(port)
+    }
+
+    fn set_mouse_position(&mut self, _x: u8, _y: u8) {
+        // SNES mouse uses relative motion only.
+    }
+
+    fn set_paddle_position(&mut self, _x: u8) {
+        // SNES has no NES-style paddle absolute X routing.
+    }
+
+    fn add_mouse_delta(&mut self, dx: i16, dy: i16) {
+        for port in 0..=1u8 {
+            if self.has_mouse_on_port(port) {
+                self.add_mouse_delta(port, dx, dy);
+            }
+        }
+    }
+
+    fn set_mouse_button(&mut self, button: MouseInputButton, pressed: bool) {
+        for port in 0..=1u8 {
+            if self.has_mouse_on_port(port) {
+                match button {
+                    MouseInputButton::Left => self.set_mouse_left_button(port, pressed),
+                    MouseInputButton::Right => self.set_mouse_right_button(port, pressed),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native")]
+impl PpuViewerCapability for Nes {
+    fn create_ppu_viewer_snapshot(&self) -> PpuViewerSnapshotKind {
+        PpuViewerSnapshotKind::Nes(NesPpuViewerSnapshot::from_nes(self))
+    }
+}
+
+#[cfg(feature = "native")]
+impl PpuViewerCapability for GameBoy {
+    fn create_ppu_viewer_snapshot(&self) -> PpuViewerSnapshotKind {
+        PpuViewerSnapshotKind::GameBoy(Box::new(GameBoy::create_ppu_viewer_snapshot(self)))
+    }
 }
 
 /// Identifies which emulated system a [`Console`] instance is running.
@@ -136,6 +272,98 @@ impl Console {
             Console::GameBoy(gb) => gb.as_mut(),
             Console::GameBoyAdvance(gba) => gba.as_mut(),
             Console::Snes(snes) => snes.as_mut(),
+        }
+    }
+
+    /// Access mouse capability for consoles that support mouse-driven input.
+    pub fn as_mouse_input(&self) -> Option<&dyn MouseInputCapability> {
+        match self {
+            Console::Nes(nes) => Some(nes.as_ref()),
+            Console::Snes(snes) => Some(snes.as_ref()),
+            Console::GameBoy(_) | Console::GameBoyAdvance(_) => None,
+        }
+    }
+
+    /// Mutable access to mouse capability for consoles that support it.
+    pub fn as_mouse_input_mut(&mut self) -> Option<&mut dyn MouseInputCapability> {
+        match self {
+            Console::Nes(nes) => Some(nes.as_mut()),
+            Console::Snes(snes) => Some(snes.as_mut()),
+            Console::GameBoy(_) | Console::GameBoyAdvance(_) => None,
+        }
+    }
+
+    /// Access the NES emulator, if this console is running NES hardware.
+    pub fn as_nes(&self) -> Option<&Nes> {
+        match self {
+            Console::Nes(nes) => Some(nes.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Mutable access to the NES emulator, if present.
+    pub fn as_nes_mut(&mut self) -> Option<&mut Nes> {
+        match self {
+            Console::Nes(nes) => Some(nes.as_mut()),
+            _ => None,
+        }
+    }
+
+    /// Access the Game Boy emulator, if this console is running Game Boy hardware.
+    pub fn as_gameboy(&self) -> Option<&GameBoy> {
+        match self {
+            Console::GameBoy(gb) => Some(gb.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Mutable access to the Game Boy emulator, if present.
+    pub fn as_gameboy_mut(&mut self) -> Option<&mut GameBoy> {
+        match self {
+            Console::GameBoy(gb) => Some(gb.as_mut()),
+            _ => None,
+        }
+    }
+
+    /// Access the Game Boy Advance emulator, if this console is running GBA hardware.
+    pub fn as_gba(&self) -> Option<&Gba> {
+        match self {
+            Console::GameBoyAdvance(gba) => Some(gba.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Mutable access to the Game Boy Advance emulator, if present.
+    pub fn as_gba_mut(&mut self) -> Option<&mut Gba> {
+        match self {
+            Console::GameBoyAdvance(gba) => Some(gba.as_mut()),
+            _ => None,
+        }
+    }
+
+    /// Access the SNES emulator, if this console is running SNES hardware.
+    pub fn as_snes(&self) -> Option<&Snes> {
+        match self {
+            Console::Snes(snes) => Some(snes.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Mutable access to the SNES emulator, if present.
+    pub fn as_snes_mut(&mut self) -> Option<&mut Snes> {
+        match self {
+            Console::Snes(snes) => Some(snes.as_mut()),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "native")]
+    /// Access PPU viewer capability for consoles that support it.
+    pub fn as_ppu_viewer(&self) -> Option<&dyn PpuViewerCapability> {
+        match self {
+            Console::Nes(nes) => Some(nes.as_ref()),
+            Console::GameBoy(gb) => Some(gb.as_ref()),
+            Console::GameBoyAdvance(_) | Console::Snes(_) => None,
         }
     }
 
@@ -560,6 +788,38 @@ mod tests {
         } else {
             panic!("expected Console::Nes");
         }
+    }
+
+    #[test]
+    fn test_mouse_capability_accessors_match_console_support() {
+        let mut nes = Console::new_nes(make_shared_context());
+        let mut snes = Console::new_snes(make_shared_context());
+        let mut gb = Console::new_gameboy(make_shared_context());
+        let mut gba = Console::new_gba(make_shared_context());
+
+        assert!(nes.as_mouse_input().is_some());
+        assert!(nes.as_mouse_input_mut().is_some());
+        assert!(snes.as_mouse_input().is_some());
+        assert!(snes.as_mouse_input_mut().is_some());
+
+        assert!(gb.as_mouse_input().is_none());
+        assert!(gb.as_mouse_input_mut().is_none());
+        assert!(gba.as_mouse_input().is_none());
+        assert!(gba.as_mouse_input_mut().is_none());
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_ppu_viewer_accessors_match_console_support() {
+        let nes = Console::new_nes(make_shared_context());
+        let gb = Console::new_gameboy(make_shared_context());
+        let gba = Console::new_gba(make_shared_context());
+        let snes = Console::new_snes(make_shared_context());
+
+        assert!(nes.as_ppu_viewer().is_some());
+        assert!(gb.as_ppu_viewer().is_some());
+        assert!(gba.as_ppu_viewer().is_none());
+        assert!(snes.as_ppu_viewer().is_none());
     }
 
     #[test]

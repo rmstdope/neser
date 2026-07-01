@@ -72,7 +72,7 @@ pub(super) fn handle_controller_key(
     pressed: bool,
     ports: &[u8],
 ) {
-    let Console::Nes(nes) = console else {
+    let Some(nes) = console.as_nes_mut() else {
         return;
     };
     match key_code {
