@@ -460,10 +460,6 @@ impl SnesApu {
 
     #[cfg(test)]
     pub(crate) fn write_spc_memory_for_test(&mut self, addr: u16, value: u8) {
-        // TEST register writes are only valid when PSW P flag (bit 5) is clear, per bsmes.
-        if addr == 0x00F0 && self.spc700.psw() & 0x20 != 0 {
-            return; // Ignore write when P flag is set
-        }
         let mut bus_view = SpcBusView {
             aram: &mut self.aram,
             ipl: &self.ipl,
@@ -638,11 +634,17 @@ impl Spc700Bus for SpcBusView<'_> {
     fn read(&mut self, addr: u16) -> u8 {
         let cycles = self.read_cycles(addr);
         let value = match addr {
-            0x00F0 => self.test_reg(), // TEST is readable; returns current register value (fullsnes: default 0x0A)
+            // I/O register reads ($F0-$FF) always return I/O values, not the RAM-disable
+            // sentinel. Per bsmes smp/memory.cpp: readRAM is called first (returns $5A when
+            // RAM-disabled), but readIO overrides for the entire $F0-$FF range.
+            0x00F0 => self.test_reg(), // TEST is readable; per fullsnes default 0x0A
             0x00F1 => *self.control,
             0x00F2 => *self.dsp_addr,
             0x00F3 => self.dsp.read_reg(*self.dsp_addr),
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
+            // $F8-$F9 = AUXIO4/AUXIO5 (general-purpose I/O, stores value in ARAM)
+            // $FA-$FC = T0/T1/T2 targets (write-only; return underlying ARAM bytes, per bsmes)
+            0x00F8..=0x00FC => self.aram[addr as usize],
             0x00FD..=0x00FF => self.timers.read_counter((addr - 0x00FD) as usize),
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
             _ if self.ram_disabled() => 0x5A,

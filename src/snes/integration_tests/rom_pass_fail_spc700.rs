@@ -14,6 +14,8 @@ mod tests {
         ("1-test_exec_from_io.smc", 600, 0x7EEE_5E15),
         ("2-test_single_instr.smc", 600, 0x2B42_CE76),
         ("3-test_write_disable.smc", 600, 0xC3DE_3F4F),
+        ("4-test_ram_disable.smc", 600, 0x85F1_D154),
+        ("test_ram_disable_ipl.smc", 600, 0xD001_765E),
         ("test_speed.smc", 600, 0x8EAD_6D95),
         ("test_timer_speed_2.smc", 600, 0x471F_26BD),
         ("test_timer_speed3.smc", 600, 0x0BBB_12C6),
@@ -99,18 +101,6 @@ mod tests {
             result.passed,
             result.exit_reason
         );
-    }
-
-    #[test]
-    #[ignore = "fails: APU RAM disable reports code CC — fix emulator then update CRC"]
-    fn blargg_4_test_ram_disable_passes() {
-        run_failing_rom("4-test_ram_disable.smc");
-    }
-
-    #[test]
-    #[ignore = "fails: APU RAM/IPL disable — fix emulator then update CRC"]
-    fn blargg_test_ram_disable_ipl_passes() {
-        run_failing_rom("test_ram_disable_ipl.smc");
     }
 
     #[test]
