@@ -259,7 +259,7 @@ fn maybe_write_capture_png(
     crc: u32,
     capture_screen: bool,
 ) -> Option<PathBuf> {
-    if !capture_screen {
+    if !capture_screen || capture_is_disabled_for_fixture(name) {
         return None;
     }
 
@@ -272,6 +272,18 @@ fn maybe_write_capture_png(
         snes.screen_height(),
     );
     Some(path)
+}
+
+fn capture_is_disabled_for_fixture(name: &str) -> bool {
+    matches!(
+        Path::new(name).file_stem().and_then(|stem| stem.to_str()),
+        Some("bus-byte-pass")
+            | Some("fail")
+            | Some("pass")
+            | Some("screen-crc-match")
+            | Some("screen-crc-mismatch")
+            | Some("screen-crc-probe")
+    )
 }
 
 fn capture_stem(name: &str) -> String {
@@ -542,5 +554,20 @@ mod tests {
             path.display()
         );
         std::fs::remove_file(path).expect("remove test capture");
+    }
+
+    #[test]
+    fn capture_is_disabled_for_known_fixture_names_even_when_enabled() {
+        for name in [
+            "bus-byte-pass.sfc",
+            "fail.sfc",
+            "pass.sfc",
+            "screen-crc-match.sfc",
+            "screen-crc-mismatch.sfc",
+            "screen-crc-probe.sfc",
+        ] {
+            let result = run_rom_with_capture(&pass_marker_rom(), name, short_config(), true);
+            assert!(result.capture_path.is_none(), "{name} should not capture");
+        }
     }
 }
