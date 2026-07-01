@@ -23,14 +23,29 @@ impl Ppu {
         }
         self.master_cycle_accumulator += 1;
         let cycles_per_dot = self.cycles_per_current_dot();
-        if self.master_cycle_accumulator < cycles_per_dot {
-            return;
+        if self.master_cycle_accumulator >= cycles_per_dot {
+            self.master_cycle_accumulator -= cycles_per_dot;
+            if self.advance_dot() {
+                // A new scanline just began: record the length of the line that just
+                // finished (its final `line_clock` + this wrapping clock) and restart
+                // the intra-line clock at 0.
+                self.last_hperiod = self.line_clock + 1;
+                self.line_clock = 0;
+            } else {
+                self.line_clock += 1;
+            }
+        } else {
+            self.line_clock += 1;
         }
-        self.master_cycle_accumulator -= cycles_per_dot;
-        self.advance_dot();
+        // H/V IRQ is evaluated every master clock so it can fire at the exact
+        // sub-dot clock offset used by the hardware ((HTIME+1)*4 + 10).
+        self.evaluate_hv_irq();
     }
 
-    fn advance_dot(&mut self) {
+    /// Advance the dot/scanline counters by one dot. Returns `true` if the scanline wrapped
+    /// (i.e. a new scanline began), so the caller can restart the intra-line clock.
+    fn advance_dot(&mut self) -> bool {
+        let mut new_scanline = false;
         self.position.dot += 1;
         if self.position.dot >= self.dots_in_current_scanline() {
             self.position.dot = 0;
@@ -39,16 +54,17 @@ impl Ppu {
                 self.position.scanline = 0;
             }
             self.on_scanline_start();
+            new_scanline = true;
         }
         if self.position.scanline == self.vblank_start_line()
             && self.position.dot == super::AUTO_JOYPAD_LATCH_DOT
         {
             self.auto_joypad_latch = true;
         }
-        self.evaluate_hv_irq();
         let forced_blank = self.inidisp & 0x80 != 0;
         self.update_obj_pipeline(forced_blank);
         self.render_dot();
+        new_scanline
     }
 
     fn dots_in_current_scanline(&self) -> u16 {
@@ -174,24 +190,61 @@ impl Ppu {
     }
 
     fn evaluate_hv_irq(&mut self) {
-        let h = self.position.dot;
+        if self.irq_mode == 0 {
+            return;
+        }
         let v = self.position.scanline;
-        let triggered = match self.irq_mode {
-            // H IRQ each scanline at HTIME.
-            1 => h == self.htime,
-            // V IRQ once on matching scanline (current dot model: dot 0 of that line).
-            2 => h == 0 && v == self.vtime,
-            // HV IRQ at HTIME of VTIME line, with HTIME=0 as the dot-0 special case.
-            3 => {
-                v == self.vtime
-                    && ((self.htime == 0 && h == 0) || (self.htime != 0 && h == self.htime))
-            }
-            _ => false,
+        let lc = self.line_clock;
+        // bsnes (`CPU::irqPoll`) compares the delayed H/V counters against the timer
+        // targets. `hcounter(n)`/`vcounter(n)` return the counter value `n` clocks in the
+        // past, wrapping into the previous scanline (using its `hperiod`) when `n` reaches
+        // back past the current line start. The IRQ fires when:
+        //   H  : hcounter(10) == io.htime            (every scanline)
+        //   V  : vcounter(10) == vtime               (once, at the first poll)
+        //   HV : both of the above on the same line
+        // where `io.htime = (HTIME + 1) * 4`.
+        let io_htime = (self.htime + 1) * 4;
+        let hc10 = if lc >= 10 {
+            lc - 10
+        } else {
+            lc + self.last_hperiod - 10
         };
+        let v10 = if lc >= 10 {
+            v
+        } else if v > 0 {
+            v - 1
+        } else {
+            self.scanlines_per_frame() - 1
+        };
+        // "IRQs cannot trigger on the last dot of the field": bsnes blocks a match whose
+        // 6-clock-delayed position is the frame origin (vcounter(6) == 0 && hcounter(6) == 0).
+        let hc6 = if lc >= 6 {
+            lc - 6
+        } else {
+            lc + self.last_hperiod - 6
+        };
+        let v6 = if lc >= 6 {
+            v
+        } else if v > 0 {
+            v - 1
+        } else {
+            self.scanlines_per_frame() - 1
+        };
+        let not_last_dot = v6 != 0 || hc6 != 0;
+        let triggered = not_last_dot
+            && match self.irq_mode {
+                // H IRQ each scanline when the delayed H counter reaches the compare value.
+                1 => hc10 == io_htime,
+                // V IRQ once on the matching scanline, at the first poll (rising edge).
+                2 => v == self.vtime && lc == 10,
+                // HV IRQ at the H compare of the VTIME line.
+                3 => hc10 == io_htime && v10 == self.vtime,
+                _ => false,
+            };
         if triggered && !self.timeup_flag {
-            trace_ppu!(2; "timeup y={} x={} irq_mode={} htime={:03X} vtime={:03X}",
-                h,
-                self.position.dot,
+            trace_ppu!(2; "timeup y={} lc={} irq_mode={} htime={:03X} vtime={:03X}",
+                v,
+                lc,
                 self.irq_mode,
                 self.htime,
                 self.vtime,
@@ -521,13 +574,36 @@ mod tests {
     }
 
     #[test]
+    fn h_irq_fires_at_bsnes_clock_offset() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4207, 0x01); // HTIME = 1
+        ppu.write_register(0x4208, 0x00);
+        ppu.write_register(0x4200, 0x10); // H-IRQ enable
+        // bsnes fires H-IRQ when the (10-clock-delayed) H counter reaches (HTIME+1)*4
+        // clocks, i.e. at intra-scanline master clock (HTIME+1)*4 + 10 = 18.
+        tick_cycles(&mut ppu, 17);
+        assert_eq!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "H-IRQ must not fire before clock (HTIME+1)*4 + 10"
+        );
+        tick_cycles(&mut ppu, 1);
+        assert_ne!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "H-IRQ fires at clock (HTIME+1)*4 + 10"
+        );
+    }
+
+    #[test]
     fn h_irq_sets_timeup_and_4211_read_acknowledges_it() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x4207, 0x01);
         ppu.write_register(0x4208, 0x00);
         ppu.write_register(0x4200, 0x10);
 
-        tick_dots(&mut ppu, 1);
+        // HTIME=1 fires at clock (1+1)*4 + 10 = 18.
+        tick_cycles(&mut ppu, 18);
 
         let first = ppu.read_register(0x4211);
         let second = ppu.read_register(0x4211);
@@ -542,7 +618,8 @@ mod tests {
         ppu.write_register(0x4208, 0x00);
         ppu.write_register(0x4200, 0x10);
 
-        tick_dots(&mut ppu, 2);
+        // HTIME=2 fires at clock (2+1)*4 + 10 = 22.
+        tick_cycles(&mut ppu, 22);
         assert_ne!(ppu.read_register(0x4211) & 0x80, 0, "line 0 trigger");
 
         tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32);
@@ -554,12 +631,42 @@ mod tests {
     }
 
     #[test]
+    fn h_irq_with_late_htime_wraps_to_next_scanline_and_is_blocked_on_field_origin() {
+        // HTIME = 339 (0x153) => io.htime = (339 + 1) * 4 = 1360 clocks. Since a normal
+        // scanline is only 1364 clocks, bsnes' delayed `hcounter(10) == io.htime` compare
+        // matches via wraparound at intra-line clock 6 of the *following* scanline
+        // (6 + 1364 - 10 == 1360). On the first scanline that match lands on the frame
+        // origin and is suppressed by the "IRQs cannot trigger on the last dot of the
+        // field" guard. This is the case that previously hung the SPC700 timing ROMs.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4207, 0x53); // HTIME low
+        ppu.write_register(0x4208, 0x01); // HTIME high => 0x153 = 339
+        ppu.write_register(0x4200, 0x10); // H-IRQ enable
+
+        // Advance through scanline 0 and into scanline 1 (dot 0, intra-line clock 0).
+        tick_cycles(&mut ppu, 1364);
+        assert_eq!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "the wrapped match on the field origin must be blocked on scanline 0"
+        );
+
+        // Six clocks into scanline 1 the wrapped H compare matches and fires.
+        tick_cycles(&mut ppu, 6);
+        assert_ne!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "H-IRQ fires at the wrapped compare clock on the following scanline"
+        );
+    }
+
+    #[test]
     fn disabling_irq_mode_clears_timeup_flag() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x4207, 0x01);
         ppu.write_register(0x4208, 0x00);
         ppu.write_register(0x4200, 0x10);
-        tick_dots(&mut ppu, 1);
+        tick_cycles(&mut ppu, 18); // HTIME=1 fires at clock 18
         assert_ne!(ppu.read_register(0x4211) & 0x80, 0);
 
         ppu.write_register(0x4200, 0x00);
@@ -577,7 +684,9 @@ mod tests {
         ppu.write_register(0x420A, 0x00);
         ppu.write_register(0x4200, 0x20);
 
+        // V-IRQ fires at the poll-delay clock (10) of the VTIME scanline.
         tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 2);
+        tick_cycles(&mut ppu, 10);
         assert_ne!(
             ppu.read_register(0x4211) & 0x80,
             0,
@@ -601,10 +710,12 @@ mod tests {
         ppu.write_register(0x420A, 0x00);
         ppu.write_register(0x4200, 0x30);
 
-        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 3 + 4);
+        // HV IRQ fires at clock (5+1)*4 + 10 = 34 of the VTIME=3 scanline.
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 3);
+        tick_cycles(&mut ppu, 33);
         assert_eq!(ppu.read_register(0x4211) & 0x80, 0);
 
-        tick_dots(&mut ppu, 1);
+        tick_cycles(&mut ppu, 1);
         assert_ne!(
             ppu.read_register(0x4211) & 0x80,
             0,
@@ -613,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn hv_irq_with_htime_zero_triggers_at_dot_zero_of_vtime_line() {
+    fn hv_irq_with_htime_zero_triggers_at_clock_14_of_vtime_line() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x4207, 0x00);
         ppu.write_register(0x4208, 0x00);
@@ -621,11 +732,13 @@ mod tests {
         ppu.write_register(0x420A, 0x00);
         ppu.write_register(0x4200, 0x30);
 
+        // HTIME=0 fires at clock (0+1)*4 + 10 = 14 of the VTIME=4 scanline.
         tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 4);
+        tick_cycles(&mut ppu, 14);
         assert_ne!(
             ppu.read_register(0x4211) & 0x80,
             0,
-            "HTIME=0 HV mode should trigger at dot 0 of the VTIME line"
+            "HTIME=0 HV mode should trigger at clock 14 of the VTIME line"
         );
     }
 

@@ -17,6 +17,8 @@ impl Ppu {
             scanline: self.position.scanline,
             dot: self.position.dot,
             master_cycle_accumulator: self.master_cycle_accumulator,
+            line_clock: self.line_clock,
+            last_hperiod: self.last_hperiod,
             line_timing_profile: self.line_timing_profile.as_u8(),
             inidisp: self.inidisp,
             nmi_enable: self.nmi_enable,
@@ -106,6 +108,8 @@ impl Ppu {
             dot: state.dot,
         };
         self.master_cycle_accumulator = state.master_cycle_accumulator;
+        self.line_clock = state.line_clock;
+        self.last_hperiod = state.last_hperiod;
         self.line_timing_profile = PpuLineTimingProfile::from_u8(state.line_timing_profile);
         self.inidisp = state.inidisp;
         self.nmi_enable = state.nmi_enable;
