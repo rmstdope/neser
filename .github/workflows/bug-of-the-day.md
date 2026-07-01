@@ -1,7 +1,9 @@
 ---
 name: Bug of the Day
 description: Selects the highest-priority open bug issue, fixes it using the bug-hunter workflow, and creates a pull request.
-engine: copilot
+engine:
+  id: copilot
+  model: claude-sonnet-4.6
 on:
   schedule: daily
   workflow_dispatch:
@@ -28,6 +30,8 @@ network:
     - defaults
     - "rust"
     - "www.nesdev.org"
+    - "fullsnes.emualog.com"
+    - "problemkaputt.de"
 
 tools:
   github:
