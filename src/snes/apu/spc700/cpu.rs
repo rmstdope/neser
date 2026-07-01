@@ -129,6 +129,11 @@ impl Spc700 {
         self.halted = true;
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_halted(&self) -> bool {
+        self.halted
+    }
+
     /// Reset the CPU: clear registers/flags and load `PC` from the reset vector.
     ///
     /// On real hardware the boot ROM is mapped at reset, so the vector at

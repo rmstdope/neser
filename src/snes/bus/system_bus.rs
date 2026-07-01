@@ -558,6 +558,26 @@ impl SnesSystemBus {
         self.apu.get_mut().read_spc_memory_for_test(addr)
     }
 
+    #[cfg(test)]
+    pub(crate) fn apu_spc_pc_for_debug(&self) -> u16 {
+        self.apu.borrow().spc_pc_for_debug()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apu_peek_aram_for_debug(&self, addr: u16) -> u8 {
+        self.apu.borrow().peek_aram_for_debug(addr)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apu_main_to_spc_ports_for_debug(&self) -> [u8; 4] {
+        self.apu.borrow().main_to_spc_ports_for_debug()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apu_spc_to_main_ports_for_debug(&self) -> [u8; 4] {
+        self.apu.borrow().spc_to_main_ports_for_debug()
+    }
+
     fn read_mmio(&self, addr: u32) -> Option<u8> {
         let offset = Self::decode_system_offset(addr)?;
         let open_bus = self.mdr.get();
