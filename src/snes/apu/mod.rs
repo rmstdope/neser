@@ -662,7 +662,7 @@ impl Spc700Bus for SpcBusView<'_> {
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
             // $F8-$F9 = AUXIO4/AUXIO5 (general-purpose I/O, stores value in ARAM)
             0x00F8..=0x00F9 => self.aram[addr as usize],
-            // $FA-$FC = T0/T1/T2 targets (write-only)
+            // $FA-$FC = T0/T1/T2 targets (write-only; reads return 0x00)
             0x00FA..=0x00FC => 0x00,
             0x00FD..=0x00FF => self.timers.read_counter((addr - 0x00FD) as usize),
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],

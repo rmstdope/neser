@@ -222,10 +222,13 @@ mod tests {
 
         timers.write_control(0x04, 0x00); // disable T2 → TnOUT must be cleared
 
+        assert_eq!(timers.read_counter(2), 0x00, "disabling must clear TnOUT");
+
+        advance_cycles(&mut timers, 64);
         assert_eq!(
             timers.read_counter(2),
             0x00,
-            "disabling must clear TnOUT"
+            "disabled timer must not advance"
         );
     }
 
