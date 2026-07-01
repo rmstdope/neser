@@ -92,7 +92,7 @@
       },
       "license": "unknown",
       "oracle_type": "screen_crc",
-      "notes": "blargg (Shay Green) SNES SPC700/APU test ROMs. They report results via blargg's standard text shell (Passed / Failed #N / Internal error), so the committed subset is verified by comparing the rendered screen CRC32 at a fixed frame against a human-approved PASS capture (NESER_CAPTURE_SCREEN). License is informal: these are freely-redistributable test binaries with no formal license file, recorded as unknown; author site http://www.slack.net/~ant/. All 18 ROMs are committed. Six currently PASS in this emulator (verified goldens): 1-test_exec_from_io, 2-test_single_instr, 3-test_write_disable, test_speed, test_timer_speed_2, test_timer_speed3. Twelve are committed with #[ignore]'d tests pending emulator accuracy improvements: 4-test_ram_disable (code CC), test_ram_disable_ipl, spc_smp (Failed 02), spc_mem_access_times, spc_dsp6 (Failed 03), spc_timer (Failed 02), test_timer_speed, test_timer_speed2, test_timer_stop, test_timer_stop2, timer_at_power_reset, speed_2_freezes2. See README-SNES for details.",
+      "notes": "blargg (Shay Green) SNES SPC700/APU test ROMs. They report results via blargg's standard text shell (Passed / Failed #N / Internal error), so the committed subset is verified by comparing the rendered screen CRC32 at a fixed frame against a human-approved PASS capture (NESER_CAPTURE_SCREEN). License is informal: these are freely-redistributable test binaries with no formal license file, recorded as unknown; author site http://www.slack.net/~ant/. All 18 ROMs are committed. Ten currently PASS in this emulator (verified goldens): 1-test_exec_from_io, 2-test_single_instr, 3-test_write_disable, 4-test_ram_disable, test_ram_disable_ipl, spc_smp, test_speed, test_timer_speed_2, test_timer_speed3, test_timer_stop. Eight are committed with #[ignore]'d tests pending emulator accuracy improvements: spc_mem_access_times, spc_dsp6 (Failed 03), spc_timer (Failed 02), test_timer_speed, test_timer_speed2, test_timer_stop2, timer_at_power_reset, speed_2_freezes2. See README-SNES for details.",
       "variants": [
         {
           "id": "ci_subset",
@@ -105,7 +105,7 @@
             "file_count": 18,
             "total_size_bytes": 1681408
           },
-          "notes": "All 18 blargg SPC700/APU ROMs. Six have visually-approved PASS goldens run by snes::integration_tests::rom_pass_fail_spc700 with the screen-CRC oracle (frame 600). Twelve are committed with #[ignore]'d tests that will be promoted to regular tests once the emulator produces Passed results. tree_sha256 is the sorted per-file sha256 record hash; regenerate with scripts/compute_snes_rom_asset_integrity.py."
+          "notes": "All 18 blargg SPC700/APU ROMs. Ten have visually-approved PASS goldens run by snes::integration_tests::rom_pass_fail_spc700 with the screen-CRC oracle (frame 600). Eight are committed with #[ignore]'d tests that will be promoted to regular tests once the emulator produces Passed results. tree_sha256 is the sorted per-file sha256 record hash; regenerate with scripts/compute_snes_rom_asset_integrity.py."
         }
       ]
     }
