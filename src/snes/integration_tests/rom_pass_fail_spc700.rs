@@ -71,12 +71,13 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // ROMs that currently FAIL — committed and tracked, ignored until fixed.
+    // Additional ROM tests — a mix of:
+    //   • Passing tests with real golden CRCs (no #[ignore]).
+    //   • Failing tests with a placeholder CRC of 0x0000_0000 and #[ignore].
     //
-    // Each test uses a placeholder expected_crc of 0x0000_0000. When the
-    // emulator is fixed and the ROM prints "Passed", run with
-    // NESER_CAPTURE_SCREEN=1 to capture the golden screen, then replace the
-    // placeholder with the real CRC and remove the #[ignore].
+    // For failing tests: when the emulator is fixed and the ROM prints
+    // "Passed", run with NESER_CAPTURE_SCREEN=1 to capture the golden screen,
+    // then replace the placeholder with the real CRC and remove the #[ignore].
     // -------------------------------------------------------------------------
 
     fn run_rom_with_expected_crc(file: &str, expected_crc: u32) {
