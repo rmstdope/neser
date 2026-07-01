@@ -150,9 +150,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: SPC speed/freeze — fix emulator then update CRC"]
     fn blargg_speed_2_freezes2_passes() {
-        run_failing_rom("speed_2_freezes2.smc");
+        run_rom_with_expected_crc("speed_2_freezes2.smc", 0x6E1B_F905);
     }
 
     // -------------------------------------------------------------------------
