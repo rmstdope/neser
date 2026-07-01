@@ -602,15 +602,18 @@ impl<B: SnesBus> Cpu<B> {
         // Poll hardware interrupts (higher priority than opcode fetch)
         if self.abort_pending {
             self.abort_pending = false;
-            return self.dispatch_abort();
+            let base = self.dispatch_abort();
+            return self.tick_internal_cycles_for(base);
         }
         if self.nmi_pending {
             self.nmi_pending = false;
-            return self.dispatch_nmi();
+            let base = self.dispatch_nmi();
+            return self.tick_internal_cycles_for(base);
         }
         if irq_line_asserted && !self.flag_i() {
             // IRQ is level-triggered: do NOT clear irq_pending here; caller must deassert
-            return self.dispatch_irq();
+            let base = self.dispatch_irq();
+            return self.tick_internal_cycles_for(base);
         }
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
@@ -880,12 +883,26 @@ impl<B: SnesBus> Cpu<B> {
         let total_bus_cycles = base + self.extra_cycles;
 
         // Tick bus for internal (non-memory-access) cycles.
-        // Internal cycles always consume 6 master clocks (CPU-internal, not a memory access).
+        self.tick_internal_cycles_for(total_bus_cycles)
+    }
+
+    /// Tick the bus for the CPU-internal (non-memory-access) cycles of an
+    /// operation whose total length is `total_bus_cycles`.
+    ///
+    /// Memory accesses already tick the bus at their region speed and increment
+    /// `memory_bus_cycles`; the remaining cycles are CPU-internal and each
+    /// consume 6 master clocks. Returns `total_bus_cycles` for convenience so
+    /// callers can `return self.tick_internal_cycles_for(n);`.
+    ///
+    /// This applies uniformly to normal opcodes and to hardware interrupt
+    /// dispatch (IRQ/NMI/ABORT), whose 8/7-cycle sequences include two internal
+    /// cycles that must advance the PPU/APU alongside the stack pushes and
+    /// vector reads.
+    fn tick_internal_cycles_for(&mut self, total_bus_cycles: u8) -> u8 {
         let internal_cycles = total_bus_cycles.saturating_sub(self.memory_bus_cycles);
         for _ in 0..internal_cycles {
             self.tick_internal_cycle();
         }
-
         total_bus_cycles
     }
 
@@ -10779,6 +10796,42 @@ mod master_clock_tests {
         cpu.step();
         // opcode(8) + lo(8) + hi(8) + read at $2140 (B-Bus I/O, 6) = 30
         assert_eq!(cpu.bus.tick_count(), 30);
+    }
+
+    // -------------------------------------------------------------------------
+    // Hardware interrupt dispatch must tick the bus for the full 8/7-cycle
+    // sequence, including the two CPU-internal cycles — not only the memory
+    // accesses. The 65816 native IRQ/NMI sequence is 8 cycles (2 internal +
+    // 4 stack pushes + 2 vector reads); the emulation-mode sequence is 7
+    // cycles (2 internal + 3 stack pushes + 2 vector reads).
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn native_irq_dispatch_ticks_full_eight_cycles() {
+        // Native mode, I clear so the IRQ dispatches. No opcode is fetched.
+        let mut cpu = cpu_at(0x00_0000, &[]);
+        cpu.write_pc(0x0000);
+        // Native IRQ/BRK vector at $00FFEE -> handler.
+        cpu.bus.load(0x00_FFEE, &[0x00, 0x90]);
+        cpu.set_irq(true);
+        cpu.step();
+        // 4 pushes (WRAM stack $01xx, 8 each = 32) + 2 vector reads
+        // ($00FFEE/EF, WS1 ROM slow 8 each = 16) + 2 internal (6 each = 12) = 60.
+        assert_eq!(cpu.bus.tick_count(), 60);
+    }
+
+    #[test]
+    fn emulation_irq_dispatch_ticks_full_seven_cycles() {
+        let mut cpu = cpu_at(0x00_0000, &[]);
+        cpu.e = true; // emulation mode
+        cpu.write_pc(0x0000);
+        // Emulation IRQ vector at $00FFFE -> handler.
+        cpu.bus.load(0x00_FFFE, &[0x00, 0x90]);
+        cpu.set_irq(true);
+        cpu.step();
+        // 3 pushes (8 each = 24) + 2 vector reads (8 each = 16) + 2 internal
+        // (6 each = 12) = 52.
+        assert_eq!(cpu.bus.tick_count(), 52);
     }
 }
 
