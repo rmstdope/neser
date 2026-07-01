@@ -17,10 +17,10 @@ test.describe("SNES frontend flow", () => {
         await expect(page.locator(START_BUTTON_SELECTOR)).toBeDisabled();
         await expect(page.locator(PAUSE_BUTTON_SELECTOR)).toHaveText("Pause");
 
-        await page.locator(PAUSE_BUTTON_SELECTOR).click({ force: true });
+        await page.locator(PAUSE_BUTTON_SELECTOR).evaluate((button: HTMLButtonElement) => button.click());
         await waitForPausedState(page);
 
-        await page.locator(PAUSE_BUTTON_SELECTOR).click({ force: true });
+        await page.locator(PAUSE_BUTTON_SELECTOR).evaluate((button: HTMLButtonElement) => button.click());
         await waitForRunningState(page);
     });
 });

@@ -8,7 +8,7 @@
 
 use crate::frontends::native::app_state::NativeAppState;
 use crate::platform::audio::EmulatorAudio;
-use crate::platform::emulator::Console;
+use crate::platform::emulator::{Console, SystemType};
 use winit::keyboard::KeyCode;
 
 mod console_keyboard;
@@ -58,8 +58,8 @@ pub fn handle_key_pressed(
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
-    match console {
-        Console::Nes(_) => {
+    match console.system_type() {
+        SystemType::Nes => {
             if app_state.cart_switch.open {
                 return hotkeys::handle_cartridge_switch_key(key_code, app_state);
             }
@@ -68,13 +68,13 @@ pub fn handle_key_pressed(
             }
             console_keyboard::handle_unmodified_key(console, key_code, app_state, audio)
         }
-        Console::GameBoy(_) => {
+        SystemType::GameBoy => {
             console_keyboard::handle_gameboy_key_pressed(console, key_code, app_state, audio)
         }
-        Console::GameBoyAdvance(_) => {
+        SystemType::Gba => {
             console_keyboard::handle_gba_key_pressed(console, key_code, app_state, audio)
         }
-        Console::Snes(_) => {
+        SystemType::Snes => {
             console_keyboard::handle_snes_key_pressed(console, key_code, app_state, audio)
         }
     }
@@ -94,22 +94,22 @@ pub fn handle_key_released(
     gamepad_count: usize,
     four_score: bool,
 ) {
-    match console {
-        Console::Nes(_) => {
+    match console.system_type() {
+        SystemType::Nes => {
             let ports = keyboard_target_ports(gamepad_count, four_score);
             controller_mapping::handle_controller_key(console, key_code, false, ports);
         }
-        Console::GameBoy(_) => {
+        SystemType::GameBoy => {
             if let Some(btn_id) = controller_mapping::gameboy_key_to_button_id(key_code) {
                 console.set_button(0, btn_id, false);
             }
         }
-        Console::GameBoyAdvance(_) => {
+        SystemType::Gba => {
             if let Some(btn_id) = controller_mapping::gba_key_to_button_id(key_code) {
                 console.set_button(0, btn_id, false);
             }
         }
-        Console::Snes(_) => {
+        SystemType::Snes => {
             if let Some(btn_id) = controller_mapping::snes_key_to_button_id(key_code) {
                 console.set_button(0, btn_id, false);
             }

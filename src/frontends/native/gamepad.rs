@@ -5,7 +5,7 @@
 //! hot-plug player assignment.
 
 use crate::nes::input::{Button, ControllerInput, SnesButton};
-use crate::platform::emulator::Console;
+use crate::platform::emulator::{Console, SystemType};
 
 use gilrs::{Axis, EventType, GamepadId, Gilrs, GilrsBuilder};
 
@@ -364,34 +364,32 @@ impl GamepadManager {
     ) -> Option<GamepadChange> {
         if let Some(player_num) = self.player_map.get(&id).copied() {
             // Release all held buttons for this gamepad's port before removing.
-            match console {
-                Console::Nes(nes) => {
-                    if let Some(port) = Self::assigned_port(nes, &self.player_map, player_num) {
-                        use Button::{A, B, Down, Left, Right, Select, Start, Up};
-                        for button in [A, B, Select, Start, Up, Down, Left, Right] {
-                            nes.set_button(port, button, false);
-                        }
-                        use SnesButton as S;
-                        for snes_btn in [
-                            S::A,
-                            S::B,
-                            S::X,
-                            S::Y,
-                            S::L,
-                            S::R,
-                            S::Start,
-                            S::Select,
-                            S::Up,
-                            S::Down,
-                            S::Left,
-                            S::Right,
-                        ] {
-                            nes.set_snes_button(port, snes_btn, false);
-                        }
+            if let Some(nes) = console.as_nes_mut() {
+                if let Some(port) = Self::assigned_port(nes, &self.player_map, player_num) {
+                    use Button::{A, B, Down, Left, Right, Select, Start, Up};
+                    for button in [A, B, Select, Start, Up, Down, Left, Right] {
+                        nes.set_button(port, button, false);
+                    }
+                    use SnesButton as S;
+                    for snes_btn in [
+                        S::A,
+                        S::B,
+                        S::X,
+                        S::Y,
+                        S::L,
+                        S::R,
+                        S::Start,
+                        S::Select,
+                        S::Up,
+                        S::Down,
+                        S::Left,
+                        S::Right,
+                    ] {
+                        nes.set_snes_button(port, snes_btn, false);
                     }
                 }
-                Console::Snes(_) => release_snes_buttons_for_player(console, player_num),
-                _ => {}
+            } else if console.as_snes().is_some() {
+                release_snes_buttons_for_player(console, player_num);
             }
 
             self.player_map.remove(&id);
@@ -402,7 +400,7 @@ impl GamepadManager {
             self.reassign_players();
 
             // Release all buttons when the last gamepad disconnects (non-NES systems).
-            if !matches!(console, Console::Nes(_)) && self.player_map.is_empty() {
+            if console.system_type() != SystemType::Nes && self.player_map.is_empty() {
                 console.set_joypad_button_states(0, 0);
             }
 
@@ -474,7 +472,7 @@ impl GamepadManager {
         button: gilrs::Button,
         pressed: bool,
     ) {
-        if let Console::Nes(nes) = console {
+        if let Some(nes) = console.as_nes_mut() {
             let Some(&player_num) = self.player_map.get(&id) else {
                 return;
             };
@@ -490,7 +488,7 @@ impl GamepadManager {
             if let Some(nes_btn) = map_button_to_nes(button) {
                 nes.set_button(port, nes_btn, pressed);
             }
-        } else if let Console::Snes(_) = console {
+        } else if console.as_snes().is_some() {
             let Some(&player_num) = self.player_map.get(&id) else {
                 return;
             };
@@ -517,7 +515,7 @@ impl GamepadManager {
             _ => return,
         };
 
-        if let Console::Nes(nes) = console {
+        if let Some(nes) = console.as_nes_mut() {
             let Some(&player_num) = self.player_map.get(&id) else {
                 return;
             };
@@ -533,7 +531,7 @@ impl GamepadManager {
                 }
                 nes.set_button(port, button, pressed);
             }
-        } else if let Console::Snes(_) = console {
+        } else if console.as_snes().is_some() {
             let Some(&player_num) = self.player_map.get(&id) else {
                 return;
             };
