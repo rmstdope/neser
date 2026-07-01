@@ -1652,10 +1652,11 @@ mod tests {
         bus.write(0x004200, 0x10); // H-IRQ mode
 
         assert!(!bus.poll_irq(), "IRQ line starts deasserted");
-        for _ in 0..4 {
-            bus.tick(); // one dot
+        // HTIME=1 fires at intra-scanline clock (1+1)*4 + 10 = 18.
+        for _ in 0..18 {
+            bus.tick(); // one master clock each
         }
-        assert!(bus.poll_irq(), "IRQ line asserted at HTIME");
+        assert!(bus.poll_irq(), "IRQ line asserted at the H-IRQ clock");
 
         assert_ne!(bus.read(0x004211) & 0x80, 0, "TIMEUP read sees pending IRQ");
         assert!(

@@ -116,6 +116,13 @@ pub struct Ppu {
     position: ScanPosition,
     /// Accumulated master clocks not yet converted into dots.
     master_cycle_accumulator: u32,
+    /// Master clocks elapsed since the current scanline started (bsnes "hcounter").
+    /// Reset to 0 at each scanline boundary; used for cycle-accurate H/V IRQ timing.
+    line_clock: u16,
+    /// Master-clock length (bsnes "hperiod") of the previously completed scanline.
+    /// Used to emulate the delayed `hcounter(n)`/`vcounter(n)` counters, which wrap
+    /// into the previous line when the delay reaches back past the line start.
+    last_hperiod: u16,
     /// Latched timing profile for the active scanline.
     line_timing_profile: PpuLineTimingProfile,
     inidisp: u8,
@@ -280,6 +287,8 @@ impl Ppu {
             oam: vec![0; OAM_SIZE],
             position: ScanPosition::default(),
             master_cycle_accumulator: 0,
+            line_clock: 0,
+            last_hperiod: 1364,
             line_timing_profile: PpuLineTimingProfile::Normal,
             inidisp: 0,
             nmi_enable: false,

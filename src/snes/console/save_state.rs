@@ -25,6 +25,10 @@ fn default_dma_channel_lines_left() -> Vec<u16> {
     vec![0; 8]
 }
 
+fn default_last_hperiod() -> u16 {
+    1364
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SnesBlockMoveDirection {
     #[default]
@@ -75,9 +79,13 @@ pub struct SnesCpuState {
     #[serde(default)]
     pub abort_pending: bool,
     #[serde(default)]
+    pub waiting: bool,
+    #[serde(default)]
     pub fast_rom: bool,
     #[serde(default)]
     pub memory_bus_cycles: u8,
+    #[serde(default)]
+    pub irq_lock_step: bool,
     #[serde(default)]
     pub block_move_state: Option<SnesBlockMoveState>,
 }
@@ -152,6 +160,10 @@ pub struct SnesPpuState {
     pub dot: u16,
     #[serde(default)]
     pub master_cycle_accumulator: u32,
+    #[serde(default)]
+    pub line_clock: u16,
+    #[serde(default = "default_last_hperiod")]
+    pub last_hperiod: u16,
     #[serde(default)]
     pub line_timing_profile: u8,
     #[serde(default)]

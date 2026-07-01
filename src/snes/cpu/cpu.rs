@@ -94,6 +94,10 @@ pub struct Cpu<B: SnesBus> {
     irq_pending: bool,
     abort_pending: bool,
 
+    /// True while the CPU is halted by a WAI instruction, waiting for a
+    /// hardware interrupt (NMI, IRQ, or ABORT) to be asserted.
+    waiting: bool,
+
     /// FastROM flag: mirrors MEMSEL $420D bit 0.
     /// When true, WS2 ROM regions ($80–$BF:$8000–$FFFF, $C0–$FF) run at 6 master clocks.
     fast_rom: bool,
@@ -101,6 +105,10 @@ pub struct Cpu<B: SnesBus> {
     /// Count of memory bus accesses (tick_read/tick_write calls) in the current step.
     /// Reset at the start of each step() call; used to compute internal-cycle tick counts.
     memory_bus_cycles: u8,
+
+    /// One-step interrupt lock used to emulate delayed IRQ/NMI recognition after
+    /// specific hardware events (e.g. writes to `$4200` and DMA start via `$420B`).
+    irq_lock_step: bool,
 
     /// In-progress MVN/MVP transfer state. When present, each `step()` performs one
     /// transfer unit and keeps architectural PC at the post-operand address.
@@ -129,8 +137,10 @@ impl<B: SnesBus> Cpu<B> {
             nmi_pending: false,
             irq_pending: false,
             abort_pending: false,
+            waiting: false,
             fast_rom: false,
             memory_bus_cycles: 0,
+            irq_lock_step: false,
             block_move_state: None,
             bus,
         }
@@ -275,8 +285,10 @@ impl<B: SnesBus> Cpu<B> {
             nmi_pending: self.nmi_pending,
             irq_pending: self.irq_pending,
             abort_pending: self.abort_pending,
+            waiting: self.waiting,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
+            irq_lock_step: self.irq_lock_step,
             block_move_state: self.block_move_state.map(|state| SnesBlockMoveState {
                 dst_bank: state.dst_bank,
                 src_bank: state.src_bank,
@@ -304,8 +316,10 @@ impl<B: SnesBus> Cpu<B> {
         self.nmi_pending = state.nmi_pending;
         self.irq_pending = state.irq_pending;
         self.abort_pending = state.abort_pending;
+        self.waiting = state.waiting;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
+        self.irq_lock_step = state.irq_lock_step;
         self.block_move_state = state.block_move_state.map(|state| BlockMoveState {
             dst_bank: state.dst_bank,
             src_bank: state.src_bank,
@@ -397,6 +411,7 @@ impl<B: SnesBus> Cpu<B> {
         self.nmi_pending = false;
         self.irq_pending = false;
         self.abort_pending = false;
+        self.irq_lock_step = false;
         let lo = self.read8(0x00FFFC) as u16;
         let hi = self.read8(0x00FFFD) as u16;
         self.pc = lo | hi << 8;
@@ -569,6 +584,9 @@ impl<B: SnesBus> Cpu<B> {
         self.extra_cycles = 0;
         self.last_page_crossed = false;
         self.memory_bus_cycles = 0;
+        let interrupts_locked = self.irq_lock_step;
+        self.irq_lock_step = false;
+        let mut wai_wake_cycles: u8 = 0;
 
         if let Some(state) = self.block_move_state {
             return self.step_block_move_unit(state);
@@ -580,18 +598,43 @@ impl<B: SnesBus> Cpu<B> {
         }
         let irq_line_asserted = self.bus.poll_irq() || self.irq_pending;
 
+        // WAI: while halted, the CPU idles (advancing the master clock) until any
+        // hardware interrupt (NMI, IRQ, or ABORT) is asserted — regardless of the
+        // I flag. Once an interrupt is pending we clear the wait state and fall
+        // through to the normal dispatch logic below (which services the interrupt
+        // if unmasked, or simply resumes the next instruction if the I flag masks it).
+        if self.waiting {
+            if !interrupts_locked && (self.nmi_pending || irq_line_asserted || self.abort_pending) {
+                self.waiting = false;
+                self.tick_internal_cycle();
+                wai_wake_cycles = 1;
+            } else {
+                self.tick_internal_cycle();
+                return 1;
+            }
+        }
+
         // Poll hardware interrupts (higher priority than opcode fetch)
-        if self.abort_pending {
+        if !interrupts_locked && self.abort_pending {
             self.abort_pending = false;
-            return self.dispatch_abort();
+            let base = self.dispatch_abort();
+            return self
+                .tick_internal_cycles_for(base)
+                .saturating_add(wai_wake_cycles);
         }
-        if self.nmi_pending {
+        if !interrupts_locked && self.nmi_pending {
             self.nmi_pending = false;
-            return self.dispatch_nmi();
+            let base = self.dispatch_nmi();
+            return self
+                .tick_internal_cycles_for(base)
+                .saturating_add(wai_wake_cycles);
         }
-        if irq_line_asserted && !self.flag_i() {
+        if !interrupts_locked && irq_line_asserted && !self.flag_i() {
             // IRQ is level-triggered: do NOT clear irq_pending here; caller must deassert
-            return self.dispatch_irq();
+            let base = self.dispatch_irq();
+            return self
+                .tick_internal_cycles_for(base)
+                .saturating_add(wai_wake_cycles);
         }
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
@@ -861,12 +904,27 @@ impl<B: SnesBus> Cpu<B> {
         let total_bus_cycles = base + self.extra_cycles;
 
         // Tick bus for internal (non-memory-access) cycles.
-        // Internal cycles always consume 6 master clocks (CPU-internal, not a memory access).
+        self.tick_internal_cycles_for(total_bus_cycles)
+            .saturating_add(wai_wake_cycles)
+    }
+
+    /// Tick the bus for the CPU-internal (non-memory-access) cycles of an
+    /// operation whose total length is `total_bus_cycles`.
+    ///
+    /// Memory accesses already tick the bus at their region speed and increment
+    /// `memory_bus_cycles`; the remaining cycles are CPU-internal and each
+    /// consume 6 master clocks. Returns `total_bus_cycles` for convenience so
+    /// callers can `return self.tick_internal_cycles_for(n);`.
+    ///
+    /// This applies uniformly to normal opcodes and to hardware interrupt
+    /// dispatch (IRQ/NMI/ABORT), whose 8/7-cycle sequences include two internal
+    /// cycles that must advance the PPU/APU alongside the stack pushes and
+    /// vector reads.
+    fn tick_internal_cycles_for(&mut self, total_bus_cycles: u8) -> u8 {
         let internal_cycles = total_bus_cycles.saturating_sub(self.memory_bus_cycles);
         for _ in 0..internal_cycles {
             self.tick_internal_cycle();
         }
-
         total_bus_cycles
     }
 
@@ -910,11 +968,23 @@ impl<B: SnesBus> Cpu<B> {
             self.bus.tick();
         }
         self.memory_bus_cycles += 1;
-        // MEMSEL $420D: bit 0 controls WS2 ROM speed.
-        // The register is mirrored across all banks $00–$3F and $80–$BF.
         let bank = (addr >> 16) as u8;
-        if (bank <= 0x3F || (0x80..=0xBF).contains(&bank)) && (addr & 0xFFFF) as u16 == 0x420D {
-            self.fast_rom = value & 0x01 != 0;
+        if bank <= 0x3F || (0x80..=0xBF).contains(&bank) {
+            match (addr & 0xFFFF) as u16 {
+                0x4200 => {
+                    // Writes to NMITIMEN introduce a one-step interrupt-lock window.
+                    self.irq_lock_step = true;
+                }
+                0x420B => {
+                    // Starting DMA introduces the same lock window before IRQ/NMI recognition.
+                    if value != 0 {
+                        self.irq_lock_step = true;
+                    }
+                }
+                // MEMSEL $420D: bit 0 controls WS2 ROM speed.
+                0x420D => self.fast_rom = value & 0x01 != 0,
+                _ => {}
+            }
         }
         self.bus.write(addr, value);
     }
@@ -996,6 +1066,7 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_wai(&mut self) -> u8 {
+        self.waiting = true;
         4
     }
 
@@ -9022,6 +9093,92 @@ mod wai_stp_tests {
         assert_eq!(cycles, 4);
     }
 
+    // WAI halts the CPU: once executed, subsequent steps must idle (PC frozen)
+    // until a hardware interrupt is asserted, then execution resumes.
+    #[test]
+    fn wai_halts_until_interrupt_then_resumes() {
+        let mut cpu = Cpu::new(TestBus::default());
+        // WAI followed by NOP.
+        cpu.bus.load(0x0000, &[0xCB, 0xEA]);
+
+        // Execute WAI: PC advances past the opcode and the CPU enters wait state.
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0001);
+        assert!(cpu.waiting, "CPU should be waiting after WAI");
+
+        // With no interrupt pending, stepping idles without fetching the next
+        // instruction (PC stays frozen).
+        for _ in 0..4 {
+            cpu.step();
+            assert_eq!(cpu.pc, 0x0001, "PC must not advance while waiting");
+            assert!(cpu.waiting, "CPU must remain in wait state without an IRQ");
+        }
+
+        // Assert an IRQ. The reset I flag masks dispatch, so WAI wakes and simply
+        // resumes with the following instruction (NOP), advancing PC.
+        cpu.irq_pending = true;
+        cpu.step();
+        assert!(!cpu.waiting, "IRQ must release the WAI wait state");
+        assert_eq!(cpu.pc, 0x0002, "execution should resume after WAI");
+    }
+
+    #[test]
+    fn wai_wake_adds_one_cycle_before_masked_resume() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xCB, 0xEA]); // WAI ; NOP
+        assert_eq!(cpu.step(), 4, "WAI opcode timing");
+        assert!(cpu.waiting);
+
+        // I=1 after reset: IRQ wakes WAI but does not dispatch.
+        cpu.irq_pending = true;
+        let cycles = cpu.step();
+        assert_eq!(cycles, 3, "wake from WAI adds one idle cycle before NOP");
+        assert!(!cpu.waiting);
+        assert_eq!(cpu.pc, 0x0002);
+    }
+
+    #[test]
+    fn wai_wake_adds_one_cycle_before_irq_dispatch() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false); // allow IRQ dispatch
+        cpu.bus.load(0x008000, &[0xCB]); // WAI
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
+
+        assert_eq!(cpu.step(), 4, "WAI opcode timing");
+        assert!(cpu.waiting);
+        cpu.irq_pending = true;
+
+        let cycles = cpu.step();
+        assert_eq!(
+            cycles, 8,
+            "wake cycle + emulation IRQ dispatch (7) should total 8"
+        );
+        assert_eq!(cpu.pc, 0x9100);
+        assert!(!cpu.waiting);
+    }
+
+    #[test]
+    fn wai_waiting_state_round_trips_through_cpu_state() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xCB, 0xEA]); // WAI ; NOP
+        assert_eq!(cpu.step(), 4);
+        assert!(cpu.waiting);
+
+        let state = cpu.capture_state_inner();
+        let mut restored = Cpu::new(TestBus::default());
+        restored.restore_state_inner(&state);
+
+        assert!(
+            restored.waiting,
+            "restored CPU must remain in WAI wait state"
+        );
+        let cycles = restored.step();
+        assert_eq!(cycles, 1, "without interrupt, WAI wait should idle");
+        assert_eq!(restored.pc, 0x0001, "PC must stay frozen while waiting");
+    }
+
     // STP (0xDB): halts CPU until reset; modeled as 4-cycle instruction.
     #[test]
     fn stp_advances_pc_and_returns_4_cycles() {
@@ -10210,6 +10367,50 @@ mod interrupt_dispatch_tests {
         );
     }
 
+    #[test]
+    fn write_4200_defers_irq_dispatch_for_one_step() {
+        let mut cpu = Cpu::new(PollIrqBus::new());
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.write_a(0x0010);
+        // STA $4200 ; NOP ; NOP
+        cpu.bus.load(0x008000, &[0x8D, 0x00, 0x42, 0xEA, 0xEA]);
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
+        cpu.bus.irq_level = false;
+
+        cpu.step(); // STA $4200 (arms irq lock)
+        cpu.bus.irq_level = true;
+        cpu.step(); // lock window: should execute NOP
+        assert_eq!(cpu.pc, 0x8004, "defer window should run next opcode first");
+
+        let cycles = cpu.step();
+        assert_eq!(cycles, 7, "IRQ dispatch should occur on following step");
+        assert_eq!(cpu.pc, 0x9100);
+    }
+
+    #[test]
+    fn write_420b_defers_irq_dispatch_for_one_step() {
+        let mut cpu = Cpu::new(PollIrqBus::new());
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.write_a(0x0001);
+        // STA $420B ; NOP ; NOP
+        cpu.bus.load(0x008000, &[0x8D, 0x0B, 0x42, 0xEA, 0xEA]);
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
+        cpu.bus.irq_level = false;
+
+        cpu.step(); // STA $420B (DMA start path, arms irq lock)
+        cpu.bus.irq_level = true;
+        cpu.step(); // lock window: should execute NOP
+        assert_eq!(cpu.pc, 0x8004, "defer window should run next opcode first");
+
+        let cycles = cpu.step();
+        assert_eq!(cycles, 7);
+        assert_eq!(cpu.pc, 0x9100);
+    }
+
     // =========================================================================
     // NMI — native mode
     // Vectors via $FFEA/$FFEB; pushes PBR, PCH, PCL, P; sets I=1, D=0; 8 cycles
@@ -10730,6 +10931,42 @@ mod master_clock_tests {
         cpu.step();
         // opcode(8) + lo(8) + hi(8) + read at $2140 (B-Bus I/O, 6) = 30
         assert_eq!(cpu.bus.tick_count(), 30);
+    }
+
+    // -------------------------------------------------------------------------
+    // Hardware interrupt dispatch must tick the bus for the full 8/7-cycle
+    // sequence, including the two CPU-internal cycles — not only the memory
+    // accesses. The 65816 native IRQ/NMI sequence is 8 cycles (2 internal +
+    // 4 stack pushes + 2 vector reads); the emulation-mode sequence is 7
+    // cycles (2 internal + 3 stack pushes + 2 vector reads).
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn native_irq_dispatch_ticks_full_eight_cycles() {
+        // Native mode, I clear so the IRQ dispatches. No opcode is fetched.
+        let mut cpu = cpu_at(0x00_0000, &[]);
+        cpu.write_pc(0x0000);
+        // Native IRQ/BRK vector at $00FFEE -> handler.
+        cpu.bus.load(0x00_FFEE, &[0x00, 0x90]);
+        cpu.set_irq(true);
+        cpu.step();
+        // 4 pushes (WRAM stack $01xx, 8 each = 32) + 2 vector reads
+        // ($00FFEE/EF, WS1 ROM slow 8 each = 16) + 2 internal (6 each = 12) = 60.
+        assert_eq!(cpu.bus.tick_count(), 60);
+    }
+
+    #[test]
+    fn emulation_irq_dispatch_ticks_full_seven_cycles() {
+        let mut cpu = cpu_at(0x00_0000, &[]);
+        cpu.e = true; // emulation mode
+        cpu.write_pc(0x0000);
+        // Emulation IRQ vector at $00FFFE -> handler.
+        cpu.bus.load(0x00_FFFE, &[0x00, 0x90]);
+        cpu.set_irq(true);
+        cpu.step();
+        // 3 pushes (8 each = 24) + 2 vector reads (8 each = 16) + 2 internal
+        // (6 each = 12) = 52.
+        assert_eq!(cpu.bus.tick_count(), 52);
     }
 }
 
