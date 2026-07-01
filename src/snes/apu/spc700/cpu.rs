@@ -1843,7 +1843,7 @@ impl Spc700 {
                 self.write_cycle(bus, x_addr, result, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // CMP X,#imm — compare X with immediate, update N/Z/V/C.
+            // CMP X,#imm — compare X with immediate, update N/Z/C (V unchanged).
             0xC8 => {
                 let imm = self.fetch(bus, &mut cycles);
                 self.compare_x(imm);
