@@ -5777,9 +5777,9 @@ mod tests {
         let pc_after_sleep = cpu.pc();
         let second_cycles = cpu.step(&mut bus);
 
-        assert_eq!(first_cycles, 1);
+        assert_eq!(first_cycles, 7);
         assert_eq!(second_cycles, 1);
-        assert_eq!(bus.cycles(), 2);
+        assert_eq!(bus.cycles(), 8);
         assert_eq!(pc_after_sleep, cpu.pc());
     }
 
@@ -5794,9 +5794,9 @@ mod tests {
         let pc_after_stop = cpu.pc();
         let second_cycles = cpu.step(&mut bus);
 
-        assert_eq!(first_cycles, 1);
+        assert_eq!(first_cycles, 7);
         assert_eq!(second_cycles, 1);
-        assert_eq!(bus.cycles(), 2);
+        assert_eq!(bus.cycles(), 8);
         assert_eq!(pc_after_stop, cpu.pc());
     }
 
@@ -5810,8 +5810,8 @@ mod tests {
         let first_cycles = cpu.step(&mut bus);
         let second_cycles = cpu.step(&mut bus);
 
-        assert_eq!(first_cycles, 1);
+        assert_eq!(first_cycles, 31);
         assert_eq!(second_cycles, 5);
-        assert_eq!(bus.cycles(), 6);
+        assert_eq!(bus.cycles(), 36);
     }
 }
