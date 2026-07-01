@@ -94,6 +94,10 @@ pub struct Cpu<B: SnesBus> {
     irq_pending: bool,
     abort_pending: bool,
 
+    /// True while the CPU is halted by a WAI instruction, waiting for a
+    /// hardware interrupt (NMI, IRQ, or ABORT) to be asserted.
+    waiting: bool,
+
     /// FastROM flag: mirrors MEMSEL $420D bit 0.
     /// When true, WS2 ROM regions ($80–$BF:$8000–$FFFF, $C0–$FF) run at 6 master clocks.
     fast_rom: bool,
@@ -129,6 +133,7 @@ impl<B: SnesBus> Cpu<B> {
             nmi_pending: false,
             irq_pending: false,
             abort_pending: false,
+            waiting: false,
             fast_rom: false,
             memory_bus_cycles: 0,
             block_move_state: None,
@@ -580,6 +585,20 @@ impl<B: SnesBus> Cpu<B> {
         }
         let irq_line_asserted = self.bus.poll_irq() || self.irq_pending;
 
+        // WAI: while halted, the CPU idles (advancing the master clock) until any
+        // hardware interrupt (NMI, IRQ, or ABORT) is asserted — regardless of the
+        // I flag. Once an interrupt is pending we clear the wait state and fall
+        // through to the normal dispatch logic below (which services the interrupt
+        // if unmasked, or simply resumes the next instruction if the I flag masks it).
+        if self.waiting {
+            if self.nmi_pending || irq_line_asserted || self.abort_pending {
+                self.waiting = false;
+            } else {
+                self.tick_internal_cycle();
+                return 1;
+            }
+        }
+
         // Poll hardware interrupts (higher priority than opcode fetch)
         if self.abort_pending {
             self.abort_pending = false;
@@ -996,6 +1015,7 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_wai(&mut self) -> u8 {
+        self.waiting = true;
         4
     }
 
@@ -9020,6 +9040,35 @@ mod wai_stp_tests {
         let cycles = cpu.step();
         assert_eq!(cpu.pc, 0x0001);
         assert_eq!(cycles, 4);
+    }
+
+    // WAI halts the CPU: once executed, subsequent steps must idle (PC frozen)
+    // until a hardware interrupt is asserted, then execution resumes.
+    #[test]
+    fn wai_halts_until_interrupt_then_resumes() {
+        let mut cpu = Cpu::new(TestBus::default());
+        // WAI followed by NOP.
+        cpu.bus.load(0x0000, &[0xCB, 0xEA]);
+
+        // Execute WAI: PC advances past the opcode and the CPU enters wait state.
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0001);
+        assert!(cpu.waiting, "CPU should be waiting after WAI");
+
+        // With no interrupt pending, stepping idles without fetching the next
+        // instruction (PC stays frozen).
+        for _ in 0..4 {
+            cpu.step();
+            assert_eq!(cpu.pc, 0x0001, "PC must not advance while waiting");
+            assert!(cpu.waiting, "CPU must remain in wait state without an IRQ");
+        }
+
+        // Assert an IRQ. The reset I flag masks dispatch, so WAI wakes and simply
+        // resumes with the following instruction (NOP), advancing PC.
+        cpu.irq_pending = true;
+        cpu.step();
+        assert!(!cpu.waiting, "IRQ must release the WAI wait state");
+        assert_eq!(cpu.pc, 0x0002, "execution should resume after WAI");
     }
 
     // STP (0xDB): halts CPU until reset; modeled as 4-cycle instruction.
