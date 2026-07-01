@@ -9,6 +9,7 @@ pub(crate) mod egui_renderer;
 pub(crate) mod egui_texture;
 pub(crate) mod egui_theme;
 mod event_loop;
+mod frame_runner;
 pub(crate) mod gamepad;
 pub(crate) mod gl_backend;
 mod gl_wrapper;

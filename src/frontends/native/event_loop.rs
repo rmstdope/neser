@@ -5,6 +5,7 @@
 
 use crate::frontends::native::app_state::NativeAppState;
 use crate::frontends::native::audio::NativeAudio;
+use crate::frontends::native::frame_runner::NativeFrameRunner;
 use crate::frontends::native::gamepad::{GamepadChange, GamepadManager};
 use crate::frontends::native::gl_wrapper::NativeGlWrapper;
 use crate::frontends::native::keyboard::{self, KeyOutcome};
@@ -13,11 +14,11 @@ use crate::frontends::native::sleep_inhibitor::SleepInhibitor;
 use crate::gb::debugging::control::GbDebuggerController;
 use crate::nes::debugging::control::DebuggerController;
 use crate::platform::app_context::SharedAppContext;
-use crate::platform::audio::{EmulatorAudio, normalize_nes_sample};
+use crate::platform::audio::EmulatorAudio;
 use crate::platform::autorun::AutorunMode;
 use crate::platform::autorun::state::AutorunState;
 use crate::platform::debugging::Tracing;
-use crate::platform::emulator::{Console, Emulator, SystemType};
+use crate::platform::emulator::{Console, SystemType};
 use crate::platform::frontend_toasts::{
     gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
 };
@@ -39,6 +40,7 @@ pub struct NativeEventLoop {
     state: NativeAppState,
     debugger_controller: DebuggerController,
     gb_debugger_controller: GbDebuggerController,
+    frame_runner: NativeFrameRunner,
     /// Whether the user had manually paused before the debugger opened,
     /// so we can restore pause state when the debugger closes.
     paused_before_debugger: bool,
@@ -106,6 +108,7 @@ impl NativeEventLoop {
                 gb_dc,
             )
         };
+        let frame_runner = NativeFrameRunner::new();
 
         let (gamepad, gamepad_init_failed) = if gamepads_enabled {
             match GamepadManager::new(four_score) {
@@ -140,6 +143,7 @@ impl NativeEventLoop {
             },
             debugger_controller,
             gb_debugger_controller,
+            frame_runner,
             paused_before_debugger: false,
             paused_before_cart_switch: false,
             gamepad,
@@ -191,19 +195,19 @@ impl NativeEventLoop {
     }
 
     fn debugger_paused(&self) -> bool {
-        match self.console.system_type() {
-            SystemType::Nes => self.debugger_controller.is_paused(),
-            SystemType::GameBoy => self.gb_debugger_controller.is_paused(),
-            SystemType::Gba | SystemType::Snes => false,
-        }
+        self.frame_runner.debugger_paused(
+            &self.console,
+            &self.debugger_controller,
+            &self.gb_debugger_controller,
+        )
     }
 
     fn debugger_open(&self) -> bool {
-        match self.console.system_type() {
-            SystemType::Nes => self.debugger_controller.is_debugger_open(),
-            SystemType::GameBoy => self.gb_debugger_controller.is_debugger_open(),
-            SystemType::Gba | SystemType::Snes => false,
-        }
+        self.frame_runner.debugger_open(
+            &self.console,
+            &self.debugger_controller,
+            &self.gb_debugger_controller,
+        )
     }
 
     fn run_frame(&mut self) {
@@ -231,42 +235,13 @@ impl NativeEventLoop {
 
         let audio = self.audio.take();
         let audio_cell = std::cell::RefCell::new(audio);
-        if let Some(nes) = self.console.as_nes_mut() {
-            self.debugger_controller
-                .run_frame(nes, &self.tracing, &mut |nes| {
-                    if let Some(ref mut audio) = *audio_cell.borrow_mut() {
-                        while nes.sample_ready() {
-                            if let Some(sample) = nes.get_sample() {
-                                audio.queue_sample(normalize_nes_sample(sample));
-                            }
-                        }
-                    }
-                });
-        } else if let Some(gb) = self.console.as_gameboy_mut() {
-            gb.run_frame_with_debugger(&mut self.gb_debugger_controller, &audio_cell);
-        } else if let Some(gba) = self.console.as_gba_mut() {
-            while !gba.is_ready_to_render() {
-                let _ = gba.run_tick();
-                if let Some(ref mut audio) = *audio_cell.borrow_mut() {
-                    while gba.sample_ready() {
-                        if let Some((left, right)) = gba.get_stereo_sample() {
-                            audio.queue_stereo_sample(left, right);
-                        }
-                    }
-                }
-            }
-        } else if let Some(snes) = self.console.as_snes_mut() {
-            while !snes.is_ready_to_render() {
-                let _ = snes.run_tick();
-                if let Some(ref mut audio) = *audio_cell.borrow_mut() {
-                    while snes.sample_ready() {
-                        if let Some(sample) = snes.get_sample() {
-                            audio.queue_sample(sample);
-                        }
-                    }
-                }
-            }
-        }
+        self.frame_runner.run_frame(
+            &mut self.console,
+            &self.tracing,
+            &mut self.debugger_controller,
+            &mut self.gb_debugger_controller,
+            &audio_cell,
+        );
         self.audio = audio_cell.into_inner();
         self.sync_from_controller();
         self.console.clear_ready_to_render();
