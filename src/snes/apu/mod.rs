@@ -997,9 +997,9 @@ mod tests {
     fn timer_target_registers_are_write_only_when_read_back() {
         let mut apu = SnesApu::new(None);
 
-        apu.write_spc_memory_for_test(0x00FA, 0x12);
-        apu.write_spc_memory_for_test(0x00FB, 0x34);
-        apu.write_spc_memory_for_test(0x00FC, 0x56);
+        apu.aram[0x00FA] = 0x12;
+        apu.aram[0x00FB] = 0x34;
+        apu.aram[0x00FC] = 0x56;
 
         assert_eq!(apu.read_spc_memory_for_test(0x00FA), 0x00);
         assert_eq!(apu.read_spc_memory_for_test(0x00FB), 0x00);
