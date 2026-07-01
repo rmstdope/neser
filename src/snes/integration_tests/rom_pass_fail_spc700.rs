@@ -17,8 +17,8 @@ mod tests {
         ("4-test_ram_disable.smc", 600, 0x85F1_D154),
         ("test_ram_disable_ipl.smc", 600, 0xD001_765E),
         ("test_speed.smc", 600, 0x8EAD_6D95),
-        ("test_timer_speed_2.smc", 600, 0x471F_26BD),
-        ("test_timer_speed3.smc", 600, 0x0BBB_12C6),
+        ("test_timer_speed_2.smc", 600, 0x48DA_ACE9),
+        ("test_timer_speed3.smc", 600, 0xCD83_D4B0),
         ("test_timer_stop.smc", 600, 0x7CC2_B76B),
     ];
 
@@ -79,7 +79,7 @@ mod tests {
     // placeholder with the real CRC and remove the #[ignore].
     // -------------------------------------------------------------------------
 
-    fn run_failing_rom(file: &str) {
+    fn run_rom_with_expected_crc(file: &str, expected_crc: u32) {
         let root = Path::new(ROM_PASS_FAIL_ROOT);
         let path = root.join(file);
         let rom = fs::read(&path)
@@ -90,7 +90,7 @@ mod tests {
             RunConfig::new(400_000_000, 0),
             RunOracle::ScreenCrc {
                 frames: 600,
-                expected_crc: 0x0000_0000, // placeholder — update once Passed
+                expected_crc,
             },
         );
         assert!(
@@ -101,6 +101,10 @@ mod tests {
             result.passed,
             result.exit_reason
         );
+    }
+
+    fn run_failing_rom(file: &str) {
+        run_rom_with_expected_crc(file, 0x0000_0000);
     }
 
     #[test]
@@ -128,15 +132,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: timer speed — fix emulator then update CRC"]
     fn blargg_test_timer_speed_passes() {
-        run_failing_rom("test_timer_speed.smc");
+        run_rom_with_expected_crc("test_timer_speed.smc", 0x03C4_1961);
     }
 
     #[test]
-    #[ignore = "fails: timer speed — fix emulator then update CRC"]
     fn blargg_test_timer_speed2_passes() {
-        run_failing_rom("test_timer_speed2.smc");
+        run_rom_with_expected_crc("test_timer_speed2.smc", 0x03C4_1961);
     }
 
     #[test]

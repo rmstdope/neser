@@ -67,17 +67,14 @@ impl SpcTimers {
             let timer = &mut self.timers[timer_index];
             timer.enabled = now_enabled;
             // Spec ($F1): "0=Disable, [1=]Enable: set TnOUT=0 & reload divider"
-            // The "set TnOUT=0 & reload divider" side-effect applies to the
-            // 0→1 (ENABLE) transition: the timer starts fresh.
-            // The 1→0 (DISABLE) transition only stops the timer;
-            // TnOUT is preserved so the program can still read the last value.
+            // Both transitions should reload timer progress; enable starts
+            // counting, disable stops counting.
             if !was_enabled && now_enabled {
                 // Enable: clear TnOUT and reload dividers
                 timer.reset_progress();
             } else if was_enabled && !now_enabled {
-                // Disable: stop but preserve TnOUT; only reload dividers
-                timer.input_divider_counter = 0;
-                timer.target_counter = 0;
+                // Disable: clear TnOUT and reload dividers
+                timer.reset_progress();
             }
         }
     }
@@ -211,25 +208,24 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Spec ($F1 bit0-2): "1=Enable: set TnOUT=0 & reload divider"
+    // Spec ($F1 bit0-2): "0=Disable, [1=]Enable: set TnOUT=0 & reload divider"
     //   - ENABLE  (0→1): TnOUT is cleared and dividers are reloaded.
-    //   - DISABLE (1→0): timer stops but TnOUT is preserved so the program
-    //                    can still read the last accumulated value.
+    //   - DISABLE (1→0): TnOUT is cleared and dividers are reloaded.
     // -----------------------------------------------------------------------
 
     #[test]
-    fn disabling_a_running_timer_preserves_tout() {
+    fn disabling_a_running_timer_clears_tout() {
         let mut timers = SpcTimers::default();
         timers.write_target(2, 1);
         timers.write_control(0x00, 0x04); // enable T2 (clears TnOUT)
         advance_cycles(&mut timers, 48); // 3 full periods → TnOUT = 3 (unread)
 
-        timers.write_control(0x04, 0x00); // disable T2 → TnOUT must be preserved
+        timers.write_control(0x04, 0x00); // disable T2 → TnOUT must be cleared
 
         assert_eq!(
             timers.read_counter(2),
-            0x03,
-            "disabling must preserve TnOUT so the program can read the last value"
+            0x00,
+            "disabling must clear TnOUT"
         );
     }
 
@@ -240,7 +236,7 @@ mod tests {
         timers.write_control(0x00, 0x04); // enable T2
         advance_cycles(&mut timers, 32); // 2 full periods → TnOUT = 2 (unread)
 
-        timers.write_control(0x04, 0x00); // disable: TnOUT preserved (=2)
+        timers.write_control(0x04, 0x00); // disable: TnOUT cleared
         timers.write_control(0x00, 0x04); // re-enable: TnOUT must be cleared
 
         // Immediately after enable, TnOUT must be 0
