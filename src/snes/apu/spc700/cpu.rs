@@ -712,21 +712,18 @@ impl Spc700 {
             0xC4 => {
                 let dp = self.fetch(bus, &mut cycles);
                 let addr = self.direct_page_base() | dp as u16;
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
             }
             // MOV dp,X — store X to direct page; flags unaffected.
             0xD8 => {
                 let dp = self.fetch(bus, &mut cycles);
                 let addr = self.direct_page_base() | dp as u16;
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.x, &mut cycles);
             }
             // MOV dp,Y — store Y to direct page; flags unaffected.
             0xCB => {
                 let dp = self.fetch(bus, &mut cycles);
                 let addr = self.direct_page_base() | dp as u16;
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.y, &mut cycles);
             }
             // MOV dp,dp — copy source direct-page byte into destination direct-page byte.
@@ -760,7 +757,6 @@ impl Spc700 {
             // MOV (X),A — store A to direct-page address in X; flags unchanged.
             0xC6 => {
                 let addr = self.direct_page_base() | self.x as u16;
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
@@ -813,7 +809,6 @@ impl Spc700 {
                     &mut cycles,
                 );
                 let addr = u16::from(lo) | (u16::from(hi) << 8);
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
             }
             // MOV [dp]+Y,A — store A via direct-page pointer plus Y; flags unchanged.
@@ -840,7 +835,6 @@ impl Spc700 {
                         self.psw
                     );
                 }
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
             }
             // MOV A,dp+X — load A from direct page indexed by X, update N/Z.
@@ -855,7 +849,6 @@ impl Spc700 {
             0xD4 => {
                 let dp = self.fetch(bus, &mut cycles);
                 let addr = self.direct_page_base() | dp.wrapping_add(self.x) as u16;
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
@@ -863,7 +856,6 @@ impl Spc700 {
             0xDB => {
                 let dp = self.fetch(bus, &mut cycles);
                 let addr = self.direct_page_base() | dp.wrapping_add(self.x) as u16;
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.y, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
@@ -871,7 +863,6 @@ impl Spc700 {
             0xD9 => {
                 let dp = self.fetch(bus, &mut cycles);
                 let addr = self.direct_page_base() | dp.wrapping_add(self.y) as u16;
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.x, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
@@ -884,7 +875,6 @@ impl Spc700 {
             // MOV !abs,A — store A to 16-bit absolute address; flags unchanged.
             0xC5 => {
                 let addr = self.fetch_u16(bus, &mut cycles);
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
             }
             // MOV A,!abs+X — load A from absolute indexed by X, update N/Z.
@@ -908,7 +898,6 @@ impl Spc700 {
                 let base = self.fetch_u16(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
                 let addr = base.wrapping_add(self.x as u16);
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
             }
             // MOV !abs+Y,A — store A to absolute indexed by Y; flags unchanged.
@@ -916,7 +905,6 @@ impl Spc700 {
                 let base = self.fetch_u16(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
                 let addr = base.wrapping_add(self.y as u16);
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
             }
             // MOV X,dp — load X from direct page, update N/Z.
@@ -964,13 +952,11 @@ impl Spc700 {
             // MOV !abs,X — store X to absolute address; flags unchanged.
             0xC9 => {
                 let addr = self.fetch_u16(bus, &mut cycles);
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.x, &mut cycles);
             }
             // MOV !abs,Y — store Y to absolute address; flags unchanged.
             0xCC => {
                 let addr = self.fetch_u16(bus, &mut cycles);
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.y, &mut cycles);
             }
             // MOV dp,#imm — store immediate to direct-page address; flags unchanged.
@@ -978,7 +964,6 @@ impl Spc700 {
                 let imm = self.fetch(bus, &mut cycles);
                 let dp = self.fetch(bus, &mut cycles);
                 let addr = self.direct_page_base() | u16::from(dp);
-                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, imm, &mut cycles);
             }
             // MOVW YA,dp — load 16-bit direct-page word into YA, update N/Z from YA.
@@ -2970,7 +2955,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 3);
         assert_eq!(cpu.pc(), 0x036A);
         assert_eq!(bus.get(0x0181), 0x42);
         assert!(cpu.flag(FLAG_CARRY));
@@ -2994,7 +2979,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 3);
         assert_eq!(cpu.pc(), 0x036C);
         assert_eq!(bus.get(0x0182), 0x37);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3018,7 +3003,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 3);
         assert_eq!(cpu.pc(), 0x036E);
         assert_eq!(bus.get(0x0183), 0x91);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3095,7 +3080,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 3);
         assert_eq!(cpu.pc(), 0x0371);
         assert_eq!(bus.get(0x0184), 0x66);
         assert_eq!(cpu.x(), 0x84);
@@ -3170,7 +3155,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 5);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0376);
         assert_eq!(bus.get(0x0100), 0x5A);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3194,7 +3179,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 5);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0378);
         assert_eq!(bus.get(0x0100), 0x91);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3218,7 +3203,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 5);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x037A);
         assert_eq!(bus.get(0x0100), 0x77);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3260,7 +3245,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 5);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x0380);
         assert_eq!(bus.get(0x1235), 0x66);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3320,7 +3305,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 6);
+        assert_eq!(cycles, 5);
         assert_eq!(cpu.pc(), 0x0389);
         assert_eq!(bus.get(0x1236), 0x66);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3344,7 +3329,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 6);
+        assert_eq!(cycles, 5);
         assert_eq!(cpu.pc(), 0x038C);
         assert_eq!(bus.get(0x1236), 0x66);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3504,7 +3489,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 5);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x039D);
         assert_eq!(bus.get(0x1234), 0x66);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3528,7 +3513,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 5);
+        assert_eq!(cycles, 4);
         assert_eq!(cpu.pc(), 0x03A0);
         assert_eq!(bus.get(0x1235), 0x77);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3608,7 +3593,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 7);
+        assert_eq!(cycles, 6);
         assert_eq!(cpu.pc(), 0x03A6);
         assert_eq!(bus.get(0x1240), 0x66);
         assert!(cpu.flag(FLAG_CARRY));
@@ -3634,7 +3619,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 7);
+        assert_eq!(cycles, 6);
         assert_eq!(cpu.pc(), 0x03A8);
         assert_eq!(bus.get(0x1242), 0x77);
         assert!(cpu.flag(FLAG_CARRY));
@@ -4961,7 +4946,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 5);
+        assert_eq!(cycles, 4);
         assert_eq!(bus.read(0x0020), 0x5A);
         assert!(cpu.flag(FLAG_CARRY));
     }
