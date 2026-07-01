@@ -128,7 +128,7 @@ CRC32 against a human-approved PASS capture. To approve a new golden, run with
 committed integrity with
 `python -m scripts.compute_snes_rom_asset_integrity <dir>`.
 
-**Passing (10) — visually-approved screen-CRC goldens at frame 600:**
+**Passing (11) — visually-approved screen-CRC goldens at frame 600:**
 
 | ROM | Category | Golden CRC |
 | --- | --- | --- |
@@ -142,8 +142,9 @@ committed integrity with
 | `test_timer_speed_2` | Timers | `0x471F26BD` |
 | `test_timer_speed3` | Timers | `0x0BBB12C6` |
 | `test_timer_stop` | Timers | `0x7CC2B76B` |
+| `speed_2_freezes2` | Timers | `0x6E1BF905` |
 
-**Currently failing (8) — committed with `#[ignore]`'d tests:**
+**Currently failing (7) — committed with `#[ignore]`'d tests:**
 
 When the emulator is improved to produce a Passed screen, run
 `NESER_CAPTURE_SCREEN=1 cargo test … -- --ignored` to capture the golden,
@@ -158,7 +159,6 @@ replace the `0x0000_0000` placeholder CRC in the test, and remove `#[ignore]`.
 | `test_timer_speed2` | Timers | timer speed |
 | `test_timer_stop2` | Timers | timer stop |
 | `timer_at_power_reset` | Timers | timer at power/reset |
-| `speed_2_freezes2` | Timers | SPC speed/freeze |
 
 Run SNES tests during development with:
 

@@ -196,6 +196,11 @@ impl Spc700 {
         self.pc
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_pc_for_test(&mut self, pc: u16) {
+        self.pc = pc;
+    }
+
     /// Program status word (flags byte).
     pub fn psw(&self) -> u8 {
         self.psw
