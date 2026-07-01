@@ -564,8 +564,8 @@ impl SnesSystemBus {
     }
 
     #[cfg(test)]
-    pub(crate) fn apu_peek_aram_for_debug(&self, addr: u16) -> u8 {
-        self.apu.borrow().peek_aram_for_debug(addr)
+    pub(crate) fn apu_peek_spc_memory_for_debug(&self, addr: u16) -> u8 {
+        self.apu.borrow().peek_spc_memory_for_debug(addr)
     }
 
     #[cfg(test)]

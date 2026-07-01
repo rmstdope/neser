@@ -243,7 +243,7 @@ mod tests {
             eprint!("  PC=${pc:04X}  hits={count:>4}  bytes:");
             for off in 0..8u16 {
                 let b = snes
-                    .apu_peek_aram_for_debug(pc.wrapping_add(off))
+                    .apu_peek_spc_memory_for_debug(pc.wrapping_add(off))
                     .unwrap_or(0);
                 eprint!(" {b:02X}");
             }
@@ -252,7 +252,7 @@ mod tests {
         eprintln!("=== CPU PC hotspots ===");
         for (pc, count) in top_cpu.iter().take(10) {
             eprint!("  CPU PC=${pc:04X}  hits={count}  bytes:");
-            let pc_full = 0x00_0000u32 | (*pc as u32);
+            let pc_full = *pc as u32;
             for off in 0..16u32 {
                 let b = snes
                     .read_bus_for_debugger_for_tests(pc_full.wrapping_add(off))

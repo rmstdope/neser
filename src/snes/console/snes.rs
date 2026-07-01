@@ -116,10 +116,10 @@ impl Snes {
     }
 
     #[cfg(test)]
-    pub(crate) fn apu_peek_aram_for_debug(&self, addr: u16) -> Option<u8> {
+    pub(crate) fn apu_peek_spc_memory_for_debug(&self, addr: u16) -> Option<u8> {
         self.cpu
             .as_ref()
-            .map(|cpu| cpu.bus().apu_peek_aram_for_debug(addr))
+            .map(|cpu| cpu.bus().apu_peek_spc_memory_for_debug(addr))
     }
 
     #[cfg(test)]
