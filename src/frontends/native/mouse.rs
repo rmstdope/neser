@@ -17,9 +17,10 @@ pub enum MouseButton {
 
 // ── Device detection ─────────────────────────────────────────────────────────
 
-/// Returns `true` when any controller port or expansion device uses mouse input.
+/// Returns `true` when the current console exposes any mouse-driven controller.
 ///
-/// Always returns `false` for non-NES consoles.
+/// This includes NES Zapper / paddle input and SNES mouse input, and returns
+/// `false` for consoles without mouse-capable controllers.
 pub fn has_any_mouse_controller(console: &Console) -> bool {
     console
         .as_mouse_input()
@@ -27,8 +28,6 @@ pub fn has_any_mouse_controller(console: &Console) -> bool {
 }
 
 /// Returns `true` when a Zapper is connected on any port or expansion.
-///
-/// Always returns `false` for non-NES consoles.
 pub fn has_zapper(console: &Console) -> bool {
     console
         .as_mouse_input()

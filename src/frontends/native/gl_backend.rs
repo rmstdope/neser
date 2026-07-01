@@ -14,7 +14,7 @@ use crate::nes::debugging::ui::{
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::debugging::breakpoints::BreakpointList;
 use crate::platform::debugging::log_info;
-use crate::platform::emulator::{Console, PpuViewerSnapshotKind};
+use crate::platform::emulator::{Console, PpuViewerSnapshotKind, SystemType};
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::time::Instant;
@@ -787,13 +787,18 @@ impl GlBackend {
         }
 
         let visible_toasts = self.app_context.borrow_mut().visible_toasts(now);
-        let ppu_viewer_snapshot = if show_debugger
-            && (self.debugger_view_state.is_ppu_viewer_visible()
-                || self.gb_debugger_view_state.is_ppu_viewer_visible())
-        {
-            console
-                .as_ppu_viewer()
-                .map(|viewer| viewer.create_ppu_viewer_snapshot())
+        let ppu_viewer_snapshot = if show_debugger {
+            match console.system_type() {
+                SystemType::Nes if self.debugger_view_state.is_ppu_viewer_visible() => console
+                    .as_ppu_viewer()
+                    .map(|viewer| viewer.create_ppu_viewer_snapshot()),
+                SystemType::GameBoy if self.gb_debugger_view_state.is_ppu_viewer_visible() => {
+                    console
+                        .as_ppu_viewer()
+                        .map(|viewer| viewer.create_ppu_viewer_snapshot())
+                }
+                _ => None,
+            }
         } else {
             None
         };
@@ -808,20 +813,18 @@ impl GlBackend {
                     )),
                     _ => None,
                 });
-        let gb_ppu_viewer_snapshot = if self.gb_debugger_view_state.is_ppu_viewer_visible() {
-            match ppu_viewer_snapshot.as_ref() {
-                Some(PpuViewerSnapshotKind::GameBoy(gb_snap)) => {
-                    update_gb_ppu_viewer_textures_from_snapshot(
-                        gb_snap.as_ref(),
-                        self.gb_ppu_viewer_tiles_texture,
-                        self.gb_ppu_viewer_bg_maps_texture,
-                    );
-                    Some(gb_snap)
-                }
-                _ => None,
+        let gb_ppu_viewer_snapshot = match ppu_viewer_snapshot.as_ref() {
+            Some(PpuViewerSnapshotKind::GameBoy(gb_snap))
+                if self.gb_debugger_view_state.is_ppu_viewer_visible() =>
+            {
+                update_gb_ppu_viewer_textures_from_snapshot(
+                    gb_snap.as_ref(),
+                    self.gb_ppu_viewer_tiles_texture,
+                    self.gb_ppu_viewer_bg_maps_texture,
+                );
+                Some(gb_snap)
             }
-        } else {
-            None
+            _ => None,
         };
         let nes_debugger_snapshot = if show_debugger {
             console
