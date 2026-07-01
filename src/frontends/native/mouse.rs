@@ -68,9 +68,7 @@ pub fn update_mouse_motion(
     window_width: u32,
     window_height: u32,
 ) -> Option<(u8, u8)> {
-    let Some(mouse) = console.as_mouse_input_mut() else {
-        return None;
-    };
+    let mouse = console.as_mouse_input_mut()?;
     if mouse.has_zapper() || mouse.has_snes_mouse() {
         let x_pos = mouse_mapping::map_mouse_axis_to_zapper_position(x, window_width);
         let y_pos = mouse_mapping::map_mouse_axis_to_zapper_position(y, window_height);
@@ -126,9 +124,7 @@ pub fn update_mouse_button(console: &mut Console, button: MouseButton, pressed: 
 ///
 /// Always returns `None` for non-NES consoles.
 pub fn zapper_crosshair(console: &Console, last_position: Option<(u8, u8)>) -> Option<Crosshair> {
-    let Some(mouse) = console.as_mouse_input() else {
-        return None;
-    };
+    let mouse = console.as_mouse_input()?;
     if !mouse.has_zapper() {
         None
     } else {

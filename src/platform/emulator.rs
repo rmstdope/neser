@@ -97,9 +97,10 @@ pub trait MouseInputCapability {
 
 #[cfg(feature = "native")]
 /// PPU viewer snapshot kind exposed through a console capability.
+#[allow(clippy::large_enum_variant)]
 pub enum PpuViewerSnapshotKind {
     Nes(NesPpuViewerSnapshot),
-    GameBoy(GbPpuViewerSnapshot),
+    GameBoy(Box<GbPpuViewerSnapshot>),
 }
 
 #[cfg(feature = "native")]
@@ -202,7 +203,7 @@ impl PpuViewerCapability for Nes {
 #[cfg(feature = "native")]
 impl PpuViewerCapability for GameBoy {
     fn create_ppu_viewer_snapshot(&self) -> PpuViewerSnapshotKind {
-        PpuViewerSnapshotKind::GameBoy(GameBoy::create_ppu_viewer_snapshot(self))
+        PpuViewerSnapshotKind::GameBoy(Box::new(GameBoy::create_ppu_viewer_snapshot(self)))
     }
 }
 

@@ -194,7 +194,7 @@ impl NativeEventLoop {
         match self.console.system_type() {
             SystemType::Nes => self.debugger_controller.is_paused(),
             SystemType::GameBoy => self.gb_debugger_controller.is_paused(),
-            SystemType::GameBoyAdvance | SystemType::Snes => false,
+            SystemType::Gba | SystemType::Snes => false,
         }
     }
 
@@ -202,7 +202,7 @@ impl NativeEventLoop {
         match self.console.system_type() {
             SystemType::Nes => self.debugger_controller.is_debugger_open(),
             SystemType::GameBoy => self.gb_debugger_controller.is_debugger_open(),
-            SystemType::GameBoyAdvance | SystemType::Snes => false,
+            SystemType::Gba | SystemType::Snes => false,
         }
     }
 
@@ -1025,14 +1025,11 @@ impl ApplicationHandler for NativeEventLoop {
                 };
                 if let Some(nes) = self.console.as_nes_mut() {
                     self.debugger_controller.apply_ui_action(nes, action);
-                } else if let Some(gb) = self.console.as_gameboy_mut() {
-                    if let Some(ref mut gl) = self.gl_wrapper {
-                        let gb_action = gl.take_gb_debugger_action();
-                        gb.apply_ui_action_with_controller(
-                            &mut self.gb_debugger_controller,
-                            gb_action,
-                        );
-                    }
+                } else if let Some(gb) = self.console.as_gameboy_mut()
+                    && let Some(ref mut gl) = self.gl_wrapper
+                {
+                    let gb_action = gl.take_gb_debugger_action();
+                    gb.apply_ui_action_with_controller(&mut self.gb_debugger_controller, gb_action);
                 }
                 self.sync_from_controller();
             }

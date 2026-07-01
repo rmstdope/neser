@@ -812,7 +812,7 @@ impl GlBackend {
             match ppu_viewer_snapshot.as_ref() {
                 Some(PpuViewerSnapshotKind::GameBoy(gb_snap)) => {
                     update_gb_ppu_viewer_textures_from_snapshot(
-                        gb_snap,
+                        gb_snap.as_ref(),
                         self.gb_ppu_viewer_tiles_texture,
                         self.gb_ppu_viewer_bg_maps_texture,
                     );
