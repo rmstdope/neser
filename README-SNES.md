@@ -158,7 +158,7 @@ replace the `0x0000_0000` placeholder CRC in the test, and remove `#[ignore]`.
 | `test_timer_speed2` | Timers | timer speed |
 | `test_timer_stop2` | Timers | timer stop |
 | `timer_at_power_reset` | Timers | timer at power/reset |
-| `speed_2_freezes2` | Timers | SPC speed/freeze |
+| `speed_2_freezes2` | Timers | `$F0` speed-2 freeze behavior (hardware-glitch timing) |
 
 Run SNES tests during development with:
 
