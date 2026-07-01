@@ -79,6 +79,8 @@ pub struct SnesCpuState {
     #[serde(default)]
     pub abort_pending: bool,
     #[serde(default)]
+    pub waiting: bool,
+    #[serde(default)]
     pub fast_rom: bool,
     #[serde(default)]
     pub memory_bus_cycles: u8,

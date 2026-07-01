@@ -285,6 +285,7 @@ impl<B: SnesBus> Cpu<B> {
             nmi_pending: self.nmi_pending,
             irq_pending: self.irq_pending,
             abort_pending: self.abort_pending,
+            waiting: self.waiting,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
             irq_lock_step: self.irq_lock_step,
@@ -315,6 +316,7 @@ impl<B: SnesBus> Cpu<B> {
         self.nmi_pending = state.nmi_pending;
         self.irq_pending = state.irq_pending;
         self.abort_pending = state.abort_pending;
+        self.waiting = state.waiting;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
         self.irq_lock_step = state.irq_lock_step;
@@ -9155,6 +9157,23 @@ mod wai_stp_tests {
         );
         assert_eq!(cpu.pc, 0x9100);
         assert!(!cpu.waiting);
+    }
+
+    #[test]
+    fn wai_waiting_state_round_trips_through_cpu_state() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xCB, 0xEA]); // WAI ; NOP
+        assert_eq!(cpu.step(), 4);
+        assert!(cpu.waiting);
+
+        let state = cpu.capture_state_inner();
+        let mut restored = Cpu::new(TestBus::default());
+        restored.restore_state_inner(&state);
+
+        assert!(restored.waiting, "restored CPU must remain in WAI wait state");
+        let cycles = restored.step();
+        assert_eq!(cycles, 1, "without interrupt, WAI wait should idle");
+        assert_eq!(restored.pc, 0x0001, "PC must stay frozen while waiting");
     }
 
     // STP (0xDB): halts CPU until reset; modeled as 4-cycle instruction.
