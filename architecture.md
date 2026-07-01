@@ -10,7 +10,7 @@ The native frontend now exposes audio buffering in milliseconds through configur
 
 The codebase is roughly 383,000 lines of Rust, with additional JavaScript for the web frontend and Python tooling for ROM management.
 
-As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps the NES, Game Boy, Game Boy Advance, and SNES implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
+As of version 0.3.0, NESER has been refactored to introduce a hardware-agnostic `Emulator` trait and a `Console` enum that wraps the NES, Game Boy, Game Boy Advance, and SNES implementations. This allows the native frontend and GL backend to dispatch common operations through the trait instead of matching on specific console variants or using NES-specific types directly. Optional capability accessors on `Console` expose mouse input, debugger-facing PPU viewer snapshots, and direct system handles for the few places that still need them. The architecture is designed to be extensible for future emulated systems while maintaining a clean separation between hardware-specific logic and shared platform/frontend code.
 
 ## High-Level Architecture
 
@@ -117,7 +117,7 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 
 | File | Description |
 | ------ | ------------- |
-| `src/platform/emulator.rs` | `Emulator` trait — defines the common interface (22 methods) for all emulated systems: `run_tick`, `is_ready_to_render`, `screen_snapshot`, `get_sample`, `set_button`, `save_state_bytes`/`load_state_bytes`, `reset`, etc. `Console` enum wraps `Box<Nes>` and `Box<GameBoy>`, delegating common methods through `as_core()`/`as_core_mut()`. System-specific features accessed via variant matching (`Console::Nes`). |
+| `src/platform/emulator.rs` | `Emulator` trait — defines the common interface (22 methods) for all emulated systems: `run_tick`, `is_ready_to_render`, `screen_snapshot`, `get_sample`, `set_button`, `save_state_bytes`/`load_state_bytes`, `reset`, etc. `Console` enum wraps the system cores, delegating common methods through `as_core()`/`as_core_mut()` and exposing optional accessors for mouse input, PPU viewer, and system-specific handles. |
 | `src/platform/save_state.rs` | Shared save-state primitives used by all four cores: the `Stateful` trait (component-level capture/restore with an associated serializable `State` and an infallible `restore_state`), a console-agnostic `SaveStateError`, and generic `to_bytes`/`from_bytes` (JSON) plus a `check_version` helper. Console-specific errors (NES `MapperMismatch`, SNES `RomMismatch`) live in slim per-console enums that convert `From<SaveStateError>`; fallible restores are surfaced as `SaveStateError::RestoreFailed` at the console boundary. |
 | `src/platform/config/` | `FrontendConfig` struct — generic frontend settings shared across all emulated systems — split into per-domain modules: `mod.rs` (data structs + thin `apply_args`/`apply_config_value` orchestrators), `cli.rs` (shared CLI machinery: flag table, parse helpers, validation, help text), and `audio`/`video`/`autorun`/`debugger`/`cartridge` (per-domain flag parsing). The `cartridge` module holds the `resolved_metadata_db_path()`, `resolved_image_cache_path()`, and `resolved_favorites_path()` helpers. |
 | `src/platform/app_context.rs` | `AppContext` — shared application state including configuration, ROM database, and toast notification manager. Wrapped in `Rc<RefCell<>>` for interior mutability. |
@@ -371,7 +371,7 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | Directory/File | Description |
 | ---------------- | ------------- |
 | `src/frontends/native/` | Desktop frontend using winit + OpenGL. |
-| `src/frontends/native/event_loop.rs` | Main event loop — holds `Console` enum, handles input events, frame timing, VSync, autorun integration, pause/resume, and hot-reload of ROMs. NES-specific features (debugger, Zapper, SNES mouse) accessed by extracting the inner `Nes` via pattern match. |
+| `src/frontends/native/event_loop.rs` | Main event loop — holds `Console` enum, handles input events, frame timing, VSync, autorun integration, pause/resume, and hot-reload of ROMs. NES/Game Boy-specific features (debugger, PPU viewer, Zapper, SNES mouse) use `Console` accessors instead of variant branching. |
 | `src/frontends/native/audio.rs` | Native audio device setup and sample queuing. |
 | `src/frontends/native/keyboard/` | Keyboard input handling, split into focused modules: `mod.rs` (entry points `handle_key_pressed`/`handle_key_released`/`keyboard_target_ports` + `KeyOutcome`), `hotkeys.rs` (system/debugger/cartridge-switch hotkeys), `console_keyboard.rs` (per-console press dispatch), and `controller_mapping.rs` (key→button mapping tables). |
 | `src/frontends/native/gamepad.rs` | Gamepad input using gilrs — maps controller axes/buttons to NES joypads. |

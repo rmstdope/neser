@@ -6,7 +6,7 @@
 
 use crate::platform::autorun::AutorunMode;
 use crate::platform::autorun::state::AutorunState;
-use crate::platform::emulator::Console;
+use crate::platform::emulator::{Console, SystemType};
 use winit::keyboard::ModifiersState;
 
 /// State for the in-game cartridge-switch dialog.
@@ -242,18 +242,19 @@ impl NativeAppState {
             return Some(autorun_overlay_text(autorun, fps));
         }
         if self.help_overlay_visible {
-            let (port1_is_power_pad, port2_is_power_pad) = match console {
-                Console::Nes(nes) => {
+            let (port1_is_power_pad, port2_is_power_pad) =
+                if console.system_type() == SystemType::Nes {
+                    let Some(nes) = console.as_nes() else {
+                        unreachable!("system_type() reported NES but console was not NES");
+                    };
                     use crate::nes::input::ControllerType;
                     (
                         nes.active_controller_port_type(1) == ControllerType::PowerPad,
                         nes.active_controller_port_type(2) == ControllerType::PowerPad,
                     )
-                }
-                Console::GameBoy(_) | Console::GameBoyAdvance(_) | Console::Snes(_) => {
+                } else {
                     (false, false)
-                }
-            };
+                };
             return Some(help_overlay_text(
                 console,
                 self.gamepad_count,
@@ -305,15 +306,15 @@ F6/F7: Save/Load state";
 
     let mut controllers = String::new();
 
-    if matches!(console, Console::GameBoyAdvance(_)) {
+    if console.system_type() == SystemType::Gba {
         return format!("{hotkeys}{}", gba_keyboard_section(gamepad_count));
     }
 
-    if matches!(console, Console::GameBoy(_)) {
+    if console.system_type() == SystemType::GameBoy {
         return format!("{hotkeys}{}", gameboy_keyboard_section(gamepad_count));
     }
 
-    if matches!(console, Console::Snes(_)) {
+    if console.system_type() == SystemType::Snes {
         return format!("{hotkeys}{}", snes_keyboard_section(gamepad_count));
     }
 

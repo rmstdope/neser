@@ -4,10 +4,9 @@ use crate::frontends::native::input::{EguiInputState, InputEvent};
 use crate::frontends::native::shader_manager::ShaderManager;
 use crate::gb::debugging::GbDebuggerViewState;
 use crate::gb::debugging::debugger_ui as gb_debugger_ui;
-use crate::nes::console::Nes;
 use crate::nes::debugging::DebuggerViewState;
 use crate::nes::debugging::ppu_viewer::{
-    PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
+    PpuViewerSnapshot as NesPpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
 };
 use crate::nes::debugging::ui::{
     self as debugger_ui, BreakpointAddUiState, HexdumpUiState, WatchlistUiState,
@@ -15,7 +14,7 @@ use crate::nes::debugging::ui::{
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::debugging::breakpoints::BreakpointList;
 use crate::platform::debugging::log_info;
-use crate::platform::emulator::Console;
+use crate::platform::emulator::{Console, PpuViewerSnapshotKind};
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::time::Instant;
@@ -666,7 +665,7 @@ impl GlBackend {
     /// Renders the current frame and optional debugger overlay.
     ///
     /// Accepts a `&Console` so it works for both NES and Game Boy. The debugger
-    /// overlay is only drawn when `console` is a `Console::Nes` variant.
+    /// overlay is only drawn when `console` exposes the matching debugger state.
     pub fn render(
         &mut self,
         console: &Console,
@@ -788,39 +787,53 @@ impl GlBackend {
         }
 
         let visible_toasts = self.app_context.borrow_mut().visible_toasts(now);
-        let nes_ppu_viewer_scroll = if show_debugger
-            && let Console::Nes(nes) = console
-            && self.debugger_view_state.is_ppu_viewer_visible()
+        let ppu_viewer_snapshot = if show_debugger
+            && (self.debugger_view_state.is_ppu_viewer_visible()
+                || self.gb_debugger_view_state.is_ppu_viewer_visible())
         {
-            Some(update_ppu_viewer_textures(
-                nes,
-                self.ppu_viewer_nt_texture,
-                self.ppu_viewer_tiles_texture,
-            ))
+            console
+                .as_ppu_viewer()
+                .map(|viewer| viewer.create_ppu_viewer_snapshot())
         } else {
             None
         };
-        let gb_ppu_viewer_snapshot = if show_debugger
-            && let Console::GameBoy(gb) = console
-            && self.gb_debugger_view_state.is_ppu_viewer_visible()
-        {
-            let ppu_snap = gb.create_ppu_viewer_snapshot();
-            update_gb_ppu_viewer_textures_from_snapshot(
-                &ppu_snap,
-                self.gb_ppu_viewer_tiles_texture,
-                self.gb_ppu_viewer_bg_maps_texture,
-            );
-            Some(ppu_snap)
+        let nes_ppu_viewer_scroll =
+            ppu_viewer_snapshot
+                .as_ref()
+                .and_then(|snapshot| match snapshot {
+                    PpuViewerSnapshotKind::Nes(nes_snap) => Some(update_ppu_viewer_textures(
+                        nes_snap,
+                        self.ppu_viewer_nt_texture,
+                        self.ppu_viewer_tiles_texture,
+                    )),
+                    _ => None,
+                });
+        let gb_ppu_viewer_snapshot = if self.gb_debugger_view_state.is_ppu_viewer_visible() {
+            match ppu_viewer_snapshot.as_ref() {
+                Some(PpuViewerSnapshotKind::GameBoy(gb_snap)) => {
+                    update_gb_ppu_viewer_textures_from_snapshot(
+                        gb_snap,
+                        self.gb_ppu_viewer_tiles_texture,
+                        self.gb_ppu_viewer_bg_maps_texture,
+                    );
+                    Some(gb_snap)
+                }
+                _ => None,
+            }
         } else {
             None
         };
-        let nes_debugger_snapshot = if show_debugger && let Console::Nes(nes) = console {
-            Some(self.debugger_view_state.snapshot(nes))
+        let nes_debugger_snapshot = if show_debugger {
+            console
+                .as_nes()
+                .map(|nes| self.debugger_view_state.snapshot(nes))
         } else {
             None
         };
-        let gb_debugger_snapshot = if show_debugger && let Console::GameBoy(gb) = console {
-            Some(gb.create_debugger_snapshot(&mut self.gb_debugger_view_state))
+        let gb_debugger_snapshot = if show_debugger {
+            console
+                .as_gameboy()
+                .map(|gb| gb.create_debugger_snapshot(&mut self.gb_debugger_view_state))
         } else {
             None
         };
@@ -896,7 +909,7 @@ impl GlBackend {
                             scroll,
                         );
                     }
-                    if let Some(ppu_snap) = gb_ppu_viewer_snapshot.as_ref() {
+                    if let Some(ppu_snap) = gb_ppu_viewer_snapshot {
                         draw_gb_ppu_viewer_window(
                             ui,
                             gb_ppu_viewer_tiles_texture_id,
@@ -1527,13 +1540,12 @@ fn scroll_rect_line_segments(
     segments
 }
 
-/// Upload pixel data for the PPU nametable and pattern table textures from the current NES state.
+/// Upload pixel data for the NES PPU nametable and pattern table textures from a snapshot.
 fn update_ppu_viewer_textures(
-    nes: &Nes,
+    ppu_snap: &NesPpuViewerSnapshot,
     nt_texture: gl::types::GLuint,
     tiles_texture: gl::types::GLuint,
 ) -> (u16, u16) {
-    let ppu_snap = PpuViewerSnapshot::from_nes(nes);
     let nt_pixels = render_nametables_rgba(
         &ppu_snap.chr,
         &ppu_snap.nametables,

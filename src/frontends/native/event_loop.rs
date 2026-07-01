@@ -17,7 +17,7 @@ use crate::platform::audio::{EmulatorAudio, normalize_nes_sample};
 use crate::platform::autorun::AutorunMode;
 use crate::platform::autorun::state::AutorunState;
 use crate::platform::debugging::Tracing;
-use crate::platform::emulator::{Console, Emulator};
+use crate::platform::emulator::{Console, Emulator, SystemType};
 use crate::platform::frontend_toasts::{
     gamepad_connected_toast_message, gamepad_disconnected_toast_message, gamepad_init_toast_message,
 };
@@ -190,12 +190,24 @@ impl NativeEventLoop {
         }
     }
 
+    fn debugger_paused(&self) -> bool {
+        match self.console.system_type() {
+            SystemType::Nes => self.debugger_controller.is_paused(),
+            SystemType::GameBoy => self.gb_debugger_controller.is_paused(),
+            SystemType::GameBoyAdvance | SystemType::Snes => false,
+        }
+    }
+
+    fn debugger_open(&self) -> bool {
+        match self.console.system_type() {
+            SystemType::Nes => self.debugger_controller.is_debugger_open(),
+            SystemType::GameBoy => self.gb_debugger_controller.is_debugger_open(),
+            SystemType::GameBoyAdvance | SystemType::Snes => false,
+        }
+    }
+
     fn run_frame(&mut self) {
-        let debugger_paused = match &self.console {
-            Console::Nes(_) => self.debugger_controller.is_paused(),
-            Console::GameBoy(_) => self.gb_debugger_controller.is_paused(),
-            Console::GameBoyAdvance(_) | Console::Snes(_) => false, // GBA and SNES debuggers not yet implemented
-        };
+        let debugger_paused = self.debugger_paused();
         if self.state.paused && !debugger_paused {
             // Manually paused (not debugger) — skip frame
             return;
@@ -219,43 +231,37 @@ impl NativeEventLoop {
 
         let audio = self.audio.take();
         let audio_cell = std::cell::RefCell::new(audio);
-        match &mut self.console {
-            Console::Nes(nes) => {
-                self.debugger_controller
-                    .run_frame(nes, &self.tracing, &mut |nes| {
-                        if let Some(ref mut audio) = *audio_cell.borrow_mut() {
-                            while nes.sample_ready() {
-                                if let Some(sample) = nes.get_sample() {
-                                    audio.queue_sample(normalize_nes_sample(sample));
-                                }
+        if let Some(nes) = self.console.as_nes_mut() {
+            self.debugger_controller
+                .run_frame(nes, &self.tracing, &mut |nes| {
+                    if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                        while nes.sample_ready() {
+                            if let Some(sample) = nes.get_sample() {
+                                audio.queue_sample(normalize_nes_sample(sample));
                             }
                         }
-                    });
-            }
-            Console::GameBoy(gb) => {
-                gb.run_frame_with_debugger(&mut self.gb_debugger_controller, &audio_cell);
-            }
-            Console::GameBoyAdvance(gba) => {
-                while !gba.is_ready_to_render() {
-                    let _ = gba.run_tick();
-                    if let Some(ref mut audio) = *audio_cell.borrow_mut() {
-                        while gba.sample_ready() {
-                            if let Some((left, right)) = gba.get_stereo_sample() {
-                                audio.queue_stereo_sample(left, right);
-                            }
+                    }
+                });
+        } else if let Some(gb) = self.console.as_gameboy_mut() {
+            gb.run_frame_with_debugger(&mut self.gb_debugger_controller, &audio_cell);
+        } else if let Some(gba) = self.console.as_gba_mut() {
+            while !gba.is_ready_to_render() {
+                let _ = gba.run_tick();
+                if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                    while gba.sample_ready() {
+                        if let Some((left, right)) = gba.get_stereo_sample() {
+                            audio.queue_stereo_sample(left, right);
                         }
                     }
                 }
             }
-            Console::Snes(snes) => {
-                // SNES: run frame without debugger support
-                while !snes.is_ready_to_render() {
-                    let _ = snes.run_tick();
-                    if let Some(ref mut audio) = *audio_cell.borrow_mut() {
-                        while snes.sample_ready() {
-                            if let Some(sample) = snes.get_sample() {
-                                audio.queue_sample(sample);
-                            }
+        } else if let Some(snes) = self.console.as_snes_mut() {
+            while !snes.is_ready_to_render() {
+                let _ = snes.run_tick();
+                if let Some(ref mut audio) = *audio_cell.borrow_mut() {
+                    while snes.sample_ready() {
+                        if let Some(sample) = snes.get_sample() {
+                            audio.queue_sample(sample);
                         }
                     }
                 }
@@ -286,10 +292,7 @@ impl NativeEventLoop {
     /// changes to avoid underruns while paused.
     fn sync_audio_state(&self) {
         if let Some(ref audio) = self.audio {
-            if audio_should_be_paused(
-                self.state.window_focused,
-                self.debugger_controller.is_paused(),
-            ) {
+            if audio_should_be_paused(self.state.window_focused, self.debugger_paused()) {
                 audio.pause();
             } else {
                 audio.resume();
@@ -299,11 +302,7 @@ impl NativeEventLoop {
 
     /// Sync frontend state from the debugger controller.
     fn sync_from_controller(&mut self) {
-        let debugger_open = match &self.console {
-            Console::Nes(_) => self.debugger_controller.is_debugger_open(),
-            Console::GameBoy(_) => self.gb_debugger_controller.is_debugger_open(),
-            Console::GameBoyAdvance(_) | Console::Snes(_) => false, // GBA and SNES debuggers not yet implemented
-        };
+        let debugger_open = self.debugger_open();
 
         if debugger_open {
             if !self.state.debugger_open {
@@ -400,7 +399,7 @@ impl NativeEventLoop {
 
     /// Loads a new cartridge from the given ROM path and resets the emulator.
     fn switch_to_cartridge(&mut self, rom_path: &str) {
-        let Console::Nes(_) = &self.console else {
+        let Some(_) = self.console.as_nes() else {
             return;
         };
         let rom_bytes = match std::fs::read(rom_path) {
@@ -412,7 +411,7 @@ impl NativeEventLoop {
         };
 
         let cartridge = {
-            let Console::Nes(nes) = &self.console else {
+            let Some(nes) = self.console.as_nes() else {
                 unreachable!("console type checked above");
             };
             match crate::nes::cartridge::Cartridge::load_from_file(
@@ -439,7 +438,7 @@ impl NativeEventLoop {
                 .apply_rom_timing_mode(rom_timing)
         };
 
-        if let Console::Nes(nes) = &mut self.console {
+        if let Some(nes) = self.console.as_nes_mut() {
             nes.insert_cartridge(cartridge);
         }
         crate::nes::console::log_hardware_selection(self.console.app_context(), applied);
@@ -466,7 +465,7 @@ impl NativeEventLoop {
                 let save_state =
                     crate::nes::console::SaveState::from_bytes(&restore.state_bytes)
                         .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
-                if let Console::Nes(nes) = &mut self.console {
+                if let Some(nes) = self.console.as_nes_mut() {
                     nes.load_state(&save_state)
                         .map_err(|e| format!("Failed to restore checkpoint state: {e}"))?;
                 }
@@ -618,7 +617,7 @@ impl NativeEventLoop {
 
             let checkpoint_due = self.handle_autorun_after_input();
 
-            if let Console::Nes(nes) = &mut self.console {
+            if let Some(nes) = self.console.as_nes_mut() {
                 crate::nes::autorun::headless_playback::run_one_frame(nes);
             }
 
@@ -644,7 +643,7 @@ impl ApplicationHandler for NativeEventLoop {
                 if !self.initialized {
                     self.initialize_audio();
                     self.sync_audio_state();
-                    if let Console::Nes(nes) = &self.console {
+                    if let Some(nes) = self.console.as_nes() {
                         let watches = self.debugger_controller.load_debug_state_from_file(nes);
                         if let Some(ref mut gl) = self.gl_wrapper {
                             gl.set_watch_addresses(watches);
@@ -671,7 +670,7 @@ impl ApplicationHandler for NativeEventLoop {
                 if let Err(e) = self.finish_recording() {
                     eprintln!("Failed to finish recording on window close: {e}");
                 }
-                if let Console::Nes(nes) = &self.console {
+                if let Some(nes) = self.console.as_nes() {
                     let watches = self
                         .gl_wrapper
                         .as_ref()
@@ -761,7 +760,7 @@ impl ApplicationHandler for NativeEventLoop {
                             if let Err(e) = self.finish_recording() {
                                 eprintln!("Failed to finish recording on quit: {e}");
                             }
-                            if let Console::Nes(nes) = &self.console {
+                            if let Some(nes) = self.console.as_nes() {
                                 let watches = self
                                     .gl_wrapper
                                     .as_ref()
@@ -786,46 +785,28 @@ impl ApplicationHandler for NativeEventLoop {
                             }
                         }
                         KeyOutcome::ToggleDebugger => {
-                            match &mut self.console {
-                                Console::Nes(nes) => {
-                                    self.debugger_controller.toggle_debugger(nes);
-                                }
-                                Console::GameBoy(gb) => {
-                                    gb.toggle_debugger_with_controller(
-                                        &mut self.gb_debugger_controller,
-                                    );
-                                }
-                                Console::GameBoyAdvance(_) | Console::Snes(_) => {
-                                    // GBA and SNES debuggers not yet implemented
-                                }
+                            if let Some(nes) = self.console.as_nes_mut() {
+                                self.debugger_controller.toggle_debugger(nes);
+                            } else if let Some(gb) = self.console.as_gameboy_mut() {
+                                gb.toggle_debugger_with_controller(
+                                    &mut self.gb_debugger_controller,
+                                );
                             }
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepOver => {
-                            match &mut self.console {
-                                Console::Nes(nes) => {
-                                    self.debugger_controller.step_over(nes);
-                                }
-                                Console::GameBoy(gb) => {
-                                    gb.step_over_with_controller(&mut self.gb_debugger_controller);
-                                }
-                                Console::GameBoyAdvance(_) | Console::Snes(_) => {
-                                    // GBA and SNES debuggers not yet implemented
-                                }
+                            if let Some(nes) = self.console.as_nes_mut() {
+                                self.debugger_controller.step_over(nes);
+                            } else if let Some(gb) = self.console.as_gameboy_mut() {
+                                gb.step_over_with_controller(&mut self.gb_debugger_controller);
                             }
                             self.sync_from_controller();
                         }
                         KeyOutcome::StepInto => {
-                            match &mut self.console {
-                                Console::Nes(nes) => {
-                                    self.debugger_controller.step_into(nes);
-                                }
-                                Console::GameBoy(gb) => {
-                                    gb.step_into_with_controller(&mut self.gb_debugger_controller);
-                                }
-                                Console::GameBoyAdvance(_) | Console::Snes(_) => {
-                                    // GBA and SNES debuggers not yet implemented
-                                }
+                            if let Some(nes) = self.console.as_nes_mut() {
+                                self.debugger_controller.step_into(nes);
+                            } else if let Some(gb) = self.console.as_gameboy_mut() {
+                                gb.step_into_with_controller(&mut self.gb_debugger_controller);
                             }
                             self.sync_from_controller();
                         }
@@ -850,7 +831,7 @@ impl ApplicationHandler for NativeEventLoop {
                             self.state.show_fps = !self.state.show_fps;
                         }
                         KeyOutcome::CyclePalette => {
-                            if let Console::Nes(nes) = &mut self.console {
+                            if let Some(nes) = self.console.as_nes_mut() {
                                 let palette = nes.cycle_palette();
                                 let toast =
                                     crate::nes::frontend_toasts::palette_toast_message(palette);
@@ -980,7 +961,7 @@ impl ApplicationHandler for NativeEventLoop {
                 // Likewise, when the NES runs with audio disabled (--no-audio),
                 // there is no ring-buffer back-pressure either.
                 // Apply the same elapsed-time guard in both cases.
-                let is_game_boy = matches!(&self.console, Console::GameBoy(_));
+                let is_game_boy = self.console.system_type() == SystemType::GameBoy;
                 let audio_disabled = self.audio.is_none();
                 let frame_guard =
                     needs_frame_guard(using_manual_throttle, is_game_boy, audio_disabled);
@@ -1018,16 +999,10 @@ impl ApplicationHandler for NativeEventLoop {
 
                 // Render and apply debugger UI actions
                 let action = if let Some(ref mut gl) = self.gl_wrapper {
-                    match &self.console {
-                        Console::Nes(_) => {
-                            gl.update_breakpoints(self.debugger_controller.breakpoints());
-                        }
-                        Console::GameBoy(_) => {
-                            gl.update_gb_breakpoints(self.gb_debugger_controller.breakpoints());
-                        }
-                        Console::GameBoyAdvance(_) | Console::Snes(_) => {
-                            // GBA and SNES debugger breakpoints not yet implemented
-                        }
+                    if self.console.as_nes().is_some() {
+                        gl.update_breakpoints(self.debugger_controller.breakpoints());
+                    } else if self.console.as_gameboy().is_some() {
+                        gl.update_gb_breakpoints(self.gb_debugger_controller.breakpoints());
                     }
                     let crosshair =
                         mouse::zapper_crosshair(&self.console, self.state.last_zapper_position);
@@ -1048,21 +1023,15 @@ impl ApplicationHandler for NativeEventLoop {
                 } else {
                     Default::default()
                 };
-                match &mut self.console {
-                    Console::Nes(nes) => {
-                        self.debugger_controller.apply_ui_action(nes, action);
-                    }
-                    Console::GameBoy(gb) => {
-                        if let Some(ref mut gl) = self.gl_wrapper {
-                            let gb_action = gl.take_gb_debugger_action();
-                            gb.apply_ui_action_with_controller(
-                                &mut self.gb_debugger_controller,
-                                gb_action,
-                            );
-                        }
-                    }
-                    Console::GameBoyAdvance(_) | Console::Snes(_) => {
-                        // GBA and SNES debugger UI not yet implemented
+                if let Some(nes) = self.console.as_nes_mut() {
+                    self.debugger_controller.apply_ui_action(nes, action);
+                } else if let Some(gb) = self.console.as_gameboy_mut() {
+                    if let Some(ref mut gl) = self.gl_wrapper {
+                        let gb_action = gl.take_gb_debugger_action();
+                        gb.apply_ui_action_with_controller(
+                            &mut self.gb_debugger_controller,
+                            gb_action,
+                        );
                     }
                 }
                 self.sync_from_controller();
@@ -1170,7 +1139,7 @@ impl ApplicationHandler for NativeEventLoop {
             } else if should_use_manual_frame_throttle(
                 self.vsync_enabled,
                 self.state.window_focused,
-            ) || matches!(&self.console, Console::GameBoy(_))
+            ) || self.console.as_gameboy().is_some()
             {
                 // Manual frame limiting: advance deadline by target interval.
                 // The GameBoy branch is included here because it has no audio
