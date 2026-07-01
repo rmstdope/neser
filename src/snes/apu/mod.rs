@@ -572,6 +572,24 @@ impl SpcBusView<'_> {
         }
     }
 
+    fn timer_wait_cycles_for_addr(&self, addr: Option<u16>) -> u8 {
+        let wait_bits = match addr {
+            None => (self.test_reg() >> 6) & 0x03,
+            Some(address) if self.is_internal_wait_address(address) => {
+                (self.test_reg() >> 6) & 0x03
+            }
+            Some(_) => (self.test_reg() >> 4) & 0x03,
+        };
+        // Timers use non-glitchy wait-state divisors (2,4,8,16) while SMP core
+        // cycles use (2,4,10,20). This scale is normalized by /2 in this core.
+        match wait_bits {
+            0 => 1,
+            1 => 2,
+            2 => 4,
+            _ => 8,
+        }
+    }
+
     fn write_control(&mut self, value: u8) {
         let old_control = *self.control;
         *self.control = value;
@@ -632,7 +650,7 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn read(&mut self, addr: u16) -> u8 {
-        let cycles = self.read_cycles(addr);
+        let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
         let value = match addr {
             // I/O register reads ($F0-$FF) always return I/O values, not the RAM-disable
             // sentinel. Per bsnes smp/memory.cpp: readRAM is called first (returns $5A when
@@ -643,8 +661,9 @@ impl Spc700Bus for SpcBusView<'_> {
             0x00F3 => self.dsp.read_reg(*self.dsp_addr),
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
             // $F8-$F9 = AUXIO4/AUXIO5 (general-purpose I/O, stores value in ARAM)
-            // $FA-$FC = T0/T1/T2 targets (write-only; return underlying ARAM bytes, per bsnes)
-            0x00F8..=0x00FC => self.aram[addr as usize],
+            0x00F8..=0x00F9 => self.aram[addr as usize],
+            // $FA-$FC = T0/T1/T2 targets (write-only; reads return 0x00)
+            0x00FA..=0x00FC => 0x00,
             0x00FD..=0x00FF => self.timers.read_counter((addr - 0x00FD) as usize),
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
             _ if self.ram_disabled() => 0x5A,
@@ -656,7 +675,7 @@ impl Spc700Bus for SpcBusView<'_> {
         if (0x00F4..=0x00F7).contains(&addr) {
             trace_apu!(3; "SPC reads port[{}] -> ${:02X}", addr - 0x00F4, value);
         }
-        self.tick_timers_multiple(cycles);
+        self.tick_timers_multiple(timer_cycles);
         value
     }
 
@@ -665,7 +684,7 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn write(&mut self, addr: u16, value: u8) {
-        let cycles = self.write_cycles(addr);
+        let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
         match addr {
             0x00F0 => {
                 self.write_test(value);
@@ -707,7 +726,7 @@ impl Spc700Bus for SpcBusView<'_> {
                 }
             }
         }
-        self.tick_timers_multiple(cycles);
+        self.tick_timers_multiple(timer_cycles);
     }
 
     fn idle_cycles(&self) -> u8 {
@@ -715,8 +734,8 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn idle(&mut self) {
-        let cycles = self.idle_cycles();
-        self.tick_timers_multiple(cycles);
+        let timer_cycles = self.timer_wait_cycles_for_addr(None);
+        self.tick_timers_multiple(timer_cycles);
     }
 }
 
@@ -974,6 +993,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn timer_target_registers_are_write_only_when_read_back() {
+        let mut apu = SnesApu::new(None);
+
+        apu.aram[0x00FA] = 0x12;
+        apu.aram[0x00FB] = 0x34;
+        apu.aram[0x00FC] = 0x56;
+
+        assert_eq!(apu.read_spc_memory_for_test(0x00FA), 0x00);
+        assert_eq!(apu.read_spc_memory_for_test(0x00FB), 0x00);
+        assert_eq!(apu.read_spc_memory_for_test(0x00FC), 0x00);
+    }
+
     // -----------------------------------------------------------------------
     // Reproducer for #2911. Per bsnes `smp/io.cpp` + `smp/memory.cpp`:
     //   $F0 bit 1 = RAM-Writable (1 = writes go to ARAM)
@@ -1082,6 +1114,25 @@ mod tests {
             apu.read_spc_memory_for_test(0x00FF),
             0x00,
             "Timer must not tick when TEST bit 3 = 0 (Timer-Disable = don't work)"
+        );
+    }
+
+    #[test]
+    fn timer_ticks_use_nonglitchy_waitstate_divider_under_test_wait_bits() {
+        let mut apu = SnesApu::new(None);
+        // Enable T2 with target=1 (one increment per 16 timer cycles).
+        apu.write_spc_memory_for_test(0x00FC, 0x01);
+        apu.write_spc_control_for_test(0x04);
+        // Keep timers enabled (bit3=1, bit0=0), but set external wait bits=2.
+        apu.write_spc_memory_for_test(0x00F0, 0x2A);
+        // External RAM access should advance timers by 4 cycles each (not 5).
+        for _ in 0..7 {
+            apu.write_spc_memory_for_test(0x0200, 0x55);
+        }
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x01,
+            "T2 should tick once after 7 external writes at wait-bits=2"
         );
     }
 
