@@ -83,6 +83,8 @@ pub struct SnesCpuState {
     #[serde(default)]
     pub memory_bus_cycles: u8,
     #[serde(default)]
+    pub irq_lock_step: bool,
+    #[serde(default)]
     pub block_move_state: Option<SnesBlockMoveState>,
 }
 

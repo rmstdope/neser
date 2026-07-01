@@ -106,6 +106,10 @@ pub struct Cpu<B: SnesBus> {
     /// Reset at the start of each step() call; used to compute internal-cycle tick counts.
     memory_bus_cycles: u8,
 
+    /// One-step interrupt lock used to emulate delayed IRQ/NMI recognition after
+    /// specific hardware events (e.g. writes to `$4200` and DMA start via `$420B`).
+    irq_lock_step: bool,
+
     /// In-progress MVN/MVP transfer state. When present, each `step()` performs one
     /// transfer unit and keeps architectural PC at the post-operand address.
     block_move_state: Option<BlockMoveState>,
@@ -136,6 +140,7 @@ impl<B: SnesBus> Cpu<B> {
             waiting: false,
             fast_rom: false,
             memory_bus_cycles: 0,
+            irq_lock_step: false,
             block_move_state: None,
             bus,
         }
@@ -282,6 +287,7 @@ impl<B: SnesBus> Cpu<B> {
             abort_pending: self.abort_pending,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
+            irq_lock_step: self.irq_lock_step,
             block_move_state: self.block_move_state.map(|state| SnesBlockMoveState {
                 dst_bank: state.dst_bank,
                 src_bank: state.src_bank,
@@ -311,6 +317,7 @@ impl<B: SnesBus> Cpu<B> {
         self.abort_pending = state.abort_pending;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
+        self.irq_lock_step = state.irq_lock_step;
         self.block_move_state = state.block_move_state.map(|state| BlockMoveState {
             dst_bank: state.dst_bank,
             src_bank: state.src_bank,
@@ -402,6 +409,7 @@ impl<B: SnesBus> Cpu<B> {
         self.nmi_pending = false;
         self.irq_pending = false;
         self.abort_pending = false;
+        self.irq_lock_step = false;
         let lo = self.read8(0x00FFFC) as u16;
         let hi = self.read8(0x00FFFD) as u16;
         self.pc = lo | hi << 8;
@@ -574,6 +582,9 @@ impl<B: SnesBus> Cpu<B> {
         self.extra_cycles = 0;
         self.last_page_crossed = false;
         self.memory_bus_cycles = 0;
+        let interrupts_locked = self.irq_lock_step;
+        self.irq_lock_step = false;
+        let mut wai_wake_cycles: u8 = 0;
 
         if let Some(state) = self.block_move_state {
             return self.step_block_move_unit(state);
@@ -591,8 +602,10 @@ impl<B: SnesBus> Cpu<B> {
         // through to the normal dispatch logic below (which services the interrupt
         // if unmasked, or simply resumes the next instruction if the I flag masks it).
         if self.waiting {
-            if self.nmi_pending || irq_line_asserted || self.abort_pending {
+            if !interrupts_locked && (self.nmi_pending || irq_line_asserted || self.abort_pending) {
                 self.waiting = false;
+                self.tick_internal_cycle();
+                wai_wake_cycles = 1;
             } else {
                 self.tick_internal_cycle();
                 return 1;
@@ -600,20 +613,26 @@ impl<B: SnesBus> Cpu<B> {
         }
 
         // Poll hardware interrupts (higher priority than opcode fetch)
-        if self.abort_pending {
+        if !interrupts_locked && self.abort_pending {
             self.abort_pending = false;
             let base = self.dispatch_abort();
-            return self.tick_internal_cycles_for(base);
+            return self
+                .tick_internal_cycles_for(base)
+                .saturating_add(wai_wake_cycles);
         }
-        if self.nmi_pending {
+        if !interrupts_locked && self.nmi_pending {
             self.nmi_pending = false;
             let base = self.dispatch_nmi();
-            return self.tick_internal_cycles_for(base);
+            return self
+                .tick_internal_cycles_for(base)
+                .saturating_add(wai_wake_cycles);
         }
-        if irq_line_asserted && !self.flag_i() {
+        if !interrupts_locked && irq_line_asserted && !self.flag_i() {
             // IRQ is level-triggered: do NOT clear irq_pending here; caller must deassert
             let base = self.dispatch_irq();
-            return self.tick_internal_cycles_for(base);
+            return self
+                .tick_internal_cycles_for(base)
+                .saturating_add(wai_wake_cycles);
         }
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
@@ -884,6 +903,7 @@ impl<B: SnesBus> Cpu<B> {
 
         // Tick bus for internal (non-memory-access) cycles.
         self.tick_internal_cycles_for(total_bus_cycles)
+            .saturating_add(wai_wake_cycles)
     }
 
     /// Tick the bus for the CPU-internal (non-memory-access) cycles of an
@@ -946,11 +966,23 @@ impl<B: SnesBus> Cpu<B> {
             self.bus.tick();
         }
         self.memory_bus_cycles += 1;
-        // MEMSEL $420D: bit 0 controls WS2 ROM speed.
-        // The register is mirrored across all banks $00–$3F and $80–$BF.
         let bank = (addr >> 16) as u8;
-        if (bank <= 0x3F || (0x80..=0xBF).contains(&bank)) && (addr & 0xFFFF) as u16 == 0x420D {
-            self.fast_rom = value & 0x01 != 0;
+        if bank <= 0x3F || (0x80..=0xBF).contains(&bank) {
+            match (addr & 0xFFFF) as u16 {
+                0x4200 => {
+                    // Writes to NMITIMEN introduce a one-step interrupt-lock window.
+                    self.irq_lock_step = true;
+                }
+                0x420B => {
+                    // Starting DMA introduces the same lock window before IRQ/NMI recognition.
+                    if value != 0 {
+                        self.irq_lock_step = true;
+                    }
+                }
+                // MEMSEL $420D: bit 0 controls WS2 ROM speed.
+                0x420D => self.fast_rom = value & 0x01 != 0,
+                _ => {}
+            }
         }
         self.bus.write(addr, value);
     }
@@ -9088,6 +9120,43 @@ mod wai_stp_tests {
         assert_eq!(cpu.pc, 0x0002, "execution should resume after WAI");
     }
 
+    #[test]
+    fn wai_wake_adds_one_cycle_before_masked_resume() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xCB, 0xEA]); // WAI ; NOP
+        assert_eq!(cpu.step(), 4, "WAI opcode timing");
+        assert!(cpu.waiting);
+
+        // I=1 after reset: IRQ wakes WAI but does not dispatch.
+        cpu.irq_pending = true;
+        let cycles = cpu.step();
+        assert_eq!(cycles, 3, "wake from WAI adds one idle cycle before NOP");
+        assert!(!cpu.waiting);
+        assert_eq!(cpu.pc, 0x0002);
+    }
+
+    #[test]
+    fn wai_wake_adds_one_cycle_before_irq_dispatch() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false); // allow IRQ dispatch
+        cpu.bus.load(0x008000, &[0xCB]); // WAI
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
+
+        assert_eq!(cpu.step(), 4, "WAI opcode timing");
+        assert!(cpu.waiting);
+        cpu.irq_pending = true;
+
+        let cycles = cpu.step();
+        assert_eq!(
+            cycles, 8,
+            "wake cycle + emulation IRQ dispatch (7) should total 8"
+        );
+        assert_eq!(cpu.pc, 0x9100);
+        assert!(!cpu.waiting);
+    }
+
     // STP (0xDB): halts CPU until reset; modeled as 4-cycle instruction.
     #[test]
     fn stp_advances_pc_and_returns_4_cycles() {
@@ -10274,6 +10343,50 @@ mod interrupt_dispatch_tests {
             2,
             "IRQ should not redispatch once line is deasserted"
         );
+    }
+
+    #[test]
+    fn write_4200_defers_irq_dispatch_for_one_step() {
+        let mut cpu = Cpu::new(PollIrqBus::new());
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.write_a(0x0010);
+        // STA $4200 ; NOP ; NOP
+        cpu.bus.load(0x008000, &[0x8D, 0x00, 0x42, 0xEA, 0xEA]);
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
+        cpu.bus.irq_level = false;
+
+        cpu.step(); // STA $4200 (arms irq lock)
+        cpu.bus.irq_level = true;
+        cpu.step(); // lock window: should execute NOP
+        assert_eq!(cpu.pc, 0x8004, "defer window should run next opcode first");
+
+        let cycles = cpu.step();
+        assert_eq!(cycles, 7, "IRQ dispatch should occur on following step");
+        assert_eq!(cpu.pc, 0x9100);
+    }
+
+    #[test]
+    fn write_420b_defers_irq_dispatch_for_one_step() {
+        let mut cpu = Cpu::new(PollIrqBus::new());
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.write_a(0x0001);
+        // STA $420B ; NOP ; NOP
+        cpu.bus.load(0x008000, &[0x8D, 0x0B, 0x42, 0xEA, 0xEA]);
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
+        cpu.bus.irq_level = false;
+
+        cpu.step(); // STA $420B (DMA start path, arms irq lock)
+        cpu.bus.irq_level = true;
+        cpu.step(); // lock window: should execute NOP
+        assert_eq!(cpu.pc, 0x8004, "defer window should run next opcode first");
+
+        let cycles = cpu.step();
+        assert_eq!(cycles, 7);
+        assert_eq!(cpu.pc, 0x9100);
     }
 
     // =========================================================================
