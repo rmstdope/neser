@@ -227,6 +227,12 @@ impl Spc700 {
         self.set_flag(FLAG_NEGATIVE, value & 0x80 != 0);
     }
 
+    /// Update N and Z according to a 16-bit result value.
+    fn update_nz16(&mut self, value: u16) {
+        self.set_flag(FLAG_ZERO, value == 0);
+        self.set_flag(FLAG_NEGATIVE, value & 0x8000 != 0);
+    }
+
     /// Base address for direct-page addressing (`$00xx` or `$01xx`).
     fn direct_page_base(&self) -> u16 {
         if self.flag(FLAG_DIRECT_PAGE) {
@@ -242,19 +248,12 @@ impl Spc700 {
         let (temp, carry1) = self.a.overflowing_add(imm);
         let (result, carry2) = temp.overflowing_add(carry_bit);
         let overflow = (self.a ^ result) & (imm ^ result) & 0x80 != 0;
+        let half_carry =
+            (u16::from(self.a & 0x0F) + u16::from(imm & 0x0F) + u16::from(carry_bit)) > 0x0F;
         self.a = result;
         self.set_flag(FLAG_CARRY, carry1 || carry2);
         self.set_flag(FLAG_OVERFLOW, overflow);
-        self.update_nz8(self.a);
-    }
-
-    /// Subtract immediate from A, updating N/Z/V/C flags.
-    fn subtract_from_a(&mut self, imm: u8) {
-        let (result, borrow) = self.a.overflowing_sub(imm);
-        let overflow = (self.a ^ result) & (!imm ^ result) & 0x80 != 0;
-        self.a = result;
-        self.set_flag(FLAG_CARRY, !borrow);
-        self.set_flag(FLAG_OVERFLOW, overflow);
+        self.set_flag(FLAG_HALF_CARRY, half_carry);
         self.update_nz8(self.a);
     }
 
@@ -264,39 +263,40 @@ impl Spc700 {
         let (temp, borrow1) = self.a.overflowing_sub(imm);
         let (result, borrow2) = temp.overflowing_sub(carry_bit);
         let overflow = (self.a ^ result) & (!imm ^ result) & 0x80 != 0;
+        let subtrahend_low = u16::from(imm & 0x0F) + u16::from(carry_bit);
+        let half_borrow = u16::from(self.a & 0x0F) < subtrahend_low;
         self.a = result;
         self.set_flag(FLAG_CARRY, !(borrow1 || borrow2));
         self.set_flag(FLAG_OVERFLOW, overflow);
+        self.set_flag(FLAG_HALF_CARRY, !half_borrow);
         self.update_nz8(self.a);
     }
 
-    /// Update C, V, Z, N flags based on subtraction (left - right).
+    /// Update C, Z, N flags based on subtraction (left - right).
     /// Used by CMP instructions.
     fn update_flags_on_compare(&mut self, left: u8, right: u8) {
         let (result, borrow) = left.overflowing_sub(right);
-        let overflow = (left ^ result) & (!right ^ result) & 0x80 != 0;
         self.set_flag(FLAG_CARRY, !borrow);
-        self.set_flag(FLAG_OVERFLOW, overflow);
         self.set_flag(FLAG_ZERO, result == 0);
         self.set_flag(FLAG_NEGATIVE, result & 0x80 != 0);
     }
 
-    /// Compare A with immediate (subtract without storing), updating N/Z/V/C flags.
+    /// Compare A with immediate (subtract without storing), updating N/Z/C flags.
     fn compare_a(&mut self, imm: u8) {
         self.update_flags_on_compare(self.a, imm);
     }
 
-    /// Compare X with immediate, updating N/Z/V/C flags.
+    /// Compare X with immediate, updating N/Z/C flags.
     fn compare_x(&mut self, imm: u8) {
         self.update_flags_on_compare(self.x, imm);
     }
 
-    /// Compare Y with immediate, updating N/Z/V/C flags.
+    /// Compare Y with immediate, updating N/Z/C flags.
     fn compare_y(&mut self, imm: u8) {
         self.update_flags_on_compare(self.y, imm);
     }
 
-    /// Compare two 8-bit values (left - right), updating N/Z/V/C flags.
+    /// Compare two 8-bit values (left - right), updating N/Z/C flags.
     fn compare_values(&mut self, left: u8, right: u8) {
         self.update_flags_on_compare(left, right);
     }
@@ -402,7 +402,7 @@ impl Spc700 {
         self.set_flag(FLAG_CARRY, carry);
         self.set_flag(FLAG_OVERFLOW, overflow);
         self.set_flag(FLAG_HALF_CARRY, half_carry);
-        self.update_nz8(self.y);
+        self.update_nz16(result);
     }
 
     /// SUBW YA,[dp] — subtract 16-bit direct-page word from YA.
@@ -417,18 +417,16 @@ impl Spc700 {
         self.set_flag(FLAG_CARRY, !borrow);
         self.set_flag(FLAG_OVERFLOW, overflow);
         self.set_flag(FLAG_HALF_CARRY, !half_borrow);
-        self.update_nz8(self.y);
+        self.update_nz16(result);
     }
 
     /// CMPW YA,[dp] — compare 16-bit direct-page word with YA.
-    /// Updates N/Z/V/C flags based on the comparison result (YA - value).
+    /// Updates N/Z/C flags based on the comparison result (YA - value).
     fn compare_ya(&mut self, value: u16) {
         let ya = (u16::from(self.y) << 8) | u16::from(self.a);
         let (result, borrow) = ya.overflowing_sub(value);
-        let overflow = ((ya ^ value) & (ya ^ result) & 0x8000) != 0;
         self.set_flag(FLAG_CARRY, !borrow);
-        self.set_flag(FLAG_OVERFLOW, overflow);
-        self.update_nz8((result >> 8) as u8);
+        self.update_nz16(result);
     }
 
     /// ASL — shift left and update N/Z/C flags.
@@ -476,20 +474,29 @@ impl Spc700 {
         self.update_nz8(self.y); // Set flags based on high byte
     }
 
-    /// DIV YA,X — divide YA / X, store quotient in A and remainder in Y (12 cycles).
-    /// A = YA / X; Y = YA mod X. Sets overflow flag if X == 0 (division by zero).
+    /// DIV YA,X — divide YA by X, store quotient in A and remainder in Y.
+    ///
+    /// The SPC700 quotient is 9-bit internally. Bit 8 is reported in V, and H
+    /// follows the low-nibble compare between Y and X.
     fn div_ya(&mut self) {
+        let x = self.x;
         let ya = (u16::from(self.y) << 8) | u16::from(self.a);
-        if self.x == 0 {
-            self.set_flag(FLAG_OVERFLOW, true);
+
+        self.set_flag(FLAG_OVERFLOW, self.y >= x);
+        self.set_flag(FLAG_HALF_CARRY, (self.y & 0x0F) >= (x & 0x0F));
+
+        let x_u16 = u16::from(x);
+        if u16::from(self.y) < (x_u16 << 1) {
+            self.a = (ya / x_u16) as u8;
+            self.y = (ya % x_u16) as u8;
         } else {
-            let quotient = (ya / u16::from(self.x)) as u8;
-            let remainder = (ya % u16::from(self.x)) as u8;
-            self.a = quotient;
-            self.y = remainder;
-            self.set_flag(FLAG_OVERFLOW, false);
+            let denom = 0x0100u16 - x_u16;
+            let adjusted = ya.wrapping_sub(x_u16 << 9);
+            self.a = (0x00FFu16.wrapping_sub(adjusted / denom)) as u8;
+            self.y = (x_u16.wrapping_add(adjusted % denom)) as u8;
         }
-        self.update_nz8(self.a); // Set flags based on quotient
+
+        self.update_nz8(self.a);
     }
 
     /// Return `true` if the given opcode has a per-cycle script and should be
@@ -974,7 +981,7 @@ impl Spc700 {
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, imm, &mut cycles);
             }
-            // MOVW YA,dp — load 16-bit direct-page word into YA, update N/Z from high byte.
+            // MOVW YA,dp — load 16-bit direct-page word into YA, update N/Z from YA.
             0xBA => {
                 let dp = self.fetch(bus, &mut cycles);
                 let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
@@ -985,7 +992,7 @@ impl Spc700 {
                 );
                 self.a = lo;
                 self.y = hi;
-                self.update_nz8(self.y);
+                self.update_nz16((u16::from(self.y) << 8) | u16::from(self.a));
                 self.idle_cycle(bus, &mut cycles);
             }
             // MOVW dp,YA — store YA as 16-bit direct-page word; flags unchanged.
@@ -1201,10 +1208,12 @@ impl Spc700 {
                 let result = self.ror(value);
                 self.write_cycle(bus, addr, result, &mut cycles);
             }
-            // AND A,#imm — bitwise AND of immediate into A, update N/Z.
+            // AND A,dp — bitwise AND of direct-page byte into A, update N/Z.
             0x24 => {
-                let imm = self.fetch(bus, &mut cycles);
-                self.a &= imm;
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.a &= value;
                 self.update_nz8(self.a);
             }
             // AND A,#imm — canonical opcode form.
@@ -1326,10 +1335,12 @@ impl Spc700 {
                 self.update_nz8(result);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // OR A,#imm — bitwise OR of immediate into A, update N/Z.
+            // OR A,dp — bitwise OR of direct-page byte into A, update N/Z.
             0x04 => {
-                let imm = self.fetch(bus, &mut cycles);
-                self.a |= imm;
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.a |= value;
                 self.update_nz8(self.a);
             }
             // OR A,#imm — canonical opcode form.
@@ -1451,10 +1462,12 @@ impl Spc700 {
                 self.update_nz8(result);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // EOR A,#imm — bitwise XOR of immediate into A, update N/Z.
+            // EOR A,dp — bitwise XOR of direct-page byte into A, update N/Z.
             0x44 => {
-                let imm = self.fetch(bus, &mut cycles);
-                self.a ^= imm;
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.a ^= value;
                 self.update_nz8(self.a);
             }
             // EOR A,#imm — canonical opcode form.
@@ -1701,16 +1714,19 @@ impl Spc700 {
                 let result = self.a;
                 self.a = saved_a;
                 self.write_cycle(bus, x_addr, result, &mut cycles);
-            }
-            // SUB A,#imm — subtract immediate from A, update N/Z/V/C.
-            0xA8 => {
-                let imm = self.fetch(bus, &mut cycles);
-                self.subtract_from_a(imm);
+                self.idle_cycle(bus, &mut cycles);
             }
             // SBC A,#imm — subtract immediate from A with borrow, update N/Z/V/C.
-            0xA4 => {
+            0xA8 => {
                 let imm = self.fetch(bus, &mut cycles);
                 self.subtract_with_borrow_from_a(imm);
+            }
+            // SBC A,dp — subtract direct-page byte from A with borrow, update N/Z/V/C.
+            0xA4 => {
+                let dp = self.fetch(bus, &mut cycles);
+                let value =
+                    self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
+                self.subtract_with_borrow_from_a(value);
             }
             // SBC A,(X).
             0xA6 => {
@@ -1825,6 +1841,7 @@ impl Spc700 {
                 let result = self.a;
                 self.a = saved_a;
                 self.write_cycle(bus, x_addr, result, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
             }
             // CMP X,#imm — compare X with immediate, update N/Z/V/C.
             0xC8 => {
@@ -2280,21 +2297,18 @@ impl Spc700 {
             // POP A — pop accumulator from stack (4 cycles).
             0xAE => {
                 self.a = self.pop(bus, &mut cycles);
-                self.update_nz8(self.a);
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // POP X — pop X register from stack (4 cycles).
             0xCE => {
                 self.x = self.pop(bus, &mut cycles);
-                self.update_nz8(self.x);
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // POP Y — pop Y register from stack (4 cycles).
             0xEE => {
                 self.y = self.pop(bus, &mut cycles);
-                self.update_nz8(self.y);
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
@@ -2426,21 +2440,21 @@ impl Spc700 {
                 self.write_cycle(bus, addr, value & !self.a, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
-            // INCW dp — increment 16-bit direct-page word, update N/Z from high byte.
+            // INCW dp — increment 16-bit direct-page word, update N/Z from 16-bit result.
             0x3A => {
                 let dp = self.fetch(bus, &mut cycles);
                 let value = self.read_word_direct_page(bus, dp, &mut cycles);
                 let result = value.wrapping_add(1);
                 self.write_word_direct_page(bus, dp, result, &mut cycles);
-                self.update_nz8((result >> 8) as u8);
+                self.update_nz16(result);
             }
-            // DECW dp — decrement 16-bit direct-page word, update N/Z from high byte.
+            // DECW dp — decrement 16-bit direct-page word, update N/Z from 16-bit result.
             0x1A => {
                 let dp = self.fetch(bus, &mut cycles);
                 let value = self.read_word_direct_page(bus, dp, &mut cycles);
                 let result = value.wrapping_sub(1);
                 self.write_word_direct_page(bus, dp, result, &mut cycles);
-                self.update_nz8((result >> 8) as u8);
+                self.update_nz16(result);
             }
             // ADDW YA,dp — add 16-bit direct-page word to YA (5 cycles).
             0x7A => {
@@ -2519,11 +2533,17 @@ impl Spc700 {
             // SLEEP — halt CPU until external wakeup source.
             0xEF => {
                 trace_apu!(1; "SPC entered SLEEP at ${:04X}", opcode_pc);
+                for _ in 0..6 {
+                    self.idle_cycle(bus, &mut cycles);
+                }
                 self.halted = true;
             }
             // STOP — halt CPU clock until reset.
             0xFF => {
                 trace_apu!(1; "SPC entered STOP at ${:04X}", opcode_pc);
+                for _ in 0..6 {
+                    self.idle_cycle(bus, &mut cycles);
+                }
                 self.halted = true;
             }
         }
@@ -3822,7 +3842,7 @@ mod tests {
     fn and_a_imm_bitwise_and() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x24, 0x0F]); // AND A,#$0F
+        bus.load(0x0200, &[0x28, 0x0F]); // AND A,#$0F
         cpu.load_state_for_processor_test(0xFF, 0, 0, 0xEF, 0x0200, FLAG_NEGATIVE);
 
         let cycles = cpu.step(&mut bus);
@@ -3838,7 +3858,7 @@ mod tests {
     fn and_a_imm_results_in_zero() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x24, 0x00]); // AND A,#$00
+        bus.load(0x0200, &[0x28, 0x00]); // AND A,#$00
         cpu.load_state_for_processor_test(0xFF, 0, 0, 0xEF, 0x0200, 0);
 
         let _cycles = cpu.step(&mut bus);
@@ -3852,7 +3872,7 @@ mod tests {
     fn or_a_imm_bitwise_or() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x04, 0x0F]); // OR A,#$0F
+        bus.load(0x0200, &[0x08, 0x0F]); // OR A,#$0F
         cpu.load_state_for_processor_test(0xF0, 0, 0, 0xEF, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
@@ -3868,7 +3888,7 @@ mod tests {
     fn or_a_imm_zero_result() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x04, 0x00]); // OR A,#$00
+        bus.load(0x0200, &[0x08, 0x00]); // OR A,#$00
         cpu.load_state_for_processor_test(0x00, 0, 0, 0xEF, 0x0200, FLAG_NEGATIVE);
 
         let _cycles = cpu.step(&mut bus);
@@ -3882,7 +3902,7 @@ mod tests {
     fn eor_a_imm_bitwise_xor() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x44, 0xFF]); // EOR A,#$FF
+        bus.load(0x0200, &[0x48, 0xFF]); // EOR A,#$FF
         cpu.load_state_for_processor_test(0x0F, 0, 0, 0xEF, 0x0200, 0);
 
         let cycles = cpu.step(&mut bus);
@@ -3898,7 +3918,7 @@ mod tests {
     fn eor_a_imm_zero_result() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0x44, 0x55]); // EOR A,#$55
+        bus.load(0x0200, &[0x48, 0x55]); // EOR A,#$55
         cpu.load_state_for_processor_test(0x55, 0, 0, 0xEF, 0x0200, FLAG_NEGATIVE);
 
         let _cycles = cpu.step(&mut bus);
@@ -3987,11 +4007,26 @@ mod tests {
     }
 
     #[test]
-    fn sub_a_imm_simple_no_borrow() {
+    fn adc_a_dp_sets_half_carry_on_low_nibble_overflow() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0xA8, 0x10]); // SUB A,#$10
-        cpu.load_state_for_processor_test(0x30, 0, 0, 0xEF, 0x0200, 0);
+        bus.load(0x0200, &[0x84, 0x10]); // ADC A,$10
+        bus.set(0x0010, 0x01);
+        cpu.load_state_for_processor_test(0x0F, 0, 0, 0xEF, 0x0200, 0);
+
+        let _cycles = cpu.step(&mut bus);
+
+        assert_eq!(cpu.a(), 0x10);
+        assert!(cpu.flag(FLAG_HALF_CARRY));
+        assert!(!cpu.flag(FLAG_CARRY));
+    }
+
+    #[test]
+    fn sbc_a_imm_simple_no_borrow_when_carry_set() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xA8, 0x10]); // SBC A,#$10
+        cpu.load_state_for_processor_test(0x30, 0, 0, 0xEF, 0x0200, FLAG_CARRY);
 
         let cycles = cpu.step(&mut bus);
 
@@ -4004,18 +4039,33 @@ mod tests {
     }
 
     #[test]
-    fn sub_a_imm_with_borrow() {
+    fn sbc_a_imm_with_borrow_when_carry_clear() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
-        bus.load(0x0200, &[0xA8, 0x10]); // SUB A,#$10
+        bus.load(0x0200, &[0xA8, 0x10]); // SBC A,#$10
         cpu.load_state_for_processor_test(0x05, 0, 0, 0xEF, 0x0200, 0);
 
         let _cycles = cpu.step(&mut bus);
 
-        assert_eq!(cpu.a(), 0xF5);
+        assert_eq!(cpu.a(), 0xF4);
         assert!(!cpu.flag(FLAG_CARRY)); // Carry is clear on borrow
         assert!(!cpu.flag(FLAG_OVERFLOW));
         assert!(cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn sbc_a_dp_opcode_a4_reads_direct_page_and_takes_three_cycles() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xA4, 0x10]); // SBC A,$10
+        bus.set(0x0010, 0x01);
+        cpu.load_state_for_processor_test(0x10, 0, 0, 0xEF, 0x0200, FLAG_CARRY);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0x0F);
+        assert!(cpu.flag(FLAG_CARRY));
     }
 
     #[test]
@@ -4426,14 +4476,14 @@ mod tests {
         let mut bus = FlatRamBus::new();
         bus.load(0x0200, &[0xAE]); // POP A
         bus.write(0x01F0, 0x88); // Stack contains value
-        cpu.load_state_for_processor_test(0x00, 0xBB, 0xCC, 0xEF, 0x0200, 0);
+        cpu.load_state_for_processor_test(0x00, 0xBB, 0xCC, 0xEF, 0x0200, FLAG_ZERO);
 
         let cycles = cpu.step(&mut bus);
 
         assert_eq!(cycles, 4);
         assert_eq!(cpu.sp(), 0xF0); // SP incremented
         assert_eq!(cpu.a(), 0x88); // A loaded from stack
-        assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0x88 is negative)
+        assert!(cpu.flag(FLAG_ZERO)); // POP A must not alter flags
     }
 
     #[test]
@@ -4442,14 +4492,14 @@ mod tests {
         let mut bus = FlatRamBus::new();
         bus.load(0x0200, &[0xCE]); // POP X
         bus.write(0x01F0, 0x44); // Stack contains value
-        cpu.load_state_for_processor_test(0xAA, 0x00, 0xCC, 0xEF, 0x0200, 0);
+        cpu.load_state_for_processor_test(0xAA, 0x00, 0xCC, 0xEF, 0x0200, FLAG_NEGATIVE);
 
         let cycles = cpu.step(&mut bus);
 
         assert_eq!(cycles, 4);
         assert_eq!(cpu.sp(), 0xF0); // SP incremented
         assert_eq!(cpu.x(), 0x44); // X loaded from stack
-        assert!(!cpu.flag(FLAG_NEGATIVE)); // N flag clear (0x44 is positive)
+        assert!(cpu.flag(FLAG_NEGATIVE)); // POP X must not alter flags
     }
 
     #[test]
@@ -4458,14 +4508,14 @@ mod tests {
         let mut bus = FlatRamBus::new();
         bus.load(0x0200, &[0xEE]); // POP Y
         bus.write(0x01F0, 0x99); // Stack contains value
-        cpu.load_state_for_processor_test(0xAA, 0xBB, 0x00, 0xEF, 0x0200, 0);
+        cpu.load_state_for_processor_test(0xAA, 0xBB, 0x00, 0xEF, 0x0200, FLAG_ZERO);
 
         let cycles = cpu.step(&mut bus);
 
         assert_eq!(cycles, 4);
         assert_eq!(cpu.sp(), 0xF0); // SP incremented
         assert_eq!(cpu.y(), 0x99); // Y loaded from stack
-        assert!(cpu.flag(FLAG_NEGATIVE)); // N flag set (0x99 is negative)
+        assert!(cpu.flag(FLAG_ZERO)); // POP Y must not alter flags
     }
 
     #[test]
@@ -4595,6 +4645,24 @@ mod tests {
         assert_eq!(bus.read(0x0020), 0xFF);
         assert_eq!(bus.read(0x0021), 0x7F);
         assert!(!cpu.flag(FLAG_NEGATIVE)); // N flag clear (0x7F is positive)
+    }
+
+    #[test]
+    fn decw_dp_keeps_zero_clear_when_16bit_result_is_nonzero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x1A, 0x20]); // DECW $20
+        bus.set(0x0020, 0x02);
+        bus.set(0x0021, 0x00);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(bus.read(0x0020), 0x01);
+        assert_eq!(bus.read(0x0021), 0x00);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
     }
 
     #[test]
@@ -4916,6 +4984,23 @@ mod tests {
     }
 
     #[test]
+    fn movw_ya_dp_keeps_zero_clear_when_low_byte_is_nonzero() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0xBA, 0x30]); // MOVW YA,$30
+        bus.set(0x0030, 0xDB);
+        bus.set(0x0031, 0x00);
+        cpu.load_state_for_processor_test(0x00, 0x00, 0x00, 0xF0, 0x0200, FLAG_ZERO);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(cpu.a(), 0xDB);
+        assert_eq!(cpu.y(), 0x00);
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
     fn movw_dp_ya_stores_word_low_then_high() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
@@ -5180,6 +5265,20 @@ mod tests {
     }
 
     #[test]
+    fn cmp_x_abs_preserves_overflow_flag() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x1E, 0x34, 0x12]); // CMP X,$1234
+        bus.set(0x1234, 0x53);
+        cpu.load_state_for_processor_test(0x00, 0x53, 0x00, 0xF0, 0x0200, FLAG_OVERFLOW);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert!(cpu.flag(FLAG_OVERFLOW));
+    }
+
+    #[test]
     fn cmp_y_dp_uses_direct_page_base_flag() {
         let mut cpu = Spc700::new();
         let mut bus = FlatRamBus::new();
@@ -5285,6 +5384,54 @@ mod tests {
         assert_eq!(cycles, 5);
         assert_eq!(bus.read(0x0010), 0x0C);
         assert!(!cpu.flag(FLAG_NEGATIVE));
+    }
+
+    #[test]
+    fn or_a_dp_opcode_04_reads_direct_page_and_takes_three_cycles() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x04, 0x10]); // OR A,$10
+        bus.set(0x0010, 0x0F);
+        cpu.load_state_for_processor_test(0x30, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0x3F);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn and_a_dp_opcode_24_reads_direct_page_and_takes_three_cycles() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x24, 0x10]); // AND A,$10
+        bus.set(0x0010, 0x0F);
+        cpu.load_state_for_processor_test(0x3F, 0, 0, 0xF0, 0x0200, FLAG_NEGATIVE);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0x0F);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
+    }
+
+    #[test]
+    fn eor_a_dp_opcode_44_reads_direct_page_and_takes_three_cycles() {
+        let mut cpu = Spc700::new();
+        let mut bus = FlatRamBus::new();
+        bus.load(0x0200, &[0x44, 0x10]); // EOR A,$10
+        bus.set(0x0010, 0x0F);
+        cpu.load_state_for_processor_test(0x55, 0, 0, 0xF0, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.a(), 0x5A);
+        assert!(!cpu.flag(FLAG_NEGATIVE));
+        assert!(!cpu.flag(FLAG_ZERO));
     }
 
     #[test]
@@ -5531,7 +5678,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 5);
         assert_eq!(bus.read(0x0010), 0x03);
         assert_eq!(cpu.a(), 0xCC);
         assert!(!cpu.flag(FLAG_ZERO));
@@ -5566,7 +5713,7 @@ mod tests {
 
         let cycles = cpu.step(&mut bus);
 
-        assert_eq!(cycles, 4);
+        assert_eq!(cycles, 5);
         assert_eq!(bus.read(0x0010), 0x0F);
         assert_eq!(cpu.a(), 0xCC);
         assert!(cpu.flag(FLAG_CARRY));

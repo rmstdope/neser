@@ -16,6 +16,7 @@ mod tests {
         ("3-test_write_disable.smc", 600, 0xC3DE_3F4F),
         ("4-test_ram_disable.smc", 600, 0x85F1_D154),
         ("test_ram_disable_ipl.smc", 600, 0xD001_765E),
+        ("spc_smp.sfc", 600, 0xE6CE_0BCE),
         ("test_speed.smc", 600, 0x8EAD_6D95),
         ("test_timer_speed_2.smc", 600, 0x471F_26BD),
         ("test_timer_speed3.smc", 600, 0x0BBB_12C6),
@@ -101,12 +102,6 @@ mod tests {
             result.passed,
             result.exit_reason
         );
-    }
-
-    #[test]
-    #[ignore = "fails: SMP behavior (Failed 02) — fix emulator then update CRC"]
-    fn blargg_spc_smp_passes() {
-        run_failing_rom("spc_smp.sfc");
     }
 
     #[test]

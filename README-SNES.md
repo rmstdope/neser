@@ -128,18 +128,22 @@ CRC32 against a human-approved PASS capture. To approve a new golden, run with
 committed integrity with
 `python -m scripts.compute_snes_rom_asset_integrity <dir>`.
 
-**Passing (6) — visually-approved screen-CRC goldens at frame 600:**
+**Passing (10) — visually-approved screen-CRC goldens at frame 600:**
 
 | ROM | Category | Golden CRC |
 | --- | --- | --- |
 | `1-test_exec_from_io` | SMP | `0x7EEE5E15` |
 | `2-test_single_instr` | SMP | `0x2B42CE76` |
 | `3-test_write_disable` | SMP | `0xC3DE3F4F` |
-| `test_speed` | Timers | `0x5085D88F` |
+| `4-test_ram_disable` | SMP | `0x85F1D154` |
+| `test_ram_disable_ipl` | SMP | `0xD001765E` |
+| `spc_smp` | SMP | `0xE6CE0BCE` |
+| `test_speed` | Timers | `0x8EAD6D95` |
 | `test_timer_speed_2` | Timers | `0x471F26BD` |
 | `test_timer_speed3` | Timers | `0x0BBB12C6` |
+| `test_timer_stop` | Timers | `0x7CC2B76B` |
 
-**Currently failing (12) — committed with `#[ignore]`'d tests:**
+**Currently failing (8) — committed with `#[ignore]`'d tests:**
 
 When the emulator is improved to produce a Passed screen, run
 `NESER_CAPTURE_SCREEN=1 cargo test … -- --ignored` to capture the golden,
@@ -147,15 +151,11 @@ replace the `0x0000_0000` placeholder CRC in the test, and remove `#[ignore]`.
 
 | ROM | Category | Known failure |
 | --- | --- | --- |
-| `4-test_ram_disable` | SMP | reports code CC |
-| `test_ram_disable_ipl` | SMP | APU RAM/IPL disable |
-| `spc_smp` | SMP | Failed 02: SMP behavior |
 | `spc_mem_access_times` | SMP | memory access timing |
 | `spc_dsp6` | DSP | Failed 03: DSP echo/basics |
 | `spc_timer` | Timers | Failed 02: SPC timer |
 | `test_timer_speed` | Timers | timer speed |
 | `test_timer_speed2` | Timers | timer speed |
-| `test_timer_stop` | Timers | timer stop |
 | `test_timer_stop2` | Timers | timer stop |
 | `timer_at_power_reset` | Timers | timer at power/reset |
 | `speed_2_freezes2` | Timers | SPC speed/freeze |
