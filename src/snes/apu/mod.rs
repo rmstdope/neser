@@ -97,6 +97,9 @@ pub struct SnesApu {
     control: u8,
     /// Mirrors `$F0` test bits.
     test: u8,
+    /// `true` once the SPC700 has deadlocked after selecting the glitchy
+    /// internal-speed divider (value 2). See [`SpcBusView::internal_speed_freeze`].
+    spc_frozen: bool,
     timers: SpcTimers,
     master_ticks: u64,
     /// Signed budget in numerator units for fractional SPC catch-up.
@@ -122,6 +125,7 @@ impl SnesApu {
             spc_to_main_ports: [0; 4],
             control: 0xB0,
             test: default_test_reg(),
+            spc_frozen: false,
             timers: SpcTimers::default(),
             master_ticks: 0,
             spc_cycle_budget: 0,
@@ -161,6 +165,15 @@ impl SnesApu {
         self.spc_cycle_budget += SPC_PER_MASTER_NUM;
 
         while self.spc_cycle_budget >= SPC_PER_MASTER_DEN {
+            // The SPC700 deadlocks permanently once the glitchy internal-speed
+            // divider (value 2) has been engaged during an internal access
+            // (blargg `speed_2_freezes`). Keep draining the budget so the rest
+            // of the system advances, but never execute the halted core.
+            if self.spc_frozen {
+                self.spc_cycle_budget -= SPC_PER_MASTER_DEN;
+                continue;
+            }
+
             // Cycle-scripted dispatch (per-SPC-cycle stepping) is used for
             // the blargg IPL-hack trampoline (#2908), where opcodes execute
             // directly out of the I/O port region $00F4-$00F7. Restricting
@@ -186,6 +199,7 @@ impl SnesApu {
                     timers: &mut self.timers,
                     dsp: &mut self.dsp,
                     dsp_addr: &mut self.dsp_addr,
+                    frozen: &mut self.spc_frozen,
                     tick_timers: true,
                 };
                 if use_cycle_stepper {
@@ -334,6 +348,7 @@ impl SnesApu {
     }
 
     fn reset_spc700(&mut self) {
+        self.spc_frozen = false;
         let mut bus_view = SpcBusView {
             aram: &mut self.aram,
             ipl: &self.ipl,
@@ -344,6 +359,7 @@ impl SnesApu {
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
+            frozen: &mut self.spc_frozen,
             tick_timers: false,
         };
         self.spc700.reset(&mut bus_view);
@@ -453,6 +469,7 @@ impl SnesApu {
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
+            frozen: &mut self.spc_frozen,
             tick_timers: true,
         };
         bus_view.read(addr)
@@ -470,6 +487,7 @@ impl SnesApu {
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
+            frozen: &mut self.spc_frozen,
             tick_timers: true,
         };
         bus_view.write(addr, value);
@@ -487,6 +505,7 @@ impl SnesApu {
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
+            frozen: &mut self.spc_frozen,
             tick_timers: true,
         };
         for _ in 0..cycles {
@@ -506,6 +525,7 @@ impl SnesApu {
             timers: &mut self.timers,
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
+            frozen: &mut self.spc_frozen,
             tick_timers: true,
         };
         bus_view.write(0x00F1, value);
@@ -514,6 +534,11 @@ impl SnesApu {
     #[cfg(test)]
     pub(crate) fn dsp_phase_for_test(&self) -> u8 {
         self.dsp.phase()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spc_frozen_for_test(&self) -> bool {
+        self.spc_frozen
     }
 }
 
@@ -527,6 +552,7 @@ struct SpcBusView<'a> {
     timers: &'a mut SpcTimers,
     dsp: &'a mut Sdsp,
     dsp_addr: &'a mut u8,
+    frozen: &'a mut bool,
     tick_timers: bool,
 }
 
@@ -554,6 +580,24 @@ impl SpcBusView<'_> {
 
     fn is_internal_wait_address(&self, addr: u16) -> bool {
         matches!(addr, 0x00F0..=0x00FF) || (0xFFC0..=0xFFFF).contains(&addr) && self.ipl_enabled()
+    }
+
+    /// `true` when this access must deadlock the SPC700 due to the glitchy
+    /// internal-speed divider.
+    ///
+    /// Hardware quirk exercised by blargg's `speed_2_freezes` test: selecting
+    /// internal-speed field value 2 (`$F0` bits 6-7 = `10`, clock divider 8) is
+    /// glitchy and deterministically deadlocks the SPC700 as soon as it performs
+    /// an internal-timed access (an idle cycle, an I/O register `$F0-$FF`, or an
+    /// IPLROM fetch). Divider value 3 runs slow (~20 clocks/cycle) but keeps
+    /// executing, and the external-speed field (bits 4-5) never triggers the
+    /// freeze, so ordinary slow-speed tests are unaffected.
+    fn internal_speed_freeze(&self, addr: Option<u16>) -> bool {
+        let internal = match addr {
+            None => true,
+            Some(address) => self.is_internal_wait_address(address),
+        };
+        internal && (self.test_reg() >> 6) & 0x03 == 2
     }
 
     fn wait_cycles_for_addr(&self, addr: Option<u16>) -> u8 {
@@ -650,6 +694,9 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn read(&mut self, addr: u16) -> u8 {
+        if self.internal_speed_freeze(Some(addr)) {
+            *self.frozen = true;
+        }
         let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
         let value = match addr {
             // I/O register reads ($F0-$FF) always return I/O values, not the RAM-disable
@@ -684,6 +731,9 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn write(&mut self, addr: u16, value: u8) {
+        if self.internal_speed_freeze(Some(addr)) {
+            *self.frozen = true;
+        }
         let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
         match addr {
             0x00F0 => {
@@ -734,6 +784,9 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn idle(&mut self) {
+        if self.internal_speed_freeze(None) {
+            *self.frozen = true;
+        }
         let timer_cycles = self.timer_wait_cycles_for_addr(None);
         self.tick_timers_multiple(timer_cycles);
     }
@@ -1059,6 +1112,87 @@ mod tests {
         assert!(
             !apu.spc700.is_halted(),
             "writing $F0 with bit 2 set must NOT halt the SPC700 (#2911)",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Hardware quirk (blargg `speed_2_freezes`): internal-speed field value 2
+    // ($F0 bits 6-7 = 10, clock divider 8) is glitchy and deadlocks the SPC700
+    // on the next internal-timed access. Value 3 runs slow but keeps executing,
+    // and the external-speed field never triggers the freeze.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn internal_speed_2_freezes_spc_on_next_io_access() {
+        let mut apu = SnesApu::new(None);
+        // Select internal speed 2 (bit 7). The write itself runs at the old
+        // internal speed (0), so it must not freeze yet.
+        apu.write_spc_memory_for_test(0x00F0, 0x8A);
+        assert!(
+            !apu.spc_frozen_for_test(),
+            "selecting internal speed 2 must not freeze until an internal access"
+        );
+        // The next access to an internal address ($F0-$FF) now happens at the
+        // glitchy internal speed 2 and must deadlock the SPC700.
+        apu.write_spc_memory_for_test(0x00F0, 0x0A);
+        assert!(
+            apu.spc_frozen_for_test(),
+            "an internal access at internal speed 2 must freeze the SPC700"
+        );
+    }
+
+    #[test]
+    fn internal_speed_2_freeze_halts_spc_execution() {
+        let mut apu = SnesApu::new(None);
+        // Program at $0000: set internal speed 2, then write $F0 (freezes),
+        // then write a marker to port 1 ($F5) that must never run.
+        apu.aram[0x0000] = 0x8F; // MOV $F0,#$8A
+        apu.aram[0x0001] = 0x8A;
+        apu.aram[0x0002] = 0xF0;
+        apu.aram[0x0003] = 0x8F; // MOV $F0,#$0A  (internal access -> freeze)
+        apu.aram[0x0004] = 0x0A;
+        apu.aram[0x0005] = 0xF0;
+        apu.aram[0x0006] = 0x8F; // MOV $F5,#$AA  (must never execute)
+        apu.aram[0x0007] = 0xAA;
+        apu.aram[0x0008] = 0xF5;
+        apu.aram[0x0009] = 0x2F; // BRA *
+        apu.aram[0x000A] = 0xFE;
+        apu.write_spc_control_for_test(0x00); // disable IPL overlay
+        apu.spc700.set_pc_for_test(0x0000);
+
+        for _ in 0..2_000_000 {
+            apu.tick();
+        }
+
+        assert!(apu.spc_frozen_for_test(), "SPC must be frozen");
+        assert_eq!(
+            apu.spc_to_main_ports[1], 0x00,
+            "instruction after the freezing write must never execute"
+        );
+    }
+
+    #[test]
+    fn internal_speed_3_does_not_freeze_spc() {
+        let mut apu = SnesApu::new(None);
+        // Internal speed 3 (bits 6-7 = 11 -> $CA) runs slow but keeps executing.
+        apu.write_spc_memory_for_test(0x00F0, 0xCA);
+        apu.write_spc_memory_for_test(0x00F0, 0x0A);
+        assert!(
+            !apu.spc_frozen_for_test(),
+            "internal speed 3 must not freeze the SPC700"
+        );
+    }
+
+    #[test]
+    fn external_speed_2_does_not_freeze_spc() {
+        let mut apu = SnesApu::new(None);
+        // External speed 2 (bits 4-5 = 10 -> $2A) plus RAM-Writable so the ARAM
+        // write lands. External accesses never trigger the internal-speed glitch.
+        apu.write_spc_memory_for_test(0x00F0, 0x2A);
+        apu.write_spc_memory_for_test(0x0200, 0x55);
+        assert!(
+            !apu.spc_frozen_for_test(),
+            "an external access at external speed 2 must not freeze the SPC700"
         );
     }
 
