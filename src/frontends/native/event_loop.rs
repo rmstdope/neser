@@ -108,7 +108,7 @@ impl NativeEventLoop {
                 gb_dc,
             )
         };
-        let frame_runner = NativeFrameRunner::new();
+        let frame_runner = NativeFrameRunner;
 
         let (gamepad, gamepad_init_failed) = if gamepads_enabled {
             match GamepadManager::new(four_score) {

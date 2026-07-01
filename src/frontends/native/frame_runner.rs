@@ -1,18 +1,14 @@
 use std::cell::RefCell;
 
 use crate::gb::debugging::control::GbDebuggerController;
-use crate::platform::audio::{EmulatorAudio, normalize_nes_sample};
+use crate::platform::audio::{normalize_nes_sample, EmulatorAudio};
 use crate::platform::debugging::Tracing;
-use crate::platform::emulator::{Console, Emulator};
+use crate::platform::emulator::Console;
 use crate::{frontends::native::NativeAudio, nes::debugging::control::DebuggerController};
 
 pub(crate) struct NativeFrameRunner;
 
 impl NativeFrameRunner {
-    pub(crate) fn new() -> Self {
-        Self
-    }
-
     pub(crate) fn debugger_paused(
         &self,
         console: &Console,
@@ -103,7 +99,7 @@ mod tests {
 
     #[test]
     fn debugger_state_routes_to_supported_console_controllers() {
-        let runner = NativeFrameRunner::new();
+        let runner = NativeFrameRunner;
         let console_nes = make_console("nes");
         let console_gb = make_console("gb");
         let console_gba = make_console("gba");
