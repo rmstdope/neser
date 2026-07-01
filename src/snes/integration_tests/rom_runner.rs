@@ -283,6 +283,7 @@ fn capture_is_disabled_for_fixture(name: &str) -> bool {
             | Some("screen-crc-match")
             | Some("screen-crc-mismatch")
             | Some("screen-crc-probe")
+            | Some("timeout")
     )
 }
 
@@ -565,9 +566,16 @@ mod tests {
             "screen-crc-match.sfc",
             "screen-crc-mismatch.sfc",
             "screen-crc-probe.sfc",
+            "timeout.sfc",
         ] {
             let result = run_rom_with_capture(&pass_marker_rom(), name, short_config(), true);
             assert!(result.capture_path.is_none(), "{name} should not capture");
         }
+    }
+
+    #[test]
+    fn capture_is_disabled_for_timeout_fixture_even_when_enabled() {
+        let result = run_rom_with_capture(&timeout_rom(), "timeout.sfc", short_config(), true);
+        assert!(result.capture_path.is_none());
     }
 }
