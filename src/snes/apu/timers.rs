@@ -43,12 +43,8 @@ impl Timer {
         self.readable_counter = 0;
     }
 
-    fn target_period(&self) -> u16 {
-        if self.target == 0 {
-            256
-        } else {
-            u16::from(self.target)
-        }
+    fn target_compare_value(&self) -> u16 {
+        u16::from(self.target)
     }
 }
 
@@ -107,8 +103,8 @@ impl SpcTimers {
             }
 
             timer.input_divider_counter = 0;
-            timer.target_counter = timer.target_counter.wrapping_add(1);
-            if timer.target_counter < timer.target_period() {
+            timer.target_counter = timer.target_counter.wrapping_add(1) & 0x00FF;
+            if timer.target_counter != timer.target_compare_value() {
                 continue;
             }
 
@@ -178,6 +174,23 @@ mod tests {
 
         advance_cycles(&mut timers, 16);
         assert_eq!(timers.read_counter(2), 0x01);
+    }
+
+    #[test]
+    fn lowering_target_below_current_progress_waits_for_counter_wraparound() {
+        let mut timers = SpcTimers::default();
+        timers.write_target(2, 5);
+        timers.write_control(0x00, 0x04);
+        advance_cycles(&mut timers, 16 * 3);
+
+        timers.write_target(2, 2);
+        advance_cycles(&mut timers, 16);
+
+        assert_eq!(
+            timers.read_counter(2),
+            0x00,
+            "timer must fire only when the target counter equals TnDIV"
+        );
     }
 
     #[test]

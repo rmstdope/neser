@@ -184,8 +184,9 @@ impl SnesApu {
                 true
             } else {
                 let next_pc = self.spc700.pc();
+                let opcode = self.peek_opcode_at(next_pc);
                 Self::pc_is_in_trampoline_region(next_pc)
-                    && Spc700::opcode_is_cycle_scripted(self.peek_opcode_at(next_pc))
+                    && Spc700::opcode_is_cycle_scripted(opcode)
             };
 
             let consumed_cycles = {
@@ -674,16 +675,16 @@ impl SpcBusView<'_> {
         (self.test_reg() & 0x01 == 0) && (self.test_reg() & 0x08 != 0)
     }
 
+    fn tick_timers_multiple(&mut self, cycles: u8) {
+        for _ in 0..cycles {
+            self.tick_timers_if_enabled();
+        }
+    }
+
     fn tick_timers_if_enabled(&mut self) {
         if self.tick_timers && self.test_allows_timers() {
             self.timers.tick_cycle();
             self.dsp.step_phase_with_memory(&self.aram[..]);
-        }
-    }
-
-    fn tick_timers_multiple(&mut self, cycles: u8) {
-        for _ in 0..cycles {
-            self.tick_timers_if_enabled();
         }
     }
 }
@@ -735,6 +736,21 @@ impl Spc700Bus for SpcBusView<'_> {
             *self.frozen = true;
         }
         let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
+        let write_enabled = self.ram_write_enabled();
+        if write_enabled {
+            self.aram[addr as usize] = value;
+            if addr <= 0x0001 {
+                trace_apu!(4; "SPC writes ARAM[${:04X}] = ${:02X}", addr, value);
+            }
+        } else if addr < 0x0100 {
+            trace_apu!(
+                4;
+                "SPC RAM write blocked addr=${:04X} value=${:02X} test=${:02X}",
+                addr,
+                value,
+                self.test_reg()
+            );
+        }
         match addr {
             0x00F0 => {
                 self.write_test(value);
@@ -759,22 +775,7 @@ impl Spc700Bus for SpcBusView<'_> {
                 trace_apu!(4; "SPC write timer target ${:04X} = ${:02X}", addr, value);
                 self.timers.write_target((addr - 0x00FA) as usize, value);
             }
-            _ => {
-                if self.ram_write_enabled() {
-                    self.aram[addr as usize] = value;
-                    if addr <= 0x0001 {
-                        trace_apu!(4; "SPC writes ARAM[${:04X}] = ${:02X}", addr, value);
-                    }
-                } else if addr < 0x0100 {
-                    trace_apu!(
-                        4;
-                        "SPC RAM write blocked addr=${:04X} value=${:02X} test=${:02X}",
-                        addr,
-                        value,
-                        self.test_reg()
-                    );
-                }
-            }
+            _ => {}
         }
         self.tick_timers_multiple(timer_cycles);
     }
@@ -784,6 +785,14 @@ impl Spc700Bus for SpcBusView<'_> {
     }
 
     fn idle(&mut self) {
+        if self.internal_speed_freeze(None) {
+            *self.frozen = true;
+        }
+        let timer_cycles = self.timer_wait_cycles_for_addr(None);
+        self.tick_timers_multiple(timer_cycles);
+    }
+
+    fn dummy_read(&mut self, _addr: u16) {
         if self.internal_speed_freeze(None) {
             *self.frozen = true;
         }
@@ -1059,6 +1068,29 @@ mod tests {
         assert_eq!(apu.read_spc_memory_for_test(0x00FC), 0x00);
     }
 
+    #[test]
+    fn spc_io_writes_also_update_underlying_aram_when_ram_writable() {
+        let mut apu = SnesApu::new(None);
+
+        for (addr, value) in [
+            (0x00F0, 0x2A),
+            (0x00F1, 0x80),
+            (0x00F2, 0x10),
+            (0x00F3, 0x55),
+            (0x00F4, 0x66),
+            (0x00FA, 0x01),
+            (0x00FD, 0x77),
+            (0x00FE, 0x88),
+            (0x00FF, 0x99),
+        ] {
+            apu.write_spc_memory_for_test(addr, value);
+            assert_eq!(
+                apu.aram[addr as usize], value,
+                "write to ${addr:04X} should also land in underlying ARAM"
+            );
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Reproducer for #2911. Per bsnes `smp/io.cpp` + `smp/memory.cpp`:
     //   $F0 bit 1 = RAM-Writable (1 = writes go to ARAM)
@@ -1168,6 +1200,35 @@ mod tests {
         assert_eq!(
             apu.spc_to_main_ports[1], 0x00,
             "instruction after the freezing write must never execute"
+        );
+    }
+
+    #[test]
+    fn internal_speed_2_freezes_spc_on_dummy_read_cycle() {
+        let mut apu = SnesApu::new(None);
+        // Program at $0000: set internal speed 2, execute NOP (dummy-read
+        // internal cycle freezes), then write a marker that must never run.
+        apu.aram[0x0000] = 0x8F; // MOV $F0,#$8A
+        apu.aram[0x0001] = 0x8A;
+        apu.aram[0x0002] = 0xF0;
+        apu.aram[0x0003] = 0x00; // NOP dummy-read cycle freezes
+        apu.aram[0x0004] = 0x8F; // MOV $F5,#$AA (must never execute)
+        apu.aram[0x0005] = 0xAA;
+        apu.aram[0x0006] = 0xF5;
+        apu.write_spc_control_for_test(0x00); // disable IPL overlay
+        apu.spc700.set_pc_for_test(0x0000);
+
+        for _ in 0..2_000_000 {
+            apu.tick();
+        }
+
+        assert!(
+            apu.spc_frozen_for_test(),
+            "SPC must freeze on NOP's internal dummy-read cycle"
+        );
+        assert_eq!(
+            apu.spc_to_main_ports[1], 0x00,
+            "instruction after the freezing dummy read must never execute"
         );
     }
 

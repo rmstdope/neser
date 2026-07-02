@@ -17,6 +17,7 @@ mod tests {
         ("4-test_ram_disable.smc", 600, 0x85F1_D154),
         ("test_ram_disable_ipl.smc", 600, 0xD001_765E),
         ("spc_smp.sfc", 600, 0xE6CE_0BCE),
+        ("spc_mem_access_times.sfc", 600, 0x3AC3_E30F),
         ("test_speed.smc", 600, 0x8EAD_6D95),
         ("test_timer_speed_2.smc", 600, 0x48DA_ACE9),
         ("test_timer_speed3.smc", 600, 0xCD83_D4B0),
@@ -110,9 +111,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: SPC memory access timing — fix emulator then update CRC"]
     fn blargg_spc_mem_access_times_passes() {
-        run_failing_rom("spc_mem_access_times.sfc");
+        run_rom_with_expected_crc("spc_mem_access_times.sfc", 0x3AC3_E30F);
     }
 
     #[test]
