@@ -251,8 +251,8 @@ fn given_voice_volume_when_mixing_then_voice_volume_uses_15_bit_sample_scale() {
     dsp.set_voice_volume(0, 64, 32);
 
     let (left, right) = dsp.mix_voice_sample(0, 1000);
-    assert_eq!(left, 1000);
-    assert_eq!(right, 500);
+    assert_eq!(left, 500);
+    assert_eq!(right, 250);
 }
 
 #[test]
@@ -293,8 +293,8 @@ fn normalize_after_restore_rebuilds_cached_pitch_and_volume_fields() {
     dsp.normalize_after_restore()
         .expect("normalize should rebuild cached fields");
     let (left, right) = dsp.mix_voice_sample(0, 1000);
-    assert_eq!(left, 1000);
-    assert_eq!(right, 500);
+    assert_eq!(left, 500);
+    assert_eq!(right, 250);
 
     dsp.step_voice_pitch(0);
     assert_eq!(dsp.voice_sample_pos(0), 0x1234);
@@ -435,11 +435,11 @@ fn given_full_scale_voice_when_rendering_then_mixer_uses_full_resolution_sample_
     let (left, right) = dsp.render_stereo_sample();
 
     assert!(
-        (0.95..1.0).contains(&left),
+        (0.45..0.5).contains(&left),
         "left channel should use full-resolution voice sample before OUTX quantization"
     );
     assert!(
-        (0.95..1.0).contains(&right),
+        (0.45..0.5).contains(&right),
         "right channel should use full-resolution voice sample before OUTX quantization"
     );
 }

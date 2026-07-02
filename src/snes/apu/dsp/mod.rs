@@ -660,7 +660,7 @@ fn voice_interpolation_sample(voice: &VoiceState, index: usize, previous: usize)
 }
 
 fn apply_voice_volume(sample: i16, voice_vol: i8) -> i16 {
-    clamp_i16_i32((i32::from(sample) * i32::from(voice_vol)) >> 6) as i16
+    clamp_i16_i32((i32::from(sample) * i32::from(voice_vol)) >> 7) as i16
 }
 
 fn clamp_i16_i32(value: i32) -> i32 {
