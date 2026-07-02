@@ -750,6 +750,36 @@ fn given_echo_ram_and_fir_coefficients_when_rendering_with_memory_then_echo_is_m
 }
 
 #[test]
+fn given_first_seven_fir_taps_overflow_when_rendering_then_intermediate_sum_wraps() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x2C, 0x7F); // EVOLL
+    dsp.write_reg(0x6D, 0x10); // ESA base 0x1000
+    dsp.write_reg(0x7D, 0x00); // keep reading the same echo entry
+    dsp.write_reg(0x6C, 0x20); // echo writes disabled, echo reads still enabled
+    for reg in [0x0F, 0x1F, 0x2F, 0x3F, 0x4F, 0x5F, 0x6F] {
+        dsp.write_reg(reg, 0x7F);
+    }
+    dsp.write_reg(0x7F, 0x81); // FIR7 = -127
+    let base = 0x1000usize;
+    let sample = 0x7FFEi16.to_le_bytes();
+    aram[base] = sample[0];
+    aram[base + 1] = sample[1];
+
+    let mut left = 0.0;
+    for _ in 0..8 {
+        (left, _) = dsp.render_stereo_sample_with_memory(&mut aram);
+    }
+
+    let expected_fir = -1549i32;
+    let expected_left = ((expected_fir * 0x7F) >> 7) as f32 / 32768.0;
+    assert!(
+        (left - expected_left).abs() < 0.00002,
+        "first seven FIR additions should wrap as 16-bit before FIR7 saturation: left={left}, expected={expected_left}"
+    );
+}
+
+#[test]
 fn given_edl_zero_when_rendering_then_echo_ring_wraps_each_sample() {
     let mut dsp = Sdsp::new();
     let mut aram = [0u8; 0x1_0000];

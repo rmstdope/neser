@@ -122,13 +122,19 @@ impl EchoState {
     }
 
     fn fir_sum(&self, history: &[i16; 8], fir_coeffs: &[i8; 8]) -> i32 {
-        let mut sum = 0i32;
-        for (tap, coeff) in fir_coeffs.iter().enumerate() {
+        let mut sum = 0i16;
+        for (tap, coeff) in fir_coeffs.iter().take(7).enumerate() {
             let hist_idx = (self.fir_pos + tap + 1) & 7;
-            sum += (i32::from(history[hist_idx]) * i32::from(*coeff)) >> 6;
+            sum = sum.wrapping_add(fir_term(history[hist_idx], *coeff) as i16);
         }
-        sum.clamp(i32::from(i16::MIN), i32::from(i16::MAX))
+        let newest_idx = self.fir_pos;
+        (i32::from(sum) + fir_term(history[newest_idx], fir_coeffs[7]))
+            .clamp(i32::from(i16::MIN), i32::from(i16::MAX))
     }
+}
+
+fn fir_term(sample: i16, coeff: i8) -> i32 {
+    (i32::from(sample) * i32::from(coeff)) >> 6
 }
 
 fn ring_size_from_edl(edl: u8) -> u16 {
