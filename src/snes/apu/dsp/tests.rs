@@ -46,12 +46,22 @@ fn given_all_register_addresses_when_written_then_reads_back_same_value() {
 }
 
 #[test]
-fn given_mirrored_register_addresses_when_written_then_base_registers_match() {
+fn given_mirrored_register_addresses_when_written_then_base_registers_are_unchanged() {
     let mut dsp = Sdsp::new();
 
+    dsp.write_reg(0x15, 0x34);
     dsp.write_reg(0x95, 0xAB);
-    assert_eq!(dsp.read_reg(0x15), 0xAB);
-    assert_eq!(dsp.read_reg(0x95), 0xAB);
+
+    assert_eq!(
+        dsp.read_reg(0x15),
+        0x34,
+        "DSP $80-$FF mirror writes should not alter base registers"
+    );
+    assert_eq!(
+        dsp.read_reg(0x95),
+        0x34,
+        "DSP $80-$FF reads should mirror base registers"
+    );
 }
 
 #[test]
@@ -155,6 +165,7 @@ fn given_voice_pitch_when_step_voice_pitch_then_sample_position_advances() {
 #[test]
 fn given_voice_pitch_when_dsp_phase_steps_then_pitch_advances_once_per_32_phases() {
     let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
     dsp.set_voice_pitch(0, 0x1000);
 
     for _ in 0..31 {
@@ -301,6 +312,7 @@ fn normalize_after_restore_masks_phase_to_5_bits() {
 #[test]
 fn given_kon_for_adsr_voice_when_latency_passes_then_envx_becomes_non_zero() {
     let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x05, 0x8F); // ADSR1: ADSR enabled, fastest attack
     dsp.write_reg(0x06, 0xE0); // ADSR2: high sustain level, slow sustain
     dsp.write_reg(0x4C, 0x01); // KON voice 0
@@ -322,6 +334,7 @@ fn given_kon_for_adsr_voice_when_latency_passes_then_envx_becomes_non_zero() {
 #[test]
 fn given_active_adsr_voice_when_koff_then_envx_decreases() {
     let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
@@ -403,6 +416,7 @@ fn given_full_scale_voice_when_rendering_then_mixer_uses_full_resolution_sample_
 #[test]
 fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step_is_modulated() {
     let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x0C, 127);
     dsp.write_reg(0x1C, 127);
     dsp.write_reg(0x00, 127);
@@ -415,6 +429,7 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
     let base_step = dsp.voice_sample_pos(1);
 
     let mut modulated = Sdsp::new();
+    modulated.write_reg(0x6C, 0x00);
     modulated.write_reg(0x0C, 127);
     modulated.write_reg(0x1C, 127);
     modulated.write_reg(0x00, 127);
@@ -451,6 +466,7 @@ fn given_koff_during_kon_delay_when_latency_would_expire_then_voice_stays_releas
 #[test]
 fn given_envx_outx_when_written_then_voice_status_is_not_directly_overridden() {
     let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
@@ -468,6 +484,7 @@ fn given_envx_outx_when_written_then_voice_status_is_not_directly_overridden() {
 #[test]
 fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applies() {
     let mut base = Sdsp::new();
+    base.write_reg(0x6C, 0x00);
     base.write_reg(0x00, 127);
     base.write_reg(0x01, 127);
     base.write_reg(0x07, 0x7F);
@@ -477,6 +494,7 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
     let base_step = base.voice_sample_pos(1);
 
     let mut modulated = Sdsp::new();
+    modulated.write_reg(0x6C, 0x00);
     modulated.write_reg(0x00, 127);
     modulated.write_reg(0x01, 127);
     modulated.write_reg(0x07, 0x7F);
@@ -497,6 +515,7 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
 #[test]
 fn given_pmon_enabled_with_voice0_output_when_voice1_steps_then_pitch_uses_modulation_formula() {
     let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x00, 127);
     dsp.write_reg(0x01, 127);
     dsp.write_reg(0x07, 0x7F);
@@ -518,6 +537,7 @@ fn given_pmon_enabled_with_voice0_output_when_voice1_steps_then_pitch_uses_modul
 #[test]
 fn given_adsr_attack_rate_15_when_key_on_latency_expires_then_envelope_jumps_by_1024() {
     let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
@@ -545,6 +565,56 @@ fn given_write_to_endx_when_acknowledged_then_all_voice_end_bits_clear() {
 }
 
 #[test]
+fn given_flg_soft_reset_when_sample_ticks_then_voice_envelope_and_output_clear() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
+    dsp.write_reg(0x05, 0x8F);
+    dsp.write_reg(0x06, 0xE0);
+    dsp.write_reg(0x4C, 0x01);
+    step_sample_ticks(&mut dsp, 5);
+    assert_ne!(
+        dsp.read_reg(0x08),
+        0,
+        "precondition: voice envelope should be active before FLG.7 reset"
+    );
+
+    dsp.write_reg(0x6C, 0x80);
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(dsp.read_reg(0x08), 0, "FLG.7 should clear ENVX");
+    assert_eq!(dsp.read_reg(0x09), 0, "FLG.7 should clear OUTX");
+    assert_eq!(dsp.voices[0].env_level, 0);
+    assert_eq!(dsp.voices[0].current_output, 0);
+}
+
+#[test]
+fn given_flg_soft_reset_held_for_direct_gain_voice_when_sample_ticks_then_voice_stays_reset() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
+    dsp.write_reg(0x02, 0x00);
+    dsp.write_reg(0x03, 0x10);
+    dsp.write_reg(0x07, 0x7F);
+    step_sample_ticks(&mut dsp, 1);
+    assert_ne!(
+        dsp.read_reg(0x08),
+        0,
+        "precondition: direct GAIN should produce a non-zero envelope"
+    );
+
+    dsp.write_reg(0x6C, 0x80);
+    let sample_pos_before_reset_tick = dsp.voice_sample_pos(0);
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(dsp.read_reg(0x08), 0, "FLG.7 should keep ENVX clear");
+    assert_eq!(dsp.read_reg(0x09), 0, "FLG.7 should keep OUTX clear");
+    assert_eq!(
+        dsp.voice_sample_pos(0),
+        sample_pos_before_reset_tick,
+        "FLG.7 should prevent voice pitch/BRR progress while held"
+    );
+}
+
+#[test]
 fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sample_data() {
     let mut dsp = Sdsp::new();
     let mut aram = [0u8; 0x1_0000];
@@ -553,6 +623,7 @@ fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sam
     aram[0x0002] = 0x00;
     aram[0x0003] = 0x01;
 
+    dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x04, 0x00);
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
@@ -582,6 +653,7 @@ fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
     aram[0x0003] = 0x01;
     aram[0x0100] = 0x01;
 
+    dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x04, 0x00);
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);

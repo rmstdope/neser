@@ -336,6 +336,10 @@ impl Sdsp {
         }
 
         self.envelope_counter = self.envelope_counter.wrapping_add(1);
+        if self.flg & 0x80 != 0 {
+            self.soft_reset_voices();
+            return;
+        }
         self.step_noise_lfsr();
         let pmon = self.regs[usize::from(PMON_REG)];
         let non = self.regs[usize::from(NON_REG)];
@@ -469,7 +473,10 @@ impl Sdsp {
     }
 
     pub fn write_reg(&mut self, addr: u8, value: u8) {
-        let reg = addr & 0x7F;
+        if addr >= 0x80 {
+            return;
+        }
+        let reg = addr;
         let index = usize::from(reg);
         if reg == ENDX_REG {
             self.endx = 0;
@@ -518,6 +525,9 @@ impl Sdsp {
             }
             0x6C => {
                 self.flg = value;
+                if value & 0x80 != 0 {
+                    self.soft_reset_voices();
+                }
                 return;
             }
             0x6D => {
@@ -586,6 +596,21 @@ impl Sdsp {
     #[must_use]
     pub fn decode_brr_block(header: u8, data: [u8; 8], prev1: i16, prev2: i16) -> DecodedBrrBlock {
         decode_brr_block(header, data, prev1, prev2)
+    }
+
+    fn soft_reset_voices(&mut self) {
+        for voice in 0..8usize {
+            let v = &mut self.voices[voice];
+            v.kon_delay = 0;
+            v.mode = EnvelopeMode::Release;
+            v.env_level = 0;
+            v.envx = 0;
+            v.outx = 0;
+            v.current_output = 0;
+            v.mod_source = 0;
+            self.regs[(voice << 4) + 8] = 0;
+            self.regs[(voice << 4) + 9] = 0;
+        }
     }
 }
 
