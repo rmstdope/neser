@@ -453,6 +453,7 @@ fn given_gain_increase_during_attack_when_envelope_saturates_then_mode_enters_de
     dsp.write_reg(0x07, 0xFF); // GAIN mode 7, fastest two-slope increase
     dsp.voices[0].mode = EnvelopeMode::Attack;
     dsp.voices[0].env_level = 0x7F8;
+    dsp.voices[0].hidden_env = 0x7F8;
 
     step_sample_ticks(&mut dsp, 1);
 
@@ -488,6 +489,7 @@ fn given_gain_increase_during_decay_when_envelope_saturates_then_mode_stays_deca
     dsp.write_reg(0x07, 0xFF); // GAIN mode 7, fastest two-slope increase
     dsp.voices[0].mode = EnvelopeMode::Decay;
     dsp.voices[0].env_level = 0x7F8;
+    dsp.voices[0].hidden_env = 0x7F8;
 
     step_sample_ticks(&mut dsp, 1);
 
@@ -496,6 +498,25 @@ fn given_gain_increase_during_decay_when_envelope_saturates_then_mode_stays_deca
         dsp.voices[0].mode,
         EnvelopeMode::Decay,
         "saturated GAIN increase should not take the decay-to-sustain path"
+    );
+}
+
+#[test]
+fn given_gain_two_slope_hidden_envelope_above_threshold_when_visible_envelope_is_lower_then_slow_slope_applies()
+ {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x07, 0xFF); // GAIN mode 7, fastest two-slope increase
+    dsp.voices[0].mode = EnvelopeMode::Sustain;
+    dsp.voices[0].env_level = 0x5F0;
+    dsp.voices[0].hidden_env = 0x610;
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(dsp.voices[0].env_level, 0x5F8);
+    assert_eq!(
+        dsp.voices[0].hidden_env, 0x5F8,
+        "GAIN mode 7 should use hidden envelope for the two-slope threshold"
     );
 }
 

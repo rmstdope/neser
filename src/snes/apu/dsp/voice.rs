@@ -46,6 +46,8 @@ pub struct VoiceState {
     #[serde(default)]
     pub env_level: u16,
     #[serde(default)]
+    pub hidden_env: u16,
+    #[serde(default)]
     pub envx: u8,
     #[serde(default)]
     pub outx: i8,

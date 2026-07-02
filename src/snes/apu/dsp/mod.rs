@@ -346,6 +346,7 @@ impl Sdsp {
                 if v.kon_delay == 0 {
                     v.mode = EnvelopeMode::Attack;
                     v.env_level = 0;
+                    v.hidden_env = 0;
                     begin_brr = aram.is_some();
                 }
             }
@@ -515,6 +516,7 @@ impl Sdsp {
             if header & 0x03 == 0x01 {
                 self.voices[voice].mode = EnvelopeMode::Release;
                 self.voices[voice].env_level = 0;
+                self.voices[voice].hidden_env = 0;
             }
         }
     }
@@ -678,6 +680,7 @@ impl Sdsp {
         v.kon_delay = 0;
         v.mode = EnvelopeMode::Release;
         v.env_level = 0;
+        v.hidden_env = 0;
         v.envx = 0;
         v.outx = 0;
         v.current_output = 0;

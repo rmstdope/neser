@@ -6,6 +6,7 @@ pub fn step_voice_envelope(voice: &mut VoiceState, global_counter: u16) {
     if voice.mode == EnvelopeMode::Release {
         if envelope_tick_due(global_counter, 31) {
             voice.env_level = voice.env_level.saturating_sub(8);
+            voice.hidden_env = voice.env_level;
             voice.envx = ((voice.env_level >> 4).min(0x7F)) as u8;
         }
         return;
@@ -13,6 +14,7 @@ pub fn step_voice_envelope(voice: &mut VoiceState, global_counter: u16) {
 
     if voice.adsr1 & 0x80 == 0 && voice.gain & 0x80 == 0 {
         voice.env_level = (u16::from(voice.gain) << 4).min(ENV_MAX);
+        voice.hidden_env = voice.env_level;
         voice.envx = (voice.env_level >> 4).min(0x7F) as u8;
         apply_gain_state_transitions(voice);
         return;
@@ -29,6 +31,9 @@ pub fn step_voice_envelope(voice: &mut VoiceState, global_counter: u16) {
     }
 
     voice.env_level = voice.env_level.min(ENV_MAX);
+    if voice.adsr1 & 0x80 != 0 {
+        voice.hidden_env = voice.env_level;
+    }
     if voice.adsr1 & 0x80 == 0 {
         apply_gain_state_transitions(voice);
     }
@@ -119,6 +124,7 @@ fn step_adsr(voice: &mut VoiceState) {
             voice.env_level = voice.env_level.saturating_add(attack_step);
             if voice.env_level >= 0x7E0 {
                 voice.env_level = voice.env_level.min(ENV_MAX);
+                voice.hidden_env = voice.env_level;
                 voice.mode = EnvelopeMode::Decay;
             }
         }
@@ -141,23 +147,30 @@ fn step_gain(voice: &mut VoiceState) {
     let gain = voice.gain;
     if gain & 0x80 == 0 {
         voice.env_level = u16::from(gain) << 4;
+        voice.hidden_env = voice.env_level;
         return;
     }
 
     match (gain >> 5) & 0x03 {
         0 => {
             voice.env_level = voice.env_level.saturating_sub(0x20);
+            voice.hidden_env = voice.env_level;
         }
         1 => {
             let step = ((voice.env_level.saturating_sub(1)) >> 8) + 1;
             voice.env_level = voice.env_level.saturating_sub(step);
+            voice.hidden_env = voice.env_level;
         }
         2 => {
-            voice.env_level = (voice.env_level + 0x20).min(ENV_MAX);
+            let env = voice.env_level.saturating_add(0x20);
+            voice.hidden_env = env;
+            voice.env_level = env.min(ENV_MAX);
         }
         _ => {
-            let step = if voice.env_level < 0x600 { 0x20 } else { 0x08 };
-            voice.env_level = (voice.env_level + step).min(ENV_MAX);
+            let step = if voice.hidden_env < 0x600 { 0x20 } else { 0x08 };
+            let env = voice.env_level.saturating_add(step);
+            voice.hidden_env = env;
+            voice.env_level = env.min(ENV_MAX);
         }
     }
 }
