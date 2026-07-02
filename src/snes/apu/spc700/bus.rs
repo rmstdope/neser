@@ -44,6 +44,12 @@ pub trait Spc700Bus {
     ///
     /// Timing is represented by [`Self::idle_cycles`].
     fn idle(&mut self);
+
+    /// Consume an internal dummy-read cycle that drives `addr` on the bus but
+    /// does not perform memory/register read side effects.
+    fn dummy_read(&mut self, addr: u16) {
+        let _ = self.read(addr);
+    }
 }
 
 /// Flat 64 KB RAM bus used for unit tests and SingleStepTests vectors.

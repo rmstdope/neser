@@ -1,4 +1,4 @@
-use crate::snes::apu::spc700::{FlatRamBus, Spc700};
+use crate::snes::apu::spc700::{Spc700, Spc700Bus};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,6 +42,72 @@ struct ProcessorTestVector {
     cycles: Vec<VectorCycle>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActualCycle {
+    address: Option<u16>,
+    value: Option<u8>,
+    signals: &'static str,
+}
+
+struct TraceRamBus {
+    ram: Box<[u8; 0x1_0000]>,
+    cycles: Vec<ActualCycle>,
+}
+
+impl TraceRamBus {
+    fn new() -> Self {
+        Self {
+            ram: Box::new([0u8; 0x1_0000]),
+            cycles: Vec::new(),
+        }
+    }
+
+    fn set(&mut self, addr: u16, value: u8) {
+        self.ram[addr as usize] = value;
+    }
+
+    fn get(&self, addr: u16) -> u8 {
+        self.ram[addr as usize]
+    }
+}
+
+impl Spc700Bus for TraceRamBus {
+    fn read(&mut self, addr: u16) -> u8 {
+        let value = self.ram[addr as usize];
+        self.cycles.push(ActualCycle {
+            address: Some(addr),
+            value: Some(value),
+            signals: "read",
+        });
+        value
+    }
+
+    fn write(&mut self, addr: u16, value: u8) {
+        self.cycles.push(ActualCycle {
+            address: Some(addr),
+            value: Some(value),
+            signals: "write",
+        });
+        self.ram[addr as usize] = value;
+    }
+
+    fn idle(&mut self) {
+        self.cycles.push(ActualCycle {
+            address: None,
+            value: None,
+            signals: "wait",
+        });
+    }
+
+    fn dummy_read(&mut self, addr: u16) {
+        self.cycles.push(ActualCycle {
+            address: Some(addr),
+            value: None,
+            signals: "read",
+        });
+    }
+}
+
 #[derive(Debug)]
 struct VectorFailure {
     details: String,
@@ -74,7 +140,7 @@ fn load_vectors_from_file(path: &Path) -> Result<Vec<ProcessorTestVector>, Strin
                 .map(|(address, value, signals)| VectorCycle {
                     address,
                     value,
-                    signals,
+                    signals: normalize_signals(signals),
                 })
                 .collect(),
         })
@@ -83,8 +149,17 @@ fn load_vectors_from_file(path: &Path) -> Result<Vec<ProcessorTestVector>, Strin
     Ok(vectors)
 }
 
+fn normalize_signals(signals: String) -> String {
+    match signals.as_str() {
+        "read" | "write" | "wait" => signals,
+        compact if compact.contains('r') => "read".to_string(),
+        compact if compact.contains('w') => "write".to_string(),
+        _ => "wait".to_string(),
+    }
+}
+
 fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
-    let mut bus = FlatRamBus::new();
+    let mut bus = TraceRamBus::new();
     for [addr, value] in &vector.initial.ram {
         let byte = checked_byte(*value, vector, "initial RAM", Some(*addr))?;
         bus.set(*addr, byte);
@@ -132,6 +207,44 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
             ),
         });
     }
+    if bus.cycles.len() != vector.cycles.len() {
+        return Err(VectorFailure {
+            details: format!(
+                "{}: bus cycle trace length mismatch (expected {}, got {})",
+                vector.name,
+                vector.cycles.len(),
+                bus.cycles.len()
+            ),
+        });
+    }
+    if has_processor_tests_case_name(&vector.name) {
+        for (index, (actual, expected)) in bus.cycles.iter().zip(&vector.cycles).enumerate() {
+            let address_matches = actual.address == expected.address
+                || (expected.address.is_none()
+                    && expected.value.is_none()
+                    && expected.signals.as_str() == "read"
+                    && actual.signals == "read");
+            if !address_matches
+                || expected
+                    .value
+                    .is_some_and(|expected_value| actual.value != Some(expected_value))
+                || actual.signals != expected.signals.as_str()
+            {
+                return Err(VectorFailure {
+                    details: format!(
+                        "{}: bus cycle {index} mismatch\n  expected: {:?} {:?} {}\n  actual:   {:?} {:?} {}",
+                        vector.name,
+                        expected.address,
+                        expected.value,
+                        expected.signals,
+                        actual.address,
+                        actual.value,
+                        actual.signals
+                    ),
+                });
+            }
+        }
+    }
 
     if cpu.pc() != vector.final_state.pc
         || cpu.sp() != vector.final_state.sp
@@ -158,6 +271,21 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
                 cpu.y()
             ),
         });
+    }
+
+    fn has_processor_tests_case_name(name: &str) -> bool {
+        let mut parts = name.split_whitespace();
+        let Some(opcode) = parts.next() else {
+            return false;
+        };
+        let Some(case_id) = parts.next() else {
+            return false;
+        };
+        parts.next().is_none()
+            && opcode.len() == 2
+            && case_id.len() == 4
+            && opcode.chars().all(|c| c.is_ascii_hexdigit())
+            && case_id.chars().all(|c| c.is_ascii_hexdigit())
     }
 
     for [addr, expected] in &vector.final_state.ram {
@@ -1696,7 +1824,7 @@ mod tests {
       "a": 255,
       "x": 0,
       "y": 0,
-      "ram": [[512, 36], [513, 15]]
+      "ram": [[15, 15], [512, 36], [513, 15]]
     },
     "final": {
       "pc": 514,
@@ -1705,11 +1833,12 @@ mod tests {
       "a": 15,
       "x": 0,
       "y": 0,
-      "ram": [[512, 36], [513, 15]]
+      "ram": [[15, 15], [512, 36], [513, 15]]
     },
     "cycles": [
       [512, 36, "d-r-----"],
-      [513, 15, "d-r-----"]
+      [513, 15, "d-r-----"],
+      [15, 15, "d-r-----"]
     ]
   }
 ]
@@ -1728,7 +1857,7 @@ mod tests {
       "a": 240,
       "x": 0,
       "y": 0,
-      "ram": [[512, 4], [513, 15]]
+      "ram": [[15, 15], [512, 4], [513, 15]]
     },
     "final": {
       "pc": 514,
@@ -1737,11 +1866,12 @@ mod tests {
       "a": 255,
       "x": 0,
       "y": 0,
-      "ram": [[512, 4], [513, 15]]
+      "ram": [[15, 15], [512, 4], [513, 15]]
     },
     "cycles": [
       [512, 4, "d-r-----"],
-      [513, 15, "d-r-----"]
+      [513, 15, "d-r-----"],
+      [15, 15, "d-r-----"]
     ]
   }
 ]
@@ -1760,7 +1890,7 @@ mod tests {
       "a": 15,
       "x": 0,
       "y": 0,
-      "ram": [[512, 68], [513, 255]]
+      "ram": [[255, 255], [512, 68], [513, 255]]
     },
     "final": {
       "pc": 514,
@@ -1769,11 +1899,12 @@ mod tests {
       "a": 240,
       "x": 0,
       "y": 0,
-      "ram": [[512, 68], [513, 255]]
+      "ram": [[255, 255], [512, 68], [513, 255]]
     },
     "cycles": [
       [512, 68, "d-r-----"],
-      [513, 255, "d-r-----"]
+      [513, 255, "d-r-----"],
+      [255, 255, "d-r-----"]
     ]
   }
 ]
@@ -1789,7 +1920,7 @@ mod tests {
       "pc": 512,
       "sp": 239,
       "psw": 0,
-      "a": 32,
+      "a": 31,
       "x": 0,
       "y": 0,
       "ram": [[512, 136], [513, 16]]
@@ -1798,7 +1929,7 @@ mod tests {
       "pc": 514,
       "sp": 239,
       "psw": 0,
-      "a": 48,
+      "a": 47,
       "x": 0,
       "y": 0,
       "ram": [[512, 136], [513, 16]]
@@ -1821,7 +1952,7 @@ mod tests {
       "pc": 512,
       "sp": 239,
       "psw": 1,
-      "a": 32,
+      "a": 31,
       "x": 0,
       "y": 0,
       "ram": [[16, 16], [512, 132], [513, 16]]
@@ -1829,8 +1960,8 @@ mod tests {
     "final": {
       "pc": 514,
       "sp": 239,
-      "psw": 0,
-      "a": 49,
+      "psw": 8,
+      "a": 48,
       "x": 0,
       "y": 0,
       "ram": [[16, 16], [512, 132], [513, 16]]
@@ -1863,7 +1994,7 @@ mod tests {
       "pc": 514,
       "sp": 239,
       "psw": 1,
-      "a": 32,
+      "a": 31,
       "x": 0,
       "y": 0,
       "ram": [[512, 168], [513, 16]]
@@ -1889,7 +2020,7 @@ mod tests {
       "a": 48,
       "x": 0,
       "y": 0,
-      "ram": [[512, 164], [513, 16]]
+      "ram": [[16, 16], [512, 164], [513, 16]]
     },
     "final": {
       "pc": 514,
@@ -1898,11 +2029,12 @@ mod tests {
       "a": 31,
       "x": 0,
       "y": 0,
-      "ram": [[512, 164], [513, 16]]
+      "ram": [[16, 16], [512, 164], [513, 16]]
     },
     "cycles": [
       [512, 164, "d-r-----"],
-      [513, 16, "d-r-----"]
+      [513, 16, "d-r-----"],
+      [16, 16, "d-r-----"]
     ]
   }
 ]
@@ -2362,7 +2494,7 @@ mod tests {
     "final": {
       "pc": 2561,
       "sp": 239,
-      "psw": 128,
+      "psw": 0,
       "a": 136,
       "x": 0,
       "y": 0,
@@ -2417,7 +2549,7 @@ mod tests {
         assert_eq!(vector.cycles.len(), 2);
         assert_eq!(vector.cycles[0].address, Some(0x0200));
         assert_eq!(vector.cycles[0].value, Some(0x00));
-        assert_eq!(vector.cycles[0].signals, "d-r-----");
+        assert_eq!(vector.cycles[0].signals, "read");
     }
 
     #[test]
@@ -3144,5 +3276,19 @@ mod tests {
             result.is_ok(),
             "available spc700 vectors should pass: {result:?}"
         );
+    }
+
+    #[test]
+    #[ignore = "debug helper: set NESER_SPC700_EXTERNAL_VECTORS_ROOT to run external vector set"]
+    fn debug_runs_external_spc700_vectors() {
+        let root = std::env::var("NESER_SPC700_EXTERNAL_VECTORS_ROOT")
+            .expect("set NESER_SPC700_EXTERNAL_VECTORS_ROOT");
+        let root = Path::new(&root);
+        let files = list_vector_files(root).expect("list external vector files");
+        assert!(!files.is_empty(), "external vector directory is empty");
+        for file in files {
+            let result = run_vectors_from_file(&file);
+            assert!(result.is_ok(), "{} failed: {result:?}", file.display());
+        }
     }
 }

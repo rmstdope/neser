@@ -339,6 +339,19 @@ impl Spc700 {
     #[allow(dead_code)] // Used as opcodes are added in subsequent slices.
     fn write_cycle(&mut self, bus: &mut impl Spc700Bus, addr: u16, value: u8, cycles: &mut u8) {
         *cycles = cycles.wrapping_add(bus.write_cycles(addr));
+        if (0x00F0..=0x00FF).contains(&addr) {
+            trace_apu!(
+                3;
+                "SPC I/O write-cycle ${:04X}=${:02X} PC=${:04X} A=${:02X} X=${:02X} Y=${:02X} PSW=${:02X}",
+                addr,
+                value,
+                self.pc,
+                self.a,
+                self.x,
+                self.y,
+                self.psw
+            );
+        }
         bus.write(addr, value);
     }
 
@@ -346,6 +359,14 @@ impl Spc700 {
     fn idle_cycle(&mut self, bus: &mut impl Spc700Bus, cycles: &mut u8) {
         *cycles = cycles.wrapping_add(bus.idle_cycles());
         bus.idle();
+    }
+
+    /// Consume one internal dummy-read cycle. ProcessorTests expose these as
+    /// read-signal cycles with no value; fullsnes classifies their wait timing
+    /// as internal, not as a side-effecting read from the displayed address.
+    fn dummy_read_cycle(&mut self, bus: &mut impl Spc700Bus, addr: u16, cycles: &mut u8) {
+        *cycles = cycles.wrapping_add(bus.idle_cycles());
+        bus.dummy_read(addr);
     }
 
     /// Perform a branch using a signed 8-bit offset (relative to PC+2).
@@ -377,22 +398,19 @@ impl Spc700 {
         u16::from(lo) | (u16::from(hi) << 8)
     }
 
-    /// Write a 16-bit little-endian word to direct-page address `dp`.
-    fn write_word_direct_page(
+    /// Read a 16-bit direct-page word with the SPC700's extra internal cycle
+    /// between low and high byte reads used by MOVW/ADDW/SUBW.
+    fn read_word_direct_page_with_idle(
         &mut self,
         bus: &mut impl Spc700Bus,
         dp: u8,
-        value: u16,
         cycles: &mut u8,
-    ) {
+    ) -> u16 {
         let base = self.direct_page_base();
-        self.write_cycle(bus, base | u16::from(dp), value as u8, cycles);
-        self.write_cycle(
-            bus,
-            base | u16::from(dp.wrapping_add(1)),
-            (value >> 8) as u8,
-            cycles,
-        );
+        let lo = self.read_cycle(bus, base | u16::from(dp), cycles);
+        self.idle_cycle(bus, cycles);
+        let hi = self.read_cycle(bus, base | u16::from(dp.wrapping_add(1)), cycles);
+        u16::from(lo) | (u16::from(hi) << 8)
     }
 
     /// ADDW YA,[dp] — add 16-bit direct-page word to YA.
@@ -651,7 +669,7 @@ impl Spc700 {
         match opcode {
             // NOP — no operation (2 cycles: opcode fetch + 1 idle).
             0x00 => {
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // MOV A,#imm — load 8-bit immediate into A, update N/Z.
             0xE8 => {
@@ -675,36 +693,36 @@ impl Spc700 {
             0x7D => {
                 self.a = self.x;
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // MOV X,A — copy A into X, update N/Z.
             0x5D => {
                 self.x = self.a;
                 self.update_nz8(self.x);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // MOV A,Y — copy Y into A, update N/Z.
             0xDD => {
                 self.a = self.y;
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // MOV Y,A — copy A into Y, update N/Z.
             0xFD => {
                 self.y = self.a;
                 self.update_nz8(self.y);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // MOV X,SP — copy SP into X, update N/Z.
             0x9D => {
                 self.x = self.sp;
                 self.update_nz8(self.x);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // MOV SP,X — copy X into SP; flags are unaffected.
             0xBD => {
                 self.sp = self.x;
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // MOV A,dp — load A from direct page, update N/Z.
             0xE4 => {
@@ -737,45 +755,45 @@ impl Spc700 {
             // MOV dp,dp — copy source direct-page byte into destination direct-page byte.
             0xFA => {
                 let src_dp = self.fetch(bus, &mut cycles);
-                let dst_dp = self.fetch(bus, &mut cycles);
                 let value = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(src_dp),
                     &mut cycles,
                 );
+                let dst_dp = self.fetch(bus, &mut cycles);
                 let dst_addr = self.direct_page_base() | u16::from(dst_dp);
                 self.write_cycle(bus, dst_addr, value, &mut cycles);
             }
             // MOV A,(X) — load A from direct-page address in X, update N/Z.
             0xE6 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let addr = self.direct_page_base() | self.x as u16;
                 self.a = self.read_cycle(bus, addr, &mut cycles);
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
             }
             // MOV A,(X)+ — load A from [X], then increment X, update N/Z.
             0xBF => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let addr = self.direct_page_base() | self.x as u16;
                 self.a = self.read_cycle(bus, addr, &mut cycles);
                 self.update_nz8(self.a);
                 self.x = self.x.wrapping_add(1);
-                self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // MOV (X),A — store A to direct-page address in X; flags unchanged.
             0xC6 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let addr = self.direct_page_base() | self.x as u16;
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // MOV (X)+,A — store A to [X], then increment X; flags unchanged.
             0xAF => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let addr = self.direct_page_base() | self.x as u16;
                 self.write_cycle(bus, addr, self.a, &mut cycles);
                 self.x = self.x.wrapping_add(1);
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // MOV A,[dp+X] — load A via direct-page pointer indexed by X, update N/Z.
             0xE7 => {
@@ -795,13 +813,13 @@ impl Spc700 {
             // MOV A,[dp]+Y — load A via direct-page pointer plus Y, update N/Z.
             0xF7 => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let lo = self.read_cycle(bus, self.direct_page_base() | dp as u16, &mut cycles);
                 let hi = self.read_cycle(
                     bus,
                     self.direct_page_base() | dp.wrapping_add(1) as u16,
                     &mut cycles,
                 );
-                self.idle_cycle(bus, &mut cycles);
                 let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(self.y as u16);
                 self.a = self.read_cycle(bus, addr, &mut cycles);
                 self.update_nz8(self.a);
@@ -859,26 +877,26 @@ impl Spc700 {
             // MOV dp+X,A — store A to direct page indexed by X; flags unchanged.
             0xD4 => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let addr = self.direct_page_base() | dp.wrapping_add(self.x) as u16;
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.a, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // MOV dp+X,Y — store Y to direct page indexed by X; flags unchanged.
             0xDB => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let addr = self.direct_page_base() | dp.wrapping_add(self.x) as u16;
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.y, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // MOV dp+Y,X — store X to direct page indexed by Y; flags unchanged.
             0xD9 => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let addr = self.direct_page_base() | dp.wrapping_add(self.y) as u16;
                 self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, self.x, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // MOV A,!abs — load A from 16-bit absolute address, update N/Z.
             0xE5 => {
@@ -989,16 +1007,10 @@ impl Spc700 {
             // MOVW YA,dp — load 16-bit direct-page word into YA, update N/Z from YA.
             0xBA => {
                 let dp = self.fetch(bus, &mut cycles);
-                let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
-                let hi = self.read_cycle(
-                    bus,
-                    self.direct_page_base() | u16::from(dp.wrapping_add(1)),
-                    &mut cycles,
-                );
-                self.a = lo;
-                self.y = hi;
+                let value = self.read_word_direct_page_with_idle(bus, dp, &mut cycles);
+                self.a = value as u8;
+                self.y = (value >> 8) as u8;
                 self.update_nz16((u16::from(self.y) << 8) | u16::from(self.a));
-                self.idle_cycle(bus, &mut cycles);
             }
             // MOVW dp,YA — store YA as 16-bit direct-page word; flags unchanged.
             0xDA => {
@@ -1017,37 +1029,37 @@ impl Spc700 {
             0xBC => {
                 self.a = self.a.wrapping_add(1);
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // DEC A — decrement A, update N/Z.
             0x9C => {
                 self.a = self.a.wrapping_sub(1);
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // INC X — increment X, update N/Z.
             0x3D => {
                 self.x = self.x.wrapping_add(1);
                 self.update_nz8(self.x);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // DEC X — decrement X, update N/Z.
             0x1D => {
                 self.x = self.x.wrapping_sub(1);
                 self.update_nz8(self.x);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // INC Y — increment Y, update N/Z.
             0xFC => {
                 self.y = self.y.wrapping_add(1);
                 self.update_nz8(self.y);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // DEC Y — decrement Y, update N/Z.
             0xDC => {
                 self.y = self.y.wrapping_sub(1);
                 self.update_nz8(self.y);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // INC dp — increment direct-page byte, update N/Z.
             0xAB => {
@@ -1100,22 +1112,22 @@ impl Spc700 {
             // ASL A — shift left accumulator, bit 7 to carry.
             0x1C => {
                 self.a = self.asl(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // ROL A — rotate left accumulator through carry.
             0x3C => {
                 self.a = self.rol(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // LSR A — shift right accumulator, bit 0 to carry.
             0x5C => {
                 self.a = self.lsr(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // ROR A — rotate right accumulator through carry.
             0x7C => {
                 self.a = self.ror(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // ASL dp — shift left direct-page byte.
             0x0B => {
@@ -1230,12 +1242,12 @@ impl Spc700 {
             // AND dp,dp — [dst] &= [src], update N/Z from destination result.
             0x29 => {
                 let src_dp = self.fetch(bus, &mut cycles);
-                let dst_dp = self.fetch(bus, &mut cycles);
                 let src = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(src_dp),
                     &mut cycles,
                 );
+                let dst_dp = self.fetch(bus, &mut cycles);
                 let dst_addr = self.direct_page_base() | u16::from(dst_dp);
                 let dst = self.read_cycle(bus, dst_addr, &mut cycles);
                 let result = dst & src;
@@ -1254,6 +1266,7 @@ impl Spc700 {
             }
             // AND A,(X).
             0x26 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let value = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(self.x),
@@ -1261,7 +1274,6 @@ impl Spc700 {
                 );
                 self.a &= value;
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
             }
             // AND A,dp+X.
             0x34 => {
@@ -1317,13 +1329,13 @@ impl Spc700 {
             // AND A,[dp]+Y.
             0x37 => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
                 let hi = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(dp.wrapping_add(1)),
                     &mut cycles,
                 );
-                self.idle_cycle(bus, &mut cycles);
                 let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 self.a &= value;
@@ -1331,14 +1343,14 @@ impl Spc700 {
             }
             // AND (X),(Y) — (X) &= (Y).
             0x39 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let x_addr = self.direct_page_base() | u16::from(self.x);
                 let y_addr = self.direct_page_base() | u16::from(self.y);
-                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let result = x_value & y_value;
                 self.write_cycle(bus, x_addr, result, &mut cycles);
                 self.update_nz8(result);
-                self.idle_cycle(bus, &mut cycles);
             }
             // OR A,dp — bitwise OR of direct-page byte into A, update N/Z.
             0x04 => {
@@ -1357,12 +1369,12 @@ impl Spc700 {
             // OR dp,dp — [dst] |= [src], update N/Z from destination result.
             0x09 => {
                 let src_dp = self.fetch(bus, &mut cycles);
-                let dst_dp = self.fetch(bus, &mut cycles);
                 let src = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(src_dp),
                     &mut cycles,
                 );
+                let dst_dp = self.fetch(bus, &mut cycles);
                 let dst_addr = self.direct_page_base() | u16::from(dst_dp);
                 let dst = self.read_cycle(bus, dst_addr, &mut cycles);
                 let result = dst | src;
@@ -1381,6 +1393,7 @@ impl Spc700 {
             }
             // OR A,(X).
             0x06 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let value = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(self.x),
@@ -1388,7 +1401,6 @@ impl Spc700 {
                 );
                 self.a |= value;
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
             }
             // OR A,dp+X.
             0x14 => {
@@ -1444,13 +1456,13 @@ impl Spc700 {
             // OR A,[dp]+Y.
             0x17 => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
                 let hi = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(dp.wrapping_add(1)),
                     &mut cycles,
                 );
-                self.idle_cycle(bus, &mut cycles);
                 let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 self.a |= value;
@@ -1458,14 +1470,14 @@ impl Spc700 {
             }
             // OR (X),(Y) — (X) |= (Y).
             0x19 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let x_addr = self.direct_page_base() | u16::from(self.x);
                 let y_addr = self.direct_page_base() | u16::from(self.y);
-                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let result = x_value | y_value;
                 self.write_cycle(bus, x_addr, result, &mut cycles);
                 self.update_nz8(result);
-                self.idle_cycle(bus, &mut cycles);
             }
             // EOR A,dp — bitwise XOR of direct-page byte into A, update N/Z.
             0x44 => {
@@ -1484,12 +1496,12 @@ impl Spc700 {
             // EOR dp,dp — [dst] ^= [src], update N/Z from destination result.
             0x49 => {
                 let src_dp = self.fetch(bus, &mut cycles);
-                let dst_dp = self.fetch(bus, &mut cycles);
                 let src = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(src_dp),
                     &mut cycles,
                 );
+                let dst_dp = self.fetch(bus, &mut cycles);
                 let dst_addr = self.direct_page_base() | u16::from(dst_dp);
                 let dst = self.read_cycle(bus, dst_addr, &mut cycles);
                 let result = dst ^ src;
@@ -1508,6 +1520,7 @@ impl Spc700 {
             }
             // EOR A,(X).
             0x46 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let value = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(self.x),
@@ -1515,7 +1528,6 @@ impl Spc700 {
                 );
                 self.a ^= value;
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
             }
             // EOR A,dp+X.
             0x54 => {
@@ -1571,13 +1583,13 @@ impl Spc700 {
             // EOR A,[dp]+Y.
             0x57 => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
                 let hi = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(dp.wrapping_add(1)),
                     &mut cycles,
                 );
-                self.idle_cycle(bus, &mut cycles);
                 let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 self.a ^= value;
@@ -1585,14 +1597,14 @@ impl Spc700 {
             }
             // EOR (X),(Y) — (X) ^= (Y).
             0x59 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let x_addr = self.direct_page_base() | u16::from(self.x);
                 let y_addr = self.direct_page_base() | u16::from(self.y);
-                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let result = x_value ^ y_value;
                 self.write_cycle(bus, x_addr, result, &mut cycles);
                 self.update_nz8(result);
-                self.idle_cycle(bus, &mut cycles);
             }
             // ADC A,#imm — add immediate and carry to A, update N/Z/V/C/H.
             0x88 => {
@@ -1608,13 +1620,13 @@ impl Spc700 {
             }
             // ADC A,(X).
             0x86 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let value = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(self.x),
                     &mut cycles,
                 );
                 self.add_with_carry_to_a(value);
-                self.idle_cycle(bus, &mut cycles);
             }
             // ADC A,dp+X.
             0x94 => {
@@ -1665,13 +1677,13 @@ impl Spc700 {
             // ADC A,[dp]+Y.
             0x97 => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
                 let hi = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(dp.wrapping_add(1)),
                     &mut cycles,
                 );
-                self.idle_cycle(bus, &mut cycles);
                 let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 self.add_with_carry_to_a(value);
@@ -1679,12 +1691,12 @@ impl Spc700 {
             // ADC dp,dp — [dst] = [dst] + [src] + C, update N/Z/V/C from result.
             0x89 => {
                 let src_dp = self.fetch(bus, &mut cycles);
-                let dst_dp = self.fetch(bus, &mut cycles);
                 let src = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(src_dp),
                     &mut cycles,
                 );
+                let dst_dp = self.fetch(bus, &mut cycles);
                 let dst_addr = self.direct_page_base() | u16::from(dst_dp);
                 let dst = self.read_cycle(bus, dst_addr, &mut cycles);
                 let saved_a = self.a;
@@ -1709,17 +1721,17 @@ impl Spc700 {
             }
             // ADC (X),(Y) — (X) = (X) + (Y) + C.
             0x99 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let x_addr = self.direct_page_base() | u16::from(self.x);
                 let y_addr = self.direct_page_base() | u16::from(self.y);
-                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let saved_a = self.a;
                 self.a = x_value;
                 self.add_with_carry_to_a(y_value);
                 let result = self.a;
                 self.a = saved_a;
                 self.write_cycle(bus, x_addr, result, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // SBC A,#imm — subtract immediate from A with borrow, update N/Z/V/C.
             0xA8 => {
@@ -1735,13 +1747,13 @@ impl Spc700 {
             }
             // SBC A,(X).
             0xA6 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let value = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(self.x),
                     &mut cycles,
                 );
                 self.subtract_with_borrow_from_a(value);
-                self.idle_cycle(bus, &mut cycles);
             }
             // SBC A,dp+X.
             0xB4 => {
@@ -1792,13 +1804,13 @@ impl Spc700 {
             // SBC A,[dp]+Y.
             0xB7 => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
                 let hi = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(dp.wrapping_add(1)),
                     &mut cycles,
                 );
-                self.idle_cycle(bus, &mut cycles);
                 let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 self.subtract_with_borrow_from_a(value);
@@ -1806,12 +1818,12 @@ impl Spc700 {
             // SBC dp,dp — [dst] = [dst] - [src] - !C, update N/Z/V/C from result.
             0xA9 => {
                 let src_dp = self.fetch(bus, &mut cycles);
-                let dst_dp = self.fetch(bus, &mut cycles);
                 let src = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(src_dp),
                     &mut cycles,
                 );
+                let dst_dp = self.fetch(bus, &mut cycles);
                 let dst_addr = self.direct_page_base() | u16::from(dst_dp);
                 let dst = self.read_cycle(bus, dst_addr, &mut cycles);
                 let saved_a = self.a;
@@ -1836,17 +1848,17 @@ impl Spc700 {
             }
             // SBC (X),(Y) — (X) = (X) - (Y) - !C.
             0xB9 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let x_addr = self.direct_page_base() | u16::from(self.x);
                 let y_addr = self.direct_page_base() | u16::from(self.y);
-                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let y_value = self.read_cycle(bus, y_addr, &mut cycles);
+                let x_value = self.read_cycle(bus, x_addr, &mut cycles);
                 let saved_a = self.a;
                 self.a = x_value;
                 self.subtract_with_borrow_from_a(y_value);
                 let result = self.a;
                 self.a = saved_a;
                 self.write_cycle(bus, x_addr, result, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // CMP X,#imm — compare X with immediate, update N/Z/C (V unchanged).
             0xC8 => {
@@ -1856,7 +1868,7 @@ impl Spc700 {
             // DI — clear interrupt-enable flag (logical only on SNES APU).
             0xC0 => {
                 self.set_flag(FLAG_INTERRUPT, false);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // CMP Y,#imm — compare Y with immediate, update N/Z/V/C.
@@ -1872,12 +1884,12 @@ impl Spc700 {
             // CMP dp,dp — compare [dst] with [src], update N/Z/V/C.
             0x69 => {
                 let src_dp = self.fetch(bus, &mut cycles);
-                let dst_dp = self.fetch(bus, &mut cycles);
                 let src = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(src_dp),
                     &mut cycles,
                 );
+                let dst_dp = self.fetch(bus, &mut cycles);
                 let dst = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(dst_dp),
@@ -1897,13 +1909,13 @@ impl Spc700 {
             }
             // CMP A,(X) — compare A with direct-page address in X.
             0x66 => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let value = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(self.x),
                     &mut cycles,
                 );
                 self.compare_a(value);
-                self.idle_cycle(bus, &mut cycles);
             }
             // CMP A,dp — compare A with direct-page byte.
             0x64 => {
@@ -1961,13 +1973,13 @@ impl Spc700 {
             // CMP A,[dp]+Y — compare A with indirect direct-page pointer plus Y.
             0x77 => {
                 let dp = self.fetch(bus, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let lo = self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
                 let hi = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(dp.wrapping_add(1)),
                     &mut cycles,
                 );
-                self.idle_cycle(bus, &mut cycles);
                 let addr = (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.y));
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 self.compare_a(value);
@@ -2009,56 +2021,56 @@ impl Spc700 {
             }
             // CMP (X),(Y) — compare direct-page bytes addressed by X and Y.
             0x79 => {
-                let x_value = self.read_cycle(
-                    bus,
-                    self.direct_page_base() | u16::from(self.x),
-                    &mut cycles,
-                );
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let y_value = self.read_cycle(
                     bus,
                     self.direct_page_base() | u16::from(self.y),
                     &mut cycles,
                 );
+                let x_value = self.read_cycle(
+                    bus,
+                    self.direct_page_base() | u16::from(self.x),
+                    &mut cycles,
+                );
                 self.compare_values(x_value, y_value);
-                self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // CLRP — clear direct-page select flag (P=0).
             0x20 => {
                 self.set_flag(FLAG_DIRECT_PAGE, false);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // SETP — set direct-page select flag (P=1).
             0x40 => {
                 self.set_flag(FLAG_DIRECT_PAGE, true);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // CLRC — clear carry flag.
             0x60 => {
                 self.set_flag(FLAG_CARRY, false);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // SETC — set carry flag.
             0x80 => {
                 self.set_flag(FLAG_CARRY, true);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // CLRV — clear overflow and half-carry flags.
             0xE0 => {
                 self.set_flag(FLAG_OVERFLOW, false);
                 self.set_flag(FLAG_HALF_CARRY, false);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
             }
             // EI — set interrupt-enable flag (logical only on SNES APU).
             0xA0 => {
                 self.set_flag(FLAG_INTERRUPT, true);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // NOTC — complement carry flag.
             0xED => {
                 self.set_flag(FLAG_CARRY, !self.flag(FLAG_CARRY));
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // AND1 C,mem.bit — C &= bit.
@@ -2115,8 +2127,8 @@ impl Spc700 {
                 } else {
                     value & !mask
                 };
-                self.write_cycle(bus, addr, result, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
+                self.write_cycle(bus, addr, result, &mut cycles);
             }
             // NOT1 mem.bit — bit = !bit.
             0xEA => {
@@ -2144,10 +2156,10 @@ impl Spc700 {
             op @ (0x03 | 0x23 | 0x43 | 0x63 | 0x83 | 0xA3 | 0xC3 | 0xE3) => {
                 let bit = (op >> 5) & 0x07;
                 let dp = self.fetch(bus, &mut cycles);
-                let rel = self.fetch(bus, &mut cycles) as i8;
                 let value =
                     self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
+                let rel = self.fetch(bus, &mut cycles) as i8;
                 if value & (1 << bit) != 0 {
                     self.branch(rel);
                     self.idle_cycle(bus, &mut cycles);
@@ -2158,10 +2170,10 @@ impl Spc700 {
             op @ (0x13 | 0x33 | 0x53 | 0x73 | 0x93 | 0xB3 | 0xD3 | 0xF3) => {
                 let bit = (op >> 5) & 0x07;
                 let dp = self.fetch(bus, &mut cycles);
-                let rel = self.fetch(bus, &mut cycles) as i8;
                 let value =
                     self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
+                let rel = self.fetch(bus, &mut cycles) as i8;
                 if value & (1 << bit) == 0 {
                     self.branch(rel);
                     self.idle_cycle(bus, &mut cycles);
@@ -2259,10 +2271,10 @@ impl Spc700 {
             // CBNE dp,rel — compare A with direct-page byte and branch if not equal.
             0x2E => {
                 let dp = self.fetch(bus, &mut cycles);
-                let offset = self.fetch(bus, &mut cycles) as i8;
                 let value =
                     self.read_cycle(bus, self.direct_page_base() | u16::from(dp), &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
+                let offset = self.fetch(bus, &mut cycles) as i8;
                 if self.a != value {
                     self.branch(offset);
                     self.idle_cycle(bus, &mut cycles);
@@ -2271,55 +2283,55 @@ impl Spc700 {
             }
             // PUSH PSW — push flags onto stack (4 cycles).
             0x0D => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 self.push(bus, self.psw, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // PUSH A — push accumulator onto stack (4 cycles).
             0x2D => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 self.push(bus, self.a, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // PUSH X — push X register onto stack (4 cycles).
             0x4D => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 self.push(bus, self.x, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // PUSH Y — push Y register onto stack (4 cycles).
             0x6D => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 self.push(bus, self.y, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // POP PSW — pop flags from stack (4 cycles).
             0x8E => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 self.psw = self.pop(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // POP A — pop accumulator from stack (4 cycles).
             0xAE => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 self.a = self.pop(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // POP X — pop X register from stack (4 cycles).
             0xCE => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 self.x = self.pop(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // POP Y — pop Y register from stack (4 cycles).
             0xEE => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 self.y = self.pop(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // BRK — software interrupt: push PC+1 and PSW; set B, clear I; jump via vector.
             0x0F => {
-                self.read_cycle(bus, self.pc, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 let return_addr = self.pc;
                 self.push(bus, (return_addr >> 8) as u8, &mut cycles);
                 self.push(bus, return_addr as u8, &mut cycles);
@@ -2335,9 +2347,9 @@ impl Spc700 {
             0x3F => {
                 let addr = self.fetch_u16(bus, &mut cycles);
                 let return_addr = self.pc;
+                self.idle_cycle(bus, &mut cycles);
                 self.push(bus, (return_addr >> 8) as u8, &mut cycles);
                 self.push(bus, return_addr as u8, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
                 self.pc = addr;
@@ -2346,9 +2358,9 @@ impl Spc700 {
             0x4F => {
                 let upage = self.fetch(bus, &mut cycles);
                 let return_addr = self.pc;
+                self.idle_cycle(bus, &mut cycles);
                 self.push(bus, (return_addr >> 8) as u8, &mut cycles);
                 self.push(bus, return_addr as u8, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
                 self.pc = 0xFF00 | u16::from(upage);
             }
@@ -2358,10 +2370,10 @@ impl Spc700 {
                 let n = (op >> 4) & 0x0F;
                 let vector = 0xFFDEu16.wrapping_sub(u16::from(n) * 2);
                 let return_addr = self.pc;
+                self.read_cycle(bus, self.pc, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 self.push(bus, (return_addr >> 8) as u8, &mut cycles);
                 self.push(bus, return_addr as u8, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
                 let lo = self.read_cycle(bus, vector, &mut cycles);
                 let hi = self.read_cycle(bus, vector.wrapping_add(1), &mut cycles);
@@ -2370,29 +2382,29 @@ impl Spc700 {
             // RTS — return from subroutine (5 cycles).
             // Pops return address from stack and jumps.
             0x6F => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let lo = self.pop(bus, &mut cycles) as u16;
                 let hi = self.pop(bus, &mut cycles) as u16;
                 self.pc = (hi << 8) | lo;
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // RETI — return from interrupt: pop PSW, then PC.
             0x7F => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 self.psw = self.pop(bus, &mut cycles);
                 let lo = self.pop(bus, &mut cycles) as u16;
                 let hi = self.pop(bus, &mut cycles) as u16;
                 self.pc = (hi << 8) | lo;
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // DBNZ dp,rel — decrement direct-page byte and branch if result is non-zero.
             0x6E => {
                 let dp = self.fetch(bus, &mut cycles);
-                let offset = self.fetch(bus, &mut cycles) as i8;
                 let addr = self.direct_page_base() | u16::from(dp);
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 let result = value.wrapping_sub(1);
                 self.write_cycle(bus, addr, result, &mut cycles);
+                let offset = self.fetch(bus, &mut cycles) as i8;
                 if result != 0 {
                     self.branch(offset);
                     self.idle_cycle(bus, &mut cycles);
@@ -2402,11 +2414,11 @@ impl Spc700 {
             // CBNE dp+X,rel — compare A with direct-page byte indexed by X and branch if not equal.
             0xDE => {
                 let dp = self.fetch(bus, &mut cycles);
-                let offset = self.fetch(bus, &mut cycles) as i8;
                 self.idle_cycle(bus, &mut cycles);
                 let addr = self.direct_page_base() | u16::from(dp.wrapping_add(self.x));
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
+                let offset = self.fetch(bus, &mut cycles) as i8;
                 if self.a != value {
                     self.branch(offset);
                     self.idle_cycle(bus, &mut cycles);
@@ -2415,10 +2427,10 @@ impl Spc700 {
             }
             // DBNZ Y,rel — decrement Y and branch if result is non-zero.
             0xFE => {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                self.idle_cycle(bus, &mut cycles);
                 let offset = self.fetch(bus, &mut cycles) as i8;
                 self.y = self.y.wrapping_sub(1);
-                self.idle_cycle(bus, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
                 if self.y != 0 {
                     self.branch(offset);
                     self.idle_cycle(bus, &mut cycles);
@@ -2434,46 +2446,58 @@ impl Spc700 {
                 let addr = self.fetch_u16(bus, &mut cycles);
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 self.update_nz8(self.a.wrapping_sub(value));
+                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, value | self.a, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // TCLR1 !abs — clear bits in memory by A; N/Z from A - M.
             0x4E => {
                 let addr = self.fetch_u16(bus, &mut cycles);
                 let value = self.read_cycle(bus, addr, &mut cycles);
                 self.update_nz8(self.a.wrapping_sub(value));
+                self.read_cycle(bus, addr, &mut cycles);
                 self.write_cycle(bus, addr, value & !self.a, &mut cycles);
-                self.idle_cycle(bus, &mut cycles);
             }
             // INCW dp — increment 16-bit direct-page word, update N/Z from 16-bit result.
             0x3A => {
                 let dp = self.fetch(bus, &mut cycles);
-                let value = self.read_word_direct_page(bus, dp, &mut cycles);
-                let result = value.wrapping_add(1);
-                self.write_word_direct_page(bus, dp, result, &mut cycles);
+                let base = self.direct_page_base();
+                let lo_addr = base | u16::from(dp);
+                let hi_addr = base | u16::from(dp.wrapping_add(1));
+                let lo = self.read_cycle(bus, lo_addr, &mut cycles);
+                let lo_result = lo.wrapping_add(1);
+                self.write_cycle(bus, lo_addr, lo_result, &mut cycles);
+                let hi = self.read_cycle(bus, hi_addr, &mut cycles);
+                let hi_result = hi.wrapping_add(u8::from(lo == 0xFF));
+                self.write_cycle(bus, hi_addr, hi_result, &mut cycles);
+                let result = u16::from(lo_result) | (u16::from(hi_result) << 8);
                 self.update_nz16(result);
             }
             // DECW dp — decrement 16-bit direct-page word, update N/Z from 16-bit result.
             0x1A => {
                 let dp = self.fetch(bus, &mut cycles);
-                let value = self.read_word_direct_page(bus, dp, &mut cycles);
-                let result = value.wrapping_sub(1);
-                self.write_word_direct_page(bus, dp, result, &mut cycles);
+                let base = self.direct_page_base();
+                let lo_addr = base | u16::from(dp);
+                let hi_addr = base | u16::from(dp.wrapping_add(1));
+                let lo = self.read_cycle(bus, lo_addr, &mut cycles);
+                let lo_result = lo.wrapping_sub(1);
+                self.write_cycle(bus, lo_addr, lo_result, &mut cycles);
+                let hi = self.read_cycle(bus, hi_addr, &mut cycles);
+                let hi_result = hi.wrapping_sub(u8::from(lo == 0x00));
+                self.write_cycle(bus, hi_addr, hi_result, &mut cycles);
+                let result = u16::from(lo_result) | (u16::from(hi_result) << 8);
                 self.update_nz16(result);
             }
             // ADDW YA,dp — add 16-bit direct-page word to YA (5 cycles).
             0x7A => {
                 let dp = self.fetch(bus, &mut cycles);
-                let value = self.read_word_direct_page(bus, dp, &mut cycles);
+                let value = self.read_word_direct_page_with_idle(bus, dp, &mut cycles);
                 self.add_to_ya(value);
-                self.idle_cycle(bus, &mut cycles);
             }
             // SUBW YA,dp — subtract 16-bit direct-page word from YA (5 cycles).
             0x9A => {
                 let dp = self.fetch(bus, &mut cycles);
-                let value = self.read_word_direct_page(bus, dp, &mut cycles);
+                let value = self.read_word_direct_page_with_idle(bus, dp, &mut cycles);
                 self.subtract_from_ya(value);
-                self.idle_cycle(bus, &mut cycles);
             }
             // CMPW YA,dp — compare 16-bit direct-page word with YA (4 cycles).
             0x5A => {
@@ -2485,7 +2509,8 @@ impl Spc700 {
             0xCF => {
                 self.mul_ya();
                 // MUL takes 9 cycles: 1 fetch + 8 operation/idle
-                for _ in 0..8 {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                for _ in 0..7 {
                     self.idle_cycle(bus, &mut cycles);
                 }
             }
@@ -2493,7 +2518,8 @@ impl Spc700 {
             0x9E => {
                 self.div_ya();
                 // DIV takes 12 cycles: 1 fetch + 11 operation/idle
-                for _ in 0..11 {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                for _ in 0..10 {
                     self.idle_cycle(bus, &mut cycles);
                 }
             }
@@ -2501,7 +2527,8 @@ impl Spc700 {
             0x9F => {
                 self.a = self.a.rotate_left(4);
                 self.update_nz8(self.a);
-                for _ in 0..4 {
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                for _ in 0..3 {
                     self.idle_cycle(bus, &mut cycles);
                 }
             }
@@ -2517,7 +2544,7 @@ impl Spc700 {
                 }
                 self.a = value;
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // DAA A — BCD adjust after addition.
@@ -2532,13 +2559,14 @@ impl Spc700 {
                 }
                 self.a = value;
                 self.update_nz8(self.a);
-                self.idle_cycle(bus, &mut cycles);
+                self.dummy_read_cycle(bus, self.pc, &mut cycles);
                 self.idle_cycle(bus, &mut cycles);
             }
             // SLEEP — halt CPU until external wakeup source.
             0xEF => {
                 trace_apu!(1; "SPC entered SLEEP at ${:04X}", opcode_pc);
-                for _ in 0..6 {
+                for _ in 0..3 {
+                    self.dummy_read_cycle(bus, self.pc, &mut cycles);
                     self.idle_cycle(bus, &mut cycles);
                 }
                 self.halted = true;
@@ -2546,7 +2574,8 @@ impl Spc700 {
             // STOP — halt CPU clock until reset.
             0xFF => {
                 trace_apu!(1; "SPC entered STOP at ${:04X}", opcode_pc);
-                for _ in 0..6 {
+                for _ in 0..3 {
+                    self.dummy_read_cycle(bus, self.pc, &mut cycles);
                     self.idle_cycle(bus, &mut cycles);
                 }
                 self.halted = true;
@@ -2573,6 +2602,7 @@ impl Spc700 {
         self.pc = pc;
         self.psw = psw;
         self.halted = false;
+        self.in_progress = None;
     }
 }
 
@@ -2585,6 +2615,53 @@ mod tests {
         ram: Box<[u8; 0x1_0000]>,
         cycles: u64,
         idle_cost: u8,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum BusOp {
+        Read(u16),
+        Write(u16, u8),
+        Idle,
+    }
+
+    struct RecordingBus {
+        ram: Box<[u8; 0x1_0000]>,
+        ops: Vec<BusOp>,
+    }
+
+    impl RecordingBus {
+        fn new() -> Self {
+            Self {
+                ram: Box::new([0; 0x1_0000]),
+                ops: Vec::new(),
+            }
+        }
+
+        fn load(&mut self, addr: u16, data: &[u8]) {
+            for (i, &byte) in data.iter().enumerate() {
+                self.ram[addr.wrapping_add(i as u16) as usize] = byte;
+            }
+        }
+    }
+
+    impl Spc700Bus for RecordingBus {
+        fn read(&mut self, addr: u16) -> u8 {
+            self.ops.push(BusOp::Read(addr));
+            self.ram[addr as usize]
+        }
+
+        fn write(&mut self, addr: u16, value: u8) {
+            self.ops.push(BusOp::Write(addr, value));
+            self.ram[addr as usize] = value;
+        }
+
+        fn idle(&mut self) {
+            self.ops.push(BusOp::Idle);
+        }
+
+        fn dummy_read(&mut self, addr: u16) {
+            self.ops.push(BusOp::Read(addr));
+        }
     }
 
     impl VariableIdleBus {
@@ -2623,6 +2700,10 @@ mod tests {
         }
 
         fn idle(&mut self) {
+            self.cycles = self.cycles.wrapping_add(u64::from(self.idle_cost));
+        }
+
+        fn dummy_read(&mut self, _addr: u16) {
             self.cycles = self.cycles.wrapping_add(u64::from(self.idle_cost));
         }
     }
@@ -2694,6 +2775,219 @@ mod tests {
         assert_eq!(cpu.pc(), 0x0201);
         assert_eq!(cycles, 2);
         assert_eq!(bus.cycles(), 2);
+    }
+
+    #[test]
+    fn mov_indirect_x_a_reads_next_pc_before_target_dummy_read_and_write() {
+        let mut cpu = Spc700::new();
+        let mut bus = RecordingBus::new();
+        bus.load(0x0200, &[0xC6]); // MOV (X),A
+        cpu.load_state_for_processor_test(0x5A, 0x10, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(
+            bus.ops,
+            vec![
+                BusOp::Read(0x0200),
+                BusOp::Read(0x0201),
+                BusOp::Read(0x0010),
+                BusOp::Write(0x0010, 0x5A),
+            ]
+        );
+    }
+
+    #[test]
+    fn mov_indirect_x_increment_a_reads_next_pc_and_idles_before_target_write() {
+        let mut cpu = Spc700::new();
+        let mut bus = RecordingBus::new();
+        bus.load(0x0200, &[0xAF]); // MOV (X)+,A
+        cpu.load_state_for_processor_test(0x5A, 0x10, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(
+            bus.ops,
+            vec![
+                BusOp::Read(0x0200),
+                BusOp::Read(0x0201),
+                BusOp::Idle,
+                BusOp::Write(0x0010, 0x5A),
+            ]
+        );
+        assert_eq!(cpu.x(), 0x11);
+    }
+
+    #[test]
+    fn mov_a_indirect_x_increment_reads_next_pc_before_target_read_and_idle() {
+        let mut cpu = Spc700::new();
+        let mut bus = RecordingBus::new();
+        bus.load(0x0200, &[0xBF]); // MOV A,(X)+
+        bus.load(0x0010, &[0x5A]);
+        cpu.load_state_for_processor_test(0, 0x10, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(
+            bus.ops,
+            vec![
+                BusOp::Read(0x0200),
+                BusOp::Read(0x0201),
+                BusOp::Read(0x0010),
+                BusOp::Idle,
+            ]
+        );
+        assert_eq!(cpu.a(), 0x5A);
+        assert_eq!(cpu.x(), 0x11);
+    }
+
+    #[test]
+    fn mov_direct_x_a_idles_before_indexed_dummy_read_and_write() {
+        let mut cpu = Spc700::new();
+        let mut bus = RecordingBus::new();
+        bus.load(0x0200, &[0xD4, 0x20]); // MOV $20+X,A
+        cpu.load_state_for_processor_test(0x5A, 0x05, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(
+            bus.ops,
+            vec![
+                BusOp::Read(0x0200),
+                BusOp::Read(0x0201),
+                BusOp::Idle,
+                BusOp::Read(0x0025),
+                BusOp::Write(0x0025, 0x5A),
+            ]
+        );
+    }
+
+    #[test]
+    fn movw_ya_direct_idles_between_low_and_high_byte_reads() {
+        let mut cpu = Spc700::new();
+        let mut bus = RecordingBus::new();
+        bus.load(0x0200, &[0xBA, 0x30]); // MOVW YA,$30
+        bus.load(0x0030, &[0x34, 0x12]);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 5);
+        assert_eq!(
+            bus.ops,
+            vec![
+                BusOp::Read(0x0200),
+                BusOp::Read(0x0201),
+                BusOp::Read(0x0030),
+                BusOp::Idle,
+                BusOp::Read(0x0031),
+            ]
+        );
+        assert_eq!(cpu.ya(), 0x1234);
+    }
+
+    #[test]
+    fn incw_direct_writes_low_byte_before_reading_high_byte() {
+        let mut cpu = Spc700::new();
+        let mut bus = RecordingBus::new();
+        bus.load(0x0200, &[0x3A, 0x30]); // INCW $30
+        bus.load(0x0030, &[0xFF, 0x12]);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(
+            bus.ops,
+            vec![
+                BusOp::Read(0x0200),
+                BusOp::Read(0x0201),
+                BusOp::Read(0x0030),
+                BusOp::Write(0x0030, 0x00),
+                BusOp::Read(0x0031),
+                BusOp::Write(0x0031, 0x13),
+            ]
+        );
+    }
+
+    #[test]
+    fn tset_absolute_reads_target_twice_before_write() {
+        let mut cpu = Spc700::new();
+        let mut bus = RecordingBus::new();
+        bus.load(0x0200, &[0x0E, 0x34, 0x12]); // TSET1 $1234
+        bus.load(0x1234, &[0x10]);
+        cpu.load_state_for_processor_test(0x03, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(
+            bus.ops,
+            vec![
+                BusOp::Read(0x0200),
+                BusOp::Read(0x0201),
+                BusOp::Read(0x0202),
+                BusOp::Read(0x1234),
+                BusOp::Read(0x1234),
+                BusOp::Write(0x1234, 0x13),
+            ]
+        );
+    }
+
+    #[test]
+    fn cbne_direct_reads_target_before_relative_operand() {
+        let mut cpu = Spc700::new();
+        let mut bus = RecordingBus::new();
+        bus.load(0x0200, &[0x2E, 0x30, 0x04]); // CBNE $30,+4
+        bus.load(0x0030, &[0x10]);
+        cpu.load_state_for_processor_test(0x20, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 7);
+        assert_eq!(
+            bus.ops,
+            vec![
+                BusOp::Read(0x0200),
+                BusOp::Read(0x0201),
+                BusOp::Read(0x0030),
+                BusOp::Idle,
+                BusOp::Read(0x0202),
+                BusOp::Idle,
+                BusOp::Idle,
+            ]
+        );
+        assert_eq!(cpu.pc(), 0x0207);
+    }
+
+    #[test]
+    fn dbnz_direct_writes_target_before_relative_operand() {
+        let mut cpu = Spc700::new();
+        let mut bus = RecordingBus::new();
+        bus.load(0x0200, &[0x6E, 0x30, 0x04]); // DBNZ $30,+4
+        bus.load(0x0030, &[0x02]);
+        cpu.load_state_for_processor_test(0, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 7);
+        assert_eq!(
+            bus.ops,
+            vec![
+                BusOp::Read(0x0200),
+                BusOp::Read(0x0201),
+                BusOp::Read(0x0030),
+                BusOp::Write(0x0030, 0x01),
+                BusOp::Read(0x0202),
+                BusOp::Idle,
+                BusOp::Idle,
+            ]
+        );
+        assert_eq!(cpu.pc(), 0x0207);
     }
 
     #[test]
