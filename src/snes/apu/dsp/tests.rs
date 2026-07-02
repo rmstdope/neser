@@ -450,7 +450,7 @@ fn given_direct_gain_voice_in_release_when_sample_ticks_then_envelope_stays_sile
 fn given_gain_increase_during_attack_when_envelope_saturates_then_mode_enters_decay() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x20);
-    dsp.write_reg(0x07, 0xFE); // GAIN mode 7, fastest two-slope increase
+    dsp.write_reg(0x07, 0xFF); // GAIN mode 7, fastest two-slope increase
     dsp.voices[0].mode = EnvelopeMode::Attack;
     dsp.voices[0].env_level = 0x7F8;
 
@@ -485,7 +485,7 @@ fn given_gain_direct_during_decay_when_sustain_level_reached_then_mode_enters_su
 fn given_gain_increase_during_decay_when_envelope_saturates_then_mode_stays_decay() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x20);
-    dsp.write_reg(0x07, 0xFE); // GAIN mode 7, fastest two-slope increase
+    dsp.write_reg(0x07, 0xFF); // GAIN mode 7, fastest two-slope increase
     dsp.voices[0].mode = EnvelopeMode::Decay;
     dsp.voices[0].env_level = 0x7F8;
 

@@ -50,21 +50,16 @@ fn apply_gain_state_transitions(voice: &mut VoiceState) {
 }
 
 fn envelope_tick_due(global_counter: u16, rate: u8) -> bool {
-    let divider = rate_to_divider(rate);
-    if divider == 0 {
-        return false;
-    }
-    if divider == 1 {
-        return true;
-    }
-    global_counter.is_multiple_of(divider)
+    let rate = usize::from(rate.min(31));
+    let divider = COUNTER_RATES[rate];
+    (u32::from(global_counter) + COUNTER_OFFSETS[rate]).is_multiple_of(divider)
 }
 
 fn active_rate(voice: &VoiceState) -> u8 {
     if voice.adsr1 & 0x80 != 0 {
         match voice.mode {
-            EnvelopeMode::Attack => voice.adsr1 & 0x0F,
-            EnvelopeMode::Decay => ((voice.adsr1 >> 4) & 0x07) * 2 + 1,
+            EnvelopeMode::Attack => (voice.adsr1 & 0x0F) * 2 + 1,
+            EnvelopeMode::Decay => ((voice.adsr1 >> 4) & 0x07) * 2 + 0x10,
             EnvelopeMode::Sustain => voice.adsr2 & 0x1F,
             EnvelopeMode::Release => 31,
         }
@@ -73,13 +68,45 @@ fn active_rate(voice: &VoiceState) -> u8 {
     }
 }
 
-fn rate_to_divider(rate: u8) -> u16 {
-    const RATE_TO_DIV: [u16; 32] = [
-        0, 2048, 1536, 1280, 1024, 768, 640, 512, 384, 320, 256, 192, 160, 128, 96, 1, 80, 64, 48,
-        24, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1, 1,
-    ];
-    RATE_TO_DIV[usize::from(rate.min(31))]
-}
+const SIMPLE_COUNTER_RANGE: u32 = 30_720;
+const COUNTER_RATES: [u32; 32] = [
+    SIMPLE_COUNTER_RANGE + 1,
+    2048,
+    1536,
+    1280,
+    1024,
+    768,
+    640,
+    512,
+    384,
+    320,
+    256,
+    192,
+    160,
+    128,
+    96,
+    80,
+    64,
+    48,
+    40,
+    32,
+    24,
+    20,
+    16,
+    12,
+    10,
+    8,
+    6,
+    5,
+    4,
+    3,
+    2,
+    1,
+];
+const COUNTER_OFFSETS: [u32; 32] = [
+    1, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040,
+    536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 0, 0,
+];
 
 fn step_adsr(voice: &mut VoiceState) {
     match voice.mode {

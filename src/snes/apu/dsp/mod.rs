@@ -373,7 +373,11 @@ impl Sdsp {
         }
 
         let soft_reset = self.flg & 0x80 != 0;
-        self.envelope_counter = self.envelope_counter.wrapping_add(1);
+        self.envelope_counter = if self.envelope_counter == 0 {
+            30_719
+        } else {
+            self.envelope_counter - 1
+        };
         self.step_noise_lfsr();
         let pmon = self.regs[usize::from(PMON_REG)];
         let non = self.regs[usize::from(NON_REG)];
