@@ -338,6 +338,9 @@ impl Sdsp {
 
     fn step_phase_internal(&mut self, mut aram: Option<&mut [u8]>) {
         let sample_tick = self.phase == 31;
+        if self.phase == 29 {
+            self.echo_state.sample_esa_for_next_echo_sample(self.esa);
+        }
         self.phase = self.phase.wrapping_add(1) & 0x1F;
         if !sample_tick {
             return;

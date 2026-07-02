@@ -933,6 +933,53 @@ fn given_esa_change_when_rendering_then_write_base_switches_after_one_sample_del
 }
 
 #[test]
+fn given_esa_written_after_echo_sample_point_when_phase_ticks_then_new_base_waits_two_samples() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x07, 0x7F);
+    dsp.write_reg(0x4D, 0x01); // EON voice 0
+    dsp.write_reg(0x7D, 0x00); // EDL=0 keeps overwriting one 4-byte entry
+    dsp.write_reg(0x6D, 0x10);
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
+
+    for _ in 0..30 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    assert_eq!(dsp.phase(), 30, "precondition: ESA sample point has passed");
+    dsp.write_reg(0x6D, 0x20);
+
+    for _ in 0..2 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    let old_base_after_first = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
+    let new_base_after_first = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
+
+    dsp.write_reg(0x00, 0x40);
+    dsp.write_reg(0x01, 0x40);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    let old_base_after_second = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
+    let new_base_after_second = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
+
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    let new_base_after_third = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
+
+    assert_ne!(old_base_after_first, [0, 0, 0, 0]);
+    assert_eq!(new_base_after_first, [0, 0, 0, 0]);
+    assert_ne!(
+        old_base_after_second, old_base_after_first,
+        "second sample should still use the old ESA base"
+    );
+    assert_eq!(new_base_after_second, [0, 0, 0, 0]);
+    assert_ne!(
+        new_base_after_third,
+        [0, 0, 0, 0],
+        "new ESA base should take effect after the next ESA sample point"
+    );
+}
+
+#[test]
 fn legacy_deserialization_without_echo_state_uses_default_echo_state() {
     let legacy = serde_json::from_str::<Sdsp>(r#"{"phase":255,"regs":[]}"#)
         .expect("legacy payload without echo_state should deserialize with defaults");

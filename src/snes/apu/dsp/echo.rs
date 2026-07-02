@@ -10,6 +10,8 @@ pub(super) struct EchoState {
     fir_left: [i16; 8],
     fir_right: [i16; 8],
     esa_latched: u8,
+    esa_pending: u8,
+    esa_sampled: bool,
     esa_initialized: bool,
 }
 
@@ -29,6 +31,8 @@ impl EchoState {
             fir_left: [0; 8],
             fir_right: [0; 8],
             esa_latched: 0,
+            esa_pending: 0,
+            esa_sampled: false,
             esa_initialized: false,
         }
     }
@@ -41,6 +45,15 @@ impl EchoState {
         if self.ring_index >= self.ring_size {
             self.ring_index = 0;
         }
+    }
+
+    pub(super) fn sample_esa_for_next_echo_sample(&mut self, esa: u8) {
+        if !self.esa_initialized {
+            self.esa_latched = esa;
+            self.esa_initialized = true;
+        }
+        self.esa_pending = esa;
+        self.esa_sampled = true;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -63,7 +76,11 @@ impl EchoState {
     ) -> (i32, i32) {
         if !self.esa_initialized {
             self.esa_latched = esa;
+            self.esa_pending = esa;
             self.esa_initialized = true;
+        }
+        if !self.esa_sampled {
+            self.esa_pending = esa;
         }
 
         let addr = self.ring_addr();
@@ -102,7 +119,8 @@ impl EchoState {
 
         self.advance_ring(edl);
         self.fir_pos = (self.fir_pos + 1) & 7;
-        self.esa_latched = esa;
+        self.esa_latched = self.esa_pending;
+        self.esa_sampled = false;
 
         (out_l, out_r)
     }
