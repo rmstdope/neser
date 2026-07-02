@@ -100,9 +100,9 @@ SNES integration tests live under `src/snes/integration_tests/`.
   detects pass/fail through a reserved WRAM marker at `$7E1FF0`, records
   diagnostics, and computes a screen CRC.
 - `rom_pass_fail` suite for #2876 vendors all 18 blargg SNES SPC700/APU test ROMs as
-  `snes-rom-pass-fail-blargg-spc-apu`. Six are verified by the `rom_runner`
+  `snes-rom-pass-fail-blargg-spc-apu`. Fifteen are verified by the `rom_runner`
   screen-CRC oracle (run to a fixed frame, compare the screen CRC32 against a
-  human-approved PASS capture). The remaining 12 are committed with `#[ignore]`'d
+  human-approved PASS capture). The remaining 3 are committed with `#[ignore]`'d
   tests pending emulator accuracy improvements.
 - Asset provenance is tracked in
   `roms/snes/automated_tests/manifest.json` and validated by
@@ -128,7 +128,7 @@ CRC32 against a human-approved PASS capture. To approve a new golden, run with
 committed integrity with
 `python -m scripts.compute_snes_rom_asset_integrity <dir>`.
 
-**Passing (12) — visually-approved screen-CRC goldens at frame 600:**
+**Passing (15) — visually-approved screen-CRC goldens at frame 600:**
 
 | ROM | Category | Golden CRC |
 | --- | --- | --- |
@@ -139,13 +139,16 @@ committed integrity with
 | `test_ram_disable_ipl` | SMP | `0xD001765E` |
 | `spc_smp` | SMP | `0xE6CE0BCE` |
 | `spc_mem_access_times` | SMP | `0x3AC3E30F` |
+| `spc_timer` | Timers | `0x249738B2` |
 | `test_speed` | Timers | `0x8EAD6D95` |
-| `test_timer_speed_2` | Timers | `0x471F26BD` |
-| `test_timer_speed3` | Timers | `0x0BBB12C6` |
+| `test_timer_speed` | Timers | `0x03C41961` |
+| `test_timer_speed2` | Timers | `0x03C41961` |
+| `test_timer_speed_2` | Timers | `0x48DAACE9` |
+| `test_timer_speed3` | Timers | `0xCD83D4B0` |
 | `test_timer_stop` | Timers | `0x7CC2B76B` |
 | `speed_2_freezes2` | Timers | `0x6E1BF905` |
 
-**Currently failing (6) — committed with `#[ignore]`'d tests:**
+**Currently failing (3) — committed with `#[ignore]`'d tests:**
 
 When the emulator is improved to produce a Passed screen, run
 `NESER_CAPTURE_SCREEN=1 cargo test … -- --ignored` to capture the golden,
@@ -154,9 +157,6 @@ replace the `0x0000_0000` placeholder CRC in the test, and remove `#[ignore]`.
 | ROM | Category | Known failure |
 | --- | --- | --- |
 | `spc_dsp6` | DSP | Failed 03: DSP echo/basics |
-| `spc_timer` | Timers | Failed 02: SPC timer |
-| `test_timer_speed` | Timers | timer speed |
-| `test_timer_speed2` | Timers | timer speed |
 | `test_timer_stop2` | Timers | timer stop |
 | `timer_at_power_reset` | Timers | timer at power/reset |
 

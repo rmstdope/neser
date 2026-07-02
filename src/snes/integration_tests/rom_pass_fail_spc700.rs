@@ -18,6 +18,7 @@ mod tests {
         ("test_ram_disable_ipl.smc", 600, 0xD001_765E),
         ("spc_smp.sfc", 600, 0xE6CE_0BCE),
         ("spc_mem_access_times.sfc", 600, 0x3AC3_E30F),
+        ("spc_timer.sfc", 600, 0x2497_38B2),
         ("test_speed.smc", 600, 0x8EAD_6D95),
         ("test_timer_speed_2.smc", 600, 0x48DA_ACE9),
         ("test_timer_speed3.smc", 600, 0xCD83_D4B0),
@@ -122,9 +123,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: SPC timer (Failed 02) — fix emulator then update CRC"]
     fn blargg_spc_timer_passes() {
-        run_failing_rom("spc_timer.sfc");
+        run_rom_with_expected_crc("spc_timer.sfc", 0x2497_38B2);
     }
 
     #[test]
