@@ -11,6 +11,7 @@ pub(super) struct EchoState {
     fir_right: [i16; 8],
     esa_latched: u8,
     esa_pending: u8,
+    edl_pending: u8,
     esa_sampled: bool,
     esa_initialized: bool,
 }
@@ -32,6 +33,7 @@ impl EchoState {
             fir_right: [0; 8],
             esa_latched: 0,
             esa_pending: 0,
+            edl_pending: 0,
             esa_sampled: false,
             esa_initialized: false,
         }
@@ -47,12 +49,13 @@ impl EchoState {
         }
     }
 
-    pub(super) fn sample_esa_for_next_echo_sample(&mut self, esa: u8) {
+    pub(super) fn sample_echo_registers(&mut self, esa: u8, edl: u8) {
         if !self.esa_initialized {
             self.esa_latched = esa;
             self.esa_initialized = true;
         }
         self.esa_pending = esa;
+        self.edl_pending = edl;
         self.esa_sampled = true;
     }
 
@@ -77,10 +80,12 @@ impl EchoState {
         if !self.esa_initialized {
             self.esa_latched = esa;
             self.esa_pending = esa;
+            self.edl_pending = edl;
             self.esa_initialized = true;
         }
         if !self.esa_sampled {
             self.esa_pending = esa;
+            self.edl_pending = edl;
         }
 
         let addr = self.ring_addr();
@@ -117,7 +122,7 @@ impl EchoState {
             out_r = 0;
         }
 
-        self.advance_ring(edl);
+        self.advance_ring();
         self.fir_pos = (self.fir_pos + 1) & 7;
         self.esa_latched = self.esa_pending;
         self.esa_sampled = false;
@@ -129,9 +134,9 @@ impl EchoState {
         (u16::from(self.esa_latched) << 8).wrapping_add(self.ring_index.wrapping_mul(4))
     }
 
-    fn advance_ring(&mut self, edl: u8) {
+    fn advance_ring(&mut self) {
         if self.ring_index == 0 {
-            self.ring_size = ring_size_from_edl(edl);
+            self.ring_size = ring_size_from_edl(self.edl_pending);
         }
         self.ring_index = self.ring_index.wrapping_add(1);
         if self.ring_index >= self.ring_size {

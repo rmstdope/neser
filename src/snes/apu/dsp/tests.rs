@@ -980,6 +980,54 @@ fn given_esa_written_after_echo_sample_point_when_phase_ticks_then_new_base_wait
 }
 
 #[test]
+fn given_edl_written_after_echo_sample_point_when_phase_ticks_then_old_zero_length_wraps_once_more()
+{
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x07, 0x7F);
+    dsp.write_reg(0x4D, 0x01); // EON voice 0
+    dsp.write_reg(0x6D, 0x10);
+    dsp.write_reg(0x7D, 0x00); // EDL=0 keeps ring index at one entry
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
+
+    for _ in 0..30 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    assert_eq!(dsp.phase(), 30, "precondition: EDL sample point has passed");
+    dsp.write_reg(0x7D, 0x01);
+
+    for _ in 0..2 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    let base_after_first = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
+    let next_after_first = [aram[0x1004], aram[0x1005], aram[0x1006], aram[0x1007]];
+
+    dsp.write_reg(0x00, 0x40);
+    dsp.write_reg(0x01, 0x40);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    let base_after_second = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
+    let next_after_second = [aram[0x1004], aram[0x1005], aram[0x1006], aram[0x1007]];
+
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    let next_after_third = [aram[0x1004], aram[0x1005], aram[0x1006], aram[0x1007]];
+
+    assert_ne!(base_after_first, [0, 0, 0, 0]);
+    assert_eq!(next_after_first, [0, 0, 0, 0]);
+    assert_ne!(
+        base_after_second, base_after_first,
+        "late EDL write should leave the next sample using old EDL=0 wrapping"
+    );
+    assert_eq!(next_after_second, [0, 0, 0, 0]);
+    assert_ne!(
+        next_after_third,
+        [0, 0, 0, 0],
+        "new EDL should take effect after the next EDL sample point"
+    );
+}
+
+#[test]
 fn legacy_deserialization_without_echo_state_uses_default_echo_state() {
     let legacy = serde_json::from_str::<Sdsp>(r#"{"phase":255,"regs":[]}"#)
         .expect("legacy payload without echo_state should deserialize with defaults");
