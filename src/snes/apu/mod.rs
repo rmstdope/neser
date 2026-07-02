@@ -376,7 +376,7 @@ impl SnesApu {
     }
 
     fn render_stereo_sample_internal(&mut self) -> (f32, f32) {
-        self.dsp.render_stereo_sample_with_memory(&mut self.aram)
+        self.dsp.current_stereo_sample()
     }
 
     fn step_native_audio_clock(&mut self) {
@@ -688,7 +688,7 @@ impl SpcBusView<'_> {
     fn tick_timers_if_enabled(&mut self) {
         if self.tick_timers && self.test_allows_timers() {
             self.timers.tick_cycle();
-            self.dsp.step_phase_with_memory(&self.aram[..]);
+            self.dsp.step_phase_with_memory(&mut self.aram[..]);
         }
     }
 }
@@ -965,6 +965,7 @@ mod tests {
         apu.aram[base + 3] = 0x7F;
 
         apu.native_cycles_per_sample = 1.0;
+        apu.advance_spc_bus_cycles_for_test(32);
         apu.step_native_audio_clock();
 
         let sample = apu

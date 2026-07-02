@@ -6,7 +6,7 @@ fn step_sample_ticks(dsp: &mut Sdsp, ticks: usize) {
     }
 }
 
-fn step_sample_ticks_with_memory(dsp: &mut Sdsp, aram: &[u8], ticks: usize) {
+fn step_sample_ticks_with_memory(dsp: &mut Sdsp, aram: &mut [u8], ticks: usize) {
     for _ in 0..ticks * 32 {
         dsp.step_phase_with_memory(aram);
     }
@@ -165,7 +165,7 @@ fn given_voice_pitch_when_step_voice_pitch_then_sample_position_advances() {
 #[test]
 fn given_voice_pitch_when_dsp_phase_steps_then_pitch_advances_once_per_32_phases() {
     let mut dsp = Sdsp::new();
-    dsp.write_reg(0x6C, 0x00);
+    dsp.write_reg(0x6C, 0x20);
     dsp.set_voice_pitch(0, 0x1000);
 
     for _ in 0..31 {
@@ -260,7 +260,7 @@ fn given_many_loud_voices_when_rendering_then_main_sum_clamps_before_master_volu
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x0C, 0x01);
     dsp.write_reg(0x1C, 0x01);
-    dsp.write_reg(0x6C, 0x00);
+    dsp.write_reg(0x6C, 0x20);
     for voice in 0..8usize {
         let base = voice << 4;
         dsp.write_reg(base as u8, 0x7F);
@@ -343,7 +343,7 @@ fn normalize_after_restore_masks_phase_to_5_bits() {
 #[test]
 fn given_kon_for_adsr_voice_when_latency_passes_then_envx_becomes_non_zero() {
     let mut dsp = Sdsp::new();
-    dsp.write_reg(0x6C, 0x00);
+    dsp.write_reg(0x6C, 0x20);
     dsp.write_reg(0x05, 0x8F); // ADSR1: ADSR enabled, fastest attack
     dsp.write_reg(0x06, 0xE0); // ADSR2: high sustain level, slow sustain
     dsp.write_reg(0x4C, 0x01); // KON voice 0
@@ -365,7 +365,7 @@ fn given_kon_for_adsr_voice_when_latency_passes_then_envx_becomes_non_zero() {
 #[test]
 fn given_active_adsr_voice_when_koff_then_envx_decreases() {
     let mut dsp = Sdsp::new();
-    dsp.write_reg(0x6C, 0x00);
+    dsp.write_reg(0x6C, 0x20);
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
@@ -679,7 +679,7 @@ fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sam
     aram[0x0002] = 0x00;
     aram[0x0003] = 0x01;
 
-    dsp.write_reg(0x6C, 0x00);
+    dsp.write_reg(0x6C, 0x20);
     dsp.write_reg(0x04, 0x00);
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
@@ -690,7 +690,7 @@ fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sam
     dsp.write_reg(0x03, 0x10);
     dsp.write_reg(0x4C, 0x01);
 
-    step_sample_ticks_with_memory(&mut dsp, &aram, 5);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 5);
 
     assert_eq!(
         dsp.read_reg(0x09),
@@ -709,7 +709,7 @@ fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
     aram[0x0003] = 0x01;
     aram[0x0100] = 0x01;
 
-    dsp.write_reg(0x6C, 0x00);
+    dsp.write_reg(0x6C, 0x20);
     dsp.write_reg(0x04, 0x00);
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
@@ -720,7 +720,7 @@ fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
     dsp.write_reg(0x03, 0x10);
     dsp.write_reg(0x4C, 0x01);
 
-    step_sample_ticks_with_memory(&mut dsp, &aram, 5);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 5);
 
     assert_ne!(
         dsp.read_reg(0x7C),
@@ -737,6 +737,7 @@ fn given_echo_enabled_when_rendering_with_memory_then_echo_ring_buffer_is_writte
     dsp.write_reg(0x01, 0x7F);
     dsp.write_reg(0x0C, 0x7F);
     dsp.write_reg(0x1C, 0x7F);
+    dsp.write_reg(0x07, 0x7F);
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x40); // ESA base 0x4000
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
@@ -751,6 +752,29 @@ fn given_echo_enabled_when_rendering_with_memory_then_echo_ring_buffer_is_writte
     let right = i16::from_le_bytes([aram[base + 2], aram[base + 3]]);
     assert_ne!(left, 0, "left echo sample should be written to ARAM");
     assert_ne!(right, 0, "right echo sample should be written to ARAM");
+}
+
+#[test]
+fn given_echo_enabled_when_dsp_phase_ticks_with_memory_then_echo_ring_buffer_is_written() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x0C, 0x7F);
+    dsp.write_reg(0x1C, 0x7F);
+    dsp.write_reg(0x07, 0x7F);
+    dsp.write_reg(0x4D, 0x01); // EON voice 0
+    dsp.write_reg(0x6D, 0x40); // ESA base 0x4000
+    dsp.write_reg(0x7D, 0x01); // EDL non-zero
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
+
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+
+    let base = 0x4000usize;
+    let left = i16::from_le_bytes([aram[base], aram[base + 1]]);
+    let right = i16::from_le_bytes([aram[base + 2], aram[base + 3]]);
+    assert_ne!(left, 0, "left echo sample should be written by DSP phase");
+    assert_ne!(right, 0, "right echo sample should be written by DSP phase");
 }
 
 #[test]

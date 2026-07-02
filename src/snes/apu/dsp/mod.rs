@@ -65,6 +65,10 @@ pub struct Sdsp {
     noise_counter: u16,
     #[serde(default)]
     envelope_counter: u16,
+    #[serde(default)]
+    last_output_l: i32,
+    #[serde(default)]
+    last_output_r: i32,
 }
 
 impl Default for Sdsp {
@@ -102,6 +106,8 @@ impl Sdsp {
             noise_lfsr: default_noise_lfsr(),
             noise_counter: 0,
             envelope_counter: 0,
+            last_output_l: 0,
+            last_output_r: 0,
         }
     }
 
@@ -193,6 +199,18 @@ impl Sdsp {
     }
 
     #[must_use]
+    pub fn current_stereo_sample(&self) -> (f32, f32) {
+        (
+            self.last_output_l
+                .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as f32
+                / 32768.0,
+            self.last_output_r
+                .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as f32
+                / 32768.0,
+        )
+    }
+
+    #[must_use]
     fn render_stereo_sample_internal(&mut self, aram: Option<&mut [u8]>) -> (f32, f32) {
         let mut dry_l = 0i32;
         let mut dry_r = 0i32;
@@ -226,9 +244,9 @@ impl Sdsp {
             dry_l,
             dry_r,
         );
-        let left = left.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as f32 / 32768.0;
-        let right = right.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as f32 / 32768.0;
-        (left, right)
+        self.last_output_l = left;
+        self.last_output_r = right;
+        self.current_stereo_sample()
     }
 
     #[must_use]
@@ -248,7 +266,7 @@ impl Sdsp {
         self.step_phase_internal(None);
     }
 
-    pub fn step_phase_with_memory(&mut self, aram: &[u8]) {
+    pub fn step_phase_with_memory(&mut self, aram: &mut [u8]) {
         self.step_phase_internal(Some(aram));
     }
 
@@ -318,7 +336,7 @@ impl Sdsp {
         }
     }
 
-    fn step_phase_internal(&mut self, aram: Option<&[u8]>) {
+    fn step_phase_internal(&mut self, mut aram: Option<&mut [u8]>) {
         let sample_tick = self.phase == 31;
         self.phase = self.phase.wrapping_add(1) & 0x1F;
         if !sample_tick {
@@ -334,24 +352,32 @@ impl Sdsp {
         let pmon = self.regs[usize::from(PMON_REG)];
         let non = self.regs[usize::from(NON_REG)];
 
-        for voice in 0..8usize {
-            self.step_voice_envelope(voice, aram);
-            let effective_pitch = self.effective_pitch_for_voice(voice, pmon);
-            self.voices[voice].sample_pos = self.voices[voice]
-                .sample_pos
-                .wrapping_add(u32::from(effective_pitch));
-            if let Some(aram) = aram {
-                self.advance_voice_brr_stream(voice, aram);
+        {
+            let aram_read = aram.as_deref();
+            for voice in 0..8usize {
+                self.step_voice_envelope(voice, aram_read);
+                let effective_pitch = self.effective_pitch_for_voice(voice, pmon);
+                self.voices[voice].sample_pos = self.voices[voice]
+                    .sample_pos
+                    .wrapping_add(u32::from(effective_pitch));
+                if let Some(aram) = aram_read {
+                    self.advance_voice_brr_stream(voice, aram);
+                }
+                let sample = self.voice_sample(voice, non, aram_read);
+                let out_before_mix = (sample >> 8).clamp(-128, 127) as i8;
+                self.voices[voice].mod_source = out_before_mix;
+                self.voices[voice].current_output = sample;
+                let (left, right) = self.mix_voice_sample(voice, sample);
+                let _mixed =
+                    (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
+                self.voices[voice].outx = out_before_mix;
+                self.regs[(voice << 4) + 8] = self.voices[voice].envx;
+                self.regs[(voice << 4) + 9] = out_before_mix as u8;
             }
-            let sample = self.voice_sample(voice, non, aram);
-            let out_before_mix = (sample >> 8).clamp(-128, 127) as i8;
-            self.voices[voice].mod_source = out_before_mix;
-            self.voices[voice].current_output = sample;
-            let (left, right) = self.mix_voice_sample(voice, sample);
-            let _mixed = (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
-            self.voices[voice].outx = out_before_mix;
-            self.regs[(voice << 4) + 8] = self.voices[voice].envx;
-            self.regs[(voice << 4) + 9] = out_before_mix as u8;
+        }
+
+        if let Some(aram) = aram.as_deref_mut() {
+            let _ = self.render_stereo_sample_internal(Some(aram));
         }
     }
 
