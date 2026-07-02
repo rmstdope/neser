@@ -139,6 +139,8 @@ impl SnesApu {
             resample_phase: 0.0,
             pending_samples: VecDeque::with_capacity(MAX_PENDING_SAMPLES),
         };
+        apu.aram[0x00F8] = 0x00;
+        apu.aram[0x00F9] = 0x00;
         apu.reset_spc700();
         apu
     }
@@ -293,6 +295,8 @@ impl SnesApu {
         if state.aram.is_empty() {
             // Backward-compat: older save-states didn't include APU ARAM/control.
             self.aram = [0; ARAM_SIZE];
+            self.aram[0x00F8] = 0x00;
+            self.aram[0x00F9] = 0x00;
             self.main_to_spc_ports = [0; 4];
             self.spc_to_main_ports = [0; 4];
             self.control = 0xB0;
@@ -318,7 +322,7 @@ impl SnesApu {
         }
         let mut normalized_dsp = state.dsp.clone();
         normalized_dsp.normalize_after_restore()?;
-        let normalized_dsp_addr = state.dsp_addr & 0x7F;
+        let restored_dsp_addr = state.dsp_addr;
 
         self.main_to_spc_ports = state.main_to_spc_ports;
         self.spc_to_main_ports = state.spc_to_main_ports;
@@ -328,7 +332,7 @@ impl SnesApu {
         self.spc_cycle_budget = state.spc_cycle_budget;
         self.timers = state.timers.clone();
         self.dsp = normalized_dsp;
-        self.dsp_addr = normalized_dsp_addr;
+        self.dsp_addr = restored_dsp_addr;
         self.sample_acc = sanitize_non_negative_f32(state.sample_acc);
         self.cycles_per_sample = sanitize_non_negative_f32(state.cycles_per_sample);
         self.native_sample_acc = sanitize_non_negative_f32(state.native_sample_acc);
@@ -699,14 +703,15 @@ impl Spc700Bus for SpcBusView<'_> {
             *self.frozen = true;
         }
         let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
+        self.tick_timers_multiple(timer_cycles);
         let value = match addr {
             // I/O register reads ($F0-$FF) always return I/O values, not the RAM-disable
             // sentinel. Per bsnes smp/memory.cpp: readRAM is called first (returns $5A when
             // RAM-disabled), but readIO overrides for the entire $F0-$FF range.
-            0x00F0 => self.test_reg(), // TEST is readable; per fullsnes default 0x0A
-            0x00F1 => *self.control,
+            // $F0 TEST and $F1 CONTROL are write-only; reads return $00.
+            0x00F0..=0x00F1 => 0x00,
             0x00F2 => *self.dsp_addr,
-            0x00F3 => self.dsp.read_reg(*self.dsp_addr),
+            0x00F3 => self.dsp.read_reg(*self.dsp_addr & 0x7F),
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
             // $F8-$F9 = AUXIO4/AUXIO5 (general-purpose I/O, stores value in ARAM)
             0x00F8..=0x00F9 => self.aram[addr as usize],
@@ -723,7 +728,6 @@ impl Spc700Bus for SpcBusView<'_> {
         if (0x00F4..=0x00F7).contains(&addr) {
             trace_apu!(3; "SPC reads port[{}] -> ${:02X}", addr - 0x00F4, value);
         }
-        self.tick_timers_multiple(timer_cycles);
         value
     }
 
@@ -736,6 +740,7 @@ impl Spc700Bus for SpcBusView<'_> {
             *self.frozen = true;
         }
         let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
+        self.tick_timers_multiple(timer_cycles);
         let write_enabled = self.ram_write_enabled();
         if write_enabled {
             self.aram[addr as usize] = value;
@@ -756,15 +761,17 @@ impl Spc700Bus for SpcBusView<'_> {
                 self.write_test(value);
             }
             0x00F1 => self.write_control(value),
-            0x00F2 => *self.dsp_addr = value & 0x7F,
+            0x00F2 => *self.dsp_addr = value,
             0x00F3 => {
-                trace_apu!(
-                    3;
-                    "SPC writes DSP[${:02X}] = ${:02X}",
-                    *self.dsp_addr,
-                    value
-                );
-                self.dsp.write_reg(*self.dsp_addr, value)
+                if *self.dsp_addr & 0x80 == 0 {
+                    trace_apu!(
+                        3;
+                        "SPC writes DSP[${:02X}] = ${:02X}",
+                        *self.dsp_addr,
+                        value
+                    );
+                    self.dsp.write_reg(*self.dsp_addr, value)
+                }
             }
             0x00F4..=0x00F7 => {
                 let port_idx = (addr - 0x00F4) as usize;
@@ -777,7 +784,6 @@ impl Spc700Bus for SpcBusView<'_> {
             }
             _ => {}
         }
-        self.tick_timers_multiple(timer_cycles);
     }
 
     fn idle_cycles(&self) -> u8 {
@@ -874,7 +880,7 @@ mod tests {
         let mut apu = SnesApu::new(None);
         apu.write_spc_memory_for_test(0x00FA, 0x01);
         apu.write_spc_control_for_test(0x81);
-        apu.advance_spc_bus_cycles_for_test(126);
+        apu.advance_spc_bus_cycles_for_test(124);
 
         let state = apu.capture_state();
         apu.restore_state(&state).expect("restore should succeed");
@@ -898,14 +904,22 @@ mod tests {
     }
 
     #[test]
-    fn dsp_f2_address_masks_to_7_bit_register_space() {
+    fn dsp_f2_preserves_full_readback_while_f3_masks_and_ignores_mirror_writes() {
         let mut apu = SnesApu::new(None);
 
         apu.write_spc_memory_for_test(0x00F2, 0x10);
         apu.write_spc_memory_for_test(0x00F3, 0x34);
 
         apu.write_spc_memory_for_test(0x00F2, 0x90);
+        assert_eq!(apu.read_spc_memory_for_test(0x00F2), 0x90);
         assert_eq!(apu.read_spc_memory_for_test(0x00F3), 0x34);
+        apu.write_spc_memory_for_test(0x00F3, 0x56);
+        apu.write_spc_memory_for_test(0x00F2, 0x10);
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00F3),
+            0x34,
+            "DSP writes through read-only mirrors must be ignored"
+        );
     }
 
     #[test]
@@ -965,13 +979,13 @@ mod tests {
     }
 
     #[test]
-    fn restore_state_masks_dsp_address_to_7_bit() {
+    fn restore_state_preserves_full_dsp_address_readback_byte() {
         let mut apu = SnesApu::new(None);
         let mut state = apu.capture_state();
         state.dsp_addr = 0xFF;
 
         apu.restore_state(&state).expect("restore should succeed");
-        assert_eq!(apu.read_spc_memory_for_test(0x00F2), 0x7F);
+        assert_eq!(apu.read_spc_memory_for_test(0x00F2), 0xFF);
     }
 
     #[test]
@@ -1030,9 +1044,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Spec: $F0 TEST register — power-on default is 0Ah, and blargg's
-    // timer_at_power_reset / test_timer_stop tests verify the value by
-    // reading $F0. The register must return its current written value.
+    // Spec: $F0 TEST register has a power-on default of 0Ah internally, while
+    // SPC-visible $F0 TEST and $F1 CONTROL reads are write-only and return 0.
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1045,13 +1058,19 @@ mod tests {
     }
 
     #[test]
-    fn test_register_at_f0_reads_back_written_value() {
+    fn test_and_control_registers_are_write_only_when_read_back() {
         let mut apu = SnesApu::new(None);
         apu.write_spc_memory_for_test(0x00F0, 0x3A);
+        apu.write_spc_memory_for_test(0x00F1, 0x80);
         assert_eq!(
             apu.read_spc_memory_for_test(0x00F0),
-            0x3A,
-            "$F0 TEST register must be readable and return the last-written value"
+            0x00,
+            "$F0 TEST register is write-only and reads as zero"
+        );
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00F1),
+            0x00,
+            "$F1 CONTROL register is write-only and reads as zero"
         );
     }
 
@@ -1066,6 +1085,20 @@ mod tests {
         assert_eq!(apu.read_spc_memory_for_test(0x00FA), 0x00);
         assert_eq!(apu.read_spc_memory_for_test(0x00FB), 0x00);
         assert_eq!(apu.read_spc_memory_for_test(0x00FC), 0x00);
+    }
+
+    #[test]
+    fn auxio_registers_power_on_as_zero_and_read_back_written_values() {
+        let mut apu = SnesApu::new(None);
+
+        assert_eq!(apu.read_spc_memory_for_test(0x00F8), 0x00);
+        assert_eq!(apu.read_spc_memory_for_test(0x00F9), 0x00);
+
+        apu.write_spc_memory_for_test(0x00F8, 0x12);
+        apu.write_spc_memory_for_test(0x00F9, 0x34);
+
+        assert_eq!(apu.read_spc_memory_for_test(0x00F8), 0x12);
+        assert_eq!(apu.read_spc_memory_for_test(0x00F9), 0x34);
     }
 
     #[test]
@@ -1321,13 +1354,15 @@ mod tests {
         // Keep timers enabled (bit3=1, bit0=0), but set external wait bits=2.
         apu.write_spc_memory_for_test(0x00F0, 0x2A);
         // External RAM access should advance timers by 4 cycles each (not 5).
-        for _ in 0..7 {
+        // Three such writes plus the surrounding register access cycles put T2
+        // exactly on its first tick when $FF is read below.
+        for _ in 0..3 {
             apu.write_spc_memory_for_test(0x0200, 0x55);
         }
         assert_eq!(
             apu.read_spc_memory_for_test(0x00FF),
             0x01,
-            "T2 should tick once after 7 external writes at wait-bits=2"
+            "T2 should tick once after 3 external writes at wait-bits=2"
         );
     }
 
