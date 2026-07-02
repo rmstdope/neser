@@ -145,16 +145,6 @@ impl Sdsp {
             v.adsr1 = self.regs[base + 5];
             v.adsr2 = self.regs[base + 6];
             v.gain = self.regs[base + 7];
-            v.envx = self.regs[base + 8];
-            v.outx = self.regs[base + 9] as i8;
-            v.current_output = i16::from(v.outx) << 8;
-            v.mod_source = v.outx;
-            v.env_level = u16::from(v.envx) << 4;
-            v.mode = if v.env_level == 0 {
-                EnvelopeMode::Release
-            } else {
-                EnvelopeMode::Sustain
-            };
             self.fir_coeffs[voice] = self.regs[base + 0x0F] as i8;
         }
     }
@@ -490,6 +480,7 @@ impl Sdsp {
         }
         let voice = usize::from(reg >> 4);
         if voice < 8 && matches!(reg & 0x0F, 0x08 | 0x09) {
+            self.regs[index] = value;
             return;
         }
         self.regs[index] = value;

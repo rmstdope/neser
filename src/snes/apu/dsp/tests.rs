@@ -301,6 +301,37 @@ fn normalize_after_restore_rebuilds_cached_pitch_and_volume_fields() {
 }
 
 #[test]
+fn normalize_after_restore_preserves_voice_status_when_envx_outx_buffers_differ() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x08, 0xAA);
+    dsp.write_reg(0x09, 0xBB);
+    dsp.voices[0].env_level = 0x340;
+    dsp.voices[0].envx = 0x34;
+    dsp.voices[0].outx = 0x12;
+    dsp.voices[0].current_output = 0x1200;
+    dsp.voices[0].mod_source = 0x12;
+
+    dsp.normalize_after_restore()
+        .expect("normalize should preserve true voice status");
+
+    assert_eq!(
+        dsp.read_reg(0x08),
+        0xAA,
+        "readable ENVX buffer should remain external register state"
+    );
+    assert_eq!(
+        dsp.read_reg(0x09),
+        0xBB,
+        "readable OUTX buffer should remain external register state"
+    );
+    assert_eq!(dsp.voices[0].env_level, 0x340);
+    assert_eq!(dsp.voices[0].envx, 0x34);
+    assert_eq!(dsp.voices[0].outx, 0x12);
+    assert_eq!(dsp.voices[0].current_output, 0x1200);
+    assert_eq!(dsp.voices[0].mod_source, 0x12);
+}
+
+#[test]
 fn normalize_after_restore_masks_phase_to_5_bits() {
     let mut dsp = Sdsp::new();
     dsp.phase = 0xFF;
@@ -464,7 +495,7 @@ fn given_koff_during_kon_delay_when_latency_would_expire_then_voice_stays_releas
 }
 
 #[test]
-fn given_envx_outx_when_written_then_voice_status_is_not_directly_overridden() {
+fn given_envx_outx_when_written_then_reads_return_buffered_values_until_status_refresh() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x05, 0x8F);
@@ -474,11 +505,36 @@ fn given_envx_outx_when_written_then_voice_status_is_not_directly_overridden() {
     let env_before = dsp.read_reg(0x08);
     let out_before = dsp.read_reg(0x09);
 
-    dsp.write_reg(0x08, env_before.wrapping_add(1));
-    dsp.write_reg(0x09, out_before.wrapping_add(1));
+    let buffered_env = env_before.wrapping_add(1);
+    let buffered_out = out_before.wrapping_add(1);
+    dsp.write_reg(0x08, buffered_env);
+    dsp.write_reg(0x09, buffered_out);
 
-    assert_eq!(dsp.read_reg(0x08), env_before);
-    assert_eq!(dsp.read_reg(0x09), out_before);
+    assert_eq!(
+        dsp.read_reg(0x08),
+        buffered_env,
+        "ENVX writes should update the DSP register buffer until hardware refreshes status"
+    );
+    assert_eq!(
+        dsp.read_reg(0x09),
+        buffered_out,
+        "OUTX writes should update the DSP register buffer until hardware refreshes status"
+    );
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.read_reg(0x08),
+        dsp.voices[0].envx,
+        "hardware status refresh should restore ENVX from voice state"
+    );
+    assert_eq!(
+        dsp.read_reg(0x09),
+        dsp.voices[0].outx as u8,
+        "hardware status refresh should restore OUTX from voice state"
+    );
+    assert_ne!(dsp.read_reg(0x08), buffered_env);
+    assert_ne!(dsp.read_reg(0x09), buffered_out);
 }
 
 #[test]
