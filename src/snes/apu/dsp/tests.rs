@@ -644,7 +644,8 @@ fn given_flg_soft_reset_when_sample_ticks_then_voice_envelope_and_output_clear()
 }
 
 #[test]
-fn given_flg_soft_reset_held_for_direct_gain_voice_when_sample_ticks_then_voice_stays_reset() {
+fn given_flg_soft_reset_held_for_direct_gain_voice_when_sample_ticks_then_voice_advances_silently()
+{
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x00);
     dsp.write_reg(0x02, 0x00);
@@ -665,8 +666,30 @@ fn given_flg_soft_reset_held_for_direct_gain_voice_when_sample_ticks_then_voice_
     assert_eq!(dsp.read_reg(0x09), 0, "FLG.7 should keep OUTX clear");
     assert_eq!(
         dsp.voice_sample_pos(0),
-        sample_pos_before_reset_tick,
-        "FLG.7 should prevent voice pitch/BRR progress while held"
+        sample_pos_before_reset_tick + 0x1000,
+        "FLG.7 should not halt voice pitch/BRR progress while held"
+    );
+}
+
+#[test]
+fn given_flg_soft_reset_held_when_echo_enabled_then_echo_ring_still_advances() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0x55u8; 0x1_0000];
+    dsp.write_reg(0x6D, 0x10); // ESA base 0x1000
+    dsp.write_reg(0x7D, 0x01); // multi-entry ring
+    dsp.write_reg(0x6C, 0x80); // FLG.7 soft reset, echo writes still enabled
+
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 2);
+
+    assert_eq!(
+        [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]],
+        [0, 0, 0, 0],
+        "echo processing should continue and write silence while FLG.7 resets voices"
+    );
+    assert_eq!(
+        [aram[0x1004], aram[0x1005], aram[0x1006], aram[0x1007]],
+        [0, 0, 0, 0],
+        "echo ring should keep advancing while FLG.7 is held"
     );
 }
 

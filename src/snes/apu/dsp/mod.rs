@@ -346,11 +346,8 @@ impl Sdsp {
             return;
         }
 
+        let soft_reset = self.flg & 0x80 != 0;
         self.envelope_counter = self.envelope_counter.wrapping_add(1);
-        if self.flg & 0x80 != 0 {
-            self.soft_reset_voices();
-            return;
-        }
         self.step_noise_lfsr();
         let pmon = self.regs[usize::from(PMON_REG)];
         let non = self.regs[usize::from(NON_REG)];
@@ -358,7 +355,11 @@ impl Sdsp {
         {
             let aram_read = aram.as_deref();
             for voice in 0..8usize {
-                self.step_voice_envelope(voice, aram_read);
+                if soft_reset {
+                    self.soft_reset_voice(voice);
+                } else {
+                    self.step_voice_envelope(voice, aram_read);
+                }
                 let effective_pitch = self.effective_pitch_for_voice(voice, pmon);
                 self.voices[voice].sample_pos = self.voices[voice]
                     .sample_pos
@@ -366,7 +367,11 @@ impl Sdsp {
                 if let Some(aram) = aram_read {
                     self.advance_voice_brr_stream(voice, aram);
                 }
-                let sample = self.voice_sample(voice, non, aram_read);
+                let sample = if soft_reset {
+                    0
+                } else {
+                    self.voice_sample(voice, non, aram_read)
+                };
                 let out_before_mix = (sample >> 8).clamp(-128, 127) as i8;
                 self.voices[voice].mod_source = out_before_mix;
                 self.voices[voice].current_output = sample;
@@ -620,17 +625,21 @@ impl Sdsp {
 
     fn soft_reset_voices(&mut self) {
         for voice in 0..8usize {
-            let v = &mut self.voices[voice];
-            v.kon_delay = 0;
-            v.mode = EnvelopeMode::Release;
-            v.env_level = 0;
-            v.envx = 0;
-            v.outx = 0;
-            v.current_output = 0;
-            v.mod_source = 0;
-            self.regs[(voice << 4) + 8] = 0;
-            self.regs[(voice << 4) + 9] = 0;
+            self.soft_reset_voice(voice);
         }
+    }
+
+    fn soft_reset_voice(&mut self, voice: usize) {
+        let v = &mut self.voices[voice];
+        v.kon_delay = 0;
+        v.mode = EnvelopeMode::Release;
+        v.env_level = 0;
+        v.envx = 0;
+        v.outx = 0;
+        v.current_output = 0;
+        v.mod_source = 0;
+        self.regs[(voice << 4) + 8] = 0;
+        self.regs[(voice << 4) + 9] = 0;
     }
 }
 
