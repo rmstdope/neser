@@ -3,6 +3,14 @@ use crate::snes::apu::dsp::voice::{EnvelopeMode, VoiceState};
 const ENV_MAX: u16 = 0x7FF;
 
 pub fn step_voice_envelope(voice: &mut VoiceState, global_counter: u16) {
+    if voice.mode == EnvelopeMode::Release {
+        if envelope_tick_due(global_counter, 31) {
+            voice.env_level = voice.env_level.saturating_sub(8);
+            voice.envx = ((voice.env_level >> 4).min(0x7F)) as u8;
+        }
+        return;
+    }
+
     if voice.adsr1 & 0x80 == 0 && voice.gain & 0x80 == 0 {
         voice.env_level = (u16::from(voice.gain) << 4).min(ENV_MAX);
         voice.envx = (voice.env_level >> 4).min(0x7F) as u8;

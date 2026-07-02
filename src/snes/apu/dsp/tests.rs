@@ -1,4 +1,5 @@
 use super::Sdsp;
+use super::voice::EnvelopeMode;
 
 fn step_sample_ticks(dsp: &mut Sdsp, ticks: usize) {
     for _ in 0..ticks * 32 {
@@ -10,6 +11,10 @@ fn step_sample_ticks_with_memory(dsp: &mut Sdsp, aram: &mut [u8], ticks: usize) 
     for _ in 0..ticks * 32 {
         dsp.step_phase_with_memory(aram);
     }
+}
+
+fn activate_voice_for_gain(dsp: &mut Sdsp, voice: usize) {
+    dsp.voices[voice].mode = EnvelopeMode::Sustain;
 }
 
 #[test]
@@ -393,6 +398,7 @@ fn given_non_voice_when_noise_clock_ticks_then_outx_changes_from_silence() {
     dsp.write_reg(0x00, 127);
     dsp.write_reg(0x01, 127);
     dsp.write_reg(0x07, 0x7F); // direct gain for non-zero envelope
+    activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x3D, 0x01); // NON voice 0
     dsp.write_reg(0x6C, 0x1F); // fastest noise clock in this implementation
 
@@ -421,6 +427,26 @@ fn given_sub_envx_envelope_level_when_sampling_voice_then_internal_11_bit_envelo
 }
 
 #[test]
+fn given_direct_gain_voice_in_release_when_sample_ticks_then_envelope_stays_silent() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x07, 0x7F);
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.read_reg(0x08),
+        0,
+        "direct GAIN must not raise ENVX while the voice is still in release"
+    );
+    assert_eq!(
+        dsp.read_reg(0x09),
+        0,
+        "direct GAIN must not produce output before KON activates the voice"
+    );
+}
+
+#[test]
 fn given_full_scale_voice_when_rendering_then_mixer_uses_full_resolution_sample_not_outx_register()
 {
     let mut dsp = Sdsp::new();
@@ -429,6 +455,7 @@ fn given_full_scale_voice_when_rendering_then_mixer_uses_full_resolution_sample_
     dsp.write_reg(0x00, 0x7F);
     dsp.write_reg(0x01, 0x7F);
     dsp.write_reg(0x07, 0x7F); // direct gain => ENVX=0x7F
+    activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x6C, 0x00); // unmute
 
     step_sample_ticks(&mut dsp, 1);
@@ -453,6 +480,7 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
     dsp.write_reg(0x00, 127);
     dsp.write_reg(0x01, 127);
     dsp.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x12, 0x00); // voice1 pitch low
     dsp.write_reg(0x13, 0x10); // voice1 pitch high => 0x1000
 
@@ -466,6 +494,7 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
     modulated.write_reg(0x00, 127);
     modulated.write_reg(0x01, 127);
     modulated.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut modulated, 0);
     modulated.write_reg(0x12, 0x00);
     modulated.write_reg(0x13, 0x10);
     modulated.write_reg(0x2D, 0x02); // PMON voice 1
@@ -544,6 +573,7 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
     base.write_reg(0x00, 127);
     base.write_reg(0x01, 127);
     base.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut base, 0);
     base.write_reg(0x12, 0x00);
     base.write_reg(0x13, 0x10);
     step_sample_ticks(&mut base, 1);
@@ -554,6 +584,7 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
     modulated.write_reg(0x00, 127);
     modulated.write_reg(0x01, 127);
     modulated.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut modulated, 0);
     modulated.write_reg(0x12, 0x00);
     modulated.write_reg(0x13, 0x10);
     modulated.write_reg(0x0C, 0x00);
@@ -575,6 +606,7 @@ fn given_pmon_enabled_with_voice0_output_when_voice1_steps_then_pitch_uses_modul
     dsp.write_reg(0x00, 127);
     dsp.write_reg(0x01, 127);
     dsp.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x12, 0x00);
     dsp.write_reg(0x13, 0x10);
     dsp.write_reg(0x2D, 0x02);
@@ -651,6 +683,7 @@ fn given_flg_soft_reset_held_for_direct_gain_voice_when_sample_ticks_then_voice_
     dsp.write_reg(0x02, 0x00);
     dsp.write_reg(0x03, 0x10);
     dsp.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut dsp, 0);
     step_sample_ticks(&mut dsp, 1);
     assert_ne!(
         dsp.read_reg(0x08),
@@ -701,6 +734,7 @@ fn given_echo_write_disabled_after_left_enable_sample_when_phase_ticks_then_only
     dsp.write_reg(0x00, 0x7F);
     dsp.write_reg(0x01, 0x7F);
     dsp.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x10);
     dsp.write_reg(0x7D, 0x00);
@@ -800,6 +834,7 @@ fn given_echo_enabled_when_rendering_with_memory_then_echo_ring_buffer_is_writte
     dsp.write_reg(0x0C, 0x7F);
     dsp.write_reg(0x1C, 0x7F);
     dsp.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x40); // ESA base 0x4000
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
@@ -825,6 +860,7 @@ fn given_echo_enabled_when_dsp_phase_ticks_with_memory_then_echo_ring_buffer_is_
     dsp.write_reg(0x0C, 0x7F);
     dsp.write_reg(0x1C, 0x7F);
     dsp.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x40); // ESA base 0x4000
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
@@ -1055,6 +1091,7 @@ fn given_esa_written_after_echo_sample_point_when_phase_ticks_then_new_base_wait
     dsp.write_reg(0x00, 0x7F);
     dsp.write_reg(0x01, 0x7F);
     dsp.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x7D, 0x00); // EDL=0 keeps overwriting one 4-byte entry
     dsp.write_reg(0x6D, 0x10);
@@ -1103,6 +1140,7 @@ fn given_edl_written_after_echo_sample_point_when_phase_ticks_then_old_zero_leng
     dsp.write_reg(0x00, 0x7F);
     dsp.write_reg(0x01, 0x7F);
     dsp.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x10);
     dsp.write_reg(0x7D, 0x00); // EDL=0 keeps ring index at one entry
