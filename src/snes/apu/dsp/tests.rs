@@ -548,6 +548,28 @@ fn given_multiple_kon_writes_before_sample_tick_then_last_write_selects_keyed_vo
 }
 
 #[test]
+fn given_kon_written_when_first_sample_ticks_then_key_on_waits_for_every_other_sample_poll() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x05, 0x8F);
+    dsp.write_reg(0x06, 0xE0);
+    dsp.write_reg(0x4C, 0x01);
+
+    step_sample_ticks(&mut dsp, 4);
+    assert_eq!(
+        dsp.read_reg(0x08),
+        0,
+        "KON should not be consumed on the first every-other-sample slot"
+    );
+
+    step_sample_ticks(&mut dsp, 3);
+    assert!(
+        dsp.read_reg(0x08) > 0,
+        "KON should begin after the next every-other-sample poll plus latency"
+    );
+}
+
+#[test]
 fn given_envx_outx_when_written_then_reads_return_buffered_values_until_status_refresh() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x00);
@@ -654,7 +676,7 @@ fn given_adsr_attack_rate_15_when_key_on_latency_expires_then_envelope_jumps_by_
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
 
-    step_sample_ticks(&mut dsp, 5);
+    step_sample_ticks(&mut dsp, 6);
 
     assert_eq!(
         dsp.read_reg(0x08),
@@ -683,7 +705,7 @@ fn given_flg_soft_reset_when_sample_ticks_then_voice_envelope_and_output_clear()
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
-    step_sample_ticks(&mut dsp, 5);
+    step_sample_ticks(&mut dsp, 8);
     assert_ne!(
         dsp.read_reg(0x08),
         0,
@@ -810,7 +832,7 @@ fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sam
     dsp.write_reg(0x03, 0x10);
     dsp.write_reg(0x4C, 0x01);
 
-    step_sample_ticks_with_memory(&mut dsp, &mut aram, 5);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 6);
 
     assert_eq!(
         dsp.read_reg(0x09),
@@ -840,7 +862,7 @@ fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
     dsp.write_reg(0x03, 0x10);
     dsp.write_reg(0x4C, 0x01);
 
-    step_sample_ticks_with_memory(&mut dsp, &mut aram, 5);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 8);
 
     assert_ne!(
         dsp.read_reg(0x7C),

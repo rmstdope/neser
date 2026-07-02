@@ -57,6 +57,8 @@ pub struct Sdsp {
     edl: u8,
     #[serde(default)]
     kon_pending: u8,
+    #[serde(default = "default_kon_poll_slot")]
+    kon_poll_slot: bool,
     #[serde(default)]
     fir_coeffs: [i8; 8],
     #[serde(default)]
@@ -83,6 +85,10 @@ fn default_noise_lfsr() -> u16 {
     0x4000
 }
 
+fn default_kon_poll_slot() -> bool {
+    true
+}
+
 impl Sdsp {
     #[must_use]
     pub fn new() -> Self {
@@ -104,6 +110,7 @@ impl Sdsp {
             esa: 0,
             edl: 0,
             kon_pending: 0,
+            kon_poll_slot: true,
             fir_coeffs: [0; 8],
             echo_state: EchoState::new(),
             noise_lfsr: default_noise_lfsr(),
@@ -358,7 +365,12 @@ impl Sdsp {
         self.step_noise_lfsr();
         let pmon = self.regs[usize::from(PMON_REG)];
         let non = self.regs[usize::from(NON_REG)];
-        let kon = std::mem::take(&mut self.kon_pending);
+        self.kon_poll_slot = !self.kon_poll_slot;
+        let kon = if self.kon_poll_slot {
+            std::mem::take(&mut self.kon_pending)
+        } else {
+            0
+        };
 
         {
             let aram_read = aram.as_deref();
