@@ -56,6 +56,8 @@ pub struct Sdsp {
     #[serde(default)]
     edl: u8,
     #[serde(default)]
+    kon_pending: u8,
+    #[serde(default)]
     fir_coeffs: [i8; 8],
     #[serde(default)]
     echo_state: EchoState,
@@ -101,6 +103,7 @@ impl Sdsp {
             dir: 0,
             esa: 0,
             edl: 0,
+            kon_pending: 0,
             fir_coeffs: [0; 8],
             echo_state: EchoState::new(),
             noise_lfsr: default_noise_lfsr(),
@@ -355,10 +358,15 @@ impl Sdsp {
         self.step_noise_lfsr();
         let pmon = self.regs[usize::from(PMON_REG)];
         let non = self.regs[usize::from(NON_REG)];
+        let kon = std::mem::take(&mut self.kon_pending);
 
         {
             let aram_read = aram.as_deref();
             for voice in 0..8usize {
+                if kon & (1 << voice) != 0 {
+                    let v = &mut self.voices[voice];
+                    v.kon_delay = 5;
+                }
                 if soft_reset {
                     self.soft_reset_voice(voice);
                 } else {
@@ -568,15 +576,11 @@ impl Sdsp {
                 return;
             }
             KON_REG => {
-                for voice in 0..8 {
-                    if value & (1 << voice) != 0 {
-                        let v = &mut self.voices[voice];
-                        v.kon_delay = 5;
-                    }
-                }
+                self.kon_pending = value;
                 return;
             }
             KOFF_REG => {
+                self.kon_pending &= !value;
                 for voice in 0..8 {
                     if value & (1 << voice) != 0 {
                         let v = &mut self.voices[voice];

@@ -524,6 +524,30 @@ fn given_koff_during_kon_delay_when_latency_would_expire_then_voice_stays_releas
 }
 
 #[test]
+fn given_multiple_kon_writes_before_sample_tick_then_last_write_selects_keyed_voices() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x05, 0x8F);
+    dsp.write_reg(0x06, 0xE0);
+    dsp.write_reg(0x45, 0x8F);
+    dsp.write_reg(0x46, 0xE0);
+
+    dsp.write_reg(0x4C, 0x10);
+    dsp.write_reg(0x4C, 0x01);
+    step_sample_ticks(&mut dsp, 12);
+
+    assert!(
+        dsp.read_reg(0x08) > 0,
+        "voice 0 should key on from the final KON write"
+    );
+    assert_eq!(
+        dsp.read_reg(0x48),
+        0,
+        "voice 4 should not key on from an overwritten KON write"
+    );
+}
+
+#[test]
 fn given_envx_outx_when_written_then_reads_return_buffered_values_until_status_refresh() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x00);
