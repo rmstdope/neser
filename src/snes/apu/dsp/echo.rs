@@ -96,17 +96,13 @@ impl EchoState {
         let fir_l = self.fir_sum(&self.fir_left, fir_coeffs);
         let fir_r = self.fir_sum(&self.fir_right, fir_coeffs);
 
-        let mut out_l =
-            ((dry_l * i32::from(master_vol_l)) >> 7) + ((fir_l * i32::from(echo_vol_l)) >> 7);
-        let mut out_r =
-            ((dry_r * i32::from(master_vol_r)) >> 7) + ((fir_r * i32::from(echo_vol_r)) >> 7);
+        let mut out_l = volume_term(dry_l, master_vol_l) + volume_term(fir_l, echo_vol_l);
+        let mut out_r = volume_term(dry_r, master_vol_r) + volume_term(fir_r, echo_vol_r);
         out_l = clamp_i16_i32(out_l);
         out_r = clamp_i16_i32(out_r);
 
-        let write_l =
-            clamp_i16_and_clear_bit0(echo_voice_l + ((fir_l * i32::from(echo_feedback)) >> 7));
-        let write_r =
-            clamp_i16_and_clear_bit0(echo_voice_r + ((fir_r * i32::from(echo_feedback)) >> 7));
+        let write_l = clamp_i16_and_clear_bit0(echo_voice_l + volume_term(fir_l, echo_feedback));
+        let write_r = clamp_i16_and_clear_bit0(echo_voice_r + volume_term(fir_r, echo_feedback));
 
         if flg & 0x20 == 0
             && let Some(aram) = aram
@@ -151,13 +147,17 @@ impl EchoState {
             sum = sum.wrapping_add(fir_term(history[hist_idx], *coeff) as i16);
         }
         let newest_idx = self.fir_pos;
-        (i32::from(sum) + fir_term(history[newest_idx], fir_coeffs[7]))
+        (i32::from(sum) + i32::from(fir_term(history[newest_idx], fir_coeffs[7]) as i16))
             .clamp(i32::from(i16::MIN), i32::from(i16::MAX))
     }
 }
 
 fn fir_term(sample: i16, coeff: i8) -> i32 {
     (i32::from(sample) * i32::from(coeff)) >> 6
+}
+
+fn volume_term(sample: i32, volume: i8) -> i32 {
+    i32::from(((sample * i32::from(volume)) >> 7) as i16)
 }
 
 fn ring_size_from_edl(edl: u8) -> u16 {

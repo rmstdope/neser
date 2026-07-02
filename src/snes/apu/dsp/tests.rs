@@ -883,6 +883,33 @@ fn given_first_seven_fir_taps_overflow_when_rendering_then_intermediate_sum_wrap
 }
 
 #[test]
+fn given_fir7_multiply_overflows_when_rendering_then_final_fir_term_wraps_before_saturating() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x2C, 0x7F); // EVOLL
+    dsp.write_reg(0x3C, 0x7F); // EVOLR
+    dsp.write_reg(0x7F, 0x80); // FIR7 = -128
+    dsp.write_reg(0x6D, 0x10);
+    dsp.write_reg(0x7D, 0x00);
+    dsp.write_reg(0x6C, 0x20); // echo writes disabled, echo reads still enabled
+    let base = 0x1000usize;
+    let sample = i16::MIN.to_le_bytes();
+    aram[base] = sample[0];
+    aram[base + 1] = sample[1];
+    aram[base + 2] = sample[0];
+    aram[base + 3] = sample[1];
+
+    let (left, right) = dsp.render_stereo_sample_with_memory(&mut aram);
+
+    let expected = -32512.0 / 32768.0;
+    assert!(
+        (left - expected).abs() < 0.00002,
+        "FIR7 product should wrap to signed 16 bits before final saturation: left={left}, expected={expected}"
+    );
+    assert_eq!(right, left);
+}
+
+#[test]
 fn given_edl_zero_when_rendering_then_echo_ring_wraps_each_sample() {
     let mut dsp = Sdsp::new();
     let mut aram = [0u8; 0x1_0000];
