@@ -14,6 +14,7 @@ pub fn step_voice_envelope(voice: &mut VoiceState, global_counter: u16) {
     if voice.adsr1 & 0x80 == 0 && voice.gain & 0x80 == 0 {
         voice.env_level = (u16::from(voice.gain) << 4).min(ENV_MAX);
         voice.envx = (voice.env_level >> 4).min(0x7F) as u8;
+        apply_gain_state_transitions(voice);
         return;
     }
 
@@ -28,7 +29,24 @@ pub fn step_voice_envelope(voice: &mut VoiceState, global_counter: u16) {
     }
 
     voice.env_level = voice.env_level.min(ENV_MAX);
+    if voice.adsr1 & 0x80 == 0 {
+        apply_gain_state_transitions(voice);
+    }
     voice.envx = ((voice.env_level >> 4).min(0x7F)) as u8;
+}
+
+fn apply_gain_state_transitions(voice: &mut VoiceState) {
+    let gain_mode = (voice.gain >> 5) & 0x03;
+    let saturated_gain_increase =
+        voice.env_level == ENV_MAX && voice.gain & 0x80 != 0 && gain_mode >= 2;
+    if voice.mode == EnvelopeMode::Decay
+        && !saturated_gain_increase
+        && (voice.env_level >> 8) == u16::from(voice.gain >> 5)
+    {
+        voice.mode = EnvelopeMode::Sustain;
+    } else if voice.mode == EnvelopeMode::Attack && voice.env_level == ENV_MAX {
+        voice.mode = EnvelopeMode::Decay;
+    }
 }
 
 fn envelope_tick_due(global_counter: u16, rate: u8) -> bool {
