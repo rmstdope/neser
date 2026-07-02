@@ -594,21 +594,22 @@ impl SpcBusView<'_> {
     /// executing, and the external-speed field (bits 4-5) never triggers the
     /// freeze, so ordinary slow-speed tests are unaffected.
     fn internal_speed_freeze(&self, addr: Option<u16>) -> bool {
-        let internal = match addr {
-            None => true,
-            Some(address) => self.is_internal_wait_address(address),
-        };
-        internal && (self.test_reg() >> 6) & 0x03 == 2
+        let is_internal = addr.map_or(true, |address| self.is_internal_wait_address(address));
+        is_internal && (self.test_reg() >> 6) & 0x03 == 2
     }
 
-    fn wait_cycles_for_addr(&self, addr: Option<u16>) -> u8 {
-        let wait_bits = match addr {
+    fn get_wait_bits(&self, addr: Option<u16>) -> u8 {
+        match addr {
             None => (self.test_reg() >> 6) & 0x03,
             Some(address) if self.is_internal_wait_address(address) => {
                 (self.test_reg() >> 6) & 0x03
             }
             Some(_) => (self.test_reg() >> 4) & 0x03,
-        };
+        }
+    }
+
+    fn wait_cycles_for_addr(&self, addr: Option<u16>) -> u8 {
+        let wait_bits = self.get_wait_bits(addr);
         match wait_bits {
             0 => 1,
             1 => 2,
@@ -618,13 +619,7 @@ impl SpcBusView<'_> {
     }
 
     fn timer_wait_cycles_for_addr(&self, addr: Option<u16>) -> u8 {
-        let wait_bits = match addr {
-            None => (self.test_reg() >> 6) & 0x03,
-            Some(address) if self.is_internal_wait_address(address) => {
-                (self.test_reg() >> 6) & 0x03
-            }
-            Some(_) => (self.test_reg() >> 4) & 0x03,
-        };
+        let wait_bits = self.get_wait_bits(addr);
         // Timers use non-glitchy wait-state divisors (2,4,8,16) while SMP core
         // cycles use (2,4,10,20). This scale is normalized by /2 in this core.
         match wait_bits {
