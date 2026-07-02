@@ -913,7 +913,7 @@ fn given_first_seven_fir_taps_overflow_when_rendering_then_intermediate_sum_wrap
         (left, _) = dsp.render_stereo_sample_with_memory(&mut aram);
     }
 
-    let expected_fir = -1549i32;
+    let expected_fir = -1550i32;
     let expected_left = ((expected_fir * 0x7F) >> 7) as f32 / 32768.0;
     assert!(
         (left - expected_left).abs() < 0.00002,
@@ -944,6 +944,33 @@ fn given_fir7_multiply_overflows_when_rendering_then_final_fir_term_wraps_before
     assert!(
         (left - expected).abs() < 0.00002,
         "FIR7 product should wrap to signed 16 bits before final saturation: left={left}, expected={expected}"
+    );
+    assert_eq!(right, left);
+}
+
+#[test]
+fn given_odd_fir_sum_when_feedback_mixes_then_bit0_is_cleared_before_feedback_volume() {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    dsp.write_reg(0x0D, 0x80); // EFB = -128
+    dsp.write_reg(0x7F, 0x7F); // FIR7 = newest sample
+    dsp.write_reg(0x6D, 0x10);
+    dsp.write_reg(0x7D, 0x00);
+    dsp.write_reg(0x6C, 0x00);
+    let base = 0x1000usize;
+    let sample = (-32766i16).to_le_bytes();
+    aram[base] = sample[0];
+    aram[base + 1] = sample[1];
+    aram[base + 2] = sample[0];
+    aram[base + 3] = sample[1];
+
+    let _ = dsp.render_stereo_sample_with_memory(&mut aram);
+
+    let left = i16::from_le_bytes([aram[base], aram[base + 1]]);
+    let right = i16::from_le_bytes([aram[base + 2], aram[base + 3]]);
+    assert_eq!(
+        left, 32512,
+        "FIR sum bit 0 should be cleared before echo feedback volume is applied"
     );
     assert_eq!(right, left);
 }

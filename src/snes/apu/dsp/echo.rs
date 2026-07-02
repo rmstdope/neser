@@ -117,8 +117,8 @@ impl EchoState {
         self.fir_left[self.fir_pos] = echo_ram_l >> 1;
         self.fir_right[self.fir_pos] = echo_ram_r >> 1;
 
-        let fir_l = self.fir_sum(&self.fir_left, fir_coeffs);
-        let fir_r = self.fir_sum(&self.fir_right, fir_coeffs);
+        let fir_l = self.fir_sum(&self.fir_left, fir_coeffs) & !1;
+        let fir_r = self.fir_sum(&self.fir_right, fir_coeffs) & !1;
 
         let mut out_l = volume_term(dry_l, master_vol_l) + volume_term(fir_l, echo_vol_l);
         let mut out_r = volume_term(dry_r, master_vol_r) + volume_term(fir_r, echo_vol_r);
