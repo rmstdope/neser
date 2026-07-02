@@ -694,6 +694,45 @@ fn given_flg_soft_reset_held_when_echo_enabled_then_echo_ring_still_advances() {
 }
 
 #[test]
+fn given_echo_write_disabled_after_left_enable_sample_when_phase_ticks_then_only_right_write_is_blocked()
+ {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0x55u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x07, 0x7F);
+    dsp.write_reg(0x4D, 0x01); // EON voice 0
+    dsp.write_reg(0x6D, 0x10);
+    dsp.write_reg(0x7D, 0x00);
+    dsp.write_reg(0x6C, 0x00); // echo writes enabled for left sample point
+
+    for _ in 0..29 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    assert_eq!(
+        dsp.phase(),
+        29,
+        "precondition: left write-enable sample point passed"
+    );
+    dsp.write_reg(0x6C, 0x20); // disable before right write-enable sample point
+
+    for _ in 0..3 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+
+    assert_ne!(
+        [aram[0x1000], aram[0x1001]],
+        [0x55, 0x55],
+        "left echo write should use FLG sampled before bit 5 was set"
+    );
+    assert_eq!(
+        [aram[0x1002], aram[0x1003]],
+        [0x55, 0x55],
+        "right echo write should use FLG sampled after bit 5 was set"
+    );
+}
+
+#[test]
 fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sample_data() {
     let mut dsp = Sdsp::new();
     let mut aram = [0u8; 0x1_0000];

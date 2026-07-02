@@ -338,7 +338,11 @@ impl Sdsp {
 
     fn step_phase_internal(&mut self, mut aram: Option<&mut [u8]>) {
         let sample_tick = self.phase == 31;
+        if self.phase == 28 {
+            self.echo_state.sample_left_echo_write_enable(self.flg);
+        }
         if self.phase == 29 {
+            self.echo_state.sample_right_echo_write_enable(self.flg);
             self.echo_state.sample_echo_registers(self.esa, self.edl);
         }
         self.phase = self.phase.wrapping_add(1) & 0x1F;

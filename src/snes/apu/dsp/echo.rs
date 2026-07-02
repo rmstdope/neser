@@ -12,6 +12,10 @@ pub(super) struct EchoState {
     esa_latched: u8,
     esa_pending: u8,
     edl_pending: u8,
+    flg_left: u8,
+    flg_right: u8,
+    flg_left_sampled: bool,
+    flg_right_sampled: bool,
     esa_sampled: bool,
     esa_initialized: bool,
 }
@@ -34,6 +38,10 @@ impl EchoState {
             esa_latched: 0,
             esa_pending: 0,
             edl_pending: 0,
+            flg_left: 0,
+            flg_right: 0,
+            flg_left_sampled: false,
+            flg_right_sampled: false,
             esa_sampled: false,
             esa_initialized: false,
         }
@@ -57,6 +65,16 @@ impl EchoState {
         self.esa_pending = esa;
         self.edl_pending = edl;
         self.esa_sampled = true;
+    }
+
+    pub(super) fn sample_left_echo_write_enable(&mut self, flg: u8) {
+        self.flg_left = flg;
+        self.flg_left_sampled = true;
+    }
+
+    pub(super) fn sample_right_echo_write_enable(&mut self, flg: u8) {
+        self.flg_right = flg;
+        self.flg_right_sampled = true;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -87,6 +105,12 @@ impl EchoState {
             self.esa_pending = esa;
             self.edl_pending = edl;
         }
+        if !self.flg_left_sampled {
+            self.flg_left = flg;
+        }
+        if !self.flg_right_sampled {
+            self.flg_right = flg;
+        }
 
         let addr = self.ring_addr();
         let (echo_ram_l, echo_ram_r) = read_echo_entry(aram.as_deref(), addr);
@@ -104,13 +128,16 @@ impl EchoState {
         let write_l = clamp_i16_and_clear_bit0(echo_voice_l + volume_term(fir_l, echo_feedback));
         let write_r = clamp_i16_and_clear_bit0(echo_voice_r + volume_term(fir_r, echo_feedback));
 
-        if flg & 0x20 == 0
-            && let Some(aram) = aram
-        {
-            if addr < 0x0010 {
-                trace_apu!(4; "DSP echo writes addr=${:04X} flg=${:02X}", addr, flg);
+        if let Some(aram) = aram {
+            if self.flg_left & 0x20 == 0 {
+                if addr < 0x0010 {
+                    trace_apu!(4; "DSP echo writes addr=${:04X} flg=${:02X}", addr, flg);
+                }
+                write_i16_wrap(aram, addr, write_l);
             }
-            write_echo_entry(aram, addr, write_l, write_r);
+            if self.flg_right & 0x20 == 0 {
+                write_i16_wrap(aram, addr.wrapping_add(2), write_r);
+            }
         }
 
         if flg & 0x40 != 0 {
@@ -122,6 +149,8 @@ impl EchoState {
         self.fir_pos = (self.fir_pos + 1) & 7;
         self.esa_latched = self.esa_pending;
         self.esa_sampled = false;
+        self.flg_left_sampled = false;
+        self.flg_right_sampled = false;
 
         (out_l, out_r)
     }
@@ -172,11 +201,6 @@ fn read_echo_entry(aram: Option<&[u8]>, addr: u16) -> (i16, i16) {
     let left = read_i16_wrap(aram, addr);
     let right = read_i16_wrap(aram, addr.wrapping_add(2));
     (left, right)
-}
-
-fn write_echo_entry(aram: &mut [u8], addr: u16, left: i16, right: i16) {
-    write_i16_wrap(aram, addr, left);
-    write_i16_wrap(aram, addr.wrapping_add(2), right);
 }
 
 fn read_i16_wrap(aram: &[u8], addr: u16) -> i16 {
