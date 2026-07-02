@@ -813,6 +813,37 @@ fn given_echo_write_disabled_after_left_enable_sample_when_phase_ticks_then_only
 }
 
 #[test]
+fn given_eon_disabled_after_sample_point_when_phase_ticks_then_current_sample_still_uses_latched_eon()
+ {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0x55u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F);
+    dsp.write_reg(0x01, 0x7F);
+    dsp.write_reg(0x07, 0x7F);
+    activate_voice_for_gain(&mut dsp, 0);
+    dsp.write_reg(0x4D, 0x01);
+    dsp.write_reg(0x6D, 0x10);
+    dsp.write_reg(0x7D, 0x00);
+    dsp.write_reg(0x6C, 0x00);
+
+    for _ in 0..29 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    assert_eq!(dsp.phase(), 29, "precondition: EON sample point passed");
+    dsp.write_reg(0x4D, 0x00);
+
+    for _ in 0..3 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+
+    assert_ne!(
+        [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]],
+        [0, 0, 0, 0],
+        "current echo sample should still include voice output from latched EON"
+    );
+}
+
+#[test]
 fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sample_data() {
     let mut dsp = Sdsp::new();
     let mut aram = [0u8; 0x1_0000];

@@ -46,6 +46,10 @@ pub struct Sdsp {
     #[serde(default)]
     echo_enable: u8,
     #[serde(default)]
+    echo_enable_latched: u8,
+    #[serde(default)]
+    echo_enable_sampled: bool,
+    #[serde(default)]
     flg: u8,
     #[serde(default)]
     endx: u8,
@@ -104,6 +108,8 @@ impl Sdsp {
             echo_vol_r: 0,
             echo_feedback: 0,
             echo_enable: 0,
+            echo_enable_latched: 0,
+            echo_enable_sampled: false,
             flg: 0xE0,
             endx: 0,
             dir: 0,
@@ -200,12 +206,12 @@ impl Sdsp {
 
     #[must_use]
     pub fn render_stereo_sample(&mut self) -> (f32, f32) {
-        self.render_stereo_sample_internal(None)
+        self.render_stereo_sample_internal(None, self.echo_enable)
     }
 
     #[must_use]
     pub fn render_stereo_sample_with_memory(&mut self, aram: &mut [u8]) -> (f32, f32) {
-        self.render_stereo_sample_internal(Some(aram))
+        self.render_stereo_sample_internal(Some(aram), self.echo_enable)
     }
 
     #[must_use]
@@ -221,7 +227,11 @@ impl Sdsp {
     }
 
     #[must_use]
-    fn render_stereo_sample_internal(&mut self, aram: Option<&mut [u8]>) -> (f32, f32) {
+    fn render_stereo_sample_internal(
+        &mut self,
+        aram: Option<&mut [u8]>,
+        echo_enable: u8,
+    ) -> (f32, f32) {
         let mut dry_l = 0i32;
         let mut dry_r = 0i32;
         let mut echo_voice_l = 0i32;
@@ -232,7 +242,7 @@ impl Sdsp {
             let (left, right) = self.mix_voice_sample(voice, sample);
             dry_l = clamp_i16_i32(dry_l + i32::from(left));
             dry_r = clamp_i16_i32(dry_r + i32::from(right));
-            if self.echo_enable & (1 << voice) != 0 {
+            if echo_enable & (1 << voice) != 0 {
                 echo_voice_l = clamp_i16_i32(echo_voice_l + i32::from(left));
                 echo_voice_r = clamp_i16_i32(echo_voice_r + i32::from(right));
             }
@@ -349,6 +359,8 @@ impl Sdsp {
     fn step_phase_internal(&mut self, mut aram: Option<&mut [u8]>) {
         let sample_tick = self.phase == 31;
         if self.phase == 28 {
+            self.echo_enable_latched = self.echo_enable;
+            self.echo_enable_sampled = true;
             self.echo_state.sample_left_echo_write_enable(self.flg);
         }
         if self.phase == 29 {
@@ -409,7 +421,15 @@ impl Sdsp {
         }
 
         if let Some(aram) = aram.as_deref_mut() {
-            let _ = self.render_stereo_sample_internal(Some(aram));
+            let echo_enable = if self.echo_enable_sampled {
+                self.echo_enable_latched
+            } else {
+                self.echo_enable
+            };
+            let _ = self.render_stereo_sample_internal(Some(aram), echo_enable);
+            self.echo_enable_sampled = false;
+        } else {
+            self.echo_enable_sampled = false;
         }
     }
 
