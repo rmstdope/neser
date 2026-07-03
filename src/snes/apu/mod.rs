@@ -807,11 +807,11 @@ impl Spc700Bus for SpcBusView<'_> {
         self.tick_access_cycles_for_addr(None);
     }
 
-    fn dummy_read(&mut self, _addr: u16) {
+    fn dummy_read(&mut self, addr: u16) {
         if self.internal_speed_freeze(None) {
             *self.frozen = true;
         }
-        self.tick_access_cycles_for_addr(None);
+        self.tick_access_cycles_for_addr(Some(addr));
     }
 }
 

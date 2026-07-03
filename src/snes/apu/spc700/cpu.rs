@@ -361,11 +361,10 @@ impl Spc700 {
         bus.idle();
     }
 
-    /// Consume one internal dummy-read cycle. ProcessorTests expose these as
-    /// read-signal cycles with no value; fullsnes classifies their wait timing
-    /// as internal, not as a side-effecting read from the displayed address.
+    /// Consume one dummy-read cycle. ProcessorTests expose these as read-signal
+    /// cycles with no value; Mesen charges the displayed address wait class.
     fn dummy_read_cycle(&mut self, bus: &mut impl Spc700Bus, addr: u16, cycles: &mut u8) {
-        *cycles = cycles.wrapping_add(bus.idle_cycles());
+        *cycles = cycles.wrapping_add(bus.read_cycles(addr));
         bus.dummy_read(addr);
     }
 
@@ -2566,7 +2565,7 @@ impl Spc700 {
             0xEF => {
                 trace_apu!(1; "SPC entered SLEEP at ${:04X}", opcode_pc);
                 for _ in 0..3 {
-                    self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                     self.idle_cycle(bus, &mut cycles);
                 }
                 self.halted = true;
@@ -2575,7 +2574,7 @@ impl Spc700 {
             0xFF => {
                 trace_apu!(1; "SPC entered STOP at ${:04X}", opcode_pc);
                 for _ in 0..3 {
-                    self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                     self.idle_cycle(bus, &mut cycles);
                 }
                 self.halted = true;
@@ -2614,6 +2613,12 @@ mod tests {
     struct VariableIdleBus {
         ram: Box<[u8; 0x1_0000]>,
         cycles: u64,
+        idle_cost: u8,
+    }
+
+    struct VariableReadBus {
+        ram: Box<[u8; 0x1_0000]>,
+        read_cost: u8,
         idle_cost: u8,
     }
 
@@ -2684,6 +2689,44 @@ mod tests {
         }
     }
 
+    impl VariableReadBus {
+        fn new(read_cost: u8, idle_cost: u8) -> Self {
+            Self {
+                ram: Box::new([0; 0x1_0000]),
+                read_cost,
+                idle_cost,
+            }
+        }
+
+        fn load(&mut self, addr: u16, data: &[u8]) {
+            for (i, &byte) in data.iter().enumerate() {
+                self.ram[addr.wrapping_add(i as u16) as usize] = byte;
+            }
+        }
+    }
+
+    impl Spc700Bus for VariableReadBus {
+        fn read_cycles(&self, _addr: u16) -> u8 {
+            self.read_cost
+        }
+
+        fn read(&mut self, addr: u16) -> u8 {
+            self.ram[addr as usize]
+        }
+
+        fn write(&mut self, addr: u16, value: u8) {
+            self.ram[addr as usize] = value;
+        }
+
+        fn idle_cycles(&self) -> u8 {
+            self.idle_cost
+        }
+
+        fn idle(&mut self) {}
+
+        fn dummy_read(&mut self, _addr: u16) {}
+    }
+
     impl Spc700Bus for VariableIdleBus {
         fn read(&mut self, addr: u16) -> u8 {
             self.cycles = self.cycles.wrapping_add(1);
@@ -2717,6 +2760,21 @@ mod tests {
         assert_eq!(cpu.sp(), 0);
         assert_eq!(cpu.pc(), 0);
         assert_eq!(cpu.psw(), 0);
+    }
+
+    #[test]
+    fn nop_dummy_read_uses_displayed_address_read_cycle_cost() {
+        let mut cpu = Spc700::new();
+        let mut bus = VariableReadBus::new(2, 1);
+        bus.load(0x0200, &[0x00]); // NOP
+        cpu.load_state_for_processor_test(0, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(
+            cycles, 4,
+            "Mesen charges dummy reads using the displayed address wait-state class"
+        );
     }
 
     #[test]
