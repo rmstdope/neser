@@ -399,6 +399,39 @@ mod tests {
     }
 
     #[test]
+    fn ophct_read_flipflop_stays_high_across_a_relatch_without_a_stat78_read() {
+        // Per bsnes (`PPU::readIO` case 0x213c/0x213f), a fresh SLHV/WRIO latch does NOT
+        // reset the OPHCT/OPVCT read flip-flop -- only a STAT78 ($213F) read does. So once
+        // a program has read OPHCT twice (low then high), latching again *without* an
+        // intervening STAT78 read must keep returning the high bit, not toggle back to the
+        // (new) low byte.
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, 20);
+        ppu.read_register(0x2137); // first latch: H=20
+
+        assert_eq!(
+            ppu.read_register(0x213C),
+            20,
+            "first read returns the low byte"
+        );
+        assert_eq!(
+            ppu.read_register(0x213C),
+            0,
+            "second read returns the high bit"
+        );
+
+        tick_dots(&mut ppu, 5);
+        ppu.read_register(0x2137); // second latch, no STAT78 read in between: H=25
+
+        assert_eq!(
+            ppu.read_register(0x213C),
+            0,
+            "third read (no intervening STAT78 read) stays on the high bit, \
+             it must not toggle back to the new latch's low byte"
+        );
+    }
+
+    #[test]
     fn stat78_reports_and_clears_the_latch_flag() {
         let mut ppu = Ppu::new();
         ppu.read_register(0x2137); // latch (WRIO bit7 set on reset)

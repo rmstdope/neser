@@ -817,6 +817,8 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn poll_irq(&self) -> bool {
+        // CPU-dispatch-visible signal (one-dot delayed vs. the raw PPU line) -- see
+        // `Ppu::poll_irq_dispatch` and the `SnesBus::poll_irq` trait doc.
         self.ppu.borrow().poll_irq_dispatch()
     }
 

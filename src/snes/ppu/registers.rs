@@ -321,8 +321,11 @@ impl Ppu {
                 0
             }
             // OPHCT: horizontal counter latch. Per bsnes (`PPU::readIO` case 0x213c), the first
-            // read after a latch/STAT78-reset returns the low byte; every subsequent read
-            // (2nd, 3rd, ...) returns the high bit -- it does NOT toggle back to the low byte.
+            // read since the flip-flop was last reset by a STAT78 ($213F) read returns the low
+            // byte; every subsequent read (2nd, 3rd, ...) returns the high bit and does NOT
+            // toggle back to the low byte -- even across an intervening SLHV/WRIO re-latch,
+            // since `latch_counters` only updates the latched value, not this flip-flop (only
+            // a $213F read does, see below).
             0x213C => {
                 let value = if !self.ophct_read_high {
                     (self.ophct_latch & 0x00FF) as u8
