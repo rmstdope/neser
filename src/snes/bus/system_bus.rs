@@ -5,7 +5,7 @@ use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
 use crate::snes::input::{InputPorts, SnesButton};
-use crate::snes::ppu::{Ppu, SnesVideoRegion};
+use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
 use crate::trace_apu;
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -722,6 +722,23 @@ impl SnesSystemBus {
             _ => false,
         }
     }
+
+    /// Advances the APU, PPU, and input latch by exactly one master clock.
+    ///
+    /// DRAM refresh (see [`Ppu::dram_refresh_due`]) is a CPU/bus-wide stall, not a PPU-only
+    /// event: every one of its stolen clocks must tick the APU and input the same way a normal
+    /// clock does, or they'd desynchronize from the PPU's (and the bus's own `ticks` counter's)
+    /// timeline. `SnesBus::tick()` loops this single-clock step an extra
+    /// `DRAM_REFRESH_STOLEN_CLOCKS` times whenever the just-ticked clock was the refresh trigger.
+    fn tick_one_master_clock(&mut self) {
+        self.ticks.set(self.ticks.get().wrapping_add(1));
+        self.apu.borrow_mut().tick();
+        self.ppu.get_mut().tick();
+        if self.ppu.get_mut().poll_auto_joypad_latch() {
+            self.input.get_mut().trigger_auto_read();
+        }
+        self.input.get_mut().tick();
+    }
 }
 
 impl DmaABus for SnesSystemBus {
@@ -803,13 +820,12 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn tick(&mut self) {
-        self.ticks.set(self.ticks.get().wrapping_add(1));
-        self.apu.borrow_mut().tick();
-        self.ppu.get_mut().tick();
-        if self.ppu.get_mut().poll_auto_joypad_latch() {
-            self.input.get_mut().trigger_auto_read();
+        self.tick_one_master_clock();
+        if self.ppu.get_mut().dram_refresh_due() {
+            for _ in 0..DRAM_REFRESH_STOLEN_CLOCKS {
+                self.tick_one_master_clock();
+            }
         }
-        self.input.get_mut().tick();
     }
 
     fn poll_nmi(&mut self) -> bool {

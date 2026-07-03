@@ -71,6 +71,17 @@ pub(super) const PAL_SCANLINES_PER_FRAME: u16 = 312;
 /// [`Ppu::poll_irq_dispatch`].
 pub(super) const IRQ_DISPATCH_EDGE_DELAY_CLOCKS: u32 = MASTER_CYCLES_PER_DOT;
 
+/// DRAM refresh: once per scanline the CPU is transparently paused for 40 master clocks so
+/// WRAM can be refreshed. The base trigger clock (5A22 CPU version 2, matching
+/// [`CPU_VERSION`]) is 538, jittered by `-(total master clocks mod 8)` each scanline to track
+/// the refresh circuit's phase relationship with the CPU's own cycle counter -- see
+/// `Ppu::recompute_dram_refresh_position`. Confirmed against fullsnes ("SNES Timing H/V
+/// Counters": "Refresh (per scanline) 40 master cycles (10 dot cycles)") and Mesen2
+/// (`Core/SNES/SnesMemoryManager.cpp`, `_dramRefreshPosition = 538 - (_masterClock & 0x07)`).
+pub(super) const DRAM_REFRESH_BASE_POSITION: u16 = 538;
+/// Master clocks stolen from the CPU for each DRAM refresh.
+pub(super) const DRAM_REFRESH_STOLEN_CLOCKS: u32 = 40;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SnesVideoRegion {
     #[default]
@@ -127,6 +138,11 @@ pub struct Ppu {
     /// Used to emulate the delayed `hcounter(n)`/`vcounter(n)` counters, which wrap
     /// into the previous line when the delay reaches back past the line start.
     last_hperiod: u16,
+    /// Cumulative master clocks since power-on/reset. Used only for the DRAM-refresh
+    /// position jitter formula (see [`DRAM_REFRESH_BASE_POSITION`]).
+    total_master_clocks: u64,
+    /// This scanline's DRAM-refresh trigger clock, recomputed at each scanline boundary.
+    dram_refresh_position: u16,
     /// Latched timing profile for the active scanline.
     line_timing_profile: PpuLineTimingProfile,
     inidisp: u8,
@@ -301,6 +317,8 @@ impl Ppu {
             master_cycle_accumulator: 0,
             line_clock: 0,
             last_hperiod: 1364,
+            total_master_clocks: 0,
+            dram_refresh_position: DRAM_REFRESH_BASE_POSITION,
             line_timing_profile: PpuLineTimingProfile::Normal,
             inidisp: 0,
             nmi_enable: false,

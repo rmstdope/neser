@@ -10,17 +10,47 @@
 //! long-dot phase around H=323/327 and the NTSC/PAL short/long scanline exceptions.
 
 use super::{
-    DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, PpuLineTimingProfile, VISIBLE_LINE_START,
+    DOTS_PER_SCANLINE, DRAM_REFRESH_BASE_POSITION, MASTER_CYCLES_PER_DOT, Ppu,
+    PpuLineTimingProfile, VISIBLE_LINE_START,
 };
 use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
 
 impl Ppu {
     /// Advance the PPU by one master clock.
+    ///
+    /// DRAM refresh (stealing [`DRAM_REFRESH_STOLEN_CLOCKS`] extra clocks once per scanline) is
+    /// *not* handled here: it is a CPU/bus-wide stall, not a PPU-only event, so every stolen
+    /// clock must also tick the APU and input latch the same way a normal clock does. The bus
+    /// (`SnesSystemBus::tick`) is responsible for calling [`Ppu::dram_refresh_due`] after each
+    /// single-clock `tick()` and looping its *entire* per-clock sequence (APU/PPU/input) for the
+    /// stolen clocks, keeping every ticked device on the same master-clock timeline.
     pub fn tick(&mut self) {
+        self.tick_one_clock();
+    }
+
+    /// Returns `true` if this clock was the scanline's DRAM-refresh trigger, i.e. the caller
+    /// must additionally tick every master-clock-driven device (APU, PPU, input) for
+    /// [`DRAM_REFRESH_STOLEN_CLOCKS`] more clocks. See [`Ppu::tick`] for why this can't be
+    /// handled internally by the PPU alone.
+    pub fn dram_refresh_due(&self) -> bool {
+        u32::from(self.line_clock) == u32::from(self.dram_refresh_position)
+    }
+
+    /// Recompute this scanline's DRAM-refresh trigger clock from the current cumulative
+    /// master clock count, matching the refresh circuit's phase jitter on real hardware.
+    fn recompute_dram_refresh_position(&mut self) {
+        self.dram_refresh_position =
+            DRAM_REFRESH_BASE_POSITION - (self.total_master_clocks & 0x07) as u16;
+    }
+
+    /// The per-clock advance logic (dot/scanline/IRQ bookkeeping). Split out from [`Ppu::tick`]
+    /// so DRAM refresh can steal extra clocks without re-checking the refresh trigger itself.
+    fn tick_one_clock(&mut self) {
         if ppu_trace_level() >= 5 {
             trace_ppu!(5; "{}", self.format_trace_tick_line());
         }
+        self.total_master_clocks += 1;
         self.master_cycle_accumulator += 1;
         let cycles_per_dot = self.cycles_per_current_dot();
         if self.master_cycle_accumulator >= cycles_per_dot {
@@ -31,6 +61,7 @@ impl Ppu {
                 // the intra-line clock at 0.
                 self.last_hperiod = self.line_clock + 1;
                 self.line_clock = 0;
+                self.recompute_dram_refresh_position();
             } else {
                 self.line_clock += 1;
             }
@@ -326,9 +357,7 @@ mod tests {
     fn tick_should_advance_scanline_and_wrap_the_dot_counter() {
         let mut ppu = Ppu::new();
 
-        for _ in 0..(DOTS_PER_SCANLINE as u32 * MASTER_CYCLES_PER_DOT) {
-            ppu.tick();
-        }
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32);
 
         assert_eq!(
             ppu.position(),

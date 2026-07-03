@@ -29,6 +29,10 @@ fn default_last_hperiod() -> u16 {
     1364
 }
 
+fn default_dram_refresh_position() -> u16 {
+    538
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SnesBlockMoveDirection {
     #[default]
@@ -164,6 +168,10 @@ pub struct SnesPpuState {
     pub line_clock: u16,
     #[serde(default = "default_last_hperiod")]
     pub last_hperiod: u16,
+    #[serde(default)]
+    pub total_master_clocks: u64,
+    #[serde(default = "default_dram_refresh_position")]
+    pub dram_refresh_position: u16,
     #[serde(default)]
     pub line_timing_profile: u8,
     #[serde(default)]

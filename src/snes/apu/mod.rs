@@ -598,7 +598,7 @@ impl SpcBusView<'_> {
     /// executing, and the external-speed field (bits 4-5) never triggers the
     /// freeze, so ordinary slow-speed tests are unaffected.
     fn internal_speed_freeze(&self, addr: Option<u16>) -> bool {
-        let is_internal = addr.map_or(true, |address| self.is_internal_wait_address(address));
+        let is_internal = addr.is_none_or(|address| self.is_internal_wait_address(address));
         is_internal && (self.test_reg() >> 6) & 0x03 == 2
     }
 
