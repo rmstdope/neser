@@ -698,13 +698,13 @@ impl Sdsp {
         }
         let index = ((v.sample_pos >> 12) & 0x0F) as usize;
         let frac = ((v.sample_pos >> 4) & 0xFF) as u8;
-        if v.brr_block_index == 0 && index == 0 && frac == 0 {
+        if v.brr_block_index == 0 && index == 0 && v.brr_history == [0; 3] {
             return Some(gaussian::gaussian_interpolate(
                 v.brr_samples[0],
                 v.brr_samples[1],
                 v.brr_samples[2],
                 v.brr_samples[3],
-                0,
+                frac,
             ));
         }
         Some(gaussian::gaussian_interpolate(

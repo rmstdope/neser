@@ -251,6 +251,28 @@ fn given_initial_brr_block_at_sample_start_when_sampling_voice_then_decoded_samp
 }
 
 #[test]
+fn given_initial_brr_block_at_fractional_start_when_sampling_voice_then_decoded_samples_are_used() {
+    let mut dsp = Sdsp::new();
+    dsp.voices[0].brr_initialized = true;
+    dsp.voices[0].env_level = 0x7FF;
+    dsp.voices[0].sample_pos = 0x0800;
+    dsp.voices[0].brr_block_index = 0;
+    dsp.voices[0].brr_samples[0] = 0x1000;
+    dsp.voices[0].brr_samples[1] = 0x2000;
+    dsp.voices[0].brr_samples[2] = 0x3000;
+    dsp.voices[0].brr_samples[3] = 0x4000;
+
+    let expected_raw = dsp.gaussian_interpolate(0x1000, 0x2000, 0x3000, 0x4000, 0x80);
+    let expected = (((i32::from(expected_raw) * 0x7FF) >> 11) as i16) & !1;
+    let sample = dsp.voice_sample(0, 0, Some(&[]));
+
+    assert_eq!(
+        sample, expected,
+        "the first decoded BRR group should feed interpolation across the initial index-0 interval"
+    );
+}
+
+#[test]
 fn given_constant_samples_when_gaussian_interpolating_then_output_preserves_level() {
     let dsp = Sdsp::new();
     let out = dsp.gaussian_interpolate(100, 100, 100, 100, 64);
