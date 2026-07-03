@@ -128,7 +128,7 @@ CRC32 against a human-approved PASS capture. To approve a new golden, run with
 committed integrity with
 `python -m scripts.compute_snes_rom_asset_integrity <dir>`.
 
-**Passing (15) — visually-approved screen-CRC goldens at frame 600:**
+**Passing (15) — visually-approved screen-CRC goldens:**
 
 | ROM | Category | Golden CRC |
 | --- | --- | --- |
@@ -137,16 +137,19 @@ committed integrity with
 | `3-test_write_disable` | SMP | `0xC3DE3F4F` |
 | `4-test_ram_disable` | SMP | `0x85F1D154` |
 | `test_ram_disable_ipl` | SMP | `0xD001765E` |
-| `spc_smp` | SMP | `0xE6CE0BCE` |
+| `spc_smp` | SMP | `0xEFD13576` (frame 2200) |
 | `spc_mem_access_times` | SMP | `0x3AC3E30F` |
 | `spc_timer` | Timers | `0x249738B2` |
 | `test_speed` | Timers | `0x8EAD6D95` |
-| `test_timer_speed` | Timers | `0x03C41961` |
-| `test_timer_speed2` | Timers | `0x03C41961` |
-| `test_timer_speed_2` | Timers | `0x48DAACE9` |
-| `test_timer_speed3` | Timers | `0xCD83D4B0` |
+| `test_timer_speed` | Timers | `0x65B11CE0` |
+| `test_timer_speed2` | Timers | `0x65B11CE0` |
+| `test_timer_speed_2` | Timers | `0xC003A7D0` |
+| `test_timer_speed3` | Timers | `0xD0FA7627` |
 | `test_timer_stop` | Timers | `0x7CC2B76B` |
 | `speed_2_freezes2` | Timers | `0x6E1BF905` |
+
+`test_timer_speed3` is a measurement-oriented ROM: its golden is a visually
+approved `Done` screen rather than an internal `Passed` text screen.
 
 **Currently failing (3) — committed with `#[ignore]`'d tests:**
 
