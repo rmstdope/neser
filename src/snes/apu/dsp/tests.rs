@@ -79,7 +79,7 @@ fn given_brr_header_with_loop_and_end_bits_when_decoded_then_flags_are_exposed()
 }
 
 #[test]
-fn given_filter0_shift0_nibbles_when_decoded_then_samples_are_halved_to_15_bit_scale() {
+fn given_filter0_shift0_nibbles_when_decoded_then_samples_are_even_output_scale() {
     let header = 0b0000_0000;
     let mut data = [0u8; 8];
     data[0] = 0x78;
@@ -87,10 +87,10 @@ fn given_filter0_shift0_nibbles_when_decoded_then_samples_are_halved_to_15_bit_s
 
     let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
 
-    assert_eq!(decoded.samples[0], 3);
-    assert_eq!(decoded.samples[1], -4);
+    assert_eq!(decoded.samples[0], 6);
+    assert_eq!(decoded.samples[1], -8);
     assert_eq!(decoded.samples[2], 0);
-    assert_eq!(decoded.samples[3], -1);
+    assert_eq!(decoded.samples[3], -2);
 }
 
 #[test]
@@ -101,8 +101,8 @@ fn given_filter0_shift12_nibbles_when_decoded_then_samples_are_15_bit_scaled() {
 
     let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
 
-    assert_eq!(decoded.samples[0], 0x3800);
-    assert_eq!(decoded.samples[1], -0x4000);
+    assert_eq!(decoded.samples[0], 0x7000);
+    assert_eq!(decoded.samples[1], -0x8000);
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn given_reserved_shift_nibbles_when_decoded_then_negative_samples_use_shift12_s
     let decoded = Sdsp::decode_brr_block(header, data, 0, 0);
 
     assert_eq!(decoded.samples[0], 0);
-    assert_eq!(decoded.samples[1], -2048);
+    assert_eq!(decoded.samples[1], -4096);
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn given_filter2_negative_history_when_decoded_then_fullsnes_signed_rounding_is_
 
     let decoded = Sdsp::decode_brr_block(header, data, -64, -63);
 
-    assert_eq!(decoded.samples[0], -63);
+    assert_eq!(decoded.samples[0], -126);
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn given_filter3_negative_history_when_decoded_then_fullsnes_signed_rounding_is_
 
     let decoded = Sdsp::decode_brr_block(header, data, -64, -63);
 
-    assert_eq!(decoded.samples[0], -64);
+    assert_eq!(decoded.samples[0], -128);
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn given_filter_output_exceeds_positive_15_bit_range_when_decoded_then_sample_wr
 
     let decoded = Sdsp::decode_brr_block(header, data, 0x3FFF, 0);
 
-    assert_eq!(decoded.samples[0], -0x0C01);
+    assert_eq!(decoded.samples[0], -0x1802);
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn given_filter_output_exceeds_negative_15_bit_range_when_decoded_then_sample_wr
 
     let decoded = Sdsp::decode_brr_block(header, data, -1, 0);
 
-    assert_eq!(decoded.samples[0], 0x3FFF);
+    assert_eq!(decoded.samples[0], 0x7FFE);
 }
 
 #[test]

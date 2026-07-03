@@ -60,5 +60,5 @@ fn decode_brr_nibble(raw: i16, shift: u8, filter: u8, prev1: i16, prev2: i16) ->
 
 fn clamp16_and_wrap_15_bit(value: i32) -> i16 {
     let clamped = value.clamp(i32::from(i16::MIN), i32::from(i16::MAX));
-    ((clamped << 1) as i16) >> 1
+    (clamped as i16).wrapping_mul(2)
 }
