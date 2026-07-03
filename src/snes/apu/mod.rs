@@ -679,17 +679,20 @@ impl SpcBusView<'_> {
         (self.test_reg() & 0x01 == 0) && (self.test_reg() & 0x08 != 0)
     }
 
-    fn tick_timers_multiple(&mut self, cycles: u8) {
-        for _ in 0..cycles {
-            self.tick_timers_if_enabled();
+    fn tick_apu_cycles(&mut self, timer_cycles: u8) {
+        if !self.tick_timers {
+            return;
+        }
+        self.dsp.step_phase_with_memory(&mut self.aram[..]);
+        if self.test_allows_timers() {
+            for _ in 0..timer_cycles {
+                self.timers.tick_cycle();
+            }
         }
     }
 
-    fn tick_timers_if_enabled(&mut self) {
-        if self.tick_timers && self.test_allows_timers() {
-            self.timers.tick_cycle();
-            self.dsp.step_phase_with_memory(&mut self.aram[..]);
-        }
+    fn tick_access_cycles_for_addr(&mut self, addr: Option<u16>) {
+        self.tick_apu_cycles(self.timer_wait_cycles_for_addr(addr));
     }
 }
 
@@ -702,8 +705,7 @@ impl Spc700Bus for SpcBusView<'_> {
         if self.internal_speed_freeze(Some(addr)) {
             *self.frozen = true;
         }
-        let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
-        self.tick_timers_multiple(timer_cycles);
+        self.tick_access_cycles_for_addr(Some(addr));
         let value = match addr {
             // I/O register reads ($F0-$FF) always return I/O values, not the RAM-disable
             // sentinel. Per bsnes smp/memory.cpp: readRAM is called first (returns $5A when
@@ -711,7 +713,17 @@ impl Spc700Bus for SpcBusView<'_> {
             // $F0 TEST and $F1 CONTROL are write-only; reads return $00.
             0x00F0..=0x00F1 => 0x00,
             0x00F2 => *self.dsp_addr,
-            0x00F3 => self.dsp.read_reg(*self.dsp_addr & 0x7F),
+            0x00F3 => {
+                let value = self.dsp.read_reg(*self.dsp_addr);
+                trace_apu!(
+                    1;
+                    "SPC reads DSP[${:02X}] -> ${:02X} phase={}",
+                    *self.dsp_addr,
+                    value,
+                    self.dsp.phase()
+                );
+                value
+            }
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
             // $F8-$F9 = AUXIO4/AUXIO5 (general-purpose I/O, stores value in ARAM)
             0x00F8..=0x00F9 => self.aram[addr as usize],
@@ -739,8 +751,7 @@ impl Spc700Bus for SpcBusView<'_> {
         if self.internal_speed_freeze(Some(addr)) {
             *self.frozen = true;
         }
-        let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
-        self.tick_timers_multiple(timer_cycles);
+        self.tick_access_cycles_for_addr(Some(addr));
         let write_enabled = self.ram_write_enabled();
         if write_enabled {
             self.aram[addr as usize] = value;
@@ -763,15 +774,14 @@ impl Spc700Bus for SpcBusView<'_> {
             0x00F1 => self.write_control(value),
             0x00F2 => *self.dsp_addr = value,
             0x00F3 => {
-                if *self.dsp_addr & 0x80 == 0 {
-                    trace_apu!(
-                        3;
-                        "SPC writes DSP[${:02X}] = ${:02X}",
-                        *self.dsp_addr,
-                        value
-                    );
-                    self.dsp.write_reg(*self.dsp_addr, value)
-                }
+                trace_apu!(
+                    1;
+                    "SPC writes DSP[${:02X}] = ${:02X} phase={}",
+                    *self.dsp_addr,
+                    value,
+                    self.dsp.phase()
+                );
+                self.dsp.write_reg(*self.dsp_addr, value)
             }
             0x00F4..=0x00F7 => {
                 let port_idx = (addr - 0x00F4) as usize;
@@ -794,16 +804,14 @@ impl Spc700Bus for SpcBusView<'_> {
         if self.internal_speed_freeze(None) {
             *self.frozen = true;
         }
-        let timer_cycles = self.timer_wait_cycles_for_addr(None);
-        self.tick_timers_multiple(timer_cycles);
+        self.tick_access_cycles_for_addr(None);
     }
 
     fn dummy_read(&mut self, _addr: u16) {
         if self.internal_speed_freeze(None) {
             *self.frozen = true;
         }
-        let timer_cycles = self.timer_wait_cycles_for_addr(None);
-        self.tick_timers_multiple(timer_cycles);
+        self.tick_access_cycles_for_addr(None);
     }
 }
 
@@ -940,6 +948,36 @@ mod tests {
         apu.write_spc_memory_for_test(0x00F0, 0x3A);
 
         assert_eq!(apu.dsp_phase_for_test(), 1);
+    }
+
+    #[test]
+    fn dsp_phase_advances_while_test_register_disables_spc_timers() {
+        let mut apu = SnesApu::new(None);
+
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // default TEST with timer-enable bit set
+        let phase_after_test_write = apu.dsp_phase_for_test();
+        apu.advance_spc_bus_cycles_for_test(3);
+
+        assert_eq!(
+            apu.dsp_phase_for_test(),
+            (phase_after_test_write + 3) & 0x1F,
+            "S-DSP should keep clocking even when TEST disables SPC timers"
+        );
+    }
+
+    #[test]
+    fn dsp_phase_advances_once_per_spc_memory_operation_under_test_waitstates() {
+        let mut apu = SnesApu::new(None);
+
+        apu.write_spc_memory_for_test(0x00F0, 0x2A); // external RAM access time = 5 cycles
+        let phase_after_test_write = apu.dsp_phase_for_test();
+        apu.write_spc_memory_for_test(0x0200, 0x55);
+
+        assert_eq!(
+            apu.dsp_phase_for_test(),
+            (phase_after_test_write + 1) & 0x1F,
+            "Mesen advances the S-DSP pipeline once per SPC memory operation, not once per TEST waitstate"
+        );
     }
 
     #[test]

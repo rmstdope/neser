@@ -84,6 +84,10 @@ mod tests {
     // -------------------------------------------------------------------------
 
     fn run_rom_with_expected_crc(file: &str, expected_crc: u32) {
+        run_rom_with_expected_crc_at_frame(file, 600, expected_crc);
+    }
+
+    fn run_rom_with_expected_crc_at_frame(file: &str, frames: u32, expected_crc: u32) {
         let root = Path::new(ROM_PASS_FAIL_ROOT);
         let path = root.join(file);
         let rom = fs::read(&path)
@@ -93,13 +97,13 @@ mod tests {
             file,
             RunConfig::new(400_000_000, 0),
             RunOracle::ScreenCrc {
-                frames: 600,
+                frames,
                 expected_crc,
             },
         );
         assert!(
             result.passed && result.exit_reason == RunExitReason::ScreenCrcFrame,
-            "{file}: expected screen-CRC PASS at frame 600, \
+            "{file}: expected screen-CRC PASS at frame {frames}, \
              got crc=0x{:08X} passed={} exit={:?}",
             result.screen_crc32,
             result.passed,
@@ -119,7 +123,7 @@ mod tests {
     #[test]
     #[ignore = "fails: DSP echo/basics (Failed 03) — fix emulator then update CRC"]
     fn blargg_spc_dsp6_passes() {
-        run_failing_rom("spc_dsp6.sfc");
+        run_rom_with_expected_crc_at_frame("spc_dsp6.sfc", 2200, 0x0000_0000);
     }
 
     #[test]

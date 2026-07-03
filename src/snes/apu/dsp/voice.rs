@@ -24,6 +24,8 @@ pub struct VoiceState {
     #[serde(default)]
     pub brr_block_index: u32,
     #[serde(default)]
+    pub brr_header: u8,
+    #[serde(default)]
     pub brr_prev1: i16,
     #[serde(default)]
     pub brr_prev2: i16,
@@ -40,13 +42,15 @@ pub struct VoiceState {
     #[serde(default)]
     pub adsr1: u8,
     #[serde(default)]
+    pub adsr1_latch: u8,
+    #[serde(default)]
     pub adsr2: u8,
     #[serde(default)]
     pub gain: u8,
     #[serde(default)]
     pub env_level: u16,
     #[serde(default)]
-    pub hidden_env: u16,
+    pub hidden_env: i32,
     #[serde(default)]
     pub envx: u8,
     #[serde(default)]
@@ -59,4 +63,6 @@ pub struct VoiceState {
     pub mode: EnvelopeMode,
     #[serde(default)]
     pub kon_delay: u8,
+    #[serde(default)]
+    pub pitch_step: u16,
 }

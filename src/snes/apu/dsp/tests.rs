@@ -1,4 +1,5 @@
 use super::Sdsp;
+use super::echo::EchoState;
 use super::voice::EnvelopeMode;
 
 fn step_sample_ticks(dsp: &mut Sdsp, ticks: usize) {
@@ -227,6 +228,29 @@ fn given_brr_position_at_block_start_when_sampling_voice_then_previous_block_his
 }
 
 #[test]
+fn given_initial_brr_block_at_sample_start_when_sampling_voice_then_decoded_samples_are_used() {
+    let mut dsp = Sdsp::new();
+    dsp.voices[0].brr_initialized = true;
+    dsp.voices[0].env_level = 0x7FF;
+    dsp.voices[0].sample_pos = 0;
+    dsp.voices[0].brr_block_index = 0;
+    dsp.voices[0].brr_samples[0] = 0x1000;
+    dsp.voices[0].brr_samples[1] = 0x2000;
+    dsp.voices[0].brr_samples[2] = 0x3000;
+    dsp.voices[0].brr_samples[3] = 0x4000;
+
+    let expected_raw = dsp.gaussian_interpolate(0x1000, 0x2000, 0x3000, 0x4000, 0);
+    let expected = (((i32::from(expected_raw) * 0x7FF) >> 11) as i16) & !1;
+    let sample = dsp.voice_sample(0, 0, Some(&[]));
+
+    assert_eq!(
+        sample, expected,
+        "the first decoded BRR group after key-on should feed interpolation at position zero"
+    );
+    assert_ne!(sample, 0, "the key-on BRR start sample must be audible");
+}
+
+#[test]
 fn given_constant_samples_when_gaussian_interpolating_then_output_preserves_level() {
     let dsp = Sdsp::new();
     let out = dsp.gaussian_interpolate(100, 100, 100, 100, 64);
@@ -447,6 +471,112 @@ fn given_direct_gain_voice_in_release_when_sample_ticks_then_envelope_stays_sile
 }
 
 #[test]
+fn given_release_envelope_when_sample_ticks_then_hidden_gain_envelope_is_preserved() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.voices[0].mode = EnvelopeMode::Release;
+    dsp.voices[0].env_level = 0x400;
+    dsp.voices[0].hidden_env = 0x700;
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.voices[0].hidden_env, 0x700,
+        "release mode should not update the hidden GAIN envelope latch"
+    );
+}
+
+#[test]
+fn given_envelope_step_when_sample_ticks_then_envx_keeps_pre_step_envelope_until_next_sample() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x07, 0x7F);
+    dsp.voices[0].mode = EnvelopeMode::Sustain;
+    dsp.voices[0].env_level = 0;
+    dsp.voices[0].envx = 0;
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.voices[0].env_level, 0x7F0,
+        "direct GAIN should update the internal envelope for the next sample"
+    );
+    assert_eq!(
+        dsp.voices[0].envx, 0,
+        "ENVX should report the envelope used by this sample, before envelopeRun updates next sample state"
+    );
+}
+
+#[test]
+fn given_adsr1_written_after_voice2_phase_when_sample_ticks_then_envelope_uses_previous_latch() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.voices[0].mode = EnvelopeMode::Attack;
+    dsp.voices[0].adsr1_latch = 0x00;
+
+    for _ in 0..22 {
+        dsp.step_phase();
+    }
+    assert_eq!(
+        dsp.phase(),
+        22,
+        "precondition: voice0 voice2 phase has passed"
+    );
+    dsp.write_reg(0x05, 0x8F);
+    while dsp.phase() != 0 {
+        dsp.step_phase();
+    }
+
+    assert_eq!(
+        dsp.voices[0].env_level, 0,
+        "ADSR enable/rate writes after voice2 should not affect the current voice3c envelope run"
+    );
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.voices[0].env_level, 0x400,
+        "the next sample should use the ADSR1 value latched at the next voice2 phase"
+    );
+}
+
+#[test]
+fn given_voice1_adsr1_written_after_voice2_phase_when_voice3c_runs_then_envelope_uses_previous_latch()
+ {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.voices[1].mode = EnvelopeMode::Attack;
+    dsp.voices[1].adsr1_latch = 0x00;
+
+    dsp.step_phase();
+    assert_eq!(
+        dsp.phase(),
+        1,
+        "precondition: voice1 voice2 phase has passed"
+    );
+    dsp.write_reg(0x15, 0x8F);
+    dsp.step_phase();
+
+    assert_eq!(
+        dsp.voices[1].env_level, 0,
+        "ADSR1 writes after voice1 voice2 should not affect the current voice3c"
+    );
+
+    for _ in 0..33 {
+        dsp.step_phase();
+    }
+
+    assert_eq!(
+        dsp.voices[1].env_level,
+        0x400,
+        "the next voice1 sample should use ADSR1 latched at the next voice2 phase; latch={:02X} mode={:?} phase={}",
+        dsp.voices[1].adsr1_latch,
+        dsp.voices[1].mode,
+        dsp.phase()
+    );
+}
+
+#[test]
 fn given_gain_increase_during_attack_when_envelope_saturates_then_mode_enters_decay() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x20);
@@ -462,6 +592,49 @@ fn given_gain_increase_during_attack_when_envelope_saturates_then_mode_enters_de
         dsp.voices[0].mode,
         EnvelopeMode::Decay,
         "GAIN processing should still perform attack-to-decay transition on saturation"
+    );
+}
+
+#[test]
+fn given_gain_increase_during_attack_when_counter_not_due_then_mode_still_enters_decay() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x07, 0xE1); // GAIN mode 7, slow enough that first sample is not due
+    dsp.voices[0].mode = EnvelopeMode::Attack;
+    dsp.voices[0].env_level = 0x7F8;
+    dsp.voices[0].hidden_env = 0x7F8;
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.voices[0].env_level, 0x7F8,
+        "visible envelope should not update until the gain counter fires"
+    );
+    assert_eq!(
+        dsp.voices[0].mode,
+        EnvelopeMode::Decay,
+        "GAIN state transitions should happen even when the counter does not commit ENV"
+    );
+}
+
+#[test]
+fn given_gain_increase_when_counter_not_due_then_hidden_env_updates_but_visible_env_waits() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x07, 0xE1); // GAIN mode 7, counter not due on first sample
+    dsp.voices[0].mode = EnvelopeMode::Sustain;
+    dsp.voices[0].env_level = 0x5F0;
+    dsp.voices[0].hidden_env = 0x5F0;
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.voices[0].env_level, 0x5F0,
+        "visible envelope should not update until the gain counter fires"
+    );
+    assert_eq!(
+        dsp.voices[0].hidden_env, 0x610,
+        "hidden envelope should update every sample even when visible ENV waits"
     );
 }
 
@@ -517,6 +690,24 @@ fn given_gain_two_slope_hidden_envelope_above_threshold_when_visible_envelope_is
     assert_eq!(
         dsp.voices[0].hidden_env, 0x5F8,
         "GAIN mode 7 should use hidden envelope for the two-slope threshold"
+    );
+}
+
+#[test]
+fn given_gain_two_slope_hidden_envelope_negative_when_sample_ticks_then_unsigned_threshold_uses_slow_slope()
+ {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x07, 0xFF); // GAIN mode 7, fastest two-slope increase
+    dsp.voices[0].mode = EnvelopeMode::Sustain;
+    dsp.voices[0].env_level = 0x010;
+    dsp.voices[0].hidden_env = -1;
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.voices[0].hidden_env, 0x018,
+        "negative hidden envelope values compare above the two-slope threshold as unsigned"
     );
 }
 
@@ -582,18 +773,73 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
 }
 
 #[test]
-fn given_koff_during_kon_delay_when_latency_would_expire_then_voice_stays_released() {
+fn given_koff_written_after_kon_before_poll_when_latched_together_then_kon_still_starts_attack() {
     let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
     dsp.write_reg(0x5C, 0x01);
 
-    step_sample_ticks(&mut dsp, 16);
+    for _ in 0..63 {
+        dsp.step_phase();
+    }
+
     assert_eq!(
-        dsp.read_reg(0x08),
-        0,
-        "KOFF should cancel pending KON attack start"
+        dsp.voices[0].mode,
+        EnvelopeMode::Attack,
+        "KON should win when KOFF and KON are latched for the same sample"
+    );
+    assert_eq!(
+        dsp.voices[0].kon_delay, 5,
+        "the winning KON should start the key-on delay"
+    );
+}
+
+#[test]
+fn given_koff_written_when_not_sample_poll_slot_then_release_waits_until_latched_voice3c() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.voices[0].mode = EnvelopeMode::Sustain;
+    dsp.voices[0].env_level = 0x400;
+    dsp.write_reg(0x5C, 0x01);
+
+    for _ in 0..31 {
+        dsp.step_phase();
+    }
+
+    assert_eq!(
+        dsp.voices[0].mode,
+        EnvelopeMode::Sustain,
+        "KOFF should not release the voice until the every-other-sample poll latches it"
+    );
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.voices[0].mode,
+        EnvelopeMode::Release,
+        "latched KOFF should release the voice at voice3c"
+    );
+}
+
+#[test]
+fn given_koff_and_kon_latched_together_when_voice3c_runs_then_kon_wins_without_clearing_delay() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.voices[0].mode = EnvelopeMode::Sustain;
+    dsp.kon_poll_slot = false;
+    dsp.write_reg(0x5C, 0x01);
+    dsp.write_reg(0x4C, 0x01);
+
+    for _ in 0..31 {
+        dsp.step_phase();
+    }
+
+    assert_eq!(dsp.voices[0].mode, EnvelopeMode::Attack);
+    assert_eq!(
+        dsp.voices[0].kon_delay, 5,
+        "KON should start the key-on delay even when KOFF is latched for the same sample"
     );
 }
 
@@ -640,6 +886,30 @@ fn given_kon_written_when_first_sample_ticks_then_key_on_waits_for_every_other_s
     assert!(
         dsp.read_reg(0x08) > 0,
         "KON should begin after the next every-other-sample poll plus latency"
+    );
+}
+
+#[test]
+fn given_voice_in_kon_delay_when_voice3c_runs_then_pitch_does_not_advance() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x02, 0x00);
+    dsp.write_reg(0x03, 0x10);
+    dsp.voices[0].kon_delay = 1;
+    dsp.voices[0].mode = EnvelopeMode::Attack;
+
+    for _ in 0..31 {
+        dsp.step_phase();
+    }
+
+    assert_eq!(
+        dsp.voice_sample_pos(0),
+        0,
+        "S-DSP should suppress pitch advancement during every key-on delay sample"
+    );
+    assert_eq!(
+        dsp.voices[0].kon_delay, 0,
+        "the final key-on delay sample should still count down"
     );
 }
 
@@ -977,6 +1247,67 @@ fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
 }
 
 #[test]
+fn given_brr_end_without_loop_when_block_boundary_is_reached_then_envx_reports_pre_silence_envelope()
+ {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    aram[0x0200] = 0x01; // END without LOOP
+
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x02, 0x01);
+    dsp.voices[0].mode = EnvelopeMode::Sustain;
+    dsp.voices[0].env_level = 0x400;
+    dsp.voices[0].hidden_env = 0x400;
+    dsp.voices[0].brr_initialized = true;
+    dsp.voices[0].brr_next_addr = 0x0200;
+    dsp.voices[0].sample_pos = 0xFFFF;
+
+    for _ in 0..31 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+
+    assert_eq!(
+        dsp.voices[0].envx, 0x40,
+        "ENVX should expose the envelope used by the current sample before BRR END silence applies"
+    );
+    assert_eq!(
+        dsp.voices[0].env_level, 0,
+        "BRR END without LOOP should silence the voice after the current sample ENVX is latched"
+    );
+}
+
+#[test]
+fn given_key_on_delay_starts_on_end_brr_block_when_voice3c_runs_then_header_is_ignored_for_current_sample()
+ {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    aram[0x0000] = 0x00;
+    aram[0x0001] = 0x02;
+    aram[0x0002] = 0x00;
+    aram[0x0003] = 0x02;
+    aram[0x0200] = 0x01; // END without LOOP
+
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x04, 0x00);
+    dsp.voices[0].mode = EnvelopeMode::Attack;
+    dsp.voices[0].kon_delay = 5;
+
+    for _ in 0..31 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+
+    assert_eq!(
+        dsp.voices[0].brr_header, 0,
+        "the BRR header is ignored on the sample where key-on delay starts the stream"
+    );
+    assert_eq!(
+        dsp.voices[0].mode,
+        EnvelopeMode::Attack,
+        "an END header at the new BRR address must not force release until a later sample"
+    );
+}
+
+#[test]
 fn given_echo_enabled_when_rendering_with_memory_then_echo_ring_buffer_is_written_at_esa_base() {
     let mut dsp = Sdsp::new();
     let mut aram = [0u8; 0x1_0000];
@@ -1237,36 +1568,73 @@ fn given_esa_change_when_rendering_then_write_base_switches_after_one_sample_del
 
 #[test]
 fn given_esa_written_after_echo_sample_point_when_phase_ticks_then_new_base_waits_two_samples() {
-    let mut dsp = Sdsp::new();
+    let mut echo = EchoState::new();
     let mut aram = [0u8; 0x1_0000];
-    dsp.write_reg(0x00, 0x7F);
-    dsp.write_reg(0x01, 0x7F);
-    dsp.write_reg(0x07, 0x7F);
-    activate_voice_for_gain(&mut dsp, 0);
-    dsp.write_reg(0x4D, 0x01); // EON voice 0
-    dsp.write_reg(0x7D, 0x00); // EDL=0 keeps overwriting one 4-byte entry
-    dsp.write_reg(0x6D, 0x10);
-    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
+    let fir_coeffs = [0i8; 8];
 
-    for _ in 0..30 {
-        dsp.step_phase_with_memory(&mut aram);
-    }
-    assert_eq!(dsp.phase(), 30, "precondition: ESA sample point has passed");
-    dsp.write_reg(0x6D, 0x20);
-
-    for _ in 0..2 {
-        dsp.step_phase_with_memory(&mut aram);
-    }
+    echo.sample_left_echo_write_enable(0x00);
+    echo.sample_right_echo_write_enable(0x00);
+    echo.sample_echo_registers(0x10, 0x00);
+    let _ = echo.process_sample(
+        Some(&mut aram),
+        0x20,
+        0x00,
+        &fir_coeffs,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x1000,
+        0x2000,
+        0,
+        0,
+    );
     let old_base_after_first = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
     let new_base_after_first = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
 
-    dsp.write_reg(0x00, 0x40);
-    dsp.write_reg(0x01, 0x40);
-    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    echo.sample_left_echo_write_enable(0x00);
+    echo.sample_right_echo_write_enable(0x00);
+    echo.sample_echo_registers(0x20, 0x00);
+    let _ = echo.process_sample(
+        Some(&mut aram),
+        0x20,
+        0x00,
+        &fir_coeffs,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x3000,
+        0x4000,
+        0,
+        0,
+    );
     let old_base_after_second = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
     let new_base_after_second = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
 
-    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    echo.sample_left_echo_write_enable(0x00);
+    echo.sample_right_echo_write_enable(0x00);
+    echo.sample_echo_registers(0x20, 0x00);
+    let _ = echo.process_sample(
+        Some(&mut aram),
+        0x20,
+        0x00,
+        &fir_coeffs,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x5000,
+        0x6000,
+        0,
+        0,
+    );
     let new_base_after_third = [aram[0x2000], aram[0x2001], aram[0x2002], aram[0x2003]];
 
     assert_ne!(old_base_after_first, [0, 0, 0, 0]);
@@ -1284,51 +1652,85 @@ fn given_esa_written_after_echo_sample_point_when_phase_ticks_then_new_base_wait
 }
 
 #[test]
-fn given_edl_written_after_echo_sample_point_when_phase_ticks_then_old_zero_length_wraps_once_more()
-{
-    let mut dsp = Sdsp::new();
+fn given_nonzero_echo_ring_when_edl_zero_is_sampled_then_offset_keeps_advancing_until_wrap() {
+    let mut echo = EchoState::new();
     let mut aram = [0u8; 0x1_0000];
-    dsp.write_reg(0x00, 0x7F);
-    dsp.write_reg(0x01, 0x7F);
-    dsp.write_reg(0x07, 0x7F);
-    activate_voice_for_gain(&mut dsp, 0);
-    dsp.write_reg(0x4D, 0x01); // EON voice 0
-    dsp.write_reg(0x6D, 0x10);
-    dsp.write_reg(0x7D, 0x00); // EDL=0 keeps ring index at one entry
-    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
+    let fir_coeffs = [0i8; 8];
 
-    for _ in 0..30 {
-        dsp.step_phase_with_memory(&mut aram);
-    }
-    assert_eq!(dsp.phase(), 30, "precondition: EDL sample point has passed");
-    dsp.write_reg(0x7D, 0x01);
-
-    for _ in 0..2 {
-        dsp.step_phase_with_memory(&mut aram);
-    }
-    let base_after_first = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
-    let next_after_first = [aram[0x1004], aram[0x1005], aram[0x1006], aram[0x1007]];
-
-    dsp.write_reg(0x00, 0x40);
-    dsp.write_reg(0x01, 0x40);
-    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
-    let base_after_second = [aram[0x1000], aram[0x1001], aram[0x1002], aram[0x1003]];
-    let next_after_second = [aram[0x1004], aram[0x1005], aram[0x1006], aram[0x1007]];
-
-    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
-    let next_after_third = [aram[0x1004], aram[0x1005], aram[0x1006], aram[0x1007]];
-
-    assert_ne!(base_after_first, [0, 0, 0, 0]);
-    assert_eq!(next_after_first, [0, 0, 0, 0]);
-    assert_ne!(
-        base_after_second, base_after_first,
-        "late EDL write should leave the next sample using old EDL=0 wrapping"
+    echo.sample_left_echo_write_enable(0x00);
+    echo.sample_right_echo_write_enable(0x00);
+    echo.sample_echo_registers(0xF0, 0x01);
+    let _ = echo.process_sample(
+        Some(&mut aram),
+        0xF0,
+        0x01,
+        &fir_coeffs,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x1000,
+        0x2000,
+        0,
+        0,
     );
-    assert_eq!(next_after_second, [0, 0, 0, 0]);
+    let first_entry = [aram[0xF000], aram[0xF001], aram[0xF002], aram[0xF003]];
+
+    echo.sample_left_echo_write_enable(0x00);
+    echo.sample_right_echo_write_enable(0x00);
+    echo.sample_echo_registers(0xF0, 0x01);
+    let _ = echo.process_sample(
+        Some(&mut aram),
+        0xF0,
+        0x01,
+        &fir_coeffs,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x3000,
+        0x4000,
+        0,
+        0,
+    );
+    let second_entry = [aram[0xF004], aram[0xF005], aram[0xF006], aram[0xF007]];
+
+    echo.sample_left_echo_write_enable(0x00);
+    echo.sample_right_echo_write_enable(0x00);
+    echo.sample_echo_registers(0xF0, 0x00);
+    let _ = echo.process_sample(
+        Some(&mut aram),
+        0xF0,
+        0x00,
+        &fir_coeffs,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x5000,
+        0x6000,
+        0,
+        0,
+    );
+    let first_entry_after_edl_zero = [aram[0xF000], aram[0xF001], aram[0xF002], aram[0xF003]];
+    let third_entry = [aram[0xF008], aram[0xF009], aram[0xF00A], aram[0xF00B]];
+
+    assert_ne!(first_entry, [0, 0, 0, 0]);
+    assert_ne!(second_entry, [0, 0, 0, 0]);
+    assert_eq!(
+        first_entry_after_edl_zero, first_entry,
+        "EDL=0 must not reset a nonzero echo offset before the old ring wraps"
+    );
     assert_ne!(
-        next_after_third,
+        third_entry,
         [0, 0, 0, 0],
-        "new EDL should take effect after the next EDL sample point"
+        "EDL=0 should still write the next old-ring entry while the offset is nonzero"
     );
 }
 
