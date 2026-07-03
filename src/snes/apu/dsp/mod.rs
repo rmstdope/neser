@@ -735,11 +735,6 @@ impl Sdsp {
         let voice = usize::from(reg >> 4);
         if voice < 8 && matches!(reg & 0x0F, 0x08 | 0x09) {
             self.regs[index] = value;
-            if reg & 0x0F == 0x08 {
-                self.envx_latch = value;
-            } else {
-                self.outx_latch = value;
-            }
             return;
         }
         self.regs[index] = value;

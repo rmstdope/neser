@@ -942,18 +942,78 @@ fn given_envx_outx_when_written_then_reads_return_buffered_values_until_status_r
 
     step_sample_ticks(&mut dsp, 1);
 
+    assert_ne!(
+        dsp.read_reg(0x08),
+        buffered_env,
+        "hardware status refresh should replace the software-written ENVX buffer"
+    );
+    assert_ne!(
+        dsp.read_reg(0x09),
+        buffered_out,
+        "hardware status refresh should replace the software-written OUTX buffer"
+    );
+}
+
+#[test]
+fn given_envx_written_after_status_buffer_prepared_when_status_refreshes_then_prepared_envx_wins() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.phase = 2; // voice 0 Step7 prepares ENVX for later Step9 visibility.
+    dsp.voices[0].envx = 0x12;
+    dsp.write_reg(0x08, 0x00);
+
+    dsp.step_phase();
+    assert_eq!(
+        dsp.phase(),
+        3,
+        "precondition: voice0 ENVX buffer is prepared"
+    );
+    dsp.write_reg(0x08, 0x88);
+
+    dsp.step_phase();
+    assert_eq!(
+        dsp.phase(),
+        4,
+        "precondition: voice0 Step9 is about to publish ENVX"
+    );
+    dsp.step_phase();
+
     assert_eq!(
         dsp.read_reg(0x08),
-        dsp.voices[0].envx,
-        "hardware status refresh should restore ENVX from voice state"
+        0x12,
+        "a software ENVX write must not replace the hardware-prepared ENVX buffer before Step9"
     );
+}
+
+#[test]
+fn given_outx_written_after_status_buffer_prepared_when_status_refreshes_then_prepared_outx_wins() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.phase = 1; // voice 0 Step6 prepares OUTX for later Step8 visibility.
+    dsp.voices[0].outx = 0x34;
+    dsp.write_reg(0x09, 0x00);
+
+    dsp.step_phase();
+    assert_eq!(
+        dsp.phase(),
+        2,
+        "precondition: voice0 OUTX buffer is prepared"
+    );
+    dsp.write_reg(0x09, 0x88);
+
+    dsp.step_phase();
+    assert_eq!(
+        dsp.phase(),
+        3,
+        "precondition: voice0 Step8 is about to publish OUTX"
+    );
+    dsp.step_phase();
+
     assert_eq!(
         dsp.read_reg(0x09),
-        dsp.voices[0].outx as u8,
-        "hardware status refresh should restore OUTX from voice state"
+        0x34,
+        "a software OUTX write must not replace the hardware-prepared OUTX buffer before Step8"
     );
-    assert_ne!(dsp.read_reg(0x08), buffered_env);
-    assert_ne!(dsp.read_reg(0x09), buffered_out);
 }
 
 #[test]
