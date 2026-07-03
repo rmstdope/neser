@@ -817,7 +817,7 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn poll_irq(&self) -> bool {
-        self.ppu.borrow().poll_irq_level()
+        self.ppu.borrow().poll_irq_dispatch()
     }
 
     fn screen_dimensions(&self) -> (u32, u32) {
@@ -1645,7 +1645,25 @@ mod tests {
     }
 
     #[test]
-    fn bus_poll_irq_reflects_timeup_level_and_read_ack_clears_it() {
+    fn bus_timeup_reflects_irq_line_immediately_at_the_trigger_clock() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004207, 0x01);
+        bus.write(0x004208, 0x00);
+        bus.write(0x004200, 0x10); // H-IRQ mode
+
+        // HTIME=1 fires at intra-scanline clock (1+1)*4 + 10 = 18.
+        for _ in 0..18 {
+            bus.tick(); // one master clock each
+        }
+        assert_ne!(
+            bus.read(0x004211) & 0x80,
+            0,
+            "TIMEUP reflects the raw IRQ line the instant it triggers, unlike poll_irq()"
+        );
+    }
+
+    #[test]
+    fn bus_poll_irq_has_a_one_dot_dispatch_delay_then_read_ack_clears_it() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x004207, 0x01);
         bus.write(0x004208, 0x00);
@@ -1656,7 +1674,22 @@ mod tests {
         for _ in 0..18 {
             bus.tick(); // one master clock each
         }
-        assert!(bus.poll_irq(), "IRQ line asserted at the H-IRQ clock");
+        // bsnes' `CPU::irqPoll` only turns a freshly-risen IRQ line into a CPU-visible
+        // dispatch/WAI-wake transition on the *next* 4-clock poll (it samples the
+        // previous poll's still-stale line value first) -- a fixed one-dot pipeline
+        // delay. `poll_irq()` (unlike TIMEUP) must not be visible yet at the exact
+        // trigger clock.
+        assert!(
+            !bus.poll_irq(),
+            "poll_irq() is not yet visible at the exact IRQ-line trigger clock"
+        );
+        for _ in 0..4 {
+            bus.tick();
+        }
+        assert!(
+            bus.poll_irq(),
+            "poll_irq() becomes visible one dot (4 master clocks) after the trigger"
+        );
 
         assert_ne!(bus.read(0x004211) & 0x80, 0, "TIMEUP read sees pending IRQ");
         assert!(

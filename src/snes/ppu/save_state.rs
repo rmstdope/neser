@@ -46,6 +46,7 @@ impl Ppu {
             vtime: self.vtime,
             timeup_flag: self.timeup_flag,
             irq_line: self.irq_line,
+            irq_edge_age: self.irq_edge_age,
             interlace_field: self.interlace_field,
             video_region: match self.video_region {
                 SnesVideoRegion::Ntsc => 0,
@@ -137,6 +138,7 @@ impl Ppu {
         self.vtime = state.vtime & 0x01FF;
         self.timeup_flag = state.timeup_flag;
         self.irq_line = state.irq_line;
+        self.irq_edge_age = state.irq_edge_age;
         self.interlace_field = state.interlace_field;
         self.video_region = match state.video_region {
             1 => SnesVideoRegion::Pal,
