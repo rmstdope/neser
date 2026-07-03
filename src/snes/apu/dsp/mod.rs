@@ -775,9 +775,6 @@ impl Sdsp {
             }
             0x6C => {
                 self.flg = value;
-                if value & 0x80 != 0 {
-                    self.soft_reset_voices();
-                }
                 return;
             }
             0x6D => {
@@ -834,12 +831,6 @@ impl Sdsp {
     #[must_use]
     pub fn decode_brr_block(header: u8, data: [u8; 8], prev1: i16, prev2: i16) -> DecodedBrrBlock {
         decode_brr_block(header, data, prev1, prev2)
-    }
-
-    fn soft_reset_voices(&mut self) {
-        for voice in 0..8usize {
-            self.soft_reset_voice(voice);
-        }
     }
 
     fn refresh_status_registers_for_phase(&mut self, phase: u8) {

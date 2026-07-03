@@ -1148,6 +1148,49 @@ fn given_flg_soft_reset_when_sample_ticks_then_voice_envelope_and_output_clear()
 }
 
 #[test]
+fn given_flg_soft_reset_written_when_voice3c_has_not_run_then_status_is_not_cleared_immediately() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x00);
+    dsp.voices[0].env_level = 0x400;
+    dsp.voices[0].envx = 0x40;
+    dsp.voices[0].outx = 0x20;
+    dsp.voices[0].current_output = 0x2000;
+    dsp.regs[0x08] = 0x40;
+    dsp.regs[0x09] = 0x20;
+
+    dsp.write_reg(0x6C, 0x80);
+
+    assert_eq!(
+        dsp.read_reg(0x08),
+        0x40,
+        "FLG.7 writes should not clear ENVX until the voice pipeline observes reset"
+    );
+    assert_eq!(
+        dsp.read_reg(0x09),
+        0x20,
+        "FLG.7 writes should not clear OUTX until the voice pipeline observes reset"
+    );
+    assert_eq!(dsp.voices[0].env_level, 0x400);
+    assert_eq!(dsp.voices[0].current_output, 0x2000);
+
+    dsp.phase = 30;
+    dsp.step_phase();
+
+    assert_eq!(
+        dsp.read_reg(0x08),
+        0,
+        "FLG.7 should clear ENVX when voice3c observes reset"
+    );
+    assert_eq!(
+        dsp.read_reg(0x09),
+        0,
+        "FLG.7 should clear OUTX when voice3c observes reset"
+    );
+    assert_eq!(dsp.voices[0].env_level, 0);
+    assert_eq!(dsp.voices[0].current_output, 0);
+}
+
+#[test]
 fn given_flg_soft_reset_held_for_direct_gain_voice_when_sample_ticks_then_voice_advances_silently()
 {
     let mut dsp = Sdsp::new();
