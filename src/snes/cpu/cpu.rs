@@ -27,6 +27,15 @@ const FLAG_ACCUM_WIDTH: u8 = 0b0010_0000; // M flag
 const FLAG_OVERFLOW: u8 = 0b0100_0000;
 const FLAG_NEGATIVE: u8 = 0b1000_0000;
 
+/// Fixed master-clock delay the real 5A22 needs to come out of reset before its first
+/// instruction fetch. Mesen models this as a flat 186-clock delay applied right after
+/// reset/power-on (`SnesMemoryManager::IncMasterClockStartup`); bsnes reaches an equivalent
+/// total via a 22-internal-cycle pre-delay plus its interrupt-dispatch sequence. The two
+/// $FFFC/$FFFD vector-byte reads in [`Cpu::do_reset`] already charge 16 clocks (2 SlowROM
+/// reads @ 8 clocks each), so only the remaining 170 clocks are ticked separately here to
+/// land on the same 186-clock total observed in Mesen.
+const RESET_STARTUP_DELAY_CLOCKS: u32 = 170;
+
 #[derive(Clone, Copy)]
 enum BlockMoveDirection {
     Increment,
@@ -401,6 +410,9 @@ impl<B: SnesBus> Cpu<B> {
     ///
     /// No bytes are pushed. The CPU enters emulation mode, sets I=1, clears D, PBR, DBR,
     /// forces S to $01FF, clears pending interrupt latches, and loads PC from $FFFC/$FFFD.
+    /// Before fetching the vector, the bus is ticked [`RESET_STARTUP_DELAY_CLOCKS`] times to
+    /// model the fixed delay the real 5A22 takes to come out of reset (see the constant's doc
+    /// comment for the derivation against Mesen/bsnes ground truth).
     pub fn do_reset(&mut self) {
         self.e = true;
         self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_INTERRUPT;
@@ -412,6 +424,9 @@ impl<B: SnesBus> Cpu<B> {
         self.irq_pending = false;
         self.abort_pending = false;
         self.irq_lock_step = false;
+        for _ in 0..RESET_STARTUP_DELAY_CLOCKS {
+            self.bus.tick();
+        }
         let lo = self.read8(0x00FFFC) as u16;
         let hi = self.read8(0x00FFFD) as u16;
         self.pc = lo | hi << 8;

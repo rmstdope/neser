@@ -10,7 +10,8 @@
 //! long-dot phase around H=323/327 and the NTSC/PAL short/long scanline exceptions.
 
 use super::{
-    DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, PpuLineTimingProfile, VISIBLE_LINE_START,
+    DOTS_PER_SCANLINE, DRAM_REFRESH_BASE_POSITION, DRAM_REFRESH_STOLEN_CLOCKS,
+    MASTER_CYCLES_PER_DOT, Ppu, PpuLineTimingProfile, VISIBLE_LINE_START,
 };
 use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
@@ -18,9 +19,40 @@ use crate::trace_ppu;
 impl Ppu {
     /// Advance the PPU by one master clock.
     pub fn tick(&mut self) {
+        self.tick_one_clock();
+        // DRAM refresh: once per scanline the CPU is transparently paused for
+        // `DRAM_REFRESH_STOLEN_CLOCKS` master clocks (see [`DRAM_REFRESH_BASE_POSITION`]).
+        // `line_clock` strictly increases and `dram_refresh_position` is only recomputed at
+        // the next scanline boundary, so this fires exactly once per scanline.
+        if u32::from(self.line_clock) == u32::from(self.dram_refresh_position) {
+            for _ in 0..DRAM_REFRESH_STOLEN_CLOCKS {
+                self.tick_one_clock();
+            }
+        }
+    }
+
+    /// Cumulative master clocks since power-on/reset. Exposed for tests so helpers like
+    /// [`tests::tick_dots`] can advance by a precise clock delta instead of a fixed external
+    /// `tick()` call count, which would drift once DRAM refresh injects extra clocks.
+    #[cfg(test)]
+    pub(super) fn total_master_clocks(&self) -> u64 {
+        self.total_master_clocks
+    }
+
+    /// Recompute this scanline's DRAM-refresh trigger clock from the current cumulative
+    /// master clock count, matching the refresh circuit's phase jitter on real hardware.
+    fn recompute_dram_refresh_position(&mut self) {
+        self.dram_refresh_position =
+            DRAM_REFRESH_BASE_POSITION - (self.total_master_clocks & 0x07) as u16;
+    }
+
+    /// The per-clock advance logic (dot/scanline/IRQ bookkeeping). Split out from [`Ppu::tick`]
+    /// so DRAM refresh can steal extra clocks without re-checking the refresh trigger itself.
+    fn tick_one_clock(&mut self) {
         if ppu_trace_level() >= 5 {
             trace_ppu!(5; "{}", self.format_trace_tick_line());
         }
+        self.total_master_clocks += 1;
         self.master_cycle_accumulator += 1;
         let cycles_per_dot = self.cycles_per_current_dot();
         if self.master_cycle_accumulator >= cycles_per_dot {
@@ -31,6 +63,7 @@ impl Ppu {
                 // the intra-line clock at 0.
                 self.last_hperiod = self.line_clock + 1;
                 self.line_clock = 0;
+                self.recompute_dram_refresh_position();
             } else {
                 self.line_clock += 1;
             }
@@ -326,9 +359,7 @@ mod tests {
     fn tick_should_advance_scanline_and_wrap_the_dot_counter() {
         let mut ppu = Ppu::new();
 
-        for _ in 0..(DOTS_PER_SCANLINE as u32 * MASTER_CYCLES_PER_DOT) {
-            ppu.tick();
-        }
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32);
 
         assert_eq!(
             ppu.position(),
@@ -339,8 +370,16 @@ mod tests {
         );
     }
 
+    /// Advances the PPU by exactly `dots` nominal dot-widths worth of master clocks
+    /// (`dots * MASTER_CYCLES_PER_DOT`), measured against [`Ppu::total_master_clocks`] rather
+    /// than a fixed external `tick()` call count. DRAM refresh can make a single `tick()` call
+    /// silently consume up to `DRAM_REFRESH_STOLEN_CLOCKS` extra master clocks, so counting
+    /// external calls (or dot-position transitions, which can also jump by more than one dot
+    /// in a single call) would under/over-shoot; tracking the real clock delta absorbs this
+    /// transparently.
     fn tick_dots(ppu: &mut Ppu, dots: u32) {
-        for _ in 0..(dots * MASTER_CYCLES_PER_DOT) {
+        let target = ppu.total_master_clocks() + u64::from(dots) * u64::from(MASTER_CYCLES_PER_DOT);
+        while ppu.total_master_clocks() < target {
             ppu.tick();
         }
     }
@@ -688,6 +727,10 @@ mod tests {
         ppu.write_register(0x4207, 0x53); // HTIME low
         ppu.write_register(0x4208, 0x01); // HTIME high => 0x153 = 339
         ppu.write_register(0x4200, 0x10); // H-IRQ enable
+        // This test verifies exact H-IRQ wraparound clock counts in isolation from DRAM
+        // refresh (tested separately); push the refresh trigger out of range so it can't
+        // steal 40 clocks partway through the asserted spans below.
+        ppu.dram_refresh_position = u16::MAX;
 
         // Advance through scanline 0 and into scanline 1 (dot 0, intra-line clock 0).
         tick_cycles(&mut ppu, 1364);
@@ -822,6 +865,9 @@ mod tests {
         ppu.interlace_field = true;
         ppu.line_timing_profile = PpuLineTimingProfile::Short;
         ppu.write_register(0x2133, 0x00); // non-interlaced output
+        // Isolate this scanline-length quirk from DRAM refresh (tested separately) so the
+        // 1360-clock assertion below isn't skewed by an unrelated 40-clock steal.
+        ppu.dram_refresh_position = u16::MAX;
 
         // fullsnes: NTSC short line at V=240, field=1, non-interlace is 1360 cycles.
         for _ in 0..1360 {
@@ -845,6 +891,9 @@ mod tests {
         ppu.interlace_field = true;
         ppu.line_timing_profile = PpuLineTimingProfile::Long;
         ppu.write_register(0x2133, 0x01); // interlaced output
+        // Isolate this scanline-length quirk from DRAM refresh (tested separately) so the
+        // 1368-clock assertion below isn't skewed by an unrelated 40-clock steal.
+        ppu.dram_refresh_position = u16::MAX;
 
         // fullsnes: PAL interlaced line 311 in field=1 is a long 1368-cycle line.
         for _ in 0..1364 {
@@ -949,6 +998,9 @@ mod tests {
         ppu.position.dot = 0;
         ppu.interlace_field = true;
         ppu.line_timing_profile = PpuLineTimingProfile::Short;
+        // Isolate this scanline-length quirk from DRAM refresh (tested separately) so the
+        // exact 1360-clock assertion below isn't skewed by an unrelated 40-clock steal.
+        ppu.dram_refresh_position = u16::MAX;
 
         ppu.write_register(0x2133, 0x01);
         tick_cycles(&mut ppu, 1360);

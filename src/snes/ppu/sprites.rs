@@ -867,8 +867,13 @@ mod tests {
         assert_eq!(ppu.compute_pixel(8, 0), OBJ_COLOR);
     }
 
+    /// Advances the PPU by exactly `dots` nominal dot-widths worth of master clocks,
+    /// measured against [`Ppu::total_master_clocks`] rather than a fixed external `tick()`
+    /// call count -- see the matching helper in `timing.rs` for why this is necessary once
+    /// DRAM refresh can make a single `tick()` call consume extra master clocks.
     fn tick_dots(ppu: &mut Ppu, dots: u32) {
-        for _ in 0..(dots * 4) {
+        let target = ppu.total_master_clocks() + u64::from(dots) * 4;
+        while ppu.total_master_clocks() < target {
             ppu.tick();
         }
     }

@@ -16,12 +16,12 @@ mod tests {
         ("3-test_write_disable.smc", 600, 0xC3DE_3F4F),
         ("4-test_ram_disable.smc", 600, 0x85F1_D154),
         ("test_ram_disable_ipl.smc", 600, 0xD001_765E),
-        ("spc_smp.sfc", 2200, 0xEFD1_3576),
+        ("spc_smp.sfc", 2200, 0x5380_38B7),
         ("spc_mem_access_times.sfc", 600, 0x3AC3_E30F),
         ("spc_timer.sfc", 600, 0x2497_38B2),
         ("test_speed.smc", 600, 0x8EAD_6D95),
-        ("test_timer_speed_2.smc", 600, 0xC003_A7D0),
-        ("test_timer_speed3.smc", 600, 0xD0FA_7627),
+        ("test_timer_speed_2.smc", 600, 0x4228_E885),
+        ("test_timer_speed3.smc", 600, 0x8503_B253),
         ("test_timer_stop.smc", 600, 0x7CC2_B76B),
     ];
 
@@ -84,6 +84,10 @@ mod tests {
     // -------------------------------------------------------------------------
 
     fn run_rom_with_expected_crc(file: &str, expected_crc: u32) {
+        run_rom_with_expected_crc_and_config(file, expected_crc, RunConfig::new(400_000_000, 0));
+    }
+
+    fn run_rom_with_expected_crc_and_config(file: &str, expected_crc: u32, config: RunConfig) {
         let root = Path::new(ROM_PASS_FAIL_ROOT);
         let path = root.join(file);
         let rom = fs::read(&path)
@@ -91,7 +95,7 @@ mod tests {
         let result = run_rom_with_oracle(
             &rom,
             file,
-            RunConfig::new(400_000_000, 0),
+            config,
             RunOracle::ScreenCrc {
                 frames: 600,
                 expected_crc,
@@ -129,12 +133,12 @@ mod tests {
 
     #[test]
     fn blargg_test_timer_speed_passes() {
-        run_rom_with_expected_crc("test_timer_speed.smc", 0x65B1_1CE0);
+        run_rom_with_expected_crc("test_timer_speed.smc", 0x8331_6262);
     }
 
     #[test]
     fn blargg_test_timer_speed2_passes() {
-        run_rom_with_expected_crc("test_timer_speed2.smc", 0x65B1_1CE0);
+        run_rom_with_expected_crc("test_timer_speed2.smc", 0x8331_6262);
     }
 
     #[test]
@@ -144,11 +148,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: timer at power/reset — see #2930 (H/V-IRQ dispatch delay fixed \
-                in #2909, but the ROM's Passed/Failed decision path hasn't been fully \
-                traced yet) — fix emulator then update CRC"]
     fn blargg_timer_at_power_reset_passes() {
-        run_failing_rom("timer_at_power_reset.smc");
+        run_rom_with_expected_crc_and_config(
+            "timer_at_power_reset.smc",
+            0x9A3B_5FC3,
+            RunConfig::new(400_000_000, 0).with_reset_on_pc_trap(0x0000),
+        );
     }
 
     #[test]

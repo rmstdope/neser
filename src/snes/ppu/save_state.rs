@@ -19,6 +19,8 @@ impl Ppu {
             master_cycle_accumulator: self.master_cycle_accumulator,
             line_clock: self.line_clock,
             last_hperiod: self.last_hperiod,
+            total_master_clocks: self.total_master_clocks,
+            dram_refresh_position: self.dram_refresh_position,
             line_timing_profile: self.line_timing_profile.as_u8(),
             inidisp: self.inidisp,
             nmi_enable: self.nmi_enable,
@@ -111,6 +113,8 @@ impl Ppu {
         self.master_cycle_accumulator = state.master_cycle_accumulator;
         self.line_clock = state.line_clock;
         self.last_hperiod = state.last_hperiod;
+        self.total_master_clocks = state.total_master_clocks;
+        self.dram_refresh_position = state.dram_refresh_position;
         self.line_timing_profile = PpuLineTimingProfile::from_u8(state.line_timing_profile);
         self.inidisp = state.inidisp;
         self.nmi_enable = state.nmi_enable;
