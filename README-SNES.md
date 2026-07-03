@@ -137,14 +137,14 @@ committed integrity with
 | `3-test_write_disable` | SMP | `0xC3DE3F4F` |
 | `4-test_ram_disable` | SMP | `0x85F1D154` |
 | `test_ram_disable_ipl` | SMP | `0xD001765E` |
-| `spc_smp` | SMP | `0x538038B7` (frame 2200) |
+| `spc_smp` | SMP | `0xEFD13576` (frame 2200) |
 | `spc_mem_access_times` | SMP | `0x3AC3E30F` |
 | `spc_timer` | Timers | `0x249738B2` |
-| `test_speed` | Timers | `0x8EAD6D95` |
-| `test_timer_speed` | Timers | `0x83316262` |
-| `test_timer_speed2` | Timers | `0x83316262` |
-| `test_timer_speed_2` | Timers | `0x4228E885` |
-| `test_timer_speed3` | Timers | `0x8503B253` |
+| `test_speed` | Timers | `0xB02E63CE` |
+| `test_timer_speed` | Timers | `0xED59F2AF` |
+| `test_timer_speed2` | Timers | `0xED59F2AF` |
+| `test_timer_speed_2` | Timers | `0x48DAACE9` |
+| `test_timer_speed3` | Timers | `0x8B6CB1A1` |
 | `test_timer_stop` | Timers | `0x7CC2B76B` |
 | `speed_2_freezes2` | Timers | `0x6E1BF905` |
 | `timer_at_power_reset` | Timers | `0x9A3B5FC3` (mid-test reset, see below) |

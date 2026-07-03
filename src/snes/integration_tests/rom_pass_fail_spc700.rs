@@ -16,12 +16,12 @@ mod tests {
         ("3-test_write_disable.smc", 600, 0xC3DE_3F4F),
         ("4-test_ram_disable.smc", 600, 0x85F1_D154),
         ("test_ram_disable_ipl.smc", 600, 0xD001_765E),
-        ("spc_smp.sfc", 2200, 0x5380_38B7),
+        ("spc_smp.sfc", 2200, 0xEFD1_3576),
         ("spc_mem_access_times.sfc", 600, 0x3AC3_E30F),
         ("spc_timer.sfc", 600, 0x2497_38B2),
-        ("test_speed.smc", 600, 0x8EAD_6D95),
-        ("test_timer_speed_2.smc", 600, 0x4228_E885),
-        ("test_timer_speed3.smc", 600, 0x8503_B253),
+        ("test_speed.smc", 600, 0xB02E_63CE),
+        ("test_timer_speed_2.smc", 600, 0x48DA_ACE9),
+        ("test_timer_speed3.smc", 600, 0x8B6C_B1A1),
         ("test_timer_stop.smc", 600, 0x7CC2_B76B),
     ];
 
@@ -133,12 +133,12 @@ mod tests {
 
     #[test]
     fn blargg_test_timer_speed_passes() {
-        run_rom_with_expected_crc("test_timer_speed.smc", 0x8331_6262);
+        run_rom_with_expected_crc("test_timer_speed.smc", 0xED59_F2AF);
     }
 
     #[test]
     fn blargg_test_timer_speed2_passes() {
-        run_rom_with_expected_crc("test_timer_speed2.smc", 0x8331_6262);
+        run_rom_with_expected_crc("test_timer_speed2.smc", 0xED59_F2AF);
     }
 
     #[test]

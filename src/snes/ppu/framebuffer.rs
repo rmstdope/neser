@@ -106,17 +106,6 @@ mod tests {
         }
     }
 
-    /// Advances the PPU by exactly `dots` nominal dot-widths worth of master clocks,
-    /// measured against [`Ppu::total_master_clocks`] rather than a fixed external `tick()`
-    /// call count -- see the matching helper in `timing.rs` for why this is necessary once
-    /// DRAM refresh can make a single `tick()` call consume extra master clocks.
-    fn tick_dots(ppu: &mut Ppu, dots: u32) {
-        let target = ppu.total_master_clocks() + u64::from(dots) * u64::from(MASTER_CYCLES_PER_DOT);
-        while ppu.total_master_clocks() < target {
-            ppu.tick();
-        }
-    }
-
     fn set_backdrop(ppu: &mut Ppu, bgr555: u16) {
         ppu.write_register(0x2121, 0x00); // CGADD = color 0
         ppu.write_register(0x2122, (bgr555 & 0xFF) as u8);
@@ -225,11 +214,15 @@ mod tests {
         assert!(!ppu.take_frame_complete());
 
         // 239 visible lines are completed, but VBlank has not started yet.
-        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 239);
+        for _ in 0..(DOTS_PER_SCANLINE as u32 * 239 * MASTER_CYCLES_PER_DOT) {
+            ppu.tick();
+        }
         assert!(!ppu.take_frame_complete());
 
         // One more scanline enters VBlank at line 240.
-        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32);
+        for _ in 0..(DOTS_PER_SCANLINE as u32 * MASTER_CYCLES_PER_DOT) {
+            ppu.tick();
+        }
         assert!(
             ppu.take_frame_complete(),
             "frame complete at overscan VBlank entry"
