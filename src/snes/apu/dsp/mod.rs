@@ -480,9 +480,7 @@ impl Sdsp {
         aram: Option<&[u8]>,
     ) {
         let suppress_pitch = !soft_reset && self.voices[voice].kon_delay > 0;
-        if soft_reset {
-            self.soft_reset_voice(voice);
-        } else {
+        if !soft_reset {
             self.prepare_voice_for_output(voice, aram);
         }
         self.voices[voice].pitch_step = if suppress_pitch {
@@ -490,11 +488,7 @@ impl Sdsp {
         } else {
             self.effective_pitch_for_voice(voice, pmon)
         };
-        let sample = if soft_reset {
-            0
-        } else {
-            self.voice_sample(voice, non, aram)
-        };
+        let sample = self.voice_sample(voice, non, aram);
         let out_before_mix = (sample >> 8).clamp(-128, 127) as i8;
         self.voices[voice].mod_source = out_before_mix;
         self.voices[voice].envx = ((self.voices[voice].env_level >> 4).min(0x7F)) as u8;
@@ -502,7 +496,14 @@ impl Sdsp {
         let (left, right) = self.mix_voice_sample(voice, sample);
         let _mixed = (((i32::from(left) + i32::from(right)) / 2) >> 8).clamp(-128, 127) as i8;
         self.voices[voice].outx = out_before_mix;
-        if !soft_reset {
+        if soft_reset {
+            self.voices[voice].mode = EnvelopeMode::Release;
+            self.voices[voice].env_level = 0;
+            self.voices[voice].hidden_env = 0;
+            self.voices[voice].adsr1_latch = self.voices[voice].adsr1;
+            self.voices[voice].current_output = 0;
+            self.voices[voice].mod_source = 0;
+        } else {
             if self.voices[voice].brr_header & 0x03 == 0x01 {
                 self.voices[voice].mode = EnvelopeMode::Release;
                 self.voices[voice].env_level = 0;
@@ -856,23 +857,6 @@ impl Sdsp {
                 self.regs[(voice << 4) + 8] = self.envx_latch;
             }
         }
-    }
-
-    fn soft_reset_voice(&mut self, voice: usize) {
-        let v = &mut self.voices[voice];
-        v.kon_delay = 0;
-        v.mode = EnvelopeMode::Release;
-        v.env_level = 0;
-        v.hidden_env = 0;
-        v.adsr1_latch = v.adsr1;
-        v.envx = 0;
-        v.outx = 0;
-        v.current_output = 0;
-        v.mod_source = 0;
-        self.envx_latch = 0;
-        self.outx_latch = 0;
-        self.regs[(voice << 4) + 8] = 0;
-        self.regs[(voice << 4) + 9] = 0;
     }
 }
 
