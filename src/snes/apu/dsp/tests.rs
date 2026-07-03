@@ -1144,7 +1144,10 @@ fn given_flg_soft_reset_when_sample_ticks_then_voice_envelope_and_output_clear()
     assert_eq!(dsp.read_reg(0x08), 0, "FLG.7 should clear ENVX");
     assert_eq!(dsp.read_reg(0x09), 0, "FLG.7 should clear OUTX");
     assert_eq!(dsp.voices[0].env_level, 0);
-    assert_eq!(dsp.voices[0].current_output, 0);
+    assert_ne!(
+        dsp.voices[0].current_output, 0,
+        "FLG.7 should preserve VoiceOutput from the sample that observed reset"
+    );
 }
 
 #[test]
@@ -1179,7 +1182,7 @@ fn given_flg_soft_reset_written_when_voice3c_has_not_run_then_status_is_not_clea
     assert_eq!(dsp.voices[0].envx, 0x40);
     assert_eq!(dsp.voices[0].outx, 0x1F);
     assert_eq!(dsp.voices[0].env_level, 0);
-    assert_eq!(dsp.voices[0].current_output, 0);
+    assert_ne!(dsp.voices[0].current_output, 0);
 }
 
 #[test]
@@ -1196,6 +1199,10 @@ fn given_flg_soft_reset_when_voice3c_runs_then_envx_uses_pre_reset_envelope() {
     assert_eq!(
         dsp.voices[0].envx, 0x40,
         "FLG.7 should clear internal envelope after ENVX captures the envelope used by this sample"
+    );
+    assert_ne!(
+        dsp.voices[0].current_output, 0,
+        "FLG.7 should not erase the VoiceOutput computed for the current sample"
     );
     assert_eq!(
         dsp.voices[0].env_level, 0,

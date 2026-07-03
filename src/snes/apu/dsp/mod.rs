@@ -499,8 +499,6 @@ impl Sdsp {
             self.voices[voice].env_level = 0;
             self.voices[voice].hidden_env = 0;
             self.voices[voice].adsr1_latch = self.voices[voice].adsr1;
-            self.voices[voice].current_output = 0;
-            self.voices[voice].mod_source = 0;
         }
         if !soft_reset {
             if self.voices[voice].brr_header & 0x03 == 0x01 {
