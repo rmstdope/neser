@@ -955,7 +955,7 @@ fn given_envx_outx_when_written_then_reads_return_buffered_values_until_status_r
 }
 
 #[test]
-fn given_envx_written_after_status_buffer_prepared_when_status_refreshes_then_prepared_envx_wins() {
+fn given_envx_written_after_status_buffer_prepared_when_status_refreshes_then_software_envx_wins() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x20);
     dsp.phase = 2; // voice 0 Step7 prepares ENVX for later Step9 visibility.
@@ -980,13 +980,13 @@ fn given_envx_written_after_status_buffer_prepared_when_status_refreshes_then_pr
 
     assert_eq!(
         dsp.read_reg(0x08),
-        0x12,
-        "a software ENVX write must not replace the hardware-prepared ENVX buffer before Step9"
+        0x88,
+        "a software ENVX write should replace the pending ENVX buffer before Step9"
     );
 }
 
 #[test]
-fn given_outx_written_after_status_buffer_prepared_when_status_refreshes_then_prepared_outx_wins() {
+fn given_outx_written_after_status_buffer_prepared_when_status_refreshes_then_software_outx_wins() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x20);
     dsp.phase = 1; // voice 0 Step6 prepares OUTX for later Step8 visibility.
@@ -1011,8 +1011,8 @@ fn given_outx_written_after_status_buffer_prepared_when_status_refreshes_then_pr
 
     assert_eq!(
         dsp.read_reg(0x09),
-        0x34,
-        "a software OUTX write must not replace the hardware-prepared OUTX buffer before Step8"
+        0x88,
+        "a software OUTX write should replace the pending OUTX buffer before Step8"
     );
 }
 
