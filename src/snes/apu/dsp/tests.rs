@@ -1204,6 +1204,43 @@ fn given_flg_soft_reset_when_voice3c_runs_then_envx_uses_pre_reset_envelope() {
 }
 
 #[test]
+fn given_flg_soft_reset_and_kon_latched_when_voice3c_runs_then_kon_still_starts_delay() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x80);
+    dsp.write_reg(0x02, 0x00);
+    dsp.write_reg(0x03, 0x10);
+    dsp.write_reg(0x4C, 0x01);
+    dsp.kon_poll_slot = false;
+
+    for _ in 0..31 {
+        dsp.step_phase();
+    }
+
+    assert_eq!(
+        dsp.voices[0].kon_delay, 5,
+        "KON should still start the key-on delay when latched on a sample where FLG.7 is set"
+    );
+    assert_eq!(dsp.voices[0].mode, EnvelopeMode::Attack);
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(
+        dsp.voices[0].kon_delay, 4,
+        "held FLG.7 should still let the key-on delay count down on later samples"
+    );
+    let sample_pos_after_first_delay_sample = dsp.voice_sample_pos(0);
+
+    step_sample_ticks(&mut dsp, 1);
+
+    assert_eq!(dsp.voices[0].kon_delay, 3);
+    assert_eq!(
+        dsp.voice_sample_pos(0),
+        sample_pos_after_first_delay_sample,
+        "held FLG.7 should still suppress pitch while key-on delay is active"
+    );
+}
+
+#[test]
 fn given_flg_soft_reset_held_for_direct_gain_voice_when_sample_ticks_then_voice_advances_silently()
 {
     let mut dsp = Sdsp::new();

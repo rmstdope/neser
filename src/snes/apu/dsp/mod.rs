@@ -479,10 +479,8 @@ impl Sdsp {
         non: u8,
         aram: Option<&[u8]>,
     ) {
-        let suppress_pitch = !soft_reset && self.voices[voice].kon_delay > 0;
-        if !soft_reset {
-            self.prepare_voice_for_output(voice, aram);
-        }
+        let suppress_pitch = self.voices[voice].kon_delay > 0;
+        self.prepare_voice_for_output(voice, aram);
         self.voices[voice].pitch_step = if suppress_pitch {
             0
         } else {
@@ -503,21 +501,22 @@ impl Sdsp {
             self.voices[voice].adsr1_latch = self.voices[voice].adsr1;
             self.voices[voice].current_output = 0;
             self.voices[voice].mod_source = 0;
-        } else {
+        }
+        if !soft_reset {
             if self.voices[voice].brr_header & 0x03 == 0x01 {
                 self.voices[voice].mode = EnvelopeMode::Release;
                 self.voices[voice].env_level = 0;
             }
-            if self.koff_latched & (1 << voice) != 0 {
-                self.voices[voice].mode = EnvelopeMode::Release;
-            }
-            if self.kon_latched & (1 << voice) != 0 {
-                let v = &mut self.voices[voice];
-                v.kon_delay = 5;
-                v.mode = EnvelopeMode::Attack;
-            } else {
-                self.step_voice_envelope_after_output(voice);
-            }
+        }
+        if self.koff_latched & (1 << voice) != 0 {
+            self.voices[voice].mode = EnvelopeMode::Release;
+        }
+        if self.kon_latched & (1 << voice) != 0 {
+            let v = &mut self.voices[voice];
+            v.kon_delay = 5;
+            v.mode = EnvelopeMode::Attack;
+        } else if !soft_reset {
+            self.step_voice_envelope_after_output(voice);
         }
     }
 
