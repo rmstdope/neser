@@ -219,6 +219,8 @@ pub struct SnesPpuState {
     #[serde(default)]
     pub irq_line: bool,
     #[serde(default)]
+    pub irq_edge_age: u32,
+    #[serde(default)]
     pub interlace_field: bool,
     #[serde(default)]
     pub video_region: u8,

@@ -190,70 +190,83 @@ impl Ppu {
     }
 
     fn evaluate_hv_irq(&mut self) {
-        if self.irq_mode == 0 {
-            return;
-        }
-        let v = self.position.scanline;
-        let lc = self.line_clock;
-        // bsnes (`CPU::irqPoll`) compares the delayed H/V counters against the timer
-        // targets. `hcounter(n)`/`vcounter(n)` return the counter value `n` clocks in the
-        // past, wrapping into the previous scanline (using its `hperiod`) when `n` reaches
-        // back past the current line start. The IRQ fires when:
-        //   H  : hcounter(10) == io.htime            (every scanline)
-        //   V  : vcounter(10) == vtime               (once, at the first poll)
-        //   HV : both of the above on the same line
-        // where `io.htime = (HTIME + 1) * 4`.
-        let io_htime = (self.htime + 1) * 4;
-        let hc10 = if lc >= 10 {
-            lc - 10
-        } else {
-            lc + self.last_hperiod - 10
-        };
-        let v10 = if lc >= 10 {
-            v
-        } else if v > 0 {
-            v - 1
-        } else {
-            self.scanlines_per_frame() - 1
-        };
-        // "IRQs cannot trigger on the last dot of the field": bsnes blocks a match whose
-        // 6-clock-delayed position is the frame origin (vcounter(6) == 0 && hcounter(6) == 0).
-        let hc6 = if lc >= 6 {
-            lc - 6
-        } else {
-            lc + self.last_hperiod - 6
-        };
-        let v6 = if lc >= 6 {
-            v
-        } else if v > 0 {
-            v - 1
-        } else {
-            self.scanlines_per_frame() - 1
-        };
-        let not_last_dot = v6 != 0 || hc6 != 0;
-        let triggered = not_last_dot
-            && match self.irq_mode {
-                // H IRQ each scanline when the delayed H counter reaches the compare value.
-                1 => hc10 == io_htime,
-                // V IRQ once on the matching scanline, at the first poll (rising edge).
-                2 => v == self.vtime && lc == 10,
-                // HV IRQ at the H compare of the VTIME line.
-                3 => hc10 == io_htime && v10 == self.vtime,
-                _ => false,
+        // Captured before any mutation below, so the edge-age update at the bottom can
+        // distinguish "already asserted last clock" from "just asserted this clock" even
+        // though `self.irq_line` may be set to `true` further down in this same call.
+        let was_asserted = self.irq_line;
+        if self.irq_mode != 0 {
+            let v = self.position.scanline;
+            let lc = self.line_clock;
+            // bsnes (`CPU::irqPoll`) compares the delayed H/V counters against the timer
+            // targets. `hcounter(n)`/`vcounter(n)` return the counter value `n` clocks in the
+            // past, wrapping into the previous scanline (using its `hperiod`) when `n` reaches
+            // back past the current line start. The IRQ fires when:
+            //   H  : hcounter(10) == io.htime            (every scanline)
+            //   V  : vcounter(10) == vtime               (once, at the first poll)
+            //   HV : both of the above on the same line
+            // where `io.htime = (HTIME + 1) * 4`.
+            let io_htime = (self.htime + 1) * 4;
+            let hc10 = if lc >= 10 {
+                lc - 10
+            } else {
+                lc + self.last_hperiod - 10
             };
-        if triggered && !self.timeup_flag {
-            trace_ppu!(2; "timeup y={} lc={} irq_mode={} htime={:03X} vtime={:03X}",
-                v,
-                lc,
-                self.irq_mode,
-                self.htime,
-                self.vtime,
-            );
+            let v10 = if lc >= 10 {
+                v
+            } else if v > 0 {
+                v - 1
+            } else {
+                self.scanlines_per_frame() - 1
+            };
+            // "IRQs cannot trigger on the last dot of the field": bsnes blocks a match whose
+            // 6-clock-delayed position is the frame origin (vcounter(6) == 0 && hcounter(6) == 0).
+            let hc6 = if lc >= 6 {
+                lc - 6
+            } else {
+                lc + self.last_hperiod - 6
+            };
+            let v6 = if lc >= 6 {
+                v
+            } else if v > 0 {
+                v - 1
+            } else {
+                self.scanlines_per_frame() - 1
+            };
+            let not_last_dot = v6 != 0 || hc6 != 0;
+            let triggered = not_last_dot
+                && match self.irq_mode {
+                    // H IRQ each scanline when the delayed H counter reaches the compare value.
+                    1 => hc10 == io_htime,
+                    // V IRQ once on the matching scanline, at the first poll (rising edge).
+                    2 => v == self.vtime && lc == 10,
+                    // HV IRQ at the H compare of the VTIME line.
+                    3 => hc10 == io_htime && v10 == self.vtime,
+                    _ => false,
+                };
+            if triggered && !self.timeup_flag {
+                trace_ppu!(2; "timeup y={} lc={} irq_mode={} htime={:03X} vtime={:03X}",
+                    v,
+                    lc,
+                    self.irq_mode,
+                    self.htime,
+                    self.vtime,
+                );
+            }
+            if triggered {
+                self.timeup_flag = true;
+                self.irq_line = true;
+            }
         }
-        if triggered {
-            self.timeup_flag = true;
-            self.irq_line = true;
-        }
+        // Track how many consecutive clocks `irq_line` has been asserted (0 on its rising
+        // edge), regardless of whether it changed above or was already latched from a
+        // previous scanline/tick, or cleared elsewhere (TIMEUP read, NMITIMEN disabling
+        // IRQs). This powers the one-dot CPU dispatch/WAI-wake delay in
+        // `Ppu::poll_irq_dispatch` -- see [`IRQ_DISPATCH_EDGE_DELAY_CLOCKS`].
+        self.irq_edge_age = match (self.irq_line, was_asserted) {
+            (true, true) => self.irq_edge_age.saturating_add(1),
+            (true, false) => 0,
+            (false, _) => 0,
+        };
     }
 }
 
@@ -383,6 +396,39 @@ mod tests {
 
         assert_eq!(low_first, 20);
         assert_eq!(low_again, 20);
+    }
+
+    #[test]
+    fn ophct_read_flipflop_stays_high_across_a_relatch_without_a_stat78_read() {
+        // Per bsnes (`PPU::readIO` case 0x213c/0x213f), a fresh SLHV/WRIO latch does NOT
+        // reset the OPHCT/OPVCT read flip-flop -- only a STAT78 ($213F) read does. So once
+        // a program has read OPHCT twice (low then high), latching again *without* an
+        // intervening STAT78 read must keep returning the high bit, not toggle back to the
+        // (new) low byte.
+        let mut ppu = Ppu::new();
+        tick_dots(&mut ppu, 20);
+        ppu.read_register(0x2137); // first latch: H=20
+
+        assert_eq!(
+            ppu.read_register(0x213C),
+            20,
+            "first read returns the low byte"
+        );
+        assert_eq!(
+            ppu.read_register(0x213C),
+            0,
+            "second read returns the high bit"
+        );
+
+        tick_dots(&mut ppu, 5);
+        ppu.read_register(0x2137); // second latch, no STAT78 read in between: H=25
+
+        assert_eq!(
+            ppu.read_register(0x213C),
+            0,
+            "third read (no intervening STAT78 read) stays on the high bit, \
+             it must not toggle back to the new latch's low byte"
+        );
     }
 
     #[test]

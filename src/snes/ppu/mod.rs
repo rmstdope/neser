@@ -66,6 +66,10 @@ pub(super) const DOTS_PER_SCANLINE: u16 = 341;
 pub(super) const NTSC_SCANLINES_PER_FRAME: u16 = 262;
 /// PAL scanlines per frame.
 pub(super) const PAL_SCANLINES_PER_FRAME: u16 = 312;
+/// Master clocks between the H/V-IRQ line's rising edge and the CPU noticing a
+/// dispatchable transition (one dot / one bsnes `CPU::irqPoll` cycle). See
+/// [`Ppu::poll_irq_dispatch`].
+pub(super) const IRQ_DISPATCH_EDGE_DELAY_CLOCKS: u32 = MASTER_CYCLES_PER_DOT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SnesVideoRegion {
@@ -163,8 +167,16 @@ pub struct Ppu {
     vtime: u16,
     /// TIMEUP ($4211) bit 7 latch.
     timeup_flag: bool,
-    /// Current IRQ line level delivered to the CPU.
+    /// Current IRQ line level, readable instantaneously via TIMEUP ($4211).
     irq_line: bool,
+    /// Master clocks `irq_line` has been continuously asserted (0 on its rising edge).
+    /// bsnes' `CPU::irqPoll` only turns the level into a dispatch/WAI-wake "transition"
+    /// pulse on the *next* 4-clock poll after the line rises (it samples the previous
+    /// poll's stale line value first) -- i.e. real hardware has a fixed one-dot (4
+    /// master clock) pipeline delay before the CPU can act on a fresh H/V-IRQ. Gate
+    /// [`Ppu::poll_irq_dispatch`] on this so CPU dispatch/WAI-wake sees the same delay,
+    /// while TIMEUP reads (which reflect the raw hardware line) stay instantaneous.
+    irq_edge_age: u32,
     /// STAT78 ($213F) bit 7: interlace field flag.
     interlace_field: bool,
     video_region: SnesVideoRegion,
@@ -315,6 +327,7 @@ impl Ppu {
             vtime: 0x01FF,
             timeup_flag: false,
             irq_line: false,
+            irq_edge_age: 0,
             interlace_field: false,
             video_region,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
@@ -387,6 +400,17 @@ impl Ppu {
     /// Poll the current level of the H/V IRQ line.
     pub fn poll_irq_level(&self) -> bool {
         self.irq_line
+    }
+
+    /// Poll whether the H/V IRQ is visible to the CPU for dispatch/WAI-wake purposes.
+    ///
+    /// This gates on [`Ppu::irq_edge_age`] to reproduce the fixed one-dot (4 master
+    /// clock) pipeline delay real hardware has between the IRQ line's rising edge and
+    /// the CPU noticing a dispatchable "transition" (see the field doc for the bsnes
+    /// `CPU::irqPoll` reasoning). TIMEUP ($4211) reads are unaffected by this delay --
+    /// they use [`Ppu::poll_irq_level`]/`timeup_flag` directly, matching bsnes' `timeup()`.
+    pub fn poll_irq_dispatch(&self) -> bool {
+        self.irq_line && self.irq_edge_age >= IRQ_DISPATCH_EDGE_DELAY_CLOCKS
     }
 
     /// Whether the PPU is currently in the VBlank period.

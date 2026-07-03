@@ -144,7 +144,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: timer at power/reset — fix emulator then update CRC"]
+    #[ignore = "fails: timer at power/reset — see #2930 (H/V-IRQ dispatch delay fixed \
+                in #2909, but the ROM's Passed/Failed decision path hasn't been fully \
+                traced yet) — fix emulator then update CRC"]
     fn blargg_timer_at_power_reset_passes() {
         run_failing_rom("timer_at_power_reset.smc");
     }
