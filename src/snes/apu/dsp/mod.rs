@@ -64,6 +64,8 @@ pub struct Sdsp {
     #[serde(default)]
     kon_pending: u8,
     #[serde(default)]
+    kon_active: u8,
+    #[serde(default)]
     kon_latched: u8,
     #[serde(default)]
     koff_latched: u8,
@@ -137,6 +139,7 @@ impl Sdsp {
             esa: 0,
             edl: 0,
             kon_pending: 0,
+            kon_active: 0,
             kon_latched: 0,
             koff_latched: 0,
             kon_poll_slot: true,
@@ -459,16 +462,21 @@ impl Sdsp {
         };
         self.step_noise_lfsr();
         self.kon_poll_slot = !self.kon_poll_slot;
-        self.kon_latched = if self.kon_poll_slot {
-            std::mem::take(&mut self.kon_pending)
+        if self.kon_poll_slot {
+            self.kon_latched = std::mem::take(&mut self.kon_pending);
+            self.kon_active = self.kon_latched;
         } else {
-            0
-        };
+            self.kon_latched = 0;
+        }
         self.koff_latched = if self.kon_poll_slot {
             self.regs[usize::from(KOFF_REG)]
         } else {
             0
         };
+    }
+
+    fn clear_pending_kon_for_active_key_on_delay(&mut self) {
+        self.kon_pending &= !self.kon_active;
     }
 
     fn process_voice3c(
@@ -585,6 +593,9 @@ impl Sdsp {
             self.echo_state.sample_left_echo_write_enable(self.flg);
         }
         if self.phase == 29 {
+            if !self.kon_poll_slot {
+                self.clear_pending_kon_for_active_key_on_delay();
+            }
             self.echo_state.sample_right_echo_write_enable(self.flg);
             self.echo_state.sample_echo_registers(self.esa, self.edl);
         }

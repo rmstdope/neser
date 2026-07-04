@@ -912,6 +912,26 @@ fn given_kon_written_when_first_sample_ticks_then_key_on_waits_for_every_other_s
 }
 
 #[test]
+fn given_kon_rewritten_while_key_on_delay_active_when_next_poll_runs_then_delay_is_not_restarted() {
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.kon_poll_slot = false;
+    dsp.kon_active = 0x01;
+    dsp.voices[0].mode = EnvelopeMode::Attack;
+    dsp.voices[0].kon_delay = 3;
+    dsp.write_reg(0x4C, 0x01);
+
+    for _ in 0..31 {
+        dsp.step_phase();
+    }
+
+    assert_eq!(
+        dsp.voices[0].kon_delay, 2,
+        "rewriting KON while the voice is already in key-on delay must not restart the delay"
+    );
+}
+
+#[test]
 fn given_voice_in_kon_delay_when_voice3c_runs_then_pitch_does_not_advance() {
     let mut dsp = Sdsp::new();
     dsp.write_reg(0x6C, 0x20);
