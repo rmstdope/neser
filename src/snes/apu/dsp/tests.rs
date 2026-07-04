@@ -1490,6 +1490,45 @@ fn given_key_on_delay_starts_on_end_brr_block_when_voice3c_runs_then_header_is_i
 }
 
 #[test]
+fn given_brr_header_loaded_before_key_on_delay_when_voice3c_runs_then_header_is_visible_until_ignored()
+ {
+    let mut dsp = Sdsp::new();
+    let mut aram = [0u8; 0x1_0000];
+    aram[0x0000] = 0x00;
+    aram[0x0001] = 0x02;
+    aram[0x0002] = 0x00;
+    aram[0x0003] = 0x02;
+    aram[0x0200] = 0x03; // END+LOOP bits visible in BRR header
+
+    dsp.write_reg(0x6C, 0x20);
+    dsp.write_reg(0x04, 0x00);
+    dsp.voices[0].brr_initialized = true;
+    dsp.voices[0].brr_addr = 0x0200;
+    dsp.voices[0].brr_next_addr = 0x0200;
+    dsp.voices[0].mode = EnvelopeMode::Attack;
+    dsp.voices[0].kon_delay = 5;
+
+    for _ in 0..26 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+
+    assert_eq!(
+        dsp.voices[0].brr_header & 0x03,
+        0x03,
+        "voice Step3b should make BRR header bits visible before Step3c key-on masking"
+    );
+
+    for _ in 0..6 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+
+    assert_eq!(
+        dsp.voices[0].brr_header, 0,
+        "voice Step3c should still ignore the newly loaded header for the key-on sample"
+    );
+}
+
+#[test]
 fn given_echo_enabled_when_rendering_with_memory_then_echo_ring_buffer_is_written_at_esa_base() {
     let mut dsp = Sdsp::new();
     let mut aram = [0u8; 0x1_0000];

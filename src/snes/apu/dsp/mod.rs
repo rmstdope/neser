@@ -564,6 +564,13 @@ impl Sdsp {
             let non = self.regs[usize::from(NON_REG)];
             self.process_voice3c(voice, soft_reset, pmon, non, aram_read);
         }
+        if let Some(voice) = Self::voice3c_phase_voice(self.phase.wrapping_add(5) & 0x1F)
+            && let Some(aram) = aram.as_deref()
+            && self.voices[voice].brr_initialized
+            && let Some((header, _)) = read_brr_block_from_aram(aram, self.voices[voice].brr_addr)
+        {
+            self.voices[voice].brr_header = header;
+        }
         if let Some(voice) = Self::voice4_phase_voice(self.phase) {
             let aram_read = aram.as_deref();
             self.process_voice4(voice, aram_read);
