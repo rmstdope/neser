@@ -114,6 +114,9 @@ enum MicroOp {
     /// PSW flag in `.0` equals `.1` (conditional branches are 2 cycles when
     /// not taken, 4 when taken).
     FetchOperandBranch(u8, bool),
+    /// Read-modify-write completion: transform `value` per the finish kind
+    /// (with flag updates) and write the result back to `addr`.
+    WriteRmw,
     /// Compute `addr` = `operand2`:`operand` and read `value`.
     ReadAbs,
     /// Compute `addr` = `operand2`:`operand` and dummy-read it.
@@ -205,6 +208,28 @@ enum Finish {
     SetDirectPage(bool),
     /// Set or clear the interrupt-enable flag.
     SetInterrupt(bool),
+    /// RMW: `mem += 1`, update N/Z.
+    RmwInc,
+    /// RMW: `mem -= 1`, update N/Z.
+    RmwDec,
+    /// RMW: arithmetic shift left, C/N/Z.
+    RmwAsl,
+    /// RMW: logical shift right, C/N/Z.
+    RmwLsr,
+    /// RMW: rotate left through carry, C/N/Z.
+    RmwRol,
+    /// RMW: rotate right through carry, C/N/Z.
+    RmwRor,
+    /// RMW: `mem |= imm` (first operand), update N/Z.
+    OrMemImm,
+    /// RMW: `mem &= imm`, update N/Z.
+    AndMemImm,
+    /// RMW: `mem ^= imm`, update N/Z.
+    EorMemImm,
+    /// RMW: `mem = mem + imm + C` with full flag update.
+    AdcMemImm,
+    /// RMW: `mem = mem - imm - !C` with full flag update.
+    SbcMemImm,
 }
 
 /// SPC700 CPU core.
@@ -705,6 +730,10 @@ impl Spc700 {
         const DP_WORD_READ: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), Idle, ReadDpHigh];
         const IMPLIED: &[MicroOp] = &[DummyReadPc];
         const IMPLIED3: &[MicroOp] = &[DummyReadPc, Idle];
+        const DP_RMW: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), WriteRmw];
+        const DP_X_RMW: &[MicroOp] = &[FetchOperand, Idle, ReadDp(Index::X), WriteRmw];
+        const ABS_RMW: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbs, WriteRmw];
+        const DP_IMM_RMW: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2, WriteRmw];
         const DP_X_WRITE: &[MicroOp] = &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg];
         const ABS_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbsForStore, WriteReg];
 
@@ -799,6 +828,33 @@ impl Spc700 {
             0xA0 => (IMPLIED3, F::SetInterrupt(true)),
             0xC0 => (IMPLIED3, F::SetInterrupt(false)),
             0xED => (IMPLIED3, F::NotCarry),
+            // Read-modify-write dp.
+            0xAB => (DP_RMW, F::RmwInc),
+            0x8B => (DP_RMW, F::RmwDec),
+            0x0B => (DP_RMW, F::RmwAsl),
+            0x4B => (DP_RMW, F::RmwLsr),
+            0x2B => (DP_RMW, F::RmwRol),
+            0x6B => (DP_RMW, F::RmwRor),
+            // Read-modify-write dp+X.
+            0xBB => (DP_X_RMW, F::RmwInc),
+            0x9B => (DP_X_RMW, F::RmwDec),
+            0x1B => (DP_X_RMW, F::RmwAsl),
+            0x5B => (DP_X_RMW, F::RmwLsr),
+            0x3B => (DP_X_RMW, F::RmwRol),
+            0x7B => (DP_X_RMW, F::RmwRor),
+            // Read-modify-write !abs.
+            0xAC => (ABS_RMW, F::RmwInc),
+            0x8C => (ABS_RMW, F::RmwDec),
+            0x0C => (ABS_RMW, F::RmwAsl),
+            0x4C => (ABS_RMW, F::RmwLsr),
+            0x2C => (ABS_RMW, F::RmwRol),
+            0x6C => (ABS_RMW, F::RmwRor),
+            // ALU dp,#imm read-modify-write (imm first, dp second).
+            0x18 => (DP_IMM_RMW, F::OrMemImm),
+            0x38 => (DP_IMM_RMW, F::AndMemImm),
+            0x58 => (DP_IMM_RMW, F::EorMemImm),
+            0x98 => (DP_IMM_RMW, F::AdcMemImm),
+            0xB8 => (DP_IMM_RMW, F::SbcMemImm),
             0x3E => (DP_READ, F::CmpX),
             0x7E => (DP_READ, F::CmpY),
             // Direct-page indexed reads.
@@ -953,6 +1009,57 @@ impl Spc700 {
                     op.done_early = true;
                 }
             }
+            MicroOp::WriteRmw => {
+                let result = match finish {
+                    Finish::RmwInc => {
+                        let r = op.value.wrapping_add(1);
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::RmwDec => {
+                        let r = op.value.wrapping_sub(1);
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::RmwAsl => self.asl(op.value),
+                    Finish::RmwLsr => self.lsr(op.value),
+                    Finish::RmwRol => self.rol(op.value),
+                    Finish::RmwRor => self.ror(op.value),
+                    Finish::OrMemImm => {
+                        let r = op.value | op.operand;
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::AndMemImm => {
+                        let r = op.value & op.operand;
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::EorMemImm => {
+                        let r = op.value ^ op.operand;
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::AdcMemImm => {
+                        let saved = self.a;
+                        self.a = op.value;
+                        self.add_with_carry_to_a(op.operand);
+                        let r = self.a;
+                        self.a = saved;
+                        r
+                    }
+                    Finish::SbcMemImm => {
+                        let saved = self.a;
+                        self.a = op.value;
+                        self.subtract_with_borrow_from_a(op.operand);
+                        let r = self.a;
+                        self.a = saved;
+                        r
+                    }
+                    _ => unreachable!("WriteRmw without an RMW finish"),
+                };
+                bus.write(op.addr, result);
+            }
             MicroOp::ReadAbs => {
                 op.addr = u16::from(op.operand) | (u16::from(op.operand2) << 8);
                 op.value = bus.read(op.addr);
@@ -995,7 +1102,22 @@ impl Spc700 {
     /// Apply the result action of a completed cycle script.
     fn apply_finish(&mut self, finish: Finish, op: &InProgressOp) {
         match finish {
-            Finish::None | Finish::StoreA | Finish::StoreX | Finish::StoreY | Finish::StoreImm => {}
+            Finish::None
+            | Finish::StoreA
+            | Finish::StoreX
+            | Finish::StoreY
+            | Finish::StoreImm
+            | Finish::RmwInc
+            | Finish::RmwDec
+            | Finish::RmwAsl
+            | Finish::RmwLsr
+            | Finish::RmwRol
+            | Finish::RmwRor
+            | Finish::OrMemImm
+            | Finish::AndMemImm
+            | Finish::EorMemImm
+            | Finish::AdcMemImm
+            | Finish::SbcMemImm => {}
             Finish::MovA => {
                 self.a = op.value;
                 self.update_nz8(self.a);
@@ -6801,13 +6923,42 @@ mod tests {
             assert_cycle_script_matches_atomic(regs, &[op, 0x02], pokes);
         }
 
+        // Read-modify-write and dp,#imm families (#2938 batch 4).
+        for insn in [
+            &[0xABu8, 0x30][..],
+            &[0x8B, 0x30],
+            &[0x0B, 0x30],
+            &[0x4B, 0x30],
+            &[0x2B, 0x30],
+            &[0x6B, 0x30],
+            &[0xBB, 0x2E],
+            &[0x9B, 0x2E],
+            &[0x1B, 0x2E],
+            &[0x5B, 0x2E],
+            &[0x3B, 0x2E],
+            &[0x7B, 0x2E],
+            &[0xAC, 0x30, 0x00],
+            &[0x8C, 0x30, 0x00],
+            &[0x0C, 0x30, 0x00],
+            &[0x4C, 0x30, 0x00],
+            &[0x2C, 0x30, 0x00],
+            &[0x6C, 0x30, 0x00],
+            &[0x18, 0x5A, 0x30],
+            &[0x38, 0x5A, 0x30],
+            &[0x58, 0x5A, 0x30],
+            &[0x98, 0x5A, 0x30],
+            &[0xB8, 0x5A, 0x30],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
         // Coverage pin for #2938: bump as families are scripted; the goal
         // is 256, at which point the atomic path is deleted.
         let scripted = (0u16..=0xFF)
             .filter(|&op| Spc700::opcode_is_cycle_scripted(op as u8))
             .count();
         assert_eq!(
-            scripted, 76,
+            scripted, 99,
             "cycle-script coverage changed; update the pin"
         );
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
