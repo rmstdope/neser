@@ -479,6 +479,9 @@ impl Emulator for Snes {
 
     fn reset(&mut self, _soft_reset: bool) {
         if let Some(cpu) = self.cpu.as_mut() {
+            // /RES resets the S-SMP alongside the 65816 (ports, timers, SPC
+            // clock anchor, reset vector fetch); ARAM survives.
+            cpu.bus_mut().reset_apu();
             cpu.do_reset();
         }
         self.ready_to_render = false;

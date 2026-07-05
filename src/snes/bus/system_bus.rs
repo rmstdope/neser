@@ -723,6 +723,12 @@ impl SnesSystemBus {
         }
     }
 
+    /// Console reset: forwards the /RES line to the S-SMP (see
+    /// `SnesApu::reset`); ARAM survives, ports/timers/SPC clock restart.
+    pub(crate) fn reset_apu(&mut self) {
+        self.apu.borrow_mut().reset();
+    }
+
     /// Advances the APU, PPU, and input latch by exactly one master clock.
     ///
     /// DRAM refresh (see [`Ppu::dram_refresh_due`]) is a CPU/bus-wide stall, not a PPU-only

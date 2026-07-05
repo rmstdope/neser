@@ -33,6 +33,17 @@ fn default_test_reg() -> u8 {
     0x0A
 }
 
+/// Temporary #2914 diagnostic (remove before merge): parse
+/// `NESER_SPC_HOST_LOG_WINDOW="<start>-<end>"` once.
+fn host_log_window() -> Option<(u64, u64)> {
+    static WINDOW: std::sync::OnceLock<Option<(u64, u64)>> = std::sync::OnceLock::new();
+    *WINDOW.get_or_init(|| {
+        let raw = std::env::var("NESER_SPC_HOST_LOG_WINDOW").ok()?;
+        let (a, b) = raw.split_once('-')?;
+        Some((a.parse().ok()?, b.parse().ok()?))
+    })
+}
+
 /// fullsnes TEST $F0:
 ///   bit 0 = Timer-Enable  (0=Normal/timers work, 1=Timers don't work)
 ///   bit 3 = Timer-Disable (0=Timers don't work,  1=Normal/timers work)
@@ -182,6 +193,16 @@ impl SnesApu {
 
     pub fn read_main_port(&self, port: usize) -> u8 {
         let value = self.spc_to_main_ports[port];
+        // Temporary #2914 diagnostic: uncompressed host-read log inside an
+        // mclk window given as NESER_SPC_HOST_LOG_WINDOW="<start>-<end>".
+        if let Some((start, end)) = host_log_window()
+            && (start..=end).contains(&self.master_ticks)
+        {
+            eprintln!(
+                "neser hostpoll port={port} val=${value:02X} mclk={}",
+                self.master_ticks
+            );
+        }
         if dsp::spc_dsp6_trace_enabled() {
             // Change-compressed: only log when the observed value changes,
             // otherwise host poll loops flood the trace.
@@ -514,6 +535,26 @@ impl SnesApu {
             .collect();
         self.spc700.restore_state(&state.spc700);
         Ok(())
+    }
+
+    /// Console reset: the /RES line resets the S-SMP alongside the 65816
+    /// (Mesen `Spc::Reset`). Ports clear in both directions (including the
+    /// CPU write latch), timers restart, the DSP restarts its pipeline with
+    /// FLG acting as $E0 (registers otherwise preserved), the SPC clock
+    /// re-anchors to the reset instant, and the SPC700 re-runs its reset
+    /// vector fetch. ARAM contents survive, as on hardware.
+    pub fn reset(&mut self) {
+        self.main_to_spc_ports = [0; 4];
+        self.main_to_spc_latch = [0; 4];
+        self.pending_main_port_update = false;
+        self.spc_to_main_ports = [0; 4];
+        self.control = 0xB0;
+        self.timers = SpcTimers::default();
+        self.timers
+            .restore_global_enabled(test_reg_allows_timers(self.test));
+        self.dsp.reset();
+        self.spc_cycle_budget = 0;
+        self.reset_spc700();
     }
 
     fn reset_spc700(&mut self) {
@@ -1802,6 +1843,40 @@ mod tests {
             0x42,
             "the in-flight port read must observe the mid-instruction host write"
         );
+    }
+
+    // On hardware the console /RES line resets the S-SMP too: ports are
+    // cleared in both directions, timers reset, the SPC re-runs its reset
+    // vector fetch, and the SPC clock re-anchors to the reset instant
+    // (Mesen `Spc::Reset`: OutputReg/CpuRegs/NewCpuRegs cleared, timer
+    // Reset, Cycle=0, PC=ReadWord(ResetVector), Dsp::Reset).
+    #[test]
+    fn console_reset_clears_ports_and_reanchors_spc_clock() {
+        let mut apu = SnesApu::new(None);
+        for _ in 0..1000 {
+            apu.tick();
+        }
+        apu.write_main_port(0, 0xCC);
+        apu.write_spc_port(1, 0xAB);
+
+        apu.reset();
+
+        assert_eq!(apu.read_spc_port(0), 0, "CPU->SPC ports clear on reset");
+        assert_eq!(apu.read_main_port(1), 0, "SPC->CPU ports clear on reset");
+        assert_eq!(
+            apu.spc_cycle_budget,
+            -2 * super::SPC_PER_MASTER_DEN,
+            "SPC clock re-anchors to the reset instant plus the vector fetch"
+        );
+        assert_eq!(
+            apu.dsp.phase(),
+            2,
+            "DSP restarts at the power-on phase (reset vector fetch included)"
+        );
+        // A write of the same value as before the reset must be latched
+        // fresh (the latch was cleared alongside the visible ports).
+        apu.write_main_port(0, 0xCC);
+        assert_eq!(apu.read_spc_port(0), 0xCC);
     }
 
     // #2914: on hardware the SPC700 reset sequence fetches the reset vector

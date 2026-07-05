@@ -170,6 +170,21 @@ impl Sdsp {
         }
     }
 
+    /// Console-reset behavior (Mesen `Dsp::Reset`): FLG acts as if written
+    /// with $E0, the pipeline restarts at phase 0 with power-on counters and
+    /// noise LFSR, and echo positions restart. All other DSP registers keep
+    /// their values across a reset.
+    pub fn reset(&mut self) {
+        self.regs[usize::from(FLG_REG)] = 0xE0;
+        self.flg = 0xE0;
+        self.phase = 0;
+        self.envelope_counter = 0;
+        self.noise_lfsr = default_noise_lfsr();
+        self.noise_counter = 0;
+        self.kon_poll_slot = default_kon_poll_slot();
+        self.echo_state = EchoState::new();
+    }
+
     pub fn normalize_after_restore(&mut self) -> Result<(), String> {
         self.phase &= 0x1F;
         if self.regs.is_empty() {
