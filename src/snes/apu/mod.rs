@@ -291,6 +291,7 @@ impl SnesApu {
 
             let consumed_cycles = {
                 let mut bus_view = SpcBusView {
+                    consumed_cycles: 0,
                     aram: &mut self.aram,
                     ipl: &self.ipl,
                     main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -306,7 +307,9 @@ impl SnesApu {
                 };
                 if use_cycle_stepper {
                     self.spc700.step_one_cycle(&mut bus_view);
-                    1i64
+                    // One micro-op = one bus access, stretched by the TEST
+                    // wait states (see SpcBusView::consumed_cycles).
+                    i64::from(bus_view.consumed_cycles.max(1))
                 } else {
                     // Temporary #2914 diagnostic (remove before merge):
                     // flag atomic steps so port-window accesses inside them
@@ -576,6 +579,7 @@ impl SnesApu {
     fn reset_spc700(&mut self) {
         self.spc_frozen = false;
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -696,6 +700,7 @@ impl SnesApu {
     #[cfg(test)]
     pub(crate) fn read_spc_memory_for_test(&mut self, addr: u16) -> u8 {
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -715,6 +720,7 @@ impl SnesApu {
     #[cfg(test)]
     pub(crate) fn write_spc_memory_for_test(&mut self, addr: u16, value: u8) {
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -734,6 +740,7 @@ impl SnesApu {
     #[cfg(test)]
     pub(crate) fn advance_spc_bus_cycles_for_test(&mut self, cycles: usize) {
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -755,6 +762,7 @@ impl SnesApu {
     #[cfg(test)]
     pub(crate) fn write_spc_control_for_test(&mut self, value: u8) {
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -792,6 +800,11 @@ static BUS_OP_LOG_REMAINING: std::sync::atomic::AtomicI32 = std::sync::atomic::A
 static ATOMIC_STEP_PC: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0xFFFF);
 
 struct SpcBusView<'a> {
+    /// SMP core cycles consumed by bus accesses during the current
+    /// `step_one_cycle` call (TEST wait states stretch each access to
+    /// 1/2/5/10 cycles). The tick loop charges the budget with this so the
+    /// per-cycle stepper honors wait states exactly like the atomic path.
+    consumed_cycles: u8,
     aram: &'a mut [u8; ARAM_SIZE],
     ipl: &'a [u8; 64],
     main_to_spc_ports: &'a mut [u8; 4],
@@ -955,6 +968,9 @@ impl SpcBusView<'_> {
 
     fn tick_access_cycles_for_addr(&mut self, addr: Option<u16>) {
         self.log_bus_op_if_armed(addr);
+        self.consumed_cycles = self
+            .consumed_cycles
+            .saturating_add(self.wait_cycles_for_addr(addr));
         self.tick_apu_cycles(self.timer_wait_cycles_for_addr(addr));
     }
 }
@@ -1929,6 +1945,41 @@ mod tests {
             apu.spc_cycle_budget,
             -2 * super::SPC_PER_MASTER_DEN,
             "reset vector fetch must delay the first instruction by 2 SPC cycles"
+        );
+    }
+
+    // #2938: the per-cycle stepper must charge TEST-register wait states
+    // like the atomic path does (SMP core cycles stretch to 2/5/10 under
+    // TEST bits). blargg test_speed measures exactly this through the
+    // IPL-hack trampoline once its micro-ops are cycle-scripted.
+    #[test]
+    fn cycle_stepper_charges_test_register_wait_states() {
+        let mut state = SnesApuState {
+            aram: vec![0u8; super::ARAM_SIZE],
+            control: 0x00,
+            // External RAM access time = 5 SMP cycles per access.
+            test: 0x2A,
+            ..SnesApuState::default()
+        };
+        // $0200: E4 F4  MOV A,$F4 (cycle-scripted port read: 3 accesses).
+        state.aram[0x0200..0x0202].copy_from_slice(&[0xE4, 0xF4]);
+        state.spc700.pc = 0x0200;
+        let mut apu = SnesApu::new(None);
+        apu.restore_state(&state).expect("restore");
+
+        let mut ticks = 0u32;
+        while apu.spc700.pc() != 0x0202 || apu.spc700.has_in_progress_op() {
+            apu.tick();
+            ticks += 1;
+            assert!(ticks < 10_000, "instruction never completed");
+        }
+        // Fetch+operand are external (5 cycles each); the $F4 read is an
+        // I/O access using the internal speed (1 cycle at TEST=$2A upper
+        // bits 0). Total 11 SMP cycles ~= 230 master ticks; the unfixed
+        // stepper charges 3 cycles (~63 ticks).
+        assert!(
+            (170..300).contains(&ticks),
+            "scripted MOV A,dp under TEST=$2A must consume ~11 SPC cycles of budget, took {ticks} ticks"
         );
     }
 

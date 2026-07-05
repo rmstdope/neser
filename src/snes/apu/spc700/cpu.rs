@@ -104,6 +104,9 @@ enum MicroOp {
     /// Read the high byte at direct page | (`operand` + 1) into `operand2`
     /// (the second read of `MOVW YA,dp`).
     ReadDpHigh,
+    /// Dummy-read the opcode byte at PC without advancing it (the internal
+    /// cycle of implied/register instructions).
+    DummyReadPc,
     /// Compute `addr` = `operand2`:`operand` and read `value`.
     ReadAbs,
     /// Compute `addr` = `operand2`:`operand` and dummy-read it.
@@ -161,6 +164,40 @@ enum Finish {
     AdcA,
     /// `A = A - value - !C` with full flag update.
     SbcA,
+    /// `A += 1`, update N/Z.
+    IncA,
+    /// `A -= 1`, update N/Z.
+    DecA,
+    /// `X += 1`, update N/Z.
+    IncX,
+    /// `X -= 1`, update N/Z.
+    DecX,
+    /// `Y += 1`, update N/Z.
+    IncY,
+    /// `Y -= 1`, update N/Z.
+    DecY,
+    /// `A = X`, update N/Z.
+    AFromX,
+    /// `X = A`, update N/Z.
+    XFromA,
+    /// `A = Y`, update N/Z.
+    AFromY,
+    /// `Y = A`, update N/Z.
+    YFromA,
+    /// `X = SP`, update N/Z.
+    XFromSp,
+    /// `SP = X`, flags unaffected.
+    SpFromX,
+    /// Set or clear the carry flag.
+    SetCarry(bool),
+    /// Complement the carry flag.
+    NotCarry,
+    /// Clear overflow and half-carry.
+    ClrV,
+    /// Set or clear the direct-page select flag.
+    SetDirectPage(bool),
+    /// Set or clear the interrupt-enable flag.
+    SetInterrupt(bool),
 }
 
 /// SPC700 CPU core.
@@ -659,6 +696,8 @@ impl Spc700 {
         const DP_IMM_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2ForStore, WriteReg];
         const DP_IMM_CMP: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2, Idle];
         const DP_WORD_READ: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), Idle, ReadDpHigh];
+        const IMPLIED: &[MicroOp] = &[DummyReadPc];
+        const IMPLIED3: &[MicroOp] = &[DummyReadPc, Idle];
         const DP_X_WRITE: &[MicroOp] = &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg];
         const ABS_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbsForStore, WriteReg];
 
@@ -697,6 +736,29 @@ impl Spc700 {
             0x88 => (&[ReadImm], F::AdcA),
             0xA8 => (&[ReadImm], F::SbcA),
             0x68 => (&[ReadImm], F::CmpA),
+            // Implied / register ops (dummy read of PC as the internal cycle).
+            0x00 => (IMPLIED, F::None),
+            0xBC => (IMPLIED, F::IncA),
+            0x9C => (IMPLIED, F::DecA),
+            0x3D => (IMPLIED, F::IncX),
+            0x1D => (IMPLIED, F::DecX),
+            0xFC => (IMPLIED, F::IncY),
+            0xDC => (IMPLIED, F::DecY),
+            0x7D => (IMPLIED, F::AFromX),
+            0x5D => (IMPLIED, F::XFromA),
+            0xDD => (IMPLIED, F::AFromY),
+            0xFD => (IMPLIED, F::YFromA),
+            0x9D => (IMPLIED, F::XFromSp),
+            0xBD => (IMPLIED, F::SpFromX),
+            0x60 => (IMPLIED, F::SetCarry(false)),
+            0x80 => (IMPLIED, F::SetCarry(true)),
+            0x20 => (IMPLIED, F::SetDirectPage(false)),
+            0x40 => (IMPLIED, F::SetDirectPage(true)),
+            0xE0 => (IMPLIED, F::ClrV),
+            // EI/DI/NOTC take one extra internal cycle.
+            0xA0 => (IMPLIED3, F::SetInterrupt(true)),
+            0xC0 => (IMPLIED3, F::SetInterrupt(false)),
+            0xED => (IMPLIED3, F::NotCarry),
             0x3E => (DP_READ, F::CmpX),
             0x7E => (DP_READ, F::CmpY),
             // Direct-page indexed reads.
@@ -841,6 +903,9 @@ impl Spc700 {
                 let addr = self.direct_page_base() | u16::from(op.operand.wrapping_add(1));
                 op.operand2 = bus.read(addr);
             }
+            MicroOp::DummyReadPc => {
+                bus.read(self.pc);
+            }
             MicroOp::ReadAbs => {
                 op.addr = u16::from(op.operand) | (u16::from(op.operand2) << 8);
                 op.value = bus.read(op.addr);
@@ -908,6 +973,69 @@ impl Spc700 {
             }
             Finish::SbcA => {
                 self.subtract_with_borrow_from_a(op.value);
+            }
+            Finish::IncA => {
+                self.a = self.a.wrapping_add(1);
+                self.update_nz8(self.a);
+            }
+            Finish::DecA => {
+                self.a = self.a.wrapping_sub(1);
+                self.update_nz8(self.a);
+            }
+            Finish::IncX => {
+                self.x = self.x.wrapping_add(1);
+                self.update_nz8(self.x);
+            }
+            Finish::DecX => {
+                self.x = self.x.wrapping_sub(1);
+                self.update_nz8(self.x);
+            }
+            Finish::IncY => {
+                self.y = self.y.wrapping_add(1);
+                self.update_nz8(self.y);
+            }
+            Finish::DecY => {
+                self.y = self.y.wrapping_sub(1);
+                self.update_nz8(self.y);
+            }
+            Finish::AFromX => {
+                self.a = self.x;
+                self.update_nz8(self.a);
+            }
+            Finish::XFromA => {
+                self.x = self.a;
+                self.update_nz8(self.x);
+            }
+            Finish::AFromY => {
+                self.a = self.y;
+                self.update_nz8(self.a);
+            }
+            Finish::YFromA => {
+                self.y = self.a;
+                self.update_nz8(self.y);
+            }
+            Finish::XFromSp => {
+                self.x = self.sp;
+                self.update_nz8(self.x);
+            }
+            Finish::SpFromX => {
+                self.sp = self.x;
+            }
+            Finish::SetCarry(v) => {
+                self.set_flag(FLAG_CARRY, v);
+            }
+            Finish::NotCarry => {
+                self.set_flag(FLAG_CARRY, !self.flag(FLAG_CARRY));
+            }
+            Finish::ClrV => {
+                self.set_flag(FLAG_OVERFLOW, false);
+                self.set_flag(FLAG_HALF_CARRY, false);
+            }
+            Finish::SetDirectPage(v) => {
+                self.set_flag(FLAG_DIRECT_PAGE, v);
+            }
+            Finish::SetInterrupt(v) => {
+                self.set_flag(FLAG_INTERRUPT, v);
             }
             Finish::MovwYa => {
                 self.a = op.value;
@@ -6611,13 +6739,21 @@ mod tests {
             assert_cycle_script_matches_atomic(regs, insn, pokes);
         }
 
+        // Implied / register / flag ops (#2938 batch 2).
+        for op in [
+            0x00u8, 0xBC, 0x9C, 0x3D, 0x1D, 0xFC, 0xDC, 0x7D, 0x5D, 0xDD, 0xFD, 0x9D, 0xBD, 0x60,
+            0x80, 0x20, 0x40, 0xE0, 0xA0, 0xC0, 0xED,
+        ] {
+            assert_cycle_script_matches_atomic(regs, &[op], pokes);
+        }
+
         // Coverage pin for #2938: bump as families are scripted; the goal
         // is 256, at which point the atomic path is deleted.
         let scripted = (0u16..=0xFF)
             .filter(|&op| Spc700::opcode_is_cycle_scripted(op as u8))
             .count();
         assert_eq!(
-            scripted, 47,
+            scripted, 68,
             "cycle-script coverage changed; update the pin"
         );
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs

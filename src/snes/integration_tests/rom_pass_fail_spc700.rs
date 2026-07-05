@@ -19,10 +19,10 @@ mod tests {
         ("spc_smp.sfc", 2200, 0xEFD1_3576),
         ("spc_mem_access_times.sfc", 600, 0x3AC3_E30F),
         ("spc_timer.sfc", 600, 0x2497_38B2),
-        // Golden re-approved for #2914: at the hardware 32040 Hz SPC rate the
-        // fast rows now match Mesen exactly; the slow (TEST wait-state) rows
-        // keep the known pre-existing deviation (168/46 vs Mesen 126/26).
-        ("test_speed.smc", 600, 0xEBBB_393D),
+        // Golden re-approved for #2938: with trampoline micro-ops cycle-
+        // scripted and the stepper charging TEST wait states, every row now
+        // matches Mesen exactly (fast 252/251, waited 126 and 26).
+        ("test_speed.smc", 600, 0xFAE4_99DA),
         // Golden re-approved for #2914: cycle-stepped port polling + 32040 Hz
         // SPC rate; measured values match Mesen's within ±1 (still "Passed").
         ("test_timer_speed_2.smc", 600, 0x301C_FFF8),
