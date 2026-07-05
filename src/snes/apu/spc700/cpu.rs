@@ -143,6 +143,32 @@ enum MicroOp {
     /// Fetch the branch displacement into `operand`, then end the
     /// instruction unless bit `.0` of `value` equals `.1` (BBS/BBC).
     FetchOperandBranchBit(u8, bool),
+    /// Push the finish's source register onto the stack (SP decrements).
+    PushReg,
+    /// Pop a byte from the stack into `value` (SP increments first).
+    PopByte,
+    /// Write Y to direct page | (`operand` + 1) (the high write of
+    /// `MOVW dp,YA`).
+    WriteDpHighY,
+    /// INCW/DECW low half: write `value` +/- 1 back to `addr` and keep the
+    /// low result in `value` (`.0` = increment).
+    WordRmwLoWrite(bool),
+    /// INCW/DECW high half: write `operand2` +/- carry/borrow from the low
+    /// result back to `addr`+1 and set N/Z from the 16-bit result
+    /// (`.0` = increment).
+    WordRmwHiWrite(bool),
+    /// Fetch the branch displacement, then end the instruction if A equals
+    /// `value` (CBNE).
+    FetchOperandBranchANe,
+    /// Write `value` - 1 back to `addr` without touching flags, keeping the
+    /// result in `value` (DBNZ dp).
+    WriteDecNoFlags,
+    /// Fetch the branch displacement, then end the instruction if `value`
+    /// is zero (DBNZ dp tail).
+    FetchOperandBranchValueNz,
+    /// Decrement Y, fetch the branch displacement, then end the instruction
+    /// if Y is zero (DBNZ Y tail).
+    FetchOperandBranchDecY,
     /// Compute `addr` = `operand2`:`operand` and read `value`.
     ReadAbs,
     /// Compute `addr` = `operand2`:`operand` and dummy-read it.
@@ -264,6 +290,22 @@ enum Finish {
     RmwSet1(u8),
     /// RMW: clear bit `.0` of `mem` (no flags).
     RmwClr1(u8),
+    /// Source register for [`MicroOp::PushReg`] is PSW.
+    StorePsw,
+    /// `A = value` from the stack (no flags).
+    PopA,
+    /// `X = value` from the stack (no flags).
+    PopX,
+    /// `Y = value` from the stack (no flags).
+    PopY,
+    /// `PSW = value` from the stack.
+    PopPsw,
+    /// `YA += word` (`value` lo, `operand2` hi) with full flag update.
+    AddwYa,
+    /// `YA -= word` with full flag update.
+    SubwYa,
+    /// Compare YA with the word, update N/Z/C (16-bit).
+    CmpwYa,
 }
 
 /// SPC700 CPU core.
@@ -788,6 +830,24 @@ impl Spc700 {
         ];
         const XY_RMW: &[MicroOp] = &[DummyReadPc, ReadAtYToOperand, ReadAtX, WriteRmw];
         const XY_CMP: &[MicroOp] = &[DummyReadPc, ReadAtYToOperand, ReadAtX, Idle];
+        const PUSH: &[MicroOp] = &[DummyReadPc, PushReg, Idle];
+        const POP: &[MicroOp] = &[DummyReadPc, Idle, PopByte];
+        const DP_WORD_ARITH: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), Idle, ReadDpHigh];
+        const DP_WORD_CMP: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), ReadDpHigh];
+        const DP_WORD_INCDEC_INC: &[MicroOp] = &[
+            FetchOperand,
+            ReadDp(Index::None),
+            WordRmwLoWrite(true),
+            ReadDpHigh,
+            WordRmwHiWrite(true),
+        ];
+        const DP_WORD_INCDEC_DEC: &[MicroOp] = &[
+            FetchOperand,
+            ReadDp(Index::None),
+            WordRmwLoWrite(false),
+            ReadDpHigh,
+            WordRmwHiWrite(false),
+        ];
         const DP_X_WRITE: &[MicroOp] = &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg];
         const ABS_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbsForStore, WriteReg];
 
@@ -1178,6 +1238,80 @@ impl Spc700 {
             0x99 => (XY_RMW, F::AdcMemImm),
             0xB9 => (XY_RMW, F::SbcMemImm),
             0x79 => (XY_CMP, F::CmpMemImm),
+            // Stack.
+            0x2D => (PUSH, F::StoreA),
+            0x4D => (PUSH, F::StoreX),
+            0x6D => (PUSH, F::StoreY),
+            0x0D => (PUSH, F::StorePsw),
+            0xAE => (POP, F::PopA),
+            0xCE => (POP, F::PopX),
+            0xEE => (POP, F::PopY),
+            0x8E => (POP, F::PopPsw),
+            // 16-bit word ops on dp.
+            0xDA => (
+                &[
+                    FetchOperand,
+                    ReadDpForStore(Index::None),
+                    WriteReg,
+                    WriteDpHighY,
+                ],
+                F::StoreA,
+            ),
+            0x3A => (DP_WORD_INCDEC_INC, F::None),
+            0x1A => (DP_WORD_INCDEC_DEC, F::None),
+            0x7A => (DP_WORD_ARITH, F::AddwYa),
+            0x9A => (DP_WORD_ARITH, F::SubwYa),
+            0x5A => (DP_WORD_CMP, F::CmpwYa),
+            // ALU A,[dp+X] / A,[dp]+Y (pointer shapes shared with MOV/CMP).
+            0x07 => (IND_X_READ, F::OrA),
+            0x27 => (IND_X_READ, F::AndA),
+            0x47 => (IND_X_READ, F::EorA),
+            0x87 => (IND_X_READ, F::AdcA),
+            0xA7 => (IND_X_READ, F::SbcA),
+            0x17 => (IND_Y_READ, F::OrA),
+            0x37 => (IND_Y_READ, F::AndA),
+            0x57 => (IND_Y_READ, F::EorA),
+            0x97 => (IND_Y_READ, F::AdcA),
+            0xB7 => (IND_Y_READ, F::SbcA),
+            // CBNE / DBNZ.
+            0x2E => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchANe,
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xDE => (
+                &[
+                    FetchOperand,
+                    Idle,
+                    ReadDp(Index::X),
+                    Idle,
+                    FetchOperandBranchANe,
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x6E => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    WriteDecNoFlags,
+                    FetchOperandBranchValueNz,
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xFE => (
+                &[DummyReadPc, Idle, FetchOperandBranchDecY, BranchIdle, Idle],
+                F::None,
+            ),
             // ALU dp,#imm read-modify-write (imm first, dp second).
             0x18 => (DP_IMM_RMW, F::OrMemImm),
             0x38 => (DP_IMM_RMW, F::AndMemImm),
@@ -1369,6 +1503,75 @@ impl Spc700 {
                     op.done_early = true;
                 }
             }
+            MicroOp::PushReg => {
+                let value = match finish {
+                    Finish::StoreA => self.a,
+                    Finish::StoreX => self.x,
+                    Finish::StoreY => self.y,
+                    Finish::StorePsw => self.psw,
+                    _ => unreachable!("PushReg without a store finish"),
+                };
+                let addr = 0x0100u16 | u16::from(self.sp);
+                bus.write(addr, value);
+                self.sp = self.sp.wrapping_sub(1);
+            }
+            MicroOp::PopByte => {
+                self.sp = self.sp.wrapping_add(1);
+                let addr = 0x0100u16 | u16::from(self.sp);
+                op.value = bus.read(addr);
+            }
+            MicroOp::WriteDpHighY => {
+                let addr = self.direct_page_base() | u16::from(op.operand.wrapping_add(1));
+                bus.write(addr, self.y);
+            }
+            MicroOp::WordRmwLoWrite(inc) => {
+                let result = if inc {
+                    op.value.wrapping_add(1)
+                } else {
+                    op.value.wrapping_sub(1)
+                };
+                bus.write(op.addr, result);
+                op.value = result;
+            }
+            MicroOp::WordRmwHiWrite(inc) => {
+                // High byte was loaded into `operand2` by ReadDpHigh; the
+                // carry/borrow propagates when the low byte wrapped.
+                let hi_addr = self.direct_page_base() | u16::from(op.operand.wrapping_add(1));
+                let result = if inc {
+                    op.operand2.wrapping_add(u8::from(op.value == 0x00))
+                } else {
+                    op.operand2.wrapping_sub(u8::from(op.value == 0xFF))
+                };
+                bus.write(hi_addr, result);
+                self.update_nz16((u16::from(result) << 8) | u16::from(op.value));
+            }
+            MicroOp::FetchOperandBranchANe => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                if self.a == op.value {
+                    op.done_early = true;
+                }
+            }
+            MicroOp::WriteDecNoFlags => {
+                let result = op.value.wrapping_sub(1);
+                bus.write(op.addr, result);
+                op.value = result;
+            }
+            MicroOp::FetchOperandBranchValueNz => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                if op.value == 0 {
+                    op.done_early = true;
+                }
+            }
+            MicroOp::FetchOperandBranchDecY => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                self.y = self.y.wrapping_sub(1);
+                if self.y == 0 {
+                    op.done_early = true;
+                }
+            }
             MicroOp::ReadAbsIdx(index) => {
                 let base = u16::from(op.operand) | (u16::from(op.operand2) << 8);
                 op.addr = base.wrapping_add(u16::from(index_of(index, self.x, self.y)));
@@ -1490,7 +1693,28 @@ impl Spc700 {
             | Finish::EorMemImm
             | Finish::AdcMemImm
             | Finish::SbcMemImm => {}
-            Finish::RmwSet1(_) | Finish::RmwClr1(_) => {}
+            Finish::RmwSet1(_) | Finish::RmwClr1(_) | Finish::StorePsw => {}
+            Finish::PopA => {
+                self.a = op.value;
+            }
+            Finish::PopX => {
+                self.x = op.value;
+            }
+            Finish::PopY => {
+                self.y = op.value;
+            }
+            Finish::PopPsw => {
+                self.psw = op.value;
+            }
+            Finish::AddwYa => {
+                self.add_to_ya(u16::from(op.value) | (u16::from(op.operand2) << 8));
+            }
+            Finish::SubwYa => {
+                self.subtract_from_ya(u16::from(op.value) | (u16::from(op.operand2) << 8));
+            }
+            Finish::CmpwYa => {
+                self.compare_ya(u16::from(op.value) | (u16::from(op.operand2) << 8));
+            }
             Finish::MovA => {
                 self.a = op.value;
                 self.update_nz8(self.a);
@@ -7422,13 +7646,47 @@ mod tests {
             assert_cycle_script_matches_atomic(regs, insn, pokes);
         }
 
+        // Stack, word ops, indirect ALU, CBNE/DBNZ (#2938 batch 7).
+        for insn in [
+            &[0x2Du8][..],
+            &[0x4D],
+            &[0x6D],
+            &[0x0D],
+            &[0xAE],
+            &[0xCE],
+            &[0xEE],
+            &[0x8E],
+            &[0xDA, 0x30],
+            &[0x3A, 0x30],
+            &[0x1A, 0x30],
+            &[0x7A, 0x30],
+            &[0x9A, 0x30],
+            &[0x5A, 0x30],
+            &[0x07, 0x30],
+            &[0x27, 0x30],
+            &[0x47, 0x30],
+            &[0x87, 0x30],
+            &[0xA7, 0x30],
+            &[0x17, 0x30],
+            &[0x37, 0x30],
+            &[0x57, 0x30],
+            &[0x97, 0x30],
+            &[0xB7, 0x30],
+            &[0x2E, 0x30, 0x02],
+            &[0xDE, 0x2E, 0x02],
+            &[0x6E, 0x30, 0x02],
+            &[0xFE, 0x02],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
         // Coverage pin for #2938: bump as families are scripted; the goal
         // is 256, at which point the atomic path is deleted.
         let scripted = (0u16..=0xFF)
             .filter(|&op| Spc700::opcode_is_cycle_scripted(op as u8))
             .count();
         assert_eq!(
-            scripted, 176,
+            scripted, 204,
             "cycle-script coverage changed; update the pin"
         );
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
