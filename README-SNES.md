@@ -100,10 +100,10 @@ SNES integration tests live under `src/snes/integration_tests/`.
   detects pass/fail through a reserved WRAM marker at `$7E1FF0`, records
   diagnostics, and computes a screen CRC.
 - `rom_pass_fail` suite for #2876 vendors all 18 blargg SNES SPC700/APU test ROMs as
-  `snes-rom-pass-fail-blargg-spc-apu`. Fifteen are verified by the `rom_runner`
+  `snes-rom-pass-fail-blargg-spc-apu`. Seventeen are verified by the `rom_runner`
   screen-CRC oracle (run to a fixed frame, compare the screen CRC32 against a
-  human-approved PASS capture). The remaining 3 are committed with `#[ignore]`'d
-  tests pending emulator accuracy improvements.
+  human-approved PASS capture). The remaining one is committed with an `#[ignore]`'d
+  test pending emulator accuracy improvements.
 - Asset provenance is tracked in
   `roms/snes/automated_tests/manifest.json` and validated by
   `python -m scripts.validate_snes_test_assets`.
@@ -128,7 +128,7 @@ CRC32 against a human-approved PASS capture. To approve a new golden, run with
 committed integrity with
 `python -m scripts.compute_snes_rom_asset_integrity <dir>`.
 
-**Passing (15) — visually-approved screen-CRC goldens:**
+**Passing (17) — visually-approved screen-CRC goldens:**
 
 | ROM | Category | Golden CRC |
 | --- | --- | --- |
@@ -140,18 +140,33 @@ committed integrity with
 | `spc_smp` | SMP | `0xEFD13576` (frame 2200) |
 | `spc_mem_access_times` | SMP | `0x3AC3E30F` |
 | `spc_timer` | Timers | `0x249738B2` |
-| `test_speed` | Timers | `0x8EAD6D95` |
-| `test_timer_speed` | Timers | `0x65B11CE0` |
-| `test_timer_speed2` | Timers | `0x65B11CE0` |
-| `test_timer_speed_2` | Timers | `0xC003A7D0` |
-| `test_timer_speed3` | Timers | `0xD0FA7627` |
+| `test_speed` | Timers | `0xB02E63CE` |
+| `test_timer_speed` | Timers | `0xED59F2AF` |
+| `test_timer_speed2` | Timers | `0xED59F2AF` |
+| `test_timer_speed_2` | Timers | `0x48DAACE9` |
+| `test_timer_speed3` | Timers | `0x8B6CB1A1` |
 | `test_timer_stop` | Timers | `0x7CC2B76B` |
+| `test_timer_stop2` | Timers | `0xB2CC2986` |
 | `speed_2_freezes2` | Timers | `0x6E1BF905` |
+| `timer_at_power_reset` | Timers | `0x9A3B5FC3` (mid-test reset, see below) |
 
 `test_timer_speed3` is a measurement-oriented ROM: its golden is a visually
 approved `Done` screen rather than an internal `Passed` text screen.
 
-**Currently failing (3) — committed with `#[ignore]`'d tests:**
+`timer_at_power_reset` signals that it wants a physical reset partway through
+by jumping into zeroed-out low WRAM (`$0000`), which real test hardware
+answers with a reset-button press. `RunConfig::with_reset_on_pc_trap(0x0000)`
+models this handshake: the runner triggers a soft CPU reset every time PC
+reaches the trap address (capped at 16 auto-resets) so the ROM can continue
+into its post-reset comparison and reach its real Passed/Failed screen.
+
+`test_timer_stop2` exercises the TEST-register ($F0) global timer stop: it
+rapidly pumps the stop/start bits and expects each stop issued while the
+timer's stage-1 prescaler square wave is high to inject one target-counter
+clock (the forced-low input is a falling edge at the timer's edge detector),
+with TnOUT preserved across the stop.
+
+**Currently failing (1) — committed with an `#[ignore]`'d test:**
 
 When the emulator is improved to produce a Passed screen, run
 `NESER_CAPTURE_SCREEN=1 cargo test … -- --ignored` to capture the golden,
@@ -160,8 +175,6 @@ replace the `0x0000_0000` placeholder CRC in the test, and remove `#[ignore]`.
 | ROM | Category | Known failure |
 | --- | --- | --- |
 | `spc_dsp6` | DSP | Failed 03: DSP echo/basics |
-| `test_timer_stop2` | Timers | timer stop |
-| `timer_at_power_reset` | Timers | timer at power/reset |
 
 Run SNES tests during development with:
 

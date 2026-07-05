@@ -33,6 +33,11 @@ pub(crate) enum RunOracle {
 pub(crate) struct RunConfig {
     pub max_ticks: u64,
     pub max_frames: u32,
+    /// If set, a soft CPU reset is triggered every time the PC reaches this address. Some
+    /// blargg SPC/APU ROMs (e.g. `timer_at_power_reset.smc`) signal "please reset now" by
+    /// jumping into zeroed-out low WRAM ($0000), which the real test rig/hardware answers
+    /// with a physical reset button press; this models that handshake for automated runs.
+    pub reset_on_pc_trap: Option<u16>,
 }
 
 impl RunConfig {
@@ -40,7 +45,14 @@ impl RunConfig {
         Self {
             max_ticks,
             max_frames,
+            reset_on_pc_trap: None,
         }
+    }
+
+    /// Enables the reset-on-PC-trap handshake (see [`RunConfig::reset_on_pc_trap`]).
+    pub(crate) const fn with_reset_on_pc_trap(mut self, trap_pc: u16) -> Self {
+        self.reset_on_pc_trap = Some(trap_pc);
+        self
     }
 }
 
@@ -113,8 +125,19 @@ fn run_rom_with_oracle_and_capture(
 
     let mut ticks = 0u64;
     let mut frames = 0u32;
+    let mut resets_triggered = 0u32;
+    const MAX_AUTO_RESETS: u32 = 16;
 
     loop {
+        if let Some(trap_pc) = config.reset_on_pc_trap
+            && snes.cpu_pc_for_tests() == Some(trap_pc)
+            && resets_triggered < MAX_AUTO_RESETS
+        {
+            snes.reset(true);
+            resets_triggered += 1;
+            continue;
+        }
+
         let step_ticks = u64::from(snes.run_tick());
         ticks = ticks.saturating_add(step_ticks);
 

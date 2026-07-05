@@ -30,9 +30,14 @@ pub trait SnesBus {
         false
     }
 
-    /// Poll the current IRQ line level from the bus (e.g. PPU H/V timer IRQ).
+    /// Poll whether an IRQ is currently visible to the CPU for dispatch/WAI-wake purposes
+    /// (e.g. the PPU H/V timer IRQ).
     ///
-    /// IRQ is level-triggered. The default returns `false` for buses without an IRQ source.
+    /// IRQ is level-triggered, but implementations may model a real-hardware pipeline delay
+    /// between the underlying IRQ source's line level and when the CPU actually notices it
+    /// (see `SnesSystemBus::poll_irq`, which gates on `Ppu::poll_irq_dispatch`). Register
+    /// reads that expose the raw line (e.g. TIMEUP `$4211`) are unaffected by that delay and
+    /// must not use this method. The default returns `false` for buses without an IRQ source.
     fn poll_irq(&self) -> bool {
         false
     }

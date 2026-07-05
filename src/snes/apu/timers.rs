@@ -1,10 +1,28 @@
 //! SPC700 timer subsystem.
 //!
-//! This module models the three SPC700 timers (T0/T1/T2) visible at `$FA-$FF`.
+//! This module models the three SPC700 timers (T0/T1/T2) visible at `$FA-$FF`
+//! using the hardware's two-stage prescaler (verified against Mesen2's
+//! `SpcTimer` and blargg's `test_timer_stop2` ROM):
+//!
+//! * Stage 0 divides the SPC clock into a square wave (stage 1) that toggles
+//!   every half-period — 64 SPC cycles for T0/T1, 8 for T2.
+//! * The 8-bit target counter (stage 2) clocks on stage-1 **falling edges**,
+//!   giving the documented full periods of 128 (T0/T1) and 16 (T2) cycles.
+//! * The TEST register's global stop (`$F0` bits 0/3) forces the edge
+//!   detector's input low without clearing TnOUT. If stage 1 is high at the
+//!   moment of the stop, that forced low is itself a falling edge and injects
+//!   one stage-2 clock — the quirk blargg's `test_timer_stop2` measures by
+//!   rapidly pumping the TEST stop/start bits.
+//! * Stage 0/1 keep running while a timer is disabled (per-timer via `$F1`
+//!   or globally via TEST), so re-enabling resumes mid-phase.
 
 use serde::{Deserialize, Serialize};
 
-const TIMER_INPUT_DIVIDERS: [u16; 3] = [128, 128, 16];
+const TIMER_HALF_PERIODS: [u16; 3] = [64, 64, 8];
+
+fn default_global_enabled() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 struct Timer {
@@ -13,28 +31,55 @@ struct Timer {
     #[serde(default)]
     target: u8,
     #[serde(default)]
-    input_divider_counter: u16,
+    stage0: u16,
     #[serde(default)]
-    target_counter: u16,
+    stage1: bool,
     #[serde(default)]
-    readable_counter: u8,
+    prev_stage1: bool,
+    #[serde(default)]
+    stage2: u8,
+    #[serde(default)]
+    output: u8,
 }
 
 impl Timer {
     fn reset_target_progress(&mut self) {
-        self.target_counter = 0;
-        self.readable_counter = 0;
+        self.stage2 = 0;
+        self.output = 0;
     }
 
-    fn target_compare_value(&self) -> u16 {
-        u16::from(self.target)
+    /// Feed the current stage-1 level (masked by the TEST-register global
+    /// enable) into the edge detector; clock stage 2 on a falling edge.
+    fn clock_edge_detector(&mut self, global_enabled: bool) {
+        let current = self.stage1 && global_enabled;
+        let previous = self.prev_stage1;
+        self.prev_stage1 = current;
+        if !self.enabled || !previous || current {
+            return;
+        }
+        self.stage2 = self.stage2.wrapping_add(1);
+        if self.stage2 == self.target {
+            self.stage2 = 0;
+            self.output = self.output.wrapping_add(1);
+        }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpcTimers {
     #[serde(default)]
     timers: [Timer; 3],
+    #[serde(default = "default_global_enabled")]
+    global_enabled: bool,
+}
+
+impl Default for SpcTimers {
+    fn default() -> Self {
+        Self {
+            timers: Default::default(),
+            global_enabled: default_global_enabled(),
+        }
+    }
 }
 
 impl SpcTimers {
@@ -56,36 +101,43 @@ impl SpcTimers {
     }
 
     pub fn read_counter(&mut self, timer: usize) -> u8 {
-        let value = self.timers[timer].readable_counter & 0x0F;
-        self.timers[timer].readable_counter = 0;
+        let value = self.timers[timer].output & 0x0F;
+        self.timers[timer].output = 0;
         value
     }
 
-    pub fn clear_all_tout(&mut self) {
+    /// Apply the TEST register's global timer enable/disable. Runs the edge
+    /// detector immediately: a stop while stage 1 is high injects one
+    /// stage-2 clock (falling edge), matching real hardware.
+    pub fn set_global_enabled(&mut self, enabled: bool) {
+        self.global_enabled = enabled;
         for timer in &mut self.timers {
-            timer.readable_counter = 0;
+            timer.clock_edge_detector(enabled);
+        }
+    }
+
+    /// Set the global gate from a restored TEST value without running the
+    /// edge detector (no injected tick). The detector's latched level is
+    /// settled to its steady-state value so the next stage-1 falling edge
+    /// counts normally. Used by save-state restore, where older states
+    /// don't carry the gate and default it to enabled.
+    pub fn restore_global_enabled(&mut self, enabled: bool) {
+        self.global_enabled = enabled;
+        for timer in &mut self.timers {
+            timer.prev_stage1 = timer.stage1 && enabled;
         }
     }
 
     pub fn tick_cycle(&mut self) {
+        let global_enabled = self.global_enabled;
         for (timer_index, timer) in self.timers.iter_mut().enumerate() {
-            timer.input_divider_counter = timer.input_divider_counter.wrapping_add(1);
-            if timer.input_divider_counter < TIMER_INPUT_DIVIDERS[timer_index] {
+            timer.stage0 += 1;
+            if timer.stage0 < TIMER_HALF_PERIODS[timer_index] {
                 continue;
             }
-
-            timer.input_divider_counter = 0;
-            if !timer.enabled {
-                continue;
-            }
-
-            timer.target_counter = timer.target_counter.wrapping_add(1) & 0x00FF;
-            if timer.target_counter != timer.target_compare_value() {
-                continue;
-            }
-
-            timer.target_counter = 0;
-            timer.readable_counter = (timer.readable_counter.wrapping_add(1)) & 0x0F;
+            timer.stage0 = 0;
+            timer.stage1 = !timer.stage1;
+            timer.clock_edge_detector(global_enabled);
         }
     }
 }
@@ -279,5 +331,72 @@ mod tests {
 
         advance_cycles(&mut timers, 128);
         assert_eq!(timers.read_counter(0), 0x01);
+    }
+
+    // -----------------------------------------------------------------------
+    // TEST-register global stop/start semantics (blargg test_timer_stop2):
+    // a stop forces the stage-1 edge-detector input low without clearing
+    // TnOUT; pumping stop/start while stage 1 is high injects one stage-2
+    // clock per stop.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn global_stop_start_pump_injects_one_target_clock_per_stop() {
+        let mut timers = SpcTimers::default();
+        timers.write_target(2, 2);
+        timers.write_control(0x00, 0x04); // enable T2
+        advance_cycles(&mut timers, 8); // stage 1 toggles high
+
+        // Four stop/start pairs with stage 1 held high: each stop is a
+        // falling edge at the detector, each start re-arms it.
+        for _ in 0..4 {
+            timers.set_global_enabled(false);
+            timers.set_global_enabled(true);
+        }
+
+        assert_eq!(
+            timers.read_counter(2),
+            0x02,
+            "4 injected clocks at target=2 must produce TnOUT=2"
+        );
+    }
+
+    #[test]
+    fn global_stop_with_stage1_low_injects_nothing_and_preserves_tout() {
+        let mut timers = SpcTimers::default();
+        timers.write_target(2, 1);
+        timers.write_control(0x00, 0x04); // enable T2
+        advance_cycles(&mut timers, 48); // 3 falling edges; stage 1 ends low
+
+        timers.set_global_enabled(false);
+
+        assert_eq!(
+            timers.read_counter(2),
+            0x03,
+            "a TEST stop must not clear TnOUT"
+        );
+    }
+
+    #[test]
+    fn globally_stopped_timer_does_not_count_but_stage1_keeps_toggling() {
+        let mut timers = SpcTimers::default();
+        timers.write_target(2, 1);
+        timers.write_control(0x00, 0x04); // enable T2
+        advance_cycles(&mut timers, 4);
+
+        timers.set_global_enabled(false);
+        advance_cycles(&mut timers, 160); // many toggles, no counting
+        assert_eq!(timers.read_counter(2), 0x00);
+
+        // Stage 1 toggled 20 times while stopped (cycles 8,16,...,160) and is
+        // low again, with stage 0 at 4 of 8. After the restart it toggles
+        // high 4 cycles in and falls 8 cycles later → tick at +12 exactly.
+        timers.set_global_enabled(true);
+        advance_cycles(&mut timers, 12);
+        assert_eq!(
+            timers.read_counter(2),
+            0x01,
+            "prescaler phase must be preserved across a TEST stop"
+        );
     }
 }

@@ -27,6 +27,14 @@ fn default_test_reg() -> u8 {
     0x0A
 }
 
+/// fullsnes TEST $F0:
+///   bit 0 = Timer-Enable  (0=Normal/timers work, 1=Timers don't work)
+///   bit 3 = Timer-Disable (0=Timers don't work,  1=Normal/timers work)
+/// Both must be in the "Normal" state for timers to count.
+fn test_reg_allows_timers(test: u8) -> bool {
+    (test & 0x01 == 0) && (test & 0x08 != 0)
+}
+
 fn default_pending_samples() -> Vec<(f32, f32)> {
     Vec::new()
 }
@@ -331,6 +339,11 @@ impl SnesApu {
         self.master_ticks = state.master_ticks;
         self.spc_cycle_budget = state.spc_cycle_budget;
         self.timers = state.timers.clone();
+        // Older save-states predate the serialized timer global gate; always
+        // re-derive it from the restored TEST value (without running the
+        // edge detector, so no tick is injected by the restore itself).
+        self.timers
+            .restore_global_enabled(test_reg_allows_timers(self.test));
         self.dsp = normalized_dsp;
         self.dsp_addr = restored_dsp_addr;
         self.sample_acc = sanitize_non_negative_f32(state.sample_acc);
@@ -598,21 +611,22 @@ impl SpcBusView<'_> {
     /// executing, and the external-speed field (bits 4-5) never triggers the
     /// freeze, so ordinary slow-speed tests are unaffected.
     fn internal_speed_freeze(&self, addr: Option<u16>) -> bool {
-        let internal = match addr {
-            None => true,
-            Some(address) => self.is_internal_wait_address(address),
-        };
-        internal && (self.test_reg() >> 6) & 0x03 == 2
+        let is_internal = addr.is_none_or(|address| self.is_internal_wait_address(address));
+        is_internal && (self.test_reg() >> 6) & 0x03 == 2
     }
 
-    fn wait_cycles_for_addr(&self, addr: Option<u16>) -> u8 {
-        let wait_bits = match addr {
+    fn get_wait_bits(&self, addr: Option<u16>) -> u8 {
+        match addr {
             None => (self.test_reg() >> 6) & 0x03,
             Some(address) if self.is_internal_wait_address(address) => {
                 (self.test_reg() >> 6) & 0x03
             }
             Some(_) => (self.test_reg() >> 4) & 0x03,
-        };
+        }
+    }
+
+    fn wait_cycles_for_addr(&self, addr: Option<u16>) -> u8 {
+        let wait_bits = self.get_wait_bits(addr);
         match wait_bits {
             0 => 1,
             1 => 2,
@@ -622,13 +636,7 @@ impl SpcBusView<'_> {
     }
 
     fn timer_wait_cycles_for_addr(&self, addr: Option<u16>) -> u8 {
-        let wait_bits = match addr {
-            None => (self.test_reg() >> 6) & 0x03,
-            Some(address) if self.is_internal_wait_address(address) => {
-                (self.test_reg() >> 6) & 0x03
-            }
-            Some(_) => (self.test_reg() >> 4) & 0x03,
-        };
+        let wait_bits = self.get_wait_bits(addr);
         // Timers use non-glitchy wait-state divisors (2,4,8,16) while SMP core
         // cycles use (2,4,10,20). This scale is normalized by /2 in this core.
         match wait_bits {
@@ -660,23 +668,12 @@ impl SpcBusView<'_> {
     }
 
     fn write_test(&mut self, value: u8) {
-        let old_test = *self.test;
         *self.test = value;
-        // If TEST transitions from "timers allowed" to "timers stopped",
-        // clear TnOUT on all timers (analogous to CONTROL disable clearing TnOUT).
-        let old_allows = (old_test & 0x01 == 0) && (old_test & 0x08 != 0);
-        let new_allows = (value & 0x01 == 0) && (value & 0x08 != 0);
-        if old_allows && !new_allows {
-            self.timers.clear_all_tout();
-        }
-    }
-
-    fn test_allows_timers(&self) -> bool {
-        // fullsnes TEST $F0:
-        //   bit 0 = Timer-Enable  (0=Normal/timers work, 1=Timers don't work)
-        //   bit 3 = Timer-Disable (0=Timers don't work,  1=Normal/timers work)
-        // Both must be in the "Normal" state for timers to tick.
-        (self.test_reg() & 0x01 == 0) && (self.test_reg() & 0x08 != 0)
+        // Every TEST write re-evaluates the global timer gate and runs the
+        // stage-1 edge detector: a stop while stage 1 is high injects one
+        // target-counter clock (blargg test_timer_stop2). TnOUT is preserved.
+        self.timers
+            .set_global_enabled(test_reg_allows_timers(value));
     }
 
     fn tick_apu_cycles(&mut self, timer_cycles: u8) {
@@ -684,10 +681,11 @@ impl SpcBusView<'_> {
             return;
         }
         self.dsp.step_phase_with_memory(&mut self.aram[..]);
-        if self.test_allows_timers() {
-            for _ in 0..timer_cycles {
-                self.timers.tick_cycle();
-            }
+        // The timer prescalers always run; a TEST-register stop only gates
+        // the edge detector inside SpcTimers (the stage-1 square wave keeps
+        // toggling, as on hardware).
+        for _ in 0..timer_cycles {
+            self.timers.tick_cycle();
         }
     }
 
@@ -1406,28 +1404,103 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // When TEST transitions from "timers allowed" to "timers stopped", TnOUT
-    // must be cleared to 0.  The test_timer_stop ROM fires T2 four times
-    // before calling STOP via TEST, and the test expects TnOUT = 0 afterwards
-    // — consistent with TEST stop behaving analogously to CONTROL disable
-    // ("set TnOUT=0") for the accumulated-but-unread counter.
+    // Hardware model of the timer prescaler (verified against Mesen2's
+    // SpcTimer and blargg's test_timer_stop2 ROM): stage 0 divides the SPC
+    // clock into a square wave (stage 1) that toggles every half-period
+    // (64 cycles for T0/T1, 8 for T2). The target counter clocks on stage-1
+    // falling edges. A TEST-register global stop forces the edge-detector
+    // input low WITHOUT clearing TnOUT — and if stage 1 was high at the stop,
+    // that forced low is itself a falling edge, injecting one target-counter
+    // clock. The prescaler keeps toggling while timers are stopped.
     // -----------------------------------------------------------------------
 
     #[test]
-    fn writing_test_to_stop_timers_clears_accumulated_tout() {
+    fn writing_test_to_stop_timers_preserves_accumulated_tout() {
         let mut apu = SnesApu::new(None);
         // Enable T2 with target=1 (fires every 16 cycles)
-        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
-        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2)
-        // Let T2 fire 4 times (4 × 16 = 64 cycles; do NOT read TnOUT yet)
-        apu.advance_spc_bus_cycles_for_test(64);
-        // Now stop timers via TEST bit 0 = 1 (Timer-Enable = "don't work")
-        apu.write_spc_memory_for_test(0x00F0, 0x0B); // 0x0A | 0x01
-        // TnOUT must be 0 immediately after the TEST stop
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1 (cycle 1)
+        apu.write_spc_control_for_test(0x04); // enable T2 (bit 2) (cycle 2)
+        // Let T2 fire 4 times (falling edges at cycles 16/32/48/64).
+        apu.advance_spc_bus_cycles_for_test(64); // cycles 3-66
+        // Stop timers via TEST bit 0 = 1. Stage 1 is low here (it toggled low
+        // at cycle 64), so the stop injects no extra tick.
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // 0x0A | 0x01 (cycle 67)
         assert_eq!(
             apu.read_spc_memory_for_test(0x00FF),
+            0x04,
+            "TnOUT must survive a TEST stop (hardware does not clear it)"
+        );
+    }
+
+    #[test]
+    fn test_stop_while_stage1_high_injects_one_target_clock() {
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1 (cycle 1)
+        apu.write_spc_control_for_test(0x04); // enable T2 (cycle 2)
+        // After 8 more cycles the T2 stage-1 square wave toggles high
+        // (half-period = 8 cycles) at cycle 8.
+        apu.advance_spc_bus_cycles_for_test(8); // cycles 3-10
+        // Stopping the timers forces the edge-detector input low while
+        // stage 1 is high — a falling edge, so the target counter clocks
+        // once and (target=1) TnOUT increments.
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // cycle 11
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x01,
+            "a TEST stop while stage 1 is high must inject one timer tick"
+        );
+    }
+
+    #[test]
+    fn restore_state_syncs_timer_global_gate_from_test_register() {
+        // Save-states written before the timer global gate was serialized
+        // deserialize SpcTimers with global_enabled defaulting to true. If
+        // the state was captured while TEST had timers stopped, the restore
+        // must re-derive the gate from the restored TEST value.
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // TEST stop
+        let mut state = apu.capture_state();
+
+        // Simulate the pre-gate save-state: strip global_enabled so it
+        // deserializes to its default (true), contradicting TEST.
+        let mut timers_json = serde_json::to_value(&state.timers).unwrap();
+        timers_json
+            .as_object_mut()
+            .unwrap()
+            .remove("global_enabled");
+        state.timers = serde_json::from_value(timers_json).unwrap();
+
+        let mut restored = SnesApu::new(None);
+        restored.restore_state(&state).unwrap();
+        restored.advance_spc_bus_cycles_for_test(64);
+        assert_eq!(
+            restored.read_spc_memory_for_test(0x00FF),
             0x00,
-            "TnOUT must be cleared when TEST transitions to stop state"
+            "timers must stay stopped after restoring a state whose TEST register stops them"
+        );
+    }
+
+    #[test]
+    fn prescaler_keeps_toggling_while_timers_are_test_stopped() {
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1 (cycle 1)
+        apu.write_spc_control_for_test(0x04); // enable T2 (cycle 2)
+        apu.advance_spc_bus_cycles_for_test(2); // cycles 3-4 (stage 1 low)
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // stop (cycle 5)
+        // While stopped, stage 1 still toggles high at cycle 8 (edge detector
+        // sees a forced low, so no tick is counted during the stop).
+        apu.advance_spc_bus_cycles_for_test(8); // cycles 6-13
+        apu.write_spc_memory_for_test(0x00F0, 0x0A); // restart (cycle 14)
+        // Stage 1 (high since cycle 8) falls at cycle 16 → first tick, only
+        // 2 cycles after the restart. A prescaler frozen during the stop
+        // would need 16 more enabled cycles before its first tick.
+        apu.advance_spc_bus_cycles_for_test(2); // cycles 15-16
+        assert_eq!(
+            apu.read_spc_memory_for_test(0x00FF),
+            0x01,
+            "the stage-1 square wave must keep toggling during a TEST stop"
         );
     }
 

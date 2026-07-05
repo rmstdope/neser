@@ -926,6 +926,51 @@ No feedback provided
 #### What to improve
 
 No feedback provided
+*** End of File
+
+---
+
+## 2026-07-03 — PR #2929: Fix SPC SMP edge arithmetic
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2929
+**Linked issues:** none
+
+### Customizations used
+
+| Type         | Name                         | Purpose                                                                 |
+| ------------ | ---------------------------- | ----------------------------------------------------------------------- |
+| Skill        | `bug-hunter`                 | Drove reproduction of the longer-running `spc_smp.sfc` frame-2200 `Failed 02` signal and focused the diagnostic loop. |
+| Skill        | `rust-developer`             | Supported targeted Rust fixes for SPC MMIO and timer behavior without unrelated production-code changes. |
+| Skill        | `test-driven-development`    | Kept the fix anchored to reproduced ROM failure signals, final golden updates, and local/CI verification. |
+| Skill        | `snes-hardware-research`     | Grounded SPC MMIO and timer behavior decisions in SNES/APU hardware semantics. |
+| Skill        | `self-learning-skills`       | Captured this post-merge AI-customization retrospective entry. |
+| Instructions | `.github/copilot-instructions.md` | Applied repository expectations for explicit skill usage, TDD, validation gates, review/merge discipline, and retrospective capture. |
+| Other        | `Copilot review comments`    | Provided AI review feedback that was addressed before final validation and merge. |
+
+### What went well
+
+- ✅ Extending the `bug-hunter` loop to the longer-running frame-2200 `spc_smp.sfc` failure avoided stopping at an earlier partial success and exposed the remaining `Failed 02` behavior before merge.
+- ✅ The `snes-hardware-research` + `rust-developer` pairing kept the production-code fix focused on SPC MMIO and timer semantics instead of broad emulator churn.
+- ✅ The `test-driven-development` workflow converted the reproduced ROM failure into updated final goldens and then verified the outcome through local gates and green CI before merge.
+- ✅ Copilot review comments were treated as part of the AI verification loop: they were addressed before the final local/CI validation rather than after the branch was already considered done.
+
+### What to improve
+
+- ❌ The earlier PR-created retrospective recorded a frame-900 golden, but the merge work later found a frame-2200 failure. Future AI-assisted ROM debugging should include a longer-run acceptance checkpoint before considering SPC/APU timing fixes complete.
+- ❌ The exact diagnostic sequence from frame-2200 `Failed 02` to the final MMIO/timer fix was only summarized post-hoc. Future bug-hunting runs should preserve a compact symptom → hypothesis → register/timer behavior → verification trace in the work notes.
+- ❌ Prompt and agent usage were not explicitly recorded in the handoff. Future retrospectives should state "no prompts used" and "no agents used" when true so customization absence does not need to be inferred.
+- ❌ Final golden updates are durable project knowledge; future TDD handoffs should record the exact verification command(s), failing frame/CRC, and final passing frame/CRC alongside the golden changes.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided (navigator unavailable/pending)
+
+#### What to improve
+
+No feedback provided (navigator unavailable/pending)
 
 ---
 
@@ -1084,3 +1129,258 @@ No additional feedback provided beyond driver observations.
 - The $420C latch vs. hdma_active_mask distinction should be documented to prevent future misunderstandings
 
 ---
+
+## 2026-06-25 — PR #2902: Sub-issue (2825): Add a shared Stateful save-state trait and platform save_state helpers
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2902
+**Linked issues:** #2834 (sub-issue of epic #2825, item I2.1)
+
+### Customizations used
+
+| Type | Name | Purpose |
+| --- | --- | --- |
+| Prompt | `plan-issue` (`[[PLAN]]` mode) | Relentless one-question-at-a-time design interview with recommended answers; resolved ~12 design decisions before any code was written. |
+| Instructions | `copilot-instructions.md` | Enforced the small-increment TDD loop, four-eye / no-auto-merge, question-UI collaboration, `gh` workflow, and the mandated retrospective. |
+| Skill | `test-driven-development` | Drove Red→Green→Refactor→Commit across 5 increments (platform foundation + NES / GB / GBA / SNES). |
+| Skill | `rust-developer` | Shaped the `Stateful` trait design, hand-rolled error types, and naming. |
+| Agent | `rubber-duck` | Acted as the REFACTOR-phase reviewer on every increment. |
+| Skill | `self-learning-skills` | Captured this retrospective entry. |
+
+### What went well
+
+- ✅ **Up-front bulk pre-approval composed cleanly with TDD:** Authorizing "work autonomously through RED→GREEN→REFACTOR→COMMIT; stop only at design decisions and MERGE" kept a fast pace while pinning human oversight to exactly the two points that matter — design forks and the merge gate.
+- ✅ **`plan-issue` interview front-loaded the design forks:** Resolving ~12 decisions before coding (trait placement/fallibility, shared `SaveStateError` shape, thiserror-vs-hand-rolled, `IncompatibleVersion { found, supported }`, GB/GBA enum removal, fallible-restore handling, one-PR / per-console-commit delivery) produced near-zero design churn during implementation.
+- ✅ **`rubber-duck` caught real pre-commit defects every REFACTOR:** It flagged untracked golden fixtures that would break a clean checkout, a missing `Error::source()` chain, and a stale doc link to a removed type — all before they reached a commit.
+- ✅ **`rust-developer` yielded one uniform trait/error pattern across four consoles:** The shared shape made the per-console commits read as mechanical, low-risk repetitions rather than four bespoke implementations.
+
+### What to improve
+
+- ❌ **`test-driven-development` lacks a compiled-language refactor RED pattern:** For pure rename / trait-adoption refactors, the natural RED is a compile failure referencing the not-yet-existing type/impl — distinct from the `unimplemented!()` stub used for brand-new functions. Add a short "RED for refactors in compiled languages" note to the skill.
+- ❌ **Missing golden-fixture size guidance forced a mid-task round-trip:** The real NES save-state fixture was ~430 KB (framebuffer dominates); gzip compression (`flate2` dev-dep) brought fixtures down to ~2.4–24 KB. Add a "real console save-states are large — compress golden fixtures" heads-up to the relevant testing / save-state guidance.
+- ❌ **Recurring disk-space hazard ("No space left on device"):** Mid-task the build filled the disk and required pruning `target/` (incremental + wasm target). This repeats a prior retrospective finding — add a standing note to proactively prune `target/**/incremental` and the wasm target on long build-heavy sessions.
+- ❌ **Non-obvious design choices aren't auto-surfaced for reviewers:** The trait-method → private `*_inner` delegation (chosen for uniformity/safety over moving large method bodies) warrants a one-line rationale. Suggest `rust-developer` / `clean-coder` emit a brief rationale note when introducing non-obvious delegation.
+
+### Navigator feedback
+
+_AI-observed retrospective: the navigator was running in autopilot this iteration and did not add feedback. The "What went well" / "What to improve" sections above are driver observations; a human can append navigator notes below later._
+
+#### What went well
+
+_Pending — no navigator feedback this iteration._
+
+#### What to improve
+
+_Pending — no navigator feedback this iteration._
+
+---
+
+## 2026-07-02 — PR #2926: Fix SNES SPC timer target-counter behavior
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2926
+**Linked issues:** #2913
+
+### Customizations used
+
+| Type         | Name                         | Purpose                                                                 |
+| ------------ | ---------------------------- | ----------------------------------------------------------------------- |
+| Skill        | `rust-developer`             | Supported focused Rust changes for SPC timer behavior and test assets.  |
+| Skill        | `test-driven-development`    | Anchored the fix in the failing `spc_mem_access_times.sfc` ROM signal.  |
+| Skill        | `snes-hardware-research`     | Grounded SPC timer target-counter semantics in SNES/APU behavior.       |
+| Skill        | `self-learning-skills`       | Captured this customization-focused retrospective entry.                 |
+| Instructions | `copilot-instructions.md`    | Applied repository TDD, validation, documentation, and retrospective expectations. |
+| Other        | `Copilot review comments`    | Provided AI review feedback that was addressed before final validation.  |
+
+### What went well
+
+- ✅ Using `spc_mem_access_times.sfc` as the acceptance signal kept the SPC timer target-counter fix tied to observable emulator behavior, and promoting golden CRC `0x3AC3E30F` turns that discovery into reusable regression coverage.
+- ✅ The `snes-hardware-research` + `test-driven-development` pairing was well matched for a timing-sensitive APU bug: hardware semantics guided the expected behavior while the ROM result proved the fix.
+- ✅ Copilot review comments gave a focused AI-review checkpoint after implementation; addressing those comments before rerunning the local gates kept the AI feedback in the main verification loop instead of treating it as optional cleanup.
+- ✅ Updating the SNES README and ROM manifest in the same work package made the newly promoted verification ROM discoverable for future AI-assisted SNES test work.
+
+### What to improve
+
+- ❌ The retrospective context only had a post-hoc skills list. Future iterations should announce active skills at kickoff and record explicitly when no prompts or agents are used, so customization usage does not need reconstruction.
+- ❌ For hardware timing fixes, capture the exact source-backed rule that drove the implementation in the active work notes or test rationale; this reduces future AI review ambiguity around SPC timer target-counter edge cases.
+- ❌ When AI review comments are resolved, keep a compact comment-to-resolution note in the PR or work log so future retrospectives can identify which Copilot feedback changed the final patch and which was only confirmatory.
+- ❌ When promoting a golden CRC, record the pre-fix failure signal and final verification command sequence in the AI work log so later retrospectives can distinguish the effective diagnostic path from the final success state.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided
+
+#### What to improve
+
+No feedback provided
+
+---
+
+## 2026-07-02 — PR #2928: Promote SPC timer ROM
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2928
+**Linked issues:** none
+
+### Customizations used
+
+| Type         | Name                         | Purpose                                                                 |
+| ------------ | ---------------------------- | ----------------------------------------------------------------------- |
+| Skill        | `rust-developer`             | Supported safe Rust-repository changes limited to ROM verification metadata and documentation. |
+| Skill        | `test-driven-development`    | Kept the promotion anchored to the observed PASS screen and CRC `0x249738B2` signal. |
+| Skill        | `self-learning-skills`       | Captured this customization-focused retrospective entry after PR creation. |
+| Instructions | `copilot-instructions.md`    | Applied repository expectations for TDD, validation, documentation updates, and retrospectives. |
+
+### What went well
+
+- ✅ The workflow treated the formerly ignored blargg `spc_timer.sfc` as the acceptance signal: verifying the PASS screen and CRC `0x249738B2` before unignoring/promoting it made the catalog update evidence-backed rather than a bookkeeping-only change.
+- ✅ The `test-driven-development` skill fit a validation-only PR well because the outcome was still framed as a reproducible regression signal: an ignored ROM now becomes part of the verified SPC/APU safety net.
+- ✅ Updating the verified SPC/APU catalog, README/manifest pass-fail counts, and stale timer-speed CRC documentation in the same package reduced the chance that future AI-assisted ROM work would see contradictory verification metadata.
+- ✅ Keeping the PR to promotion/documentation work after the preceding SPC timer behavior fix avoided unnecessary production-code churn and made the scope clear for review.
+
+### What to improve
+
+- ❌ The need to correct stale timer-speed CRC docs shows that CRC references can drift across documents. Future ROM-promotion iterations should include an explicit workspace search for the ROM name and old/new CRC before finalizing metadata.
+- ❌ Promotion touched several bookkeeping locations. Add or follow a compact ROM-promotion checklist in the active work notes: unignore entry, verified catalog, README counts, manifest counts, and any stale CRC documentation.
+- ❌ The customization context was provided post-hoc as a skills list. Future iterations should announce active skills at kickoff and explicitly record whether prompts or agents were not used, so retrospectives do not have to infer absence.
+- ❌ For validation-only PRs, record the exact verification command and observed pre/post status in the AI work log alongside the final CRC; that would make the diagnostic path as reusable as the final catalog entry.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided
+
+#### What to improve
+
+No feedback provided
+
+---
+
+## 2026-07-03 — PR #2928: Promote SPC timer ROM
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2928
+**Linked issues:** none
+
+### Customizations used
+
+| Type         | Name                         | Purpose                                                                 |
+| ------------ | ---------------------------- | ----------------------------------------------------------------------- |
+| Skill        | `rust-developer`             | Supported safe repository edits limited to verified ROM metadata and documentation. |
+| Skill        | `test-driven-development`    | Kept the promotion grounded in a reproducible PASS screen and CRC `0x249738B2` signal. |
+| Skill        | `self-learning-skills`       | Captured this AI-customization-focused post-merge retrospective entry. |
+| Instructions | `copilot-instructions.md`    | Applied repository expectations for TDD, validation gates, review/merge discipline, and retrospectives. |
+
+### What went well
+
+- ✅ The AI workflow treated the ignored blargg `spc_timer.sfc` ROM as evidence first: PASS screen plus CRC `0x249738B2` was verified before promoting it to the verified test set.
+- ✅ The `test-driven-development` customization translated cleanly to a validation-only change by making the promoted ROM the regression signal, rather than forcing unnecessary production-code edits.
+- ✅ The `rust-developer` customization helped keep the patch scope narrow: README-SNES and manifest/catalog corrections were made without touching emulator production code.
+- ✅ Repository instructions kept the final loop explicit: documentation/manifest consistency was checked, CI was confirmed green, and the retrospective was run after merge.
+
+### What to improve
+
+- ❌ The AI customization context still depended on a post-hoc skills list. Future iterations should record active skills at kickoff and explicitly note when no prompts or agents are used.
+- ❌ The exact local verification command and observed output for the PASS/CRC evidence were not included in the retrospective context. Future validation-only PRs should preserve that command transcript in the AI work log.
+- ❌ ROM promotion touched multiple documentation/catalog locations. Future AI-assisted ROM promotions should use a short active checklist covering ignored status, verified catalog, README counts, manifest counts, and stale CRC references.
+- ❌ PR metadata reconstruction is easier when branch name and linked-issue status are captured before merge. Future retrospectives should include those fields in the handoff summary, even when linked issues are `none`.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided
+
+#### What to improve
+
+No feedback provided
+
+---
+
+## 2026-07-03 — PR #2929: Fix SPC SMP edge arithmetic
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2929
+**Linked issues:** none
+
+### Customizations used
+
+| Type         | Name                         | Purpose                                                                 |
+| ------------ | ---------------------------- | ----------------------------------------------------------------------- |
+| Skill        | `bug-hunter`                 | Guided reproduction of the longer-timeout `spc_smp.sfc` failure and narrowed the failing signal to MMIO readback behavior. |
+| Skill        | `rust-developer`             | Supported targeted Rust changes for SPC MMIO register semantics without broad production-code churn. |
+| Skill        | `test-driven-development`    | Kept the fix anchored to the failing frame-900 ROM signal and the updated golden CRC `0x73C335D6`. |
+| Skill        | `snes-hardware-research`     | Grounded SPC MMIO edge behavior for `$F0/$F1`, `$F2/$F3`, and `$F8/$F9` in SNES/APU semantics. |
+| Skill        | `self-learning-skills`       | Captured this AI-customization-focused retrospective entry after PR creation. |
+| Instructions | `.github/copilot-instructions.md` | Applied repository expectations for explicit skills usage, TDD, validation, and retrospective capture. |
+
+### What went well
+
+- ✅ The `bug-hunter` workflow was well matched to the failure: reproducing the longer-timeout `spc_smp.sfc` failure at frame 900 with CRC `0x1A6CB67C` / `Failed 02` gave the AI a concrete before-signal instead of relying on speculative SPC changes.
+- ✅ Pairing `snes-hardware-research` with `rust-developer` kept the fix narrow and hardware-specific: write-only `$F0/$F1` reads, full-byte `$F2` DSPADDR readback, 7-bit `$F3` masking/read-only mirror behavior, and `$F8/$F9` AUXIO readback were handled as MMIO semantics rather than generalized emulator cleanup.
+- ✅ The `test-driven-development` customization translated the ROM failure into durable regression coverage by updating the golden to frame 900 CRC `0x73C335D6` after the behavior fix.
+- ✅ Including `self-learning-skills` in the handoff made customization usage explicit enough to avoid reconstructing which skills drove the work package after the PR was created.
+
+### What to improve
+
+- ❌ The PR context provided the final failing and passing CRCs, but not the exact diagnostic sequence that isolated `$F0/$F1`, `$F2/$F3`, and `$F8/$F9`. Future AI bug-hunting iterations should preserve a compact trace from symptom to culprit register group so later work can reuse the path, not only the result.
+- ❌ The title, branch, and skills were available post-hoc, but prompt/agent absence was not explicitly recorded. Future handoffs should state "no prompts used" and "no agents used" when true, so retrospectives do not infer missing customization categories.
+- ❌ Hardware edge-case fixes benefit from source-backed rule snippets. Future `snes-hardware-research` use should capture the exact SPC MMIO read/write rules in the active work notes or test rationale, especially when different registers intentionally use different readback masks.
+- ❌ The longer-timeout ROM failure was central to the diagnosis. Future AI-assisted ROM debugging should record timeout/frame choices as part of the reproducible acceptance setup so a later run knows why frame 900 was selected.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided
+
+#### What to improve
+
+No feedback provided
+
+---
+
+## 2026-07-03 — PR #2929: Fix SPC SMP edge arithmetic
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/2929
+**Linked issues:** none
+
+### Customizations used
+
+| Type         | Name                         | Purpose                                                                 |
+| ------------ | ---------------------------- | ----------------------------------------------------------------------- |
+| Skill        | `bug-hunter`                 | Drove reproduction of the longer-running `spc_smp.sfc` frame-2200 `Failed 02` signal and focused the diagnostic loop. |
+| Skill        | `rust-developer`             | Supported targeted Rust fixes for SPC MMIO and timer behavior without unrelated production-code changes. |
+| Skill        | `test-driven-development`    | Kept the fix anchored to reproduced ROM failure signals, final golden updates, and local/CI verification. |
+| Skill        | `snes-hardware-research`     | Grounded SPC MMIO and timer behavior decisions in SNES/APU hardware semantics. |
+| Skill        | `self-learning-skills`       | Captured this post-merge AI-customization retrospective entry. |
+| Instructions | `.github/copilot-instructions.md` | Applied repository expectations for explicit skill usage, TDD, validation gates, review/merge discipline, and retrospective capture. |
+| Other        | `Copilot review comments`    | Provided AI review feedback that was addressed before final validation and merge. |
+
+### What went well
+
+- ✅ Extending the `bug-hunter` loop to the longer-running frame-2200 `spc_smp.sfc` failure avoided stopping at an earlier partial success and exposed the remaining `Failed 02` behavior before merge.
+- ✅ The `snes-hardware-research` + `rust-developer` pairing kept the production-code fix focused on SPC MMIO and timer semantics instead of broad emulator churn.
+- ✅ The `test-driven-development` workflow converted the reproduced ROM failure into updated final goldens and then verified the outcome through local gates and green CI before merge.
+- ✅ Copilot review comments were treated as part of the AI verification loop: they were addressed before the final local/CI validation rather than after the branch was already considered done.
+
+### What to improve
+
+- ❌ The earlier PR-created retrospective recorded a frame-900 golden, but the merge work later found a frame-2200 failure. Future AI-assisted ROM debugging should include a longer-run acceptance checkpoint before considering SPC/APU timing fixes complete.
+- ❌ The exact diagnostic sequence from frame-2200 `Failed 02` to the final MMIO/timer fix was only summarized post-hoc. Future bug-hunting runs should preserve a compact symptom → hypothesis → register/timer behavior → verification trace in the work notes.
+- ❌ Prompt and agent usage were not explicitly recorded in the handoff. Future retrospectives should state "no prompts used" and "no agents used" when true so customization absence does not need to be inferred.
+- ❌ Final golden updates are durable project knowledge; future TDD handoffs should record the exact verification command(s), failing frame/CRC, and final passing frame/CRC alongside the golden changes.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided (navigator unavailable/pending)
+
+#### What to improve
+
+No feedback provided (navigator unavailable/pending)

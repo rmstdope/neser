@@ -320,24 +320,30 @@ impl Ppu {
                 self.latch_strobe();
                 0
             }
-            // OPHCT: horizontal counter latch, read-twice (low byte then high bit).
+            // OPHCT: horizontal counter latch. Per bsnes (`PPU::readIO` case 0x213c), the first
+            // read since the flip-flop was last reset by a STAT78 ($213F) read returns the low
+            // byte; every subsequent read (2nd, 3rd, ...) returns the high bit and does NOT
+            // toggle back to the low byte -- even across an intervening SLHV/WRIO re-latch,
+            // since `latch_counters` only updates the latched value, not this flip-flop (only
+            // a $213F read does, see below).
             0x213C => {
                 let value = if !self.ophct_read_high {
                     (self.ophct_latch & 0x00FF) as u8
                 } else {
                     ((self.ophct_latch >> 8) & 0x01) as u8
                 };
-                self.ophct_read_high = !self.ophct_read_high;
+                self.ophct_read_high = true;
                 value
             }
-            // OPVCT: vertical counter latch, read-twice (low byte then high bit).
+            // OPVCT: vertical counter latch. Same sticky first-read-then-high-bit semantics as
+            // OPHCT above (see bsnes `PPU::readIO` case 0x213d).
             0x213D => {
                 let value = if !self.opvct_read_high {
                     (self.opvct_latch & 0x00FF) as u8
                 } else {
                     ((self.opvct_latch >> 8) & 0x01) as u8
                 };
-                self.opvct_read_high = !self.opvct_read_high;
+                self.opvct_read_high = true;
                 value
             }
             // STAT77: PPU1 status + version. Bit 7 = OBJ time over-limit, bit 6 = OBJ range

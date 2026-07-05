@@ -19,6 +19,8 @@ impl Ppu {
             master_cycle_accumulator: self.master_cycle_accumulator,
             line_clock: self.line_clock,
             last_hperiod: self.last_hperiod,
+            total_master_clocks: self.total_master_clocks,
+            dram_refresh_position: self.dram_refresh_position,
             line_timing_profile: self.line_timing_profile.as_u8(),
             inidisp: self.inidisp,
             nmi_enable: self.nmi_enable,
@@ -46,6 +48,7 @@ impl Ppu {
             vtime: self.vtime,
             timeup_flag: self.timeup_flag,
             irq_line: self.irq_line,
+            irq_edge_age: self.irq_edge_age,
             interlace_field: self.interlace_field,
             video_region: match self.video_region {
                 SnesVideoRegion::Ntsc => 0,
@@ -110,6 +113,8 @@ impl Ppu {
         self.master_cycle_accumulator = state.master_cycle_accumulator;
         self.line_clock = state.line_clock;
         self.last_hperiod = state.last_hperiod;
+        self.total_master_clocks = state.total_master_clocks;
+        self.dram_refresh_position = state.dram_refresh_position;
         self.line_timing_profile = PpuLineTimingProfile::from_u8(state.line_timing_profile);
         self.inidisp = state.inidisp;
         self.nmi_enable = state.nmi_enable;
@@ -137,6 +142,7 @@ impl Ppu {
         self.vtime = state.vtime & 0x01FF;
         self.timeup_flag = state.timeup_flag;
         self.irq_line = state.irq_line;
+        self.irq_edge_age = state.irq_edge_age;
         self.interlace_field = state.interlace_field;
         self.video_region = match state.video_region {
             1 => SnesVideoRegion::Pal,
