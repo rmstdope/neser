@@ -62,6 +62,9 @@ pub(crate) struct InProgressOp {
     pub(crate) addr: u16,
     /// Value loaded by a read micro-op.
     pub(crate) value: u8,
+    /// Set by a conditional micro-op to terminate the script after the
+    /// current cycle (a not-taken branch is 2 cycles instead of 4).
+    pub(crate) done_early: bool,
 }
 
 /// Index register applied by an addressing micro-op.
@@ -107,6 +110,10 @@ enum MicroOp {
     /// Dummy-read the opcode byte at PC without advancing it (the internal
     /// cycle of implied/register instructions).
     DummyReadPc,
+    /// Fetch the branch displacement, then end the instruction unless the
+    /// PSW flag in `.0` equals `.1` (conditional branches are 2 cycles when
+    /// not taken, 4 when taken).
+    FetchOperandBranch(u8, bool),
     /// Compute `addr` = `operand2`:`operand` and read `value`.
     ReadAbs,
     /// Compute `addr` = `operand2`:`operand` and dummy-read it.
@@ -704,6 +711,39 @@ impl Spc700 {
         Some(match opcode {
             // BRA rel — the trampoline wait-loop opcode.
             0x2F => (&[FetchOperand, BranchIdle, Idle], F::None),
+            // Conditional branches: 2 cycles not taken, 4 taken.
+            0xF0 => (
+                &[FetchOperandBranch(FLAG_ZERO, true), BranchIdle, Idle],
+                F::None,
+            ),
+            0xD0 => (
+                &[FetchOperandBranch(FLAG_ZERO, false), BranchIdle, Idle],
+                F::None,
+            ),
+            0xB0 => (
+                &[FetchOperandBranch(FLAG_CARRY, true), BranchIdle, Idle],
+                F::None,
+            ),
+            0x90 => (
+                &[FetchOperandBranch(FLAG_CARRY, false), BranchIdle, Idle],
+                F::None,
+            ),
+            0x30 => (
+                &[FetchOperandBranch(FLAG_NEGATIVE, true), BranchIdle, Idle],
+                F::None,
+            ),
+            0x10 => (
+                &[FetchOperandBranch(FLAG_NEGATIVE, false), BranchIdle, Idle],
+                F::None,
+            ),
+            0x70 => (
+                &[FetchOperandBranch(FLAG_OVERFLOW, true), BranchIdle, Idle],
+                F::None,
+            ),
+            0x50 => (
+                &[FetchOperandBranch(FLAG_OVERFLOW, false), BranchIdle, Idle],
+                F::None,
+            ),
             // MOV A,#imm — the queued micro-op behind the trampoline.
             0xE8 => (&[ReadImm], F::MovA),
             // Direct-page reads.
@@ -840,7 +880,7 @@ impl Spc700 {
         let micro_index = usize::from(op.cycle) - 1;
         op.cycle = op.cycle.wrapping_add(1);
         self.run_micro_op(bus, &mut op, script[micro_index], finish);
-        let done = micro_index + 1 == script.len();
+        let done = op.done_early || micro_index + 1 == script.len();
         if done {
             self.apply_finish(finish, &op);
         } else {
@@ -905,6 +945,13 @@ impl Spc700 {
             }
             MicroOp::DummyReadPc => {
                 bus.read(self.pc);
+            }
+            MicroOp::FetchOperandBranch(flag, wanted) => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                if self.flag(flag) != wanted {
+                    op.done_early = true;
+                }
             }
             MicroOp::ReadAbs => {
                 op.addr = u16::from(op.operand) | (u16::from(op.operand2) << 8);
@@ -6747,13 +6794,20 @@ mod tests {
             assert_cycle_script_matches_atomic(regs, &[op], pokes);
         }
 
+        // Conditional branches, taken and not-taken (#2938 batch 3). The
+        // shared register file has Z clear / C clear / N clear / V clear, so
+        // pick both polarities per flag.
+        for op in [0xF0u8, 0xD0, 0xB0, 0x90, 0x30, 0x10, 0x70, 0x50] {
+            assert_cycle_script_matches_atomic(regs, &[op, 0x02], pokes);
+        }
+
         // Coverage pin for #2938: bump as families are scripted; the goal
         // is 256, at which point the atomic path is deleted.
         let scripted = (0u16..=0xFF)
             .filter(|&op| Spc700::opcode_is_cycle_scripted(op as u8))
             .count();
         assert_eq!(
-            scripted, 68,
+            scripted, 76,
             "cycle-script coverage changed; update the pin"
         );
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
