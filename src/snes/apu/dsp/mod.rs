@@ -566,7 +566,7 @@ impl Sdsp {
         }
         if voice == 0 && spc_dsp6_trace_enabled() {
             eprintln!(
-                "neser v0 step3c env_volume=${:03X} envx=${:02X} outx=${:02X} mode={} key_on_delay={} key_on=${:02X} key_off=${:02X}",
+                "neser v0 step3c env_volume=${:03X} envx=${:02X} outx=${:02X} mode={} key_on_delay={} key_on=${:02X} key_off=${:02X} eos={}",
                 self.voices[0].env_level,
                 self.voices[0].envx,
                 (self.voices[0].current_output >> 8) as u8,
@@ -579,6 +579,7 @@ impl Sdsp {
                 self.voices[0].kon_delay,
                 self.kon_latched,
                 self.koff_latched,
+                u8::from(self.kon_poll_slot),
             );
         }
     }

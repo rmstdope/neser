@@ -309,6 +309,47 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "debug helper (#2914): dump ARAM result buffer after spc_dsp6 run"]
+    fn debug_dump_spc_dsp6_result_buffer() {
+        use crate::platform::app_context::AppContext;
+        use crate::platform::emulator::Emulator;
+        use crate::snes::console::Snes;
+
+        let root = Path::new(ROM_PASS_FAIL_ROOT);
+        let rom = fs::read(root.join("spc_dsp6.sfc")).unwrap();
+        let mut snes = Snes::new(AppContext::default());
+        snes.load_rom(&rom, "spc_dsp6.sfc").unwrap();
+        let mut ticks: u64 = 0;
+        while ticks < 700_000_000 {
+            ticks = ticks.saturating_add(u64::from(snes.run_tick()));
+        }
+        // Search ARAM for the failure table prefix in LE/BE word layouts.
+        let peek = |addr: u16| snes.apu_peek_spc_memory_for_debug(addr).unwrap_or(0);
+        let patterns: [(&str, [u8; 8]); 3] = [
+            ("LE", [0x00, 0x00, 0x00, 0x04, 0x00, 0x05, 0x00, 0x06]),
+            ("BE", [0x00, 0x00, 0x04, 0x00, 0x05, 0x00, 0x06, 0x00]),
+            ("bytes", [0x00, 0x40, 0x50, 0x60, 0x60, 0x60, 0x60, 0x00]),
+        ];
+        for (label, pat) in patterns {
+            for base in 0u32..0xFFF0 {
+                let b: Vec<u8> = (0..8).map(|o| peek((base + o) as u16)).collect();
+                if b[..] == pat {
+                    eprintln!("table candidate ({label}) at ${base:04X}");
+                    for row in 0..12u32 {
+                        let mut line = format!("  ${:04X}:", base + row * 16);
+                        for o in 0..16u32 {
+                            line.push_str(&format!(" {:02X}", peek((base + row * 16 + o) as u16)));
+                        }
+                        eprintln!("{line}");
+                    }
+                    return;
+                }
+            }
+        }
+        eprintln!("no table candidate found");
+    }
+
+    #[test]
     #[ignore = "debug helper: run with --include-ignored to print SPC PC hotspots"]
     fn debug_spc_pc_hotspots_4_test_ram_disable() {
         investigate_failing_rom_spc_pc("4-test_ram_disable.smc", 50_000, 1000);

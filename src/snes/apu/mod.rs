@@ -20,6 +20,13 @@ const ARAM_SIZE: usize = 0x1_0000;
 const MAX_PENDING_SAMPLES: usize = 16_384;
 const SNES_MASTER_CLOCK_HZ: f32 = 21_477_272.0;
 const NATIVE_AUDIO_SAMPLE_RATE_HZ: f32 = 32_000.0;
+// Nominal SPC clock ratio (1.024 MHz vs 21.477 MHz master). Real consoles
+// measure slightly fast (~32040 Hz DSP sample rate = 1,025,280 cycles/s;
+// Mesen2 ships that as its default via SpcClockSpeedAdjustment=40), but the
+// verified blargg ROM goldens in this repo were approved at the nominal
+// ratio and switching moves the measured values on test_speed and the
+// timer-speed ROMs (#2914 investigation) — revisit together with those
+// goldens if hardware-rate emulation is ever adopted.
 const SPC_PER_MASTER_NUM: i64 = 1_024_000;
 const SPC_PER_MASTER_DEN: i64 = 21_477_272;
 
@@ -159,6 +166,12 @@ impl SnesApu {
 
     pub fn write_main_port(&mut self, port: usize, value: u8) {
         trace_apu!(3; "CPU->SPC port[{}] <= ${:02X}", port, value);
+        if dsp::spc_dsp6_trace_enabled() {
+            eprintln!(
+                "neser hostwrite port={port} val=${value:02X} mclk={}",
+                self.master_ticks
+            );
+        }
         self.main_to_spc_ports[port] = value;
     }
 
@@ -749,12 +762,30 @@ impl Spc700Bus for SpcBusView<'_> {
                 }
                 value
             }
-            0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
+            0x00F4..=0x00F7 => {
+                let value = self.main_to_spc_ports[(addr - 0x00F4) as usize];
+                if dsp::spc_dsp6_trace_enabled() {
+                    eprintln!(
+                        "neser ioread reg=${addr:02X} val=${value:02X} phase={}",
+                        self.dsp.phase()
+                    );
+                }
+                value
+            }
             // $F8-$F9 = AUXIO4/AUXIO5 (general-purpose I/O, stores value in ARAM)
             0x00F8..=0x00F9 => self.aram[addr as usize],
             // $FA-$FC = T0/T1/T2 targets (write-only; reads return 0x00)
             0x00FA..=0x00FC => 0x00,
-            0x00FD..=0x00FF => self.timers.read_counter((addr - 0x00FD) as usize),
+            0x00FD..=0x00FF => {
+                let value = self.timers.read_counter((addr - 0x00FD) as usize);
+                if dsp::spc_dsp6_trace_enabled() {
+                    eprintln!(
+                        "neser ioread reg=${addr:02X} val=${value:02X} phase={}",
+                        self.dsp.phase()
+                    );
+                }
+                value
+            }
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
             _ if self.ram_disabled() => 0x5A,
             _ => self.aram[addr as usize],
