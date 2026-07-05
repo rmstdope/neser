@@ -151,6 +151,16 @@ enum Finish {
     /// `YA = operand2:value`, update N/Z from the 16-bit result
     /// (`MOVW YA,dp`).
     MovwYa,
+    /// `A |= value`, update N/Z.
+    OrA,
+    /// `A &= value`, update N/Z.
+    AndA,
+    /// `A ^= value`, update N/Z.
+    EorA,
+    /// `A = A + value + C` with full flag update.
+    AdcA,
+    /// `A = A - value - !C` with full flag update.
+    SbcA,
 }
 
 /// SPC700 CPU core.
@@ -662,6 +672,31 @@ impl Spc700 {
             0xF8 => (DP_READ, F::MovX),
             0xEB => (DP_READ, F::MovY),
             0x64 => (DP_READ, F::CmpA),
+            // ALU A,dp family (same bus shape as MOV A,dp).
+            0x04 => (DP_READ, F::OrA),
+            0x24 => (DP_READ, F::AndA),
+            0x44 => (DP_READ, F::EorA),
+            0x84 => (DP_READ, F::AdcA),
+            0xA4 => (DP_READ, F::SbcA),
+            // ALU A,dp+X family.
+            0x14 => (DP_X_READ, F::OrA),
+            0x34 => (DP_X_READ, F::AndA),
+            0x54 => (DP_X_READ, F::EorA),
+            0x94 => (DP_X_READ, F::AdcA),
+            0xB4 => (DP_X_READ, F::SbcA),
+            // ALU A,!abs family.
+            0x05 => (ABS_READ, F::OrA),
+            0x25 => (ABS_READ, F::AndA),
+            0x45 => (ABS_READ, F::EorA),
+            0x85 => (ABS_READ, F::AdcA),
+            0xA5 => (ABS_READ, F::SbcA),
+            // ALU A,#imm family (same shape as MOV A,#imm).
+            0x08 => (&[ReadImm], F::OrA),
+            0x28 => (&[ReadImm], F::AndA),
+            0x48 => (&[ReadImm], F::EorA),
+            0x88 => (&[ReadImm], F::AdcA),
+            0xA8 => (&[ReadImm], F::SbcA),
+            0x68 => (&[ReadImm], F::CmpA),
             0x3E => (DP_READ, F::CmpX),
             0x7E => (DP_READ, F::CmpY),
             // Direct-page indexed reads.
@@ -855,6 +890,24 @@ impl Spc700 {
             }
             Finish::CmpMemImm => {
                 self.compare_values(op.value, op.operand);
+            }
+            Finish::OrA => {
+                self.a |= op.value;
+                self.update_nz8(self.a);
+            }
+            Finish::AndA => {
+                self.a &= op.value;
+                self.update_nz8(self.a);
+            }
+            Finish::EorA => {
+                self.a ^= op.value;
+                self.update_nz8(self.a);
+            }
+            Finish::AdcA => {
+                self.add_with_carry_to_a(op.value);
+            }
+            Finish::SbcA => {
+                self.subtract_with_borrow_from_a(op.value);
             }
             Finish::MovwYa => {
                 self.a = op.value;
@@ -6529,6 +6582,44 @@ mod tests {
         assert_cycle_script_matches_atomic(regs, &[0x8F, 0x77, 0xF4], pokes); // MOV dp,#imm
         assert_cycle_script_matches_atomic(regs, &[0x78, 0xCC, 0xF4], pokes); // CMP dp,#imm
         assert_cycle_script_matches_atomic(regs, &[0xBA, 0xF4], pokes); // MOVW YA,dp
+
+        // ALU A,mem/imm family (#2938 universal stepping, batch 1).
+        for (insn, name) in [
+            (&[0x04u8, 0xF4][..], "OR A,dp"),
+            (&[0x24, 0xF4], "AND A,dp"),
+            (&[0x44, 0xF4], "EOR A,dp"),
+            (&[0x84, 0xF4], "ADC A,dp"),
+            (&[0xA4, 0xF4], "SBC A,dp"),
+            (&[0x14, 0xF2], "OR A,dp+X"),
+            (&[0x34, 0xF2], "AND A,dp+X"),
+            (&[0x54, 0xF2], "EOR A,dp+X"),
+            (&[0x94, 0xF2], "ADC A,dp+X"),
+            (&[0xB4, 0xF2], "SBC A,dp+X"),
+            (&[0x05, 0xF4, 0x00], "OR A,!abs"),
+            (&[0x25, 0xF4, 0x00], "AND A,!abs"),
+            (&[0x45, 0xF4, 0x00], "EOR A,!abs"),
+            (&[0x85, 0xF4, 0x00], "ADC A,!abs"),
+            (&[0xA5, 0xF4, 0x00], "SBC A,!abs"),
+            (&[0x08, 0x5A], "OR A,#imm"),
+            (&[0x28, 0x5A], "AND A,#imm"),
+            (&[0x48, 0x5A], "EOR A,#imm"),
+            (&[0x88, 0x5A], "ADC A,#imm"),
+            (&[0xA8, 0x5A], "SBC A,#imm"),
+            (&[0x68, 0x5A], "CMP A,#imm"),
+        ] {
+            let _ = name;
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
+        // Coverage pin for #2938: bump as families are scripted; the goal
+        // is 256, at which point the atomic path is deleted.
+        let scripted = (0u16..=0xFF)
+            .filter(|&op| Spc700::opcode_is_cycle_scripted(op as u8))
+            .count();
+        assert_eq!(
+            scripted, 47,
+            "cycle-script coverage changed; update the pin"
+        );
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
         assert_cycle_script_matches_atomic(regs, &[0xEC, 0xF6, 0x00], pokes); // MOV Y,!abs
         assert_cycle_script_matches_atomic(regs, &[0x65, 0xF4, 0x00], pokes); // CMP A,!abs

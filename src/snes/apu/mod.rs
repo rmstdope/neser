@@ -373,15 +373,14 @@ impl SnesApu {
                 let op2 = self.peek_opcode_at(pc.wrapping_add(2));
                 PORTS.contains(&(dp_base | u16::from(op2)))
             }
-            0xE4 | 0xF8 | 0xEB | 0x64 | 0x3E | 0x7E | 0xC4 | 0xD8 | 0xCB => {
-                PORTS.contains(&(dp_base | u16::from(op1)))
-            }
+            0xE4 | 0xF8 | 0xEB | 0x64 | 0x3E | 0x7E | 0xC4 | 0xD8 | 0xCB | 0x04 | 0x24 | 0x44
+            | 0x84 | 0xA4 => PORTS.contains(&(dp_base | u16::from(op1))),
             // dp+X reads/writes.
-            0xF4 | 0x74 | 0xD4 => {
+            0xF4 | 0x74 | 0xD4 | 0x14 | 0x34 | 0x54 | 0x94 | 0xB4 => {
                 PORTS.contains(&(dp_base | u16::from(op1.wrapping_add(self.spc700.x()))))
             }
             // Absolute reads/writes.
-            0xE5 | 0xE9 | 0xEC | 0x65 | 0xC5 => {
+            0xE5 | 0xE9 | 0xEC | 0x65 | 0xC5 | 0x05 | 0x25 | 0x45 | 0x85 | 0xA5 => {
                 let op2 = self.peek_opcode_at(pc.wrapping_add(2));
                 PORTS.contains(&(u16::from(op1) | (u16::from(op2) << 8)))
             }
