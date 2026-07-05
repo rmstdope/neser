@@ -21,12 +21,13 @@ const MAX_PENDING_SAMPLES: usize = 16_384;
 const SNES_MASTER_CLOCK_HZ: f32 = 21_477_272.0;
 const NATIVE_AUDIO_SAMPLE_RATE_HZ: f32 = 32_000.0;
 // Nominal SPC clock ratio (1.024 MHz vs 21.477 MHz master). Real consoles
-// measure slightly fast (~32040 Hz DSP sample rate = 1,025,280 cycles/s;
-// Mesen2 ships that as its default via SpcClockSpeedAdjustment=40), but the
-// verified blargg ROM goldens in this repo were approved at the nominal
-// ratio and switching moves the measured values on test_speed and the
-// timer-speed ROMs (#2914 investigation) — revisit together with those
-// goldens if hardware-rate emulation is ever adopted.
+// measure slightly fast (~32040 Hz DSP sample rate = 1,025,280 SPC cycles/s;
+// Mesen2's default via SpcClockSpeedAdjustment = 40). Full phase parity with
+// Mesen's reference runs (the last step for blargg spc_dsp6, #2914) needs
+// that rate; adopting it moves the measured values on the test_speed /
+// timer-speed measurement ROMs again, so it is deferred until the remaining
+// handshake-edge semantics are settled and all goldens can be re-approved
+// against Mesen in one pass.
 const SPC_PER_MASTER_NUM: i64 = 1_024_000;
 const SPC_PER_MASTER_DEN: i64 = 21_477_272;
 
@@ -143,7 +144,13 @@ impl SnesApu {
             spc_frozen: false,
             timers: SpcTimers::default(),
             master_ticks: 0,
-            spc_cycle_budget: 0,
+            // Diagnostic override for #2914 boot-origin scanning: pre-charge
+            // the SPC budget by N master-ticks' worth (may be negative).
+            spc_cycle_budget: std::env::var("NESER_SPC_BOOT_BUDGET")
+                .ok()
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap_or(0)
+                * SPC_PER_MASTER_NUM,
             dsp: Sdsp::new(),
             dsp_addr: 0,
             sample_acc: 0.0,
@@ -215,19 +222,23 @@ impl SnesApu {
                 continue;
             }
 
-            // Cycle-scripted dispatch (per-SPC-cycle stepping) is used for
-            // the blargg IPL-hack trampoline (#2908), where opcodes execute
-            // directly out of the I/O port region $00F4-$00F7. Restricting
-            // cycle-stepping to that PC range preserves the timing of all
-            // normal SPC code (which lives in ARAM or the IPL boot ROM),
-            // avoiding regressions in already-passing tests.
+            // Cycle-scripted dispatch (per-SPC-cycle stepping) is used for:
+            //   * the blargg IPL-hack trampoline (#2908), where opcodes
+            //     execute directly out of the I/O port region $00F4-$00F7;
+            //   * any instruction that reads or writes the $F4-$F7 port
+            //     window (#2914), so port accesses land on the correct
+            //     wall-clock SPC cycle relative to 65816 port writes instead
+            //     of executing atomically at the instruction start.
+            // Everything else still steps atomically, preserving the timing
+            // of already-passing tests.
             let use_cycle_stepper = if self.spc700.has_in_progress_op() {
                 true
             } else {
                 let next_pc = self.spc700.pc();
                 let opcode = self.peek_opcode_at(next_pc);
-                Self::pc_is_in_trampoline_region(next_pc)
-                    && Spc700::opcode_is_cycle_scripted(opcode)
+                (Self::pc_is_in_trampoline_region(next_pc)
+                    && Spc700::opcode_is_cycle_scripted(opcode))
+                    || self.next_op_accesses_port_window()
             };
 
             let consumed_cycles = {
@@ -262,6 +273,59 @@ impl SnesApu {
     /// trampoline case without regressing timing for normal ARAM/IPL code.
     fn pc_is_in_trampoline_region(pc: u16) -> bool {
         matches!(pc, 0x00F4..=0x00F7)
+    }
+
+    /// `true` when the next SPC700 instruction will read or write one of the
+    /// CPU I/O ports `$F4-$F7` (#2914). Such instructions are cycle-stepped
+    /// so the port access happens on the correct wall-clock SPC cycle: a
+    /// 65816 port write landing mid-instruction is then observed exactly as
+    /// on hardware, rather than with whole-instruction granularity.
+    ///
+    /// The decision peeks the operand bytes (and, for indirect modes, the
+    /// direct-page pointer) without side effects. A stale peek is harmless:
+    /// cycle-stepped and atomic execution are architecturally identical, so a
+    /// misprediction only changes scheduling granularity.
+    fn next_op_accesses_port_window(&self) -> bool {
+        const PORTS: std::ops::RangeInclusive<u16> = 0x00F4..=0x00F7;
+        let pc = self.spc700.pc();
+        let opcode = self.peek_opcode_at(pc);
+        let dp_base: u16 = if self.spc700.psw() & spc700::FLAG_DIRECT_PAGE != 0 {
+            0x0100
+        } else {
+            0x0000
+        };
+        let op1 = self.peek_opcode_at(pc.wrapping_add(1));
+        match opcode {
+            // dp direct reads/writes.
+            0xE4 | 0xF8 | 0xEB | 0x64 | 0x3E | 0x7E | 0xC4 | 0xD8 | 0xCB => {
+                PORTS.contains(&(dp_base | u16::from(op1)))
+            }
+            // dp+X reads/writes.
+            0xF4 | 0x74 | 0xD4 => {
+                PORTS.contains(&(dp_base | u16::from(op1.wrapping_add(self.spc700.x()))))
+            }
+            // Absolute reads/writes.
+            0xE5 | 0xE9 | 0xEC | 0x65 | 0xC5 => {
+                let op2 = self.peek_opcode_at(pc.wrapping_add(2));
+                PORTS.contains(&(u16::from(op1) | (u16::from(op2) << 8)))
+            }
+            // [dp+X] indirect reads.
+            0xE7 | 0x67 => {
+                let ptr = op1.wrapping_add(self.spc700.x());
+                let lo = self.peek_opcode_at(dp_base | u16::from(ptr));
+                let hi = self.peek_opcode_at(dp_base | u16::from(ptr.wrapping_add(1)));
+                PORTS.contains(&(u16::from(lo) | (u16::from(hi) << 8)))
+            }
+            // [dp]+Y indirect reads.
+            0xF7 | 0x77 => {
+                let lo = self.peek_opcode_at(dp_base | u16::from(op1));
+                let hi = self.peek_opcode_at(dp_base | u16::from(op1.wrapping_add(1)));
+                let addr =
+                    (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.spc700.y()));
+                PORTS.contains(&addr)
+            }
+            _ => false,
+        }
     }
 
     /// Read the byte at `addr` from the SPC700 address space without ticking
@@ -1617,6 +1681,51 @@ mod tests {
     // EXPECTED with cycle-accurate per-SPC-cycle stepping:
     //   A receives the operand value from each release in turn.
     // CURRENT (atomic) behavior: A stays at the sentinel.
+    #[test]
+    fn port_polling_mov_observes_host_write_landing_mid_instruction() {
+        // #2914: instructions reading $F4-$F7 are cycle-stepped so a 65816
+        // port write landing between the operand fetch and the read cycle is
+        // observed by THAT read, as on hardware. Atomic stepping samples the
+        // port at the instruction's first budget cycle and would miss the
+        // write for a whole poll iteration.
+        let mut state = SnesApuState {
+            aram: vec![0u8; super::ARAM_SIZE],
+            control: 0x00,
+            test: super::default_test_reg(),
+            ..SnesApuState::default()
+        };
+        // $0200: E4 F4    MOV A,$F4
+        // $0202: C4 10    MOV $10,A
+        // $0204: 2F FA    BRA $0200
+        state.aram[0x0200..0x0206].copy_from_slice(&[0xE4, 0xF4, 0xC4, 0x10, 0x2F, 0xFA]);
+        state.spc700.pc = 0x0200;
+        let mut apu = SnesApu::new(None);
+        apu.restore_state(&state).expect("restore poll-loop state");
+
+        // Advance until the MOV A,$F4 is mid-flight with its operand fetched
+        // (PC just past the dp byte) but the port read cycle still pending.
+        let mut guard = 0;
+        while !(apu.spc700.pc() == 0x0202 && apu.spc700.has_in_progress_op()) {
+            apu.tick();
+            guard += 1;
+            assert!(guard < 10_000, "MOV A,$F4 never became mid-flight");
+        }
+
+        // The host write lands between the operand fetch and the read cycle.
+        apu.write_main_port(0, 0x42);
+
+        // Enough master ticks for the pending read cycle plus the MOV $10,A
+        // store (~5 SPC cycles), but well short of a second poll iteration.
+        for _ in 0..120 {
+            apu.tick();
+        }
+        assert_eq!(
+            apu.peek_spc_memory_for_debug(0x0010),
+            0x42,
+            "the in-flight port read must observe the mid-instruction host write"
+        );
+    }
+
     fn ipl_hack_trampoline_state() -> SnesApuState {
         let mut state = SnesApuState {
             aram: vec![0u8; super::ARAM_SIZE],

@@ -44,17 +44,93 @@ pub const FLAG_NEGATIVE: u8 = 0b1000_0000;
 ///
 /// When the per-cycle stepper starts a new instruction it stores the opcode
 /// and a cycle-since-opcode-fetch counter here; subsequent calls advance the
-/// counter and dispatch into a per-opcode cycle handler that consumes one bus
-/// operation (read / write / idle) per call. When the last cycle of the
-/// opcode runs, the handler clears this slot back to `None`.
+/// counter and execute the next [`MicroOp`] of the opcode's cycle script,
+/// consuming exactly one bus operation (read / write / idle) per call. When
+/// the last micro-op runs, the [`Finish`] action applies the result and this
+/// slot clears back to `None`.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct InProgressOp {
     pub(crate) opcode: u8,
     /// Cycle index within the instruction. Cycle 1 is the opcode fetch (done
-    /// when this struct is created); per-opcode handlers run for cycles 2..N.
+    /// when this struct is created); micro-ops run for cycles 2..N.
     pub(crate) cycle: u8,
-    /// Scratch operand byte fetched mid-instruction.
+    /// First operand byte fetched mid-instruction.
     pub(crate) operand: u8,
+    /// Second operand byte (absolute-address high byte).
+    pub(crate) operand2: u8,
+    /// Effective address computed by an addressing micro-op.
+    pub(crate) addr: u16,
+    /// Value loaded by a read micro-op.
+    pub(crate) value: u8,
+}
+
+/// Index register applied by an addressing micro-op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Index {
+    None,
+    X,
+    Y,
+}
+
+/// One bus operation of a cycle-scripted instruction (see
+/// [`Spc700::cycle_script`]). Each micro-op performs exactly one bus access
+/// (read, write, or idle), mirroring the bus-op sequence of the atomic
+/// implementation in [`Spc700::step`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MicroOp {
+    /// Read the immediate byte at PC into `value` (PC += 1).
+    ReadImm,
+    /// Read the operand byte at PC into `operand` (PC += 1).
+    FetchOperand,
+    /// Read the second operand byte at PC into `operand2` (PC += 1).
+    FetchOperand2,
+    /// One internal idle cycle.
+    Idle,
+    /// Take the relative branch using `operand` and spend one idle cycle.
+    BranchIdle,
+    /// Compute `addr` = direct page | (`operand` + index) and read `value`.
+    ReadDp(Index),
+    /// Compute `addr` = direct page | (`operand` + index) and dummy-read it
+    /// (the read-before-write cycle of store instructions).
+    ReadDpForStore(Index),
+    /// Compute `addr` = `operand2`:`operand` and read `value`.
+    ReadAbs,
+    /// Compute `addr` = `operand2`:`operand` and dummy-read it.
+    ReadAbsForStore,
+    /// Read the pointer low byte at direct page | (`operand` + index) into
+    /// `addr` (low half).
+    ReadPtrLo(Index),
+    /// Read the pointer high byte at the following direct-page address.
+    ReadPtrHi(Index),
+    /// Read `value` from `addr` (+ Y for `Index::Y`).
+    ReadTarget(Index),
+    /// Write A/X/Y (per `Finish`) to `addr`.
+    WriteReg,
+}
+
+/// Result action applied together with the final micro-op of a cycle script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Finish {
+    /// No register result (branches, stores).
+    None,
+    /// `A = value`, update N/Z.
+    MovA,
+    /// `X = value`, update N/Z.
+    MovX,
+    /// `Y = value`, update N/Z.
+    MovY,
+    /// Compare A with `value`.
+    CmpA,
+    /// Compare X with `value`.
+    CmpX,
+    /// Compare Y with `value`.
+    CmpY,
+    /// Source register for [`MicroOp::WriteReg`] is A.
+    StoreA,
+    /// Source register for [`MicroOp::WriteReg`] is X.
+    StoreX,
+    /// Source register for [`MicroOp::WriteReg`] is Y.
+    StoreY,
 }
 
 /// SPC700 CPU core.
@@ -521,25 +597,77 @@ impl Spc700 {
         self.update_nz8(self.a);
     }
 
-    /// Return `true` if the given opcode has a per-cycle script and should be
-    /// driven by [`Self::step_one_cycle`] instead of the atomic [`Self::step`].
+    /// Cycle script for the given opcode, or `None` when the opcode is only
+    /// implemented atomically.
     ///
-    /// Only opcodes critical for the blargg IPL-hack trampoline test
-    /// reproducer are cycle-scripted in this commit; the remainder still run
-    /// atomically via `step`. Subsequent commits in #2908 expand coverage to
-    /// the full instruction set.
+    /// The scripted set covers the blargg IPL-hack trampoline opcodes (#2908)
+    /// plus every opcode the blargg shells use to poll or post through the
+    /// `$F4-$F7` port window (#2914) — the dispatcher in `SnesApu::tick`
+    /// cycle-steps these so port accesses land on the correct wall-clock SPC
+    /// cycle instead of executing atomically at the instruction start.
+    fn cycle_script(opcode: u8) -> Option<(&'static [MicroOp], Finish)> {
+        use Finish as F;
+        use MicroOp::*;
+        const DP_READ: &[MicroOp] = &[FetchOperand, ReadDp(Index::None)];
+        const DP_X_READ: &[MicroOp] = &[FetchOperand, Idle, ReadDp(Index::X)];
+        const ABS_READ: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbs];
+        const IND_X_READ: &[MicroOp] = &[
+            FetchOperand,
+            Idle,
+            ReadPtrLo(Index::X),
+            ReadPtrHi(Index::X),
+            ReadTarget(Index::None),
+        ];
+        const IND_Y_READ: &[MicroOp] = &[
+            FetchOperand,
+            Idle,
+            ReadPtrLo(Index::None),
+            ReadPtrHi(Index::None),
+            ReadTarget(Index::Y),
+        ];
+        const DP_WRITE: &[MicroOp] = &[FetchOperand, ReadDpForStore(Index::None), WriteReg];
+        const DP_X_WRITE: &[MicroOp] = &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg];
+        const ABS_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbsForStore, WriteReg];
+
+        Some(match opcode {
+            // BRA rel — the trampoline wait-loop opcode.
+            0x2F => (&[FetchOperand, BranchIdle, Idle], F::None),
+            // MOV A,#imm — the queued micro-op behind the trampoline.
+            0xE8 => (&[ReadImm], F::MovA),
+            // Direct-page reads.
+            0xE4 => (DP_READ, F::MovA),
+            0xF8 => (DP_READ, F::MovX),
+            0xEB => (DP_READ, F::MovY),
+            0x64 => (DP_READ, F::CmpA),
+            0x3E => (DP_READ, F::CmpX),
+            0x7E => (DP_READ, F::CmpY),
+            // Direct-page indexed reads.
+            0xF4 => (DP_X_READ, F::MovA),
+            0x74 => (DP_X_READ, F::CmpA),
+            // Absolute reads.
+            0xE5 => (ABS_READ, F::MovA),
+            0xE9 => (ABS_READ, F::MovX),
+            0xEC => (ABS_READ, F::MovY),
+            0x65 => (ABS_READ, F::CmpA),
+            // Indirect reads through a direct-page pointer.
+            0xE7 => (IND_X_READ, F::MovA),
+            0x67 => (IND_X_READ, F::CmpA),
+            0xF7 => (IND_Y_READ, F::MovA),
+            0x77 => (IND_Y_READ, F::CmpA),
+            // Stores (port posts).
+            0xC4 => (DP_WRITE, F::StoreA),
+            0xD8 => (DP_WRITE, F::StoreX),
+            0xCB => (DP_WRITE, F::StoreY),
+            0xD4 => (DP_X_WRITE, F::StoreA),
+            0xC5 => (ABS_WRITE, F::StoreA),
+            _ => return None,
+        })
+    }
+
+    /// Return `true` if the given opcode has a per-cycle script and can be
+    /// driven by [`Self::step_one_cycle`] instead of the atomic [`Self::step`].
     pub fn opcode_is_cycle_scripted(opcode: u8) -> bool {
-        matches!(
-            opcode,
-            // BRA rel — the trampoline wait-loop opcode. Cycle-scripted so the
-            // operand byte (port-3 in the trampoline) is read at the correct
-            // sub-cycle, observing brief host pulses.
-            0x2F
-            // MOV A,#imm — the queued micro-op behind the trampoline. Cycle-
-            // scripted so the operand byte (port-1 in the trampoline) is read
-            // when the host expects.
-            | 0xE8
-        )
+        Self::cycle_script(opcode).is_some()
     }
 
     /// `true` while a cycle-scripted opcode is mid-execution.
@@ -572,61 +700,127 @@ impl Spc700 {
             self.in_progress = Some(InProgressOp {
                 opcode,
                 cycle: 1,
-                operand: 0,
+                ..InProgressOp::default()
             });
             return;
         }
 
         let mut op = self.in_progress.take().expect("checked above");
+        let (script, finish) =
+            Self::cycle_script(op.opcode).expect("in_progress holds non-scripted opcode");
+        // op.cycle counts executed cycles; cycle 1 was the opcode fetch, so
+        // micro-op k (0-based) runs as cycle k+2.
+        let micro_index = usize::from(op.cycle) - 1;
         op.cycle = op.cycle.wrapping_add(1);
-        let done = match op.opcode {
-            0x2F => self.bra_cycle(bus, &mut op),
-            0xE8 => self.mov_a_imm_cycle(bus, &mut op),
-            _ => unreachable!(
-                "in_progress holds non-cycle-scripted opcode ${:02X}",
-                op.opcode
-            ),
-        };
-        if !done {
+        self.run_micro_op(bus, &mut op, script[micro_index], finish);
+        let done = micro_index + 1 == script.len();
+        if done {
+            self.apply_finish(finish, &op);
+        } else {
             self.in_progress = Some(op);
         }
     }
 
-    /// BRA rel cycle handler. 4 cycles total (cycle 1 = opcode fetch elsewhere).
-    fn bra_cycle(&mut self, bus: &mut impl Spc700Bus, op: &mut InProgressOp) -> bool {
-        match op.cycle {
-            2 => {
-                // Operand fetch.
+    /// Execute one micro-op of a cycle script (exactly one bus operation).
+    fn run_micro_op(
+        &mut self,
+        bus: &mut impl Spc700Bus,
+        op: &mut InProgressOp,
+        micro: MicroOp,
+        finish: Finish,
+    ) {
+        let index_of = |index: Index, x: u8, y: u8| match index {
+            Index::None => 0,
+            Index::X => x,
+            Index::Y => y,
+        };
+        match micro {
+            MicroOp::ReadImm => {
+                op.value = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+            }
+            MicroOp::FetchOperand => {
                 op.operand = bus.read(self.pc);
                 self.pc = self.pc.wrapping_add(1);
-                false
             }
-            3 => {
-                // First idle + take branch.
+            MicroOp::FetchOperand2 => {
+                op.operand2 = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+            }
+            MicroOp::Idle => {
+                bus.idle();
+            }
+            MicroOp::BranchIdle => {
                 self.branch(op.operand as i8);
                 bus.idle();
-                false
             }
-            4 => {
-                // Second idle. Done.
-                bus.idle();
-                true
+            MicroOp::ReadDp(index) => {
+                op.addr = self.direct_page_base()
+                    | u16::from(op.operand.wrapping_add(index_of(index, self.x, self.y)));
+                op.value = bus.read(op.addr);
             }
-            _ => unreachable!("BRA cycle {} out of range", op.cycle),
+            MicroOp::ReadDpForStore(index) => {
+                op.addr = self.direct_page_base()
+                    | u16::from(op.operand.wrapping_add(index_of(index, self.x, self.y)));
+                bus.read(op.addr);
+            }
+            MicroOp::ReadAbs => {
+                op.addr = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadAbsForStore => {
+                op.addr = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+                bus.read(op.addr);
+            }
+            MicroOp::ReadPtrLo(index) => {
+                let ptr = op.operand.wrapping_add(index_of(index, self.x, self.y));
+                op.addr = u16::from(bus.read(self.direct_page_base() | u16::from(ptr)));
+            }
+            MicroOp::ReadPtrHi(index) => {
+                let ptr = op
+                    .operand
+                    .wrapping_add(index_of(index, self.x, self.y))
+                    .wrapping_add(1);
+                let hi = bus.read(self.direct_page_base() | u16::from(ptr));
+                op.addr |= u16::from(hi) << 8;
+            }
+            MicroOp::ReadTarget(index) => {
+                let addr = op
+                    .addr
+                    .wrapping_add(u16::from(index_of(index, self.x, self.y)));
+                op.value = bus.read(addr);
+            }
+            MicroOp::WriteReg => {
+                let value = match finish {
+                    Finish::StoreA => self.a,
+                    Finish::StoreX => self.x,
+                    Finish::StoreY => self.y,
+                    _ => unreachable!("WriteReg without a store finish"),
+                };
+                bus.write(op.addr, value);
+            }
         }
     }
 
-    /// MOV A,#imm cycle handler. 2 cycles total (cycle 1 = opcode fetch elsewhere).
-    fn mov_a_imm_cycle(&mut self, bus: &mut impl Spc700Bus, op: &mut InProgressOp) -> bool {
-        match op.cycle {
-            2 => {
-                let imm = bus.read(self.pc);
-                self.pc = self.pc.wrapping_add(1);
-                self.a = imm;
+    /// Apply the result action of a completed cycle script.
+    fn apply_finish(&mut self, finish: Finish, op: &InProgressOp) {
+        match finish {
+            Finish::None | Finish::StoreA | Finish::StoreX | Finish::StoreY => {}
+            Finish::MovA => {
+                self.a = op.value;
                 self.update_nz8(self.a);
-                true
             }
-            _ => unreachable!("MOV A,#imm cycle {} out of range", op.cycle),
+            Finish::MovX => {
+                self.x = op.value;
+                self.update_nz8(self.x);
+            }
+            Finish::MovY => {
+                self.y = op.value;
+                self.update_nz8(self.y);
+            }
+            Finish::CmpA => self.compare_a(op.value),
+            Finish::CmpX => self.compare_x(op.value),
+            Finish::CmpY => self.compare_y(op.value),
         }
     }
 
@@ -6170,5 +6364,132 @@ mod tests {
         assert_eq!(first_cycles, 31);
         assert_eq!(second_cycles, 5);
         assert_eq!(bus.cycles(), 36);
+    }
+
+    // -----------------------------------------------------------------------
+    // #2914: sub-instruction port visibility requires cycle scripts for every
+    // opcode the blargg shell uses to poll or post through $F4-$F7. Each
+    // scripted opcode must execute identically to the atomic step():
+    // same registers/flags/PC and the same bus-op sequence, one bus op per
+    // step_one_cycle call.
+    // -----------------------------------------------------------------------
+
+    fn assert_cycle_script_matches_atomic(setup: &[u8], insn: &[u8], pokes: &[(u16, u8)]) {
+        let opcode = insn[0];
+        assert!(
+            Spc700::opcode_is_cycle_scripted(opcode),
+            "opcode ${opcode:02X} must be cycle-scripted"
+        );
+
+        let build = |ops_recorded: bool| {
+            let mut bus = RecordingBus::new();
+            let mut program = setup.to_vec();
+            program.extend_from_slice(insn);
+            bus.load(0x0200, &program);
+            for &(addr, value) in pokes {
+                bus.ram[addr as usize] = value;
+            }
+            let mut cpu = Spc700::new();
+            cpu.pc = 0x0200;
+            // Execute the setup instructions atomically on both instances.
+            let setup_end = 0x0200 + setup.len() as u16;
+            while cpu.pc() < setup_end {
+                cpu.step(&mut bus);
+            }
+            if !ops_recorded {
+                bus.ops.clear();
+            }
+            (cpu, bus)
+        };
+
+        let (mut atomic_cpu, mut atomic_bus) = build(false);
+        let (mut scripted_cpu, mut scripted_bus) = build(false);
+        atomic_bus.ops.clear();
+        scripted_bus.ops.clear();
+
+        let cycles = atomic_cpu.step(&mut atomic_bus);
+
+        let mut scripted_cycles = 0u8;
+        loop {
+            scripted_cpu.step_one_cycle(&mut scripted_bus);
+            scripted_cycles += 1;
+            if !scripted_cpu.has_in_progress_op() {
+                break;
+            }
+        }
+
+        assert_eq!(
+            scripted_cycles, cycles,
+            "op ${opcode:02X}: cycle-stepped op count must equal atomic cycles"
+        );
+        assert_eq!(
+            scripted_bus.ops, atomic_bus.ops,
+            "op ${opcode:02X}: bus-op sequences must match"
+        );
+        assert_eq!(scripted_cpu.a(), atomic_cpu.a(), "op ${opcode:02X}: A");
+        assert_eq!(scripted_cpu.x(), atomic_cpu.x(), "op ${opcode:02X}: X");
+        assert_eq!(scripted_cpu.y(), atomic_cpu.y(), "op ${opcode:02X}: Y");
+        assert_eq!(
+            scripted_cpu.psw(),
+            atomic_cpu.psw(),
+            "op ${opcode:02X}: PSW"
+        );
+        assert_eq!(scripted_cpu.pc(), atomic_cpu.pc(), "op ${opcode:02X}: PC");
+        assert_eq!(
+            &scripted_bus.ram[..],
+            &atomic_bus.ram[..],
+            "op ${opcode:02X}: RAM"
+        );
+    }
+
+    #[test]
+    fn cycle_scripts_match_atomic_execution_for_port_poll_and_post_opcodes() {
+        // Register setup prefixes executed atomically before the instruction
+        // under test: A=$42, X=$02, Y=$01.
+        let regs: &[u8] = &[0xE8, 0x42, 0xCD, 0x02, 0x8D, 0x01];
+        let pokes: &[(u16, u8)] = &[
+            (0x00F4, 0x80),
+            (0x00F5, 0x01),
+            (0x00F6, 0x42),
+            (0x0030, 0xF3),
+            (0x0031, 0x00),
+            (0x0032, 0xF4),
+            (0x0033, 0x00),
+        ];
+
+        // Existing trampoline scripts must stay covered.
+        assert_cycle_script_matches_atomic(regs, &[0x2F, 0x02], pokes); // BRA rel
+        assert_cycle_script_matches_atomic(regs, &[0xE8, 0x99], pokes); // MOV A,#imm
+
+        // Direct-page reads.
+        assert_cycle_script_matches_atomic(regs, &[0xE4, 0xF4], pokes); // MOV A,dp
+        assert_cycle_script_matches_atomic(regs, &[0xF8, 0xF5], pokes); // MOV X,dp
+        assert_cycle_script_matches_atomic(regs, &[0xEB, 0xF6], pokes); // MOV Y,dp
+        assert_cycle_script_matches_atomic(regs, &[0x64, 0xF4], pokes); // CMP A,dp
+        assert_cycle_script_matches_atomic(regs, &[0x3E, 0xF4], pokes); // CMP X,dp
+        assert_cycle_script_matches_atomic(regs, &[0x7E, 0xF4], pokes); // CMP Y,dp
+
+        // Direct-page indexed reads.
+        assert_cycle_script_matches_atomic(regs, &[0xF4, 0xF2], pokes); // MOV A,dp+X
+        assert_cycle_script_matches_atomic(regs, &[0x74, 0xF2], pokes); // CMP A,dp+X
+
+        // Absolute reads.
+        assert_cycle_script_matches_atomic(regs, &[0xE5, 0xF4, 0x00], pokes); // MOV A,!abs
+        assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
+        assert_cycle_script_matches_atomic(regs, &[0xEC, 0xF6, 0x00], pokes); // MOV Y,!abs
+        assert_cycle_script_matches_atomic(regs, &[0x65, 0xF4, 0x00], pokes); // CMP A,!abs
+
+        // Indirect reads through a direct-page pointer.
+        assert_cycle_script_matches_atomic(regs, &[0xE7, 0x30], pokes); // MOV A,[dp+X]
+        assert_cycle_script_matches_atomic(regs, &[0x67, 0x30], pokes); // CMP A,[dp+X]
+        assert_cycle_script_matches_atomic(regs, &[0xF7, 0x30], pokes); // MOV A,[dp]+Y
+        assert_cycle_script_matches_atomic(regs, &[0x77, 0x30], pokes); // CMP A,[dp]+Y
+
+        // Port posts (stores).
+        assert_cycle_script_matches_atomic(regs, &[0xC4, 0xF4], pokes); // MOV dp,A
+        assert_cycle_script_matches_atomic(regs, &[0xD8, 0xF5], pokes); // MOV dp,X
+        assert_cycle_script_matches_atomic(regs, &[0xCB, 0xF6], pokes); // MOV dp,Y
+        assert_cycle_script_matches_atomic(regs, &[0xD4, 0xF2], pokes); // MOV dp+X,A
+        assert_cycle_script_matches_atomic(regs, &[0xC5, 0xF4, 0x00], pokes); // MOV !abs,A
     }
 }

@@ -20,8 +20,12 @@ mod tests {
         ("spc_mem_access_times.sfc", 600, 0x3AC3_E30F),
         ("spc_timer.sfc", 600, 0x2497_38B2),
         ("test_speed.smc", 600, 0xB02E_63CE),
-        ("test_timer_speed_2.smc", 600, 0x48DA_ACE9),
-        ("test_timer_speed3.smc", 600, 0x8B6C_B1A1),
+        // Golden re-approved for #2914: cycle-stepped port polling moved the
+        // measured values to match Mesen's within ±1 (screen still "Passed").
+        ("test_timer_speed_2.smc", 600, 0x1DA0_6C21),
+        // Golden re-approved for #2914 (see test_timer_speed_2 note); "Done"
+        // measurement screen, rows match Mesen within ±1.
+        ("test_timer_speed3.smc", 600, 0xABF6_D131),
         ("test_timer_stop.smc", 600, 0x7CC2_B76B),
     ];
 
@@ -146,12 +150,15 @@ mod tests {
 
     #[test]
     fn blargg_test_timer_speed_passes() {
-        run_rom_with_expected_crc("test_timer_speed.smc", 0xED59_F2AF);
+        // Golden re-approved for #2914 (cycle-stepped port polling); screen
+        // still reads "Passed", measured rows now match Mesen within ±1.
+        run_rom_with_expected_crc("test_timer_speed.smc", 0x6CA0_0A02);
     }
 
     #[test]
     fn blargg_test_timer_speed2_passes() {
-        run_rom_with_expected_crc("test_timer_speed2.smc", 0xED59_F2AF);
+        // Same re-approval as test_timer_speed (identical output screen).
+        run_rom_with_expected_crc("test_timer_speed2.smc", 0x6CA0_0A02);
     }
 
     #[test]
