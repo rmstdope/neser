@@ -117,6 +117,20 @@ enum MicroOp {
     /// Read-modify-write completion: transform `value` per the finish kind
     /// (with flag updates) and write the result back to `addr`.
     WriteRmw,
+    /// Compute `addr` = direct page | X and read `value` (the `(X)`
+    /// indirect operand).
+    ReadAtX,
+    /// Compute `addr` = direct page | X and dummy-read it (store form).
+    ReadAtXForStore,
+    /// Compute `addr` = direct page | X and write the finish's source
+    /// register there (`MOV (X)+,A` has no read-before-write).
+    WriteAtX,
+    /// Compute `addr` = `operand2`:`operand` + index and read `value`
+    /// (absolute indexed loads).
+    ReadAbsIdx(Index),
+    /// Compute `addr` = `operand2`:`operand` + index and dummy-read it
+    /// (absolute indexed stores).
+    ReadAbsIdxForStore(Index),
     /// Compute `addr` = `operand2`:`operand` and read `value`.
     ReadAbs,
     /// Compute `addr` = `operand2`:`operand` and dummy-read it.
@@ -230,6 +244,10 @@ enum Finish {
     AdcMemImm,
     /// RMW: `mem = mem - imm - !C` with full flag update.
     SbcMemImm,
+    /// `A = value`, update N/Z, then `X += 1` (`MOV A,(X)+`).
+    MovAXInc,
+    /// Store A then `X += 1` (`MOV (X)+,A`).
+    StoreAXInc,
 }
 
 /// SPC700 CPU core.
@@ -734,6 +752,10 @@ impl Spc700 {
         const DP_X_RMW: &[MicroOp] = &[FetchOperand, Idle, ReadDp(Index::X), WriteRmw];
         const ABS_RMW: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbs, WriteRmw];
         const DP_IMM_RMW: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2, WriteRmw];
+        const AT_X_READ: &[MicroOp] = &[DummyReadPc, ReadAtX];
+        const ABS_X_READ: &[MicroOp] = &[FetchOperand, FetchOperand2, Idle, ReadAbsIdx(Index::X)];
+        const ABS_Y_READ: &[MicroOp] = &[FetchOperand, FetchOperand2, Idle, ReadAbsIdx(Index::Y)];
+        const DP_Y_READ: &[MicroOp] = &[FetchOperand, Idle, ReadDp(Index::Y)];
         const DP_X_WRITE: &[MicroOp] = &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg];
         const ABS_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbsForStore, WriteReg];
 
@@ -849,6 +871,67 @@ impl Spc700 {
             0x4C => (ABS_RMW, F::RmwLsr),
             0x2C => (ABS_RMW, F::RmwRol),
             0x6C => (ABS_RMW, F::RmwRor),
+            // (X) indirect forms.
+            0xE6 => (AT_X_READ, F::MovA),
+            0xBF => (&[DummyReadPc, ReadAtX, Idle], F::MovAXInc),
+            0xC6 => (&[DummyReadPc, ReadAtXForStore, WriteReg], F::StoreA),
+            0xAF => (&[DummyReadPc, Idle, WriteAtX], F::StoreAXInc),
+            0x06 => (AT_X_READ, F::OrA),
+            0x26 => (AT_X_READ, F::AndA),
+            0x46 => (AT_X_READ, F::EorA),
+            0x66 => (AT_X_READ, F::CmpA),
+            0x86 => (AT_X_READ, F::AdcA),
+            0xA6 => (AT_X_READ, F::SbcA),
+            // Absolute stores of X/Y and indexed stores of A.
+            0xC9 => (ABS_WRITE, F::StoreX),
+            0xCC => (ABS_WRITE, F::StoreY),
+            0xD5 => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    Idle,
+                    ReadAbsIdxForStore(Index::X),
+                    WriteReg,
+                ],
+                F::StoreA,
+            ),
+            0xD6 => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    Idle,
+                    ReadAbsIdxForStore(Index::Y),
+                    WriteReg,
+                ],
+                F::StoreA,
+            ),
+            // MOV dp+Y,X / MOV dp+X,Y.
+            0xD9 => (
+                &[FetchOperand, Idle, ReadDpForStore(Index::Y), WriteReg],
+                F::StoreX,
+            ),
+            0xDB => (
+                &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg],
+                F::StoreY,
+            ),
+            // Absolute-indexed and dp-indexed loads.
+            0xF5 => (ABS_X_READ, F::MovA),
+            0xF6 => (ABS_Y_READ, F::MovA),
+            0xF9 => (DP_Y_READ, F::MovX),
+            0xFB => (DP_X_READ, F::MovY),
+            // ALU A,!abs+X / !abs+Y.
+            0x15 => (ABS_X_READ, F::OrA),
+            0x16 => (ABS_Y_READ, F::OrA),
+            0x35 => (ABS_X_READ, F::AndA),
+            0x36 => (ABS_Y_READ, F::AndA),
+            0x55 => (ABS_X_READ, F::EorA),
+            0x56 => (ABS_Y_READ, F::EorA),
+            0x75 => (ABS_X_READ, F::CmpA),
+            0x76 => (ABS_Y_READ, F::CmpA),
+            0x95 => (ABS_X_READ, F::AdcA),
+            0x96 => (ABS_Y_READ, F::AdcA),
+            0xB5 => (ABS_X_READ, F::SbcA),
+            0xB6 => (ABS_Y_READ, F::SbcA),
             // ALU dp,#imm read-modify-write (imm first, dp second).
             0x18 => (DP_IMM_RMW, F::OrMemImm),
             0x38 => (DP_IMM_RMW, F::AndMemImm),
@@ -1009,6 +1092,28 @@ impl Spc700 {
                     op.done_early = true;
                 }
             }
+            MicroOp::ReadAtX => {
+                op.addr = self.direct_page_base() | u16::from(self.x);
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadAtXForStore => {
+                op.addr = self.direct_page_base() | u16::from(self.x);
+                bus.read(op.addr);
+            }
+            MicroOp::WriteAtX => {
+                op.addr = self.direct_page_base() | u16::from(self.x);
+                bus.write(op.addr, self.a);
+            }
+            MicroOp::ReadAbsIdx(index) => {
+                let base = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+                op.addr = base.wrapping_add(u16::from(index_of(index, self.x, self.y)));
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadAbsIdxForStore(index) => {
+                let base = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+                op.addr = base.wrapping_add(u16::from(index_of(index, self.x, self.y)));
+                bus.read(op.addr);
+            }
             MicroOp::WriteRmw => {
                 let result = match finish {
                     Finish::RmwInc => {
@@ -1088,7 +1193,7 @@ impl Spc700 {
             }
             MicroOp::WriteReg => {
                 let value = match finish {
-                    Finish::StoreA => self.a,
+                    Finish::StoreA | Finish::StoreAXInc => self.a,
                     Finish::StoreX => self.x,
                     Finish::StoreY => self.y,
                     Finish::StoreImm => op.operand,
@@ -1142,6 +1247,14 @@ impl Spc700 {
             }
             Finish::SbcA => {
                 self.subtract_with_borrow_from_a(op.value);
+            }
+            Finish::MovAXInc => {
+                self.a = op.value;
+                self.update_nz8(self.a);
+                self.x = self.x.wrapping_add(1);
+            }
+            Finish::StoreAXInc => {
+                self.x = self.x.wrapping_add(1);
             }
             Finish::IncA => {
                 self.a = self.a.wrapping_add(1);
@@ -6952,13 +7065,51 @@ mod tests {
             assert_cycle_script_matches_atomic(regs, insn, pokes);
         }
 
+        // (X) indirect, indexed loads/stores, ALU abs+X/Y (#2938 batch 5).
+        for insn in [
+            &[0xE6u8][..],
+            &[0xBF],
+            &[0xC6],
+            &[0xAF],
+            &[0x06],
+            &[0x26],
+            &[0x46],
+            &[0x66],
+            &[0x86],
+            &[0xA6],
+            &[0xC9, 0x30, 0x00],
+            &[0xCC, 0x30, 0x00],
+            &[0xD5, 0x30, 0x00],
+            &[0xD6, 0x30, 0x00],
+            &[0xD9, 0x2E],
+            &[0xDB, 0x2E],
+            &[0xF5, 0x2E, 0x00],
+            &[0xF6, 0x2E, 0x00],
+            &[0xF9, 0x2E],
+            &[0xFB, 0x2E],
+            &[0x15, 0x2E, 0x00],
+            &[0x16, 0x2E, 0x00],
+            &[0x35, 0x2E, 0x00],
+            &[0x36, 0x2E, 0x00],
+            &[0x55, 0x2E, 0x00],
+            &[0x56, 0x2E, 0x00],
+            &[0x75, 0x2E, 0x00],
+            &[0x76, 0x2E, 0x00],
+            &[0x95, 0x2E, 0x00],
+            &[0x96, 0x2E, 0x00],
+            &[0xB5, 0x2E, 0x00],
+            &[0xB6, 0x2E, 0x00],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
         // Coverage pin for #2938: bump as families are scripted; the goal
         // is 256, at which point the atomic path is deleted.
         let scripted = (0u16..=0xFF)
             .filter(|&op| Spc700::opcode_is_cycle_scripted(op as u8))
             .count();
         assert_eq!(
-            scripted, 99,
+            scripted, 131,
             "cycle-script coverage changed; update the pin"
         );
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
