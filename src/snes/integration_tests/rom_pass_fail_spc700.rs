@@ -142,9 +142,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: timer stop — fix emulator then update CRC"]
     fn blargg_test_timer_stop2_passes() {
-        run_failing_rom("test_timer_stop2.smc");
+        run_rom_with_expected_crc("test_timer_stop2.smc", 0xB2CC_2986);
     }
 
     #[test]
