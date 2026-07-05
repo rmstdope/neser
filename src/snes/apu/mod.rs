@@ -356,6 +356,11 @@ impl SnesApu {
         let op1 = self.peek_opcode_at(pc.wrapping_add(1));
         match opcode {
             // dp direct reads/writes.
+            // MOV dp,#imm: the dp byte is the SECOND operand.
+            0x8F => {
+                let op2 = self.peek_opcode_at(pc.wrapping_add(2));
+                PORTS.contains(&(dp_base | u16::from(op2)))
+            }
             0xE4 | 0xF8 | 0xEB | 0x64 | 0x3E | 0x7E | 0xC4 | 0xD8 | 0xCB => {
                 PORTS.contains(&(dp_base | u16::from(op1)))
             }

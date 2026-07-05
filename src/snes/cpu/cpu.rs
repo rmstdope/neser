@@ -620,9 +620,16 @@ impl<B: SnesBus> Cpu<B> {
         // if unmasked, or simply resumes the next instruction if the I flag masks it).
         if self.waiting {
             if !interrupts_locked && (self.nmi_pending || irq_line_asserted || self.abort_pending) {
+                // Hardware spends TWO idle cycles between the wait-loop poll
+                // that first sees the interrupt and resuming execution: the
+                // detecting idle completes, and one more idle runs before the
+                // core leaves the halted state (Mesen ProcessHaltedState
+                // samples `_waiOver` before each Idle). Verified against
+                // Mesen with the #2914 boot bus trace.
                 self.waiting = false;
                 self.tick_internal_cycle();
-                wai_wake_cycles = 1;
+                self.tick_internal_cycle();
+                wai_wake_cycles = 2;
             } else {
                 self.tick_internal_cycle();
                 return 1;
@@ -963,22 +970,26 @@ impl<B: SnesBus> Cpu<B> {
         byte
     }
 
-    /// Advance the master clock N cycles for `addr`, then read one byte.
+    /// Run one read bus cycle for `addr` and return the byte.
     ///
-    /// NOTE (#2914): hardware (and Mesen's `_execRead`) samples read data 4
-    /// master clocks before the end of the bus cycle. Adopting that split
-    /// here currently flips a knife-edge poll quantization in the
-    /// blargg `timer_at_power_reset` trampoline sequence, so end-of-cycle
-    /// sampling is kept until the remaining host<->SPC sub-cycle phase
-    /// question is settled.
+    /// The 65816 samples the data bus 4 master clocks before the end of the
+    /// bus cycle (writes drive it until the very end, see [`Self::tick_write`];
+    /// Mesen: `_execRead` runs `speed - 4` clocks, the handler read happens,
+    /// then IncMasterClock4 finishes the cycle). The split matters for reads
+    /// that race asynchronous hardware: APU port polls at $2140-$2143 (#2914)
+    /// and the $2137 H/V counter latch both observe the sampling instant.
     fn tick_read(&mut self, addr: u32) -> u8 {
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      read  ${:06X}", addr);
-        for _ in 0..cycles {
+        for _ in 0..cycles - 4 {
             self.bus.tick();
         }
         self.memory_bus_cycles += 1;
-        self.bus.read(addr)
+        let value = self.bus.read(addr);
+        for _ in 0..4 {
+            self.bus.tick();
+        }
+        value
     }
 
     /// Advance the master clock N cycles for `addr`, then write one byte.
@@ -4219,6 +4230,75 @@ mod tests {
         }
 
         fn tick(&mut self) {}
+    }
+
+    /// Records the interleaving of master-clock ticks and bus data accesses.
+    #[derive(Default)]
+    struct BusCycleRecordingBus {
+        mem: BTreeMap<u32, u8>,
+        events: RefCell<Vec<BusCycleEvent>>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum BusCycleEvent {
+        Tick,
+        Read(u32),
+    }
+
+    impl BusCycleRecordingBus {
+        fn load(&mut self, addr: u32, data: &[u8]) {
+            for (offset, byte) in data.iter().enumerate() {
+                self.mem.insert((addr + offset as u32) & 0xFF_FFFF, *byte);
+            }
+        }
+    }
+
+    impl SnesBus for BusCycleRecordingBus {
+        fn read(&self, addr: u32) -> u8 {
+            self.events
+                .borrow_mut()
+                .push(BusCycleEvent::Read(addr & 0xFF_FFFF));
+            *self.mem.get(&(addr & 0xFF_FFFF)).unwrap_or(&0)
+        }
+
+        fn read_for_debugger(&self, addr: u32) -> u8 {
+            *self.mem.get(&(addr & 0xFF_FFFF)).unwrap_or(&0)
+        }
+
+        fn write(&mut self, addr: u32, value: u8) {
+            self.mem.insert(addr & 0xFF_FFFF, value);
+        }
+
+        fn tick(&mut self) {
+            self.events.borrow_mut().push(BusCycleEvent::Tick);
+        }
+    }
+
+    // #2914: see `Cpu::tick_read` — read data is sampled 4 master clocks
+    // before the end of the bus cycle; writes land at the end.
+    #[test]
+    fn read_bus_cycle_samples_data_four_clocks_before_cycle_end() {
+        let mut bus = BusCycleRecordingBus::default();
+        // $00:8000 (WS1 ROM, 8 clocks/access): LDA $2140 ($2140 = 6 clocks).
+        bus.load(0x00_8000, &[0xAD, 0x40, 0x21]);
+        let mut cpu = Cpu::new(bus);
+        cpu.pc = 0x8000;
+
+        cpu.step();
+
+        use BusCycleEvent::{Read, Tick};
+        let mut expected = Vec::new();
+        for operand in 0u32..3 {
+            // 8-clock fetch: 4 ticks, sample, 4 ticks.
+            expected.extend([Tick; 4]);
+            expected.push(Read(0x00_8000 + operand));
+            expected.extend([Tick; 4]);
+        }
+        // 6-clock data read: 2 ticks, sample, 4 ticks.
+        expected.extend([Tick; 2]);
+        expected.push(Read(0x00_2140));
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
     }
 
     struct TraceReset;
@@ -9144,8 +9224,14 @@ mod wai_stp_tests {
         assert_eq!(cpu.pc, 0x0002, "execution should resume after WAI");
     }
 
+    // Hardware runs TWO idle cycles between the wait-loop poll that first
+    // sees the interrupt and execution resuming (Mesen ProcessHaltedState:
+    // the detecting Idle() completes, and `_waiOver` is sampled before the
+    // next Idle(), so one more full idle runs before the CPU is Running).
+    // Verified against Mesen via the #2914 boot bus trace (WAI wake was 6
+    // master clocks early with a single idle).
     #[test]
-    fn wai_wake_adds_one_cycle_before_masked_resume() {
+    fn wai_wake_adds_two_cycles_before_masked_resume() {
         let mut cpu = Cpu::new(TestBus::default());
         cpu.bus.load(0x0000, &[0xCB, 0xEA]); // WAI ; NOP
         assert_eq!(cpu.step(), 4, "WAI opcode timing");
@@ -9154,13 +9240,13 @@ mod wai_stp_tests {
         // I=1 after reset: IRQ wakes WAI but does not dispatch.
         cpu.irq_pending = true;
         let cycles = cpu.step();
-        assert_eq!(cycles, 3, "wake from WAI adds one idle cycle before NOP");
+        assert_eq!(cycles, 4, "wake from WAI adds two idle cycles before NOP");
         assert!(!cpu.waiting);
         assert_eq!(cpu.pc, 0x0002);
     }
 
     #[test]
-    fn wai_wake_adds_one_cycle_before_irq_dispatch() {
+    fn wai_wake_adds_two_cycles_before_irq_dispatch() {
         let mut cpu = Cpu::new(TestBus::default());
         cpu.pc = 0x8000;
         cpu.s = 0x01FF;
@@ -9174,8 +9260,8 @@ mod wai_stp_tests {
 
         let cycles = cpu.step();
         assert_eq!(
-            cycles, 8,
-            "wake cycle + emulation IRQ dispatch (7) should total 8"
+            cycles, 9,
+            "two wake cycles + emulation IRQ dispatch (7) should total 9"
         );
         assert_eq!(cpu.pc, 0x9100);
         assert!(!cpu.waiting);

@@ -289,6 +289,16 @@ impl Ppu {
                 );
             }
             if triggered {
+                // Temporary #2914 diagnostic (remove before merge).
+                if std::env::var_os("NESER_TPR_LOG").is_some()
+                    && !self.irq_line
+                    && self.total_master_clocks < 170_000
+                {
+                    eprintln!(
+                        "neser irqrise sl={} lc={} htime={} vtime={} mode={} total={}",
+                        v, lc, self.htime, self.vtime, self.irq_mode, self.total_master_clocks
+                    );
+                }
                 self.timeup_flag = true;
                 self.irq_line = true;
             }

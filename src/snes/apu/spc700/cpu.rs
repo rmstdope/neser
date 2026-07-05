@@ -93,6 +93,10 @@ enum MicroOp {
     /// Compute `addr` = direct page | (`operand` + index) and dummy-read it
     /// (the read-before-write cycle of store instructions).
     ReadDpForStore(Index),
+    /// Compute `addr` = direct page | `operand2` and dummy-read it (the
+    /// read-before-write cycle of `MOV dp,#imm`, whose dp byte is the
+    /// second operand).
+    ReadDp2ForStore,
     /// Compute `addr` = `operand2`:`operand` and read `value`.
     ReadAbs,
     /// Compute `addr` = `operand2`:`operand` and dummy-read it.
@@ -131,6 +135,9 @@ enum Finish {
     StoreX,
     /// Source register for [`MicroOp::WriteReg`] is Y.
     StoreY,
+    /// Source for [`MicroOp::WriteReg`] is the first operand byte (the
+    /// immediate of `MOV dp,#imm`).
+    StoreImm,
 }
 
 /// SPC700 CPU core.
@@ -626,6 +633,7 @@ impl Spc700 {
             ReadTarget(Index::Y),
         ];
         const DP_WRITE: &[MicroOp] = &[FetchOperand, ReadDpForStore(Index::None), WriteReg];
+        const DP_IMM_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2ForStore, WriteReg];
         const DP_X_WRITE: &[MicroOp] = &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg];
         const ABS_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbsForStore, WriteReg];
 
@@ -656,6 +664,8 @@ impl Spc700 {
             0x77 => (IND_Y_READ, F::CmpA),
             // Stores (port posts).
             0xC4 => (DP_WRITE, F::StoreA),
+            // MOV dp,#imm (imm fetched first, dp second).
+            0x8F => (DP_IMM_WRITE, F::StoreImm),
             0xD8 => (DP_WRITE, F::StoreX),
             0xCB => (DP_WRITE, F::StoreY),
             0xD4 => (DP_X_WRITE, F::StoreA),
@@ -764,6 +774,10 @@ impl Spc700 {
                     | u16::from(op.operand.wrapping_add(index_of(index, self.x, self.y)));
                 bus.read(op.addr);
             }
+            MicroOp::ReadDp2ForStore => {
+                op.addr = self.direct_page_base() | u16::from(op.operand2);
+                bus.read(op.addr);
+            }
             MicroOp::ReadAbs => {
                 op.addr = u16::from(op.operand) | (u16::from(op.operand2) << 8);
                 op.value = bus.read(op.addr);
@@ -795,6 +809,7 @@ impl Spc700 {
                     Finish::StoreA => self.a,
                     Finish::StoreX => self.x,
                     Finish::StoreY => self.y,
+                    Finish::StoreImm => op.operand,
                     _ => unreachable!("WriteReg without a store finish"),
                 };
                 bus.write(op.addr, value);
@@ -805,7 +820,7 @@ impl Spc700 {
     /// Apply the result action of a completed cycle script.
     fn apply_finish(&mut self, finish: Finish, op: &InProgressOp) {
         match finish {
-            Finish::None | Finish::StoreA | Finish::StoreX | Finish::StoreY => {}
+            Finish::None | Finish::StoreA | Finish::StoreX | Finish::StoreY | Finish::StoreImm => {}
             Finish::MovA => {
                 self.a = op.value;
                 self.update_nz8(self.a);
@@ -6475,6 +6490,7 @@ mod tests {
 
         // Absolute reads.
         assert_cycle_script_matches_atomic(regs, &[0xE5, 0xF4, 0x00], pokes); // MOV A,!abs
+        assert_cycle_script_matches_atomic(regs, &[0x8F, 0x77, 0xF4], pokes); // MOV dp,#imm
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
         assert_cycle_script_matches_atomic(regs, &[0xEC, 0xF6, 0x00], pokes); // MOV Y,!abs
         assert_cycle_script_matches_atomic(regs, &[0x65, 0xF4, 0x00], pokes); // CMP A,!abs
