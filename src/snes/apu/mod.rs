@@ -27,6 +27,14 @@ fn default_test_reg() -> u8 {
     0x0A
 }
 
+/// fullsnes TEST $F0:
+///   bit 0 = Timer-Enable  (0=Normal/timers work, 1=Timers don't work)
+///   bit 3 = Timer-Disable (0=Timers don't work,  1=Normal/timers work)
+/// Both must be in the "Normal" state for timers to count.
+fn test_reg_allows_timers(test: u8) -> bool {
+    (test & 0x01 == 0) && (test & 0x08 != 0)
+}
+
 fn default_pending_samples() -> Vec<(f32, f32)> {
     Vec::new()
 }
@@ -331,6 +339,11 @@ impl SnesApu {
         self.master_ticks = state.master_ticks;
         self.spc_cycle_budget = state.spc_cycle_budget;
         self.timers = state.timers.clone();
+        // Older save-states predate the serialized timer global gate; always
+        // re-derive it from the restored TEST value (without running the
+        // edge detector, so no tick is injected by the restore itself).
+        self.timers
+            .restore_global_enabled(test_reg_allows_timers(self.test));
         self.dsp = normalized_dsp;
         self.dsp_addr = restored_dsp_addr;
         self.sample_acc = sanitize_non_negative_f32(state.sample_acc);
@@ -659,16 +672,12 @@ impl SpcBusView<'_> {
         // Every TEST write re-evaluates the global timer gate and runs the
         // stage-1 edge detector: a stop while stage 1 is high injects one
         // target-counter clock (blargg test_timer_stop2). TnOUT is preserved.
-        let allows = (value & 0x01 == 0) && (value & 0x08 != 0);
-        self.timers.set_global_enabled(allows);
+        self.timers
+            .set_global_enabled(test_reg_allows_timers(value));
     }
 
     fn test_allows_timers(&self) -> bool {
-        // fullsnes TEST $F0:
-        //   bit 0 = Timer-Enable  (0=Normal/timers work, 1=Timers don't work)
-        //   bit 3 = Timer-Disable (0=Timers don't work,  1=Normal/timers work)
-        // Both must be in the "Normal" state for timers to tick.
-        (self.test_reg() & 0x01 == 0) && (self.test_reg() & 0x08 != 0)
+        test_reg_allows_timers(self.test_reg())
     }
 
     fn tick_timers_multiple(&mut self, cycles: u8) {
@@ -1408,6 +1417,37 @@ mod tests {
             apu.read_spc_memory_for_test(0x00FF),
             0x01,
             "a TEST stop while stage 1 is high must inject one timer tick"
+        );
+    }
+
+    #[test]
+    fn restore_state_syncs_timer_global_gate_from_test_register() {
+        // Save-states written before the timer global gate was serialized
+        // deserialize SpcTimers with global_enabled defaulting to true. If
+        // the state was captured while TEST had timers stopped, the restore
+        // must re-derive the gate from the restored TEST value.
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1
+        apu.write_spc_control_for_test(0x04); // enable T2
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // TEST stop
+        let mut state = apu.capture_state();
+
+        // Simulate the pre-gate save-state: strip global_enabled so it
+        // deserializes to its default (true), contradicting TEST.
+        let mut timers_json = serde_json::to_value(&state.timers).unwrap();
+        timers_json
+            .as_object_mut()
+            .unwrap()
+            .remove("global_enabled");
+        state.timers = serde_json::from_value(timers_json).unwrap();
+
+        let mut restored = SnesApu::new(None);
+        restored.restore_state(&state).unwrap();
+        restored.advance_spc_bus_cycles_for_test(64);
+        assert_eq!(
+            restored.read_spc_memory_for_test(0x00FF),
+            0x00,
+            "timers must stay stopped after restoring a state whose TEST register stops them"
         );
     }
 

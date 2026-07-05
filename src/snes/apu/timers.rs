@@ -116,6 +116,18 @@ impl SpcTimers {
         }
     }
 
+    /// Set the global gate from a restored TEST value without running the
+    /// edge detector (no injected tick). The detector's latched level is
+    /// settled to its steady-state value so the next stage-1 falling edge
+    /// counts normally. Used by save-state restore, where older states
+    /// don't carry the gate and default it to enabled.
+    pub fn restore_global_enabled(&mut self, enabled: bool) {
+        self.global_enabled = enabled;
+        for timer in &mut self.timers {
+            timer.prev_stage1 = timer.stage1 && enabled;
+        }
+    }
+
     pub fn tick_cycle(&mut self) {
         let global_enabled = self.global_enabled;
         for (timer_index, timer) in self.timers.iter_mut().enumerate() {
