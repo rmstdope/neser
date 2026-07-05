@@ -161,7 +161,25 @@ impl SnesApu {
     }
 
     pub fn read_main_port(&self, port: usize) -> u8 {
-        self.spc_to_main_ports[port]
+        let value = self.spc_to_main_ports[port];
+        if dsp::spc_dsp6_trace_enabled() {
+            // Change-compressed: only log when the observed value changes,
+            // otherwise host poll loops flood the trace.
+            static LAST: [std::sync::atomic::AtomicU16; 4] = [
+                std::sync::atomic::AtomicU16::new(0xFFFF),
+                std::sync::atomic::AtomicU16::new(0xFFFF),
+                std::sync::atomic::AtomicU16::new(0xFFFF),
+                std::sync::atomic::AtomicU16::new(0xFFFF),
+            ];
+            let last = LAST[port].swap(u16::from(value), std::sync::atomic::Ordering::Relaxed);
+            if last != u16::from(value) {
+                eprintln!(
+                    "neser hostread port={port} val=${value:02X} mclk={}",
+                    self.master_ticks
+                );
+            }
+        }
+        value
     }
 
     pub fn write_main_port(&mut self, port: usize, value: u8) {
