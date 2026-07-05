@@ -169,6 +169,32 @@ enum MicroOp {
     /// Decrement Y, fetch the branch displacement, then end the instruction
     /// if Y is zero (DBNZ Y tail).
     FetchOperandBranchDecY,
+    /// Read the byte at `addr` + 1 into `operand2` (the second pointer read
+    /// of `JMP [!abs+X]`).
+    ReadAddrPlus1,
+    /// Read the mem.bit operand target: `addr` = low 13 bits of
+    /// `operand2`:`operand`, `value` = memory byte (bit index is the top
+    /// three bits of `operand2`).
+    ReadMemBitAbs,
+    /// Dummy re-read of `addr` (TSET1/TCLR1 read the target twice).
+    ReadAddrAgain,
+    /// Push the return-address high byte.
+    PushPcHi,
+    /// Push the return-address low byte.
+    PushPcLo,
+    /// Push PSW (BRK's third push).
+    PushPsw,
+    /// Pop a byte from the stack into `operand2` (the second pop of RET).
+    PopByte2,
+    /// Pop PSW from the stack (RETI's first pop).
+    PopPsw,
+    /// Read the TCALL/BRK vector low byte at $FFDE - 2*`.0` into `value`.
+    ReadVecLo(u8),
+    /// Read the TCALL/BRK vector high byte into `operand2`.
+    ReadVecHi(u8),
+    /// Add the index to `addr`, then dummy-read it (the read-before-write
+    /// of pointer stores).
+    ReadTargetForStore(Index),
     /// Compute `addr` = `operand2`:`operand` and read `value`.
     ReadAbs,
     /// Compute `addr` = `operand2`:`operand` and dummy-read it.
@@ -306,6 +332,45 @@ enum Finish {
     SubwYa,
     /// Compare YA with the word, update N/Z/C (16-bit).
     CmpwYa,
+    /// `A = asl(A)` / `rol` / `lsr` / `ror` with shift flags.
+    AslAcc,
+    RolAcc,
+    LsrAcc,
+    RorAcc,
+    /// `PC = operand2:operand` (JMP !abs, CALL !abs tail).
+    JmpAbs,
+    /// `PC = operand2:value` (JMP [!abs+X], TCALL/BRK vectors, RET).
+    JmpPtr,
+    /// `PC = $FF00 | operand` (PCALL).
+    JmpUpage,
+    /// BRK tail: set B, clear I, `PC = operand2:value`.
+    Brk,
+    /// `YA = Y * A` (flags from Y).
+    MulYa,
+    /// `YA / X -> A remainder Y` with flags.
+    DivYa,
+    /// Swap A's nibbles, update N/Z.
+    Xcn,
+    /// Decimal adjust after addition / subtraction.
+    Daa,
+    Das,
+    /// Halt the core (SLEEP/STOP).
+    Halt,
+    /// `C |= mem.bit` (`.0` inverts the bit).
+    Or1(bool),
+    /// `C &= mem.bit` (`.0` inverts the bit).
+    And1(bool),
+    /// `C ^= mem.bit`.
+    Eor1,
+    /// `C = mem.bit`.
+    Mov1CFromMem,
+    /// RMW: store C into mem.bit (MOV1 m.b,C).
+    RmwMov1MemFromC,
+    /// RMW: invert mem.bit (NOT1).
+    RmwNot1,
+    /// RMW: TSET1/TCLR1 — set/clear A's bits in memory, N/Z from A - mem.
+    RmwTset1,
+    RmwTclr1,
 }
 
 /// SPC700 CPU core.
@@ -1312,6 +1377,344 @@ impl Spc700 {
                 &[DummyReadPc, Idle, FetchOperandBranchDecY, BranchIdle, Idle],
                 F::None,
             ),
+            // Accumulator shifts and remaining immediates/abs compares.
+            0x1C => (IMPLIED, F::AslAcc),
+            0x3C => (IMPLIED, F::RolAcc),
+            0x5C => (IMPLIED, F::LsrAcc),
+            0x7C => (IMPLIED, F::RorAcc),
+            0x8D => (&[ReadImm], F::MovY),
+            0xCD => (&[ReadImm], F::MovX),
+            0xAD => (&[ReadImm], F::CmpY),
+            0xC8 => (&[ReadImm], F::CmpX),
+            0x1E => (ABS_READ, F::CmpX),
+            0x5E => (ABS_READ, F::CmpY),
+            // Jumps, calls and returns.
+            0x5F => (&[FetchOperand, FetchOperand2], F::JmpAbs),
+            0x1F => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    Idle,
+                    ReadAbsIdx(Index::X),
+                    ReadAddrPlus1,
+                ],
+                F::JmpPtr,
+            ),
+            0x3F => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    Idle,
+                ],
+                F::JmpAbs,
+            ),
+            0x4F => (&[FetchOperand, Idle, PushPcHi, PushPcLo, Idle], F::JmpUpage),
+            0x6F => (&[DummyReadPc, Idle, PopByte, PopByte2], F::JmpPtr),
+            0x7F => (&[DummyReadPc, Idle, PopPsw, PopByte, PopByte2], F::JmpPtr),
+            0x0F => (
+                &[
+                    DummyReadPc,
+                    PushPcHi,
+                    PushPcLo,
+                    PushPsw,
+                    Idle,
+                    ReadVecLo(0),
+                    ReadVecHi(0),
+                ],
+                F::Brk,
+            ),
+            0x01 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(0),
+                    ReadVecHi(0),
+                ],
+                F::JmpPtr,
+            ),
+            0x11 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(1),
+                    ReadVecHi(1),
+                ],
+                F::JmpPtr,
+            ),
+            0x21 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(2),
+                    ReadVecHi(2),
+                ],
+                F::JmpPtr,
+            ),
+            0x31 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(3),
+                    ReadVecHi(3),
+                ],
+                F::JmpPtr,
+            ),
+            0x41 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(4),
+                    ReadVecHi(4),
+                ],
+                F::JmpPtr,
+            ),
+            0x51 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(5),
+                    ReadVecHi(5),
+                ],
+                F::JmpPtr,
+            ),
+            0x61 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(6),
+                    ReadVecHi(6),
+                ],
+                F::JmpPtr,
+            ),
+            0x71 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(7),
+                    ReadVecHi(7),
+                ],
+                F::JmpPtr,
+            ),
+            0x81 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(8),
+                    ReadVecHi(8),
+                ],
+                F::JmpPtr,
+            ),
+            0x91 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(9),
+                    ReadVecHi(9),
+                ],
+                F::JmpPtr,
+            ),
+            0xA1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(10),
+                    ReadVecHi(10),
+                ],
+                F::JmpPtr,
+            ),
+            0xB1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(11),
+                    ReadVecHi(11),
+                ],
+                F::JmpPtr,
+            ),
+            0xC1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(12),
+                    ReadVecHi(12),
+                ],
+                F::JmpPtr,
+            ),
+            0xD1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(13),
+                    ReadVecHi(13),
+                ],
+                F::JmpPtr,
+            ),
+            0xE1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(14),
+                    ReadVecHi(14),
+                ],
+                F::JmpPtr,
+            ),
+            0xF1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(15),
+                    ReadVecHi(15),
+                ],
+                F::JmpPtr,
+            ),
+            // Arithmetic specials.
+            0xCF => (
+                &[DummyReadPc, Idle, Idle, Idle, Idle, Idle, Idle, Idle],
+                F::MulYa,
+            ),
+            0x9E => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                ],
+                F::DivYa,
+            ),
+            0x9F => (&[DummyReadPc, Idle, Idle, Idle], F::Xcn),
+            0xDF => (&[DummyReadPc, Idle], F::Daa),
+            0xBE => (&[DummyReadPc, Idle], F::Das),
+            0xEF => (&[Idle, Idle, Idle, Idle, Idle, Idle], F::Halt),
+            0xFF => (&[Idle, Idle, Idle, Idle, Idle, Idle], F::Halt),
+            // Absolute mem.bit ops and TSET1/TCLR1.
+            0x0A => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs, Idle],
+                F::Or1(false),
+            ),
+            0x2A => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs, Idle],
+                F::Or1(true),
+            ),
+            0x4A => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs],
+                F::And1(false),
+            ),
+            0x6A => (&[FetchOperand, FetchOperand2, ReadMemBitAbs], F::And1(true)),
+            0x8A => (&[FetchOperand, FetchOperand2, ReadMemBitAbs, Idle], F::Eor1),
+            0xAA => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs],
+                F::Mov1CFromMem,
+            ),
+            0xCA => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs, Idle, WriteRmw],
+                F::RmwMov1MemFromC,
+            ),
+            0xEA => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs, WriteRmw],
+                F::RmwNot1,
+            ),
+            0x0E => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    ReadAbs,
+                    ReadAddrAgain,
+                    WriteRmw,
+                ],
+                F::RmwTset1,
+            ),
+            0x4E => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    ReadAbs,
+                    ReadAddrAgain,
+                    WriteRmw,
+                ],
+                F::RmwTclr1,
+            ),
+            // Indirect pointer stores.
+            0xC7 => (
+                &[
+                    FetchOperand,
+                    Idle,
+                    ReadPtrLo(Index::X),
+                    ReadPtrHi(Index::X),
+                    ReadTargetForStore(Index::None),
+                    WriteReg,
+                ],
+                F::StoreA,
+            ),
+            0xD7 => (
+                &[
+                    FetchOperand,
+                    ReadPtrLo(Index::None),
+                    ReadPtrHi(Index::None),
+                    Idle,
+                    ReadTargetForStore(Index::Y),
+                    WriteReg,
+                ],
+                F::StoreA,
+            ),
             // ALU dp,#imm read-modify-write (imm first, dp second).
             0x18 => (DP_IMM_RMW, F::OrMemImm),
             0x38 => (DP_IMM_RMW, F::AndMemImm),
@@ -1346,7 +1749,6 @@ impl Spc700 {
             0xCB => (DP_WRITE, F::StoreY),
             0xD4 => (DP_X_WRITE, F::StoreA),
             0xC5 => (ABS_WRITE, F::StoreA),
-            _ => return None,
         })
     }
 
@@ -1572,6 +1974,54 @@ impl Spc700 {
                     op.done_early = true;
                 }
             }
+            MicroOp::ReadAddrPlus1 => {
+                op.operand2 = bus.read(op.addr.wrapping_add(1));
+            }
+            MicroOp::ReadMemBitAbs => {
+                op.addr = (u16::from(op.operand) | (u16::from(op.operand2) << 8)) & 0x1FFF;
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadAddrAgain => {
+                bus.read(op.addr);
+            }
+            MicroOp::PushPcHi => {
+                let addr = 0x0100u16 | u16::from(self.sp);
+                bus.write(addr, (self.pc >> 8) as u8);
+                self.sp = self.sp.wrapping_sub(1);
+            }
+            MicroOp::PushPcLo => {
+                let addr = 0x0100u16 | u16::from(self.sp);
+                bus.write(addr, self.pc as u8);
+                self.sp = self.sp.wrapping_sub(1);
+            }
+            MicroOp::PushPsw => {
+                let addr = 0x0100u16 | u16::from(self.sp);
+                bus.write(addr, self.psw);
+                self.sp = self.sp.wrapping_sub(1);
+            }
+            MicroOp::PopByte2 => {
+                self.sp = self.sp.wrapping_add(1);
+                let addr = 0x0100u16 | u16::from(self.sp);
+                op.operand2 = bus.read(addr);
+            }
+            MicroOp::PopPsw => {
+                self.sp = self.sp.wrapping_add(1);
+                let addr = 0x0100u16 | u16::from(self.sp);
+                self.psw = bus.read(addr);
+            }
+            MicroOp::ReadVecLo(n) => {
+                op.addr = 0xFFDEu16.wrapping_sub(2 * u16::from(n));
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadVecHi(_) => {
+                op.operand2 = bus.read(op.addr.wrapping_add(1));
+            }
+            MicroOp::ReadTargetForStore(index) => {
+                op.addr = op
+                    .addr
+                    .wrapping_add(u16::from(index_of(index, self.x, self.y)));
+                bus.read(op.addr);
+            }
             MicroOp::ReadAbsIdx(index) => {
                 let base = u16::from(op.operand) | (u16::from(op.operand2) << 8);
                 op.addr = base.wrapping_add(u16::from(index_of(index, self.x, self.y)));
@@ -1623,6 +2073,23 @@ impl Spc700 {
                     }
                     Finish::RmwSet1(bit) => op.value | (1 << bit),
                     Finish::RmwClr1(bit) => op.value & !(1 << bit),
+                    Finish::RmwMov1MemFromC => {
+                        let mask = 1u8 << (op.operand2 >> 5);
+                        if self.flag(FLAG_CARRY) {
+                            op.value | mask
+                        } else {
+                            op.value & !mask
+                        }
+                    }
+                    Finish::RmwNot1 => op.value ^ (1 << (op.operand2 >> 5)),
+                    Finish::RmwTset1 => {
+                        self.update_nz8(self.a.wrapping_sub(op.value));
+                        op.value | self.a
+                    }
+                    Finish::RmwTclr1 => {
+                        self.update_nz8(self.a.wrapping_sub(op.value));
+                        op.value & !self.a
+                    }
                     Finish::SbcMemImm => {
                         let saved = self.a;
                         self.a = op.value;
@@ -1715,6 +2182,74 @@ impl Spc700 {
             Finish::CmpwYa => {
                 self.compare_ya(u16::from(op.value) | (u16::from(op.operand2) << 8));
             }
+            Finish::AslAcc => self.a = self.asl(self.a),
+            Finish::RolAcc => self.a = self.rol(self.a),
+            Finish::LsrAcc => self.a = self.lsr(self.a),
+            Finish::RorAcc => self.a = self.ror(self.a),
+            Finish::JmpAbs => {
+                self.pc = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+            }
+            Finish::JmpPtr => {
+                self.pc = u16::from(op.value) | (u16::from(op.operand2) << 8);
+            }
+            Finish::JmpUpage => {
+                self.pc = 0xFF00 | u16::from(op.operand);
+            }
+            Finish::Brk => {
+                self.set_flag(FLAG_BREAK, true);
+                self.set_flag(FLAG_INTERRUPT, false);
+                self.pc = u16::from(op.value) | (u16::from(op.operand2) << 8);
+            }
+            Finish::MulYa => self.mul_ya(),
+            Finish::DivYa => self.div_ya(),
+            Finish::Xcn => {
+                self.a = self.a.rotate_left(4);
+                self.update_nz8(self.a);
+            }
+            Finish::Daa => {
+                let mut value = self.a;
+                if self.flag(FLAG_CARRY) || value > 0x99 {
+                    value = value.wrapping_add(0x60);
+                    self.set_flag(FLAG_CARRY, true);
+                }
+                if self.flag(FLAG_HALF_CARRY) || (value & 0x0F) > 0x09 {
+                    value = value.wrapping_add(0x06);
+                }
+                self.a = value;
+                self.update_nz8(self.a);
+            }
+            Finish::Das => {
+                let mut value = self.a;
+                if !self.flag(FLAG_CARRY) || value > 0x99 {
+                    value = value.wrapping_sub(0x60);
+                    self.set_flag(FLAG_CARRY, false);
+                }
+                if !self.flag(FLAG_HALF_CARRY) || (value & 0x0F) > 0x09 {
+                    value = value.wrapping_sub(0x06);
+                }
+                self.a = value;
+                self.update_nz8(self.a);
+            }
+            Finish::Halt => self.halted = true,
+            Finish::Or1(invert) => {
+                let bit = (op.value >> (op.operand2 >> 5)) & 1 != 0;
+                let bit = bit != invert;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) || bit);
+            }
+            Finish::And1(invert) => {
+                let bit = (op.value >> (op.operand2 >> 5)) & 1 != 0;
+                let bit = bit != invert;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) && bit);
+            }
+            Finish::Eor1 => {
+                let bit = (op.value >> (op.operand2 >> 5)) & 1 != 0;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) != bit);
+            }
+            Finish::Mov1CFromMem => {
+                let bit = (op.value >> (op.operand2 >> 5)) & 1 != 0;
+                self.set_flag(FLAG_CARRY, bit);
+            }
+            Finish::RmwMov1MemFromC | Finish::RmwNot1 | Finish::RmwTset1 | Finish::RmwTclr1 => {}
             Finish::MovA => {
                 self.a = op.value;
                 self.update_nz8(self.a);
@@ -7680,13 +8215,75 @@ mod tests {
             assert_cycle_script_matches_atomic(regs, insn, pokes);
         }
 
+        // Final batch: shifts-on-A, remaining imm/abs compares, jumps,
+        // calls/returns, MUL/DIV/XCN/DAA/DAS, mem.bit ops, TSET/TCLR,
+        // pointer stores (#2938 batch 8).
+        for insn in [
+            &[0x1Cu8][..],
+            &[0x3C],
+            &[0x5C],
+            &[0x7C],
+            &[0x8D, 0x5A],
+            &[0xCD, 0x5A],
+            &[0xAD, 0x5A],
+            &[0xC8, 0x5A],
+            &[0x1E, 0x30, 0x00],
+            &[0x5E, 0x30, 0x00],
+            &[0x5F, 0x00, 0x03],
+            &[0x1F, 0x30, 0x00],
+            &[0x3F, 0x00, 0x03],
+            &[0x4F, 0x20],
+            &[0x0F],
+            &[0x01],
+            &[0x11],
+            &[0x21],
+            &[0x31],
+            &[0x41],
+            &[0x51],
+            &[0x61],
+            &[0x71],
+            &[0x81],
+            &[0x91],
+            &[0xA1],
+            &[0xB1],
+            &[0xC1],
+            &[0xD1],
+            &[0xE1],
+            &[0xF1],
+            &[0xCF],
+            &[0x9E],
+            &[0x9F],
+            &[0xDF],
+            &[0xBE],
+            &[0x0A, 0x33, 0x25],
+            &[0x2A, 0x33, 0x25],
+            &[0x4A, 0x33, 0x25],
+            &[0x6A, 0x33, 0x25],
+            &[0x8A, 0x33, 0x25],
+            &[0xAA, 0x33, 0x25],
+            &[0xCA, 0x33, 0x25],
+            &[0xEA, 0x33, 0x25],
+            &[0x0E, 0x30, 0x00],
+            &[0x4E, 0x30, 0x00],
+            &[0xC7, 0x30],
+            &[0xD7, 0x30],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+        // RET/RETI need a primed stack; run them with SP below pushed data.
+        assert_cycle_script_matches_atomic(regs, &[0x6F], pokes);
+        assert_cycle_script_matches_atomic(regs, &[0x7F], pokes);
+        // SLEEP/STOP halt the core.
+        assert_cycle_script_matches_atomic(regs, &[0xEF], pokes);
+        assert_cycle_script_matches_atomic(regs, &[0xFF], pokes);
+
         // Coverage pin for #2938: bump as families are scripted; the goal
         // is 256, at which point the atomic path is deleted.
         let scripted = (0u16..=0xFF)
             .filter(|&op| Spc700::opcode_is_cycle_scripted(op as u8))
             .count();
         assert_eq!(
-            scripted, 204,
+            scripted, 256,
             "cycle-script coverage changed; update the pin"
         );
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs

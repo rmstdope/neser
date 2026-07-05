@@ -270,25 +270,11 @@ impl SnesApu {
                 continue;
             }
 
-            // Cycle-scripted dispatch (per-SPC-cycle stepping) is used for:
-            //   * the blargg IPL-hack trampoline (#2908), where opcodes
-            //     execute directly out of the I/O port region $00F4-$00F7;
-            //   * any instruction that reads or writes the $F4-$F7 port
-            //     window (#2914), so port accesses land on the correct
-            //     wall-clock SPC cycle relative to 65816 port writes instead
-            //     of executing atomically at the instruction start.
-            // Everything else still steps atomically, preserving the timing
-            // of already-passing tests.
-            let use_cycle_stepper = if self.spc700.has_in_progress_op() {
-                true
-            } else {
-                let next_pc = self.spc700.pc();
-                let opcode = self.peek_opcode_at(next_pc);
-                (Self::pc_is_in_trampoline_region(next_pc)
-                    && Spc700::opcode_is_cycle_scripted(opcode))
-                    || self.next_op_accesses_port_window()
-            };
-
+            // Universal per-cycle stepping (#2938): every SPC700 opcode has
+            // a cycle script, so the core executes exactly one bus access
+            // per iteration on the true master-clock grid. The atomic
+            // `Spc700::step` path remains only as the reference for the
+            // script equivalence tests.
             let consumed_cycles = {
                 let mut bus_view = SpcBusView {
                     consumed_cycles: 0,
@@ -305,28 +291,15 @@ impl SnesApu {
                     frozen: &mut self.spc_frozen,
                     tick_timers: true,
                 };
-                if use_cycle_stepper {
-                    self.spc700.step_one_cycle(&mut bus_view);
-                    // One micro-op = one bus access, stretched by the TEST
-                    // wait states (see SpcBusView::consumed_cycles).
-                    i64::from(bus_view.consumed_cycles.max(1))
-                } else {
-                    // Temporary #2914 diagnostic (remove before merge):
-                    // flag atomic steps so port-window accesses inside them
-                    // (= opcodes missing a cycle script) can be logged.
-                    ATOMIC_STEP_PC.store(self.spc700.pc(), std::sync::atomic::Ordering::Relaxed);
-                    let c = i64::from(self.spc700.step(&mut bus_view));
-                    ATOMIC_STEP_PC.store(0xFFFF, std::sync::atomic::Ordering::Relaxed);
-                    c
-                }
+                self.spc700.step_one_cycle(&mut bus_view);
+                // One micro-op = one bus access, stretched by the TEST
+                // wait states (see SpcBusView::consumed_cycles).
+                i64::from(bus_view.consumed_cycles.max(1))
             };
             self.spc_cycle_budget -= consumed_cycles * SPC_PER_MASTER_DEN;
 
             // A second-half CPU port write becomes SPC-visible at the end of
-            // the next executed SPC cycle (see `write_main_port`). Atomic
-            // multi-cycle steps never touch the port window (the dispatcher
-            // above cycle-steps those), so applying once after the step is
-            // equivalent to applying at every cycle boundary within it.
+            // the next executed SPC cycle (see `write_main_port`).
             if self.pending_main_port_update {
                 self.main_to_spc_ports = self.main_to_spc_latch;
                 self.pending_main_port_update = false;
@@ -336,82 +309,9 @@ impl SnesApu {
         self.step_audio_clock();
     }
 
-    /// `true` when `pc` points into the I/O port window the blargg IPL-hack
-    /// trampoline executes from. Used to gate cycle-accurate stepping to the
-    /// trampoline case without regressing timing for normal ARAM/IPL code.
-    fn pc_is_in_trampoline_region(pc: u16) -> bool {
-        matches!(pc, 0x00F4..=0x00F7)
-    }
-
-    /// `true` when the next SPC700 instruction will read or write one of the
-    /// CPU I/O ports `$F4-$F7` (#2914). Such instructions are cycle-stepped
-    /// so the port access happens on the correct wall-clock SPC cycle: a
-    /// 65816 port write landing mid-instruction is then observed exactly as
-    /// on hardware, rather than with whole-instruction granularity.
-    ///
-    /// The decision peeks the operand bytes (and, for indirect modes, the
-    /// direct-page pointer) without side effects. A stale peek is harmless:
-    /// cycle-stepped and atomic execution are architecturally identical, so a
-    /// misprediction only changes scheduling granularity.
-    fn next_op_accesses_port_window(&self) -> bool {
-        const PORTS: std::ops::RangeInclusive<u16> = 0x00F4..=0x00F7;
-        let pc = self.spc700.pc();
-        let opcode = self.peek_opcode_at(pc);
-        let dp_base: u16 = if self.spc700.psw() & spc700::FLAG_DIRECT_PAGE != 0 {
-            0x0100
-        } else {
-            0x0000
-        };
-        let op1 = self.peek_opcode_at(pc.wrapping_add(1));
-        match opcode {
-            // dp direct reads/writes.
-            // MOVW YA,dp reads a 16-bit word at dp/dp+1.
-            0xBA => {
-                let lo = dp_base | u16::from(op1);
-                let hi = dp_base | u16::from(op1.wrapping_add(1));
-                PORTS.contains(&lo) || PORTS.contains(&hi)
-            }
-            // MOV dp,#imm / CMP dp,#imm: the dp byte is the SECOND operand.
-            0x8F | 0x78 => {
-                let op2 = self.peek_opcode_at(pc.wrapping_add(2));
-                PORTS.contains(&(dp_base | u16::from(op2)))
-            }
-            0xE4 | 0xF8 | 0xEB | 0x64 | 0x3E | 0x7E | 0xC4 | 0xD8 | 0xCB | 0x04 | 0x24 | 0x44
-            | 0x84 | 0xA4 => PORTS.contains(&(dp_base | u16::from(op1))),
-            // dp+X reads/writes.
-            0xF4 | 0x74 | 0xD4 | 0x14 | 0x34 | 0x54 | 0x94 | 0xB4 => {
-                PORTS.contains(&(dp_base | u16::from(op1.wrapping_add(self.spc700.x()))))
-            }
-            // Absolute reads/writes.
-            0xE5 | 0xE9 | 0xEC | 0x65 | 0xC5 | 0x05 | 0x25 | 0x45 | 0x85 | 0xA5 => {
-                let op2 = self.peek_opcode_at(pc.wrapping_add(2));
-                PORTS.contains(&(u16::from(op1) | (u16::from(op2) << 8)))
-            }
-            // [dp+X] indirect reads.
-            0xE7 | 0x67 => {
-                let ptr = op1.wrapping_add(self.spc700.x());
-                let lo = self.peek_opcode_at(dp_base | u16::from(ptr));
-                let hi = self.peek_opcode_at(dp_base | u16::from(ptr.wrapping_add(1)));
-                PORTS.contains(&(u16::from(lo) | (u16::from(hi) << 8)))
-            }
-            // [dp]+Y indirect reads.
-            0xF7 | 0x77 => {
-                let lo = self.peek_opcode_at(dp_base | u16::from(op1));
-                let hi = self.peek_opcode_at(dp_base | u16::from(op1.wrapping_add(1)));
-                let addr =
-                    (u16::from(lo) | (u16::from(hi) << 8)).wrapping_add(u16::from(self.spc700.y()));
-                PORTS.contains(&addr)
-            }
-            _ => false,
-        }
-    }
-
     /// Read the byte at `addr` from the SPC700 address space without ticking
-    /// timers or moving any other state. Used by the cycle-stepper dispatcher
-    /// in [`Self::tick`] to peek the next opcode and decide between cycle and
-    /// atomic stepping; safe because every region the SPC can have its PC in
-    /// (ARAM, IPL ROM overlay, ports `$F4-$F7`) returns a value with no read
-    /// side effects.
+    /// timers or moving any other state (no read side effects).
+    #[cfg(test)]
     fn peek_opcode_at(&self, addr: u16) -> u8 {
         match addr {
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
