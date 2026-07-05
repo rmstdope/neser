@@ -112,7 +112,7 @@ fn default_noise_lfsr() -> u16 {
 }
 
 fn default_kon_poll_slot() -> bool {
-    true
+    false
 }
 
 impl Sdsp {
@@ -142,7 +142,7 @@ impl Sdsp {
             kon_active: 0,
             kon_latched: 0,
             koff_latched: 0,
-            kon_poll_slot: true,
+            kon_poll_slot: default_kon_poll_slot(),
             fir_coeffs: [0; 8],
             echo_state: EchoState::new(),
             noise_lfsr: default_noise_lfsr(),
@@ -519,7 +519,7 @@ impl Sdsp {
         }
         if self.kon_latched & (1 << voice) != 0 {
             let v = &mut self.voices[voice];
-            v.kon_delay = 5;
+            v.kon_delay = 4;
             v.mode = EnvelopeMode::Attack;
         } else if !soft_reset {
             self.step_voice_envelope_after_output(voice);
@@ -571,6 +571,12 @@ impl Sdsp {
             let pmon = self.regs[usize::from(PMON_REG)];
             let non = self.regs[usize::from(NON_REG)];
             self.process_voice3c(voice, soft_reset, pmon, non, aram_read);
+            if voice == 0 {
+                self.envx_latch = self.voices[0].envx;
+                self.outx_latch = self.voices[0].outx as u8;
+                self.regs[0x08] = self.envx_latch;
+                self.regs[0x09] = self.outx_latch;
+            }
         }
         if let Some(voice) = Self::voice3c_phase_voice(self.phase.wrapping_add(5) & 0x1F)
             && let Some(aram) = aram.as_deref()
