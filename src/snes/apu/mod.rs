@@ -308,7 +308,13 @@ impl SnesApu {
                     self.spc700.step_one_cycle(&mut bus_view);
                     1i64
                 } else {
-                    i64::from(self.spc700.step(&mut bus_view))
+                    // Temporary #2914 diagnostic (remove before merge):
+                    // flag atomic steps so port-window accesses inside them
+                    // (= opcodes missing a cycle script) can be logged.
+                    ATOMIC_STEP_PC.store(self.spc700.pc(), std::sync::atomic::Ordering::Relaxed);
+                    let c = i64::from(self.spc700.step(&mut bus_view));
+                    ATOMIC_STEP_PC.store(0xFFFF, std::sync::atomic::Ordering::Relaxed);
+                    c
                 }
             };
             self.spc_cycle_budget -= consumed_cycles * SPC_PER_MASTER_DEN;
@@ -356,8 +362,14 @@ impl SnesApu {
         let op1 = self.peek_opcode_at(pc.wrapping_add(1));
         match opcode {
             // dp direct reads/writes.
-            // MOV dp,#imm: the dp byte is the SECOND operand.
-            0x8F => {
+            // MOVW YA,dp reads a 16-bit word at dp/dp+1.
+            0xBA => {
+                let lo = dp_base | u16::from(op1);
+                let hi = dp_base | u16::from(op1.wrapping_add(1));
+                PORTS.contains(&lo) || PORTS.contains(&hi)
+            }
+            // MOV dp,#imm / CMP dp,#imm: the dp byte is the SECOND operand.
+            0x8F | 0x78 => {
                 let op2 = self.peek_opcode_at(pc.wrapping_add(2));
                 PORTS.contains(&(dp_base | u16::from(op2)))
             }
@@ -775,6 +787,11 @@ impl SnesApu {
 /// ROM writes FLG=$20 (armed from the DSP-write trace hook).
 static BUS_OP_LOG_REMAINING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+/// Temporary diagnostic for #2914 (remove before merge): PC of the SPC700
+/// instruction currently executing ATOMICALLY (0xFFFF = none). Port-window
+/// accesses seen while set identify opcodes missing a cycle script.
+static ATOMIC_STEP_PC: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0xFFFF);
+
 struct SpcBusView<'a> {
     aram: &'a mut [u8; ARAM_SIZE],
     ipl: &'a [u8; 64],
@@ -900,6 +917,17 @@ impl SpcBusView<'_> {
 
     fn log_bus_op_if_armed(&self, addr: Option<u16>) {
         use std::sync::atomic::Ordering;
+        // Temporary #2914 diagnostic (remove before merge): report port-window
+        // accesses performed inside an atomic step = unscripted opcodes.
+        if dsp::spc_dsp6_trace_enabled()
+            && let Some(a) = addr
+            && (0x00F4..=0x00F7).contains(&a)
+        {
+            let pc = ATOMIC_STEP_PC.load(Ordering::Relaxed);
+            if pc != 0xFFFF {
+                eprintln!("neser ATOMICPORT pc={pc:04X} addr={a:04X}");
+            }
+        }
         if !dsp::spc_dsp6_trace_enabled() {
             return;
         }

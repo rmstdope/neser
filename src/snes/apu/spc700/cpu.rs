@@ -97,6 +97,13 @@ enum MicroOp {
     /// read-before-write cycle of `MOV dp,#imm`, whose dp byte is the
     /// second operand).
     ReadDp2ForStore,
+    /// Compute `addr` = direct page | `operand2` and read `value` (the
+    /// memory operand of `CMP dp,#imm`, whose dp byte is the second
+    /// operand).
+    ReadDp2,
+    /// Read the high byte at direct page | (`operand` + 1) into `operand2`
+    /// (the second read of `MOVW YA,dp`).
+    ReadDpHigh,
     /// Compute `addr` = `operand2`:`operand` and read `value`.
     ReadAbs,
     /// Compute `addr` = `operand2`:`operand` and dummy-read it.
@@ -138,6 +145,12 @@ enum Finish {
     /// Source for [`MicroOp::WriteReg`] is the first operand byte (the
     /// immediate of `MOV dp,#imm`).
     StoreImm,
+    /// Compare the memory `value` with the first operand byte (the
+    /// immediate of `CMP dp,#imm`).
+    CmpMemImm,
+    /// `YA = operand2:value`, update N/Z from the 16-bit result
+    /// (`MOVW YA,dp`).
+    MovwYa,
 }
 
 /// SPC700 CPU core.
@@ -634,6 +647,8 @@ impl Spc700 {
         ];
         const DP_WRITE: &[MicroOp] = &[FetchOperand, ReadDpForStore(Index::None), WriteReg];
         const DP_IMM_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2ForStore, WriteReg];
+        const DP_IMM_CMP: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2, Idle];
+        const DP_WORD_READ: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), Idle, ReadDpHigh];
         const DP_X_WRITE: &[MicroOp] = &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg];
         const ABS_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbsForStore, WriteReg];
 
@@ -666,6 +681,11 @@ impl Spc700 {
             0xC4 => (DP_WRITE, F::StoreA),
             // MOV dp,#imm (imm fetched first, dp second).
             0x8F => (DP_IMM_WRITE, F::StoreImm),
+            // CMP dp,#imm (imm fetched first, dp second) — the IPL's $CC
+            // handshake wait loop polls $F4 with this opcode.
+            0x78 => (DP_IMM_CMP, F::CmpMemImm),
+            // MOVW YA,dp — the IPL's 16-bit port reads ($F4/$F6).
+            0xBA => (DP_WORD_READ, F::MovwYa),
             0xD8 => (DP_WRITE, F::StoreX),
             0xCB => (DP_WRITE, F::StoreY),
             0xD4 => (DP_X_WRITE, F::StoreA),
@@ -778,6 +798,14 @@ impl Spc700 {
                 op.addr = self.direct_page_base() | u16::from(op.operand2);
                 bus.read(op.addr);
             }
+            MicroOp::ReadDp2 => {
+                op.addr = self.direct_page_base() | u16::from(op.operand2);
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadDpHigh => {
+                let addr = self.direct_page_base() | u16::from(op.operand.wrapping_add(1));
+                op.operand2 = bus.read(addr);
+            }
             MicroOp::ReadAbs => {
                 op.addr = u16::from(op.operand) | (u16::from(op.operand2) << 8);
                 op.value = bus.read(op.addr);
@@ -824,6 +852,14 @@ impl Spc700 {
             Finish::MovA => {
                 self.a = op.value;
                 self.update_nz8(self.a);
+            }
+            Finish::CmpMemImm => {
+                self.compare_values(op.value, op.operand);
+            }
+            Finish::MovwYa => {
+                self.a = op.value;
+                self.y = op.operand2;
+                self.update_nz16((u16::from(self.y) << 8) | u16::from(self.a));
             }
             Finish::MovX => {
                 self.x = op.value;
@@ -6491,6 +6527,8 @@ mod tests {
         // Absolute reads.
         assert_cycle_script_matches_atomic(regs, &[0xE5, 0xF4, 0x00], pokes); // MOV A,!abs
         assert_cycle_script_matches_atomic(regs, &[0x8F, 0x77, 0xF4], pokes); // MOV dp,#imm
+        assert_cycle_script_matches_atomic(regs, &[0x78, 0xCC, 0xF4], pokes); // CMP dp,#imm
+        assert_cycle_script_matches_atomic(regs, &[0xBA, 0xF4], pokes); // MOVW YA,dp
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
         assert_cycle_script_matches_atomic(regs, &[0xEC, 0xF6, 0x00], pokes); // MOV Y,!abs
         assert_cycle_script_matches_atomic(regs, &[0x65, 0xF4, 0x00], pokes); // CMP A,!abs
