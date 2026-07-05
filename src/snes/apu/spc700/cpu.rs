@@ -131,6 +131,18 @@ enum MicroOp {
     /// Compute `addr` = `operand2`:`operand` + index and dummy-read it
     /// (absolute indexed stores).
     ReadAbsIdxForStore(Index),
+    /// Read direct page | `operand` and stash the byte back into `operand`
+    /// (the source read of two-operand memory instructions).
+    ReadDpSrcToOperand,
+    /// Read direct page | Y and stash the byte into `operand` (the source
+    /// read of `(X),(Y)` instructions).
+    ReadAtYToOperand,
+    /// Compute `addr` = direct page | `operand2` and write `operand` there
+    /// without a read-before-write (`MOV dp,dp`).
+    WriteDp2Operand,
+    /// Fetch the branch displacement into `operand`, then end the
+    /// instruction unless bit `.0` of `value` equals `.1` (BBS/BBC).
+    FetchOperandBranchBit(u8, bool),
     /// Compute `addr` = `operand2`:`operand` and read `value`.
     ReadAbs,
     /// Compute `addr` = `operand2`:`operand` and dummy-read it.
@@ -248,6 +260,10 @@ enum Finish {
     MovAXInc,
     /// Store A then `X += 1` (`MOV (X)+,A`).
     StoreAXInc,
+    /// RMW: set bit `.0` of `mem` (no flags).
+    RmwSet1(u8),
+    /// RMW: clear bit `.0` of `mem` (no flags).
+    RmwClr1(u8),
 }
 
 /// SPC700 CPU core.
@@ -756,6 +772,22 @@ impl Spc700 {
         const ABS_X_READ: &[MicroOp] = &[FetchOperand, FetchOperand2, Idle, ReadAbsIdx(Index::X)];
         const ABS_Y_READ: &[MicroOp] = &[FetchOperand, FetchOperand2, Idle, ReadAbsIdx(Index::Y)];
         const DP_Y_READ: &[MicroOp] = &[FetchOperand, Idle, ReadDp(Index::Y)];
+        const DP_DP_RMW: &[MicroOp] = &[
+            FetchOperand,
+            ReadDpSrcToOperand,
+            FetchOperand2,
+            ReadDp2,
+            WriteRmw,
+        ];
+        const DP_DP_CMP: &[MicroOp] = &[
+            FetchOperand,
+            ReadDpSrcToOperand,
+            FetchOperand2,
+            ReadDp2,
+            Idle,
+        ];
+        const XY_RMW: &[MicroOp] = &[DummyReadPc, ReadAtYToOperand, ReadAtX, WriteRmw];
+        const XY_CMP: &[MicroOp] = &[DummyReadPc, ReadAtYToOperand, ReadAtX, Idle];
         const DP_X_WRITE: &[MicroOp] = &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg];
         const ABS_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbsForStore, WriteReg];
 
@@ -932,6 +964,220 @@ impl Spc700 {
             0x96 => (ABS_Y_READ, F::AdcA),
             0xB5 => (ABS_X_READ, F::SbcA),
             0xB6 => (ABS_Y_READ, F::SbcA),
+            // SET1/CLR1 dp.bit, BBS/BBC dp.bit,rel, dp<-dp ALU, (X)<-(Y) ALU.
+            0x02 => (DP_RMW, F::RmwSet1(0)),
+            0x22 => (DP_RMW, F::RmwSet1(1)),
+            0x42 => (DP_RMW, F::RmwSet1(2)),
+            0x62 => (DP_RMW, F::RmwSet1(3)),
+            0x82 => (DP_RMW, F::RmwSet1(4)),
+            0xA2 => (DP_RMW, F::RmwSet1(5)),
+            0xC2 => (DP_RMW, F::RmwSet1(6)),
+            0xE2 => (DP_RMW, F::RmwSet1(7)),
+            0x12 => (DP_RMW, F::RmwClr1(0)),
+            0x32 => (DP_RMW, F::RmwClr1(1)),
+            0x52 => (DP_RMW, F::RmwClr1(2)),
+            0x72 => (DP_RMW, F::RmwClr1(3)),
+            0x92 => (DP_RMW, F::RmwClr1(4)),
+            0xB2 => (DP_RMW, F::RmwClr1(5)),
+            0xD2 => (DP_RMW, F::RmwClr1(6)),
+            0xF2 => (DP_RMW, F::RmwClr1(7)),
+            0x03 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(0, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x23 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(1, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x43 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(2, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x63 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(3, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x83 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(4, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xA3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(5, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xC3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(6, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xE3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(7, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x13 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(0, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x33 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(1, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x53 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(2, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x73 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(3, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x93 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(4, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xB3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(5, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xD3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(6, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xF3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(7, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x09 => (DP_DP_RMW, F::OrMemImm),
+            0x29 => (DP_DP_RMW, F::AndMemImm),
+            0x49 => (DP_DP_RMW, F::EorMemImm),
+            0x89 => (DP_DP_RMW, F::AdcMemImm),
+            0xA9 => (DP_DP_RMW, F::SbcMemImm),
+            0x69 => (DP_DP_CMP, F::CmpMemImm),
+            0xFA => (
+                &[
+                    FetchOperand,
+                    ReadDpSrcToOperand,
+                    FetchOperand2,
+                    WriteDp2Operand,
+                ],
+                F::None,
+            ),
+            0x19 => (XY_RMW, F::OrMemImm),
+            0x39 => (XY_RMW, F::AndMemImm),
+            0x59 => (XY_RMW, F::EorMemImm),
+            0x99 => (XY_RMW, F::AdcMemImm),
+            0xB9 => (XY_RMW, F::SbcMemImm),
+            0x79 => (XY_CMP, F::CmpMemImm),
             // ALU dp,#imm read-modify-write (imm first, dp second).
             0x18 => (DP_IMM_RMW, F::OrMemImm),
             0x38 => (DP_IMM_RMW, F::AndMemImm),
@@ -1104,6 +1350,25 @@ impl Spc700 {
                 op.addr = self.direct_page_base() | u16::from(self.x);
                 bus.write(op.addr, self.a);
             }
+            MicroOp::ReadDpSrcToOperand => {
+                let addr = self.direct_page_base() | u16::from(op.operand);
+                op.operand = bus.read(addr);
+            }
+            MicroOp::ReadAtYToOperand => {
+                let addr = self.direct_page_base() | u16::from(self.y);
+                op.operand = bus.read(addr);
+            }
+            MicroOp::WriteDp2Operand => {
+                op.addr = self.direct_page_base() | u16::from(op.operand2);
+                bus.write(op.addr, op.operand);
+            }
+            MicroOp::FetchOperandBranchBit(bit, wanted) => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                if (op.value & (1 << bit) != 0) != wanted {
+                    op.done_early = true;
+                }
+            }
             MicroOp::ReadAbsIdx(index) => {
                 let base = u16::from(op.operand) | (u16::from(op.operand2) << 8);
                 op.addr = base.wrapping_add(u16::from(index_of(index, self.x, self.y)));
@@ -1153,6 +1418,8 @@ impl Spc700 {
                         self.a = saved;
                         r
                     }
+                    Finish::RmwSet1(bit) => op.value | (1 << bit),
+                    Finish::RmwClr1(bit) => op.value & !(1 << bit),
                     Finish::SbcMemImm => {
                         let saved = self.a;
                         self.a = op.value;
@@ -1223,6 +1490,7 @@ impl Spc700 {
             | Finish::EorMemImm
             | Finish::AdcMemImm
             | Finish::SbcMemImm => {}
+            Finish::RmwSet1(_) | Finish::RmwClr1(_) => {}
             Finish::MovA => {
                 self.a = op.value;
                 self.update_nz8(self.a);
@@ -7103,13 +7371,64 @@ mod tests {
             assert_cycle_script_matches_atomic(regs, insn, pokes);
         }
 
+        // Bit ops, dp<-dp, (X)<-(Y) families (#2938 batch 6).
+        for insn in [
+            &[0x02u8, 0x30][..],
+            &[0x22, 0x30],
+            &[0x42, 0x30],
+            &[0x62, 0x30],
+            &[0x82, 0x30],
+            &[0xA2, 0x30],
+            &[0xC2, 0x30],
+            &[0xE2, 0x30],
+            &[0x12, 0x30],
+            &[0x32, 0x30],
+            &[0x52, 0x30],
+            &[0x72, 0x30],
+            &[0x92, 0x30],
+            &[0xB2, 0x30],
+            &[0xD2, 0x30],
+            &[0xF2, 0x30],
+            &[0x03, 0x30, 0x02],
+            &[0x23, 0x30, 0x02],
+            &[0x43, 0x30, 0x02],
+            &[0x63, 0x30, 0x02],
+            &[0x83, 0x30, 0x02],
+            &[0xA3, 0x30, 0x02],
+            &[0xC3, 0x30, 0x02],
+            &[0xE3, 0x30, 0x02],
+            &[0x13, 0x30, 0x02],
+            &[0x33, 0x30, 0x02],
+            &[0x53, 0x30, 0x02],
+            &[0x73, 0x30, 0x02],
+            &[0x93, 0x30, 0x02],
+            &[0xB3, 0x30, 0x02],
+            &[0xD3, 0x30, 0x02],
+            &[0xF3, 0x30, 0x02],
+            &[0x09, 0x31, 0x30],
+            &[0x29, 0x31, 0x30],
+            &[0x49, 0x31, 0x30],
+            &[0x69, 0x31, 0x30],
+            &[0x89, 0x31, 0x30],
+            &[0xA9, 0x31, 0x30],
+            &[0xFA, 0x31, 0x30],
+            &[0x19],
+            &[0x39],
+            &[0x59],
+            &[0x79],
+            &[0x99],
+            &[0xB9],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
         // Coverage pin for #2938: bump as families are scripted; the goal
         // is 256, at which point the atomic path is deleted.
         let scripted = (0u16..=0xFF)
             .filter(|&op| Spc700::opcode_is_cycle_scripted(op as u8))
             .count();
         assert_eq!(
-            scripted, 131,
+            scripted, 176,
             "cycle-script coverage changed; update the pin"
         );
         assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
