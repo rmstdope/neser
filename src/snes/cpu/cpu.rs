@@ -964,6 +964,13 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Advance the master clock N cycles for `addr`, then read one byte.
+    ///
+    /// NOTE (#2914): hardware (and Mesen's `_execRead`) samples read data 4
+    /// master clocks before the end of the bus cycle. Adopting that split
+    /// here currently flips a knife-edge poll quantization in the
+    /// blargg `timer_at_power_reset` trampoline sequence, so end-of-cycle
+    /// sampling is kept until the remaining host<->SPC sub-cycle phase
+    /// question is settled.
     fn tick_read(&mut self, addr: u32) -> u8 {
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      read  ${:06X}", addr);

@@ -708,7 +708,7 @@ impl Sdsp {
         }
     }
 
-    fn step_phase_internal(&mut self, mut aram: Option<&mut [u8]>) {
+    fn step_phase_internal(&mut self, aram: Option<&mut [u8]>) {
         let control_tick = self.phase == 30;
         let render_tick = self.phase == 31;
         self.refresh_status_registers_for_phase(self.phase);
@@ -765,7 +765,7 @@ impl Sdsp {
             return;
         }
 
-        if let Some(aram) = aram.as_deref_mut() {
+        if let Some(aram) = aram {
             let echo_enable = if self.echo_enable_sampled {
                 self.echo_enable_latched
             } else {
@@ -942,14 +942,6 @@ fn read_u16_le(data: &[u8], index: usize) -> Option<u16> {
     let lo = *data.get(index)?;
     let hi = *data.get(index + 1)?;
     Some(u16::from(lo) | (u16::from(hi) << 8))
-}
-
-fn read_brr_block_from_aram(aram: &[u8], addr: u16) -> Option<(u8, [u8; 8])> {
-    let start = usize::from(addr);
-    let header = *aram.get(start)?;
-    let mut data = [0u8; 8];
-    data.copy_from_slice(aram.get(start + 1..start + 9)?);
-    Some((header, data))
 }
 
 #[cfg(test)]

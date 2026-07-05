@@ -19,13 +19,16 @@ mod tests {
         ("spc_smp.sfc", 2200, 0xEFD1_3576),
         ("spc_mem_access_times.sfc", 600, 0x3AC3_E30F),
         ("spc_timer.sfc", 600, 0x2497_38B2),
-        ("test_speed.smc", 600, 0xB02E_63CE),
-        // Golden re-approved for #2914: cycle-stepped port polling moved the
-        // measured values to match Mesen's within ±1 (screen still "Passed").
-        ("test_timer_speed_2.smc", 600, 0x1DA0_6C21),
+        // Golden re-approved for #2914: at the hardware 32040 Hz SPC rate the
+        // fast rows now match Mesen exactly; the slow (TEST wait-state) rows
+        // keep the known pre-existing deviation (168/46 vs Mesen 126/26).
+        ("test_speed.smc", 600, 0xEBBB_393D),
+        // Golden re-approved for #2914: cycle-stepped port polling + 32040 Hz
+        // SPC rate; measured values match Mesen's within ±1 (still "Passed").
+        ("test_timer_speed_2.smc", 600, 0xB237_B0AD),
         // Golden re-approved for #2914 (see test_timer_speed_2 note); "Done"
         // measurement screen, rows match Mesen within ±1.
-        ("test_timer_speed3.smc", 600, 0xABF6_D131),
+        ("test_timer_speed3.smc", 600, 0x3D9F_85EB),
         ("test_timer_stop.smc", 600, 0x7CC2_B76B),
     ];
 
@@ -128,10 +131,6 @@ mod tests {
         );
     }
 
-    fn run_failing_rom(file: &str) {
-        run_rom_with_expected_crc(file, 0x0000_0000);
-    }
-
     #[test]
     fn blargg_spc_mem_access_times_passes() {
         run_rom_with_expected_crc("spc_mem_access_times.sfc", 0x3AC3_E30F);
@@ -150,15 +149,16 @@ mod tests {
 
     #[test]
     fn blargg_test_timer_speed_passes() {
-        // Golden re-approved for #2914 (cycle-stepped port polling); screen
-        // still reads "Passed", measured rows now match Mesen within ±1.
-        run_rom_with_expected_crc("test_timer_speed.smc", 0x6CA0_0A02);
+        // Golden re-approved for #2914 (cycle-stepped port polling, then the
+        // hardware 32040 Hz SPC rate + CPU->SPC write latch); screen still
+        // reads "Passed", measured rows match Mesen within ±1.
+        run_rom_with_expected_crc("test_timer_speed.smc", 0x5CD4_D3F5);
     }
 
     #[test]
     fn blargg_test_timer_speed2_passes() {
         // Same re-approval as test_timer_speed (identical output screen).
-        run_rom_with_expected_crc("test_timer_speed2.smc", 0x6CA0_0A02);
+        run_rom_with_expected_crc("test_timer_speed2.smc", 0x5CD4_D3F5);
     }
 
     #[test]

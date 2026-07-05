@@ -20,15 +20,13 @@ const ARAM_SIZE: usize = 0x1_0000;
 const MAX_PENDING_SAMPLES: usize = 16_384;
 const SNES_MASTER_CLOCK_HZ: f32 = 21_477_272.0;
 const NATIVE_AUDIO_SAMPLE_RATE_HZ: f32 = 32_000.0;
-// Nominal SPC clock ratio (1.024 MHz vs 21.477 MHz master). Real consoles
-// measure slightly fast (~32040 Hz DSP sample rate = 1,025,280 SPC cycles/s;
-// Mesen2's default via SpcClockSpeedAdjustment = 40). Full phase parity with
-// Mesen's reference runs (the last step for blargg spc_dsp6, #2914) needs
-// that rate; adopting it moves the measured values on the test_speed /
-// timer-speed measurement ROMs again, so it is deferred until the remaining
-// handshake-edge semantics are settled and all goldens can be re-approved
-// against Mesen in one pass.
-const SPC_PER_MASTER_NUM: i64 = 1_024_000;
+// SPC clock ratio vs the 21.477 MHz master clock. Real consoles run the
+// APU slightly fast: ~32040 Hz DSP sample rate = 1,025,280 SPC cycles/s
+// (Mesen2's default via SpcClockSpeedAdjustment = 40), not the nominal
+// 1.024 MHz. blargg's measurement ROMs and spc_dsp6 (#2914) are sensitive
+// to the exact host<->SPC phase relationship and match Mesen's reference
+// runs only at this rate.
+const SPC_PER_MASTER_NUM: i64 = 1_025_280;
 const SPC_PER_MASTER_DEN: i64 = 21_477_272;
 
 fn default_test_reg() -> u8 {
@@ -70,6 +68,10 @@ pub struct SnesApuState {
     #[serde(default)]
     pub main_to_spc_ports: [u8; 4],
     #[serde(default)]
+    pub main_to_spc_latch: [u8; 4],
+    #[serde(default)]
+    pub pending_main_port_update: bool,
+    #[serde(default)]
     pub spc_to_main_ports: [u8; 4],
     #[serde(default)]
     pub control: u8,
@@ -108,6 +110,15 @@ pub struct SnesApu {
     aram: [u8; ARAM_SIZE],
     ipl: [u8; 64],
     main_to_spc_ports: [u8; 4],
+    /// Latest 65816-written port values (Mesen `NewCpuRegs`). CPU writes
+    /// always land here first; they become SPC-visible in
+    /// `main_to_spc_ports` either immediately (write in the first half of
+    /// the current SPC cycle) or at the end of the next executed SPC cycle
+    /// (write in the second half). See [`Self::write_main_port`].
+    main_to_spc_latch: [u8; 4],
+    /// `true` while a second-half CPU port write is waiting for the next
+    /// SPC cycle boundary to become SPC-visible.
+    pending_main_port_update: bool,
     spc_to_main_ports: [u8; 4],
     /// Mirrors `$F1` control bits. Bit 7 toggles IPL overlay at `$FFC0-$FFFF`.
     control: u8,
@@ -138,6 +149,8 @@ impl SnesApu {
             aram: [0; ARAM_SIZE],
             ipl: ipl.unwrap_or(ipl::EMBEDDED_IPL),
             main_to_spc_ports: [0; 4],
+            main_to_spc_latch: [0; 4],
+            pending_main_port_update: false,
             spc_to_main_ports: [0; 4],
             control: 0xB0,
             test: default_test_reg(),
@@ -197,7 +210,21 @@ impl SnesApu {
                 self.master_ticks
             );
         }
-        self.main_to_spc_ports[port] = value;
+        if self.main_to_spc_latch[port] == value {
+            return;
+        }
+        self.main_to_spc_latch[port] = value;
+        // CPU writes are latched at the SPC's 2.048 MHz input clock (2 latch
+        // ticks per SPC cycle): a write landing in the first half of the
+        // current SPC cycle is SPC-visible immediately, otherwise only at
+        // the end of the next executed SPC cycle. `budget/DEN` is the
+        // fractional position of the master clock inside the current SPC
+        // cycle, so "first half" is `2*budget <= DEN`.
+        if 2 * self.spc_cycle_budget <= SPC_PER_MASTER_DEN {
+            self.main_to_spc_ports[port] = value;
+        } else {
+            self.pending_main_port_update = true;
+        }
     }
 
     pub fn read_spc_port(&self, port: usize) -> u8 {
@@ -246,6 +273,7 @@ impl SnesApu {
                     aram: &mut self.aram,
                     ipl: &self.ipl,
                     main_to_spc_ports: &mut self.main_to_spc_ports,
+                    main_to_spc_latch: &mut self.main_to_spc_latch,
                     spc_to_main_ports: &mut self.spc_to_main_ports,
                     control: &mut self.control,
                     test: &mut self.test,
@@ -263,6 +291,16 @@ impl SnesApu {
                 }
             };
             self.spc_cycle_budget -= consumed_cycles * SPC_PER_MASTER_DEN;
+
+            // A second-half CPU port write becomes SPC-visible at the end of
+            // the next executed SPC cycle (see `write_main_port`). Atomic
+            // multi-cycle steps never touch the port window (the dispatcher
+            // above cycle-steps those), so applying once after the step is
+            // equivalent to applying at every cycle boundary within it.
+            if self.pending_main_port_update {
+                self.main_to_spc_ports = self.main_to_spc_latch;
+                self.pending_main_port_update = false;
+            }
         }
 
         self.step_audio_clock();
@@ -370,6 +408,8 @@ impl SnesApu {
         SnesApuState {
             aram: self.aram.to_vec(),
             main_to_spc_ports: self.main_to_spc_ports,
+            main_to_spc_latch: self.main_to_spc_latch,
+            pending_main_port_update: self.pending_main_port_update,
             spc_to_main_ports: self.spc_to_main_ports,
             control: self.control,
             test: self.test,
@@ -401,6 +441,8 @@ impl SnesApu {
             self.aram[0x00F8] = 0x00;
             self.aram[0x00F9] = 0x00;
             self.main_to_spc_ports = [0; 4];
+            self.main_to_spc_latch = [0; 4];
+            self.pending_main_port_update = false;
             self.spc_to_main_ports = [0; 4];
             self.control = 0xB0;
             self.test = default_test_reg();
@@ -428,6 +470,20 @@ impl SnesApu {
         let restored_dsp_addr = state.dsp_addr;
 
         self.main_to_spc_ports = state.main_to_spc_ports;
+        // Backward-compat: save-states predating the CPU write latch default
+        // it to zeros. In the current format a zero latch alongside nonzero
+        // visible ports can only occur with an update pending, so a
+        // no-pending mismatch identifies a legacy state; seed the latch from
+        // the visible values.
+        self.main_to_spc_latch = if !state.pending_main_port_update
+            && state.main_to_spc_latch == [0; 4]
+            && state.main_to_spc_ports != [0; 4]
+        {
+            state.main_to_spc_ports
+        } else {
+            state.main_to_spc_latch
+        };
+        self.pending_main_port_update = state.pending_main_port_update;
         self.spc_to_main_ports = state.spc_to_main_ports;
         self.control = state.control;
         self.test = state.test;
@@ -466,6 +522,7 @@ impl SnesApu {
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -476,6 +533,15 @@ impl SnesApu {
             tick_timers: false,
         };
         self.spc700.reset(&mut bus_view);
+        // The reset vector fetch at $FFFE/$FFFF occupies the first 2 SPC
+        // cycles: step the DSP for them and delay the first instruction
+        // (#2914, Mesen-verified DSP phase parity). The timer prescaler
+        // phase stays untouched: it is calibrated against the blargg timer
+        // ROMs (#2908), whose observable power-on behavior already matches
+        // hardware without reset-fetch ticks.
+        self.dsp.step_phase_with_memory(&mut self.aram[..]);
+        self.dsp.step_phase_with_memory(&mut self.aram[..]);
+        self.spc_cycle_budget -= 2 * SPC_PER_MASTER_DEN;
     }
 
     fn step_audio_clock(&mut self) {
@@ -576,6 +642,7 @@ impl SnesApu {
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -594,6 +661,7 @@ impl SnesApu {
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -612,6 +680,7 @@ impl SnesApu {
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -632,6 +701,7 @@ impl SnesApu {
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -663,6 +733,7 @@ struct SpcBusView<'a> {
     aram: &'a mut [u8; ARAM_SIZE],
     ipl: &'a [u8; 64],
     main_to_spc_ports: &'a mut [u8; 4],
+    main_to_spc_latch: &'a mut [u8; 4],
     spc_to_main_ports: &'a mut [u8; 4],
     control: &'a mut u8,
     test: &'a mut u8,
@@ -756,13 +827,19 @@ impl SpcBusView<'_> {
             value
         );
         self.timers.write_control(old_control, value);
+        // Clearing an input port pair resets both the SPC-visible values and
+        // the CPU write latch (hardware clears CpuRegs and NewCpuRegs alike).
         if value & 0x10 != 0 {
             self.main_to_spc_ports[0] = 0;
             self.main_to_spc_ports[1] = 0;
+            self.main_to_spc_latch[0] = 0;
+            self.main_to_spc_latch[1] = 0;
         }
         if value & 0x20 != 0 {
             self.main_to_spc_ports[2] = 0;
             self.main_to_spc_ports[3] = 0;
+            self.main_to_spc_latch[2] = 0;
+            self.main_to_spc_latch[3] = 0;
         }
     }
 
@@ -1082,20 +1159,21 @@ mod tests {
     fn advancing_spc_bus_cycles_advances_dsp_phase_skeleton() {
         let mut apu = SnesApu::new(None);
 
-        assert_eq!(apu.dsp_phase_for_test(), 0);
+        // Phase 2 at power-on: the reset vector fetch steps the DSP twice.
+        assert_eq!(apu.dsp_phase_for_test(), 2);
 
         apu.advance_spc_bus_cycles_for_test(3);
-        assert_eq!(apu.dsp_phase_for_test(), 3);
+        assert_eq!(apu.dsp_phase_for_test(), 5);
     }
 
     #[test]
     fn writing_test_register_uses_pre_write_waitstate_cycles() {
         let mut apu = SnesApu::new(None);
 
-        assert_eq!(apu.dsp_phase_for_test(), 0);
+        let phase_at_power_on = apu.dsp_phase_for_test();
         apu.write_spc_memory_for_test(0x00F0, 0x3A);
 
-        assert_eq!(apu.dsp_phase_for_test(), 1);
+        assert_eq!(apu.dsp_phase_for_test(), phase_at_power_on + 1);
     }
 
     #[test]
@@ -1723,6 +1801,79 @@ mod tests {
             apu.peek_spc_memory_for_debug(0x0010),
             0x42,
             "the in-flight port read must observe the mid-instruction host write"
+        );
+    }
+
+    // #2914: on hardware the SPC700 reset sequence fetches the reset vector
+    // at $FFFE/$FFFF through the normal bus: 2 SPC cycles that step the DSP
+    // and timers and delay the first instruction (Mesen: constructor/Reset
+    // call ReadWord(ResetVector) through the cycle-counting Read). Without
+    // them every DSP event runs 2 phases early relative to 65816 port
+    // traffic, which blargg spc_dsp6's write-phase-sensitive checks detect.
+    #[test]
+    fn spc700_reset_vector_fetch_consumes_two_spc_cycles() {
+        let apu = SnesApu::new(None);
+        assert_eq!(
+            apu.dsp.phase(),
+            2,
+            "reset vector fetch must step the DSP once per bus read"
+        );
+        assert_eq!(
+            apu.spc_cycle_budget,
+            -2 * super::SPC_PER_MASTER_DEN,
+            "reset vector fetch must delay the first instruction by 2 SPC cycles"
+        );
+    }
+
+    // #2914: CPU->SPC port writes are latched at the SPC's 2.048 MHz input
+    // clock (2 latch ticks per SPC cycle). A 65816 write landing in the
+    // FIRST half of the current SPC cycle is visible to the SPC
+    // immediately; one landing in the SECOND half only becomes visible at
+    // the end of the next executed SPC cycle. This mirrors verified
+    // hardware behavior (Mesen `NewCpuRegs`/`_pendingCpuRegUpdate`; both
+    // Kishin Douji Zenki and Kawasaki Superbike Challenge depend on it).
+    //
+    // Budget arithmetic: reset pre-charges the budget by -2 SPC cycles (the
+    // reset vector fetch), so after `n` master ticks the budget is
+    // `n*NUM - 2*DEN`. With NUM=1_025_280, DEN=21_477_272 the first SPC
+    // instruction cycle executes at tick 63; ticks 1-52 fall in its first
+    // half (`2*budget <= DEN`, including the negative pre-charge), ticks
+    // 53-62 in its second half.
+    #[test]
+    fn host_port_write_in_first_half_of_spc_cycle_is_visible_immediately() {
+        let mut apu = SnesApu::new(None);
+        for _ in 0..45 {
+            apu.tick();
+        }
+        apu.write_main_port(0, 0xCC);
+        assert_eq!(
+            apu.read_spc_port(0),
+            0xCC,
+            "first-half write must be SPC-visible in the same SPC cycle"
+        );
+    }
+
+    #[test]
+    fn host_port_write_in_second_half_of_spc_cycle_is_visible_next_cycle() {
+        let mut apu = SnesApu::new(None);
+        for _ in 0..57 {
+            apu.tick();
+        }
+        apu.write_main_port(0, 0xCC);
+        assert_eq!(
+            apu.read_spc_port(0),
+            0x00,
+            "second-half write must not be SPC-visible before the next SPC cycle"
+        );
+        // Tick past the next SPC cycle boundary (tick 63); the latch is
+        // applied at the end of that cycle.
+        for _ in 0..6 {
+            apu.tick();
+        }
+        assert_eq!(
+            apu.read_spc_port(0),
+            0xCC,
+            "second-half write must be SPC-visible after the next SPC cycle"
         );
     }
 
