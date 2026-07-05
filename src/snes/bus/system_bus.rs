@@ -607,9 +607,25 @@ impl SnesSystemBus {
             // HVBJOY: bit 0 reports auto-joypad busy, owned by the input ports.
             0x4212 => {
                 let raw = self.ppu.borrow_mut().read_register(offset);
-                (raw & !0x01) | (self.input.borrow().auto_busy() as u8)
+                let value = (raw & !0x01) | (self.input.borrow().auto_busy() as u8);
+                // Temporary #2914 diagnostic (remove before merge).
+                if std::env::var_os("NESER_TPR_LOG").is_some() && self.ticks.get() < 3_000_000 {
+                    eprintln!("neser io4212 val=${value:02X} ticks={}", self.ticks.get());
+                }
+                value
             }
-            0x4210 | 0x4211 => self.ppu.borrow_mut().read_register(offset),
+            0x4210 | 0x4211 => {
+                let value = self.ppu.borrow_mut().read_register(offset);
+                // Temporary #2914 diagnostic (remove before merge).
+                if std::env::var_os("NESER_TPR_LOG").is_some() && self.ticks.get() < 3_000_000 {
+                    eprintln!(
+                        "neser io{:04X} val=${value:02X} ticks={}",
+                        offset,
+                        self.ticks.get()
+                    );
+                }
+                value
+            }
             0x4016 => self.input.borrow_mut().read_joya(open_bus),
             0x4017 => self.input.borrow_mut().read_joyb(open_bus),
             0x4218..=0x421F => self.input.borrow().read_joy_register(offset)?,
