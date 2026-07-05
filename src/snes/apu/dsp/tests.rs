@@ -190,13 +190,9 @@ fn given_voice_pitch_when_dsp_phase_steps_then_pitch_advances_once_per_32_phases
 #[test]
 fn given_fractional_brr_position_when_sampling_voice_then_gaussian_interpolation_is_used() {
     let mut dsp = Sdsp::new();
-    dsp.voices[0].brr_initialized = true;
     dsp.voices[0].env_level = 0x7FF;
-    dsp.voices[0].sample_pos = 0x3800;
-    dsp.voices[0].brr_samples[0] = 0;
-    dsp.voices[0].brr_samples[1] = 0;
-    dsp.voices[0].brr_samples[2] = 0;
-    dsp.voices[0].brr_samples[3] = 0x3000;
+    dsp.voices[0].interpolation_pos = 0x0800; // base index 0, fraction 0x80
+    dsp.voices[0].sample_buffer[3] = 0x3000;
 
     let sample = dsp.voice_sample(0, 0, Some(&[]));
 
@@ -205,39 +201,41 @@ fn given_fractional_brr_position_when_sampling_voice_then_gaussian_interpolation
         "fractional BRR positions should use S-DSP gaussian interpolation"
     );
     assert_ne!(
-        sample, dsp.voices[0].brr_samples[3],
+        sample, dsp.voices[0].sample_buffer[3],
         "playback must not point-sample the selected BRR entry"
     );
 }
 
 #[test]
-fn given_brr_position_at_block_start_when_sampling_voice_then_previous_block_history_is_used() {
+fn given_brr_position_at_group_boundary_when_sampling_voice_then_ring_buffer_wraps() {
     let mut dsp = Sdsp::new();
-    dsp.voices[0].brr_initialized = true;
     dsp.voices[0].env_level = 0x7FF;
-    dsp.voices[0].sample_pos = 0x0800;
-    dsp.voices[0].brr_history = [0x1000, 0x2000, 0x3000];
-    dsp.voices[0].brr_samples[0] = 0x4000;
+    // Base sample index 9 (= buffer_pos 8 + position 1): the interpolation
+    // window [9, 10, 11, 0] spans the ring-buffer wrap into the next group.
+    dsp.voices[0].buffer_pos = 8;
+    dsp.voices[0].interpolation_pos = 0x1800;
+    dsp.voices[0].sample_buffer[9] = 0x1000;
+    dsp.voices[0].sample_buffer[10] = 0x2000;
+    dsp.voices[0].sample_buffer[11] = 0x3000;
+    dsp.voices[0].sample_buffer[0] = 0x4000;
 
     let sample = dsp.voice_sample(0, 0, Some(&[]));
 
     assert_eq!(
         sample, 10244,
-        "gaussian interpolation at a block boundary should include the previous block tail"
+        "gaussian interpolation must wrap across the 12-sample ring buffer"
     );
 }
 
 #[test]
-fn given_initial_brr_block_at_sample_start_when_sampling_voice_then_decoded_samples_are_used() {
+fn given_initial_brr_group_at_sample_start_when_sampling_voice_then_decoded_samples_are_used() {
     let mut dsp = Sdsp::new();
-    dsp.voices[0].brr_initialized = true;
     dsp.voices[0].env_level = 0x7FF;
-    dsp.voices[0].sample_pos = 0;
-    dsp.voices[0].brr_block_index = 0;
-    dsp.voices[0].brr_samples[0] = 0x1000;
-    dsp.voices[0].brr_samples[1] = 0x2000;
-    dsp.voices[0].brr_samples[2] = 0x3000;
-    dsp.voices[0].brr_samples[3] = 0x4000;
+    dsp.voices[0].interpolation_pos = 0;
+    dsp.voices[0].sample_buffer[0] = 0x1000;
+    dsp.voices[0].sample_buffer[1] = 0x2000;
+    dsp.voices[0].sample_buffer[2] = 0x3000;
+    dsp.voices[0].sample_buffer[3] = 0x4000;
 
     let expected_raw = dsp.gaussian_interpolate(0x1000, 0x2000, 0x3000, 0x4000, 0);
     let expected = (((i32::from(expected_raw) * 0x7FF) >> 11) as i16) & !1;
@@ -251,16 +249,14 @@ fn given_initial_brr_block_at_sample_start_when_sampling_voice_then_decoded_samp
 }
 
 #[test]
-fn given_initial_brr_block_at_fractional_start_when_sampling_voice_then_decoded_samples_are_used() {
+fn given_initial_brr_group_at_fractional_start_when_sampling_voice_then_decoded_samples_are_used() {
     let mut dsp = Sdsp::new();
-    dsp.voices[0].brr_initialized = true;
     dsp.voices[0].env_level = 0x7FF;
-    dsp.voices[0].sample_pos = 0x0800;
-    dsp.voices[0].brr_block_index = 0;
-    dsp.voices[0].brr_samples[0] = 0x1000;
-    dsp.voices[0].brr_samples[1] = 0x2000;
-    dsp.voices[0].brr_samples[2] = 0x3000;
-    dsp.voices[0].brr_samples[3] = 0x4000;
+    dsp.voices[0].interpolation_pos = 0x0800;
+    dsp.voices[0].sample_buffer[0] = 0x1000;
+    dsp.voices[0].sample_buffer[1] = 0x2000;
+    dsp.voices[0].sample_buffer[2] = 0x3000;
+    dsp.voices[0].sample_buffer[3] = 0x4000;
 
     let expected_raw = dsp.gaussian_interpolate(0x1000, 0x2000, 0x3000, 0x4000, 0x80);
     let expected = (((i32::from(expected_raw) * 0x7FF) >> 11) as i16) & !1;
@@ -1255,14 +1251,12 @@ fn given_flg_soft_reset_and_kon_latched_when_voice3c_runs_then_kon_still_starts_
         dsp.voices[0].kon_delay, 4,
         "held FLG.7 should still let the key-on delay count down on later samples"
     );
-    let sample_pos_after_first_delay_sample = dsp.voice_sample_pos(0);
 
     step_sample_ticks(&mut dsp, 1);
 
     assert_eq!(dsp.voices[0].kon_delay, 3);
     assert_eq!(
-        dsp.voice_sample_pos(0),
-        sample_pos_after_first_delay_sample,
+        dsp.voices[0].pitch_step, 0,
         "held FLG.7 should still suppress pitch while key-on delay is active"
     );
 }
@@ -1419,6 +1413,29 @@ fn given_key_on_with_zero_brr_block_when_phase_steps_then_voice_uses_decoded_sam
 }
 
 #[test]
+fn given_endx_bit_set_when_voice_keys_on_then_that_bit_clears_at_voice5() {
+    // Mesen2 DspVoice::Step5: `if(_keyOnDelay == 5) voiceEnd &= ~_voiceBit` —
+    // key-on clears the keyed voice's ENDX bit while other bits persist.
+    // Verified against blargg spc_dsp6: without this, ENDX reads $FF instead
+    // of $00 in the sub-test teardown sweep and the ROM's control flow forks.
+    let mut dsp = Sdsp::new();
+    dsp.write_reg(0x6C, 0x20);
+    dsp.endx = 0xFF;
+    dsp.write_reg(0x4C, 0x01); // KON voice 0
+
+    // KON is consumed on the second sample's every-other-sample poll (voice-3c
+    // at phase 30); voice 0's voice-5 stage (phase 0 of the following sample)
+    // then clears the ENDX bit while the key-on delay is still 5.
+    step_sample_ticks(&mut dsp, 3);
+
+    assert_eq!(
+        dsp.read_reg(0x7C),
+        0xFE,
+        "key-on must clear only the keyed voice's ENDX bit"
+    );
+}
+
+#[test]
 fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
     let mut dsp = Sdsp::new();
     let mut aram = [0u8; 0x1_0000];
@@ -1439,7 +1456,11 @@ fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
     dsp.write_reg(0x03, 0x10);
     dsp.write_reg(0x4C, 0x01);
 
-    step_sample_ticks_with_memory(&mut dsp, &mut aram, 8);
+    // Hardware timeline (Mesen2 group pipeline): the key-on delay pre-decodes
+    // 3 groups; with pitch $1000 the 4th group decode — which wraps past the
+    // END block and raises ENDX — happens 4 samples after the delay expires
+    // (KON poll at tick 2 + 5 delay ticks + 4 pitch steps ≈ tick 11).
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 12);
 
     assert_ne!(
         dsp.read_reg(0x7C),
@@ -1460,9 +1481,10 @@ fn given_brr_end_without_loop_when_block_boundary_is_reached_then_envx_reports_p
     dsp.voices[0].mode = EnvelopeMode::Sustain;
     dsp.voices[0].env_level = 0x400;
     dsp.voices[0].hidden_env = 0x400;
-    dsp.voices[0].brr_initialized = true;
+    // Voice sits on the END-without-LOOP block: stage 3b re-reads its header
+    // every sample and stage 3c applies the release after ENVX is captured.
+    dsp.voices[0].brr_addr = 0x0200;
     dsp.voices[0].brr_next_addr = 0x0200;
-    dsp.voices[0].sample_pos = 0xFFFF;
 
     for _ in 0..31 {
         dsp.step_phase_with_memory(&mut aram);
@@ -1522,7 +1544,6 @@ fn given_brr_header_loaded_before_key_on_delay_when_voice3c_runs_then_header_is_
 
     dsp.write_reg(0x6C, 0x20);
     dsp.write_reg(0x04, 0x00);
-    dsp.voices[0].brr_initialized = true;
     dsp.voices[0].brr_addr = 0x0200;
     dsp.voices[0].brr_next_addr = 0x0200;
     dsp.voices[0].mode = EnvelopeMode::Attack;

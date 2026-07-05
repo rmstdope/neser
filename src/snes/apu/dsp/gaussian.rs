@@ -27,6 +27,27 @@ const GAUSSIAN_LUT: [i16; 512] = [
     1300, 1301, 1302, 1302, 1303, 1303, 1303, 1304, 1304, 1304, 1304, 1304, 1305, 1305,
 ];
 
+/// Gaussian interpolation over the voice 12-sample ring buffer, mirroring
+/// Mesen2 `DspInterpolation::Gauss`: bits 12-14 of the interpolation
+/// position select the base sample relative to `buffer_pos`, bits 4-11 are
+/// the fraction.
+#[must_use]
+pub fn gaussian_interpolate_ring(
+    interpolation_pos: u16,
+    samples: &[i16; 12],
+    buffer_pos: u8,
+) -> i16 {
+    let pos = usize::from(interpolation_pos >> 12) + usize::from(buffer_pos);
+    let frac = ((interpolation_pos >> 4) & 0xFF) as u8;
+    gaussian_interpolate(
+        samples[pos % 12],
+        samples[(pos + 1) % 12],
+        samples[(pos + 2) % 12],
+        samples[(pos + 3) % 12],
+        frac,
+    )
+}
+
 #[must_use]
 pub fn gaussian_interpolate(s0: i16, s1: i16, s2: i16, s3: i16, frac: u8) -> i16 {
     let offset = usize::from(frac);

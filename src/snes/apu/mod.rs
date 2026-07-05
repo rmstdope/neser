@@ -560,6 +560,10 @@ impl SnesApu {
     }
 }
 
+/// Temporary diagnostic for #2914: countdown of SPC bus ops to log after the
+/// ROM writes FLG=$20 (armed from the DSP-write trace hook).
+static BUS_OP_LOG_REMAINING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 struct SpcBusView<'a> {
     aram: &'a mut [u8; ARAM_SIZE],
     ipl: &'a [u8; 64],
@@ -676,6 +680,21 @@ impl SpcBusView<'_> {
             .set_global_enabled(test_reg_allows_timers(value));
     }
 
+    fn log_bus_op_if_armed(&self, addr: Option<u16>) {
+        use std::sync::atomic::Ordering;
+        if !dsp::spc_dsp6_trace_enabled() {
+            return;
+        }
+        let remaining = BUS_OP_LOG_REMAINING.load(Ordering::Relaxed);
+        if remaining > 0 {
+            BUS_OP_LOG_REMAINING.store(remaining - 1, Ordering::Relaxed);
+            match addr {
+                Some(a) => eprintln!("neser busop addr={a}"),
+                None => eprintln!("neser busop addr=-1"),
+            }
+        }
+    }
+
     fn tick_apu_cycles(&mut self, timer_cycles: u8) {
         if !self.tick_timers {
             return;
@@ -690,6 +709,7 @@ impl SpcBusView<'_> {
     }
 
     fn tick_access_cycles_for_addr(&mut self, addr: Option<u16>) {
+        self.log_bus_op_if_armed(addr);
         self.tick_apu_cycles(self.timer_wait_cycles_for_addr(addr));
     }
 }
@@ -720,6 +740,13 @@ impl Spc700Bus for SpcBusView<'_> {
                     value,
                     self.dsp.phase()
                 );
+                if dsp::spc_dsp6_trace_enabled() {
+                    eprintln!(
+                        "neser dspread reg=${:02X} val=${value:02X} phase={}",
+                        *self.dsp_addr & 0x7F,
+                        self.dsp.phase()
+                    );
+                }
                 value
             }
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
@@ -779,6 +806,16 @@ impl Spc700Bus for SpcBusView<'_> {
                     value,
                     self.dsp.phase()
                 );
+                if dsp::spc_dsp6_trace_enabled() {
+                    eprintln!(
+                        "neser dspwrite reg=${:02X} val=${value:02X} phase={}",
+                        *self.dsp_addr,
+                        self.dsp.phase()
+                    );
+                    if *self.dsp_addr == 0x6C && value == 0x20 {
+                        BUS_OP_LOG_REMAINING.store(1500, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
                 self.dsp.write_reg(*self.dsp_addr, value)
             }
             0x00F4..=0x00F7 => {
