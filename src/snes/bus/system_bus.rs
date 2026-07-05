@@ -789,6 +789,10 @@ impl DmaABus for SnesSystemBus {
 
 impl SnesBus for SnesSystemBus {
     fn read(&self, addr: u32) -> u8 {
+        // Temporary #2914 diagnostic (remove before merge): boot bus trace.
+        if std::env::var_os("NESER_BUS_LOG").is_some() && self.ticks.get() < 170_000 {
+            eprintln!("neser busR {addr:06X} ticks={}", self.ticks.get());
+        }
         if let Some(value) = self.read_mmio(addr) {
             self.mdr.set(value);
             return value;
@@ -824,6 +828,10 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn write(&mut self, addr: u32, value: u8) {
+        // Temporary #2914 diagnostic (remove before merge): boot bus trace.
+        if std::env::var_os("NESER_BUS_LOG").is_some() && self.ticks.get() < 170_000 {
+            eprintln!("neser busW {addr:06X} ticks={}", self.ticks.get());
+        }
         if self.write_mmio(addr, value) {
             return;
         }
