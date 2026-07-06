@@ -1740,6 +1740,41 @@ fn echo_write_excludes_voice0_output_accumulated_at_phase_31() {
 }
 
 #[test]
+fn pitch_registers_are_read_at_voice_steps_2_and_3a() {
+    // The pitch is not cached voice state: VxPITCHL is loaded at the
+    // voice's Step2 slot and VxPITCHH is OR-ed in at Step3a (Mesen
+    // DspVoice::Step2/Step3a; voice 0: slots 21/22). blargg dsp6
+    // "Random/kon pitch" randomizes pitch writes mid-sample, so a write
+    // landing after Step3a must only affect the NEXT sample (#2914).
+    let mut dsp = Sdsp::new();
+    let mut aram = vec![0u8; 0x1_0000];
+    dsp.write_reg(0x02, 0x00); // V0 PITCHL
+    dsp.write_reg(0x03, 0x10); // V0 PITCHH -> pitch $1000
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 2);
+    assert_eq!(dsp.voices[0].pitch_step, 0x1000);
+
+    // Write PITCHL after voice 0's Step3a slot; Step3c at slot 30 must
+    // still use the already-loaded value for this sample.
+    while dsp.phase != 23 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    dsp.write_reg(0x02, 0xFF);
+    while dsp.phase != 31 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    assert_eq!(
+        dsp.voices[0].pitch_step, 0x1000,
+        "a pitch write after Step3a must not affect the sample in flight"
+    );
+
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    assert_eq!(
+        dsp.voices[0].pitch_step, 0x10FF,
+        "the pitch write must be loaded by the next sample's Step2"
+    );
+}
+
+#[test]
 fn fir_coefficients_are_read_at_echo_pipeline_slots_not_at_render() {
     // The FIR coefficients are read at their echo pipeline slots (Mesen
     // Dsp::EchoStep22-25: FFC0 at slot 22, FFC1-2 at 23, FFC3-5 at 24,

@@ -231,6 +231,9 @@ impl Sdsp {
 
     pub fn set_voice_pitch(&mut self, voice: usize, pitch: u16) {
         let idx = voice_index(voice);
+        let base = idx << 4;
+        self.regs[base + 2] = (pitch & 0xFF) as u8;
+        self.regs[base + 3] = ((pitch >> 8) & 0x3F) as u8;
         self.voices[idx].pitch = pitch & 0x3FFF;
     }
 
@@ -684,6 +687,15 @@ impl Sdsp {
             }
         }
         self.voices[voice].adsr1_latch = self.voices[voice].adsr1;
+        // "Load VxPITCHL register." — replaces the pitch; the high bits
+        // arrive at Step3a (Mesen DspVoice::Step2).
+        self.voices[voice].pitch = u16::from(self.regs[(voice << 4) + 2]);
+    }
+
+    /// Stage 3a: OR the pitch-high register bits into the pitch loaded at
+    /// Step2 (Mesen `DspVoice::Step3a`).
+    fn process_voice3a(&mut self, voice: usize) {
+        self.voices[voice].pitch |= u16::from(self.regs[(voice << 4) + 3] & 0x3F) << 8;
     }
 
     /// Stage 3b: re-read the BRR header and the first data byte of the next
@@ -747,6 +759,13 @@ impl Sdsp {
         }
         // Voice 0's Step3 is split across phases 22/25/30; voices 1-7 run
         // 3a+3b+3c in a single slot at their voice3c phase.
+        if self.phase == 22 {
+            self.process_voice3a(0);
+        } else if let Some(voice) = Self::voice3c_phase_voice(self.phase)
+            && voice != 0
+        {
+            self.process_voice3a(voice);
+        }
         if self.phase == 25 || Self::voice3c_phase_voice(self.phase).is_some_and(|v| v != 0) {
             let voice = if self.phase == 25 {
                 0
@@ -941,14 +960,10 @@ impl Sdsp {
         match reg & 0x0F {
             0x00 => v.vol_l = value as i8,
             0x01 => v.vol_r = value as i8,
-            0x02 => {
-                let prev = v.pitch;
-                v.pitch = (prev & 0x3F00) | u16::from(value);
-            }
-            0x03 => {
-                let prev = v.pitch;
-                v.pitch = (prev & 0x00FF) | (u16::from(value & 0x3F) << 8);
-            }
+            // $x2/$x3 (pitch) are not cached: the DSP re-reads them from
+            // the register file every sample at the voice's Step2/Step3a
+            // slots (Mesen DspVoice::Step2/Step3a).
+            0x02 | 0x03 => {}
             0x05 => v.adsr1 = value,
             0x06 => v.adsr2 = value,
             0x07 => v.gain = value,
