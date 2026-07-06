@@ -84,7 +84,7 @@ export function createAutorunContext() {
 
         /** @param {boolean} flag */
         setCreateRecording(flag: boolean) {
-            createRecording = Boolean(flag);
+            createRecording = flag;
         },
 
         // ── loaded file ───────────────────────────────────────────────────
@@ -148,7 +148,7 @@ export function createAutorunContext() {
 
         /** @param {boolean} flag */
         setExtend(flag: boolean) {
-            extend = Boolean(flag);
+            extend = flag;
         },
 
         // ── combined queries ──────────────────────────────────────────────

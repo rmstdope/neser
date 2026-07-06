@@ -73,12 +73,9 @@ const shortcutActionByCode = {
     KeyH: "toggleHelp"
 };
 
-function hasControlModifier(event: ShortcutEvent) {
-    return Boolean(event.ctrlKey) && !event.altKey;
-}
-
 function shortcutActionForEvent(event: ShortcutEvent, actions: ShortcutActions) {
-    if (hasControlModifier(event)) {
+    const isCtrlPressed = event.ctrlKey && !event.altKey;
+    if (isCtrlPressed) {
         if (event.code === "KeyR") {
             return event.shiftKey ? actions.hardReset : actions.reset;
         }

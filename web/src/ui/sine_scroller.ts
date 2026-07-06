@@ -29,27 +29,20 @@ export function createSineScroller({
     const buffer = new Uint8Array(width * height * 4);
     const canvas = (typeof OffscreenCanvas !== "undefined")
         ? new OffscreenCanvas(width, height)
-        : (() => {
-            if (typeof document === "undefined") {
-                throw new Error("No canvas available for sine scroller");
-            }
-            const element = document.createElement("canvas");
-            element.width = width;
-            element.height = height;
-            return element;
-        })();
-    const ctxOrNull = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
-    if (!ctxOrNull) {
+        : createCanvasFallback(width, height);
+    
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) {
         throw new Error("2D canvas context unavailable for sine scroller");
     }
-    const ctx: CanvasRenderingContext2D = ctxOrNull;
+    
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     const fontString = buildFontString(fontSizePx, fontFamily);
     ctx.font = fontString;
 
-    const chars = Array.from(text) as string[];
-    const charWidths = chars.map((char: string) => ctx.measureText(char).width);
+    const chars = Array.from(text);
+    const charWidths = chars.map((char) => ctx.measureText(char).width);
     const textWidth = charWidths.reduce((total, value) => total + value, 0);
 
     let time = 0;
@@ -63,15 +56,12 @@ export function createSineScroller({
         const deltaSeconds = (timestampMs - lastTimestamp) / 1000;
         lastTimestamp = timestampMs;
 
-        const canvasWidth = width;
-        const canvasHeight = height;
-
         ctx.fillStyle = "#000000";
-        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        ctx.fillRect(0, 0, width, height);
 
         scrollX -= speed * deltaSeconds * 60;
         if (scrollX < -textWidth) {
-            scrollX = canvasWidth;
+            scrollX = width;
         }
 
         let charX = scrollX;
@@ -85,7 +75,7 @@ export function createSineScroller({
                 amplitude,
                 frequency
             });
-            const charY = (canvasHeight / 2) + sineOffset;
+            const charY = (height / 2) + sineOffset;
 
             const gradient = ctx.createLinearGradient(charX, charY - 20, charX, charY + 20);
             gradient.addColorStop(0, "#ff00ff");
@@ -93,11 +83,11 @@ export function createSineScroller({
             gradient.addColorStop(1, "#ffff00");
 
             ctx.fillStyle = gradient;
-            ctx.fillText(char as string, charX, charY);
+            ctx.fillText(char, charX, charY);
 
             ctx.shadowColor = "#00ffff";
             ctx.shadowBlur = 10;
-            ctx.fillText(char as string, charX, charY);
+            ctx.fillText(char, charX, charY);
             ctx.shadowBlur = 0;
 
             charX += charWidth;
@@ -105,7 +95,7 @@ export function createSineScroller({
 
         time += 0.05;
 
-        const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+        const imageData = ctx.getImageData(0, 0, width, height);
         buffer.set(imageData.data);
         return buffer;
     }
@@ -113,4 +103,14 @@ export function createSineScroller({
     return {
         renderFrame
     };
+}
+
+function createCanvasFallback(width: number, height: number) {
+    if (typeof document === "undefined") {
+        throw new Error("No canvas available for sine scroller");
+    }
+    const element = document.createElement("canvas");
+    element.width = width;
+    element.height = height;
+    return element;
 }
