@@ -37,28 +37,6 @@ fn default_test_reg() -> u8 {
     0x0A
 }
 
-/// Temporary #2938 diagnostic (remove before merge): parse
-/// `NESER_SPC_FETCH_WINDOW="<start>-<end>"` once.
-fn fetch_log_window() -> Option<(u64, u64)> {
-    static WINDOW: std::sync::OnceLock<Option<(u64, u64)>> = std::sync::OnceLock::new();
-    *WINDOW.get_or_init(|| {
-        let raw = std::env::var("NESER_SPC_FETCH_WINDOW").ok()?;
-        let (a, b) = raw.split_once('-')?;
-        Some((a.parse().ok()?, b.parse().ok()?))
-    })
-}
-
-/// Temporary #2914 diagnostic (remove before merge): parse
-/// `NESER_SPC_HOST_LOG_WINDOW="<start>-<end>"` once.
-fn host_log_window() -> Option<(u64, u64)> {
-    static WINDOW: std::sync::OnceLock<Option<(u64, u64)>> = std::sync::OnceLock::new();
-    *WINDOW.get_or_init(|| {
-        let raw = std::env::var("NESER_SPC_HOST_LOG_WINDOW").ok()?;
-        let (a, b) = raw.split_once('-')?;
-        Some((a.parse().ok()?, b.parse().ok()?))
-    })
-}
-
 /// fullsnes TEST $F0:
 ///   bit 0 = Timer-Enable  (0=Normal/timers work, 1=Timers don't work)
 ///   bit 3 = Timer-Disable (0=Timers don't work,  1=Normal/timers work)
@@ -107,8 +85,6 @@ pub struct SnesApuState {
     pub control: u8,
     #[serde(default = "default_test_reg")]
     pub test: u8,
-    #[serde(default)]
-    pub master_ticks: u64,
     #[serde(default)]
     pub spc_cycle_budget: i64,
     #[serde(default)]
@@ -161,7 +137,6 @@ pub struct SnesApu {
     /// internal-speed divider (value 2). See [`SpcBusView::internal_speed_freeze`].
     spc_frozen: bool,
     timers: SpcTimers,
-    master_ticks: u64,
     /// Signed budget in numerator units for fractional SPC catch-up.
     spc_cycle_budget: i64,
     dsp: Sdsp,
@@ -190,14 +165,7 @@ impl SnesApu {
             test: default_test_reg(),
             spc_frozen: false,
             timers: SpcTimers::default(),
-            master_ticks: 0,
-            // Diagnostic override for #2914 boot-origin scanning: pre-charge
-            // the SPC budget by N master-ticks' worth (may be negative).
-            spc_cycle_budget: std::env::var("NESER_SPC_BOOT_BUDGET")
-                .ok()
-                .and_then(|v| v.parse::<i64>().ok())
-                .unwrap_or(0)
-                * SPC_PER_MASTER_NUM,
+            spc_cycle_budget: 0,
             dsp: Sdsp::new(),
             dsp_addr: 0,
             sample_acc: 0.0,
@@ -215,45 +183,11 @@ impl SnesApu {
     }
 
     pub fn read_main_port(&self, port: usize) -> u8 {
-        let value = self.spc_to_main_ports[port];
-        // Temporary #2914 diagnostic: uncompressed host-read log inside an
-        // mclk window given as NESER_SPC_HOST_LOG_WINDOW="<start>-<end>".
-        if let Some((start, end)) = host_log_window()
-            && (start..=end).contains(&self.master_ticks)
-        {
-            eprintln!(
-                "neser hostpoll port={port} val=${value:02X} mclk={}",
-                self.master_ticks
-            );
-        }
-        if dsp::spc_dsp6_trace_enabled() {
-            // Change-compressed: only log when the observed value changes,
-            // otherwise host poll loops flood the trace.
-            static LAST: [std::sync::atomic::AtomicU16; 4] = [
-                std::sync::atomic::AtomicU16::new(0xFFFF),
-                std::sync::atomic::AtomicU16::new(0xFFFF),
-                std::sync::atomic::AtomicU16::new(0xFFFF),
-                std::sync::atomic::AtomicU16::new(0xFFFF),
-            ];
-            let last = LAST[port].swap(u16::from(value), std::sync::atomic::Ordering::Relaxed);
-            if last != u16::from(value) {
-                eprintln!(
-                    "neser hostread port={port} val=${value:02X} mclk={}",
-                    self.master_ticks
-                );
-            }
-        }
-        value
+        self.spc_to_main_ports[port]
     }
 
     pub fn write_main_port(&mut self, port: usize, value: u8) {
         trace_apu!(3; "CPU->SPC port[{}] <= ${:02X}", port, value);
-        if dsp::spc_dsp6_trace_enabled() {
-            eprintln!(
-                "neser hostwrite port={port} val=${value:02X} mclk={}",
-                self.master_ticks
-            );
-        }
         if self.main_to_spc_latch[port] == value {
             return;
         }
@@ -280,7 +214,6 @@ impl SnesApu {
     }
 
     pub fn tick(&mut self) {
-        self.master_ticks = self.master_ticks.wrapping_add(1);
         self.spc_cycle_budget += SPC_PER_MASTER_NUM;
 
         while self.spc_cycle_budget >= SPC_PER_MASTER_DEN {
@@ -298,35 +231,9 @@ impl SnesApu {
             // per iteration on the true master-clock grid. The atomic
             // `Spc700::step` path remains only as the reference for the
             // script equivalence tests.
-            // Temporary #2938 diagnostic (remove before merge): log opcode
-            // fetch instants inside NESER_SPC_FETCH_WINDOW="<start>-<end>".
-            if !self.spc700.has_in_progress_op()
-                && let Some((ws, we)) = fetch_log_window()
-                && (ws..=we).contains(&self.master_ticks)
-            {
-                eprintln!(
-                    "neser fetch pc={:04X} mclk={}",
-                    self.spc700.pc(),
-                    self.master_ticks
-                );
-                {
-                    static DUMPED: std::sync::atomic::AtomicBool =
-                        std::sync::atomic::AtomicBool::new(false);
-                    if self.spc700.pc() == 0x0460
-                        && !DUMPED.swap(true, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        eprint!("neser code@0460:");
-                        for a in 0x0460u16..0x0480 {
-                            eprint!(" {:02X}", self.aram[usize::from(a)]);
-                        }
-                        eprintln!();
-                    }
-                }
-            }
             let consumed_cycles = {
                 let mut bus_view = SpcBusView {
                     consumed_cycles: 0,
-                    master_ticks: self.master_ticks,
                     aram: &mut self.aram,
                     ipl: &self.ipl,
                     main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -391,10 +298,6 @@ impl SnesApu {
         self.spc_to_main_ports
     }
 
-    pub fn master_ticks(&self) -> u64 {
-        self.master_ticks
-    }
-
     pub fn capture_state(&self) -> SnesApuState {
         SnesApuState {
             aram: self.aram.to_vec(),
@@ -405,7 +308,6 @@ impl SnesApu {
             spc_to_main_ports: self.spc_to_main_ports,
             control: self.control,
             test: self.test,
-            master_ticks: self.master_ticks,
             spc_cycle_budget: self.spc_cycle_budget,
             timers: self.timers.clone(),
             dsp: self.dsp.clone(),
@@ -438,7 +340,6 @@ impl SnesApu {
             self.spc_to_main_ports = [0; 4];
             self.control = 0xB0;
             self.test = default_test_reg();
-            self.master_ticks = 0;
             self.spc_cycle_budget = 0;
             self.timers = SpcTimers::default();
             self.dsp = Sdsp::new();
@@ -482,7 +383,6 @@ impl SnesApu {
         self.spc_to_main_ports = state.spc_to_main_ports;
         self.control = state.control;
         self.test = state.test;
-        self.master_ticks = state.master_ticks;
         self.spc_cycle_budget = state.spc_cycle_budget;
         self.timers = state.timers.clone();
         // Older save-states predate the serialized timer global gate; always
@@ -535,7 +435,6 @@ impl SnesApu {
         self.spc_frozen = false;
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
-            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -654,7 +553,6 @@ impl SnesApu {
     pub(crate) fn read_spc_memory_for_test(&mut self, addr: u16) -> u8 {
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
-            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -676,7 +574,6 @@ impl SnesApu {
     pub(crate) fn write_spc_memory_for_test(&mut self, addr: u16, value: u8) {
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
-            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -698,7 +595,6 @@ impl SnesApu {
     pub(crate) fn advance_spc_bus_cycles_for_test(&mut self, cycles: usize) {
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
-            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -722,7 +618,6 @@ impl SnesApu {
     pub(crate) fn write_spc_control_for_test(&mut self, value: u8) {
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
-            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -751,15 +646,6 @@ impl SnesApu {
     }
 }
 
-/// Temporary diagnostic for #2914: countdown of SPC bus ops to log after the
-/// ROM writes FLG=$20 (armed from the DSP-write trace hook).
-static BUS_OP_LOG_REMAINING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-
-/// Temporary diagnostic for #2914 (remove before merge): PC of the SPC700
-/// instruction currently executing ATOMICALLY (0xFFFF = none). Port-window
-/// accesses seen while set identify opcodes missing a cycle script.
-static ATOMIC_STEP_PC: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0xFFFF);
-
 struct SpcBusView<'a> {
     /// SMP core cycles consumed by bus accesses during the current
     /// `step_one_cycle` call (TEST wait states stretch each access to
@@ -779,9 +665,6 @@ struct SpcBusView<'a> {
     dsp_addr: &'a mut u8,
     frozen: &'a mut bool,
     tick_timers: bool,
-    /// Temporary #2914 diagnostic (remove before merge): wall stamp for
-    /// the dspread/dspwrite trace hooks.
-    master_ticks: u64,
 }
 
 impl SpcBusView<'_> {
@@ -892,32 +775,6 @@ impl SpcBusView<'_> {
             .set_global_enabled(test_reg_allows_timers(value));
     }
 
-    fn log_bus_op_if_armed(&self, addr: Option<u16>) {
-        use std::sync::atomic::Ordering;
-        // Temporary #2914 diagnostic (remove before merge): report port-window
-        // accesses performed inside an atomic step = unscripted opcodes.
-        if dsp::spc_dsp6_trace_enabled()
-            && let Some(a) = addr
-            && (0x00F4..=0x00F7).contains(&a)
-        {
-            let pc = ATOMIC_STEP_PC.load(Ordering::Relaxed);
-            if pc != 0xFFFF {
-                eprintln!("neser ATOMICPORT pc={pc:04X} addr={a:04X}");
-            }
-        }
-        if !dsp::spc_dsp6_trace_enabled() {
-            return;
-        }
-        let remaining = BUS_OP_LOG_REMAINING.load(Ordering::Relaxed);
-        if remaining > 0 {
-            BUS_OP_LOG_REMAINING.store(remaining - 1, Ordering::Relaxed);
-            match addr {
-                Some(a) => eprintln!("neser busop addr={a}"),
-                None => eprintln!("neser busop addr=-1"),
-            }
-        }
-    }
-
     fn tick_apu_cycles(&mut self, timer_cycles: u8) {
         if !self.tick_timers {
             return;
@@ -932,7 +789,6 @@ impl SpcBusView<'_> {
     }
 
     fn tick_access_cycles_for_addr(&mut self, addr: Option<u16>) {
-        self.log_bus_op_if_armed(addr);
         self.consumed_cycles = self
             .consumed_cycles
             .saturating_add(self.wait_cycles_for_addr(addr));
@@ -966,41 +822,15 @@ impl Spc700Bus for SpcBusView<'_> {
                     value,
                     self.dsp.phase()
                 );
-                if dsp::spc_dsp6_trace_enabled() {
-                    eprintln!(
-                        "neser dspread reg=${:02X} val=${value:02X} phase={} mclk={}",
-                        *self.dsp_addr & 0x7F,
-                        self.dsp.phase(),
-                        self.master_ticks
-                    );
-                }
                 value
             }
-            0x00F4..=0x00F7 => {
-                let value = self.main_to_spc_ports[(addr - 0x00F4) as usize];
-                if dsp::spc_dsp6_trace_enabled() {
-                    eprintln!(
-                        "neser ioread reg=${addr:02X} val=${value:02X} phase={}",
-                        self.dsp.phase()
-                    );
-                }
-                value
-            }
+            0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
             // $F8-$F9 = AUXIO4/AUXIO5: dedicated registers (Mesen RamReg);
             // the RAM underneath is only reachable by the DSP.
             0x00F8..=0x00F9 => self.aux_regs[(addr - 0x00F8) as usize],
             // $FA-$FC = T0/T1/T2 targets (write-only; reads return 0x00)
             0x00FA..=0x00FC => 0x00,
-            0x00FD..=0x00FF => {
-                let value = self.timers.read_counter((addr - 0x00FD) as usize);
-                if dsp::spc_dsp6_trace_enabled() {
-                    eprintln!(
-                        "neser ioread reg=${addr:02X} val=${value:02X} phase={}",
-                        self.dsp.phase()
-                    );
-                }
-                value
-            }
+            0x00FD..=0x00FF => self.timers.read_counter((addr - 0x00FD) as usize),
             0xFFC0..=0xFFFF if self.ipl_enabled() => self.ipl[(addr - 0xFFC0) as usize],
             _ if self.ram_disabled() => 0x5A,
             _ => self.aram[addr as usize],
@@ -1010,16 +840,6 @@ impl Spc700Bus for SpcBusView<'_> {
         }
         if (0x00F4..=0x00F7).contains(&addr) {
             trace_apu!(3; "SPC reads port[{}] -> ${:02X}", addr - 0x00F4, value);
-        }
-        // Temporary #2914 diagnostic (remove before merge): uncompressed log
-        // of every SPC register-page read for the dsp6 "$F0-$FF are not ram"
-        // verification comparison.
-        if dsp::spc_dsp6_trace_enabled() && (0x00F0..=0x00FF).contains(&addr) {
-            eprintln!(
-                "neser ioread2 reg={addr:02X} val={value:02X} phase={} mclk={}",
-                self.dsp.phase(),
-                self.master_ticks
-            );
         }
         value
     }
@@ -1031,21 +851,6 @@ impl Spc700Bus for SpcBusView<'_> {
     fn write(&mut self, addr: u16, value: u8) {
         if self.internal_speed_freeze(Some(addr)) {
             *self.frozen = true;
-        }
-        // Temporary #2938 diagnostic (remove before merge): trace writes to
-        // the dsp6 delay counter at $00EA/$00EB.
-        if dsp::spc_dsp6_trace_enabled() && (addr == 0x00EA || addr == 0x00EB) {
-            eprintln!(
-                "neser eawrite addr={addr:04X} val={value:02X} phase={}",
-                self.dsp.phase()
-            );
-        }
-        if dsp::spc_dsp6_trace_enabled() && (0xF000..=0xF05F).contains(&addr) {
-            eprintln!(
-                "neser recwrite addr={addr:04X} val={value:02X} phase={} mclk={}",
-                self.dsp.phase(),
-                self.master_ticks
-            );
         }
         self.tick_access_cycles_for_addr(Some(addr));
         let write_enabled = self.ram_write_enabled();
@@ -1077,17 +882,6 @@ impl Spc700Bus for SpcBusView<'_> {
                     value,
                     self.dsp.phase()
                 );
-                if dsp::spc_dsp6_trace_enabled() {
-                    eprintln!(
-                        "neser dspwrite reg=${:02X} val=${value:02X} phase={} mclk={}",
-                        *self.dsp_addr,
-                        self.dsp.phase(),
-                        self.master_ticks
-                    );
-                    if *self.dsp_addr == 0x6C && value == 0x20 {
-                        BUS_OP_LOG_REMAINING.store(1500, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
                 self.dsp.write_reg(*self.dsp_addr, value)
             }
             0x00F4..=0x00F7 => {

@@ -569,11 +569,6 @@ impl SnesSystemBus {
     }
 
     #[cfg(test)]
-    pub(crate) fn apu_master_ticks_for_debug(&self) -> u64 {
-        self.apu.borrow().master_ticks()
-    }
-
-    #[cfg(test)]
     pub(crate) fn apu_main_to_spc_ports_for_debug(&self) -> [u8; 4] {
         self.apu.borrow().main_to_spc_ports_for_debug()
     }
@@ -612,25 +607,9 @@ impl SnesSystemBus {
             // HVBJOY: bit 0 reports auto-joypad busy, owned by the input ports.
             0x4212 => {
                 let raw = self.ppu.borrow_mut().read_register(offset);
-                let value = (raw & !0x01) | (self.input.borrow().auto_busy() as u8);
-                // Temporary #2914 diagnostic (remove before merge).
-                if std::env::var_os("NESER_TPR_LOG").is_some() && self.ticks.get() < 3_000_000 {
-                    eprintln!("neser io4212 val=${value:02X} ticks={}", self.ticks.get());
-                }
-                value
+                (raw & !0x01) | (self.input.borrow().auto_busy() as u8)
             }
-            0x4210 | 0x4211 => {
-                let value = self.ppu.borrow_mut().read_register(offset);
-                // Temporary #2914 diagnostic (remove before merge).
-                if std::env::var_os("NESER_TPR_LOG").is_some() && self.ticks.get() < 3_000_000 {
-                    eprintln!(
-                        "neser io{:04X} val=${value:02X} ticks={}",
-                        offset,
-                        self.ticks.get()
-                    );
-                }
-                value
-            }
+            0x4210 | 0x4211 => self.ppu.borrow_mut().read_register(offset),
             0x4016 => self.input.borrow_mut().read_joya(open_bus),
             0x4017 => self.input.borrow_mut().read_joyb(open_bus),
             0x4218..=0x421F => self.input.borrow().read_joy_register(offset)?,
@@ -794,10 +773,6 @@ impl DmaABus for SnesSystemBus {
 
 impl SnesBus for SnesSystemBus {
     fn read(&self, addr: u32) -> u8 {
-        // Temporary #2914 diagnostic (remove before merge): boot bus trace.
-        if std::env::var_os("NESER_BUS_LOG").is_some() && self.ticks.get() < 170_000 {
-            eprintln!("neser busR {addr:06X} ticks={}", self.ticks.get());
-        }
         if let Some(value) = self.read_mmio(addr) {
             self.mdr.set(value);
             return value;
@@ -833,10 +808,6 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn write(&mut self, addr: u32, value: u8) {
-        // Temporary #2914 diagnostic (remove before merge): boot bus trace.
-        if std::env::var_os("NESER_BUS_LOG").is_some() && self.ticks.get() < 170_000 {
-            eprintln!("neser busW {addr:06X} ticks={}", self.ticks.get());
-        }
         if self.write_mmio(addr, value) {
             return;
         }

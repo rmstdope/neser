@@ -140,9 +140,6 @@ impl EchoState {
             if addr < 0x0010 {
                 trace_apu!(4; "DSP echo writes addr=${:04X} flg=${:02X}", addr, self.flg_left);
             }
-            if super::spc_dsp6_trace_enabled() {
-                eprintln!("neser echowrite ptr={addr:04X} L={:04X}", value as u16);
-            }
             write_i16_wrap(aram, addr, value);
         }
         self.esa_latched = esa;
@@ -156,9 +153,6 @@ impl EchoState {
             && self.flg_right & 0x20 == 0
         {
             let addr = self.echo_pointer.wrapping_add(2);
-            if super::spc_dsp6_trace_enabled() {
-                eprintln!("neser echowrite ptr={addr:04X} R={:04X}", value as u16);
-            }
             write_i16_wrap(aram, addr, value);
         }
         self.flg_right_sampled = false;

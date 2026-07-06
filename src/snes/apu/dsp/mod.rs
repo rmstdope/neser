@@ -26,15 +26,6 @@ fn default_regs() -> Vec<u8> {
     vec![0; DSP_REGISTER_COUNT]
 }
 
-/// Temporary diagnostic for #2914: mirrors the `NESER_SPC_DSP6_TRACE` hook
-/// patched into the local Mesen2 build (DspVoice::Step3c) so voice-0 state
-/// can be diffed line-by-line between the two emulators.
-pub(crate) fn spc_dsp6_trace_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("NESER_SPC_DSP6_TRACE").is_some())
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Sdsp {
     #[serde(default)]
@@ -534,16 +525,6 @@ impl Sdsp {
     }
 
     fn sample_control_tick(&mut self) {
-        // Temporary #2938 diagnostic (remove before merge): absolute sample
-        // index of every latched KON, for eos-parity comparison vs Mesen.
-        if spc_dsp6_trace_enabled() {
-            static SAMPLE_NO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let n = SAMPLE_NO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if !self.kon_poll_slot && self.kon_pending != 0 {
-                // This tick will latch (slot toggles to true below).
-                eprintln!("neser konlatch sample={} kon={:02X}", n, self.kon_pending);
-            }
-        }
         self.envelope_counter = if self.envelope_counter == 0 {
             30_719
         } else {
@@ -607,25 +588,6 @@ impl Sdsp {
             v.mode = EnvelopeMode::Attack;
         } else if !soft_reset {
             self.step_voice_envelope_after_output(voice);
-        }
-        if voice == 0 && spc_dsp6_trace_enabled() {
-            eprintln!(
-                "neser v0 step3c env_volume=${:03X} envx=${:02X} outx=${:02X} mode={} key_on_delay={} key_on=${:02X} key_off=${:02X} eos={} ctr={}",
-                self.voices[0].env_level,
-                self.voices[0].envx,
-                (self.voices[0].current_output >> 8) as u8,
-                match self.voices[0].mode {
-                    EnvelopeMode::Release => 0,
-                    EnvelopeMode::Attack => 1,
-                    EnvelopeMode::Decay => 2,
-                    EnvelopeMode::Sustain => 3,
-                },
-                self.voices[0].kon_delay,
-                self.kon_latched,
-                self.koff_latched,
-                u8::from(self.kon_poll_slot),
-                self.envelope_counter,
-            );
         }
     }
 
