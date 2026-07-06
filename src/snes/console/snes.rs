@@ -123,6 +123,13 @@ impl Snes {
     }
 
     #[cfg(test)]
+    pub(crate) fn apu_master_ticks_for_debug(&self) -> Option<u64> {
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.bus().apu_master_ticks_for_debug())
+    }
+
+    #[cfg(test)]
     pub(crate) fn apu_main_to_spc_ports_for_debug(&self) -> Option<[u8; 4]> {
         self.cpu
             .as_ref()

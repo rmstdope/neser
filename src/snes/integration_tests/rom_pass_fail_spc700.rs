@@ -317,6 +317,38 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "debug helper (#2914): dump shell code + buffer regions around the KON battery"]
+    fn debug_dump_spc_dsp6_code_regions() {
+        use crate::platform::app_context::AppContext;
+        use crate::platform::emulator::Emulator;
+        use crate::snes::console::Snes;
+
+        let root = Path::new(ROM_PASS_FAIL_ROOT);
+        let rom = fs::read(root.join("spc_dsp6.sfc")).unwrap();
+        let mut snes = Snes::new(AppContext::default());
+        snes.load_rom(&rom, "spc_dsp6.sfc").unwrap();
+        while snes.apu_master_ticks_for_debug().unwrap_or(0) < 304_396_200 {
+            snes.run_tick();
+        }
+        let peek = |addr: u16| snes.apu_peek_spc_memory_for_debug(addr).unwrap_or(0);
+        for (label, lo, hi) in [
+            ("wait loop", 0x0430u32, 0x0470u32),
+            ("walk routine", 0x0800, 0x08A0),
+            ("buffer", 0xF000, 0xF060),
+            ("dp E0-FF", 0x00E0, 0x0100),
+        ] {
+            eprintln!("--- {label} ---");
+            for base in (lo..hi).step_by(16) {
+                let mut line = format!("${base:04X}:");
+                for o in 0..16u32 {
+                    line.push_str(&format!(" {:02X}", peek((base + o) as u16)));
+                }
+                eprintln!("{line}");
+            }
+        }
+    }
+
+    #[test]
     #[ignore = "debug helper (#2914): dump ARAM result buffer after spc_dsp6 run"]
     fn debug_dump_spc_dsp6_result_buffer() {
         use crate::platform::app_context::AppContext;

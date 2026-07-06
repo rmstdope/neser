@@ -318,6 +318,7 @@ impl SnesApu {
             let consumed_cycles = {
                 let mut bus_view = SpcBusView {
                     consumed_cycles: 0,
+                    master_ticks: self.master_ticks,
                     aram: &mut self.aram,
                     ipl: &self.ipl,
                     main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -520,6 +521,7 @@ impl SnesApu {
         self.spc_frozen = false;
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
+            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -637,6 +639,7 @@ impl SnesApu {
     pub(crate) fn read_spc_memory_for_test(&mut self, addr: u16) -> u8 {
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
+            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -657,6 +660,7 @@ impl SnesApu {
     pub(crate) fn write_spc_memory_for_test(&mut self, addr: u16, value: u8) {
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
+            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -677,6 +681,7 @@ impl SnesApu {
     pub(crate) fn advance_spc_bus_cycles_for_test(&mut self, cycles: usize) {
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
+            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -699,6 +704,7 @@ impl SnesApu {
     pub(crate) fn write_spc_control_for_test(&mut self, value: u8) {
         let mut bus_view = SpcBusView {
             consumed_cycles: 0,
+            master_ticks: self.master_ticks,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
@@ -753,6 +759,9 @@ struct SpcBusView<'a> {
     dsp_addr: &'a mut u8,
     frozen: &'a mut bool,
     tick_timers: bool,
+    /// Temporary #2914 diagnostic (remove before merge): wall stamp for
+    /// the dspread/dspwrite trace hooks.
+    master_ticks: u64,
 }
 
 impl SpcBusView<'_> {
@@ -939,9 +948,10 @@ impl Spc700Bus for SpcBusView<'_> {
                 );
                 if dsp::spc_dsp6_trace_enabled() {
                     eprintln!(
-                        "neser dspread reg=${:02X} val=${value:02X} phase={}",
+                        "neser dspread reg=${:02X} val=${value:02X} phase={} mclk={}",
                         *self.dsp_addr & 0x7F,
-                        self.dsp.phase()
+                        self.dsp.phase(),
+                        self.master_ticks
                     );
                 }
                 value
@@ -1031,9 +1041,10 @@ impl Spc700Bus for SpcBusView<'_> {
                 );
                 if dsp::spc_dsp6_trace_enabled() {
                     eprintln!(
-                        "neser dspwrite reg=${:02X} val=${value:02X} phase={}",
+                        "neser dspwrite reg=${:02X} val=${value:02X} phase={} mclk={}",
                         *self.dsp_addr,
-                        self.dsp.phase()
+                        self.dsp.phase(),
+                        self.master_ticks
                     );
                     if *self.dsp_addr == 0x6C && value == 0x20 {
                         BUS_OP_LOG_REMAINING.store(1500, std::sync::atomic::Ordering::Relaxed);

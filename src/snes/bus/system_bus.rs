@@ -569,6 +569,11 @@ impl SnesSystemBus {
     }
 
     #[cfg(test)]
+    pub(crate) fn apu_master_ticks_for_debug(&self) -> u64 {
+        self.apu.borrow().master_ticks()
+    }
+
+    #[cfg(test)]
     pub(crate) fn apu_main_to_spc_ports_for_debug(&self) -> [u8; 4] {
         self.apu.borrow().main_to_spc_ports_for_debug()
     }
