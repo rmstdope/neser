@@ -33,6 +33,17 @@ fn default_test_reg() -> u8 {
     0x0A
 }
 
+/// Temporary #2938 diagnostic (remove before merge): parse
+/// `NESER_SPC_FETCH_WINDOW="<start>-<end>"` once.
+fn fetch_log_window() -> Option<(u64, u64)> {
+    static WINDOW: std::sync::OnceLock<Option<(u64, u64)>> = std::sync::OnceLock::new();
+    *WINDOW.get_or_init(|| {
+        let raw = std::env::var("NESER_SPC_FETCH_WINDOW").ok()?;
+        let (a, b) = raw.split_once('-')?;
+        Some((a.parse().ok()?, b.parse().ok()?))
+    })
+}
+
 /// Temporary #2914 diagnostic (remove before merge): parse
 /// `NESER_SPC_HOST_LOG_WINDOW="<start>-<end>"` once.
 fn host_log_window() -> Option<(u64, u64)> {
@@ -275,6 +286,31 @@ impl SnesApu {
             // per iteration on the true master-clock grid. The atomic
             // `Spc700::step` path remains only as the reference for the
             // script equivalence tests.
+            // Temporary #2938 diagnostic (remove before merge): log opcode
+            // fetch instants inside NESER_SPC_FETCH_WINDOW="<start>-<end>".
+            if !self.spc700.has_in_progress_op()
+                && let Some((ws, we)) = fetch_log_window()
+                && (ws..=we).contains(&self.master_ticks)
+            {
+                eprintln!(
+                    "neser fetch pc={:04X} mclk={}",
+                    self.spc700.pc(),
+                    self.master_ticks
+                );
+                {
+                    static DUMPED: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(false);
+                    if self.spc700.pc() == 0x0460
+                        && !DUMPED.swap(true, std::sync::atomic::Ordering::Relaxed)
+                    {
+                        eprint!("neser code@0460:");
+                        for a in 0x0460u16..0x0480 {
+                            eprint!(" {:02X}", self.aram[usize::from(a)]);
+                        }
+                        eprintln!();
+                    }
+                }
+            }
             let consumed_cycles = {
                 let mut bus_view = SpcBusView {
                     consumed_cycles: 0,
@@ -491,17 +527,13 @@ impl SnesApu {
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
             frozen: &mut self.spc_frozen,
-            tick_timers: false,
+            tick_timers: true,
         };
         self.spc700.reset(&mut bus_view);
         // The reset vector fetch at $FFFE/$FFFF occupies the first 2 SPC
-        // cycles: step the DSP for them and delay the first instruction
-        // (#2914, Mesen-verified DSP phase parity). The timer prescaler
-        // phase stays untouched: it is calibrated against the blargg timer
-        // ROMs (#2908), whose observable power-on behavior already matches
-        // hardware without reset-fetch ticks.
-        self.dsp.step_phase_with_memory(&mut self.aram[..]);
-        self.dsp.step_phase_with_memory(&mut self.aram[..]);
+        // cycles: the two bus reads above step the DSP and the timer
+        // prescalers, and the budget charge delays the first instruction
+        // accordingly (#2914/#2938, Mesen-verified).
         self.spc_cycle_budget -= 2 * SPC_PER_MASTER_DEN;
     }
 

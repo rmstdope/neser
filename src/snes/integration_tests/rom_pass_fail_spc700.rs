@@ -25,7 +25,7 @@ mod tests {
         ("test_speed.smc", 600, 0xFAE4_99DA),
         // Golden re-approved for #2914: cycle-stepped port polling + 32040 Hz
         // SPC rate; measured values match Mesen's within ±1 (still "Passed").
-        ("test_timer_speed_2.smc", 600, 0x301C_FFF8),
+        ("test_timer_speed_2.smc", 600, 0xCAF1_E3BC),
         // Golden re-approved for #2914 (see test_timer_speed_2 note); "Done"
         // measurement screen, rows match Mesen within ±1.
         ("test_timer_speed3.smc", 600, 0x8B6C_B1A1),
