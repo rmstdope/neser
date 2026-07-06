@@ -133,9 +133,19 @@ impl EchoState {
                 if addr < 0x0010 {
                     trace_apu!(4; "DSP echo writes addr=${:04X} flg=${:02X}", addr, flg);
                 }
+                if super::spc_dsp6_trace_enabled() {
+                    eprintln!("neser echowrite ptr={addr:04X} L={:04X}", write_l as u16);
+                }
                 write_i16_wrap(aram, addr, write_l);
             }
             if self.flg_right & 0x20 == 0 {
+                if super::spc_dsp6_trace_enabled() {
+                    eprintln!(
+                        "neser echowrite ptr={:04X} R={:04X}",
+                        addr.wrapping_add(2),
+                        write_r as u16
+                    );
+                }
                 write_i16_wrap(aram, addr.wrapping_add(2), write_r);
             }
         }

@@ -1620,6 +1620,71 @@ fn given_echo_enabled_when_dsp_phase_ticks_with_memory_then_echo_ring_buffer_is_
 }
 
 #[test]
+fn echo_write_excludes_voice0_output_accumulated_at_phase_31() {
+    // Mesen writes the echo samples at slots 29/30, BEFORE voice 0's
+    // Step4 left-volume accumulation at slot 31 (Dsp.cpp Exec: case 29
+    // EchoStep29, case 31 V0.Step4). Voice 0's output therefore reaches
+    // the echo buffer one sample later than it reaches the voice state —
+    // blargg dsp6's "echo basics" record check measures exactly this
+    // (#2914): after a direct-gain level change, the echo record written
+    // during the SAME sample must still carry the old level.
+    let mut dsp = Sdsp::new();
+    let mut aram = vec![0u8; 0x1_0000];
+    dsp.write_reg(0x00, 0x7F); // V0 VOLL
+    dsp.write_reg(0x01, 0x7F); // V0 VOLR
+    dsp.write_reg(0x0C, 0x7F); // MVOLL
+    dsp.write_reg(0x1C, 0x7F); // MVOLR
+    dsp.write_reg(0x07, 0x40); // V0 GAIN: direct level $40
+    dsp.write_reg(0x3D, 0x01); // NON: voice 0 outputs the (static) noise LFSR
+    dsp.write_reg(0x4D, 0x01); // EON voice 0
+    dsp.write_reg(0x6D, 0x40); // ESA base $4000
+    dsp.write_reg(0x7D, 0x01); // EDL 1 -> 2 KiB ring, one record per sample
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute, echo write enabled, noise rate 0
+    activate_voice_for_gain(&mut dsp, 0);
+
+    // Let the envelope reach the direct level and the ring advance.
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 8);
+
+    // Jump the direct gain level, then step sample by sample recording
+    // when the voice output and the freshly written echo record first
+    // reflect the new level.
+    let before_output = dsp.voices[0].current_output;
+    dsp.write_reg(0x07, 0x7F);
+    let mut output_changed_at = None;
+    let mut record_changed_at = None;
+    let mut prev_record_value = None;
+    for sample in 0..6 {
+        let snapshot = aram.clone();
+        step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+        if output_changed_at.is_none() && dsp.voices[0].current_output != before_output {
+            output_changed_at = Some(sample);
+        }
+        let changed: Vec<usize> = (0x4000..0x4800)
+            .filter(|&i| aram[i] != snapshot[i])
+            .collect();
+        let rec = changed.first().map(|&i| i & !3);
+        let written = rec.map(|rec| i16::from_le_bytes([aram[rec], aram[rec + 1]]));
+        if record_changed_at.is_none()
+            && let (Some(w), Some(p)) = (written, prev_record_value)
+            && w != p
+        {
+            record_changed_at = Some(sample);
+        }
+        if let Some(w) = written {
+            prev_record_value = Some(w);
+        }
+    }
+    let output_changed_at = output_changed_at.expect("voice output must change");
+    let record_changed_at = record_changed_at.expect("echo records must change");
+    assert_eq!(
+        record_changed_at,
+        output_changed_at + 1,
+        "voice 0's fresh output must reach the echo buffer one sample \
+         after it reaches the voice state (echo write precedes V0 Step4)"
+    );
+}
+
+#[test]
 fn given_echo_write_disabled_when_rendering_with_memory_then_echo_buffer_is_not_overwritten() {
     let mut dsp = Sdsp::new();
     let mut aram = [0x55u8; 0x1_0000];

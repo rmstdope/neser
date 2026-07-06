@@ -591,7 +591,7 @@ impl Sdsp {
         }
         if voice == 0 && spc_dsp6_trace_enabled() {
             eprintln!(
-                "neser v0 step3c env_volume=${:03X} envx=${:02X} outx=${:02X} mode={} key_on_delay={} key_on=${:02X} key_off=${:02X} eos={}",
+                "neser v0 step3c env_volume=${:03X} envx=${:02X} outx=${:02X} mode={} key_on_delay={} key_on=${:02X} key_off=${:02X} eos={} ctr={}",
                 self.voices[0].env_level,
                 self.voices[0].envx,
                 (self.voices[0].current_output >> 8) as u8,
@@ -605,6 +605,7 @@ impl Sdsp {
                 self.kon_latched,
                 self.koff_latched,
                 u8::from(self.kon_poll_slot),
+                self.envelope_counter,
             );
         }
     }
@@ -733,12 +734,28 @@ impl Sdsp {
         }
     }
 
-    fn step_phase_internal(&mut self, aram: Option<&mut [u8]>) {
+    fn step_phase_internal(&mut self, mut aram: Option<&mut [u8]>) {
         let control_tick = self.phase == 30;
         let render_tick = self.phase == 31;
         self.refresh_status_registers_for_phase(self.phase);
         if control_tick {
             self.sample_control_tick();
+        }
+        // The echo write and output mix happen BEFORE voice 0's Step4/5
+        // volume accumulation in this slot (Mesen Dsp::Exec: EchoStep29/30
+        // at cases 29/30, V0.Step4 at case 31). Voice 0's fresh output
+        // therefore only reaches the echo buffer with the NEXT sample —
+        // blargg dsp6's "echo basics" records measure exactly this edge.
+        if render_tick {
+            if let Some(aram) = aram.as_deref_mut() {
+                let echo_enable = if self.echo_enable_sampled {
+                    self.echo_enable_latched
+                } else {
+                    self.echo_enable
+                };
+                let _ = self.render_stereo_sample_internal(Some(aram), echo_enable);
+            }
+            self.echo_enable_sampled = false;
         }
         if let Some(voice) = Self::voice1_phase_voice(self.phase) {
             self.process_voice1(voice);
@@ -786,21 +803,6 @@ impl Sdsp {
             self.echo_state.sample_echo_registers(self.esa, self.edl);
         }
         self.phase = self.phase.wrapping_add(1) & 0x1F;
-        if !render_tick {
-            return;
-        }
-
-        if let Some(aram) = aram {
-            let echo_enable = if self.echo_enable_sampled {
-                self.echo_enable_latched
-            } else {
-                self.echo_enable
-            };
-            let _ = self.render_stereo_sample_internal(Some(aram), echo_enable);
-            self.echo_enable_sampled = false;
-        } else {
-            self.echo_enable_sampled = false;
-        }
     }
 
     pub fn write_reg(&mut self, addr: u8, value: u8) {
