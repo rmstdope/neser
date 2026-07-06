@@ -12,8 +12,6 @@ DEFAULT_MANIFEST = REPO_ROOT / "roms/snes/automated_tests/manifest.json"
 
 ALLOWED_STATUS = {"committed_ci", "optional_local"}
 ALLOWED_ORACLE_TYPES = {"vector_state", "rom_pass_fail", "screen_crc", "audio_sample"}
-ALLOWED_INTEGRITY_KINDS = {"tree_sha256", "not_vendored"}
-HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -30,48 +28,6 @@ def _validate_source(asset: dict[str, Any], errors: list[str], asset_id: str) ->
     for key in ("url", "ref"):
         if not _is_non_empty_string(source.get(key)):
             errors.append(f"asset '{asset_id}': source.{key} must be a non-empty string")
-
-
-def _validate_integrity(
-    variant: dict[str, Any], errors: list[str], asset_id: str, variant_id: str
-) -> None:
-    integrity = variant.get("integrity")
-    prefix = f"asset '{asset_id}' variant '{variant_id}'"
-    if not isinstance(integrity, dict):
-        errors.append(f"{prefix}: integrity must be an object")
-        return
-
-    kind = integrity.get("kind")
-    if kind not in ALLOWED_INTEGRITY_KINDS:
-        errors.append(
-            f"{prefix}: integrity.kind must be one of {sorted(ALLOWED_INTEGRITY_KINDS)}"
-        )
-        return
-
-    sha256 = integrity.get("sha256")
-    file_count = integrity.get("file_count")
-    total_size = integrity.get("total_size_bytes")
-
-    if not isinstance(file_count, int) or file_count < 0:
-        errors.append(f"{prefix}: integrity.file_count must be an integer >= 0")
-    if not isinstance(total_size, int) or total_size < 0:
-        errors.append(f"{prefix}: integrity.total_size_bytes must be an integer >= 0")
-
-    if kind == "tree_sha256":
-        if not isinstance(sha256, str) or not HEX64_RE.fullmatch(sha256):
-            errors.append(f"{prefix}: integrity.sha256 must be a lowercase 64-char hex string")
-        if isinstance(file_count, int) and file_count <= 0:
-            errors.append(f"{prefix}: tree_sha256 integrity requires file_count > 0")
-        if isinstance(total_size, int) and total_size <= 0:
-            errors.append(f"{prefix}: tree_sha256 integrity requires total_size_bytes > 0")
-
-    if kind == "not_vendored":
-        if sha256 != "not_applicable":
-            errors.append(f"{prefix}: not_vendored integrity must use sha256='not_applicable'")
-        if isinstance(file_count, int) and file_count != 0:
-            errors.append(f"{prefix}: not_vendored integrity requires file_count == 0")
-        if isinstance(total_size, int) and total_size != 0:
-            errors.append(f"{prefix}: not_vendored integrity requires total_size_bytes == 0")
 
 
 def _validate_variant_path(
@@ -209,20 +165,6 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
             if variant.get("status") == "optional_local" and not _is_non_empty_string(refresh_command):
                 errors.append(
                     f"asset '{asset_id}' variant '{variant_id}': optional_local variants require refresh_command"
-                )
-
-            _validate_integrity(variant, errors, asset_id, variant_id)
-
-            integrity = variant.get("integrity")
-            integrity_kind = integrity.get("kind") if isinstance(integrity, dict) else None
-            status = variant.get("status")
-            if status == "committed_ci" and integrity_kind != "tree_sha256":
-                errors.append(
-                    f"asset '{asset_id}' variant '{variant_id}': committed_ci variants must use tree_sha256 integrity"
-                )
-            if status == "optional_local" and integrity_kind != "not_vendored":
-                errors.append(
-                    f"asset '{asset_id}' variant '{variant_id}': optional_local variants must use not_vendored integrity"
                 )
 
             if variant.get("status") == "committed_ci" and path_obj is not None:

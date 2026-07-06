@@ -100,10 +100,9 @@ SNES integration tests live under `src/snes/integration_tests/`.
   detects pass/fail through a reserved WRAM marker at `$7E1FF0`, records
   diagnostics, and computes a screen CRC.
 - `rom_pass_fail` suite for #2876 vendors all 18 blargg SNES SPC700/APU test ROMs as
-  `snes-rom-pass-fail-blargg-spc-apu`. Seventeen are verified by the `rom_runner`
-  screen-CRC oracle (run to a fixed frame, compare the screen CRC32 against a
-  human-approved PASS capture). The remaining one is committed with an `#[ignore]`'d
-  test pending emulator accuracy improvements.
+  `snes-rom-pass-fail-blargg-spc-apu`. Each ROM has its own test verified by the
+  `rom_runner` screen-CRC oracle (run to a fixed frame, compare the screen CRC32
+  against a human-approved PASS capture); all 18 currently pass.
 - Asset provenance is tracked in
   `roms/snes/automated_tests/manifest.json` and validated by
   `python -m scripts.validate_snes_test_assets`.
@@ -118,15 +117,13 @@ SNES integration tests live under `src/snes/integration_tests/`.
 ### blargg SPC700/APU ROM suite (#2876)
 
 All 18 blargg SNES SPC700/APU test ROMs are committed under
-`roms/snes/automated_tests/rom_pass_fail/blargg_spc_apu/v1/`. They report
+`roms/snes/automated_tests/blargg_apu/`. They report
 results through blargg's text shell, so each ROM is verified by the `rom_runner`
 **screen-CRC oracle**: run to a fixed frame, then compare the rendered screen
 CRC32 against a human-approved PASS capture. To approve a new golden, run with
 `NESER_CAPTURE_SCREEN=1`, visually confirm the capture under
-`target/snes_test_captures/` shows a PASS screen, record the `(frame, CRC)` in
-`src/snes/integration_tests/rom_pass_fail_spc700.rs`, and recompute the
-committed integrity with
-`python -m scripts.compute_snes_rom_asset_integrity <dir>`.
+`target/snes_test_captures/` shows a PASS screen, and record the
+`(frame, CRC)` in `src/snes/integration_tests/blargg_apu_tests.rs`.
 
 **Passing (18) — visually-approved screen-CRC goldens:**
 

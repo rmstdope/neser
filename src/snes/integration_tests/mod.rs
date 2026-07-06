@@ -2,7 +2,7 @@
 //!
 //! Tests will be added as subsystems are implemented.
 
+mod blargg_apu_tests;
 mod processor_tests_65816;
 mod processor_tests_spc700;
-mod rom_pass_fail_spc700;
 mod rom_runner;

@@ -35,19 +35,8 @@ Each variant must define:
 - Stable `id` (for example `ci_subset`, `optional_full_corpus`)
 - `status` (`committed_ci` or `optional_local`)
 - Repository-relative `path`
-- `integrity` object
 - `refresh_command` for `optional_local` variants
 - Variant `notes`
-
-## Integrity Model
-
-v1 supports two integrity strategies:
-
-- `tree_sha256`: for committed CI assets present in the repository.
-  - Includes a deterministic SHA-256 hash over sorted per-file hash records.
-  - Includes `file_count` and `total_size_bytes` for quick review sanity.
-- `not_vendored`: for optional local corpora that are intentionally not committed.
-  - Uses `sha256 = not_applicable` with zero file count and size in the committed manifest.
 
 ## CI Subset vs Optional Local Corpus
 

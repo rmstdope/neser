@@ -281,23 +281,8 @@ impl SnesApu {
     }
 
     #[cfg(test)]
-    pub(crate) fn spc_pc_for_debug(&self) -> u16 {
-        self.spc700.pc()
-    }
-
-    #[cfg(test)]
     pub(crate) fn peek_spc_memory_for_debug(&self, addr: u16) -> u8 {
         self.peek_opcode_at(addr)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn main_to_spc_ports_for_debug(&self) -> [u8; 4] {
-        self.main_to_spc_ports
-    }
-
-    #[cfg(test)]
-    pub(crate) fn spc_to_main_ports_for_debug(&self) -> [u8; 4] {
-        self.spc_to_main_ports
     }
 
     pub fn capture_state(&self) -> SnesApuState {
