@@ -1009,6 +1009,13 @@ impl Spc700Bus for SpcBusView<'_> {
                 self.dsp.phase()
             );
         }
+        if dsp::spc_dsp6_trace_enabled() && (0xF000..=0xF05F).contains(&addr) {
+            eprintln!(
+                "neser recwrite addr={addr:04X} val={value:02X} phase={} mclk={}",
+                self.dsp.phase(),
+                self.master_ticks
+            );
+        }
         self.tick_access_cycles_for_addr(Some(addr));
         let write_enabled = self.ram_write_enabled();
         if write_enabled {

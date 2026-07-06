@@ -327,7 +327,7 @@ mod tests {
         let rom = fs::read(root.join("spc_dsp6.sfc")).unwrap();
         let mut snes = Snes::new(AppContext::default());
         snes.load_rom(&rom, "spc_dsp6.sfc").unwrap();
-        while snes.apu_master_ticks_for_debug().unwrap_or(0) < 304_396_200 {
+        while snes.apu_master_ticks_for_debug().unwrap_or(0) < 646_302_500 {
             snes.run_tick();
         }
         let peek = |addr: u16| snes.apu_peek_spc_memory_for_debug(addr).unwrap_or(0);
