@@ -139,7 +139,7 @@ mod tests {
     #[test]
     #[ignore = "fails: DSP echo/basics (Failed 03) — fix emulator then update CRC"]
     fn blargg_spc_dsp6_passes() {
-        run_rom_with_expected_crc_at_frame("spc_dsp6.sfc", 2200, 0x0000_0000);
+        run_rom_with_expected_crc_at_frame("spc_dsp6.sfc", 9000, 0x0000_0000);
     }
 
     #[test]

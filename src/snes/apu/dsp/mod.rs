@@ -367,15 +367,16 @@ impl Sdsp {
     }
 
     fn step_noise_lfsr(&mut self) {
-        let divider = noise_clock_divider(self.regs[usize::from(FLG_REG)] & 0x1F);
-        if divider == 0 {
+        // The noise clock is the GLOBAL rate counter checked against
+        // FLG bits 0-4 (Mesen Dsp::Exec case 30: UpdateCounter, then
+        // CheckCounter(FLG & 0x1F)), so step instants follow the counter
+        // phase, not a private divider.
+        if !envelope::envelope_tick_due(
+            self.envelope_counter,
+            self.regs[usize::from(FLG_REG)] & 0x1F,
+        ) {
             return;
         }
-        self.noise_counter = self.noise_counter.wrapping_add(1);
-        if self.noise_counter < divider {
-            return;
-        }
-        self.noise_counter = 0;
         let bit0 = self.noise_lfsr & 1;
         let bit1 = (self.noise_lfsr >> 1) & 1;
         let feedback = bit0 ^ bit1;
@@ -388,11 +389,9 @@ impl Sdsp {
 
     fn voice_sample(&self, voice: usize, non: u8, aram: Option<&[u8]>) -> i16 {
         let raw: i16 = if non & (1 << voice) != 0 {
-            if self.noise_lfsr & 1 == 0 {
-                -0x4000
-            } else {
-                0x3FFF
-            }
+            // The full 15-bit LFSR value, left-shifted to "restore" the low
+            // bit (Mesen DspVoice::Step3c: `output = (int16)(NoiseLfsr * 2)`).
+            self.noise_lfsr.wrapping_shl(1) as i16
         } else if aram.is_some() {
             let v = &self.voices[voice];
             gaussian::gaussian_interpolate_ring(v.interpolation_pos, &v.sample_buffer, v.buffer_pos)
@@ -406,6 +405,11 @@ impl Sdsp {
     /// Effective pitch step for this sample. Hardware modulates by the full
     /// 15-bit output of the previous voice (Mesen2 DspVoice::Step3c:
     /// `Pitch += ((VoiceOutput >> 5) * Pitch) >> 10`), not the OUTX byte.
+    /// The result is NOT clamped to 14 bits: with maximum modulation the
+    /// step reaches ~$7FEB, which is what lets the interpolation position
+    /// hit its $7FFF ceiling (blargg dsp6 "interp pos clamped at $7FFF").
+    /// The modulation term can at most negate the base pitch, so the value
+    /// stays in $0000-$7FEB.
     fn effective_pitch_for_voice(&self, voice: usize, pmon: u8) -> u16 {
         let base = i32::from(self.voices[voice].pitch);
         if voice == 0 || (pmon & (1 << voice)) == 0 {
@@ -413,7 +417,7 @@ impl Sdsp {
         }
         let prev = i32::from(self.voices[voice - 1].mod_source);
         let modulated = base + (((prev >> 5) * base) >> 10);
-        (modulated & 0x7FFF).clamp(0, 0x3FFF) as u16
+        modulated as u16
     }
 
     fn prepare_voice_for_output(&mut self, voice: usize) {
@@ -955,14 +959,6 @@ fn apply_voice_volume(sample: i16, voice_vol: i8) -> i16 {
 
 fn clamp_i16_i32(value: i32) -> i32 {
     value.clamp(i32::from(i16::MIN), i32::from(i16::MAX))
-}
-
-fn noise_clock_divider(clock_select: u8) -> u16 {
-    const NOISE_RATE_TO_DIV: [u16; 32] = [
-        0, 2048, 1536, 1280, 1024, 768, 640, 512, 384, 320, 256, 192, 160, 128, 96, 80, 64, 48, 40,
-        32, 24, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1,
-    ];
-    NOISE_RATE_TO_DIV[usize::from(clock_select.min(31))]
 }
 
 fn read_u16_le(data: &[u8], index: usize) -> Option<u16> {

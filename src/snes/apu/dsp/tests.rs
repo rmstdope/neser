@@ -443,6 +443,9 @@ fn given_non_voice_when_noise_clock_ticks_then_outx_changes_from_silence() {
     activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x3D, 0x01); // NON voice 0
     dsp.write_reg(0x6C, 0x1F); // fastest noise clock in this implementation
+    // Seed high LFSR bits so the full-value noise output (LFSR*2) is large
+    // enough to register in the 8-bit OUTX monitor within a few samples.
+    dsp.noise_lfsr = 0x5555;
 
     let before = dsp.read_reg(0x09);
     step_sample_ticks(&mut dsp, 8);
@@ -456,14 +459,16 @@ fn given_non_voice_when_noise_clock_ticks_then_outx_changes_from_silence() {
 #[test]
 fn given_sub_envx_envelope_level_when_sampling_voice_then_internal_11_bit_envelope_is_used() {
     let mut dsp = Sdsp::new();
-    dsp.noise_lfsr = 1;
+    // Noise output is the full LFSR value doubled: $2000 -> raw $4000.
+    dsp.noise_lfsr = 0x2000;
     dsp.voices[0].env_level = 8;
     dsp.voices[0].envx = 0;
 
     let sample = dsp.voice_sample(0, 0x01, None);
 
+    // ($4000 * 8) >> 11 = 64: visible only through the 11-bit level.
     assert_eq!(
-        sample, 62,
+        sample, 64,
         "voice output should use the 11-bit envelope, not the truncated ENVX monitor value"
     );
 }
@@ -752,6 +757,56 @@ fn given_full_scale_voice_when_rendering_then_mixer_uses_full_resolution_sample_
         (0.45..0.5).contains(&right),
         "right channel should use full-resolution voice sample before OUTX quantization"
     );
+}
+
+// #2914: a noise voice outputs the full 15-bit LFSR value, not a 1-bit
+// square wave (Mesen DspVoice::Step3c: `output = (int16)(NoiseLfsr * 2)`).
+// blargg dsp6 "Misc/noise rates" records the noise stream through the echo
+// buffer and sees the shifting bit pattern.
+#[test]
+fn noise_voice_outputs_full_lfsr_value() {
+    let mut dsp = Sdsp::new();
+    dsp.voices[0].env_level = 0x7FF;
+    dsp.noise_lfsr = 0x2AC0;
+    let raw = (0x2AC0u16.wrapping_shl(1)) as i16; // $5580
+    let expected = (((i32::from(raw) * 0x7FF) >> 11) as i16) & !1;
+    assert_eq!(dsp.voice_sample(0, 0x01, None), expected);
+}
+
+// #2914: the noise LFSR steps off the GLOBAL rate counter (Mesen Dsp::Exec
+// case 30: UpdateCounter then CheckCounter(FLG & 0x1F)), not a private
+// divider. Rate 3 has period 1280 with offset 536, so from power-on
+// (counter 30719 counting down) the first step lands on sample 536, when
+// (counter + 536) % 1280 == 0 - blargg dsp6 "Misc/noise rates" measures
+// these instants.
+#[test]
+fn noise_lfsr_steps_on_global_counter_phase() {
+    let mut dsp = Sdsp::new();
+    let mut aram = vec![0u8; 0x1_0000];
+    dsp.write_reg(0x6C, 0x03); // FLG: noise rate 3, no reset/mute
+    let seed = dsp.noise_lfsr;
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 535);
+    assert_eq!(
+        dsp.noise_lfsr, seed,
+        "no step before the counter phase hits"
+    );
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    assert_ne!(dsp.noise_lfsr, seed, "step exactly at sample 536");
+}
+
+// #2914: hardware does not clamp the PMON-modulated pitch to $3FFF (Mesen
+// DspVoice::Step3c keeps the raw int32); with max modulation the step
+// reaches ~$7FEB, which is what lets the interpolation position hit its
+// $7FFF ceiling - blargg dsp6's "Misc/interp pos clamped at $7FFF" measures
+// exactly this.
+#[test]
+fn pmon_modulated_pitch_is_not_clamped_to_14_bits() {
+    let mut dsp = Sdsp::new();
+    dsp.voices[0].mod_source = i16::MAX;
+    dsp.voices[1].pitch = 0x3FFF;
+    let step = dsp.effective_pitch_for_voice(1, 0b0000_0010);
+    // $3FFF + ((32767>>5) * $3FFF >> 10) = $3FFF + $3FEF = $7FEE
+    assert_eq!(step, 0x7FEE);
 }
 
 #[test]

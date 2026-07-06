@@ -97,6 +97,10 @@ pub struct SnesApuState {
     pub main_to_spc_latch: [u8; 4],
     #[serde(default)]
     pub pending_main_port_update: bool,
+    /// $F8/$F9 register values (None in save-states predating them; the
+    /// RAM bytes underneath are the faithful legacy fallback).
+    #[serde(default)]
+    pub aux_regs: Option<[u8; 2]>,
     #[serde(default)]
     pub spc_to_main_ports: [u8; 4],
     #[serde(default)]
@@ -145,6 +149,9 @@ pub struct SnesApu {
     /// `true` while a second-half CPU port write is waiting for the next
     /// SPC cycle boundary to become SPC-visible.
     pending_main_port_update: bool,
+    /// $F8/$F9: dedicated registers (Mesen `Spc RamReg`). SPC writes also
+    /// reach the RAM underneath; DSP echo writes only touch the RAM.
+    aux_regs: [u8; 2],
     spc_to_main_ports: [u8; 4],
     /// Mirrors `$F1` control bits. Bit 7 toggles IPL overlay at `$FFC0-$FFFF`.
     control: u8,
@@ -177,6 +184,7 @@ impl SnesApu {
             main_to_spc_ports: [0; 4],
             main_to_spc_latch: [0; 4],
             pending_main_port_update: false,
+            aux_regs: [0; 2],
             spc_to_main_ports: [0; 4],
             control: 0xB0,
             test: default_test_reg(),
@@ -323,6 +331,7 @@ impl SnesApu {
                     ipl: &self.ipl,
                     main_to_spc_ports: &mut self.main_to_spc_ports,
                     main_to_spc_latch: &mut self.main_to_spc_latch,
+                    aux_regs: &mut self.aux_regs,
                     spc_to_main_ports: &mut self.spc_to_main_ports,
                     control: &mut self.control,
                     test: &mut self.test,
@@ -356,6 +365,7 @@ impl SnesApu {
     fn peek_opcode_at(&self, addr: u16) -> u8 {
         match addr {
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
+            0x00F8..=0x00F9 => self.aux_regs[(addr - 0x00F8) as usize],
             0xFFC0..=0xFFFF if self.control & 0x80 != 0 => self.ipl[(addr - 0xFFC0) as usize],
             _ => self.aram[addr as usize],
         }
@@ -391,6 +401,7 @@ impl SnesApu {
             main_to_spc_ports: self.main_to_spc_ports,
             main_to_spc_latch: self.main_to_spc_latch,
             pending_main_port_update: self.pending_main_port_update,
+            aux_regs: Some(self.aux_regs),
             spc_to_main_ports: self.spc_to_main_ports,
             control: self.control,
             test: self.test,
@@ -465,6 +476,9 @@ impl SnesApu {
             state.main_to_spc_latch
         };
         self.pending_main_port_update = state.pending_main_port_update;
+        self.aux_regs = state
+            .aux_regs
+            .unwrap_or([self.aram[0x00F8], self.aram[0x00F9]]);
         self.spc_to_main_ports = state.spc_to_main_ports;
         self.control = state.control;
         self.test = state.test;
@@ -526,6 +540,7 @@ impl SnesApu {
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
             main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -644,6 +659,7 @@ impl SnesApu {
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
             main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -665,6 +681,7 @@ impl SnesApu {
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
             main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -686,6 +703,7 @@ impl SnesApu {
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
             main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -709,6 +727,7 @@ impl SnesApu {
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
             main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -751,6 +770,7 @@ struct SpcBusView<'a> {
     ipl: &'a [u8; 64],
     main_to_spc_ports: &'a mut [u8; 4],
     main_to_spc_latch: &'a mut [u8; 4],
+    aux_regs: &'a mut [u8; 2],
     spc_to_main_ports: &'a mut [u8; 4],
     control: &'a mut u8,
     test: &'a mut u8,
@@ -966,8 +986,9 @@ impl Spc700Bus for SpcBusView<'_> {
                 }
                 value
             }
-            // $F8-$F9 = AUXIO4/AUXIO5 (general-purpose I/O, stores value in ARAM)
-            0x00F8..=0x00F9 => self.aram[addr as usize],
+            // $F8-$F9 = AUXIO4/AUXIO5: dedicated registers (Mesen RamReg);
+            // the RAM underneath is only reachable by the DSP.
+            0x00F8..=0x00F9 => self.aux_regs[(addr - 0x00F8) as usize],
             // $FA-$FC = T0/T1/T2 targets (write-only; reads return 0x00)
             0x00FA..=0x00FC => 0x00,
             0x00FD..=0x00FF => {
@@ -989,6 +1010,16 @@ impl Spc700Bus for SpcBusView<'_> {
         }
         if (0x00F4..=0x00F7).contains(&addr) {
             trace_apu!(3; "SPC reads port[{}] -> ${:02X}", addr - 0x00F4, value);
+        }
+        // Temporary #2914 diagnostic (remove before merge): uncompressed log
+        // of every SPC register-page read for the dsp6 "$F0-$FF are not ram"
+        // verification comparison.
+        if dsp::spc_dsp6_trace_enabled() && (0x00F0..=0x00FF).contains(&addr) {
+            eprintln!(
+                "neser ioread2 reg={addr:02X} val={value:02X} phase={} mclk={}",
+                self.dsp.phase(),
+                self.master_ticks
+            );
         }
         value
     }
@@ -1063,6 +1094,9 @@ impl Spc700Bus for SpcBusView<'_> {
                 let port_idx = (addr - 0x00F4) as usize;
                 trace_apu!(2; "SPC writes port[{}] = ${:02X}", port_idx, value);
                 self.spc_to_main_ports[port_idx] = value;
+            }
+            0x00F8..=0x00F9 => {
+                self.aux_regs[(addr - 0x00F8) as usize] = value;
             }
             0x00FA..=0x00FC => {
                 trace_apu!(4; "SPC write timer target ${:04X} = ${:02X}", addr, value);
@@ -1935,6 +1969,30 @@ mod tests {
             apu.spc_cycle_budget,
             super::SPC_PER_MASTER_DEN,
         );
+    }
+
+    // #2914: $F8/$F9 are dedicated registers on the S-SMP (Mesen
+    // Spc::_state.RamReg): SPC reads return the register, SPC writes set
+    // the register AND the RAM underneath, but DSP echo writes to
+    // $00F8/$00F9 only touch the RAM. blargg dsp6's "Misc/$F0-$FF are not
+    // ram" sweeps the echo buffer across the I/O page and verifies the
+    // register readback is unaffected.
+    #[test]
+    fn f8_f9_read_as_registers_not_ram() {
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00F8, 0x12);
+        apu.write_spc_memory_for_test(0x00F9, 0x34);
+        assert_eq!(
+            (apu.aram[0x00F8], apu.aram[0x00F9]),
+            (0x12, 0x34),
+            "SPC writes to $F8/$F9 must also reach the RAM underneath"
+        );
+        // A DSP echo write landing in the RAM under the registers must not
+        // affect what the SPC reads back.
+        apu.aram[0x00F8] = 0xFE;
+        apu.aram[0x00F9] = 0xFF;
+        assert_eq!(apu.read_spc_memory_for_test(0x00F8), 0x12);
+        assert_eq!(apu.read_spc_memory_for_test(0x00F9), 0x34);
     }
 
     // #2938: the per-cycle stepper must charge TEST-register wait states

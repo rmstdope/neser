@@ -41,7 +41,7 @@ fn transition_data(voice: &VoiceState) -> u8 {
     }
 }
 
-fn envelope_tick_due(global_counter: u16, rate: u8) -> bool {
+pub(super) fn envelope_tick_due(global_counter: u16, rate: u8) -> bool {
     let rate = usize::from(rate.min(31));
     let divider = COUNTER_RATES[rate];
     (u32::from(global_counter) + COUNTER_OFFSETS[rate]).is_multiple_of(divider)
