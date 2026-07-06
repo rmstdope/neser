@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(wasm-pack test *)"
-    ]
-  }
-}

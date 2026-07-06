@@ -18,20 +18,22 @@ use timers::SpcTimers;
 
 const ARAM_SIZE: usize = 0x1_0000;
 const MAX_PENDING_SAMPLES: usize = 16_384;
-const SNES_MASTER_CLOCK_HZ: f32 = 21_477_272.0;
 const NATIVE_AUDIO_SAMPLE_RATE_HZ: f32 = 32_000.0;
 // SPC clock ratio vs the 21.477 MHz master clock. Real consoles run the
 // APU slightly fast: ~32040 Hz DSP sample rate = 1,025,280 SPC cycles/s
 // (Mesen2's default via SpcClockSpeedAdjustment = 40), not the nominal
 // 1.024 MHz. blargg's measurement ROMs and spc_dsp6 (#2914) are sensitive
 // to the exact host<->SPC phase relationship and match Mesen's reference
-// runs only at this exact ratio, including the denominator: Mesen's NTSC
-// master clock rate is 21,477,270 Hz (SnesConsole::GetMasterClockRate),
-// not 21,477,272. The 2-count difference drifts the SPC grid by ~1
-// half-cycle per 100M master clocks and flips handshake-latch verdicts
-// at knife-edge writes (#2914 round 13).
+// runs only at this exact ratio, including the denominator: the NTSC
+// master clock rate is 21,477,270 Hz (Mesen2
+// SnesConsole::GetMasterClockRate), not the often-quoted 21,477,272.
+// The 2-count difference drifts the SPC grid by ~1 half-cycle per 100M
+// master clocks and flips handshake-latch verdicts at knife-edge writes
+// (#2914 round 13).
 const SPC_PER_MASTER_NUM: i64 = 1_025_280;
 const SPC_PER_MASTER_DEN: i64 = 21_477_270;
+// The same master-clock rate as an f32, used only for audio sample pacing.
+const SNES_MASTER_CLOCK_HZ: f32 = SPC_PER_MASTER_DEN as f32;
 
 fn default_test_reg() -> u8 {
     0x0A
@@ -815,8 +817,9 @@ impl Spc700Bus for SpcBusView<'_> {
             0x00F2 => *self.dsp_addr,
             0x00F3 => {
                 let value = self.dsp.read_reg(*self.dsp_addr);
+                // Level 4: DSP register polls are extremely frequent.
                 trace_apu!(
-                    1;
+                    4;
                     "SPC reads DSP[${:02X}] -> ${:02X} phase={}",
                     *self.dsp_addr,
                     value,
@@ -875,8 +878,9 @@ impl Spc700Bus for SpcBusView<'_> {
             0x00F1 => self.write_control(value),
             0x00F2 => *self.dsp_addr = value,
             0x00F3 => {
+                // Level 4: DSP register writes are extremely frequent.
                 trace_apu!(
-                    1;
+                    4;
                     "SPC writes DSP[${:02X}] = ${:02X} phase={}",
                     *self.dsp_addr,
                     value,
