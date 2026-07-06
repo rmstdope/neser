@@ -515,6 +515,16 @@ impl Sdsp {
     }
 
     fn sample_control_tick(&mut self) {
+        // Temporary #2938 diagnostic (remove before merge): absolute sample
+        // index of every latched KON, for eos-parity comparison vs Mesen.
+        if spc_dsp6_trace_enabled() {
+            static SAMPLE_NO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = SAMPLE_NO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if !self.kon_poll_slot && self.kon_pending != 0 {
+                // This tick will latch (slot toggles to true below).
+                eprintln!("neser konlatch sample={} kon={:02X}", n, self.kon_pending);
+            }
+        }
         self.envelope_counter = if self.envelope_counter == 0 {
             30_719
         } else {
