@@ -1740,6 +1740,93 @@ fn echo_write_excludes_voice0_output_accumulated_at_phase_31() {
 }
 
 #[test]
+fn fir_coefficients_are_read_at_echo_pipeline_slots_not_at_render() {
+    // The FIR coefficients are read at their echo pipeline slots (Mesen
+    // Dsp::EchoStep22-25: FFC0 at slot 22, FFC1-2 at 23, FFC3-5 at 24,
+    // FFC6-7 at 25). blargg dsp6 "Random/echo fir" randomizes FFC writes
+    // mid-sample, so a write landing after a coefficient's read slot must
+    // only take effect in the NEXT sample (#2914).
+    let mut dsp = Sdsp::new();
+    let mut aram = vec![0u8; 0x1_0000];
+    dsp.write_reg(0x2C, 0x7F); // EVOLL
+    dsp.write_reg(0x6D, 0x10); // ESA base $1000
+    dsp.write_reg(0x7D, 0x00); // EDL 0: single entry, re-read every sample
+    dsp.write_reg(0x6C, 0x20); // FLG: unmute, echo writes disabled (reads still run)
+    aram[0x1000] = 0x00;
+    aram[0x1001] = 0x20; // constant ring word $2000 -> history entries $1000
+
+    // Fill the 8-entry FIR history; all coefficients are still zero.
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 8);
+
+    // Write FFC0 just after its slot-22 read; the sample in flight must
+    // still compute FIR with the old (zero) coefficient.
+    while dsp.phase != 23 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    dsp.write_reg(0x0F, 0x40); // FFC0 = $40 (x1.0 after >>6)
+    while dsp.phase != 0 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    let (left_in_flight, _) = dsp.current_stereo_sample();
+    assert_eq!(
+        left_in_flight, 0.0,
+        "an FFC0 write after slot 22 must not affect the sample in flight"
+    );
+
+    // The next sample reads FFC0=$40 at slot 22: FIR = $1000, output =
+    // ($1000 * EVOLL $7F) >> 7 = $0FE0.
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    let (left_next, _) = dsp.current_stereo_sample();
+    assert_eq!(
+        left_next,
+        f32::from(0x0FE0u16) / 32768.0,
+        "the FFC0 write must take effect on the next sample's FIR"
+    );
+}
+
+#[test]
+fn echo_buffer_is_read_at_slots_22_and_23_not_at_render() {
+    // The echo ring word is loaded into the FIR history at slots 22
+    // (left) and 23 (right) (Mesen Dsp::EchoStep22/23), not when the
+    // output sample is assembled. An ARAM write landing between those
+    // slots and the end of the sample must only be picked up by the
+    // NEXT sample's history load (#2914).
+    let mut dsp = Sdsp::new();
+    let mut aram = vec![0u8; 0x1_0000];
+    dsp.write_reg(0x2C, 0x7F); // EVOLL
+    dsp.write_reg(0x7F, 0x40); // FFC7 (newest tap) = $40 (x1.0 after >>6)
+    dsp.write_reg(0x6D, 0x10); // ESA base $1000
+    dsp.write_reg(0x7D, 0x00); // EDL 0: single entry, re-read every sample
+    dsp.write_reg(0x6C, 0x20); // FLG: unmute, echo writes disabled
+
+    // History fills with zeros from the empty ring word.
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 8);
+
+    // Change the ring word after this sample's slot-22/23 loads.
+    while dsp.phase != 24 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    aram[0x1000] = 0x00;
+    aram[0x1001] = 0x20; // ring word $2000 -> history entry $1000
+    while dsp.phase != 0 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    let (left_in_flight, _) = dsp.current_stereo_sample();
+    assert_eq!(
+        left_in_flight, 0.0,
+        "a ring-word write after slot 23 must not affect the sample in flight"
+    );
+
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    let (left_next, _) = dsp.current_stereo_sample();
+    assert_eq!(
+        left_next,
+        f32::from(0x0FE0u16) / 32768.0,
+        "the new ring word must be loaded by the next sample's slot 22"
+    );
+}
+
+#[test]
 fn given_echo_write_disabled_when_rendering_with_memory_then_echo_buffer_is_not_overwritten() {
     let mut dsp = Sdsp::new();
     let mut aram = [0x55u8; 0x1_0000];
@@ -1954,12 +2041,13 @@ fn given_esa_written_after_echo_sample_point_when_phase_ticks_then_new_base_wait
     let mut aram = [0u8; 0x1_0000];
     let fir_coeffs = [0i8; 8];
 
+    // ESA is $10 at the first sample's slot-29 read; the SPC's write of
+    // $20 lands after it, so slot 29 first sees $20 on the second sample.
     echo.sample_left_echo_write_enable(0x00);
     echo.sample_right_echo_write_enable(0x00);
-    echo.sample_echo_registers(0x10, 0x00);
     let _ = echo.process_sample(
         Some(&mut aram),
-        0x20,
+        0x10,
         0x00,
         &fir_coeffs,
         0,
@@ -1978,7 +2066,6 @@ fn given_esa_written_after_echo_sample_point_when_phase_ticks_then_new_base_wait
 
     echo.sample_left_echo_write_enable(0x00);
     echo.sample_right_echo_write_enable(0x00);
-    echo.sample_echo_registers(0x20, 0x00);
     let _ = echo.process_sample(
         Some(&mut aram),
         0x20,
@@ -2000,7 +2087,6 @@ fn given_esa_written_after_echo_sample_point_when_phase_ticks_then_new_base_wait
 
     echo.sample_left_echo_write_enable(0x00);
     echo.sample_right_echo_write_enable(0x00);
-    echo.sample_echo_registers(0x20, 0x00);
     let _ = echo.process_sample(
         Some(&mut aram),
         0x20,
@@ -2041,7 +2127,6 @@ fn given_nonzero_echo_ring_when_edl_zero_is_sampled_then_offset_keeps_advancing_
 
     echo.sample_left_echo_write_enable(0x00);
     echo.sample_right_echo_write_enable(0x00);
-    echo.sample_echo_registers(0xF0, 0x01);
     let _ = echo.process_sample(
         Some(&mut aram),
         0xF0,
@@ -2062,7 +2147,6 @@ fn given_nonzero_echo_ring_when_edl_zero_is_sampled_then_offset_keeps_advancing_
 
     echo.sample_left_echo_write_enable(0x00);
     echo.sample_right_echo_write_enable(0x00);
-    echo.sample_echo_registers(0xF0, 0x01);
     let _ = echo.process_sample(
         Some(&mut aram),
         0xF0,
@@ -2083,7 +2167,6 @@ fn given_nonzero_echo_ring_when_edl_zero_is_sampled_then_offset_keeps_advancing_
 
     echo.sample_left_echo_write_enable(0x00);
     echo.sample_right_echo_write_enable(0x00);
-    echo.sample_echo_registers(0xF0, 0x00);
     let _ = echo.process_sample(
         Some(&mut aram),
         0xF0,

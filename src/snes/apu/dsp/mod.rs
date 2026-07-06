@@ -56,11 +56,7 @@ pub struct Sdsp {
     #[serde(default)]
     echo_enable: u8,
     #[serde(default)]
-    echo_enable_latched: u8,
-    #[serde(default)]
     echo_enable_current: u8,
-    #[serde(default)]
-    echo_enable_sampled: bool,
     #[serde(default)]
     flg: u8,
     #[serde(default)]
@@ -140,9 +136,7 @@ impl Sdsp {
             echo_vol_r: 0,
             echo_feedback: 0,
             echo_enable: 0,
-            echo_enable_latched: 0,
             echo_enable_current: 0,
-            echo_enable_sampled: false,
             flg: 0xE0,
             endx: 0,
             dir: 0,
@@ -740,26 +734,9 @@ impl Sdsp {
 
     fn step_phase_internal(&mut self, mut aram: Option<&mut [u8]>) {
         let control_tick = self.phase == 30;
-        let render_tick = self.phase == 31;
         self.refresh_status_registers_for_phase(self.phase);
         if control_tick {
             self.sample_control_tick();
-        }
-        // The echo write and output mix happen BEFORE voice 0's Step4/5
-        // volume accumulation in this slot (Mesen Dsp::Exec: EchoStep29/30
-        // at cases 29/30, V0.Step4 at case 31). Voice 0's fresh output
-        // therefore only reaches the echo buffer with the NEXT sample —
-        // blargg dsp6's "echo basics" records measure exactly this edge.
-        if render_tick {
-            if let Some(aram) = aram.as_deref_mut() {
-                let echo_enable = if self.echo_enable_sampled {
-                    self.echo_enable_latched
-                } else {
-                    self.echo_enable
-                };
-                let _ = self.render_stereo_sample_internal(Some(aram), echo_enable);
-            }
-            self.echo_enable_sampled = false;
         }
         if let Some(voice) = Self::voice1_phase_voice(self.phase) {
             self.process_voice1(voice);
@@ -794,9 +771,7 @@ impl Sdsp {
             self.process_voice5(voice);
         }
         if self.phase == 28 {
-            self.echo_enable_latched = self.echo_enable;
             self.echo_enable_current = self.echo_enable;
-            self.echo_enable_sampled = true;
             self.echo_state.sample_left_echo_write_enable(self.flg);
         }
         if self.phase == 29 {
@@ -804,7 +779,78 @@ impl Sdsp {
                 self.clear_pending_kon_for_active_key_on_delay();
             }
             self.echo_state.sample_right_echo_write_enable(self.flg);
-            self.echo_state.sample_echo_registers(self.esa, self.edl);
+        }
+        // Echo pipeline slots (Mesen Dsp::Exec cases 22-30, each at the END
+        // of its slot): the ring word is loaded and the FIR sums are built
+        // across slots 22-25 reading each FFC coefficient at its own slot,
+        // the output samples are assembled at 26/27 (MVOL/EVOL) with the
+        // echo feedback applied at 26, the DAC latches the finished sample
+        // at 27, and the echo buffer writes happen at 29/30 — all BEFORE
+        // voice 0's Step4/5 volume accumulation at slot 31, so V0's fresh
+        // output only reaches the echo buffer with the NEXT sample.
+        match self.phase {
+            22 => {
+                let aram_read = aram.as_deref();
+                self.echo_state
+                    .step_22(aram_read, self.esa, self.fir_coeffs[0]);
+            }
+            23 => {
+                let aram_read = aram.as_deref();
+                self.echo_state
+                    .step_23(aram_read, self.fir_coeffs[1], self.fir_coeffs[2]);
+            }
+            24 => {
+                self.echo_state
+                    .step_24(self.fir_coeffs[3], self.fir_coeffs[4], self.fir_coeffs[5]);
+            }
+            25 => {
+                self.echo_state
+                    .step_25(self.fir_coeffs[6], self.fir_coeffs[7]);
+            }
+            26 => {
+                let (echo_in_l, echo_in_r) = self.echo_state.echo_in();
+                self.main_out_l = clamp_i16_i32(
+                    echo::volume_term(self.main_out_l, self.master_vol_l)
+                        + echo::volume_term(echo_in_l, self.echo_vol_l),
+                );
+                self.echo_out_l = clamp_i16_i32(
+                    self.echo_out_l + echo::volume_term(echo_in_l, self.echo_feedback),
+                ) & !1;
+                self.echo_out_r = clamp_i16_i32(
+                    self.echo_out_r + echo::volume_term(echo_in_r, self.echo_feedback),
+                ) & !1;
+            }
+            27 => {
+                let (_, echo_in_r) = self.echo_state.echo_in();
+                self.main_out_r = clamp_i16_i32(
+                    echo::volume_term(self.main_out_r, self.master_vol_r)
+                        + echo::volume_term(echo_in_r, self.echo_vol_r),
+                );
+                // DAC latch (Mesen Dsp::Exec case 27); FLG.6 mutes only the
+                // DAC output, not the echo buffer writes.
+                if self.flg & 0x40 != 0 {
+                    self.last_output_l = 0;
+                    self.last_output_r = 0;
+                } else {
+                    self.last_output_l = self.main_out_l;
+                    self.last_output_r = self.main_out_r;
+                }
+                self.main_out_l = 0;
+                self.main_out_r = 0;
+                self.output_accumulated = false;
+            }
+            29 => {
+                let value = self.echo_out_l as i16;
+                self.echo_state
+                    .step_29(aram.as_deref_mut(), self.esa, self.edl, value);
+                self.echo_out_l = 0;
+            }
+            30 => {
+                let value = self.echo_out_r as i16;
+                self.echo_state.step_30(aram, value);
+                self.echo_out_r = 0;
+            }
+            _ => {}
         }
         self.phase = self.phase.wrapping_add(1) & 0x1F;
     }
