@@ -25,9 +25,13 @@ const NATIVE_AUDIO_SAMPLE_RATE_HZ: f32 = 32_000.0;
 // (Mesen2's default via SpcClockSpeedAdjustment = 40), not the nominal
 // 1.024 MHz. blargg's measurement ROMs and spc_dsp6 (#2914) are sensitive
 // to the exact host<->SPC phase relationship and match Mesen's reference
-// runs only at this rate.
+// runs only at this exact ratio, including the denominator: Mesen's NTSC
+// master clock rate is 21,477,270 Hz (SnesConsole::GetMasterClockRate),
+// not 21,477,272. The 2-count difference drifts the SPC grid by ~1
+// half-cycle per 100M master clocks and flips handshake-latch verdicts
+// at knife-edge writes (#2914 round 13).
 const SPC_PER_MASTER_NUM: i64 = 1_025_280;
-const SPC_PER_MASTER_DEN: i64 = 21_477_272;
+const SPC_PER_MASTER_DEN: i64 = 21_477_270;
 
 fn default_test_reg() -> u8 {
     0x0A
@@ -1887,6 +1891,31 @@ mod tests {
             apu.spc_cycle_budget,
             -2 * super::SPC_PER_MASTER_DEN,
             "reset vector fetch must delay the first instruction by 2 SPC cycles"
+        );
+    }
+
+    // #2914: the SPC core must advance on the hardware-calibrated clock
+    // grid Mesen uses (32040 Hz x 64 SPC clocks = 2,050,560 half-units
+    // per 21,477,270 master clocks; SnesConsole::GetMasterClockRate).
+    // blargg spc_dsp6's first diverging handshake writes $01 to $2140 at
+    // master tick 31,574,540, which lands in the SECOND half of the
+    // in-flight SPC cycle on that grid (write latched only after the next
+    // executed cycle). A denominator of 21,477,272 places the same write
+    // in the first half, the SPC's `E4 $F4` poll sees it one 7-cycle loop
+    // iteration early, and every later handshake re-quantizes differently
+    // (the #2914 KON eos-parity failure chain).
+    #[test]
+    fn spc_clock_grid_places_dsp6_race_write_in_second_half_of_cycle() {
+        let mut apu = SnesApu::new(None);
+        for _ in 0..31_574_540u32 {
+            apu.tick();
+        }
+        assert!(
+            2 * apu.spc_cycle_budget > super::SPC_PER_MASTER_DEN,
+            "master tick 31,574,540 must land in the second half of the \
+             current SPC cycle; got budget {} of {}",
+            apu.spc_cycle_budget,
+            super::SPC_PER_MASTER_DEN,
         );
     }
 

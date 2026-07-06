@@ -149,16 +149,17 @@ mod tests {
 
     #[test]
     fn blargg_test_timer_speed_passes() {
-        // Golden re-approved for #2914 (cycle-stepped port polling, then the
-        // hardware 32040 Hz SPC rate + CPU->SPC write latch); screen still
-        // reads "Passed", measured rows match Mesen within ±1.
-        run_rom_with_expected_crc("test_timer_speed.smc", 0x4255_6960);
+        // Golden re-approved for #2914 (cycle-stepped port polling, the
+        // hardware 32040 Hz SPC rate + CPU->SPC write latch, then the exact
+        // Mesen master-clock denominator 21,477,270); screen reads "Passed"
+        // and every measured row now matches Mesen exactly.
+        run_rom_with_expected_crc("test_timer_speed.smc", 0xA4D0_ACB0);
     }
 
     #[test]
     fn blargg_test_timer_speed2_passes() {
         // Same re-approval as test_timer_speed (identical output screen).
-        run_rom_with_expected_crc("test_timer_speed2.smc", 0x4255_6960);
+        run_rom_with_expected_crc("test_timer_speed2.smc", 0xA4D0_ACB0);
     }
 
     #[test]
