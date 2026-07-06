@@ -18,10 +18,22 @@ use timers::SpcTimers;
 
 const ARAM_SIZE: usize = 0x1_0000;
 const MAX_PENDING_SAMPLES: usize = 16_384;
-const SNES_MASTER_CLOCK_HZ: f32 = 21_477_272.0;
 const NATIVE_AUDIO_SAMPLE_RATE_HZ: f32 = 32_000.0;
-const SPC_PER_MASTER_NUM: i64 = 1_024_000;
-const SPC_PER_MASTER_DEN: i64 = 21_477_272;
+// SPC clock ratio vs the 21.477 MHz master clock. Real consoles run the
+// APU slightly fast: ~32040 Hz DSP sample rate = 1,025,280 SPC cycles/s
+// (Mesen2's default via SpcClockSpeedAdjustment = 40), not the nominal
+// 1.024 MHz. blargg's measurement ROMs and spc_dsp6 (#2914) are sensitive
+// to the exact host<->SPC phase relationship and match Mesen's reference
+// runs only at this exact ratio, including the denominator: the NTSC
+// master clock rate is 21,477,270 Hz (Mesen2
+// SnesConsole::GetMasterClockRate), not the often-quoted 21,477,272.
+// The 2-count difference drifts the SPC grid by ~1 half-cycle per 100M
+// master clocks and flips handshake-latch verdicts at knife-edge writes
+// (#2914 round 13).
+const SPC_PER_MASTER_NUM: i64 = 1_025_280;
+const SPC_PER_MASTER_DEN: i64 = 21_477_270;
+// The same master-clock rate as an f32, used only for audio sample pacing.
+const SNES_MASTER_CLOCK_HZ: f32 = SPC_PER_MASTER_DEN as f32;
 
 fn default_test_reg() -> u8 {
     0x0A
@@ -62,13 +74,19 @@ pub struct SnesApuState {
     #[serde(default)]
     pub main_to_spc_ports: [u8; 4],
     #[serde(default)]
+    pub main_to_spc_latch: [u8; 4],
+    #[serde(default)]
+    pub pending_main_port_update: bool,
+    /// $F8/$F9 register values (None in save-states predating them; the
+    /// RAM bytes underneath are the faithful legacy fallback).
+    #[serde(default)]
+    pub aux_regs: Option<[u8; 2]>,
+    #[serde(default)]
     pub spc_to_main_ports: [u8; 4],
     #[serde(default)]
     pub control: u8,
     #[serde(default = "default_test_reg")]
     pub test: u8,
-    #[serde(default)]
-    pub master_ticks: u64,
     #[serde(default)]
     pub spc_cycle_budget: i64,
     #[serde(default)]
@@ -100,6 +118,18 @@ pub struct SnesApu {
     aram: [u8; ARAM_SIZE],
     ipl: [u8; 64],
     main_to_spc_ports: [u8; 4],
+    /// Latest 65816-written port values (Mesen `NewCpuRegs`). CPU writes
+    /// always land here first; they become SPC-visible in
+    /// `main_to_spc_ports` either immediately (write in the first half of
+    /// the current SPC cycle) or at the end of the next executed SPC cycle
+    /// (write in the second half). See [`Self::write_main_port`].
+    main_to_spc_latch: [u8; 4],
+    /// `true` while a second-half CPU port write is waiting for the next
+    /// SPC cycle boundary to become SPC-visible.
+    pending_main_port_update: bool,
+    /// $F8/$F9: dedicated registers (Mesen `Spc RamReg`). SPC writes also
+    /// reach the RAM underneath; DSP echo writes only touch the RAM.
+    aux_regs: [u8; 2],
     spc_to_main_ports: [u8; 4],
     /// Mirrors `$F1` control bits. Bit 7 toggles IPL overlay at `$FFC0-$FFFF`.
     control: u8,
@@ -109,7 +139,6 @@ pub struct SnesApu {
     /// internal-speed divider (value 2). See [`SpcBusView::internal_speed_freeze`].
     spc_frozen: bool,
     timers: SpcTimers,
-    master_ticks: u64,
     /// Signed budget in numerator units for fractional SPC catch-up.
     spc_cycle_budget: i64,
     dsp: Sdsp,
@@ -130,12 +159,14 @@ impl SnesApu {
             aram: [0; ARAM_SIZE],
             ipl: ipl.unwrap_or(ipl::EMBEDDED_IPL),
             main_to_spc_ports: [0; 4],
+            main_to_spc_latch: [0; 4],
+            pending_main_port_update: false,
+            aux_regs: [0; 2],
             spc_to_main_ports: [0; 4],
             control: 0xB0,
             test: default_test_reg(),
             spc_frozen: false,
             timers: SpcTimers::default(),
-            master_ticks: 0,
             spc_cycle_budget: 0,
             dsp: Sdsp::new(),
             dsp_addr: 0,
@@ -159,7 +190,21 @@ impl SnesApu {
 
     pub fn write_main_port(&mut self, port: usize, value: u8) {
         trace_apu!(3; "CPU->SPC port[{}] <= ${:02X}", port, value);
-        self.main_to_spc_ports[port] = value;
+        if self.main_to_spc_latch[port] == value {
+            return;
+        }
+        self.main_to_spc_latch[port] = value;
+        // CPU writes are latched at the SPC's 2.048 MHz input clock (2 latch
+        // ticks per SPC cycle): a write landing in the first half of the
+        // current SPC cycle is SPC-visible immediately, otherwise only at
+        // the end of the next executed SPC cycle. `budget/DEN` is the
+        // fractional position of the master clock inside the current SPC
+        // cycle, so "first half" is `2*budget <= DEN`.
+        if 2 * self.spc_cycle_budget <= SPC_PER_MASTER_DEN {
+            self.main_to_spc_ports[port] = value;
+        } else {
+            self.pending_main_port_update = true;
+        }
     }
 
     pub fn read_spc_port(&self, port: usize) -> u8 {
@@ -171,7 +216,6 @@ impl SnesApu {
     }
 
     pub fn tick(&mut self) {
-        self.master_ticks = self.master_ticks.wrapping_add(1);
         self.spc_cycle_budget += SPC_PER_MASTER_NUM;
 
         while self.spc_cycle_budget >= SPC_PER_MASTER_DEN {
@@ -184,26 +228,19 @@ impl SnesApu {
                 continue;
             }
 
-            // Cycle-scripted dispatch (per-SPC-cycle stepping) is used for
-            // the blargg IPL-hack trampoline (#2908), where opcodes execute
-            // directly out of the I/O port region $00F4-$00F7. Restricting
-            // cycle-stepping to that PC range preserves the timing of all
-            // normal SPC code (which lives in ARAM or the IPL boot ROM),
-            // avoiding regressions in already-passing tests.
-            let use_cycle_stepper = if self.spc700.has_in_progress_op() {
-                true
-            } else {
-                let next_pc = self.spc700.pc();
-                let opcode = self.peek_opcode_at(next_pc);
-                Self::pc_is_in_trampoline_region(next_pc)
-                    && Spc700::opcode_is_cycle_scripted(opcode)
-            };
-
+            // Universal per-cycle stepping (#2938): every SPC700 opcode has
+            // a cycle script, so the core executes exactly one bus access
+            // per iteration on the true master-clock grid. The atomic
+            // `Spc700::step` path remains only as the reference for the
+            // script equivalence tests.
             let consumed_cycles = {
                 let mut bus_view = SpcBusView {
+                    consumed_cycles: 0,
                     aram: &mut self.aram,
                     ipl: &self.ipl,
                     main_to_spc_ports: &mut self.main_to_spc_ports,
+                    main_to_spc_latch: &mut self.main_to_spc_latch,
+                    aux_regs: &mut self.aux_regs,
                     spc_to_main_ports: &mut self.spc_to_main_ports,
                     control: &mut self.control,
                     test: &mut self.test,
@@ -213,35 +250,31 @@ impl SnesApu {
                     frozen: &mut self.spc_frozen,
                     tick_timers: true,
                 };
-                if use_cycle_stepper {
-                    self.spc700.step_one_cycle(&mut bus_view);
-                    1i64
-                } else {
-                    i64::from(self.spc700.step(&mut bus_view))
-                }
+                self.spc700.step_one_cycle(&mut bus_view);
+                // One micro-op = one bus access, stretched by the TEST
+                // wait states (see SpcBusView::consumed_cycles).
+                i64::from(bus_view.consumed_cycles.max(1))
             };
             self.spc_cycle_budget -= consumed_cycles * SPC_PER_MASTER_DEN;
+
+            // A second-half CPU port write becomes SPC-visible at the end of
+            // the next executed SPC cycle (see `write_main_port`).
+            if self.pending_main_port_update {
+                self.main_to_spc_ports = self.main_to_spc_latch;
+                self.pending_main_port_update = false;
+            }
         }
 
         self.step_audio_clock();
     }
 
-    /// `true` when `pc` points into the I/O port window the blargg IPL-hack
-    /// trampoline executes from. Used to gate cycle-accurate stepping to the
-    /// trampoline case without regressing timing for normal ARAM/IPL code.
-    fn pc_is_in_trampoline_region(pc: u16) -> bool {
-        matches!(pc, 0x00F4..=0x00F7)
-    }
-
     /// Read the byte at `addr` from the SPC700 address space without ticking
-    /// timers or moving any other state. Used by the cycle-stepper dispatcher
-    /// in [`Self::tick`] to peek the next opcode and decide between cycle and
-    /// atomic stepping; safe because every region the SPC can have its PC in
-    /// (ARAM, IPL ROM overlay, ports `$F4-$F7`) returns a value with no read
-    /// side effects.
+    /// timers or moving any other state (no read side effects).
+    #[cfg(test)]
     fn peek_opcode_at(&self, addr: u16) -> u8 {
         match addr {
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
+            0x00F8..=0x00F9 => self.aux_regs[(addr - 0x00F8) as usize],
             0xFFC0..=0xFFFF if self.control & 0x80 != 0 => self.ipl[(addr - 0xFFC0) as usize],
             _ => self.aram[addr as usize],
         }
@@ -267,18 +300,16 @@ impl SnesApu {
         self.spc_to_main_ports
     }
 
-    pub fn master_ticks(&self) -> u64 {
-        self.master_ticks
-    }
-
     pub fn capture_state(&self) -> SnesApuState {
         SnesApuState {
             aram: self.aram.to_vec(),
             main_to_spc_ports: self.main_to_spc_ports,
+            main_to_spc_latch: self.main_to_spc_latch,
+            pending_main_port_update: self.pending_main_port_update,
+            aux_regs: Some(self.aux_regs),
             spc_to_main_ports: self.spc_to_main_ports,
             control: self.control,
             test: self.test,
-            master_ticks: self.master_ticks,
             spc_cycle_budget: self.spc_cycle_budget,
             timers: self.timers.clone(),
             dsp: self.dsp.clone(),
@@ -306,10 +337,11 @@ impl SnesApu {
             self.aram[0x00F8] = 0x00;
             self.aram[0x00F9] = 0x00;
             self.main_to_spc_ports = [0; 4];
+            self.main_to_spc_latch = [0; 4];
+            self.pending_main_port_update = false;
             self.spc_to_main_ports = [0; 4];
             self.control = 0xB0;
             self.test = default_test_reg();
-            self.master_ticks = 0;
             self.spc_cycle_budget = 0;
             self.timers = SpcTimers::default();
             self.dsp = Sdsp::new();
@@ -333,10 +365,26 @@ impl SnesApu {
         let restored_dsp_addr = state.dsp_addr;
 
         self.main_to_spc_ports = state.main_to_spc_ports;
+        // Backward-compat: save-states predating the CPU write latch default
+        // it to zeros. In the current format a zero latch alongside nonzero
+        // visible ports can only occur with an update pending, so a
+        // no-pending mismatch identifies a legacy state; seed the latch from
+        // the visible values.
+        self.main_to_spc_latch = if !state.pending_main_port_update
+            && state.main_to_spc_latch == [0; 4]
+            && state.main_to_spc_ports != [0; 4]
+        {
+            state.main_to_spc_ports
+        } else {
+            state.main_to_spc_latch
+        };
+        self.pending_main_port_update = state.pending_main_port_update;
+        self.aux_regs = state
+            .aux_regs
+            .unwrap_or([self.aram[0x00F8], self.aram[0x00F9]]);
         self.spc_to_main_ports = state.spc_to_main_ports;
         self.control = state.control;
         self.test = state.test;
-        self.master_ticks = state.master_ticks;
         self.spc_cycle_budget = state.spc_cycle_budget;
         self.timers = state.timers.clone();
         // Older save-states predate the serialized timer global gate; always
@@ -365,12 +413,35 @@ impl SnesApu {
         Ok(())
     }
 
+    /// Console reset: the /RES line resets the S-SMP alongside the 65816
+    /// (Mesen `Spc::Reset`). Ports clear in both directions (including the
+    /// CPU write latch), timers restart, the DSP restarts its pipeline with
+    /// FLG acting as $E0 (registers otherwise preserved), the SPC clock
+    /// re-anchors to the reset instant, and the SPC700 re-runs its reset
+    /// vector fetch. ARAM contents survive, as on hardware.
+    pub fn reset(&mut self) {
+        self.main_to_spc_ports = [0; 4];
+        self.main_to_spc_latch = [0; 4];
+        self.pending_main_port_update = false;
+        self.spc_to_main_ports = [0; 4];
+        self.control = 0xB0;
+        self.timers = SpcTimers::default();
+        self.timers
+            .restore_global_enabled(test_reg_allows_timers(self.test));
+        self.dsp.reset();
+        self.spc_cycle_budget = 0;
+        self.reset_spc700();
+    }
+
     fn reset_spc700(&mut self) {
         self.spc_frozen = false;
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -378,9 +449,14 @@ impl SnesApu {
             dsp: &mut self.dsp,
             dsp_addr: &mut self.dsp_addr,
             frozen: &mut self.spc_frozen,
-            tick_timers: false,
+            tick_timers: true,
         };
         self.spc700.reset(&mut bus_view);
+        // The reset vector fetch at $FFFE/$FFFF occupies the first 2 SPC
+        // cycles: the two bus reads above step the DSP and the timer
+        // prescalers, and the budget charge delays the first instruction
+        // accordingly (#2914/#2938, Mesen-verified).
+        self.spc_cycle_budget -= 2 * SPC_PER_MASTER_DEN;
     }
 
     fn step_audio_clock(&mut self) {
@@ -389,7 +465,7 @@ impl SnesApu {
     }
 
     fn render_stereo_sample_internal(&mut self) -> (f32, f32) {
-        self.dsp.render_stereo_sample_with_memory(&mut self.aram)
+        self.dsp.current_stereo_sample()
     }
 
     fn step_native_audio_clock(&mut self) {
@@ -478,9 +554,12 @@ impl SnesApu {
     #[cfg(test)]
     pub(crate) fn read_spc_memory_for_test(&mut self, addr: u16) -> u8 {
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -496,9 +575,12 @@ impl SnesApu {
     #[cfg(test)]
     pub(crate) fn write_spc_memory_for_test(&mut self, addr: u16, value: u8) {
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -514,9 +596,12 @@ impl SnesApu {
     #[cfg(test)]
     pub(crate) fn advance_spc_bus_cycles_for_test(&mut self, cycles: usize) {
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -534,9 +619,12 @@ impl SnesApu {
     #[cfg(test)]
     pub(crate) fn write_spc_control_for_test(&mut self, value: u8) {
         let mut bus_view = SpcBusView {
+            consumed_cycles: 0,
             aram: &mut self.aram,
             ipl: &self.ipl,
             main_to_spc_ports: &mut self.main_to_spc_ports,
+            main_to_spc_latch: &mut self.main_to_spc_latch,
+            aux_regs: &mut self.aux_regs,
             spc_to_main_ports: &mut self.spc_to_main_ports,
             control: &mut self.control,
             test: &mut self.test,
@@ -561,9 +649,16 @@ impl SnesApu {
 }
 
 struct SpcBusView<'a> {
+    /// SMP core cycles consumed by bus accesses during the current
+    /// `step_one_cycle` call (TEST wait states stretch each access to
+    /// 1/2/5/10 cycles). The tick loop charges the budget with this so the
+    /// per-cycle stepper honors wait states exactly like the atomic path.
+    consumed_cycles: u8,
     aram: &'a mut [u8; ARAM_SIZE],
     ipl: &'a [u8; 64],
     main_to_spc_ports: &'a mut [u8; 4],
+    main_to_spc_latch: &'a mut [u8; 4],
+    aux_regs: &'a mut [u8; 2],
     spc_to_main_ports: &'a mut [u8; 4],
     control: &'a mut u8,
     test: &'a mut u8,
@@ -657,13 +752,19 @@ impl SpcBusView<'_> {
             value
         );
         self.timers.write_control(old_control, value);
+        // Clearing an input port pair resets both the SPC-visible values and
+        // the CPU write latch (hardware clears CpuRegs and NewCpuRegs alike).
         if value & 0x10 != 0 {
             self.main_to_spc_ports[0] = 0;
             self.main_to_spc_ports[1] = 0;
+            self.main_to_spc_latch[0] = 0;
+            self.main_to_spc_latch[1] = 0;
         }
         if value & 0x20 != 0 {
             self.main_to_spc_ports[2] = 0;
             self.main_to_spc_ports[3] = 0;
+            self.main_to_spc_latch[2] = 0;
+            self.main_to_spc_latch[3] = 0;
         }
     }
 
@@ -676,26 +777,24 @@ impl SpcBusView<'_> {
             .set_global_enabled(test_reg_allows_timers(value));
     }
 
-    fn test_allows_timers(&self) -> bool {
-        test_reg_allows_timers(self.test_reg())
-    }
-
-    fn tick_timers_multiple(&mut self, cycles: u8) {
-        for _ in 0..cycles {
-            self.tick_timers_if_enabled();
+    fn tick_apu_cycles(&mut self, timer_cycles: u8) {
+        if !self.tick_timers {
+            return;
         }
-    }
-
-    fn tick_timers_if_enabled(&mut self) {
-        if self.tick_timers {
-            // The timer prescalers always run; a TEST-register stop only
-            // gates the edge detector inside SpcTimers (the stage-1 square
-            // wave keeps toggling, as on hardware).
+        self.dsp.step_phase_with_memory(&mut self.aram[..]);
+        // The timer prescalers always run; a TEST-register stop only gates
+        // the edge detector inside SpcTimers (the stage-1 square wave keeps
+        // toggling, as on hardware).
+        for _ in 0..timer_cycles {
             self.timers.tick_cycle();
-            if self.test_allows_timers() {
-                self.dsp.step_phase_with_memory(&self.aram[..]);
-            }
         }
+    }
+
+    fn tick_access_cycles_for_addr(&mut self, addr: Option<u16>) {
+        self.consumed_cycles = self
+            .consumed_cycles
+            .saturating_add(self.wait_cycles_for_addr(addr));
+        self.tick_apu_cycles(self.timer_wait_cycles_for_addr(addr));
     }
 }
 
@@ -708,8 +807,7 @@ impl Spc700Bus for SpcBusView<'_> {
         if self.internal_speed_freeze(Some(addr)) {
             *self.frozen = true;
         }
-        let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
-        self.tick_timers_multiple(timer_cycles);
+        self.tick_access_cycles_for_addr(Some(addr));
         let value = match addr {
             // I/O register reads ($F0-$FF) always return I/O values, not the RAM-disable
             // sentinel. Per bsnes smp/memory.cpp: readRAM is called first (returns $5A when
@@ -717,10 +815,22 @@ impl Spc700Bus for SpcBusView<'_> {
             // $F0 TEST and $F1 CONTROL are write-only; reads return $00.
             0x00F0..=0x00F1 => 0x00,
             0x00F2 => *self.dsp_addr,
-            0x00F3 => self.dsp.read_reg(*self.dsp_addr & 0x7F),
+            0x00F3 => {
+                let value = self.dsp.read_reg(*self.dsp_addr);
+                // Level 4: DSP register polls are extremely frequent.
+                trace_apu!(
+                    4;
+                    "SPC reads DSP[${:02X}] -> ${:02X} phase={}",
+                    *self.dsp_addr,
+                    value,
+                    self.dsp.phase()
+                );
+                value
+            }
             0x00F4..=0x00F7 => self.main_to_spc_ports[(addr - 0x00F4) as usize],
-            // $F8-$F9 = AUXIO4/AUXIO5 (general-purpose I/O, stores value in ARAM)
-            0x00F8..=0x00F9 => self.aram[addr as usize],
+            // $F8-$F9 = AUXIO4/AUXIO5: dedicated registers (Mesen RamReg);
+            // the RAM underneath is only reachable by the DSP.
+            0x00F8..=0x00F9 => self.aux_regs[(addr - 0x00F8) as usize],
             // $FA-$FC = T0/T1/T2 targets (write-only; reads return 0x00)
             0x00FA..=0x00FC => 0x00,
             0x00FD..=0x00FF => self.timers.read_counter((addr - 0x00FD) as usize),
@@ -745,8 +855,7 @@ impl Spc700Bus for SpcBusView<'_> {
         if self.internal_speed_freeze(Some(addr)) {
             *self.frozen = true;
         }
-        let timer_cycles = self.timer_wait_cycles_for_addr(Some(addr));
-        self.tick_timers_multiple(timer_cycles);
+        self.tick_access_cycles_for_addr(Some(addr));
         let write_enabled = self.ram_write_enabled();
         if write_enabled {
             self.aram[addr as usize] = value;
@@ -769,20 +878,23 @@ impl Spc700Bus for SpcBusView<'_> {
             0x00F1 => self.write_control(value),
             0x00F2 => *self.dsp_addr = value,
             0x00F3 => {
-                if *self.dsp_addr & 0x80 == 0 {
-                    trace_apu!(
-                        3;
-                        "SPC writes DSP[${:02X}] = ${:02X}",
-                        *self.dsp_addr,
-                        value
-                    );
-                    self.dsp.write_reg(*self.dsp_addr, value)
-                }
+                // Level 4: DSP register writes are extremely frequent.
+                trace_apu!(
+                    4;
+                    "SPC writes DSP[${:02X}] = ${:02X} phase={}",
+                    *self.dsp_addr,
+                    value,
+                    self.dsp.phase()
+                );
+                self.dsp.write_reg(*self.dsp_addr, value)
             }
             0x00F4..=0x00F7 => {
                 let port_idx = (addr - 0x00F4) as usize;
                 trace_apu!(2; "SPC writes port[{}] = ${:02X}", port_idx, value);
                 self.spc_to_main_ports[port_idx] = value;
+            }
+            0x00F8..=0x00F9 => {
+                self.aux_regs[(addr - 0x00F8) as usize] = value;
             }
             0x00FA..=0x00FC => {
                 trace_apu!(4; "SPC write timer target ${:04X} = ${:02X}", addr, value);
@@ -800,16 +912,14 @@ impl Spc700Bus for SpcBusView<'_> {
         if self.internal_speed_freeze(None) {
             *self.frozen = true;
         }
-        let timer_cycles = self.timer_wait_cycles_for_addr(None);
-        self.tick_timers_multiple(timer_cycles);
+        self.tick_access_cycles_for_addr(None);
     }
 
-    fn dummy_read(&mut self, _addr: u16) {
+    fn dummy_read(&mut self, addr: u16) {
         if self.internal_speed_freeze(None) {
             *self.frozen = true;
         }
-        let timer_cycles = self.timer_wait_cycles_for_addr(None);
-        self.tick_timers_multiple(timer_cycles);
+        self.tick_access_cycles_for_addr(Some(addr));
     }
 }
 
@@ -884,9 +994,11 @@ mod tests {
     #[test]
     fn restore_state_does_not_advance_timers_during_spc_reset_vector_reads() {
         let mut apu = SnesApu::new(None);
+        // Power-on burned cycles 1-2 (reset vector fetch); stay just below
+        // the 128-cycle timer-0 period so no tick is due before the capture.
         apu.write_spc_memory_for_test(0x00FA, 0x01);
         apu.write_spc_control_for_test(0x81);
-        apu.advance_spc_bus_cycles_for_test(124);
+        apu.advance_spc_bus_cycles_for_test(122);
 
         let state = apu.capture_state();
         apu.restore_state(&state).expect("restore should succeed");
@@ -932,20 +1044,51 @@ mod tests {
     fn advancing_spc_bus_cycles_advances_dsp_phase_skeleton() {
         let mut apu = SnesApu::new(None);
 
-        assert_eq!(apu.dsp_phase_for_test(), 0);
+        // Phase 2 at power-on: the reset vector fetch steps the DSP twice.
+        assert_eq!(apu.dsp_phase_for_test(), 2);
 
         apu.advance_spc_bus_cycles_for_test(3);
-        assert_eq!(apu.dsp_phase_for_test(), 3);
+        assert_eq!(apu.dsp_phase_for_test(), 5);
     }
 
     #[test]
     fn writing_test_register_uses_pre_write_waitstate_cycles() {
         let mut apu = SnesApu::new(None);
 
-        assert_eq!(apu.dsp_phase_for_test(), 0);
+        let phase_at_power_on = apu.dsp_phase_for_test();
         apu.write_spc_memory_for_test(0x00F0, 0x3A);
 
-        assert_eq!(apu.dsp_phase_for_test(), 1);
+        assert_eq!(apu.dsp_phase_for_test(), phase_at_power_on + 1);
+    }
+
+    #[test]
+    fn dsp_phase_advances_while_test_register_disables_spc_timers() {
+        let mut apu = SnesApu::new(None);
+
+        apu.write_spc_memory_for_test(0x00F0, 0x0B); // default TEST with timer-enable bit set
+        let phase_after_test_write = apu.dsp_phase_for_test();
+        apu.advance_spc_bus_cycles_for_test(3);
+
+        assert_eq!(
+            apu.dsp_phase_for_test(),
+            (phase_after_test_write + 3) & 0x1F,
+            "S-DSP should keep clocking even when TEST disables SPC timers"
+        );
+    }
+
+    #[test]
+    fn dsp_phase_advances_once_per_spc_memory_operation_under_test_waitstates() {
+        let mut apu = SnesApu::new(None);
+
+        apu.write_spc_memory_for_test(0x00F0, 0x2A); // external RAM access time = 5 cycles
+        let phase_after_test_write = apu.dsp_phase_for_test();
+        apu.write_spc_memory_for_test(0x0200, 0x55);
+
+        assert_eq!(
+            apu.dsp_phase_for_test(),
+            (phase_after_test_write + 1) & 0x1F,
+            "Mesen advances the S-DSP pipeline once per SPC memory operation, not once per TEST waitstate"
+        );
     }
 
     #[test]
@@ -971,6 +1114,7 @@ mod tests {
         apu.aram[base + 3] = 0x7F;
 
         apu.native_cycles_per_sample = 1.0;
+        apu.advance_spc_bus_cycles_for_test(32);
         apu.step_native_audio_clock();
 
         let sample = apu
@@ -1454,9 +1598,9 @@ mod tests {
     #[test]
     fn prescaler_keeps_toggling_while_timers_are_test_stopped() {
         let mut apu = SnesApu::new(None);
-        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1 (cycle 1)
-        apu.write_spc_control_for_test(0x04); // enable T2 (cycle 2)
-        apu.advance_spc_bus_cycles_for_test(2); // cycles 3-4 (stage 1 low)
+        // Power-on burned cycles 1-2 (reset vector fetch).
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1 (cycle 3)
+        apu.write_spc_control_for_test(0x04); // enable T2 (cycle 4, stage 1 low)
         apu.write_spc_memory_for_test(0x00F0, 0x0B); // stop (cycle 5)
         // While stopped, stage 1 still toggles high at cycle 8 (edge detector
         // sees a forced low, so no tick is counted during the stop).
@@ -1500,6 +1644,242 @@ mod tests {
     // EXPECTED with cycle-accurate per-SPC-cycle stepping:
     //   A receives the operand value from each release in turn.
     // CURRENT (atomic) behavior: A stays at the sentinel.
+    #[test]
+    fn port_polling_mov_observes_host_write_landing_mid_instruction() {
+        // #2914: instructions reading $F4-$F7 are cycle-stepped so a 65816
+        // port write landing between the operand fetch and the read cycle is
+        // observed by THAT read, as on hardware. Atomic stepping samples the
+        // port at the instruction's first budget cycle and would miss the
+        // write for a whole poll iteration.
+        let mut state = SnesApuState {
+            aram: vec![0u8; super::ARAM_SIZE],
+            control: 0x00,
+            test: super::default_test_reg(),
+            ..SnesApuState::default()
+        };
+        // $0200: E4 F4    MOV A,$F4
+        // $0202: C4 10    MOV $10,A
+        // $0204: 2F FA    BRA $0200
+        state.aram[0x0200..0x0206].copy_from_slice(&[0xE4, 0xF4, 0xC4, 0x10, 0x2F, 0xFA]);
+        state.spc700.pc = 0x0200;
+        let mut apu = SnesApu::new(None);
+        apu.restore_state(&state).expect("restore poll-loop state");
+
+        // Advance until the MOV A,$F4 is mid-flight with its operand fetched
+        // (PC just past the dp byte) but the port read cycle still pending.
+        let mut guard = 0;
+        while !(apu.spc700.pc() == 0x0202 && apu.spc700.has_in_progress_op()) {
+            apu.tick();
+            guard += 1;
+            assert!(guard < 10_000, "MOV A,$F4 never became mid-flight");
+        }
+
+        // The host write lands between the operand fetch and the read cycle.
+        apu.write_main_port(0, 0x42);
+
+        // Enough master ticks for the pending read cycle plus the MOV $10,A
+        // store (~5 SPC cycles), but well short of a second poll iteration.
+        for _ in 0..120 {
+            apu.tick();
+        }
+        assert_eq!(
+            apu.peek_spc_memory_for_debug(0x0010),
+            0x42,
+            "the in-flight port read must observe the mid-instruction host write"
+        );
+    }
+
+    // On hardware the console /RES line resets the S-SMP too: ports are
+    // cleared in both directions, timers reset, the SPC re-runs its reset
+    // vector fetch, and the SPC clock re-anchors to the reset instant
+    // (Mesen `Spc::Reset`: OutputReg/CpuRegs/NewCpuRegs cleared, timer
+    // Reset, Cycle=0, PC=ReadWord(ResetVector), Dsp::Reset).
+    #[test]
+    fn console_reset_clears_ports_and_reanchors_spc_clock() {
+        let mut apu = SnesApu::new(None);
+        for _ in 0..1000 {
+            apu.tick();
+        }
+        apu.write_main_port(0, 0xCC);
+        apu.write_spc_port(1, 0xAB);
+
+        apu.reset();
+
+        assert_eq!(apu.read_spc_port(0), 0, "CPU->SPC ports clear on reset");
+        assert_eq!(apu.read_main_port(1), 0, "SPC->CPU ports clear on reset");
+        assert_eq!(
+            apu.spc_cycle_budget,
+            -2 * super::SPC_PER_MASTER_DEN,
+            "SPC clock re-anchors to the reset instant plus the vector fetch"
+        );
+        assert_eq!(
+            apu.dsp.phase(),
+            2,
+            "DSP restarts at the power-on phase (reset vector fetch included)"
+        );
+        // A write of the same value as before the reset must be latched
+        // fresh (the latch was cleared alongside the visible ports).
+        apu.write_main_port(0, 0xCC);
+        assert_eq!(apu.read_spc_port(0), 0xCC);
+    }
+
+    // #2914: on hardware the SPC700 reset sequence fetches the reset vector
+    // at $FFFE/$FFFF through the normal bus: 2 SPC cycles that step the DSP
+    // and timers and delay the first instruction (Mesen: constructor/Reset
+    // call ReadWord(ResetVector) through the cycle-counting Read). Without
+    // them every DSP event runs 2 phases early relative to 65816 port
+    // traffic, which blargg spc_dsp6's write-phase-sensitive checks detect.
+    #[test]
+    fn spc700_reset_vector_fetch_consumes_two_spc_cycles() {
+        let apu = SnesApu::new(None);
+        assert_eq!(
+            apu.dsp.phase(),
+            2,
+            "reset vector fetch must step the DSP once per bus read"
+        );
+        assert_eq!(
+            apu.spc_cycle_budget,
+            -2 * super::SPC_PER_MASTER_DEN,
+            "reset vector fetch must delay the first instruction by 2 SPC cycles"
+        );
+    }
+
+    // #2914: the SPC core must advance on the hardware-calibrated clock
+    // grid Mesen uses (32040 Hz x 64 SPC clocks = 2,050,560 half-units
+    // per 21,477,270 master clocks; SnesConsole::GetMasterClockRate).
+    // blargg spc_dsp6's first diverging handshake writes $01 to $2140 at
+    // master tick 31,574,540, which lands in the SECOND half of the
+    // in-flight SPC cycle on that grid (write latched only after the next
+    // executed cycle). A denominator of 21,477,272 places the same write
+    // in the first half, the SPC's `E4 $F4` poll sees it one 7-cycle loop
+    // iteration early, and every later handshake re-quantizes differently
+    // (the #2914 KON eos-parity failure chain).
+    #[test]
+    fn spc_clock_grid_places_dsp6_race_write_in_second_half_of_cycle() {
+        let mut apu = SnesApu::new(None);
+        for _ in 0..31_574_540u32 {
+            apu.tick();
+        }
+        assert!(
+            2 * apu.spc_cycle_budget > super::SPC_PER_MASTER_DEN,
+            "master tick 31,574,540 must land in the second half of the \
+             current SPC cycle; got budget {} of {}",
+            apu.spc_cycle_budget,
+            super::SPC_PER_MASTER_DEN,
+        );
+    }
+
+    // #2914: $F8/$F9 are dedicated registers on the S-SMP (Mesen
+    // Spc::_state.RamReg): SPC reads return the register, SPC writes set
+    // the register AND the RAM underneath, but DSP echo writes to
+    // $00F8/$00F9 only touch the RAM. blargg dsp6's "Misc/$F0-$FF are not
+    // ram" sweeps the echo buffer across the I/O page and verifies the
+    // register readback is unaffected.
+    #[test]
+    fn f8_f9_read_as_registers_not_ram() {
+        let mut apu = SnesApu::new(None);
+        apu.write_spc_memory_for_test(0x00F8, 0x12);
+        apu.write_spc_memory_for_test(0x00F9, 0x34);
+        assert_eq!(
+            (apu.aram[0x00F8], apu.aram[0x00F9]),
+            (0x12, 0x34),
+            "SPC writes to $F8/$F9 must also reach the RAM underneath"
+        );
+        // A DSP echo write landing in the RAM under the registers must not
+        // affect what the SPC reads back.
+        apu.aram[0x00F8] = 0xFE;
+        apu.aram[0x00F9] = 0xFF;
+        assert_eq!(apu.read_spc_memory_for_test(0x00F8), 0x12);
+        assert_eq!(apu.read_spc_memory_for_test(0x00F9), 0x34);
+    }
+
+    // #2938: the per-cycle stepper must charge TEST-register wait states
+    // like the atomic path does (SMP core cycles stretch to 2/5/10 under
+    // TEST bits). blargg test_speed measures exactly this through the
+    // IPL-hack trampoline once its micro-ops are cycle-scripted.
+    #[test]
+    fn cycle_stepper_charges_test_register_wait_states() {
+        let mut state = SnesApuState {
+            aram: vec![0u8; super::ARAM_SIZE],
+            control: 0x00,
+            // External RAM access time = 5 SMP cycles per access.
+            test: 0x2A,
+            ..SnesApuState::default()
+        };
+        // $0200: E4 F4  MOV A,$F4 (cycle-scripted port read: 3 accesses).
+        state.aram[0x0200..0x0202].copy_from_slice(&[0xE4, 0xF4]);
+        state.spc700.pc = 0x0200;
+        let mut apu = SnesApu::new(None);
+        apu.restore_state(&state).expect("restore");
+
+        let mut ticks = 0u32;
+        while apu.spc700.pc() != 0x0202 || apu.spc700.has_in_progress_op() {
+            apu.tick();
+            ticks += 1;
+            assert!(ticks < 10_000, "instruction never completed");
+        }
+        // Fetch+operand are external (5 cycles each); the $F4 read is an
+        // I/O access using the internal speed (1 cycle at TEST=$2A upper
+        // bits 0). Total 11 SMP cycles ~= 230 master ticks; the unfixed
+        // stepper charges 3 cycles (~63 ticks).
+        assert!(
+            (170..300).contains(&ticks),
+            "scripted MOV A,dp under TEST=$2A must consume ~11 SPC cycles of budget, took {ticks} ticks"
+        );
+    }
+
+    // #2914: CPU->SPC port writes are latched at the SPC's 2.048 MHz input
+    // clock (2 latch ticks per SPC cycle). A 65816 write landing in the
+    // FIRST half of the current SPC cycle is visible to the SPC
+    // immediately; one landing in the SECOND half only becomes visible at
+    // the end of the next executed SPC cycle. This mirrors verified
+    // hardware behavior (Mesen `NewCpuRegs`/`_pendingCpuRegUpdate`; both
+    // Kishin Douji Zenki and Kawasaki Superbike Challenge depend on it).
+    //
+    // Budget arithmetic: reset pre-charges the budget by -2 SPC cycles (the
+    // reset vector fetch), so after `n` master ticks the budget is
+    // `n*NUM - 2*DEN`. With NUM=1_025_280, DEN=21_477_272 the first SPC
+    // instruction cycle executes at tick 63; ticks 1-52 fall in its first
+    // half (`2*budget <= DEN`, including the negative pre-charge), ticks
+    // 53-62 in its second half.
+    #[test]
+    fn host_port_write_in_first_half_of_spc_cycle_is_visible_immediately() {
+        let mut apu = SnesApu::new(None);
+        for _ in 0..45 {
+            apu.tick();
+        }
+        apu.write_main_port(0, 0xCC);
+        assert_eq!(
+            apu.read_spc_port(0),
+            0xCC,
+            "first-half write must be SPC-visible in the same SPC cycle"
+        );
+    }
+
+    #[test]
+    fn host_port_write_in_second_half_of_spc_cycle_is_visible_next_cycle() {
+        let mut apu = SnesApu::new(None);
+        for _ in 0..57 {
+            apu.tick();
+        }
+        apu.write_main_port(0, 0xCC);
+        assert_eq!(
+            apu.read_spc_port(0),
+            0x00,
+            "second-half write must not be SPC-visible before the next SPC cycle"
+        );
+        // Tick past the next SPC cycle boundary (tick 63); the latch is
+        // applied at the end of that cycle.
+        for _ in 0..6 {
+            apu.tick();
+        }
+        assert_eq!(
+            apu.read_spc_port(0),
+            0xCC,
+            "second-half write must be SPC-visible after the next SPC cycle"
+        );
+    }
+
     fn ipl_hack_trampoline_state() -> SnesApuState {
         let mut state = SnesApuState {
             aram: vec![0u8; super::ARAM_SIZE],

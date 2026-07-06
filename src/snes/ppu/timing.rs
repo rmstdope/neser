@@ -118,7 +118,12 @@ impl Ppu {
     }
 
     pub(super) fn hblank_active(&self) -> bool {
-        self.position.dot == 0 || self.position.dot >= super::HBLANK_START_DOT
+        // HBLANK is reported for hClock outside [4, 1096]: it clears one
+        // dot into the line and rises one master clock INTO dot 274
+        // (hardware/Mesen `$4212`; the sub-dot edge is observable, #2914).
+        self.position.dot == 0
+            || self.position.dot > super::HBLANK_START_DOT
+            || (self.position.dot == super::HBLANK_START_DOT && self.master_cycle_accumulator >= 1)
     }
 
     fn line_timing_profile_for_scanline(&self) -> PpuLineTimingProfile {
@@ -609,6 +614,30 @@ mod tests {
         let vb = ppu.read_register(0x4212);
         assert_ne!(vb & 0x80, 0, "VBlank flag set");
         assert_ne!(vb & 0x40, 0, "HBlank remains set at dot 0");
+    }
+
+    // The HBLANK flag rises one master clock INTO dot 274, not on the dot
+    // boundary: hardware reports HBLANK for hClock outside [4, 1096]
+    // (Mesen InternalRegisters $4212: `hClock >= 1*4 && hClock <= 274*4`
+    // reads as not-HBLANK). blargg's SPC-APU shell counts $4212 polls
+    // inside the HBLANK window; the one-clock edge position is observable
+    // (#2914 timer_at_power_reset).
+    #[test]
+    fn hblank_flag_rises_one_clock_into_dot_274() {
+        let mut ppu = Ppu::new();
+        // Dots 0-273 are 4 clocks each: hClock 1096 is dot 274's first clock.
+        tick_cycles(&mut ppu, 1096);
+        assert_eq!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "hClock 1096 (dot 274 boundary) must not yet report HBlank"
+        );
+        tick_cycles(&mut ppu, 1);
+        assert_ne!(
+            ppu.read_register(0x4212) & 0x40,
+            0,
+            "hClock 1097 must report HBlank"
+        );
     }
 
     #[test]

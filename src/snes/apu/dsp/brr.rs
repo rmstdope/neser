@@ -1,3 +1,44 @@
+/// Decode one 4-sample BRR group (2 data bytes) into the voice ring buffer
+/// scale, mirroring Mesen2 `DspVoice::DecodeBrrSample`. `prev1`/`prev2` are
+/// the last two ring-buffer samples at full (×2) scale.
+#[must_use]
+pub fn decode_brr_group(header: u8, byte0: u8, byte1: u8, prev1: i16, prev2: i16) -> [i16; 4] {
+    let shift = (header >> 4) & 0x0F;
+    let filter = (header >> 2) & 0x03;
+    let nibbles = [
+        sign_extend_nibble(((byte0 >> 4) & 0x0F) as i8),
+        sign_extend_nibble((byte0 & 0x0F) as i8),
+        sign_extend_nibble(((byte1 >> 4) & 0x0F) as i8),
+        sign_extend_nibble((byte1 & 0x0F) as i8),
+    ];
+    let mut prev1 = i32::from(prev1 >> 1);
+    let mut prev2 = i32::from(prev2 >> 1);
+    let mut out = [0i16; 4];
+    for (slot, nibble) in out.iter_mut().zip(nibbles) {
+        let base = if shift > 12 {
+            if nibble >= 0 { 0 } else { -2048 }
+        } else {
+            (i32::from(nibble) << shift) >> 1
+        };
+        let predict = match filter {
+            0 => 0,
+            1 => prev1 + (-prev1 >> 4),
+            2 => (prev1 << 1) + ((-((prev1 << 1) + prev1)) >> 5) - prev2 + (prev2 >> 4),
+            _ => {
+                (prev1 << 1) + ((-(prev1 + (prev1 << 2) + (prev1 << 3))) >> 6) - prev2
+                    + (((prev2 << 1) + prev2) >> 4)
+            }
+        };
+        let sample = (base + predict)
+            .clamp(i32::from(i16::MIN), i32::from(i16::MAX))
+            .wrapping_mul(2) as i16;
+        *slot = sample;
+        prev2 = prev1;
+        prev1 = i32::from(sample >> 1);
+    }
+    out
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedBrrBlock {
     pub samples: [i16; 16],
@@ -60,5 +101,5 @@ fn decode_brr_nibble(raw: i16, shift: u8, filter: u8, prev1: i16, prev2: i16) ->
 
 fn clamp16_and_wrap_15_bit(value: i32) -> i16 {
     let clamped = value.clamp(i32::from(i16::MIN), i32::from(i16::MAX));
-    ((clamped << 1) as i16) >> 1
+    (clamped as i16).wrapping_mul(2)
 }

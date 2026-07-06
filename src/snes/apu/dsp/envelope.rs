@@ -3,108 +3,145 @@ use crate::snes::apu::dsp::voice::{EnvelopeMode, VoiceState};
 const ENV_MAX: u16 = 0x7FF;
 
 pub fn step_voice_envelope(voice: &mut VoiceState, global_counter: u16) {
-    if voice.adsr1 & 0x80 == 0 && voice.gain & 0x80 == 0 {
-        voice.env_level = (u16::from(voice.gain) << 4).min(ENV_MAX);
-        voice.envx = (voice.env_level >> 4).min(0x7F) as u8;
+    if voice.mode == EnvelopeMode::Release {
+        voice.env_level = voice.env_level.saturating_sub(8);
         return;
     }
 
-    if !envelope_tick_due(global_counter, active_rate(voice)) {
-        return;
-    }
-
-    if voice.adsr1 & 0x80 != 0 {
-        step_adsr(voice);
+    let (next_env, raw_env, rate) = if voice.adsr1_latch & 0x80 != 0 {
+        next_adsr_env(voice)
     } else {
-        step_gain(voice);
-    }
+        next_gain_env(voice)
+    };
 
-    voice.env_level = voice.env_level.min(ENV_MAX);
-    voice.envx = ((voice.env_level >> 4).min(0x7F)) as u8;
+    apply_state_transitions(voice, raw_env);
+    voice.hidden_env = raw_env;
+
+    if envelope_tick_due(global_counter, rate) {
+        voice.env_level = next_env;
+    }
 }
 
-fn envelope_tick_due(global_counter: u16, rate: u8) -> bool {
-    let divider = rate_to_divider(rate);
-    if divider == 0 {
-        return false;
+fn apply_state_transitions(voice: &mut VoiceState, raw_env: i32) {
+    if voice.mode == EnvelopeMode::Decay && (raw_env >> 8) == i32::from(transition_data(voice) >> 5)
+    {
+        voice.mode = EnvelopeMode::Sustain;
     }
-    if divider == 1 {
-        return true;
+
+    if !(0..=i32::from(ENV_MAX)).contains(&raw_env) && voice.mode == EnvelopeMode::Attack {
+        voice.mode = EnvelopeMode::Decay;
     }
-    global_counter.is_multiple_of(divider)
 }
 
-fn active_rate(voice: &VoiceState) -> u8 {
-    if voice.adsr1 & 0x80 != 0 {
-        match voice.mode {
-            EnvelopeMode::Attack => voice.adsr1 & 0x0F,
-            EnvelopeMode::Decay => ((voice.adsr1 >> 4) & 0x07) * 2 + 1,
-            EnvelopeMode::Sustain => voice.adsr2 & 0x1F,
-            EnvelopeMode::Release => 31,
-        }
+fn transition_data(voice: &VoiceState) -> u8 {
+    if voice.adsr1_latch & 0x80 != 0 {
+        voice.adsr2
     } else {
-        voice.gain & 0x1F
+        voice.gain
     }
 }
 
-fn rate_to_divider(rate: u8) -> u16 {
-    const RATE_TO_DIV: [u16; 32] = [
-        0, 2048, 1536, 1280, 1024, 768, 640, 512, 384, 320, 256, 192, 160, 128, 96, 1, 80, 64, 48,
-        24, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1, 1,
-    ];
-    RATE_TO_DIV[usize::from(rate.min(31))]
+pub(super) fn envelope_tick_due(global_counter: u16, rate: u8) -> bool {
+    let rate = usize::from(rate.min(31));
+    let divider = COUNTER_RATES[rate];
+    (u32::from(global_counter) + COUNTER_OFFSETS[rate]).is_multiple_of(divider)
 }
 
-fn step_adsr(voice: &mut VoiceState) {
-    match voice.mode {
-        EnvelopeMode::Release => {
-            voice.env_level = voice.env_level.saturating_sub(8);
-        }
+const SIMPLE_COUNTER_RANGE: u32 = 30_720;
+const COUNTER_RATES: [u32; 32] = [
+    SIMPLE_COUNTER_RANGE + 1,
+    2048,
+    1536,
+    1280,
+    1024,
+    768,
+    640,
+    512,
+    384,
+    320,
+    256,
+    192,
+    160,
+    128,
+    96,
+    80,
+    64,
+    48,
+    40,
+    32,
+    24,
+    20,
+    16,
+    12,
+    10,
+    8,
+    6,
+    5,
+    4,
+    3,
+    2,
+    1,
+];
+const COUNTER_OFFSETS: [u32; 32] = [
+    1, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 536, 0, 1040,
+    536, 0, 1040, 536, 0, 1040, 536, 0, 1040, 0, 0,
+];
+
+fn next_adsr_env(voice: &VoiceState) -> (u16, i32, u8) {
+    let mut env = i32::from(voice.env_level);
+    let rate = match voice.mode {
         EnvelopeMode::Attack => {
-            let attack_rate = voice.adsr1 & 0x0F;
-            let attack_step = if attack_rate == 0x0F { 0x400 } else { 0x20 };
-            voice.env_level = voice.env_level.saturating_add(attack_step);
-            if voice.env_level >= 0x7E0 {
-                voice.env_level = voice.env_level.min(ENV_MAX);
-                voice.mode = EnvelopeMode::Decay;
-            }
+            let rate = (voice.adsr1_latch & 0x0F) * 2 + 1;
+            env += if rate < 31 { 0x20 } else { 0x400 };
+            rate
         }
         EnvelopeMode::Decay => {
-            let sustain_level = (((voice.adsr2 >> 5) & 0x07) + 1) as u16 * 0x100;
-            let decay_step = ((voice.env_level.saturating_sub(1)) >> 8) + 1;
-            voice.env_level = voice.env_level.saturating_sub(decay_step);
-            if voice.env_level <= sustain_level {
-                voice.mode = EnvelopeMode::Sustain;
-            }
+            env -= 1;
+            env -= env >> 8;
+            ((voice.adsr1_latch >> 3) & 0x0E) + 0x10
         }
         EnvelopeMode::Sustain => {
-            let sustain_step = ((voice.env_level.saturating_sub(1)) >> 8) + 1;
-            voice.env_level = voice.env_level.saturating_sub(sustain_step);
+            env -= 1;
+            env -= env >> 8;
+            voice.adsr2 & 0x1F
         }
-    }
+        EnvelopeMode::Release => 31,
+    };
+    (clamp_env(env), env, rate)
 }
 
-fn step_gain(voice: &mut VoiceState) {
+fn next_gain_env(voice: &VoiceState) -> (u16, i32, u8) {
     let gain = voice.gain;
     if gain & 0x80 == 0 {
-        voice.env_level = u16::from(gain) << 4;
-        return;
+        let env = i32::from(gain) * 0x10;
+        return (clamp_env(env), env, 31);
     }
 
+    let mut env = i32::from(voice.env_level);
+    let rate = gain & 0x1F;
     match (gain >> 5) & 0x03 {
         0 => {
-            voice.env_level = voice.env_level.saturating_sub(0x20);
+            env -= 0x20;
         }
         1 => {
-            let step = ((voice.env_level.saturating_sub(1)) >> 8) + 1;
-            voice.env_level = voice.env_level.saturating_sub(step);
+            env -= 1;
+            env -= env >> 8;
         }
         2 => {
-            voice.env_level = (voice.env_level + 0x20).min(ENV_MAX);
+            env += 0x20;
         }
         _ => {
-            let step = if voice.env_level < 0x600 { 0x20 } else { 0x08 };
-            voice.env_level = (voice.env_level + step).min(ENV_MAX);
+            let step = if (voice.hidden_env as u32) < 0x600 {
+                0x20
+            } else {
+                0x08
+            };
+            env += step;
         }
     }
+    (clamp_env(env), env, rate)
+}
+
+fn clamp_env(env: i32) -> u16 {
+    env.clamp(0, i32::from(ENV_MAX)) as u16
 }

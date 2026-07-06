@@ -19,9 +19,16 @@ mod tests {
         ("spc_smp.sfc", 2200, 0xEFD1_3576),
         ("spc_mem_access_times.sfc", 600, 0x3AC3_E30F),
         ("spc_timer.sfc", 600, 0x2497_38B2),
-        ("test_speed.smc", 600, 0xB02E_63CE),
-        ("test_timer_speed_2.smc", 600, 0x48DA_ACE9),
-        ("test_timer_speed3.smc", 600, 0x8B6C_B1A1),
+        // Golden re-approved for #2938: with trampoline micro-ops cycle-
+        // scripted and the stepper charging TEST wait states, every row now
+        // matches Mesen exactly (fast 252/251, waited 126 and 26).
+        ("test_speed.smc", 600, 0xFAE4_99DA),
+        // Golden re-approved for #2914: cycle-stepped port polling + 32040 Hz
+        // SPC rate; measured values match Mesen's within ±1 (still "Passed").
+        ("test_timer_speed_2.smc", 600, 0xCAF1_E3BC),
+        // Golden re-approved for #2914 (see test_timer_speed_2 note); "Done"
+        // measurement screen, rows match Mesen within ±1.
+        ("test_timer_speed3.smc", 600, 0x367A_08A5),
         ("test_timer_stop.smc", 600, 0x7CC2_B76B),
     ];
 
@@ -84,10 +91,23 @@ mod tests {
     // -------------------------------------------------------------------------
 
     fn run_rom_with_expected_crc(file: &str, expected_crc: u32) {
-        run_rom_with_expected_crc_and_config(file, expected_crc, RunConfig::new(400_000_000, 0));
+        run_rom_with_expected_crc_at_frame(file, 600, expected_crc);
+    }
+
+    fn run_rom_with_expected_crc_at_frame(file: &str, frames: u32, expected_crc: u32) {
+        run_rom_with_expected_crc_full(file, frames, expected_crc, RunConfig::new(400_000_000, 0));
     }
 
     fn run_rom_with_expected_crc_and_config(file: &str, expected_crc: u32, config: RunConfig) {
+        run_rom_with_expected_crc_full(file, 600, expected_crc, config);
+    }
+
+    fn run_rom_with_expected_crc_full(
+        file: &str,
+        frames: u32,
+        expected_crc: u32,
+        config: RunConfig,
+    ) {
         let root = Path::new(ROM_PASS_FAIL_ROOT);
         let path = root.join(file);
         let rom = fs::read(&path)
@@ -97,22 +117,18 @@ mod tests {
             file,
             config,
             RunOracle::ScreenCrc {
-                frames: 600,
+                frames,
                 expected_crc,
             },
         );
         assert!(
             result.passed && result.exit_reason == RunExitReason::ScreenCrcFrame,
-            "{file}: expected screen-CRC PASS at frame 600, \
+            "{file}: expected screen-CRC PASS at frame {frames}, \
              got crc=0x{:08X} passed={} exit={:?}",
             result.screen_crc32,
             result.passed,
             result.exit_reason
         );
-    }
-
-    fn run_failing_rom(file: &str) {
-        run_rom_with_expected_crc(file, 0x0000_0000);
     }
 
     #[test]
@@ -121,9 +137,16 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: DSP echo/basics (Failed 03) — fix emulator then update CRC"]
     fn blargg_spc_dsp6_passes() {
-        run_failing_rom("spc_dsp6.sfc");
+        // Full suite (KON, Misc, Order, Random and Timing batteries) ends
+        // with "PASSED TESTS" on a blue background just before frame
+        // 9000; the default 400M-tick budget stops short of that.
+        run_rom_with_expected_crc_full(
+            "spc_dsp6.sfc",
+            9100,
+            0x05CD_5DA7,
+            RunConfig::new(600_000_000, 0),
+        );
     }
 
     #[test]
@@ -133,12 +156,17 @@ mod tests {
 
     #[test]
     fn blargg_test_timer_speed_passes() {
-        run_rom_with_expected_crc("test_timer_speed.smc", 0xED59_F2AF);
+        // Golden re-approved for #2914 (cycle-stepped port polling, the
+        // hardware 32040 Hz SPC rate + CPU->SPC write latch, then the exact
+        // Mesen master-clock denominator 21,477,270); screen reads "Passed"
+        // and every measured row now matches Mesen exactly.
+        run_rom_with_expected_crc("test_timer_speed.smc", 0xA4D0_ACB0);
     }
 
     #[test]
     fn blargg_test_timer_speed2_passes() {
-        run_rom_with_expected_crc("test_timer_speed2.smc", 0xED59_F2AF);
+        // Same re-approval as test_timer_speed (identical output screen).
+        run_rom_with_expected_crc("test_timer_speed2.smc", 0xA4D0_ACB0);
     }
 
     #[test]

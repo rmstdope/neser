@@ -44,17 +44,333 @@ pub const FLAG_NEGATIVE: u8 = 0b1000_0000;
 ///
 /// When the per-cycle stepper starts a new instruction it stores the opcode
 /// and a cycle-since-opcode-fetch counter here; subsequent calls advance the
-/// counter and dispatch into a per-opcode cycle handler that consumes one bus
-/// operation (read / write / idle) per call. When the last cycle of the
-/// opcode runs, the handler clears this slot back to `None`.
+/// counter and execute the next [`MicroOp`] of the opcode's cycle script,
+/// consuming exactly one bus operation (read / write / idle) per call. When
+/// the last micro-op runs, the [`Finish`] action applies the result and this
+/// slot clears back to `None`.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct InProgressOp {
     pub(crate) opcode: u8,
     /// Cycle index within the instruction. Cycle 1 is the opcode fetch (done
-    /// when this struct is created); per-opcode handlers run for cycles 2..N.
+    /// when this struct is created); micro-ops run for cycles 2..N.
     pub(crate) cycle: u8,
-    /// Scratch operand byte fetched mid-instruction.
+    /// First operand byte fetched mid-instruction.
     pub(crate) operand: u8,
+    /// Second operand byte (absolute-address high byte).
+    pub(crate) operand2: u8,
+    /// Effective address computed by an addressing micro-op.
+    pub(crate) addr: u16,
+    /// Value loaded by a read micro-op.
+    pub(crate) value: u8,
+    /// Set by a conditional micro-op to terminate the script after the
+    /// current cycle (a not-taken branch is 2 cycles instead of 4).
+    pub(crate) done_early: bool,
+}
+
+/// Index register applied by an addressing micro-op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Index {
+    None,
+    X,
+    Y,
+}
+
+/// One bus operation of a cycle-scripted instruction (see
+/// [`Spc700::cycle_script`]). Each micro-op performs exactly one bus access
+/// (read, write, or idle), mirroring the bus-op sequence of the atomic
+/// implementation in [`Spc700::step`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MicroOp {
+    /// Read the immediate byte at PC into `value` (PC += 1).
+    ReadImm,
+    /// Read the operand byte at PC into `operand` (PC += 1).
+    FetchOperand,
+    /// Read the second operand byte at PC into `operand2` (PC += 1).
+    FetchOperand2,
+    /// One internal idle cycle.
+    Idle,
+    /// Take the relative branch using `operand` and spend one idle cycle.
+    BranchIdle,
+    /// Compute `addr` = direct page | (`operand` + index) and read `value`.
+    ReadDp(Index),
+    /// Compute `addr` = direct page | (`operand` + index) and dummy-read it
+    /// (the read-before-write cycle of store instructions).
+    ReadDpForStore(Index),
+    /// Compute `addr` = direct page | `operand2` and dummy-read it (the
+    /// read-before-write cycle of `MOV dp,#imm`, whose dp byte is the
+    /// second operand).
+    ReadDp2ForStore,
+    /// Compute `addr` = direct page | `operand2` and read `value` (the
+    /// memory operand of `CMP dp,#imm`, whose dp byte is the second
+    /// operand).
+    ReadDp2,
+    /// Read the high byte at direct page | (`operand` + 1) into `operand2`
+    /// (the second read of `MOVW YA,dp`).
+    ReadDpHigh,
+    /// Dummy-read the opcode byte at PC without advancing it (the internal
+    /// cycle of implied/register instructions).
+    DummyReadPc,
+    /// Fetch the branch displacement, then end the instruction unless the
+    /// PSW flag in `.0` equals `.1` (conditional branches are 2 cycles when
+    /// not taken, 4 when taken).
+    FetchOperandBranch(u8, bool),
+    /// Read-modify-write completion: transform `value` per the finish kind
+    /// (with flag updates) and write the result back to `addr`.
+    WriteRmw,
+    /// Compute `addr` = direct page | X and read `value` (the `(X)`
+    /// indirect operand).
+    ReadAtX,
+    /// Compute `addr` = direct page | X and dummy-read it (store form).
+    ReadAtXForStore,
+    /// Compute `addr` = direct page | X and write the finish's source
+    /// register there (`MOV (X)+,A` has no read-before-write).
+    WriteAtX,
+    /// Compute `addr` = `operand2`:`operand` + index and read `value`
+    /// (absolute indexed loads).
+    ReadAbsIdx(Index),
+    /// Compute `addr` = `operand2`:`operand` + index and dummy-read it
+    /// (absolute indexed stores).
+    ReadAbsIdxForStore(Index),
+    /// Read direct page | `operand` and stash the byte back into `operand`
+    /// (the source read of two-operand memory instructions).
+    ReadDpSrcToOperand,
+    /// Read direct page | Y and stash the byte into `operand` (the source
+    /// read of `(X),(Y)` instructions).
+    ReadAtYToOperand,
+    /// Compute `addr` = direct page | `operand2` and write `operand` there
+    /// without a read-before-write (`MOV dp,dp`).
+    WriteDp2Operand,
+    /// Fetch the branch displacement into `operand`, then end the
+    /// instruction unless bit `.0` of `value` equals `.1` (BBS/BBC).
+    FetchOperandBranchBit(u8, bool),
+    /// Push the finish's source register onto the stack (SP decrements).
+    PushReg,
+    /// Pop a byte from the stack into `value` (SP increments first).
+    PopByte,
+    /// Write Y to direct page | (`operand` + 1) (the high write of
+    /// `MOVW dp,YA`).
+    WriteDpHighY,
+    /// INCW/DECW low half: write `value` +/- 1 back to `addr` and keep the
+    /// low result in `value` (`.0` = increment).
+    WordRmwLoWrite(bool),
+    /// INCW/DECW high half: write `operand2` +/- carry/borrow from the low
+    /// result back to `addr`+1 and set N/Z from the 16-bit result
+    /// (`.0` = increment).
+    WordRmwHiWrite(bool),
+    /// Fetch the branch displacement, then end the instruction if A equals
+    /// `value` (CBNE).
+    FetchOperandBranchANe,
+    /// Write `value` - 1 back to `addr` without touching flags, keeping the
+    /// result in `value` (DBNZ dp).
+    WriteDecNoFlags,
+    /// Fetch the branch displacement, then end the instruction if `value`
+    /// is zero (DBNZ dp tail).
+    FetchOperandBranchValueNz,
+    /// Decrement Y, fetch the branch displacement, then end the instruction
+    /// if Y is zero (DBNZ Y tail).
+    FetchOperandBranchDecY,
+    /// Read the byte at `addr` + 1 into `operand2` (the second pointer read
+    /// of `JMP [!abs+X]`).
+    ReadAddrPlus1,
+    /// Read the mem.bit operand target: `addr` = low 13 bits of
+    /// `operand2`:`operand`, `value` = memory byte (bit index is the top
+    /// three bits of `operand2`).
+    ReadMemBitAbs,
+    /// Dummy re-read of `addr` (TSET1/TCLR1 read the target twice).
+    ReadAddrAgain,
+    /// Push the return-address high byte.
+    PushPcHi,
+    /// Push the return-address low byte.
+    PushPcLo,
+    /// Push PSW (BRK's third push).
+    PushPsw,
+    /// Pop a byte from the stack into `operand2` (the second pop of RET).
+    PopByte2,
+    /// Pop PSW from the stack (RETI's first pop).
+    PopPsw,
+    /// Read the TCALL/BRK vector low byte at $FFDE - 2*`.0` into `value`.
+    ReadVecLo(u8),
+    /// Read the TCALL/BRK vector high byte into `operand2`.
+    ReadVecHi(u8),
+    /// Add the index to `addr`, then dummy-read it (the read-before-write
+    /// of pointer stores).
+    ReadTargetForStore(Index),
+    /// Compute `addr` = `operand2`:`operand` and read `value`.
+    ReadAbs,
+    /// Compute `addr` = `operand2`:`operand` and dummy-read it.
+    ReadAbsForStore,
+    /// Read the pointer low byte at direct page | (`operand` + index) into
+    /// `addr` (low half).
+    ReadPtrLo(Index),
+    /// Read the pointer high byte at the following direct-page address.
+    ReadPtrHi(Index),
+    /// Read `value` from `addr` (+ Y for `Index::Y`).
+    ReadTarget(Index),
+    /// Write A/X/Y (per `Finish`) to `addr`.
+    WriteReg,
+}
+
+/// Result action applied together with the final micro-op of a cycle script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Finish {
+    /// No register result (branches, stores).
+    None,
+    /// `A = value`, update N/Z.
+    MovA,
+    /// `X = value`, update N/Z.
+    MovX,
+    /// `Y = value`, update N/Z.
+    MovY,
+    /// Compare A with `value`.
+    CmpA,
+    /// Compare X with `value`.
+    CmpX,
+    /// Compare Y with `value`.
+    CmpY,
+    /// Source register for [`MicroOp::WriteReg`] is A.
+    StoreA,
+    /// Source register for [`MicroOp::WriteReg`] is X.
+    StoreX,
+    /// Source register for [`MicroOp::WriteReg`] is Y.
+    StoreY,
+    /// Source for [`MicroOp::WriteReg`] is the first operand byte (the
+    /// immediate of `MOV dp,#imm`).
+    StoreImm,
+    /// Compare the memory `value` with the first operand byte (the
+    /// immediate of `CMP dp,#imm`).
+    CmpMemImm,
+    /// `YA = operand2:value`, update N/Z from the 16-bit result
+    /// (`MOVW YA,dp`).
+    MovwYa,
+    /// `A |= value`, update N/Z.
+    OrA,
+    /// `A &= value`, update N/Z.
+    AndA,
+    /// `A ^= value`, update N/Z.
+    EorA,
+    /// `A = A + value + C` with full flag update.
+    AdcA,
+    /// `A = A - value - !C` with full flag update.
+    SbcA,
+    /// `A += 1`, update N/Z.
+    IncA,
+    /// `A -= 1`, update N/Z.
+    DecA,
+    /// `X += 1`, update N/Z.
+    IncX,
+    /// `X -= 1`, update N/Z.
+    DecX,
+    /// `Y += 1`, update N/Z.
+    IncY,
+    /// `Y -= 1`, update N/Z.
+    DecY,
+    /// `A = X`, update N/Z.
+    AFromX,
+    /// `X = A`, update N/Z.
+    XFromA,
+    /// `A = Y`, update N/Z.
+    AFromY,
+    /// `Y = A`, update N/Z.
+    YFromA,
+    /// `X = SP`, update N/Z.
+    XFromSp,
+    /// `SP = X`, flags unaffected.
+    SpFromX,
+    /// Set or clear the carry flag.
+    SetCarry(bool),
+    /// Complement the carry flag.
+    NotCarry,
+    /// Clear overflow and half-carry.
+    ClrV,
+    /// Set or clear the direct-page select flag.
+    SetDirectPage(bool),
+    /// Set or clear the interrupt-enable flag.
+    SetInterrupt(bool),
+    /// RMW: `mem += 1`, update N/Z.
+    RmwInc,
+    /// RMW: `mem -= 1`, update N/Z.
+    RmwDec,
+    /// RMW: arithmetic shift left, C/N/Z.
+    RmwAsl,
+    /// RMW: logical shift right, C/N/Z.
+    RmwLsr,
+    /// RMW: rotate left through carry, C/N/Z.
+    RmwRol,
+    /// RMW: rotate right through carry, C/N/Z.
+    RmwRor,
+    /// RMW: `mem |= imm` (first operand), update N/Z.
+    OrMemImm,
+    /// RMW: `mem &= imm`, update N/Z.
+    AndMemImm,
+    /// RMW: `mem ^= imm`, update N/Z.
+    EorMemImm,
+    /// RMW: `mem = mem + imm + C` with full flag update.
+    AdcMemImm,
+    /// RMW: `mem = mem - imm - !C` with full flag update.
+    SbcMemImm,
+    /// `A = value`, update N/Z, then `X += 1` (`MOV A,(X)+`).
+    MovAXInc,
+    /// Store A then `X += 1` (`MOV (X)+,A`).
+    StoreAXInc,
+    /// RMW: set bit `.0` of `mem` (no flags).
+    RmwSet1(u8),
+    /// RMW: clear bit `.0` of `mem` (no flags).
+    RmwClr1(u8),
+    /// Source register for [`MicroOp::PushReg`] is PSW.
+    StorePsw,
+    /// `A = value` from the stack (no flags).
+    PopA,
+    /// `X = value` from the stack (no flags).
+    PopX,
+    /// `Y = value` from the stack (no flags).
+    PopY,
+    /// `PSW = value` from the stack.
+    PopPsw,
+    /// `YA += word` (`value` lo, `operand2` hi) with full flag update.
+    AddwYa,
+    /// `YA -= word` with full flag update.
+    SubwYa,
+    /// Compare YA with the word, update N/Z/C (16-bit).
+    CmpwYa,
+    /// `A = asl(A)` / `rol` / `lsr` / `ror` with shift flags.
+    AslAcc,
+    RolAcc,
+    LsrAcc,
+    RorAcc,
+    /// `PC = operand2:operand` (JMP !abs, CALL !abs tail).
+    JmpAbs,
+    /// `PC = operand2:value` (JMP [!abs+X], TCALL/BRK vectors, RET).
+    JmpPtr,
+    /// `PC = $FF00 | operand` (PCALL).
+    JmpUpage,
+    /// BRK tail: set B, clear I, `PC = operand2:value`.
+    Brk,
+    /// `YA = Y * A` (flags from Y).
+    MulYa,
+    /// `YA / X -> A remainder Y` with flags.
+    DivYa,
+    /// Swap A's nibbles, update N/Z.
+    Xcn,
+    /// Decimal adjust after addition / subtraction.
+    Daa,
+    Das,
+    /// Halt the core (SLEEP/STOP).
+    Halt,
+    /// `C |= mem.bit` (`.0` inverts the bit).
+    Or1(bool),
+    /// `C &= mem.bit` (`.0` inverts the bit).
+    And1(bool),
+    /// `C ^= mem.bit`.
+    Eor1,
+    /// `C = mem.bit`.
+    Mov1CFromMem,
+    /// RMW: store C into mem.bit (MOV1 m.b,C).
+    RmwMov1MemFromC,
+    /// RMW: invert mem.bit (NOT1).
+    RmwNot1,
+    /// RMW: TSET1/TCLR1 — set/clear A's bits in memory, N/Z from A - mem.
+    RmwTset1,
+    RmwTclr1,
 }
 
 /// SPC700 CPU core.
@@ -361,11 +677,10 @@ impl Spc700 {
         bus.idle();
     }
 
-    /// Consume one internal dummy-read cycle. ProcessorTests expose these as
-    /// read-signal cycles with no value; fullsnes classifies their wait timing
-    /// as internal, not as a side-effecting read from the displayed address.
+    /// Consume one dummy-read cycle. ProcessorTests expose these as read-signal
+    /// cycles with no value; Mesen charges the displayed address wait class.
     fn dummy_read_cycle(&mut self, bus: &mut impl Spc700Bus, addr: u16, cycles: &mut u8) {
-        *cycles = cycles.wrapping_add(bus.idle_cycles());
+        *cycles = cycles.wrapping_add(bus.read_cycles(addr));
         bus.dummy_read(addr);
     }
 
@@ -522,25 +837,925 @@ impl Spc700 {
         self.update_nz8(self.a);
     }
 
-    /// Return `true` if the given opcode has a per-cycle script and should be
-    /// driven by [`Self::step_one_cycle`] instead of the atomic [`Self::step`].
+    /// Cycle script for the given opcode, or `None` when the opcode is only
+    /// implemented atomically.
     ///
-    /// Only opcodes critical for the blargg IPL-hack trampoline test
-    /// reproducer are cycle-scripted in this commit; the remainder still run
-    /// atomically via `step`. Subsequent commits in #2908 expand coverage to
-    /// the full instruction set.
+    /// The scripted set covers the blargg IPL-hack trampoline opcodes (#2908)
+    /// plus every opcode the blargg shells use to poll or post through the
+    /// `$F4-$F7` port window (#2914) — the dispatcher in `SnesApu::tick`
+    /// cycle-steps these so port accesses land on the correct wall-clock SPC
+    /// cycle instead of executing atomically at the instruction start.
+    fn cycle_script(opcode: u8) -> Option<(&'static [MicroOp], Finish)> {
+        use Finish as F;
+        use MicroOp::*;
+        const DP_READ: &[MicroOp] = &[FetchOperand, ReadDp(Index::None)];
+        const DP_X_READ: &[MicroOp] = &[FetchOperand, Idle, ReadDp(Index::X)];
+        const ABS_READ: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbs];
+        const IND_X_READ: &[MicroOp] = &[
+            FetchOperand,
+            Idle,
+            ReadPtrLo(Index::X),
+            ReadPtrHi(Index::X),
+            ReadTarget(Index::None),
+        ];
+        const IND_Y_READ: &[MicroOp] = &[
+            FetchOperand,
+            Idle,
+            ReadPtrLo(Index::None),
+            ReadPtrHi(Index::None),
+            ReadTarget(Index::Y),
+        ];
+        const DP_WRITE: &[MicroOp] = &[FetchOperand, ReadDpForStore(Index::None), WriteReg];
+        const DP_IMM_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2ForStore, WriteReg];
+        const DP_IMM_CMP: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2, Idle];
+        const DP_WORD_READ: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), Idle, ReadDpHigh];
+        const IMPLIED: &[MicroOp] = &[DummyReadPc];
+        const IMPLIED3: &[MicroOp] = &[DummyReadPc, Idle];
+        const DP_RMW: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), WriteRmw];
+        const DP_X_RMW: &[MicroOp] = &[FetchOperand, Idle, ReadDp(Index::X), WriteRmw];
+        const ABS_RMW: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbs, WriteRmw];
+        const DP_IMM_RMW: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadDp2, WriteRmw];
+        const AT_X_READ: &[MicroOp] = &[DummyReadPc, ReadAtX];
+        const ABS_X_READ: &[MicroOp] = &[FetchOperand, FetchOperand2, Idle, ReadAbsIdx(Index::X)];
+        const ABS_Y_READ: &[MicroOp] = &[FetchOperand, FetchOperand2, Idle, ReadAbsIdx(Index::Y)];
+        const DP_Y_READ: &[MicroOp] = &[FetchOperand, Idle, ReadDp(Index::Y)];
+        const DP_DP_RMW: &[MicroOp] = &[
+            FetchOperand,
+            ReadDpSrcToOperand,
+            FetchOperand2,
+            ReadDp2,
+            WriteRmw,
+        ];
+        const DP_DP_CMP: &[MicroOp] = &[
+            FetchOperand,
+            ReadDpSrcToOperand,
+            FetchOperand2,
+            ReadDp2,
+            Idle,
+        ];
+        const XY_RMW: &[MicroOp] = &[DummyReadPc, ReadAtYToOperand, ReadAtX, WriteRmw];
+        const XY_CMP: &[MicroOp] = &[DummyReadPc, ReadAtYToOperand, ReadAtX, Idle];
+        const PUSH: &[MicroOp] = &[DummyReadPc, PushReg, Idle];
+        const POP: &[MicroOp] = &[DummyReadPc, Idle, PopByte];
+        const DP_WORD_ARITH: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), Idle, ReadDpHigh];
+        const DP_WORD_CMP: &[MicroOp] = &[FetchOperand, ReadDp(Index::None), ReadDpHigh];
+        const DP_WORD_INCDEC_INC: &[MicroOp] = &[
+            FetchOperand,
+            ReadDp(Index::None),
+            WordRmwLoWrite(true),
+            ReadDpHigh,
+            WordRmwHiWrite(true),
+        ];
+        const DP_WORD_INCDEC_DEC: &[MicroOp] = &[
+            FetchOperand,
+            ReadDp(Index::None),
+            WordRmwLoWrite(false),
+            ReadDpHigh,
+            WordRmwHiWrite(false),
+        ];
+        const DP_X_WRITE: &[MicroOp] = &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg];
+        const ABS_WRITE: &[MicroOp] = &[FetchOperand, FetchOperand2, ReadAbsForStore, WriteReg];
+
+        Some(match opcode {
+            // BRA rel — the trampoline wait-loop opcode.
+            0x2F => (&[FetchOperand, BranchIdle, Idle], F::None),
+            // Conditional branches: 2 cycles not taken, 4 taken.
+            0xF0 => (
+                &[FetchOperandBranch(FLAG_ZERO, true), BranchIdle, Idle],
+                F::None,
+            ),
+            0xD0 => (
+                &[FetchOperandBranch(FLAG_ZERO, false), BranchIdle, Idle],
+                F::None,
+            ),
+            0xB0 => (
+                &[FetchOperandBranch(FLAG_CARRY, true), BranchIdle, Idle],
+                F::None,
+            ),
+            0x90 => (
+                &[FetchOperandBranch(FLAG_CARRY, false), BranchIdle, Idle],
+                F::None,
+            ),
+            0x30 => (
+                &[FetchOperandBranch(FLAG_NEGATIVE, true), BranchIdle, Idle],
+                F::None,
+            ),
+            0x10 => (
+                &[FetchOperandBranch(FLAG_NEGATIVE, false), BranchIdle, Idle],
+                F::None,
+            ),
+            0x70 => (
+                &[FetchOperandBranch(FLAG_OVERFLOW, true), BranchIdle, Idle],
+                F::None,
+            ),
+            0x50 => (
+                &[FetchOperandBranch(FLAG_OVERFLOW, false), BranchIdle, Idle],
+                F::None,
+            ),
+            // MOV A,#imm — the queued micro-op behind the trampoline.
+            0xE8 => (&[ReadImm], F::MovA),
+            // Direct-page reads.
+            0xE4 => (DP_READ, F::MovA),
+            0xF8 => (DP_READ, F::MovX),
+            0xEB => (DP_READ, F::MovY),
+            0x64 => (DP_READ, F::CmpA),
+            // ALU A,dp family (same bus shape as MOV A,dp).
+            0x04 => (DP_READ, F::OrA),
+            0x24 => (DP_READ, F::AndA),
+            0x44 => (DP_READ, F::EorA),
+            0x84 => (DP_READ, F::AdcA),
+            0xA4 => (DP_READ, F::SbcA),
+            // ALU A,dp+X family.
+            0x14 => (DP_X_READ, F::OrA),
+            0x34 => (DP_X_READ, F::AndA),
+            0x54 => (DP_X_READ, F::EorA),
+            0x94 => (DP_X_READ, F::AdcA),
+            0xB4 => (DP_X_READ, F::SbcA),
+            // ALU A,!abs family.
+            0x05 => (ABS_READ, F::OrA),
+            0x25 => (ABS_READ, F::AndA),
+            0x45 => (ABS_READ, F::EorA),
+            0x85 => (ABS_READ, F::AdcA),
+            0xA5 => (ABS_READ, F::SbcA),
+            // ALU A,#imm family (same shape as MOV A,#imm).
+            0x08 => (&[ReadImm], F::OrA),
+            0x28 => (&[ReadImm], F::AndA),
+            0x48 => (&[ReadImm], F::EorA),
+            0x88 => (&[ReadImm], F::AdcA),
+            0xA8 => (&[ReadImm], F::SbcA),
+            0x68 => (&[ReadImm], F::CmpA),
+            // Implied / register ops (dummy read of PC as the internal cycle).
+            0x00 => (IMPLIED, F::None),
+            0xBC => (IMPLIED, F::IncA),
+            0x9C => (IMPLIED, F::DecA),
+            0x3D => (IMPLIED, F::IncX),
+            0x1D => (IMPLIED, F::DecX),
+            0xFC => (IMPLIED, F::IncY),
+            0xDC => (IMPLIED, F::DecY),
+            0x7D => (IMPLIED, F::AFromX),
+            0x5D => (IMPLIED, F::XFromA),
+            0xDD => (IMPLIED, F::AFromY),
+            0xFD => (IMPLIED, F::YFromA),
+            0x9D => (IMPLIED, F::XFromSp),
+            0xBD => (IMPLIED, F::SpFromX),
+            0x60 => (IMPLIED, F::SetCarry(false)),
+            0x80 => (IMPLIED, F::SetCarry(true)),
+            0x20 => (IMPLIED, F::SetDirectPage(false)),
+            0x40 => (IMPLIED, F::SetDirectPage(true)),
+            0xE0 => (IMPLIED, F::ClrV),
+            // EI/DI/NOTC take one extra internal cycle.
+            0xA0 => (IMPLIED3, F::SetInterrupt(true)),
+            0xC0 => (IMPLIED3, F::SetInterrupt(false)),
+            0xED => (IMPLIED3, F::NotCarry),
+            // Read-modify-write dp.
+            0xAB => (DP_RMW, F::RmwInc),
+            0x8B => (DP_RMW, F::RmwDec),
+            0x0B => (DP_RMW, F::RmwAsl),
+            0x4B => (DP_RMW, F::RmwLsr),
+            0x2B => (DP_RMW, F::RmwRol),
+            0x6B => (DP_RMW, F::RmwRor),
+            // Read-modify-write dp+X.
+            0xBB => (DP_X_RMW, F::RmwInc),
+            0x9B => (DP_X_RMW, F::RmwDec),
+            0x1B => (DP_X_RMW, F::RmwAsl),
+            0x5B => (DP_X_RMW, F::RmwLsr),
+            0x3B => (DP_X_RMW, F::RmwRol),
+            0x7B => (DP_X_RMW, F::RmwRor),
+            // Read-modify-write !abs.
+            0xAC => (ABS_RMW, F::RmwInc),
+            0x8C => (ABS_RMW, F::RmwDec),
+            0x0C => (ABS_RMW, F::RmwAsl),
+            0x4C => (ABS_RMW, F::RmwLsr),
+            0x2C => (ABS_RMW, F::RmwRol),
+            0x6C => (ABS_RMW, F::RmwRor),
+            // (X) indirect forms.
+            0xE6 => (AT_X_READ, F::MovA),
+            0xBF => (&[DummyReadPc, ReadAtX, Idle], F::MovAXInc),
+            0xC6 => (&[DummyReadPc, ReadAtXForStore, WriteReg], F::StoreA),
+            0xAF => (&[DummyReadPc, Idle, WriteAtX], F::StoreAXInc),
+            0x06 => (AT_X_READ, F::OrA),
+            0x26 => (AT_X_READ, F::AndA),
+            0x46 => (AT_X_READ, F::EorA),
+            0x66 => (AT_X_READ, F::CmpA),
+            0x86 => (AT_X_READ, F::AdcA),
+            0xA6 => (AT_X_READ, F::SbcA),
+            // Absolute stores of X/Y and indexed stores of A.
+            0xC9 => (ABS_WRITE, F::StoreX),
+            0xCC => (ABS_WRITE, F::StoreY),
+            0xD5 => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    Idle,
+                    ReadAbsIdxForStore(Index::X),
+                    WriteReg,
+                ],
+                F::StoreA,
+            ),
+            0xD6 => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    Idle,
+                    ReadAbsIdxForStore(Index::Y),
+                    WriteReg,
+                ],
+                F::StoreA,
+            ),
+            // MOV dp+Y,X / MOV dp+X,Y.
+            0xD9 => (
+                &[FetchOperand, Idle, ReadDpForStore(Index::Y), WriteReg],
+                F::StoreX,
+            ),
+            0xDB => (
+                &[FetchOperand, Idle, ReadDpForStore(Index::X), WriteReg],
+                F::StoreY,
+            ),
+            // Absolute-indexed and dp-indexed loads.
+            0xF5 => (ABS_X_READ, F::MovA),
+            0xF6 => (ABS_Y_READ, F::MovA),
+            0xF9 => (DP_Y_READ, F::MovX),
+            0xFB => (DP_X_READ, F::MovY),
+            // ALU A,!abs+X / !abs+Y.
+            0x15 => (ABS_X_READ, F::OrA),
+            0x16 => (ABS_Y_READ, F::OrA),
+            0x35 => (ABS_X_READ, F::AndA),
+            0x36 => (ABS_Y_READ, F::AndA),
+            0x55 => (ABS_X_READ, F::EorA),
+            0x56 => (ABS_Y_READ, F::EorA),
+            0x75 => (ABS_X_READ, F::CmpA),
+            0x76 => (ABS_Y_READ, F::CmpA),
+            0x95 => (ABS_X_READ, F::AdcA),
+            0x96 => (ABS_Y_READ, F::AdcA),
+            0xB5 => (ABS_X_READ, F::SbcA),
+            0xB6 => (ABS_Y_READ, F::SbcA),
+            // SET1/CLR1 dp.bit, BBS/BBC dp.bit,rel, dp<-dp ALU, (X)<-(Y) ALU.
+            0x02 => (DP_RMW, F::RmwSet1(0)),
+            0x22 => (DP_RMW, F::RmwSet1(1)),
+            0x42 => (DP_RMW, F::RmwSet1(2)),
+            0x62 => (DP_RMW, F::RmwSet1(3)),
+            0x82 => (DP_RMW, F::RmwSet1(4)),
+            0xA2 => (DP_RMW, F::RmwSet1(5)),
+            0xC2 => (DP_RMW, F::RmwSet1(6)),
+            0xE2 => (DP_RMW, F::RmwSet1(7)),
+            0x12 => (DP_RMW, F::RmwClr1(0)),
+            0x32 => (DP_RMW, F::RmwClr1(1)),
+            0x52 => (DP_RMW, F::RmwClr1(2)),
+            0x72 => (DP_RMW, F::RmwClr1(3)),
+            0x92 => (DP_RMW, F::RmwClr1(4)),
+            0xB2 => (DP_RMW, F::RmwClr1(5)),
+            0xD2 => (DP_RMW, F::RmwClr1(6)),
+            0xF2 => (DP_RMW, F::RmwClr1(7)),
+            0x03 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(0, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x23 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(1, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x43 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(2, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x63 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(3, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x83 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(4, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xA3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(5, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xC3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(6, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xE3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(7, true),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x13 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(0, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x33 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(1, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x53 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(2, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x73 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(3, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x93 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(4, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xB3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(5, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xD3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(6, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xF3 => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchBit(7, false),
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x09 => (DP_DP_RMW, F::OrMemImm),
+            0x29 => (DP_DP_RMW, F::AndMemImm),
+            0x49 => (DP_DP_RMW, F::EorMemImm),
+            0x89 => (DP_DP_RMW, F::AdcMemImm),
+            0xA9 => (DP_DP_RMW, F::SbcMemImm),
+            0x69 => (DP_DP_CMP, F::CmpMemImm),
+            0xFA => (
+                &[
+                    FetchOperand,
+                    ReadDpSrcToOperand,
+                    FetchOperand2,
+                    WriteDp2Operand,
+                ],
+                F::None,
+            ),
+            0x19 => (XY_RMW, F::OrMemImm),
+            0x39 => (XY_RMW, F::AndMemImm),
+            0x59 => (XY_RMW, F::EorMemImm),
+            0x99 => (XY_RMW, F::AdcMemImm),
+            0xB9 => (XY_RMW, F::SbcMemImm),
+            0x79 => (XY_CMP, F::CmpMemImm),
+            // Stack.
+            0x2D => (PUSH, F::StoreA),
+            0x4D => (PUSH, F::StoreX),
+            0x6D => (PUSH, F::StoreY),
+            0x0D => (PUSH, F::StorePsw),
+            0xAE => (POP, F::PopA),
+            0xCE => (POP, F::PopX),
+            0xEE => (POP, F::PopY),
+            0x8E => (POP, F::PopPsw),
+            // 16-bit word ops on dp.
+            0xDA => (
+                &[
+                    FetchOperand,
+                    ReadDpForStore(Index::None),
+                    WriteReg,
+                    WriteDpHighY,
+                ],
+                F::StoreA,
+            ),
+            0x3A => (DP_WORD_INCDEC_INC, F::None),
+            0x1A => (DP_WORD_INCDEC_DEC, F::None),
+            0x7A => (DP_WORD_ARITH, F::AddwYa),
+            0x9A => (DP_WORD_ARITH, F::SubwYa),
+            0x5A => (DP_WORD_CMP, F::CmpwYa),
+            // ALU A,[dp+X] / A,[dp]+Y (pointer shapes shared with MOV/CMP).
+            0x07 => (IND_X_READ, F::OrA),
+            0x27 => (IND_X_READ, F::AndA),
+            0x47 => (IND_X_READ, F::EorA),
+            0x87 => (IND_X_READ, F::AdcA),
+            0xA7 => (IND_X_READ, F::SbcA),
+            0x17 => (IND_Y_READ, F::OrA),
+            0x37 => (IND_Y_READ, F::AndA),
+            0x57 => (IND_Y_READ, F::EorA),
+            0x97 => (IND_Y_READ, F::AdcA),
+            0xB7 => (IND_Y_READ, F::SbcA),
+            // CBNE / DBNZ.
+            0x2E => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    Idle,
+                    FetchOperandBranchANe,
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xDE => (
+                &[
+                    FetchOperand,
+                    Idle,
+                    ReadDp(Index::X),
+                    Idle,
+                    FetchOperandBranchANe,
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0x6E => (
+                &[
+                    FetchOperand,
+                    ReadDp(Index::None),
+                    WriteDecNoFlags,
+                    FetchOperandBranchValueNz,
+                    BranchIdle,
+                    Idle,
+                ],
+                F::None,
+            ),
+            0xFE => (
+                &[DummyReadPc, Idle, FetchOperandBranchDecY, BranchIdle, Idle],
+                F::None,
+            ),
+            // Accumulator shifts and remaining immediates/abs compares.
+            0x1C => (IMPLIED, F::AslAcc),
+            0x3C => (IMPLIED, F::RolAcc),
+            0x5C => (IMPLIED, F::LsrAcc),
+            0x7C => (IMPLIED, F::RorAcc),
+            0x8D => (&[ReadImm], F::MovY),
+            0xCD => (&[ReadImm], F::MovX),
+            0xAD => (&[ReadImm], F::CmpY),
+            0xC8 => (&[ReadImm], F::CmpX),
+            0x1E => (ABS_READ, F::CmpX),
+            0x5E => (ABS_READ, F::CmpY),
+            // Jumps, calls and returns.
+            0x5F => (&[FetchOperand, FetchOperand2], F::JmpAbs),
+            0x1F => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    Idle,
+                    ReadAbsIdx(Index::X),
+                    ReadAddrPlus1,
+                ],
+                F::JmpPtr,
+            ),
+            0x3F => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    Idle,
+                ],
+                F::JmpAbs,
+            ),
+            0x4F => (&[FetchOperand, Idle, PushPcHi, PushPcLo, Idle], F::JmpUpage),
+            0x6F => (&[DummyReadPc, Idle, PopByte, PopByte2], F::JmpPtr),
+            0x7F => (&[DummyReadPc, Idle, PopPsw, PopByte, PopByte2], F::JmpPtr),
+            0x0F => (
+                &[
+                    DummyReadPc,
+                    PushPcHi,
+                    PushPcLo,
+                    PushPsw,
+                    Idle,
+                    ReadVecLo(0),
+                    ReadVecHi(0),
+                ],
+                F::Brk,
+            ),
+            0x01 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(0),
+                    ReadVecHi(0),
+                ],
+                F::JmpPtr,
+            ),
+            0x11 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(1),
+                    ReadVecHi(1),
+                ],
+                F::JmpPtr,
+            ),
+            0x21 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(2),
+                    ReadVecHi(2),
+                ],
+                F::JmpPtr,
+            ),
+            0x31 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(3),
+                    ReadVecHi(3),
+                ],
+                F::JmpPtr,
+            ),
+            0x41 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(4),
+                    ReadVecHi(4),
+                ],
+                F::JmpPtr,
+            ),
+            0x51 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(5),
+                    ReadVecHi(5),
+                ],
+                F::JmpPtr,
+            ),
+            0x61 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(6),
+                    ReadVecHi(6),
+                ],
+                F::JmpPtr,
+            ),
+            0x71 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(7),
+                    ReadVecHi(7),
+                ],
+                F::JmpPtr,
+            ),
+            0x81 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(8),
+                    ReadVecHi(8),
+                ],
+                F::JmpPtr,
+            ),
+            0x91 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(9),
+                    ReadVecHi(9),
+                ],
+                F::JmpPtr,
+            ),
+            0xA1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(10),
+                    ReadVecHi(10),
+                ],
+                F::JmpPtr,
+            ),
+            0xB1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(11),
+                    ReadVecHi(11),
+                ],
+                F::JmpPtr,
+            ),
+            0xC1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(12),
+                    ReadVecHi(12),
+                ],
+                F::JmpPtr,
+            ),
+            0xD1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(13),
+                    ReadVecHi(13),
+                ],
+                F::JmpPtr,
+            ),
+            0xE1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(14),
+                    ReadVecHi(14),
+                ],
+                F::JmpPtr,
+            ),
+            0xF1 => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    PushPcHi,
+                    PushPcLo,
+                    Idle,
+                    ReadVecLo(15),
+                    ReadVecHi(15),
+                ],
+                F::JmpPtr,
+            ),
+            // Arithmetic specials.
+            0xCF => (
+                &[DummyReadPc, Idle, Idle, Idle, Idle, Idle, Idle, Idle],
+                F::MulYa,
+            ),
+            0x9E => (
+                &[
+                    DummyReadPc,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                    Idle,
+                ],
+                F::DivYa,
+            ),
+            0x9F => (&[DummyReadPc, Idle, Idle, Idle], F::Xcn),
+            0xDF => (&[DummyReadPc, Idle], F::Daa),
+            0xBE => (&[DummyReadPc, Idle], F::Das),
+            0xEF => (&[Idle, Idle, Idle, Idle, Idle, Idle], F::Halt),
+            0xFF => (&[Idle, Idle, Idle, Idle, Idle, Idle], F::Halt),
+            // Absolute mem.bit ops and TSET1/TCLR1.
+            0x0A => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs, Idle],
+                F::Or1(false),
+            ),
+            0x2A => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs, Idle],
+                F::Or1(true),
+            ),
+            0x4A => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs],
+                F::And1(false),
+            ),
+            0x6A => (&[FetchOperand, FetchOperand2, ReadMemBitAbs], F::And1(true)),
+            0x8A => (&[FetchOperand, FetchOperand2, ReadMemBitAbs, Idle], F::Eor1),
+            0xAA => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs],
+                F::Mov1CFromMem,
+            ),
+            0xCA => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs, Idle, WriteRmw],
+                F::RmwMov1MemFromC,
+            ),
+            0xEA => (
+                &[FetchOperand, FetchOperand2, ReadMemBitAbs, WriteRmw],
+                F::RmwNot1,
+            ),
+            0x0E => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    ReadAbs,
+                    ReadAddrAgain,
+                    WriteRmw,
+                ],
+                F::RmwTset1,
+            ),
+            0x4E => (
+                &[
+                    FetchOperand,
+                    FetchOperand2,
+                    ReadAbs,
+                    ReadAddrAgain,
+                    WriteRmw,
+                ],
+                F::RmwTclr1,
+            ),
+            // Indirect pointer stores.
+            0xC7 => (
+                &[
+                    FetchOperand,
+                    Idle,
+                    ReadPtrLo(Index::X),
+                    ReadPtrHi(Index::X),
+                    ReadTargetForStore(Index::None),
+                    WriteReg,
+                ],
+                F::StoreA,
+            ),
+            0xD7 => (
+                &[
+                    FetchOperand,
+                    ReadPtrLo(Index::None),
+                    ReadPtrHi(Index::None),
+                    Idle,
+                    ReadTargetForStore(Index::Y),
+                    WriteReg,
+                ],
+                F::StoreA,
+            ),
+            // ALU dp,#imm read-modify-write (imm first, dp second).
+            0x18 => (DP_IMM_RMW, F::OrMemImm),
+            0x38 => (DP_IMM_RMW, F::AndMemImm),
+            0x58 => (DP_IMM_RMW, F::EorMemImm),
+            0x98 => (DP_IMM_RMW, F::AdcMemImm),
+            0xB8 => (DP_IMM_RMW, F::SbcMemImm),
+            0x3E => (DP_READ, F::CmpX),
+            0x7E => (DP_READ, F::CmpY),
+            // Direct-page indexed reads.
+            0xF4 => (DP_X_READ, F::MovA),
+            0x74 => (DP_X_READ, F::CmpA),
+            // Absolute reads.
+            0xE5 => (ABS_READ, F::MovA),
+            0xE9 => (ABS_READ, F::MovX),
+            0xEC => (ABS_READ, F::MovY),
+            0x65 => (ABS_READ, F::CmpA),
+            // Indirect reads through a direct-page pointer.
+            0xE7 => (IND_X_READ, F::MovA),
+            0x67 => (IND_X_READ, F::CmpA),
+            0xF7 => (IND_Y_READ, F::MovA),
+            0x77 => (IND_Y_READ, F::CmpA),
+            // Stores (port posts).
+            0xC4 => (DP_WRITE, F::StoreA),
+            // MOV dp,#imm (imm fetched first, dp second).
+            0x8F => (DP_IMM_WRITE, F::StoreImm),
+            // CMP dp,#imm (imm fetched first, dp second) — the IPL's $CC
+            // handshake wait loop polls $F4 with this opcode.
+            0x78 => (DP_IMM_CMP, F::CmpMemImm),
+            // MOVW YA,dp — the IPL's 16-bit port reads ($F4/$F6).
+            0xBA => (DP_WORD_READ, F::MovwYa),
+            0xD8 => (DP_WRITE, F::StoreX),
+            0xCB => (DP_WRITE, F::StoreY),
+            0xD4 => (DP_X_WRITE, F::StoreA),
+            0xC5 => (ABS_WRITE, F::StoreA),
+        })
+    }
+
+    /// Return `true` if the given opcode has a per-cycle script and can be
+    /// driven by [`Self::step_one_cycle`] instead of the atomic [`Self::step`].
     pub fn opcode_is_cycle_scripted(opcode: u8) -> bool {
-        matches!(
-            opcode,
-            // BRA rel — the trampoline wait-loop opcode. Cycle-scripted so the
-            // operand byte (port-3 in the trampoline) is read at the correct
-            // sub-cycle, observing brief host pulses.
-            0x2F
-            // MOV A,#imm — the queued micro-op behind the trampoline. Cycle-
-            // scripted so the operand byte (port-1 in the trampoline) is read
-            // when the host expects.
-            | 0xE8
-        )
+        Self::cycle_script(opcode).is_some()
     }
 
     /// `true` while a cycle-scripted opcode is mid-execution.
@@ -573,61 +1788,580 @@ impl Spc700 {
             self.in_progress = Some(InProgressOp {
                 opcode,
                 cycle: 1,
-                operand: 0,
+                ..InProgressOp::default()
             });
             return;
         }
 
         let mut op = self.in_progress.take().expect("checked above");
+        let (script, finish) =
+            Self::cycle_script(op.opcode).expect("in_progress holds non-scripted opcode");
+        // op.cycle counts executed cycles; cycle 1 was the opcode fetch, so
+        // micro-op k (0-based) runs as cycle k+2.
+        let micro_index = usize::from(op.cycle) - 1;
         op.cycle = op.cycle.wrapping_add(1);
-        let done = match op.opcode {
-            0x2F => self.bra_cycle(bus, &mut op),
-            0xE8 => self.mov_a_imm_cycle(bus, &mut op),
-            _ => unreachable!(
-                "in_progress holds non-cycle-scripted opcode ${:02X}",
-                op.opcode
-            ),
-        };
-        if !done {
+        self.run_micro_op(bus, &mut op, script[micro_index], finish);
+        let done = op.done_early || micro_index + 1 == script.len();
+        if done {
+            self.apply_finish(finish, &op);
+        } else {
             self.in_progress = Some(op);
         }
     }
 
-    /// BRA rel cycle handler. 4 cycles total (cycle 1 = opcode fetch elsewhere).
-    fn bra_cycle(&mut self, bus: &mut impl Spc700Bus, op: &mut InProgressOp) -> bool {
-        match op.cycle {
-            2 => {
-                // Operand fetch.
+    /// Execute one micro-op of a cycle script (exactly one bus operation).
+    fn run_micro_op(
+        &mut self,
+        bus: &mut impl Spc700Bus,
+        op: &mut InProgressOp,
+        micro: MicroOp,
+        finish: Finish,
+    ) {
+        let index_of = |index: Index, x: u8, y: u8| match index {
+            Index::None => 0,
+            Index::X => x,
+            Index::Y => y,
+        };
+        match micro {
+            MicroOp::ReadImm => {
+                op.value = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+            }
+            MicroOp::FetchOperand => {
                 op.operand = bus.read(self.pc);
                 self.pc = self.pc.wrapping_add(1);
-                false
             }
-            3 => {
-                // First idle + take branch.
+            MicroOp::FetchOperand2 => {
+                op.operand2 = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+            }
+            MicroOp::Idle => {
+                bus.idle();
+            }
+            MicroOp::BranchIdle => {
                 self.branch(op.operand as i8);
                 bus.idle();
-                false
             }
-            4 => {
-                // Second idle. Done.
-                bus.idle();
-                true
+            MicroOp::ReadDp(index) => {
+                op.addr = self.direct_page_base()
+                    | u16::from(op.operand.wrapping_add(index_of(index, self.x, self.y)));
+                op.value = bus.read(op.addr);
             }
-            _ => unreachable!("BRA cycle {} out of range", op.cycle),
+            MicroOp::ReadDpForStore(index) => {
+                op.addr = self.direct_page_base()
+                    | u16::from(op.operand.wrapping_add(index_of(index, self.x, self.y)));
+                bus.read(op.addr);
+            }
+            MicroOp::ReadDp2ForStore => {
+                op.addr = self.direct_page_base() | u16::from(op.operand2);
+                bus.read(op.addr);
+            }
+            MicroOp::ReadDp2 => {
+                op.addr = self.direct_page_base() | u16::from(op.operand2);
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadDpHigh => {
+                let addr = self.direct_page_base() | u16::from(op.operand.wrapping_add(1));
+                op.operand2 = bus.read(addr);
+            }
+            MicroOp::DummyReadPc => {
+                bus.read(self.pc);
+            }
+            MicroOp::FetchOperandBranch(flag, wanted) => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                if self.flag(flag) != wanted {
+                    op.done_early = true;
+                }
+            }
+            MicroOp::ReadAtX => {
+                op.addr = self.direct_page_base() | u16::from(self.x);
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadAtXForStore => {
+                op.addr = self.direct_page_base() | u16::from(self.x);
+                bus.read(op.addr);
+            }
+            MicroOp::WriteAtX => {
+                op.addr = self.direct_page_base() | u16::from(self.x);
+                bus.write(op.addr, self.a);
+            }
+            MicroOp::ReadDpSrcToOperand => {
+                let addr = self.direct_page_base() | u16::from(op.operand);
+                op.operand = bus.read(addr);
+            }
+            MicroOp::ReadAtYToOperand => {
+                let addr = self.direct_page_base() | u16::from(self.y);
+                op.operand = bus.read(addr);
+            }
+            MicroOp::WriteDp2Operand => {
+                op.addr = self.direct_page_base() | u16::from(op.operand2);
+                bus.write(op.addr, op.operand);
+            }
+            MicroOp::FetchOperandBranchBit(bit, wanted) => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                if (op.value & (1 << bit) != 0) != wanted {
+                    op.done_early = true;
+                }
+            }
+            MicroOp::PushReg => {
+                let value = match finish {
+                    Finish::StoreA => self.a,
+                    Finish::StoreX => self.x,
+                    Finish::StoreY => self.y,
+                    Finish::StorePsw => self.psw,
+                    _ => unreachable!("PushReg without a store finish"),
+                };
+                let addr = 0x0100u16 | u16::from(self.sp);
+                bus.write(addr, value);
+                self.sp = self.sp.wrapping_sub(1);
+            }
+            MicroOp::PopByte => {
+                self.sp = self.sp.wrapping_add(1);
+                let addr = 0x0100u16 | u16::from(self.sp);
+                op.value = bus.read(addr);
+            }
+            MicroOp::WriteDpHighY => {
+                let addr = self.direct_page_base() | u16::from(op.operand.wrapping_add(1));
+                bus.write(addr, self.y);
+            }
+            MicroOp::WordRmwLoWrite(inc) => {
+                let result = if inc {
+                    op.value.wrapping_add(1)
+                } else {
+                    op.value.wrapping_sub(1)
+                };
+                bus.write(op.addr, result);
+                op.value = result;
+            }
+            MicroOp::WordRmwHiWrite(inc) => {
+                // High byte was loaded into `operand2` by ReadDpHigh; the
+                // carry/borrow propagates when the low byte wrapped.
+                let hi_addr = self.direct_page_base() | u16::from(op.operand.wrapping_add(1));
+                let result = if inc {
+                    op.operand2.wrapping_add(u8::from(op.value == 0x00))
+                } else {
+                    op.operand2.wrapping_sub(u8::from(op.value == 0xFF))
+                };
+                bus.write(hi_addr, result);
+                self.update_nz16((u16::from(result) << 8) | u16::from(op.value));
+            }
+            MicroOp::FetchOperandBranchANe => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                if self.a == op.value {
+                    op.done_early = true;
+                }
+            }
+            MicroOp::WriteDecNoFlags => {
+                let result = op.value.wrapping_sub(1);
+                bus.write(op.addr, result);
+                op.value = result;
+            }
+            MicroOp::FetchOperandBranchValueNz => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                if op.value == 0 {
+                    op.done_early = true;
+                }
+            }
+            MicroOp::FetchOperandBranchDecY => {
+                op.operand = bus.read(self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                self.y = self.y.wrapping_sub(1);
+                if self.y == 0 {
+                    op.done_early = true;
+                }
+            }
+            MicroOp::ReadAddrPlus1 => {
+                op.operand2 = bus.read(op.addr.wrapping_add(1));
+            }
+            MicroOp::ReadMemBitAbs => {
+                op.addr = (u16::from(op.operand) | (u16::from(op.operand2) << 8)) & 0x1FFF;
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadAddrAgain => {
+                bus.read(op.addr);
+            }
+            MicroOp::PushPcHi => {
+                let addr = 0x0100u16 | u16::from(self.sp);
+                bus.write(addr, (self.pc >> 8) as u8);
+                self.sp = self.sp.wrapping_sub(1);
+            }
+            MicroOp::PushPcLo => {
+                let addr = 0x0100u16 | u16::from(self.sp);
+                bus.write(addr, self.pc as u8);
+                self.sp = self.sp.wrapping_sub(1);
+            }
+            MicroOp::PushPsw => {
+                let addr = 0x0100u16 | u16::from(self.sp);
+                bus.write(addr, self.psw);
+                self.sp = self.sp.wrapping_sub(1);
+            }
+            MicroOp::PopByte2 => {
+                self.sp = self.sp.wrapping_add(1);
+                let addr = 0x0100u16 | u16::from(self.sp);
+                op.operand2 = bus.read(addr);
+            }
+            MicroOp::PopPsw => {
+                self.sp = self.sp.wrapping_add(1);
+                let addr = 0x0100u16 | u16::from(self.sp);
+                self.psw = bus.read(addr);
+            }
+            MicroOp::ReadVecLo(n) => {
+                op.addr = 0xFFDEu16.wrapping_sub(2 * u16::from(n));
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadVecHi(_) => {
+                op.operand2 = bus.read(op.addr.wrapping_add(1));
+            }
+            MicroOp::ReadTargetForStore(index) => {
+                op.addr = op
+                    .addr
+                    .wrapping_add(u16::from(index_of(index, self.x, self.y)));
+                bus.read(op.addr);
+            }
+            MicroOp::ReadAbsIdx(index) => {
+                let base = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+                op.addr = base.wrapping_add(u16::from(index_of(index, self.x, self.y)));
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadAbsIdxForStore(index) => {
+                let base = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+                op.addr = base.wrapping_add(u16::from(index_of(index, self.x, self.y)));
+                bus.read(op.addr);
+            }
+            MicroOp::WriteRmw => {
+                let result = match finish {
+                    Finish::RmwInc => {
+                        let r = op.value.wrapping_add(1);
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::RmwDec => {
+                        let r = op.value.wrapping_sub(1);
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::RmwAsl => self.asl(op.value),
+                    Finish::RmwLsr => self.lsr(op.value),
+                    Finish::RmwRol => self.rol(op.value),
+                    Finish::RmwRor => self.ror(op.value),
+                    Finish::OrMemImm => {
+                        let r = op.value | op.operand;
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::AndMemImm => {
+                        let r = op.value & op.operand;
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::EorMemImm => {
+                        let r = op.value ^ op.operand;
+                        self.update_nz8(r);
+                        r
+                    }
+                    Finish::AdcMemImm => {
+                        let saved = self.a;
+                        self.a = op.value;
+                        self.add_with_carry_to_a(op.operand);
+                        let r = self.a;
+                        self.a = saved;
+                        r
+                    }
+                    Finish::RmwSet1(bit) => op.value | (1 << bit),
+                    Finish::RmwClr1(bit) => op.value & !(1 << bit),
+                    Finish::RmwMov1MemFromC => {
+                        let mask = 1u8 << (op.operand2 >> 5);
+                        if self.flag(FLAG_CARRY) {
+                            op.value | mask
+                        } else {
+                            op.value & !mask
+                        }
+                    }
+                    Finish::RmwNot1 => op.value ^ (1 << (op.operand2 >> 5)),
+                    Finish::RmwTset1 => {
+                        self.update_nz8(self.a.wrapping_sub(op.value));
+                        op.value | self.a
+                    }
+                    Finish::RmwTclr1 => {
+                        self.update_nz8(self.a.wrapping_sub(op.value));
+                        op.value & !self.a
+                    }
+                    Finish::SbcMemImm => {
+                        let saved = self.a;
+                        self.a = op.value;
+                        self.subtract_with_borrow_from_a(op.operand);
+                        let r = self.a;
+                        self.a = saved;
+                        r
+                    }
+                    _ => unreachable!("WriteRmw without an RMW finish"),
+                };
+                bus.write(op.addr, result);
+            }
+            MicroOp::ReadAbs => {
+                op.addr = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+                op.value = bus.read(op.addr);
+            }
+            MicroOp::ReadAbsForStore => {
+                op.addr = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+                bus.read(op.addr);
+            }
+            MicroOp::ReadPtrLo(index) => {
+                let ptr = op.operand.wrapping_add(index_of(index, self.x, self.y));
+                op.addr = u16::from(bus.read(self.direct_page_base() | u16::from(ptr)));
+            }
+            MicroOp::ReadPtrHi(index) => {
+                let ptr = op
+                    .operand
+                    .wrapping_add(index_of(index, self.x, self.y))
+                    .wrapping_add(1);
+                let hi = bus.read(self.direct_page_base() | u16::from(ptr));
+                op.addr |= u16::from(hi) << 8;
+            }
+            MicroOp::ReadTarget(index) => {
+                let addr = op
+                    .addr
+                    .wrapping_add(u16::from(index_of(index, self.x, self.y)));
+                op.value = bus.read(addr);
+            }
+            MicroOp::WriteReg => {
+                let value = match finish {
+                    Finish::StoreA | Finish::StoreAXInc => self.a,
+                    Finish::StoreX => self.x,
+                    Finish::StoreY => self.y,
+                    Finish::StoreImm => op.operand,
+                    _ => unreachable!("WriteReg without a store finish"),
+                };
+                bus.write(op.addr, value);
+            }
         }
     }
 
-    /// MOV A,#imm cycle handler. 2 cycles total (cycle 1 = opcode fetch elsewhere).
-    fn mov_a_imm_cycle(&mut self, bus: &mut impl Spc700Bus, op: &mut InProgressOp) -> bool {
-        match op.cycle {
-            2 => {
-                let imm = bus.read(self.pc);
-                self.pc = self.pc.wrapping_add(1);
-                self.a = imm;
-                self.update_nz8(self.a);
-                true
+    /// Apply the result action of a completed cycle script.
+    fn apply_finish(&mut self, finish: Finish, op: &InProgressOp) {
+        match finish {
+            Finish::None
+            | Finish::StoreA
+            | Finish::StoreX
+            | Finish::StoreY
+            | Finish::StoreImm
+            | Finish::RmwInc
+            | Finish::RmwDec
+            | Finish::RmwAsl
+            | Finish::RmwLsr
+            | Finish::RmwRol
+            | Finish::RmwRor
+            | Finish::OrMemImm
+            | Finish::AndMemImm
+            | Finish::EorMemImm
+            | Finish::AdcMemImm
+            | Finish::SbcMemImm => {}
+            Finish::RmwSet1(_) | Finish::RmwClr1(_) | Finish::StorePsw => {}
+            Finish::PopA => {
+                self.a = op.value;
             }
-            _ => unreachable!("MOV A,#imm cycle {} out of range", op.cycle),
+            Finish::PopX => {
+                self.x = op.value;
+            }
+            Finish::PopY => {
+                self.y = op.value;
+            }
+            Finish::PopPsw => {
+                self.psw = op.value;
+            }
+            Finish::AddwYa => {
+                self.add_to_ya(u16::from(op.value) | (u16::from(op.operand2) << 8));
+            }
+            Finish::SubwYa => {
+                self.subtract_from_ya(u16::from(op.value) | (u16::from(op.operand2) << 8));
+            }
+            Finish::CmpwYa => {
+                self.compare_ya(u16::from(op.value) | (u16::from(op.operand2) << 8));
+            }
+            Finish::AslAcc => self.a = self.asl(self.a),
+            Finish::RolAcc => self.a = self.rol(self.a),
+            Finish::LsrAcc => self.a = self.lsr(self.a),
+            Finish::RorAcc => self.a = self.ror(self.a),
+            Finish::JmpAbs => {
+                self.pc = u16::from(op.operand) | (u16::from(op.operand2) << 8);
+            }
+            Finish::JmpPtr => {
+                self.pc = u16::from(op.value) | (u16::from(op.operand2) << 8);
+            }
+            Finish::JmpUpage => {
+                self.pc = 0xFF00 | u16::from(op.operand);
+            }
+            Finish::Brk => {
+                self.set_flag(FLAG_BREAK, true);
+                self.set_flag(FLAG_INTERRUPT, false);
+                self.pc = u16::from(op.value) | (u16::from(op.operand2) << 8);
+            }
+            Finish::MulYa => self.mul_ya(),
+            Finish::DivYa => self.div_ya(),
+            Finish::Xcn => {
+                self.a = self.a.rotate_left(4);
+                self.update_nz8(self.a);
+            }
+            Finish::Daa => {
+                let mut value = self.a;
+                if self.flag(FLAG_CARRY) || value > 0x99 {
+                    value = value.wrapping_add(0x60);
+                    self.set_flag(FLAG_CARRY, true);
+                }
+                if self.flag(FLAG_HALF_CARRY) || (value & 0x0F) > 0x09 {
+                    value = value.wrapping_add(0x06);
+                }
+                self.a = value;
+                self.update_nz8(self.a);
+            }
+            Finish::Das => {
+                let mut value = self.a;
+                if !self.flag(FLAG_CARRY) || value > 0x99 {
+                    value = value.wrapping_sub(0x60);
+                    self.set_flag(FLAG_CARRY, false);
+                }
+                if !self.flag(FLAG_HALF_CARRY) || (value & 0x0F) > 0x09 {
+                    value = value.wrapping_sub(0x06);
+                }
+                self.a = value;
+                self.update_nz8(self.a);
+            }
+            Finish::Halt => self.halted = true,
+            Finish::Or1(invert) => {
+                let bit = (op.value >> (op.operand2 >> 5)) & 1 != 0;
+                let bit = bit != invert;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) || bit);
+            }
+            Finish::And1(invert) => {
+                let bit = (op.value >> (op.operand2 >> 5)) & 1 != 0;
+                let bit = bit != invert;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) && bit);
+            }
+            Finish::Eor1 => {
+                let bit = (op.value >> (op.operand2 >> 5)) & 1 != 0;
+                self.set_flag(FLAG_CARRY, self.flag(FLAG_CARRY) != bit);
+            }
+            Finish::Mov1CFromMem => {
+                let bit = (op.value >> (op.operand2 >> 5)) & 1 != 0;
+                self.set_flag(FLAG_CARRY, bit);
+            }
+            Finish::RmwMov1MemFromC | Finish::RmwNot1 | Finish::RmwTset1 | Finish::RmwTclr1 => {}
+            Finish::MovA => {
+                self.a = op.value;
+                self.update_nz8(self.a);
+            }
+            Finish::CmpMemImm => {
+                self.compare_values(op.value, op.operand);
+            }
+            Finish::OrA => {
+                self.a |= op.value;
+                self.update_nz8(self.a);
+            }
+            Finish::AndA => {
+                self.a &= op.value;
+                self.update_nz8(self.a);
+            }
+            Finish::EorA => {
+                self.a ^= op.value;
+                self.update_nz8(self.a);
+            }
+            Finish::AdcA => {
+                self.add_with_carry_to_a(op.value);
+            }
+            Finish::SbcA => {
+                self.subtract_with_borrow_from_a(op.value);
+            }
+            Finish::MovAXInc => {
+                self.a = op.value;
+                self.update_nz8(self.a);
+                self.x = self.x.wrapping_add(1);
+            }
+            Finish::StoreAXInc => {
+                self.x = self.x.wrapping_add(1);
+            }
+            Finish::IncA => {
+                self.a = self.a.wrapping_add(1);
+                self.update_nz8(self.a);
+            }
+            Finish::DecA => {
+                self.a = self.a.wrapping_sub(1);
+                self.update_nz8(self.a);
+            }
+            Finish::IncX => {
+                self.x = self.x.wrapping_add(1);
+                self.update_nz8(self.x);
+            }
+            Finish::DecX => {
+                self.x = self.x.wrapping_sub(1);
+                self.update_nz8(self.x);
+            }
+            Finish::IncY => {
+                self.y = self.y.wrapping_add(1);
+                self.update_nz8(self.y);
+            }
+            Finish::DecY => {
+                self.y = self.y.wrapping_sub(1);
+                self.update_nz8(self.y);
+            }
+            Finish::AFromX => {
+                self.a = self.x;
+                self.update_nz8(self.a);
+            }
+            Finish::XFromA => {
+                self.x = self.a;
+                self.update_nz8(self.x);
+            }
+            Finish::AFromY => {
+                self.a = self.y;
+                self.update_nz8(self.a);
+            }
+            Finish::YFromA => {
+                self.y = self.a;
+                self.update_nz8(self.y);
+            }
+            Finish::XFromSp => {
+                self.x = self.sp;
+                self.update_nz8(self.x);
+            }
+            Finish::SpFromX => {
+                self.sp = self.x;
+            }
+            Finish::SetCarry(v) => {
+                self.set_flag(FLAG_CARRY, v);
+            }
+            Finish::NotCarry => {
+                self.set_flag(FLAG_CARRY, !self.flag(FLAG_CARRY));
+            }
+            Finish::ClrV => {
+                self.set_flag(FLAG_OVERFLOW, false);
+                self.set_flag(FLAG_HALF_CARRY, false);
+            }
+            Finish::SetDirectPage(v) => {
+                self.set_flag(FLAG_DIRECT_PAGE, v);
+            }
+            Finish::SetInterrupt(v) => {
+                self.set_flag(FLAG_INTERRUPT, v);
+            }
+            Finish::MovwYa => {
+                self.a = op.value;
+                self.y = op.operand2;
+                self.update_nz16((u16::from(self.y) << 8) | u16::from(self.a));
+            }
+            Finish::MovX => {
+                self.x = op.value;
+                self.update_nz8(self.x);
+            }
+            Finish::MovY => {
+                self.y = op.value;
+                self.update_nz8(self.y);
+            }
+            Finish::CmpA => self.compare_a(op.value),
+            Finish::CmpX => self.compare_x(op.value),
+            Finish::CmpY => self.compare_y(op.value),
         }
     }
 
@@ -2566,7 +4300,7 @@ impl Spc700 {
             0xEF => {
                 trace_apu!(1; "SPC entered SLEEP at ${:04X}", opcode_pc);
                 for _ in 0..3 {
-                    self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                     self.idle_cycle(bus, &mut cycles);
                 }
                 self.halted = true;
@@ -2575,7 +4309,7 @@ impl Spc700 {
             0xFF => {
                 trace_apu!(1; "SPC entered STOP at ${:04X}", opcode_pc);
                 for _ in 0..3 {
-                    self.dummy_read_cycle(bus, self.pc, &mut cycles);
+                    self.idle_cycle(bus, &mut cycles);
                     self.idle_cycle(bus, &mut cycles);
                 }
                 self.halted = true;
@@ -2614,6 +4348,12 @@ mod tests {
     struct VariableIdleBus {
         ram: Box<[u8; 0x1_0000]>,
         cycles: u64,
+        idle_cost: u8,
+    }
+
+    struct VariableReadBus {
+        ram: Box<[u8; 0x1_0000]>,
+        read_cost: u8,
         idle_cost: u8,
     }
 
@@ -2684,6 +4424,44 @@ mod tests {
         }
     }
 
+    impl VariableReadBus {
+        fn new(read_cost: u8, idle_cost: u8) -> Self {
+            Self {
+                ram: Box::new([0; 0x1_0000]),
+                read_cost,
+                idle_cost,
+            }
+        }
+
+        fn load(&mut self, addr: u16, data: &[u8]) {
+            for (i, &byte) in data.iter().enumerate() {
+                self.ram[addr.wrapping_add(i as u16) as usize] = byte;
+            }
+        }
+    }
+
+    impl Spc700Bus for VariableReadBus {
+        fn read_cycles(&self, _addr: u16) -> u8 {
+            self.read_cost
+        }
+
+        fn read(&mut self, addr: u16) -> u8 {
+            self.ram[addr as usize]
+        }
+
+        fn write(&mut self, addr: u16, value: u8) {
+            self.ram[addr as usize] = value;
+        }
+
+        fn idle_cycles(&self) -> u8 {
+            self.idle_cost
+        }
+
+        fn idle(&mut self) {}
+
+        fn dummy_read(&mut self, _addr: u16) {}
+    }
+
     impl Spc700Bus for VariableIdleBus {
         fn read(&mut self, addr: u16) -> u8 {
             self.cycles = self.cycles.wrapping_add(1);
@@ -2717,6 +4495,21 @@ mod tests {
         assert_eq!(cpu.sp(), 0);
         assert_eq!(cpu.pc(), 0);
         assert_eq!(cpu.psw(), 0);
+    }
+
+    #[test]
+    fn nop_dummy_read_uses_displayed_address_read_cycle_cost() {
+        let mut cpu = Spc700::new();
+        let mut bus = VariableReadBus::new(2, 1);
+        bus.load(0x0200, &[0x00]); // NOP
+        cpu.load_state_for_processor_test(0, 0, 0, 0xEF, 0x0200, 0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(
+            cycles, 4,
+            "Mesen charges dummy reads using the displayed address wait-state class"
+        );
     }
 
     #[test]
@@ -6112,5 +7905,402 @@ mod tests {
         assert_eq!(first_cycles, 31);
         assert_eq!(second_cycles, 5);
         assert_eq!(bus.cycles(), 36);
+    }
+
+    // -----------------------------------------------------------------------
+    // #2914: sub-instruction port visibility requires cycle scripts for every
+    // opcode the blargg shell uses to poll or post through $F4-$F7. Each
+    // scripted opcode must execute identically to the atomic step():
+    // same registers/flags/PC and the same bus-op sequence, one bus op per
+    // step_one_cycle call.
+    // -----------------------------------------------------------------------
+
+    fn assert_cycle_script_matches_atomic(setup: &[u8], insn: &[u8], pokes: &[(u16, u8)]) {
+        let opcode = insn[0];
+        assert!(
+            Spc700::opcode_is_cycle_scripted(opcode),
+            "opcode ${opcode:02X} must be cycle-scripted"
+        );
+
+        let build = |ops_recorded: bool| {
+            let mut bus = RecordingBus::new();
+            let mut program = setup.to_vec();
+            program.extend_from_slice(insn);
+            bus.load(0x0200, &program);
+            for &(addr, value) in pokes {
+                bus.ram[addr as usize] = value;
+            }
+            let mut cpu = Spc700::new();
+            cpu.pc = 0x0200;
+            // Execute the setup instructions atomically on both instances.
+            let setup_end = 0x0200 + setup.len() as u16;
+            while cpu.pc() < setup_end {
+                cpu.step(&mut bus);
+            }
+            if !ops_recorded {
+                bus.ops.clear();
+            }
+            (cpu, bus)
+        };
+
+        let (mut atomic_cpu, mut atomic_bus) = build(false);
+        let (mut scripted_cpu, mut scripted_bus) = build(false);
+        atomic_bus.ops.clear();
+        scripted_bus.ops.clear();
+
+        let cycles = atomic_cpu.step(&mut atomic_bus);
+
+        let mut scripted_cycles = 0u8;
+        loop {
+            scripted_cpu.step_one_cycle(&mut scripted_bus);
+            scripted_cycles += 1;
+            if !scripted_cpu.has_in_progress_op() {
+                break;
+            }
+        }
+
+        assert_eq!(
+            scripted_cycles, cycles,
+            "op ${opcode:02X}: cycle-stepped op count must equal atomic cycles"
+        );
+        assert_eq!(
+            scripted_bus.ops, atomic_bus.ops,
+            "op ${opcode:02X}: bus-op sequences must match"
+        );
+        assert_eq!(scripted_cpu.a(), atomic_cpu.a(), "op ${opcode:02X}: A");
+        assert_eq!(scripted_cpu.x(), atomic_cpu.x(), "op ${opcode:02X}: X");
+        assert_eq!(scripted_cpu.y(), atomic_cpu.y(), "op ${opcode:02X}: Y");
+        assert_eq!(
+            scripted_cpu.psw(),
+            atomic_cpu.psw(),
+            "op ${opcode:02X}: PSW"
+        );
+        assert_eq!(scripted_cpu.pc(), atomic_cpu.pc(), "op ${opcode:02X}: PC");
+        assert_eq!(
+            &scripted_bus.ram[..],
+            &atomic_bus.ram[..],
+            "op ${opcode:02X}: RAM"
+        );
+    }
+
+    #[test]
+    fn cycle_scripts_match_atomic_execution_for_port_poll_and_post_opcodes() {
+        // Register setup prefixes executed atomically before the instruction
+        // under test: A=$42, X=$02, Y=$01.
+        let regs: &[u8] = &[0xE8, 0x42, 0xCD, 0x02, 0x8D, 0x01];
+        let pokes: &[(u16, u8)] = &[
+            (0x00F4, 0x80),
+            (0x00F5, 0x01),
+            (0x00F6, 0x42),
+            (0x0030, 0xF3),
+            (0x0031, 0x00),
+            (0x0032, 0xF4),
+            (0x0033, 0x00),
+        ];
+
+        // Existing trampoline scripts must stay covered.
+        assert_cycle_script_matches_atomic(regs, &[0x2F, 0x02], pokes); // BRA rel
+        assert_cycle_script_matches_atomic(regs, &[0xE8, 0x99], pokes); // MOV A,#imm
+
+        // Direct-page reads.
+        assert_cycle_script_matches_atomic(regs, &[0xE4, 0xF4], pokes); // MOV A,dp
+        assert_cycle_script_matches_atomic(regs, &[0xF8, 0xF5], pokes); // MOV X,dp
+        assert_cycle_script_matches_atomic(regs, &[0xEB, 0xF6], pokes); // MOV Y,dp
+        assert_cycle_script_matches_atomic(regs, &[0x64, 0xF4], pokes); // CMP A,dp
+        assert_cycle_script_matches_atomic(regs, &[0x3E, 0xF4], pokes); // CMP X,dp
+        assert_cycle_script_matches_atomic(regs, &[0x7E, 0xF4], pokes); // CMP Y,dp
+
+        // Direct-page indexed reads.
+        assert_cycle_script_matches_atomic(regs, &[0xF4, 0xF2], pokes); // MOV A,dp+X
+        assert_cycle_script_matches_atomic(regs, &[0x74, 0xF2], pokes); // CMP A,dp+X
+
+        // Absolute reads.
+        assert_cycle_script_matches_atomic(regs, &[0xE5, 0xF4, 0x00], pokes); // MOV A,!abs
+        assert_cycle_script_matches_atomic(regs, &[0x8F, 0x77, 0xF4], pokes); // MOV dp,#imm
+        assert_cycle_script_matches_atomic(regs, &[0x78, 0xCC, 0xF4], pokes); // CMP dp,#imm
+        assert_cycle_script_matches_atomic(regs, &[0xBA, 0xF4], pokes); // MOVW YA,dp
+
+        // ALU A,mem/imm family (#2938 universal stepping, batch 1).
+        for (insn, name) in [
+            (&[0x04u8, 0xF4][..], "OR A,dp"),
+            (&[0x24, 0xF4], "AND A,dp"),
+            (&[0x44, 0xF4], "EOR A,dp"),
+            (&[0x84, 0xF4], "ADC A,dp"),
+            (&[0xA4, 0xF4], "SBC A,dp"),
+            (&[0x14, 0xF2], "OR A,dp+X"),
+            (&[0x34, 0xF2], "AND A,dp+X"),
+            (&[0x54, 0xF2], "EOR A,dp+X"),
+            (&[0x94, 0xF2], "ADC A,dp+X"),
+            (&[0xB4, 0xF2], "SBC A,dp+X"),
+            (&[0x05, 0xF4, 0x00], "OR A,!abs"),
+            (&[0x25, 0xF4, 0x00], "AND A,!abs"),
+            (&[0x45, 0xF4, 0x00], "EOR A,!abs"),
+            (&[0x85, 0xF4, 0x00], "ADC A,!abs"),
+            (&[0xA5, 0xF4, 0x00], "SBC A,!abs"),
+            (&[0x08, 0x5A], "OR A,#imm"),
+            (&[0x28, 0x5A], "AND A,#imm"),
+            (&[0x48, 0x5A], "EOR A,#imm"),
+            (&[0x88, 0x5A], "ADC A,#imm"),
+            (&[0xA8, 0x5A], "SBC A,#imm"),
+            (&[0x68, 0x5A], "CMP A,#imm"),
+        ] {
+            let _ = name;
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
+        // Implied / register / flag ops (#2938 batch 2).
+        for op in [
+            0x00u8, 0xBC, 0x9C, 0x3D, 0x1D, 0xFC, 0xDC, 0x7D, 0x5D, 0xDD, 0xFD, 0x9D, 0xBD, 0x60,
+            0x80, 0x20, 0x40, 0xE0, 0xA0, 0xC0, 0xED,
+        ] {
+            assert_cycle_script_matches_atomic(regs, &[op], pokes);
+        }
+
+        // Conditional branches, taken and not-taken (#2938 batch 3). The
+        // shared register file has Z clear / C clear / N clear / V clear, so
+        // pick both polarities per flag.
+        for op in [0xF0u8, 0xD0, 0xB0, 0x90, 0x30, 0x10, 0x70, 0x50] {
+            assert_cycle_script_matches_atomic(regs, &[op, 0x02], pokes);
+        }
+
+        // Read-modify-write and dp,#imm families (#2938 batch 4).
+        for insn in [
+            &[0xABu8, 0x30][..],
+            &[0x8B, 0x30],
+            &[0x0B, 0x30],
+            &[0x4B, 0x30],
+            &[0x2B, 0x30],
+            &[0x6B, 0x30],
+            &[0xBB, 0x2E],
+            &[0x9B, 0x2E],
+            &[0x1B, 0x2E],
+            &[0x5B, 0x2E],
+            &[0x3B, 0x2E],
+            &[0x7B, 0x2E],
+            &[0xAC, 0x30, 0x00],
+            &[0x8C, 0x30, 0x00],
+            &[0x0C, 0x30, 0x00],
+            &[0x4C, 0x30, 0x00],
+            &[0x2C, 0x30, 0x00],
+            &[0x6C, 0x30, 0x00],
+            &[0x18, 0x5A, 0x30],
+            &[0x38, 0x5A, 0x30],
+            &[0x58, 0x5A, 0x30],
+            &[0x98, 0x5A, 0x30],
+            &[0xB8, 0x5A, 0x30],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
+        // (X) indirect, indexed loads/stores, ALU abs+X/Y (#2938 batch 5).
+        for insn in [
+            &[0xE6u8][..],
+            &[0xBF],
+            &[0xC6],
+            &[0xAF],
+            &[0x06],
+            &[0x26],
+            &[0x46],
+            &[0x66],
+            &[0x86],
+            &[0xA6],
+            &[0xC9, 0x30, 0x00],
+            &[0xCC, 0x30, 0x00],
+            &[0xD5, 0x30, 0x00],
+            &[0xD6, 0x30, 0x00],
+            &[0xD9, 0x2E],
+            &[0xDB, 0x2E],
+            &[0xF5, 0x2E, 0x00],
+            &[0xF6, 0x2E, 0x00],
+            &[0xF9, 0x2E],
+            &[0xFB, 0x2E],
+            &[0x15, 0x2E, 0x00],
+            &[0x16, 0x2E, 0x00],
+            &[0x35, 0x2E, 0x00],
+            &[0x36, 0x2E, 0x00],
+            &[0x55, 0x2E, 0x00],
+            &[0x56, 0x2E, 0x00],
+            &[0x75, 0x2E, 0x00],
+            &[0x76, 0x2E, 0x00],
+            &[0x95, 0x2E, 0x00],
+            &[0x96, 0x2E, 0x00],
+            &[0xB5, 0x2E, 0x00],
+            &[0xB6, 0x2E, 0x00],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
+        // Bit ops, dp<-dp, (X)<-(Y) families (#2938 batch 6).
+        for insn in [
+            &[0x02u8, 0x30][..],
+            &[0x22, 0x30],
+            &[0x42, 0x30],
+            &[0x62, 0x30],
+            &[0x82, 0x30],
+            &[0xA2, 0x30],
+            &[0xC2, 0x30],
+            &[0xE2, 0x30],
+            &[0x12, 0x30],
+            &[0x32, 0x30],
+            &[0x52, 0x30],
+            &[0x72, 0x30],
+            &[0x92, 0x30],
+            &[0xB2, 0x30],
+            &[0xD2, 0x30],
+            &[0xF2, 0x30],
+            &[0x03, 0x30, 0x02],
+            &[0x23, 0x30, 0x02],
+            &[0x43, 0x30, 0x02],
+            &[0x63, 0x30, 0x02],
+            &[0x83, 0x30, 0x02],
+            &[0xA3, 0x30, 0x02],
+            &[0xC3, 0x30, 0x02],
+            &[0xE3, 0x30, 0x02],
+            &[0x13, 0x30, 0x02],
+            &[0x33, 0x30, 0x02],
+            &[0x53, 0x30, 0x02],
+            &[0x73, 0x30, 0x02],
+            &[0x93, 0x30, 0x02],
+            &[0xB3, 0x30, 0x02],
+            &[0xD3, 0x30, 0x02],
+            &[0xF3, 0x30, 0x02],
+            &[0x09, 0x31, 0x30],
+            &[0x29, 0x31, 0x30],
+            &[0x49, 0x31, 0x30],
+            &[0x69, 0x31, 0x30],
+            &[0x89, 0x31, 0x30],
+            &[0xA9, 0x31, 0x30],
+            &[0xFA, 0x31, 0x30],
+            &[0x19],
+            &[0x39],
+            &[0x59],
+            &[0x79],
+            &[0x99],
+            &[0xB9],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
+        // Stack, word ops, indirect ALU, CBNE/DBNZ (#2938 batch 7).
+        for insn in [
+            &[0x2Du8][..],
+            &[0x4D],
+            &[0x6D],
+            &[0x0D],
+            &[0xAE],
+            &[0xCE],
+            &[0xEE],
+            &[0x8E],
+            &[0xDA, 0x30],
+            &[0x3A, 0x30],
+            &[0x1A, 0x30],
+            &[0x7A, 0x30],
+            &[0x9A, 0x30],
+            &[0x5A, 0x30],
+            &[0x07, 0x30],
+            &[0x27, 0x30],
+            &[0x47, 0x30],
+            &[0x87, 0x30],
+            &[0xA7, 0x30],
+            &[0x17, 0x30],
+            &[0x37, 0x30],
+            &[0x57, 0x30],
+            &[0x97, 0x30],
+            &[0xB7, 0x30],
+            &[0x2E, 0x30, 0x02],
+            &[0xDE, 0x2E, 0x02],
+            &[0x6E, 0x30, 0x02],
+            &[0xFE, 0x02],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+
+        // Final batch: shifts-on-A, remaining imm/abs compares, jumps,
+        // calls/returns, MUL/DIV/XCN/DAA/DAS, mem.bit ops, TSET/TCLR,
+        // pointer stores (#2938 batch 8).
+        for insn in [
+            &[0x1Cu8][..],
+            &[0x3C],
+            &[0x5C],
+            &[0x7C],
+            &[0x8D, 0x5A],
+            &[0xCD, 0x5A],
+            &[0xAD, 0x5A],
+            &[0xC8, 0x5A],
+            &[0x1E, 0x30, 0x00],
+            &[0x5E, 0x30, 0x00],
+            &[0x5F, 0x00, 0x03],
+            &[0x1F, 0x30, 0x00],
+            &[0x3F, 0x00, 0x03],
+            &[0x4F, 0x20],
+            &[0x0F],
+            &[0x01],
+            &[0x11],
+            &[0x21],
+            &[0x31],
+            &[0x41],
+            &[0x51],
+            &[0x61],
+            &[0x71],
+            &[0x81],
+            &[0x91],
+            &[0xA1],
+            &[0xB1],
+            &[0xC1],
+            &[0xD1],
+            &[0xE1],
+            &[0xF1],
+            &[0xCF],
+            &[0x9E],
+            &[0x9F],
+            &[0xDF],
+            &[0xBE],
+            &[0x0A, 0x33, 0x25],
+            &[0x2A, 0x33, 0x25],
+            &[0x4A, 0x33, 0x25],
+            &[0x6A, 0x33, 0x25],
+            &[0x8A, 0x33, 0x25],
+            &[0xAA, 0x33, 0x25],
+            &[0xCA, 0x33, 0x25],
+            &[0xEA, 0x33, 0x25],
+            &[0x0E, 0x30, 0x00],
+            &[0x4E, 0x30, 0x00],
+            &[0xC7, 0x30],
+            &[0xD7, 0x30],
+        ] {
+            assert_cycle_script_matches_atomic(regs, insn, pokes);
+        }
+        // RET/RETI need a primed stack; run them with SP below pushed data.
+        assert_cycle_script_matches_atomic(regs, &[0x6F], pokes);
+        assert_cycle_script_matches_atomic(regs, &[0x7F], pokes);
+        // SLEEP/STOP halt the core.
+        assert_cycle_script_matches_atomic(regs, &[0xEF], pokes);
+        assert_cycle_script_matches_atomic(regs, &[0xFF], pokes);
+
+        // Coverage pin for #2938: bump as families are scripted; the goal
+        // is 256, at which point the atomic path is deleted.
+        let scripted = (0u16..=0xFF)
+            .filter(|&op| Spc700::opcode_is_cycle_scripted(op as u8))
+            .count();
+        assert_eq!(
+            scripted, 256,
+            "cycle-script coverage changed; update the pin"
+        );
+        assert_cycle_script_matches_atomic(regs, &[0xE9, 0xF5, 0x00], pokes); // MOV X,!abs
+        assert_cycle_script_matches_atomic(regs, &[0xEC, 0xF6, 0x00], pokes); // MOV Y,!abs
+        assert_cycle_script_matches_atomic(regs, &[0x65, 0xF4, 0x00], pokes); // CMP A,!abs
+
+        // Indirect reads through a direct-page pointer.
+        assert_cycle_script_matches_atomic(regs, &[0xE7, 0x30], pokes); // MOV A,[dp+X]
+        assert_cycle_script_matches_atomic(regs, &[0x67, 0x30], pokes); // CMP A,[dp+X]
+        assert_cycle_script_matches_atomic(regs, &[0xF7, 0x30], pokes); // MOV A,[dp]+Y
+        assert_cycle_script_matches_atomic(regs, &[0x77, 0x30], pokes); // CMP A,[dp]+Y
+
+        // Port posts (stores).
+        assert_cycle_script_matches_atomic(regs, &[0xC4, 0xF4], pokes); // MOV dp,A
+        assert_cycle_script_matches_atomic(regs, &[0xD8, 0xF5], pokes); // MOV dp,X
+        assert_cycle_script_matches_atomic(regs, &[0xCB, 0xF6], pokes); // MOV dp,Y
+        assert_cycle_script_matches_atomic(regs, &[0xD4, 0xF2], pokes); // MOV dp+X,A
+        assert_cycle_script_matches_atomic(regs, &[0xC5, 0xF4, 0x00], pokes); // MOV !abs,A
     }
 }

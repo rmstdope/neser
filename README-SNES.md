@@ -128,7 +128,7 @@ CRC32 against a human-approved PASS capture. To approve a new golden, run with
 committed integrity with
 `python -m scripts.compute_snes_rom_asset_integrity <dir>`.
 
-**Passing (17) — visually-approved screen-CRC goldens:**
+**Passing (18) — visually-approved screen-CRC goldens:**
 
 | ROM | Category | Golden CRC |
 | --- | --- | --- |
@@ -139,12 +139,13 @@ committed integrity with
 | `test_ram_disable_ipl` | SMP | `0xD001765E` |
 | `spc_smp` | SMP | `0xEFD13576` (frame 2200) |
 | `spc_mem_access_times` | SMP | `0x3AC3E30F` |
+| `spc_dsp6` | DSP | `0x05CD5DA7` (frame 9100, see below) |
 | `spc_timer` | Timers | `0x249738B2` |
-| `test_speed` | Timers | `0xB02E63CE` |
-| `test_timer_speed` | Timers | `0xED59F2AF` |
-| `test_timer_speed2` | Timers | `0xED59F2AF` |
-| `test_timer_speed_2` | Timers | `0x48DAACE9` |
-| `test_timer_speed3` | Timers | `0x8B6CB1A1` |
+| `test_speed` | Timers | `0xFAE499DA` |
+| `test_timer_speed` | Timers | `0xA4D0ACB0` |
+| `test_timer_speed2` | Timers | `0xA4D0ACB0` |
+| `test_timer_speed_2` | Timers | `0xCAF1E3BC` |
+| `test_timer_speed3` | Timers | `0x367A08A5` |
 | `test_timer_stop` | Timers | `0x7CC2B76B` |
 | `test_timer_stop2` | Timers | `0xB2CC2986` |
 | `speed_2_freezes2` | Timers | `0x6E1BF905` |
@@ -166,15 +167,11 @@ timer's stage-1 prescaler square wave is high to inject one target-counter
 clock (the forced-low input is a falling edge at the timer's edge detector),
 with TnOUT preserved across the stop.
 
-**Currently failing (1) — committed with an `#[ignore]`'d test:**
-
-When the emulator is improved to produce a Passed screen, run
-`NESER_CAPTURE_SCREEN=1 cargo test … -- --ignored` to capture the golden,
-replace the `0x0000_0000` placeholder CRC in the test, and remove `#[ignore]`.
-
-| ROM | Category | Known failure |
-| --- | --- | --- |
-| `spc_dsp6` | DSP | Failed 03: DSP echo/basics |
+`spc_dsp6` runs blargg's full S-DSP suite (KON, Misc, Order, Random and
+Timing batteries, ~9000 frames) and ends with a "PASSED TESTS" screen on a
+blue background; its test uses a 600M-tick budget to reach frame 9100. Note
+that real 3-chip SNES consoles fail parts of this ROM — the golden matches
+Mesen2's DSP model, which passes it fully.
 
 Run SNES tests during development with:
 
