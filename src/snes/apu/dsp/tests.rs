@@ -1745,6 +1745,116 @@ fn echo_write_excludes_voice0_output_accumulated_at_phase_31() {
 }
 
 #[test]
+fn pmon_is_latched_at_slot_27() {
+    // PMON is reloaded once per sample at slot 27 (Mesen Dsp::Exec case
+    // 27: `PitchModulationOn = ReadReg(PMON) & 0xFE`), not read live at
+    // each voice's Step3c — blargg dsp6 "Timing/Misc/27 pmon" (#2914).
+    let mut dsp = Sdsp::new();
+    let mut aram = vec![0u8; 0x1_0000];
+    dsp.write_reg(0x3D, 0x01); // NON: voice 0 outputs the noise LFSR
+    dsp.write_reg(0x07, 0x7F); // V0 GAIN direct max
+    dsp.write_reg(0x12, 0x00); // V1 PITCHL
+    dsp.write_reg(0x13, 0x10); // V1 PITCHH -> pitch $1000
+    dsp.write_reg(0x6C, 0x20); // FLG: unmute, noise rate 0 (LFSR static)
+    dsp.noise_lfsr = 0x2AC0;
+    activate_voice_for_gain(&mut dsp, 0);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 4);
+    assert_ne!(dsp.voices[0].mod_source, 0, "voice 0 must produce output");
+    assert_eq!(dsp.voices[1].pitch_step, 0x1000);
+
+    // Write PMON just after slot 27; voice 1's Step3c (slot 1) must still
+    // see the value latched at the previous slot 27.
+    while dsp.phase != 28 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    dsp.write_reg(0x2D, 0x02); // PMON: modulate voice 1 by voice 0
+    for _ in 0..6 {
+        dsp.step_phase_with_memory(&mut aram); // slots 28..31, 0, 1
+    }
+    assert_eq!(
+        dsp.voices[1].pitch_step, 0x1000,
+        "a PMON write after slot 27 must not affect the next Step3c"
+    );
+
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    assert_ne!(
+        dsp.voices[1].pitch_step, 0x1000,
+        "PMON must apply once slot 27 has latched it"
+    );
+}
+
+#[test]
+fn non_is_latched_at_slot_28() {
+    // NON is reloaded once per sample at slot 28 (Mesen Dsp::Exec case
+    // 28: `NoiseOn = ReadReg(NON)`), not read live at Step3c (#2914).
+    let mut dsp = Sdsp::new();
+    let mut aram = vec![0u8; 0x1_0000];
+    dsp.write_reg(0x07, 0x7F); // V0 GAIN direct max
+    dsp.write_reg(0x6C, 0x20); // FLG: unmute, noise rate 0 (LFSR static)
+    dsp.noise_lfsr = 0x2AC0;
+    activate_voice_for_gain(&mut dsp, 0);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 4);
+    assert_eq!(dsp.voices[0].current_output, 0, "BRR-silent voice");
+
+    // Write NON just after slot 28; voice 0's Step3c (slot 30) must
+    // still see the value latched at slot 28.
+    while dsp.phase != 29 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    dsp.write_reg(0x3D, 0x01);
+    while dsp.phase != 31 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    assert_eq!(
+        dsp.voices[0].current_output, 0,
+        "a NON write after slot 28 must not affect the next Step3c"
+    );
+
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    assert_ne!(
+        dsp.voices[0].current_output, 0,
+        "the noise output must appear once slot 28 has latched NON"
+    );
+}
+
+#[test]
+fn dir_is_latched_at_slot_28() {
+    // DIR is reloaded once per sample at slot 28 (Mesen Dsp::Exec case
+    // 28: `DirSampleTableAddress = ReadReg(DIR)`), so the pointer fetch
+    // at the voice's Step2 uses the latched value (#2914).
+    let mut dsp = Sdsp::new();
+    let mut aram = vec![0u8; 0x1_0000];
+    // Loop-entry pointers (kon_delay == 0 reads entry base+2).
+    aram[0x1002] = 0x34;
+    aram[0x1003] = 0x12; // DIR $10 -> loop pointer $1234
+    aram[0x2002] = 0x78;
+    aram[0x2003] = 0x56; // DIR $20 -> loop pointer $5678
+    dsp.write_reg(0x5D, 0x10);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 2);
+    assert_eq!(dsp.voices[0].brr_next_addr, 0x1234);
+
+    // Write DIR between slot 28 and voice 0's Step2 (slot 21): the fetch
+    // must still use the DIR latched at slot 28.
+    while dsp.phase != 18 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    dsp.write_reg(0x5D, 0x20);
+    for _ in 0..4 {
+        dsp.step_phase_with_memory(&mut aram); // slots 18..21 (Step2)
+    }
+    assert_eq!(
+        dsp.voices[0].brr_next_addr, 0x1234,
+        "a DIR write after slot 28 must not affect this sample's fetch"
+    );
+
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    assert_eq!(
+        dsp.voices[0].brr_next_addr, 0x5678,
+        "the new DIR must apply once slot 28 has latched it"
+    );
+}
+
+#[test]
 fn endx_bit_is_published_at_voice_step7_not_at_brr_decode() {
     // The end-block flag raised at Step4 is staged through a buffer at
     // Step5 and only becomes readable at Step7, two slots later (Mesen

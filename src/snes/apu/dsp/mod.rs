@@ -68,6 +68,12 @@ pub struct Sdsp {
     #[serde(default)]
     dir: u8,
     #[serde(default)]
+    dir_latched: u8,
+    #[serde(default)]
+    pmon_latched: u8,
+    #[serde(default)]
+    non_latched: u8,
+    #[serde(default)]
     esa: u8,
     #[serde(default)]
     edl: u8,
@@ -146,6 +152,9 @@ impl Sdsp {
             endx_buffer: 0,
             looped: 0,
             dir: 0,
+            dir_latched: 0,
+            pmon_latched: 0,
+            non_latched: 0,
             esa: 0,
             edl: 0,
             kon_pending: 0,
@@ -212,6 +221,9 @@ impl Sdsp {
         self.echo_vol_r = self.regs[0x3C] as i8;
         self.echo_enable = self.regs[0x4D];
         self.dir = self.regs[0x5D];
+        self.dir_latched = self.dir;
+        self.pmon_latched = self.regs[0x2D] & 0xFE;
+        self.non_latched = self.regs[0x3D];
         self.flg = self.regs[0x6C];
         self.esa = self.regs[0x6D];
         self.edl = self.regs[0x7D];
@@ -683,8 +695,8 @@ impl Sdsp {
     /// the start entry while the key-on delay runs, the loop entry after.
     fn process_voice2(&mut self, voice: usize, aram: Option<&[u8]>) {
         if let Some(aram) = aram {
-            let base =
-                (usize::from(self.dir) << 8) + usize::from(self.voices[voice].srcn_latch) * 4;
+            let base = (usize::from(self.dir_latched) << 8)
+                + usize::from(self.voices[voice].srcn_latch) * 4;
             let entry = if self.voices[voice].kon_delay == 0 {
                 base + 2
             } else {
@@ -789,8 +801,8 @@ impl Sdsp {
         if let Some(voice) = Self::voice3c_phase_voice(self.phase) {
             let aram_read = aram.as_deref();
             let soft_reset = self.flg & 0x80 != 0;
-            let pmon = self.regs[usize::from(PMON_REG)];
-            let non = self.regs[usize::from(NON_REG)];
+            let pmon = self.pmon_latched;
+            let non = self.non_latched;
             self.process_voice3c(voice, soft_reset, pmon, non, aram_read);
         }
         if let Some(voice) = Self::voice4_phase_voice(self.phase) {
@@ -800,7 +812,16 @@ impl Sdsp {
         if let Some(voice) = Self::voice5_phase_voice(self.phase) {
             self.process_voice5(voice);
         }
+        if self.phase == 27 {
+            // PMON is reloaded once per sample here (Mesen Dsp::Exec case
+            // 27); voice 0 has no pitch modulation.
+            self.pmon_latched = self.regs[usize::from(PMON_REG)] & 0xFE;
+        }
         if self.phase == 28 {
+            // DIR, NON and EON are reloaded once per sample here (Mesen
+            // Dsp::Exec case 28).
+            self.dir_latched = self.dir;
+            self.non_latched = self.regs[usize::from(NON_REG)];
             self.echo_enable_current = self.echo_enable;
             self.echo_state.sample_left_echo_write_enable(self.flg);
         }

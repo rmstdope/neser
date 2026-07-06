@@ -137,9 +137,16 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "fails: DSP echo/basics (Failed 03) — fix emulator then update CRC"]
     fn blargg_spc_dsp6_passes() {
-        run_rom_with_expected_crc_at_frame("spc_dsp6.sfc", 9000, 0x0000_0000);
+        // Full suite (KON, Misc, Order, Random and Timing batteries) ends
+        // with "PASSED TESTS" on a blue background just before frame
+        // 9000; the default 400M-tick budget stops short of that.
+        run_rom_with_expected_crc_full(
+            "spc_dsp6.sfc",
+            9100,
+            0x05CD_5DA7,
+            RunConfig::new(600_000_000, 0),
+        );
     }
 
     #[test]
