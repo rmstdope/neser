@@ -62,6 +62,10 @@ pub struct Sdsp {
     #[serde(default)]
     endx: u8,
     #[serde(default)]
+    endx_buffer: u8,
+    #[serde(default)]
+    looped: u8,
+    #[serde(default)]
     dir: u8,
     #[serde(default)]
     esa: u8,
@@ -139,6 +143,8 @@ impl Sdsp {
             echo_enable_current: 0,
             flg: 0xE0,
             endx: 0,
+            endx_buffer: 0,
+            looped: 0,
             dir: 0,
             esa: 0,
             edl: 0,
@@ -612,6 +618,7 @@ impl Sdsp {
     }
 
     fn process_voice4(&mut self, voice: usize, aram: Option<&[u8]>) {
+        self.looped = 0;
         if self.voices[voice].interpolation_pos >= 0x4000
             && let Some(aram) = aram
         {
@@ -620,9 +627,10 @@ impl Sdsp {
             if v.brr_offset >= 7 {
                 if v.brr_header & 0x01 != 0 {
                     // End block reached: jump to the (re-fetched) loop
-                    // pointer and raise ENDX for this voice.
+                    // pointer and flag ENDX for this voice; the flag is
+                    // staged at Step5 and published at Step7.
                     v.brr_addr = v.brr_next_addr;
-                    self.endx |= 1 << voice;
+                    self.looped = 1 << voice;
                 } else {
                     v.brr_addr = v.brr_addr.wrapping_add(9);
                 }
@@ -717,13 +725,16 @@ impl Sdsp {
 
     fn process_voice5(&mut self, voice: usize) {
         self.accumulate_voice_output(voice, true);
-        // Key-on clears this voice's ENDX bit (Mesen2 DspVoice::Step5:
-        // `if(_keyOnDelay == 5) voiceEnd &= ~_voiceBit`). kon_delay is still 5
-        // here because the voice-3c stage of the same sample set it and the
-        // countdown only starts next sample.
+        // Stage the new ENDX value (Mesen2 DspVoice::Step5); it becomes
+        // readable when Step7 publishes it two slots later. Key-on clears
+        // this voice's bit — kon_delay is still 5 here because the
+        // voice-3c stage of the same sample set it and the countdown only
+        // starts next sample.
+        let mut voice_end = self.endx | self.looped;
         if self.voices[voice].kon_delay == 5 {
-            self.endx &= !(1 << voice);
+            voice_end &= !(1 << voice);
         }
+        self.endx_buffer = voice_end;
     }
 
     fn accumulate_voice_output(&mut self, voice: usize, right: bool) {
@@ -881,7 +892,10 @@ impl Sdsp {
         let reg = addr;
         let index = usize::from(reg);
         if reg == ENDX_REG {
+            // An SPC write to $7C clears the register AND the staged
+            // buffer (Mesen2 Dsp::Write case VoiceEnd).
             self.endx = 0;
+            self.endx_buffer = 0;
             if index < self.regs.len() {
                 self.regs[index] = 0;
             }
@@ -998,6 +1012,9 @@ impl Sdsp {
             }
             if phase == voice7_phase {
                 self.envx_latch = self.voices[voice].envx;
+                // "The new ENDX.x value may now be read." (Mesen2
+                // DspVoice::Step7 publishes the buffer staged at Step5.)
+                self.endx = self.endx_buffer;
             }
             if phase == voice8_phase {
                 self.regs[(voice << 4) + 9] = self.outx_latch;

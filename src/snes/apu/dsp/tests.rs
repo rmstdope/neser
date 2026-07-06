@@ -1516,6 +1516,11 @@ fn given_end_flagged_brr_block_when_keyed_on_then_endx_is_set() {
     // END block and raises ENDX — happens 4 samples after the delay expires
     // (KON poll at tick 2 + 5 delay ticks + 4 pitch steps ≈ tick 11).
     step_sample_ticks_with_memory(&mut dsp, &mut aram, 12);
+    // The flag from voice 0's Step4 (slot 31) is staged at Step5 and only
+    // published to $7C at Step7 (slot 2 of the next window).
+    for _ in 0..3 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
 
     assert_ne!(
         dsp.read_reg(0x7C),
@@ -1736,6 +1741,42 @@ fn echo_write_excludes_voice0_output_accumulated_at_phase_31() {
         output_changed_at + 1,
         "voice 0's fresh output must reach the echo buffer one sample \
          after it reaches the voice state (echo write precedes V0 Step4)"
+    );
+}
+
+#[test]
+fn endx_bit_is_published_at_voice_step7_not_at_brr_decode() {
+    // The end-block flag raised at Step4 is staged through a buffer at
+    // Step5 and only becomes readable at Step7, two slots later (Mesen
+    // DspVoice::Step4/Step5/Step7: Looped -> VoiceEndBuffer -> reg $7C).
+    // blargg dsp6 "Random/kon pitch" reads ENDX at random slots during a
+    // KON storm and measures exactly this publication edge (#2914).
+    let mut dsp = Sdsp::new();
+    let mut aram = vec![0u8; 0x1_0000];
+    aram[0x0200] = 0x03; // BRR end+loop header
+    // Voice 0 mid-playback at the last group of the block, needing a new
+    // group this sample: Step4 at slot 31 wraps and flags the end block.
+    dsp.voices[0].brr_addr = 0x0200;
+    dsp.voices[0].brr_next_addr = 0x0200;
+    dsp.voices[0].brr_offset = 7;
+    dsp.voices[0].interpolation_pos = 0x4000;
+
+    while dsp.phase != 31 {
+        dsp.step_phase_with_memory(&mut aram);
+    }
+    for _ in 0..3 {
+        dsp.step_phase_with_memory(&mut aram); // slots 31 (Step4), 0 (Step5), 1 (Step6)
+    }
+    assert_eq!(
+        dsp.read_reg(0x7C),
+        0x00,
+        "ENDX must not be readable before voice 0's Step7 slot"
+    );
+    dsp.step_phase_with_memory(&mut aram); // slot 2: Step7 publishes
+    assert_eq!(
+        dsp.read_reg(0x7C),
+        0x01,
+        "ENDX must be readable after voice 0's Step7 slot"
     );
 }
 
