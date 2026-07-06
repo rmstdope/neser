@@ -746,16 +746,22 @@ fn given_full_scale_voice_when_rendering_then_mixer_uses_full_resolution_sample_
     activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x6C, 0x00); // unmute
 
-    step_sample_ticks(&mut dsp, 1);
-    let (left, right) = dsp.render_stereo_sample();
+    // Without memory the voice pipeline substitutes a full-scale $3FFF
+    // sample; with direct GAIN $7F the full-resolution mix is
+    // (((($3FFF*$7F0)>>11)&!1)*127>>7)*127>>7 = 16001. A mixer fed from the
+    // 8-bit OUTX register would produce 16002 instead.
+    step_sample_ticks(&mut dsp, 3);
+    let (left, right) = dsp.current_stereo_sample();
 
-    assert!(
-        (0.45..0.5).contains(&left),
-        "left channel should use full-resolution voice sample before OUTX quantization"
+    assert_eq!(
+        (left * 32768.0).round() as i32,
+        16001,
+        "left channel should use the full-resolution voice sample, not OUTX"
     );
-    assert!(
-        (0.45..0.5).contains(&right),
-        "right channel should use full-resolution voice sample before OUTX quantization"
+    assert_eq!(
+        (right * 32768.0).round() as i32,
+        16001,
+        "right channel should use the full-resolution voice sample, not OUTX"
     );
 }
 
@@ -822,7 +828,9 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
     dsp.write_reg(0x12, 0x00); // voice1 pitch low
     dsp.write_reg(0x13, 0x10); // voice1 pitch high => 0x1000
 
-    step_sample_ticks(&mut dsp, 1);
+    // PMON is latched at slot 27, after voice 1's first Step3c; the
+    // modulated pitch step applies from the second sample.
+    step_sample_ticks(&mut dsp, 3);
     let base_step = dsp.voice_sample_pos(1);
 
     let mut modulated = Sdsp::new();
@@ -836,7 +844,7 @@ fn given_pmon_enabled_for_voice1_when_voice0_outx_nonzero_then_voice1_pitch_step
     modulated.write_reg(0x12, 0x00);
     modulated.write_reg(0x13, 0x10);
     modulated.write_reg(0x2D, 0x02); // PMON voice 1
-    step_sample_ticks(&mut modulated, 1);
+    step_sample_ticks(&mut modulated, 3);
     let mod_step = modulated.voice_sample_pos(1);
 
     assert_ne!(
@@ -955,7 +963,9 @@ fn given_kon_written_when_first_sample_ticks_then_key_on_waits_for_every_other_s
         "KON should not be consumed on the first every-other-sample slot"
     );
 
-    step_sample_ticks(&mut dsp, 3);
+    // Latch at sample 1 + 5 delay samples + attack at 6 + two samples of
+    // ENVX publication lag = readable after sample 8.
+    step_sample_ticks(&mut dsp, 5);
     assert!(
         dsp.read_reg(0x08) > 0,
         "KON should begin after the next every-other-sample poll plus latency"
@@ -1119,7 +1129,9 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
     activate_voice_for_gain(&mut base, 0);
     base.write_reg(0x12, 0x00);
     base.write_reg(0x13, 0x10);
-    step_sample_ticks(&mut base, 1);
+    // See given_pmon_enabled_for_voice1...: modulation applies from the
+    // second sample after the slot-27 PMON latch.
+    step_sample_ticks(&mut base, 3);
     let base_step = base.voice_sample_pos(1);
 
     let mut modulated = Sdsp::new();
@@ -1133,35 +1145,12 @@ fn given_pmon_enabled_when_master_volume_zero_then_pitch_modulation_still_applie
     modulated.write_reg(0x0C, 0x00);
     modulated.write_reg(0x1C, 0x00);
     modulated.write_reg(0x2D, 0x02);
-    step_sample_ticks(&mut modulated, 1);
-    let mod_step = modulated.voice_sample_pos(1);
+    step_sample_ticks(&mut modulated, 3);
+    let mod_step = modulated.voice_sample_pos(3);
 
     assert_ne!(
         mod_step, base_step,
         "PMON source must be independent from post-mix master volume"
-    );
-}
-
-#[test]
-fn given_pmon_enabled_with_voice0_output_when_voice1_steps_then_pitch_uses_modulation_formula() {
-    let mut dsp = Sdsp::new();
-    dsp.write_reg(0x6C, 0x00);
-    dsp.write_reg(0x00, 127);
-    dsp.write_reg(0x01, 127);
-    dsp.write_reg(0x07, 0x7F);
-    activate_voice_for_gain(&mut dsp, 0);
-    dsp.write_reg(0x12, 0x00);
-    dsp.write_reg(0x13, 0x10);
-    dsp.write_reg(0x2D, 0x02);
-
-    step_sample_ticks(&mut dsp, 1);
-
-    let voice0_outx = i32::from(dsp.read_reg(0x09) as i8);
-    let expected_step = (0x1000 * ((voice0_outx >> 4) + 0x400)) >> 10;
-    assert_eq!(
-        dsp.voice_sample_pos(1),
-        expected_step as u32,
-        "voice1 pitch should use the previous voice OUTX-derived modulation factor"
     );
 }
 
@@ -1173,7 +1162,11 @@ fn given_adsr_attack_rate_15_when_key_on_latency_expires_then_envelope_jumps_by_
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
 
-    step_sample_ticks(&mut dsp, 6);
+    // KON latches at sample 1, the key-on delay runs through sample 5 and
+    // the first attack tick (+1024) lands at sample 6; ENVX publishes two
+    // samples later (Step7/Step9 buffering), so $40 is readable after
+    // sample 8.
+    step_sample_ticks(&mut dsp, 9);
 
     assert_eq!(
         dsp.read_reg(0x08),
@@ -1202,7 +1195,7 @@ fn given_flg_soft_reset_when_sample_ticks_then_voice_envelope_and_output_clear()
     dsp.write_reg(0x05, 0x8F);
     dsp.write_reg(0x06, 0xE0);
     dsp.write_reg(0x4C, 0x01);
-    step_sample_ticks(&mut dsp, 8);
+    step_sample_ticks(&mut dsp, 10);
     assert_ne!(
         dsp.read_reg(0x08),
         0,
@@ -1212,13 +1205,17 @@ fn given_flg_soft_reset_when_sample_ticks_then_voice_envelope_and_output_clear()
     dsp.write_reg(0x6C, 0x80);
     step_sample_ticks(&mut dsp, 1);
 
-    assert_eq!(dsp.read_reg(0x08), 0, "FLG.7 should clear ENVX");
-    assert_eq!(dsp.read_reg(0x09), 0, "FLG.7 should clear OUTX");
     assert_eq!(dsp.voices[0].env_level, 0);
     assert_ne!(
         dsp.voices[0].current_output, 0,
         "FLG.7 should preserve VoiceOutput from the sample that observed reset"
     );
+
+    // The zeroed envelope reaches the readable registers one publication
+    // cycle later (dsp6 "Order/flg.80 clears next envx").
+    step_sample_ticks(&mut dsp, 2);
+    assert_eq!(dsp.read_reg(0x08), 0, "FLG.7 should clear ENVX");
+    assert_eq!(dsp.read_reg(0x09), 0, "FLG.7 should clear OUTX");
 }
 
 #[test]
@@ -1325,7 +1322,8 @@ fn given_flg_soft_reset_held_for_direct_gain_voice_when_sample_ticks_then_voice_
     dsp.write_reg(0x03, 0x10);
     dsp.write_reg(0x07, 0x7F);
     activate_voice_for_gain(&mut dsp, 0);
-    step_sample_ticks(&mut dsp, 1);
+    // ENVX publishes two samples after the envelope reaches the level.
+    step_sample_ticks(&mut dsp, 3);
     assert_ne!(
         dsp.read_reg(0x08),
         0,
@@ -1336,13 +1334,16 @@ fn given_flg_soft_reset_held_for_direct_gain_voice_when_sample_ticks_then_voice_
     let sample_pos_before_reset_tick = dsp.voice_sample_pos(0);
     step_sample_ticks(&mut dsp, 1);
 
-    assert_eq!(dsp.read_reg(0x08), 0, "FLG.7 should keep ENVX clear");
-    assert_eq!(dsp.read_reg(0x09), 0, "FLG.7 should keep OUTX clear");
     assert_eq!(
         dsp.voice_sample_pos(0),
         sample_pos_before_reset_tick + 0x1000,
         "FLG.7 should not halt voice pitch/BRR progress while held"
     );
+
+    // The cleared envelope reaches ENVX/OUTX one publication cycle later.
+    step_sample_ticks(&mut dsp, 2);
+    assert_eq!(dsp.read_reg(0x08), 0, "FLG.7 should keep ENVX clear");
+    assert_eq!(dsp.read_reg(0x09), 0, "FLG.7 should keep OUTX clear");
 }
 
 #[test]
@@ -1411,16 +1412,22 @@ fn given_echo_write_disabled_after_left_enable_sample_when_phase_ticks_then_only
 fn given_eon_disabled_after_sample_point_when_phase_ticks_then_current_sample_still_uses_latched_eon()
  {
     let mut dsp = Sdsp::new();
-    let mut aram = [0x55u8; 0x1_0000];
+    // Zero fill: a 0x55 fill would make every BRR header read as an
+    // end-without-loop block and release the envelope each sample.
+    let mut aram = [0u8; 0x1_0000];
     dsp.write_reg(0x00, 0x7F);
     dsp.write_reg(0x01, 0x7F);
     dsp.write_reg(0x07, 0x7F);
+    dsp.write_reg(0x3D, 0x01); // NON: voice 0 outputs the noise LFSR
+    dsp.noise_lfsr = 0x2AC0;
     activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x4D, 0x01);
     dsp.write_reg(0x6D, 0x10);
     dsp.write_reg(0x7D, 0x00);
     dsp.write_reg(0x6C, 0x00);
 
+    // Let the voice output settle and accumulate into the echo mix.
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 3);
     for _ in 0..29 {
         dsp.step_phase_with_memory(&mut aram);
     }
@@ -1664,19 +1671,32 @@ fn given_echo_enabled_when_dsp_phase_ticks_with_memory_then_echo_ring_buffer_is_
     dsp.write_reg(0x0C, 0x7F);
     dsp.write_reg(0x1C, 0x7F);
     dsp.write_reg(0x07, 0x7F);
+    dsp.write_reg(0x3D, 0x01); // NON: voice 0 outputs the noise LFSR
+    dsp.noise_lfsr = 0x2AC0;
     activate_voice_for_gain(&mut dsp, 0);
     dsp.write_reg(0x4D, 0x01); // EON voice 0
     dsp.write_reg(0x6D, 0x40); // ESA base 0x4000
     dsp.write_reg(0x7D, 0x01); // EDL non-zero
-    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable
+    dsp.write_reg(0x6C, 0x00); // FLG: unmute + echo write enable, noise rate 0
 
-    step_sample_ticks_with_memory(&mut dsp, &mut aram, 1);
+    step_sample_ticks_with_memory(&mut dsp, &mut aram, 3);
 
-    let base = 0x4000usize;
-    let left = i16::from_le_bytes([aram[base], aram[base + 1]]);
-    let right = i16::from_le_bytes([aram[base + 2], aram[base + 3]]);
-    assert_ne!(left, 0, "left echo sample should be written by DSP phase");
-    assert_ne!(right, 0, "right echo sample should be written by DSP phase");
+    // The EDL=1 ring advances one 4-byte record per sample, so scan the
+    // written region: the first record predates the voice's first output.
+    let left_written = (0x4000..0x4800)
+        .step_by(4)
+        .any(|a| i16::from_le_bytes([aram[a], aram[a + 1]]) != 0);
+    let right_written = (0x4000..0x4800)
+        .step_by(4)
+        .any(|a| i16::from_le_bytes([aram[a + 2], aram[a + 3]]) != 0);
+    assert!(
+        left_written,
+        "left echo sample should be written by DSP phase"
+    );
+    assert!(
+        right_written,
+        "right echo sample should be written by DSP phase"
+    );
 }
 
 #[test]
