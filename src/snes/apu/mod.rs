@@ -987,6 +987,14 @@ impl Spc700Bus for SpcBusView<'_> {
         if self.internal_speed_freeze(Some(addr)) {
             *self.frozen = true;
         }
+        // Temporary #2938 diagnostic (remove before merge): trace writes to
+        // the dsp6 delay counter at $00EA/$00EB.
+        if dsp::spc_dsp6_trace_enabled() && (addr == 0x00EA || addr == 0x00EB) {
+            eprintln!(
+                "neser eawrite addr={addr:04X} val={value:02X} phase={}",
+                self.dsp.phase()
+            );
+        }
         self.tick_access_cycles_for_addr(Some(addr));
         let write_enabled = self.ram_write_enabled();
         if write_enabled {
@@ -1132,9 +1140,11 @@ mod tests {
     #[test]
     fn restore_state_does_not_advance_timers_during_spc_reset_vector_reads() {
         let mut apu = SnesApu::new(None);
+        // Power-on burned cycles 1-2 (reset vector fetch); stay just below
+        // the 128-cycle timer-0 period so no tick is due before the capture.
         apu.write_spc_memory_for_test(0x00FA, 0x01);
         apu.write_spc_control_for_test(0x81);
-        apu.advance_spc_bus_cycles_for_test(124);
+        apu.advance_spc_bus_cycles_for_test(122);
 
         let state = apu.capture_state();
         apu.restore_state(&state).expect("restore should succeed");
@@ -1734,9 +1744,9 @@ mod tests {
     #[test]
     fn prescaler_keeps_toggling_while_timers_are_test_stopped() {
         let mut apu = SnesApu::new(None);
-        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1 (cycle 1)
-        apu.write_spc_control_for_test(0x04); // enable T2 (cycle 2)
-        apu.advance_spc_bus_cycles_for_test(2); // cycles 3-4 (stage 1 low)
+        // Power-on burned cycles 1-2 (reset vector fetch).
+        apu.write_spc_memory_for_test(0x00FC, 0x01); // T2DIV = 1 (cycle 3)
+        apu.write_spc_control_for_test(0x04); // enable T2 (cycle 4, stage 1 low)
         apu.write_spc_memory_for_test(0x00F0, 0x0B); // stop (cycle 5)
         // While stopped, stage 1 still toggles high at cycle 8 (edge detector
         // sees a forced low, so no tick is counted during the stop).
