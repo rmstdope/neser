@@ -83,18 +83,22 @@ impl Ppu {
     }
 }
 
-/// Convert a 15-bit BGR555 color to RGB888, scaled by master brightness `n` (1..=15).
+/// Convert a 15-bit BGR555 color to RGB888, scaled by master brightness `n` (0..=15).
 ///
-/// Each 5-bit channel is expanded to 8 bits, then scaled by `(n + 1) / 16` per INIDISP.
+/// Hardware scales each raw 5-bit channel *first* (`c5 * n / 15`), then expands the
+/// scaled 5-bit result to 8 bits -- confirmed against Mesen2 (`Core/SNES/SnesPpu.cpp`:
+/// `(pixel & 0x1F) * ScreenBrightness / 15`, `Core/Shared/ColorUtilities.h`:
+/// `Convert5BitTo8Bit`). Scaling the already-8-bit-expanded value instead rounds
+/// differently and was a real (if subtle) rendering divergence from real hardware.
 fn bgr555_to_rgb888(bgr: u16, brightness: u32) -> (u8, u8, u8) {
     let r5 = (bgr & 0x1F) as u32;
     let g5 = ((bgr >> 5) & 0x1F) as u32;
     let b5 = ((bgr >> 10) & 0x1F) as u32;
 
     let expand = |c5: u32| (c5 << 3) | (c5 >> 2);
-    let scale = |c8: u32| ((c8 * (brightness + 1)) / 16) as u8;
+    let scale = |c5: u32| expand((c5 * brightness) / 15) as u8;
 
-    (scale(expand(r5)), scale(expand(g5)), scale(expand(b5)))
+    (scale(r5), scale(g5), scale(b5))
 }
 
 #[cfg(test)]
@@ -170,13 +174,19 @@ mod tests {
     #[test]
     fn half_brightness_scales_the_output() {
         let mut ppu = Ppu::new();
-        set_backdrop(&mut ppu, 0x001F); // full red (255 at full brightness)
-        ppu.write_register(0x2100, 0x07); // brightness 7 -> factor 8/16
+        set_backdrop(&mut ppu, 0x001F); // full red (raw 5-bit red = 31)
+        ppu.write_register(0x2100, 0x07); // brightness 7
         render_full_frame(&mut ppu);
 
         let rgb = ppu.screen_snapshot_rgb();
-        // 255 * 8 / 16 = 127
-        assert_eq!(rgb[0], 127);
+        // Hardware scales the raw 5-bit component first (31 * 7 / 15 = 14,
+        // truncated), then expands to 8-bit ((14 << 3) + (14 >> 2) = 115) --
+        // confirmed against Mesen2 (Core/SNES/SnesPpu.cpp: `(pixel & 0x1F) *
+        // ScreenBrightness / 15`, Core/Shared/ColorUtilities.h:
+        // Convert5BitTo8Bit). Scaling the already-8-bit-expanded value
+        // instead (255 * 8 / 16 = 127, the previous behavior here) rounds
+        // differently and was a real, if subtle, rendering divergence.
+        assert_eq!(rgb[0], 115);
         assert_eq!(rgb[1], 0);
         assert_eq!(rgb[2], 0);
     }
