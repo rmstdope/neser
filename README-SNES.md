@@ -170,6 +170,34 @@ blue background; its test uses a 600M-tick budget to reach frame 9100. Note
 that real 3-chip SNES consoles fail parts of this ROM — the golden matches
 Mesen2's DSP model, which passes it fully.
 
+### gilyon/snes-tests CPU/SPC-700 ROM suite
+
+Vendored [gilyon/snes-tests](https://github.com/gilyon/snes-tests) v1.4 ROMs
+are committed under `roms/snes/automated_tests/gilyon_tests/`:
+
+- `cputest/cputest-basic.sfc` (1107 tests) and `cputest/cputest-full.sfc`
+  (1610 tests, including undocumented emulation-mode direct-page/stack
+  wrapping edge cases) exercise the 65816 CPU.
+- `spctest/spctest.sfc` (1368 tests) exercises the SPC-700.
+
+Like the blargg ROMs, these report through a text shell ("Success" or
+"Failed" with a register dump) and freeze forever on their final screen, so
+each gets one `rom_runner` screen-CRC test in
+`src/snes/integration_tests/gilyon_cpu_tests.rs` and `gilyon_spc_tests.rs`. All
+three currently PASS.
+
+Fixing `cputest-full.sfc`'s undocumented-behavior edge cases (DP-indexed
+indirect and long-indirect pointer-read page wrapping, JSR-indirect/PEI/PLB
+stack-page wrapping) required cross-checking against both the ROM's own
+documented expected register/memory state and Mesen2 (running the identical
+ROM file) — the downloaded Tom Harte `SingleStepTests/ProcessorTests` 65816
+vectors disagree with both for a handful of these exact edge cases, which
+turned out to be the stale/wrong reference; two vector-derived regression
+tests that baked in that stale data were removed. See the CPU addressing-mode
+doc comments in `src/snes/cpu/cpu.rs` (`addr_dp_x_ind`, `addr_dp_ind_long_y`,
+`op_jsr_abs_x_ind`, `op_pei`, `op_plb`) for the resolved, cross-verified
+behavior.
+
 Run SNES tests during development with:
 
 ```bash

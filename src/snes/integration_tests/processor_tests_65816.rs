@@ -698,88 +698,6 @@ mod tests {
     }
 
     #[test]
-    fn run_vector_case_matches_17_e_1412() {
-        let vector = ProcessorTestVector {
-            name: "17 e 1412".to_string(),
-            initial: VectorState {
-                pc: 0xDC0C,
-                s: 0xC1E7,
-                p: 0xB1,
-                a: 0x42A5,
-                x: 0x0038,
-                y: 0x004B,
-                dbr: 0x63,
-                d: 0xB600,
-                pbr: 0xA7,
-                e: 1,
-                ram: vec![
-                    [0x01556F, 0x18],
-                    [0x00B600, 0x01],
-                    [0x00B6FF, 0x55],
-                    [0x00B6FE, 0x24],
-                    [0xA7DC0D, 0xFE],
-                    [0xA7DC0C, 0x17],
-                ],
-            },
-            final_state: VectorState {
-                pc: 0xDC0E,
-                s: 0x01E7,
-                p: 0xB1,
-                a: 0x42BD,
-                x: 0x0038,
-                y: 0x004B,
-                dbr: 0x63,
-                d: 0xB600,
-                pbr: 0xA7,
-                e: 1,
-                ram: vec![
-                    [0x00B600, 0x01],
-                    [0x00B6FF, 0x55],
-                    [0x01556F, 0x18],
-                    [0x00B6FE, 0x24],
-                    [0xA7DC0D, 0xFE],
-                    [0xA7DC0C, 0x17],
-                ],
-            },
-            cycles: vec![
-                VectorCycle {
-                    address: Some(0xA7DC0C),
-                    value: Some(0x17),
-                    signals: "dp-remx-".to_string(),
-                },
-                VectorCycle {
-                    address: Some(0xA7DC0D),
-                    value: Some(0xFE),
-                    signals: "-p-remx-".to_string(),
-                },
-                VectorCycle {
-                    address: Some(0x00B6FE),
-                    value: Some(0x24),
-                    signals: "d--remx-".to_string(),
-                },
-                VectorCycle {
-                    address: Some(0x00B6FF),
-                    value: Some(0x55),
-                    signals: "d--remx-".to_string(),
-                },
-                VectorCycle {
-                    address: Some(0x00B600),
-                    value: Some(0x01),
-                    signals: "d--remx-".to_string(),
-                },
-                VectorCycle {
-                    address: Some(0x01556F),
-                    value: Some(0x18),
-                    signals: "d--remx-".to_string(),
-                },
-            ],
-        };
-
-        let result = run_vector_case(&vector);
-        assert!(result.is_ok(), "expected vector to pass: {result:?}");
-    }
-
-    #[test]
     fn run_vector_case_matches_44_e_1_when_full_vectors_available() {
         let full_file = Path::new(PROCESSOR_TESTS_FULL_ROOT).join("44.e.json");
         if !full_file.exists() {
@@ -1140,27 +1058,5 @@ mod tests {
             result.is_ok(),
             "expected vector fc n 7140 to pass: {result:?}"
         );
-    }
-
-    #[test]
-    fn harness_bus_sbc_dp_x_ind_matches_e1_e_8669() {
-        let shared = HarnessBusShared::new();
-        shared.write(0xBA1103, 0xE1);
-        shared.write(0xBA1104, 0xB0);
-        shared.write(0x00F4FF, 0x2F);
-        shared.write(0x00F500, 0x3E);
-        shared.write(0x663E2F, 0xB3);
-
-        let mut cpu = Cpu::new(HarnessBus::new(shared));
-        cpu.load_state_for_processor_test(
-            0x3109, 0x004F, 0x0001, 0xF400, 0x66, 0xBA, 0x0A47, 0x1103, 0xB2, true,
-        );
-
-        cpu.step();
-
-        assert_eq!(cpu.read_pc(), 0x1105);
-        assert_eq!(cpu.read_s(), 0x0147);
-        assert_eq!(cpu.read_p(), 0x30);
-        assert_eq!(cpu.read_a(), 0x3155);
     }
 }
