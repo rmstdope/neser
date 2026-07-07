@@ -2,18 +2,30 @@
 //! ROMs (`roms/snes/automated_tests/undisbeliever_snes_test_roms/`) that
 //! visually match Mesen2.
 //!
-//! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen --
-//! reading the upstream source (github.com/undisbeliever/snes-test-roms)
-//! shows they are hardware-glitch demonstrations that the source comments
-//! themselves describe as needing "a few console resets" to manifest, or
-//! interactive demos driven by joypad input. There is no canonical correct
-//! screen even on real hardware. Each golden here is a **stability
-//! snapshot**: the ROM's default (no-input) rendering, cross-checked against
-//! a Mesen2 capture of the identical ROM file at the same frame (using
-//! `--Video.VideoFilter=None --Video.AspectRatio=NoStretching` to get a
-//! comparable capture, and allowing for a harmless constant 1-scanline row
-//! offset between the two emulators' screenshot conventions) -- not proof
-//! of hardware accuracy.
+//! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen.
+//! Most of them (9 of the 12 automated here) demonstrate a real, documented
+//! SNES hardware bug -- the "INIDISP D7 glitch" -- where writing `$2100`
+//! shortly after the CPU/HDMA data bus held a byte with bit 7 set can
+//! corrupt sprite rendering or briefly flip force-blank, on real 3-chip/
+//! 1-chip consoles (see the NESdev post quoted in
+//! <https://github.com/akatsuki105/snes-test-roms/tree/master/undisbeliever-inidisp>,
+//! from Near/byuu, and its real-hardware reference photos). This is *not*
+//! rare or a coin-flip for most of these ROMs -- the post documents fairly
+//! reliable trigger conditions -- but it's an analog bus-residual effect
+//! that **no known SNES emulator models**: checked Mesen2
+//! (`Core/SNES/SnesPpu.cpp`), ares (`ares/sfc/ppu/io.cpp`, Near's own
+//! current emulator), and Snes9x (`ppu.cpp`) -- all three write `$2100`
+//! deterministically with no bus-residual modeling at all (see #2949). So
+//! each golden here is a **stability snapshot** cross-checked against
+//! Mesen2 (using `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+//! for a comparable capture, and allowing for a harmless constant 1-scanline
+//! row offset between the two emulators' screenshot conventions): for the 2
+//! ROMs the source confirms never glitch on real hardware
+//! (`hdma_21ff_glitch_matches_mesen2`, `inidisp_hammer_0f0f_matches_mesen2`,
+//! marked below) this genuinely *is* proof of hardware accuracy; for the
+//! other 9 it only proves parity with a limitation NESER shares with every
+//! checked reference emulator, not hardware accuracy -- see #2949 before
+//! treating a mismatch here as a regression.
 //!
 //! The other 17 ROMs are deliberately left un-automated: cross-checking
 //! against Mesen2 exposed real NESER divergences, tracked as follow-up bugs
@@ -75,60 +87,91 @@ mod tests {
         };
     }
 
+    // Real hardware usually shows a sprite glitch here (~40% of runs per the
+    // NESdev source, "may need a few console resets"). No known emulator
+    // (Mesen2/ares/Snes9x) models it, so this golden matches that shared
+    // limitation, not hardware accuracy. See #2949.
     undisbeliever_rom_test!(
         hdma_2100_glitch_matches_mesen2,
         "hdma-2100-glitch.sfc",
         0x4844_ECF2
     );
 
+    // Glitches on real hardware via an FXPak firmware bug (a different cause
+    // than the other ROMs here, per the NESdev source). Not modeled by any
+    // checked emulator. See #2949.
     undisbeliever_rom_test!(
         hdma_21ff_2100_0f_glitch_matches_mesen2,
         "hdma-21ff-2100-0f-glitch.sfc",
         0x4844_ECF2
     );
 
+    // Confirmed by the source to never glitch on real hardware -- this
+    // golden genuinely is hardware-accurate, not just Mesen2-matching.
+    // See #2949.
     undisbeliever_rom_test!(
         hdma_21ff_glitch_matches_mesen2,
         "hdma-21ff-glitch.sfc",
         0x4844_ECF2
     );
 
+    // Real hardware reliably shows a sprite glitch here (`ldx.w #$0f80 ;
+    // stx.w $20ff`, per the NESdev source). Not modeled by any checked
+    // emulator. See #2949.
     undisbeliever_rom_test!(
         inidisp_d7_glitch_test_matches_mesen2,
         "inidisp_d7_glitch_test.sfc",
         0x4844_ECF2
     );
 
+    // Real hardware reliably shows a brightness glitch here (`lda.b #$0f ;
+    // sta.w $2100` with $21 left on the data bus, per the NESdev source).
+    // Not modeled by any checked emulator. See #2949.
     undisbeliever_rom_test!(
         inidisp_hammer_0f_matches_mesen2,
         "inidisp_hammer_0f.sfc",
         0x4844_ECF2
     );
 
+    // Real hardware reliably shows a brightness glitch here (`ldx.w #$0f00 ;
+    // stx.w $20ff`, per the NESdev source). Not modeled by any checked
+    // emulator. See #2949.
     undisbeliever_rom_test!(
         inidisp_hammer_0f00_matches_mesen2,
         "inidisp_hammer_0f00.sfc",
         0x4844_ECF2
     );
 
+    // Confirmed by the source to never glitch on real hardware -- this
+    // golden genuinely is hardware-accurate, not just Mesen2-matching.
+    // See #2949.
     undisbeliever_rom_test!(
         inidisp_hammer_0f0f_matches_mesen2,
         "inidisp_hammer_0f0f.sfc",
         0x4844_ECF2
     );
 
+    // Real hardware reliably shows the "inverse" glitch here (briefly
+    // enabling the display for about a dot while in force-blank), per the
+    // NESdev source. Not modeled by any checked emulator. See #2949.
     undisbeliever_rom_test!(
         inidisp_hammer_0f8f_matches_mesen2,
         "inidisp_hammer_0f8f.sfc",
         0x4844_ECF2
     );
 
+    // Same inverse glitch as inidisp_hammer_0f8f.sfc at a faster hammer
+    // rate; real hardware still glitches per the source photos. Not
+    // modeled by any checked emulator. See #2949.
     undisbeliever_rom_test!(
         inidisp_hammer_0f8f_fast_matches_mesen2,
         "inidisp_hammer_0f8f_fast.sfc",
         0x4844_ECF2
     );
 
+    // Real hardware reliably shows a sprite glitch here (`lda.b #$0f ;
+    // sta.l $802100` with $80 left on the data bus, per the NESdev source).
+    // Not modeled by any checked emulator. See #2949.
     undisbeliever_rom_test!(
         inidisp_hammer_0f_long_matches_mesen2,
         "inidisp_hammer_0f_long.sfc",
@@ -137,6 +180,10 @@ mod tests {
 
     // The only exact byte-for-byte match against Mesen2 (both stay in
     // forced-blank almost the entire time, alternating INIDISP $8F/$0F).
+    // The source's reference photos show real hardware still glitches here
+    // too (not confirmed "does not glitch" like 0f0f/21ff-glitch above), so
+    // -- like the others in this file -- this is a shared-limitation match,
+    // not a hardware-accuracy claim. See #2949.
     undisbeliever_rom_test!(
         inidisp_hammer_8f0f_matches_mesen2,
         "inidisp_hammer_8f0f.sfc",
