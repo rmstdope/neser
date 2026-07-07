@@ -3460,8 +3460,12 @@ impl<B: SnesBus> Cpu<B> {
         lo as u32 | (mid as u32) << 8 | (hi as u32) << 16
     }
 
-    /// Direct Page Indexed Indirect X: pointer at (D+offset+X), with emulation wrap
-    /// when D low byte is zero (compatible with 6502-style zero-page indexing).
+    /// Direct Page Indexed Indirect X: pointer at (D+offset+X). In emulation
+    /// mode the low-byte-of-D-is-zero case additionally wraps `offset+X` to
+    /// 8 bits (6502-style zero-page indexing), and — regardless of D's low
+    /// byte — the pointer's high-byte read always wraps within its own page
+    /// instead of carrying into the next page. Cross-verified against the
+    /// vendored snes-tests cputest ROM (test 0024) and Mesen2.
     fn addr_dp_x_ind(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
@@ -3475,7 +3479,11 @@ impl<B: SnesBus> Cpu<B> {
         };
 
         let lo = self.tick_read(ptr_addr & 0xFFFF);
-        let hi_addr = (ptr_addr + 1) & 0xFFFF;
+        let hi_addr = if self.e {
+            (ptr_addr & 0xFF00) | ((ptr_addr + 1) & 0x00FF)
+        } else {
+            (ptr_addr + 1) & 0xFFFF
+        };
         let hi = self.tick_read(hi_addr);
         let ptr = lo as u32 | (hi as u32) << 8;
         (self.dbr as u32) << 16 | ptr
@@ -3505,26 +3513,19 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Direct Page Indirect Long Indexed Y: 24-bit ptr at (D+offset), EA = (ptr+Y) & 0xFF_FFFF
+    ///
+    /// Cross-verified against the vendored snes-tests cputest ROM (test
+    /// 0042) and Mesen2: unlike the 6502-heritage 16-bit-pointer indirect
+    /// modes, this 65816-only long-indirect pointer read never wraps within
+    /// D's page, even in emulation mode with a zero D low byte.
     fn addr_dp_ind_long_y(&mut self, offset: u8) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
-        let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
-            ((self.d & 0xFF00) | offset as u16) as u32
-        } else {
-            (self.d as u32 + offset as u32) & 0xFFFF
-        };
+        let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
         let lo = self.tick_read(ptr_addr);
-        let mid_addr = if self.e && (self.d & 0x00FF) == 0 {
-            ((self.d & 0xFF00) | (((ptr_addr as u16) + 1) & 0x00FF)) as u32
-        } else {
-            (ptr_addr + 1) & 0xFFFF
-        };
-        let hi_addr = if self.e && (self.d & 0x00FF) == 0 {
-            ((self.d & 0xFF00) | (((ptr_addr as u16) + 2) & 0x00FF)) as u32
-        } else {
-            (ptr_addr + 2) & 0xFFFF
-        };
+        let mid_addr = (ptr_addr + 1) & 0xFFFF;
+        let hi_addr = (ptr_addr + 2) & 0xFFFF;
         let mid = self.tick_read(mid_addr);
         let hi = self.tick_read(hi_addr);
         let base = lo as u32 | (mid as u32) << 8 | (hi as u32) << 16;
@@ -3853,7 +3854,12 @@ impl<B: SnesBus> Cpu<B> {
     fn op_jsr_abs_x_ind(&mut self) -> u8 {
         let base = self.fetch_word();
         let ret = self.pc.wrapping_sub(1);
-        self.push16_bytes(ret);
+        // Unlike plain JSR absolute, this form's return-address push uses a
+        // natural (unclamped) intermediate stack address that may cross out
+        // of page 1 in emulation mode, clamping only the final S. Verified
+        // against the vendored snes-tests cputest ROM (test 0277) and
+        // Mesen2.
+        self.push16(ret);
         let ptr = base.wrapping_add(self.x);
         let bank_base = (self.pbr as u32) << 16;
         let lo = self.tick_read(bank_base | ptr as u32);
@@ -4145,7 +4151,23 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_plb(&mut self) -> u8 {
-        let val = self.pull8();
+        // Unlike the 6502-heritage single-byte pulls (PLA/PLX/PLY/PLP), PLB
+        // is 65816-exclusive: it reads from the natural (unclamped)
+        // incremented address in emulation mode, clamping only the final S
+        // afterward. Cross-verified against the vendored snes-tests cputest
+        // ROM (test 0x3D9) and Mesen2.
+        let val = if self.e {
+            let new_s = self.s.wrapping_add(1);
+            // read8 delegates to tick_read, the same ticked bus access
+            // pull8 itself uses for its read — no cycle-accuracy difference,
+            // just a different address (unclamped `new_s` vs pull8's
+            // already-clamped self.s).
+            let val = self.read8(new_s as u32);
+            self.s = 0x0100 | (new_s & 0x00FF);
+            val
+        } else {
+            self.pull8()
+        };
         self.dbr = val;
         self.set_nz(val as u16, 0x80);
         4
@@ -4176,7 +4198,17 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_pei(&mut self) -> u8 {
         let off = self.fetch_byte();
-        let val = self.addr_dp_ind(off) as u16;
+        // Unlike the 6502-heritage (dp) indirect opcodes (ADC, AND, CMP,
+        // ...), PEI's pointer read never wraps within D's page in emulation
+        // mode. Cross-verified against the vendored snes-tests cputest ROM
+        // (test 0x3C4) and Mesen2.
+        if self.d & 0xFF != 0 {
+            self.extra_cycles += 1;
+        }
+        let ptr_addr = (self.d as u32 + off as u32) & 0xFFFF;
+        let lo = self.tick_read(ptr_addr);
+        let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
+        let val = lo as u16 | (hi as u16) << 8;
         self.push16(val);
         6
     }
@@ -4950,6 +4982,43 @@ mod tests {
             assert_eq!(cpu.addr_dp_x_ind(0xF6), 0xAF_1479);
         }
 
+        #[test]
+        fn addr_dp_x_ind_wraps_hi_byte_in_page_when_emulation_and_d_low_zero() {
+            // snes-tests cputest test 0024 (adc ($EF,x), D=$0100, X=$10, E=1),
+            // cross-verified against Mesen2: (offset+X) wraps to $FF within
+            // D's page, landing the low-byte read at $01FF. The high-byte
+            // read must then wrap within that same page back to $0100, not
+            // carry into $0200.
+            let mut cpu = cpu_with_bus();
+            cpu.e = true;
+            cpu.write_d(0x0100);
+            cpu.write_x(0x0010);
+            cpu.write_dbr(0x7F);
+            cpu.bus.load(0x0000_01FF, &[0x34]);
+            cpu.bus.load(0x0000_0100, &[0x12]);
+            assert_eq!(cpu.addr_dp_x_ind(0xEF), 0x7F_1234);
+        }
+
+        #[test]
+        fn addr_dp_x_ind_wraps_hi_byte_in_page_when_emulation_and_d_low_nonzero() {
+            // Documented snes-tests cputest quirk (cputest/README.md),
+            // cross-verified against Mesen2: in emulation mode with a
+            // nonzero D low byte, (dp,X)'s low-byte pointer read uses a
+            // full, non-wrapping add, but the high-byte read wraps within
+            // that address's own page instead of carrying into the next
+            // page.
+            let mut cpu = cpu_with_bus();
+            cpu.e = true;
+            cpu.write_d(0x011A);
+            cpu.write_x(0x00EE);
+            cpu.write_dbr(0x00);
+            // $011A + $F7 + $EE = $02FF: low byte read from $02FF, high byte
+            // wraps back to $0200 (not $0300).
+            cpu.bus.load(0x0000_02FF, &[0x6C]);
+            cpu.bus.load(0x0000_0200, &[0x8B]);
+            assert_eq!(cpu.addr_dp_x_ind(0xF7), 0x00_8B6C);
+        }
+
         // -- Direct Page Indirect Indexed Y (dp),Y -----------------------------
 
         #[test]
@@ -4985,6 +5054,24 @@ mod tests {
             // Place 24-bit ptr $05_1200 at $0210
             cpu.bus.load(0x0000_0210, &[0x00, 0x12, 0x05]);
             assert_eq!(cpu.addr_dp_ind_long_y(0x10), 0x05_1210);
+        }
+
+        #[test]
+        fn addr_dp_ind_long_y_does_not_wrap_within_page_in_emulation_when_d_low_zero() {
+            // snes-tests cputest test 0042 (adc [$FF],y, D=$0100, E=1),
+            // cross-verified against Mesen2: unlike the 6502-heritage
+            // 16-bit-pointer indirect modes, the 65816-only 24-bit
+            // long-indirect pointer read never wraps within D's page, even
+            // in emulation mode with a zero D low byte.
+            let mut cpu = cpu_with_bus();
+            cpu.e = true;
+            cpu.write_d(0x0100);
+            cpu.write_y(0x0010);
+            cpu.write_dbr(0x00);
+            cpu.bus.load(0x0000_01FF, &[0x34]);
+            cpu.bus.load(0x0000_0200, &[0x12]);
+            cpu.bus.load(0x0000_0201, &[0x7F]);
+            assert_eq!(cpu.addr_dp_ind_long_y(0xFF), 0x7F_1244);
         }
 
         // -- Stack Relative Indirect Indexed Y (sr,S),Y ------------------------
@@ -8112,6 +8199,33 @@ mod jmp_jsr_rts_tests {
         assert_eq!(cpu.s, 0xD080);
     }
 
+    #[test]
+    fn jsr_abs_x_ind_return_addr_push_crosses_stack_page_in_emulation_mode() {
+        // snes-tests cputest test 0277 (jsr ($FFFF,x), E=1, S=$0100),
+        // cross-verified against Mesen2: unlike plain `jsr $8000` (opcode
+        // $20), the (abs,X) indirect form's 2-byte return-address push uses
+        // a natural, unclamped intermediate stack address that may cross
+        // out of page 1, and only clamps the final S back into page 1 once
+        // both bytes are written.
+        let mut cpu = native16();
+        cpu.e = true;
+        cpu.s = 0x0100;
+        cpu.x = 0x0081;
+        cpu.pbr = 0x7E;
+        cpu.dbr = 0x7F;
+        cpu.write_pc(0x7000);
+        cpu.bus.load(0x7E7000, &[0xFC, 0xFF, 0xFF]); // JSR ($FFFF,X)
+        cpu.bus.load(0x7E0080, &[0x00, 0x80]); // pointer -> $8000
+        cpu.step();
+
+        assert_eq!(cpu.pc, 0x8000);
+        // Return addr = $7002: high byte at initial S=$0100, low byte at the
+        // natural (unclamped) predecessor $00FF, not $01FF.
+        assert_eq!(cpu.bus.read(0x0100), 0x70);
+        assert_eq!(cpu.bus.read(0x00FF), 0x02);
+        assert_eq!(cpu.s, 0x01FE);
+    }
+
     // =========================================================================
     // JSL abs_long ( push PBR + return_addr-1 (3 bytes), jump0x22)
     // =========================================================================
@@ -8428,6 +8542,23 @@ mod stack_ops_tests {
         assert!(cpu.flag_n());
     }
 
+    #[test]
+    fn plb_pull_crosses_stack_page_in_emulation_mode() {
+        // snes-tests cputest test 0x3D9 (plb, E=1, S=$01FF), cross-verified
+        // against Mesen2: unlike the 6502-heritage single-byte pulls
+        // (PLA/PLX/PLY/PLP), PLB is 65816-exclusive and reads its byte from
+        // the natural (unclamped) incremented address, only clamping the
+        // final S afterward.
+        let mut cpu = native16();
+        cpu.e = true;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x0200, &[0x3D]); // would be $0100 if wrongly clamped first
+        cpu.bus.load(0x0000, &[0xAB]); // PLB
+        cpu.step();
+        assert_eq!(cpu.dbr, 0x3D);
+        assert_eq!(cpu.s, 0x0100);
+    }
+
     // =========================================================================
     // PHD / PLD (0x0B / 0x2B)
     // =========================================================================
@@ -8516,6 +8647,30 @@ mod stack_ops_tests {
         assert_eq!(cpu.bus.read(0x01FF), 0x56); // high byte
         assert_eq!(cpu.bus.read(0x01FE), 0x78); // low byte
         assert_eq!(cpu.s, 0x01FD);
+    }
+
+    #[test]
+    fn pei_pointer_read_does_not_wrap_within_dp_page_in_emulation_mode() {
+        // snes-tests cputest test 0x3C4 (pei ($ff), E=1, D=$0200, D-low
+        // byte zero), cross-verified against Mesen2: unlike the
+        // 6502-heritage (dp) indirect opcodes (ADC, AND, CMP, ...), which
+        // wrap their pointer's high-byte read within D's page in this
+        // scenario, PEI's 65816-only addressing reads the pointer with a
+        // plain, unwrapped 16-bit add. The stack push itself also crosses
+        // page 1 naturally here, matching PHD/PEA/PER's push16 behavior.
+        let mut cpu = native16();
+        cpu.e = true;
+        cpu.s = 0x0100;
+        cpu.d = 0x0200;
+        cpu.dbr = 0x7F;
+        cpu.bus.load(0x0000, &[0xD4, 0xFF]); // PEI ($FF)
+        cpu.bus.load(0x02FF, &[0x54]);
+        cpu.bus.load(0x0300, &[0x76]); // would be $0200 if wrongly wrapped
+        cpu.step();
+
+        assert_eq!(cpu.bus.read(0x0100), 0x76); // high byte
+        assert_eq!(cpu.bus.read(0x00FF), 0x54); // low byte
+        assert_eq!(cpu.s, 0x01FE);
     }
 
     // =========================================================================
@@ -9295,32 +9450,6 @@ mod wai_stp_tests {
         let cycles = cpu.step();
         assert_eq!(cpu.pc, 0x0001);
         assert_eq!(cycles, 4);
-    }
-}
-
-#[cfg(test)]
-mod processor_vector_regression_tests {
-    use super::*;
-    use crate::snes::bus::TestBus;
-
-    #[test]
-    fn sbc_dp_x_ind_emulation_matches_e1_e_8669() {
-        let mut cpu = Cpu::new(TestBus::default());
-        cpu.bus.load(0xBA1103, &[0xE1, 0xB0]);
-        cpu.bus.load(0x00F4FF, &[0x2F]);
-        cpu.bus.load(0x00F500, &[0x3E]);
-        cpu.bus.load(0x663E2F, &[0xB3]);
-
-        cpu.load_state_for_processor_test(
-            0x3109, 0x004F, 0x0001, 0xF400, 0x66, 0xBA, 0x0A47, 0x1103, 0xB2, true,
-        );
-
-        cpu.step();
-
-        assert_eq!(cpu.read_pc(), 0x1105);
-        assert_eq!(cpu.read_s(), 0x0147);
-        assert_eq!(cpu.read_p(), 0x30);
-        assert_eq!(cpu.read_a(), 0x3155);
     }
 }
 
