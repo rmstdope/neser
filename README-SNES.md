@@ -198,6 +198,65 @@ doc comments in `src/snes/cpu/cpu.rs` (`addr_dp_x_ind`, `addr_dp_ind_long_y`,
 `op_jsr_abs_x_ind`, `op_pei`, `op_plb`) for the resolved, cross-verified
 behavior.
 
+### undisbeliever SNES test ROMs (#2884, #2880)
+
+29 hardware-glitch/timing-hammer ROMs from
+[undisbeliever/snes-test-roms](https://github.com/undisbeliever/snes-test-roms)
+are committed under `roms/snes/automated_tests/undisbeliever_snes_test_roms/`.
+Unlike blargg/gilyon, **these ROMs do not print a PASS/FAIL text screen** --
+reading the upstream source shows they demonstrate rare hardware races (the
+source comments literally say "you may need to reset your console a few
+times for the glitch to appear") or are interactive demos driven by joypad
+input. There is no canonical correct screen even on real hardware, so each
+golden here is a **stability snapshot** of the ROM's default (no-input)
+rendering at frame 600, cross-checked against a Mesen2 capture of the
+identical ROM file, not proof of hardware accuracy.
+
+Comparing against Mesen2 requires normalizing its capture first: force
+`--Video.VideoFilter=None --Video.AspectRatio=NoStretching` (otherwise a
+personal Mesen config can rescale/stretch the screenshot), and allow for a
+harmless constant 1-scanline row offset between the two emulators'
+screenshot conventions (an initial visual-only spot check missed this and
+wrongly judged some ROMs identical; a per-pixel diff with a ±1 row shift
+caught it).
+
+**Automated (11) — stability snapshots confirmed against Mesen2:**
+
+| ROM | Golden CRC |
+| --- | --- |
+| `hdma-2100-glitch.sfc` | `0x4844ECF2` |
+| `hdma-21ff-2100-0f-glitch.sfc` | `0x4844ECF2` |
+| `hdma-21ff-glitch.sfc` | `0x4844ECF2` |
+| `inidisp_d7_glitch_test.sfc` | `0x4844ECF2` |
+| `inidisp_hammer_0f.sfc` | `0x4844ECF2` |
+| `inidisp_hammer_0f00.sfc` | `0x4844ECF2` |
+| `inidisp_hammer_0f0f.sfc` | `0x4844ECF2` |
+| `inidisp_hammer_0f8f.sfc` | `0x4844ECF2` |
+| `inidisp_hammer_0f8f_fast.sfc` | `0x4844ECF2` |
+| `inidisp_hammer_0f_long.sfc` | `0x4844ECF2` |
+| `inidisp_hammer_8f0f.sfc` | `0x6E8D8520` (exact byte-for-byte match with Mesen2) |
+
+**Deliberately un-automated (18) — real NESER-vs-Mesen2 divergences found
+during this cross-check, tracked as follow-up bugs instead of baked into a
+golden:**
+
+- `hdmaen_latch_test.sfc`, `hdmaen_latch_test_2.sfc`,
+  `inidisp_brightness_delay.sfc`, `hdma-2100-glitch-2ch-0a.sfc`,
+  `hdma-2100-glitch-2ch-81.sfc`, `hdma-21ff-2100-glitch.sfc` -- NESER renders
+  a blank/undisturbed screen where Mesen2 shows a striped or
+  per-scanline-shaded pattern; likely a shared gap in per-scanline
+  HDMA-driven register writes not visibly taking effect. See #2943.
+- `inidisp_forgot_to_force_blank.sfc`, `inidisp_enable_display_mid_frame.sfc`
+  -- NESER doesn't reproduce force-blank/display-enable mid-frame timing
+  effects (missing VRAM-corruption-outside-force-blank and missing the
+  partial-blank region respectively) that Mesen2 shows correctly. See #2944.
+- All 10 `scpu-a-dma-bug-*.sfc` -- all render an identical flat,
+  half-brightness screen in NESER. Per `dma-test.inc`'s own documented
+  convention (green scanline pattern = pass, red squares = DMA bug detected,
+  flat half-brightness = the break/COP handler fired), this means all 10
+  variants crash into the break handler during shared setup, instead of
+  running the DMA test loop like Mesen2 does. See #2945.
+
 Run SNES tests during development with:
 
 ```bash

@@ -120,6 +120,27 @@
           "notes": "All 18 blargg SPC700/APU ROMs have visually-approved PASS goldens run by snes::integration_tests::blargg_apu_tests with the screen-CRC oracle, one test per ROM."
         }
       ]
+    },
+    {
+      "id": "snes-tests-undisbeliever",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/undisbeliever/snes-test-roms",
+        "ref": "20210217"
+      },
+      "license": "MIT",
+      "oracle_type": "screen_crc",
+      "notes": "undisbeliever (Marcus Rowe) SNES hardware-glitch/timing-hammer test ROMs. Unlike blargg/gilyon, these do not print a PASS/FAIL text screen -- the upstream source documents them as hardware race demonstrations ('you may need to reset your console a few times for the glitch to appear') or interactive demos, so there is no canonical correct screen even on real hardware. Only 11 of the 29 vendored ROMs are automated: each golden is a stability snapshot of the ROM's default (no-input) rendering, cross-checked against a Mesen2 capture of the identical ROM file (using --Video.VideoFilter=None --Video.AspectRatio=NoStretching, and allowing for a harmless constant 1-scanline row offset between the two emulators' screenshot conventions) -- not proof of hardware accuracy. See snes::integration_tests::undisbeliever_tests. The other 18 ROMs showed real NESER-vs-Mesen2 divergences during this cross-check and are deliberately left un-automated pending fixes: hdmaen_latch_test(_2).sfc, inidisp_brightness_delay.sfc, hdma-2100-glitch-2ch-{0a,81}.sfc, hdma-21ff-2100-glitch.sfc (issue #2943, per-scanline HDMA writes not visibly taking effect); inidisp_forgot_to_force_blank.sfc, inidisp_enable_display_mid_frame.sfc (issue #2944, force-blank/display-enable mid-frame timing); all 10 scpu-a-dma-bug-*.sfc (issue #2945, shared crash into the break/COP handler). See README-SNES.md for the full breakdown.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/undisbeliever_snes_test_roms",
+          "refresh_command": null,
+          "notes": "All 29 ROMs are vendored; 11 have visually-approved stability-snapshot goldens run by snes::integration_tests::undisbeliever_tests with the screen-CRC oracle, one test per ROM. The remaining 18 are committed but not yet automated (see notes above and #2943/#2944/#2945)."
+        }
+      ]
     }
   ]
 }

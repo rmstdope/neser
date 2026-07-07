@@ -8,3 +8,4 @@ mod gilyon_spc_tests;
 mod processor_tests_65816;
 mod processor_tests_spc700;
 mod rom_runner;
+mod undisbeliever_tests;
