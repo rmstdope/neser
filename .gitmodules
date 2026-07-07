@@ -2,3 +2,6 @@
 	path = vendor/slang-shaders
 	url = https://github.com/libretro/slang-shaders
 	shallow = true
+[submodule "roms/snes/automated_tests/snes_test_roms"]
+	path = roms/snes/automated_tests/snes_test_roms
+	url = https://github.com/rmstdope/snes-test-roms

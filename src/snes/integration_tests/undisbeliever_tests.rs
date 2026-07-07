@@ -1,6 +1,6 @@
 //! Automates 12 of the 29 vendored undisbeliever/snes-test-roms hardware
-//! ROMs (`roms/snes/automated_tests/undisbeliever_snes_test_roms/`) that
-//! visually match Mesen2.
+//! ROMs (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`)
+//! that visually match Mesen2.
 //!
 //! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen.
 //! Most of them (9 of the 12 automated here) demonstrate a real, documented
@@ -40,7 +40,7 @@ use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;
 use std::path::Path;
 
-const UNDISBELIEVER_ROOT: &str = "roms/snes/automated_tests/undisbeliever_snes_test_roms";
+const UNDISBELIEVER_ROOT: &str = "roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp";
 
 #[cfg(test)]
 mod tests {

@@ -202,7 +202,8 @@ behavior.
 
 29 hardware-glitch/timing-hammer ROMs from
 [undisbeliever/snes-test-roms](https://github.com/undisbeliever/snes-test-roms)
-are committed under `roms/snes/automated_tests/undisbeliever_snes_test_roms/`.
+are vendored via the `snes_test_roms` submodule under
+`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`.
 Unlike blargg/gilyon, **these ROMs do not print a PASS/FAIL text screen** --
 most demonstrate a real, documented SNES hardware bug (the "INIDISP D7
 glitch": writing `$2100` shortly after the CPU/HDMA data bus held a byte with

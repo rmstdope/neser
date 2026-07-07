@@ -136,7 +136,7 @@
         {
           "id": "ci_subset",
           "status": "committed_ci",
-          "path": "roms/snes/automated_tests/undisbeliever_snes_test_roms",
+          "path": "roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp",
           "refresh_command": null,
           "notes": "All 29 ROMs are vendored; 12 have visually-approved stability-snapshot goldens run by snes::integration_tests::undisbeliever_tests with the screen-CRC oracle, one test per ROM. The remaining 17 are committed but not yet automated (see notes above and #2943/#2944/#2945)."
         }
