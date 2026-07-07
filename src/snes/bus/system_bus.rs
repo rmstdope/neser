@@ -312,6 +312,19 @@ impl SnesSystemBus {
         self.dma = dma;
     }
 
+    /// Fires the once-per-frame HDMA channel reload and once-per-active-scanline HDMA
+    /// transfer at their hardware-timed trigger clocks (see [`Ppu::hdma_init_due`] /
+    /// [`Ppu::hdma_transfer_due`]). `hdma_init`/`hdma_do_line` were previously only reachable
+    /// from tests -- nothing drove them during real emulation, so HDMA never actually ran.
+    fn check_hdma_triggers(&mut self) {
+        if self.ppu.get_mut().hdma_init_due() {
+            self.hdma_init();
+        }
+        if self.ppu.get_mut().hdma_transfer_due() {
+            self.hdma_do_line();
+        }
+    }
+
     /// Returns the size of the cartridge SRAM in bytes.
     pub fn sram_size(&self) -> usize {
         self._cartridge.sram_size()
@@ -813,9 +826,11 @@ impl SnesBus for SnesSystemBus {
 
     fn tick(&mut self) {
         self.tick_one_master_clock();
+        self.check_hdma_triggers();
         if self.ppu.get_mut().dram_refresh_due() {
             for _ in 0..DRAM_REFRESH_STOLEN_CLOCKS {
                 self.tick_one_master_clock();
+                self.check_hdma_triggers();
             }
         }
     }
@@ -1363,6 +1378,40 @@ mod tests {
         assert_eq!(bus.read(0x004308), 0x01); // table current ptr low advanced past descriptor
         assert_eq!(bus.read(0x004309), 0x21);
         assert_eq!(bus.read(0x00430A), 0x02);
+    }
+
+    #[test]
+    fn tick_automatically_runs_hdma_init_and_transfer_without_manual_calls() {
+        // Regression test for #2947: hdma_init/hdma_do_line were fully implemented
+        // and unit-tested, but nothing in the real per-master-clock tick loop ever
+        // called them, so HDMA never actually ran during emulation. This drives
+        // the system purely through `tick()` (as real emulation does) and expects
+        // the transfer to land without any manual hdma_init()/hdma_do_line() call.
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        // Point WMDATA's auto-increment pointer at $000200.
+        bus.write(0x002181, 0x00);
+        bus.write(0x002182, 0x02);
+        bus.write(0x002183, 0x00);
+
+        // HDMA channel 0: direct mode, A->B, targets WMDATA ($2180, B-bus offset 0x80).
+        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E3000);
+        bus.write(0x7E3000, 0xFF); // repeat mode, plenty of lines
+        bus.write(0x7E3001, 0x7A); // data byte
+        bus.write(0x00420C, 0x01); // enable HDMA channel 0
+
+        // Advance one full scanline purely via tick() -- past both the once-per-frame
+        // HDMA init point and the once-per-scanline HDMA transfer point.
+        let ticks_per_line = u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT;
+        for _ in 0..ticks_per_line {
+            bus.tick();
+        }
+
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x7A,
+            "HDMA transfer should have run automatically via tick(), with no manual \
+             hdma_init()/hdma_do_line() call"
+        );
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //! cleared and redrawn over the following frame.
 
 use super::{
-    CGRAM_SIZE, OAM_SIZE, Ppu, PpuLineTimingProfile, ScanPosition, SnesVideoRegion, VRAM_SIZE,
+    CGRAM_SIZE, OAM_SIZE, Ppu, PpuLineTimingProfile, ScanPosition, SnesVideoRegion,
+    VISIBLE_DOT_START, VISIBLE_LINE_START, VRAM_SIZE,
 };
 use crate::snes::console::save_state::SnesPpuState;
 
@@ -199,6 +200,22 @@ impl Ppu {
             self.framebuffer.len(),
             super::SCREEN_WIDTH_MAX * super::SCREEN_HEIGHT_MAX
         );
+        // Per-scanline latched INIDISP is transient too; the next frame relatches it.
+        self.line_inidisp.iter_mut().for_each(|v| *v = 0);
+        debug_assert_eq!(self.line_inidisp.len(), super::SCREEN_HEIGHT_MAX);
+        // The scanline currently being rendered already passed its own latch
+        // point (VISIBLE_DOT_START) before this snapshot was taken, so it
+        // won't be relatched by render_dot this frame -- restore it directly
+        // from the (already-restored) live INIDISP value.
+        if self.position.scanline >= VISIBLE_LINE_START
+            && self.position.dot > VISIBLE_DOT_START
+            && (self.position.scanline as usize)
+                < VISIBLE_LINE_START as usize + self.active_screen_height()
+        {
+            let y = (self.position.scanline - VISIBLE_LINE_START) as usize;
+            let row = self.framebuffer_row(y);
+            self.line_inidisp[row] = self.inidisp;
+        }
         Ok(())
     }
 }

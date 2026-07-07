@@ -25,6 +25,9 @@ impl Ppu {
         let x = (dot - VISIBLE_DOT_START) as usize;
         let y = (line - VISIBLE_LINE_START) as usize;
         let row = self.framebuffer_row(y);
+        if dot == VISIBLE_DOT_START {
+            self.line_inidisp[row] = self.inidisp;
+        }
         let base_x = self.framebuffer_x(x);
         let base = row * self.framebuffer_stride() + base_x;
         if self.hires_output_enabled() {
@@ -58,15 +61,15 @@ impl Ppu {
         let width = width as usize;
         let height = height as usize;
         let mut out = vec![0u8; width * height * 3];
-        let forced_blank = self.inidisp & 0x80 != 0;
-        let brightness = (self.inidisp & 0x0F) as u32;
-
-        if forced_blank || brightness == 0 {
-            return out; // already all-black
-        }
 
         let stride = self.framebuffer_stride();
         for y in 0..height {
+            let line_inidisp = self.line_inidisp[y];
+            let forced_blank = line_inidisp & 0x80 != 0;
+            let brightness = (line_inidisp & 0x0F) as u32;
+            if forced_blank || brightness == 0 {
+                continue; // row already all-black
+            }
             for x in 0..width {
                 let pixel = self.framebuffer[y * stride + x];
                 let (r, g, b) = bgr555_to_rgb888(pixel, brightness);
@@ -176,6 +179,42 @@ mod tests {
         assert_eq!(rgb[0], 127);
         assert_eq!(rgb[1], 0);
         assert_eq!(rgb[2], 0);
+    }
+
+    #[test]
+    fn inidisp_changed_mid_frame_only_affects_later_scanlines() {
+        let mut ppu = Ppu::new();
+        set_backdrop(&mut ppu, 0x001F); // full red
+        ppu.write_register(0x2100, 0x0F); // brightness 15, no forced blank
+
+        // Render the first 50 scanlines at full brightness (this is exactly
+        // what HDMA-driven per-scanline INIDISP writes rely on, e.g. the
+        // undisbeliever scpu-a-dma-bug/hdmaen_latch_test ROMs' scanline
+        // brightness banding).
+        let ticks_per_line = u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT;
+        for _ in 0..(ticks_per_line * 50) {
+            ppu.tick();
+        }
+
+        // Switch to forced blank partway through the frame.
+        ppu.write_register(0x2100, 0x80);
+        for _ in 0..(ticks_per_line * (u32::from(NTSC_SCANLINES_PER_FRAME) - 50)) {
+            ppu.tick();
+        }
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            &rgb[0..3],
+            &[255, 0, 0],
+            "scanline rendered before the INIDISP change keeps its original brightness"
+        );
+        let later_row = 100usize;
+        let idx = later_row * 256 * 3;
+        assert_eq!(
+            &rgb[idx..idx + 3],
+            &[0, 0, 0],
+            "scanline rendered after the INIDISP change reflects forced blank"
+        );
     }
 
     #[test]

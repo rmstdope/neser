@@ -82,6 +82,15 @@ pub(super) const DRAM_REFRESH_BASE_POSITION: u16 = 538;
 /// Master clocks stolen from the CPU for each DRAM refresh.
 pub(super) const DRAM_REFRESH_STOLEN_CLOCKS: u32 = 40;
 
+/// HDMA channel reload ("init"): latched once per frame, at the start of scanline 0, jittered
+/// by `+(total master clocks mod 8)` the same way DRAM refresh is. Matches Mesen2
+/// (`Core/SNES/SnesMemoryManager.cpp`, `_nextEventClock = 12 + (_masterClock & 0x07)` scheduled
+/// when entering scanline 0).
+pub(super) const HDMA_INIT_BASE_POSITION: u16 = 12;
+/// HDMA per-scanline transfer: fires once per active (non-vblank) scanline at a fixed clock
+/// (no jitter). Matches Mesen2 (`_nextEventClock = 276 * 4`, i.e. dot 276).
+pub(super) const HDMA_TRANSFER_POSITION: u16 = 276 * (MASTER_CYCLES_PER_DOT as u16);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SnesVideoRegion {
     #[default]
@@ -143,6 +152,9 @@ pub struct Ppu {
     total_master_clocks: u64,
     /// This scanline's DRAM-refresh trigger clock, recomputed at each scanline boundary.
     dram_refresh_position: u16,
+    /// This scanline's HDMA-init trigger clock (only meaningful on scanline 0), recomputed at
+    /// each scanline boundary. See [`HDMA_INIT_BASE_POSITION`].
+    hdma_init_position: u16,
     /// Latched timing profile for the active scanline.
     line_timing_profile: PpuLineTimingProfile,
     inidisp: u8,
@@ -198,6 +210,11 @@ pub struct Ppu {
     video_region: SnesVideoRegion,
     /// Visible framebuffer in 15-bit BGR555 (converted to RGB888 at snapshot time).
     framebuffer: Vec<u16>,
+    /// INIDISP ($2100) latched once per scanline, at that scanline's first
+    /// visible dot. HDMA commonly rewrites INIDISP every scanline (fade and
+    /// scanline-banding effects), so forced-blank/brightness must be applied
+    /// per scanline at snapshot time rather than with one frame-wide value.
+    line_inidisp: Vec<u8>,
     /// Set when the PPU enters VBlank (a full visible frame has been produced).
     frame_complete: bool,
     /// One-shot flag set when the first VBlank scanline reaches
@@ -319,6 +336,7 @@ impl Ppu {
             last_hperiod: 1364,
             total_master_clocks: 0,
             dram_refresh_position: DRAM_REFRESH_BASE_POSITION,
+            hdma_init_position: HDMA_INIT_BASE_POSITION,
             line_timing_profile: PpuLineTimingProfile::Normal,
             inidisp: 0,
             nmi_enable: false,
@@ -349,6 +367,7 @@ impl Ppu {
             interlace_field: false,
             video_region,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
+            line_inidisp: vec![0; SCREEN_HEIGHT_MAX],
             frame_complete: false,
             auto_joypad_latch: false,
             bg_mode: 0,
