@@ -746,6 +746,12 @@ impl DmaABus for SnesSystemBus {
                 .apu
                 .borrow_mut()
                 .write_main_port((addr - 0x40) as usize, value),
+            // WMDATA/WMADD ($2180-$2183): DMA is a common way to fill WRAM
+            // (e.g. transferring test/result tables), so it must go through
+            // the same auto-incrementing WRAM port a direct CPU store would.
+            0x80..=0x83 => {
+                self.write_mmio(0x00_2100 + u32::from(addr), value);
+            }
             _ => {}
         }
     }
@@ -1198,6 +1204,25 @@ mod tests {
         assert_eq!(bus.read(0x004306), 0x00);
         assert_eq!(bus.read(0x004302), 0x01);
         assert_eq!(bus.read(0x004303), 0x02);
+    }
+
+    #[test]
+    fn dma_a_to_b_wmdata_writes_wram_and_advances_wmadd() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        // Point WMDATA's auto-increment pointer at $000123.
+        bus.write(0x002181, 0x23);
+        bus.write(0x002182, 0x01);
+        bus.write(0x002183, 0x00);
+
+        bus.write(0x7E0100, 0x42);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E0100, 1);
+        bus.write(0x00420B, 0x01);
+
+        // The byte must land at $000123 (via WRAM, not silently dropped).
+        assert_eq!(bus.read(0x7E0123), 0x42);
+        // wmadd must have advanced by 1, just like a direct CPU write to $2180 would.
+        assert_eq!(bus.read(0x002181), 0x24);
+        assert_eq!(bus.read(0x002182), 0x01);
     }
 
     #[test]
