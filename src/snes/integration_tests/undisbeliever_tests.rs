@@ -1,4 +1,4 @@
-//! Automates 11 of the 29 vendored undisbeliever/snes-test-roms hardware
+//! Automates 12 of the 29 vendored undisbeliever/snes-test-roms hardware
 //! ROMs (`roms/snes/automated_tests/undisbeliever_snes_test_roms/`) that
 //! visually match Mesen2.
 //!
@@ -15,14 +15,13 @@
 //! offset between the two emulators' screenshot conventions) -- not proof
 //! of hardware accuracy.
 //!
-//! The other 18 ROMs are deliberately left un-automated: cross-checking
+//! The other 17 ROMs are deliberately left un-automated: cross-checking
 //! against Mesen2 exposed real NESER divergences, tracked as follow-up bugs
 //! rather than papered over with a golden that bakes in known-wrong
 //! behavior (see README-SNES.md for the full breakdown):
 //! - `hdmaen_latch_test(_2).sfc`, `inidisp_brightness_delay.sfc`,
 //!   `hdma-2100-glitch-2ch-{0a,81}.sfc`, `hdma-21ff-2100-glitch.sfc` -- #2943
-//! - `inidisp_forgot_to_force_blank.sfc`,
-//!   `inidisp_enable_display_mid_frame.sfc` -- #2944
+//! - `inidisp_forgot_to_force_blank.sfc` -- #2944
 //! - all 10 `scpu-a-dma-bug-*.sfc` -- #2945
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
@@ -142,5 +141,14 @@ mod tests {
         inidisp_hammer_8f0f_matches_mesen2,
         "inidisp_hammer_8f0f.sfc",
         0x6E8D_8520
+    );
+
+    // Fixed by the per-scanline INIDISP latch (was previously left un-automated
+    // under #2944): the top of the frame is force-blanked (black), then the
+    // display is enabled partway down, matching Mesen2 exactly.
+    undisbeliever_rom_test!(
+        inidisp_enable_display_mid_frame_matches_mesen2,
+        "inidisp_enable_display_mid_frame.sfc",
+        0x3B0F_939D
     );
 }

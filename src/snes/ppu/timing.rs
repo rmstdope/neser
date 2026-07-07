@@ -10,8 +10,8 @@
 //! long-dot phase around H=323/327 and the NTSC/PAL short/long scanline exceptions.
 
 use super::{
-    DOTS_PER_SCANLINE, DRAM_REFRESH_BASE_POSITION, MASTER_CYCLES_PER_DOT, Ppu,
-    PpuLineTimingProfile, VISIBLE_LINE_START,
+    DOTS_PER_SCANLINE, DRAM_REFRESH_BASE_POSITION, HDMA_INIT_BASE_POSITION, HDMA_TRANSFER_POSITION,
+    MASTER_CYCLES_PER_DOT, Ppu, PpuLineTimingProfile, VISIBLE_LINE_START,
 };
 use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
@@ -44,6 +44,29 @@ impl Ppu {
             DRAM_REFRESH_BASE_POSITION - (self.total_master_clocks & 0x07) as u16;
     }
 
+    /// Returns `true` if this clock is the once-per-frame HDMA channel reload point (only
+    /// meaningful on scanline 0). The caller (`SnesSystemBus::tick`) must call `hdma_init()`
+    /// on the bus's DMA controller when this fires.
+    pub fn hdma_init_due(&self) -> bool {
+        self.position.scanline == 0
+            && u32::from(self.line_clock) == u32::from(self.hdma_init_position)
+    }
+
+    /// Recompute this scanline's HDMA-init trigger clock, matching the same phase-jitter
+    /// formula as DRAM refresh (see [`HDMA_INIT_BASE_POSITION`]).
+    fn recompute_hdma_init_position(&mut self) {
+        self.hdma_init_position =
+            HDMA_INIT_BASE_POSITION + (self.total_master_clocks & 0x07) as u16;
+    }
+
+    /// Returns `true` if this clock is the once-per-active-scanline HDMA transfer point. The
+    /// caller (`SnesSystemBus::tick`) must call `hdma_do_line()` on the bus's DMA controller
+    /// when this fires. Does not fire during VBlank (see [`HDMA_TRANSFER_POSITION`]).
+    pub fn hdma_transfer_due(&self) -> bool {
+        self.position.scanline < self.vblank_start_line()
+            && u32::from(self.line_clock) == u32::from(HDMA_TRANSFER_POSITION)
+    }
+
     /// The per-clock advance logic (dot/scanline/IRQ bookkeeping). Split out from [`Ppu::tick`]
     /// so DRAM refresh can steal extra clocks without re-checking the refresh trigger itself.
     fn tick_one_clock(&mut self) {
@@ -62,6 +85,7 @@ impl Ppu {
                 self.last_hperiod = self.line_clock + 1;
                 self.line_clock = 0;
                 self.recompute_dram_refresh_position();
+                self.recompute_hdma_init_position();
             } else {
                 self.line_clock += 1;
             }

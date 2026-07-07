@@ -25,6 +25,9 @@ impl Ppu {
         let x = (dot - VISIBLE_DOT_START) as usize;
         let y = (line - VISIBLE_LINE_START) as usize;
         let row = self.framebuffer_row(y);
+        if dot == VISIBLE_DOT_START {
+            self.line_inidisp[row] = self.inidisp;
+        }
         let base_x = self.framebuffer_x(x);
         let base = row * self.framebuffer_stride() + base_x;
         if self.hires_output_enabled() {
@@ -58,15 +61,15 @@ impl Ppu {
         let width = width as usize;
         let height = height as usize;
         let mut out = vec![0u8; width * height * 3];
-        let forced_blank = self.inidisp & 0x80 != 0;
-        let brightness = (self.inidisp & 0x0F) as u32;
-
-        if forced_blank || brightness == 0 {
-            return out; // already all-black
-        }
 
         let stride = self.framebuffer_stride();
         for y in 0..height {
+            let line_inidisp = self.line_inidisp[y];
+            let forced_blank = line_inidisp & 0x80 != 0;
+            let brightness = (line_inidisp & 0x0F) as u32;
+            if forced_blank || brightness == 0 {
+                continue; // row already all-black
+            }
             for x in 0..width {
                 let pixel = self.framebuffer[y * stride + x];
                 let (r, g, b) = bgr555_to_rgb888(pixel, brightness);
@@ -80,18 +83,22 @@ impl Ppu {
     }
 }
 
-/// Convert a 15-bit BGR555 color to RGB888, scaled by master brightness `n` (1..=15).
+/// Convert a 15-bit BGR555 color to RGB888, scaled by master brightness `n` (0..=15).
 ///
-/// Each 5-bit channel is expanded to 8 bits, then scaled by `(n + 1) / 16` per INIDISP.
+/// Hardware scales each raw 5-bit channel *first* (`c5 * n / 15`), then expands the
+/// scaled 5-bit result to 8 bits -- confirmed against Mesen2 (`Core/SNES/SnesPpu.cpp`:
+/// `(pixel & 0x1F) * ScreenBrightness / 15`, `Core/Shared/ColorUtilities.h`:
+/// `Convert5BitTo8Bit`). Scaling the already-8-bit-expanded value instead rounds
+/// differently and was a real (if subtle) rendering divergence from real hardware.
 fn bgr555_to_rgb888(bgr: u16, brightness: u32) -> (u8, u8, u8) {
     let r5 = (bgr & 0x1F) as u32;
     let g5 = ((bgr >> 5) & 0x1F) as u32;
     let b5 = ((bgr >> 10) & 0x1F) as u32;
 
     let expand = |c5: u32| (c5 << 3) | (c5 >> 2);
-    let scale = |c8: u32| ((c8 * (brightness + 1)) / 16) as u8;
+    let scale = |c5: u32| expand((c5 * brightness) / 15) as u8;
 
-    (scale(expand(r5)), scale(expand(g5)), scale(expand(b5)))
+    (scale(r5), scale(g5), scale(b5))
 }
 
 #[cfg(test)]
@@ -167,15 +174,57 @@ mod tests {
     #[test]
     fn half_brightness_scales_the_output() {
         let mut ppu = Ppu::new();
-        set_backdrop(&mut ppu, 0x001F); // full red (255 at full brightness)
-        ppu.write_register(0x2100, 0x07); // brightness 7 -> factor 8/16
+        set_backdrop(&mut ppu, 0x001F); // full red (raw 5-bit red = 31)
+        ppu.write_register(0x2100, 0x07); // brightness 7
         render_full_frame(&mut ppu);
 
         let rgb = ppu.screen_snapshot_rgb();
-        // 255 * 8 / 16 = 127
-        assert_eq!(rgb[0], 127);
+        // Hardware scales the raw 5-bit component first (31 * 7 / 15 = 14,
+        // truncated), then expands to 8-bit ((14 << 3) + (14 >> 2) = 115) --
+        // confirmed against Mesen2 (Core/SNES/SnesPpu.cpp: `(pixel & 0x1F) *
+        // ScreenBrightness / 15`, Core/Shared/ColorUtilities.h:
+        // Convert5BitTo8Bit). Scaling the already-8-bit-expanded value
+        // instead (255 * 8 / 16 = 127, the previous behavior here) rounds
+        // differently and was a real, if subtle, rendering divergence.
+        assert_eq!(rgb[0], 115);
         assert_eq!(rgb[1], 0);
         assert_eq!(rgb[2], 0);
+    }
+
+    #[test]
+    fn inidisp_changed_mid_frame_only_affects_later_scanlines() {
+        let mut ppu = Ppu::new();
+        set_backdrop(&mut ppu, 0x001F); // full red
+        ppu.write_register(0x2100, 0x0F); // brightness 15, no forced blank
+
+        // Render the first 50 scanlines at full brightness (this is exactly
+        // what HDMA-driven per-scanline INIDISP writes rely on, e.g. the
+        // undisbeliever scpu-a-dma-bug/hdmaen_latch_test ROMs' scanline
+        // brightness banding).
+        let ticks_per_line = u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT;
+        for _ in 0..(ticks_per_line * 50) {
+            ppu.tick();
+        }
+
+        // Switch to forced blank partway through the frame.
+        ppu.write_register(0x2100, 0x80);
+        for _ in 0..(ticks_per_line * (u32::from(NTSC_SCANLINES_PER_FRAME) - 50)) {
+            ppu.tick();
+        }
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            &rgb[0..3],
+            &[255, 0, 0],
+            "scanline rendered before the INIDISP change keeps its original brightness"
+        );
+        let later_row = 100usize;
+        let idx = later_row * 256 * 3;
+        assert_eq!(
+            &rgb[idx..idx + 3],
+            &[0, 0, 0],
+            "scanline rendered after the INIDISP change reflects forced blank"
+        );
     }
 
     #[test]
