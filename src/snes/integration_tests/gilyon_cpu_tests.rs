@@ -1,6 +1,4 @@
-use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
-use std::fs;
-use std::path::Path;
+use super::rom_runner::{RunConfig, assert_rom_screen_crc};
 
 const GILYON_TESTS_CPU_ROOT: &str = "roms/snes/automated_tests/gilyon_tests/cputest";
 
@@ -8,31 +6,19 @@ const GILYON_TESTS_CPU_ROOT: &str = "roms/snes/automated_tests/gilyon_tests/cput
 mod tests {
     use super::*;
 
-    /// Runs a vendored gilyon/snes-tests 65816 CPU test ROM and asserts that
-    /// the screen rendered at `frames` matches the visually-approved golden
-    /// CRC32. Both ROMs finish by looping forever on their final screen
-    /// (either "Success" or a frozen "Failed" diagnostic screen), so any
-    /// frame comfortably past completion works as the sampling point.
+    /// Both ROMs finish by looping forever on their final screen (either
+    /// "Success" or a frozen "Failed" diagnostic screen), so any frame
+    /// comfortably past completion works as the sampling point. Both need
+    /// ~87M ticks to reach frame 2000; 400M (the same budget used
+    /// throughout blargg_apu_tests.rs) gives comfortable headroom without
+    /// letting a hung/regressed run grind for long.
     fn run_cputest_screen_crc(file: &str, frames: u32, expected_crc: u32) {
-        let path = Path::new(GILYON_TESTS_CPU_ROOT).join(file);
-        let rom = fs::read(&path)
-            .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
-        let result = run_rom_with_oracle(
-            &rom,
+        assert_rom_screen_crc(
+            GILYON_TESTS_CPU_ROOT,
             file,
-            RunConfig::new(4_000_000_000, 0),
-            RunOracle::ScreenCrc {
-                frames,
-                expected_crc,
-            },
-        );
-        assert!(
-            result.passed && result.exit_reason == RunExitReason::ScreenCrcFrame,
-            "{file}: expected screen-CRC PASS at frame {frames}, \
-             got crc=0x{:08X} passed={} exit={:?}",
-            result.screen_crc32,
-            result.passed,
-            result.exit_reason
+            frames,
+            expected_crc,
+            RunConfig::new(400_000_000, 0),
         );
     }
 

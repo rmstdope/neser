@@ -68,7 +68,7 @@
       },
       "license": "MIT",
       "oracle_type": "screen_crc",
-      "notes": "gilyon/snes-tests 65816 CPU test ROMs (cputest-basic.sfc: 1107 tests, skips undocumented emulation-mode wrapping edge cases; cputest-full.sfc: 1610 tests, includes them). Both report results via a text shell (Success / Failed #N with register dump), verified by the rom_runner screen-CRC oracle against a human-approved PASS capture. Both currently PASS in this emulator (visually confirmed against Mesen2 running the same ROM files) — one test per ROM in snes::integration_tests::snes_tests_cpu.",
+      "notes": "gilyon/snes-tests 65816 CPU test ROMs (cputest-basic.sfc: 1107 tests, skips undocumented emulation-mode wrapping edge cases; cputest-full.sfc: 1610 tests, includes them). Both report results via a text shell (Success / Failed #N with register dump), verified by the rom_runner screen-CRC oracle against a human-approved PASS capture. Both currently PASS in this emulator (visually confirmed against Mesen2 running the same ROM files) — one test per ROM in snes::integration_tests::gilyon_cpu_tests.",
       "variants": [
         {
           "id": "ci_subset",
@@ -89,7 +89,7 @@
       },
       "license": "MIT",
       "oracle_type": "screen_crc",
-      "notes": "gilyon/snes-tests SPC-700 CPU test ROM (spctest.sfc: 1368 tests). Reports results via a text shell (Success / Failed with register dump), verified by the rom_runner screen-CRC oracle against a human-approved PASS capture. Currently PASSES in this emulator (visually confirmed against Mesen2 running the same ROM file) — snes::integration_tests::snes_tests_spc.",
+      "notes": "gilyon/snes-tests SPC-700 CPU test ROM (spctest.sfc: 1368 tests). Reports results via a text shell (Success / Failed with register dump), verified by the rom_runner screen-CRC oracle against a human-approved PASS capture. Currently PASSES in this emulator (visually confirmed against Mesen2 running the same ROM file) — snes::integration_tests::gilyon_spc_tests.",
       "variants": [
         {
           "id": "ci_subset",

@@ -103,6 +103,39 @@ pub(crate) fn run_rom_with_oracle(
     )
 }
 
+/// Reads `root/file`, runs it with the screen-CRC oracle, and asserts it
+/// passes at `frames` with `expected_crc`. Shared by ROM suites whose ROMs
+/// report pass/fail purely by drawing text to the screen and freezing
+/// (blargg- and gilyon-style test ROMs).
+pub(crate) fn assert_rom_screen_crc(
+    root: &str,
+    file: &str,
+    frames: u32,
+    expected_crc: u32,
+    config: RunConfig,
+) {
+    let path = Path::new(root).join(file);
+    let rom = std::fs::read(&path)
+        .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
+    let result = run_rom_with_oracle(
+        &rom,
+        file,
+        config,
+        RunOracle::ScreenCrc {
+            frames,
+            expected_crc,
+        },
+    );
+    assert!(
+        result.passed && result.exit_reason == RunExitReason::ScreenCrcFrame,
+        "{file}: expected screen-CRC PASS at frame {frames}, \
+         got crc=0x{:08X} passed={} exit={:?}",
+        result.screen_crc32,
+        result.passed,
+        result.exit_reason
+    );
+}
+
 fn run_rom_with_capture(
     rom: &[u8],
     name: &str,

@@ -4158,6 +4158,10 @@ impl<B: SnesBus> Cpu<B> {
         // ROM (test 0x3D9) and Mesen2.
         let val = if self.e {
             let new_s = self.s.wrapping_add(1);
+            // read8 delegates to tick_read, the same ticked bus access
+            // pull8 itself uses for its read — no cycle-accuracy difference,
+            // just a different address (unclamped `new_s` vs pull8's
+            // already-clamped self.s).
             let val = self.read8(new_s as u32);
             self.s = 0x0100 | (new_s & 0x00FF);
             val
