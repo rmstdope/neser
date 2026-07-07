@@ -220,7 +220,7 @@ screenshot conventions (an initial visual-only spot check missed this and
 wrongly judged some ROMs identical; a per-pixel diff with a ±1 row shift
 caught it).
 
-**Automated (11) — stability snapshots confirmed against Mesen2:**
+**Automated (12) — stability snapshots confirmed against Mesen2:**
 
 | ROM | Golden CRC |
 | --- | --- |
@@ -235,27 +235,34 @@ caught it).
 | `inidisp_hammer_0f8f_fast.sfc` | `0x4844ECF2` |
 | `inidisp_hammer_0f_long.sfc` | `0x4844ECF2` |
 | `inidisp_hammer_8f0f.sfc` | `0x6E8D8520` (exact byte-for-byte match with Mesen2) |
+| `inidisp_enable_display_mid_frame.sfc` | `0x3B0F939D` (fixed by the per-scanline INIDISP latch, #2947) |
 
-**Deliberately un-automated (18) — real NESER-vs-Mesen2 divergences found
+**Deliberately un-automated (17) — real NESER-vs-Mesen2 divergences found
 during this cross-check, tracked as follow-up bugs instead of baked into a
 golden:**
 
 - `hdmaen_latch_test.sfc`, `hdmaen_latch_test_2.sfc`,
   `inidisp_brightness_delay.sfc`, `hdma-2100-glitch-2ch-0a.sfc`,
-  `hdma-2100-glitch-2ch-81.sfc`, `hdma-21ff-2100-glitch.sfc` -- NESER renders
-  a blank/undisturbed screen where Mesen2 shows a striped or
-  per-scanline-shaded pattern; likely a shared gap in per-scanline
-  HDMA-driven register writes not visibly taking effect. See #2943.
-- `inidisp_forgot_to_force_blank.sfc`, `inidisp_enable_display_mid_frame.sfc`
-  -- NESER doesn't reproduce force-blank/display-enable mid-frame timing
-  effects (missing VRAM-corruption-outside-force-blank and missing the
-  partial-blank region respectively) that Mesen2 shows correctly. See #2944.
-- All 10 `scpu-a-dma-bug-*.sfc` -- all render an identical flat,
-  half-brightness screen in NESER. Per `dma-test.inc`'s own documented
-  convention (green scanline pattern = pass, red squares = DMA bug detected,
-  flat half-brightness = the break/COP handler fired), this means all 10
-  variants crash into the break handler during shared setup, instead of
-  running the DMA test loop like Mesen2 does. See #2945.
+  `hdma-2100-glitch-2ch-81.sfc`, `hdma-21ff-2100-glitch.sfc` -- root cause
+  found and partially fixed in #2947 (HDMA was never scheduled
+  automatically at all -- `hdma_init`/`hdma_do_line` were fully implemented
+  and unit-tested but nothing in the real tick loop ever called them).
+  With that fixed, the `hdma-2100-glitch-2ch-*`/`hdma-21ff-2100-glitch`
+  ROMs now render distinct, HDMA-driven visuals per variant instead of one
+  static "no effect" screen, but still don't pixel-match Mesen2 (~55-60%
+  diff, visually close but not phase-accurate); `hdmaen_latch_test(_2)`/
+  `inidisp_brightness_delay` are still unaffected, likely needing
+  finer within-scanline (H-position) HDMA timing than the once-per-scanline
+  model covers. See #2943.
+- `inidisp_forgot_to_force_blank.sfc` -- NESER doesn't reproduce the
+  VRAM/OAM corruption from writes outside force-blank that Mesen2 shows.
+  See #2944.
+- All 10 `scpu-a-dma-bug-*.sfc` -- the break/COP crash (from a silently
+  no-op'd DMA-to-WMDATA write, see #2945) is fixed and the ROMs now render
+  the documented "green squares, no bug detected" pass pattern, but the
+  HDMA-driven scanline-brightness banding isn't yet phase-accurate against
+  Mesen2 (same root cause as the `hdma-2100-glitch-2ch-*` gap above).
+  See #2945, #2947.
 
 Run SNES tests during development with:
 
