@@ -204,13 +204,22 @@ behavior.
 [undisbeliever/snes-test-roms](https://github.com/undisbeliever/snes-test-roms)
 are committed under `roms/snes/automated_tests/undisbeliever_snes_test_roms/`.
 Unlike blargg/gilyon, **these ROMs do not print a PASS/FAIL text screen** --
-reading the upstream source shows they demonstrate rare hardware races (the
-source comments literally say "you may need to reset your console a few
-times for the glitch to appear") or are interactive demos driven by joypad
-input. There is no canonical correct screen even on real hardware, so each
-golden here is a **stability snapshot** of the ROM's default (no-input)
-rendering at frame 600, cross-checked against a Mesen2 capture of the
-identical ROM file, not proof of hardware accuracy.
+most demonstrate a real, documented SNES hardware bug (the "INIDISP D7
+glitch": writing `$2100` shortly after the CPU/HDMA data bus held a byte with
+bit 7 set can corrupt sprite rendering or briefly flip force-blank on real
+3-chip/1-chip consoles -- see the NESdev post quoted at
+[akatsuki105/snes-test-roms](https://github.com/akatsuki105/snes-test-roms/tree/master/undisbeliever-inidisp),
+from Near/byuu, with real-hardware reference photos), or are interactive
+demos driven by joypad input. **No known SNES emulator models this glitch**
+-- checked Mesen2 (`Core/SNES/SnesPpu.cpp`), ares (`ares/sfc/ppu/io.cpp`,
+Near's own current emulator), and Snes9x (`ppu.cpp`); all three write `$2100`
+deterministically with no bus-residual modeling (#2949). So each golden here
+is a **stability snapshot** of the ROM's default (no-input) rendering at
+frame 600, cross-checked against a Mesen2 capture of the identical ROM file
+-- for the 2 ROMs the source confirms never glitch on real hardware
+(`hdma-21ff-glitch.sfc`, `inidisp_hammer_0f0f.sfc`) this genuinely is proof of
+hardware accuracy; for the other 9 it only proves parity with a limitation
+NESER shares with every checked reference emulator, not hardware accuracy.
 
 Comparing against Mesen2 requires normalizing its capture first: force
 `--Video.VideoFilter=None --Video.AspectRatio=NoStretching` (otherwise a
@@ -222,20 +231,25 @@ caught it).
 
 **Automated (12) — stability snapshots confirmed against Mesen2:**
 
-| ROM | Golden CRC |
-| --- | --- |
-| `hdma-2100-glitch.sfc` | `0x4844ECF2` |
-| `hdma-21ff-2100-0f-glitch.sfc` | `0x4844ECF2` |
-| `hdma-21ff-glitch.sfc` | `0x4844ECF2` |
-| `inidisp_d7_glitch_test.sfc` | `0x4844ECF2` |
-| `inidisp_hammer_0f.sfc` | `0x4844ECF2` |
-| `inidisp_hammer_0f00.sfc` | `0x4844ECF2` |
-| `inidisp_hammer_0f0f.sfc` | `0x4844ECF2` |
-| `inidisp_hammer_0f8f.sfc` | `0x4844ECF2` |
-| `inidisp_hammer_0f8f_fast.sfc` | `0x4844ECF2` |
-| `inidisp_hammer_0f_long.sfc` | `0x4844ECF2` |
-| `inidisp_hammer_8f0f.sfc` | `0x6E8D8520` (exact byte-for-byte match with Mesen2) |
-| `inidisp_enable_display_mid_frame.sfc` | `0x3B0F939D` (fixed by the per-scanline INIDISP latch, #2947) |
+| ROM | Golden CRC | Hardware accuracy |
+| --- | --- | --- |
+| `hdma-2100-glitch.sfc` | `0x4844ECF2` | Shared limitation (real HW usually glitches, #2949) |
+| `hdma-21ff-2100-0f-glitch.sfc` | `0x4844ECF2` | Shared limitation (real HW glitches via an FXPak firmware bug, #2949) |
+| `hdma-21ff-glitch.sfc` | `0x4844ECF2` | **Confirmed hardware-accurate** -- source confirms this ROM never glitches |
+| `inidisp_d7_glitch_test.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
+| `inidisp_hammer_0f.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
+| `inidisp_hammer_0f00.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
+| `inidisp_hammer_0f0f.sfc` | `0x4844ECF2` | **Confirmed hardware-accurate** -- source confirms this ROM never glitches |
+| `inidisp_hammer_0f8f.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
+| `inidisp_hammer_0f8f_fast.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
+| `inidisp_hammer_0f_long.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
+| `inidisp_hammer_8f0f.sfc` | `0x6E8D8520` (exact byte-for-byte match with Mesen2) | Shared limitation (real HW glitches, #2949) |
+| `inidisp_enable_display_mid_frame.sfc` | `0x3B0F939D` (fixed by the per-scanline INIDISP latch, #2947) | Not related to the D7 glitch; confirmed hardware-accurate |
+
+"Shared limitation" means: Mesen2, ares, and Snes9x all also fail to reproduce
+the documented real-hardware glitch for this ROM (#2949) -- the golden is a
+faithful cross-check against our reference emulator, not a hardware-accuracy
+claim.
 
 **Deliberately un-automated (17) — real NESER-vs-Mesen2 divergences found
 during this cross-check, tracked as follow-up bugs instead of baked into a
