@@ -82,21 +82,28 @@ pub(crate) fn run_rom(rom: &[u8], name: &str, config: RunConfig) -> RunResult {
     run_rom_with_oracle_and_capture(
         rom,
         name,
+        "rom_runner",
         config,
         RunOracle::Marker,
         std::env::var_os("NESER_CAPTURE_SCREEN").is_some(),
     )
 }
 
+/// `suite` names the calling integration-test module (e.g. `"blargg_apu_tests"`)
+/// and is used only to namespace `NESER_CAPTURE_SCREEN` PNG output under
+/// `target/snes_test_captures/<suite>/` so captures from different ROM suites
+/// don't collide or land in one flat directory.
 pub(crate) fn run_rom_with_oracle(
     rom: &[u8],
     name: &str,
+    suite: &str,
     config: RunConfig,
     oracle: RunOracle,
 ) -> RunResult {
     run_rom_with_oracle_and_capture(
         rom,
         name,
+        suite,
         config,
         oracle,
         std::env::var_os("NESER_CAPTURE_SCREEN").is_some(),
@@ -106,10 +113,12 @@ pub(crate) fn run_rom_with_oracle(
 /// Reads `root/file`, runs it with the screen-CRC oracle, and asserts it
 /// passes at `frames` with `expected_crc`. Shared by ROM suites whose ROMs
 /// report pass/fail purely by drawing text to the screen and freezing
-/// (blargg- and gilyon-style test ROMs).
+/// (blargg- and gilyon-style test ROMs). See [`run_rom_with_oracle`] for
+/// what `suite` is used for.
 pub(crate) fn assert_rom_screen_crc(
     root: &str,
     file: &str,
+    suite: &str,
     frames: u32,
     expected_crc: u32,
     config: RunConfig,
@@ -120,6 +129,7 @@ pub(crate) fn assert_rom_screen_crc(
     let result = run_rom_with_oracle(
         &rom,
         file,
+        suite,
         config,
         RunOracle::ScreenCrc {
             frames,
@@ -142,12 +152,21 @@ fn run_rom_with_capture(
     config: RunConfig,
     capture_screen: bool,
 ) -> RunResult {
-    run_rom_with_oracle_and_capture(rom, name, config, RunOracle::Marker, capture_screen)
+    run_rom_with_oracle_and_capture(
+        rom,
+        name,
+        "rom_runner",
+        config,
+        RunOracle::Marker,
+        capture_screen,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_rom_with_oracle_and_capture(
     rom: &[u8],
     name: &str,
+    suite: &str,
     config: RunConfig,
     oracle: RunOracle,
     capture_screen: bool,
@@ -185,6 +204,7 @@ fn run_rom_with_oracle_and_capture(
             return finish_result(
                 &snes,
                 name,
+                suite,
                 exit_reason,
                 passed,
                 ticks,
@@ -199,6 +219,7 @@ fn run_rom_with_oracle_and_capture(
             return finish_result(
                 &snes,
                 name,
+                suite,
                 RunExitReason::FrameLimit,
                 false,
                 ticks,
@@ -213,6 +234,7 @@ fn run_rom_with_oracle_and_capture(
             return finish_result(
                 &snes,
                 name,
+                suite,
                 RunExitReason::TickLimit,
                 false,
                 ticks,
@@ -286,6 +308,7 @@ fn read_marker(snes: &Snes) -> [u8; 5] {
 fn finish_result(
     snes: &Snes,
     name: &str,
+    suite: &str,
     exit_reason: RunExitReason,
     passed: bool,
     ticks: u64,
@@ -295,7 +318,7 @@ fn finish_result(
     capture_screen: bool,
 ) -> RunResult {
     let screen_crc32 = snes.screen_crc32();
-    let capture_path = maybe_write_capture_png(snes, name, screen_crc32, capture_screen);
+    let capture_path = maybe_write_capture_png(snes, name, suite, screen_crc32, capture_screen);
 
     RunResult {
         passed,
@@ -312,6 +335,7 @@ fn finish_result(
 fn maybe_write_capture_png(
     snes: &Snes,
     name: &str,
+    suite: &str,
     crc: u32,
     capture_screen: bool,
 ) -> Option<PathBuf> {
@@ -319,7 +343,7 @@ fn maybe_write_capture_png(
         return None;
     }
 
-    let path = capture_output_path(&capture_stem(name), crc);
+    let path = capture_output_path(suite, &capture_stem(name), crc);
     let rgb = snes.screen_snapshot();
     crate::platform::png_utils::write_rgb_png(
         &path,
@@ -359,8 +383,10 @@ fn capture_stem(name: &str) -> String {
         .collect()
 }
 
-pub(crate) fn capture_output_path(stem: &str, crc: u32) -> PathBuf {
-    PathBuf::from("target/snes_test_captures").join(format!("{stem}_crc_{crc:08X}.png"))
+pub(crate) fn capture_output_path(suite: &str, stem: &str, crc: u32) -> PathBuf {
+    PathBuf::from("target/snes_test_captures")
+        .join(suite)
+        .join(format!("{stem}_crc_{crc:08X}.png"))
 }
 
 #[cfg(test)]
@@ -517,6 +543,7 @@ mod tests {
         let probe = run_rom_with_oracle(
             &rom,
             "screen-crc-probe.sfc",
+            "rom_runner",
             RunConfig::new(20_000_000, 0),
             RunOracle::ScreenCrc {
                 frames: 3,
@@ -532,6 +559,7 @@ mod tests {
         let result = run_rom_with_oracle(
             &rom,
             "screen-crc-match.sfc",
+            "rom_runner",
             RunConfig::new(20_000_000, 0),
             RunOracle::ScreenCrc {
                 frames: 3,
@@ -549,6 +577,7 @@ mod tests {
         let result = run_rom_with_oracle(
             &pass_marker_rom(),
             "screen-crc-mismatch.sfc",
+            "rom_runner",
             RunConfig::new(20_000_000, 0),
             RunOracle::ScreenCrc {
                 frames: 2,
@@ -566,6 +595,7 @@ mod tests {
         let result = run_rom_with_oracle(
             &pass_bus_byte_rom(),
             "bus-byte-pass.sfc",
+            "rom_runner",
             short_config(),
             RunOracle::BusByte {
                 addr: 0x7E_1FE0,
@@ -583,8 +613,8 @@ mod tests {
     #[test]
     fn capture_output_path_uses_snes_target_directory_and_crc() {
         assert_eq!(
-            capture_output_path("pass", 0x8C90_CEE0),
-            PathBuf::from("target/snes_test_captures/pass_crc_8C90CEE0.png")
+            capture_output_path("blargg_apu_tests", "pass", 0x8C90_CEE0),
+            PathBuf::from("target/snes_test_captures/blargg_apu_tests/pass_crc_8C90CEE0.png")
         );
     }
 

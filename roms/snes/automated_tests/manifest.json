@@ -141,6 +141,27 @@
           "notes": "All 29 ROMs are vendored; 12 have visually-approved stability-snapshot goldens run by snes::integration_tests::undisbeliever_tests with the screen-CRC oracle, one test per ROM. The remaining 17 are committed but not yet automated (see notes above and #2943/#2944/#2945)."
         }
       ]
+    },
+    {
+      "id": "snes-tests-93143-hblank-dma-vram",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/rmstdope/snes-test-roms",
+        "ref": "26e8aa91e0d3b90b901e7e693bc4a8244b391d7b"
+      },
+      "license": "unknown",
+      "oracle_type": "screen_crc",
+      "notes": "Two ROMs (hvdma.sfc, hvdma_max.sfc) from a NESdev forum post by user '93143' (https://forums.nesdev.com/viewtopic.php?p=248408#p248408), mirrored into the rmstdope/snes-test-roms fork of higan's bundled test ROMs (not a dedicated per-author ROM-source repo, hence license unknown -- no LICENSE file exists in the submodule root or this subfolder). Neither prints a PASS/FAIL text screen; both are cross-checked against Mesen2 captures of the identical ROM file, same methodology as the undisbeliever suite. 1 of 2 is automated: hvdma.sfc (all 8 HDMA channels force-blank/write-VRAM-address/burst-20-bytes/unblank on two scanlines, changing BG1's tile pattern partway down the screen) now matches both Mesen2 and the bundled real-hardware reference photo after fixing #2952 (NESER's HDMA transfer mode 5 was reusing general-purpose DMA's cyclic-mode simplification, truncating 4 bytes/line to 2 and desyncing the per-channel HDMA table pointer, so every VMDATA channel mistook a leftover data byte for the table terminator right after its first line). hvdma_max.sfc (an H-IRQ-triggered DMA burst probing force-blank release timing) renders solid black in NESER vs. Mesen2's documented solid green -- a real, separate rendering gap unaffected by the #2952 fix, tracked as #2953 and deliberately left un-automated. See snes::integration_tests::hblank_dma_vram_tests and README-SNES.md.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram",
+          "refresh_command": null,
+          "notes": "Both ROMs are vendored; hvdma.sfc has a visually-approved, Mesen2-cross-checked golden run by snes::integration_tests::hblank_dma_vram_tests with the screen-CRC oracle. hvdma_max.sfc is committed but not yet automated pending #2953."
+        }
+      ]
     }
   ]
 }

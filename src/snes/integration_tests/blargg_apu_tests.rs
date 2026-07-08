@@ -21,6 +21,7 @@ mod tests {
         let result = run_rom_with_oracle(
             &rom,
             file,
+            "blargg_apu_tests",
             config,
             RunOracle::ScreenCrc {
                 frames,

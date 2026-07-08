@@ -1491,6 +1491,63 @@ mod tests {
     }
 
     #[test]
+    fn hdma_mode5_transfers_all_four_bytes_and_advances_table_pointer_correctly() {
+        // Regression test for #2952: HDMA transfer mode 5 ("2 registers, written
+        // twice each": B, B+1, B, B+1 -- 4 bytes per line) was reusing the
+        // general-purpose DMA controller's `canonical_mode` simplification
+        // (5 -> 1), which is only valid for GPDMA's cyclic multi-byte transfers
+        // (mode 1's [0,1] pattern cycled over many bytes is byte-identical to
+        // mode 5's [0,1,0,1] pattern cycled the same way). HDMA instead performs
+        // exactly one full pattern per scanline with no cycling, so collapsing
+        // mode 5 to mode 1's 2-byte pattern silently drops 2 of every 4 table
+        // bytes -- both the wrong data reaching the B-bus *and* the per-channel
+        // table pointer under-advancing, so the next reload misreads a leftover
+        // data byte as the following entry's descriptor. This exact shape (a
+        // one-line, non-repeat, mode-5 entry followed immediately by another
+        // entry) is what the vendored `hvdma.sfc` test ROM's 5 VMDATA HDMA
+        // channels use, and the pointer corruption made every one of them
+        // mistake a leftover zero data byte for the table terminator right
+        // after their first line, silently dropping the ROM's entire mid-frame
+        // VRAM tile update (see the 93143-hblank-dma-vram README).
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        write_hdma_channel(&mut bus, 0, 0x05, 0x60, 0x7E2B00); // mode5, direct, A->B
+        bus.write(0x7E2B00, 0x01); // entry1: repeat clear, 1 line
+        bus.write(0x7E2B01, 0x11);
+        bus.write(0x7E2B02, 0x22);
+        bus.write(0x7E2B03, 0x33);
+        bus.write(0x7E2B04, 0x44);
+        bus.write(0x7E2B05, 0x01); // entry2: repeat clear, 1 line
+        bus.write(0x7E2B06, 0x55);
+        bus.write(0x7E2B07, 0x66);
+        bus.write(0x7E2B08, 0x77);
+        bus.write(0x7E2B09, 0x88);
+        bus.write(0x7E2B0A, 0x00); // terminator
+        bus.write(0x00420C, 0x01);
+
+        bus.hdma_init();
+        bus.hdma_do_line(); // transfers entry1's 4 bytes; reloads entry2 at the end
+        bus.hdma_do_line(); // transfers entry2's 4 bytes
+
+        // The B-bus port sees the *last* write to each of the 2 registers in
+        // the B,B+1,B,B+1 pattern, so entry2's transfer should leave 0x77 (3rd
+        // byte) / 0x88 (4th byte) behind -- not entry1's leftover bytes or a
+        // misread descriptor, which is what the truncated-pattern bug produces.
+        write_dma_channel(&mut bus, 0, 0x80, 0x60, 0x7E2B10, 1);
+        write_dma_channel(&mut bus, 1, 0x80, 0x61, 0x7E2B11, 1);
+        bus.write(0x00420B, 0x03);
+        assert_eq!(
+            bus.read(0x7E2B10),
+            0x77,
+            "B-bus port 0x60 after entry2's transfer"
+        );
+        assert_eq!(
+            bus.read(0x7E2B11),
+            0x88,
+            "B-bus port 0x61 after entry2's transfer"
+        );
+    }
+
+    #[test]
     fn hdma_descriptor_80_transfers_once_then_pauses() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         write_hdma_channel(&mut bus, 0, 0x00, 0x70, 0x7E2700);

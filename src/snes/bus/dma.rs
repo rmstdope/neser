@@ -274,6 +274,30 @@ impl DmaController {
         }
     }
 
+    /// The B-bus offset pattern HDMA writes/reads once per active scanline for
+    /// a given raw DMAP transfer-mode field (0-7).
+    ///
+    /// Unlike GPDMA (`run_channel`/`transfer_offsets`+`canonical_mode`), which
+    /// cycles its pattern over an arbitrary total byte count -- so modes 5/6/7
+    /// are byte-identical to modes 1/2/3 once cycled and can be safely
+    /// canonicalized down -- HDMA performs exactly *one* full pattern per line
+    /// with no cycling. Mode 5 ("2 registers, written twice each": B, B+1, B,
+    /// B+1) therefore transfers 4 bytes per line, not the 2 bytes of mode 1's
+    /// pattern; collapsing it to mode 1 silently drops half the table bytes
+    /// each line and desyncs the per-channel table pointer, corrupting every
+    /// entry read afterward. See #2952.
+    fn hdma_transfer_offsets(mode: u8) -> &'static [u8] {
+        match mode {
+            0x0 => &[0],
+            0x1 => &[0, 1],
+            0x2 | 0x6 => &[0, 0],
+            0x3 | 0x7 => &[0, 0, 1, 1],
+            0x4 => &[0, 1, 2, 3],
+            0x5 => &[0, 1, 0, 1],
+            _ => &[0],
+        }
+    }
+
     fn advance_a_address(low: u8, high: u8, step: u8) -> (u8, u8) {
         let mut addr = u16::from_le_bytes([low, high]);
         match step {
@@ -361,8 +385,7 @@ impl DmaController {
     ) -> u64 {
         let dmap = self.get_reg(channel, 0x0);
         let bbad = self.get_reg(channel, 0x1);
-        let mode = Self::canonical_mode(dmap & 0x07);
-        let pattern = Self::transfer_offsets(mode);
+        let pattern = Self::hdma_transfer_offsets(dmap & 0x07);
         let direction_b_to_a = (dmap & 0x80) != 0;
         let indirect = (dmap & 0x40) != 0;
 
