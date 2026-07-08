@@ -77,210 +77,38 @@ For browser build/run/test commands, see [web/README.md](web/README.md).
 
 ## SNES automated verification
 
-SNES integration tests live under `src/snes/integration_tests/`.
-
-- `processor_tests_65816.rs` and `processor_tests_spc700.rs` run pinned
-  Tom Harte ProcessorTests vector subsets, with optional local full-corpus
-  caches under `roms/snes/automated_tests/processor_tests/*/full/v1`.
-- `scripts/refresh_65816_processor_tests_subset.py` regenerates the committed
-  65816 CI subset deterministically from the local full corpus and writes
-  `roms/snes/automated_tests/processor_tests/65816/subset_coverage_report.json`
-  with selected-opcode family coverage and tree-integrity metadata. By default,
-  it also truncates each selected opcode file to the first 32 vectors to keep
-  committed CI assets compact (`--max-vectors-per-file 0` disables truncation).
-- `scripts/refresh_spc700_processor_tests_subset.py` regenerates the committed
-  SPC700 CI subset deterministically from the local full corpus and writes
-  `roms/snes/automated_tests/processor_tests/spc700/subset_coverage_report.json`
-  with selected-opcode family coverage and tree-integrity metadata. By default,
-  it truncates selected opcode files to the first 32 vectors
-  (`--max-vectors-per-file 0` disables truncation).
-- `rom_runner.rs` provides the shared headless ROM runner used by future
-  ROM-based SNES verification suites. It loads generated or vendored `.sfc` /
-  `.smc` bytes through the SNES console, runs with explicit tick/frame budgets,
-  detects pass/fail through a reserved WRAM marker at `$7E1FF0`, records
-  diagnostics, and computes a screen CRC.
-- `rom_pass_fail` suite for #2876 vendors all 18 blargg SNES SPC700/APU test ROMs as
-  `snes-rom-pass-fail-blargg-spc-apu`. Each ROM has its own test verified by the
-  `rom_runner` screen-CRC oracle (run to a fixed frame, compare the screen CRC32
-  against a human-approved PASS capture); all 18 currently pass.
-- Asset provenance is tracked in
-  `roms/snes/automated_tests/manifest.json` and validated by
-  `python -m scripts.validate_snes_test_assets`.
-- For SNES `processor_tests` entries, `source.ref` must be a pinned 40-char
-  lowercase commit SHA, and assets sharing a `source.url` must share the same
-  pinned ref.
-- Intake policy and baseline-approval rules are documented in
-  [docs/SNES_TEST_ASSET_POLICY.md](docs/SNES_TEST_ASSET_POLICY.md).
-- Set `NESER_CAPTURE_SCREEN=1` to write optional runner screenshots under
-  `target/snes_test_captures/`.
-
-### blargg SPC700/APU ROM suite (#2876)
-
-All 18 blargg SNES SPC700/APU test ROMs are committed under
-`roms/snes/automated_tests/blargg_apu/`. They report
-results through blargg's text shell, so each ROM is verified by the `rom_runner`
-**screen-CRC oracle**: run to a fixed frame, then compare the rendered screen
-CRC32 against a human-approved PASS capture. To approve a new golden, run with
-`NESER_CAPTURE_SCREEN=1`, visually confirm the capture under
-`target/snes_test_captures/` shows a PASS screen, and record the
-`(frame, CRC)` in `src/snes/integration_tests/blargg_apu_tests.rs`.
-
-**Passing (18) — visually-approved screen-CRC goldens:**
-
-| ROM | Category | Golden CRC |
-| --- | --- | --- |
-| `1-test_exec_from_io` | SMP | `0x7EEE5E15` |
-| `2-test_single_instr` | SMP | `0x2B42CE76` |
-| `3-test_write_disable` | SMP | `0xC3DE3F4F` |
-| `4-test_ram_disable` | SMP | `0x85F1D154` |
-| `test_ram_disable_ipl` | SMP | `0xD001765E` |
-| `spc_smp` | SMP | `0xEFD13576` (frame 2200) |
-| `spc_mem_access_times` | SMP | `0x3AC3E30F` |
-| `spc_dsp6` | DSP | `0x05CD5DA7` (frame 9100, see below) |
-| `spc_timer` | Timers | `0x249738B2` |
-| `test_speed` | Timers | `0xFAE499DA` |
-| `test_timer_speed` | Timers | `0xA4D0ACB0` |
-| `test_timer_speed2` | Timers | `0xA4D0ACB0` |
-| `test_timer_speed_2` | Timers | `0xCAF1E3BC` |
-| `test_timer_speed3` | Timers | `0x367A08A5` |
-| `test_timer_stop` | Timers | `0x7CC2B76B` |
-| `test_timer_stop2` | Timers | `0xB2CC2986` |
-| `speed_2_freezes2` | Timers | `0x6E1BF905` |
-| `timer_at_power_reset` | Timers | `0x9A3B5FC3` (mid-test reset, see below) |
-
-`test_timer_speed3` is a measurement-oriented ROM: its golden is a visually
-approved `Done` screen rather than an internal `Passed` text screen.
-
-`timer_at_power_reset` signals that it wants a physical reset partway through
-by jumping into zeroed-out low WRAM (`$0000`), which real test hardware
-answers with a reset-button press. `RunConfig::with_reset_on_pc_trap(0x0000)`
-models this handshake: the runner triggers a soft CPU reset every time PC
-reaches the trap address (capped at 16 auto-resets) so the ROM can continue
-into its post-reset comparison and reach its real Passed/Failed screen.
-
-`test_timer_stop2` exercises the TEST-register ($F0) global timer stop: it
-rapidly pumps the stop/start bits and expects each stop issued while the
-timer's stage-1 prescaler square wave is high to inject one target-counter
-clock (the forced-low input is a falling edge at the timer's edge detector),
-with TnOUT preserved across the stop.
-
-`spc_dsp6` runs blargg's full S-DSP suite (KON, Misc, Order, Random and
-Timing batteries, ~9000 frames) and ends with a "PASSED TESTS" screen on a
-blue background; its test uses a 600M-tick budget to reach frame 9100. Note
-that real 3-chip SNES consoles fail parts of this ROM — the golden matches
-Mesen2's DSP model, which passes it fully.
-
-### gilyon/snes-tests CPU/SPC-700 ROM suite
-
-Vendored [gilyon/snes-tests](https://github.com/gilyon/snes-tests) v1.4 ROMs
-are committed under `roms/snes/automated_tests/gilyon_tests/`:
-
-- `cputest/cputest-basic.sfc` (1107 tests) and `cputest/cputest-full.sfc`
-  (1610 tests, including undocumented emulation-mode direct-page/stack
-  wrapping edge cases) exercise the 65816 CPU.
-- `spctest/spctest.sfc` (1368 tests) exercises the SPC-700.
-
-Like the blargg ROMs, these report through a text shell ("Success" or
-"Failed" with a register dump) and freeze forever on their final screen, so
-each gets one `rom_runner` screen-CRC test in
-`src/snes/integration_tests/gilyon_cpu_tests.rs` and `gilyon_spc_tests.rs`. All
-three currently PASS.
-
-Fixing `cputest-full.sfc`'s undocumented-behavior edge cases (DP-indexed
-indirect and long-indirect pointer-read page wrapping, JSR-indirect/PEI/PLB
-stack-page wrapping) required cross-checking against both the ROM's own
-documented expected register/memory state and Mesen2 (running the identical
-ROM file) — the downloaded Tom Harte `SingleStepTests/ProcessorTests` 65816
-vectors disagree with both for a handful of these exact edge cases, which
-turned out to be the stale/wrong reference; two vector-derived regression
-tests that baked in that stale data were removed. See the CPU addressing-mode
-doc comments in `src/snes/cpu/cpu.rs` (`addr_dp_x_ind`, `addr_dp_ind_long_y`,
-`op_jsr_abs_x_ind`, `op_pei`, `op_plb`) for the resolved, cross-verified
-behavior.
-
-### undisbeliever SNES test ROMs (#2884, #2880)
-
-29 hardware-glitch/timing-hammer ROMs from
-[undisbeliever/snes-test-roms](https://github.com/undisbeliever/snes-test-roms)
-are vendored via the `snes_test_roms` submodule under
-`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`.
-Unlike blargg/gilyon, **these ROMs do not print a PASS/FAIL text screen** --
-most demonstrate a real, documented SNES hardware bug (the "INIDISP D7
-glitch": writing `$2100` shortly after the CPU/HDMA data bus held a byte with
-bit 7 set can corrupt sprite rendering or briefly flip force-blank on real
-3-chip/1-chip consoles -- see the NESdev post quoted at
-[akatsuki105/snes-test-roms](https://github.com/akatsuki105/snes-test-roms/tree/master/undisbeliever-inidisp),
-from Near/byuu, with real-hardware reference photos), or are interactive
-demos driven by joypad input. **No known SNES emulator models this glitch**
--- checked Mesen2 (`Core/SNES/SnesPpu.cpp`), ares (`ares/sfc/ppu/io.cpp`,
-Near's own current emulator), and Snes9x (`ppu.cpp`); all three write `$2100`
-deterministically with no bus-residual modeling (#2949). So each golden here
-is a **stability snapshot** of the ROM's default (no-input) rendering at
-frame 600, cross-checked against a Mesen2 capture of the identical ROM file
--- for the 2 ROMs the source confirms never glitch on real hardware
-(`hdma-21ff-glitch.sfc`, `inidisp_hammer_0f0f.sfc`) this genuinely is proof of
-hardware accuracy; for the other 9 it only proves parity with a limitation
-NESER shares with every checked reference emulator, not hardware accuracy.
-
-Comparing against Mesen2 requires normalizing its capture first: force
-`--Video.VideoFilter=None --Video.AspectRatio=NoStretching` (otherwise a
-personal Mesen config can rescale/stretch the screenshot), and allow for a
-harmless constant 1-scanline row offset between the two emulators'
-screenshot conventions (an initial visual-only spot check missed this and
-wrongly judged some ROMs identical; a per-pixel diff with a ±1 row shift
-caught it).
-
-**Automated (12) — stability snapshots confirmed against Mesen2:**
-
-| ROM | Golden CRC | Hardware accuracy |
-| --- | --- | --- |
-| `hdma-2100-glitch.sfc` | `0x4844ECF2` | Shared limitation (real HW usually glitches, #2949) |
-| `hdma-21ff-2100-0f-glitch.sfc` | `0x4844ECF2` | Shared limitation (real HW glitches via an FXPak firmware bug, #2949) |
-| `hdma-21ff-glitch.sfc` | `0x4844ECF2` | **Confirmed hardware-accurate** -- source confirms this ROM never glitches |
-| `inidisp_d7_glitch_test.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
-| `inidisp_hammer_0f.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
-| `inidisp_hammer_0f00.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
-| `inidisp_hammer_0f0f.sfc` | `0x4844ECF2` | **Confirmed hardware-accurate** -- source confirms this ROM never glitches |
-| `inidisp_hammer_0f8f.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
-| `inidisp_hammer_0f8f_fast.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
-| `inidisp_hammer_0f_long.sfc` | `0x4844ECF2` | Shared limitation (real HW reliably glitches, #2949) |
-| `inidisp_hammer_8f0f.sfc` | `0x6E8D8520` (exact byte-for-byte match with Mesen2) | Shared limitation (real HW glitches, #2949) |
-| `inidisp_enable_display_mid_frame.sfc` | `0x3B0F939D` (fixed by the per-scanline INIDISP latch, #2947) | Not related to the D7 glitch; confirmed hardware-accurate |
-
-"Shared limitation" means: Mesen2, ares, and Snes9x all also fail to reproduce
-the documented real-hardware glitch for this ROM (#2949) -- the golden is a
-faithful cross-check against our reference emulator, not a hardware-accuracy
-claim.
-
-**Deliberately un-automated (17) — real NESER-vs-Mesen2 divergences found
-during this cross-check, tracked as follow-up bugs instead of baked into a
-golden:**
-
-- `hdmaen_latch_test.sfc`, `hdmaen_latch_test_2.sfc`,
-  `inidisp_brightness_delay.sfc`, `hdma-2100-glitch-2ch-0a.sfc`,
-  `hdma-2100-glitch-2ch-81.sfc`, `hdma-21ff-2100-glitch.sfc` -- root cause
-  found and partially fixed in #2947 (HDMA was never scheduled
-  automatically at all -- `hdma_init`/`hdma_do_line` were fully implemented
-  and unit-tested but nothing in the real tick loop ever called them).
-  With that fixed, the `hdma-2100-glitch-2ch-*`/`hdma-21ff-2100-glitch`
-  ROMs now render distinct, HDMA-driven visuals per variant instead of one
-  static "no effect" screen, but still don't pixel-match Mesen2 (~55-60%
-  diff, visually close but not phase-accurate); `hdmaen_latch_test(_2)`/
-  `inidisp_brightness_delay` are still unaffected, likely needing
-  finer within-scanline (H-position) HDMA timing than the once-per-scanline
-  model covers. See #2943.
-- `inidisp_forgot_to_force_blank.sfc` -- NESER doesn't reproduce the
-  VRAM/OAM corruption from writes outside force-blank that Mesen2 shows.
-  See #2944.
-- All 10 `scpu-a-dma-bug-*.sfc` -- the break/COP crash (from a silently
-  no-op'd DMA-to-WMDATA write, see #2945) is fixed and the ROMs now render
-  the documented "green squares, no bug detected" pass pattern, but the
-  HDMA-driven scanline-brightness banding isn't yet phase-accurate against
-  Mesen2 (same root cause as the `hdma-2100-glitch-2ch-*` gap above).
-  See #2945, #2947.
-
-Run SNES tests during development with:
+SNES integration tests live under `src/snes/integration_tests/`. Run them
+during development with:
 
 ```bash
 ./scripts/test-dir.sh src/snes
 ```
+
+Test suites:
+
+- `processor_tests_65816.rs` / `processor_tests_spc700.rs` -- single-step
+  CPU/SPC-700 vector tests, with an optional local full-corpus cache under
+  `roms/snes/automated_tests/processor_tests/*/full/v1`.
+- `blargg_apu_tests.rs` -- 18 SPC700/APU test ROMs
+  (`roms/snes/automated_tests/blargg_apu/`).
+- `gilyon_cpu_tests.rs` / `gilyon_spc_tests.rs` -- 65816 and SPC-700 CPU test
+  ROMs (`roms/snes/automated_tests/gilyon_tests/`).
+- `undisbeliever_tests.rs` -- hardware-glitch/timing-hammer ROMs
+  (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`).
+- `hblank_dma_vram_tests.rs` -- HDMA-to-VRAM timing ROMs
+  (`roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram/`).
+
+Most ROM-based suites report pass/fail either through a text shell
+(blargg/gilyon) or by rendering a known-good screen; `rom_runner.rs` provides
+the shared headless runner (tick/frame budgets, WRAM-marker and bus-byte
+oracles) and a screen-CRC oracle that runs to a fixed frame and compares the
+rendered screen CRC32 against an approved golden. Set
+`NESER_CAPTURE_SCREEN=1` to write a PNG per test under
+`target/snes_test_captures/<suite>/` when approving a new golden; each
+suite's own source file documents how to record the result.
+
+Asset provenance (source URL/ref, license, oracle type) is tracked in
+`roms/snes/automated_tests/manifest.json` and validated by
+`python -m scripts.validate_snes_test_assets`. Intake policy and
+baseline-approval rules are documented in
+[docs/SNES_TEST_ASSET_POLICY.md](docs/SNES_TEST_ASSET_POLICY.md).

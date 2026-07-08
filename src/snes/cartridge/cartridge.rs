@@ -1,7 +1,11 @@
 use crate::snes::cartridge::header::parse_header_at;
 use crate::snes::cartridge::mapping::{Mapping, detect_mapping};
 use std::fmt;
-const MIN_LOROM_HEADER_END: usize = 0x80C0;
+// A 32 KiB single-bank LoROM has its header flush against the end of the
+// image (0x7FC0..0x8000), so the pre-detection length guard must only
+// require these 0x40 bytes, matching detect_mapping's own per-candidate
+// bounds check (mapping.rs).
+const MIN_LOROM_HEADER_END: usize = 0x8000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RomSpeed {
@@ -266,6 +270,26 @@ mod tests {
 
         let cart = Cartridge::from_bytes(&rom).expect("64 KiB HiROM should load");
         assert_eq!(cart.mapping(), Mapping::HiRom);
+    }
+
+    #[test]
+    fn from_bytes_detects_minimal_32kib_lorom_mapping() {
+        // A single-bank 32 KiB LoROM has its header flush against the end of
+        // the image (0x7FC0..0x8000), same as the 64 KiB HiROM case above.
+        // This is a valid, minimal SNES ROM size (used by e.g. the vendored
+        // 93143 hvdma.sfc test ROM) and must not be rejected as TooShort.
+        let mut rom = vec![0u8; 0x8000];
+        write_header(
+            &mut rom,
+            0x7FC0,
+            0x20,
+            0x00,
+            0x00,
+            b"LOROM 32K TEST     \0\0",
+        );
+
+        let cart = Cartridge::from_bytes(&rom).expect("32 KiB LoROM should load");
+        assert_eq!(cart.mapping(), Mapping::LoRom);
     }
 
     #[test]

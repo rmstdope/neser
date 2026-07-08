@@ -16,6 +16,7 @@ mod tests {
         assert_rom_screen_crc(
             GILYON_TESTS_CPU_ROOT,
             file,
+            "gilyon_cpu_tests",
             frames,
             expected_crc,
             RunConfig::new(400_000_000, 0),

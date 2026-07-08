@@ -15,6 +15,7 @@ mod tests {
         assert_rom_screen_crc(
             GILYON_TESTS_SPC_ROOT,
             "spctest.sfc",
+            "gilyon_spc_tests",
             2000,
             0x87CD_986B,
             RunConfig::new(400_000_000, 0),

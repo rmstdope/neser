@@ -62,6 +62,7 @@ mod tests {
         let result = run_rom_with_oracle(
             &rom,
             file,
+            "undisbeliever_tests",
             RunConfig::new(400_000_000, 0),
             RunOracle::ScreenCrc {
                 frames,
