@@ -199,9 +199,14 @@ impl Sa1ControlRegisters {
     }
 
     /// Consumes the edge-triggered SA-1-side NMI dispatch signal (see the struct doc comment).
-    /// Does not affect the separately-tracked, CIC-acknowledged `sa1_nmi_pending` flag CFR
-    /// exposes.
+    /// Does nothing while SA-1-side NMI is disabled (CIE bit 4) -- the edge stays latched so
+    /// enabling NMI afterward still dispatches it, and a masked edge is never delivered to the
+    /// SA-1 CPU. Does not affect the separately-tracked, CIC-acknowledged `sa1_nmi_pending` flag
+    /// CFR exposes.
     pub(crate) fn take_sa1_nmi_edge(&mut self) -> bool {
+        if !self.sa1_nmi_enabled {
+            return false;
+        }
         std::mem::take(&mut self.sa1_nmi_edge)
     }
 
@@ -763,6 +768,7 @@ mod tests {
     #[test]
     fn ccnt_nmi_trigger_sets_edge_and_persistent_pending_independently() {
         let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x220A, 0x10); // CIE bit 4: enable SA-1-side NMI
         registers.write(0x2200, 0x10); // NMI trigger bit
         assert!(registers.sa1_nmi_pending());
         assert!(registers.take_sa1_nmi_edge(), "edge consumed once");
@@ -773,6 +779,23 @@ mod tests {
         // The CFR-visible pending flag survives the edge being consumed -- it's cleared only by
         // CIC, matching real 65816 NMI hardware (edge dispatch, level-persistent status flag).
         assert!(registers.sa1_nmi_pending());
+    }
+
+    #[test]
+    fn take_sa1_nmi_edge_stays_latched_while_nmi_is_disabled_then_fires_once_enabled() {
+        let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x2200, 0x10); // NMI trigger bit, CIE bit 4 not yet set
+        assert!(
+            !registers.take_sa1_nmi_edge(),
+            "masked NMI must not be delivered to the SA-1 CPU"
+        );
+
+        registers.write(0x220A, 0x10); // CIE bit 4: enable SA-1-side NMI
+        assert!(
+            registers.take_sa1_nmi_edge(),
+            "the edge must still be latched once NMI is enabled"
+        );
+        assert!(!registers.take_sa1_nmi_edge(), "edge consumed once");
     }
 
     #[test]
