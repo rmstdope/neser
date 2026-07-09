@@ -206,6 +206,7 @@ mod tests {
     // Known minor visual differences from Mesen2:
     // - Rightmost column timing (#2967): extra red pixels due to rendering order
     // - Frame-to-frame timing drift (#2971): one extra flickering line in test_2
+    // - INIDISP brightness timing (#2973): ~4% pixel diff at brightness transition edges
     undisbeliever_rom_test!(
         hdmaen_latch_test_matches_mesen2,
         "hdmaen_latch_test.sfc",
