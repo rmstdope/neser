@@ -108,6 +108,24 @@ impl Snes {
             .map(|cpu| cpu.bus().read_for_debugger(addr))
     }
 
+    /// Returns the SA-1 CPU's program counter, or `None` if no ROM is loaded or the loaded
+    /// cartridge isn't SA-1-chipped.
+    #[cfg(test)]
+    pub(crate) fn sa1_cpu_pc_for_tests(&self) -> Option<u16> {
+        self.cpu
+            .as_ref()
+            .and_then(|cpu| cpu.bus().sa1_cpu_pc_for_tests())
+    }
+
+    /// Returns the SA-1 CPU's accumulator, or `None` if no ROM is loaded or the loaded
+    /// cartridge isn't SA-1-chipped.
+    #[cfg(test)]
+    pub(crate) fn sa1_cpu_a_for_tests(&self) -> Option<u16> {
+        self.cpu
+            .as_ref()
+            .and_then(|cpu| cpu.bus().sa1_cpu_a_for_tests())
+    }
+
     /// Load battery-backed cartridge SRAM from a `.sav` file if one exists.
     #[cfg(not(target_arch = "wasm32"))]
     fn load_save_ram_from_disk(&mut self) {

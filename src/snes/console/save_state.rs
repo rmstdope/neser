@@ -33,6 +33,29 @@ fn default_dram_refresh_position() -> u16 {
     538
 }
 
+/// `$2228` BWPA's hardware reset value (fullsnes "Reset" table), used as the `#[serde(default)]`
+/// fallback so a `SnesSa1State` predating this field still deserializes to the fully-protected
+/// power-on state rather than `bwpa=$00` (protected-area size `256` bytes only).
+fn default_sa1_bwpa() -> u8 {
+    0xFF
+}
+
+/// `$2221`/`$2222`/`$2223` DXB/EXB/FXB's hardware reset values (fullsnes "Reset" table: ROM
+/// slots 1/2/3 in order). Used as `#[serde(default)]` fallbacks so a `SnesSa1State` saved before
+/// these fields existed (i.e. before #2959) deserializes to the same ROM mapping as power-on --
+/// plain `0` would incorrectly show ROM slot 0 in all three quarters instead.
+fn default_sa1_dxb() -> u8 {
+    0x01
+}
+
+fn default_sa1_exb() -> u8 {
+    0x02
+}
+
+fn default_sa1_fxb() -> u8 {
+    0x03
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SnesBlockMoveDirection {
     #[default]
@@ -110,6 +133,74 @@ pub struct SnesDmaState {
     pub hdma_lines_left: Vec<u16>,
 }
 
+/// SA-1 enhancement chip state: control/vector registers (`$2200-$220F`), I-RAM plus its two
+/// independent write-protection registers (`$2229`/`$222A`), Super MMC ROM banking and BW-RAM
+/// mapping/write-protection registers (`$2220-$2228`), and the second 65816 CPU core's own
+/// architectural state. `None`/absent on `SnesBusState` for non-SA-1 cartridges and for save
+/// states captured before SA-1 support existed. BW-RAM's own bytes are `SnesBusState::sram` --
+/// shared with the SNES CPU's cartridge RAM, not duplicated here.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct SnesSa1State {
+    #[serde(default)]
+    pub ccnt: u8,
+    #[serde(default)]
+    pub sie: u8,
+    #[serde(default)]
+    pub reset_vector: u16,
+    #[serde(default)]
+    pub nmi_vector: u16,
+    #[serde(default)]
+    pub irq_vector: u16,
+    #[serde(default)]
+    pub scnt: u8,
+    #[serde(default)]
+    pub cie: u8,
+    #[serde(default)]
+    pub snes_nmi_vector: u16,
+    #[serde(default)]
+    pub snes_irq_vector: u16,
+    #[serde(default)]
+    pub iram: Vec<u8>,
+    #[serde(default)]
+    pub iram_snes_write_protect: u8,
+    #[serde(default)]
+    pub iram_sa1_write_protect: u8,
+    #[serde(default)]
+    pub cxb: u8,
+    #[serde(default = "default_sa1_dxb")]
+    pub dxb: u8,
+    #[serde(default = "default_sa1_exb")]
+    pub exb: u8,
+    #[serde(default = "default_sa1_fxb")]
+    pub fxb: u8,
+    #[serde(default)]
+    pub bmaps: u8,
+    #[serde(default)]
+    pub bmap: u8,
+    #[serde(default)]
+    pub sbwe: u8,
+    #[serde(default)]
+    pub cbwe: u8,
+    #[serde(default = "default_sa1_bwpa")]
+    pub bwpa: u8,
+    #[serde(default)]
+    pub cpu: SnesCpuState,
+    #[serde(default)]
+    pub booted: bool,
+    #[serde(default)]
+    pub master_clock_debt: i64,
+    /// CFR bit 7 (SA-1-side IRQ-from-SNES pending). Not re-derivable from `ccnt` alone, since
+    /// its message nibble may have been overwritten since the flag latched.
+    #[serde(default)]
+    pub sa1_irq_pending: bool,
+    /// CFR bit 4 (SA-1-side NMI-from-SNES pending). See `sa1_irq_pending`.
+    #[serde(default)]
+    pub sa1_nmi_pending: bool,
+    /// SFR bit 7 (SNES-side IRQ-from-SA-1 pending). See `sa1_irq_pending`.
+    #[serde(default)]
+    pub snes_irq_pending: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SnesBusState {
     #[serde(default)]
@@ -140,6 +231,10 @@ pub struct SnesBusState {
     pub apu: SnesApuState,
     #[serde(default)]
     pub input: InputPortsState,
+    /// `None` for non-SA-1 cartridges, and for save states captured before SA-1 support existed
+    /// (`#[serde(default)]` keeps those loadable).
+    #[serde(default)]
+    pub sa1: Option<SnesSa1State>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -386,5 +481,38 @@ impl SnesSaveState {
         let state: Self = crate::platform::save_state::from_bytes(bytes)?;
         crate::platform::save_state::check_version(state.version, &[SNES_SAVESTATE_VERSION])?;
         Ok(state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `SnesSa1State` predating #2959 (i.e. before CXB/DXB/EXB/FXB/BMAPS/BMAP/SBWE/CBWE/BWPA
+    /// existed) deserializes as an empty JSON object for those fields.
+    #[test]
+    fn sa1_state_missing_memory_control_fields_deserializes_to_hardware_reset_values() {
+        let state: SnesSa1State = serde_json::from_str("{}").expect("deserialize");
+        assert_eq!(state.cxb, 0x00);
+        assert_eq!(state.dxb, 0x01);
+        assert_eq!(state.exb, 0x02);
+        assert_eq!(state.fxb, 0x03);
+        assert_eq!(state.bmaps, 0x00);
+        assert_eq!(state.bmap, 0x00);
+        assert_eq!(state.sbwe, 0x00);
+        assert_eq!(state.cbwe, 0x00);
+        assert_eq!(state.bwpa, 0xFF);
+    }
+
+    /// A `SnesSa1State` predating #2960 (i.e. before the cross-CPU IRQ pending flags existed)
+    /// deserializes with all three flags clear -- the correct "nothing pending" hardware
+    /// power-on state, and also what a pre-#2960 save state's SA-1 would actually have been in
+    /// (since the interrupt lines didn't exist to have anything pending).
+    #[test]
+    fn sa1_state_missing_irq_pending_fields_deserializes_to_nothing_pending() {
+        let state: SnesSa1State = serde_json::from_str("{}").expect("deserialize");
+        assert!(!state.sa1_irq_pending);
+        assert!(!state.sa1_nmi_pending);
+        assert!(!state.snes_irq_pending);
     }
 }

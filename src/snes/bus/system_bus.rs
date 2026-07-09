@@ -2,13 +2,18 @@ use crate::snes::apu::SnesApu;
 use crate::snes::bus::SnesBus;
 use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
+use crate::snes::cartridge::EnhancementChip;
 use crate::snes::cartridge::Mapping;
-use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
+use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity, SnesSa1State};
 use crate::snes::input::{InputPorts, SnesButton};
 use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
+use crate::snes::sa1::{
+    self, Sa1ControlRegisters, Sa1Core, Sa1IRam, Sa1MemoryControl, decode_mirror_offset,
+};
 use crate::trace_apu;
 use std::cell::{Cell, RefCell};
 use std::fs;
+use std::rc::Rc;
 
 const WRAM_SIZE: usize = 128 * 1024;
 
@@ -26,8 +31,8 @@ const WRAM_SIZE: usize = 128 * 1024;
 pub struct SnesSystemBus {
     _cartridge: Cartridge,
     mapping: Mapping,
-    rom: Vec<u8>,
-    sram: Vec<u8>,
+    rom: Rc<Vec<u8>>,
+    sram: Rc<RefCell<Vec<u8>>>,
     wram: Vec<u8>,
     wmadd: Cell<u32>,
     wrmpya: u8,
@@ -47,6 +52,18 @@ pub struct SnesSystemBus {
     input: RefCell<InputPorts>,
     mdr: Cell<u8>,
     ticks: Cell<u64>,
+    /// `$2200-$220F` SA-1 control/vector register state, shared with [`Sa1Core`]'s own
+    /// `Sa1Bus` so both CPU sides see the same registers. `None` for non-SA-1 cartridges.
+    sa1_registers: Option<Rc<RefCell<Sa1ControlRegisters>>>,
+    /// SA-1's 2KB I-RAM, shared with `Sa1Bus` so both CPU sides see the same bytes and their
+    /// own independent write-protection registers (`$2229`/`$222A`). `None` for non-SA-1
+    /// cartridges.
+    sa1_iram: Option<Rc<RefCell<Sa1IRam>>>,
+    /// `$2220-$2228` SA-1 Super MMC ROM banking and BW-RAM mapping/write-protection registers,
+    /// shared with `Sa1Bus`. `None` for non-SA-1 cartridges.
+    sa1_memory_control: Option<Rc<RefCell<Sa1MemoryControl>>>,
+    /// The second 65816 CPU core for SA-1. `None` for non-SA-1 cartridges.
+    sa1_core: Option<Sa1Core>,
 }
 
 impl SnesSystemBus {
@@ -64,9 +81,30 @@ impl SnesSystemBus {
         video_region: SnesVideoRegion,
     ) -> Self {
         let mapping = cartridge.mapping();
-        let rom = cartridge.rom().to_vec();
-        let sram = vec![0; cartridge.sram_size()];
+        let rom = Rc::new(cartridge.rom().to_vec());
+        let sram = Rc::new(RefCell::new(vec![0; cartridge.sram_size()]));
         let spc_ipl = Self::load_spc_ipl_override(spc_ipl_path);
+        let (sa1_registers, sa1_iram, sa1_memory_control, sa1_core) =
+            if cartridge.enhancement_chip() == Some(EnhancementChip::Sa1) {
+                let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+                let iram = Rc::new(RefCell::new(Sa1IRam::new()));
+                let memory_control = Rc::new(RefCell::new(Sa1MemoryControl::new()));
+                let core = Sa1Core::new(
+                    Rc::clone(&registers),
+                    Rc::clone(&iram),
+                    Rc::clone(&memory_control),
+                    Rc::clone(&rom),
+                    Rc::clone(&sram),
+                );
+                (
+                    Some(registers),
+                    Some(iram),
+                    Some(memory_control),
+                    Some(core),
+                )
+            } else {
+                (None, None, None, None)
+            };
         Self {
             _cartridge: cartridge,
             mapping,
@@ -86,6 +124,10 @@ impl SnesSystemBus {
             input: RefCell::new(InputPorts::new()),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
+            sa1_registers,
+            sa1_iram,
+            sa1_memory_control,
+            sa1_core,
         }
     }
 
@@ -229,29 +271,128 @@ impl SnesSystemBus {
                 || (0x4300..=0x437F).contains(&offset))
     }
 
+    /// SA-1 Super MMC ROM decode, used instead of the generic LoROM/HiROM/ExHiROM decode for
+    /// SA-1-chipped cartridges (fullsnes: "The registers do affect both SNES and SA-1
+    /// mapping"). `None` for non-SA-1 cartridges.
+    fn sa1_rom_index(&self, addr: u32) -> Option<usize> {
+        let control = self.sa1_memory_control.as_ref()?.borrow();
+        sa1::decode_rom_index(addr, &control)
+    }
+
+    /// SA-1 BW-RAM linear offset from the SNES CPU's own perspective: its `$2224` BMAPS block
+    /// select for the windowed `$6000-$7FFF` view, or the direct `$40-$4F` banks. `None` for
+    /// non-SA-1 cartridges.
+    fn sa1_bwram_index(&self, addr: u32) -> Option<usize> {
+        let control = self.sa1_memory_control.as_ref()?.borrow();
+        if let Some(window_offset) = sa1::decode_bwram_windowed_offset(addr) {
+            Some(control.snes_bwram_block() * 0x2000 + window_offset)
+        } else {
+            sa1::decode_bwram_direct_offset(addr)
+        }
+    }
+
+    /// SNES-side optional NMI/IRQ vector-override interception: reads of `$00FFEA`/`$00FFEB`
+    /// return `$220C`/`$220D` SNV instead of ROM when `$2209` SCNT bit 4 is set; reads of
+    /// `$00FFEE`/`$00FFEF` return `$220E`/`$220F` SIV instead when SCNT bit 6 is set (confirmed
+    /// against bsnes's `SA1::ROM::readCPU`, since fullsnes documents the switch bits but not
+    /// this exact interception mechanism). fullsnes notes real games rarely use this for actual
+    /// vector redirection ("used only by Jumpin Derby") -- the absindx RAM protection test
+    /// instead repurposes the IRQ pair as a data side-channel: its own IRQ handler, entered via
+    /// the ROM's ordinary fixed IRQ vector, deliberately re-reads `$00FFEE` as *data* to recover
+    /// a byte SA-1 stashed in SIV (see `Sa1ControlRegisters::snes_irq_vector`'s doc comment).
+    /// `None` for non-SA-1 cartridges or when the matching override switch is off.
+    fn sa1_snes_vector_override_byte(&self, addr: u32) -> Option<u8> {
+        let registers = self.sa1_registers.as_ref()?.borrow();
+        let (vector, low_byte) = match addr & 0xFF_FFFF {
+            0x00_FFEA if registers.snes_nmi_vector_override_enabled() => {
+                (registers.snes_nmi_vector(), true)
+            }
+            0x00_FFEB if registers.snes_nmi_vector_override_enabled() => {
+                (registers.snes_nmi_vector(), false)
+            }
+            0x00_FFEE if registers.snes_irq_vector_override_enabled() => {
+                (registers.snes_irq_vector(), true)
+            }
+            0x00_FFEF if registers.snes_irq_vector_override_enabled() => {
+                (registers.snes_irq_vector(), false)
+            }
+            _ => return None,
+        };
+        Some(if low_byte {
+            (vector & 0xFF) as u8
+        } else {
+            (vector >> 8) as u8
+        })
+    }
+
     fn dma_read_a_bus_impl(&self, addr: u32, open_bus: u8) -> u8 {
         if Self::is_dma_a_bus_mmio(addr) {
             return open_bus;
         }
 
+        if let Some(byte) = self.sa1_snes_vector_override_byte(addr) {
+            return byte;
+        }
         if let Some(index) = Self::decode_wram_index(addr) {
-            self.wram[index]
-        } else if let Some(index) = self.decode_rom_index(addr) {
-            self.rom.get(index).copied().unwrap_or(open_bus)
-        } else if let Some(index) = self.decode_sram_index(addr) {
-            if self.sram.is_empty() {
+            return self.wram[index];
+        }
+        if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
+            return iram.borrow().read(offset);
+        }
+        if self.sa1_memory_control.is_some() {
+            if let Some(index) = self.sa1_bwram_index(addr) {
+                let sram = self.sram.borrow();
+                return if sram.is_empty() {
+                    open_bus
+                } else {
+                    sram[index % sram.len()]
+                };
+            }
+            return self
+                .sa1_rom_index(addr)
+                .and_then(|index| self.rom.get(index).copied())
+                .unwrap_or(open_bus);
+        }
+        if let Some(index) = self.decode_rom_index(addr) {
+            return self.rom.get(index).copied().unwrap_or(open_bus);
+        }
+        if let Some(index) = self.decode_sram_index(addr) {
+            let sram = self.sram.borrow();
+            return if sram.is_empty() {
                 open_bus
             } else {
-                self.sram[index % self.sram.len()]
-            }
-        } else {
-            open_bus
+                sram[index % sram.len()]
+            };
         }
+        open_bus
     }
 
     fn read_for_debugger_impl(&self, addr: u32) -> u8 {
+        if let Some(byte) = self.sa1_snes_vector_override_byte(addr) {
+            return byte;
+        }
+
         if let Some(index) = Self::decode_wram_index(addr) {
             return self.wram[index];
+        }
+
+        if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
+            return iram.borrow().read(offset);
+        }
+
+        if self.sa1_memory_control.is_some() {
+            if let Some(index) = self.sa1_bwram_index(addr) {
+                let sram = self.sram.borrow();
+                return if sram.is_empty() {
+                    self.mdr.get()
+                } else {
+                    sram[index % sram.len()]
+                };
+            }
+            return self
+                .sa1_rom_index(addr)
+                .and_then(|index| self.rom.get(index).copied())
+                .unwrap_or(self.mdr.get());
         }
 
         if let Some(index) = self.decode_rom_index(addr) {
@@ -259,10 +400,11 @@ impl SnesSystemBus {
         }
 
         if let Some(index) = self.decode_sram_index(addr) {
-            return if self.sram.is_empty() {
+            let sram = self.sram.borrow();
+            return if sram.is_empty() {
                 self.mdr.get()
             } else {
-                self.sram[index % self.sram.len()]
+                sram[index % sram.len()]
             };
         }
 
@@ -276,12 +418,48 @@ impl SnesSystemBus {
 
         if let Some(index) = Self::decode_wram_index(addr) {
             self.wram[index] = value;
-        } else if let Some(index) = self.decode_sram_index(addr) {
-            let len = self.sram.len();
+            return;
+        }
+        if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
+            iram.borrow_mut().write_from_snes(offset, value);
+            return;
+        }
+        if self.sa1_memory_control.is_some() {
+            if let Some(index) = self.sa1_bwram_index(addr) {
+                self.write_sa1_bwram(index, value);
+            }
+            // ROM is read-only.
+            return;
+        }
+        if let Some(index) = self.decode_sram_index(addr) {
+            let mut sram = self.sram.borrow_mut();
+            let len = sram.len();
             if len != 0 {
-                self.sram[index % len] = value;
+                sram[index % len] = value;
             }
         }
+    }
+
+    /// Writes `value` to BW-RAM at linear offset `index`, honoring the shared write-protection
+    /// rule (`$2226`/`$2227`/`$2228`; see [`Sa1MemoryControl::is_bwram_write_protected`]).
+    fn write_sa1_bwram(&self, index: usize, value: u8) {
+        let Some(control) = &self.sa1_memory_control else {
+            return;
+        };
+        let mut sram = self.sram.borrow_mut();
+        let len = sram.len();
+        if len == 0 {
+            return;
+        }
+        // Protection must be checked against the *wrapped* physical offset -- BW-RAM mirrors
+        // when the selected block/bank exceeds the physical size, so an unwrapped check could
+        // let a mirrored address (e.g. banks $44-$4F, or a large BMAP block) bypass protection
+        // on a byte that maps onto a protected physical address after wrapping.
+        let wrapped = index % len;
+        if control.borrow().is_bwram_write_protected(wrapped) {
+            return;
+        }
+        sram[wrapped] = value;
     }
 
     fn start_dma_transfer(&mut self, mdmaen: u8) {
@@ -337,7 +515,7 @@ impl SnesSystemBus {
 
     /// Returns a snapshot of the current SRAM contents.
     pub fn sram_snapshot(&self) -> Vec<u8> {
-        self.sram.clone()
+        self.sram.borrow().clone()
     }
 
     /// Snapshot the PPU's visible framebuffer as packed RGB888.
@@ -457,9 +635,10 @@ impl SnesSystemBus {
     /// Restores SRAM from a byte slice. If the slice is larger than SRAM,
     /// only the first `sram_size()` bytes are used.
     pub fn restore_sram(&mut self, data: &[u8]) {
-        let len = self.sram.len().min(data.len());
+        let mut sram = self.sram.borrow_mut();
+        let len = sram.len().min(data.len());
         if len > 0 {
-            self.sram[..len].copy_from_slice(&data[..len]);
+            sram[..len].copy_from_slice(&data[..len]);
         }
     }
 
@@ -483,10 +662,59 @@ impl SnesSystemBus {
             dma: self.dma.capture_state(),
             mdr: self.mdr.get(),
             ticks: self.ticks.get(),
-            sram: self.sram.clone(),
+            sram: self.sram.borrow().clone(),
             apu: self.apu.borrow().capture_state(),
             input: self.input.borrow().capture_state(),
+            sa1: self.capture_sa1_state(),
         }
+    }
+
+    /// `None` for non-SA-1 cartridges; see the [`SnesSa1State`] doc comment.
+    fn capture_sa1_state(&self) -> Option<SnesSa1State> {
+        let registers = self.sa1_registers.as_ref()?.borrow();
+        let iram = self
+            .sa1_iram
+            .as_ref()
+            .expect("sa1_iram is constructed alongside sa1_registers")
+            .borrow();
+        let memory_control = self
+            .sa1_memory_control
+            .as_ref()
+            .expect("sa1_memory_control is constructed alongside sa1_registers")
+            .borrow();
+        let core = self
+            .sa1_core
+            .as_ref()
+            .expect("sa1_core is constructed alongside sa1_registers");
+        Some(SnesSa1State {
+            ccnt: registers.ccnt(),
+            sie: registers.sie(),
+            reset_vector: registers.reset_vector(),
+            nmi_vector: registers.nmi_vector(),
+            irq_vector: registers.irq_vector(),
+            scnt: registers.scnt(),
+            cie: registers.cie(),
+            snes_nmi_vector: registers.snes_nmi_vector(),
+            snes_irq_vector: registers.snes_irq_vector(),
+            iram: iram.data().to_vec(),
+            iram_snes_write_protect: iram.snes_write_protect_raw(),
+            iram_sa1_write_protect: iram.sa1_write_protect_raw(),
+            cxb: memory_control.cxb(),
+            dxb: memory_control.dxb(),
+            exb: memory_control.exb(),
+            fxb: memory_control.fxb(),
+            bmaps: memory_control.bmaps(),
+            bmap: memory_control.bmap(),
+            sbwe: memory_control.sbwe(),
+            cbwe: memory_control.cbwe(),
+            bwpa: memory_control.bwpa(),
+            cpu: core.cpu_state(),
+            booted: core.booted(),
+            master_clock_debt: core.master_clock_debt(),
+            sa1_irq_pending: registers.sa1_irq_pending(),
+            sa1_nmi_pending: registers.sa1_nmi_pending(),
+            snes_irq_pending: registers.snes_irq_pending(),
+        })
     }
 
     pub(crate) fn restore_state(&mut self, state: &SnesBusState) -> Result<(), String> {
@@ -515,10 +743,10 @@ impl SnesSystemBus {
         {
             return Err("DMA HDMA state size mismatch".to_string());
         }
-        if state.sram.len() != self.sram.len() {
+        if state.sram.len() != self.sram.borrow().len() {
             return Err(format!(
                 "SRAM size mismatch (expected {}, found {})",
-                self.sram.len(),
+                self.sram.borrow().len(),
                 state.sram.len()
             ));
         }
@@ -534,10 +762,59 @@ impl SnesSystemBus {
         self.dma.restore_state(&state.dma)?;
         self.mdr.set(state.mdr);
         self.ticks.set(state.ticks);
-        self.sram.copy_from_slice(&state.sram);
+        self.sram.borrow_mut().copy_from_slice(&state.sram);
         self.apu.get_mut().restore_state(&state.apu)?;
         self.input.get_mut().restore_state(&state.input);
+        self.restore_sa1_state(state.sa1.as_ref());
         Ok(())
+    }
+
+    /// `None` (e.g. non-SA-1 cartridge, or a save state predating SA-1 support) leaves SA-1 at
+    /// its current power-on-reset state rather than erroring -- matches this codebase's general
+    /// `#[serde(default)]` backward-compatibility approach elsewhere in save states.
+    fn restore_sa1_state(&mut self, state: Option<&SnesSa1State>) {
+        let Some(state) = state else { return };
+        let (Some(registers), Some(iram), Some(memory_control), Some(core)) = (
+            &self.sa1_registers,
+            &self.sa1_iram,
+            &self.sa1_memory_control,
+            &mut self.sa1_core,
+        ) else {
+            return;
+        };
+        registers.borrow_mut().restore_raw(
+            state.ccnt,
+            state.sie,
+            state.reset_vector,
+            state.nmi_vector,
+            state.irq_vector,
+            state.scnt,
+            state.cie,
+            state.snes_nmi_vector,
+            state.snes_irq_vector,
+            state.sa1_irq_pending,
+            state.sa1_nmi_pending,
+            state.snes_irq_pending,
+        );
+        iram.borrow_mut().restore_raw(
+            &state.iram,
+            state.iram_snes_write_protect,
+            state.iram_sa1_write_protect,
+        );
+        memory_control.borrow_mut().restore_raw(
+            state.cxb,
+            state.dxb,
+            state.exb,
+            state.fxb,
+            state.bmaps,
+            state.bmap,
+            state.sbwe,
+            state.cbwe,
+            state.bwpa,
+        );
+        core.restore_cpu_state(&state.cpu);
+        core.set_booted(state.booted);
+        core.set_master_clock_debt(state.master_clock_debt);
     }
 
     pub(crate) fn sample_ready(&self) -> bool {
@@ -569,6 +846,28 @@ impl SnesSystemBus {
     #[cfg(test)]
     fn apu_read_spc_memory_for_test(&mut self, addr: u16) -> u8 {
         self.apu.get_mut().read_spc_memory_for_test(addr)
+    }
+
+    /// Returns the SA-1 CPU's program counter, or `None` for non-SA-1 cartridges.
+    #[cfg(test)]
+    pub(crate) fn sa1_cpu_pc_for_tests(&self) -> Option<u16> {
+        self.sa1_core.as_ref().map(|core| core.cpu().read_pc())
+    }
+
+    /// Returns the SA-1 CPU's accumulator, or `None` for non-SA-1 cartridges.
+    #[cfg(test)]
+    pub(crate) fn sa1_cpu_a_for_tests(&self) -> Option<u16> {
+        self.sa1_core.as_ref().map(|core| core.cpu().read_a())
+    }
+
+    /// Simulates the SA-1 CPU itself writing one of its side-writable registers (e.g. `$2209`
+    /// SCNT, `$220A` CIE, `$220B` CIC), without needing a running fixture program. No-op for
+    /// non-SA-1 cartridges.
+    #[cfg(test)]
+    pub(crate) fn write_sa1_side_register_for_tests(&self, port: u16, value: u8) {
+        if let Some(registers) = &self.sa1_registers {
+            registers.borrow_mut().write(port, value);
+        }
     }
 
     fn read_mmio(&self, addr: u32) -> Option<u8> {
@@ -614,6 +913,10 @@ impl SnesSystemBus {
             0x4016 => self.input.borrow_mut().read_joya(open_bus),
             0x4017 => self.input.borrow_mut().read_joyb(open_bus),
             0x4218..=0x421F => self.input.borrow().read_joy_register(offset)?,
+            // $2300 SFR: SNES-side status flag read (message from SA-1, vector-override
+            // switches, IRQ-from-SA-1 pending). `None` for non-SA-1 cartridges, matching every
+            // other SA-1 register's fall-through-to-open-bus behavior.
+            0x2300 => self.sa1_registers.as_ref()?.borrow().sfr(),
             0x4300..=0x437F => self.dma.read_register(offset)?,
             _ => return None,
         };
@@ -720,6 +1023,36 @@ impl SnesSystemBus {
                 self.ppu.borrow_mut().write_register(offset, value);
                 true
             }
+            // $2200-$2208 are the SNES-side-writable subset of the control/vector register
+            // block; $2209-$220F (SCNT/CIE/CIC/SNV/SIV) are SA-1-side-writable instead (handled
+            // by `Sa1Bus`). All are write-only (fullsnes "Write Only Registers"), so no
+            // read_mmio arm -- $2300 SFR is the separate read-only status register.
+            0x2200..=0x2208 => match &self.sa1_registers {
+                Some(registers) => {
+                    registers.borrow_mut().write(offset, value);
+                    true
+                }
+                None => false,
+            },
+            // $2229 SIWP: write-only (fullsnes "Write Only Registers"), so no read_mmio arm.
+            0x2229 => match &self.sa1_iram {
+                Some(iram) => {
+                    iram.borrow_mut().set_snes_write_protect(value);
+                    true
+                }
+                None => false,
+            },
+            // $2220-$2224/$2226/$2228 are the SNES-side-writable subset of the Super MMC/BW-RAM
+            // register block; $2225 BMAP and $2227 CBWE are SA-1-side-writable instead (handled
+            // by `Sa1Bus`). All are write-only (fullsnes "Write Only Registers"), so no
+            // read_mmio arm.
+            0x2220..=0x2224 | 0x2226 | 0x2228 => match &self.sa1_memory_control {
+                Some(memory_control) => {
+                    memory_control.borrow_mut().write(offset, value);
+                    true
+                }
+                None => false,
+            },
             0x4300..=0x437F => self.dma.write_register(offset, value),
             _ => false,
         }
@@ -746,6 +1079,9 @@ impl SnesSystemBus {
             self.input.get_mut().trigger_auto_read();
         }
         self.input.get_mut().tick();
+        if let Some(sa1_core) = &mut self.sa1_core {
+            sa1_core.tick_one_master_clock();
+        }
     }
 }
 
@@ -786,29 +1122,64 @@ impl SnesBus for SnesSystemBus {
             return value;
         }
 
+        if let Some(byte) = self.sa1_snes_vector_override_byte(addr) {
+            self.mdr.set(byte);
+            return byte;
+        }
+
         if let Some(index) = Self::decode_wram_index(addr) {
             let value = self.wram[index];
             self.mdr.set(value);
-            value
-        } else if let Some(index) = self.decode_rom_index(addr) {
+            return value;
+        }
+        if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
+            let value = iram.borrow().read(offset);
+            self.mdr.set(value);
+            return value;
+        }
+        if self.sa1_memory_control.is_some() {
+            if let Some(index) = self.sa1_bwram_index(addr) {
+                let sram = self.sram.borrow();
+                let value = if sram.is_empty() {
+                    self.mdr.get()
+                } else {
+                    sram.get(index % sram.len())
+                        .copied()
+                        .unwrap_or_else(|| self.mdr.get())
+                };
+                self.mdr.set(value);
+                return value;
+            }
+            return if let Some(index) = self.sa1_rom_index(addr) {
+                if let Some(&value) = self.rom.get(index) {
+                    self.mdr.set(value);
+                    value
+                } else {
+                    self.mdr.get()
+                }
+            } else {
+                self.mdr.get()
+            };
+        }
+        if let Some(index) = self.decode_rom_index(addr) {
             if let Some(&value) = self.rom.get(index) {
                 self.mdr.set(value);
-                value
-            } else {
-                self.mdr.get()
+                return value;
             }
-        } else if let Some(index) = self.decode_sram_index(addr) {
-            if self.sram.is_empty() {
-                self.mdr.get()
-            } else if let Some(&value) = self.sram.get(index % self.sram.len()) {
-                self.mdr.set(value);
-                value
-            } else {
-                self.mdr.get()
-            }
-        } else {
-            self.mdr.get()
+            return self.mdr.get();
         }
+        if let Some(index) = self.decode_sram_index(addr) {
+            let sram = self.sram.borrow();
+            if sram.is_empty() {
+                return self.mdr.get();
+            }
+            if let Some(&value) = sram.get(index % sram.len()) {
+                self.mdr.set(value);
+                return value;
+            }
+            return self.mdr.get();
+        }
+        self.mdr.get()
     }
 
     fn read_for_debugger(&self, addr: u32) -> u8 {
@@ -822,11 +1193,25 @@ impl SnesBus for SnesSystemBus {
 
         if let Some(index) = Self::decode_wram_index(addr) {
             self.wram[index] = value;
-        } else if let Some(index) = self.decode_sram_index(addr) {
-            let len = self.sram.len();
+            return;
+        }
+        if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
+            iram.borrow_mut().write_from_snes(offset, value);
+            return;
+        }
+        if self.sa1_memory_control.is_some() {
+            if let Some(index) = self.sa1_bwram_index(addr) {
+                self.write_sa1_bwram(index, value);
+            }
+            // ROM is read-only.
+            return;
+        }
+        if let Some(index) = self.decode_sram_index(addr) {
+            let mut sram = self.sram.borrow_mut();
+            let len = sram.len();
             if len != 0 {
                 let wrapped = index % len;
-                if let Some(slot) = self.sram.get_mut(wrapped) {
+                if let Some(slot) = sram.get_mut(wrapped) {
                     *slot = value;
                 }
             }
@@ -850,8 +1235,14 @@ impl SnesBus for SnesSystemBus {
 
     fn poll_irq(&self) -> bool {
         // CPU-dispatch-visible signal (one-dot delayed vs. the raw PPU line) -- see
-        // `Ppu::poll_irq_dispatch` and the `SnesBus::poll_irq` trait doc.
+        // `Ppu::poll_irq_dispatch` and the `SnesBus::poll_irq` trait doc. OR'd with SA-1's own
+        // cross-CPU IRQ line (SCNT bit 7 pending && SIE bit 7 enabled), which has no equivalent
+        // dispatch-pipeline delay to model.
         self.ppu.borrow().poll_irq_dispatch()
+            || self
+                .sa1_registers
+                .as_ref()
+                .is_some_and(|registers| registers.borrow().snes_irq_line())
     }
 
     fn screen_dimensions(&self) -> (u32, u32) {
@@ -894,6 +1285,41 @@ mod tests {
     fn lorom_cart_with_sram() -> Cartridge {
         let mut rom = vec![0u8; 0x20000];
         build_cart(&mut rom, 0x7FC0, 0x20, 0x05)
+    }
+
+    fn sa1_test_cart() -> Cartridge {
+        let mut rom = vec![0u8; 0x10000];
+        let base = 0x7FC0;
+        rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
+        rom[base + 0x3C] = 0x00;
+        rom[base + 0x3D] = 0x80;
+        rom[base + 0x15] = 0x20;
+        rom[base + 0x16] = 0x35; // SA-1 chipset (matches the vendored absindx ROMs' own header)
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = 0x00;
+        rom[base + 0x1C] = 0x34;
+        rom[base + 0x1D] = 0x12;
+        rom[base + 0x1E] = 0xCB;
+        rom[base + 0x1F] = 0xED;
+        Cartridge::from_bytes(&rom).expect("valid SA-1 test cartridge")
+    }
+
+    /// Same as [`sa1_test_cart`] but with a non-zero BW-RAM (SRAM) size, for BW-RAM tests.
+    fn sa1_test_cart_with_bwram() -> Cartridge {
+        let mut rom = vec![0u8; 0x10000];
+        let base = 0x7FC0;
+        rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
+        rom[base + 0x3C] = 0x00;
+        rom[base + 0x3D] = 0x80;
+        rom[base + 0x15] = 0x20;
+        rom[base + 0x16] = 0x35; // SA-1 chipset
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = 0x05; // 32 KB BW-RAM
+        rom[base + 0x1C] = 0x34;
+        rom[base + 0x1D] = 0x12;
+        rom[base + 0x1E] = 0xCB;
+        rom[base + 0x1F] = 0xED;
+        Cartridge::from_bytes(&rom).expect("valid SA-1 test cartridge with BW-RAM")
     }
 
     fn lorom_cart_with_battery_sram() -> Cartridge {
@@ -1662,12 +2088,13 @@ mod tests {
 
     #[test]
     fn sram_snapshot_returns_current_sram_contents() {
-        let mut bus = SnesSystemBus::new(lorom_cart_with_battery_sram());
+        let bus = SnesSystemBus::new(lorom_cart_with_battery_sram());
         // Write some values to SRAM directly
         if bus.sram_size() > 0 {
-            bus.sram[0] = 0xAA;
-            bus.sram[1] = 0xBB;
-            bus.sram[2] = 0xCC;
+            let mut sram = bus.sram.borrow_mut();
+            sram[0] = 0xAA;
+            sram[1] = 0xBB;
+            sram[2] = 0xCC;
         }
 
         let snapshot = bus.sram_snapshot();
@@ -2049,5 +2476,290 @@ mod tests {
         }
         let joy1 = (restored.read(0x004219) as u16) << 8 | restored.read(0x004218) as u16;
         assert_ne!(joy1 & (1 << 6), 0, "X preserved across save-state");
+    }
+
+    #[test]
+    fn sa1_iram_mirror_write_is_blocked_until_siwp_enables_its_chunk() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write(0x00_3000, 0x42); // SIWP is $00 at reset: write must be dropped.
+        assert_eq!(bus.read(0x00_3000), 0x00);
+
+        bus.write(0x00_2229, 0x01); // enable chunk 0 ($3000-$30FF)
+        bus.write(0x00_3000, 0x42);
+        assert_eq!(bus.read(0x00_3000), 0x42);
+    }
+
+    #[test]
+    fn sa1_iram_mirror_is_visible_through_the_debugger_read_path() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write(0x00_2229, 0xFF);
+        bus.write(0x80_31FF, 0x7A); // banks $80-$BF mirror the same window
+        assert_eq!(bus.read_for_debugger(0x00_31FF), 0x7A);
+    }
+
+    #[test]
+    fn sa1_iram_mirror_is_reachable_as_a_general_dma_a_bus_source() {
+        // Modeled directly on `dma_a_to_b_wmdata_writes_wram_and_advances_wmadd` above, with the
+        // A-bus source moved from plain WRAM to the SA-1 I-RAM mirror.
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write(0x00_2229, 0xFF); // write-enable all I-RAM chunks from the SNES side
+        bus.write(0x00_3000, 0x55); // I-RAM source byte, via the mirror window
+
+        // Point WMDATA's auto-increment pointer at $000010.
+        bus.write(0x002181, 0x10);
+        bus.write(0x002182, 0x00);
+        bus.write(0x002183, 0x00);
+
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x00_3000, 1);
+        bus.write(0x00420B, 0x01);
+
+        assert_eq!(bus.read(0x7E0010), 0x55);
+    }
+
+    #[test]
+    fn non_sa1_cartridge_iram_mirror_addresses_are_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x00_3000, 0x42); // no SA-1 I-RAM backing this cartridge: must be a no-op
+        assert_eq!(bus.read(0x00_3000), 0x00);
+    }
+
+    #[test]
+    fn save_state_round_trips_sa1_registers_iram_and_cpu() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        // I-RAM: write-enable only chunks 0-1 ($3000-$31FF) and store distinct marker bytes,
+        // leaving chunk 7 ($3700-$37FF) protected so the protection state itself is exercised.
+        bus.write(0x00_2229, 0x03);
+        bus.write(0x00_3000, 0x11);
+        bus.write(0x00_3100, 0x22);
+        // Boot SA-1: point its reset vector at a real (if trivial) idle loop and release it.
+        bus.write(0x00_2203, 0x00);
+        bus.write(0x00_2204, 0x80); // SA-1 reset vector = $8000 (ROM is zeroed: JMP $0000 loop)
+        bus.write(0x00_2200, 0x00);
+        for _ in 0..300 {
+            bus.tick();
+        }
+        let pc_before = bus.sa1_cpu_pc_for_tests();
+        let a_before = bus.sa1_cpu_a_for_tests();
+
+        let state = bus.capture_state();
+
+        let mut restored = SnesSystemBus::new(sa1_test_cart());
+        restored.restore_state(&state).expect("restore");
+
+        assert_eq!(restored.read_for_debugger(0x00_3000), 0x11);
+        assert_eq!(restored.read_for_debugger(0x00_3100), 0x22);
+        assert_eq!(restored.sa1_cpu_pc_for_tests(), pc_before);
+        assert_eq!(restored.sa1_cpu_a_for_tests(), a_before);
+
+        // The restored I-RAM protection state must survive too: a chunk that was never
+        // enabled stays protected.
+        restored.write(0x00_3700, 0x99);
+        assert_eq!(restored.read(0x00_3700), 0x00);
+    }
+
+    #[test]
+    fn save_state_round_trip_is_a_no_op_for_non_sa1_cartridges() {
+        let bus = SnesSystemBus::new(lorom_test_cart());
+        let state = bus.capture_state();
+        assert_eq!(state.sa1, None);
+
+        let mut restored = SnesSystemBus::new(lorom_test_cart());
+        restored.restore_state(&state).expect("restore");
+        assert_eq!(restored.sa1_cpu_pc_for_tests(), None);
+    }
+
+    #[test]
+    fn sa1_bwram_windowed_write_succeeds_once_either_side_enables_writes() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        bus.write(0x00_6000, 0x42); // BWPA defaults to $FF (protect everything); write dropped.
+        assert_eq!(bus.read(0x00_6000), 0x00);
+
+        // Confirmed against bsnes (KDL3 quirk comment in SA1::BWRAM::writeLinear): BWPA only
+        // protects when *both* SBWE and CBWE are disabled -- enabling just one side already
+        // lifts protection entirely, it isn't independent per-side gating like I-RAM's.
+        bus.write(0x00_2226, 0x80); // SNES side enables writes; SA-1 side (CBWE) stays disabled.
+        bus.write(0x00_6000, 0x42);
+        assert_eq!(bus.read(0x00_6000), 0x42);
+    }
+
+    #[test]
+    fn sa1_bwram_windowed_write_succeeds_once_bwpa_shrinks_below_the_target_offset() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        bus.write(0x00_2228, 0x00); // protect only the first 256 bytes
+        bus.write(0x00_6100, 0x42); // offset $100, outside the protected region
+        assert_eq!(bus.read(0x00_6100), 0x42);
+    }
+
+    #[test]
+    fn sa1_bwram_windowed_access_honors_bmaps_block_select() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        bus.write(0x00_2228, 0x00); // shrink protection so the write below succeeds
+        bus.write(0x00_2224, 0x01); // BMAPS: block 1 ($2000-$3FFF of BW-RAM)
+        bus.write(0x00_6000, 0x77);
+        // The same byte must be visible directly at BW-RAM offset $2000 (bank $40).
+        assert_eq!(bus.read(0x40_2000), 0x77);
+    }
+
+    #[test]
+    fn sa1_bwram_write_protection_is_checked_against_the_wrapped_physical_offset() {
+        // 32KB BW-RAM = 4 blocks of 8KB (blocks 0-3). Block 4 wraps around to physical offset 0
+        // -- the exact byte BWPA protects below. A protection check against the *unwrapped*
+        // linear offset (4*0x2000 = 0x8000) would wrongly see it as outside the 256-byte
+        // protected region and let the write through onto a byte that block 0 (offset 0) would
+        // correctly protect.
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        bus.write(0x00_2228, 0x00); // protect only the first 256 bytes
+        bus.write(0x00_2224, 0x04); // BMAPS: block 4 (wraps to physical offset 0 in 32KB BW-RAM)
+        bus.write(0x00_6000, 0x42);
+        assert_eq!(
+            bus.read(0x00_6000),
+            0x00,
+            "mirrored block must not bypass protection"
+        );
+    }
+
+    #[test]
+    fn sa1_bwram_direct_banks_cover_the_full_range() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        bus.write(0x00_2228, 0x00); // shrink protection
+        bus.write(0x00_2226, 0x80); // and enable writes outright
+        bus.write(0x41_0000, 0x99); // bank $41 = BW-RAM offset $10000
+        assert_eq!(bus.read(0x41_0000), 0x99);
+    }
+
+    #[test]
+    fn sa1_rom_banking_hirom_quarter_always_honors_the_bank_select_field() {
+        let mut rom = vec![0u8; 0x20_0000]; // 2MB: room for ROM slots 0 and 1
+        write_sa1_header(&mut rom);
+        rom[0x10_0000..0x10_0003].copy_from_slice(&[0x11, 0x22, 0x33]); // ROM slot 1
+        let cartridge = Cartridge::from_bytes(&rom).expect("valid SA-1 ROM");
+        let mut bus = SnesSystemBus::new(cartridge);
+
+        bus.write(0x00_2220, 0x01); // CXB: slot 1 (bit 7 clear)
+        assert_eq!(bus.read(0xC0_0000), 0x11);
+        assert_eq!(bus.read(0xC0_0001), 0x22);
+    }
+
+    #[test]
+    fn sa1_rom_banking_lorom_quarter_remaps_once_bit7_is_set() {
+        let mut rom = vec![0u8; 0x20_0000]; // 2MB: room for ROM slots 0 and 1
+        write_sa1_header(&mut rom);
+        rom[0x10_0000] = 0xAB; // ROM slot 1, byte 0
+        let cartridge = Cartridge::from_bytes(&rom).expect("valid SA-1 ROM");
+        let mut bus = SnesSystemBus::new(cartridge);
+
+        bus.write(0x00_2220, 0x81); // CXB: slot 1, bit 7 set (remap LoROM too)
+        assert_eq!(bus.read(0x00_8000), 0xAB);
+    }
+
+    #[test]
+    fn sa1_irq_vector_override_redirects_00ffee_ffef_to_siv() {
+        let bus = SnesSystemBus::new(sa1_test_cart());
+        // Before the override switch (SCNT bit 6) is set, $00FFEE/FFEF read real ROM (zeroed).
+        assert_eq!(bus.read(0x00_FFEE), 0x00);
+
+        bus.write_sa1_side_register_for_tests(0x220E, 0x34); // SIV low
+        bus.write_sa1_side_register_for_tests(0x220F, 0x12); // SIV high
+        bus.write_sa1_side_register_for_tests(0x2209, 0x40); // SCNT bit 6: enable IRQ vector override
+        assert_eq!(bus.read(0x00_FFEE), 0x34);
+        assert_eq!(bus.read(0x00_FFEF), 0x12);
+        assert_eq!(
+            bus.read_for_debugger(0x00_FFEE),
+            0x34,
+            "debugger path sees the same override"
+        );
+    }
+
+    #[test]
+    fn sa1_nmi_vector_override_redirects_00ffea_ffeb_to_snv() {
+        let bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write_sa1_side_register_for_tests(0x220C, 0x78); // SNV low
+        bus.write_sa1_side_register_for_tests(0x220D, 0x56); // SNV high
+        bus.write_sa1_side_register_for_tests(0x2209, 0x10); // SCNT bit 4: enable NMI vector override
+        assert_eq!(bus.read(0x00_FFEA), 0x78);
+        assert_eq!(bus.read(0x00_FFEB), 0x56);
+    }
+
+    #[test]
+    fn sa1_vector_override_does_not_affect_non_sa1_cartridges() {
+        let bus = SnesSystemBus::new(lorom_test_cart());
+        assert_eq!(bus.read(0x00_FFEE), 0x00);
+    }
+
+    #[test]
+    fn sa1_irq_from_sa1_asserts_main_bus_poll_irq_once_enabled() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write_sa1_side_register_for_tests(0x2209, 0x80); // SCNT: SA-1 raises IRQ
+        assert!(!bus.poll_irq(), "SIE not yet enabled");
+
+        bus.write(0x00_2201, 0x80); // SIE: SNES side enables IRQ-from-SA-1
+        assert!(bus.poll_irq());
+
+        bus.write(0x00_2202, 0x80); // SIC: acknowledge
+        assert!(!bus.poll_irq());
+    }
+
+    #[test]
+    fn sa1_sfr_reflects_message_and_pending_from_scnt() {
+        let bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write_sa1_side_register_for_tests(0x2209, 0x87); // message=7, IRQ trigger
+        assert_eq!(bus.read(0x00_2300), 0x87);
+    }
+
+    /// Writes a minimal valid SA-1 LoROM header into `rom` (64 KiB+, chipset `$35`), matching
+    /// the pattern in [`sa1_test_cart`] but as a free function so ROM-banking tests can build a
+    /// larger backing buffer (needed to address ROM slot 1 at file offset `$100000`).
+    fn write_sa1_header(rom: &mut [u8]) {
+        let base = 0x7FC0;
+        rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
+        rom[base + 0x3C] = 0x00;
+        rom[base + 0x3D] = 0x80;
+        rom[base + 0x15] = 0x20;
+        rom[base + 0x16] = 0x35;
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = 0x00;
+        rom[base + 0x1C] = 0x34;
+        rom[base + 0x1D] = 0x12;
+        rom[base + 0x1E] = 0xCB;
+        rom[base + 0x1F] = 0xED;
+    }
+
+    #[test]
+    fn save_state_round_trips_sa1_memory_control_and_bwram() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        bus.write(0x00_2228, 0x00); // shrink BWPA protection
+        bus.write(0x00_2226, 0x80); // SBWE
+        bus.write(0x00_2224, 0x03); // BMAPS
+        bus.write(0x00_2220, 0x81); // CXB: slot 1, LoROM remap enabled
+        bus.write(0x00_6000, 0x5A); // BW-RAM byte via the (now block-3) window
+
+        let state = bus.capture_state();
+        let mut restored = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        restored.restore_state(&state).expect("restore");
+
+        assert_eq!(restored.read(0x00_6000), 0x5A);
+        // Protection state must survive: still shrunk to 256 bytes, still write-enabled.
+        restored.write(0x00_6100, 0x11);
+        assert_eq!(restored.read(0x00_6100), 0x11);
+    }
+
+    #[test]
+    fn save_state_round_trips_sa1_cross_cpu_interrupt_pending_flags() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write(0x00_2200, 0x90); // CCNT: latch sa1_irq_pending and sa1_nmi_pending
+        bus.write_sa1_side_register_for_tests(0x2209, 0x80); // SCNT: latch snes_irq_pending
+
+        let state = bus.capture_state();
+        let mut restored = SnesSystemBus::new(sa1_test_cart());
+        restored.restore_state(&state).expect("restore");
+
+        let registers = restored
+            .sa1_registers
+            .as_ref()
+            .expect("SA-1 cart should have control registers")
+            .borrow();
+        assert!(registers.sa1_irq_pending());
+        assert!(registers.sa1_nmi_pending());
+        assert!(registers.snes_irq_pending());
     }
 }

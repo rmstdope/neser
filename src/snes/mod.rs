@@ -10,6 +10,7 @@ pub mod console;
 pub mod cpu;
 pub mod input;
 pub mod ppu;
+pub mod sa1;
 
 #[cfg(test)]
 mod integration_tests;

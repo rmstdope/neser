@@ -9,4 +9,8 @@ mod hblank_dma_vram_tests;
 mod processor_tests_65816;
 mod processor_tests_spc700;
 mod rom_runner;
+mod sa1_boot_tests;
+mod sa1_bwram_tests;
+mod sa1_iram_tests;
+mod sa1_irq_tests;
 mod undisbeliever_tests;
