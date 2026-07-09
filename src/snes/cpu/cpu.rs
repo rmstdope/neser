@@ -406,6 +406,16 @@ impl<B: SnesBus> Cpu<B> {
         self.abort_pending = pending;
     }
 
+    /// Force the Fast/Slow memory-access speed classification (mirrors MEMSEL `$420D` bit 0).
+    ///
+    /// Used by the SA-1 core, which has no MEMSEL of its own but always accesses memory at
+    /// the uniformly-fast rate (see fullsnes: SA-1 CPU at 10.74MHz vs the main CPU's
+    /// 2.68/3.58MHz), so its `Cpu` instance is forced into the "Fast" classification once at
+    /// construction rather than toggled at runtime like the main CPU's.
+    pub fn set_fast_rom(&mut self, value: bool) {
+        self.fast_rom = value;
+    }
+
     /// Perform a hardware RESET.
     ///
     /// No bytes are pushed. The CPU enters emulation mode, sets I=1, clears D, PBR, DBR,

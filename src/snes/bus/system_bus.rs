@@ -2,13 +2,16 @@ use crate::snes::apu::SnesApu;
 use crate::snes::bus::SnesBus;
 use crate::snes::bus::dma::{DmaABus, DmaController};
 use crate::snes::cartridge::Cartridge;
+use crate::snes::cartridge::EnhancementChip;
 use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity};
 use crate::snes::input::{InputPorts, SnesButton};
 use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
+use crate::snes::sa1::{Sa1ControlRegisters, Sa1Core};
 use crate::trace_apu;
 use std::cell::{Cell, RefCell};
 use std::fs;
+use std::rc::Rc;
 
 const WRAM_SIZE: usize = 128 * 1024;
 
@@ -26,7 +29,7 @@ const WRAM_SIZE: usize = 128 * 1024;
 pub struct SnesSystemBus {
     _cartridge: Cartridge,
     mapping: Mapping,
-    rom: Vec<u8>,
+    rom: Rc<Vec<u8>>,
     sram: Vec<u8>,
     wram: Vec<u8>,
     wmadd: Cell<u32>,
@@ -47,6 +50,11 @@ pub struct SnesSystemBus {
     input: RefCell<InputPorts>,
     mdr: Cell<u8>,
     ticks: Cell<u64>,
+    /// `$2200-$220F` SA-1 control/vector register state, shared with [`Sa1Core`]'s own
+    /// `Sa1Bus` so both CPU sides see the same registers. `None` for non-SA-1 cartridges.
+    sa1_registers: Option<Rc<RefCell<Sa1ControlRegisters>>>,
+    /// The second 65816 CPU core for SA-1. `None` for non-SA-1 cartridges.
+    sa1_core: Option<Sa1Core>,
 }
 
 impl SnesSystemBus {
@@ -64,9 +72,17 @@ impl SnesSystemBus {
         video_region: SnesVideoRegion,
     ) -> Self {
         let mapping = cartridge.mapping();
-        let rom = cartridge.rom().to_vec();
+        let rom = Rc::new(cartridge.rom().to_vec());
         let sram = vec![0; cartridge.sram_size()];
         let spc_ipl = Self::load_spc_ipl_override(spc_ipl_path);
+        let (sa1_registers, sa1_core) =
+            if cartridge.enhancement_chip() == Some(EnhancementChip::Sa1) {
+                let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+                let core = Sa1Core::new(Rc::clone(&registers), Rc::clone(&rom));
+                (Some(registers), Some(core))
+            } else {
+                (None, None)
+            };
         Self {
             _cartridge: cartridge,
             mapping,
@@ -86,6 +102,8 @@ impl SnesSystemBus {
             input: RefCell::new(InputPorts::new()),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
+            sa1_registers,
+            sa1_core,
         }
     }
 
@@ -571,6 +589,18 @@ impl SnesSystemBus {
         self.apu.get_mut().read_spc_memory_for_test(addr)
     }
 
+    /// Returns the SA-1 CPU's program counter, or `None` for non-SA-1 cartridges.
+    #[cfg(test)]
+    pub(crate) fn sa1_cpu_pc_for_tests(&self) -> Option<u16> {
+        self.sa1_core.as_ref().map(|core| core.cpu().read_pc())
+    }
+
+    /// Returns the SA-1 CPU's accumulator, or `None` for non-SA-1 cartridges.
+    #[cfg(test)]
+    pub(crate) fn sa1_cpu_a_for_tests(&self) -> Option<u16> {
+        self.sa1_core.as_ref().map(|core| core.cpu().read_a())
+    }
+
     fn read_mmio(&self, addr: u32) -> Option<u8> {
         let offset = Self::decode_system_offset(addr)?;
         let open_bus = self.mdr.get();
@@ -719,6 +749,16 @@ impl SnesSystemBus {
                 self.ppu.borrow_mut().write_register(offset, value);
                 true
             }
+            // SA-1 control/vector registers are write-only on real hardware (fullsnes lists
+            // them under "Write Only Registers"), so there is no matching read_mmio arm --
+            // reads of this range correctly fall through to open bus.
+            0x2200..=0x220F => match &self.sa1_registers {
+                Some(registers) => {
+                    registers.borrow_mut().write(offset, value);
+                    true
+                }
+                None => false,
+            },
             0x4300..=0x437F => self.dma.write_register(offset, value),
             _ => false,
         }
@@ -745,6 +785,9 @@ impl SnesSystemBus {
             self.input.get_mut().trigger_auto_read();
         }
         self.input.get_mut().tick();
+        if let Some(sa1_core) = &mut self.sa1_core {
+            sa1_core.tick_one_master_clock();
+        }
     }
 }
 
