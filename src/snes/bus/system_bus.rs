@@ -499,10 +499,16 @@ impl SnesSystemBus {
     /// [`Ppu::hdma_transfer_due`]). `hdma_init`/`hdma_do_line` were previously only reachable
     /// from tests -- nothing drove them during real emulation, so HDMA never actually ran.
     fn check_hdma_triggers(&mut self) {
-        if self.ppu.borrow_mut().hdma_init_due() {
+        // Both `_due` checks are read-only; compute them under a single immutable borrow
+        // instead of two separate `RefCell` runtime checks on this once-per-tick hot path.
+        let (init_due, transfer_due) = {
+            let ppu = self.ppu.borrow();
+            (ppu.hdma_init_due(), ppu.hdma_transfer_due())
+        };
+        if init_due {
             self.hdma_init();
         }
-        if self.ppu.borrow_mut().hdma_transfer_due() {
+        if transfer_due {
             self.hdma_do_line();
         }
     }
@@ -1077,8 +1083,14 @@ impl SnesSystemBus {
     fn tick_one_master_clock(&mut self) {
         self.ticks.set(self.ticks.get().wrapping_add(1));
         self.apu.borrow_mut().tick();
-        self.ppu.borrow_mut().tick();
-        if self.ppu.borrow_mut().poll_auto_joypad_latch() {
+        // Single `borrow_mut()` scope for both calls -- this runs once per master clock, so two
+        // separate `RefCell` runtime checks here would be needless overhead on a hot path.
+        let auto_joypad_latch = {
+            let mut ppu = self.ppu.borrow_mut();
+            ppu.tick();
+            ppu.poll_auto_joypad_latch()
+        };
+        if auto_joypad_latch {
             self.input.get_mut().trigger_auto_read();
         }
         self.input.get_mut().tick();

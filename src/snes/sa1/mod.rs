@@ -393,6 +393,11 @@ impl Sa1ControlRegisters {
         self.sa1_nmi_edge = false; // transient dispatch signal; never persisted
         self.snes_irq_pending = snes_irq_pending;
         self.snes_irq_enabled = sie & 0x80 != 0;
+        // Transient H/V-counter latch, also never persisted (see the field doc comment) --
+        // cleared here too, since `restore_raw` runs on the live shared instance rather than a
+        // fresh one, and would otherwise leak a stale pre-restore latch into $2303-$2305.
+        self.hcr = 0;
+        self.vcr = 0;
     }
 }
 
@@ -793,6 +798,31 @@ mod tests {
         assert_eq!(registers.reset_vector(), 0x9ABC);
         assert_eq!(registers.nmi_vector(), 0x1234);
         assert_eq!(registers.irq_vector(), 0x5678);
+    }
+
+    #[test]
+    fn restore_raw_clears_a_stale_hv_counter_latch() {
+        let mut registers = Sa1ControlRegisters::new();
+        registers.latch_hv_counter(123, 45); // simulate a pre-restore $2302 read
+        assert_eq!(registers.hcr_low(), 123);
+        assert_eq!(registers.vcr_low(), 45);
+
+        registers.restore_raw(
+            0x00, 0x00, 0x0000, 0x0000, 0x0000, 0x00, 0x00, 0x0000, 0x0000, false, false, false,
+        );
+
+        assert_eq!(
+            registers.hcr_low(),
+            0,
+            "hcr must not leak a pre-restore latch"
+        );
+        assert_eq!(registers.hcr_high(), 0);
+        assert_eq!(
+            registers.vcr_low(),
+            0,
+            "vcr must not leak a pre-restore latch"
+        );
+        assert_eq!(registers.vcr_high(), 0);
     }
 
     #[test]
