@@ -1,18 +1,23 @@
 //! SA-1 enhancement chip: dual-CPU core, `$2200-$220F` control/vector registers, I-RAM, Super
-//! MMC ROM banking, and BW-RAM.
+//! MMC ROM banking, BW-RAM, cross-CPU IRQ/status handshake, and the read-only register block.
 //!
-//! Scope so far (issues #2957, #2958, #2959): a second, independently-clocked 65816 CPU core for
-//! SA-1, reusing the existing generic [`Cpu`] unmodified, the SA-1 control/vector register block
-//! needed to boot it, SA-1's 2KB I-RAM (see [`iram`]) with its per-CPU-side write protection,
-//! configurable ROM banking, and BW-RAM mapping/write-protection (see [`memory_control`]). The
-//! cross-CPU IRQ/status handshake and the version-code/read-only register block are separate
-//! sub-issues of #2956 and land on top of this.
+//! Scope so far (issues #2957-#2961): a second, independently-clocked 65816 CPU core for SA-1,
+//! reusing the existing generic [`Cpu`] unmodified, the SA-1 control/vector register block needed
+//! to boot it, SA-1's 2KB I-RAM (see [`iram`]) with its per-CPU-side write protection, configurable
+//! ROM banking, and BW-RAM mapping/write-protection (see [`memory_control`]); the cross-CPU
+//! IRQ/status handshake (`$2300`/`$2301` SFR/CFR, SNV/SIV vector-override interception); and the
+//! remaining read-only register block (`$2302-$230E`: H/V counter reads sharing the main [`Ppu`],
+//! stubbed arithmetic-result/overflow and variable-length-data-port registers, and the
+//! never-implemented-on-real-hardware `$230E` version code). Automating the absindx conformance
+//! ROMs themselves is a separate sub-issue of #2956 that lands on top of this.
 //!
 //! Register bit layouts and reset values are sourced from fullsnes ("SNES Cart SA-1 I/O Map" /
-//! "Interrupt/Control on SNES Side" / "Interrupt/Control on SA-1 Side" / "Memory Control"
-//! sections), per the `snes-hardware-research` skill's source priority; the ROM-banking default
-//! LoROM-range behavior is additionally cross-checked against bsnes since fullsnes's own prose
-//! there is ambiguous in isolation (see [`memory_control::decode_rom_index`]'s doc comment).
+//! "Interrupt/Control on SNES Side" / "Interrupt/Control on SA-1 Side" / "Memory Control" / "Timer"
+//! / "Arithmetic Maths" / "Variable-Length Bit Processing" sections), per the
+//! `snes-hardware-research` skill's source priority; the ROM-banking default LoROM-range behavior
+//! and `$230E`'s open-bus-only nature are additionally cross-checked against bsnes since fullsnes's
+//! own prose there is ambiguous or explicitly says "unknown" in isolation (see
+//! [`memory_control::decode_rom_index`]'s doc comment and [`Sa1Bus`]'s doc comment respectively).
 
 mod iram;
 mod memory_control;
@@ -27,6 +32,7 @@ use crate::platform::save_state::Stateful;
 use crate::snes::bus::SnesBus;
 use crate::snes::console::save_state::SnesCpuState;
 use crate::snes::cpu::Cpu;
+use crate::snes::ppu::Ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -99,6 +105,12 @@ pub struct Sa1ControlRegisters {
     snes_irq_pending: bool,
     /// `$2201` SIE bit 7: SNES-side IRQ-from-SA-1 enable.
     snes_irq_enabled: bool,
+    /// `$2302`/`$2303` HCR: the PPU dot position latched by the last `$2302` read (see
+    /// [`Self::latch_hv_counter`]). Transient hardware state, like `sa1_nmi_edge` -- not
+    /// persisted across save-states, since its pre-first-latch value is unobserved anyway.
+    hcr: u16,
+    /// `$2304`/`$2305` VCR: the PPU scanline latched alongside `hcr`.
+    vcr: u16,
 }
 
 impl Sa1ControlRegisters {
@@ -124,6 +136,8 @@ impl Sa1ControlRegisters {
             sa1_nmi_edge: false,
             snes_irq_pending: false,
             snes_irq_enabled: false,
+            hcr: 0,
+            vcr: 0,
         }
     }
 
@@ -317,6 +331,31 @@ impl Sa1ControlRegisters {
         self.snes_irq_pending
     }
 
+    /// `$2302` HCR read side effect (fullsnes: "Reading from 2302h automatically latches the
+    /// other HV-Counter bits to 2303h-2305h"): latches the PPU's current dot/scanline position.
+    /// `dot` ranges 0-340 and `scanline` 0-311 (PAL) -- both fit comfortably in the 9-bit
+    /// counters real hardware exposes here, so the unused upper bits always read 0.
+    pub(crate) fn latch_hv_counter(&mut self, dot: u16, scanline: u16) {
+        self.hcr = dot;
+        self.vcr = scanline;
+    }
+
+    pub(crate) fn hcr_low(&self) -> u8 {
+        (self.hcr & 0xFF) as u8
+    }
+
+    pub(crate) fn hcr_high(&self) -> u8 {
+        (self.hcr >> 8) as u8
+    }
+
+    pub(crate) fn vcr_low(&self) -> u8 {
+        (self.vcr & 0xFF) as u8
+    }
+
+    pub(crate) fn vcr_high(&self) -> u8 {
+        (self.vcr >> 8) as u8
+    }
+
     /// Restores every register and latched interrupt-line state to an exact value, for
     /// save-state loading. Unlike [`Self::write`], this bypasses per-port dispatch semantics
     /// (there's no "message" or "strobe" to interpret, and the pending/enabled flags can't be
@@ -369,14 +408,20 @@ impl Default for Sa1ControlRegisters {
 /// BW-RAM (windowed `$6000-$7FFF`, gated by its own `$2225` BMAP block select, and direct
 /// `$40-$4F`), gated by the shared write-protection rule (see [`memory_control`]).
 ///
-/// The rest of the `$2200-$230E` register block is not yet readable/writable from the SA-1 side
-/// (#2961); all other reads return open bus (`0`) and writes are no-ops.
+/// `$2302-$2305` (HCR/VCR H/V counter reads) are also SA-1-side (#2961), sharing the main bus's
+/// [`Ppu`] read-only to latch its live dot/scanline position. `$2306-$230B` (arithmetic
+/// result/overflow) and `$230C`/`$230D` (variable-length data port) always read their
+/// power-on-equivalent default of `0`, since the arithmetic and variable-length-bit units behind
+/// them are out of scope (#2961's issue text defers their actual computation) -- only `$230E`
+/// (SNES-side VC, confirmed by bsnes's `SA1::readIOCPU` to not exist on real hardware at all) and
+/// genuinely unmapped offsets fall through to open bus.
 pub struct Sa1Bus {
     registers: Rc<RefCell<Sa1ControlRegisters>>,
     iram: Rc<RefCell<Sa1IRam>>,
     memory_control: Rc<RefCell<Sa1MemoryControl>>,
     rom: Rc<Vec<u8>>,
     sram: Rc<RefCell<Vec<u8>>>,
+    ppu: Rc<RefCell<Ppu>>,
 }
 
 impl Sa1Bus {
@@ -386,6 +431,7 @@ impl Sa1Bus {
         memory_control: Rc<RefCell<Sa1MemoryControl>>,
         rom: Rc<Vec<u8>>,
         sram: Rc<RefCell<Vec<u8>>>,
+        ppu: Rc<RefCell<Ppu>>,
     ) -> Self {
         Self {
             registers,
@@ -393,6 +439,7 @@ impl Sa1Bus {
             memory_control,
             rom,
             sram,
+            ppu,
         }
     }
 
@@ -471,6 +518,37 @@ impl SnesBus for Sa1Bus {
         // SFR is read from `SnesSystemBus` instead.
         if Self::is_system_offset(addr, 0x2301) {
             return self.registers.borrow().cfr();
+        }
+        // $2302 HCR: reading it latches the PPU's current dot/scanline (fullsnes: "Reading from
+        // 2302h automatically latches the other HV-Counter bits to 2303h-2305h"); $2303-$2305
+        // just report the already-latched value without re-latching.
+        if Self::is_system_offset(addr, 0x2302) {
+            let position = self.ppu.borrow().position();
+            let mut registers = self.registers.borrow_mut();
+            registers.latch_hv_counter(position.dot, position.scanline);
+            return registers.hcr_low();
+        }
+        if Self::is_system_offset(addr, 0x2303) {
+            return self.registers.borrow().hcr_high();
+        }
+        if Self::is_system_offset(addr, 0x2304) {
+            return self.registers.borrow().vcr_low();
+        }
+        if Self::is_system_offset(addr, 0x2305) {
+            return self.registers.borrow().vcr_high();
+        }
+        // $2306-$230A (MR arithmetic result) and $230B (OF overflow flag) always read their
+        // power-on-equivalent default of 0 -- the arithmetic unit behind them is out of scope
+        // (#2961's issue text explicitly defers real multiply/divide/cumulative-sum computation
+        // to a future issue).
+        if Self::system_offset_in(addr, 0x2306..=0x230B).is_some() {
+            return 0;
+        }
+        // $230C/$230D (VDP variable-length data read port) likewise always read 0 -- the
+        // variable-length-bit unit behind them is out of scope (#2961's issue text explicitly
+        // defers real VLB computation to a future issue).
+        if Self::system_offset_in(addr, 0x230C..=0x230D).is_some() {
+            return 0;
         }
         memory_control::decode_rom_index(addr, &self.memory_control.borrow())
             .and_then(|index| self.rom.get(index).copied())
@@ -580,8 +658,9 @@ impl Sa1Core {
         memory_control: Rc<RefCell<Sa1MemoryControl>>,
         rom: Rc<Vec<u8>>,
         sram: Rc<RefCell<Vec<u8>>>,
+        ppu: Rc<RefCell<Ppu>>,
     ) -> Self {
-        let bus = Sa1Bus::new(Rc::clone(&registers), iram, memory_control, rom, sram);
+        let bus = Sa1Bus::new(Rc::clone(&registers), iram, memory_control, rom, sram, ppu);
         let mut cpu = Cpu::new(bus);
         cpu.set_fast_rom(true);
         Self {
@@ -677,6 +756,10 @@ mod tests {
 
     fn fresh_sram(size: usize) -> Rc<RefCell<Vec<u8>>> {
         Rc::new(RefCell::new(vec![0u8; size]))
+    }
+
+    fn fresh_ppu() -> Rc<RefCell<Ppu>> {
+        Rc::new(RefCell::new(Ppu::new()))
     }
 
     #[test]
@@ -860,6 +943,7 @@ mod tests {
             fresh_memory_control(),
             rom,
             fresh_sram(0),
+            fresh_ppu(),
         );
         assert_eq!(bus.read(0x00_FFFC), 0x00);
         assert_eq!(bus.read(0x00_FFFD), 0x90);
@@ -878,6 +962,7 @@ mod tests {
             fresh_memory_control(),
             rom,
             fresh_sram(0),
+            fresh_ppu(),
         );
         assert_eq!(bus.read(0x00_FFEA), 0x34);
         assert_eq!(bus.read(0x00_FFEB), 0x12);
@@ -901,6 +986,7 @@ mod tests {
             fresh_memory_control(),
             Rc::new(rom),
             fresh_sram(0),
+            fresh_ppu(),
         );
         assert_eq!(bus.read(0x00_8000), 0xAA);
         assert_eq!(bus.read(0x00_9000), 0xBB);
@@ -916,9 +1002,81 @@ mod tests {
             fresh_memory_control(),
             rom,
             fresh_sram(0),
+            fresh_ppu(),
         );
         // Bank $40 offset $0000 is not in the default Super MMC mapping, nor BW-RAM.
         assert_eq!(bus.read(0x40_0000), 0x00);
+    }
+
+    #[test]
+    fn bus_2302_latches_the_shared_ppus_live_dot_and_scanline_into_hcr_vcr() {
+        let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+        let rom = Rc::new(vec![0u8; 0x8000]);
+        let ppu = fresh_ppu();
+        // Advance the shared PPU so its dot/scanline position is non-trivial before latching.
+        for _ in 0..100 {
+            ppu.borrow_mut().tick();
+        }
+        let position = ppu.borrow().position();
+        let bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            fresh_memory_control(),
+            rom,
+            fresh_sram(0),
+            Rc::clone(&ppu),
+        );
+
+        assert_eq!(bus.read(0x00_2302), (position.dot & 0xFF) as u8);
+        assert_eq!(bus.read(0x00_2303), (position.dot >> 8) as u8);
+        assert_eq!(bus.read(0x00_2304), (position.scanline & 0xFF) as u8);
+        assert_eq!(bus.read(0x00_2305), (position.scanline >> 8) as u8);
+    }
+
+    #[test]
+    fn bus_2303_2305_report_the_latch_without_re_latching_on_ppu_advance() {
+        let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+        let rom = Rc::new(vec![0u8; 0x8000]);
+        let ppu = fresh_ppu();
+        let bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            fresh_memory_control(),
+            rom,
+            fresh_sram(0),
+            Rc::clone(&ppu),
+        );
+
+        bus.read(0x00_2302); // latch at dot 0
+        for _ in 0..500 {
+            ppu.borrow_mut().tick();
+        }
+        // The PPU has moved on, but $2303-$2305 must still report the original latch.
+        assert_eq!(bus.read(0x00_2303), 0);
+        assert_eq!(bus.read(0x00_2304), 0);
+        assert_eq!(bus.read(0x00_2305), 0);
+    }
+
+    #[test]
+    fn bus_arithmetic_result_overflow_and_variable_length_data_port_default_to_zero() {
+        // The arithmetic and variable-length-bit units behind these registers are out of scope
+        // for #2961 (its issue text defers real computation to a future issue) -- they must
+        // still read back a plausible power-on-equivalent default rather than crashing or
+        // falling through to open bus.
+        let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+        let rom = Rc::new(vec![0u8; 0x8000]);
+        let bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            fresh_memory_control(),
+            rom,
+            fresh_sram(0),
+            fresh_ppu(),
+        );
+
+        for port in 0x2306..=0x230D {
+            assert_eq!(bus.read(port), 0x00, "port ${port:04X} should default to 0");
+        }
     }
 
     #[test]
@@ -934,6 +1092,7 @@ mod tests {
             fresh_memory_control(),
             rom,
             fresh_sram(0),
+            fresh_ppu(),
         );
         assert_eq!(bus.read(0x00_0010), 0x7E); // direct window
         assert_eq!(bus.read(0x00_3010), 0x7E); // mirror window
@@ -950,6 +1109,7 @@ mod tests {
             fresh_memory_control(),
             rom,
             fresh_sram(0),
+            fresh_ppu(),
         );
         bus.write(0x00_0000, 0x99); // blocked: CIWP is $00 at reset
         assert_eq!(iram.borrow().read(0x0000), 0x00);
@@ -972,6 +1132,7 @@ mod tests {
             Rc::clone(&memory_control),
             rom,
             Rc::clone(&sram),
+            fresh_ppu(),
         );
 
         bus.write(0x2225, 0x02); // BMAP: block 2 (SA-1-writable, routed through Sa1Bus)
@@ -987,7 +1148,14 @@ mod tests {
         memory_control.borrow_mut().write(0x2227, 0x80); // CBWE: SA-1 side enables writes
         let rom = Rc::new(vec![0u8; 0x8000]);
         let sram = fresh_sram(0x2_0000);
-        let mut bus = Sa1Bus::new(registers, fresh_iram(), memory_control, rom, sram);
+        let mut bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            memory_control,
+            rom,
+            sram,
+            fresh_ppu(),
+        );
 
         bus.write(0x41_0000, 0x33);
         assert_eq!(bus.read(0x41_0000), 0x33);
@@ -1005,6 +1173,7 @@ mod tests {
             memory_control,
             rom,
             Rc::clone(&sram),
+            fresh_ppu(),
         );
 
         bus.write(0x00_6000, 0x77);
@@ -1028,6 +1197,7 @@ mod tests {
             memory_control,
             rom,
             Rc::clone(&sram),
+            fresh_ppu(),
         );
 
         bus.write(0x00_6000, 0x42);
@@ -1048,6 +1218,7 @@ mod tests {
             fresh_memory_control(),
             rom,
             fresh_sram(0),
+            fresh_ppu(),
         );
         for _ in 0..1000 {
             core.tick_one_master_clock();
@@ -1075,6 +1246,7 @@ mod tests {
             fresh_memory_control(),
             Rc::new(rom),
             fresh_sram(0),
+            fresh_ppu(),
         );
         registers.borrow_mut().write(0x2200, 0x00); // release reset
 
@@ -1104,6 +1276,7 @@ mod tests {
             fresh_memory_control(),
             Rc::new(rom),
             fresh_sram(0),
+            fresh_ppu(),
         );
         registers.borrow_mut().write(0x2200, 0x00);
         for _ in 0..50 {
@@ -1153,6 +1326,7 @@ mod tests {
             fresh_memory_control(),
             Rc::new(rom),
             fresh_sram(0),
+            fresh_ppu(),
         );
         registers.borrow_mut().write(0x220A, 0x10); // CIE: enable SA-1-side NMI
         registers.borrow_mut().write(0x2200, 0x00); // release reset

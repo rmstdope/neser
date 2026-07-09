@@ -44,8 +44,10 @@ pub struct SnesSystemBus {
     dma: DmaController,
     apu: RefCell<SnesApu>,
     /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
-    /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`.
-    ppu: RefCell<Ppu>,
+    /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`, and in
+    /// an `Rc` so `Sa1Core`'s own `Sa1Bus` can share it read-only for the `$2302-$2305` H/V
+    /// counter registers (see `Sa1ControlRegisters::latch_hv_counter`).
+    ppu: Rc<RefCell<Ppu>>,
     /// The controller ports and auto-joypad sequencer. Wrapped in a `RefCell`
     /// because manual serial reads (`$4016`/`$4017`) clock the shift register
     /// yet the bus read path takes `&self`.
@@ -84,6 +86,7 @@ impl SnesSystemBus {
         let rom = Rc::new(cartridge.rom().to_vec());
         let sram = Rc::new(RefCell::new(vec![0; cartridge.sram_size()]));
         let spc_ipl = Self::load_spc_ipl_override(spc_ipl_path);
+        let ppu = Rc::new(RefCell::new(Ppu::new_with_region(video_region)));
         let (sa1_registers, sa1_iram, sa1_memory_control, sa1_core) =
             if cartridge.enhancement_chip() == Some(EnhancementChip::Sa1) {
                 let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
@@ -95,6 +98,7 @@ impl SnesSystemBus {
                     Rc::clone(&memory_control),
                     Rc::clone(&rom),
                     Rc::clone(&sram),
+                    Rc::clone(&ppu),
                 );
                 (
                     Some(registers),
@@ -120,7 +124,7 @@ impl SnesSystemBus {
             hdmaen: 0,
             dma: DmaController::new(),
             apu: RefCell::new(SnesApu::new(spc_ipl)),
-            ppu: RefCell::new(Ppu::new_with_region(video_region)),
+            ppu,
             input: RefCell::new(InputPorts::new()),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
@@ -495,10 +499,10 @@ impl SnesSystemBus {
     /// [`Ppu::hdma_transfer_due`]). `hdma_init`/`hdma_do_line` were previously only reachable
     /// from tests -- nothing drove them during real emulation, so HDMA never actually ran.
     fn check_hdma_triggers(&mut self) {
-        if self.ppu.get_mut().hdma_init_due() {
+        if self.ppu.borrow_mut().hdma_init_due() {
             self.hdma_init();
         }
-        if self.ppu.get_mut().hdma_transfer_due() {
+        if self.ppu.borrow_mut().hdma_transfer_due() {
             self.hdma_do_line();
         }
     }
@@ -530,7 +534,7 @@ impl SnesSystemBus {
 
     /// Returns and clears the PPU frame-complete flag (set when the PPU enters VBlank).
     pub fn take_ppu_frame_complete(&mut self) -> bool {
-        self.ppu.get_mut().take_frame_complete()
+        self.ppu.borrow_mut().take_frame_complete()
     }
 
     /// Set a controller button on the given port (0 = port 1, 1 = port 2).
@@ -629,7 +633,7 @@ impl SnesSystemBus {
 
     /// Restore the PPU state from a save-state.
     pub(crate) fn ppu_restore_state(&mut self, state: &SnesPpuState) -> Result<(), String> {
-        self.ppu.get_mut().restore_state(state)
+        self.ppu.borrow_mut().restore_state(state)
     }
 
     /// Restores SRAM from a byte slice. If the slice is larger than SRAM,
@@ -1073,8 +1077,8 @@ impl SnesSystemBus {
     fn tick_one_master_clock(&mut self) {
         self.ticks.set(self.ticks.get().wrapping_add(1));
         self.apu.borrow_mut().tick();
-        self.ppu.get_mut().tick();
-        if self.ppu.get_mut().poll_auto_joypad_latch() {
+        self.ppu.borrow_mut().tick();
+        if self.ppu.borrow_mut().poll_auto_joypad_latch() {
             self.input.get_mut().trigger_auto_read();
         }
         self.input.get_mut().tick();
@@ -1220,7 +1224,7 @@ impl SnesBus for SnesSystemBus {
     fn tick(&mut self) {
         self.tick_one_master_clock();
         self.check_hdma_triggers();
-        if self.ppu.get_mut().dram_refresh_due() {
+        if self.ppu.borrow_mut().dram_refresh_due() {
             for _ in 0..DRAM_REFRESH_STOLEN_CLOCKS {
                 self.tick_one_master_clock();
                 self.check_hdma_triggers();
@@ -1229,7 +1233,7 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn poll_nmi(&mut self) -> bool {
-        self.ppu.get_mut().poll_nmi()
+        self.ppu.borrow_mut().poll_nmi()
     }
 
     fn poll_irq(&self) -> bool {
@@ -2703,6 +2707,16 @@ mod tests {
         let bus = SnesSystemBus::new(sa1_test_cart());
         bus.write_sa1_side_register_for_tests(0x2209, 0x87); // message=7, IRQ trigger
         assert_eq!(bus.read(0x00_2300), 0x87);
+    }
+
+    #[test]
+    fn sa1_230e_version_code_register_always_reads_open_bus() {
+        // Confirmed by bsnes's `SA1::readIOCPU` ("does not actually exist on real hardware ...
+        // always returns open bus") and fullsnes ("Existing value(s) are unknown") -- unlike
+        // every other SA-1 register, there is deliberately no read arm for $230E at all.
+        let bus = SnesSystemBus::new(sa1_test_cart());
+        bus.mdr.set(0xA5);
+        assert_eq!(bus.read(0x00_230E), 0xA5);
     }
 
     /// Writes a minimal valid SA-1 LoROM header into `rom` (64 KiB+, chipset `$35`), matching
