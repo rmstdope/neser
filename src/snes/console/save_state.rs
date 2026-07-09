@@ -189,6 +189,16 @@ pub struct SnesSa1State {
     pub booted: bool,
     #[serde(default)]
     pub master_clock_debt: i64,
+    /// CFR bit 7 (SA-1-side IRQ-from-SNES pending). Not re-derivable from `ccnt` alone, since
+    /// its message nibble may have been overwritten since the flag latched.
+    #[serde(default)]
+    pub sa1_irq_pending: bool,
+    /// CFR bit 4 (SA-1-side NMI-from-SNES pending). See `sa1_irq_pending`.
+    #[serde(default)]
+    pub sa1_nmi_pending: bool,
+    /// SFR bit 7 (SNES-side IRQ-from-SA-1 pending). See `sa1_irq_pending`.
+    #[serde(default)]
+    pub snes_irq_pending: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -492,5 +502,17 @@ mod tests {
         assert_eq!(state.sbwe, 0x00);
         assert_eq!(state.cbwe, 0x00);
         assert_eq!(state.bwpa, 0xFF);
+    }
+
+    /// A `SnesSa1State` predating #2960 (i.e. before the cross-CPU IRQ pending flags existed)
+    /// deserializes with all three flags clear -- the correct "nothing pending" hardware
+    /// power-on state, and also what a pre-#2960 save state's SA-1 would actually have been in
+    /// (since the interrupt lines didn't exist to have anything pending).
+    #[test]
+    fn sa1_state_missing_irq_pending_fields_deserializes_to_nothing_pending() {
+        let state: SnesSa1State = serde_json::from_str("{}").expect("deserialize");
+        assert!(!state.sa1_irq_pending);
+        assert!(!state.sa1_nmi_pending);
+        assert!(!state.snes_irq_pending);
     }
 }
