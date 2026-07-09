@@ -201,21 +201,25 @@ mod tests {
 
     // Fixed by mid-scanline HDMA activation (#2943): ROMs write to HDMAEN mid-scanline
     // (via H-IRQ at dots 220-232) to enable HDMA channels. Channels activate on the
-    // next scanline, producing horizontal striped patterns.
-    // Note: Minor visual difference from Mesen2 - extra red pixels on rightmost column
-    // (separate PPU issue, not HDMA-related).
+    // next scanline, producing horizontal striped patterns correctly.
+    //
+    // Known minor visual differences from Mesen2:
+    // - Rightmost column timing (#2967): extra red pixels due to rendering order
+    // - Frame-to-frame timing drift (#2971): one extra flickering line in test_2
     undisbeliever_rom_test!(
         hdmaen_latch_test_matches_mesen2,
         "hdmaen_latch_test.sfc",
         0x88D5_87A5
     );
 
+    // Same test as above with different timing. Same known minor visual differences.
     undisbeliever_rom_test!(
         hdmaen_latch_test_2_matches_mesen2,
         "hdmaen_latch_test_2.sfc",
         0x4D68_EF1A
     );
 
+    // Tests HDMA-driven INIDISP changes. Same known minor visual differences.
     undisbeliever_rom_test!(
         inidisp_brightness_delay_matches_mesen2,
         "inidisp_brightness_delay.sfc",
