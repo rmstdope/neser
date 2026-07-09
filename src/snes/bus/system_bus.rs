@@ -483,7 +483,7 @@ impl SnesSystemBus {
 
     pub fn hdma_do_line(&mut self) {
         let mut dma = std::mem::take(&mut self.dma);
-        let (consumed_ticks, dma_open_bus) = dma.hdma_do_line(self, self.mdr.get());
+        let (consumed_ticks, dma_open_bus) = dma.hdma_do_line(self.hdmaen, self, self.mdr.get());
         self.ticks
             .set(self.ticks.get().wrapping_add(consumed_ticks));
         self.mdr.set(dma_open_bus);
@@ -986,6 +986,7 @@ impl SnesSystemBus {
             }
             0x420C => {
                 self.hdmaen = value;
+                // No special handling - HDMA logic will pick up changes naturally
                 true
             }
             0x2140..=0x2143 => {

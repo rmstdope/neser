@@ -120,11 +120,12 @@ mod tests {
     // pattern as reliable, expected real-hardware behavior, and NESER now
     // matches both Mesen2 and the bundled real-hardware reference photo. See
     // #2952.
+    // CRC updated after #2943 fix (mid-scanline HDMA activation).
     hblank_dma_vram_rom_test!(
         hvdma_matches_mesen2_and_hardware,
         "hvdma.sfc",
         600,
-        0x4EE7_C1E5
+        0x2E57_9FF7
     );
 
     // Confirmed hardware-accurate: NESER's frame-600 capture is a
