@@ -1,18 +1,27 @@
-//! SA-1 enhancement chip: dual-CPU core, `$2200-$220F` control/vector registers, and I-RAM.
+//! SA-1 enhancement chip: dual-CPU core, `$2200-$220F` control/vector registers, I-RAM, Super
+//! MMC ROM banking, and BW-RAM.
 //!
-//! Scope so far (issues #2957, #2958): a second, independently-clocked 65816 CPU core for SA-1,
-//! reusing the existing generic [`Cpu`] unmodified, the SA-1 control/vector register block
-//! needed to boot it, and SA-1's 2KB I-RAM (see [`iram`]) with its per-CPU-side write
-//! protection. BW-RAM, the cross-CPU IRQ/status handshake, and the version-code/read-only
-//! register block are separate sub-issues of #2956 and land on top of this.
+//! Scope so far (issues #2957, #2958, #2959): a second, independently-clocked 65816 CPU core for
+//! SA-1, reusing the existing generic [`Cpu`] unmodified, the SA-1 control/vector register block
+//! needed to boot it, SA-1's 2KB I-RAM (see [`iram`]) with its per-CPU-side write protection,
+//! configurable ROM banking, and BW-RAM mapping/write-protection (see [`memory_control`]). The
+//! cross-CPU IRQ/status handshake and the version-code/read-only register block are separate
+//! sub-issues of #2956 and land on top of this.
 //!
 //! Register bit layouts and reset values are sourced from fullsnes ("SNES Cart SA-1 I/O Map" /
 //! "Interrupt/Control on SNES Side" / "Interrupt/Control on SA-1 Side" / "Memory Control"
-//! sections), per the `snes-hardware-research` skill's source priority.
+//! sections), per the `snes-hardware-research` skill's source priority; the ROM-banking default
+//! LoROM-range behavior is additionally cross-checked against bsnes since fullsnes's own prose
+//! there is ambiguous in isolation (see [`memory_control::decode_rom_index`]'s doc comment).
 
 mod iram;
+mod memory_control;
 
 pub use iram::{Sa1IRam, decode_mirror_offset};
+pub use memory_control::{
+    Sa1MemoryControl, decode_direct_offset as decode_bwram_direct_offset, decode_rom_index,
+    decode_windowed_offset as decode_bwram_windowed_offset,
+};
 
 use crate::platform::save_state::Stateful;
 use crate::snes::bus::SnesBus;
@@ -192,27 +201,34 @@ impl Default for Sa1ControlRegisters {
 
 /// SA-1-side bus: serves the SA-1 CPU's reset/NMI/IRQ vectors from the control registers
 /// instead of ROM, its 2KB I-RAM (direct `$0000-$07FF` and mirrored `$3000-$37FF`, gated by
-/// `$222A` CIWP on writes), and cartridge ROM through SA-1's default (pre-#2959) Super MMC
-/// mapping.
+/// `$222A` CIWP on writes), cartridge ROM through SA-1's configurable Super MMC mapping, and
+/// BW-RAM (windowed `$6000-$7FFF`, gated by its own `$2225` BMAP block select, and direct
+/// `$40-$4F`), gated by the shared write-protection rule (see [`memory_control`]).
 ///
-/// BW-RAM and the rest of the `$2200-$230E` register block are not yet readable/writable from
-/// the SA-1 side (#2959/#2961); all other reads return open bus (`0`) and writes are no-ops.
+/// The rest of the `$2200-$230E` register block is not yet readable/writable from the SA-1 side
+/// (#2961); all other reads return open bus (`0`) and writes are no-ops.
 pub struct Sa1Bus {
     registers: Rc<RefCell<Sa1ControlRegisters>>,
     iram: Rc<RefCell<Sa1IRam>>,
+    memory_control: Rc<RefCell<Sa1MemoryControl>>,
     rom: Rc<Vec<u8>>,
+    sram: Rc<RefCell<Vec<u8>>>,
 }
 
 impl Sa1Bus {
     pub fn new(
         registers: Rc<RefCell<Sa1ControlRegisters>>,
         iram: Rc<RefCell<Sa1IRam>>,
+        memory_control: Rc<RefCell<Sa1MemoryControl>>,
         rom: Rc<Vec<u8>>,
+        sram: Rc<RefCell<Vec<u8>>>,
     ) -> Self {
         Self {
             registers,
             iram,
+            memory_control,
             rom,
+            sram,
         }
     }
 
@@ -237,30 +253,23 @@ impl Sa1Bus {
         })
     }
 
-    /// Default (pre-#2959) Super MMC mapping: CXB/DXB/EXB/FXB left at their hardware reset
-    /// values (`$00/$01/$02/$03`, i.e. ROM slots 0-3 in order, fullsnes "Reset" table) with no
-    /// remapping -- equivalent to a plain LoROM decode for banks `$00-$3F`/`$80-$BF` at offset
-    /// `$8000-$FFFF` (fullsnes "Memory Map (SA-1 Side)": "Four mappable 1MByte LoROM blocks").
-    /// Configurable banking via `$2220-$2223` (including the HiROM-only vs LoROM+HiROM bit 7
-    /// distinction) lands in #2959.
-    fn decode_rom_index(addr: u32) -> Option<usize> {
-        let addr = addr & 0xFF_FFFF;
-        let bank = ((addr >> 16) & 0xFF) as u8;
-        let offset = (addr & 0xFFFF) as u16;
-        if matches!(bank, 0x00..=0x3F | 0x80..=0xBF) && offset >= 0x8000 {
-            let bank_index = (bank & 0x7F) as usize;
-            Some(bank_index * 0x8000 + (offset as usize - 0x8000))
-        } else {
-            None
-        }
-    }
-
     /// True if `addr` is `system_offset` within a system bank (`$00-$3F`/`$80-$BF`), the same
     /// bank range the `$2200-$23FF` register block lives in.
     fn is_system_offset(addr: u32, system_offset: u16) -> bool {
         let bank = ((addr >> 16) & 0xFF) as u8;
         let offset = (addr & 0xFFFF) as u16;
         matches!(bank, 0x00..=0x3F | 0x80..=0xBF) && offset == system_offset
+    }
+
+    /// BW-RAM linear offset from the SA-1 CPU's own perspective: its `$2225` BMAP block select
+    /// for the windowed `$6000-$7FFF` view, or the direct `$40-$4F` banks.
+    fn bwram_index(&self, addr: u32) -> Option<usize> {
+        let control = self.memory_control.borrow();
+        if let Some(window_offset) = memory_control::decode_windowed_offset(addr) {
+            Some(control.sa1_bwram_block() * 0x2000 + window_offset)
+        } else {
+            memory_control::decode_direct_offset(addr)
+        }
     }
 }
 
@@ -275,7 +284,15 @@ impl SnesBus for Sa1Bus {
         {
             return self.iram.borrow().read(offset);
         }
-        Self::decode_rom_index(addr)
+        if let Some(index) = self.bwram_index(addr) {
+            let sram = self.sram.borrow();
+            return if sram.is_empty() {
+                0
+            } else {
+                sram[index % sram.len()]
+            };
+        }
+        memory_control::decode_rom_index(addr, &self.memory_control.borrow())
             .and_then(|index| self.rom.get(index).copied())
             .unwrap_or(0)
     }
@@ -286,6 +303,26 @@ impl SnesBus for Sa1Bus {
             iram::decode_direct_offset(addr).or_else(|| iram::decode_mirror_offset(addr))
         {
             self.iram.borrow_mut().write_from_sa1(offset, value);
+            return;
+        }
+        if let Some(index) = self.bwram_index(addr) {
+            let mut sram = self.sram.borrow_mut();
+            let len = sram.len();
+            if len != 0 && !self.memory_control.borrow().is_bwram_write_protected(index) {
+                let wrapped = index % len;
+                sram[wrapped] = value;
+            }
+            return;
+        }
+        // $2225 BMAP and $2227 CBWE are SA-1-side-writable (fullsnes I/O map "Side" column); the
+        // SNES-side register block ($2220-$2224, $2226, $2228) is written from `SnesSystemBus`
+        // instead -- see the module doc comment.
+        if Self::is_system_offset(addr, 0x2225) {
+            self.memory_control.borrow_mut().write(0x2225, value);
+            return;
+        }
+        if Self::is_system_offset(addr, 0x2227) {
+            self.memory_control.borrow_mut().write(0x2227, value);
             return;
         }
         // $222A CIWP is SA-1-side-writable (fullsnes I/O map "Side" column); the SNES-side
@@ -331,9 +368,11 @@ impl Sa1Core {
     pub fn new(
         registers: Rc<RefCell<Sa1ControlRegisters>>,
         iram: Rc<RefCell<Sa1IRam>>,
+        memory_control: Rc<RefCell<Sa1MemoryControl>>,
         rom: Rc<Vec<u8>>,
+        sram: Rc<RefCell<Vec<u8>>>,
     ) -> Self {
-        let bus = Sa1Bus::new(Rc::clone(&registers), iram, rom);
+        let bus = Sa1Bus::new(Rc::clone(&registers), iram, memory_control, rom, sram);
         let mut cpu = Cpu::new(bus);
         cpu.set_fast_rom(true);
         Self {
@@ -423,6 +462,14 @@ mod tests {
         Rc::new(RefCell::new(Sa1IRam::new()))
     }
 
+    fn fresh_memory_control() -> Rc<RefCell<Sa1MemoryControl>> {
+        Rc::new(RefCell::new(Sa1MemoryControl::new()))
+    }
+
+    fn fresh_sram(size: usize) -> Rc<RefCell<Vec<u8>>> {
+        Rc::new(RefCell::new(vec![0u8; size]))
+    }
+
     #[test]
     fn new_control_registers_hold_sa1_in_reset_by_default() {
         let registers = Sa1ControlRegisters::new();
@@ -487,7 +534,13 @@ mod tests {
     fn bus_serves_reset_vector_instead_of_rom() {
         let registers = registers_with(|r| write_vector(r, 0x2203, 0x2204, 0x9000));
         let rom = Rc::new(vec![0u8; 0x8000]);
-        let bus = Sa1Bus::new(registers, fresh_iram(), rom);
+        let bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            fresh_memory_control(),
+            rom,
+            fresh_sram(0),
+        );
         assert_eq!(bus.read(0x00_FFFC), 0x00);
         assert_eq!(bus.read(0x00_FFFD), 0x90);
     }
@@ -499,7 +552,13 @@ mod tests {
             write_vector(r, 0x2207, 0x2208, 0x5678);
         });
         let rom = Rc::new(vec![0u8; 0x8000]);
-        let bus = Sa1Bus::new(registers, fresh_iram(), rom);
+        let bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            fresh_memory_control(),
+            rom,
+            fresh_sram(0),
+        );
         assert_eq!(bus.read(0x00_FFEA), 0x34);
         assert_eq!(bus.read(0x00_FFEB), 0x12);
         assert_eq!(bus.read(0x00_FFFA), 0x34);
@@ -511,12 +570,18 @@ mod tests {
     }
 
     #[test]
-    fn bus_reads_rom_through_default_lorom_shaped_mapping() {
+    fn bus_reads_rom_through_default_super_mmc_mapping() {
         let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
         let mut rom = vec![0u8; 0x8000];
         rom[0x0000] = 0xAA; // bank $00 offset $8000
         rom[0x1000] = 0xBB; // bank $00 offset $9000
-        let bus = Sa1Bus::new(registers, fresh_iram(), Rc::new(rom));
+        let bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            fresh_memory_control(),
+            Rc::new(rom),
+            fresh_sram(0),
+        );
         assert_eq!(bus.read(0x00_8000), 0xAA);
         assert_eq!(bus.read(0x00_9000), 0xBB);
     }
@@ -525,8 +590,14 @@ mod tests {
     fn bus_returns_open_bus_zero_outside_mapped_rom_and_vectors() {
         let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
         let rom = Rc::new(vec![0xFFu8; 0x8000]);
-        let bus = Sa1Bus::new(registers, fresh_iram(), rom);
-        // Bank $40 offset $0000 is not in the default LoROM-shaped window.
+        let bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            fresh_memory_control(),
+            rom,
+            fresh_sram(0),
+        );
+        // Bank $40 offset $0000 is not in the default Super MMC mapping, nor BW-RAM.
         assert_eq!(bus.read(0x40_0000), 0x00);
     }
 
@@ -537,7 +608,13 @@ mod tests {
         iram.borrow_mut().set_sa1_write_protect(0xFF);
         iram.borrow_mut().write_from_sa1(0x0010, 0x7E);
         let rom = Rc::new(vec![0u8; 0x8000]);
-        let bus = Sa1Bus::new(registers, Rc::clone(&iram), rom);
+        let bus = Sa1Bus::new(
+            registers,
+            Rc::clone(&iram),
+            fresh_memory_control(),
+            rom,
+            fresh_sram(0),
+        );
         assert_eq!(bus.read(0x00_0010), 0x7E); // direct window
         assert_eq!(bus.read(0x00_3010), 0x7E); // mirror window
     }
@@ -547,7 +624,13 @@ mod tests {
         let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
         let iram = fresh_iram();
         let rom = Rc::new(vec![0u8; 0x8000]);
-        let mut bus = Sa1Bus::new(registers, Rc::clone(&iram), rom);
+        let mut bus = Sa1Bus::new(
+            registers,
+            Rc::clone(&iram),
+            fresh_memory_control(),
+            rom,
+            fresh_sram(0),
+        );
         bus.write(0x00_0000, 0x99); // blocked: CIWP is $00 at reset
         assert_eq!(iram.borrow().read(0x0000), 0x00);
 
@@ -557,10 +640,68 @@ mod tests {
     }
 
     #[test]
+    fn bus_reads_and_writes_bwram_through_the_windowed_view_using_bmap() {
+        let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+        let memory_control = fresh_memory_control();
+        memory_control.borrow_mut().write(0x2228, 0x00); // shrink BWPA protection
+        let rom = Rc::new(vec![0u8; 0x8000]);
+        let sram = fresh_sram(0x1_0000);
+        let mut bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            Rc::clone(&memory_control),
+            rom,
+            Rc::clone(&sram),
+        );
+
+        bus.write(0x2225, 0x02); // BMAP: block 2 (SA-1-writable, routed through Sa1Bus)
+        bus.write(0x00_6010, 0x5A);
+        assert_eq!(sram.borrow()[0x4010], 0x5A); // block 2 * 0x2000 + 0x10
+        assert_eq!(bus.read(0x00_6010), 0x5A);
+    }
+
+    #[test]
+    fn bus_reads_and_writes_bwram_through_the_direct_banks() {
+        let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+        let memory_control = fresh_memory_control();
+        memory_control.borrow_mut().write(0x2227, 0x80); // CBWE: SA-1 side enables writes
+        let rom = Rc::new(vec![0u8; 0x8000]);
+        let sram = fresh_sram(0x2_0000);
+        let mut bus = Sa1Bus::new(registers, fresh_iram(), memory_control, rom, sram);
+
+        bus.write(0x41_0000, 0x33);
+        assert_eq!(bus.read(0x41_0000), 0x33);
+    }
+
+    #[test]
+    fn bus_bwram_write_honors_the_shared_protection_rule() {
+        let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+        let memory_control = fresh_memory_control(); // BWPA=$FF, SBWE=CBWE=0 at reset: protected
+        let rom = Rc::new(vec![0u8; 0x8000]);
+        let sram = fresh_sram(0x1_0000);
+        let mut bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            memory_control,
+            rom,
+            Rc::clone(&sram),
+        );
+
+        bus.write(0x00_6000, 0x77);
+        assert_eq!(sram.borrow()[0], 0x00);
+    }
+
+    #[test]
     fn core_stays_halted_while_held_in_reset() {
         let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
         let rom = Rc::new(vec![0u8; 0x8000]);
-        let mut core = Sa1Core::new(Rc::clone(&registers), fresh_iram(), rom);
+        let mut core = Sa1Core::new(
+            Rc::clone(&registers),
+            fresh_iram(),
+            fresh_memory_control(),
+            rom,
+            fresh_sram(0),
+        );
         for _ in 0..1000 {
             core.tick_one_master_clock();
         }
@@ -581,7 +722,13 @@ mod tests {
             let mut regs = registers.borrow_mut();
             write_vector(&mut regs, 0x2203, 0x2204, 0x9000);
         }
-        let mut core = Sa1Core::new(Rc::clone(&registers), fresh_iram(), Rc::new(rom));
+        let mut core = Sa1Core::new(
+            Rc::clone(&registers),
+            fresh_iram(),
+            fresh_memory_control(),
+            Rc::new(rom),
+            fresh_sram(0),
+        );
         registers.borrow_mut().write(0x2200, 0x00); // release reset
 
         for _ in 0..100 {
@@ -604,7 +751,13 @@ mod tests {
             let mut regs = registers.borrow_mut();
             write_vector(&mut regs, 0x2203, 0x2204, 0x9000);
         }
-        let mut core = Sa1Core::new(Rc::clone(&registers), fresh_iram(), Rc::new(rom));
+        let mut core = Sa1Core::new(
+            Rc::clone(&registers),
+            fresh_iram(),
+            fresh_memory_control(),
+            Rc::new(rom),
+            fresh_sram(0),
+        );
         registers.borrow_mut().write(0x2200, 0x00);
         for _ in 0..50 {
             core.tick_one_master_clock();

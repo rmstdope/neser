@@ -33,6 +33,13 @@ fn default_dram_refresh_position() -> u16 {
     538
 }
 
+/// `$2228` BWPA's hardware reset value (fullsnes "Reset" table), used as the `#[serde(default)]`
+/// fallback so a `SnesSa1State` predating this field still deserializes to the fully-protected
+/// power-on state rather than `bwpa=$00` (protected-area size `256` bytes only).
+fn default_sa1_bwpa() -> u8 {
+    0xFF
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SnesBlockMoveDirection {
     #[default]
@@ -111,9 +118,11 @@ pub struct SnesDmaState {
 }
 
 /// SA-1 enhancement chip state: control/vector registers (`$2200-$220F`), I-RAM plus its two
-/// independent write-protection registers (`$2229`/`$222A`), and the second 65816 CPU core's
-/// own architectural state. `None`/absent on `SnesBusState` for non-SA-1 cartridges and for
-/// save states captured before SA-1 support existed.
+/// independent write-protection registers (`$2229`/`$222A`), Super MMC ROM banking and BW-RAM
+/// mapping/write-protection registers (`$2220-$2228`), and the second 65816 CPU core's own
+/// architectural state. `None`/absent on `SnesBusState` for non-SA-1 cartridges and for save
+/// states captured before SA-1 support existed. BW-RAM's own bytes are `SnesBusState::sram` --
+/// shared with the SNES CPU's cartridge RAM, not duplicated here.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SnesSa1State {
     #[serde(default)]
@@ -140,6 +149,24 @@ pub struct SnesSa1State {
     pub iram_snes_write_protect: u8,
     #[serde(default)]
     pub iram_sa1_write_protect: u8,
+    #[serde(default)]
+    pub cxb: u8,
+    #[serde(default)]
+    pub dxb: u8,
+    #[serde(default)]
+    pub exb: u8,
+    #[serde(default)]
+    pub fxb: u8,
+    #[serde(default)]
+    pub bmaps: u8,
+    #[serde(default)]
+    pub bmap: u8,
+    #[serde(default)]
+    pub sbwe: u8,
+    #[serde(default)]
+    pub cbwe: u8,
+    #[serde(default = "default_sa1_bwpa")]
+    pub bwpa: u8,
     #[serde(default)]
     pub cpu: SnesCpuState,
     #[serde(default)]
