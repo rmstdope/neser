@@ -1,4 +1,4 @@
-//! Automates 1 of the 2 vendored 93143 hblank-dma-vram ROMs
+//! Automates both vendored 93143 hblank-dma-vram ROMs
 //! (`roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram/`), mirrored
 //! from a NESdev forum post by user "93143"
 //! (<https://forums.nesdev.com/viewtopic.php?p=248408#p248408>) into the
@@ -30,13 +30,37 @@
 //! bus-residual coin-flip), so this golden is a genuine hardware-accuracy
 //! claim, not just a shared-limitation match.
 //!
-//! **Deliberately un-automated (1 of 2): `hvdma_max.sfc`.** Triggers a DMA
-//! from inside an H-IRQ (cycle-counted jump table) to measure how long a VRAM
-//! burst can run before force-blank release becomes visibly late. NESER
-//! renders a solid black screen where Mesen2 renders the documented solid
-//! green (100% pixel diff, stable across frames 600-610) -- a real,
-//! unrelated rendering gap (the #2952 fix above does not change this ROM's
-//! output at all), tracked as #2953.
+//! **Automated (2 of 2): `hvdma_max.sfc`.** Triggers a DMA from inside an
+//! H-IRQ (a cycle-counted jump table reads OPHCT/$213C to compensate for IRQ
+//! dispatch jitter) to measure how long a VRAM burst can run before
+//! force-blank release becomes visibly late. NESER used to render a solid
+//! black screen where Mesen2 renders the documented solid green (100% pixel
+//! diff), tracked as #2953. Root cause: two compounding PPU register-read
+//! bugs in `Ppu::read_register` (`src/snes/ppu/registers.rs`) broke the
+//! cycle-counted jump table's OPHCT read, which this ROM's H-IRQ handler
+//! calls on *every* firing (every scanline while armed) to compute its jump
+//! index:
+//!
+//! 1. The OPHCT/OPVCT ($213C/$213D) low/high-byte read flip-flop latched to
+//!    "high" permanently after the first read instead of alternating on every
+//!    read (per the Nocash SNES spec and bsnes/Mesen2's `ophct_byte =
+//!    ~ophct_byte`), so every *other* H-IRQ firing read the high bit instead
+//!    of the real position.
+//! 2. Even with the flip-flop toggling correctly, the "high" read's bits 1-7
+//!    are PPU2 open bus, not zero -- and since every $213B/$213C/$213D/$213F
+//!    read leaves its own return value sitting in that shared open-bus latch,
+//!    consecutive reads of an unchanged latched position (as here, since nothing
+//!    else relatches OPHCT between firings) make the "high" phase echo the
+//!    "low" phase's byte with bit 0 replaced by the real bit 8 -- not the
+//!    near-zero value NESER was computing. Real hardware/Mesen2 get a usable
+//!    jump-table index on *every* firing this way; NESER's missing open-bus
+//!    model meant every other firing computed a garbage index, jumped into
+//!    unmapped memory, and fell into a BRK loop whose stack pushes wrote
+//!    through the PPU register file, corrupting BGMODE/TM and leaving the
+//!    screen black.
+//!
+//! After fixing both, NESER's frame-600 capture is a byte-for-byte (0% pixel
+//! diff) match for a Mesen2 capture of the same ROM file.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -102,4 +126,9 @@ mod tests {
         600,
         0x4EE7_C1E5
     );
+
+    // Confirmed hardware-accurate: NESER's frame-600 capture is a
+    // byte-for-byte (0% pixel diff) match for a Mesen2 capture of the same
+    // ROM file, both showing the documented solid green. See #2953.
+    hblank_dma_vram_rom_test!(hvdma_max_matches_mesen2, "hvdma_max.sfc", 600, 0x9E6A_0E5A);
 }

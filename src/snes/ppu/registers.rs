@@ -288,11 +288,13 @@ impl Ppu {
                 self.increment_oam_address();
                 value
             }
-            // RDCGRAM: CGRAM data read (auto-incrementing byte address).
+            // RDCGRAM: CGRAM data read (auto-incrementing byte address). Contributes to PPU2
+            // open bus like the other $213B/$213C/$213D/$213F reads (see OPHCT below).
             0x213B => {
                 let index = self.cgram_index();
                 let value = self.cgram[index];
                 self.increment_cgram_address();
+                self.ppu2_open_bus = value;
                 value
             }
             // RDNMI: VBlank NMI flag (bit 7) + CPU version. Read acknowledges/clears the flag.
@@ -320,30 +322,38 @@ impl Ppu {
                 self.latch_strobe();
                 0
             }
-            // OPHCT: horizontal counter latch. Per bsnes (`PPU::readIO` case 0x213c), the first
-            // read since the flip-flop was last reset by a STAT78 ($213F) read returns the low
-            // byte; every subsequent read (2nd, 3rd, ...) returns the high bit and does NOT
-            // toggle back to the low byte -- even across an intervening SLHV/WRIO re-latch,
-            // since `latch_counters` only updates the latched value, not this flip-flop (only
-            // a $213F read does, see below).
+            // OPHCT: horizontal counter latch. Per the Nocash SNES spec and bsnes/Mesen2
+            // (`ophct_byte = ~ophct_byte` on every $213C read), this flip-flop toggles
+            // unconditionally on every read -- alternating low byte, high bit, low byte, ...
+            // -- and is NOT reset by a fresh SLHV/WRIO re-latch (`latch_counters` only updates
+            // the latched value, not this flip-flop); only a $213F read resets it (see below).
+            // The high-byte read's bits 1-7 are PPU2 open bus, not zero: since every
+            // $213B/$213C/$213D/$213F read leaves its own return value sitting in open bus,
+            // and consecutive OPHCT/OPVCT reads without an intervening STAT78 reset just
+            // re-read the same latched position, the "high" read reflects the previous "low"
+            // read's byte (bits 1-7) with bit 0 replaced by the real bit 8 -- NOT a near-zero
+            // value. A ROM that reads OPHCT once per H-IRQ to compute a jump-table index
+            // relies on exactly this to keep getting a usable value on every firing.
             0x213C => {
                 let value = if !self.ophct_read_high {
                     (self.ophct_latch & 0x00FF) as u8
                 } else {
-                    ((self.ophct_latch >> 8) & 0x01) as u8
+                    (((self.ophct_latch >> 8) & 0x01) as u8) | (self.ppu2_open_bus & 0xFE)
                 };
-                self.ophct_read_high = true;
+                self.ophct_read_high = !self.ophct_read_high;
+                self.ppu2_open_bus = value;
                 value
             }
-            // OPVCT: vertical counter latch. Same sticky first-read-then-high-bit semantics as
-            // OPHCT above (see bsnes `PPU::readIO` case 0x213d).
+            // OPVCT: vertical counter latch. Same alternating-toggle and open-bus semantics as
+            // OPHCT above.
             0x213D => {
                 let value = if !self.opvct_read_high {
                     (self.opvct_latch & 0x00FF) as u8
                 } else {
-                    ((self.opvct_latch >> 8) & 0x01) as u8
+                    (((self.opvct_latch >> 8) & 0x01) as u8) | (self.ppu2_open_bus & 0xFE)
                 };
-                self.opvct_read_high = true;
+                self.opvct_read_high = !self.opvct_read_high;
+                self.ppu2_open_bus = value;
                 value
             }
             // STAT77: PPU1 status + version. Bit 7 = OBJ time over-limit, bit 6 = OBJ range
@@ -362,6 +372,7 @@ impl Ppu {
                 self.counter_latch_flag = false;
                 self.ophct_read_high = false;
                 self.opvct_read_high = false;
+                self.ppu2_open_bus = value;
                 value
             }
             _ => 0,

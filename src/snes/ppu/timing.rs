@@ -421,10 +421,15 @@ mod tests {
         // SLHV strobe (WRIO bit7 is set on reset) latches the current H/V counters.
         ppu.read_register(0x2137);
 
-        // OPHCT read-twice: low byte then high bit.
+        // OPHCT read-twice: low byte, then high bit (bit 8 = 0 here) OR'd with bits 1-7 of
+        // PPU2 open bus -- which the low-byte read we just did left sitting at 20 (0x14),
+        // so the high read echoes `20 & 0xFE` = 20 rather than a bare 0. See
+        // `ophct_read_flipflop_keeps_alternating_across_a_relatch_without_a_stat78_read` for
+        // why this open-bus echo matters.
         assert_eq!(ppu.read_register(0x213C), 20);
-        assert_eq!(ppu.read_register(0x213C), 0);
-        // OPVCT read-twice.
+        assert_eq!(ppu.read_register(0x213C), 20);
+        // OPVCT read-twice: low byte (scanline 0) leaves PPU2 open bus at 0, so the high
+        // read's `0 & 0xFE` echo is also 0.
         assert_eq!(ppu.read_register(0x213D), 0);
         assert_eq!(ppu.read_register(0x213D), 0);
     }
@@ -436,10 +441,12 @@ mod tests {
 
         ppu.read_register(0x2137);
 
+        // High-byte reads echo bits 1-7 of PPU2 open bus, i.e. the preceding low-byte read's
+        // own value masked with 0xFE (bit 8 is 0 for both H=5 and V=3, so it doesn't show).
         assert_eq!(ppu.read_register(0x213C), 5);
-        assert_eq!(ppu.read_register(0x213C), 0);
+        assert_eq!(ppu.read_register(0x213C), 5 & 0xFE);
         assert_eq!(ppu.read_register(0x213D), 3);
-        assert_eq!(ppu.read_register(0x213D), 0);
+        assert_eq!(ppu.read_register(0x213D), 3 & 0xFE);
     }
 
     #[test]
@@ -457,12 +464,19 @@ mod tests {
     }
 
     #[test]
-    fn ophct_read_flipflop_stays_high_across_a_relatch_without_a_stat78_read() {
-        // Per bsnes (`PPU::readIO` case 0x213c/0x213f), a fresh SLHV/WRIO latch does NOT
-        // reset the OPHCT/OPVCT read flip-flop -- only a STAT78 ($213F) read does. So once
-        // a program has read OPHCT twice (low then high), latching again *without* an
-        // intervening STAT78 read must keep returning the high bit, not toggle back to the
-        // (new) low byte.
+    fn ophct_read_flipflop_keeps_alternating_across_a_relatch_without_a_stat78_read() {
+        // Per the Nocash SNES spec ("the flipflops aren't automatically reset when latching
+        // occurs") and bsnes/Mesen2 (`ophct_byte = ~ophct_byte` on every $213C read), the
+        // OPHCT/OPVCT read flip-flop is NOT reset by a fresh SLHV/WRIO latch -- only a STAT78
+        // ($213F) read does that. But the flip-flop itself unconditionally *toggles* on every
+        // $213C/$213D read, regardless of any intervening latch: it alternates low, high, low,
+        // high, ... rather than sticking to "high" forever after the first read.
+        //
+        // The "high" read's bits 1-7 are PPU2 open bus rather than 0: since a $213C read
+        // leaves its own return value sitting in PPU2 open bus, and H=20/25 both have bit 8
+        // clear, the "high" reads below echo the preceding "low" read's byte (`& 0xFE`) --
+        // this is exactly what lets a ROM that reads OPHCT once per H-IRQ firing keep getting
+        // a usable (non-near-zero) value on every other firing. See #2953.
         let mut ppu = Ppu::new();
         tick_dots(&mut ppu, 20);
         ppu.read_register(0x2137); // first latch: H=20
@@ -474,8 +488,9 @@ mod tests {
         );
         assert_eq!(
             ppu.read_register(0x213C),
-            0,
-            "second read returns the high bit"
+            20 & 0xFE,
+            "second read returns the high bit (0, since H=20 < 256) OR'd with PPU2 open \
+             bus, which the first read left at 20"
         );
 
         tick_dots(&mut ppu, 5);
@@ -483,9 +498,16 @@ mod tests {
 
         assert_eq!(
             ppu.read_register(0x213C),
-            0,
-            "third read (no intervening STAT78 read) stays on the high bit, \
-             it must not toggle back to the new latch's low byte"
+            25,
+            "third read (no intervening STAT78 read) toggles back to the low byte of \
+             the new latch, since the flip-flop toggles on every read regardless of \
+             intervening latches"
+        );
+        assert_eq!(
+            ppu.read_register(0x213C),
+            25 & 0xFE,
+            "fourth read toggles back to the high bit, again echoing the preceding low \
+             read (25) through PPU2 open bus"
         );
     }
 

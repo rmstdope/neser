@@ -43,6 +43,7 @@ impl Ppu {
             counter_latch_flag: self.counter_latch_flag,
             ophct_read_high: self.ophct_read_high,
             opvct_read_high: self.opvct_read_high,
+            ppu2_open_bus: self.ppu2_open_bus,
             wrio: self.wrio,
             irq_mode: self.irq_mode,
             htime: self.htime,
@@ -137,6 +138,7 @@ impl Ppu {
         self.counter_latch_flag = state.counter_latch_flag;
         self.ophct_read_high = state.ophct_read_high;
         self.opvct_read_high = state.opvct_read_high;
+        self.ppu2_open_bus = state.ppu2_open_bus;
         self.wrio = state.wrio;
         self.irq_mode = state.irq_mode & 0x03;
         self.htime = state.htime & 0x01FF;
