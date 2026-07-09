@@ -119,7 +119,11 @@ impl DmaController {
         abus: &mut B,
         seed_open_bus: u8,
     ) -> (u64, u8) {
-        self.hdma_active_mask = 0;
+        // Initialize active_mask to 0xFF (all channels potentially active).
+        // Channels will be cleared from active_mask when they terminate (descriptor=$00).
+        // This allows mid-scanline HDMAEN writes to work - HDMAEN gates which channels
+        // process, while active_mask only tracks termination (#2943).
+        self.hdma_active_mask = 0xFF;
         self.hdma_do_transfer = [false; 8];
         self.hdma_repeat_mode = [false; 8];
         self.hdma_lines_left = [0; 8];
@@ -162,60 +166,7 @@ impl DmaController {
                 self.set_reg(channel, 0x6, indirect_high);
             }
 
-            self.hdma_active_mask |= 1 << channel;
-            self.hdma_do_transfer[channel as usize] = true;
-        }
-
-        (ticks, open_bus)
-    }
-
-    /// Initialize only the specified channels for mid-scanline HDMAEN writes.
-    /// Unlike `hdma_init()`, this preserves state for channels not in `channel_mask`.
-    pub fn hdma_init_channels<B: DmaABus>(
-        &mut self,
-        channel_mask: u8,
-        abus: &mut B,
-        seed_open_bus: u8,
-    ) -> (u64, u8) {
-        if channel_mask == 0 {
-            return (0, seed_open_bus);
-        }
-
-        let mut ticks = 18u64;
-        let mut open_bus = seed_open_bus;
-
-        for channel in 0u8..8 {
-            if (channel_mask & (1 << channel)) == 0 {
-                continue;
-            }
-
-            let dmap = self.get_reg(channel, 0x0);
-            let indirect = (dmap & 0x40) != 0;
-            ticks += 8;
-
-            let a1t_low = self.get_reg(channel, 0x2);
-            let a1t_high = self.get_reg(channel, 0x3);
-            self.set_reg(channel, 0x8, a1t_low);
-            self.set_reg(channel, 0x9, a1t_high);
-
-            let descriptor = self.read_hdma_table_byte(channel, abus, &mut open_bus);
-            self.set_reg(channel, 0xA, descriptor);
-            if descriptor == 0 {
-                continue;
-            }
-            let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
-            self.hdma_repeat_mode[channel as usize] = repeat_mode;
-            self.hdma_lines_left[channel as usize] = lines_left;
-
-            if indirect {
-                ticks += 16;
-                let indirect_low = self.read_hdma_table_byte(channel, abus, &mut open_bus);
-                let indirect_high = self.read_hdma_table_byte(channel, abus, &mut open_bus);
-                self.set_reg(channel, 0x5, indirect_low);
-                self.set_reg(channel, 0x6, indirect_high);
-            }
-
-            self.hdma_active_mask |= 1 << channel;
+            // active_mask already 0xFF; do_transfer enables this channel
             self.hdma_do_transfer[channel as usize] = true;
         }
 
@@ -223,18 +174,13 @@ impl DmaController {
     }
 
     /// Disable the specified HDMA channels by clearing their bits in the active mask.
-    pub fn disable_hdma_channels(&mut self, channel_mask: u8) {
-        self.hdma_active_mask &= !channel_mask;
-    }
-
-    /// Returns the current HDMA active channel mask for testing.
-    #[cfg(test)]
-    pub fn hdma_active_mask(&self) -> u8 {
-        self.hdma_active_mask
-    }
-
-    pub fn hdma_do_line<B: DmaABus>(&mut self, abus: &mut B, seed_open_bus: u8) -> (u64, u8) {
-        if self.hdma_active_mask == 0 {
+    pub fn hdma_do_line<B: DmaABus>(
+        &mut self,
+        hdmaen: u8,
+        abus: &mut B,
+        seed_open_bus: u8,
+    ) -> (u64, u8) {
+        if hdmaen == 0 {
             return (0, seed_open_bus);
         }
 
@@ -242,6 +188,12 @@ impl DmaController {
         let mut open_bus = seed_open_bus;
 
         for channel in 0u8..8 {
+            // Check HDMAEN (like Mesen2), not active_mask
+            if (hdmaen & (1 << channel)) == 0 {
+                continue;
+            }
+
+            // Skip if channel has terminated (active_mask tracks this)
             if (self.hdma_active_mask & (1 << channel)) == 0 {
                 continue;
             }
@@ -252,13 +204,17 @@ impl DmaController {
             }
 
             let idx = channel as usize;
-            self.hdma_lines_left[idx] = self.hdma_lines_left[idx].saturating_sub(1);
-            self.set_reg(
-                channel,
-                0xA,
-                Self::encode_hdma_counter(self.hdma_repeat_mode[idx], self.hdma_lines_left[idx]),
-            );
-            self.hdma_do_transfer[idx] = self.hdma_repeat_mode[idx];
+            // Use wrapping_sub to match hardware (0 - 1 = 0xFF, not 0)
+            self.hdma_lines_left[idx] = self.hdma_lines_left[idx].wrapping_sub(1);
+
+            // Update line counter register
+            let line_counter =
+                Self::encode_hdma_counter(self.hdma_repeat_mode[idx], self.hdma_lines_left[idx]);
+            self.set_reg(channel, 0xA, line_counter);
+
+            // Set do_transfer based on repeat bit (bit 7) of line counter register,
+            // not internal repeat_mode. This allows mid-scanline activation to work (#2943).
+            self.hdma_do_transfer[idx] = (line_counter & 0x80) != 0;
 
             if self.hdma_lines_left[idx] == 0 {
                 if !self.reload_hdma_entry(channel, abus, &mut open_bus, &mut ticks) {

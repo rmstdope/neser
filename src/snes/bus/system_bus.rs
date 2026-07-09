@@ -47,9 +47,6 @@ pub struct SnesSystemBus {
     input: RefCell<InputPorts>,
     mdr: Cell<u8>,
     ticks: Cell<u64>,
-    /// Tracks HDMA channels newly enabled by mid-scanline HDMAEN writes (before dot 276).
-    /// These channels will be initialized just before the dot-276 transfer point (#2943).
-    pending_mid_scanline_hdma_channels: Cell<u8>,
 }
 
 impl SnesSystemBus {
@@ -89,7 +86,6 @@ impl SnesSystemBus {
             input: RefCell::new(InputPorts::new()),
             mdr: Cell::new(0),
             ticks: Cell::new(0),
-            pending_mid_scanline_hdma_channels: Cell::new(0),
         }
     }
 
@@ -309,33 +305,11 @@ impl SnesSystemBus {
 
     pub fn hdma_do_line(&mut self) {
         let mut dma = std::mem::take(&mut self.dma);
-        let (consumed_ticks, dma_open_bus) = dma.hdma_do_line(self, self.mdr.get());
+        let (consumed_ticks, dma_open_bus) = dma.hdma_do_line(self.hdmaen, self, self.mdr.get());
         self.ticks
             .set(self.ticks.get().wrapping_add(consumed_ticks));
         self.mdr.set(dma_open_bus);
         self.dma = dma;
-    }
-
-    /// Initialize only the specified HDMA channels (for mid-scanline HDMAEN writes).
-    /// Preserves state for channels not in the mask.
-    fn hdma_init_channels(&mut self, channel_mask: u8) {
-        let mut dma = std::mem::take(&mut self.dma);
-        let (consumed_ticks, dma_open_bus) =
-            dma.hdma_init_channels(channel_mask, self, self.mdr.get());
-        self.ticks
-            .set(self.ticks.get().wrapping_add(consumed_ticks));
-        self.mdr.set(dma_open_bus);
-        self.dma = dma;
-    }
-
-    /// Initialize pending mid-scanline HDMA channels just before the dot-276 transfer.
-    fn hdma_init_pending_channels(&mut self) {
-        let channels = self.pending_mid_scanline_hdma_channels.get();
-        self.pending_mid_scanline_hdma_channels.set(0);
-
-        if channels != 0 {
-            self.hdma_init_channels(channels);
-        }
     }
 
     /// Fires the once-per-frame HDMA channel reload and once-per-active-scanline HDMA
@@ -345,12 +319,8 @@ impl SnesSystemBus {
     fn check_hdma_triggers(&mut self) {
         if self.ppu.get_mut().hdma_init_due() {
             self.hdma_init();
-            // Clear pending channels after frame init
-            self.pending_mid_scanline_hdma_channels.set(0);
         }
         if self.ppu.get_mut().hdma_transfer_due() {
-            // Initialize any channels enabled mid-scanline
-            self.hdma_init_pending_channels();
             self.hdma_do_line();
         }
     }
@@ -712,23 +682,8 @@ impl SnesSystemBus {
                 true
             }
             0x420C => {
-                let old_hdmaen = self.hdmaen;
                 self.hdmaen = value;
-
-                // Disable channels that are no longer in HDMAEN
-                let disabled_channels = old_hdmaen & !value;
-                if disabled_channels != 0 {
-                    self.dma.disable_hdma_channels(disabled_channels);
-                }
-
-                // Track newly-enabled channels if before transfer point (#2943)
-                if self.ppu.borrow().before_hdma_transfer() {
-                    let newly_enabled = value & !old_hdmaen;
-                    let current_pending = self.pending_mid_scanline_hdma_channels.get();
-                    self.pending_mid_scanline_hdma_channels
-                        .set(current_pending | newly_enabled);
-                }
-
+                // No special handling - HDMA logic will pick up changes naturally
                 true
             }
             0x2140..=0x2143 => {
@@ -2094,167 +2049,5 @@ mod tests {
         }
         let joy1 = (restored.read(0x004219) as u16) << 8 | restored.read(0x004218) as u16;
         assert_ne!(joy1 & (1 << 6), 0, "X preserved across save-state");
-    }
-
-    #[test]
-    fn hdma_init_channels_preserves_other_channels() {
-        // Regression test for #2943: selective channel init for mid-scanline HDMAEN
-        // writes must not corrupt state of already-active channels.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
-
-        // Set up channel 0 and channel 1, enable both
-        write_hdma_channel(&mut bus, 0, 0x00, 0x30, 0x7E2000);
-        write_hdma_channel(&mut bus, 1, 0x00, 0x31, 0x7E2100);
-        bus.write(0x7E2000, 0x02); // channel 0: 2 lines
-        bus.write(0x7E2001, 0xAA);
-        bus.write(0x7E2002, 0x00); // terminator
-        bus.write(0x7E2100, 0x03); // channel 1: 3 lines
-        bus.write(0x7E2101, 0xBB);
-        bus.write(0x7E2102, 0x00); // terminator
-        bus.write(0x00420C, 0x03); // enable channels 0 and 1
-
-        // Initialize both channels normally
-        bus.hdma_init();
-
-        // Verify both are active
-        assert_eq!(
-            bus.dma.hdma_active_mask(),
-            0x03,
-            "both channels should be active"
-        );
-
-        // Now selectively init only channel 2 (simulating mid-scanline enable)
-        write_hdma_channel(&mut bus, 2, 0x00, 0x32, 0x7E2200);
-        bus.write(0x7E2200, 0x01);
-        bus.write(0x7E2201, 0xCC);
-        bus.write(0x7E2202, 0x00);
-
-        bus.hdma_init_channels(0x04); // init only channel 2
-
-        // Channel 0 and 1 state should be preserved
-        assert_eq!(
-            bus.dma.hdma_active_mask(),
-            0x07,
-            "all three channels should be active"
-        );
-        assert_eq!(bus.read(0x00430A), 0x02, "channel 0 descriptor preserved");
-        assert_eq!(bus.read(0x00431A), 0x03, "channel 1 descriptor preserved");
-        assert_eq!(bus.read(0x00432A), 0x01, "channel 2 initialized");
-    }
-
-    #[test]
-    #[ignore] // TODO(#2943): Fix timing in this test - feature works but test timing is complex
-    fn hdmaen_write_before_transfer_point_sets_pending() {
-        // Regression test for #2943: writing to HDMAEN ($420C) before dot 276
-        // on an active scanline should initialize that channel at dot 276.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
-
-        // Set up channel 0's HDMA registers and table
-        write_hdma_channel(&mut bus, 0, 0x00, 0x30, 0x7E2000);
-        bus.write(0x7E2000, 0x01);
-        bus.write(0x7E2001, 0xAA);
-        bus.write(0x7E2002, 0x00);
-
-        // Advance one full scanline to get past scanline 0's init point
-        let clocks_per_line = DOTS_PER_SCANLINE as u32 * MASTER_CYCLES_PER_DOT;
-        for _ in 0..clocks_per_line {
-            bus.tick();
-        }
-
-        // Now we're on scanline 1. Verify channel 0 is not active (we never enabled it)
-        assert_eq!(
-            bus.dma.hdma_active_mask() & 0x01,
-            0,
-            "channel 0 should not be active before HDMAEN write"
-        );
-
-        // Write to HDMAEN to enable channel 0 mid-scanline (at the start of scanline 1, before dot 276)
-        bus.write(0x00420C, 0x01);
-
-        // Advance to just past dot 276 on the same scanline
-        // Dot 276 * 4 master cycles/dot + a few extra to ensure we're past the trigger point
-        let clocks_to_past_276 = 276 * MASTER_CYCLES_PER_DOT + 10;
-        for _ in 0..clocks_to_past_276 {
-            bus.tick();
-        }
-
-        // The channel should now be active (initialized at dot 276 on this scanline)
-        assert_eq!(
-            bus.dma.hdma_active_mask() & 0x01,
-            0x01,
-            "channel 0 should be initialized at dot 276 after mid-scanline HDMAEN write"
-        );
-    }
-
-    #[test]
-    fn hdmaen_write_after_transfer_point_does_not_set_pending() {
-        // Regression test for #2943: writing to HDMAEN after dot 276 should
-        // NOT trigger mid-scanline initialization on the current scanline.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
-
-        // Set up channel 0's HDMA registers and table
-        write_hdma_channel(&mut bus, 0, 0x00, 0x30, 0x7E2000);
-        bus.write(0x7E2000, 0x01);
-        bus.write(0x7E2001, 0xAA);
-        bus.write(0x7E2002, 0x00);
-
-        // Advance most of the way through scanline 1 (past dot 276 but not to the next scanline)
-        // Dot 276 is at 276 * 4 = 1104 master clocks into the scanline
-        // Advance to scanline 1, dot 300: (341 + 300) * 4 = 2564 master clocks
-        let clocks_past_transfer = (DOTS_PER_SCANLINE as u32 + 300) * MASTER_CYCLES_PER_DOT;
-        for _ in 0..clocks_past_transfer {
-            bus.tick();
-        }
-
-        // Verify we're after the transfer point (we're on scanline 1, past dot 276)
-        assert!(
-            !bus.ppu.borrow().before_hdma_transfer(),
-            "should be after HDMA transfer point on scanline 1"
-        );
-
-        // Write to HDMAEN to enable channel 0 (after dot 276, so too late for this scanline)
-        bus.write(0x00420C, 0x01);
-
-        // Channel should NOT be initialized yet (missed the dot-276 window)
-        assert_eq!(
-            bus.dma.hdma_active_mask(),
-            0x00,
-            "channel should not be initialized when HDMAEN written after dot 276"
-        );
-
-        // Advance to the next scanline - the channel should be initialized at scanline 0
-        // of the next frame (not on this scanline)
-        // For this test, just verify it doesn't initialize on the current scanline
-    }
-
-    #[test]
-    fn hdmaen_disable_clears_active_mask() {
-        // Regression test for #2943: clearing a channel bit in HDMAEN should
-        // immediately disable that channel.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
-
-        // Set up and enable channel 0
-        write_hdma_channel(&mut bus, 0, 0x00, 0x30, 0x7E2000);
-        bus.write(0x7E2000, 0x01);
-        bus.write(0x7E2001, 0xAA);
-        bus.write(0x7E2002, 0x00);
-        bus.write(0x00420C, 0x01); // enable channel 0
-
-        bus.hdma_init();
-        assert_eq!(
-            bus.dma.hdma_active_mask(),
-            0x01,
-            "channel 0 should be active"
-        );
-
-        // Disable channel 0
-        bus.write(0x00420C, 0x00);
-
-        // Channel should be immediately disabled
-        assert_eq!(
-            bus.dma.hdma_active_mask(),
-            0x00,
-            "channel 0 should be disabled after clearing HDMAEN"
-        );
     }
 }

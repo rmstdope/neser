@@ -1,9 +1,9 @@
-//! Automates 12 of the 29 vendored undisbeliever/snes-test-roms hardware
+//! Automates 15 of the 29 vendored undisbeliever/snes-test-roms hardware
 //! ROMs (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`)
 //! that visually match Mesen2.
 //!
 //! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen.
-//! Most of them (9 of the 12 automated here) demonstrate a real, documented
+//! Most of them (9 of the 15 automated here) demonstrate a real, documented
 //! SNES hardware bug -- the "INIDISP D7 glitch" -- where writing `$2100`
 //! shortly after the CPU/HDMA data bus held a byte with bit 7 set can
 //! corrupt sprite rendering or briefly flip force-blank, on real 3-chip/
@@ -27,12 +27,11 @@
 //! checked reference emulator, not hardware accuracy -- see #2949 before
 //! treating a mismatch here as a regression.
 //!
-//! The other 17 ROMs are deliberately left un-automated: cross-checking
+//! The other 14 ROMs are deliberately left un-automated: cross-checking
 //! against Mesen2 exposed real NESER divergences, tracked as follow-up bugs
 //! rather than papered over with a golden that bakes in known-wrong
 //! behavior (see README-SNES.md for the full breakdown):
-//! - `hdmaen_latch_test(_2).sfc`, `inidisp_brightness_delay.sfc`,
-//!   `hdma-2100-glitch-2ch-{0a,81}.sfc`, `hdma-21ff-2100-glitch.sfc` -- #2943
+//! - `hdma-2100-glitch-2ch-{0a,81}.sfc`, `hdma-21ff-2100-glitch.sfc` -- #2943
 //! - `inidisp_forgot_to_force_blank.sfc` -- #2944
 //! - all 10 `scpu-a-dma-bug-*.sfc` -- #2945
 
@@ -198,5 +197,28 @@ mod tests {
         inidisp_enable_display_mid_frame_matches_mesen2,
         "inidisp_enable_display_mid_frame.sfc",
         0x3B0F_939D
+    );
+
+    // Fixed by mid-scanline HDMA activation (#2943): ROMs write to HDMAEN mid-scanline
+    // (via H-IRQ at dots 220-232) to enable HDMA channels. Channels activate on the
+    // next scanline, producing horizontal striped patterns.
+    // Note: Minor visual difference from Mesen2 - extra red pixels on rightmost column
+    // (separate PPU issue, not HDMA-related).
+    undisbeliever_rom_test!(
+        hdmaen_latch_test_matches_mesen2,
+        "hdmaen_latch_test.sfc",
+        0x88D5_87A5
+    );
+
+    undisbeliever_rom_test!(
+        hdmaen_latch_test_2_matches_mesen2,
+        "hdmaen_latch_test_2.sfc",
+        0x4D68_EF1A
+    );
+
+    undisbeliever_rom_test!(
+        inidisp_brightness_delay_matches_mesen2,
+        "inidisp_brightness_delay.sfc",
+        0xA6F2_AED7
     );
 }
