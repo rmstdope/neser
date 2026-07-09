@@ -67,16 +67,6 @@ impl Ppu {
             && u32::from(self.line_clock) == u32::from(HDMA_TRANSFER_POSITION)
     }
 
-    /// Returns `true` if we're on an active (non-VBlank) scanline and haven't reached the
-    /// HDMA transfer point yet. Used to detect mid-scanline HDMAEN writes that should
-    /// initialize channels for the current scanline's transfer (#2943).
-    /// Returns false on scanline 0 since hdma_init() handles initialization there.
-    pub fn before_hdma_transfer(&self) -> bool {
-        self.position.scanline > 0
-            && self.position.scanline < self.vblank_start_line()
-            && u32::from(self.line_clock) < u32::from(HDMA_TRANSFER_POSITION)
-    }
-
     /// The per-clock advance logic (dot/scanline/IRQ bookkeeping). Split out from [`Ppu::tick`]
     /// so DRAM refresh can steal extra clocks without re-checking the refresh trigger itself.
     fn tick_one_clock(&mut self) {

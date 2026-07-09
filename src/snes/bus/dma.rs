@@ -152,6 +152,8 @@ impl DmaController {
             let descriptor = self.read_hdma_table_byte(channel, abus, &mut open_bus);
             self.set_reg(channel, 0xA, descriptor);
             if descriptor == 0 {
+                // Terminator: clear this channel's bit so it's not treated as active
+                self.hdma_active_mask &= !(1 << channel);
                 continue;
             }
             let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
@@ -173,7 +175,8 @@ impl DmaController {
         (ticks, open_bus)
     }
 
-    /// Disable the specified HDMA channels by clearing their bits in the active mask.
+    /// Perform the once-per-scanline HDMA processing: check each enabled channel,
+    /// transfer data if due, decrement line counters, and reload descriptors as needed.
     pub fn hdma_do_line<B: DmaABus>(
         &mut self,
         hdmaen: u8,
