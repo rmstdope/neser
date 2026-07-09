@@ -322,12 +322,14 @@ impl Ppu {
                 self.latch_strobe();
                 0
             }
-            // OPHCT: horizontal counter latch. Per the Nocash SNES spec and bsnes/Mesen2
-            // (`ophct_byte = ~ophct_byte` on every $213C read), this flip-flop toggles
-            // unconditionally on every read -- alternating low byte, high bit, low byte, ...
-            // -- and is NOT reset by a fresh SLHV/WRIO re-latch (`latch_counters` only updates
+            // OPHCT: horizontal counter latch. Cross-checked against three independent
+            // sources (bsnes `sfc/ppu/io.cpp`, Mesen2 `SnesPpu.cpp`, and the Nocash SNES
+            // spec), which all agree: this flip-flop toggles unconditionally on every read
+            // -- alternating low byte, high bit, low byte, ... (bsnes: `latch.hcounter++`) --
+            // and is NOT reset by a fresh SLHV/WRIO re-latch (`latch_counters` only updates
             // the latched value, not this flip-flop); only a $213F read resets it (see below).
-            // The high-byte read's bits 1-7 are PPU2 open bus, not zero: since every
+            // The high-byte read's bits 1-7 are PPU2 open bus, not zero (bsnes:
+            // `ppu2.mdr &= 0xfe; ppu2.mdr |= io.hcounter >> 8 & 1;`): since every
             // $213B/$213C/$213D/$213F read leaves its own return value sitting in open bus,
             // and consecutive OPHCT/OPVCT reads without an intervening STAT78 reset just
             // re-read the same latched position, the "high" read reflects the previous "low"
