@@ -308,9 +308,17 @@ impl SnesBus for Sa1Bus {
         if let Some(index) = self.bwram_index(addr) {
             let mut sram = self.sram.borrow_mut();
             let len = sram.len();
-            if len != 0 && !self.memory_control.borrow().is_bwram_write_protected(index) {
+            if len != 0 {
+                // Protection must be checked against the *wrapped* physical offset -- see the
+                // matching comment on `SnesSystemBus::write_sa1_bwram`.
                 let wrapped = index % len;
-                sram[wrapped] = value;
+                if !self
+                    .memory_control
+                    .borrow()
+                    .is_bwram_write_protected(wrapped)
+                {
+                    sram[wrapped] = value;
+                }
             }
             return;
         }
@@ -689,6 +697,33 @@ mod tests {
 
         bus.write(0x00_6000, 0x77);
         assert_eq!(sram.borrow()[0], 0x00);
+    }
+
+    #[test]
+    fn bus_bwram_write_protection_is_checked_against_the_wrapped_physical_offset() {
+        // Same scenario as the SnesSystemBus-level regression test: an 8KB-per-block BW-RAM
+        // with only 0x8000 (32KB, blocks 0-3) of physical backing. Block 4 wraps to physical
+        // offset 0, which BWPA protects; an unwrapped protection check would miss this.
+        let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+        let memory_control = fresh_memory_control();
+        memory_control.borrow_mut().write(0x2228, 0x00); // protect only the first 256 bytes
+        memory_control.borrow_mut().write(0x2225, 0x04); // BMAP: block 4
+        let rom = Rc::new(vec![0u8; 0x8000]);
+        let sram = fresh_sram(0x8000);
+        let mut bus = Sa1Bus::new(
+            registers,
+            fresh_iram(),
+            memory_control,
+            rom,
+            Rc::clone(&sram),
+        );
+
+        bus.write(0x00_6000, 0x42);
+        assert_eq!(
+            sram.borrow()[0],
+            0x00,
+            "mirrored block must not bypass protection"
+        );
     }
 
     #[test]

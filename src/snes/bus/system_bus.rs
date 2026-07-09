@@ -405,14 +405,20 @@ impl SnesSystemBus {
         let Some(control) = &self.sa1_memory_control else {
             return;
         };
-        if control.borrow().is_bwram_write_protected(index) {
-            return;
-        }
         let mut sram = self.sram.borrow_mut();
         let len = sram.len();
-        if len != 0 {
-            sram[index % len] = value;
+        if len == 0 {
+            return;
         }
+        // Protection must be checked against the *wrapped* physical offset -- BW-RAM mirrors
+        // when the selected block/bank exceeds the physical size, so an unwrapped check could
+        // let a mirrored address (e.g. banks $44-$4F, or a large BMAP block) bypass protection
+        // on a byte that maps onto a protected physical address after wrapping.
+        let wrapped = index % len;
+        if control.borrow().is_bwram_write_protected(wrapped) {
+            return;
+        }
+        sram[wrapped] = value;
     }
 
     fn start_dma_transfer(&mut self, mdmaen: u8) {
@@ -2518,6 +2524,24 @@ mod tests {
         bus.write(0x00_6000, 0x77);
         // The same byte must be visible directly at BW-RAM offset $2000 (bank $40).
         assert_eq!(bus.read(0x40_2000), 0x77);
+    }
+
+    #[test]
+    fn sa1_bwram_write_protection_is_checked_against_the_wrapped_physical_offset() {
+        // 32KB BW-RAM = 4 blocks of 8KB (blocks 0-3). Block 4 wraps around to physical offset 0
+        // -- the exact byte BWPA protects below. A protection check against the *unwrapped*
+        // linear offset (4*0x2000 = 0x8000) would wrongly see it as outside the 256-byte
+        // protected region and let the write through onto a byte that block 0 (offset 0) would
+        // correctly protect.
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        bus.write(0x00_2228, 0x00); // protect only the first 256 bytes
+        bus.write(0x00_2224, 0x04); // BMAPS: block 4 (wraps to physical offset 0 in 32KB BW-RAM)
+        bus.write(0x00_6000, 0x42);
+        assert_eq!(
+            bus.read(0x00_6000),
+            0x00,
+            "mirrored block must not bypass protection"
+        );
     }
 
     #[test]
