@@ -185,6 +185,10 @@ pub struct Ppu {
     ophct_read_high: bool,
     /// OPVCT read-twice flipflop (false = next read is the low byte).
     opvct_read_high: bool,
+    /// PPU2 open bus: bits 1-7 of the OPHCT/OPVCT high-byte read (and the RDCGRAM/STAT78
+    /// reads) are not real data -- they reflect whatever byte the PPU2 data bus last drove.
+    /// Updated by every $213B/$213C/$213D/$213F read to that read's own return value.
+    ppu2_open_bus: u8,
     /// Current WRIO ($4201) value; bit 7 gates counter latching.
     wrio: u8,
     /// NMITIMEN ($4200) IRQ mode (bits 5-4): 0=off, 1=H, 2=V, 3=H+V.
@@ -357,6 +361,7 @@ impl Ppu {
             counter_latch_flag: false,
             ophct_read_high: false,
             opvct_read_high: false,
+            ppu2_open_bus: 0,
             wrio: 0xFF,
             irq_mode: 0,
             htime: 0x01FF,

@@ -215,6 +215,8 @@ pub struct SnesPpuState {
     #[serde(default)]
     pub opvct_read_high: bool,
     #[serde(default)]
+    pub ppu2_open_bus: u8,
+    #[serde(default)]
     pub wrio: u8,
     #[serde(default)]
     pub irq_mode: u8,
