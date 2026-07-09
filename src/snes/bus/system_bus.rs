@@ -291,11 +291,48 @@ impl SnesSystemBus {
         }
     }
 
+    /// SNES-side optional NMI/IRQ vector-override interception: reads of `$00FFEA`/`$00FFEB`
+    /// return `$220C`/`$220D` SNV instead of ROM when `$2209` SCNT bit 4 is set; reads of
+    /// `$00FFEE`/`$00FFEF` return `$220E`/`$220F` SIV instead when SCNT bit 6 is set (confirmed
+    /// against bsnes's `SA1::ROM::readCPU`, since fullsnes documents the switch bits but not
+    /// this exact interception mechanism). fullsnes notes real games rarely use this for actual
+    /// vector redirection ("used only by Jumpin Derby") -- the absindx RAM protection test
+    /// instead repurposes the IRQ pair as a data side-channel: its own IRQ handler, entered via
+    /// the ROM's ordinary fixed IRQ vector, deliberately re-reads `$00FFEE` as *data* to recover
+    /// a byte SA-1 stashed in SIV (see `Sa1ControlRegisters::snes_irq_vector`'s doc comment).
+    /// `None` for non-SA-1 cartridges or when the matching override switch is off.
+    fn sa1_snes_vector_override_byte(&self, addr: u32) -> Option<u8> {
+        let registers = self.sa1_registers.as_ref()?.borrow();
+        let (vector, low_byte) = match addr & 0xFF_FFFF {
+            0x00_FFEA if registers.snes_nmi_vector_override_enabled() => {
+                (registers.snes_nmi_vector(), true)
+            }
+            0x00_FFEB if registers.snes_nmi_vector_override_enabled() => {
+                (registers.snes_nmi_vector(), false)
+            }
+            0x00_FFEE if registers.snes_irq_vector_override_enabled() => {
+                (registers.snes_irq_vector(), true)
+            }
+            0x00_FFEF if registers.snes_irq_vector_override_enabled() => {
+                (registers.snes_irq_vector(), false)
+            }
+            _ => return None,
+        };
+        Some(if low_byte {
+            (vector & 0xFF) as u8
+        } else {
+            (vector >> 8) as u8
+        })
+    }
+
     fn dma_read_a_bus_impl(&self, addr: u32, open_bus: u8) -> u8 {
         if Self::is_dma_a_bus_mmio(addr) {
             return open_bus;
         }
 
+        if let Some(byte) = self.sa1_snes_vector_override_byte(addr) {
+            return byte;
+        }
         if let Some(index) = Self::decode_wram_index(addr) {
             return self.wram[index];
         }
@@ -331,6 +368,10 @@ impl SnesSystemBus {
     }
 
     fn read_for_debugger_impl(&self, addr: u32) -> u8 {
+        if let Some(byte) = self.sa1_snes_vector_override_byte(addr) {
+            return byte;
+        }
+
         if let Some(index) = Self::decode_wram_index(addr) {
             return self.wram[index];
         }
@@ -670,6 +711,9 @@ impl SnesSystemBus {
             cpu: core.cpu_state(),
             booted: core.booted(),
             master_clock_debt: core.master_clock_debt(),
+            sa1_irq_pending: registers.sa1_irq_pending(),
+            sa1_nmi_pending: registers.sa1_nmi_pending(),
+            snes_irq_pending: registers.snes_irq_pending(),
         })
     }
 
@@ -748,6 +792,9 @@ impl SnesSystemBus {
             state.cie,
             state.snes_nmi_vector,
             state.snes_irq_vector,
+            state.sa1_irq_pending,
+            state.sa1_nmi_pending,
+            state.snes_irq_pending,
         );
         iram.borrow_mut().restore_raw(
             &state.iram,
@@ -813,6 +860,16 @@ impl SnesSystemBus {
         self.sa1_core.as_ref().map(|core| core.cpu().read_a())
     }
 
+    /// Simulates the SA-1 CPU itself writing one of its side-writable registers (e.g. `$2209`
+    /// SCNT, `$220A` CIE, `$220B` CIC), without needing a running fixture program. No-op for
+    /// non-SA-1 cartridges.
+    #[cfg(test)]
+    pub(crate) fn write_sa1_side_register_for_tests(&self, port: u16, value: u8) {
+        if let Some(registers) = &self.sa1_registers {
+            registers.borrow_mut().write(port, value);
+        }
+    }
+
     fn read_mmio(&self, addr: u32) -> Option<u8> {
         let offset = Self::decode_system_offset(addr)?;
         let open_bus = self.mdr.get();
@@ -856,6 +913,10 @@ impl SnesSystemBus {
             0x4016 => self.input.borrow_mut().read_joya(open_bus),
             0x4017 => self.input.borrow_mut().read_joyb(open_bus),
             0x4218..=0x421F => self.input.borrow().read_joy_register(offset)?,
+            // $2300 SFR: SNES-side status flag read (message from SA-1, vector-override
+            // switches, IRQ-from-SA-1 pending). `None` for non-SA-1 cartridges, matching every
+            // other SA-1 register's fall-through-to-open-bus behavior.
+            0x2300 => self.sa1_registers.as_ref()?.borrow().sfr(),
             0x4300..=0x437F => self.dma.read_register(offset)?,
             _ => return None,
         };
@@ -961,10 +1022,11 @@ impl SnesSystemBus {
                 self.ppu.borrow_mut().write_register(offset, value);
                 true
             }
-            // SA-1 control/vector registers are write-only on real hardware (fullsnes lists
-            // them under "Write Only Registers"), so there is no matching read_mmio arm --
-            // reads of this range correctly fall through to open bus.
-            0x2200..=0x220F => match &self.sa1_registers {
+            // $2200-$2208 are the SNES-side-writable subset of the control/vector register
+            // block; $2209-$220F (SCNT/CIE/CIC/SNV/SIV) are SA-1-side-writable instead (handled
+            // by `Sa1Bus`). All are write-only (fullsnes "Write Only Registers"), so no
+            // read_mmio arm -- $2300 SFR is the separate read-only status register.
+            0x2200..=0x2208 => match &self.sa1_registers {
                 Some(registers) => {
                     registers.borrow_mut().write(offset, value);
                     true
@@ -1057,6 +1119,11 @@ impl SnesBus for SnesSystemBus {
         if let Some(value) = self.read_mmio(addr) {
             self.mdr.set(value);
             return value;
+        }
+
+        if let Some(byte) = self.sa1_snes_vector_override_byte(addr) {
+            self.mdr.set(byte);
+            return byte;
         }
 
         if let Some(index) = Self::decode_wram_index(addr) {
@@ -1167,8 +1234,14 @@ impl SnesBus for SnesSystemBus {
 
     fn poll_irq(&self) -> bool {
         // CPU-dispatch-visible signal (one-dot delayed vs. the raw PPU line) -- see
-        // `Ppu::poll_irq_dispatch` and the `SnesBus::poll_irq` trait doc.
+        // `Ppu::poll_irq_dispatch` and the `SnesBus::poll_irq` trait doc. OR'd with SA-1's own
+        // cross-CPU IRQ line (SCNT bit 7 pending && SIE bit 7 enabled), which has no equivalent
+        // dispatch-pipeline delay to model.
         self.ppu.borrow().poll_irq_dispatch()
+            || self
+                .sa1_registers
+                .as_ref()
+                .is_some_and(|registers| registers.borrow().snes_irq_line())
     }
 
     fn screen_dimensions(&self) -> (u32, u32) {
@@ -2578,6 +2651,60 @@ mod tests {
         assert_eq!(bus.read(0x00_8000), 0xAB);
     }
 
+    #[test]
+    fn sa1_irq_vector_override_redirects_00ffee_ffef_to_siv() {
+        let bus = SnesSystemBus::new(sa1_test_cart());
+        // Before the override switch (SCNT bit 6) is set, $00FFEE/FFEF read real ROM (zeroed).
+        assert_eq!(bus.read(0x00_FFEE), 0x00);
+
+        bus.write_sa1_side_register_for_tests(0x220E, 0x34); // SIV low
+        bus.write_sa1_side_register_for_tests(0x220F, 0x12); // SIV high
+        bus.write_sa1_side_register_for_tests(0x2209, 0x40); // SCNT bit 6: enable IRQ vector override
+        assert_eq!(bus.read(0x00_FFEE), 0x34);
+        assert_eq!(bus.read(0x00_FFEF), 0x12);
+        assert_eq!(
+            bus.read_for_debugger(0x00_FFEE),
+            0x34,
+            "debugger path sees the same override"
+        );
+    }
+
+    #[test]
+    fn sa1_nmi_vector_override_redirects_00ffea_ffeb_to_snv() {
+        let bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write_sa1_side_register_for_tests(0x220C, 0x78); // SNV low
+        bus.write_sa1_side_register_for_tests(0x220D, 0x56); // SNV high
+        bus.write_sa1_side_register_for_tests(0x2209, 0x10); // SCNT bit 4: enable NMI vector override
+        assert_eq!(bus.read(0x00_FFEA), 0x78);
+        assert_eq!(bus.read(0x00_FFEB), 0x56);
+    }
+
+    #[test]
+    fn sa1_vector_override_does_not_affect_non_sa1_cartridges() {
+        let bus = SnesSystemBus::new(lorom_test_cart());
+        assert_eq!(bus.read(0x00_FFEE), 0x00);
+    }
+
+    #[test]
+    fn sa1_irq_from_sa1_asserts_main_bus_poll_irq_once_enabled() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write_sa1_side_register_for_tests(0x2209, 0x80); // SCNT: SA-1 raises IRQ
+        assert!(!bus.poll_irq(), "SIE not yet enabled");
+
+        bus.write(0x00_2201, 0x80); // SIE: SNES side enables IRQ-from-SA-1
+        assert!(bus.poll_irq());
+
+        bus.write(0x00_2202, 0x80); // SIC: acknowledge
+        assert!(!bus.poll_irq());
+    }
+
+    #[test]
+    fn sa1_sfr_reflects_message_and_pending_from_scnt() {
+        let bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write_sa1_side_register_for_tests(0x2209, 0x87); // message=7, IRQ trigger
+        assert_eq!(bus.read(0x00_2300), 0x87);
+    }
+
     /// Writes a minimal valid SA-1 LoROM header into `rom` (64 KiB+, chipset `$35`), matching
     /// the pattern in [`sa1_test_cart`] but as a free function so ROM-banking tests can build a
     /// larger backing buffer (needed to address ROM slot 1 at file offset `$100000`).
@@ -2613,5 +2740,25 @@ mod tests {
         // Protection state must survive: still shrunk to 256 bytes, still write-enabled.
         restored.write(0x00_6100, 0x11);
         assert_eq!(restored.read(0x00_6100), 0x11);
+    }
+
+    #[test]
+    fn save_state_round_trips_sa1_cross_cpu_interrupt_pending_flags() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write(0x00_2200, 0x90); // CCNT: latch sa1_irq_pending and sa1_nmi_pending
+        bus.write_sa1_side_register_for_tests(0x2209, 0x80); // SCNT: latch snes_irq_pending
+
+        let state = bus.capture_state();
+        let mut restored = SnesSystemBus::new(sa1_test_cart());
+        restored.restore_state(&state).expect("restore");
+
+        let registers = restored
+            .sa1_registers
+            .as_ref()
+            .expect("SA-1 cart should have control registers")
+            .borrow();
+        assert!(registers.sa1_irq_pending());
+        assert!(registers.sa1_nmi_pending());
+        assert!(registers.snes_irq_pending());
     }
 }

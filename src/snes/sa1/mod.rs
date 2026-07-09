@@ -35,14 +35,29 @@ use std::rc::Rc;
 /// All of these are write-only on real hardware (fullsnes lists them under "SA-1 I/O Map (Write
 /// Only Registers)"), so there is deliberately no read path here -- reads of this range fall
 /// through to open bus in [`crate::snes::bus::system_bus::SnesSystemBus`].
+///
+/// Interrupt pending/enable semantics (bits confirmed unambiguous by fullsnes but the write-time
+/// *behavior* -- when a pending flag latches, when it's cleared, whether writing 0 to a trigger
+/// bit is a no-op -- is only clearly specified by bsnes's `SA1::writeIOCPU`/`writeIOSA1`
+/// (`sfc/coprocessor/sa1/io.cpp`), since fullsnes marks some of this "(0=No Change?)"):
+/// - Writing a trigger bit as 1 (CCNT bit 4 NMI / bit 7 IRQ; SCNT bit 7 IRQ) always latches the
+///   corresponding pending flag, regardless of the matching enable bit -- fullsnes: "When
+///   interrupts are disabled (in CIE/SIE), then it sounds as if the interrupt flags still do get
+///   set". Writing 0 to a trigger bit does *not* clear it; only the matching CIC/SIC bit does.
+/// - IRQ is level-triggered: `pending && enabled` is asserted for as long as both hold, exactly
+///   like the existing PPU IRQ line this bus already models via `poll_irq()`.
+/// - NMI is edge-triggered like real 65816 hardware: the SA-1 CPU's actual dispatch happens once
+///   per rising edge (a *new* CCNT bit 4 write, not "still set from before"), consumed via
+///   `poll_nmi()` exactly like the existing PPU NMI edge -- independently of the CFR-visible
+///   pending flag, which persists until CIC acknowledges it.
 #[derive(Debug, Clone)]
 pub struct Sa1ControlRegisters {
     /// `$2200` CCNT (SNES-writable). Bits 0-3: message SNES->SA-1. Bit 4: NMI SNES->SA-1. Bit
     /// 5: hold SA-1 in reset (1=reset, matches the `$20` power-on default). Bit 6: wait (freeze
     /// the SA-1 CPU). Bit 7: IRQ SNES->SA-1.
     ccnt: u8,
-    /// `$2201` SIE (SNES-writable): SNES CPU interrupt enable bits. Stored verbatim; behavior
-    /// lands with the cross-CPU IRQ handshake (#2960).
+    /// `$2201` SIE (SNES-writable): SNES CPU interrupt enable bits. Bit 7 (IRQ from SA-1) is
+    /// acted on; bit 5 (character-conversion DMA IRQ) is stored verbatim (DMA is out of scope).
     sie: u8,
     /// `$2203`/`$2204` CRV: SA-1 CPU reset vector. Fullsnes: "Exception Vectors on SA-1 side
     /// (these are ALWAYS replacing the normal vectors in ROM)".
@@ -51,17 +66,39 @@ pub struct Sa1ControlRegisters {
     nmi_vector: u16,
     /// `$2207`/`$2208` CIV: SA-1 CPU IRQ vector (always replaces the ROM vector).
     irq_vector: u16,
-    /// `$2209` SCNT (SA-1-writable): SNES CPU control. Stored verbatim; behavior lands with #2960.
+    /// `$2209` SCNT (SA-1-writable): SNES CPU control. Bit 7 (IRQ from SA-1) is acted on; bits
+    /// 4/6 (NMI/IRQ vector-override switches) are acted on by `SnesSystemBus`'s vector
+    /// interception, not here.
     scnt: u8,
-    /// `$220A` CIE (SA-1-writable): SA-1 CPU interrupt enable bits. Stored verbatim; behavior
-    /// lands with #2960.
+    /// `$220A` CIE (SA-1-writable): SA-1 CPU interrupt enable bits. Bits 4/7 (NMI/IRQ from
+    /// SNES) are acted on; bits 5/6 (DMA/timer IRQ) are stored verbatim (out of scope).
     cie: u8,
-    /// `$220C`/`$220D` SNV: SNES CPU NMI vector override (optional, gated by `scnt` bit 4 per
-    /// fullsnes; the gating itself is #2960's job). Stored verbatim here.
+    /// `$220C`/`$220D` SNV: SNES CPU NMI vector override (optional, gated by `scnt` bit 4).
     snes_nmi_vector: u16,
-    /// `$220E`/`$220F` SIV: SNES CPU IRQ vector override (optional, gated by `scnt` bit 6).
-    /// Stored verbatim here.
+    /// `$220E`/`$220F` SIV: SNES CPU IRQ vector override (optional, gated by `scnt` bit 6). The
+    /// absindx RAM protection test repurposes this as a data side-channel: it writes an
+    /// arbitrary byte here (not a real address) and relies on the main CPU's own IRQ handler
+    /// reading `$00FFEE` (redirected here by the override) to retrieve it.
     snes_irq_vector: u16,
+    /// SA-1-side IRQ-from-SNES pending flag (CFR bit 7), latched on CCNT bit 7 = 1, cleared on
+    /// CIC bit 7 = 1.
+    sa1_irq_pending: bool,
+    /// `$220A` CIE bit 7: SA-1-side IRQ-from-SNES enable.
+    sa1_irq_enabled: bool,
+    /// SA-1-side NMI-from-SNES pending flag (CFR bit 4), latched on CCNT bit 4 = 1, cleared on
+    /// CIC bit 4 = 1. Independent of the edge-consumed dispatch signal below.
+    sa1_nmi_pending: bool,
+    /// `$220A` CIE bit 4: SA-1-side NMI-from-SNES enable.
+    sa1_nmi_enabled: bool,
+    /// Edge-triggered NMI dispatch signal, consumed once by `Sa1Bus::poll_nmi()`. Set on every
+    /// CCNT bit 4 = 1 write (a new edge), regardless of `sa1_nmi_enabled` -- matches real 65816
+    /// NMI hardware, which latches the edge even while masked, then dispatches once unmasked.
+    sa1_nmi_edge: bool,
+    /// SNES-side IRQ-from-SA-1 pending flag (SFR bit 7), latched on SCNT bit 7 = 1, cleared on
+    /// SIC bit 7 = 1.
+    snes_irq_pending: bool,
+    /// `$2201` SIE bit 7: SNES-side IRQ-from-SA-1 enable.
+    snes_irq_enabled: bool,
 }
 
 impl Sa1ControlRegisters {
@@ -80,27 +117,65 @@ impl Sa1ControlRegisters {
             cie: 0x00,
             snes_nmi_vector: 0x0000,
             snes_irq_vector: 0x0000,
+            sa1_irq_pending: false,
+            sa1_irq_enabled: false,
+            sa1_nmi_pending: false,
+            sa1_nmi_enabled: false,
+            sa1_nmi_edge: false,
+            snes_irq_pending: false,
+            snes_irq_enabled: false,
         }
     }
 
     /// Dispatches a write to the raw `$2200-$220F` MMIO offset.
     pub fn write(&mut self, port: u16, value: u8) {
         match port {
-            0x2200 => self.ccnt = value,
-            0x2201 => self.sie = value,
-            // $2202 SIC: SNES CPU interrupt-acknowledge strobe. No persistent state of its own;
-            // applying its clear effect to pending-IRQ status lands with #2960.
-            0x2202 => {}
+            0x2200 => {
+                self.ccnt = value;
+                if value & 0x80 != 0 {
+                    self.sa1_irq_pending = true;
+                }
+                if value & 0x10 != 0 {
+                    self.sa1_nmi_pending = true;
+                    self.sa1_nmi_edge = true;
+                }
+            }
+            0x2201 => {
+                self.sie = value;
+                self.snes_irq_enabled = value & 0x80 != 0;
+            }
+            // $2202 SIC: SNES CPU interrupt-acknowledge strobe.
+            0x2202 => {
+                if value & 0x80 != 0 {
+                    self.snes_irq_pending = false;
+                }
+            }
             0x2203 => self.reset_vector = (self.reset_vector & 0xFF00) | u16::from(value),
             0x2204 => self.reset_vector = (self.reset_vector & 0x00FF) | (u16::from(value) << 8),
             0x2205 => self.nmi_vector = (self.nmi_vector & 0xFF00) | u16::from(value),
             0x2206 => self.nmi_vector = (self.nmi_vector & 0x00FF) | (u16::from(value) << 8),
             0x2207 => self.irq_vector = (self.irq_vector & 0xFF00) | u16::from(value),
             0x2208 => self.irq_vector = (self.irq_vector & 0x00FF) | (u16::from(value) << 8),
-            0x2209 => self.scnt = value,
-            0x220A => self.cie = value,
-            // $220B CIC: SA-1 CPU interrupt-acknowledge strobe; same as $2202 above.
-            0x220B => {}
+            0x2209 => {
+                self.scnt = value;
+                if value & 0x80 != 0 {
+                    self.snes_irq_pending = true;
+                }
+            }
+            0x220A => {
+                self.cie = value;
+                self.sa1_irq_enabled = value & 0x80 != 0;
+                self.sa1_nmi_enabled = value & 0x10 != 0;
+            }
+            // $220B CIC: SA-1 CPU interrupt-acknowledge strobe.
+            0x220B => {
+                if value & 0x80 != 0 {
+                    self.sa1_irq_pending = false;
+                }
+                if value & 0x10 != 0 {
+                    self.sa1_nmi_pending = false;
+                }
+            }
             0x220C => {
                 self.snes_nmi_vector = (self.snes_nmi_vector & 0xFF00) | u16::from(value);
             }
@@ -115,6 +190,71 @@ impl Sa1ControlRegisters {
             }
             _ => {}
         }
+    }
+
+    /// SA-1-side IRQ line (`pending && enabled`), polled every master clock like the existing
+    /// PPU IRQ line.
+    pub(crate) fn sa1_irq_line(&self) -> bool {
+        self.sa1_irq_pending && self.sa1_irq_enabled
+    }
+
+    /// Consumes the edge-triggered SA-1-side NMI dispatch signal (see the struct doc comment).
+    /// Does nothing while SA-1-side NMI is disabled (CIE bit 4) -- the edge stays latched so
+    /// enabling NMI afterward still dispatches it, and a masked edge is never delivered to the
+    /// SA-1 CPU. Does not affect the separately-tracked, CIC-acknowledged `sa1_nmi_pending` flag
+    /// CFR exposes.
+    pub(crate) fn take_sa1_nmi_edge(&mut self) -> bool {
+        if !self.sa1_nmi_enabled {
+            return false;
+        }
+        std::mem::take(&mut self.sa1_nmi_edge)
+    }
+
+    /// SNES-side IRQ line (`pending && enabled`).
+    pub(crate) fn snes_irq_line(&self) -> bool {
+        self.snes_irq_pending && self.snes_irq_enabled
+    }
+
+    /// `$2301` CFR: SA-1 CPU flag read. Bits 5/6 (DMA/timer IRQ) always read 0 -- neither is
+    /// implemented (out of scope; see the module doc comment).
+    pub(crate) fn cfr(&self) -> u8 {
+        let mut value = self.ccnt & 0x0F; // message SNES->SA-1
+        if self.sa1_nmi_pending {
+            value |= 0x10;
+        }
+        if self.sa1_irq_pending {
+            value |= 0x80;
+        }
+        value
+    }
+
+    /// `$2300` SFR: SNES CPU flag read. Bit 5 (character-conversion DMA IRQ) always reads 0 --
+    /// not implemented (out of scope).
+    pub(crate) fn sfr(&self) -> u8 {
+        let mut value = self.scnt & 0x0F; // message SA-1->SNES
+        if self.scnt & 0x10 != 0 {
+            value |= 0x10; // cpu_nvsw (NMI vector override switch), mirrors SCNT bit 4
+        }
+        if self.scnt & 0x40 != 0 {
+            value |= 0x40; // cpu_ivsw (IRQ vector override switch), mirrors SCNT bit 6
+        }
+        if self.snes_irq_pending {
+            value |= 0x80;
+        }
+        value
+    }
+
+    /// `$2209` SCNT bit 4: NMI vector override switch (fullsnes: "NMI Vector for SNES (0=ROM
+    /// FFEAh, 1=Port 220Ch)").
+    pub(crate) fn snes_nmi_vector_override_enabled(&self) -> bool {
+        self.scnt & 0x10 != 0
+    }
+
+    /// `$2209` SCNT bit 6: IRQ vector override switch (fullsnes: "IRQ Vector for SNES (0=ROM
+    /// FFEEh, 1=Port 220Eh)"). The absindx RAM protection test relies on this to smuggle a data
+    /// byte to the main CPU (see `snes_irq_vector`'s doc comment).
+    pub(crate) fn snes_irq_vector_override_enabled(&self) -> bool {
+        self.scnt & 0x40 != 0
     }
 
     /// CCNT bit 5: SA-1 CPU is held in reset (fullsnes: "Reset from SNES to SA-1 (0=No Reset,
@@ -165,9 +305,23 @@ impl Sa1ControlRegisters {
         self.snes_irq_vector
     }
 
-    /// Restores every register to an exact byte value, for save-state loading. Unlike
-    /// [`Self::write`], this bypasses per-port dispatch semantics (there's no "message" or
-    /// "strobe" to interpret -- just raw state to reinstate).
+    pub(crate) fn sa1_irq_pending(&self) -> bool {
+        self.sa1_irq_pending
+    }
+
+    pub(crate) fn sa1_nmi_pending(&self) -> bool {
+        self.sa1_nmi_pending
+    }
+
+    pub(crate) fn snes_irq_pending(&self) -> bool {
+        self.snes_irq_pending
+    }
+
+    /// Restores every register and latched interrupt-line state to an exact value, for
+    /// save-state loading. Unlike [`Self::write`], this bypasses per-port dispatch semantics
+    /// (there's no "message" or "strobe" to interpret, and the pending/enabled flags can't be
+    /// re-derived from the raw register bytes alone -- e.g. `ccnt`'s message nibble may have
+    /// been overwritten since a still-pending IRQ trigger).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn restore_raw(
         &mut self,
@@ -180,6 +334,9 @@ impl Sa1ControlRegisters {
         cie: u8,
         snes_nmi_vector: u16,
         snes_irq_vector: u16,
+        sa1_irq_pending: bool,
+        sa1_nmi_pending: bool,
+        snes_irq_pending: bool,
     ) {
         self.ccnt = ccnt;
         self.sie = sie;
@@ -190,6 +347,13 @@ impl Sa1ControlRegisters {
         self.cie = cie;
         self.snes_nmi_vector = snes_nmi_vector;
         self.snes_irq_vector = snes_irq_vector;
+        self.sa1_irq_pending = sa1_irq_pending;
+        self.sa1_irq_enabled = cie & 0x80 != 0;
+        self.sa1_nmi_pending = sa1_nmi_pending;
+        self.sa1_nmi_enabled = cie & 0x10 != 0;
+        self.sa1_nmi_edge = false; // transient dispatch signal; never persisted
+        self.snes_irq_pending = snes_irq_pending;
+        self.snes_irq_enabled = sie & 0x80 != 0;
     }
 }
 
@@ -261,6 +425,17 @@ impl Sa1Bus {
         matches!(bank, 0x00..=0x3F | 0x80..=0xBF) && offset == system_offset
     }
 
+    /// Like [`Self::is_system_offset`], but for a range of offsets; returns the matched offset.
+    fn system_offset_in(addr: u32, range: std::ops::RangeInclusive<u16>) -> Option<u16> {
+        let bank = ((addr >> 16) & 0xFF) as u8;
+        let offset = (addr & 0xFFFF) as u16;
+        if matches!(bank, 0x00..=0x3F | 0x80..=0xBF) && range.contains(&offset) {
+            Some(offset)
+        } else {
+            None
+        }
+    }
+
     /// BW-RAM linear offset from the SA-1 CPU's own perspective: its `$2225` BMAP block select
     /// for the windowed `$6000-$7FFF` view, or the direct `$40-$4F` banks.
     fn bwram_index(&self, addr: u32) -> Option<usize> {
@@ -292,6 +467,11 @@ impl SnesBus for Sa1Bus {
                 sram[index % sram.len()]
             };
         }
+        // $2301 CFR is SA-1-side-readable (fullsnes I/O map "Side" column); the SNES-side $2300
+        // SFR is read from `SnesSystemBus` instead.
+        if Self::is_system_offset(addr, 0x2301) {
+            return self.registers.borrow().cfr();
+        }
         memory_control::decode_rom_index(addr, &self.memory_control.borrow())
             .and_then(|index| self.rom.get(index).copied())
             .unwrap_or(0)
@@ -322,6 +502,13 @@ impl SnesBus for Sa1Bus {
             }
             return;
         }
+        // $2209-$220F (SCNT, CIE, CIC, SNV, SIV) are SA-1-side-writable (fullsnes I/O map "Side"
+        // column); the SNES-side register block ($2200-$2208) is written from `SnesSystemBus`
+        // instead -- see the module doc comment.
+        if let Some(offset) = Self::system_offset_in(addr, 0x2209..=0x220F) {
+            self.registers.borrow_mut().write(offset, value);
+            return;
+        }
         // $2225 BMAP and $2227 CBWE are SA-1-side-writable (fullsnes I/O map "Side" column); the
         // SNES-side register block ($2220-$2224, $2226, $2228) is written from `SnesSystemBus`
         // instead -- see the module doc comment.
@@ -334,8 +521,8 @@ impl SnesBus for Sa1Bus {
             return;
         }
         // $222A CIWP is SA-1-side-writable (fullsnes I/O map "Side" column); the SNES-side
-        // register block ($2200-$220F, $2229 SIWP) is written from `SnesSystemBus` instead --
-        // see the module doc comment.
+        // register block ($2229 SIWP) is written from `SnesSystemBus` instead -- see the module
+        // doc comment.
         if Self::is_system_offset(addr, 0x222A) {
             self.iram.borrow_mut().set_sa1_write_protect(value);
         }
@@ -346,6 +533,20 @@ impl SnesBus for Sa1Bus {
         // SA-1's own clock-domain bookkeeping lives on `Sa1Core`, not the bus (see the
         // module-level clock note): unlike `SnesSystemBus`, this bus has no PPU/APU/input of
         // its own to advance per tick.
+    }
+
+    /// Edge-triggered: consumes the SNES->SA-1 NMI dispatch signal set by a CCNT bit 4 = 1
+    /// write. See [`Sa1ControlRegisters`]'s doc comment for why this is edge-based (real 65816
+    /// NMI hardware) rather than the level-based `sa1_nmi_pending` flag CFR exposes.
+    fn poll_nmi(&mut self) -> bool {
+        self.registers.borrow_mut().take_sa1_nmi_edge()
+    }
+
+    /// Level-triggered: the SNES->SA-1 IRQ line stays asserted for as long as CCNT's IRQ-pending
+    /// bit and CIE's IRQ-enable bit are both set (fullsnes/bsnes-confirmed; see
+    /// [`Sa1ControlRegisters`]'s doc comment).
+    fn poll_irq(&self) -> bool {
+        self.registers.borrow().sa1_irq_line()
     }
 }
 
@@ -536,6 +737,117 @@ mod tests {
         // unchanged.
         assert!(registers.is_held_in_reset());
         assert!(!registers.is_waiting());
+    }
+
+    #[test]
+    fn ccnt_irq_trigger_latches_pending_regardless_of_enable() {
+        let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x2200, 0x80); // IRQ trigger bit, CIE not yet enabled
+        assert!(registers.sa1_irq_pending());
+        assert!(!registers.sa1_irq_line(), "not enabled yet");
+
+        registers.write(0x220A, 0x80); // CIE: enable SA-1-side IRQ
+        assert!(
+            registers.sa1_irq_line(),
+            "pending flag persists across the enable write"
+        );
+    }
+
+    #[test]
+    fn cic_clears_sa1_irq_pending() {
+        let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x2200, 0x80);
+        registers.write(0x220A, 0x80);
+        assert!(registers.sa1_irq_line());
+
+        registers.write(0x220B, 0x80); // CIC bit 7: acknowledge
+        assert!(!registers.sa1_irq_line());
+        assert!(!registers.sa1_irq_pending());
+    }
+
+    #[test]
+    fn ccnt_nmi_trigger_sets_edge_and_persistent_pending_independently() {
+        let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x220A, 0x10); // CIE bit 4: enable SA-1-side NMI
+        registers.write(0x2200, 0x10); // NMI trigger bit
+        assert!(registers.sa1_nmi_pending());
+        assert!(registers.take_sa1_nmi_edge(), "edge consumed once");
+        assert!(
+            !registers.take_sa1_nmi_edge(),
+            "edge does not re-fire without a new write"
+        );
+        // The CFR-visible pending flag survives the edge being consumed -- it's cleared only by
+        // CIC, matching real 65816 NMI hardware (edge dispatch, level-persistent status flag).
+        assert!(registers.sa1_nmi_pending());
+    }
+
+    #[test]
+    fn take_sa1_nmi_edge_stays_latched_while_nmi_is_disabled_then_fires_once_enabled() {
+        let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x2200, 0x10); // NMI trigger bit, CIE bit 4 not yet set
+        assert!(
+            !registers.take_sa1_nmi_edge(),
+            "masked NMI must not be delivered to the SA-1 CPU"
+        );
+
+        registers.write(0x220A, 0x10); // CIE bit 4: enable SA-1-side NMI
+        assert!(
+            registers.take_sa1_nmi_edge(),
+            "the edge must still be latched once NMI is enabled"
+        );
+        assert!(!registers.take_sa1_nmi_edge(), "edge consumed once");
+    }
+
+    #[test]
+    fn cic_clears_sa1_nmi_pending_without_affecting_the_edge_signal() {
+        let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x2200, 0x10);
+        registers.write(0x220B, 0x10); // CIC bit 4: acknowledge NMI
+        assert!(!registers.sa1_nmi_pending());
+    }
+
+    #[test]
+    fn writing_ccnt_message_only_does_not_retrigger_irq_or_nmi() {
+        // Mirrors the real ROM's `SetSnesStatus` (AND #$0F; STA CCNT): updates only the message
+        // nibble, must not spuriously latch a new IRQ/NMI trigger.
+        let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x2200, 0x05);
+        assert!(!registers.sa1_irq_pending());
+        assert!(!registers.sa1_nmi_pending());
+        assert_eq!(registers.cfr() & 0x0F, 0x05);
+    }
+
+    #[test]
+    fn scnt_irq_trigger_latches_snes_side_pending_gated_by_sie() {
+        let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x2209, 0x80); // SCNT IRQ trigger, SIE not yet enabled
+        assert!(registers.snes_irq_pending());
+        assert!(!registers.snes_irq_line());
+
+        registers.write(0x2201, 0x80); // SIE: enable SNES-side IRQ
+        assert!(registers.snes_irq_line());
+
+        registers.write(0x2202, 0x80); // SIC: acknowledge
+        assert!(!registers.snes_irq_line());
+        assert!(!registers.snes_irq_pending());
+    }
+
+    #[test]
+    fn cfr_reports_message_and_both_pending_bits() {
+        let mut registers = Sa1ControlRegisters::new();
+        registers.write(0x2200, 0x90 | 0x0A); // NMI + IRQ triggers, message = $A
+        assert_eq!(registers.cfr(), 0x90 | 0x0A);
+    }
+
+    #[test]
+    fn sfr_reports_message_override_switches_and_pending() {
+        let mut registers = Sa1ControlRegisters::new();
+        // Bit 7 (IRQ trigger), bit 6 (IRQ vector override), bit 4 (NMI vector override),
+        // message = 3.
+        registers.write(0x2209, 0b1101_0011);
+        assert_eq!(registers.sfr(), 0b1101_0011);
+        assert!(registers.snes_nmi_vector_override_enabled());
+        assert!(registers.snes_irq_vector_override_enabled());
     }
 
     #[test]
@@ -809,5 +1121,56 @@ mod tests {
         // This fixture has no leading SEI (unlike the boot test above), so its 2-byte
         // `LDA #imm` + 2-byte `BRA -2` settle the infinite self-loop at $9002, not $9003.
         assert_eq!(core.cpu().read_pc(), 0x9002);
+    }
+
+    #[test]
+    fn core_dispatches_an_nmi_from_snes_once_enabled() {
+        let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
+        let mut rom = vec![0u8; 0x8000];
+        // SA-1 boot at $9000: unlock I-RAM (its own stack lives there and is write-protected by
+        // default -- see $222A CIWP's `$00` reset value), unmask interrupts (CLI), then idle.
+        rom[0x1000] = 0xA9; // LDA #$FF
+        rom[0x1001] = 0xFF;
+        rom[0x1002] = 0x8D; // STA $222A (CIWP: unlock all I-RAM chunks)
+        rom[0x1003] = 0x2A;
+        rom[0x1004] = 0x22;
+        rom[0x1005] = 0x58; // CLI
+        rom[0x1006] = 0x4C; // JMP $9006 (self)
+        rom[0x1007] = 0x06;
+        rom[0x1008] = 0x90;
+        // NMI handler at $9100: LDA #$99; RTI.
+        rom[0x1100] = 0xA9;
+        rom[0x1101] = 0x99;
+        rom[0x1102] = 0x40; // RTI
+        {
+            let mut regs = registers.borrow_mut();
+            write_vector(&mut regs, 0x2203, 0x2204, 0x9000); // CRV
+            write_vector(&mut regs, 0x2205, 0x2206, 0x9100); // CNV
+        }
+        let mut core = Sa1Core::new(
+            Rc::clone(&registers),
+            fresh_iram(),
+            fresh_memory_control(),
+            Rc::new(rom),
+            fresh_sram(0),
+        );
+        registers.borrow_mut().write(0x220A, 0x10); // CIE: enable SA-1-side NMI
+        registers.borrow_mut().write(0x2200, 0x00); // release reset
+        for _ in 0..50 {
+            core.tick_one_master_clock();
+        }
+        assert_eq!(core.cpu().read_pc(), 0x9006, "idling, waiting for the NMI");
+
+        registers.borrow_mut().write(0x2200, 0x10); // CCNT: NMI trigger
+        for _ in 0..300 {
+            core.tick_one_master_clock();
+        }
+
+        assert_eq!(
+            core.cpu().read_a() & 0xFF,
+            0x99,
+            "NMI handler must have run"
+        );
+        assert_eq!(core.cpu().read_pc(), 0x9006, "RTI returns to the idle loop");
     }
 }
