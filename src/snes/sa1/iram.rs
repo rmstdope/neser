@@ -71,13 +71,9 @@ impl Sa1IRam {
         &self.data
     }
 
-    pub(crate) fn snes_write_protect_raw(&self) -> u8 {
-        self.snes_write_protect
-    }
+    pub(crate) fn snes_write_protect_raw(&self) -> u8 { self.snes_write_protect }
 
-    pub(crate) fn sa1_write_protect_raw(&self) -> u8 {
-        self.sa1_write_protect
-    }
+    pub(crate) fn sa1_write_protect_raw(&self) -> u8 { self.sa1_write_protect }
 
     /// Restores I-RAM bytes and both protection registers exactly, for save-state loading.
     /// `data` shorter than [`IRAM_SIZE`] leaves the remaining tail zeroed; longer is truncated.

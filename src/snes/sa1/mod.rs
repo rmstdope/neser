@@ -84,6 +84,14 @@ impl Sa1ControlRegisters {
     }
 
     /// Dispatches a write to the raw `$2200-$220F` MMIO offset.
+    fn write_u16_byte(&mut self, target: &mut u16, low_port: u16, port: u16, value: u8) {
+        if port == low_port {
+            *target = (*target & 0xFF00) | u16::from(value);
+        } else {
+            *target = (*target & 0x00FF) | (u16::from(value) << 8);
+        }
+    }
+
     pub fn write(&mut self, port: u16, value: u8) {
         match port {
             0x2200 => self.ccnt = value,
@@ -91,28 +99,15 @@ impl Sa1ControlRegisters {
             // $2202 SIC: SNES CPU interrupt-acknowledge strobe. No persistent state of its own;
             // applying its clear effect to pending-IRQ status lands with #2960.
             0x2202 => {}
-            0x2203 => self.reset_vector = (self.reset_vector & 0xFF00) | u16::from(value),
-            0x2204 => self.reset_vector = (self.reset_vector & 0x00FF) | (u16::from(value) << 8),
-            0x2205 => self.nmi_vector = (self.nmi_vector & 0xFF00) | u16::from(value),
-            0x2206 => self.nmi_vector = (self.nmi_vector & 0x00FF) | (u16::from(value) << 8),
-            0x2207 => self.irq_vector = (self.irq_vector & 0xFF00) | u16::from(value),
-            0x2208 => self.irq_vector = (self.irq_vector & 0x00FF) | (u16::from(value) << 8),
+            0x2203 | 0x2204 => self.write_u16_byte(&mut self.reset_vector, 0x2203, port, value),
+            0x2205 | 0x2206 => self.write_u16_byte(&mut self.nmi_vector, 0x2205, port, value),
+            0x2207 | 0x2208 => self.write_u16_byte(&mut self.irq_vector, 0x2207, port, value),
             0x2209 => self.scnt = value,
             0x220A => self.cie = value,
             // $220B CIC: SA-1 CPU interrupt-acknowledge strobe; same as $2202 above.
             0x220B => {}
-            0x220C => {
-                self.snes_nmi_vector = (self.snes_nmi_vector & 0xFF00) | u16::from(value);
-            }
-            0x220D => {
-                self.snes_nmi_vector = (self.snes_nmi_vector & 0x00FF) | (u16::from(value) << 8);
-            }
-            0x220E => {
-                self.snes_irq_vector = (self.snes_irq_vector & 0xFF00) | u16::from(value);
-            }
-            0x220F => {
-                self.snes_irq_vector = (self.snes_irq_vector & 0x00FF) | (u16::from(value) << 8);
-            }
+            0x220C | 0x220D => self.write_u16_byte(&mut self.snes_nmi_vector, 0x220C, port, value),
+            0x220E | 0x220F => self.write_u16_byte(&mut self.snes_irq_vector, 0x220E, port, value),
             _ => {}
         }
     }
@@ -129,41 +124,23 @@ impl Sa1ControlRegisters {
         self.ccnt & 0b0100_0000 != 0
     }
 
-    pub fn reset_vector(&self) -> u16 {
-        self.reset_vector
-    }
+    pub fn reset_vector(&self) -> u16 { self.reset_vector }
 
-    pub fn nmi_vector(&self) -> u16 {
-        self.nmi_vector
-    }
+    pub fn nmi_vector(&self) -> u16 { self.nmi_vector }
 
-    pub fn irq_vector(&self) -> u16 {
-        self.irq_vector
-    }
+    pub fn irq_vector(&self) -> u16 { self.irq_vector }
 
-    pub(crate) fn ccnt(&self) -> u8 {
-        self.ccnt
-    }
+    pub(crate) fn ccnt(&self) -> u8 { self.ccnt }
 
-    pub(crate) fn sie(&self) -> u8 {
-        self.sie
-    }
+    pub(crate) fn sie(&self) -> u8 { self.sie }
 
-    pub(crate) fn scnt(&self) -> u8 {
-        self.scnt
-    }
+    pub(crate) fn scnt(&self) -> u8 { self.scnt }
 
-    pub(crate) fn cie(&self) -> u8 {
-        self.cie
-    }
+    pub(crate) fn cie(&self) -> u8 { self.cie }
 
-    pub(crate) fn snes_nmi_vector(&self) -> u16 {
-        self.snes_nmi_vector
-    }
+    pub(crate) fn snes_nmi_vector(&self) -> u16 { self.snes_nmi_vector }
 
-    pub(crate) fn snes_irq_vector(&self) -> u16 {
-        self.snes_irq_vector
-    }
+    pub(crate) fn snes_irq_vector(&self) -> u16 { self.snes_irq_vector }
 
     /// Restores every register to an exact byte value, for save-state loading. Unlike
     /// [`Self::write`], this bypasses per-port dispatch semantics (there's no "message" or

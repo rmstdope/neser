@@ -74,33 +74,15 @@ impl Sa1MemoryControl {
         }
     }
 
-    pub(crate) fn cxb(&self) -> u8 {
-        self.cxb
-    }
-    pub(crate) fn dxb(&self) -> u8 {
-        self.dxb
-    }
-    pub(crate) fn exb(&self) -> u8 {
-        self.exb
-    }
-    pub(crate) fn fxb(&self) -> u8 {
-        self.fxb
-    }
-    pub(crate) fn bmaps(&self) -> u8 {
-        self.bmaps
-    }
-    pub(crate) fn bmap(&self) -> u8 {
-        self.bmap
-    }
-    pub(crate) fn sbwe(&self) -> u8 {
-        self.sbwe
-    }
-    pub(crate) fn cbwe(&self) -> u8 {
-        self.cbwe
-    }
-    pub(crate) fn bwpa(&self) -> u8 {
-        self.bwpa
-    }
+    pub(crate) fn cxb(&self) -> u8 { self.cxb }
+    pub(crate) fn dxb(&self) -> u8 { self.dxb }
+    pub(crate) fn exb(&self) -> u8 { self.exb }
+    pub(crate) fn fxb(&self) -> u8 { self.fxb }
+    pub(crate) fn bmaps(&self) -> u8 { self.bmaps }
+    pub(crate) fn bmap(&self) -> u8 { self.bmap }
+    pub(crate) fn sbwe(&self) -> u8 { self.sbwe }
+    pub(crate) fn cbwe(&self) -> u8 { self.cbwe }
+    pub(crate) fn bwpa(&self) -> u8 { self.bwpa }
 
     /// Restores every register to an exact byte value, for save-state loading.
     #[allow(clippy::too_many_arguments)]
