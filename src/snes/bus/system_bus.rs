@@ -596,6 +596,14 @@ impl SnesSystemBus {
                 trace_apu!(3; "CPU reads port[{}] -> ${:02X}", port, value);
                 value
             }
+            // SLHV: the strobe doesn't drive the PPU1/PPU2 data bus at all, so the CPU sees
+            // whatever was already on the bus (real open bus) rather than a fresh value --
+            // `read_register` still runs for its H/V-latch side effect, but its return value
+            // is discarded here in favor of the bus's own `open_bus`.
+            0x2137 => {
+                self.ppu.borrow_mut().read_register(offset);
+                open_bus
+            }
             0x2134..=0x213F => self.ppu.borrow_mut().read_register(offset),
             // HVBJOY: bit 0 reports auto-joypad busy, owned by the input ports.
             0x4212 => {
@@ -1313,6 +1321,20 @@ mod tests {
         assert_eq!(bus.read(0x7E1501), 0x20);
         assert_eq!(bus.read(0x7E1502), 0x40);
         assert_eq!(bus.read(0x7E1503), 0x40);
+    }
+
+    #[test]
+    fn slhv_read_returns_open_bus_instead_of_a_fixed_zero() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // Prime MDR with a nonzero value; SLHV ($2137) doesn't drive the data bus, so reading
+        // it must retain this value rather than clobbering it with a fixed 0.
+        bus.write(0x7E1500, 0x9A);
+        assert_eq!(bus.read(0x7E1500), 0x9A);
+
+        assert_eq!(bus.read(0x002137), 0x9A);
+        // The retained open-bus value carries over to the next open-bus-style read too.
+        assert_eq!(bus.read(0x002137), 0x9A);
     }
 
     #[test]

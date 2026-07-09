@@ -317,7 +317,10 @@ impl Ppu {
                 let hblank = if self.hblank_active() { 0x40 } else { 0x00 };
                 vblank | hblank
             }
-            // SLHV: software strobe to latch the H/V counters (data value is open bus).
+            // SLHV: software strobe to latch the H/V counters. Doesn't drive the data bus at
+            // all -- real hardware returns whatever was already on the bus (the caller,
+            // `SnesSystemBus::read_mmio`, substitutes its own tracked open-bus value for this
+            // address and ignores this return value).
             0x2137 => {
                 self.latch_strobe();
                 0
