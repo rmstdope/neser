@@ -169,6 +169,70 @@ impl DmaController {
         (ticks, open_bus)
     }
 
+    /// Initialize only the specified channels for mid-scanline HDMAEN writes.
+    /// Unlike `hdma_init()`, this preserves state for channels not in `channel_mask`.
+    pub fn hdma_init_channels<B: DmaABus>(
+        &mut self,
+        channel_mask: u8,
+        abus: &mut B,
+        seed_open_bus: u8,
+    ) -> (u64, u8) {
+        if channel_mask == 0 {
+            return (0, seed_open_bus);
+        }
+
+        let mut ticks = 18u64;
+        let mut open_bus = seed_open_bus;
+
+        for channel in 0u8..8 {
+            if (channel_mask & (1 << channel)) == 0 {
+                continue;
+            }
+
+            let dmap = self.get_reg(channel, 0x0);
+            let indirect = (dmap & 0x40) != 0;
+            ticks += 8;
+
+            let a1t_low = self.get_reg(channel, 0x2);
+            let a1t_high = self.get_reg(channel, 0x3);
+            self.set_reg(channel, 0x8, a1t_low);
+            self.set_reg(channel, 0x9, a1t_high);
+
+            let descriptor = self.read_hdma_table_byte(channel, abus, &mut open_bus);
+            self.set_reg(channel, 0xA, descriptor);
+            if descriptor == 0 {
+                continue;
+            }
+            let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
+            self.hdma_repeat_mode[channel as usize] = repeat_mode;
+            self.hdma_lines_left[channel as usize] = lines_left;
+
+            if indirect {
+                ticks += 16;
+                let indirect_low = self.read_hdma_table_byte(channel, abus, &mut open_bus);
+                let indirect_high = self.read_hdma_table_byte(channel, abus, &mut open_bus);
+                self.set_reg(channel, 0x5, indirect_low);
+                self.set_reg(channel, 0x6, indirect_high);
+            }
+
+            self.hdma_active_mask |= 1 << channel;
+            self.hdma_do_transfer[channel as usize] = true;
+        }
+
+        (ticks, open_bus)
+    }
+
+    /// Disable the specified HDMA channels by clearing their bits in the active mask.
+    pub fn disable_hdma_channels(&mut self, channel_mask: u8) {
+        self.hdma_active_mask &= !channel_mask;
+    }
+
+    /// Returns the current HDMA active channel mask for testing.
+    #[cfg(test)]
+    pub fn hdma_active_mask(&self) -> u8 {
+        self.hdma_active_mask
+    }
+
     pub fn hdma_do_line<B: DmaABus>(&mut self, abus: &mut B, seed_open_bus: u8) -> (u64, u8) {
         if self.hdma_active_mask == 0 {
             return (0, seed_open_bus);
