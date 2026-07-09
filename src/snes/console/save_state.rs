@@ -110,6 +110,44 @@ pub struct SnesDmaState {
     pub hdma_lines_left: Vec<u16>,
 }
 
+/// SA-1 enhancement chip state: control/vector registers (`$2200-$220F`), I-RAM plus its two
+/// independent write-protection registers (`$2229`/`$222A`), and the second 65816 CPU core's
+/// own architectural state. `None`/absent on `SnesBusState` for non-SA-1 cartridges and for
+/// save states captured before SA-1 support existed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct SnesSa1State {
+    #[serde(default)]
+    pub ccnt: u8,
+    #[serde(default)]
+    pub sie: u8,
+    #[serde(default)]
+    pub reset_vector: u16,
+    #[serde(default)]
+    pub nmi_vector: u16,
+    #[serde(default)]
+    pub irq_vector: u16,
+    #[serde(default)]
+    pub scnt: u8,
+    #[serde(default)]
+    pub cie: u8,
+    #[serde(default)]
+    pub snes_nmi_vector: u16,
+    #[serde(default)]
+    pub snes_irq_vector: u16,
+    #[serde(default)]
+    pub iram: Vec<u8>,
+    #[serde(default)]
+    pub iram_snes_write_protect: u8,
+    #[serde(default)]
+    pub iram_sa1_write_protect: u8,
+    #[serde(default)]
+    pub cpu: SnesCpuState,
+    #[serde(default)]
+    pub booted: bool,
+    #[serde(default)]
+    pub master_clock_debt: i64,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SnesBusState {
     #[serde(default)]
@@ -140,6 +178,10 @@ pub struct SnesBusState {
     pub apu: SnesApuState,
     #[serde(default)]
     pub input: InputPortsState,
+    /// `None` for non-SA-1 cartridges, and for save states captured before SA-1 support existed
+    /// (`#[serde(default)]` keeps those loadable).
+    #[serde(default)]
+    pub sa1: Option<SnesSa1State>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]

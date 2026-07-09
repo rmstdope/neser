@@ -14,7 +14,9 @@ mod iram;
 
 pub use iram::{Sa1IRam, decode_mirror_offset};
 
+use crate::platform::save_state::Stateful;
 use crate::snes::bus::SnesBus;
+use crate::snes::console::save_state::SnesCpuState;
 use crate::snes::cpu::Cpu;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -130,29 +132,55 @@ impl Sa1ControlRegisters {
         self.irq_vector
     }
 
-    #[cfg(test)]
+    pub(crate) fn ccnt(&self) -> u8 {
+        self.ccnt
+    }
+
     pub(crate) fn sie(&self) -> u8 {
         self.sie
     }
 
-    #[cfg(test)]
     pub(crate) fn scnt(&self) -> u8 {
         self.scnt
     }
 
-    #[cfg(test)]
     pub(crate) fn cie(&self) -> u8 {
         self.cie
     }
 
-    #[cfg(test)]
     pub(crate) fn snes_nmi_vector(&self) -> u16 {
         self.snes_nmi_vector
     }
 
-    #[cfg(test)]
     pub(crate) fn snes_irq_vector(&self) -> u16 {
         self.snes_irq_vector
+    }
+
+    /// Restores every register to an exact byte value, for save-state loading. Unlike
+    /// [`Self::write`], this bypasses per-port dispatch semantics (there's no "message" or
+    /// "strobe" to interpret -- just raw state to reinstate).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn restore_raw(
+        &mut self,
+        ccnt: u8,
+        sie: u8,
+        reset_vector: u16,
+        nmi_vector: u16,
+        irq_vector: u16,
+        scnt: u8,
+        cie: u8,
+        snes_nmi_vector: u16,
+        snes_irq_vector: u16,
+    ) {
+        self.ccnt = ccnt;
+        self.sie = sie;
+        self.reset_vector = reset_vector;
+        self.nmi_vector = nmi_vector;
+        self.irq_vector = irq_vector;
+        self.scnt = scnt;
+        self.cie = cie;
+        self.snes_nmi_vector = snes_nmi_vector;
+        self.snes_irq_vector = snes_irq_vector;
     }
 }
 
@@ -344,6 +372,33 @@ impl Sa1Core {
     #[cfg(test)]
     pub(crate) fn cpu(&self) -> &Cpu<Sa1Bus> {
         &self.cpu
+    }
+
+    /// Captures the inner 65816 CPU's register/flag state, for save-state serialization. This
+    /// reuses `Cpu<B>`'s existing bus-agnostic `Stateful` impl -- the same mechanism the main
+    /// CPU already uses -- since `Cpu<Sa1Bus>`'s architectural state doesn't depend on the bus.
+    pub(crate) fn cpu_state(&self) -> SnesCpuState {
+        self.cpu.capture_state()
+    }
+
+    pub(crate) fn restore_cpu_state(&mut self, state: &SnesCpuState) {
+        self.cpu.restore_state(state);
+    }
+
+    pub(crate) fn booted(&self) -> bool {
+        self.booted
+    }
+
+    pub(crate) fn set_booted(&mut self, booted: bool) {
+        self.booted = booted;
+    }
+
+    pub(crate) fn master_clock_debt(&self) -> i64 {
+        self.master_clock_debt
+    }
+
+    pub(crate) fn set_master_clock_debt(&mut self, master_clock_debt: i64) {
+        self.master_clock_debt = master_clock_debt;
     }
 }
 

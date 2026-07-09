@@ -65,6 +65,34 @@ impl Sa1IRam {
     pub fn set_sa1_write_protect(&mut self, value: u8) {
         self.sa1_write_protect = value;
     }
+
+    /// Raw I-RAM bytes, for save-state capture.
+    pub(crate) fn data(&self) -> &[u8; IRAM_SIZE] {
+        &self.data
+    }
+
+    pub(crate) fn snes_write_protect_raw(&self) -> u8 {
+        self.snes_write_protect
+    }
+
+    pub(crate) fn sa1_write_protect_raw(&self) -> u8 {
+        self.sa1_write_protect
+    }
+
+    /// Restores I-RAM bytes and both protection registers exactly, for save-state loading.
+    /// `data` shorter than [`IRAM_SIZE`] leaves the remaining tail zeroed; longer is truncated.
+    pub(crate) fn restore_raw(
+        &mut self,
+        data: &[u8],
+        snes_write_protect: u8,
+        sa1_write_protect: u8,
+    ) {
+        self.data = [0; IRAM_SIZE];
+        let len = data.len().min(IRAM_SIZE);
+        self.data[..len].copy_from_slice(&data[..len]);
+        self.snes_write_protect = snes_write_protect;
+        self.sa1_write_protect = sa1_write_protect;
+    }
 }
 
 impl Default for Sa1IRam {
@@ -178,5 +206,25 @@ mod tests {
         assert_eq!(decode_direct_offset(0x80_0100), Some(0x100));
         assert_eq!(decode_direct_offset(0x00_0800), None);
         assert_eq!(decode_direct_offset(0x40_0000), None);
+    }
+
+    #[test]
+    fn restore_raw_reinstates_bytes_and_both_protection_registers() {
+        let mut iram = Sa1IRam::new();
+        iram.restore_raw(&[0xAA, 0xBB, 0xCC], 0x01, 0x80);
+        assert_eq!(iram.read(0), 0xAA);
+        assert_eq!(iram.read(1), 0xBB);
+        assert_eq!(iram.read(2), 0xCC);
+        assert_eq!(iram.snes_write_protect_raw(), 0x01);
+        assert_eq!(iram.sa1_write_protect_raw(), 0x80);
+    }
+
+    #[test]
+    fn restore_raw_zero_fills_the_tail_when_given_fewer_bytes_than_iram_size() {
+        let mut iram = Sa1IRam::new();
+        iram.set_snes_write_protect(0xFF);
+        iram.write_from_snes(IRAM_SIZE - 1, 0x77);
+        iram.restore_raw(&[0x01], 0x00, 0x00);
+        assert_eq!(iram.read(IRAM_SIZE - 1), 0x00);
     }
 }
