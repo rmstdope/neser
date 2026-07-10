@@ -99,9 +99,7 @@ Test suites:
   (`roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram/`).
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs
   (`roms/snes/automated_tests/snes_test_roms/absindx/`), verified with
-  human-approved screen-CRC goldens. Both are documented to misbehave on
-  Mesen2, so the goldens are approved captures of NESER's own rendering, not
-  Mesen2 cross-checks. `SA1RamProtectionTest.sfc` passes all 222 sub-tests
+  human-approved screen-CRC goldens. `SA1RamProtectionTest.sfc` passes all 222 sub-tests
   (golden shows `Result Passed`); `SA1VersionCodeTest.sfc`'s golden captures
   the hardware-accurate register-dump screen, whose result line reads
   `Failed` even on real hardware (its pass path is unreferenced dead code,
