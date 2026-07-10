@@ -914,12 +914,24 @@ impl SnesSystemBus {
                 open_bus
             }
             0x2134..=0x213F => self.ppu.borrow_mut().read_register(offset),
-            // HVBJOY: bit 0 reports auto-joypad busy, owned by the input ports.
+            // HVBJOY: bit 0 reports auto-joypad busy, owned by the input ports. Only bits
+            // 7/6/0 are driven; bits 5-1 are CPU open bus (fullsnes "Unused bits").
             0x4212 => {
                 let raw = self.ppu.borrow_mut().read_register(offset);
-                (raw & !0x01) | (self.input.borrow().auto_busy() as u8)
+                (raw & 0xC0) | (open_bus & 0x3E) | (self.input.borrow().auto_busy() as u8)
             }
-            0x4210 | 0x4211 => self.ppu.borrow_mut().read_register(offset),
+            // RDNMI: only bit 7 (NMI flag) and bits 3-0 (CPU version) are driven; bits 6-4
+            // are CPU open bus. PeterLemon's WaitNMI (`bit.w $4210`) relies on bit 6
+            // reflecting the $42 operand fetch to set V (issue #2975).
+            0x4210 => {
+                let raw = self.ppu.borrow_mut().read_register(offset);
+                (raw & 0x8F) | (open_bus & 0x70)
+            }
+            // TIMEUP: only bit 7 (IRQ flag) is driven; bits 6-0 are CPU open bus.
+            0x4211 => {
+                let raw = self.ppu.borrow_mut().read_register(offset);
+                (raw & 0x80) | (open_bus & 0x7F)
+            }
             0x4016 => self.input.borrow_mut().read_joya(open_bus),
             0x4017 => self.input.borrow_mut().read_joyb(open_bus),
             0x4218..=0x421F => self.input.borrow().read_joy_register(offset)?,
@@ -1778,6 +1790,53 @@ mod tests {
         assert_eq!(bus.read(0x002137), 0x9A);
         // The retained open-bus value carries over to the next open-bus-style read too.
         assert_eq!(bus.read(0x002137), 0x9A);
+    }
+
+    /// Primes the CPU open bus (MDR) with `value` via a WRAM write + read-back.
+    fn prime_mdr(bus: &mut SnesSystemBus, value: u8) {
+        bus.write(0x7E1500, value);
+        assert_eq!(bus.read(0x7E1500), value);
+    }
+
+    // Per fullsnes "Unused bits (in Ports with less than 8 used bits)":
+    //   4210h 70h RDNMI  Bit6-4 are open bus
+    //   4211h 7Fh TIMEUP Bit6-0 are open bus
+    //   4212h 3Eh HVBJOY Bit5-1 are open bus
+    // PeterLemon's WaitNMI macro (`bit.w $4210` / `bpl`) depends on this: the
+    // operand high byte $42 is the last fetch before the data read, so bit 6
+    // reads 1 and BIT leaves V=1 (exercised by CPUPHL.sfc, issue #2975).
+
+    #[test]
+    fn rdnmi_bits_6_to_4_read_cpu_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        prime_mdr(&mut bus, 0xFF);
+        assert_eq!(bus.read(0x004210), 0x70 | crate::snes::ppu::CPU_VERSION);
+
+        prime_mdr(&mut bus, 0x00);
+        assert_eq!(bus.read(0x004210), crate::snes::ppu::CPU_VERSION);
+    }
+
+    #[test]
+    fn timeup_bits_6_to_0_read_cpu_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        prime_mdr(&mut bus, 0xFF);
+        assert_eq!(bus.read(0x004211), 0x7F);
+
+        prime_mdr(&mut bus, 0x00);
+        assert_eq!(bus.read(0x004211), 0x00);
+    }
+
+    #[test]
+    fn hvbjoy_bits_5_to_1_read_cpu_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        prime_mdr(&mut bus, 0xFF);
+        assert_eq!(bus.read(0x004212) & 0x3E, 0x3E);
+
+        prime_mdr(&mut bus, 0x00);
+        assert_eq!(bus.read(0x004212) & 0x3E, 0x00);
     }
 
     #[test]
