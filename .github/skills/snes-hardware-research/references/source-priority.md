@@ -25,28 +25,40 @@ Use this order when researching SNES / Super Famicom hardware details:
    - Treat passing/failing test vectors as authoritative for observable behavior.
 
 5. **ares (preferred) and Mesen2 for implementation evidence**
-   - **ares** (Near/byuu's current emulator, successor to bsnes/higan):
-     - Repo: `https://github.com/ares-emulator/ares`
-     - Useful entry points:
-       - `ares/sfc/cpu/` and `ares/component/processor/wdc65816/` for 65816 behavior
-       - `ares/sfc/ppu/` for PPU rendering and timing
-       - `ares/sfc/smp/` (SPC700) and `ares/sfc/dsp/` for audio
-       - `ares/sfc/cartridge/` for mapping and save hardware
-       - `ares/sfc/controller/` for input devices
-     - Represents Near/byuu's latest understanding of SNES hardware
-   - **Mesen2** (independent, highly accurate implementation):
-     - Repo: `https://github.com/SourMesen/Mesen2`
-     - Useful source entry points:
-       - `Core/SNES/SnesCpu.cpp` for CPU timing and behavior
-       - `Core/SNES/SnesPpu.cpp` for PPU rendering
-       - `Core/SNES/SnesMemoryManager.cpp` for bus timing, DRAM refresh, and memory access
-       - `Core/SNES/Debugger/` for state inspection and tracing
-     - Headless test mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
-     - Screenshot settings: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
-   - Use only after checking fullsnes, anomie's docs, and the SNESdev wiki.
-   - Treat as implementation evidence, not as equal authority with written specifications.
-   - **When both ares and Mesen2 agree** on unspecified behavior, that's strong evidence.
-   - **When they disagree**, state both approaches and investigate against hardware specs.
+   
+   **Locating sources and binaries**:
+   - **Sources**: Check for cloned repositories alongside the current repo first (e.g., `../ares`, `../Mesen2`)
+   - **Binaries**: Check if built from source, then OS-specific standard locations:
+     - macOS: `/Applications/ares.app`, `/Applications/Mesen2.app`
+     - Linux: `~/Applications/`, `/usr/local/bin/`, `~/.local/bin/`
+     - Windows: `C:\Program Files\`, `C:\Program Files (x86)\`
+   - If not found, ask the user for the location before fetching from GitHub
+   
+   **ares** (Near/byuu's current emulator, successor to bsnes/higan):
+   - GitHub: `https://github.com/ares-emulator/ares`
+   - Useful entry points:
+     - `ares/sfc/cpu/` and `ares/component/processor/wdc65816/` for 65816 behavior
+     - `ares/sfc/ppu/` for PPU rendering and timing
+     - `ares/sfc/smp/` (SPC700) and `ares/sfc/dsp/` for audio
+     - `ares/sfc/cartridge/` for mapping and save hardware
+     - `ares/sfc/controller/` for input devices
+   - Represents Near/byuu's latest understanding of SNES hardware
+   
+   **Mesen2** (independent, highly accurate implementation):
+   - GitHub: `https://github.com/SourMesen/Mesen2`
+   - Useful source entry points:
+     - `Core/SNES/SnesCpu.cpp` for CPU timing and behavior
+     - `Core/SNES/SnesPpu.cpp` for PPU rendering
+     - `Core/SNES/SnesMemoryManager.cpp` for bus timing, DRAM refresh, and memory access
+     - `Core/SNES/Debugger/` for state inspection and tracing
+   - Headless test mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
+   - Screenshot settings: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+   
+   **Usage notes**:
+   - Use only after checking fullsnes, anomie's docs, and the SNESdev wiki
+   - Treat as implementation evidence, not as equal authority with written specifications
+   - **When both ares and Mesen2 agree** on unspecified behavior, that's strong evidence
+   - **When they disagree**, state both approaches and investigate against hardware specs
 
 6. **bsnes / higan (legacy reference)**
    - Repo: `https://github.com/bsnes-emu/bsnes` (or higan)

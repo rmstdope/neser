@@ -51,10 +51,13 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
    - Note copier headers (512-byte) on `.smc` files and how to detect/strip them.
 
 8. If specification coverage is missing or incomplete, inspect ares and Mesen2 implementation.
-   - **ares** (Near/byuu's current emulator, successor to bsnes/higan): `https://github.com/ares-emulator/ares`
+   - **Locating sources**: Check for cloned repositories alongside the current repo first (e.g., `../ares`, `../Mesen2`). If not found, ask the user for the location before fetching from GitHub.
+   - **ares** (Near/byuu's current emulator, successor to bsnes/higan):
+     - GitHub: `https://github.com/ares-emulator/ares`
      - Focus on `ares/sfc/` core for SNES implementation
      - Represents Near/byuu's latest understanding of SNES hardware
-   - **Mesen2**: `https://github.com/SourMesen/Mesen2`
+   - **Mesen2**:
+     - GitHub: `https://github.com/SourMesen/Mesen2`
      - Highly accurate multi-system emulator, independent implementation
      - Source in `Core/SNES/` directory
    - Use these only after checking fullsnes, anomie's docs, and the SNESdev wiki.
@@ -62,6 +65,12 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
    - When both agree on behavior not in specs, that's strong evidence; when they disagree, state both approaches.
 
 9. For visual verification, use a two-emulator cross-check.
+   - **Locating binaries**:
+     - Check if built from local source (e.g., `../ares/desktop-ui/ares`, `../Mesen2/bin/x64/Release/Mesen`)
+     - macOS: check `/Applications/ares.app`, `/Applications/Mesen2.app`
+     - Linux: check `~/Applications/`, `/usr/local/bin/`, `~/.local/bin/`
+     - Windows: check `C:\Program Files\`, `C:\Program Files (x86)\`
+     - If not found in standard locations, ask the user for the path
    - **Always capture screenshots from both ares AND Mesen2 first.**
    - If ares and Mesen2 produce identical output (pixel-perfect match), use that as the reference for NESER comparison.
    - If ares and Mesen2 disagree, **stop and ask the user** how to proceed — don't pick one arbitrarily.
