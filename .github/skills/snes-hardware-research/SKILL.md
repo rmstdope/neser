@@ -151,7 +151,9 @@ When verifying SNES emulator accuracy:
 - **Always diff before documenting**: Before creating a "known issue" for a visual difference, run a pixel diff to quantify the discrepancy and locate where differences occur (edges, specific scanlines, etc.).
 - **Example diff script**: Use PIL to iterate pixels, mark differences as red, matches as dimmed grayscale — visual diffs immediately reveal whether issues are localized (edge effects) or systematic (whole-frame shifts).
 
-### Automating Mesen2 Screenshot Capture at Specific Frames
+### Automating Screenshot Capture at Specific Frames
+
+#### Mesen2 (Fully Automated)
 
 Mesen2 supports Lua scripting to automate screenshot capture, but **file I/O is disabled by default** for security.
 
@@ -234,5 +236,54 @@ kill $MESEN_PID
 - Use regular mode with `--loadScript`, **not** `--testRunner` mode (different Lua environment)
 - `emu.takeScreenshot()` returns PNG binary data as string
 - `emu.stop(0)` does not work in regular mode; use external process control instead
+
+#### ares (Manual/Semi-Automated)
+
+ares does not have Lua scripting like Mesen2, but supports hotkeys for frame advance and screenshots.
+
+**Hotkey Configuration Format:**
+
+Hotkeys in `settings.bml` use the format: `0xDEVICE_ID/GROUP_ID/INPUT_ID;;`
+- `0x1` = Keyboard device
+- `0` = Button group
+- `INPUT_ID` = Index in the key mapping array
+
+**Key Mapping** (from `ares/ruby/input/keyboard/quartz.cpp` on macOS):
+Keys are indexed in this order starting from 0:
+1. Escape (0)
+2. F1-F20 (1-20)
+3. Tilde, Num1-0, Dash, Equal, Delete (21-34)
+4. Erase, Home, End, PageUp, PageDown (35-39)
+5. A-Z (40-65)
+6. LeftBracket, RightBracket, Backslash, Semicolon, Apostrophe, Comma, Period, Slash (66-73)
+7. Keypad1-0, Clear, Equals, Divide, Multiply, Subtract, Add, Enter, Decimal (74-91)
+8. Up, Down, Left, Right (92-95)
+9. Tab (96), Return (97), Spacebar (98)
+10. Modifiers: Shift, Control, Alt, Super (99+)
+
+**Example configuration** (in `~/Library/Application Support/ares/settings.bml`):
+```
+Hotkey
+  FrameAdvance: 0x1/0/96;;        # Tab key (index 96)
+  CaptureScreenshot: 0x1/0/1;;    # F1 key (index 1)
+Paths
+  Screenshots: /path/to/output/directory
+```
+
+**Manual Capture Workflow:**
+1. Configure hotkeys in `settings.bml` or via ares GUI (Settings → Hotkeys)
+2. Set screenshot output path in `settings.bml` under `Paths/Screenshots`
+3. Launch ares with ROM: `/Applications/ares.app/Contents/MacOS/ares path/to/rom.sfc --system "Super Famicom"`
+4. Manually press Tab 120 times (or configured frame advance key)
+5. Press F1 (or configured screenshot key) to capture
+6. Screenshot saves to configured path with automatic naming
+
+**Automation Challenges:**
+- Hotkeys configured correctly in settings.bml may not respond to simulated keystrokes (AppleScript/Python automation)
+- ares may require interactive GUI session for hotkey processing
+- Frame advance via hotkey is manual and tedious for large frame counts
+
+**Recommended Approach:**
+For automated testing, prefer Mesen2 (fully scriptable). For ares, use manual capture or launch in GUI mode with user interaction for frame advance + screenshot at target frame.
 
 
