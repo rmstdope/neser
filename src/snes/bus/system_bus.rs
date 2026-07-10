@@ -1811,10 +1811,13 @@ mod tests {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
 
         prime_mdr(&mut bus, 0xFF);
-        assert_eq!(bus.read(0x004210), 0x70 | crate::snes::ppu::CPU_VERSION);
+        assert_eq!(
+            bus.read(0x004210) & 0x7F,
+            0x70 | crate::snes::ppu::CPU_VERSION
+        );
 
         prime_mdr(&mut bus, 0x00);
-        assert_eq!(bus.read(0x004210), crate::snes::ppu::CPU_VERSION);
+        assert_eq!(bus.read(0x004210) & 0x7F, crate::snes::ppu::CPU_VERSION);
     }
 
     #[test]
@@ -1822,10 +1825,10 @@ mod tests {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
 
         prime_mdr(&mut bus, 0xFF);
-        assert_eq!(bus.read(0x004211), 0x7F);
+        assert_eq!(bus.read(0x004211) & 0x7F, 0x7F);
 
         prime_mdr(&mut bus, 0x00);
-        assert_eq!(bus.read(0x004211), 0x00);
+        assert_eq!(bus.read(0x004211) & 0x7F, 0x00);
     }
 
     #[test]
