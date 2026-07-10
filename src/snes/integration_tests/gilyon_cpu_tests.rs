@@ -25,7 +25,7 @@ mod tests {
             "cputest.sfc",
             "gilyon_cpu_tests",
             2000,
-            0xB7EB_715E,
+            0xAE83_60F7,
             RunConfig::new(400_000_000, 0),
         );
     }

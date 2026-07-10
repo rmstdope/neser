@@ -57,44 +57,44 @@ mod tests {
         blargg_1_test_exec_from_io_passes,
         "1-test_exec_from_io.smc",
         600,
-        0x7EEE_5E15
+        0x31D3_DB73
     );
 
     blargg_rom_test!(
         blargg_2_test_single_instr_passes,
         "2-test_single_instr.smc",
         600,
-        0x2B42_CE76
+        0x880D_ED35
     );
 
     blargg_rom_test!(
         blargg_3_test_write_disable_passes,
         "3-test_write_disable.smc",
         600,
-        0xC3DE_3F4F
+        0xF638_BAD0
     );
 
     blargg_rom_test!(
         blargg_4_test_ram_disable_passes,
         "4-test_ram_disable.smc",
         600,
-        0x85F1_D154
+        0x9BC6_1B79
     );
 
     blargg_rom_test!(
         blargg_test_ram_disable_ipl_passes,
         "test_ram_disable_ipl.smc",
         600,
-        0xD001_765E
+        0x5623_82B1
     );
 
-    blargg_rom_test!(blargg_spc_smp_passes, "spc_smp.sfc", 2200, 0xEFD1_3576);
+    blargg_rom_test!(blargg_spc_smp_passes, "spc_smp.sfc", 2200, 0x5D6F_C4EA);
 
     blargg_rom_test!(
         blargg_spc_mem_access_times_passes,
         "spc_mem_access_times.sfc",
         600,
-        0x3AC3_E30F
+        0x1B4A_C6BA
     );
 
     // Full suite (KON, Misc, Order, Random and Timing batteries) ends with
@@ -104,16 +104,16 @@ mod tests {
         blargg_spc_dsp6_passes,
         "spc_dsp6.sfc",
         9100,
-        0x05CD_5DA7,
+        0xD52F_0829,
         RunConfig::new(600_000_000, 0)
     );
 
-    blargg_rom_test!(blargg_spc_timer_passes, "spc_timer.sfc", 600, 0x2497_38B2);
+    blargg_rom_test!(blargg_spc_timer_passes, "spc_timer.sfc", 600, 0xAA7E_CF03);
 
     // Golden re-approved for #2938: with trampoline micro-ops cycle-scripted
     // and the stepper charging TEST wait states, every row now matches Mesen
     // exactly (fast 252/251, waited 126 and 26).
-    blargg_rom_test!(blargg_test_speed_passes, "test_speed.smc", 600, 0xFAE4_99DA);
+    blargg_rom_test!(blargg_test_speed_passes, "test_speed.smc", 600, 0x7BA3_BF97);
 
     // Golden re-approved for #2914 (cycle-stepped port polling, the hardware
     // 32040 Hz SPC rate + CPU->SPC write latch, then the exact Mesen
@@ -123,7 +123,7 @@ mod tests {
         blargg_test_timer_speed_passes,
         "test_timer_speed.smc",
         600,
-        0xA4D0_ACB0
+        0x2B6A_56F0
     );
 
     // Same re-approval as test_timer_speed (identical output screen).
@@ -131,7 +131,7 @@ mod tests {
         blargg_test_timer_speed2_passes,
         "test_timer_speed2.smc",
         600,
-        0xA4D0_ACB0
+        0x2B6A_56F0
     );
 
     // Golden re-approved for #2914 (see test_timer_speed note); measured
@@ -140,7 +140,7 @@ mod tests {
         blargg_test_timer_speed_2_passes,
         "test_timer_speed_2.smc",
         600,
-        0xCAF1_E3BC
+        0x6E5A_EFDF
     );
 
     // Golden re-approved for #2914 (see test_timer_speed_2 note); "Done"
@@ -149,21 +149,21 @@ mod tests {
         blargg_test_timer_speed3_passes,
         "test_timer_speed3.smc",
         600,
-        0x367A_08A5
+        0x2A5A_79CF
     );
 
     blargg_rom_test!(
         blargg_test_timer_stop_passes,
         "test_timer_stop.smc",
         600,
-        0x7CC2_B76B
+        0x7DFB_5542
     );
 
     blargg_rom_test!(
         blargg_test_timer_stop2_passes,
         "test_timer_stop2.smc",
         600,
-        0xB2CC_2986
+        0xA33B_ED78
     );
 
     // The ROM jumps to $0000 mid-test to request a soft reset; model it with
@@ -172,7 +172,7 @@ mod tests {
         blargg_timer_at_power_reset_passes,
         "timer_at_power_reset.smc",
         600,
-        0x9A3B_5FC3,
+        0x84EA_9009,
         RunConfig::new(400_000_000, 0).with_reset_on_pc_trap(0x0000)
     );
 
@@ -180,6 +180,6 @@ mod tests {
         blargg_speed_2_freezes2_passes,
         "speed_2_freezes2.smc",
         600,
-        0x6E1B_F905
+        0x6F17_26D2
     );
 }

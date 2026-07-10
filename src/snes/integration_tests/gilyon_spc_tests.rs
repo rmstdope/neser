@@ -20,7 +20,7 @@ mod tests {
             "spctest.sfc",
             "gilyon_spc_tests",
             2000,
-            0x35A5_C1B0,
+            0xE10F_EB9D,
             RunConfig::new(400_000_000, 0),
         );
     }

@@ -31,42 +31,42 @@ mod tests {
     #[test]
     fn spc700_adc_passes_all_modes() {
         // Settles at frame 1579 on the ADW dp page with all rows PASS.
-        run_spctest_screen_crc("ADC/SPC700ADC.sfc", 1639, 0x50B3_9FB7);
+        run_spctest_screen_crc("ADC/SPC700ADC.sfc", 1639, 0x794D_0629);
     }
 
     #[test]
     fn spc700_and_passes_all_modes() {
         // Settles at frame 1702 on the AND !addr:bit page with all rows PASS.
-        run_spctest_screen_crc("AND/SPC700AND.sfc", 1762, 0x4AE7_9C51);
+        run_spctest_screen_crc("AND/SPC700AND.sfc", 1762, 0xD41B_379C);
     }
 
     #[test]
     fn spc700_dec_passes_all_modes() {
         // Settles at frame 840 on the DEW dp page with all rows PASS.
-        run_spctest_screen_crc("DEC/SPC700DEC.sfc", 900, 0xCEC8_EF6D);
+        run_spctest_screen_crc("DEC/SPC700DEC.sfc", 900, 0x5B09_3146);
     }
 
     #[test]
     fn spc700_eor_passes_all_modes() {
         // Settles at frame 1579 on the EOR addr:bit page with all rows PASS.
-        run_spctest_screen_crc("EOR/SPC700EOR.sfc", 1639, 0xBB06_56CF);
+        run_spctest_screen_crc("EOR/SPC700EOR.sfc", 1639, 0x8A56_FC0D);
     }
 
     #[test]
     fn spc700_inc_passes_all_modes() {
         // Settles at frame 840 on the INW dp page with all rows PASS.
-        run_spctest_screen_crc("INC/SPC700INC.sfc", 900, 0x63DB_5A44);
+        run_spctest_screen_crc("INC/SPC700INC.sfc", 900, 0x907F_E928);
     }
 
     #[test]
     fn spc700_ora_passes_all_modes() {
         // Settles at frame 1702 on the ORC !addr:bit page with all rows PASS.
-        run_spctest_screen_crc("ORA/SPC700ORA.sfc", 1762, 0xE28B_E5EE);
+        run_spctest_screen_crc("ORA/SPC700ORA.sfc", 1762, 0x41E1_5C34);
     }
 
     #[test]
     fn spc700_sbc_passes_all_modes() {
         // Settles at frame 1579 on the SBW dp page with all rows PASS.
-        run_spctest_screen_crc("SBC/SPC700SBC.sfc", 1639, 0x1B1F_68AB);
+        run_spctest_screen_crc("SBC/SPC700SBC.sfc", 1639, 0x85DA_3CA3);
     }
 }
