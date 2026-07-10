@@ -118,13 +118,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "PLP (0x28) reports FAIL (BIN,8 result 0x25, NVZC 0011); see issue #2975"]
     fn cpu_phl_passes_all_modes() {
-        // Golden CRC unknown until the PLP failure is fixed: the ROM halts at
-        // the first FAIL row, currently settling at frame 28 with CRC
-        // 0x363F3135 showing "BIN,8 $25 0011 FAIL". Re-probe the settle frame
-        // and golden CRC once issue #2975 is resolved.
-        run_cputest_screen_crc("PHL/CPUPHL.sfc", 88, 0xFFFF_FFFF);
+        // Settles at frame 32 on the PLY page with all rows PASS. Previously
+        // failed on the PLP page because RDNMI ($4210) bits 6-4 didn't return
+        // CPU open bus, leaving V=0 after WaitNMI's `bit.w $4210` (#2975).
+        run_cputest_screen_crc("PHL/CPUPHL.sfc", 92, 0xC208_E97B);
     }
 
     #[test]
