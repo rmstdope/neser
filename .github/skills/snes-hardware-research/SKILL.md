@@ -124,6 +124,7 @@ When writing code that targets or emulates SNES hardware, always verify against 
 - **APU is asynchronous**: The SPC700 runs on its own ~1.024 MHz clock, independent of the main CPU. Port reads/writes are the only synchronization; many games rely on exact IPL upload timing.
 - **VRAM access timing**: CPU access to VRAM/CGRAM/OAM is only safe during V/H-blank (or forced blank); the address-increment-on-read/write behavior of `$2116`–`$2119` is a frequent source of bugs.
 - **INIDISP brightness change delay**: When INIDISP ($2100) is written mid-scanline to change brightness, the hardware has a delay (several pixels) before the change becomes visible on-screen. The exact delay timing differs between hardware revisions and is not fully documented in fullsnes. Emulators implement different delay models, causing ~4-6% pixel differences in test ROMs that hammer INIDISP mid-scanline (e.g., `inidisp_brightness_delay.sfc`). These differences concentrate at brightness transition edges and don't affect real games. See issue #2973.
+- **BG vertical scroll is display-line based, off by one from the framebuffer row**: the BG tile fetch adds BGnVOFS to the raw display line (vcounter), and the first visible line is vcounter 1 — line 0 is never rendered — so framebuffer row `y` samples BG line `y + 1 + VOFS`. This is why games routinely write VOFS = -1 (0x3FF) to pixel-align a BG with the top of the screen. Confirmed in ares (`background.cpp` fetchNameTable: `voffset = vcounter() + vscroll`, early-return at vcounter 0) and Mesen2 (`SnesPpu.cpp`: `realY = _scanline`, renders scanlines 1..224). The same +1 applies to the offset-per-tile voffset paths and to Mode 7 (`realY = _scanline` there too). OBJ/sprites do NOT get the +1 in framebuffer-row space: evaluation happens one line early, so a sprite with OAM Y=k occupies framebuffer rows k..k+h-1 — a renderer indexed by 0-based output row needs +1 for BG/Mode 7 but not for OBJ. NESER got this wrong for tile BGs (while Mode 7 was correct) until issue #2945; the symptom was every BG one row too low, masked in Mesen2 comparisons as an apparent "1-row capture offset". See `effective_offsets`/`screen_y` in `src/snes/ppu/background.rs`.
 - **Frame-to-frame CPU/PPU timing drift**: Emulators with imperfect CPU/PPU clock synchronization can exhibit systematic frame-to-frame timing drift where the same instruction executes at slightly different horizontal positions across frames (e.g., 2-clock shifts in a 3-frame cycle). This causes test ROMs with tight timing windows to show extra flickering lines or pixel-level visual differences from reference emulators. While low-priority for gameplay (real games have timing margins), it's detectable in test ROMs like `hdmaen_latch_test_2.sfc`. Root cause is usually cumulative rounding errors in the CPU↔PPU clock conversion or DRAM refresh position jitter. See issue #2971.
 - **Copier headers**: `.smc` files may carry a 512-byte header; failing to detect/strip it offsets the entire ROM and breaks mapping detection.
 - **I/O region speeds are Fast, not Slow**: B-Bus I/O (`$2000–$3FFF`) and CPU I/O (`$4200–$5FFF`) in system banks run at 3.58 MHz (6 master clocks), the same as FastROM. Only WRAM mirrors (`$0000–$1FFF`) and expansion (`$6000–$7FFF`) in system banks are slow (8 clocks). This is a common planning mistake when building cycle-accurate bus models.
@@ -148,9 +149,25 @@ When verifying SNES emulator accuracy:
 - **Pixel-perfect comparison**: Use Python/PIL to compare screenshots pixel-by-pixel. Don't trust visual inspection — differences of 2-4% are invisible to the eye but indicate timing bugs.
 - **CRC-based integration tests**: Capture frame CRCs at known stable points (e.g., frame 600) and use as golden values for regression testing. Update test comments to reference GitHub issues for known differences.
 - **Screenshot settings for comparable captures**:
-  - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching` (note: 1-scanline row offset vs NESER)
+  - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
   - ares: default "None" video filter, no overscan cropping
+  - Since the BG vertical-scroll display-line fix (issue #2945, PR #2981), NESER and
+    Mesen2 frame-N captures align **byte-for-byte at zero row offset**. A previously
+    documented "constant 1-scanline row offset vs NESER" was in fact a NESER BG bug,
+    not a capture convention. Still run a ±1-row shift search when diffing, but treat
+    any nonzero best shift as evidence of a bug, never as a convention to allow for.
 - **Always diff before documenting**: Before creating a "known issue" for a visual difference, run a pixel diff to quantify the discrepancy and locate where differences occur (edges, specific scanlines, etc.).
+- **Regenerating many goldens after a systematic rendering fix**: when a fix invalidates
+  a large set of screen-CRC goldens (e.g. a whole-BG shift), don't re-approve blindly and
+  don't re-approve one-by-one either. Build pre-fix `main` in a `git worktree` (note:
+  worktrees do not materialize the `snes_test_roms` submodule — symlink it from the main
+  checkout), run the suite there with `NESER_CAPTURE_SCREEN=1` to regenerate the
+  previously-approved captures, then programmatically verify each post-fix capture is the
+  *exact expected transform* of its approved predecessor (for #2945: `new[y] == old[y+1]`
+  for every pixel, for every static-screen golden). Prior human approvals then carry over
+  to the new CRCs. Cross-check samples from every affected suite against fresh Mesen2
+  captures as well; ROMs with scanline-anchored effects (HDMA banding) won't satisfy a
+  pure shift and must be verified against Mesen2 directly.
 - **Example diff script**: Use PIL to iterate pixels, mark differences as red, matches as dimmed grayscale — visual diffs immediately reveal whether issues are localized (edge effects) or systematic (whole-frame shifts).
 
 ### Automating Screenshot Capture at Specific Frames
