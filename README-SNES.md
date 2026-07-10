@@ -98,25 +98,24 @@ Test suites:
 - `hblank_dma_vram_tests.rs` -- HDMA-to-VRAM timing ROMs
   (`roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram/`).
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs
-  (`roms/snes/automated_tests/snes_test_roms/absindx/`). Both are documented
-  to misbehave on Mesen2, so they use their own memory-marker protocol
-  (`TestFinished` at WRAM `$7E0000`, gated on the SA-1 CPU reaching its
-  `.sym`-documented post-test idle loop) instead of a Mesen2-cross-checked
-  golden. `SA1RamProtectionTest.sfc` passes all 222 sub-tests;
-  `SA1VersionCodeTest.sfc` is informational and reports `$FF` even on real
-  hardware (its pass path is unreferenced dead code, verified by
-  disassembly), so its test asserts the terminal `$FF` plus
-  hardware-accurate open-bus observations.
+  (`roms/snes/automated_tests/snes_test_roms/absindx/`), verified with
+  human-approved screen-CRC goldens. Both are documented to misbehave on
+  Mesen2, so the goldens are approved captures of NESER's own rendering, not
+  Mesen2 cross-checks. `SA1RamProtectionTest.sfc` passes all 222 sub-tests
+  (golden shows `Result Passed`); `SA1VersionCodeTest.sfc`'s golden captures
+  the hardware-accurate register-dump screen, whose result line reads
+  `Failed` even on real hardware (its pass path is unreferenced dead code,
+  verified by disassembly -- deliberate, since the SA-1's true version-code
+  value is unknown and `$230E` is open bus).
 - `sa1_boot_tests.rs` / `sa1_iram_tests.rs` / `sa1_bwram_tests.rs` /
   `sa1_irq_tests.rs` -- hand-assembled SA-1 fixture-ROM tests for dual-CPU
   boot, shared I-RAM/BW-RAM exchange, and the cross-CPU IRQ handshake.
 
 Most ROM-based suites report pass/fail either through a text shell
 (blargg/gilyon) or by rendering a known-good screen; `rom_runner.rs` provides
-the shared headless runner (tick/frame budgets, WRAM-marker, bus-byte, and
-SA-1-idle-PC-gated memory-marker oracles) and a screen-CRC oracle that runs
-to a fixed frame and compares the rendered screen CRC32 against an approved
-golden. Set
+the shared headless runner (tick/frame budgets, WRAM-marker and bus-byte
+oracles) and a screen-CRC oracle that runs to a fixed frame and compares the
+rendered screen CRC32 against an approved golden. Set
 `NESER_CAPTURE_SCREEN=1` to write a PNG per test under
 `target/snes_test_captures/<suite>/` when approving a new golden; each
 suite's own source file documents how to record the result.

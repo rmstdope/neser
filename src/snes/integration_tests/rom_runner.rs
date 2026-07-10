@@ -27,33 +27,6 @@ pub(crate) enum RunOracle {
         frames: u32,
         expected_crc: u32,
     },
-    /// Waits for the SA-1 CPU's own PC (not the main CPU's, unlike [`Self::BusByte`]) to reach
-    /// `idle_pc` -- a ROM-documented post-test infinite loop, discovered from its own `.sym` file
-    /// -- and, from that point on, for `addr` to become nonzero, reporting pass/fail against
-    /// `pass_value` once both hold on the same tick.
-    ///
-    /// Gating on a *register* rather than continuously polling the byte from tick zero matters
-    /// for ROMs whose test methodology transiently corrupts nearby RAM as a side effect:
-    /// absindx's SA-1 RAM protection test EORs `$FF` across its *entire* I-RAM range --
-    /// including its own `TestFinished` result byte -- while probing per-byte writability, so a
-    /// naive every-tick poll of that byte catches mid-test garbage long before the real result is
-    /// written (confirmed by tracing: the captured "failure" byte was `$FF`, matching
-    /// `TestMemoryX`'s `EOR #$FF`, while every other diagnostic byte remained `$00` --
-    /// inconsistent with the real end-of-suite handler, which always sets those together).
-    ///
-    /// Requiring *both* conditions rather than firing on `idle_pc` alone matters too: tracing
-    /// also revealed that SA-1's own `%SendSA1Message` handshake only waits for the SNES CPU to
-    /// *acknowledge* receipt (writing `CCNT`'s status nibble to `SNESStatus_TestFinished`, not
-    /// all the way back to `SNESStatus_Idle`), so SA-1 reaches `.InfLoop` *before* the SNES CPU's
-    /// handler finishes its trailing `TestBwRamSize` call and the real `STA TestFinished`. Since
-    /// SA-1 loops at `idle_pc` forever afterward, simply continuing to poll `addr` once `idle_pc`
-    /// is first seen -- without needing to separately latch that fact -- still converges
-    /// correctly on the real value a short while later.
-    Sa1IdlePc {
-        idle_pc: u16,
-        addr: u32,
-        pass_value: u8,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,11 +38,6 @@ pub(crate) struct RunConfig {
     /// jumping into zeroed-out low WRAM ($0000), which the real test rig/hardware answers
     /// with a physical reset button press; this models that handshake for automated runs.
     pub reset_on_pc_trap: Option<u16>,
-    /// Bus addresses to sample once the run finishes (pass, fail, or timeout), surfaced as
-    /// [`RunResult::debug_bytes`] in the same order. Lets a failing test's panic message report
-    /// ROM-specific diagnostic bytes (e.g. a conformance suite's own "which sub-test failed" ID)
-    /// without the shared runner needing to know what they mean.
-    pub debug_addrs: &'static [u32],
 }
 
 impl RunConfig {
@@ -78,20 +46,12 @@ impl RunConfig {
             max_ticks,
             max_frames,
             reset_on_pc_trap: None,
-            debug_addrs: &[],
         }
     }
 
     /// Enables the reset-on-PC-trap handshake (see [`RunConfig::reset_on_pc_trap`]).
     pub(crate) const fn with_reset_on_pc_trap(mut self, trap_pc: u16) -> Self {
         self.reset_on_pc_trap = Some(trap_pc);
-        self
-    }
-
-    /// Sets the addresses sampled into [`RunResult::debug_bytes`] (see
-    /// [`RunConfig::debug_addrs`]).
-    pub(crate) const fn with_debug_addrs(mut self, addrs: &'static [u32]) -> Self {
-        self.debug_addrs = addrs;
         self
     }
 }
@@ -116,8 +76,6 @@ pub(crate) struct RunResult {
     pub marker: [u8; 5],
     pub screen_crc32: u32,
     pub capture_path: Option<PathBuf>,
-    /// One byte per address in [`RunConfig::debug_addrs`], sampled when the run finished.
-    pub debug_bytes: Vec<u8>,
 }
 
 pub(crate) fn run_rom(rom: &[u8], name: &str, config: RunConfig) -> RunResult {
@@ -254,7 +212,6 @@ fn run_rom_with_oracle_and_capture(
                 pc,
                 marker,
                 capture_screen,
-                config.debug_addrs,
             );
         }
 
@@ -270,7 +227,6 @@ fn run_rom_with_oracle_and_capture(
                 pc,
                 marker,
                 capture_screen,
-                config.debug_addrs,
             );
         }
 
@@ -286,7 +242,6 @@ fn run_rom_with_oracle_and_capture(
                 pc,
                 marker,
                 capture_screen,
-                config.debug_addrs,
             );
         }
     }
@@ -336,30 +291,6 @@ fn evaluate_oracle(
                 None
             }
         }
-        RunOracle::Sa1IdlePc {
-            idle_pc,
-            addr,
-            pass_value,
-        } => {
-            // Requiring *both* conditions on the same tick (rather than latching "idle_pc seen"
-            // and then checking the byte separately) still works correctly here: SA-1 loops at
-            // `idle_pc` forever once reached, so once the main CPU's own trailing bookkeeping
-            // (see this variant's doc comment) finally writes the real result, the very next
-            // tick where SA-1's PC cycles back through `idle_pc` satisfies both conditions
-            // together.
-            if snes.sa1_cpu_pc_for_tests() == Some(idle_pc) {
-                let value = snes.read_bus_for_debugger_for_tests(addr).unwrap_or(0);
-                if value == 0 {
-                    None
-                } else if value == pass_value {
-                    Some((RunExitReason::PassMarker, true))
-                } else {
-                    Some((RunExitReason::FailMarker, false))
-                }
-            } else {
-                None
-            }
-        }
     }
 }
 
@@ -385,14 +316,9 @@ fn finish_result(
     pc: u16,
     marker: [u8; 5],
     capture_screen: bool,
-    debug_addrs: &[u32],
 ) -> RunResult {
     let screen_crc32 = snes.screen_crc32();
     let capture_path = maybe_write_capture_png(snes, name, suite, screen_crc32, capture_screen);
-    let debug_bytes = debug_addrs
-        .iter()
-        .map(|&addr| snes.read_bus_for_debugger_for_tests(addr).unwrap_or(0))
-        .collect();
 
     RunResult {
         passed,
@@ -403,7 +329,6 @@ fn finish_result(
         marker,
         screen_crc32,
         capture_path,
-        debug_bytes,
     }
 }
 
