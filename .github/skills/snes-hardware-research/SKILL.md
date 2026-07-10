@@ -151,4 +151,88 @@ When verifying SNES emulator accuracy:
 - **Always diff before documenting**: Before creating a "known issue" for a visual difference, run a pixel diff to quantify the discrepancy and locate where differences occur (edges, specific scanlines, etc.).
 - **Example diff script**: Use PIL to iterate pixels, mark differences as red, matches as dimmed grayscale — visual diffs immediately reveal whether issues are localized (edge effects) or systematic (whole-frame shifts).
 
+### Automating Mesen2 Screenshot Capture at Specific Frames
+
+Mesen2 supports Lua scripting to automate screenshot capture, but **file I/O is disabled by default** for security.
+
+**Prerequisites:**
+1. Enable file I/O access in Mesen2's settings:
+   ```bash
+   # Backup settings first
+   cp ~/Library/Application\ Support/Mesen2/settings.json \
+      ~/Library/Application\ Support/Mesen2/settings.json.backup
+   
+   # Enable I/O access (macOS/Linux)
+   sed -i '' 's/"AllowIoOsAccess": false/"AllowIoOsAccess": true/' \
+      ~/Library/Application\ Support/Mesen2/settings.json
+   
+   # Windows: use plain sed or edit manually
+   ```
+
+2. **Security note**: This allows Lua scripts filesystem access. Restore from backup when done:
+   ```bash
+   mv ~/Library/Application\ Support/Mesen2/settings.json.backup \
+      ~/Library/Application\ Support/Mesen2/settings.json
+   ```
+
+**Lua Script Pattern:**
+```lua
+-- capture_frame.lua - Capture screenshot at specific frame
+local targetFrame = 120  -- Frame number to capture
+local frame = 0
+
+function save(fname, data)
+    local file = io.open(fname, "wb")
+    if file then
+        file:write(data)
+        file:close()
+        return true
+    end
+    return false
+end
+
+function onEndFrame()
+    frame = frame + 1
+    
+    if frame == targetFrame then
+        local pngData = emu.takeScreenshot()
+        local scriptFolder = emu.getScriptDataFolder()
+        local fname = scriptFolder .. "/frame" .. targetFrame .. ".png"
+        
+        if save(fname, pngData) then
+            print("Screenshot saved: " .. fname)
+        else
+            print("ERROR: Could not save screenshot")
+        end
+    end
+end
+
+emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
+```
+
+**Running the script:**
+```bash
+# Run Mesen2 with ROM and script (opens GUI, runs in background)
+/Applications/Mesen.app/Contents/MacOS/Mesen \
+  path/to/rom.sfc \
+  --Video.VideoFilter=None \
+  --Video.AspectRatio=NoStretching \
+  --loadScript path/to/capture_frame.lua &
+
+# Let it run for enough frames, then kill
+MESEN_PID=$!
+sleep 5  # Adjust based on how long to reach target frame
+kill $MESEN_PID
+```
+
+**Output location:**
+- Files save to `~/Library/Application Support/Mesen2/LuaScriptData/<script-basename>/`
+- Example: `capture_frame.lua` saves to `.../LuaScriptData/capture_frame/frame120.png`
+
+**Important notes:**
+- `emu.getScriptDataFolder()` returns empty string (falsy) when `AllowIoOsAccess` is disabled
+- Use regular mode with `--loadScript`, **not** `--testRunner` mode (different Lua environment)
+- `emu.takeScreenshot()` returns PNG binary data as string
+- `emu.stop(0)` does not work in regular mode; use external process control instead
+
 
