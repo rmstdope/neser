@@ -455,15 +455,17 @@ impl SnesSystemBus {
         if len == 0 {
             return;
         }
-        // Protection must be checked against the *wrapped* physical offset -- BW-RAM mirrors
-        // when the selected block/bank exceeds the physical size, so an unwrapped check could
-        // let a mirrored address (e.g. banks $44-$4F, or a large BMAP block) bypass protection
-        // on a byte that maps onto a protected physical address after wrapping.
-        let wrapped = index % len;
-        if control.borrow().is_bwram_write_protected(wrapped) {
+        // Protection is checked against the *linear* bus offset, BEFORE physical-size wrapping:
+        // BWPA's comparator sits on the address bus (fullsnes: protected bytes are "originated
+        // at 400000h"), while wrapping onto a smaller chip happens afterward at the RAM's own
+        // address pins. So a mirrored write addressed beyond the protected linear range goes
+        // through -- and physically lands on a protected byte via wraparound. Conformance-tested
+        // by absindx `SA1RamProtectionTest` TEST ID 50 (BWPA=$09 = exactly its cart's 128KB:
+        // the probe write at $420000 must stick for the reported area to come out as $09).
+        if control.borrow().is_bwram_write_protected(index) {
             return;
         }
-        sram[wrapped] = value;
+        sram[index % len] = value;
     }
 
     fn start_dma_transfer(&mut self, mdmaen: u8) {
@@ -1039,6 +1041,17 @@ impl SnesSystemBus {
             // read_mmio arm -- $2300 SFR is the separate read-only status register.
             0x2200..=0x2208 => match &self.sa1_registers {
                 Some(registers) => {
+                    // A CCNT write that releases a held reset also clears the SA-1-side I-RAM
+                    // protection register (bsnes `SA1::writeIOCPU`: "CIWP is set to 0 at
+                    // reset"); the SNES-side SIWP is untouched. Conformance-tested by absindx
+                    // `SA1RamProtectionTest` TEST ID 221.
+                    if offset == 0x2200
+                        && registers.borrow().is_held_in_reset()
+                        && value & 0x20 == 0
+                        && let Some(iram) = &self.sa1_iram
+                    {
+                        iram.borrow_mut().set_sa1_write_protect(0x00);
+                    }
                     registers.borrow_mut().write(offset, value);
                     true
                 }
@@ -2617,20 +2630,73 @@ mod tests {
     }
 
     #[test]
-    fn sa1_bwram_write_protection_is_checked_against_the_wrapped_physical_offset() {
-        // 32KB BW-RAM = 4 blocks of 8KB (blocks 0-3). Block 4 wraps around to physical offset 0
-        // -- the exact byte BWPA protects below. A protection check against the *unwrapped*
-        // linear offset (4*0x2000 = 0x8000) would wrongly see it as outside the 256-byte
-        // protected region and let the write through onto a byte that block 0 (offset 0) would
-        // correctly protect.
+    fn sa1_bwram_write_protection_is_checked_against_the_linear_bus_offset_before_wrapping() {
+        // BWPA's comparator sits on the address bus (fullsnes: protected bytes are "originated
+        // at 400000h"), so it sees the *linear* BW-RAM offset; wrapping onto the smaller
+        // physical chip happens afterward, at the RAM's own address pins. A mirrored write
+        // beyond the protected linear range therefore SUCCEEDS -- and physically lands on a
+        // protected byte via wraparound. This is real, conformance-tested hardware behavior:
+        // absindx `SA1RamProtectionTest` TEST ID 50 sets BWPA=$09 (protects $400000-$41FFFF,
+        // exactly its cart's full 128KB) and requires the probe write at $420000 to stick
+        // (readable back through the wrap) for the reported protection area to come out as $09.
         let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
-        bus.write(0x00_2228, 0x00); // protect only the first 256 bytes
-        bus.write(0x00_2224, 0x04); // BMAPS: block 4 (wraps to physical offset 0 in 32KB BW-RAM)
+        bus.write(0x00_2228, 0x00); // protect only the first 256 bytes ($400000-$4000FF)
+        bus.write(0x00_2224, 0x04); // BMAPS: block 4 (linear $8000; wraps to physical 0 in 32KB)
         bus.write(0x00_6000, 0x42);
         assert_eq!(
             bus.read(0x00_6000),
-            0x00,
-            "mirrored block must not bypass protection"
+            0x42,
+            "linear offset $8000 is outside BWPA's range, so the write lands (wrapped)"
+        );
+        // The direct view of the wrapped physical byte sees the same value...
+        assert_eq!(bus.read(0x40_0000), 0x42);
+        // ...but a write addressed *inside* the protected linear range is still blocked.
+        bus.write(0x40_0000, 0x99);
+        assert_eq!(bus.read(0x40_0000), 0x42);
+    }
+
+    #[test]
+    fn sa1_reset_release_clears_ciwp_but_not_snes_side_protection_registers() {
+        // bsnes `SA1::writeIOCPU` case $2200: on the reset-RELEASE edge (resb held, then a CCNT
+        // write with bit 5 clear), "CIWP is set to 0 at reset" -- and only CIWP; the SNES-side
+        // SIWP survives. absindx `SA1RamProtectionTest` TEST ID 221 (`* reset? CIWP = $00`)
+        // sets CIWP=$33 before rebooting SA-1 and expects the post-reboot SA-1-side probe to
+        // find nothing writable, while TEST 219 expects the pre-reboot SIWP=$AA still in force.
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        bus.sa1_iram
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .set_sa1_write_protect(0x33);
+        bus.write(0x00_2229, 0xAA); // SIWP (SNES-side)
+
+        bus.write(0x00_2200, 0x20); // re-assert reset (power-on default is also held)
+        bus.write(0x00_2200, 0x00); // release: the edge that clears CIWP
+
+        let iram = bus.sa1_iram.as_ref().unwrap().borrow();
+        assert_eq!(iram.sa1_write_protect_raw(), 0x00, "CIWP cleared by reset");
+        assert_eq!(iram.snes_write_protect_raw(), 0xAA, "SIWP survives");
+    }
+
+    #[test]
+    fn sa1_ccnt_write_without_a_reset_release_edge_leaves_ciwp_alone() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        bus.write(0x00_2200, 0x00); // release reset (power-on default is held)
+        bus.sa1_iram
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .set_sa1_write_protect(0x33);
+
+        bus.write(0x00_2200, 0x05); // message-only write while already released
+        assert_eq!(
+            bus.sa1_iram
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .sa1_write_protect_raw(),
+            0x33,
+            "no reset-release edge, CIWP untouched"
         );
     }
 

@@ -162,6 +162,27 @@
           "notes": "Both ROMs are vendored; hvdma.sfc has a visually-approved, Mesen2-cross-checked golden run by snes::integration_tests::hblank_dma_vram_tests with the screen-CRC oracle. hvdma_max.sfc is committed but not yet automated pending #2953."
         }
       ]
+    },
+    {
+      "id": "snes-tests-absindx-sa1",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/absindx/SNES-TestRoms",
+        "ref": "main (git subtree under absindx/SNES-TestRoms; prebuilt .sfc/.sym from the project's release page)"
+      },
+      "license": "BSL-1.0",
+      "oracle_type": "screen_crc",
+      "notes": "absindx SA-1 conformance ROMs (epic #2956), verified with human-approved screen-CRC goldens like the blargg/gilyon suites. Both ROMs are documented (and separately confirmed) to behave unreliably on Mesen2, so the goldens are navigator-approved captures of NESER's own rendering (NESER_CAPTURE_SCREEN=1), not Mesen2 cross-checks. Both settle into static result screens (SNES CPU in its WAI idle loop, SA-1 parked in SA1TestFinished_InfLoop), so a fixed-frame CRC is stable (verified identical at frames 150 and 250). SA1RamProtectionTest.sfc: all 222 sub-tests PASS; the golden captures the 'Result Passed' screen (TEST ID 222, SRAM $020000). SA1VersionCodeTest.sfc: the golden captures the hardware-accurate register-dump screen whose result line reads 'Failed' even on real hardware -- disassembly proves its CheckResult unconditionally takes the failed path (the pass path at $9EAB is unreferenced dead code), deliberate since the true SA-1 version-code value is unknown (fullsnes) and $230E is open bus (bsnes). See snes::integration_tests::sa1_absindx_tests and README-SNES.md.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/absindx",
+          "refresh_command": "roms/snes/automated_tests/snes_test_roms/absindx/update-sources",
+          "notes": "Prebuilt SA1RamProtectionTest.sfc/SA1VersionCodeTest.sfc (+ .sym files) from the upstream release page, plus the SNES-TestRoms source subtree. Both ROMs have visually-approved screen-CRC goldens run by snes::integration_tests::sa1_absindx_tests, one test per ROM."
+        }
+      ]
     }
   ]
 }
