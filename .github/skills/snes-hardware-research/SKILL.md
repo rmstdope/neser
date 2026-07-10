@@ -1,6 +1,6 @@
 ---
 name: snes-hardware-research
-description: Research Super Nintendo (SNES/Super Famicom) hardware details from fullsnes first, with anomie's docs and the SNESdev wiki as fallbacks, and bsnes/higan implementation only when specs are incomplete.
+description: Research Super Nintendo (SNES/Super Famicom) hardware details from fullsnes first, with anomie's docs and the SNESdev wiki as fallbacks, and ares/Mesen2 implementation evidence when specs are incomplete.
 ---
 
 # SNES Hardware Research
@@ -24,7 +24,7 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
    - First, try fetching fullsnes directly.
    - If the page cannot be retrieved with standard tools, try fetching it directly with `curl -Lsf`.
    - If fullsnes is unavailable, use anomie's SNES documents (CPU, PPU, registers, timing, DSP) and the SNESdev wiki (`https://snes.nesdev.org/wiki/` / `https://wiki.superfamicom.org/`).
-   - Use bsnes / higan source code (`https://github.com/bsnes-emu/bsnes`, higan) only when specs are incomplete.
+   - Use ares and Mesen2 source code only when specs are incomplete.
 
 4. When researching 65816 CPU timing and cycle counts, account for variable memory speed.
    - Memory access speed depends on region (FastROM vs SlowROM, MEMSEL `$420D`) and the accessed bank/address.
@@ -33,7 +33,7 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
    - Key regions that are commonly mis-classified: B-Bus I/O `$2000–$3FFF` and CPU I/O `$4200–$5FFF` in banks `$00–$3F`/`$80–$BF` are **Fast (6 clocks)**, not slow. Only WRAM mirrors (`$0000–$1FFF`) and expansion (`$6000–$7FFF`) are Slow (8 clocks) in those banks.
    - WS1 ROM (banks `$00–$3F`:`$8000–$FFFF`, `$40–$7D`) is **always slow (8 clocks)**; MEMSEL only affects WS2 ROM (banks `$80–$BF`:`$8000–$FFFF` and `$C0–$FF`).
    - Document cycle penalties for MMIO, WRAM, and cartridge regions separately from base instruction cycles.
-   - Cross-check against anomie's timing docs and Tom Harte / ProcessorTests 65816 vectors; treat bsnes as implementation evidence only.
+   - Cross-check against anomie's timing docs and Tom Harte / ProcessorTests 65816 vectors; treat ares/Mesen2 as implementation evidence only.
 
 5. When researching PPU modes and rendering, separate the many features.
    - BG modes 0–7 differ in layer count and bit depth; Mode 7 adds an affine matrix (rotation/scaling).
@@ -43,26 +43,32 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
 6. When researching the APU, treat it as a separate self-contained system.
    - The SPC700 CPU + S-DSP share 64 KB ARAM; the main CPU communicates only through four I/O ports (`$2140`–`$2143` ⟷ `$F4`–`$F7`).
    - Cover the 64-byte IPL boot ROM handshake, SPC700 timers, S-DSP 8 voices, BRR block decoding, ADSR/GAIN envelopes, gaussian interpolation, echo buffer and 8-tap FIR filter.
-   - Cross-check against blargg's SNES APU/SPC700 tests; treat bsnes/higan DSP source as implementation evidence only.
+   - Cross-check against blargg's SNES APU/SPC700 tests; treat ares/Mesen2 DSP source as implementation evidence only.
 
 7. When researching the memory map and cartridges, verify mapping and save hardware.
    - LoROM, HiROM, ExHiROM mapping is auto-detected from the internal header (`$FFC0` area) plus heuristics; document the bank/offset math for each.
    - Battery SRAM size/presence comes from the header; document `.srm` layout expectations.
    - Note copier headers (512-byte) on `.smc` files and how to detect/strip them.
 
-8. If specification coverage is missing or incomplete, inspect bsnes/higan carefully.
-   - Prefer `bsnes-emu/bsnes` and focus on the `bsnes/sfc/` (or higan `sfc/`) cores.
-   - Use this source only after checking fullsnes, anomie's docs, and the SNESdev wiki.
-   - Treat bsnes/higan as implementation evidence, not as equal authority with written specifications.
-   - If bsnes makes a choice where the specification is unclear, state that explicitly.
+8. If specification coverage is missing or incomplete, inspect ares and Mesen2 implementation.
+   - **ares** (Near/byuu's current emulator, successor to bsnes/higan): `https://github.com/ares-emulator/ares`
+     - Focus on `ares/sfc/` core for SNES implementation
+     - Represents Near/byuu's latest understanding of SNES hardware
+   - **Mesen2**: `https://github.com/SourMesen/Mesen2`
+     - Highly accurate multi-system emulator, independent implementation
+     - Source in `Core/SNES/` directory
+   - Use these only after checking fullsnes, anomie's docs, and the SNESdev wiki.
+   - Treat ares/Mesen2 as implementation evidence, not as equal authority with written specifications.
+   - When both agree on behavior not in specs, that's strong evidence; when they disagree, state both approaches.
 
-9. Use Mesen2 for ground-truth comparison and timing verification.
-   - Repo: `https://github.com/SourMesen/Mesen2`
-   - Highly accurate multi-system emulator with SNES support.
-   - Use for pixel-perfect visual comparisons and timing verification.
-   - Headless test mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
-   - Particularly useful for PPU rendering accuracy and timing edge cases.
-   - When NESER and Mesen2 disagree, investigate both against hardware specs rather than assuming either is correct.
+9. For visual verification, use a two-emulator cross-check.
+   - **Always capture screenshots from both ares AND Mesen2 first.**
+   - If ares and Mesen2 produce identical output (pixel-perfect match), use that as the reference for NESER comparison.
+   - If ares and Mesen2 disagree, **stop and ask the user** how to proceed — don't pick one arbitrarily.
+   - Screenshot settings for comparable captures:
+     - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+     - ares: use default "None" video filter, no overscan cropping
+   - Mesen2 headless mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
 
 10. When sources disagree or remain ambiguous, report that directly.
    - Name the conflicting sources.
@@ -73,30 +79,31 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
     - Start with a high-level explanation of the hardware behavior.
     - Then cover precise details: registers, bit meanings, address ranges, timing, ordering, side effects, open-bus behavior, edge cases, and model/region differences.
     - Clearly label what is confirmed by specification, what is supported only by emulator implementation, and what is still unknown.
-    - Cite the exact fullsnes sections, anomie doc names, SNESdev wiki pages, or bsnes/higan files you consulted.
+    - Cite the exact fullsnes sections, anomie doc names, SNESdev wiki pages, or ares/Mesen2 files you consulted.
 
 12. Never guess — especially about timing.
     - If no authoritative information is available, say so plainly.
     - If available information is partial, answer only the supported part and identify the gaps.
-    - For timing-sensitive behavior: prefer Mesen2/bsnes implementation evidence over speculation, but label it clearly as "implementation-backed, not spec-confirmed."
+    - For timing-sensitive behavior: prefer ares/Mesen2 implementation evidence over speculation, but label it clearly as "implementation-backed, not spec-confirmed."
+    - When ares and Mesen2 agree on unspecified behavior, note that explicitly as "both ares and Mesen2 implement X."
 
 ## References
 
-- `references/source-priority.md`: source order, retrieval tips, and bsnes/higan lookup starting points.
+- `references/source-priority.md`: source order, retrieval tips, and ares/Mesen2 lookup starting points.
 
 ## Examples
 
 - Researching the memory map / LoROM vs HiROM mapping:
-  start with the fullsnes memory map section, cross-check anomie's memory-map doc, then bsnes `sfc/cartridge/` only if heuristics remain unclear.
+  start with the fullsnes memory map section, cross-check anomie's memory-map doc, then ares `ares/sfc/cartridge/` and Mesen2 `Core/SNES/Cartridge.cpp` only if heuristics remain unclear.
 
 - Researching Mode 7 rendering:
-  start with the fullsnes PPU section and anomie's PPU doc for the affine matrix math, then inspect bsnes `sfc/ppu/` if per-scanline edge cases remain unclear.
+  start with the fullsnes PPU section and anomie's PPU doc for the affine matrix math, then inspect ares `ares/sfc/ppu/` and Mesen2 `Core/SNES/SnesPpu.cpp` if per-scanline edge cases remain unclear.
 
 - Researching the APU I/O port handshake:
-  start with fullsnes APU section for the IPL boot protocol, cross-check anomie's APU/DSP docs, then verify against blargg's SPC700 tests and bsnes `sfc/smp/` / `sfc/dsp/`.
+  start with fullsnes APU section for the IPL boot protocol, cross-check anomie's APU/DSP docs, then verify against blargg's SPC700 tests and ares `ares/sfc/smp/` / `ares/sfc/dsp/` and Mesen2 `Core/SNES/Apu/`.
 
 - Researching 65816 instruction timing:
-  start with anomie's timing doc and fullsnes CPU section, then cross-check Tom Harte / ProcessorTests 65816 vectors and bsnes `processor/wdc65816/`.
+  start with anomie's timing doc and fullsnes CPU section, then cross-check Tom Harte / ProcessorTests 65816 vectors and ares `ares/component/processor/wdc65816/` and Mesen2 `Core/SNES/SnesCpu.cpp`.
 
 ## Known Hardware Gotchas
 
@@ -121,9 +128,17 @@ When writing code that targets or emulates SNES hardware, always verify against 
 
 When verifying SNES emulator accuracy:
 
-- **Pixel-perfect comparison**: Use Python/PIL to compare screenshots pixel-by-pixel against Mesen2 captures. Don't trust visual inspection — differences of 2-4% are invisible to the eye but indicate timing bugs.
+- **Two-emulator verification (mandatory for screenshots)**:
+  1. Capture screenshots from **both ares and Mesen2** for the same ROM/frame
+  2. Compare ares vs Mesen2 pixel-by-pixel first
+  3. If they match: use that as the reference for NESER comparison
+  4. If they differ: **ask the user** how to proceed — do not pick one arbitrarily
+  5. Document which emulator(s) NESER matches in test comments
+- **Pixel-perfect comparison**: Use Python/PIL to compare screenshots pixel-by-pixel. Don't trust visual inspection — differences of 2-4% are invisible to the eye but indicate timing bugs.
 - **CRC-based integration tests**: Capture frame CRCs at known stable points (e.g., frame 600) and use as golden values for regression testing. Update test comments to reference GitHub issues for known differences.
-- **Mesen2 screenshot settings**: Use `--Video.VideoFilter=None --Video.AspectRatio=NoStretching` for comparable captures (note: Mesen2 has a 1-scanline row offset vs NESER).
+- **Screenshot settings for comparable captures**:
+  - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching` (note: 1-scanline row offset vs NESER)
+  - ares: default "None" video filter, no overscan cropping
 - **Always diff before documenting**: Before creating a "known issue" for a visual difference, run a pixel diff to quantify the discrepancy and locate where differences occur (edges, specific scanlines, etc.).
 - **Example diff script**: Use PIL to iterate pixels, mark differences as red, matches as dimmed grayscale — visual diffs immediately reveal whether issues are localized (edge effects) or systematic (whole-frame shifts).
 

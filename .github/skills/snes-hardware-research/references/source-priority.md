@@ -24,29 +24,34 @@ Use this order when researching SNES / Super Famicom hardware details:
    - PPU: PeterLemon / krom SNES PPU test ROMs.
    - Treat passing/failing test vectors as authoritative for observable behavior.
 
-5. **bsnes / higan implementation for missing details**
-   - Primary repo: `https://github.com/bsnes-emu/bsnes` (or higan).
-   - Useful entry points:
-     - `bsnes/sfc/cpu/` and `processor/wdc65816/` for 65816 behavior
-     - `bsnes/sfc/ppu/` for PPU rendering and timing
-     - `bsnes/sfc/smp/` (SPC700) and `bsnes/sfc/dsp/` for audio
-     - `bsnes/sfc/cartridge/` and `bsnes/sfc/memory/` for mapping and save hardware
-     - `bsnes/sfc/controller/` for input devices
-   - Use bsnes/higan only after checking fullsnes, anomie's docs, and the SNESdev wiki.
-   - Treat bsnes/higan as implementation evidence, not as equal authority with written specifications.
+5. **ares (preferred) and Mesen2 for implementation evidence**
+   - **ares** (Near/byuu's current emulator, successor to bsnes/higan):
+     - Repo: `https://github.com/ares-emulator/ares`
+     - Useful entry points:
+       - `ares/sfc/cpu/` and `ares/component/processor/wdc65816/` for 65816 behavior
+       - `ares/sfc/ppu/` for PPU rendering and timing
+       - `ares/sfc/smp/` (SPC700) and `ares/sfc/dsp/` for audio
+       - `ares/sfc/cartridge/` for mapping and save hardware
+       - `ares/sfc/controller/` for input devices
+     - Represents Near/byuu's latest understanding of SNES hardware
+   - **Mesen2** (independent, highly accurate implementation):
+     - Repo: `https://github.com/SourMesen/Mesen2`
+     - Useful source entry points:
+       - `Core/SNES/SnesCpu.cpp` for CPU timing and behavior
+       - `Core/SNES/SnesPpu.cpp` for PPU rendering
+       - `Core/SNES/SnesMemoryManager.cpp` for bus timing, DRAM refresh, and memory access
+       - `Core/SNES/Debugger/` for state inspection and tracing
+     - Headless test mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
+     - Screenshot settings: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+   - Use only after checking fullsnes, anomie's docs, and the SNESdev wiki.
+   - Treat as implementation evidence, not as equal authority with written specifications.
+   - **When both ares and Mesen2 agree** on unspecified behavior, that's strong evidence.
+   - **When they disagree**, state both approaches and investigate against hardware specs.
 
-6. **Mesen2 for ground-truth comparison**
-   - Repo: `https://github.com/SourMesen/Mesen2`
-   - Highly accurate multi-system emulator with SNES support.
-   - Use for pixel-perfect visual comparisons and timing verification.
-   - Headless test mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
-   - Screenshot settings for comparison: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
-   - Useful source entry points:
-     - `Core/SNES/SnesCpu.cpp` for CPU timing and behavior
-     - `Core/SNES/SnesPpu.cpp` for PPU rendering
-     - `Core/SNES/SnesMemoryManager.cpp` for bus timing, DRAM refresh, and memory access
-     - `Core/SNES/Debugger/` for state inspection and tracing
-   - When NESER and Mesen2 disagree, investigate both against hardware specs rather than assuming either is correct.
+6. **bsnes / higan (legacy reference)**
+   - Repo: `https://github.com/bsnes-emu/bsnes` (or higan)
+   - Prefer ares (Near/byuu's current work) over bsnes/higan for newer issues.
+   - Still useful for historical context and cross-checking edge cases.
 
 ## Reporting rules
 
