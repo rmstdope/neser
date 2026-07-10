@@ -32,7 +32,7 @@ fn sa1_ram_protection_test_passes() {
         "SA1RamProtectionTest.sfc",
         "sa1_absindx_tests",
         150,
-        0xF34C_0611,
+        0xD652_1ACE,
         RunConfig::new(400_000_000, 0),
     );
 }
@@ -44,7 +44,7 @@ fn sa1_version_code_test_matches_approved_register_dump() {
         "SA1VersionCodeTest.sfc",
         "sa1_absindx_tests",
         150,
-        0x9693_6ACB,
+        0x4184_C2B6,
         RunConfig::new(400_000_000, 0),
     );
 }

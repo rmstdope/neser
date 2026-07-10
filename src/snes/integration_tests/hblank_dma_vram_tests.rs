@@ -125,7 +125,7 @@ mod tests {
         hvdma_matches_mesen2_and_hardware,
         "hvdma.sfc",
         600,
-        0x2E57_9FF7
+        0x8D23_B418
     );
 
     // Confirmed hardware-accurate: NESER's frame-600 capture is a

@@ -464,8 +464,12 @@ impl Ppu {
         } else {
             self.bg_vofs[bg]
         } & 0x03FF;
+        // Framebuffer row `y` shows display line `y + 1` (line 0 is never rendered), and the BG
+        // fetch adds BGnVOFS to the raw display line (ares fetchNameTable: vcounter() + vscroll;
+        // Mesen2: realY = _scanline). Same convention as Mode 7's screen_y (mode7.rs).
+        let screen_y = y.wrapping_add(1);
         let mut hoffset = x.wrapping_add(hscroll);
-        let mut voffset = y.wrapping_add(vscroll);
+        let mut voffset = screen_y.wrapping_add(vscroll);
 
         if matches!(self.bg_mode, 2 | 4 | 6) && bg < 2 {
             let tile_width = if self.bg_tile_size_16[bg] { 4 } else { 3 };
@@ -484,7 +488,7 @@ impl Ppu {
                             hoffset = offset_x.wrapping_add(hlookup & 0x03F8);
                         } else {
                             // V offset: full 10-bit field.
-                            voffset = y.wrapping_add(hlookup & 0x03FF);
+                            voffset = screen_y.wrapping_add(hlookup & 0x03FF);
                         }
                     }
                 } else {
@@ -493,7 +497,7 @@ impl Ppu {
                         hoffset = offset_x.wrapping_add(hlookup & 0x03F8);
                     }
                     if vlookup & valid_bit != 0 {
-                        voffset = y.wrapping_add(vlookup & 0x03FF);
+                        voffset = screen_y.wrapping_add(vlookup & 0x03FF);
                     }
                 }
             }
@@ -759,17 +763,25 @@ mod tests {
         // Tile 1: only the top-left pixel (row 0, col 0) is color 1.
         let base = 16; // char 1 at char_base 0: word 8 -> byte 16
         ppu.vram[base] = 0x80; // plane0 row 0, bit7 (left-most) set
-        // entry -> char 1 with H-flip + V-flip (bits 14,15).
-        set_vram_word(&mut ppu, 0, 1 | 0x4000 | 0x8000);
+        // Tilemap at word 0x400 (away from the char data): entry -> char 1 with H-flip + V-flip
+        // (bits 14,15).
+        set_vram_word(&mut ppu, 0x400, 1 | 0x4000 | 0x8000);
 
         ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x2107, 0x04); // BG1SC: map base word 0x400
         ppu.write_register(0x212C, 0x01);
         ppu.write_register(0x2100, 0x0F);
         render_frame(&mut ppu);
 
         let rgb = ppu.screen_snapshot_rgb();
-        // With both flips, the lit pixel moves to the bottom-right of the tile (7,7).
-        assert_eq!(pixel(&rgb, 7, 7), [255, 255, 255], "flipped pixel at (7,7)");
+        // With both flips, the lit pixel moves to the bottom-right of the tile: BG (7,7). Row 0
+        // shows BG line 1, so BG line 7 lands on framebuffer row 6.
+        assert_eq!(pixel(&rgb, 7, 6), [255, 255, 255], "flipped pixel at (7,6)");
+        assert_eq!(
+            pixel(&rgb, 7, 7),
+            [0, 0, 0],
+            "row 7 shows the next tile row"
+        );
         assert_eq!(pixel(&rgb, 0, 0), [0, 0, 0], "top-left now transparent");
     }
 
@@ -792,6 +804,60 @@ mod tests {
 
         let rgb = ppu.screen_snapshot_rgb();
         assert_eq!(pixel(&rgb, 0, 0), [255, 255, 255], "scrolled tile at x=0");
+    }
+
+    #[test]
+    fn vertical_scroll_samples_display_line_y_plus_1() {
+        // The first visible framebuffer row is display line 1 (line 0 is never rendered), and the
+        // BG fetch adds BGnVOFS to the raw display line: row `y` samples BG line `y + 1 + VOFS`
+        // (ares `background.cpp` fetchNameTable, Mesen2 `SnesPpu.cpp` realY = _scanline). This is
+        // why games write VOFS = -1 to pixel-align a BG with the top of the screen.
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        // Tile 1: only the pixel at (fine_x=0, fine_y=1) is lit.
+        set_vram_word(&mut ppu, 0, 1);
+        set_2bpp_tile_pixel(&mut ppu, 0, 1, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        // With VOFS = 0, framebuffer row 0 shows BG line 1: the lit pixel lands on row 0.
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "BG line 1 appears on framebuffer row 0"
+        );
+        assert_eq!(pixel(&rgb, 0, 1), [0, 0, 0], "BG line 2 on row 1 is dark");
+    }
+
+    #[test]
+    fn vertical_scroll_of_minus_one_pixel_aligns_the_bg() {
+        // VOFS = -1 (0x3FF) cancels the +1: framebuffer row 0 shows BG line 0. This is the
+        // convention used by the undisbeliever scpu-a-dma-bug ROMs (issue #2945).
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF);
+        // Tile 1: only the pixel at (fine_x=0, fine_y=0) is lit.
+        set_vram_word(&mut ppu, 0, 1);
+        set_2bpp_tile_pixel(&mut ppu, 0, 1, 0, 0, 1);
+
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x01);
+        ppu.write_register(0x2100, 0x0F);
+        ppu.write_register(0x210E, 0xFF); // BG1VOFS low
+        ppu.write_register(0x210E, 0xFF); // BG1VOFS high -> vofs = 0x3FF = -1
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            pixel(&rgb, 0, 0),
+            [255, 255, 255],
+            "VOFS -1 puts BG line 0 on framebuffer row 0"
+        );
     }
 
     /// Configure BGnSC for layer `bg` with a 32x32 tilemap at `base` words.
@@ -1665,19 +1731,19 @@ mod tests {
 
     #[test]
     fn vertical_mosaic_replicates_top_row_of_each_block() {
-        // Tile 1: only row 0 (fine_y=0) is white; all other rows are black.
-        // With mosaic block_size=4 and no scroll: scanlines 0-3 (vcount=0,1,2,3) all look at
-        // effective_y=0 (the top row), so they all show white. Scanlines 4-7 look at effective_y=4
-        // which is row 4 of the tile (black).
+        // Tile 1: only row 1 (fine_y=1) is white; all other rows are black.
+        // Framebuffer row 0 is display line 1, and with VOFS=0 it samples BG line 1. With mosaic
+        // block_size=4: rows 0-3 (block index 0,1,2,3) all replicate the block's first sampled
+        // line (BG line 1, white). Rows 4-7 replicate BG line 5 (black).
         let mut ppu = Ppu::new();
         set_cgram(&mut ppu, 0, 0x0000);
         set_cgram(&mut ppu, 1, 0x7FFF);
 
         // Tilemap: all entries char 1.
         set_vram_word(&mut ppu, 0, 1);
-        // Tile 1: only fine_y=0 is white for all columns.
+        // Tile 1: only fine_y=1 is white for all columns.
         for fine_x in 0..8 {
-            set_2bpp_tile_pixel(&mut ppu, 0, 1, fine_x, 0, 1); // row 0 = white
+            set_2bpp_tile_pixel(&mut ppu, 0, 1, fine_x, 1, 1); // row 1 = white
         }
 
         setup_bg1_mode0(&mut ppu);
@@ -1686,37 +1752,37 @@ mod tests {
         render_frame(&mut ppu);
         let rgb = ppu.screen_snapshot_rgb();
 
-        // Scanlines 0-3: top of block (vcount=0,1,2,3 all map effective_y=0 → white row).
+        // Rows 0-3: block index 0,1,2,3 all replicate the block's first line (BG line 1, white).
         assert_eq!(
             pixel(&rgb, 0, 0),
             [255, 255, 255],
-            "scanline 0: effective_y=0, white"
+            "row 0: block start, BG line 1, white"
         );
         assert_eq!(
             pixel(&rgb, 0, 1),
             [255, 255, 255],
-            "scanline 1: vcount=1 → effective_y=0"
+            "row 1: block index 1 → BG line 1"
         );
         assert_eq!(
             pixel(&rgb, 0, 2),
             [255, 255, 255],
-            "scanline 2: vcount=2 → effective_y=0"
+            "row 2: block index 2 → BG line 1"
         );
         assert_eq!(
             pixel(&rgb, 0, 3),
             [255, 255, 255],
-            "scanline 3: vcount=3 → effective_y=0"
+            "row 3: block index 3 → BG line 1"
         );
-        // Scanline 4: new block (vcount=0), effective_y=4 → black row.
+        // Row 4: new block, replicates BG line 5 → black.
         assert_eq!(
             pixel(&rgb, 0, 4),
             [0, 0, 0],
-            "scanline 4: new block, effective_y=4, black"
+            "row 4: new block, BG line 5, black"
         );
         assert_eq!(
             pixel(&rgb, 0, 5),
             [0, 0, 0],
-            "scanline 5: vcount=1 → effective_y=4"
+            "row 5: block index 1 → BG line 5"
         );
     }
 

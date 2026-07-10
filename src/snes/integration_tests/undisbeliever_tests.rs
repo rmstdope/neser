@@ -1,9 +1,9 @@
-//! Automates 15 of the 29 vendored undisbeliever/snes-test-roms hardware
+//! Automates 25 of the 29 vendored undisbeliever/snes-test-roms hardware
 //! ROMs (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`)
 //! that visually match Mesen2.
 //!
 //! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen.
-//! Most of them (9 of the 15 automated here) demonstrate a real, documented
+//! Nine of the 25 automated here demonstrate a real, documented
 //! SNES hardware bug -- the "INIDISP D7 glitch" -- where writing `$2100`
 //! shortly after the CPU/HDMA data bus held a byte with bit 7 set can
 //! corrupt sprite rendering or briefly flip force-blank, on real 3-chip/
@@ -16,10 +16,11 @@
 //! (`Core/SNES/SnesPpu.cpp`), ares (`ares/sfc/ppu/io.cpp`, Near's own
 //! current emulator), and Snes9x (`ppu.cpp`) -- all three write `$2100`
 //! deterministically with no bus-residual modeling at all (see #2949). So
-//! each golden here is a **stability snapshot** cross-checked against
-//! Mesen2 (using `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
-//! for a comparable capture, and allowing for a harmless constant 1-scanline
-//! row offset between the two emulators' screenshot conventions): for the 2
+//! each golden in that glitch family is a **stability snapshot** cross-checked
+//! against Mesen2 (using `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+//! for a comparable capture; since the BG vertical-scroll display-line fix
+//! in #2945 the two emulators' captures align byte-for-byte with no row
+//! offset): for the 2
 //! ROMs the source confirms never glitch on real hardware
 //! (`hdma_21ff_glitch_matches_mesen2`, `inidisp_hammer_0f0f_matches_mesen2`,
 //! marked below) this genuinely *is* proof of hardware accuracy; for the
@@ -27,13 +28,12 @@
 //! checked reference emulator, not hardware accuracy -- see #2949 before
 //! treating a mismatch here as a regression.
 //!
-//! The other 14 ROMs are deliberately left un-automated: cross-checking
+//! The other 4 ROMs are deliberately left un-automated: cross-checking
 //! against Mesen2 exposed real NESER divergences, tracked as follow-up bugs
 //! rather than papered over with a golden that bakes in known-wrong
 //! behavior (see README-SNES.md for the full breakdown):
 //! - `hdma-2100-glitch-2ch-{0a,81}.sfc`, `hdma-21ff-2100-glitch.sfc` -- #2943
 //! - `inidisp_forgot_to_force_blank.sfc` -- #2944
-//! - all 10 `scpu-a-dma-bug-*.sfc` -- #2945
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -45,7 +45,7 @@ const UNDISBELIEVER_ROOT: &str = "roms/snes/automated_tests/snes_test_roms/undis
 mod tests {
     use super::*;
 
-    /// All 11 ROMs here settle into their steady-state rendering well
+    /// All 25 ROMs here settle into their steady-state rendering well
     /// before frame 600 (matching the default budget used throughout
     /// blargg_apu_tests.rs / gilyon_*_tests.rs) and hold it indefinitely.
     ///
@@ -94,7 +94,7 @@ mod tests {
     undisbeliever_rom_test!(
         hdma_2100_glitch_matches_mesen2,
         "hdma-2100-glitch.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // Glitches on real hardware via an FXPak firmware bug (a different cause
@@ -103,7 +103,7 @@ mod tests {
     undisbeliever_rom_test!(
         hdma_21ff_2100_0f_glitch_matches_mesen2,
         "hdma-21ff-2100-0f-glitch.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // Confirmed by the source to never glitch on real hardware -- this
@@ -112,7 +112,7 @@ mod tests {
     undisbeliever_rom_test!(
         hdma_21ff_glitch_matches_mesen2,
         "hdma-21ff-glitch.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // Real hardware reliably shows a sprite glitch here (`ldx.w #$0f80 ;
@@ -121,7 +121,7 @@ mod tests {
     undisbeliever_rom_test!(
         inidisp_d7_glitch_test_matches_mesen2,
         "inidisp_d7_glitch_test.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // Real hardware reliably shows a brightness glitch here (`lda.b #$0f ;
@@ -130,7 +130,7 @@ mod tests {
     undisbeliever_rom_test!(
         inidisp_hammer_0f_matches_mesen2,
         "inidisp_hammer_0f.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // Real hardware reliably shows a brightness glitch here (`ldx.w #$0f00 ;
@@ -139,7 +139,7 @@ mod tests {
     undisbeliever_rom_test!(
         inidisp_hammer_0f00_matches_mesen2,
         "inidisp_hammer_0f00.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // Confirmed by the source to never glitch on real hardware -- this
@@ -148,7 +148,7 @@ mod tests {
     undisbeliever_rom_test!(
         inidisp_hammer_0f0f_matches_mesen2,
         "inidisp_hammer_0f0f.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // Real hardware reliably shows the "inverse" glitch here (briefly
@@ -157,7 +157,7 @@ mod tests {
     undisbeliever_rom_test!(
         inidisp_hammer_0f8f_matches_mesen2,
         "inidisp_hammer_0f8f.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // Same inverse glitch as inidisp_hammer_0f8f.sfc at a faster hammer
@@ -166,7 +166,7 @@ mod tests {
     undisbeliever_rom_test!(
         inidisp_hammer_0f8f_fast_matches_mesen2,
         "inidisp_hammer_0f8f_fast.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // Real hardware reliably shows a sprite glitch here (`lda.b #$0f ;
@@ -175,7 +175,7 @@ mod tests {
     undisbeliever_rom_test!(
         inidisp_hammer_0f_long_matches_mesen2,
         "inidisp_hammer_0f_long.sfc",
-        0x4844_ECF2
+        0x3B89_56D6
     );
 
     // The only exact byte-for-byte match against Mesen2 (both stay in
@@ -196,7 +196,7 @@ mod tests {
     undisbeliever_rom_test!(
         inidisp_enable_display_mid_frame_matches_mesen2,
         "inidisp_enable_display_mid_frame.sfc",
-        0x3B0F_939D
+        0xD3AE_551F
     );
 
     // Fixed by mid-scanline HDMA activation (#2943): ROMs write to HDMAEN mid-scanline
@@ -225,5 +225,33 @@ mod tests {
         inidisp_brightness_delay_matches_mesen2,
         "inidisp_brightness_delay.sfc",
         0xA6F2_AED7
+    );
+
+    // The 10 scpu-a-dma-bug-* ROMs (issue #2945) share one harness
+    // (`dma-test.inc`): an HTIME H-IRQ per visible scanline drives an MDMA
+    // byte to WMDATA while HDMA writes INIDISP on the previous scanline,
+    // rendering green squares with alternating dark/bright scanline
+    // banding on pass; a crash traps into the break/COP handler
+    // (flat half-brightness screen). They differ only in their appended
+    // HDMA table. Rendering these correctly required the DMA-to-WMDATA
+    // B-bus fix, the brightness formula fix (PR #2948), and the BG
+    // vertical-scroll display-line fix (all #2945).
+    undisbeliever_rom_test!(scpu_a_dma_bug_1, "scpu-a-dma-bug-1.sfc", 0x1E6F_71A7);
+    undisbeliever_rom_test!(scpu_a_dma_bug_2, "scpu-a-dma-bug-2.sfc", 0x8FF8_6612);
+    undisbeliever_rom_test!(scpu_a_dma_bug_3, "scpu-a-dma-bug-3.sfc", 0x8902_A5AE);
+    undisbeliever_rom_test!(scpu_a_dma_bug_5, "scpu-a-dma-bug-5.sfc", 0x2B1E_9001);
+    undisbeliever_rom_test!(scpu_a_dma_bug_ch0, "scpu-a-dma-bug-ch0.sfc", 0x8FF8_6612);
+    undisbeliever_rom_test!(scpu_a_dma_bug_fix, "scpu-a-dma-bug-fix.sfc", 0x8FF8_6612);
+    undisbeliever_rom_test!(scpu_a_dma_bug_fix2, "scpu-a-dma-bug-fix2.sfc", 0x8FF8_6612);
+    undisbeliever_rom_test!(scpu_a_dma_bug_r2, "scpu-a-dma-bug-r2.sfc", 0x1E6F_71A7);
+    undisbeliever_rom_test!(
+        scpu_a_dma_bug_strange,
+        "scpu-a-dma-bug-strange.sfc",
+        0x1E6F_71A7
+    );
+    undisbeliever_rom_test!(
+        scpu_a_dma_bug_two_regs,
+        "scpu-a-dma-bug-two-regs.sfc",
+        0x8FF8_6612
     );
 }
