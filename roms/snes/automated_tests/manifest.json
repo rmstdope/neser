@@ -59,48 +59,6 @@
       ]
     },
     {
-      "id": "snes-tests-cputest",
-      "suite": "rom_pass_fail",
-      "platform": "snes",
-      "source": {
-        "url": "https://github.com/gilyon/snes-tests",
-        "ref": "v1.4"
-      },
-      "license": "MIT",
-      "oracle_type": "screen_crc",
-      "notes": "gilyon/snes-tests 65816 CPU test ROMs (cputest-basic.sfc: 1107 tests, skips undocumented emulation-mode wrapping edge cases; cputest-full.sfc: 1610 tests, includes them). Both report results via a text shell (Success / Failed #N with register dump), verified by the rom_runner screen-CRC oracle against a human-approved PASS capture. Both currently PASS in this emulator (visually confirmed against Mesen2 running the same ROM files) — one test per ROM in snes::integration_tests::gilyon_cpu_tests.",
-      "variants": [
-        {
-          "id": "ci_subset",
-          "status": "committed_ci",
-          "path": "roms/snes/automated_tests/gilyon_tests/cputest",
-          "refresh_command": null,
-          "notes": "Vendored release build of cputest-basic.sfc and cputest-full.sfc plus their generated docs/assembly (tests-*.txt, tests-*.inc, tests_table.inc)."
-        }
-      ]
-    },
-    {
-      "id": "snes-tests-spctest",
-      "suite": "rom_pass_fail",
-      "platform": "snes",
-      "source": {
-        "url": "https://github.com/gilyon/snes-tests",
-        "ref": "v1.4"
-      },
-      "license": "MIT",
-      "oracle_type": "screen_crc",
-      "notes": "gilyon/snes-tests SPC-700 CPU test ROM (spctest.sfc: 1368 tests). Reports results via a text shell (Success / Failed with register dump), verified by the rom_runner screen-CRC oracle against a human-approved PASS capture. Currently PASSES in this emulator (visually confirmed against Mesen2 running the same ROM file) — snes::integration_tests::gilyon_spc_tests.",
-      "variants": [
-        {
-          "id": "ci_subset",
-          "status": "committed_ci",
-          "path": "roms/snes/automated_tests/gilyon_tests/spctest",
-          "refresh_command": null,
-          "notes": "Vendored release build of spctest.sfc plus its generated docs/assembly (tests.txt, spc_tests*.asm)."
-        }
-      ]
-    },
-    {
       "id": "snes-rom-pass-fail-blargg-spc-apu",
       "suite": "rom_pass_fail",
       "platform": "snes",
@@ -181,6 +139,27 @@
           "path": "roms/snes/automated_tests/snes_test_roms/absindx",
           "refresh_command": "roms/snes/automated_tests/snes_test_roms/absindx/update-sources",
           "notes": "Prebuilt SA1RamProtectionTest.sfc/SA1VersionCodeTest.sfc (+ .sym files) from the upstream release page, plus the SNES-TestRoms source subtree. Both ROMs have visually-approved screen-CRC goldens run by snes::integration_tests::sa1_absindx_tests, one test per ROM."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-gilyon",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/gilyon/snes-tests",
+        "ref": "main (git subtree under gilyon/snes-tests; prebuilt cputest.sfc/spctest.sfc alongside it)"
+      },
+      "license": "MIT",
+      "oracle_type": "screen_crc",
+      "notes": "gilyon/snes-tests 65816 CPU and SPC-700 test ROMs, vendored as a git-subtree mirror plus prebuilt ROMs (replacing the earlier ad-hoc gilyon_tests/ copy; see issue #2979). cputest.sfc is the full 1610-test 65816 build (bit-identical to the previously vendored cputest-full.sfc, so its golden carried over; the retired 1107-test cputest-basic.sfc was a strict subset and its separate test was dropped). spctest.sfc is a newer upstream build with 1320 SPC-700 tests (the older vendored build had 1368; count changed upstream). Both report results via a text shell (Success / Failed #N with register dump), verified by the rom_runner screen-CRC oracle against human-approved PASS captures; both currently PASS -- one test per ROM in snes::integration_tests::gilyon_cpu_tests / gilyon_spc_tests.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/gilyon",
+          "refresh_command": "roms/snes/automated_tests/snes_test_roms/gilyon/update-sources",
+          "notes": "Prebuilt cputest.sfc and spctest.sfc plus the snes-tests source subtree."
         }
       ]
     }

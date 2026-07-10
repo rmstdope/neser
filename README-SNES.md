@@ -92,7 +92,7 @@ Test suites:
 - `blargg_apu_tests.rs` -- 18 SPC700/APU test ROMs
   (`roms/snes/automated_tests/blargg_apu/`).
 - `gilyon_cpu_tests.rs` / `gilyon_spc_tests.rs` -- 65816 and SPC-700 CPU test
-  ROMs (`roms/snes/automated_tests/gilyon_tests/`).
+  ROMs (`roms/snes/automated_tests/snes_test_roms/gilyon/`).
 - `undisbeliever_tests.rs` -- hardware-glitch/timing-hammer ROMs
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`).
 - `hblank_dma_vram_tests.rs` -- HDMA-to-VRAM timing ROMs
