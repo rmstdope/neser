@@ -3,7 +3,7 @@
 //! that visually match Mesen2.
 //!
 //! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen.
-//! Most of them (9 of the 15 automated here) demonstrate a real, documented
+//! Nine of the 25 automated here demonstrate a real, documented
 //! SNES hardware bug -- the "INIDISP D7 glitch" -- where writing `$2100`
 //! shortly after the CPU/HDMA data bus held a byte with bit 7 set can
 //! corrupt sprite rendering or briefly flip force-blank, on real 3-chip/
@@ -16,8 +16,8 @@
 //! (`Core/SNES/SnesPpu.cpp`), ares (`ares/sfc/ppu/io.cpp`, Near's own
 //! current emulator), and Snes9x (`ppu.cpp`) -- all three write `$2100`
 //! deterministically with no bus-residual modeling at all (see #2949). So
-//! each golden here is a **stability snapshot** cross-checked against
-//! Mesen2 (using `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+//! each golden in that glitch family is a **stability snapshot** cross-checked
+//! against Mesen2 (using `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
 //! for a comparable capture; since the BG vertical-scroll display-line fix
 //! in #2945 the two emulators' captures align byte-for-byte with no row
 //! offset): for the 2
