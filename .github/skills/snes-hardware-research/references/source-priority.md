@@ -35,6 +35,19 @@ Use this order when researching SNES / Super Famicom hardware details:
    - Use bsnes/higan only after checking fullsnes, anomie's docs, and the SNESdev wiki.
    - Treat bsnes/higan as implementation evidence, not as equal authority with written specifications.
 
+6. **Mesen2 for ground-truth comparison**
+   - Repo: `https://github.com/SourMesen/Mesen2`
+   - Highly accurate multi-system emulator with SNES support.
+   - Use for pixel-perfect visual comparisons and timing verification.
+   - Headless test mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
+   - Screenshot settings for comparison: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+   - Useful source entry points:
+     - `Core/SNES/SnesCpu.cpp` for CPU timing and behavior
+     - `Core/SNES/SnesPpu.cpp` for PPU rendering
+     - `Core/SNES/SnesMemoryManager.cpp` for bus timing, DRAM refresh, and memory access
+     - `Core/SNES/Debugger/` for state inspection and tracing
+   - When NESER and Mesen2 disagree, investigate both against hardware specs rather than assuming either is correct.
+
 ## Reporting rules
 
 - Prefer written specification (fullsnes, anomie) over emulator implementation.
