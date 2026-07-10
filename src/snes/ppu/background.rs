@@ -565,7 +565,12 @@ impl Ppu {
     }
 
     /// Read a CGRAM color (BGR555) by palette index.
+    ///
+    /// Also records the index as the renderer's current palette-fetch address, which is
+    /// where CPU/DMA CGRAM writes land when they happen during active rendering (see the
+    /// $2122 handler in `registers.rs`).
     pub(super) fn cgram_color(&self, index: u8) -> u16 {
+        self.cgram_render_index.set(index);
         let byte = (index as usize) << 1;
         (self.cgram[byte & (CGRAM_SIZE - 1)] as u16
             | ((self.cgram[(byte + 1) & (CGRAM_SIZE - 1)] as u16) << 8))

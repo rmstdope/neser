@@ -470,10 +470,11 @@ impl SnesSystemBus {
 
     fn start_dma_transfer(&mut self, mdmaen: u8) {
         let mut dma = std::mem::take(&mut self.dma);
-        let (consumed_ticks, dma_open_bus) = dma.start_dma(mdmaen, self, self.mdr.get());
+        // `start_dma` advances the system live via `dma_tick` (which increments
+        // `self.ticks` one clock at a time), so the returned tick total must not be
+        // added again here.
+        let (_consumed_ticks, dma_open_bus) = dma.start_dma(mdmaen, self, self.mdr.get());
 
-        self.ticks
-            .set(self.ticks.get().wrapping_add(consumed_ticks));
         self.mdr.set(dma_open_bus);
         self.dma = dma;
     }
@@ -1135,6 +1136,17 @@ impl DmaABus for SnesSystemBus {
         self.dma_write_a_bus_impl(addr, value);
     }
 
+    fn dma_tick(&mut self, master_clocks: u64) {
+        // Advance the PPU/APU/input while the DMA controller owns the bus. HDMA
+        // triggers and the DRAM-refresh stall are deliberately not processed here:
+        // `self.dma` is `mem::take`n during a transfer, so `check_hdma_triggers`
+        // would operate on an empty controller; a refresh point crossed during DMA
+        // is picked up by the first normal `tick()` afterwards.
+        for _ in 0..master_clocks {
+            self.tick_one_master_clock();
+        }
+    }
+
     fn dma_write_b_bus(&mut self, addr: u8, value: u8) {
         match addr {
             0x00..=0x3F => self
@@ -1750,6 +1762,26 @@ mod tests {
 
         // 8/byte + 8/channel + fixed 16 global transfer overhead.
         assert_eq!(ticks_after - ticks_before, 16 + 2 * 8 + 2 * 8);
+    }
+
+    #[test]
+    fn general_purpose_dma_advances_the_ppu_during_the_transfer() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        // 1024 bytes at 8 master clocks each (plus 16 + 8 overhead) is 8216 clocks,
+        // about 6 scanlines: the PPU must keep running while DMA owns the bus, so
+        // that writes land at the scan position they really occur at (hardware
+        // keeps rendering during DMA; Mesen2 `SnesDmaController` advances the
+        // master clock per transferred byte). See #2944.
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E0100, 1024);
+        let scanline_before = bus.ppu.borrow().position().scanline;
+        bus.write(0x00420B, 0x01);
+        let scanline_after = bus.ppu.borrow().position().scanline;
+
+        assert_eq!(scanline_before, 0);
+        assert!(
+            (5..=7).contains(&scanline_after),
+            "PPU should advance ~6 scanlines during a 1KB DMA, got scanline {scanline_after}"
+        );
     }
 
     #[test]

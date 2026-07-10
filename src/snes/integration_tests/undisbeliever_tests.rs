@@ -27,12 +27,11 @@
 //! checked reference emulator, not hardware accuracy -- see #2949 before
 //! treating a mismatch here as a regression.
 //!
-//! The other 14 ROMs are deliberately left un-automated: cross-checking
+//! The other 13 ROMs are deliberately left un-automated: cross-checking
 //! against Mesen2 exposed real NESER divergences, tracked as follow-up bugs
 //! rather than papered over with a golden that bakes in known-wrong
 //! behavior (see README-SNES.md for the full breakdown):
 //! - `hdma-2100-glitch-2ch-{0a,81}.sfc`, `hdma-21ff-2100-glitch.sfc` -- #2943
-//! - `inidisp_forgot_to_force_blank.sfc` -- #2944
 //! - all 10 `scpu-a-dma-bug-*.sfc` -- #2945
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
@@ -225,5 +224,18 @@ mod tests {
         inidisp_brightness_delay_matches_mesen2,
         "inidisp_brightness_delay.sfc",
         0xA6F2_AED7
+    );
+
+    // Demonstrates forgetting to force-blank before uploading to the PPU (#2944):
+    // VRAM writes outside VBlank/forced blank are dropped, OAM writes are
+    // redirected into the high table, and CGRAM writes land at the renderer's
+    // current palette fetch (entry 0 here -- the yellow), so the "clean" uploads
+    // never land and the initial VRAM garbage fill stays on screen as the noisy
+    // striped pattern. Pixel-diffs 0.10% against Mesen2 at the usual 1-scanline
+    // capture offset -- an exact match up to anti-aliasing-level noise.
+    undisbeliever_rom_test!(
+        inidisp_forgot_to_force_blank_matches_mesen2,
+        "inidisp_forgot_to_force_blank.sfc",
+        0x104E_0736
     );
 }
