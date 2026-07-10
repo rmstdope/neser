@@ -489,13 +489,14 @@ impl Sa1Bus {
     }
 
     /// BW-RAM linear offset from the SA-1 CPU's own perspective: its `$2225` BMAP block select
-    /// for the windowed `$6000-$7FFF` view, or the direct `$40-$4F` banks.
+    /// for the windowed `$6000-$7FFF` view, or the direct `$40-$5F` banks (twice as wide as the
+    /// SNES side's `$40-$4F`; see [`memory_control::decode_sa1_direct_offset`]).
     fn bwram_index(&self, addr: u32) -> Option<usize> {
         let control = self.memory_control.borrow();
         if let Some(window_offset) = memory_control::decode_windowed_offset(addr) {
             Some(control.sa1_bwram_block() * 0x2000 + window_offset)
         } else {
-            memory_control::decode_direct_offset(addr)
+            memory_control::decode_sa1_direct_offset(addr)
         }
     }
 }
@@ -572,15 +573,10 @@ impl SnesBus for Sa1Bus {
             let mut sram = self.sram.borrow_mut();
             let len = sram.len();
             if len != 0 {
-                // Protection must be checked against the *wrapped* physical offset -- see the
-                // matching comment on `SnesSystemBus::write_sa1_bwram`.
-                let wrapped = index % len;
-                if !self
-                    .memory_control
-                    .borrow()
-                    .is_bwram_write_protected(wrapped)
-                {
-                    sram[wrapped] = value;
+                // Protection is checked against the *linear* bus offset, BEFORE physical-size
+                // wrapping -- see the matching comment on `SnesSystemBus::write_sa1_bwram`.
+                if !self.memory_control.borrow().is_bwram_write_protected(index) {
+                    sram[index % len] = value;
                 }
             }
             return;
@@ -1189,6 +1185,13 @@ mod tests {
 
         bus.write(0x41_0000, 0x33);
         assert_eq!(bus.read(0x41_0000), 0x33);
+
+        // The SA-1 side's direct window extends through bank $5F (unlike the SNES side's
+        // $40-$4F): a write to $500000 lands at linear offset $100000, which mirrors onto this
+        // 128KB backing at physical offset 0 -- absindx TEST ID 160's expected behavior.
+        bus.write(0x50_0000, 0x44);
+        assert_eq!(bus.read(0x40_0000), 0x44);
+        assert_eq!(bus.read(0x50_0000), 0x44);
     }
 
     #[test]
@@ -1211,10 +1214,13 @@ mod tests {
     }
 
     #[test]
-    fn bus_bwram_write_protection_is_checked_against_the_wrapped_physical_offset() {
-        // Same scenario as the SnesSystemBus-level regression test: an 8KB-per-block BW-RAM
-        // with only 0x8000 (32KB, blocks 0-3) of physical backing. Block 4 wraps to physical
-        // offset 0, which BWPA protects; an unwrapped protection check would miss this.
+    fn bus_bwram_write_protection_is_checked_against_the_linear_bus_offset_before_wrapping() {
+        // Same scenario as the SnesSystemBus-level test of the same name: an 8KB-per-block
+        // BW-RAM with only 0x8000 (32KB, blocks 0-3) of physical backing, block 4 wrapping to
+        // physical offset 0. BWPA's comparator sees the *linear* offset (0x8000, outside its
+        // 256-byte range), so the write goes through and lands on physical offset 0 via the RAM
+        // chip's own wraparound -- absindx `SA1RamProtectionTest` TEST ID 50's documented
+        // hardware behavior (see that test's doc comment for the full derivation).
         let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
         let memory_control = fresh_memory_control();
         memory_control.borrow_mut().write(0x2228, 0x00); // protect only the first 256 bytes
@@ -1233,9 +1239,12 @@ mod tests {
         bus.write(0x00_6000, 0x42);
         assert_eq!(
             sram.borrow()[0],
-            0x00,
-            "mirrored block must not bypass protection"
+            0x42,
+            "linear offset $8000 is outside BWPA's range, so the write lands (wrapped)"
         );
+        // A write addressed inside the protected linear range is still blocked.
+        bus.write(0x40_0000, 0x99);
+        assert_eq!(sram.borrow()[0], 0x42);
     }
 
     #[test]

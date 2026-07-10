@@ -151,10 +151,17 @@ impl Sa1MemoryControl {
     /// `$2226` SBWE and `$2227` CBWE have their write-enable bit clear; if either side has
     /// enabled writes, `$2228` BWPA has no effect and the write always succeeds. This is a
     /// single, shared rule -- not independent per-side protection like I-RAM's SIWP/CIWP.
+    ///
+    /// The comparator sees the linear offset folded to the 256KB BW-RAM address space (bsnes:
+    /// `(address & 0x3ffff) < 0x100 << bwp`; fullsnes: banks `$44-$4F` are "mirrors" of the
+    /// entire 256KB) -- so BWPA values `$0A`-`$0F` (>= 256KB) protect everything, which is what
+    /// makes `SA1RamProtectionTest` TEST IDs 51-56 report area `$0F` on real hardware.
     pub fn is_bwram_write_protected(&self, linear_offset: usize) -> bool {
         let snes_write_enabled = self.sbwe & 0x80 != 0;
         let sa1_write_enabled = self.cbwe & 0x80 != 0;
-        !snes_write_enabled && !sa1_write_enabled && linear_offset < self.protected_bytes()
+        !snes_write_enabled
+            && !sa1_write_enabled
+            && (linear_offset & 0x3_FFFF) < self.protected_bytes()
     }
 }
 
@@ -221,14 +228,32 @@ pub fn decode_windowed_offset(addr: u32) -> Option<usize> {
     }
 }
 
-/// Decodes an address into a linear BW-RAM offset if it falls within the direct-access banks
-/// `$40-$4F` (fullsnes: "Entire 256Kbyte BW-RAM (mirrors in 44h-4Fh)" -- the mirroring itself is
-/// handled by the caller modulo-ing against the actual BW-RAM size).
+/// Decodes an address into a linear BW-RAM offset if it falls within the **SNES-side**
+/// direct-access banks `$40-$4F` (fullsnes: "Entire 256Kbyte BW-RAM (mirrors in 44h-4Fh)" -- the
+/// mirroring itself is handled by the caller modulo-ing against the actual BW-RAM size).
 pub fn decode_direct_offset(addr: u32) -> Option<usize> {
     let addr = addr & 0xFF_FFFF;
     let bank = ((addr >> 16) & 0xFF) as u8;
     let offset = (addr & 0xFFFF) as u16;
     if (0x40..=0x4F).contains(&bank) {
+        Some((bank - 0x40) as usize * 0x10000 + offset as usize)
+    } else {
+        None
+    }
+}
+
+/// Like [`decode_direct_offset`], but for the **SA-1 side**, whose direct-access window is twice
+/// as wide: banks `$40-$5F` (bsnes `SA1::read`/`write` dispatch: `40-5f:0000-ffff` routes to
+/// `bwram.readLinear`/`writeLinear`; banks `$60-$6F` are the separate bitmap view, out of scope).
+/// The absindx `SA1RamProtectionTest` BW-RAM mirroring group (TEST IDs 155-162) probes exactly
+/// this asymmetry: an SA-1-side write to `$500000` must land in BW-RAM (TEST 160's expected
+/// mirror mask includes the `$500000`/`$5C0000` bit), while the same SNES-side write must NOT
+/// (TEST 156 expects an all-zero mask).
+pub fn decode_sa1_direct_offset(addr: u32) -> Option<usize> {
+    let addr = addr & 0xFF_FFFF;
+    let bank = ((addr >> 16) & 0xFF) as u8;
+    let offset = (addr & 0xFFFF) as u16;
+    if (0x40..=0x5F).contains(&bank) {
         Some((bank - 0x40) as usize * 0x10000 + offset as usize)
     } else {
         None
@@ -303,6 +328,39 @@ mod tests {
         assert_eq!(decode_direct_offset(0x4F_FFFF), Some(0x0F_FFFF));
         assert_eq!(decode_direct_offset(0x3F_0000), None);
         assert_eq!(decode_direct_offset(0x50_0000), None);
+    }
+
+    #[test]
+    fn sa1_side_direct_banks_span_40_5f_while_snes_side_spans_40_4f() {
+        // The two sides' direct BW-RAM windows differ in width -- see
+        // `decode_sa1_direct_offset`'s doc comment for the bsnes/absindx derivation.
+        assert_eq!(decode_direct_offset(0x4F_FFFF), Some(0x0F_FFFF));
+        assert_eq!(decode_direct_offset(0x50_0000), None);
+        assert_eq!(decode_sa1_direct_offset(0x4F_FFFF), Some(0x0F_FFFF));
+        assert_eq!(decode_sa1_direct_offset(0x50_0000), Some(0x10_0000));
+        assert_eq!(decode_sa1_direct_offset(0x5F_FFFF), Some(0x1F_FFFF));
+        assert_eq!(decode_sa1_direct_offset(0x60_0000), None); // bitmap view, not linear
+        assert_eq!(decode_sa1_direct_offset(0x3F_0000), None);
+    }
+
+    #[test]
+    fn write_protection_comparator_folds_the_linear_offset_to_the_256kb_address_space() {
+        // bsnes `SA1::BWRAM::writeCPU`: `(address & 0x3ffff) < 0x100 << bwp` -- the comparator
+        // sees the linear offset folded to the 256KB BW-RAM address space (fullsnes: banks
+        // $44-$4F are "mirrors" of the entire 256KB). So with BWPA=$0A (protects all 256KB), a
+        // probe at bank $44 (linear $40000, folds to $0) is still protected -- absindx
+        // `SA1RamProtectionTest` TEST ID 51 relies on this to report area $0F.
+        let mut control = Sa1MemoryControl::new();
+        control.write(0x2228, 0x0A); // BWPA=$0A: protect 256 << $0A = all 256KB
+        assert!(control.is_bwram_write_protected(0x40000), "folds to $0");
+        assert!(control.is_bwram_write_protected(0x7FFFF), "folds to $3FFFF");
+
+        control.write(0x2228, 0x09); // BWPA=$09: protect first 128KB of the 256KB space
+        assert!(!control.is_bwram_write_protected(0x20000), "outside range");
+        assert!(
+            control.is_bwram_write_protected(0x40000),
+            "folds to $0, inside range"
+        );
     }
 
     #[test]
