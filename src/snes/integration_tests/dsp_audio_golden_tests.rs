@@ -243,6 +243,33 @@ fn write_brr_block(aram: &mut [u8], addr: usize, header: u8, data: [u8; 8]) {
     aram[addr + 1..addr + 9].copy_from_slice(&data);
 }
 
+/// Programs the globals shared by the golden fixtures: FLG $20 (running,
+/// unmuted, echo writes disabled), sample directory at $0000, and
+/// MVOL $60/$60. Echo/noise windows override FLG afterwards as needed.
+fn program_common_globals(rec: &mut DspGoldenRecorder) {
+    rec.write_reg(0x6C, 0x20); // FLG: no reset, unmuted, echo writes disabled
+    rec.write_reg(0x5D, 0x00); // DIR: directory at $0000
+    rec.write_reg(0x0C, 0x60); // MVOL L
+    rec.write_reg(0x1C, 0x60); // MVOL R
+}
+
+/// Programs one voice's volume, pitch, and source-number registers.
+fn program_voice(
+    rec: &mut DspGoldenRecorder,
+    voice: u8,
+    vol_l: u8,
+    vol_r: u8,
+    pitch: u16,
+    srcn: u8,
+) {
+    let base = voice << 4;
+    rec.write_reg(base, vol_l);
+    rec.write_reg(base + 1, vol_r);
+    rec.write_reg(base + 2, (pitch & 0xFF) as u8);
+    rec.write_reg(base + 3, (pitch >> 8) as u8);
+    rec.write_reg(base + 4, srcn);
+}
+
 /// BRR golden window (a): a six-block stream exercising filters 0-3,
 /// shifts 0/8/12, and the LOOP+END wrap back to the loop address.
 const BRR_DECODE_GOLDEN: GoldenAudioWindow = GoldenAudioWindow {
@@ -304,21 +331,70 @@ fn brr_decode_fixture(rec: &mut DspGoldenRecorder) {
         [0x60, 0x06, 0x60, 0x06, 0xA0, 0x0A, 0xA0, 0x0A],
     );
 
-    rec.write_reg(0x6C, 0x20); // FLG: no reset, unmuted, echo writes disabled
-    rec.write_reg(0x5D, 0x00); // DIR: directory at $0000
-    rec.write_reg(0x00, 0x50); // V0 VOLL
-    rec.write_reg(0x01, 0x50); // V0 VOLR
-    rec.write_reg(0x02, 0x00); // V0 pitch low
-    rec.write_reg(0x03, 0x10); // V0 pitch high ($1000 = 1.0)
-    rec.write_reg(0x04, 0x00); // V0 SRCN 0
+    program_common_globals(rec);
+    program_voice(rec, 0, 0x50, 0x50, 0x1000, 0x00);
     rec.write_reg(0x05, 0x8F); // V0 ADSR1: ADSR on, fastest attack
     rec.write_reg(0x06, 0xE0); // V0 ADSR2: SL 7, SR 0 (hold at sustain)
-    rec.write_reg(0x0C, 0x60); // MVOL L
-    rec.write_reg(0x1C, 0x60); // MVOL R
     rec.write_reg(0x4C, 0x01); // KON V0
 
     rec.run_discard(BRR_DECODE_GOLDEN.warmup_samples);
     rec.run_capture(BRR_DECODE_GOLDEN.window_samples);
+}
+
+/// ADSR golden window (b): attack -> decay -> sustain on a looping tone,
+/// then KOFF mid-window to capture the release ramp.
+const ADSR_ENVELOPE_GOLDEN: GoldenAudioWindow = GoldenAudioWindow {
+    name: "adsr_envelope_attack_decay_sustain_release",
+    sample_rate_hz: NATIVE_SAMPLE_RATE_HZ,
+    warmup_samples: 8,
+    window_samples: 768,
+    source: "synthetic two-block looping tone at ARAM $0200 (filter 0 shift 10, \
+             32-sample loop); V0 SRCN 0, pitch $1000, ADSR1 $FF (AR 15, DR 7), \
+             ADSR2 $5A (SL 2, SR 26), VOL $50/$50, MVOL $60/$60, FLG $20; \
+             KOFF written after 640 captured frames, release captured for 128",
+    approved_crc32: 0x1068_BDBC,
+    review_note: "approved by navigator 2026-07-11: WAV reviewed via waveform \
+                  plot and envelope-stage analysis (instant AR-15 attack, \
+                  exponential decay matching the spec ~502-frame time to SL, \
+                  sustain plateau 0.355 of peak vs 0.375 SL-2 prediction with \
+                  the SR-26 slope explaining the deficit, linear -8/sample \
+                  release reaching exact zero as predicted)",
+};
+
+/// Writes a simple 32-sample looping tone (two filter-0 shift-10 BRR blocks,
+/// ramp up then ramp down) at `start` for use as an envelope carrier.
+fn write_loop_tone(aram: &mut [u8], srcn: usize, start: u16) {
+    write_dir_entry(aram, srcn, start, start);
+    let addr = usize::from(start);
+    write_brr_block(
+        aram,
+        addr,
+        0xA0, // filter 0, shift 10: ramp up
+        [0x01, 0x23, 0x45, 0x67, 0x77, 0x77, 0x77, 0x77],
+    );
+    write_brr_block(
+        aram,
+        addr + 9,
+        0xA3, // filter 0, shift 10, LOOP+END: ramp back down
+        [0x77, 0x65, 0x43, 0x21, 0x0F, 0xED, 0xCB, 0xA9],
+    );
+}
+
+/// Programs the ADSR fixture: keyed-on looping tone, then KOFF between the
+/// two capture segments so the window covers all four envelope stages.
+fn adsr_envelope_fixture(rec: &mut DspGoldenRecorder) {
+    write_loop_tone(rec.aram_mut(), 0, 0x0200);
+
+    program_common_globals(rec);
+    program_voice(rec, 0, 0x50, 0x50, 0x1000, 0x00);
+    rec.write_reg(0x05, 0xFF); // V0 ADSR1: ADSR on, AR 15 (instant), DR 7
+    rec.write_reg(0x06, 0x5A); // V0 ADSR2: SL 2, SR 26
+    rec.write_reg(0x4C, 0x01); // KON V0
+
+    rec.run_discard(ADSR_ENVELOPE_GOLDEN.warmup_samples);
+    rec.run_capture(640); // instant attack, exponential decay to SL, sustain
+    rec.write_reg(0x5C, 0x01); // KOFF V0 -> release
+    rec.run_capture(128); // linear release ramp (-8/sample)
 }
 
 #[cfg(test)]
@@ -461,5 +537,10 @@ mod tests {
     fn given_brr_decode_filters_and_loop_fixture_when_capturing_window_then_crc_matches_approved_golden()
      {
         assert_golden_audio(&BRR_DECODE_GOLDEN, brr_decode_fixture);
+    }
+
+    #[test]
+    fn given_adsr_envelope_fixture_when_capturing_window_then_crc_matches_approved_golden() {
+        assert_golden_audio(&ADSR_ENVELOPE_GOLDEN, adsr_envelope_fixture);
     }
 }
