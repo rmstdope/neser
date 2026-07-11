@@ -295,6 +295,10 @@ pub struct SnesPpuState {
     pub cgram_address: u16,
     #[serde(default)]
     pub cgram_latch: u8,
+    /// Renderer's current CGRAM fetch cursor (mid-render CGRAM writes land here).
+    /// Defaults to 0 for states saved before it existed.
+    #[serde(default)]
+    pub cgram_render_index: u8,
     #[serde(default)]
     pub oam_address: u16,
     #[serde(default)]

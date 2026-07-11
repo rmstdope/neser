@@ -1,9 +1,9 @@
-//! Automates 25 of the 29 vendored undisbeliever/snes-test-roms hardware
+//! Automates 26 of the 29 vendored undisbeliever/snes-test-roms hardware
 //! ROMs (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`)
 //! that visually match Mesen2.
 //!
 //! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen.
-//! Nine of the 25 automated here demonstrate a real, documented
+//! Nine of the 26 automated here demonstrate a real, documented
 //! SNES hardware bug -- the "INIDISP D7 glitch" -- where writing `$2100`
 //! shortly after the CPU/HDMA data bus held a byte with bit 7 set can
 //! corrupt sprite rendering or briefly flip force-blank, on real 3-chip/
@@ -28,12 +28,11 @@
 //! checked reference emulator, not hardware accuracy -- see #2949 before
 //! treating a mismatch here as a regression.
 //!
-//! The other 4 ROMs are deliberately left un-automated: cross-checking
+//! The other 3 ROMs are deliberately left un-automated: cross-checking
 //! against Mesen2 exposed real NESER divergences, tracked as follow-up bugs
 //! rather than papered over with a golden that bakes in known-wrong
 //! behavior (see README-SNES.md for the full breakdown):
 //! - `hdma-2100-glitch-2ch-{0a,81}.sfc`, `hdma-21ff-2100-glitch.sfc` -- #2943
-//! - `inidisp_forgot_to_force_blank.sfc` -- #2944
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -45,7 +44,7 @@ const UNDISBELIEVER_ROOT: &str = "roms/snes/automated_tests/snes_test_roms/undis
 mod tests {
     use super::*;
 
-    /// All 25 ROMs here settle into their steady-state rendering well
+    /// All 26 ROMs here settle into their steady-state rendering well
     /// before frame 600 (matching the default budget used throughout
     /// blargg_apu_tests.rs / gilyon_*_tests.rs) and hold it indefinitely.
     ///
@@ -225,6 +224,19 @@ mod tests {
         inidisp_brightness_delay_matches_mesen2,
         "inidisp_brightness_delay.sfc",
         0xA6F2_AED7
+    );
+
+    // Demonstrates forgetting to force-blank before uploading to the PPU (#2944):
+    // VRAM writes outside VBlank/forced blank are dropped, OAM writes are
+    // redirected into the high table, and CGRAM writes land at the renderer's
+    // current palette fetch (entry 0 here -- the yellow), so the "clean" uploads
+    // never land and the initial VRAM garbage fill stays on screen as the noisy
+    // striped pattern. The frame-600 capture is pixel-identical to Mesen2's
+    // (0.00% diff, byte-for-byte).
+    undisbeliever_rom_test!(
+        inidisp_forgot_to_force_blank_matches_mesen2,
+        "inidisp_forgot_to_force_blank.sfc",
+        0xBB04_7582
     );
 
     // The 10 scpu-a-dma-bug-* ROMs (issue #2945) share one harness

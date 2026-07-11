@@ -45,10 +45,23 @@ impl Ppu {
         } else {
             self.framebuffer[base] = self.compute_pixel(x as u16, y as u16);
         }
+        // Mesen2's render pipeline ends every pixel chunk with `RenderBgColor`, which
+        // fetches the backdrop for any pixel the sub screen doesn't cover. With no
+        // sub-screen layers enabled that is every pixel, so the CGRAM render cursor
+        // ([`Ppu::cgram_render_index`]) parks on palette entry 0 after each dot. (With
+        // sub-screen layers enabled the cursor keeps the last real fetch instead --
+        // a per-pixel sub-coverage check isn't modeled here.)
+        if self.ts & 0x1F == 0 {
+            self.cgram_render_index.set(0);
+        }
     }
 
     /// The backdrop color (CGRAM entry 0) as a 15-bit BGR555 word.
+    ///
+    /// Records palette word 0 as the renderer's current fetch address, mirroring Mesen2's
+    /// `RenderBgColor` (backdrop pixels reset `InternalCgramAddress` to 0).
     pub(super) fn backdrop_color(&self) -> u16 {
+        self.cgram_render_index.set(0);
         let low = self.cgram[0] as u16;
         let high = self.cgram[1] as u16;
         (low | (high << 8)) & 0x7FFF

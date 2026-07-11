@@ -39,12 +39,18 @@ fn sa1_ram_protection_test_passes() {
 
 #[test]
 fn sa1_version_code_test_matches_approved_register_dump() {
+    // Golden re-approved for #2944: general-purpose DMA now advances the bus per
+    // transferred byte, so the ROM's SA-1 H/V counter latch happens at a later,
+    // hardware-plausible scan position. Verified pixel-level against the previously
+    // approved capture (reproduced bit-exactly by no-op'ing `dma_tick`): only the
+    // HCRL/HCRH/VCRL rows of the dump changed (H $00A2 -> $0145, V $3B -> $09);
+    // every other register value is identical.
     assert_rom_screen_crc(
         ROOT,
         "SA1VersionCodeTest.sfc",
         "sa1_absindx_tests",
         150,
-        0x4184_C2B6,
+        0x28BE_AB0E,
         RunConfig::new(400_000_000, 0),
     );
 }

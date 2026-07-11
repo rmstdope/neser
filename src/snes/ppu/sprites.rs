@@ -890,6 +890,7 @@ mod tests {
     fn range_over_flag_is_raised_at_oam_index_times_two_dot() {
         let mut ppu = Ppu::new();
         fill_in_range(&mut ppu, 40, 50); // 40 in range on line 50 -> 33rd is OBJ #32, dot 64
+        ppu.write_register(0x2100, 0x0F); // display on (evaluation skips forced blank)
         tick_dots(&mut ppu, 50 * 341 + 63); // scanline 50, dot 63 (just before)
         assert_eq!(
             stat77(&mut ppu) & 0x40,
@@ -904,6 +905,7 @@ mod tests {
     fn range_over_flag_stays_clear_with_32_or_fewer_objects() {
         let mut ppu = Ppu::new();
         fill_in_range(&mut ppu, 32, 50);
+        ppu.write_register(0x2100, 0x0F); // display on (evaluation skips forced blank)
         tick_dots(&mut ppu, 51 * 341);
         assert_eq!(
             stat77(&mut ppu) & 0x40,
@@ -920,6 +922,7 @@ mod tests {
             let y = if i < 5 { 50 } else { 224 }; // park at 224 (32px tall, no wrap into visible)
             set_obj(&mut ppu, i, 0, y, 0, 0, i < 5); // 5 large -> 40 tiles > 34
         }
+        ppu.write_register(0x2100, 0x0F); // display on (evaluation skips forced blank)
         // Time over for line 50 is applied at the start of display scanline 51 (H=0).
         tick_dots(&mut ppu, 50 * 341 + 200);
         assert_eq!(
@@ -939,6 +942,7 @@ mod tests {
     fn over_limit_flags_clear_at_end_of_vblank() {
         let mut ppu = Ppu::new();
         fill_in_range(&mut ppu, 40, 50);
+        ppu.write_register(0x2100, 0x0F); // display on (evaluation skips forced blank)
         tick_dots(&mut ppu, 50 * 341 + 100); // raise range over
         assert_eq!(stat77(&mut ppu) & 0x40, 0x40);
         // Advance to scanline 0 of the next frame (end of VBlank) -> flags cleared.
@@ -955,6 +959,7 @@ mod tests {
     fn over_limit_flags_are_not_cleared_during_forced_blank() {
         let mut ppu = Ppu::new();
         fill_in_range(&mut ppu, 40, 50);
+        ppu.write_register(0x2100, 0x0F); // display on (evaluation skips forced blank)
         tick_dots(&mut ppu, 50 * 341 + 100);
         assert_eq!(stat77(&mut ppu) & 0x40, 0x40);
         ppu.write_register(0x2100, 0x80); // forced blank
@@ -1014,11 +1019,16 @@ mod tests {
         // Enter visible line 0 and render through x=4.
         tick_dots(&mut ppu, 341 + 26);
 
-        // Mid-scanline OAMDATA write: move OBJ0 from x=0 to x=40.
+        // Mid-scanline OAMDATA write: move OBJ0 from x=0 to x=40. During active display
+        // OAM low-table writes are redirected to the high table, so briefly enter forced
+        // blank around the write, the way real games do (Mario Kart changes OAM mid-screen
+        // via forced blank).
+        ppu.write_register(0x2100, 0x80);
         ppu.write_register(0x2102, 0x00);
         ppu.write_register(0x2103, 0x00);
         ppu.write_register(0x2104, 40);
         ppu.write_register(0x2104, 0);
+        ppu.write_register(0x2100, 0x0F);
 
         // Render past x=40 on the same scanline.
         tick_dots(&mut ppu, 40);

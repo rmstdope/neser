@@ -7,6 +7,12 @@ pub trait DmaABus {
     fn dma_read_a_bus(&mut self, addr: u32, open_bus: u8) -> u8;
     fn dma_write_a_bus(&mut self, addr: u32, value: u8);
     fn dma_write_b_bus(&mut self, addr: u8, value: u8);
+    /// Advance the rest of the system (PPU/APU/input) by `master_clocks` while the DMA
+    /// controller owns the bus. Real hardware keeps rendering during a general-purpose DMA
+    /// (Mesen2 `SnesDmaController` advances the master clock per transferred byte), so B-bus
+    /// writes must land at the scan position they really occur at. Default no-op for test
+    /// doubles that don't model time.
+    fn dma_tick(&mut self, _master_clocks: u64) {}
 }
 
 #[derive(Clone)]
@@ -99,6 +105,7 @@ impl DmaController {
         }
 
         let mut ticks = 16u64;
+        abus.dma_tick(16);
         let mut open_bus = seed_open_bus;
 
         for channel in 0u8..8 {
@@ -107,6 +114,7 @@ impl DmaController {
             }
 
             ticks += 8;
+            abus.dma_tick(8);
             ticks += self.run_channel(channel, abus, &mut open_bus);
         }
 
@@ -254,6 +262,10 @@ impl DmaController {
             let a_addr = ((bank as u32) << 16) | ((a_high as u32) << 8) | (a_low as u32);
             let b_addr = bbad.wrapping_add(pattern[i % pattern.len()]);
 
+            // Each byte occupies an 8-master-clock bus slot: the read fills the first
+            // half, the write lands at the slot's midpoint (Mesen2 `CopyDmaByte`, where
+            // ReadDma/WriteDma each advance 4 clocks).
+            abus.dma_tick(4);
             if direction_b_to_a {
                 let value = self.read_b_bus(b_addr);
                 *open_bus = value;
@@ -264,6 +276,7 @@ impl DmaController {
                 self.write_b_bus(b_addr, value);
                 abus.dma_write_b_bus(b_addr, value);
             }
+            abus.dma_tick(4);
 
             ticks += 8;
             count = count.wrapping_sub(1);

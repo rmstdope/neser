@@ -173,6 +173,10 @@ pub struct Ppu {
     vram_prefetch: u16,
     cgram_address: u16,
     cgram_latch: u8,
+    /// Palette word index of the renderer's most recent CGRAM fetch. CPU/DMA CGRAM writes
+    /// during active rendering land here instead of at the CPU-facing address (Mesen2's
+    /// `InternalCgramAddress`). A `Cell` because color fetches happen on `&self` render paths.
+    cgram_render_index: std::cell::Cell<u8>,
     oam_address: u16,
     oam_latch: u8,
     /// Latched horizontal counter (OPHCT, $213C).
@@ -342,7 +346,10 @@ impl Ppu {
             dram_refresh_position: DRAM_REFRESH_BASE_POSITION,
             hdma_init_position: HDMA_INIT_BASE_POSITION,
             line_timing_profile: PpuLineTimingProfile::Normal,
-            inidisp: 0,
+            // Power-on state is force-blanked (Mesen2 `SnesPpu::PowerOn` and ares
+            // `PPU::power` both start with forced blank set); this also keeps VRAM/CGRAM/OAM
+            // CPU-writable from reset until a game clears INIDISP.7.
+            inidisp: 0x80,
             nmi_enable: false,
             nmi_flag: false,
             vblank_active: false,
@@ -354,6 +361,7 @@ impl Ppu {
             vram_prefetch: 0,
             cgram_address: 0,
             cgram_latch: 0,
+            cgram_render_index: std::cell::Cell::new(0),
             oam_address: 0,
             oam_latch: 0,
             ophct_latch: 0,

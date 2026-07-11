@@ -5,7 +5,10 @@
 //! `$4212` HVBJOY). The bus passes the bare offset to [`Ppu::write_register`] /
 //! [`Ppu::read_register`].
 
-use super::{CGRAM_SIZE, CPU_VERSION, PPU1_VERSION, PPU2_VERSION, Ppu, VRAM_SIZE};
+use super::{
+    CGRAM_SIZE, CPU_VERSION, HBLANK_START_DOT, PPU1_VERSION, PPU2_VERSION, Ppu, VISIBLE_DOT_START,
+    VRAM_SIZE,
+};
 use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
 
@@ -171,16 +174,23 @@ impl Ppu {
                 self.vram_prefetch = self.read_vram_word(self.vram_address);
             }
             // VMDATAL / VMDATAH: VRAM data write (low/high byte of the addressed word).
+            // Outside VBlank/forced blank the data is silently dropped (fullsnes: "All video
+            // memory can be accessed only during V-Blank, or Forced Blank"), but the VRAM
+            // address still increments (Mesen2 `SnesPpu.cpp` $2118/$2119).
             0x2118 => {
-                let index = self.vram_index();
-                self.vram[index] = value;
+                if self.vram_cpu_access_allowed() {
+                    let index = self.vram_index();
+                    self.vram[index] = value;
+                }
                 if !self.vram_increment_after_high {
                     self.increment_vram_address();
                 }
             }
             0x2119 => {
-                let index = self.vram_index() | 1;
-                self.vram[index] = value;
+                if self.vram_cpu_access_allowed() {
+                    let index = self.vram_index() | 1;
+                    self.vram[index] = value;
+                }
                 if self.vram_increment_after_high {
                     self.increment_vram_address();
                 }
@@ -189,13 +199,23 @@ impl Ppu {
             0x2121 => self.cgram_address = (value as u16) << 1,
             // CGDATA: CGRAM data write. Even byte latches the low byte; the odd byte commits the
             // 15-bit word (high byte keeps only bits 0-6). The address increments after each write.
+            // Outside its access window (VBlank, forced blank, scanline 0, or HBlank) the
+            // commit is redirected to the palette entry the renderer is currently fetching
+            // ([`Ppu::cgram_render_index`]), corrupting the on-screen palette instead of
+            // landing at the CPU address (Mesen2 `SnesPpu.cpp` $2122, `InternalCgramAddress`).
+            // The latch and address increment happen either way.
             0x2122 => {
                 let index = self.cgram_index();
                 if index & 1 == 0 {
                     self.cgram_latch = value;
                 } else {
-                    self.cgram[index - 1] = self.cgram_latch;
-                    self.cgram[index] = value & 0x7F;
+                    let commit = if self.cgram_cpu_access_allowed() {
+                        index
+                    } else {
+                        (((self.cgram_render_index.get() as usize) << 1) | 1) & (CGRAM_SIZE - 1)
+                    };
+                    self.cgram[commit - 1] = self.cgram_latch;
+                    self.cgram[commit] = value & 0x7F;
                 }
                 self.increment_cgram_address();
             }
@@ -217,9 +237,19 @@ impl Ppu {
             // OAMDATA: OAM data write. In the low table ($000-$1FF) an even byte latches and the
             // odd byte commits the word; the high table ($200-$21F) writes each byte directly.
             // The address increments after each write.
+            // During active rendering the sprite unit's internal read cursor overrides the
+            // CPU-facing address and the write is redirected into the high table at
+            // 0x200 | ((addr & 0x1F0) >> 4) (Mesen2 `SnesPpu.cpp` $2104, needed for
+            // Uniracers). Mesen2 derives the cursor from its per-dot sprite evaluation; we
+            // approximate with the CPU-facing address, which reproduces the essential
+            // behavior: the low table is protected and the high table gets corrupted.
             0x2104 => {
                 let addr = (self.oam_address as usize) & 0x03FF;
-                if addr < 0x200 {
+                if self.oam_rendering_active() {
+                    let redirected = 0x200 | ((addr & 0x1F0) >> 4);
+                    self.oam_latch = value;
+                    self.oam[redirected] = value;
+                } else if addr < 0x200 {
                     if addr & 1 == 0 {
                         self.oam_latch = value;
                     } else {
@@ -399,6 +429,35 @@ impl Ppu {
             );
         }
         value
+    }
+
+    /// True when INIDISP ($2100) bit 7 force-blanks the display.
+    fn forced_blank_enabled(&self) -> bool {
+        self.inidisp & 0x80 != 0
+    }
+
+    /// CPU writes to VRAM are honored only during VBlank or forced blank (fullsnes: "All
+    /// video memory can be accessed only during V-Blank, or Forced Blank"; Mesen2
+    /// `SnesPpu::CanAccessVram`).
+    fn vram_cpu_access_allowed(&self) -> bool {
+        self.position.scanline >= self.vblank_start_line() || self.forced_blank_enabled()
+    }
+
+    /// CGRAM is more permissive than VRAM: also writable on scanline 0 and during the
+    /// current scanline's HBlank, i.e. outside the active-fetch dots 22..274 (Mesen2
+    /// `SnesPpu::CanAccessCgram`, hclock < 88 || >= 1096; fullsnes notes CGRAM writes work
+    /// "during certain timespots in the Hblank-period").
+    fn cgram_cpu_access_allowed(&self) -> bool {
+        self.vram_cpu_access_allowed()
+            || self.position.scanline == 0
+            || self.position.dot < VISIBLE_DOT_START
+            || self.position.dot >= HBLANK_START_DOT
+    }
+
+    /// True while the sprite unit owns OAM: display enabled and before the first VBlank
+    /// scanline (Mesen2 `SnesPpu.cpp` $2104 redirect condition).
+    fn oam_rendering_active(&self) -> bool {
+        !self.forced_blank_enabled() && self.position.scanline < self.vblank_start_line()
     }
 
     fn vram_index(&self) -> usize {
@@ -618,6 +677,202 @@ mod tests {
         ppu.write_register(0x2104, 0x56);
 
         assert_eq!(ppu.oam_byte(0x200), 0x56);
+    }
+
+    #[test]
+    fn ppu_powers_on_with_forced_blank_enabled() {
+        // Real hardware powers on force-blanked (both Mesen2 `SnesPpu::PowerOn` and ares
+        // `PPU::power` set forced blank at init); games must clear INIDISP.7 themselves.
+        let ppu = Ppu::new();
+        assert_eq!(ppu.inidisp & 0x80, 0x80);
+    }
+
+    #[test]
+    fn vram_writes_during_active_display_are_dropped_but_address_still_increments() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F); // display enabled, full brightness
+        ppu.position.scanline = 40;
+        ppu.position.dot = 100;
+
+        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x10);
+        ppu.write_register(0x2118, 0xAA);
+        ppu.write_register(0x2119, 0xBB);
+
+        // The data is silently dropped...
+        assert_eq!(ppu.vram_byte(0x2000), 0x00);
+        assert_eq!(ppu.vram_byte(0x2001), 0x00);
+
+        // ...but the VRAM address still increments: re-entering forced blank, the
+        // next word write lands one word past the dropped one.
+        ppu.write_register(0x2100, 0x80);
+        ppu.write_register(0x2118, 0x11);
+        ppu.write_register(0x2119, 0x22);
+        assert_eq!(ppu.vram_byte(0x2002), 0x11);
+        assert_eq!(ppu.vram_byte(0x2003), 0x22);
+    }
+
+    #[test]
+    fn vram_writes_during_vblank_are_stored_with_display_enabled() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F);
+        ppu.position.scanline = 225; // first VBlank scanline (224-line mode)
+        ppu.position.dot = 100;
+
+        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x10);
+        ppu.write_register(0x2118, 0xAA);
+        ppu.write_register(0x2119, 0xBB);
+
+        assert_eq!(ppu.vram_byte(0x2000), 0xAA);
+        assert_eq!(ppu.vram_byte(0x2001), 0xBB);
+    }
+
+    #[test]
+    fn vram_writes_on_scanline_zero_are_dropped_when_display_enabled() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F);
+        ppu.position.scanline = 0;
+        ppu.position.dot = 100;
+
+        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x10);
+        ppu.write_register(0x2118, 0xAA);
+        ppu.write_register(0x2119, 0xBB);
+
+        assert_eq!(ppu.vram_byte(0x2000), 0x00);
+        assert_eq!(ppu.vram_byte(0x2001), 0x00);
+    }
+
+    #[test]
+    fn cgram_writes_during_active_rendering_land_at_the_renderer_fetch_address() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F);
+        ppu.position.scanline = 40;
+        ppu.position.dot = 100; // inside the active-fetch window (dots 22..274)
+        ppu.cgram_render_index.set(0x05); // renderer last fetched palette word 5
+
+        ppu.write_register(0x2121, 0x10);
+        ppu.write_register(0x2122, 0x34);
+        ppu.write_register(0x2122, 0x12);
+
+        // The CPU-addressed word is untouched; the commit is redirected to the
+        // palette entry the renderer is currently reading (word 5, bytes 0x0A/0x0B).
+        assert_eq!(ppu.cgram_byte(0x20), 0x00);
+        assert_eq!(ppu.cgram_byte(0x21), 0x00);
+        assert_eq!(ppu.cgram_byte(0x0A), 0x34);
+        assert_eq!(ppu.cgram_byte(0x0B), 0x12);
+    }
+
+    #[test]
+    fn cgram_render_index_tracks_the_last_palette_fetch() {
+        let ppu = Ppu::new();
+        ppu.cgram_render_index.set(0x00);
+        let _ = ppu.cgram_color(0x42);
+        assert_eq!(ppu.cgram_render_index.get(), 0x42);
+    }
+
+    #[test]
+    fn cgram_render_index_parks_on_the_backdrop_when_the_sub_screen_is_empty() {
+        // Mesen2 ends every rendered pixel chunk with `RenderBgColor`, which fetches
+        // the backdrop for sub-screen-empty pixels; with no sub-screen layers enabled
+        // the render cursor therefore always parks on palette entry 0.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F); // display on
+        ppu.write_register(0x212D, 0x00); // no sub-screen layers
+        ppu.cgram_render_index.set(0x42);
+
+        // Tick through one visible dot so render_dot runs.
+        ppu.position.scanline = 40;
+        ppu.position.dot = 100;
+        for _ in 0..4 {
+            ppu.tick();
+        }
+
+        assert_eq!(ppu.cgram_render_index.get(), 0x00);
+    }
+
+    #[test]
+    fn cgram_writes_during_hblank_are_stored() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F);
+        ppu.position.scanline = 40;
+        ppu.position.dot = 280; // HBlank (>= dot 274)
+
+        ppu.write_register(0x2121, 0x10);
+        ppu.write_register(0x2122, 0x34);
+        ppu.write_register(0x2122, 0x12);
+
+        assert_eq!(ppu.cgram_byte(0x20), 0x34);
+        assert_eq!(ppu.cgram_byte(0x21), 0x12);
+    }
+
+    #[test]
+    fn cgram_writes_before_the_active_fetch_window_are_stored() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F);
+        ppu.position.scanline = 40;
+        ppu.position.dot = 10; // before the active-fetch window (< dot 22)
+
+        ppu.write_register(0x2121, 0x10);
+        ppu.write_register(0x2122, 0x34);
+        ppu.write_register(0x2122, 0x12);
+
+        assert_eq!(ppu.cgram_byte(0x20), 0x34);
+        assert_eq!(ppu.cgram_byte(0x21), 0x12);
+    }
+
+    #[test]
+    fn cgram_writes_on_scanline_zero_are_stored() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F);
+        ppu.position.scanline = 0;
+        ppu.position.dot = 100;
+
+        ppu.write_register(0x2121, 0x10);
+        ppu.write_register(0x2122, 0x34);
+        ppu.write_register(0x2122, 0x12);
+
+        assert_eq!(ppu.cgram_byte(0x20), 0x34);
+        assert_eq!(ppu.cgram_byte(0x21), 0x12);
+    }
+
+    #[test]
+    fn oam_writes_during_active_rendering_are_redirected_to_the_high_table() {
+        let mut ppu = Ppu::new();
+        // CPU-facing OAM address: word 0x20 -> byte address 0x40.
+        ppu.write_register(0x2102, 0x20);
+        ppu.write_register(0x2103, 0x00);
+        ppu.write_register(0x2100, 0x0F);
+        ppu.position.scanline = 40;
+        ppu.position.dot = 100;
+
+        ppu.write_register(0x2104, 0x9A);
+
+        // The low table is untouched; the write lands in the high table at
+        // 0x200 | ((0x40 & 0x1F0) >> 4) = 0x204.
+        assert_eq!(ppu.oam_byte(0x40), 0x00);
+        assert_eq!(ppu.oam_byte(0x41), 0x00);
+        assert_eq!(ppu.oam_byte(0x204), 0x9A);
+    }
+
+    #[test]
+    fn oam_writes_during_vblank_commit_normally_with_display_enabled() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2102, 0x20);
+        ppu.write_register(0x2103, 0x00);
+        ppu.write_register(0x2100, 0x0F);
+        ppu.position.scanline = 225;
+        ppu.position.dot = 100;
+
+        ppu.write_register(0x2104, 0x9A);
+        ppu.write_register(0x2104, 0xBC);
+
+        assert_eq!(ppu.oam_byte(0x40), 0x9A);
+        assert_eq!(ppu.oam_byte(0x41), 0xBC);
     }
 
     #[test]
