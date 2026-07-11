@@ -397,6 +397,52 @@ fn adsr_envelope_fixture(rec: &mut DspGoldenRecorder) {
     rec.run_capture(128); // linear release ramp (-8/sample)
 }
 
+/// GAIN golden window (c): four voices on the shared loop tone at distinct
+/// pitches, one GAIN mode each; halfway through, the ramp voices switch to
+/// their decrease modes and the direct voice drops to level zero.
+const GAIN_MODES_GOLDEN: GoldenAudioWindow = GoldenAudioWindow {
+    name: "gain_modes_direct_and_ramps",
+    sample_rate_hz: NATIVE_SAMPLE_RATE_HZ,
+    warmup_samples: 8,
+    window_samples: 192,
+    source: "shared two-block loop tone at ARAM $0200; V0-V3 SRCN 0 at pitches \
+             $0800/$0C00/$1000/$1400, ADSR off, VOL $50/$50, MVOL $60/$60, \
+             FLG $20; GAIN V0 $7F direct, V1 $DF linear inc r31, V2 $FF bent \
+             inc r31, V3 $7F direct; after 96 captured frames V1 -> $9F linear \
+             dec, V2 -> $BF exp dec, V3 -> $00 direct zero",
+    approved_crc32: 0xDAC1_CB47,
+    review_note: "approved by navigator 2026-07-12: solo-voice diagnostic \
+                  captures verified each mode independently (direct constant, \
+                  linear ramp full at ~64 frames and back to zero at ~160, \
+                  bent ramp with the $600 knee, exponential-decrease tail, \
+                  instant direct-zero cut); the golden is their linear mix \
+                  with no clamping",
+};
+
+/// Programs the GAIN fixture: four keyed-on voices with per-voice GAIN
+/// modes, switching to the decrease modes between the capture segments.
+fn gain_modes_fixture(rec: &mut DspGoldenRecorder) {
+    write_loop_tone(rec.aram_mut(), 0, 0x0200);
+
+    program_common_globals(rec);
+    for (voice, pitch) in [(0u8, 0x0800u16), (1, 0x0C00), (2, 0x1000), (3, 0x1400)] {
+        program_voice(rec, voice, 0x50, 0x50, pitch, 0x00);
+        rec.write_reg((voice << 4) | 0x05, 0x00); // ADSR off -> GAIN mode
+    }
+    rec.write_reg(0x07, 0x7F); // V0 GAIN: direct, max level
+    rec.write_reg(0x17, 0xDF); // V1 GAIN: linear increase, rate 31
+    rec.write_reg(0x27, 0xFF); // V2 GAIN: bent increase, rate 31
+    rec.write_reg(0x37, 0x7F); // V3 GAIN: direct, max level (switched later)
+    rec.write_reg(0x4C, 0x0F); // KON V0-V3
+
+    rec.run_discard(GAIN_MODES_GOLDEN.warmup_samples);
+    rec.run_capture(96); // direct level + linear/bent increase ramps
+    rec.write_reg(0x17, 0x9F); // V1 GAIN: linear decrease, rate 31
+    rec.write_reg(0x27, 0xBF); // V2 GAIN: exponential decrease, rate 31
+    rec.write_reg(0x37, 0x00); // V3 GAIN: direct, level 0
+    rec.run_capture(96); // decrease ramps + direct drop to silence
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,5 +588,10 @@ mod tests {
     #[test]
     fn given_adsr_envelope_fixture_when_capturing_window_then_crc_matches_approved_golden() {
         assert_golden_audio(&ADSR_ENVELOPE_GOLDEN, adsr_envelope_fixture);
+    }
+
+    #[test]
+    fn given_gain_modes_fixture_when_capturing_window_then_crc_matches_approved_golden() {
+        assert_golden_audio(&GAIN_MODES_GOLDEN, gain_modes_fixture);
     }
 }
