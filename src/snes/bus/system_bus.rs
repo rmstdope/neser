@@ -1138,10 +1138,13 @@ impl DmaABus for SnesSystemBus {
 
     fn dma_tick(&mut self, master_clocks: u64) {
         // Advance the PPU/APU/input while the DMA controller owns the bus. HDMA
-        // triggers and the DRAM-refresh stall are deliberately not processed here:
-        // `self.dma` is `mem::take`n during a transfer, so `check_hdma_triggers`
-        // would operate on an empty controller; a refresh point crossed during DMA
-        // is picked up by the first normal `tick()` afterwards.
+        // triggers are deliberately not processed here: `self.dma` is `mem::take`n
+        // during a transfer, so `check_hdma_triggers` would operate on an empty
+        // controller (HDMA-during-DMA remains unmodeled, as before). The DRAM-refresh
+        // stall is also not paid here yet: Mesen2 does process it mid-transfer (its
+        // DMA clocks through `Exec()`), but enabling it shifts SNES<->SA-1 phase
+        // alignment in a way that trips a latent handshake bug (absindx
+        // SA1RamProtectionTest TEST ID 160 regresses from Passed) -- deferred to #2985.
         for _ in 0..master_clocks {
             self.tick_one_master_clock();
         }

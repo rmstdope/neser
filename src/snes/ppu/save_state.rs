@@ -36,6 +36,7 @@ impl Ppu {
             vram_prefetch: self.vram_prefetch,
             cgram_address: self.cgram_address,
             cgram_latch: self.cgram_latch,
+            cgram_render_index: self.cgram_render_index.get(),
             oam_address: self.oam_address,
             oam_latch: self.oam_latch,
             ophct_latch: self.ophct_latch,
@@ -131,6 +132,7 @@ impl Ppu {
         self.vram_prefetch = state.vram_prefetch;
         self.cgram_address = state.cgram_address;
         self.cgram_latch = state.cgram_latch;
+        self.cgram_render_index.set(state.cgram_render_index);
         self.oam_address = state.oam_address;
         self.oam_latch = state.oam_latch;
         self.ophct_latch = state.ophct_latch;
@@ -242,6 +244,19 @@ fn restore_memory(dst: &mut [u8], src: &[u8], expected: usize, name: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::super::{Ppu, PpuLineTimingProfile};
+
+    #[test]
+    fn save_state_round_trips_the_cgram_render_index() {
+        // The CGRAM render cursor decides where mid-render CGRAM writes land, so a
+        // state saved mid-frame must restore it for deterministic resume.
+        let ppu = Ppu::new();
+        ppu.cgram_render_index.set(0x42);
+        let snapshot = ppu.capture_state();
+
+        let mut restored = Ppu::new();
+        restored.restore_state(&snapshot).expect("restore");
+        assert_eq!(restored.cgram_render_index.get(), 0x42);
+    }
 
     #[test]
     fn capture_restore_round_trips_ppu_state() {
