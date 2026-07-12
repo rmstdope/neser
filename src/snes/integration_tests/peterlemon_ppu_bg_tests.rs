@@ -22,7 +22,9 @@
 //! (content matches at a (30,30) px wrap shift; Mesen2 advances the scroll
 //! every second frame while NESER advances every frame) -- tracked as #2990.
 
-use super::rom_runner::{RunConfig, assert_rom_screen_crc};
+use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
+use std::fs;
+use std::path::Path;
 
 const PETERLEMON_PPU_ROOT: &str = "roms/snes/automated_tests/snes_test_roms/PeterLemon";
 
@@ -34,14 +36,32 @@ mod tests {
     /// upload, then a static screen forever); each sampled frame is the probed
     /// settle frame plus a 60-frame margin. The 400M tick budget matches the
     /// other screen-CRC suites.
+    ///
+    /// Deliberately does not use `rom_runner::assert_rom_screen_crc`: its
+    /// panic message says "expected screen-CRC PASS", which would be
+    /// misleading here -- these demos draw no PASS/FAIL text, so a mismatch
+    /// means the approved golden screen changed, not that a "test" failed.
     fn run_ppu_bg_screen_crc(file: &str, frames: u32, expected_crc: u32) {
-        assert_rom_screen_crc(
-            PETERLEMON_PPU_ROOT,
+        let path = Path::new(PETERLEMON_PPU_ROOT).join(file);
+        let rom = fs::read(&path)
+            .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
+        let result = run_rom_with_oracle(
+            &rom,
             file,
             "peterlemon_ppu_bg_tests",
-            frames,
-            expected_crc,
             RunConfig::new(400_000_000, 0),
+            RunOracle::ScreenCrc {
+                frames,
+                expected_crc,
+            },
+        );
+        assert_eq!(
+            result.screen_crc32, expected_crc,
+            "{file}: rendered screen at frame {frames} no longer matches the \
+             Mesen2- and upstream-screenshot-approved golden CRC (got \
+             0x{:08X}); if this is an intentional rendering change, re-approve \
+             the golden per README-SNES.md",
+            result.screen_crc32
         );
     }
 
