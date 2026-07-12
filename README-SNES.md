@@ -93,8 +93,24 @@ Test suites:
   (`roms/snes/automated_tests/blargg_apu/`).
 - `gilyon_cpu_tests.rs` / `gilyon_spc_tests.rs` -- 65816 and SPC-700 CPU test
   ROMs (`roms/snes/automated_tests/snes_test_roms/gilyon/`).
+- `peterlemon_cpu_tests.rs` / `peterlemon_spc_tests.rs` -- PeterLemon (krom)
+  per-opcode-group 65816 and SPC-700 test ROMs
+  (`roms/snes/automated_tests/snes_test_roms/PeterLemon/SNES-CPUTest-*/`).
+- `peterlemon_ppu_bg_tests.rs` -- PeterLemon basic PPU BG demos: 2/4/8bpp
+  tile decoding, BG1-BG4 tilemaps, all four tilemap screen sizes, tile
+  flip, backdrop and palettes
+  (`roms/snes/automated_tests/snes_test_roms/PeterLemon/SNES-PPU-*/`).
+  11 of 12 automated; `8x8BGMap8BPP32x32.sfc` is excluded pending the
+  animation frame-phase divergence tracked in #2990.
 - `undisbeliever_tests.rs` -- hardware-glitch/timing-hammer ROMs
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`).
+- `undisbeliever_ppu_bg_tests.rs` -- VMAIN/VRAM-increment and basic BG ROMs
+  built from the undisbeliever source mirror
+  (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-bg/`, see its
+  README for the build procedure). 8 of 18 automated; the 6
+  `*-with-remapping` ROMs are excluded pending VMAIN address remapping
+  (#2989) and the 3 scrolling ROMs plus `textbuffer-hello-world.sfc` pending
+  the animation frame-phase divergence (#2990).
 - `hblank_dma_vram_tests.rs` -- HDMA-to-VRAM timing ROMs
   (`roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram/`).
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs

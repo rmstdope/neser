@@ -143,6 +143,90 @@
       ]
     },
     {
+      "id": "snes-tests-peterlemon-cputest-cpu",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/PeterLemon/SNES",
+        "ref": "master (git subtree mirror of CPUTest/CPU under PeterLemon/SNES-CPUTest-CPU)"
+      },
+      "license": "unknown",
+      "oracle_type": "screen_crc",
+      "notes": "PeterLemon (krom) 65816 CPU test ROMs, vendored as a git-subtree mirror with prebuilt .sfc binaries and upstream reference screenshots (issue #2976). The upstream repository has no license file; the author distributes prebuilt binaries in-repo. Each ROM draws one result page per opcode/addressing-mode group and freezes; goldens were probed to their settle frame and approved after confirming all rows PASS. Run by snes::integration_tests::peterlemon_cpu_tests with the screen-CRC oracle, one test per ROM. This entry backfills provenance for a suite automated before manifest coverage was enforced (added with #2878).",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/PeterLemon/SNES-CPUTest-CPU",
+          "refresh_command": "roms/snes/automated_tests/snes_test_roms/PeterLemon/update-SNES-CPUTest-CPU",
+          "notes": "Prebuilt per-opcode-group .sfc ROMs plus sources and upstream reference screenshots."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-peterlemon-cputest-spc700",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/PeterLemon/SNES",
+        "ref": "master (git subtree mirror of CPUTest/SPC700 under PeterLemon/SNES-CPUTest-SPC700)"
+      },
+      "license": "unknown",
+      "oracle_type": "screen_crc",
+      "notes": "PeterLemon (krom) SPC700 test ROMs, vendored as a git-subtree mirror with prebuilt binaries (issue #2976). The upstream repository has no license file. Verified like the CPU suite; run by snes::integration_tests::peterlemon_spc_tests with the screen-CRC oracle. This entry backfills provenance for a suite automated before manifest coverage was enforced (added with #2878).",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/PeterLemon/SNES-CPUTest-SPC700",
+          "refresh_command": "roms/snes/automated_tests/snes_test_roms/PeterLemon/update-SNES-CPUTest-SPC700",
+          "notes": "Prebuilt per-opcode-group ROMs plus sources."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-peterlemon-ppu-bg",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/PeterLemon/SNES",
+        "ref": "master (git subtree mirrors of PPU/BGMAP, PPU/GreenSpace and PPU/Rings under PeterLemon/SNES-PPU-*)"
+      },
+      "license": "unknown",
+      "oracle_type": "screen_crc",
+      "notes": "PeterLemon (krom) basic PPU BG demos: 2bpp 32x32 tilemaps on BG1-BG4, 4bpp 32x32, 8bpp at all four tilemap screen sizes, tilemap H/V flip, backdrop/CGRAM smoke test (GreenSpace) and a palette demo (Rings). The upstream repository has no license file; prebuilt binaries and reference screenshots are distributed in-repo. 11 of the 12 vendored ROMs are automated (issue #2878): each golden was probed to its settle frame (CRC stable >= 600 consecutive frames, sampled at settle + 60) and pixel-diffed against a Mesen2 headless capture at the same frame -- all 11 match exactly, and the 8 demos shipping upstream reference screenshots also match those pixel-for-pixel. 8x8BGMap8BPP32x32.sfc (endless diagonal scroll) is committed but not automated: NESER's animation phase drifts from Mesen2 (issue #2990). Run by snes::integration_tests::peterlemon_ppu_bg_tests, one test per ROM.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/PeterLemon/SNES-PPU-BGMAP",
+          "refresh_command": "roms/snes/automated_tests/snes_test_roms/PeterLemon/update-SNES-PPU-BGMAP",
+          "notes": "BGMAP tilemap demos (prebuilt .sfc, sources, reference screenshots). GreenSpace and Rings live in sibling mirrors PeterLemon/SNES-PPU-GreenSpace and PeterLemon/SNES-PPU-Rings with their own update scripts (update-SNES-PPU-GreenSpace, update-SNES-PPU-Rings); one manifest entry covers all three mirrors since they form one suite."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-undisbeliever-ppu-bg",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/undisbeliever/snes-test-roms",
+        "ref": "ac6ef8006809c0ff5dabc8ff137a4623967697fe"
+      },
+      "license": "zlib",
+      "oracle_type": "screen_crc",
+      "notes": "undisbeliever (Marcus Rowe) basic PPU BG / VMAIN test ROMs: VRAM increment and VMAIN address remapping at 1/2/4/8bpp, byte- vs word-increment uploads, BG scroll demos, plain non-DMA VRAM writes and a text tilemap. Upstream publishes no prebuilt release containing these, so the 18 .sfc files were built once locally from the vendored source mirror (undisbeliever-inidisp/sources at the ref above) with bass-untech and committed; the folder README documents the exact build procedure including a clang argument-evaluation-order patch for bass-untech that does not affect assembled output. 8 of 18 are automated (issue #2878) with goldens probed to their settle frame and pixel-diffed against Mesen2 headless captures -- all 8 match exactly. The other 10 are committed but deliberately not automated pending real NESER divergences found during baselining: the 6 *-with-remapping ROMs (issue #2989, VMAIN $2115 bits 2-3 not implemented) and the 3 scrolling ROMs plus textbuffer-hello-world.sfc (issue #2990, animation frame-phase drift vs Mesen2). Run by snes::integration_tests::undisbeliever_ppu_bg_tests, one test per ROM.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-bg",
+          "refresh_command": null,
+          "notes": "18 locally-built .sfc ROMs plus LICENSE, build README and the bass-untech clang patch. Rebuild procedure is manual (see the folder README); refresh_command is null because building requires a one-time local toolchain setup."
+        }
+      ]
+    },
+    {
       "id": "snes-tests-gilyon",
       "suite": "rom_pass_fail",
       "platform": "snes",
