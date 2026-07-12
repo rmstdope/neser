@@ -108,6 +108,13 @@ Test suites:
 - `sa1_boot_tests.rs` / `sa1_iram_tests.rs` / `sa1_bwram_tests.rs` /
   `sa1_irq_tests.rs` -- hand-assembled SA-1 fixture-ROM tests for dual-CPU
   boot, shared I-RAM/BW-RAM exchange, and the cross-CPU IRQ handshake.
+- `dsp_audio_golden_tests.rs` -- S-DSP audio sample golden checks: eight
+  deterministic 32 kHz capture windows over synthetic in-code BRR fixtures
+  (no ROM assets) covering BRR decode, ADSR, GAIN modes, pitch modulation,
+  echo/FIR, gaussian interpolation, multi-voice mixing/clamping, and the
+  noise LFSR. Each window's baseline is an approved CRC32 plus metadata
+  (sample rate, warmup/window lengths, fixture source, review note) inline
+  in the test source.
 
 Most ROM-based suites report pass/fail either through a text shell
 (blargg/gilyon) or by rendering a known-good screen; `rom_runner.rs` provides
@@ -117,6 +124,14 @@ rendered screen CRC32 against an approved golden. Set
 `NESER_CAPTURE_SCREEN=1` to write a PNG per test under
 `target/snes_test_captures/<suite>/` when approving a new golden; each
 suite's own source file documents how to record the result.
+
+Audio goldens follow the same approval workflow with
+`NESER_CAPTURE_AUDIO=1`, which writes a 16-bit stereo 32 kHz WAV per test
+under `target/snes_test_captures/dsp_audio_golden_tests/`. Review the WAV by
+listening and/or plotting it (`python scripts/display_audio_output.py
+<wav>`), then record the printed CRC and a review note in the test's
+`GoldenAudioWindow` metadata. Capture artifacts live under the git-ignored
+`target/` directory and are never committed.
 
 Asset provenance (source URL/ref, license, oracle type) is tracked in
 `roms/snes/automated_tests/manifest.json` and validated by
