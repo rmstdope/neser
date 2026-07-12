@@ -443,6 +443,44 @@ fn gain_modes_fixture(rec: &mut DspGoldenRecorder) {
     rec.run_capture(96); // decrease ramps + direct drop to silence
 }
 
+/// PMON golden window (d): V1 carrier tone pitch-modulated by a silent
+/// low-frequency V0 modulator (PMON bit 1); the window spans one full
+/// modulation cycle of frequency wobble.
+const PITCH_MODULATION_GOLDEN: GoldenAudioWindow = GoldenAudioWindow {
+    name: "pitch_modulation_pmon",
+    sample_rate_hz: NATIVE_SAMPLE_RATE_HZ,
+    warmup_samples: 8,
+    window_samples: 256,
+    source: "shared two-block loop tone at ARAM $0200; V0 modulator SRCN 0 at \
+             pitch $0200 with VOL 0/0 (silent, OUTX only), V1 carrier SRCN 0 \
+             at pitch $1000 with VOL $60/$60; both ADSR $8F/$E0; PMON $02, \
+             MVOL $60/$60, FLG $20, KON $03",
+    approved_crc32: 0x6FA3_42B2,
+    review_note: "approved by navigator 2026-07-12: zero-crossing frequency \
+                  analysis shows the carrier sweeping 879-1217 Hz and back \
+                  over one 256-frame modulator period (flat 1000 Hz without \
+                  PMON); amplitude matches the VOL/MVOL gain prediction",
+};
+
+/// Programs the PMON fixture: keyed-on modulator and carrier with pitch
+/// modulation enabled for the carrier only.
+fn pitch_modulation_fixture(rec: &mut DspGoldenRecorder) {
+    write_loop_tone(rec.aram_mut(), 0, 0x0200);
+
+    program_common_globals(rec);
+    program_voice(rec, 0, 0x00, 0x00, 0x0200, 0x00); // silent modulator
+    program_voice(rec, 1, 0x60, 0x60, 0x1000, 0x00); // audible carrier
+    rec.write_reg(0x05, 0x8F); // V0 ADSR1: ADSR on, fastest attack
+    rec.write_reg(0x06, 0xE0); // V0 ADSR2: hold at sustain
+    rec.write_reg(0x15, 0x8F); // V1 ADSR1
+    rec.write_reg(0x16, 0xE0); // V1 ADSR2
+    rec.write_reg(0x2D, 0x02); // PMON: V1 modulated by V0 OUTX
+    rec.write_reg(0x4C, 0x03); // KON V0+V1
+
+    rec.run_discard(PITCH_MODULATION_GOLDEN.warmup_samples);
+    rec.run_capture(PITCH_MODULATION_GOLDEN.window_samples);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,5 +631,10 @@ mod tests {
     #[test]
     fn given_gain_modes_fixture_when_capturing_window_then_crc_matches_approved_golden() {
         assert_golden_audio(&GAIN_MODES_GOLDEN, gain_modes_fixture);
+    }
+
+    #[test]
+    fn given_pitch_modulation_fixture_when_capturing_window_then_crc_matches_approved_golden() {
+        assert_golden_audio(&PITCH_MODULATION_GOLDEN, pitch_modulation_fixture);
     }
 }
