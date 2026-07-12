@@ -606,6 +606,86 @@ fn noise_lfsr_fixture(rec: &mut DspGoldenRecorder) {
     rec.run_capture(NOISE_LFSR_GOLDEN.window_samples);
 }
 
+/// Echo/FIR golden window (e): a short percussive burst (END without LOOP,
+/// so the dry signal stops) fed into the echo ring at EDL 1 (512-frame
+/// delay) with a non-trivial low-pass FIR and +0.5 feedback; the window
+/// captures the dry hit, the silent gap, and two progressively filtered
+/// echo repeats.
+const ECHO_FIR_GOLDEN: GoldenAudioWindow = GoldenAudioWindow {
+    name: "echo_fir_feedback_delay",
+    sample_rate_hz: NATIVE_SAMPLE_RATE_HZ,
+    warmup_samples: 8,
+    window_samples: 1600,
+    source: "four-block percussive burst at ARAM $0600 (filter 0 shift 12, \
+             END without LOOP after 64 samples); V0 SRCN 0, pitch $1000, \
+             ADSR $8F/$E0, VOL $50/$50; EON $01, ESA $40, EDL $01, EFB $40, \
+             FIR {0C,21,2B,2B,13,FE,F3,F9}, EVOL $40/$40, MVOL $50/$50, \
+             FLG $00 (echo writes enabled)",
+    approved_crc32: 0xE9D8_12F4,
+    review_note: "approved by navigator 2026-07-12: echo repeats arrive at \
+                  frames 514/1030/1547 vs the predicted 512/1024/1536 (FIR \
+                  group delay), feedback decay ratio 0.51 matches EFB +0.5, \
+                  the FIR low-pass drops the spectral centroid each repeat \
+                  (4924->2397->2064 Hz), and the inter-echo gaps are exactly \
+                  silent",
+};
+
+/// Programs the echo fixture: keyed-on percussive burst with the echo
+/// pipeline fully enabled.
+fn echo_fir_fixture(rec: &mut DspGoldenRecorder) {
+    let aram = rec.aram_mut();
+    write_dir_entry(aram, 0, 0x0600, 0x0600);
+    write_brr_block(
+        aram,
+        0x0600,
+        0xC0,
+        [0x70, 0x07, 0x70, 0x07, 0x90, 0x09, 0x90, 0x09],
+    );
+    write_brr_block(
+        aram,
+        0x0609,
+        0xC0,
+        [0x77, 0x77, 0x77, 0x77, 0x99, 0x99, 0x99, 0x99],
+    );
+    write_brr_block(
+        aram,
+        0x0612,
+        0xC0,
+        [0x70, 0x07, 0x70, 0x07, 0x90, 0x09, 0x90, 0x09],
+    );
+    // END without LOOP: the voice halts after this block, leaving only echoes.
+    write_brr_block(
+        aram,
+        0x061B,
+        0xC1,
+        [0x77, 0x77, 0x99, 0x99, 0x77, 0x77, 0x99, 0x99],
+    );
+
+    program_common_globals(rec);
+    rec.write_reg(0x6C, 0x00); // FLG: enable echo buffer writes
+    rec.write_reg(0x0C, 0x50); // MVOL L: leave headroom for echo sum
+    rec.write_reg(0x1C, 0x50); // MVOL R
+    program_voice(rec, 0, 0x50, 0x50, 0x1000, 0x00);
+    rec.write_reg(0x05, 0x8F); // V0 ADSR1: ADSR on, fastest attack
+    rec.write_reg(0x06, 0xE0); // V0 ADSR2: hold at sustain
+    rec.write_reg(0x4D, 0x01); // EON: V0 feeds the echo bus
+    rec.write_reg(0x6D, 0x40); // ESA: echo ring at $4000
+    rec.write_reg(0x7D, 0x01); // EDL: 2 KiB ring = 512-frame delay
+    rec.write_reg(0x0D, 0x40); // EFB: +0.5 feedback
+    for (tap, coeff) in [0x0C, 0x21, 0x2B, 0x2B, 0x13, 0xFE, 0xF3, 0xF9]
+        .into_iter()
+        .enumerate()
+    {
+        rec.write_reg(((tap as u8) << 4) | 0x0F, coeff); // FIR C0-C7
+    }
+    rec.write_reg(0x2C, 0x40); // EVOL L
+    rec.write_reg(0x3C, 0x40); // EVOL R
+    rec.write_reg(0x4C, 0x01); // KON V0
+
+    rec.run_discard(ECHO_FIR_GOLDEN.warmup_samples);
+    rec.run_capture(ECHO_FIR_GOLDEN.window_samples);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,5 +860,10 @@ mod tests {
     #[test]
     fn given_noise_lfsr_fixture_when_capturing_window_then_crc_matches_approved_golden() {
         assert_golden_audio(&NOISE_LFSR_GOLDEN, noise_lfsr_fixture);
+    }
+
+    #[test]
+    fn given_echo_fir_fixture_when_capturing_window_then_crc_matches_approved_golden() {
+        assert_golden_audio(&ECHO_FIR_GOLDEN, echo_fir_fixture);
     }
 }
