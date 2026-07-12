@@ -481,6 +481,44 @@ fn pitch_modulation_fixture(rec: &mut DspGoldenRecorder) {
     rec.run_capture(PITCH_MODULATION_GOLDEN.window_samples);
 }
 
+/// Gaussian interpolation golden window (f): a jagged source (nibbles
+/// alternating +7/-7 every sample) played at pitch $0555 (~1/3 rate), so
+/// every output sample lands on a fresh fractional position and the
+/// gaussian table's shape and rolloff dominate the output.
+const GAUSSIAN_INTERPOLATION_GOLDEN: GoldenAudioWindow = GoldenAudioWindow {
+    name: "gaussian_interpolation_fractional_pitch",
+    sample_rate_hz: NATIVE_SAMPLE_RATE_HZ,
+    warmup_samples: 8,
+    window_samples: 192,
+    source: "two-block loop at ARAM $0300 of alternating +7/-7 nibbles \
+             (filter 0 shift 10, source-Nyquist square); V0 SRCN 0, pitch \
+             $0555, ADSR $8F/$E0, VOL $60/$60, MVOL $60/$60, FLG $20",
+    approved_crc32: 0x9E35_530D,
+    review_note: "approved by navigator 2026-07-12: FFT shows the source \
+                  alternation at the predicted 5332 Hz resample frequency \
+                  with amplitude attenuated to 0.274 of full scale, matching \
+                  the gaussian table's ~-11 dB rolloff near source Nyquist",
+};
+
+/// Programs the gaussian fixture: keyed-on jagged loop at a heavily
+/// fractional pitch.
+fn gaussian_interpolation_fixture(rec: &mut DspGoldenRecorder) {
+    let aram = rec.aram_mut();
+    write_dir_entry(aram, 0, 0x0300, 0x0300);
+    // 0x79 nibbles decode to +7,-7 alternating at shift 10.
+    write_brr_block(aram, 0x0300, 0xA0, [0x79; 8]);
+    write_brr_block(aram, 0x0309, 0xA3, [0x79; 8]);
+
+    program_common_globals(rec);
+    program_voice(rec, 0, 0x60, 0x60, 0x0555, 0x00);
+    rec.write_reg(0x05, 0x8F); // V0 ADSR1: ADSR on, fastest attack
+    rec.write_reg(0x06, 0xE0); // V0 ADSR2: hold at sustain
+    rec.write_reg(0x4C, 0x01); // KON V0
+
+    rec.run_discard(GAUSSIAN_INTERPOLATION_GOLDEN.warmup_samples);
+    rec.run_capture(GAUSSIAN_INTERPOLATION_GOLDEN.window_samples);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -636,5 +674,14 @@ mod tests {
     #[test]
     fn given_pitch_modulation_fixture_when_capturing_window_then_crc_matches_approved_golden() {
         assert_golden_audio(&PITCH_MODULATION_GOLDEN, pitch_modulation_fixture);
+    }
+
+    #[test]
+    fn given_gaussian_interpolation_fixture_when_capturing_window_then_crc_matches_approved_golden()
+    {
+        assert_golden_audio(
+            &GAUSSIAN_INTERPOLATION_GOLDEN,
+            gaussian_interpolation_fixture,
+        );
     }
 }
