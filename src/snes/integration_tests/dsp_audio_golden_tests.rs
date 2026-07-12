@@ -60,6 +60,7 @@ struct DspGoldenRecorder {
     dsp: Sdsp,
     aram: Box<[u8; ARAM_SIZE]>,
     samples: Vec<i16>,
+    discarded_frames: usize,
 }
 
 impl DspGoldenRecorder {
@@ -68,6 +69,7 @@ impl DspGoldenRecorder {
             dsp: Sdsp::new(),
             aram: Box::new([0; ARAM_SIZE]),
             samples: Vec::new(),
+            discarded_frames: 0,
         }
     }
 
@@ -85,6 +87,7 @@ impl DspGoldenRecorder {
         for _ in 0..frames {
             self.step_one_sample_frame();
         }
+        self.discarded_frames += frames;
     }
 
     /// Runs `frames` sample frames (32 phases each), capturing the DAC
@@ -142,6 +145,12 @@ fn capture_wav_path(stem: &str, crc: u32) -> PathBuf {
 /// Writes `samples` as a 16-bit stereo WAV at the window's sample rate,
 /// creating parent directories as needed.
 fn write_capture_wav(path: &Path, sample_rate_hz: u32, samples: &[i16]) {
+    assert!(
+        samples.len().is_multiple_of(2),
+        "capture wav {} requires an even number of interleaved stereo samples, got {}",
+        path.display(),
+        samples.len()
+    );
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .unwrap_or_else(|err| panic!("create capture dir {}: {err}", parent.display()));
@@ -192,6 +201,13 @@ fn assert_golden_audio(golden: &GoldenAudioWindow, fixture: impl FnOnce(&mut Dsp
 
     let mut rec = DspGoldenRecorder::new();
     fixture(&mut rec);
+
+    assert_eq!(
+        rec.discarded_frames, golden.warmup_samples,
+        "{}: fixture discarded {} warmup frames but warmup_samples is {}",
+        golden.name, rec.discarded_frames, golden.warmup_samples
+    );
+
     let captured = rec.finish();
 
     assert_eq!(
@@ -793,6 +809,36 @@ mod tests {
         assert_eq!(read_back, samples);
 
         std::fs::remove_file(&path).expect("remove test wav");
+    }
+
+    #[test]
+    #[should_panic(expected = "even number of interleaved stereo samples")]
+    fn given_odd_sample_count_when_writing_wav_then_panics() {
+        let stem = format!("wav-odd-length-fixture-{}", std::process::id());
+        write_capture_wav(
+            &capture_wav_path(&stem, 0),
+            NATIVE_SAMPLE_RATE_HZ,
+            &[1, 2, 3],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "discarded")]
+    fn given_fixture_discarding_fewer_frames_than_metadata_when_asserting_golden_then_panics() {
+        let golden = GoldenAudioWindow {
+            name: "warmup-mismatch-fixture",
+            sample_rate_hz: NATIVE_SAMPLE_RATE_HZ,
+            warmup_samples: 4,
+            window_samples: 2,
+            source: "unit-test fixture (no DSP programming)",
+            approved_crc32: 0,
+            review_note: "unit-test fixture",
+        };
+
+        assert_golden_audio(&golden, |rec| {
+            rec.run_discard(1); // fixture drifts from the approved warmup of 4
+            rec.run_capture(2);
+        });
     }
 
     #[test]
