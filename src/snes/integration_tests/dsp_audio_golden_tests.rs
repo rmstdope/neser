@@ -519,6 +519,53 @@ fn gaussian_interpolation_fixture(rec: &mut DspGoldenRecorder) {
     rec.run_capture(GAUSSIAN_INTERPOLATION_GOLDEN.window_samples);
 }
 
+/// Mixing/clamp golden window (g): four full-scale square-wave voices with
+/// extreme positive/negative volumes and MVOL $7F, driving `clamp_i16_i32`
+/// saturation in both the voice-sum and master-volume stages and exercising
+/// negative-volume phase inversion between channels.
+const MULTI_VOICE_MIX_GOLDEN: GoldenAudioWindow = GoldenAudioWindow {
+    name: "multi_voice_mix_and_clamp",
+    sample_rate_hz: NATIVE_SAMPLE_RATE_HZ,
+    warmup_samples: 8,
+    window_samples: 160,
+    source: "full-scale square loop at ARAM $0400 (filter 0 shift 12, 16 \
+             samples +7 then 16 samples -7); V0-V3 SRCN 0 at pitches \
+             $0F00/$1000/$1100/$1200 with VOL (+127,+127)/(+127,-128)/\
+             (-128,+127)/(+127,+127), ADSR $8F/$E0, MVOL $7F/$7F, FLG $20",
+    approved_crc32: 0x4C86_10F1,
+    review_note: "approved by navigator 2026-07-12: both channels reach the \
+                  exact post-MVOL saturation ceilings (+32511/-32512), many \
+                  samples exceed the single-voice maximum (true summation), \
+                  and L/R decorrelate (0.58) from the -128 volume inversions",
+};
+
+/// Programs the mixing fixture: four keyed-on full-scale squares.
+fn multi_voice_mix_fixture(rec: &mut DspGoldenRecorder) {
+    let aram = rec.aram_mut();
+    write_dir_entry(aram, 0, 0x0400, 0x0400);
+    write_brr_block(aram, 0x0400, 0xC0, [0x77; 8]); // 16 samples at +7 << 12
+    write_brr_block(aram, 0x0409, 0xC3, [0x99; 8]); // 16 samples at -7, LOOP+END
+
+    program_common_globals(rec);
+    rec.write_reg(0x0C, 0x7F); // MVOL L: override the common $60 with max
+    rec.write_reg(0x1C, 0x7F); // MVOL R
+    let voices: [(u8, u8, u8, u16); 4] = [
+        (0, 0x7F, 0x7F, 0x0F00),
+        (1, 0x7F, 0x80, 0x1000), // VOLR -128: right channel inverted
+        (2, 0x80, 0x7F, 0x1100), // VOLL -128: left channel inverted
+        (3, 0x7F, 0x7F, 0x1200),
+    ];
+    for (voice, vol_l, vol_r, pitch) in voices {
+        program_voice(rec, voice, vol_l, vol_r, pitch, 0x00);
+        rec.write_reg((voice << 4) | 0x05, 0x8F); // ADSR on, fastest attack
+        rec.write_reg((voice << 4) | 0x06, 0xE0); // hold at sustain
+    }
+    rec.write_reg(0x4C, 0x0F); // KON V0-V3
+
+    rec.run_discard(MULTI_VOICE_MIX_GOLDEN.warmup_samples);
+    rec.run_capture(MULTI_VOICE_MIX_GOLDEN.window_samples);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,5 +730,10 @@ mod tests {
             &GAUSSIAN_INTERPOLATION_GOLDEN,
             gaussian_interpolation_fixture,
         );
+    }
+
+    #[test]
+    fn given_multi_voice_mix_fixture_when_capturing_window_then_crc_matches_approved_golden() {
+        assert_golden_audio(&MULTI_VOICE_MIX_GOLDEN, multi_voice_mix_fixture);
     }
 }
