@@ -566,6 +566,46 @@ fn multi_voice_mix_fixture(rec: &mut DspGoldenRecorder) {
     rec.run_capture(MULTI_VOICE_MIX_GOLDEN.window_samples);
 }
 
+/// Noise golden window (h): V0 sourced from the 15-bit noise LFSR (NON) at
+/// the fastest noise rate, with a silent BRR loop carrying the envelope.
+/// The LFSR starts from its deterministic power-on seed.
+const NOISE_LFSR_GOLDEN: GoldenAudioWindow = GoldenAudioWindow {
+    name: "noise_lfsr_non_voice",
+    sample_rate_hz: NATIVE_SAMPLE_RATE_HZ,
+    warmup_samples: 8,
+    window_samples: 192,
+    source: "silent two-block BRR loop at ARAM $0500 (all-zero nibbles); V0 \
+             SRCN 0, pitch $1000, ADSR $8F/$E0, VOL $40/$40, MVOL $60/$60; \
+             NON $01, FLG $3F (running, unmuted, echo writes disabled, noise \
+             rate 31)",
+    approved_crc32: 0x5B52_45D8,
+    review_note: "approved by navigator 2026-07-12: an independent \
+                  fullsnes-spec LFSR simulation (seed $4000, bit0^bit1 into \
+                  bit14) matches the capture bit-exactly (r=1.0000 at the \
+                  warmup offset); amplitude matches the predicted full-swing \
+                  scale and the spectrum is white",
+};
+
+/// Programs the noise fixture: keyed-on silent loop with the voice switched
+/// to the noise source at the fastest LFSR rate.
+fn noise_lfsr_fixture(rec: &mut DspGoldenRecorder) {
+    let aram = rec.aram_mut();
+    write_dir_entry(aram, 0, 0x0500, 0x0500);
+    write_brr_block(aram, 0x0500, 0x00, [0x00; 8]); // silence
+    write_brr_block(aram, 0x0509, 0x03, [0x00; 8]); // silence, LOOP+END
+
+    program_common_globals(rec);
+    rec.write_reg(0x6C, 0x3F); // FLG: override with noise rate 31
+    program_voice(rec, 0, 0x40, 0x40, 0x1000, 0x00);
+    rec.write_reg(0x05, 0x8F); // V0 ADSR1: ADSR on, fastest attack
+    rec.write_reg(0x06, 0xE0); // V0 ADSR2: hold at sustain
+    rec.write_reg(0x3D, 0x01); // NON: V0 uses the noise source
+    rec.write_reg(0x4C, 0x01); // KON V0
+
+    rec.run_discard(NOISE_LFSR_GOLDEN.warmup_samples);
+    rec.run_capture(NOISE_LFSR_GOLDEN.window_samples);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -735,5 +775,10 @@ mod tests {
     #[test]
     fn given_multi_voice_mix_fixture_when_capturing_window_then_crc_matches_approved_golden() {
         assert_golden_audio(&MULTI_VOICE_MIX_GOLDEN, multi_voice_mix_fixture);
+    }
+
+    #[test]
+    fn given_noise_lfsr_fixture_when_capturing_window_then_crc_matches_approved_golden() {
+        assert_golden_audio(&NOISE_LFSR_GOLDEN, noise_lfsr_fixture);
     }
 }
