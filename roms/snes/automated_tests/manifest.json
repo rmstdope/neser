@@ -162,6 +162,27 @@
           "notes": "Prebuilt cputest.sfc and spctest.sfc plus the snes-tests source subtree."
         }
       ]
+    },
+    {
+      "id": "snes-dsp-audio-golden-windows",
+      "suite": "dsp_audio_golden_tests",
+      "platform": "snes",
+      "source": {
+        "url": "in-repo synthetic fixtures, src/snes/integration_tests/dsp_audio_golden_tests.rs",
+        "ref": "issue-2877"
+      },
+      "license": "n/a (synthetic, authored in-repo)",
+      "oracle_type": "audio_sample",
+      "notes": "Deterministic S-DSP-level golden windows over synthetic BRR fixtures covering BRR decode, ADSR, GAIN, pitch modulation, echo/FIR, gaussian interpolation, mixing/clamping, and the noise LFSR. Baselines are per-window CRC32 metadata (sample rate, warmup/window lengths, fixture source, review note) inline in the Rust test source. WAV review artifacts are generated on demand with NESER_CAPTURE_AUDIO=1 under target/snes_test_captures/dsp_audio_golden_tests/ and are never committed.",
+      "variants": [
+        {
+          "id": "in_code_fixtures",
+          "status": "committed_ci",
+          "path": "src/snes/integration_tests",
+          "refresh_command": null,
+          "notes": "No on-disk assets; fixtures and approved CRC baselines live in dsp_audio_golden_tests.rs within this directory."
+        }
+      ]
     }
   ]
 }

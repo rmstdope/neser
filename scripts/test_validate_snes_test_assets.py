@@ -177,6 +177,25 @@ class TestValidateSnesTestAssets(unittest.TestCase):
             "expected at least one rom_pass_fail asset in SNES manifest",
         )
 
+    def test_manifest_contains_dsp_audio_golden_asset(self) -> None:
+        """SNES manifest should track the synthetic DSP audio golden suite."""
+
+        manifest = load_manifest()
+        asset = next(
+            (
+                asset
+                for asset in manifest.get("assets", [])
+                if asset.get("id") == "snes-dsp-audio-golden-windows"
+            ),
+            None,
+        )
+
+        self.assertIsNotNone(
+            asset, "expected the snes-dsp-audio-golden-windows asset"
+        )
+        self.assertEqual(asset.get("suite"), "dsp_audio_golden_tests")
+        self.assertEqual(asset.get("oracle_type"), "audio_sample")
+
 
 if __name__ == "__main__":
     unittest.main()

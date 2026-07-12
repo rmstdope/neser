@@ -55,6 +55,21 @@ Visual and audio baselines must follow an explicit approval workflow:
 - Compact committed metadata (CRC or sample windows) is added only after review approval.
 - Large generated artifacts are not committed unless a separate explicit decision is made.
 
+## Synthetic In-Code Audio Assets
+
+The `dsp_audio_golden_tests` suite (oracle type `audio_sample`) uses fixtures
+generated entirely in Rust test code, so it has no vendored files:
+
+- The manifest entry's `committed_ci` variant points at the source directory
+  (`src/snes/integration_tests`) where the fixtures and approved CRC32
+  baselines live.
+- Baselines are per-window CRC32 metadata (sample rate, warmup/window
+  lengths, fixture source description, review note) inline in the test
+  source, recorded only after navigator review of the generated WAV.
+- WAV review artifacts are produced on demand with `NESER_CAPTURE_AUDIO=1`
+  under `target/snes_test_captures/dsp_audio_golden_tests/` and are never
+  committed.
+
 ## Review Gate
 
 Changes to SNES automated-test assets should include:
