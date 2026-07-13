@@ -206,7 +206,21 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    reference, breaking bare `define NAME` and failing every assembly with
    "Rom block code does not exist"). Apply the patch documented in
    `roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-bg/README.md`
-   before building; it does not change assembled output.
+   before building; it does not change assembled output. The patch is
+   never committed (the bass-untech submodule stays pristine), so a
+   previously *built* `bass/out/bass-untech` binary may still be
+   unpatched: on any "Rom block ... does not exist" failure, re-apply
+   the patch, `touch` a bass source file and rebuild before debugging
+   anything else (seen again in #2879 after a fresh submodule checkout).
+7. **Verify upstream test-ROM naming against official spec terminology
+   before documenting it.** Test-ROM sources can invert or localize the
+   official names: undisbeliever's `object-dropout-test.asm` calls the
+   32-OBJ/line limit `TimeOverflowTest` and the 34-sliver/line limit
+   `RangeOverflowTest`, which is exactly backwards from the official
+   $213E flag names (bit 6 = range over = >32 OBJs; bit 7 = time over =
+   >34 slivers). Write issues/READMEs in official fullsnes terminology
+   and note the upstream discrepancy explicitly (caught late in #2879's
+   asset README and bug issue #2999).
 
 ### Automating Screenshot Capture at Specific Frames
 

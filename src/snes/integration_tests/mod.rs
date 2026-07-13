@@ -19,4 +19,5 @@ mod sa1_bwram_tests;
 mod sa1_iram_tests;
 mod sa1_irq_tests;
 mod undisbeliever_ppu_bg_tests;
+mod undisbeliever_ppu_obj_tests;
 mod undisbeliever_tests;
