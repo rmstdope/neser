@@ -66,6 +66,25 @@ pub fn button_from_id(id: u8) -> Option<SnesButton> {
     })
 }
 
+/// Convert a [`SnesButton`] to its platform button id: the inverse of
+/// [`button_from_id`].
+pub fn button_to_id(button: SnesButton) -> u8 {
+    match button {
+        SnesButton::A => 0,
+        SnesButton::B => 1,
+        SnesButton::Select => 2,
+        SnesButton::Start => 3,
+        SnesButton::Up => 4,
+        SnesButton::Down => 5,
+        SnesButton::Left => 6,
+        SnesButton::Right => 7,
+        SnesButton::L => 8,
+        SnesButton::R => 9,
+        SnesButton::X => 10,
+        SnesButton::Y => 11,
+    }
+}
+
 /// Persisted state for a single controller's shift register.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct SnesControllerState {
@@ -737,6 +756,7 @@ mod tests {
         ];
         for (id, button) in ids {
             assert_eq!(button_from_id(id), Some(button));
+            assert_eq!(button_to_id(button), id, "inverse mapping for {button:?}");
         }
         assert_eq!(button_from_id(12), None);
     }
