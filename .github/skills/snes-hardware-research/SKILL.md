@@ -170,6 +170,44 @@ When verifying SNES emulator accuracy:
   pure shift and must be verified against Mesen2 directly.
 - **Example diff script**: Use PIL to iterate pixels, mark differences as red, matches as dimmed grayscale — visual diffs immediately reveal whether issues are localized (edge effects) or systematic (whole-frame shifts).
 
+### Approving new screen-CRC baselines (settle-probe workflow, from #2878)
+
+Established for the PPU BG suites and intended for reuse by the remaining
+epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
+
+1. **Settle-probe each ROM** headlessly (temporary `#[ignore]` test using
+   `Snes` directly): record the screen CRC after every frame up to ~1800.
+   The settle frame is the start of the final run of identical CRCs. If the
+   run is >= 600 frames long the ROM is *static*: sample at settle + 60. If
+   the CRC never stabilizes it is *animated*: sample at a fixed frame
+   (e.g. 600) — but see step 4.
+2. **Capture and pixel-diff**: write NESER PNGs during the probe, capture
+   Mesen2 headless at the same frame (`--testRunner` + Lua `print()` hex
+   dump; flags above), then diff programmatically with a ±1-row shift
+   search. Never approve by eye. Where the upstream project ships reference
+   screenshots (e.g. PeterLemon), diff those too.
+3. **Only exact matches become goldens.** Divergent ROMs stay vendored but
+   un-automated, with one bug issue per distinct root cause carrying the
+   pixel-diff evidence (policy in docs/SNES_TEST_ASSET_POLICY.md).
+4. **Animated ROMs need a phase check, not just a content check**: search
+   wrap-around shifts (`ImageChops.offset`) and neighbor frames to separate
+   "same animation, different phase" from real rendering differences. As of
+   #2990 NESER's animation phase drifts from Mesen2 (scroll demos lag by
+   6-30 px at frame 600; a ROM's on-screen frame counter leads by 7), so
+   animated goldens are deferred until that is fixed — do not bake a phase
+   offset into a golden.
+5. **Exploit twin ROMs for triage**: when a source provides with/without
+   feature pairs (e.g. vmain `no-remapping` vs `with-remapping`), a clean
+   pass on one twin and a large diff on the other pinpoints the defective
+   feature immediately (that's how #2989, VMAIN $2115 bits 2-3 ignored, was
+   isolated in minutes).
+6. **Building undisbeliever ROMs on macOS**: bass-untech miscompiles under
+   clang (unspecified argument-evaluation order dangles a `nall::vector`
+   reference, breaking bare `define NAME` and failing every assembly with
+   "Rom block code does not exist"). Apply the patch documented in
+   `roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-bg/README.md`
+   before building; it does not change assembled output.
+
 ### Automating Screenshot Capture at Specific Frames
 
 #### Mesen2 (Fully Automated)
