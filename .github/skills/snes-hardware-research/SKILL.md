@@ -212,7 +212,17 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    unpatched: on any "Rom block ... does not exist" failure, re-apply
    the patch, `touch` a bass source file and rebuild before debugging
    anything else (seen again in #2879 after a fresh submodule checkout).
-7. **Verify upstream test-ROM naming against official spec terminology
+7. **When authoring OBJ test ROMs, park unused OAM entries at X=256,
+   not y=240** (from #2879): the conventional y=240 filler is not
+   off-screen for 32px-tall sprite sizes (OBSEL 5/6/7 smalls, any
+   large) -- OAM Y is 8-bit, so the sprite wraps into screen lines
+   0-15, and even at X=256 an in-range sprite still consumes the
+   per-scanline range/time limits (the X=256 bug). 125 wrapped fillers
+   starved the visible sprites' tile slivers in Mesen2 and masked the
+   scene under test; parking at X=256 with a Y clear of any visible
+   line is safe at every size (this interaction is also how #3003 was
+   found).
+8. **Verify upstream test-ROM naming against official spec terminology
    before documenting it.** Test-ROM sources can invert or localize the
    official names: undisbeliever's `object-dropout-test.asm` calls the
    32-OBJ/line limit `TimeOverflowTest` and the 34-sliver/line limit
