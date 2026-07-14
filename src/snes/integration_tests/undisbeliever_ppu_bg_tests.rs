@@ -1,27 +1,32 @@
-//! Automates 8 of the 18 vendored undisbeliever PPU BG / VMAIN test ROMs
+//! Automates 12 of the 18 vendored undisbeliever PPU BG / VMAIN test ROMs
 //! (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-bg/`, built
 //! from the source mirror -- see that folder's README) covering VRAM
 //! increment modes at 1/2/4/8bpp, byte- vs word-increment uploads, plain
-//! (non-DMA) VRAM data-port writes, 1bpp tile decode and a text tilemap
-//! (issue #2878).
+//! (non-DMA) VRAM data-port writes, 1bpp tile decode, a text tilemap, and
+//! the animated scrolling/textbuffer demos (issues #2878, #2990).
 //!
-//! Every golden was approved via the #2878 baseline workflow: probed to its
-//! settle frame (screen CRC unchanged for >= 600 consecutive frames), sampled
-//! at settle + 60, and pixel-diffed against a Mesen2 headless capture of the
-//! identical ROM at the same frame (`--Video.VideoFilter=None
-//! --Video.AspectRatio=NoStretching`) -- all 8 match Mesen2 exactly. The
-//! shared CRC for `vmain-4bpp-no-remapping{,-word}.sfc` is by design: the
-//! demos draw the same screen via byte- and word-increment writes.
+//! Every static golden was approved via the #2878 baseline workflow: probed
+//! to its settle frame (screen CRC unchanged for >= 600 consecutive frames),
+//! sampled at settle + 60, and pixel-diffed against a Mesen2 headless capture
+//! of the identical ROM at the same frame (`--Video.VideoFilter=None
+//! --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true`; the
+//! frame-skip switch is essential for animated content, see #2990) -- all
+//! match Mesen2 exactly. The shared CRC for
+//! `vmain-4bpp-no-remapping{,-word}.sfc` is by design: the demos draw the
+//! same screen via byte- and word-increment writes.
 //!
-//! The other 10 vendored ROMs are deliberately left un-automated because
-//! cross-checking exposed real NESER divergences, tracked as follow-up bugs
-//! rather than papered over with known-wrong goldens:
-//! - `vmain-{1bpp,2bpp,2bpp-split,4bpp,4bpp-word,8bpp}-with-remapping.sfc` --
-//!   #2989 (VMAIN $2115 bits 2-3 address remapping is not implemented; the
-//!   no-remapping twins below prove everything else in the upload path).
-//! - `vmain-{horizontal,vertical,vertical-2-rows}-scrolling.sfc` and
-//!   `textbuffer-hello-world.sfc` -- #2990 (animation frame-phase drifts from
-//!   Mesen2 while static rendering matches).
+//! The four animated demos (three vmain-*-scrolling + textbuffer-hello-world)
+//! never settle, so their goldens were derived directly from frame-skip-free
+//! Mesen2 captures -- the scrolling demos at frames 120, 360 and 600 each,
+//! textbuffer at frame 120 -- and additionally verified pixel-identical to
+//! Mesen2 across frames 118-122 and 598-601 (#2990).
+//!
+//! The other 6 vendored ROMs
+//! (`vmain-{1bpp,2bpp,2bpp-split,4bpp,4bpp-word,8bpp}-with-remapping.sfc`)
+//! are deliberately left un-automated because cross-checking exposed a real
+//! NESER divergence, tracked as #2989 (VMAIN $2115 bits 2-3 address remapping
+//! is not implemented; the no-remapping twins below prove everything else in
+//! the upload path) rather than papered over with known-wrong goldens.
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -130,5 +135,85 @@ mod tests {
         "vram-writes-without-dma.sfc",
         66,
         0x1D70_AE67
+    );
+
+    // The four animated demos below never settle, so they are sampled at
+    // fixed frames instead of settle + 60. Every golden is derived directly
+    // from a frame-skip-free Mesen2 capture (issue #2990): decode the Mesen2
+    // PNG at the same frame to the `screen_snapshot` RGB layout and CRC32 it.
+    // The scrolling demos are pinned at three spread-out frames each
+    // (120/360/600) so a cadence or accumulating-phase regression cannot slip
+    // past a single lucky sample. Frame numbers count every vblank entry,
+    // including vblanks that elapse while a long DMA is in flight (see
+    // `Ppu::take_completed_frames`).
+
+    undisbeliever_ppu_bg_test!(
+        vmain_horizontal_scrolling_f120,
+        "vmain-horizontal-scrolling.sfc",
+        120,
+        0xA658_FD8B
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_horizontal_scrolling_f360,
+        "vmain-horizontal-scrolling.sfc",
+        360,
+        0x4B94_FFD2
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_horizontal_scrolling_f600,
+        "vmain-horizontal-scrolling.sfc",
+        600,
+        0xF4B9_4F56
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_vertical_scrolling_f120,
+        "vmain-vertical-scrolling.sfc",
+        120,
+        0x0622_B19F
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_vertical_scrolling_f360,
+        "vmain-vertical-scrolling.sfc",
+        360,
+        0x2B1C_23B9
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_vertical_scrolling_f600,
+        "vmain-vertical-scrolling.sfc",
+        600,
+        0x9325_3E90
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_vertical_scrolling_2_rows_f120,
+        "vmain-vertical-scrolling-2-rows.sfc",
+        120,
+        0x9E07_7E8B
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_vertical_scrolling_2_rows_f360,
+        "vmain-vertical-scrolling-2-rows.sfc",
+        360,
+        0xC268_D0EB
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_vertical_scrolling_2_rows_f600,
+        "vmain-vertical-scrolling-2-rows.sfc",
+        600,
+        0xC1A0_6C42
+    );
+
+    undisbeliever_ppu_bg_test!(
+        textbuffer_hello_world,
+        "textbuffer-hello-world.sfc",
+        120,
+        0x29FA_FE50
     );
 }

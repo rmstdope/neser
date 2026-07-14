@@ -223,8 +223,13 @@ pub struct Ppu {
     /// scanline-banding effects), so forced-blank/brightness must be applied
     /// per scanline at snapshot time rather than with one frame-wide value.
     line_inidisp: Vec<u8>,
-    /// Set when the PPU enters VBlank (a full visible frame has been produced).
-    frame_complete: bool,
+    /// Count of VBlank entries (completed visible frames) not yet drained via
+    /// [`Ppu::take_completed_frames`]. A counter rather than a bool so that
+    /// vblanks elapsing while the CPU is stalled inside one instruction-length
+    /// span (e.g. a 64KB DMA, ~1.5 frames) are all observable -- collapsing
+    /// them desynchronizes frame numbering from Mesen2's per-vblank count
+    /// (issue #2990).
+    pending_completed_frames: u32,
     /// One-shot flag set when the first VBlank scanline reaches
     /// [`AUTO_JOYPAD_LATCH_DOT`], signalling the bus to start an auto-joypad read.
     auto_joypad_latch: bool,
@@ -381,7 +386,7 @@ impl Ppu {
             video_region,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
             line_inidisp: vec![0; SCREEN_HEIGHT_MAX],
-            frame_complete: false,
+            pending_completed_frames: 0,
             auto_joypad_latch: false,
             bg_mode: 0,
             bg3_priority: false,
@@ -468,10 +473,14 @@ impl Ppu {
         self.vblank_active
     }
 
-    /// Returns and clears the frame-complete flag (set when the PPU enters VBlank).
-    pub fn take_frame_complete(&mut self) -> bool {
-        let done = self.frame_complete;
-        self.frame_complete = false;
+    /// Returns and clears the count of VBlank entries since the last drain.
+    /// Usually 0 or 1, but can be higher when vblanks elapsed while the CPU
+    /// was stalled inside a single instruction span (e.g. a multi-frame DMA);
+    /// every vblank must be counted so frame numbering matches hardware and
+    /// Mesen2 (issue #2990).
+    pub fn take_completed_frames(&mut self) -> u32 {
+        let done = self.pending_completed_frames;
+        self.pending_completed_frames = 0;
         done
     }
 
@@ -603,7 +612,7 @@ impl Ppu {
             self.nmi_enable as u8,
             self.vblank_active as u8,
             self.irq_line as u8,
-            self.frame_complete as u8,
+            (self.pending_completed_frames > 0) as u8,
             self.bg_mode,
             self.tm,
             self.ts,
@@ -632,7 +641,7 @@ mod tests {
         ppu.nmi_enable = true;
         ppu.vblank_active = true;
         ppu.irq_line = true;
-        ppu.frame_complete = true;
+        ppu.pending_completed_frames = 1;
         ppu.bg_mode = 7;
         ppu.tm = 0x1F;
         ppu.ts = 0x10;

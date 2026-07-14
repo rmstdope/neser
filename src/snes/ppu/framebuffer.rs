@@ -258,37 +258,42 @@ mod tests {
     #[test]
     fn frame_complete_is_set_once_when_entering_vblank() {
         let mut ppu = Ppu::new();
-        assert!(!ppu.take_frame_complete());
+        assert_eq!(ppu.take_completed_frames(), 0);
 
         // Advance to VBlank entry (scanline 225).
         for _ in 0..(DOTS_PER_SCANLINE as u32 * 225 * MASTER_CYCLES_PER_DOT) {
             ppu.tick();
         }
 
-        assert!(ppu.take_frame_complete(), "frame complete at VBlank entry");
-        assert!(!ppu.take_frame_complete(), "flag consumed");
+        assert_eq!(
+            ppu.take_completed_frames(),
+            1,
+            "frame complete at VBlank entry"
+        );
+        assert_eq!(ppu.take_completed_frames(), 0, "count drained");
     }
 
     #[test]
     fn frame_complete_in_239_line_mode_triggers_at_scanline_240() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x2133, 0x04); // SETINI overscan/tall-screen bit
-        assert!(!ppu.take_frame_complete());
+        assert_eq!(ppu.take_completed_frames(), 0);
 
         // 239 visible lines are completed, but VBlank has not started yet.
         for _ in 0..(DOTS_PER_SCANLINE as u32 * 239 * MASTER_CYCLES_PER_DOT) {
             ppu.tick();
         }
-        assert!(!ppu.take_frame_complete());
+        assert_eq!(ppu.take_completed_frames(), 0);
 
         // One more scanline enters VBlank at line 240.
         for _ in 0..(DOTS_PER_SCANLINE as u32 * MASTER_CYCLES_PER_DOT) {
             ppu.tick();
         }
-        assert!(
-            ppu.take_frame_complete(),
+        assert_eq!(
+            ppu.take_completed_frames(),
+            1,
             "frame complete at overscan VBlank entry"
         );
-        assert!(!ppu.take_frame_complete(), "flag consumed");
+        assert_eq!(ppu.take_completed_frames(), 0, "count drained");
     }
 }
