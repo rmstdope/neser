@@ -111,6 +111,26 @@ Test suites:
   `*-with-remapping` ROMs are excluded pending VMAIN address remapping
   (#2989) and the 3 scrolling ROMs plus `textbuffer-hello-world.sfc` pending
   the animation frame-phase divergence (#2990).
+- `undisbeliever_ppu_obj_tests.rs` -- the OBJ/sprite-limit dropout ROM built
+  from the undisbeliever source mirror
+  (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-obj/`).
+  Committed `#[ignore]`d: NESER enforces the 32-OBJ range-over limit but not
+  the 34-sliver time-over limit (#2999).
+- `byuu_test_oam_tests.rs` -- byuu's interactive `test_oam.smc` menu
+  (`roms/snes/automated_tests/snes_test_roms/jonasquinn-test-roms/test_oam/`)
+  driven through `rom_runner`'s frame-stamped input scripting. 28 combos
+  (menu, all 8 OBSEL bases x both size bits, flips, char variants) carry
+  Mesen2-approved goldens; 6 SETINI combos are `#[ignore]`d -- OBJ interlace
+  diverges (#3000) and the screen-interlace/overscan capture dimensions
+  differ from Mesen2's (#3001).
+- `neser_obj_tests.rs` -- NESER-authored OBJ feature ROMs written against
+  the undisbeliever bass framework
+  (`roms/snes/automated_tests/snes_test_roms/neser-obj-tests/`, sources
+  included; see its README): all eight OBSEL size pairs, OBJ palettes,
+  OBJ-vs-OBJ priority, OAM X bit 8, mode-1 OBJ-vs-BG layering and OAMADDH
+  first-sprite rotation, 13 of 14 with Mesen2-approved goldens.
+  `obj-y-wrap.sfc` is `#[ignore]`d pending the V-flip+Y-wrap divergence
+  (#3003).
 - `hblank_dma_vram_tests.rs` -- HDMA-to-VRAM timing ROMs
   (`roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram/`).
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs
@@ -136,7 +156,11 @@ Most ROM-based suites report pass/fail either through a text shell
 (blargg/gilyon) or by rendering a known-good screen; `rom_runner.rs` provides
 the shared headless runner (tick/frame budgets, WRAM-marker and bus-byte
 oracles) and a screen-CRC oracle that runs to a fixed frame and compares the
-rendered screen CRC32 against an approved golden. Set
+rendered screen CRC32 against an approved golden. Interactive ROMs can be
+driven deterministically with `RunConfig::with_input_script`: a sorted list
+of frame-stamped controller-1 button edges applied as the frame counter
+advances (see `byuu_test_oam_tests.rs` for the script-builder pattern and
+the Mesen2 replay recipe used to approve its goldens). Set
 `NESER_CAPTURE_SCREEN=1` to write a PNG per test under
 `target/snes_test_captures/<suite>/` when approving a new golden; each
 suite's own source file documents how to record the result.
