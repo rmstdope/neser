@@ -8,6 +8,7 @@ mod dsp_audio_golden_tests;
 mod gilyon_cpu_tests;
 mod gilyon_spc_tests;
 mod hblank_dma_vram_tests;
+mod neser_obj_tests;
 mod peterlemon_cpu_tests;
 mod peterlemon_ppu_bg_tests;
 mod peterlemon_spc_tests;

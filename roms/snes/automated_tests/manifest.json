@@ -248,6 +248,27 @@
       ]
     },
     {
+      "id": "snes-tests-neser-obj",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/rmstdope/snes-test-roms",
+        "ref": "bfcb3be667eebbea12e256226b52b9267b3073a3"
+      },
+      "license": "zlib",
+      "oracle_type": "screen_crc",
+      "notes": "NESER-authored PPU OBJ feature test ROMs (issue #2879), written against the undisbeliever bass framework (sources committed alongside the builds in the same directory; hex glyph tiles display their own tile numbers). Fourteen static scenes: all eight OBSEL size pairs (obj-size-grid-0..7, incl. the undocumented rectangular modes 6/7), OBJ palette selection, OBJ-vs-OBJ priority (OAM index order beats priority bits), OAM high-table X bit 8, mode-1 OBJ-vs-BG priority layering, OAMADDH first-sprite priority rotation, and OBJ vertical wrap-around. 13 of 14 are automated with goldens settle-probed (all settle at frame 6, sampled at 66) and pixel-diffed against Mesen2 headless captures -- all 13 match exactly. obj-y-wrap.sfc is committed but not automated: NESER renders the V-flipped Y-wrapped sprite with wrong rows (issue #3003); its test records NESER's current CRC and is #[ignore]d. Run by snes::integration_tests::neser_obj_tests, one test per ROM.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/neser-obj-tests",
+          "refresh_command": null,
+          "notes": "14 locally-built .sfc ROMs plus bass sources (src/), LICENSE and build README. Rebuild procedure is manual via the undisbeliever-inidisp/sources mirror (see the folder README); refresh_command is null because building requires a one-time local toolchain setup."
+        }
+      ]
+    },
+    {
       "id": "snes-tests-gilyon",
       "suite": "rom_pass_fail",
       "platform": "snes",
