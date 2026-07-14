@@ -3,6 +3,7 @@
 //! Tests will be added as subsystems are implemented.
 
 mod blargg_apu_tests;
+mod byuu_test_oam_tests;
 mod dsp_audio_golden_tests;
 mod gilyon_cpu_tests;
 mod gilyon_spc_tests;

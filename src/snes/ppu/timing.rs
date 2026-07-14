@@ -512,6 +512,15 @@ mod tests {
     }
 
     #[test]
+    fn stat78_reports_ppu2_version_3() {
+        // Real consoles overwhelmingly ship 5C78 revision 3: both Mesen2
+        // (hardcoded 0x03 in SnesPpu.cpp) and ares (PPU2 Version default 3)
+        // report version 3, and byuu's test_oam displays STA78=43 on them.
+        let mut ppu = Ppu::new();
+        assert_eq!(ppu.read_register(0x213F) & 0x0F, 3);
+    }
+
+    #[test]
     fn stat78_reports_and_clears_the_latch_flag() {
         let mut ppu = Ppu::new();
         ppu.read_register(0x2137); // latch (WRIO bit7 set on reset)
