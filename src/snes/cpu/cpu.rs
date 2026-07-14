@@ -8980,9 +8980,9 @@ impl Cpu<SnesSystemBus> {
         self.bus.screen_dimensions()
     }
 
-    /// Returns and clears the PPU frame-complete flag.
-    pub fn take_frame_complete(&mut self) -> bool {
-        self.bus.take_ppu_frame_complete()
+    /// Returns and clears the count of PPU vblank entries since the last drain.
+    pub fn take_completed_frames(&mut self) -> u32 {
+        self.bus.take_ppu_completed_frames()
     }
 
     /// Set a controller button on the given port (0 = port 1, 1 = port 2).

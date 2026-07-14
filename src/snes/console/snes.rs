@@ -40,7 +40,11 @@ pub struct Snes {
     app_context: SharedAppContext,
     cpu: Option<Cpu<SnesSystemBus>>,
     rom_path: Option<PathBuf>,
-    ready_to_render: bool,
+    /// Completed frames not yet consumed by the frontend. A count rather than
+    /// a bool: a DMA longer than a frame completes more than one vblank inside
+    /// a single CPU step, and each must be rendered/counted separately so
+    /// frame numbering matches hardware and Mesen2 (issue #2990).
+    pending_render_frames: u32,
     active_hardware: SnesHardware,
 }
 
@@ -56,7 +60,7 @@ impl Snes {
             app_context: app_context.into_shared(),
             cpu: None,
             rom_path: None,
-            ready_to_render: false,
+            pending_render_frames: 0,
             active_hardware: SnesHardware::Ntsc,
         }
     }
@@ -350,7 +354,7 @@ impl Emulator for Snes {
         cpu.do_reset();
         self.cpu = Some(cpu);
         self.rom_path = Some(PathBuf::from(name));
-        self.ready_to_render = false;
+        self.pending_render_frames = 0;
 
         // Load battery-backed save RAM from disk if a .sav file exists.
         self.load_save_ram_from_disk();
@@ -364,18 +368,18 @@ impl Emulator for Snes {
         };
 
         let cycles = cpu.step();
-        if cpu.take_frame_complete() {
-            self.ready_to_render = true;
-        }
+        self.pending_render_frames = self
+            .pending_render_frames
+            .saturating_add(cpu.take_completed_frames());
         cycles
     }
 
     fn is_ready_to_render(&self) -> bool {
-        self.ready_to_render
+        self.pending_render_frames > 0
     }
 
     fn clear_ready_to_render(&mut self) {
-        self.ready_to_render = false;
+        self.pending_render_frames = self.pending_render_frames.saturating_sub(1);
     }
 
     fn screen_width(&self) -> u32 {
@@ -477,7 +481,7 @@ impl Emulator for Snes {
             cpu.bus_mut().reset_apu();
             cpu.do_reset();
         }
-        self.ready_to_render = false;
+        self.pending_render_frames = 0;
     }
 
     fn save_ram(&self) -> Result<(), String> {

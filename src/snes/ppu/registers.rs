@@ -29,7 +29,7 @@ impl Ppu {
                 self.nmi_enable as u8,
                 self.vblank_active as u8,
                 self.irq_line as u8,
-                self.frame_complete as u8,
+                (self.pending_completed_frames > 0) as u8,
             );
         }
         match addr {
@@ -278,7 +278,7 @@ impl Ppu {
                 self.nmi_enable as u8,
                 self.vblank_active as u8,
                 self.irq_line as u8,
-                self.frame_complete as u8,
+                (self.pending_completed_frames > 0) as u8,
             );
         }
     }
@@ -425,7 +425,7 @@ impl Ppu {
                 self.nmi_enable as u8,
                 self.vblank_active as u8,
                 self.irq_line as u8,
-                self.frame_complete as u8,
+                (self.pending_completed_frames > 0) as u8,
             );
         }
         value

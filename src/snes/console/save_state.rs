@@ -281,8 +281,11 @@ pub struct SnesPpuState {
     pub nmi_line_prev: bool,
     #[serde(default)]
     pub nmi_edge: bool,
+    /// Undrained vblank-entry count (transient; drained every CPU step, so it
+    /// is 0 in practice except for a state captured mid-instruction). Replaces
+    /// the pre-#2990 `frame_complete: bool`, whose value old saves simply lose.
     #[serde(default)]
-    pub frame_complete: bool,
+    pub pending_completed_frames: u32,
     #[serde(default)]
     pub vram_increment_after_high: bool,
     #[serde(default)]

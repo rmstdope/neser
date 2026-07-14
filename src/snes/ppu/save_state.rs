@@ -29,7 +29,7 @@ impl Ppu {
             vblank_active: self.vblank_active,
             nmi_line_prev: self.nmi_line_prev,
             nmi_edge: self.nmi_edge,
-            frame_complete: self.frame_complete,
+            pending_completed_frames: self.pending_completed_frames,
             vram_increment_after_high: self.vram_increment_after_high,
             vram_increment_step: self.vram_increment_step,
             vram_address: self.vram_address,
@@ -125,7 +125,7 @@ impl Ppu {
         self.vblank_active = state.vblank_active;
         self.nmi_line_prev = state.nmi_line_prev;
         self.nmi_edge = state.nmi_edge;
-        self.frame_complete = state.frame_complete;
+        self.pending_completed_frames = state.pending_completed_frames;
         self.vram_increment_after_high = state.vram_increment_after_high;
         self.vram_increment_step = state.vram_increment_step;
         self.vram_address = state.vram_address;

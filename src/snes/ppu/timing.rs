@@ -186,7 +186,7 @@ impl Ppu {
                 // flags (the flag is set even if NMI is disabled), then re-evaluate the NMI line.
                 self.vblank_active = true;
                 self.nmi_flag = true;
-                self.frame_complete = true;
+                self.pending_completed_frames = self.pending_completed_frames.saturating_add(1);
                 trace_ppu!(1; "vblank enter y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X}",
                     self.position.scanline,
                     self.position.dot,
@@ -1044,6 +1044,26 @@ mod tests {
         assert_eq!(ppu.position().dot, 327);
         tick_cycles(&mut ppu, 2);
         assert_eq!(ppu.position().dot, 328);
+    }
+
+    // #2990: every vblank entry must be observable even when the CPU does not
+    // drain `take_completed_frames` between them (a >1-frame DMA previously
+    // collapsed multiple vblanks into one bool flag, desynchronizing frame
+    // numbering from Mesen2's per-vblank count).
+    #[test]
+    fn vblank_entries_accumulate_when_not_drained() {
+        let mut ppu = Ppu::new();
+
+        // Two full vblank entries without draining in between.
+        tick_scanlines(&mut ppu, 225);
+        tick_scanlines(&mut ppu, 262);
+
+        assert_eq!(
+            ppu.take_completed_frames(),
+            2,
+            "both vblank entries must be reported even without an interim drain"
+        );
+        assert_eq!(ppu.take_completed_frames(), 0, "drained");
     }
 
     #[test]
