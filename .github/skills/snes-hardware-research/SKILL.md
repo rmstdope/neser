@@ -222,6 +222,46 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    and note the upstream discrepancy explicitly (caught late in #2879's
    asset README and bug issue #2999).
 
+### Mesen2 capture-dimension conventions (from #2879)
+
+Mesen2 screenshots are not always the PPU's native frame geometry; know
+these before pixel-diffing display-mode captures:
+
+- **Screen interlace** ($2133 bit 0): Mesen2 emits 512x448 by
+  column-doubling; NESER renders 256x448. Halve Mesen2's width
+  (`Image.resize((256, 448), NEAREST)`) before diffing.
+- **239-line overscan** ($2133 bit 2): Mesen2 shows the standard
+  224-line window; NESER renders all 239 lines. NESER rows 7-231 equal
+  Mesen2's frame (search crop offsets; #2879 measured an exact match at
+  offset 7).
+- Because the raw framebuffers differ in geometry, such combos cannot
+  carry Mesen2-approved screen-CRC goldens until #3001 settles a
+  canonical convention -- commit them `#[ignore]`d with NESER's current
+  CRC recorded, like the policy for real divergences.
+
+### Replaying scripted input in Mesen2 (interactive-ROM baselining, from #2879)
+
+To baseline interactive ROMs (menus needing joypad input), drive NESER
+with `rom_runner`'s frame-stamped `InputEvent` scripting and replay the
+identical schedule in Mesen2:
+
+1. Have the Rust probe print each combo's schedule
+   (`frame:Button:pressed` list) and sample frame; generate one Lua
+   script per combo from that output so both emulators consume one
+   source of truth.
+2. In Lua, count frames via the `startFrame` event and apply every edge
+   with `stamp <= frameCount - 1` to a persistent `state` table; call
+   `emu.setInput(state, 0)` from an `emu.eventType.inputPolled`
+   callback (setting state only in `startFrame` can be overwritten by
+   Mesen's own input update). SNES button names: `a b x y l r start
+   select up down left right`.
+3. Same-numbered frames align between the two emulators (validated
+   byte-for-byte in #2878/#2879), so capture at the NESER sample frame.
+4. Menus that poll button *level* once per frame need taps held exactly
+   1 frame; space taps generously (test_oam needed an 8-frame period --
+   4 dropped presses during menu redraws). The dialed values are
+   usually visible on screen, so captures self-verify the cadence.
+
 ### Automating Screenshot Capture at Specific Frames
 
 #### Mesen2 (Fully Automated)
