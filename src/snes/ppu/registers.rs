@@ -336,8 +336,11 @@ impl Ppu {
             // frame cadence (issue #2990).
             0x4210 => {
                 let value = (if self.nmi_flag { 0x80 } else { 0x00 }) | CPU_VERSION;
-                let in_hold_window =
-                    self.position.scanline == self.vblank_start_line() && self.line_clock < 6;
+                // Clocks 0-1 are excluded only for symmetry with the documented window;
+                // the flag cannot be set there (it rises at clock 2), so this matches
+                // Mesen2's `hClock >= 6` clear guard exactly.
+                let in_hold_window = self.position.scanline == self.vblank_start_line()
+                    && (2..6).contains(&self.line_clock);
                 if !in_hold_window {
                     self.nmi_flag = false;
                     self.update_nmi_line();
