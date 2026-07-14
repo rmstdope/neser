@@ -327,11 +327,21 @@ impl Ppu {
                 self.ppu2_open_bus = value;
                 value
             }
-            // RDNMI: VBlank NMI flag (bit 7) + CPU version. Read acknowledges/clears the flag.
+            // RDNMI: VBlank NMI flag (bit 7) + CPU version. Read acknowledges/clears the flag,
+            // EXCEPT during intra-line clocks 2-5 of the vblank scanline: the flag rises at
+            // clock 2 (anomie H=0.5) but is held un-acknowledgeable until the CPU NMI line is
+            // raised at clock 6 (Mesen2 `InternalRegisters::Read` $4210, hardware-verified via
+            // Terranigma). A tight $4210 poll loop whose read lands in that window therefore
+            // sees the same vblank twice -- observable as the PeterLemon scroll demos' +2/+1
+            // frame cadence (issue #2990).
             0x4210 => {
                 let value = (if self.nmi_flag { 0x80 } else { 0x00 }) | CPU_VERSION;
-                self.nmi_flag = false;
-                self.update_nmi_line();
+                let in_hold_window =
+                    self.position.scanline == self.vblank_start_line() && self.line_clock < 6;
+                if !in_hold_window {
+                    self.nmi_flag = false;
+                    self.update_nmi_line();
+                }
                 value
             }
             // TIMEUP: H/V IRQ flag. Reading acknowledges.
