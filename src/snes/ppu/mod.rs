@@ -43,8 +43,10 @@ pub(super) const VISIBLE_LINE_START: u16 = 1;
 
 /// PPU1 (5C77) version number reported in STAT77 ($213E).
 pub(super) const PPU1_VERSION: u8 = 1;
-/// PPU2 (5C78) version number reported in STAT78 ($213F).
-pub(super) const PPU2_VERSION: u8 = 1;
+/// PPU2 (5C78) version number reported in STAT78 ($213F). Real consoles
+/// overwhelmingly ship 5C78 revision 3; Mesen2 hardcodes 3 and ares
+/// defaults to 3 (fixed from 1 while baselining byuu's test_oam, #2879).
+pub(super) const PPU2_VERSION: u8 = 3;
 /// CPU (5A22) version number reported in RDNMI ($4210).
 pub(super) const CPU_VERSION: u8 = 2;
 

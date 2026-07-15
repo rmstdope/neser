@@ -30,6 +30,16 @@ Additional rule for SNES `processor_tests` assets:
 - `source.ref` must be a pinned 40-character lowercase Git commit SHA (not a moving branch name)
 - Assets that share the same `source.url` must also share the same `source.ref`
 
+Additional rule for NESER-authored assets (e.g. `neser-obj-tests`):
+
+- The vendored `LICENSE` must carry the NESER author's own copyright
+  line, not a verbatim copy of an upstream project's license file. When
+  the work derives from an upstream framework or skeleton (as the OBJ
+  test ROMs derive from undisbeliever's zlib-licensed sources), keep an
+  attribution line for the upstream author alongside it and mark the
+  sources as altered per the upstream license terms (SPDX headers in
+  each source file).
+
 Each variant must define:
 
 - Stable `id` (for example `ci_subset`, `optional_full_corpus`)

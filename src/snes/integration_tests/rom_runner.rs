@@ -1,6 +1,7 @@
 use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
+use crate::snes::input::SnesButton;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -29,8 +30,23 @@ pub(crate) enum RunOracle {
     },
 }
 
+/// A scripted controller-1 button edge, applied once the runner's completed-frame
+/// counter reaches `frame`: the button state is set before any tick of the
+/// following frame executes, so the change is picked up by the auto-joypad
+/// read ($4218/$4219) at most one frame later (the frame counter advances at
+/// VBlank entry, slightly before the auto-joypad latch dot, so exact pickup
+/// depends on where the CPU instruction boundary falls). Events sharing a
+/// frame stamp are applied in list order as one atomic update before any
+/// tick runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RunConfig {
+pub(crate) struct InputEvent {
+    pub frame: u32,
+    pub button: SnesButton,
+    pub pressed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RunConfig<'a> {
     pub max_ticks: u64,
     pub max_frames: u32,
     /// If set, a soft CPU reset is triggered every time the PC reaches this address. Some
@@ -38,20 +54,32 @@ pub(crate) struct RunConfig {
     /// jumping into zeroed-out low WRAM ($0000), which the real test rig/hardware answers
     /// with a physical reset button press; this models that handshake for automated runs.
     pub reset_on_pc_trap: Option<u16>,
+    /// Scripted controller-1 input edges, sorted by [`InputEvent::frame`]
+    /// (ascending; validated at run start). Used to drive interactive test
+    /// ROMs (e.g. byuu's `test_oam` menu) deterministically.
+    pub input_script: &'a [InputEvent],
 }
 
-impl RunConfig {
+impl<'a> RunConfig<'a> {
     pub(crate) const fn new(max_ticks: u64, max_frames: u32) -> Self {
         Self {
             max_ticks,
             max_frames,
             reset_on_pc_trap: None,
+            input_script: &[],
         }
     }
 
     /// Enables the reset-on-PC-trap handshake (see [`RunConfig::reset_on_pc_trap`]).
     pub(crate) const fn with_reset_on_pc_trap(mut self, trap_pc: u16) -> Self {
         self.reset_on_pc_trap = Some(trap_pc);
+        self
+    }
+
+    /// Attaches a scripted controller-1 input sequence (see
+    /// [`RunConfig::input_script`]).
+    pub(crate) const fn with_input_script(mut self, script: &'a [InputEvent]) -> Self {
+        self.input_script = script;
         self
     }
 }
@@ -175,12 +203,39 @@ fn run_rom_with_oracle_and_capture(
     snes.load_rom(rom, name)
         .unwrap_or_else(|err| panic!("failed to load SNES runner ROM {name}: {err}"));
 
+    let script = config.input_script;
+    assert!(
+        script.windows(2).all(|pair| pair[0].frame <= pair[1].frame),
+        "input_script must be sorted by frame (ascending) for {name}"
+    );
+    assert!(
+        config.max_frames == 0
+            || script
+                .last()
+                .is_none_or(|event| event.frame < config.max_frames),
+        "input_script for {name} has an event at frame {} that can never fire \
+         (max_frames is {})",
+        script.last().map(|event| event.frame).unwrap_or(0),
+        config.max_frames
+    );
+
     let mut ticks = 0u64;
     let mut frames = 0u32;
     let mut resets_triggered = 0u32;
+    let mut next_input = 0usize;
     const MAX_AUTO_RESETS: u32 = 16;
 
     loop {
+        while next_input < script.len() && script[next_input].frame <= frames {
+            let event = script[next_input];
+            snes.set_button(
+                0,
+                crate::snes::input::button_to_id(event.button),
+                event.pressed,
+            );
+            next_input += 1;
+        }
+
         if let Some(trap_pc) = config.reset_on_pc_trap
             && snes.cpu_pc_for_tests() == Some(trap_pc)
             && resets_triggered < MAX_AUTO_RESETS
@@ -359,6 +414,10 @@ fn capture_is_disabled_for_fixture(name: &str) -> bool {
         Path::new(name).file_stem().and_then(|stem| stem.to_str()),
         Some("bus-byte-pass")
             | Some("fail")
+            | Some("input-script-none")
+            | Some("input-script-press")
+            | Some("input-script-release")
+            | Some("input-script-unsorted")
             | Some("pass")
             | Some("screen-crc-match")
             | Some("screen-crc-mismatch")
@@ -468,12 +527,77 @@ mod tests {
         *cursor += 3;
     }
 
+    fn emit_lda_abs(rom: &mut [u8], cursor: &mut usize, addr: u16) {
+        rom[*cursor] = 0xAD;
+        rom[*cursor + 1] = (addr & 0x00FF) as u8;
+        rom[*cursor + 2] = (addr >> 8) as u8;
+        *cursor += 3;
+    }
+
+    fn emit_cmp_imm(rom: &mut [u8], cursor: &mut usize, value: u8) {
+        rom[*cursor] = 0xC9;
+        rom[*cursor + 1] = value;
+        *cursor += 2;
+    }
+
+    fn emit_bne(rom: &mut [u8], cursor: &mut usize, rel: i8) {
+        rom[*cursor] = 0xD0;
+        rom[*cursor + 1] = rel as u8;
+        *cursor += 2;
+    }
+
+    fn emit_pass_marker_and_idle(rom: &mut [u8], cursor: &mut usize) {
+        for (offset, byte) in MARKER_MAGIC.iter().copied().enumerate() {
+            emit_write_long(rom, cursor, MARKER_ADDR + offset as u32, byte);
+        }
+        emit_write_long(rom, cursor, MARKER_ADDR + 4, PASS_STATUS);
+        emit_jmp_abs(rom, cursor, PASS_IDLE_PC);
+        write_idle_loop(rom, PASS_IDLE_PC);
+    }
+
+    /// Start button bit in JOY1H ($4219): B Y Select Start Up Down Left Right
+    /// from bit 7 down to bit 0.
+    const START_BIT_JOY1H: u8 = 0x10;
+
+    /// A ROM that enables auto-joypad reads, polls JOY1H ($4219) until it
+    /// equals `expected_joy1h`, then reports PASS via the WRAM marker.
+    fn joypad_press_wait_rom(expected_joy1h: u8) -> Vec<u8> {
+        let mut rom = vec![0u8; 0x10000];
+        write_lorom_header(&mut rom);
+
+        let mut cursor = 0usize;
+        emit_write_long(&mut rom, &mut cursor, 0x00_4200, 0x01);
+        emit_lda_abs(&mut rom, &mut cursor, 0x4219);
+        emit_cmp_imm(&mut rom, &mut cursor, expected_joy1h);
+        emit_bne(&mut rom, &mut cursor, -7);
+        emit_pass_marker_and_idle(&mut rom, &mut cursor);
+        rom
+    }
+
+    /// Like [`joypad_press_wait_rom`], but after observing the press it also
+    /// waits for JOY1H to return to zero (all buttons released) before
+    /// reporting PASS, so it can only pass if a release edge is delivered.
+    fn joypad_press_release_wait_rom(expected_joy1h: u8) -> Vec<u8> {
+        let mut rom = vec![0u8; 0x10000];
+        write_lorom_header(&mut rom);
+
+        let mut cursor = 0usize;
+        emit_write_long(&mut rom, &mut cursor, 0x00_4200, 0x01);
+        emit_lda_abs(&mut rom, &mut cursor, 0x4219);
+        emit_cmp_imm(&mut rom, &mut cursor, expected_joy1h);
+        emit_bne(&mut rom, &mut cursor, -7);
+        emit_lda_abs(&mut rom, &mut cursor, 0x4219);
+        emit_bne(&mut rom, &mut cursor, -5);
+        emit_pass_marker_and_idle(&mut rom, &mut cursor);
+        rom
+    }
+
     fn write_idle_loop(rom: &mut [u8], pc: u16) {
         let mut cursor = usize::from(pc - 0x8000);
         emit_jmp_abs(rom, &mut cursor, pc);
     }
 
-    fn short_config() -> RunConfig {
+    fn short_config() -> RunConfig<'static> {
         RunConfig::new(10_000, 2)
     }
 
@@ -611,6 +735,94 @@ mod tests {
     }
 
     #[test]
+    fn scripted_press_edge_reaches_the_rom_via_auto_joypad() {
+        let script = [InputEvent {
+            frame: 5,
+            button: SnesButton::Start,
+            pressed: true,
+        }];
+        let result = run_rom(
+            &joypad_press_wait_rom(START_BIT_JOY1H),
+            "input-script-press.sfc",
+            RunConfig::new(400_000_000, 120).with_input_script(&script),
+        );
+
+        assert!(
+            result.passed,
+            "ROM should observe the scripted Start press via $4219 \
+             (exit={:?} frames={})",
+            result.exit_reason, result.frames
+        );
+        assert_eq!(result.exit_reason, RunExitReason::PassMarker);
+    }
+
+    #[test]
+    fn scripted_release_edge_reaches_the_rom_via_auto_joypad() {
+        let script = [
+            InputEvent {
+                frame: 5,
+                button: SnesButton::Start,
+                pressed: true,
+            },
+            InputEvent {
+                frame: 30,
+                button: SnesButton::Start,
+                pressed: false,
+            },
+        ];
+        let result = run_rom(
+            &joypad_press_release_wait_rom(START_BIT_JOY1H),
+            "input-script-release.sfc",
+            RunConfig::new(400_000_000, 120).with_input_script(&script),
+        );
+
+        assert!(
+            result.passed,
+            "ROM should observe the Start press followed by its release \
+             (exit={:?} frames={})",
+            result.exit_reason, result.frames
+        );
+        assert_eq!(result.exit_reason, RunExitReason::PassMarker);
+    }
+
+    #[test]
+    fn joypad_wait_rom_times_out_without_an_input_script() {
+        let result = run_rom(
+            &joypad_press_wait_rom(START_BIT_JOY1H),
+            "input-script-none.sfc",
+            RunConfig::new(400_000_000, 30),
+        );
+
+        assert!(
+            !result.passed,
+            "without scripted input the polling ROM must never see the press"
+        );
+        assert_eq!(result.exit_reason, RunExitReason::FrameLimit);
+    }
+
+    #[test]
+    #[should_panic(expected = "input_script must be sorted by frame")]
+    fn unsorted_input_script_panics_at_run_start() {
+        let script = [
+            InputEvent {
+                frame: 9,
+                button: SnesButton::Start,
+                pressed: true,
+            },
+            InputEvent {
+                frame: 5,
+                button: SnesButton::Start,
+                pressed: false,
+            },
+        ];
+        run_rom(
+            &joypad_press_wait_rom(START_BIT_JOY1H),
+            "input-script-unsorted.sfc",
+            RunConfig::new(400_000_000, 120).with_input_script(&script),
+        );
+    }
+
+    #[test]
     fn capture_output_path_uses_snes_target_directory_and_crc() {
         assert_eq!(
             capture_output_path("blargg_apu_tests", "pass", 0x8C90_CEE0),
@@ -648,6 +860,10 @@ mod tests {
         for name in [
             "bus-byte-pass.sfc",
             "fail.sfc",
+            "input-script-none.sfc",
+            "input-script-press.sfc",
+            "input-script-release.sfc",
+            "input-script-unsorted.sfc",
             "pass.sfc",
             "screen-crc-match.sfc",
             "screen-crc-mismatch.sfc",
