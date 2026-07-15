@@ -29,7 +29,7 @@ impl Ppu {
                 self.nmi_enable as u8,
                 self.vblank_active as u8,
                 self.irq_line as u8,
-                self.frame_complete as u8,
+                (self.pending_completed_frames > 0) as u8,
             );
         }
         match addr {
@@ -278,7 +278,7 @@ impl Ppu {
                 self.nmi_enable as u8,
                 self.vblank_active as u8,
                 self.irq_line as u8,
-                self.frame_complete as u8,
+                (self.pending_completed_frames > 0) as u8,
             );
         }
     }
@@ -327,11 +327,24 @@ impl Ppu {
                 self.ppu2_open_bus = value;
                 value
             }
-            // RDNMI: VBlank NMI flag (bit 7) + CPU version. Read acknowledges/clears the flag.
+            // RDNMI: VBlank NMI flag (bit 7) + CPU version. Read acknowledges/clears the flag,
+            // EXCEPT during intra-line clocks 2-5 of the vblank scanline: the flag rises at
+            // clock 2 (anomie H=0.5) but is held un-acknowledgeable until the CPU NMI line is
+            // raised at clock 6 (Mesen2 `InternalRegisters::Read` $4210, hardware-verified via
+            // Terranigma). A tight $4210 poll loop whose read lands in that window therefore
+            // sees the same vblank twice -- observable as the PeterLemon scroll demos' +2/+1
+            // frame cadence (issue #2990).
             0x4210 => {
                 let value = (if self.nmi_flag { 0x80 } else { 0x00 }) | CPU_VERSION;
-                self.nmi_flag = false;
-                self.update_nmi_line();
+                // Clocks 0-1 are excluded only for symmetry with the documented window;
+                // the flag cannot be set there (it rises at clock 2), so this matches
+                // Mesen2's `hClock >= 6` clear guard exactly.
+                let in_hold_window = self.position.scanline == self.vblank_start_line()
+                    && (2..6).contains(&self.line_clock);
+                if !in_hold_window {
+                    self.nmi_flag = false;
+                    self.update_nmi_line();
+                }
                 value
             }
             // TIMEUP: H/V IRQ flag. Reading acknowledges.
@@ -425,7 +438,7 @@ impl Ppu {
                 self.nmi_enable as u8,
                 self.vblank_active as u8,
                 self.irq_line as u8,
-                self.frame_complete as u8,
+                (self.pending_completed_frames > 0) as u8,
             );
         }
         value

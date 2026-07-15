@@ -18,9 +18,12 @@
 //! art regardless of tilemap size.
 //!
 //! `8x8BGMap8BPP32x32.sfc` is deliberately left un-automated: it scrolls its
-//! map diagonally forever and NESER's animation phase drifts from Mesen2
-//! (content matches at a (30,30) px wrap shift; Mesen2 advances the scroll
-//! every second frame while NESER advances every frame) -- tracked as #2990.
+//! map diagonally forever, synced by a $4210 poll loop whose reads race the
+//! vblank flag. Since #2990 NESER reproduces Mesen2's +2,+1 double-step
+//! cadence pixel-exactly, but at a constant +3 frame offset acquired during
+//! the demo's DMA-heavy init because the DRAM-refresh stall is not yet paid
+//! during DMA -- tracked as #2985, whose fix should make the frame-120
+//! Mesen2-derived golden 0xA89D_7D64 match.
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;

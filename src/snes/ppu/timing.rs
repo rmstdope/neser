@@ -95,6 +95,35 @@ impl Ppu {
         // H/V IRQ is evaluated every master clock so it can fire at the exact
         // sub-dot clock offset used by the hardware ((HTIME+1)*4 + 10).
         self.evaluate_hv_irq();
+        self.evaluate_nmi_flag_events();
+    }
+
+    /// Sub-scanline RDNMI/NMI events (anomie timing.txt INTERRUPTS; Mesen2
+    /// `InternalRegisters::ProcessIrqCounters`):
+    /// - The RDNMI vblank flag rises at intra-line clock 2 (anomie: "the
+    ///   internal timer will set its NMI output low at H=0.5") of the first
+    ///   vblank scanline, and falls at clock 2 of scanline 0.
+    /// - The CPU NMI line is raised 4 clocks later, at clock 6; a $4210 read
+    ///   in the clock 2-5 hold window returns the flag set without
+    ///   acknowledging it (see `read_register`), which is what lets a tight
+    ///   RDNMI poll loop observe the same vblank twice.
+    fn evaluate_nmi_flag_events(&mut self) {
+        match self.line_clock {
+            2 => {
+                if self.position.scanline == self.vblank_start_line() {
+                    self.nmi_flag = true;
+                } else if self.position.scanline == 0 {
+                    self.nmi_flag = false;
+                    self.update_nmi_line();
+                }
+            }
+            6 => {
+                if self.position.scanline == self.vblank_start_line() {
+                    self.update_nmi_line();
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Advance the dot/scanline counters by one dot. Returns `true` if the scanline wrapped
@@ -182,11 +211,10 @@ impl Ppu {
         }
         match scanline {
             _ if scanline == vblank_start_line => {
-                // Begin VBlank: a full visible frame has been produced. Set the VBlank + RDNMI
-                // flags (the flag is set even if NMI is disabled), then re-evaluate the NMI line.
+                // Begin VBlank: a full visible frame has been produced. The RDNMI flag and CPU
+                // NMI line rise a few clocks into the line (see `evaluate_nmi_flag_events`).
                 self.vblank_active = true;
-                self.nmi_flag = true;
-                self.frame_complete = true;
+                self.pending_completed_frames = self.pending_completed_frames.saturating_add(1);
                 trace_ppu!(1; "vblank enter y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X}",
                     self.position.scanline,
                     self.position.dot,
@@ -195,12 +223,11 @@ impl Ppu {
                     self.tm,
                     self.ts,
                 );
-                self.update_nmi_line();
             }
             0 => {
-                // End of VBlank / top of a new frame: clear the VBlank + RDNMI flags.
+                // End of VBlank / top of a new frame. The RDNMI flag falls at intra-line
+                // clock 2 (see `evaluate_nmi_flag_events`).
                 self.vblank_active = false;
-                self.nmi_flag = false;
                 // The field parity still advances even when interlace output is disabled, because
                 // the short/long scanline exceptions are keyed off the latched field state.
                 self.interlace_field = !self.interlace_field;
@@ -213,7 +240,6 @@ impl Ppu {
                     self.tm,
                     self.ts,
                 );
-                self.update_nmi_line();
             }
             _ => {}
         }
@@ -588,6 +614,10 @@ mod tests {
         ppu.write_register(0x4200, 0x80); // enable VBlank NMI
 
         tick_to_vblank(&mut ppu);
+        // The RDNMI flag rises at intra-line clock 2 and the CPU NMI line at
+        // clock 6 (anomie H=0.5; Mesen2 ProcessIrqCounters) -- see the #2990
+        // tests below for the exact edges.
+        tick_cycles(&mut ppu, 6);
 
         assert!(ppu.in_vblank());
         assert!(
@@ -603,6 +633,7 @@ mod tests {
         let mut ppu = Ppu::new();
 
         tick_to_vblank(&mut ppu);
+        tick_cycles(&mut ppu, 6); // past the clock-2 flag rise
 
         assert!(!ppu.poll_nmi(), "no edge while NMI is disabled");
         assert_ne!(ppu.read_register(0x4210) & 0x80, 0, "RDNMI flag still set");
@@ -612,6 +643,7 @@ mod tests {
     fn enabling_nmi_during_vblank_raises_an_edge() {
         let mut ppu = Ppu::new();
         tick_to_vblank(&mut ppu);
+        tick_cycles(&mut ppu, 6); // past the clock-2 flag rise
         assert!(!ppu.poll_nmi());
 
         ppu.write_register(0x4200, 0x80); // enable mid-VBlank while the flag is set
@@ -623,6 +655,7 @@ mod tests {
     fn rdnmi_read_acknowledges_the_flag_and_reports_cpu_version() {
         let mut ppu = Ppu::new();
         tick_to_vblank(&mut ppu);
+        tick_cycles(&mut ppu, 6); // past the clock 2-5 read-hold window
 
         let first = ppu.read_register(0x4210);
         let second = ppu.read_register(0x4210);
@@ -642,8 +675,10 @@ mod tests {
         tick_to_vblank(&mut ppu);
         assert!(ppu.in_vblank());
 
-        // Advance through the rest of VBlank back to scanline 0.
+        // Advance through the rest of VBlank back to scanline 0. The flag
+        // falls at intra-line clock 2 of scanline 0 (Mesen2 ProcessIrqCounters).
         tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * (262 - 225));
+        tick_cycles(&mut ppu, 2);
 
         assert!(!ppu.in_vblank());
         assert_eq!(
@@ -1053,6 +1088,91 @@ mod tests {
         assert_eq!(ppu.position().dot, 327);
         tick_cycles(&mut ppu, 2);
         assert_eq!(ppu.position().dot, 328);
+    }
+
+    // --- #2990: every-vblank frame counting + RDNMI hold window ---
+    //
+    // Frame counting: every vblank entry must be observable even when the CPU
+    // does not drain `take_completed_frames` between them (a >1-frame DMA
+    // previously collapsed multiple vblanks into one bool flag).
+    //
+    // RDNMI timing (anomie timing.txt INTERRUPTS: the internal timer asserts
+    // its NMI output at H=0.5 of the first vblank line; Mesen2
+    // InternalRegisters: flag set at hclock 2, CPU NMI line raised at hclock
+    // 6, and a $4210 read during hclock 2-5 of that line returns the flag set
+    // WITHOUT acknowledging it -- hardware-verified via Terranigma).
+
+    #[test]
+    fn vblank_entries_accumulate_when_not_drained() {
+        let mut ppu = Ppu::new();
+
+        // Two full vblank entries without draining in between.
+        tick_scanlines(&mut ppu, 225);
+        tick_scanlines(&mut ppu, 262);
+
+        assert_eq!(
+            ppu.take_completed_frames(),
+            2,
+            "both vblank entries must be reported even without an interim drain"
+        );
+        assert_eq!(ppu.take_completed_frames(), 0, "drained");
+    }
+
+    #[test]
+    fn rdnmi_flag_rises_at_hclock_2_of_the_vblank_scanline() {
+        let mut ppu = Ppu::new();
+        tick_to_vblank(&mut ppu); // scanline 225, intra-line clock 0
+
+        assert!(!ppu.nmi_flag, "flag not yet set at hclock 0");
+        tick_cycles(&mut ppu, 1);
+        assert!(!ppu.nmi_flag, "flag not yet set at hclock 1");
+        tick_cycles(&mut ppu, 1);
+        assert!(ppu.nmi_flag, "flag set at hclock 2 (anomie H=0.5)");
+    }
+
+    #[test]
+    fn rdnmi_read_in_the_hold_window_does_not_acknowledge() {
+        let mut ppu = Ppu::new();
+        tick_to_vblank(&mut ppu);
+        tick_cycles(&mut ppu, 3); // hclock 3: inside the 2-5 hold window
+
+        let first = ppu.read_register(0x4210);
+        let second = ppu.read_register(0x4210);
+        assert_ne!(first & 0x80, 0, "read in the hold window returns the flag");
+        assert_ne!(
+            second & 0x80,
+            0,
+            "the hold-window read must NOT acknowledge the flag"
+        );
+
+        tick_cycles(&mut ppu, 3); // hclock 6: hold window over
+        let third = ppu.read_register(0x4210);
+        let fourth = ppu.read_register(0x4210);
+        assert_ne!(third & 0x80, 0, "flag still set before acknowledge");
+        assert_eq!(fourth & 0x80, 0, "read at hclock >= 6 acknowledges");
+    }
+
+    #[test]
+    fn nmi_edge_is_delivered_at_hclock_6_of_the_vblank_scanline() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4200, 0x80); // enable VBlank NMI
+        tick_to_vblank(&mut ppu);
+
+        tick_cycles(&mut ppu, 5);
+        assert!(!ppu.poll_nmi(), "no CPU NMI edge before hclock 6");
+        tick_cycles(&mut ppu, 1);
+        assert!(ppu.poll_nmi(), "CPU NMI edge raised at hclock 6");
+    }
+
+    #[test]
+    fn rdnmi_flag_clears_at_hclock_2_of_scanline_0() {
+        let mut ppu = Ppu::new();
+        tick_to_vblank(&mut ppu);
+        tick_scanlines(&mut ppu, 262 - 225); // wrap to scanline 0, hclock 0
+
+        assert!(ppu.nmi_flag, "flag still set at hclock 0-1 of scanline 0");
+        tick_cycles(&mut ppu, 2);
+        assert!(!ppu.nmi_flag, "flag cleared at hclock 2 of scanline 0");
     }
 
     #[test]

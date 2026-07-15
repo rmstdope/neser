@@ -542,8 +542,8 @@ impl SnesSystemBus {
     }
 
     /// Returns and clears the PPU frame-complete flag (set when the PPU enters VBlank).
-    pub fn take_ppu_frame_complete(&mut self) -> bool {
-        self.ppu.borrow_mut().take_frame_complete()
+    pub fn take_ppu_completed_frames(&mut self) -> u32 {
+        self.ppu.borrow_mut().take_completed_frames()
     }
 
     /// Set a controller button on the given port (0 = port 1, 1 = port 2).

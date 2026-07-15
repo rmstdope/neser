@@ -101,16 +101,18 @@ Test suites:
   flip, backdrop and palettes
   (`roms/snes/automated_tests/snes_test_roms/PeterLemon/SNES-PPU-*/`).
   11 of 12 automated; `8x8BGMap8BPP32x32.sfc` is excluded pending the
-  animation frame-phase divergence tracked in #2990.
+  DRAM-refresh-stall-during-DMA work tracked in #2985 (its RDNMI poll-race
+  scroll cadence itself matches Mesen2 since #2990).
 - `undisbeliever_tests.rs` -- hardware-glitch/timing-hammer ROMs
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`).
 - `undisbeliever_ppu_bg_tests.rs` -- VMAIN/VRAM-increment and basic BG ROMs
   built from the undisbeliever source mirror
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-bg/`, see its
-  README for the build procedure). 8 of 18 automated; the 6
+  README for the build procedure). 12 of 18 automated, including the 3
+  scrolling ROMs and `textbuffer-hello-world.sfc` whose animated goldens are
+  derived from frame-skip-free Mesen2 captures at frame 120 (#2990); the 6
   `*-with-remapping` ROMs are excluded pending VMAIN address remapping
-  (#2989) and the 3 scrolling ROMs plus `textbuffer-hello-world.sfc` pending
-  the animation frame-phase divergence (#2990).
+  (#2989).
 - `undisbeliever_ppu_obj_tests.rs` -- the OBJ/sprite-limit dropout ROM built
   from the undisbeliever source mirror
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-obj/`).
@@ -163,7 +165,11 @@ advances (see `byuu_test_oam_tests.rs` for the script-builder pattern and
 the Mesen2 replay recipe used to approve its goldens). Set
 `NESER_CAPTURE_SCREEN=1` to write a PNG per test under
 `target/snes_test_captures/<suite>/` when approving a new golden; each
-suite's own source file documents how to record the result.
+suite's own source file documents how to record the result. When comparing
+against Mesen2 headless captures, always pass `--Video.VideoFilter=None
+--Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true` -- without
+the frame-skip switch Mesen2's testRunner renders only every other frame and
+screenshots of animated content show stale frames (found in #2990).
 
 Audio goldens follow the same approval workflow with
 `NESER_CAPTURE_AUDIO=1`, which writes a 16-bit stereo 32 kHz WAV per test

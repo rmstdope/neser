@@ -75,9 +75,15 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
    - If ares and Mesen2 produce identical output (pixel-perfect match), use that as the reference for NESER comparison.
    - If ares and Mesen2 disagree, **stop and ask the user** how to proceed — don't pick one arbitrarily.
    - Screenshot settings for comparable captures:
-     - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+     - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true`
      - ares: use default "None" video filter, no overscan cropping
    - Mesen2 headless mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
+   - **`--snes.disableFrameSkipping=true` is mandatory for animated content** (found in #2990):
+     headless testRunner emulation runs >100 fps, engaging `_skipRender` (SnesPpu.cpp) which
+     skips rendering roughly every other frame while `SendFrame` still ships the stale buffer.
+     Screenshots of animated screens silently show the previous frame's pixels, producing
+     phantom cadence/phase "bugs" in the reference itself. Static screens are unaffected.
+     **Verify the reference capture pipeline before debugging the emulator under test.**
 
 10. When sources disagree or remain ambiguous, report that directly.
    - Name the conflicting sources.
@@ -134,6 +140,34 @@ When writing code that targets or emulates SNES hardware, always verify against 
 - **Some blargg SPC/APU test ROMs require a mid-test soft reset**: e.g. `timer_at_power_reset.smc` measures behavior across both a cold power-on and a subsequent reset, and signals "I'm ready for you to press reset now" by executing `JMP $0000` into zeroed-out low WRAM (a deliberate trap distinct from the SPC700's actual reset vector) rather than via `STP`. An automated test harness must detect this and call the emulator's own `reset()`/soft-reset API to let the ROM continue into its post-reset comparison; a plain fixed-frame run will otherwise sit on a "please reset" screen forever. Mesen's default *random* WRAM power-on state (`SnesConfig::RamPowerOnState = RamState::Random`, `UI/Config/SnesConfig.cs`) was investigated as a possible ground-truth-comparison confound but was ruled out empirically (identical results with `AllZeros`/`AllOnes` forced via `settings.json`) — Mesen's `--testRunner` mode does not appear to honor that persisted setting. See `RunConfig::reset_on_pc_trap` in `src/snes/integration_tests/rom_runner.rs`.
 - **Ground-truth comparison via Mesen2's `--testRunner` Lua mode**: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>` runs a ROM headlessly at max speed under Lua scripting until the script calls `emu.stop(exitCode)` or the timeout elapses; `--enableStdout` is required for `print()`/`emu.log()` output to reach the terminal (only `print()` was confirmed reliable). `emu.getState()` returns a **flat Lua table with dotted string keys** (e.g. `state["cpu.x"]`, `state["memoryManager.hClock"]`, `state["ppu.scanline"]`, `state["masterClock"]`) — **not** nested tables; `state.cpu.x` silently returns `nil`. Some fields are absent from the state table very early in execution, so wrap all `emu.getState()` access in `pcall()`. `emu.addMemoryCallback(callback, emu.callbackType.exec, startAddr, [endAddr], emu.cpuType.snes, emu.memType.snesMemory)` fires on instruction-fetch execution and is the most useful breakpoint-style probe for capturing register/timing state at specific PCs.
 - **SA-1 BW-RAM protection comparator operates on the pre-wrap bus address, folded to 256KB**: the `$2228` BWPA comparator sits on the address bus and sees the *linear* BW-RAM offset folded to the 256KB address space (bsnes/ares `bwram.cpp`: `(address & 0x3ffff) < 0x100 << bwp`) — wrapping onto a smaller physical chip happens *afterward*, at the RAM's own address pins. Two consequences that a plausible-sounding "check protection against the wrapped physical offset" model gets wrong (a Copilot review on PR #2965 proposed exactly that and it was wrongly confirmed; absindx `SA1RamProtectionTest` TEST IDs 50/51 caught it in #2962): a mirrored write addressed beyond the protected linear range *succeeds* and physically lands on a protected byte via chip wraparound, while bank mirrors above 256KB fold back *inside* the protected range (so BWPA >= `$0A` protects everything). Related per-side asymmetries found in the same conformance run: the SA-1-side direct BW-RAM window spans banks `$40-$5F`, twice the SNES side's `$40-$4F` (bsnes `SA1::read` dispatch; the ROM's mirror-mask expectations for TEST IDs 155-162 encode this), and releasing SA-1 from reset clears the SA-1-side I-RAM protection register CIWP (`$222A`) but not the SNES-side SIWP (bsnes `writeIOCPU` case `$2200`: "CIWP is set to 0 at reset"; TEST ID 221). SA-1-side *open bus* remains unknown spec: the absindx author documents it as unresolved, and bsnes/ares return `$FF` for unhandled SA-1-side IO reads with an explicit "unverified" comment (neser returns `$00`) — don't treat either as hardware truth.
+- **Frame numbering must count every vblank, including those inside one CPU step**: a
+  "frame complete" bool consumed at instruction boundaries silently swallows vblanks that
+  elapse while the CPU is stalled inside a single instruction span — a 64KB DMA is ~1.5
+  frames, so an init sequence with several big DMA clears loses multiple frames and every
+  animated capture lands at a constant offset from Mesen2's per-vblank `_frameCount` even
+  though the emulated timing agrees. Model it as a pending counter drained per step (see
+  `Ppu::take_completed_frames`, issue #2990). Static-settle goldens cannot detect this —
+  a settled screen matches at any frame offset — so only animated content exposes it.
+- **RDNMI ($4210) sub-scanline timing and the read-hold window**: the vblank flag rises at
+  intra-line clock 2 of the first vblank scanline (anomie timing.txt: NMI output asserted
+  at H=0.5) and falls at clock 2 of scanline 0; the CPU NMI line rises 4 clocks later at
+  clock 6; and a $4210 read landing in the clock 2-5 window returns bit 7 set WITHOUT
+  acknowledging the flag (Mesen2 `InternalRegisters::Read`, hardware-verified via
+  Terranigma sprite corruption; not documented in fullsnes/SNESdev). A tight
+  `bit $4210 / bpl` poll loop whose read phases through that window observes the same
+  vblank twice, producing a stable alternating double-step cadence (PeterLemon scroll
+  demos advance +2,+1 per frame pair). Implemented for #2990 in
+  `Ppu::evaluate_nmi_flag_events` / the `$4210` read arm.
+- **Clock-stamped trace-diff bisection between NESER and Mesen2**: to localize a timing
+  divergence, stamp the same observable events in both emulators with their master-clock
+  counters and align to the first divergent event. Mesen2 side: `--testRunner` Lua with
+  `emu.addMemoryCallback` on register writes (watch BOTH bank $00 and the $80 mirror —
+  FastROM code writes via $80xxxx and a bank-$00-only callback silently misses them) and
+  `emu.getState()["masterClock"]`. NESER side: temporary env-gated `eprintln!` traces at
+  the same registers with `total_master_clocks`. In #2990 this aligned both emulators
+  byte-for-byte up to the first MDMAEN write and exposed each 64KB DMA completing ~15,800
+  clocks early (= ~390 crossed scanlines x 40 unpaid DRAM-refresh clocks, issue #2985) in
+  two trace runs.
 - **absindx SA-1 conformance ROM automation traps**: the ROMs' `org $0000` result variables (`TestFinished`: 0=Running, 1=Passed, 255=Failed) are accessed by the SNES CPU via direct page with D=0, i.e. they live in **WRAM `$7E0000`** — polling the SA-1 I-RAM mirror at `$003000` instead reads a stale `$AA` left over from the I-RAM mirroring sub-tests. Even at the right address, a naive every-tick poll false-fails: `SA1RamProtectionTest` transiently `EOR #$FF`s its own result byte while probing I-RAM writability, and its SA-1 CPU parks in its post-test idle loop *before* the SNES finishes the trailing `TestBwRamSize` scan and writes the real result. `SA1VersionCodeTest` never reports Passed **even on real hardware** — disassembly of its release build shows `CheckResult` unconditionally taking the failed path (the `INC TestFinished` pass path at `$9EAB` is unreferenced dead code), deliberate since the true version-code value is unknown; treat its FAILED register-dump screen as the expected result. Its open-bus detection scheme is worth knowing: each register is read twice with different residual bus bytes (`LDA $2300,X` leaves operand `$23`; a `REP`-adjusted `LDA $AA,X` reaching the same register leaves `$AA`), so open-bus entries echo `23`/`AA` while real registers repeat their value. Both ROMs misbehave on Mesen2 (documented upstream and confirmed), so goldens must be navigator-approved captures of the emulator's own rendering.
 
 ## Testing Methodology for SNES Emulation
@@ -149,7 +183,8 @@ When verifying SNES emulator accuracy:
 - **Pixel-perfect comparison**: Use Python/PIL to compare screenshots pixel-by-pixel. Don't trust visual inspection — differences of 2-4% are invisible to the eye but indicate timing bugs.
 - **CRC-based integration tests**: Capture frame CRCs at known stable points (e.g., frame 600) and use as golden values for regression testing. Update test comments to reference GitHub issues for known differences.
 - **Screenshot settings for comparable captures**:
-  - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+  - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true`
+    (the frame-skip switch is mandatory for animated content; see step 9 of the Instructions)
   - ares: default "None" video filter, no overscan cropping
   - Since the BG vertical-scroll display-line fix (issue #2945, PR #2981), NESER and
     Mesen2 frame-N captures align **byte-for-byte at zero row offset**. A previously
@@ -191,11 +226,19 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    pixel-diff evidence (policy in docs/SNES_TEST_ASSET_POLICY.md).
 4. **Animated ROMs need a phase check, not just a content check**: search
    wrap-around shifts (`ImageChops.offset`) and neighbor frames to separate
-   "same animation, different phase" from real rendering differences. As of
-   #2990 NESER's animation phase drifts from Mesen2 (scroll demos lag by
-   6-30 px at frame 600; a ROM's on-screen frame counter leads by 7), so
-   animated goldens are deferred until that is fixed — do not bake a phase
-   offset into a golden.
+   "same animation, different phase" from real rendering differences. Since
+   #2990 (which fixed a swallowed-vblank frame counter and the RDNMI
+   read-hold window) NESER matches Mesen2 pixel-exactly at equal frame
+   numbers for NMI- and RDNMI-poll-driven animation. The animated-golden
+   workflow: derive CRCs directly from frame-skip-free Mesen2 captures
+   (decode the PNG to the `screen_snapshot` RGB layout, `zlib.crc32`), pin
+   scrolling/cadence-sensitive ROMs at several spread-out frames (e.g.
+   120/360/600) so a phase regression cannot slip past one lucky sample,
+   and additionally pixel-diff contiguous windows (e.g. 118-122, 598-601).
+   Cross-frame offset matching (find k where NESER f(N+k) == Mesen2 f(N)
+   exactly) separates constant init offsets from accumulating drift — a
+   constant k at two distant windows means an init-time difference, a
+   growing k means a cadence bug. Do not bake a phase offset into a golden.
 5. **Exploit twin ROMs for triage**: when a source provides with/without
    feature pairs (e.g. vmain `no-remapping` vs `with-remapping`), a clean
    pass on one twin and a large diff on the other pinpoints the defective
