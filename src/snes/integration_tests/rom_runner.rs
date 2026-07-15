@@ -310,15 +310,11 @@ fn evaluate_oracle(
     frames: u32,
 ) -> Option<(RunExitReason, bool)> {
     match oracle {
-        RunOracle::Marker => {
-            if marker[..4] == MARKER_MAGIC {
-                match (marker[4], pc) {
-                    (PASS_STATUS, PASS_IDLE_PC) => Some((RunExitReason::PassMarker, true)),
-                    (FAIL_STATUS, FAIL_IDLE_PC) => Some((RunExitReason::FailMarker, false)),
-                    _ => None,
-                }
-            } else {
-                None
+        RunOracle::Marker if marker[..4] == MARKER_MAGIC => {
+            match (marker[4], pc) {
+                (PASS_STATUS, PASS_IDLE_PC) => Some((RunExitReason::PassMarker, true)),
+                (FAIL_STATUS, FAIL_IDLE_PC) => Some((RunExitReason::FailMarker, false)),
+                _ => None,
             }
         }
         RunOracle::BusByte {
@@ -327,36 +323,29 @@ fn evaluate_oracle(
             fail_value,
         } => {
             let value = snes.read_bus_for_debugger_for_tests(addr).unwrap_or(0);
-            if value == pass_value && pc == PASS_IDLE_PC {
-                Some((RunExitReason::PassMarker, true))
-            } else if value == fail_value && pc == FAIL_IDLE_PC {
-                Some((RunExitReason::FailMarker, false))
-            } else {
-                None
+            match (value, pc) {
+                (v, PASS_IDLE_PC) if v == pass_value => Some((RunExitReason::PassMarker, true)),
+                (v, FAIL_IDLE_PC) if v == fail_value => Some((RunExitReason::FailMarker, false)),
+                _ => None,
             }
         }
         RunOracle::ScreenCrc {
             frames: target_frames,
             expected_crc,
-        } => {
-            if frames >= target_frames {
-                let actual_crc = snes.screen_crc32();
-                Some((RunExitReason::ScreenCrcFrame, actual_crc == expected_crc))
-            } else {
-                None
-            }
+        } if frames >= target_frames => {
+            let actual_crc = snes.screen_crc32();
+            Some((RunExitReason::ScreenCrcFrame, actual_crc == expected_crc))
         }
+        _ => None,
     }
 }
 
 fn read_marker(snes: &Snes) -> [u8; 5] {
-    let mut marker = [0; 5];
-    for (offset, byte) in marker.iter_mut().enumerate() {
-        *byte = snes
+    std::array::from_fn(|offset| {
+        snes
             .read_bus_for_debugger_for_tests(MARKER_ADDR + offset as u32)
-            .unwrap_or(0);
-    }
-    marker
+            .unwrap_or(0)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -410,8 +399,12 @@ fn maybe_write_capture_png(
 }
 
 fn capture_is_disabled_for_fixture(name: &str) -> bool {
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|stem| stem.to_str());
+
     matches!(
-        Path::new(name).file_stem().and_then(|stem| stem.to_str()),
+        stem,
         Some("bus-byte-pass")
             | Some("fail")
             | Some("input-script-none")
@@ -431,9 +424,10 @@ fn capture_stem(name: &str) -> String {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("snes_rom");
+
     stem.chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
                 c
             } else {
                 '_'
