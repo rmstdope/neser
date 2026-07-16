@@ -108,11 +108,12 @@ Test suites:
 - `undisbeliever_ppu_bg_tests.rs` -- VMAIN/VRAM-increment and basic BG ROMs
   built from the undisbeliever source mirror
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-bg/`, see its
-  README for the build procedure). 12 of 18 automated, including the 3
+  README for the build procedure). All 18 automated, including the 3
   scrolling ROMs and `textbuffer-hello-world.sfc` whose animated goldens are
-  derived from frame-skip-free Mesen2 captures at frame 120 (#2990); the 6
-  `*-with-remapping` ROMs are excluded pending VMAIN address remapping
-  (#2989).
+  derived from frame-skip-free Mesen2 captures at frame 120 (#2990), and the
+  6 `*-with-remapping` ROMs added once VMAIN $2115 bits 2-3 address
+  remapping was implemented (#2989; each matches Mesen2 pixel-exactly and,
+  by demo design, its no-remapping twin's golden CRC).
 - `undisbeliever_ppu_obj_tests.rs` -- the OBJ/sprite-limit dropout ROM built
   from the undisbeliever source mirror
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-obj/`).

@@ -1,9 +1,10 @@
-//! Automates 12 of the 18 vendored undisbeliever PPU BG / VMAIN test ROMs
+//! Automates all 18 vendored undisbeliever PPU BG / VMAIN test ROMs
 //! (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-bg/`, built
 //! from the source mirror -- see that folder's README) covering VRAM
-//! increment modes at 1/2/4/8bpp, byte- vs word-increment uploads, plain
-//! (non-DMA) VRAM data-port writes, 1bpp tile decode, a text tilemap, and
-//! the animated scrolling/textbuffer demos (issues #2878, #2990).
+//! increment modes at 1/2/4/8bpp, VMAIN $2115 bits 2-3 address remapping,
+//! byte- vs word-increment uploads, plain (non-DMA) VRAM data-port writes,
+//! 1bpp tile decode, a text tilemap, and the animated scrolling/textbuffer
+//! demos (issues #2878, #2990, #2989).
 //!
 //! Every static golden was approved via the #2878 baseline workflow: probed
 //! to its settle frame (screen CRC unchanged for >= 600 consecutive frames),
@@ -21,12 +22,13 @@
 //! textbuffer at frame 120 -- and additionally verified pixel-identical to
 //! Mesen2 across frames 118-122 and 598-601 (#2990).
 //!
-//! The other 6 vendored ROMs
-//! (`vmain-{1bpp,2bpp,2bpp-split,4bpp,4bpp-word,8bpp}-with-remapping.sfc`)
-//! are deliberately left un-automated because cross-checking exposed a real
-//! NESER divergence, tracked as #2989 (VMAIN $2115 bits 2-3 address remapping
-//! is not implemented; the no-remapping twins below prove everything else in
-//! the upload path) rather than papered over with known-wrong goldens.
+//! The six `*-with-remapping.sfc` ROMs were automated in #2989 once VMAIN
+//! $2115 bits 2-3 address remapping was implemented: probed to their settle
+//! frames (settle + 60, all static for >= 1700 of 1800 probed frames) and
+//! pixel-diffed against fresh Mesen2 headless captures at the same frames --
+//! zero differing pixels for all six. By the demos' design each with-remapping
+//! CRC equals its no-remapping twin's previously approved golden (the demos
+//! draw the same screen through translated addresses).
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -113,6 +115,54 @@ mod tests {
         vmain_8bpp_no_remapping,
         "vmain-8bpp-no-remapping.sfc",
         156,
+        0xB903_D8CA
+    );
+
+    // The six with-remapping ROMs exercise VMAIN $2115 bits 2-3 address
+    // translation (#2989). By design each draws the same screen as its
+    // no-remapping twin, so the CRCs intentionally match the twins above;
+    // every golden was additionally pixel-diffed (0 differing pixels)
+    // against a Mesen2 headless capture at the same frame.
+
+    undisbeliever_ppu_bg_test!(
+        vmain_1bpp_with_remapping,
+        "vmain-1bpp-with-remapping.sfc",
+        105,
+        0x755E_7FBD
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_2bpp_with_remapping,
+        "vmain-2bpp-with-remapping.sfc",
+        113,
+        0x029C_AE27
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_2bpp_split_with_remapping,
+        "vmain-2bpp-split-with-remapping.sfc",
+        113,
+        0x029C_AE27
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_4bpp_with_remapping,
+        "vmain-4bpp-with-remapping.sfc",
+        126,
+        0xAC71_052A
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_4bpp_with_remapping_word,
+        "vmain-4bpp-with-remapping-word.sfc",
+        126,
+        0xAC71_052A
+    );
+
+    undisbeliever_ppu_bg_test!(
+        vmain_8bpp_with_remapping,
+        "vmain-8bpp-with-remapping.sfc",
+        152,
         0xB903_D8CA
     );
 
