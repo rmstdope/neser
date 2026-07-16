@@ -294,20 +294,25 @@ impl Ppu {
             0x2135 => ((self.mode7_multiply() >> 8) & 0xFF) as u8,
             0x2136 => ((self.mode7_multiply() >> 16) & 0xFF) as u8,
             // RDVRAML: low byte of the prefetch register; reloads/increments per VMAIN mode.
+            // fullsnes "Increment/Prefetch in detail": return the OLD prefetch value, reload
+            // the prefetch register from the OLD (pre-increment) address, then increment --
+            // so the first word after setting $2116/17 is received twice (Mesen2
+            // `SnesPpu.cpp` $2139: `UpdateVramReadBuffer` before the increment).
             0x2139 => {
                 let value = (self.vram_prefetch & 0x00FF) as u8;
                 if !self.vram_increment_after_high {
-                    self.increment_vram_address();
                     self.vram_prefetch = self.read_vram_word(self.vram_address);
+                    self.increment_vram_address();
                 }
                 value
             }
-            // RDVRAMH: high byte of the prefetch register; reloads/increments per VMAIN mode.
+            // RDVRAMH: high byte of the prefetch register; reloads/increments per VMAIN mode
+            // (same reload-before-increment ordering as $2139).
             0x213A => {
                 let value = ((self.vram_prefetch >> 8) & 0x00FF) as u8;
                 if self.vram_increment_after_high {
-                    self.increment_vram_address();
                     self.vram_prefetch = self.read_vram_word(self.vram_address);
+                    self.increment_vram_address();
                 }
                 value
             }
@@ -536,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn vram_reads_should_prefetch_the_next_word_after_incrementing() {
+    fn vram_reads_should_return_the_first_word_twice_after_setting_the_address() {
         let mut ppu = Ppu::new();
 
         ppu.write_register(0x2115, 0x80);
@@ -546,13 +551,52 @@ mod tests {
         ppu.write_register(0x2119, 0x22);
         ppu.write_register(0x2118, 0x33);
         ppu.write_register(0x2119, 0x44);
+        ppu.write_register(0x2118, 0x55);
+        ppu.write_register(0x2119, 0x66);
 
         ppu.write_register(0x2116, 0x00);
         ppu.write_register(0x2117, 0x10);
 
+        // fullsnes "Increment/Prefetch in detail": a read returns the OLD
+        // prefetch value, reloads the prefetch register from the OLD (still
+        // current) address, and only then increments -- so the first word
+        // arrives twice after setting the address, further words follow from
+        // properly increasing addresses.
+        assert_eq!(ppu.read_register(0x2139), 0x11);
+        assert_eq!(ppu.read_register(0x213A), 0x22);
         assert_eq!(ppu.read_register(0x2139), 0x11);
         assert_eq!(ppu.read_register(0x213A), 0x22);
         assert_eq!(ppu.read_register(0x2139), 0x33);
+        assert_eq!(ppu.read_register(0x213A), 0x44);
+        assert_eq!(ppu.read_register(0x2139), 0x55);
+        assert_eq!(ppu.read_register(0x213A), 0x66);
+    }
+
+    #[test]
+    fn vram_low_byte_reads_should_reload_the_prefetch_from_the_pre_increment_address() {
+        let mut ppu = Ppu::new();
+
+        // Seed two words in increment-after-high mode, then switch to
+        // increment-after-low (bit 7 = 0), step 1, for the read phase.
+        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x10);
+        ppu.write_register(0x2118, 0x11);
+        ppu.write_register(0x2119, 0x22);
+        ppu.write_register(0x2118, 0x33);
+        ppu.write_register(0x2119, 0x44);
+
+        ppu.write_register(0x2115, 0x00);
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x10);
+
+        // The low-byte read reloads from the pre-increment address, so the
+        // following high-byte read still sees the first word's high byte; the
+        // second low-byte read then repeats the first word's low byte before
+        // the reload finally fetches the second word.
+        assert_eq!(ppu.read_register(0x2139), 0x11);
+        assert_eq!(ppu.read_register(0x213A), 0x22);
+        assert_eq!(ppu.read_register(0x2139), 0x11);
         assert_eq!(ppu.read_register(0x213A), 0x44);
     }
 
