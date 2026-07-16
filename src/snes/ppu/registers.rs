@@ -7,7 +7,7 @@
 
 use super::{
     CGRAM_SIZE, CPU_VERSION, HBLANK_START_DOT, PPU1_VERSION, PPU2_VERSION, Ppu, VISIBLE_DOT_START,
-    VRAM_SIZE,
+    VRAM_SIZE, VramAddressTranslation,
 };
 use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
@@ -157,9 +157,11 @@ impl Ppu {
             // VTIMEL/VTIMEH: V timer compare target.
             0x4209 => self.vtime = (self.vtime & 0x0100) | value as u16,
             0x420A => self.vtime = (self.vtime & 0x00FF) | (((value as u16) & 0x01) << 8),
-            // VMAIN: VRAM address increment mode/step.
+            // VMAIN: VRAM address increment mode/step and address translation.
             0x2115 => {
                 self.vram_increment_after_high = value & 0x80 != 0;
+                self.vram_address_translation =
+                    VramAddressTranslation::from_u8((value >> 2) & 0x03);
                 self.vram_increment_step = match value & 0x03 {
                     0 => 1,
                     1 => 32,
@@ -171,7 +173,7 @@ impl Ppu {
             0x2116 => self.vram_address = (self.vram_address & 0xFF00) | value as u16,
             0x2117 => {
                 self.vram_address = (self.vram_address & 0x00FF) | ((value as u16) << 8);
-                self.vram_prefetch = self.read_vram_word(self.vram_address);
+                self.vram_prefetch = self.read_vram_word(self.translated_vram_address());
             }
             // VMDATAL / VMDATAH: VRAM data write (low/high byte of the addressed word).
             // Outside VBlank/forced blank the data is silently dropped (fullsnes: "All video
@@ -301,7 +303,7 @@ impl Ppu {
             0x2139 => {
                 let value = (self.vram_prefetch & 0x00FF) as u8;
                 if !self.vram_increment_after_high {
-                    self.vram_prefetch = self.read_vram_word(self.vram_address);
+                    self.vram_prefetch = self.read_vram_word(self.translated_vram_address());
                     self.increment_vram_address();
                 }
                 value
@@ -311,7 +313,7 @@ impl Ppu {
             0x213A => {
                 let value = ((self.vram_prefetch >> 8) & 0x00FF) as u8;
                 if self.vram_increment_after_high {
-                    self.vram_prefetch = self.read_vram_word(self.vram_address);
+                    self.vram_prefetch = self.read_vram_word(self.translated_vram_address());
                     self.increment_vram_address();
                 }
                 value
@@ -479,7 +481,29 @@ impl Ppu {
     }
 
     fn vram_index(&self) -> usize {
-        ((self.vram_address as usize) << 1) & (VRAM_SIZE - 1)
+        ((self.translated_vram_address() as usize) << 1) & (VRAM_SIZE - 1)
+    }
+
+    /// The VRAM word address with the VMAIN ($2115) address translation
+    /// applied. fullsnes: the translation "does thrice left-rotate the lower
+    /// 8, 9, or 10 bits of the Word-address" (8-bit: aaaaaaaaYYYxxxxx ->
+    /// aaaaaaaaxxxxxYYY) and "is applied only temporarily upon memory
+    /// accesses, it doesn't affect the value in Port 2116h-17h" (Mesen2
+    /// `SnesPpu::GetVramAddress`).
+    fn translated_vram_address(&self) -> u16 {
+        let address = self.vram_address;
+        match self.vram_address_translation {
+            VramAddressTranslation::None => address,
+            VramAddressTranslation::EightBit => {
+                (address & 0xFF00) | ((address << 3) & 0x00F8) | ((address >> 5) & 0x0007)
+            }
+            VramAddressTranslation::NineBit => {
+                (address & 0xFE00) | ((address << 3) & 0x01F8) | ((address >> 6) & 0x0007)
+            }
+            VramAddressTranslation::TenBit => {
+                (address & 0xFC00) | ((address << 3) & 0x03F8) | ((address >> 7) & 0x0007)
+            }
+        }
     }
 
     fn cgram_index(&self) -> usize {
@@ -598,6 +622,153 @@ mod tests {
         assert_eq!(ppu.read_register(0x213A), 0x22);
         assert_eq!(ppu.read_register(0x2139), 0x11);
         assert_eq!(ppu.read_register(0x213A), 0x44);
+    }
+
+    // VMAIN ($2115) bits 3-2 address translation (fullsnes: thrice left-rotate
+    // of the lower 8/9/10 bits of the word address, applied temporarily upon
+    // memory accesses). All tests below use word address $21AC:
+    //   8-bit rotate:  %10101100 (YYY=101 xxxxx=01100) -> %01100101 = $2165
+    //   9-bit rotate: %110101100 (YYY=110 xxxxxP=101100) -> %101100110 = $2166
+    //  10-bit rotate: %0110101100 (YYY=011 xxxxxPP=0101100) -> %0101100011 = $2163
+    // and byte offsets are word address << 1.
+
+    #[test]
+    fn vmain_8bit_translation_should_rotate_the_low_byte_of_the_write_address() {
+        let mut ppu = Ppu::new();
+
+        ppu.write_register(0x2115, 0x84);
+        ppu.write_register(0x2116, 0xAC);
+        ppu.write_register(0x2117, 0x21);
+        ppu.write_register(0x2118, 0xAA);
+        ppu.write_register(0x2119, 0xBB);
+
+        assert_eq!(ppu.vram_byte(0x42CA), 0xAA);
+        assert_eq!(ppu.vram_byte(0x42CB), 0xBB);
+        // Nothing lands at the untranslated address.
+        assert_eq!(ppu.vram_byte(0x4358), 0x00);
+        assert_eq!(ppu.vram_byte(0x4359), 0x00);
+    }
+
+    #[test]
+    fn vmain_9bit_translation_should_rotate_the_low_nine_bits_of_the_write_address() {
+        let mut ppu = Ppu::new();
+
+        ppu.write_register(0x2115, 0x88);
+        ppu.write_register(0x2116, 0xAC);
+        ppu.write_register(0x2117, 0x21);
+        ppu.write_register(0x2118, 0xAA);
+        ppu.write_register(0x2119, 0xBB);
+
+        assert_eq!(ppu.vram_byte(0x42CC), 0xAA);
+        assert_eq!(ppu.vram_byte(0x42CD), 0xBB);
+        assert_eq!(ppu.vram_byte(0x4358), 0x00);
+        assert_eq!(ppu.vram_byte(0x4359), 0x00);
+    }
+
+    #[test]
+    fn vmain_10bit_translation_should_rotate_the_low_ten_bits_of_the_write_address() {
+        let mut ppu = Ppu::new();
+
+        ppu.write_register(0x2115, 0x8C);
+        ppu.write_register(0x2116, 0xAC);
+        ppu.write_register(0x2117, 0x21);
+        ppu.write_register(0x2118, 0xAA);
+        ppu.write_register(0x2119, 0xBB);
+
+        assert_eq!(ppu.vram_byte(0x42C6), 0xAA);
+        assert_eq!(ppu.vram_byte(0x42C7), 0xBB);
+        assert_eq!(ppu.vram_byte(0x4358), 0x00);
+        assert_eq!(ppu.vram_byte(0x4359), 0x00);
+    }
+
+    #[test]
+    fn vmain_translation_should_apply_to_the_prefetch_when_setting_the_address() {
+        let mut ppu = Ppu::new();
+
+        // Seed the word at the translated address $2165 without translation.
+        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2116, 0x65);
+        ppu.write_register(0x2117, 0x21);
+        ppu.write_register(0x2118, 0x5A);
+        ppu.write_register(0x2119, 0xC3);
+
+        // Setting $2116/17 with 8-bit translation active must prefetch
+        // through the translated address.
+        ppu.write_register(0x2115, 0x84);
+        ppu.write_register(0x2116, 0xAC);
+        ppu.write_register(0x2117, 0x21);
+
+        assert_eq!(ppu.read_register(0x2139), 0x5A);
+        assert_eq!(ppu.read_register(0x213A), 0xC3);
+    }
+
+    #[test]
+    fn vmain_translation_should_apply_to_the_prefetch_reload_after_reads() {
+        let mut ppu = Ppu::new();
+
+        // Seed the words at the translated addresses of $21AC and $21AD
+        // (8-bit rotate: $2165 and $216D) without translation.
+        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2116, 0x65);
+        ppu.write_register(0x2117, 0x21);
+        ppu.write_register(0x2118, 0x11);
+        ppu.write_register(0x2119, 0x22);
+        ppu.write_register(0x2116, 0x6D);
+        ppu.write_register(0x2117, 0x21);
+        ppu.write_register(0x2118, 0x33);
+        ppu.write_register(0x2119, 0x44);
+
+        ppu.write_register(0x2115, 0x84);
+        ppu.write_register(0x2116, 0xAC);
+        ppu.write_register(0x2117, 0x21);
+
+        // First word twice (reload from the pre-increment address $21AC ->
+        // $2165), then the reload must fetch through the translated
+        // incremented address ($21AD -> $216D), not untranslated $21AD.
+        assert_eq!(ppu.read_register(0x2139), 0x11);
+        assert_eq!(ppu.read_register(0x213A), 0x22);
+        assert_eq!(ppu.read_register(0x2139), 0x11);
+        assert_eq!(ppu.read_register(0x213A), 0x22);
+        assert_eq!(ppu.read_register(0x2139), 0x33);
+        assert_eq!(ppu.read_register(0x213A), 0x44);
+    }
+
+    #[test]
+    fn vmain_translation_should_not_affect_the_stored_address_or_increment() {
+        let mut ppu = Ppu::new();
+
+        // 8-bit translation with increment-after-low: consecutive $2118
+        // writes must land at translate($21AC) = $2165 and translate($21AD) =
+        // $216D -- the increment applies to the untranslated address and the
+        // rotation is re-applied per access (fullsnes: the translation "is
+        // applied only temporarily upon memory accesses, it doesn't affect
+        // the value in Port 2116h-17h").
+        ppu.write_register(0x2115, 0x04);
+        ppu.write_register(0x2116, 0xAC);
+        ppu.write_register(0x2117, 0x21);
+        ppu.write_register(0x2118, 0x11);
+        ppu.write_register(0x2118, 0x22);
+
+        assert_eq!(ppu.vram_byte(0x42CA), 0x11);
+        assert_eq!(ppu.vram_byte(0x42DA), 0x22);
+        // Incrementing the translated value instead would hit $2166.
+        assert_eq!(ppu.vram_byte(0x42CC), 0x00);
+    }
+
+    #[test]
+    fn vmain_translation_mode_zero_should_leave_the_address_unchanged() {
+        let mut ppu = Ppu::new();
+
+        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2116, 0xAC);
+        ppu.write_register(0x2117, 0x21);
+        ppu.write_register(0x2118, 0xAA);
+        ppu.write_register(0x2119, 0xBB);
+
+        assert_eq!(ppu.vram_byte(0x4358), 0xAA);
+        assert_eq!(ppu.vram_byte(0x4359), 0xBB);
+        // The 8-bit-rotated location stays untouched.
+        assert_eq!(ppu.vram_byte(0x42CA), 0x00);
     }
 
     #[test]
