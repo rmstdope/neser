@@ -295,7 +295,7 @@
       "platform": "snes",
       "source": {
         "url": "https://github.com/rmstdope/snes-test-roms",
-        "ref": "21165788e56c24f51ccb18d06890f70717f15d78"
+        "ref": "3d82992779775d28b99a198afb16edd126ee012f"
       },
       "license": "zlib",
       "oracle_type": "screen_crc",
