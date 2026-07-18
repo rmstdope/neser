@@ -310,13 +310,11 @@ fn evaluate_oracle(
     frames: u32,
 ) -> Option<(RunExitReason, bool)> {
     match oracle {
-        RunOracle::Marker if marker[..4] == MARKER_MAGIC => {
-            match (marker[4], pc) {
-                (PASS_STATUS, PASS_IDLE_PC) => Some((RunExitReason::PassMarker, true)),
-                (FAIL_STATUS, FAIL_IDLE_PC) => Some((RunExitReason::FailMarker, false)),
-                _ => None,
-            }
-        }
+        RunOracle::Marker if marker[..4] == MARKER_MAGIC => match (marker[4], pc) {
+            (PASS_STATUS, PASS_IDLE_PC) => Some((RunExitReason::PassMarker, true)),
+            (FAIL_STATUS, FAIL_IDLE_PC) => Some((RunExitReason::FailMarker, false)),
+            _ => None,
+        },
         RunOracle::BusByte {
             addr,
             pass_value,
@@ -342,8 +340,7 @@ fn evaluate_oracle(
 
 fn read_marker(snes: &Snes) -> [u8; 5] {
     std::array::from_fn(|offset| {
-        snes
-            .read_bus_for_debugger_for_tests(MARKER_ADDR + offset as u32)
+        snes.read_bus_for_debugger_for_tests(MARKER_ADDR + offset as u32)
             .unwrap_or(0)
     })
 }
@@ -399,9 +396,7 @@ fn maybe_write_capture_png(
 }
 
 fn capture_is_disabled_for_fixture(name: &str) -> bool {
-    let stem = Path::new(name)
-        .file_stem()
-        .and_then(|stem| stem.to_str());
+    let stem = Path::new(name).file_stem().and_then(|stem| stem.to_str());
 
     matches!(
         stem,
