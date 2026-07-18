@@ -133,6 +133,38 @@ Test suites:
   first-sprite rotation, 13 of 14 with Mesen2-approved goldens.
   `obj-y-wrap.sfc` is `#[ignore]`d pending the V-flip+Y-wrap divergence
   (#3003).
+- `undisbeliever_ppu_window_tests.rs` -- window mask and INIDISP fade demo
+  ROMs built from the undisbeliever source mirror
+  (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window/`, see
+  its README): the interactive `window-mask-logic.sfc` (all 21 colour-window
+  mask-logic/invert/enable states via input scripting) and
+  `window-shapes-single.sfc` (14 HDMA window shapes, locked against its
+  auto-advance with an A tap only the initial any-button check reads), the
+  two free-running precalculated bouncing-window demos, and
+  `inidisp_fadein_fadeout.sfc` sampled mid-plateau at 7 probed frames. The
+  7 fade samples and the no-window state carry Mesen2-approved goldens; all
+  36 window-enabled vectors are `#[ignore]`d because NESER renders inverted
+  window-masking regions (#3011).
+- `neser_color_math_tests.rs` -- NESER-authored colour-math, window and
+  brightness ROMs written against the undisbeliever bass framework
+  (`roms/snes/automated_tests/snes_test_roms/neser-colormath-tests/`,
+  sources included; see its README). One shared Mode 1 quadrant scene (main
+  vertical bars x sub horizontal bars = 64 math crossings plus fallback
+  regions) covers CGADSUB add/subtract with/without halving, per-plane
+  COLDATA fixed-colour math, the transparent-sub fallback rule, the OBJ
+  palette 4-7 rule, colour-window clip/prevent and layer window masks;
+  `brightness-steps.sfc` steps INIDISP through all 16 levels plus the
+  force-blank cut (17 samples). add-clamp, sub-floor, both fixed-colour
+  ROMs and all 17 brightness samples carry Mesen2-approved goldens; the
+  half-math ROMs are `#[ignore]`d pending the transparent-sub
+  halve-suppression rule (#3012) and the two window ROMs pending #3011.
+- `jonasquinn_math_tests.rs` -- `color_halve_proof/demo.smc` from the
+  jonasquinn collection
+  (`roms/snes/automated_tests/snes_test_roms/jonasquinn-test-roms/`),
+  proving half colour math halves after the add via per-scanline COLDATA
+  rewrites; Mesen2-approved golden. `test_math.sfc` was evaluated and left
+  un-automated (a CPU mul/div latency test whose screen CRC would only
+  prove the ROM ran; see the manifest notes).
 - `hblank_dma_vram_tests.rs` -- HDMA-to-VRAM timing ROMs
   (`roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram/`).
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs
