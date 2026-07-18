@@ -290,6 +290,9 @@ pub struct SnesPpuState {
     pub vram_increment_after_high: bool,
     #[serde(default)]
     pub vram_increment_step: u16,
+    /// VMAIN $2115 bits 3-2 (0..=3); old saves default to 0 = no translation.
+    #[serde(default)]
+    pub vram_address_translation: u8,
     #[serde(default)]
     pub vram_address: u16,
     #[serde(default)]

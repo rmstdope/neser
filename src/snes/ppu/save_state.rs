@@ -5,7 +5,7 @@
 
 use super::{
     CGRAM_SIZE, OAM_SIZE, Ppu, PpuLineTimingProfile, ScanPosition, SnesVideoRegion,
-    VISIBLE_DOT_START, VISIBLE_LINE_START, VRAM_SIZE,
+    VISIBLE_DOT_START, VISIBLE_LINE_START, VRAM_SIZE, VramAddressTranslation,
 };
 use crate::snes::console::save_state::SnesPpuState;
 
@@ -32,6 +32,7 @@ impl Ppu {
             pending_completed_frames: self.pending_completed_frames,
             vram_increment_after_high: self.vram_increment_after_high,
             vram_increment_step: self.vram_increment_step,
+            vram_address_translation: self.vram_address_translation.as_u8(),
             vram_address: self.vram_address,
             vram_prefetch: self.vram_prefetch,
             cgram_address: self.cgram_address,
@@ -128,6 +129,8 @@ impl Ppu {
         self.pending_completed_frames = state.pending_completed_frames;
         self.vram_increment_after_high = state.vram_increment_after_high;
         self.vram_increment_step = state.vram_increment_step;
+        self.vram_address_translation =
+            VramAddressTranslation::from_u8(state.vram_address_translation);
         self.vram_address = state.vram_address;
         self.vram_prefetch = state.vram_prefetch;
         self.cgram_address = state.cgram_address;
@@ -265,7 +268,7 @@ mod tests {
         ppu.write_register(0x2121, 0x00);
         ppu.write_register(0x2122, 0x34);
         ppu.write_register(0x2122, 0x12); // cgram[0] = 0x1234
-        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2115, 0x8C); // increment-after-high + 10-bit translation (#2989)
         ppu.write_register(0x2116, 0x00);
         ppu.write_register(0x2117, 0x10);
         ppu.write_register(0x2118, 0xAB);

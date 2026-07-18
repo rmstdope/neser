@@ -133,6 +133,40 @@ impl PpuLineTimingProfile {
     }
 }
 
+/// VMAIN ($2115) bits 3-2 address translation: a thrice left-rotate of the
+/// lower 8, 9, or 10 bits of the VRAM word address, applied temporarily upon
+/// each CPU data-port access (it never affects the address in $2116/17 or
+/// its auto-increment). Intended for uploading bitmap graphics row by row
+/// (fullsnes "2115h - VMAIN"; Mesen2 `SnesPpu::GetVramAddress`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum VramAddressTranslation {
+    #[default]
+    None,
+    EightBit,
+    NineBit,
+    TenBit,
+}
+
+impl VramAddressTranslation {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::EightBit,
+            2 => Self::NineBit,
+            3 => Self::TenBit,
+            _ => Self::None,
+        }
+    }
+
+    fn as_u8(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::EightBit => 1,
+            Self::NineBit => 2,
+            Self::TenBit => 3,
+        }
+    }
+}
+
 /// SNES Picture Processing Unit.
 #[derive(Debug, Clone)]
 pub struct Ppu {
@@ -171,6 +205,7 @@ pub struct Ppu {
     nmi_edge: bool,
     vram_increment_after_high: bool,
     vram_increment_step: u16,
+    vram_address_translation: VramAddressTranslation,
     vram_address: u16,
     vram_prefetch: u16,
     cgram_address: u16,
@@ -364,6 +399,7 @@ impl Ppu {
             nmi_edge: false,
             vram_increment_after_high: false,
             vram_increment_step: 1,
+            vram_address_translation: VramAddressTranslation::None,
             vram_address: 0,
             vram_prefetch: 0,
             cgram_address: 0,
