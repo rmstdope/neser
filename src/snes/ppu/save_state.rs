@@ -96,9 +96,6 @@ impl Ppu {
             oam_priority_rotation: self.oam_priority_rotation,
             stat77_range_over: self.stat77_range_over,
             stat77_time_over: self.stat77_time_over,
-            obj_range_over_dot: self.obj_range_over_dot,
-            obj_time_over_pending: self.obj_time_over_pending,
-            obj_eval_dirty: self.obj_eval_dirty,
             mosaic: self.mosaic,
             mosaic_vblock_size: self.mosaic_vblock_size,
             mosaic_vcount: self.mosaic_vcount,
@@ -194,9 +191,12 @@ impl Ppu {
         self.oam_priority_rotation = state.oam_priority_rotation;
         self.stat77_range_over = state.stat77_range_over;
         self.stat77_time_over = state.stat77_time_over;
-        self.obj_range_over_dot = state.obj_range_over_dot;
-        self.obj_time_over_pending = state.obj_time_over_pending;
-        self.obj_eval_dirty = state.obj_eval_dirty;
+        // The OBJ pipeline is transient like the framebuffer: reset it and let the next
+        // scanline's eval/fetch windows rebuild it. After a mid-active-scanline load the
+        // row in progress renders without OBJ pixels (its presented line and the partially
+        // run eval window are lost); rows from the next scanline onward are correct. This
+        // one-line artifact matches the transient-framebuffer policy above.
+        self.obj_pipeline = super::sprites::ObjPipeline::default();
         self.mosaic = state.mosaic;
         self.mosaic_vblock_size = state.mosaic_vblock_size;
         self.mosaic_vcount = state.mosaic_vcount;
@@ -320,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_mid_scanline_preserves_per_dot_obj_continuity() {
+    fn restore_mid_scanline_recovers_obj_pipeline_from_the_next_row() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x2100, 0x0F); // visible output
         ppu.write_register(0x2101, 0x00); // 8x8 OBJ
@@ -350,7 +350,7 @@ mod tests {
         ppu.set_oam_byte(0x03, 0);
         ppu.set_oam_byte(0x200, 0);
 
-        // Enter active display and stop mid-scanline.
+        // Enter active display and stop mid-scanline (scanline 1 dot 30, rendering row 0).
         for _ in 0..((341 + 30) * 4) {
             ppu.tick();
         }
@@ -359,8 +359,10 @@ mod tests {
         let mut restored = Ppu::new();
         restored.restore_state(&snapshot).unwrap();
 
-        // Advance both PPUs by the same number of dots and require identical visible output.
-        for _ in 0..(40 * 4) {
+        // Advance both PPUs through the rest of scanline 1 and all of scanline 2, so row 1
+        // (evaluated during the partially-restored scanline 1, fetched at its H=270..339
+        // window) is fully rendered on both.
+        for _ in 0..((2 * 341) * 4) {
             ppu.tick();
             restored.tick();
         }
@@ -373,8 +375,17 @@ mod tests {
         };
 
         assert_eq!(restored.position(), ppu.position());
+        // Row 0 backdrop pixels rendered after the restore match (the OBJ pipeline is
+        // transient, so row 0's sprite pixels are documented to drop for this one row).
         assert_eq!(pixel(&rgb_restored, 20, 0), pixel(&rgb_original, 20, 0));
         assert_eq!(pixel(&rgb_restored, 40, 0), pixel(&rgb_original, 40, 0));
+        // Row 1 recovers full OBJ output: the sprite (rows 0..7) is drawn identically.
+        assert_eq!(
+            pixel(&rgb_restored, 4, 1),
+            [0, 255, 0],
+            "restored PPU redraws the OBJ from the next row on"
+        );
+        assert_eq!(pixel(&rgb_restored, 4, 1), pixel(&rgb_original, 4, 1));
         assert_eq!(restored.read_register(0x213E), ppu.read_register(0x213E));
     }
 }

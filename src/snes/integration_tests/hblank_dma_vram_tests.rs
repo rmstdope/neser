@@ -121,11 +121,16 @@ mod tests {
     // matches both Mesen2 and the bundled real-hardware reference photo. See
     // #2952.
     // CRC updated after #2943 fix (mid-scanline HDMA activation).
+    // CRC updated after #2999 (hardware OBJ eval/fetch pipeline): row 0 no
+    // longer shows sprite pixels that the previous live-state OBJ model drew
+    // despite the ROM's forced-blank timing; frame-600 row 0 is now a 256/256
+    // pixel-exact match for a fresh Mesen2 headless capture (was 116/256),
+    // and every other row is byte-identical to the previous golden.
     hblank_dma_vram_rom_test!(
         hvdma_matches_mesen2_and_hardware,
         "hvdma.sfc",
         600,
-        0x8D23_B418
+        0xA35B_BC85
     );
 
     // Confirmed hardware-accurate: NESER's frame-600 capture is a
