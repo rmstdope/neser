@@ -314,6 +314,50 @@ identical schedule in Mesen2:
    1 frame; space taps generously (test_oam needed an 8-frame period --
    4 dropped presses during menu redraws). The dialed values are
    usually visible on screen, so captures self-verify the cadence.
+5. **Locking auto-advancing demos**: some demos free-run until *any*
+   button is pressed but navigate on only a subset of buttons -- read
+   the ROM's input handler to find a button the navigation loop
+   ignores. undisbeliever's `window-shapes-single.sfc` exits its timer
+   loop on any bit of the 16-bit `joypadPressed` word but its
+   navigation loop reads only the JOYH byte (B/Y/Select/Start/dpad), so
+   a scripted **A tap** (JOYL byte) freezes the auto-advance without
+   changing the selection. Schedule the lock tap twice (e.g. frames 40
+   and 48) so a press landing before auto-joypad is live cannot be
+   missed (#2880).
+
+### Probing animated ROMs with a per-frame CRC sweep (from #2880)
+
+Before choosing screen-CRC sample frames for animated or
+frame-scheduled content (fades, brightness steppers, image cycles), map
+the plateaus empirically with a throwaway probe test instead of
+trusting the nominal schedule: load the ROM like `rom_runner` does
+(`Snes::new` + `load_rom`), tick, and on each `is_ready_to_render()`
+frame print `snes.screen_crc32()` **only when it changes**. One run
+gives the full plateau map (e.g. #2880's fade demo: 4-frame brightness
+steps from frame 12, holds at 68-135 and 257-324, black gap 192-200,
+378-frame cycle; the brightness stepper's level-N plateau spans frames
+64N+8 through 64N+71). Then pick mid-plateau sample frames with >=2
+frames of margin on each side and delete the probe before committing
+(it needs `crate::platform::emulator::Emulator` in scope for
+`load_rom`). This replaces dozens of single-frame runs and guards
+against off-by-a-few boot-frame offsets between the ROM's internal
+counter and the emulator frame count.
+
+### Attributing divergences by exact diff-pixel counts (from #2880)
+
+When a Mesen2 cross-check diffs, compute the pixel area of the region
+each suspect rule governs and compare against the reported diff count
+before writing the bug issue -- an exact match pins the divergence to
+one rule and makes the issue evidence unambiguous. In #2880 the
+half-math scenes diffed in exactly 7424 px = the 8192 px sub-transparent
+fallback region minus 768 px of black bars that halve to themselves,
+and the center-only variant diffed in exactly 38912 px = its enlarged
+fallback area -- proving NESER fails to suppress halving for the
+fixed-colour fallback (#3012) while all 64 sub-opaque crossings match.
+Design NESER-authored scenes to make this possible: give each rule its
+own screen region (quadrant layouts) and include degenerate values
+(black bars, white bars) whose invariance under the suspect operation
+is predictable.
 
 ### Automating Screenshot Capture at Specific Frames
 
