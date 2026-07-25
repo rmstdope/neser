@@ -269,6 +269,69 @@
       ]
     },
     {
+      "id": "snes-tests-undisbeliever-ppu-window",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/undisbeliever/snes-test-roms",
+        "ref": "ac6ef8006809c0ff5dabc8ff137a4623967697fe"
+      },
+      "license": "zlib",
+      "oracle_type": "screen_crc",
+      "notes": "undisbeliever (Marcus Rowe) PPU window and INIDISP fade demo ROMs (issue #2880): window-mask-logic.sfc (interactive; all colour-window mask-logic/invert/enable states via rom_runner input scripting), window-shapes-single.sfc (interactive; 14 HDMA single-window shapes, locked against its 120-frame auto-advance with an A tap that only the initial any-button check reads), window-precalculated-single/-symmetrical.sfc (self-running bouncing-window demos animating every frame) and inidisp_fadein_fadeout.sfc (deterministic fade-in/hold/fade-to-force-blank cycle repeating every 378 frames). Built once locally from the vendored source mirror (undisbeliever-inidisp/sources at the ref above) with bass-untech per the folder README (same clang patch caveat as undisbeliever-ppu-bg). inidisp_extend_vblank.sfc from the same source dir is deliberately NOT vendored (IRQ-timed extended-VBlank demo, deferred to the PPU timing issue #2883). 8 of 44 tests carry Mesen2-approved goldens (7 mid-plateau fade samples probed with a per-frame CRC sweep, plus the mask-logic no-windows state) -- all pixel-exact vs Mesen2 headless captures (frame-skip-free). The other 36 vectors (20 mask-logic window states, 14 shapes, both precalculated demos) expose inverted window-masking regions in NESER (clearest evidence: Mesen2 renders window-precalculated-single.sfc as a white '!' on black, NESER the exact inverse) and are committed #[ignore]d with NESER's current CRCs pending issue #3011. Run by snes::integration_tests::undisbeliever_ppu_window_tests.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window",
+          "refresh_command": null,
+          "notes": "5 locally-built .sfc ROMs plus LICENSE and build README (patch lives in ../undisbeliever-ppu-bg). Rebuild procedure is manual (see the folder README); refresh_command is null because building requires a one-time local toolchain setup."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-neser-colormath",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/rmstdope/snes-test-roms",
+        "ref": "3d82992779775d28b99a198afb16edd126ee012f"
+      },
+      "license": "zlib",
+      "oracle_type": "screen_crc",
+      "notes": "NESER-authored PPU colour-math, window and INIDISP-brightness test ROMs (issue #2880), written against the undisbeliever bass framework (sources committed alongside the builds). All eleven ROMs share one static Mode 1 quadrant scene (BG1 main-screen vertical bars x BG2 sub-screen horizontal bars = 64 colour-math crossings plus backdrop-main, transparent-sub and backdrop x transparent fallback regions; bar values discriminate clamp-at-31, floor-at-0 and halve-after-add; settles at frame 8, sampled at 66). cm-add-clamp, cm-sub-floor, cm-fixed-add and cm-fixed-sub-half match Mesen2 pixel-exactly and carry approved goldens. cm-add-half, cm-sub-half, cm-obj-palettes and cm-sub-backdrop diverge ONLY in the transparent-sub fallback regions (pixel-count-exact diffs of 7424 resp. 38912 px): NESER fails to suppress halving for the fixed-colour fallback -- #[ignore]d pending #3012 (the 64 sub-opaque crossings and the OBJ palette 4-7 rule already match). cm-window-clip and win-layer-masks expose NESER's inverted window-masking regions -- #[ignore]d pending #3011. brightness-steps.sfc steps INIDISP through all 16 levels from the NMI frame counter (probed plateaus 64N+8..64N+71, force-blank from frame 1160); all 17 samples (16 levels + force-blank) match Mesen2 pixel-exactly with approved goldens (level 0 and force-blank both render all-black and share a CRC by design). Run by snes::integration_tests::neser_color_math_tests, one test per ROM plus 17 brightness samples.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/neser-colormath-tests",
+          "refresh_command": null,
+          "notes": "11 locally-built .sfc ROMs plus bass sources (src/ with the shared _colormath-scene.inc), LICENSE and build README. Rebuild procedure is manual via the undisbeliever-inidisp/sources mirror (see the folder README); refresh_command is null because building requires a one-time local toolchain setup."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-jonasquinn",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://helmet.kafuka.org/bboard/thread.php?pid=2461#2461",
+        "ref": "jonasquinn-bboard-collection"
+      },
+      "license": "unknown",
+      "oracle_type": "screen_crc",
+      "notes": "Jonas Quinn's BBoard collection of SNES test ROMs by various authors (incl. byuu), vendored under jonasquinn-test-roms/. No license file exists in the collection, recorded as unknown. Two ROMs are automated: test_oam/test_oam.smc (byuu's interactive OAM size test, 34 input-scripted combos in snes::integration_tests::byuu_test_oam_tests, automated with #2879 -- this entry backfills provenance for that suite, which predates enforced manifest coverage) and color_halve_proof/demo.smc (proves half colour math halves AFTER the add via per-scanline COLDATA rewrites; settles at frame 2, sampled at 66, matches Mesen2 pixel-exactly; snes::integration_tests::jonasquinn_math_tests, issue #2880). test_math/test_math.sfc was evaluated for #2880 and deliberately NOT automated: it is a CPU multiply/divide ($4202-$4217) latency test that writes results to SRAM and ends on a solid-colour screen, so a screen CRC would only prove the ROM ran to completion -- it remains a candidate asset for CPU-focused work. The rest of the collection is vendored but not yet automated.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/jonasquinn-test-roms",
+          "refresh_command": null,
+          "notes": "Vendored collection; test_oam and color_halve_proof have visually-approved screen-CRC goldens."
+        }
+      ]
+    },
+    {
       "id": "snes-tests-gilyon",
       "suite": "rom_pass_fail",
       "platform": "snes",
