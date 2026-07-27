@@ -471,11 +471,11 @@ impl Ppu {
         hires_half: u16,
     ) -> Option<(u16, bool)> {
         let hx = (x << 1) | hires_half;
-        let (hoffset, voffset) = self.effective_offsets_hires(bg, hx, y);
+        let (entry_col, hoffset, voffset) = self.effective_offsets_hires(bg, hx, y);
 
         let v_shift = if size16 { 4 } else { 3 };
         let v_mask = (1u16 << v_shift) - 1;
-        let entry = self.read_bg_map_entry(bg, hoffset >> 4, voffset >> v_shift);
+        let entry = self.read_bg_map_entry(bg, entry_col, voffset >> v_shift);
         let (char_num, palette, priority, hflip, vflip) = decode_bg_map_entry(entry);
 
         // Flips apply across the whole 16-wide pair (and 16-tall block for size16).
@@ -532,15 +532,41 @@ impl Ppu {
         Some(self.cgram_color(index))
     }
 
-    /// Compute the effective hires BG pixel coordinates for layer `bg` at half-pixel
-    /// column `hx` (0..512): horizontal scroll doubled into half-pixel units, vertical
-    /// scroll as in [`Ppu::effective_offsets`]. Mode 6 offset-per-tile is not applied
-    /// here yet (#3016).
-    fn effective_offsets_hires(&self, bg: usize, hx: u16, y: u16) -> (u16, u16) {
+    /// Compute the effective hires BG coordinates for layer `bg` at half-pixel column
+    /// `hx` (0..512): `(tilemap entry column, hoffset in half-pixel units, voffset)`,
+    /// with the horizontal scroll doubled and mode 6 offset-per-tile applied to the
+    /// entry column only (fine x and the char-pair half always follow BGnHOFS).
+    fn effective_offsets_hires(&self, bg: usize, hx: u16, y: u16) -> (u16, u16, u16) {
         let hscroll = (self.bg_hofs[bg] & 0x03FF) << 1;
         let hoffset = hx.wrapping_add(hscroll) & 0x07FF;
-        let voffset = y.wrapping_add(1).wrapping_add(self.bg_vscroll(bg)) & 0x03FF;
-        (hoffset, voffset)
+        let mut entry_col = hoffset >> 4;
+        let screen_y = y.wrapping_add(1);
+        let mut voffset = screen_y.wrapping_add(self.bg_vscroll(bg)) & 0x03FF;
+
+        // Offset-per-tile (mode 6 is the only hires OPT mode; mode-2-style dual H/V
+        // entries). The BG3 lookup runs in native units, where one tilemap entry spans
+        // 8 native pixels regardless of the tile-size bit, and the first entry column
+        // is exempt.
+        if self.bg_mode == 6 && bg < 2 {
+            let valid_bit = 0x2000u16 << bg; // BG1 -> bit13, BG2 -> bit14
+            let offset_x = (hx >> 1).wrapping_add(self.bg_hofs[bg] & 7);
+            if offset_x >= 8 {
+                let lookup_x = (offset_x - 8).wrapping_add(self.bg_hofs[2] & 0x03F8);
+                let bg3_vscroll = self.bg_vofs[2] & 0x03FF;
+                let hlookup = self.bg3_offset_entry(lookup_x, bg3_vscroll);
+                let vlookup = self.bg3_offset_entry(lookup_x, bg3_vscroll.wrapping_add(8));
+                if hlookup & valid_bit != 0 {
+                    // Mesen2 GetTilemapData ORs the OPT value into the doubled
+                    // scroll's bits 3-9 and shifts back down: the entry column moves
+                    // by (value & 0x3F0) >> 4 and the value's bit 3 is dropped.
+                    entry_col = (offset_x >> 3).wrapping_add((hlookup & 0x03F0) >> 4);
+                }
+                if vlookup & valid_bit != 0 {
+                    voffset = screen_y.wrapping_add(vlookup & 0x03FF) & 0x03FF;
+                }
+            }
+        }
+        (entry_col, hoffset, voffset)
     }
 
     /// The layer's vertical scroll with the mosaic block-hold subtraction applied
@@ -971,6 +997,83 @@ mod tests {
         assert_eq!(ppu.framebuffer[0], 1, "column 0 shows tile column 0");
         assert_eq!(ppu.framebuffer[1], 2, "column 1 shows tile column 1");
         assert_eq!(ppu.framebuffer[2], 3, "column 2 shows tile column 2");
+    }
+
+    /// Mode 6 scene for offset-per-tile tests: BG1 on both screens with solid char
+    /// pairs per map entry (entry 0 -> chars 1/2, entry 1 -> 3/4, entry 2 -> 5/6,
+    /// colored by char number), BG1 map at 0x400, BG3 (OPT source) map at 0x800.
+    fn setup_mode6_opt(ppu: &mut Ppu) {
+        setup_mode5_bg1_both_screens(ppu);
+        ppu.write_register(0x2105, 0x06); // mode 6 (BG1 4bpp + BG3 offset-per-tile)
+        set_bg_map_base(ppu, 0, 0x400);
+        set_bg_map_base(ppu, 2, 0x800);
+        for entry in 0..3u16 {
+            set_vram_word(ppu, 0x400 + entry as usize, entry * 2 + 1);
+            fill_4bpp_tile(ppu, 0, (entry * 2 + 1) as usize, (entry * 2 + 1) as u8);
+            fill_4bpp_tile(ppu, 0, (entry * 2 + 2) as usize, (entry * 2 + 2) as u8);
+        }
+    }
+
+    #[test]
+    fn mode6_opt_h_offset_shifts_tilemap_in_hires_units() {
+        // An OPT H value of 16 moves the BG1 tilemap by one entry (8 native px);
+        // Mesen2 ORs the value into the doubled scroll and shifts back down, so
+        // bit 3 (value 8) is dropped in modes 5/6 (halved-OPT quirk).
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        set_vram_word(&mut ppu, 0x800, 16 | 0x2000); // H entry for BG1, value 16
+        render_lines(&mut ppu, 1);
+        assert_eq!(
+            ppu.framebuffer[16], 5,
+            "H offset 16 shifts native x 8 from entry 1 to entry 2"
+        );
+
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        set_vram_word(&mut ppu, 0x800, 8 | 0x2000); // H entry for BG1, value 8
+        render_lines(&mut ppu, 1);
+        assert_eq!(
+            ppu.framebuffer[16], 3,
+            "H offset 8 is dropped by the hires halving"
+        );
+    }
+
+    #[test]
+    fn mode6_opt_v_offset_replaces_vertical_scroll_natively() {
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        set_vram_word(&mut ppu, 0x421, 7); // BG1 map row 1, col 1 -> char 7
+        fill_4bpp_tile(&mut ppu, 0, 7, 7);
+        // BG3 row 1 holds the V entries in mode 6 (mode-2-style dual lookup):
+        // V offset 8 moves the OPT-affected columns one tile row down.
+        set_vram_word(&mut ppu, 0x820, 8 | 0x2000);
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(
+            ppu.framebuffer[16], 7,
+            "V offset 8 fetches the map row below for native x 8"
+        );
+        assert_eq!(
+            ppu.framebuffer[0], 1,
+            "exempt first tile column is unshifted"
+        );
+    }
+
+    #[test]
+    fn mode6_opt_first_tile_column_exempt_in_hires() {
+        // The exemption boundary stays at 8 native pixels (one hires map entry)
+        // even with the BGMODE 16x16 tile-size bit set.
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        ppu.write_register(0x2105, 0x16); // mode 6 + BG1 16x16 tiles
+        set_vram_word(&mut ppu, 0x800, 16 | 0x2000);
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(ppu.framebuffer[0], 1, "native x 0-7 are exempt from OPT");
+        assert_eq!(
+            ppu.framebuffer[16], 5,
+            "native x 8 is past the exemption despite 16x16 tiles"
+        );
     }
 
     #[test]
