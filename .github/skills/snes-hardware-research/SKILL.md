@@ -215,7 +215,19 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    The settle frame is the start of the final run of identical CRCs. If the
    run is >= 600 frames long the ROM is *static*: sample at settle + 60. If
    the CRC never stabilizes it is *animated*: sample at a fixed frame
-   (e.g. 600) — but see step 4.
+   (e.g. 600) — but see step 4. Two probe-hygiene rules from #2881:
+   encode `frame` and `crc` in every capture PNG filename (the run
+   survives a lost log), and write the probe log to a file — a
+   background command piped through `tail` keeps only the final lines.
+   An early settle does NOT mean the ROM is static by design: PeterLemon
+   demos poll ReadJOY every frame and only animate on input — read the
+   ROM's input loop before concluding anything from a settle, then
+   exercise the feature with scripted holds/taps (each held frame is one
+   deterministic step in a per-frame poll loop, identical in NESER and
+   Mesen2). ROMs with splash screens can swallow early taps entirely
+   (hdrvtest ignores input until ~frame 300): schedule taps after the
+   first screen's settle frame, and compare each scripted combo's CRC
+   against the no-input CRC — equality means the taps were swallowed.
 2. **Capture and pixel-diff**: write NESER PNGs during the probe, capture
    Mesen2 headless at the same frame (`--testRunner` + Lua `print()` hex
    dump; flags above), then diff programmatically with a ±1-row shift
@@ -294,15 +306,40 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    drop), and the time-over flag dot (Mesen2/ares raise it inside the
    fetch window; fullsnes says H=0 of the displayed line — NESER
    follows Mesen2/ares per navigator decision).
+10. **When authoring mode 5/6 (hires) scenes, define char N+1 for every
+   used char N** (from #2881): BG1/BG2 tiles are 16 px wide in these
+   modes (fixed 16x8), so each map entry fetches chars N AND N+1 — a
+   scene defining only chars 0-8 gets transparent right tile halves
+   wherever char 8 is used (char 9 is empty VRAM). Exploit deliberately
+   or avoid, but decide; NESER missing this pairing is #3019.
+11. **Building WLA-DX assets with the modern toolchain** (from #2881):
+   Homebrew wla-dx is v10.x; upstream wla.bat recipes from v9.5 need
+   `wla-65816 -o out.obj in.asm` and wlalink flags split (`-v -r`, not
+   `-vr`). Document the toolchain version in the asset README.
+12. **`git subtree add/pull` requires a fully clean tree** — including
+   modified content inside nested submodules: revert the transient
+   bass-untech clang patch (`git -C .../bass-untech checkout -- .`)
+   before any subtree operation, re-apply to build (hit twice in #2881).
 
-### Mesen2 capture-dimension conventions (from #2879)
+### Mesen2 capture-dimension conventions (from #2879, extended #2881)
 
 Mesen2 screenshots are not always the PPU's native frame geometry; know
 these before pixel-diffing display-mode captures:
 
-- **Screen interlace** ($2133 bit 0): Mesen2 emits 512x448 by
-  column-doubling; NESER renders 256x448. Halve Mesen2's width
+- **Screen interlace** ($2133 bit 0, lo-res modes): Mesen2 emits 512x448
+  by column-doubling; NESER renders 256x448. Halve Mesen2's width
   (`Image.resize((256, 448), NEAREST)`) before diffing.
+- **Mode 5/6 hires and pseudo-hires, non-interlace**: Mesen2 emits
+  512x448 by row-doubling (verified: all even/odd row pairs identical);
+  NESER renders 512x224. Halve Mesen2's height before diffing. Mode 5/6
+  WITH interlace is 512x448 native in both (directly comparable).
+- **Structure sampling attributes hires/interlace divergences fast**
+  (from #2881): before deep analysis, sample whether each capture is
+  column-doubled and/or row-doubled (compare px[x,y] vs px[x+1,y] /
+  px[x,y+1] on a grid). NESER-vs-Mesen2 structure disagreement pinpoints
+  the broken axis immediately, and upstream reference screenshots can
+  arbitrate which structure is correct (that's how #3016 hires columns
+  and #3017 line-doubled interlace fields were separated in minutes).
 - **239-line overscan** ($2133 bit 2): Mesen2 shows the standard
   224-line window; NESER renders all 239 lines. NESER rows 7-231 equal
   Mesen2's frame (search crop offsets; #2879 measured an exact match at
