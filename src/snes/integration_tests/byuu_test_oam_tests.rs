@@ -30,10 +30,10 @@
 //!   window, both give 0-pixel diffs) but the raw frame dimensions differ,
 //!   so they stay `#[ignore]`d without goldens until #3001 settles the
 //!   capture convention.
-//! - `setini2_*` (OBJ interlace, $2133=2) diverges genuinely: Mesen2
-//!   renders the sprite half-height with interleaved lines, NESER ignores
-//!   the bit (issue #3000) -- those two tests are `#[ignore]`d with
-//!   NESER's current CRCs recorded for post-fix comparison.
+//! - `setini2_*` (OBJ interlace, $2133=2): the sprite renders half-height
+//!   with field-interleaved lines since issue #3000; both combos match
+//!   Mesen2 exactly at shift (0,0) (re-approved via the same replay
+//!   workflow, 0-pixel diffs) and carry approved goldens.
 
 use super::rom_runner::{InputEvent, RunConfig, RunOracle, run_rom_with_oracle};
 use crate::snes::input::SnesButton;
@@ -266,31 +266,9 @@ mod tests {
     test_oam_combo_ignored_3001!(setini4_small, "i4-s0", { setini: 4, size: 0 }, 0x5E52_C62B);
     test_oam_combo_ignored_3001!(setini4_large, "i4-s1", { setini: 4, size: 1 }, 0x78AE_B7C8);
 
-    /// NESER ignores OBJ interlace (SETINI bit 1), so these CRCs are
-    /// NESER's own output from when #3000 was filed, NOT Mesen2-approved
-    /// goldens (Mesen2 halves the sprite height). Re-probe and re-approve
-    /// once #3000 is fixed, then remove the ignore attributes.
-    #[test]
-    #[ignore = "NESER lacks OBJ interlace (SETINI $2133 bit 1); pending #3000"]
-    fn setini2_small() {
-        let combo = OamCombo {
-            setini: 2,
-            size: 0,
-            ..OamCombo::default_menu()
-        };
-        let (script, sample_frame) = build_combo_script(combo);
-        assert_test_oam_screen_crc("i2-s0", &script, sample_frame, 0xD1F7_F5C4);
-    }
-
-    #[test]
-    #[ignore = "NESER lacks OBJ interlace (SETINI $2133 bit 1); pending #3000"]
-    fn setini2_large() {
-        let combo = OamCombo {
-            setini: 2,
-            size: 1,
-            ..OamCombo::default_menu()
-        };
-        let (script, sample_frame) = build_combo_script(combo);
-        assert_test_oam_screen_crc("i2-s1", &script, sample_frame, 0xF5CF_D3FC);
-    }
+    // OBJ interlace ($2133=2, issue #3000): the sprite renders half-height
+    // with field-interleaved lines. Goldens re-approved against Mesen2
+    // headless replay (0-pixel diffs at shift (0,0)).
+    test_oam_combo!(setini2_small, "i2-s0", { setini: 2, size: 0 }, 0x7BE9_8B23);
+    test_oam_combo!(setini2_large, "i2-s1", { setini: 2, size: 1 }, 0xFE8D_F854);
 }

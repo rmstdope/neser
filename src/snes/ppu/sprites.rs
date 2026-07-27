@@ -23,17 +23,6 @@ pub(super) struct ObjPixel {
 }
 
 impl Ppu {
-    /// Convert framebuffer row `line` into the OBJ sampling line.
-    ///
-    /// With interlace+OBJ interlace enabled, OBJ fetches alternate source lines per field.
-    fn obj_source_line(&self, line: u16) -> u16 {
-        if self.interlace_enabled() && self.obj_interlace_enabled() {
-            line.saturating_mul(2) + self.interlace_field as u16
-        } else {
-            line
-        }
-    }
-
     /// Small-OBJ pixel size `(width, height)` selected by OBSEL bits 7-5.
     pub(super) fn obj_size_small(&self) -> (u8, u8) {
         obj_size_pair(self.obsel).0
@@ -101,12 +90,20 @@ impl Ppu {
         ((self.oam[0x200 + (index >> 2)] >> ((index & 3) * 2)) & 1) as u16
     }
 
-    /// Whether OBJ `index` is in range for OBJ source line `line`: it must intersect the line
+    /// Whether OBJ `index` is in range for display line `line`: it must intersect the line
     /// vertically (8-bit Y wrap) and not be fully off-screen horizontally. Exception: raw X=256
     /// (sign-extended -256) is always in range -- it consumes range/time budget without being
     /// drawn (Mesen2 `SpriteInfo::IsVisible`, ares `PPU::Object::onScanline`).
+    ///
+    /// With OBJ interlace (SETINI $2133 bit 1, independent of screen interlace) the sprite keeps
+    /// its OAM Y anchor but spans half its height on screen (Mesen2/ares: `height >> 1`).
     fn obj_in_range(&self, index: usize, line: u16) -> bool {
         let (width, height) = self.obj_size(index);
+        let height = if self.obj_interlace_enabled() {
+            height >> 1
+        } else {
+            height
+        };
         let y = self.oam[index * 4 + 1] as u16;
         let row = line.wrapping_sub(y) & 0xFF;
         if row >= height as u16 {
@@ -235,8 +232,7 @@ impl Ppu {
         }
         self.obj_pipeline.eval_cursor += 1;
         let index = (self.obj_pipeline.first_sprite as usize + cursor as usize) & 0x7F;
-        let source_line = self.obj_source_line(self.position.scanline);
-        if !self.obj_in_range(index, source_line) {
+        if !self.obj_in_range(index, self.position.scanline) {
             return;
         }
         let pipeline = &mut self.obj_pipeline;
@@ -295,8 +291,13 @@ impl Ppu {
         let vflip = attr & 0x80 != 0;
         let base_tile = self.oam[index * 4 + 2] as u16 | (((attr & 0x01) as u16) << 8);
         let y = self.oam[index * 4 + 1] as u16;
-        let source_line = self.obj_source_line(self.position.scanline);
-        let mut within_y = (source_line.wrapping_sub(y) & 0xFF) as i32;
+        let mut within_y = (self.position.scanline.wrapping_sub(y) & 0xFF) as i32;
+        // OBJ interlace: each field shows alternate source lines of the half-height sprite --
+        // double the line-within-sprite and OR in the field, then V-flip mirrors the doubled
+        // coordinate against the full height (Mesen2 `FetchSpriteAttributes`, ares equivalent).
+        if self.obj_interlace_enabled() {
+            within_y = (within_y << 1) | self.interlace_field as i32;
+        }
         if vflip {
             within_y = height - 1 - within_y;
         }
@@ -841,6 +842,187 @@ mod tests {
         // Field 0 samples source line 0 for display line 0; field 1 samples source line 1.
         assert_eq!(line_color_for_field(false), Some(0x001F));
         assert_eq!(line_color_for_field(true), Some(0x03E0));
+    }
+
+    #[test]
+    fn obj_interlace_halves_height_anchored_at_oam_y() {
+        // SETINI bit 1 alone (no screen interlace): the sprite stays anchored at OAM Y with
+        // halved on-screen height (Mesen2 `SpriteInfo::IsVisible`, ares `onScanline`).
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // 8x8
+        ppu.write_register(0x2133, 0x02); // OBJ interlace only
+        park_all_offscreen(&mut ppu);
+        set_obj_tile_solid(&mut ppu, 0, 3);
+        set_cgram(&mut ppu, 128 + 3, 0x1234);
+        set_obj(&mut ppu, 0, 50, 40, 0, 0, false);
+
+        present_line(&mut ppu, 20);
+        assert_eq!(obj_color_at(&ppu, 50, 20), None, "not anchored at Y/2");
+        present_line(&mut ppu, 39);
+        assert_eq!(obj_color_at(&ppu, 50, 39), None, "row above OAM Y");
+        present_line(&mut ppu, 40);
+        assert_eq!(
+            obj_color_at(&ppu, 50, 40),
+            Some(0x1234),
+            "anchored at OAM Y"
+        );
+        present_line(&mut ppu, 43);
+        assert_eq!(
+            obj_color_at(&ppu, 50, 43),
+            Some(0x1234),
+            "last halved-height row"
+        );
+        present_line(&mut ppu, 44);
+        assert_eq!(
+            obj_color_at(&ppu, 50, 44),
+            None,
+            "halved height: 4 rows for 8x8"
+        );
+    }
+
+    #[test]
+    fn obj_interlace_samples_doubled_source_line_plus_field() {
+        // Presented row `r` fetches sprite source line `(r - Y) * 2 + field`
+        // (Mesen2 `FetchSpriteAttributes`, ares `Object::fetch`).
+        let color_at_row = |row: u16, field: bool| {
+            let mut ppu = Ppu::new();
+            ppu.write_register(0x2101, 0x00); // 8x8
+            ppu.write_register(0x2133, 0x02); // OBJ interlace only
+            park_all_offscreen(&mut ppu);
+            for fy in 0..4usize {
+                set_obj_tile_pixel(&mut ppu, 0, 0, fy, fy as u8 + 1);
+                set_cgram(&mut ppu, 128 + fy as u8 + 1, 0x1000 + fy as u16);
+            }
+            set_obj(&mut ppu, 0, 50, 40, 0, 0, false);
+            ppu.interlace_field = field;
+            present_line(&mut ppu, row);
+            obj_color_at(&ppu, 50, row)
+        };
+
+        assert_eq!(
+            color_at_row(40, false),
+            Some(0x1000),
+            "row 40 field 0 -> line 0"
+        );
+        assert_eq!(
+            color_at_row(40, true),
+            Some(0x1001),
+            "row 40 field 1 -> line 1"
+        );
+        assert_eq!(
+            color_at_row(41, false),
+            Some(0x1002),
+            "row 41 field 0 -> line 2"
+        );
+        assert_eq!(
+            color_at_row(41, true),
+            Some(0x1003),
+            "row 41 field 1 -> line 3"
+        );
+    }
+
+    #[test]
+    fn obj_interlace_applies_vflip_to_the_doubled_source_line() {
+        // With V-flip, the mirror applies to the doubled coordinate against the full height:
+        // source line = height - 1 - ((r - Y) * 2 + field).
+        let color_at_row = |row: u16, field: bool| {
+            let mut ppu = Ppu::new();
+            ppu.write_register(0x2101, 0x00); // 8x8
+            ppu.write_register(0x2133, 0x02); // OBJ interlace only
+            park_all_offscreen(&mut ppu);
+            for fy in 0..8usize {
+                set_obj_tile_pixel(&mut ppu, 0, 0, fy, fy as u8 + 1);
+                set_cgram(&mut ppu, 128 + fy as u8 + 1, 0x1000 + fy as u16);
+            }
+            set_obj(&mut ppu, 0, 50, 40, 0, 0x80, false);
+            ppu.interlace_field = field;
+            present_line(&mut ppu, row);
+            obj_color_at(&ppu, 50, row)
+        };
+
+        assert_eq!(
+            color_at_row(40, false),
+            Some(0x1007),
+            "row 40 field 0 -> line 7"
+        );
+        assert_eq!(
+            color_at_row(40, true),
+            Some(0x1006),
+            "row 40 field 1 -> line 6"
+        );
+        assert_eq!(
+            color_at_row(41, false),
+            Some(0x1005),
+            "row 41 field 0 -> line 5"
+        );
+        assert_eq!(
+            color_at_row(43, true),
+            Some(0x1000),
+            "row 43 field 1 -> line 0"
+        );
+    }
+
+    #[test]
+    fn obj_interlace_range_accounting_uses_halved_height() {
+        // The range over-limit counts sprites in range of the halved height only.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // 8x8
+        ppu.write_register(0x2133, 0x02); // OBJ interlace only
+        park_all_offscreen(&mut ppu);
+        for i in 0..33 {
+            set_obj(&mut ppu, i, 0, 40, 0, 0, false);
+        }
+
+        let eval = ppu.evaluate_line_objects(44);
+        assert!(
+            eval.indices().is_empty(),
+            "row 44 is past the halved height"
+        );
+        assert!(
+            !eval.range_over,
+            "out-of-range sprites consume no range budget"
+        );
+
+        let eval = ppu.evaluate_line_objects(40);
+        assert_eq!(eval.indices().len(), 32, "in-range rows keep the 32 budget");
+        assert!(eval.range_over, "33rd in-range OBJ still raises range over");
+    }
+
+    #[test]
+    fn obj_interlace_with_screen_interlace_keeps_oam_y_anchor() {
+        // Regression for the combined $2133=3 case: the doubled-line model previously anchored
+        // the sprite at Y/2; the reference model keeps OAM Y with halved height per field.
+        let color_at_row = |row: u16, field: bool| {
+            let mut ppu = Ppu::new();
+            ppu.write_register(0x2101, 0x00); // 8x8
+            ppu.write_register(0x2133, 0x03); // screen + OBJ interlace
+            park_all_offscreen(&mut ppu);
+            set_obj_tile_solid(&mut ppu, 0, 3);
+            set_obj_tile_pixel(&mut ppu, 0, 0, 0, 1); // source line 0 marker
+            set_cgram(&mut ppu, 128 + 3, 0x1234);
+            set_cgram(&mut ppu, 128 + 1, 0x0F0F);
+            set_obj(&mut ppu, 0, 50, 40, 0, 0, false);
+            ppu.interlace_field = field;
+            present_line(&mut ppu, row);
+            obj_color_at(&ppu, 50, row)
+        };
+
+        assert_eq!(color_at_row(20, false), None, "not anchored at Y/2");
+        assert_eq!(
+            color_at_row(40, false),
+            Some(0x0F0F),
+            "row 40 field 0 samples source line 0"
+        );
+        assert_eq!(
+            color_at_row(43, false),
+            Some(0x1234),
+            "last halved-height row"
+        );
+        assert_eq!(
+            color_at_row(44, false),
+            None,
+            "halved height: 4 rows for 8x8"
+        );
     }
 
     #[test]

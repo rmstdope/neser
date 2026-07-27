@@ -117,15 +117,15 @@ Test suites:
 - `undisbeliever_ppu_obj_tests.rs` -- the OBJ/sprite-limit dropout ROM built
   from the undisbeliever source mirror
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-obj/`).
-  Committed `#[ignore]`d: NESER enforces the 32-OBJ range-over limit but not
-  the 34-sliver time-over limit (#2999).
+  Automated with a Mesen2-approved golden since the #2999 OBJ eval/fetch
+  pipeline (34-sliver time-over limit) landed.
 - `byuu_test_oam_tests.rs` -- byuu's interactive `test_oam.smc` menu
   (`roms/snes/automated_tests/snes_test_roms/jonasquinn-test-roms/test_oam/`)
-  driven through `rom_runner`'s frame-stamped input scripting. 28 combos
-  (menu, all 8 OBSEL bases x both size bits, flips, char variants) carry
-  Mesen2-approved goldens; 6 SETINI combos are `#[ignore]`d -- OBJ interlace
-  diverges (#3000) and the screen-interlace/overscan capture dimensions
-  differ from Mesen2's (#3001).
+  driven through `rom_runner`'s frame-stamped input scripting. 30 combos
+  (menu, all 8 OBSEL bases x both size bits, flips, char variants, OBJ
+  interlace since #3000) carry Mesen2-approved goldens; 4 SETINI combos are
+  `#[ignore]`d -- the screen-interlace/overscan capture dimensions differ
+  from Mesen2's (#3001).
 - `neser_obj_tests.rs` -- NESER-authored OBJ feature ROMs written against
   the undisbeliever bass framework
   (`roms/snes/automated_tests/snes_test_roms/neser-obj-tests/`, sources
