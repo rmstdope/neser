@@ -35,13 +35,16 @@ pub fn match_title(rom_title: &str, candidates: &[(i64, String)]) -> Option<Titl
         })
 }
 
-/// Normalize a title for comparison: lowercase, remove punctuation, strip
-/// leading "the", and collapse extra spaces.
+/// Normalize a title for comparison: lowercase, drop apostrophes, treat all
+/// other punctuation as word separators (so slugified filenames like
+/// "warios-woods" align with "Wario's Woods"), strip leading "the", and
+/// collapse extra spaces.
 fn normalize(title: &str) -> String {
     let lowered: String = title
         .to_lowercase()
         .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .filter(|c| !matches!(c, '\'' | '\u{2019}'))
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
         .collect();
 
     let trimmed = lowered.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -109,6 +112,52 @@ mod tests {
         assert_eq!(normalize("Kirby's  Adventure"), "kirbys adventure");
         assert_eq!(normalize("  Mega  Man  5  "), "mega man 5");
         assert_eq!(normalize("The Legend of Zelda"), "legend of zelda");
+    }
+
+    #[test]
+    fn normalize_treats_separators_as_spaces() {
+        // Slugified filenames use dashes as word separators; they must
+        // normalize to the same string as the spaced title.
+        assert_eq!(normalize("warios-woods"), "warios woods");
+        assert_eq!(normalize("kirbys-dream-land-3"), "kirbys dream land 3");
+        // '&' and ':' separate words too, and runs of separators collapse.
+        assert_eq!(
+            normalize("AD&D: Eye of the Beholder"),
+            "ad d eye of the beholder"
+        );
+        assert_eq!(
+            normalize("ad-d---eye-of-the-beholder"),
+            "ad d eye of the beholder"
+        );
+    }
+
+    #[test]
+    fn slugified_filename_matches_spaced_title() {
+        let cands = vec![
+            (5, "Donkey Kong".to_string()),
+            (76, "Wario's Woods".to_string()),
+        ];
+        let result = match_title("warios-woods", &cands);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().game_id, 76);
+    }
+
+    #[test]
+    fn slugified_filename_matches_alternate_title_candidate() {
+        // "ad-d---eye-of-the-beholder.sfc" must match via the alternate
+        // title "AD&D: Eye of the Beholder" of SNES game 284.
+        let cands = vec![
+            (5, "Donkey Kong".to_string()),
+            (
+                284,
+                "Advanced Dungeons & Dragons: Eye of the Beholder".to_string(),
+            ),
+            (284, "AD&D: Eye of the Beholder".to_string()),
+            (300, "Eye of the Storm".to_string()),
+        ];
+        let result = match_title("ad-d---eye-of-the-beholder", &cands);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().game_id, 284);
     }
 
     #[test]

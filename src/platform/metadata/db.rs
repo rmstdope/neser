@@ -80,19 +80,39 @@ impl MetadataDb {
     /// Load game titles and IDs for a specific platform.
     ///
     /// `platform_id` corresponds to TheGamesDB platform IDs (e.g. 7=NES, 4=GB).
-    /// Returns a vec of (game_id, title) pairs.
+    /// Returns a vec of (game_id, title) pairs. Alternate titles (stored as a
+    /// JSON array in the `alternates` column) are included as additional
+    /// candidates for the same game id, so ROMs named after an alternate
+    /// title (e.g. "AD&D: Eye of the Beholder") still match.
     pub fn titles_for_platform(&self, platform_id: i64) -> Vec<(i64, String)> {
         let mut stmt = match self
             .conn
-            .prepare("SELECT id, game_title FROM games WHERE platform_id = ?1")
+            .prepare("SELECT id, game_title, alternates FROM games WHERE platform_id = ?1")
         {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
 
-        stmt.query_map(params![platform_id], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map(|rows| rows.filter_map(Result::ok).collect())
-            .unwrap_or_default()
+        let rows = stmt.query_map(params![platform_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        });
+
+        let mut titles = Vec::new();
+        if let Ok(rows) = rows {
+            for (id, title, alternates) in rows.filter_map(Result::ok) {
+                titles.push((id, title));
+                if let Some(alts) = alternates
+                    && let Ok(alts) = serde_json::from_str::<Vec<String>>(&alts)
+                {
+                    titles.extend(alts.into_iter().map(|alt| (id, alt)));
+                }
+            }
+        }
+        titles
     }
 
     /// Look up full metadata for a game by its ID.
@@ -259,6 +279,29 @@ mod tests {
             titles.len() > 100,
             "expected many titles, got {}",
             titles.len()
+        );
+    }
+
+    #[test]
+    fn titles_for_platform_includes_alternate_titles() {
+        let path = test_db_path();
+        if !path.exists() {
+            return;
+        }
+        let db = MetadataDb::open(&path).unwrap();
+        // SNES game 284 "Advanced Dungeons & Dragons: Eye of the Beholder"
+        // has the alternate title "AD&D: Eye of the Beholder"; both must be
+        // offered as fuzzy-match candidates for the same game id.
+        let titles = db.titles_for_platform(6);
+        assert!(
+            titles.iter().any(
+                |(id, t)| *id == 284 && t == "Advanced Dungeons & Dragons: Eye of the Beholder"
+            )
+        );
+        assert!(
+            titles
+                .iter()
+                .any(|(id, t)| *id == 284 && t == "AD&D: Eye of the Beholder")
         );
     }
 

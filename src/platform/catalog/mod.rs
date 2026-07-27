@@ -430,24 +430,28 @@ pub fn enrich_catalog(
         EnrichmentCache::load(&cache_path)
     };
 
-    // Apply cached enrichment data for known ROMs.
+    // Apply cached enrichment data for known ROMs. Cached "no match" results
+    // (written by older versions) are treated as uncached so they are retried
+    // against the current metadata DB — new platforms or freshly synced games
+    // would otherwise never be picked up for previously scanned ROMs.
     let mut uncached_indices: Vec<usize> = Vec::new();
     for (i, entry) in catalog.iter_mut().enumerate() {
-        if let Some(cached) = ecache.get(&entry.path) {
-            entry.metadata_game_id = cached.metadata_game_id;
-            if let Some(ref name) = cached.display_name {
-                entry.display_name.clone_from(name);
-                entry.search_key = entry.display_name.to_lowercase();
+        match ecache.get(&entry.path) {
+            Some(cached) if cached.metadata_game_id.is_some() => {
+                entry.metadata_game_id = cached.metadata_game_id;
+                if let Some(ref name) = cached.display_name {
+                    entry.display_name.clone_from(name);
+                    entry.search_key = entry.display_name.to_lowercase();
+                }
+                entry.genres.clone_from(&cached.genres);
+                entry.overview.clone_from(&cached.overview);
+                entry.release_date.clone_from(&cached.release_date);
+                entry.players = cached.players;
+                entry.rating.clone_from(&cached.rating);
+                entry.boxart_path.clone_from(&cached.boxart_path);
+                entry.screenshot_paths.clone_from(&cached.screenshot_paths);
             }
-            entry.genres.clone_from(&cached.genres);
-            entry.overview.clone_from(&cached.overview);
-            entry.release_date.clone_from(&cached.release_date);
-            entry.players = cached.players;
-            entry.rating.clone_from(&cached.rating);
-            entry.boxart_path.clone_from(&cached.boxart_path);
-            entry.screenshot_paths.clone_from(&cached.screenshot_paths);
-        } else {
-            uncached_indices.push(i);
+            _ => uncached_indices.push(i),
         }
     }
 
@@ -508,14 +512,18 @@ pub fn enrich_catalog(
         Ok(cache) => cache,
         Err(e) => {
             crate::platform::debugging::log_info(format!("Failed to create image cache: {e}"));
-            // Still save metadata matches to cache.
+            // Still save metadata matches to cache (unmatched ROMs are left
+            // out so they are retried on the next startup).
             for &idx in &uncached_indices {
                 let entry = &catalog[idx];
+                if entry.metadata_game_id.is_none() {
+                    continue;
+                }
                 ecache.insert(
                     entry.path.clone(),
                     CachedEnrichment {
                         metadata_game_id: entry.metadata_game_id,
-                        display_name: entry.metadata_game_id.map(|_| entry.display_name.clone()),
+                        display_name: Some(entry.display_name.clone()),
                         genres: entry.genres.clone(),
                         overview: entry.overview.clone(),
                         release_date: entry.release_date.clone(),
@@ -551,12 +559,16 @@ pub fn enrich_catalog(
             entry.screenshot_paths = cached_imgs.screenshot_paths;
         }
 
-        // Store enrichment result in persistent cache.
+        // Store the enrichment result in the persistent cache. Unmatched
+        // ROMs are not cached so they are retried on the next startup.
+        if entry.metadata_game_id.is_none() {
+            continue;
+        }
         ecache.insert(
             entry.path.clone(),
             CachedEnrichment {
                 metadata_game_id: entry.metadata_game_id,
-                display_name: entry.metadata_game_id.map(|_| entry.display_name.clone()),
+                display_name: Some(entry.display_name.clone()),
                 genres: entry.genres.clone(),
                 overview: entry.overview.clone(),
                 release_date: entry.release_date.clone(),
@@ -858,6 +870,124 @@ mod tests {
             "SMB3 should match a metadata entry"
         );
         assert!(!entry.genres.is_empty(), "SMB3 should have genres");
+    }
+
+    /// Build a minimal metadata DB fixture with one SNES game (no images,
+    /// so enrichment never attempts a network download).
+    #[cfg(feature = "native")]
+    fn fixture_metadata_db(dir: &std::path::Path) -> std::path::PathBuf {
+        let db_path = dir.join("metadata.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"CREATE TABLE games (
+                   id INTEGER PRIMARY KEY,
+                   game_title TEXT NOT NULL,
+                   release_date TEXT,
+                   platform_id INTEGER NOT NULL,
+                   players INTEGER,
+                   overview TEXT,
+                   rating TEXT,
+                   alternates TEXT
+               );
+               INSERT INTO games
+                   (id, game_title, release_date, platform_id, players,
+                    overview, rating, alternates)
+               VALUES
+                   (284, 'Advanced Dungeons & Dragons: Eye of the Beholder',
+                    '1994-03-01', 6, 1, 'Dungeon crawler.', 'E - Everyone',
+                    '["Eye of the Beholder", "AD&D: Eye of the Beholder"]');"#,
+        )
+        .unwrap();
+        db_path
+    }
+
+    #[cfg(feature = "native")]
+    fn snes_stub_entry(path: std::path::PathBuf) -> RomEntry {
+        let display_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap()
+            .to_string();
+        RomEntry {
+            search_key: display_name.to_lowercase(),
+            display_name,
+            path,
+            mapper_label: "-".to_string(),
+            mapper: None,
+            hardware: None,
+            crc: None,
+            recording_duration: None,
+            metadata_game_id: None,
+            genres: Vec::new(),
+            overview: None,
+            release_date: None,
+            players: None,
+            rating: None,
+            boxart_path: None,
+            screenshot_paths: Vec::new(),
+            is_favorite: false,
+            platform: Platform::Snes,
+        }
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn enrich_catalog_retries_cached_no_match_entries() {
+        // Regression: 620 SNES ROMs were stuck without images because they
+        // had been cached as "no match" before SNES support existed. Cached
+        // misses must be retried, and here the retry succeeds via the
+        // alternate title "AD&D: Eye of the Beholder" of game 284.
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = fixture_metadata_db(dir.path());
+        let cache_dir = dir.path().join("image_cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let rom_path = dir.path().join("ad-d---eye-of-the-beholder.sfc");
+        std::fs::write(&rom_path, [0u8; 64]).unwrap();
+
+        let cache_json = format!(
+            r#"{{"entries":{{"{}":{{"metadata_game_id":null,"display_name":null,"genres":[],"overview":null,"release_date":null,"players":null,"rating":null,"boxart_path":null,"screenshot_paths":[]}}}}}}"#,
+            rom_path.display()
+        );
+        std::fs::write(cache_dir.join("enrichment_cache.json"), cache_json).unwrap();
+
+        let mut catalog = vec![snes_stub_entry(rom_path)];
+        enrich_catalog(&mut catalog, &db_path, &cache_dir, false, |_| {});
+
+        assert_eq!(
+            catalog[0].metadata_game_id,
+            Some(284),
+            "cached no-match entry should be re-matched against current metadata"
+        );
+        assert_eq!(
+            catalog[0].display_name,
+            "Advanced Dungeons & Dragons: Eye of the Beholder"
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn enrich_catalog_does_not_cache_unmatched_roms() {
+        // Unmatched ROMs must not be pinned in the cache; leaving them out
+        // means they are retried automatically on the next startup.
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = fixture_metadata_db(dir.path());
+        let cache_dir = dir.path().join("image_cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let rom_path = dir.path().join("totally-unknown-homebrew.sfc");
+        std::fs::write(&rom_path, [0u8; 64]).unwrap();
+
+        let mut catalog = vec![snes_stub_entry(rom_path)];
+        enrich_catalog(&mut catalog, &db_path, &cache_dir, false, |_| {});
+
+        assert!(catalog[0].metadata_game_id.is_none());
+        let cache_content =
+            std::fs::read_to_string(cache_dir.join("enrichment_cache.json")).unwrap();
+        assert!(
+            !cache_content.contains("totally-unknown-homebrew"),
+            "unmatched ROM must not be recorded in the enrichment cache"
+        );
     }
 
     #[cfg(feature = "native")]
