@@ -305,7 +305,16 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    permanently — NESER uses the pause model without the stale-latch
    drop), and the time-over flag dot (Mesen2/ares raise it inside the
    fetch window; fullsnes says H=0 of the displayed line — NESER
-   follows Mesen2/ares per navigator decision).
+   follows Mesen2/ares per navigator decision). OBJ interlace (SETINI
+   $2133 bit 1, from #3000): gated on bit 1 ALONE (no screen-interlace
+   dependency); the in-range test keeps the OAM Y anchor with height
+   halved (`height >> 1`), and the fetch doubles the line-within-sprite
+   and ORs in the frame field BEFORE V-flip mirrors the doubled
+   coordinate against the FULL height (Mesen2 `IsVisible`/
+   `FetchSpriteAttributes`, ares `onScanline`/fetch — identical
+   arithmetic incl. the rectangular split-mirror). Beware plausible
+   wrong models that coincide at Y=0 (doubling the compare line anchors
+   sprites at half their OAM Y): test geometry at Y != 0.
 10. **When authoring mode 5/6 (hires) scenes, define char N+1 for every
    used char N** (from #2881): BG1/BG2 tiles are 16 px wide in these
    modes (fixed 16x8), so each map entry fetches chars N AND N+1 — a
@@ -367,6 +376,13 @@ identical schedule in Mesen2:
    select up down left right`.
 3. Same-numbered frames align between the two emulators (validated
    byte-for-byte in #2878/#2879), so capture at the NESER sample frame.
+   **Validate the replay pipeline with a control golden first** (from
+   #3000): before approving any NEW golden, replay one already-approved
+   combo of the same suite through the exact same Lua/capture/diff
+   pipeline and require it to reproduce its approved capture at 0
+   differing pixels. A passing control proves scripts, flags, frame
+   alignment and diff code end-to-end; only then do 0-pixel results on
+   the new combos count as approvals.
 4. Menus that poll button *level* once per frame need taps held exactly
    1 frame; space taps generously (test_oam needed an 8-frame period --
    4 dropped presses during menu redraws). The dialed values are
