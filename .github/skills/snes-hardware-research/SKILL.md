@@ -274,6 +274,26 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    >34 slivers). Write issues/READMEs in official fullsnes terminology
    and note the upstream discrepancy explicitly (caught late in #2879's
    asset README and bug issue #2999).
+9. **OBJ eval/fetch pipeline specifics (from #2999, verified in both
+   Mesen2 `SnesPpu.cpp` and ares `object.cpp`)**: sprites shown on line
+   N are evaluated during line N-1 (H=0..255, one OAM entry per 2 dots)
+   and their tile slivers fetched during H=270..339 of line N-1 as 35
+   two-dot attribute-fetch slots of which only 34 get CHR data — the
+   35th attempted fetch raises time over. Fetching walks the in-range
+   list in REVERSE evaluation order, so on overflow the FIRST/front-most
+   sprites lose their slivers (the `_Flipped` ROM variant distinguishes
+   this). The range check includes horizontal visibility (fully
+   off-screen-left sprites are not in range) except raw X=256, which
+   counts for range AND consumes its full width of time budget without
+   drawing (Mesen2 `SpriteInfo::IsVisible`/`endTileX`; ares
+   `onScanline`/`x != 256` column skip). Two reference DISAGREEMENTS to
+   ask the navigator about, not guess: forced blank during the eval
+   window (Mesen2 pauses the OAM cursor — entries deferred, plus a
+   stale-latch one-entry drop on resume; ares skips entries
+   permanently — NESER uses the pause model without the stale-latch
+   drop), and the time-over flag dot (Mesen2/ares raise it inside the
+   fetch window; fullsnes says H=0 of the displayed line — NESER
+   follows Mesen2/ares per navigator decision).
 
 ### Mesen2 capture-dimension conventions (from #2879)
 
