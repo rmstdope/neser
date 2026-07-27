@@ -166,6 +166,50 @@ Test suites:
   rewrites; Mesen2-approved golden. `test_math.sfc` was evaluated and left
   un-automated (a CPU mul/div latency test whose screen CRC would only
   prove the ROM ran; see the manifest notes).
+- `peterlemon_ppu_advanced_tests.rs` -- PeterLemon (krom) advanced PPU mode
+  demos (#2881) from the four subtree mirrors under
+  `roms/snes/automated_tests/snes_test_roms/PeterLemon/SNES-PPU-{Mode7,Mosaic,Interlace,HDMA-HiColor64PerTileRowPseudoHiRes}/`:
+  Mode 7 rotozoom (static plus input-scripted rotate/zoom holds), the HDMA
+  Perspective and animated StarWars crawl demos, mosaic in modes 3 and 5,
+  six true-hires/interlace demos and four pseudo-hires HiColor demos.
+  RotZoom (3 vectors), MosaicMode3 (2) and StarWars frame 120 carry
+  Mesen2-approved goldens. `#[ignore]`d with NESER's current CRCs:
+  Perspective (rightmost-column divergence, #3020), StarWars f360/f600
+  (crawl drift, #3021), MosaicMode5 and the six Interlace demos (mode 5/6
+  hires column rendering #3016 and line-doubled interlace fields #3017),
+  and the four pseudo-hires demos (#3018).
+- `undisbeliever_ppu_mode7_tests.rs` -- Mode 7 VRAM-layout and tilemap
+  demos built from the undisbeliever source mirror
+  (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-mode7/`, see
+  its README). The four static `vmain-mode7-image-*` demos (VMAIN
+  low-byte-only, tilemap-then-tiles, 8/10-bit remapping) share one
+  Mesen2-approved golden by design; the two animated `vmain-mode7-tilemap-*`
+  demos carry Mesen2-approved goldens at frames 120/360/600 each. All six
+  match Mesen2 pixel-exactly.
+- `ddribin_hdrv_tests.rs` -- ddribin's CC0 HDRV display-mode test ROM
+  (`roms/snes/automated_tests/snes_test_roms/ddribin-hdrv-snes-test/`,
+  built once with WLA-DX; see its README), driven through `rom_runner`
+  input scripting (its splash screen ignores input until ~frame 300).
+  Default colorbars and the graybars pattern carry Mesen2-approved
+  goldens; the interlace (X) and 239-line overscan (Y) combos are
+  content-verified against Mesen2 (0-pixel diffs after width-halving resp.
+  at crop offset 0) but `#[ignore]`d with NESER CRCs pending the #3001
+  capture-geometry convention.
+- `neser_opt_tests.rs` -- NESER-authored offset-per-tile ROMs for BG modes
+  2/4/6 (`roms/snes/automated_tests/snes_test_roms/neser-opt-tests/`,
+  sources included; see its README) -- no redistributable third-party OPT
+  ROM exists. Cover V/H offsets with per-entry BG1/BG2 apply-flag gating,
+  the OPT-exempt leftmost column and entry-to-column+1 mapping, the
+  ignored low 3 bits of horizontal entries with BG1HOFS fine scroll
+  retained, and mode 4's single offset row with bit-15 H/V selection. The
+  five mode 2/4 ROMs carry Mesen2-approved goldens; `opt-m6.sfc` is
+  `#[ignore]`d (mode 6 16x8 tile pairing / hires columns, #3019/#3016).
+- `neser_mode7_tests.rs` -- NESER-authored static-matrix Mode 7 ROMs
+  (`roms/snes/automated_tests/snes_test_roms/neser-mode7-tests/`, sources
+  included; see its README): identity baseline, M7SEL out-of-screen
+  wrap / colour 0 / tile 0 fill at an 8x zoom-out, a 30-degree rotation
+  about the map centre, both M7SEL screen flips and Mode 7 mosaic. All 8
+  match Mesen2 pixel-exactly with approved goldens.
 - `hblank_dma_vram_tests.rs` -- HDMA-to-VRAM timing ROMs
   (`roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram/`).
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs

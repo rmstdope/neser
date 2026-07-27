@@ -372,6 +372,111 @@
           "notes": "No on-disk assets; fixtures and approved CRC baselines live in dsp_audio_golden_tests.rs within this directory."
         }
       ]
+    },
+    {
+      "id": "snes-tests-peterlemon-ppu-advanced",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/PeterLemon/SNES",
+        "ref": "master (git subtree mirrors of PPU/Mode7, PPU/Mosaic, PPU/Interlace and PPU/HDMA/HiColor64PerTileRowPseudoHiRes under PeterLemon/SNES-PPU-*)"
+      },
+      "license": "unknown (PeterLemon/SNES publishes no explicit license; upstream-provided prebuilt test ROMs, same status as the other PeterLemon mirrors)",
+      "oracle_type": "screen_crc",
+      "notes": "PeterLemon (krom) advanced PPU mode demos (issue #2881): Mode 7 (RotZoom static + input-scripted rotate/zoom variants, HDMA Perspective, animated HDMA StarWars crawl), mosaic in modes 3 and 5, six true-hires/interlace demos and four pseudo-hires HiColor demos. RotZoom (all three vectors), MosaicMode3 (untouched + scripted size) and StarWars frame 120 match Mesen2 pixel-exactly and carry approved goldens. Perspective diverges in exactly the rightmost pixel column (53 px, #[ignore]d pending #3020); StarWars drifts after ~frame 120 (f360/f600 vectors #[ignore]d pending #3021); MosaicMode5 and the six Interlace demos diverge via the mode 5/6 hires column rendering and line-doubled interlace fields (#[ignore]d pending #3016/#3017); the four pseudo-hires demos diverge (#[ignore]d pending #3018). Run by snes::integration_tests::peterlemon_ppu_advanced_tests.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/PeterLemon",
+          "refresh_command": null,
+          "notes": "Prebuilt .sfc ROMs vendored via git subtree mirrors (SNES-PPU-Mode7, SNES-PPU-Mosaic, SNES-PPU-Interlace, SNES-PPU-HDMA-HiColor64PerTileRowPseudoHiRes) with update-SNES-PPU-* refresh scripts alongside."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-undisbeliever-ppu-mode7",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/undisbeliever/snes-test-roms",
+        "ref": "ac6ef8006809c0ff5dabc8ff137a4623967697fe"
+      },
+      "license": "zlib",
+      "oracle_type": "screen_crc",
+      "notes": "undisbeliever Mode 7 VRAM-layout and tilemap demos (issue #2881), built once from the undisbeliever-inidisp/sources mirror like the ppu-bg suite: four static vmain-mode7-image-* demos (low-byte-only writes, tilemap-then-tiles, 8-bit and 10-bit VMAIN remapping) that by design all render the same screen, plus the animated vmain-mode7-tilemap-columns/rows demos. All six match Mesen2 pixel-exactly: statics sampled at settle+60 share one approved golden CRC; the animated pair carries approved goldens at frames 120/360/600 each. Run by snes::integration_tests::undisbeliever_ppu_mode7_tests.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-mode7",
+          "refresh_command": null,
+          "notes": "6 locally-built .sfc ROMs plus LICENSE and build README; rebuild procedure is manual via the undisbeliever-inidisp/sources mirror (see the folder README)."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-ddribin-hdrv",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/ddribin/hdrv-snes-test",
+        "ref": "main (git subtree under ddribin-hdrv-snes-test/hdrv-snes-test; hdrvtest.sfc built once locally with WLA-DX, see the folder README)"
+      },
+      "license": "CC0-1.0",
+      "oracle_type": "screen_crc",
+      "notes": "ddribin's HDRV SNES display-mode test (issue #2881): joypad-driven test patterns (A/B cycle), interlace toggle (X) and 239-line overscan toggle (Y); the splash screen ignores input until ~frame 300 so scripted taps are scheduled from frame 340. Default colorbars (frame 371) and the graybars pattern (two A taps) match Mesen2 pixel-exactly and carry approved goldens. The interlace and overscan combos are content-verified against Mesen2 (0-pixel diffs after width-halving resp. at crop offset 0) but the raw framebuffer geometries differ, so they are #[ignore]d with NESER's current CRCs pending #3001. Run by snes::integration_tests::ddribin_hdrv_tests.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/ddribin-hdrv-snes-test",
+          "refresh_command": null,
+          "notes": "Prebuilt hdrvtest.sfc (built once with WLA-DX v10.7, upstream used v9.5) plus the CC0 source subtree and an update-sources refresh script."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-neser-opt",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/rmstdope/snes-test-roms",
+        "ref": "d2d00d88f7df3c8303880903f07399e730f6bad6"
+      },
+      "license": "zlib",
+      "oracle_type": "screen_crc",
+      "notes": "NESER-authored offset-per-tile test ROMs for BG modes 2/4/6 (issue #2881; no redistributable third-party OPT ROM exists), written against the undisbeliever bass framework with sources committed alongside the builds. Static solid-colour-tile scenes with BG3 as the offset map cover: vertical offsets with per-entry BG1-flag gating plus the OPT-exempt leftmost column and entry-j-to-column-j+1 mapping; horizontal offsets with flag gating; ignored low 3 bits of horizontal entries with the BG1HOFS fine scroll retained; BG1/BG2 apply-flag selection over a two-layer scene; mode 4's single offset row with per-entry bit-15 H/V selection (never-read second row holds conspicuous filler); and mode 6. The five mode 2/4 ROMs match Mesen2 pixel-exactly at frame 68 (approved goldens); opt-m6.sfc diverges completely (mode 6 16x8 tile pairing / hires columns, #[ignore]d pending #3019 and #3016). Run by snes::integration_tests::neser_opt_tests.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/neser-opt-tests",
+          "refresh_command": null,
+          "notes": "6 locally-built .sfc ROMs plus bass sources (src/ with the shared _opt-scene.inc), LICENSE and build README; rebuild via the undisbeliever-inidisp/sources mirror (see the folder README)."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-neser-mode7",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/rmstdope/snes-test-roms",
+        "ref": "d2d00d88f7df3c8303880903f07399e730f6bad6"
+      },
+      "license": "zlib",
+      "oracle_type": "screen_crc",
+      "notes": "NESER-authored static-matrix Mode 7 test ROMs (issue #2881), written against the undisbeliever bass framework with sources committed alongside the builds. One asymmetric 1024x1024 px scene (border ring, coloured corner blocks, centre cross, checkerboard; orange tile-0 fill marker, dark blue backdrop) covers the identity baseline, M7SEL out-of-screen wrap / colour 0 / tile 0 at an 8x zoom-out, a 30-degree rotation about the map centre, both M7SEL screen flips and Mode 7 mosaic (size 16). All 8 ROMs match Mesen2 pixel-exactly at frame 68 and carry approved goldens. Run by snes::integration_tests::neser_mode7_tests.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/neser-mode7-tests",
+          "refresh_command": null,
+          "notes": "8 locally-built .sfc ROMs plus bass sources (src/ with the shared _mode7-scene.inc), LICENSE and build README; rebuild via the undisbeliever-inidisp/sources mirror (see the folder README)."
+        }
+      ]
     }
   ]
 }
