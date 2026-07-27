@@ -5,6 +5,16 @@ use strsim::jaro_winkler;
 /// Minimum similarity score to consider a title match valid.
 const SIMILARITY_THRESHOLD: f64 = 0.85;
 
+/// Base score for a word-subset match (one title's words all appear in the
+/// other's, e.g. "aladdin" ⊂ "Disney's Aladdin"). Above the similarity
+/// threshold so subset matches qualify on their own.
+const SUBSET_BASE_SCORE: f64 = 0.88;
+
+/// Extra score added to a subset match proportional to word coverage, so
+/// titles with fewer extra words rank higher. The maximum subset score
+/// (coverage → 1.0) stays below an exact match's 1.0.
+const SUBSET_COVERAGE_SPAN: f64 = 0.11;
+
 /// Result of a fuzzy title match.
 #[derive(Debug, Clone)]
 pub struct TitleMatch {
@@ -23,7 +33,8 @@ pub fn match_title(rom_title: &str, candidates: &[(i64, String)]) -> Option<Titl
         .iter()
         .map(|(id, title)| {
             let normalized_db = normalize(title);
-            let score = jaro_winkler(&normalized_rom, &normalized_db);
+            let score = jaro_winkler(&normalized_rom, &normalized_db)
+                .max(word_subset_score(&normalized_rom, &normalized_db));
             (*id, title.as_str(), score)
         })
         .filter(|(_, _, score)| *score >= SIMILARITY_THRESHOLD)
@@ -33,6 +44,29 @@ pub fn match_title(rom_title: &str, candidates: &[(i64, String)]) -> Option<Titl
             db_title: db_title.to_string(),
             score,
         })
+}
+
+/// Score for the case where one normalized title's word set fully contains
+/// the other's — e.g. a ROM named "aladdin" against "Disney's Aladdin", or
+/// "lost vikings the" against "Lost Vikings". Returns 0.0 when neither side
+/// contains the other. The score grows with word coverage so the candidate
+/// with the fewest extra words ranks highest, and it never reaches the 1.0
+/// of an exact match.
+fn word_subset_score(a: &str, b: &str) -> f64 {
+    use std::collections::HashSet;
+
+    let a_words: HashSet<&str> = a.split_whitespace().collect();
+    let b_words: HashSet<&str> = b.split_whitespace().collect();
+    if a_words.is_empty() || b_words.is_empty() {
+        return 0.0;
+    }
+    if !a_words.is_subset(&b_words) && !b_words.is_subset(&a_words) {
+        return 0.0;
+    }
+
+    let coverage =
+        a_words.len().min(b_words.len()) as f64 / a_words.len().max(b_words.len()) as f64;
+    SUBSET_BASE_SCORE + SUBSET_COVERAGE_SPAN * coverage
 }
 
 /// Normalize a title for comparison: lowercase, drop apostrophes, treat all
@@ -182,6 +216,53 @@ mod tests {
         let result = match_title("Mega Man 5", &cands);
         assert!(result.is_some());
         assert_eq!(result.unwrap().game_id, 5);
+    }
+
+    #[test]
+    fn bare_title_matches_branded_db_title() {
+        // "aladdin.sfc" must match "Disney's Aladdin": the filename's words
+        // are a subset of the DB title's words.
+        let cands = vec![
+            (5, "Donkey Kong".to_string()),
+            (2868, "Disney's Aladdin".to_string()),
+        ];
+        let result = match_title("aladdin", &cands);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().game_id, 2868);
+    }
+
+    #[test]
+    fn bare_title_matches_one_of_identical_branded_titles() {
+        // TheGamesDB has regional duplicates; matching any of them is fine.
+        let cands = vec![
+            (2868, "Disney's Aladdin".to_string()),
+            (86134, "Disney's Aladdin".to_string()),
+            (108210, "Disney's Aladdin".to_string()),
+        ];
+        let result = match_title("aladdin", &cands).expect("should match");
+        assert!([2868, 86134, 108210].contains(&result.game_id));
+    }
+
+    #[test]
+    fn exact_title_beats_superset_title() {
+        // A word-subset match must never outrank an exact title match.
+        let cands = vec![
+            (1, "Super Mario World 2: Yoshi's Island".to_string()),
+            (2, "Super Mario World".to_string()),
+        ];
+        let result = match_title("super-mario-world", &cands);
+        assert_eq!(result.unwrap().game_id, 2);
+    }
+
+    #[test]
+    fn tighter_superset_title_beats_looser_one() {
+        // Among subset matches, the title with fewer extra words wins.
+        let cands = vec![
+            (1, "Disney's Aladdin in Nasira's Revenge".to_string()),
+            (2, "Disney's Aladdin".to_string()),
+        ];
+        let result = match_title("aladdin", &cands);
+        assert_eq!(result.unwrap().game_id, 2);
     }
 
     #[test]
