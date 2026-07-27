@@ -19,6 +19,7 @@ from sync import Syncer
 
 PLATFORMS = {
     "nes":  {"id": 7,  "name": "Nintendo Entertainment System (NES)", "alias": "nintendo-entertainment-system-nes"},
+    "snes": {"id": 6,  "name": "Super Nintendo (SNES)",               "alias": "super-nintendo-snes"},
     "gb":   {"id": 4,  "name": "Nintendo Game Boy",                   "alias": "nintendo-gameboy"},
     "gbc":  {"id": 41, "name": "Nintendo Game Boy Color",             "alias": "nintendo-gameboy-color"},
     "gba":  {"id": 5,  "name": "Nintendo Game Boy Advance",           "alias": "nintendo-gameboy-advance"},

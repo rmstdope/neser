@@ -41,6 +41,12 @@ class TestMainCliArgParsing(unittest.TestCase):
         call_kwargs = syncer.sync.call_args[1]
         self.assertEqual(call_kwargs["platform_id"], 7)
 
+    def test_sync_snes_calls_syncer_sync(self):
+        _, _, syncer, _ = self._run(["sync", "--platform", "snes", "--api-key", "testkey"])
+        syncer.sync.assert_called_once()
+        call_kwargs = syncer.sync.call_args[1]
+        self.assertEqual(call_kwargs["platform_id"], 6)
+
     def test_sync_force_full_passes_flag(self):
         _, _, syncer, _ = self._run(["sync", "--platform", "nes", "--force-full", "--api-key", "testkey"])
         call_kwargs = syncer.sync.call_args[1]
@@ -92,6 +98,12 @@ class TestMainCliArgParsing(unittest.TestCase):
         call_kwargs = db.list_games.call_args[1]
         self.assertEqual(call_kwargs["platform_id"], 7)
 
+    def test_list_platform_snes_filters_by_platform_id_6(self):
+        db, _, _, _ = self._run(["list", "--platform", "snes", "--api-key", "testkey"])
+        db.list_games.assert_called_once()
+        call_kwargs = db.list_games.call_args[1]
+        self.assertEqual(call_kwargs["platform_id"], 6)
+
     def test_list_game_id_filters_by_id(self):
         db, _, _, _ = self._run(["list", "--game-id", "135", "--api-key", "testkey"])
         db.list_games.assert_called_once()
@@ -140,13 +152,14 @@ class TestMainCliArgParsing(unittest.TestCase):
             output = captured.getvalue()
             self.assertIn("boxart/back/135-2.jpg", output)
 
-    def test_sync_all_platforms_syncs_nes_gb_gbc_gba(self):
+    def test_sync_all_platforms_syncs_nes_gb_gbc_gba_snes(self):
         _, _, syncer, _ = self._run(["sync", "--platform", "all", "--api-key", "testkey"])
         platform_ids = [c[1]["platform_id"] for c in syncer.sync.call_args_list]
         self.assertIn(7, platform_ids)   # NES
         self.assertIn(4, platform_ids)   # GB
         self.assertIn(41, platform_ids)  # GBC
         self.assertIn(5, platform_ids)   # GBA
+        self.assertIn(6, platform_ids)   # SNES
 
 
 class TestInfoCommand(unittest.TestCase):
@@ -183,6 +196,11 @@ class TestInfoCommand(unittest.TestCase):
         db, _ = self._run_info(["castlevania", "--platform", "nes"])
         call_kwargs = db.search_games.call_args[1]
         self.assertEqual(call_kwargs.get("platform_id"), 7)
+
+    def test_info_with_platform_snes_passes_platform_id_6(self):
+        db, _ = self._run_info(["mario", "--platform", "snes"])
+        call_kwargs = db.search_games.call_args[1]
+        self.assertEqual(call_kwargs.get("platform_id"), 6)
 
     def test_info_no_results_prints_not_found(self):
         _, output = self._run_info(["zeldaXXX"])
