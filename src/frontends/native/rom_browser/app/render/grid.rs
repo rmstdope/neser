@@ -13,13 +13,14 @@ impl RomBrowserApp {
         selected: usize,
         scroll_offset: f32,
         search_query: &str,
+        no_roms_hint: &str,
     ) {
         if entries.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
                 if search_query.is_empty() {
                     ui.label(
-                        egui::RichText::new("No ROMs found. Add ROM files to ~/.neser/roms/")
+                        egui::RichText::new(no_roms_hint)
                             .color(theme::DIM_TEXT)
                             .size(13.0),
                     );

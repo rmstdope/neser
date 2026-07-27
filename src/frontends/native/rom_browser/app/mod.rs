@@ -181,18 +181,21 @@ pub struct RomBrowserApp {
     texture_pending: Vec<i64>,
     /// Fast lookup from game_id to boxart path (built when catalog is set).
     boxart_by_game_id: std::collections::HashMap<i64, PathBuf>,
+    /// Message shown when the catalog is empty, listing the ROM search paths.
+    no_roms_hint: String,
 }
 
 impl RomBrowserApp {
     /// Create a new ROM browser application.
     pub fn new(app_context: SharedAppContext) -> Self {
-        let (default_height, fullscreen, favorites_path) = {
+        let (default_height, fullscreen, favorites_path, no_roms_hint) = {
             let ctx = app_context.borrow();
             let config = ctx.config();
             (
                 config.frontend.window_height,
                 config.frontend.fullscreen,
                 config.frontend.resolved_favorites_path(),
+                Self::no_roms_hint(&config.frontend.cartridge_search_paths),
             )
         };
         // Default browser window: use configured height with 16:9 ratio.
@@ -276,6 +279,21 @@ impl RomBrowserApp {
             texture_result_rx: result_rx,
             texture_pending: Vec::new(),
             boxart_by_game_id: std::collections::HashMap::new(),
+            no_roms_hint,
+        }
+    }
+
+    /// Build the empty-catalog message from the configured cartridge search
+    /// paths, mirroring the fallback used by the catalog scan: when no paths
+    /// are configured, ROMs are read from ~/.neser/roms/.
+    fn no_roms_hint(search_paths: &[String]) -> String {
+        if search_paths.is_empty() {
+            "No ROMs found. Add ROM files to ~/.neser/roms/".to_string()
+        } else {
+            format!(
+                "No ROMs found. Add ROM files to {}",
+                search_paths.join(", ")
+            )
         }
     }
 

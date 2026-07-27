@@ -94,6 +94,7 @@ fn test_browser(entries: Vec<RomEntry>) -> RomBrowserApp {
         },
         texture_pending: Vec::new(),
         boxart_by_game_id: std::collections::HashMap::new(),
+        no_roms_hint: RomBrowserApp::no_roms_hint(&[]),
     };
     app.set_catalog(entries);
     app
@@ -129,6 +130,29 @@ fn rebuild_filtered_empty_result() {
     app.search_query = "castlevania".to_string();
     app.rebuild_filtered();
     assert!(app.filtered_indices.is_empty());
+}
+
+#[test]
+fn no_roms_hint_defaults_to_home_roms_dir_when_no_search_paths() {
+    let hint = RomBrowserApp::no_roms_hint(&[]);
+    assert_eq!(hint, "No ROMs found. Add ROM files to ~/.neser/roms/");
+}
+
+#[test]
+fn no_roms_hint_lists_single_configured_search_path() {
+    let paths = vec!["/mnt/roms".to_string()];
+    let hint = RomBrowserApp::no_roms_hint(&paths);
+    assert_eq!(hint, "No ROMs found. Add ROM files to /mnt/roms");
+}
+
+#[test]
+fn no_roms_hint_lists_multiple_configured_search_paths() {
+    let paths = vec!["/mnt/roms".to_string(), "/home/user/games".to_string()];
+    let hint = RomBrowserApp::no_roms_hint(&paths);
+    assert_eq!(
+        hint,
+        "No ROMs found. Add ROM files to /mnt/roms, /home/user/games"
+    );
 }
 
 #[test]
