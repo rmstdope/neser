@@ -279,5 +279,48 @@ class TestInfoCommand(unittest.TestCase):
             self.assertIn("1", output)
 
 
+class TestMainApiErrorHandling(unittest.TestCase):
+    """API errors must exit with a clear message, never a raw traceback."""
+
+    def _run_sync_failing_with(self, error):
+        """Run a sync where the syncer raises, capturing exit code and stderr."""
+        with patch("sys.argv", ["main.py", "sync", "--platform", "nes", "--api-key", "testkey"]), \
+             patch("main.MetadataDb") as MockDb, \
+             patch("main.TheGamesDbClient") as MockClient, \
+             patch("main.Syncer") as MockSyncer:
+            mock_db_instance = MagicMock()
+            MockDb.return_value.__enter__ = MagicMock(return_value=mock_db_instance)
+            MockDb.return_value.__exit__ = MagicMock(return_value=False)
+            MockClient.return_value = MagicMock()
+            mock_syncer = MagicMock()
+            mock_syncer.sync.side_effect = error
+            MockSyncer.return_value = mock_syncer
+            import main as m
+            captured_err = StringIO()
+            with patch("sys.stderr", captured_err):
+                with self.assertRaises(SystemExit) as ctx:
+                    m.main(output=StringIO())
+            return ctx.exception.code, captured_err.getvalue()
+
+    def test_sync_429_exits_with_friendly_allowance_message(self):
+        from api_client import ApiError
+        code, stderr = self._run_sync_failing_with(
+            ApiError("API error 429: /v1/Games/Updates", status_code=429)
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("429", stderr)
+        self.assertIn("allowance", stderr.lower())
+        self.assertNotIn("Traceback", stderr)
+
+    def test_sync_other_api_error_exits_with_error_message(self):
+        from api_client import ApiError
+        code, stderr = self._run_sync_failing_with(
+            ApiError("API error 500: /v1/Games/Updates", status_code=500)
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("API error 500", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
