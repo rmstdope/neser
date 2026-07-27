@@ -442,7 +442,7 @@
       "platform": "snes",
       "source": {
         "url": "https://github.com/rmstdope/snes-test-roms",
-        "ref": "1ba8bea902a2304710acbd47152abf3e5ee4ade4"
+        "ref": "d2d00d88f7df3c8303880903f07399e730f6bad6"
       },
       "license": "zlib",
       "oracle_type": "screen_crc",
@@ -463,7 +463,7 @@
       "platform": "snes",
       "source": {
         "url": "https://github.com/rmstdope/snes-test-roms",
-        "ref": "1ba8bea902a2304710acbd47152abf3e5ee4ade4"
+        "ref": "d2d00d88f7df3c8303880903f07399e730f6bad6"
       },
       "license": "zlib",
       "oracle_type": "screen_crc",
