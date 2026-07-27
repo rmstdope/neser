@@ -34,15 +34,11 @@ impl Ppu {
         self.line_main[x] = main;
         self.line_sub[x] = sub;
         if self.hires_output_enabled() {
-            if self.pseudo_hires_enabled() {
-                // Pseudo-hires shifts sub-screen half a dot left: sub lands in the first
-                // half-pixel column, main in the second.
-                self.framebuffer[base] = sub.color;
-                self.framebuffer[base + 1] = main.color;
-            } else {
-                self.framebuffer[base] = main.color;
-                self.framebuffer[base + 1] = sub.color;
-            }
+            // The sub screen supplies the even (left) half-pixel and the main screen the
+            // odd (right) one, for both true hires (modes 5/6) and pseudo-hires (Mesen2
+            // ApplyHiResMode: out[2x] = sub, out[2x+1] = main).
+            self.framebuffer[base] = sub.color;
+            self.framebuffer[base + 1] = main.color;
             self.line_main_final[x] = main.color;
         } else {
             let out = self.compose_pixels(x as u16, y as u16, main, sub);

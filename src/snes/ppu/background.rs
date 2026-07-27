@@ -1249,8 +1249,14 @@ mod tests {
         ppu.write_register(0x2100, 0x0F);
         render_frame(&mut ppu);
 
+        // Main screen lands on the odd output columns; the even column shows the
+        // sub screen (backdrop here, since TS is empty).
         let rgb = ppu.screen_snapshot_rgb();
-        assert_eq!(pixel(&rgb, 0, 0), [255, 255, 255], "mode 6 BG1 renders");
+        assert_eq!(
+            &rgb[3..6],
+            [255, 255, 255],
+            "mode 6 BG1 renders on odd columns"
+        );
     }
 
     #[test]
@@ -1266,16 +1272,14 @@ mod tests {
         ppu.write_register(0x2100, 0x0F);
         render_frame(&mut ppu);
 
+        // Main screen lands on the odd output columns; the even column shows the
+        // sub screen (backdrop here, since TS is empty).
         let rgb = ppu.screen_snapshot_rgb();
-        assert_eq!(
-            pixel(&rgb, 0, 0),
-            [0, 0, 255],
-            "mode 5 BG1 renders at 256-wide"
-        );
+        assert_eq!(&rgb[3..6], [0, 0, 255], "mode 5 BG1 renders on odd columns");
     }
 
     #[test]
-    fn mode5_hi_res_interleaves_main_and_sub_pixels() {
+    fn mode5_hi_res_places_sub_on_even_and_main_on_odd_columns() {
         let mut ppu = Ppu::new();
         set_cgram(&mut ppu, 0, 0x0000);
         set_cgram(&mut ppu, 1, 0x7FFF); // main BG1 color 1 = white
@@ -1296,8 +1300,10 @@ mod tests {
 
         let rgb = ppu.screen_snapshot_rgb();
         assert_eq!(rgb.len(), 512 * 224 * 3);
-        assert_eq!(&rgb[0..3], &[255, 255, 255], "even column uses main screen");
-        assert_eq!(&rgb[3..6], &[255, 0, 0], "odd column uses sub screen");
+        // Hardware/Mesen2: the sub screen supplies the even (left) half-pixel and the
+        // main screen the odd (right) one (Mesen2 ApplyHiResMode).
+        assert_eq!(&rgb[0..3], &[255, 0, 0], "even column uses sub screen");
+        assert_eq!(&rgb[3..6], &[255, 255, 255], "odd column uses main screen");
     }
 
     #[test]
