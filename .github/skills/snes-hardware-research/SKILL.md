@@ -64,19 +64,17 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
    - Treat ares/Mesen2 as implementation evidence, not as equal authority with written specifications.
    - When both agree on behavior not in specs, that's strong evidence; when they disagree, state both approaches.
 
-9. For visual verification, use a two-emulator cross-check.
-   - **Locating binaries**:
-     - Check if built from local source (e.g., `../ares/desktop-ui/ares`, `../Mesen2/bin/x64/Release/Mesen`)
-     - macOS: check `/Applications/ares.app`, `/Applications/Mesen2.app`
+9. For visual verification, cross-check against Mesen2 (the sole screenshot reference; navigator decision in #3000 — ares stays a source-code reference only, see step 8).
+   - **Locating the binary**:
+     - Check if built from local source (e.g., `../Mesen2/bin/x64/Release/Mesen`)
+     - macOS: check `/Applications/Mesen.app` (`/Applications/Mesen.app/Contents/MacOS/Mesen`)
      - Linux: check `~/Applications/`, `/usr/local/bin/`, `~/.local/bin/`
      - Windows: check `C:\Program Files\`, `C:\Program Files (x86)\`
      - If not found in standard locations, ask the user for the path
-   - **Always capture screenshots from both ares AND Mesen2 first.**
-   - If ares and Mesen2 produce identical output (pixel-perfect match), use that as the reference for NESER comparison.
-   - If ares and Mesen2 disagree, **stop and ask the user** how to proceed — don't pick one arbitrarily.
+   - Capture a Mesen2 screenshot at the same frame as NESER and pixel-diff programmatically; exact matches become the reference for NESER comparison.
+   - If NESER and Mesen2 disagree and the divergence is suspected to be a Mesen2 quirk, **ask the user** how to proceed rather than approving either side unilaterally.
    - Screenshot settings for comparable captures:
      - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true`
-     - ares: use default "None" video filter, no overscan cropping
    - Mesen2 headless mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
    - **`--snes.disableFrameSkipping=true` is mandatory for animated content** (found in #2990):
      headless testRunner emulation runs >100 fps, engaging `_skipRender` (SnesPpu.cpp) which
@@ -174,18 +172,20 @@ When writing code that targets or emulates SNES hardware, always verify against 
 
 When verifying SNES emulator accuracy:
 
-- **Two-emulator verification (mandatory for screenshots)**:
-  1. Capture screenshots from **both ares and Mesen2** for the same ROM/frame
-  2. Compare ares vs Mesen2 pixel-by-pixel first
-  3. If they match: use that as the reference for NESER comparison
-  4. If they differ: **ask the user** how to proceed — do not pick one arbitrarily
-  5. Document which emulator(s) NESER matches in test comments
+- **Mesen2 verification (mandatory for screenshots)**:
+  1. Capture a Mesen2 screenshot for the same ROM/frame (Mesen2 is the sole
+     screenshot reference; ares is source-code evidence only — navigator
+     decision in #3000)
+  2. Pixel-diff NESER vs Mesen2 programmatically; an exact match approves the
+     baseline
+  3. If they differ and Mesen2 itself is suspect: **ask the user** how to
+     proceed — do not approve either side arbitrarily
+  4. Document the Mesen2 approval (frame, diff result) in test comments
 - **Pixel-perfect comparison**: Use Python/PIL to compare screenshots pixel-by-pixel. Don't trust visual inspection — differences of 2-4% are invisible to the eye but indicate timing bugs.
 - **CRC-based integration tests**: Capture frame CRCs at known stable points (e.g., frame 600) and use as golden values for regression testing. Update test comments to reference GitHub issues for known differences.
 - **Screenshot settings for comparable captures**:
   - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true`
     (the frame-skip switch is mandatory for animated content; see step 9 of the Instructions)
-  - ares: default "None" video filter, no overscan cropping
   - Since the BG vertical-scroll display-line fix (issue #2945, PR #2981), NESER and
     Mesen2 frame-N captures align **byte-for-byte at zero row offset**. A previously
     documented "constant 1-scanline row offset vs NESER" was in fact a NESER BG bug,
@@ -502,53 +502,7 @@ kill $MESEN_PID
 - `emu.takeScreenshot()` returns PNG binary data as string
 - `emu.stop(0)` does not work in regular mode; use external process control instead
 
-#### ares (Manual/Semi-Automated)
-
-ares does not have Lua scripting like Mesen2, but supports hotkeys for frame advance and screenshots.
-
-**Hotkey Configuration Format:**
-
-Hotkeys in `settings.bml` use the format: `0xDEVICE_ID/GROUP_ID/INPUT_ID;;`
-- `0x1` = Keyboard device
-- `0` = Button group
-- `INPUT_ID` = Index in the key mapping array
-
-**Key Mapping** (from `ares/ruby/input/keyboard/quartz.cpp` on macOS):
-Keys are indexed in this order starting from 0:
-1. Escape (0)
-2. F1-F20 (1-20)
-3. Tilde, Num1-0, Dash, Equal, Delete (21-34)
-4. Erase, Home, End, PageUp, PageDown (35-39)
-5. A-Z (40-65)
-6. LeftBracket, RightBracket, Backslash, Semicolon, Apostrophe, Comma, Period, Slash (66-73)
-7. Keypad1-0, Clear, Equals, Divide, Multiply, Subtract, Add, Enter, Decimal (74-91)
-8. Up, Down, Left, Right (92-95)
-9. Tab (96), Return (97), Spacebar (98)
-10. Modifiers: Shift, Control, Alt, Super (99+)
-
-**Example configuration** (in `~/Library/Application Support/ares/settings.bml`):
-```
-Hotkey
-  FrameAdvance: 0x1/0/96;;        # Tab key (index 96)
-  CaptureScreenshot: 0x1/0/1;;    # F1 key (index 1)
-Paths
-  Screenshots: /path/to/output/directory
-```
-
-**Manual Capture Workflow:**
-1. Configure hotkeys in `settings.bml` or via ares GUI (Settings → Hotkeys)
-2. Set screenshot output path in `settings.bml` under `Paths/Screenshots`
-3. Launch ares with ROM: `/Applications/ares.app/Contents/MacOS/ares path/to/rom.sfc --system "Super Famicom"`
-4. Manually press Tab 120 times (or configured frame advance key)
-5. Press F1 (or configured screenshot key) to capture
-6. Screenshot saves to configured path with automatic naming
-
-**Automation Challenges:**
-- Hotkeys configured correctly in settings.bml may not respond to simulated keystrokes (AppleScript/Python automation)
-- ares may require interactive GUI session for hotkey processing
-- Frame advance via hotkey is manual and tedious for large frame counts
-
-**Recommended Approach:**
-For automated testing, prefer Mesen2 (fully scriptable). For ares, use manual capture or launch in GUI mode with user interaction for frame advance + screenshot at target frame.
+(ares is not used for screenshot capture — it has no scripting support and is
+a source-code reference only; see step 9 of the Instructions.)
 
 
