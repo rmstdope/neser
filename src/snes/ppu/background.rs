@@ -104,7 +104,11 @@ impl Ppu {
                     if self.layer_disabled_by_window(target, WindowLayer::Bg(bg), x, y) {
                         continue;
                     }
-                    if let Some((color, pixel_priority)) = self.bg_pixel(bg, x, y)
+                    // In true hires (modes 5/6) the sub screen fetches the even
+                    // half-pixel (2x) and the main screen the odd one (2x+1).
+                    let hires_half =
+                        u16::from(self.true_hires_enabled() && target == ScreenTarget::Main);
+                    if let Some((color, pixel_priority)) = self.bg_pixel(bg, x, y, hires_half)
                         && pixel_priority == priority
                     {
                         return ScreenPixel {
@@ -398,27 +402,33 @@ impl Ppu {
     /// Resolve `(BGR555 color, priority)` for BG layer `bg` at screen `(x, y)`, or `None` if the
     /// pixel is transparent (color 0). Supports 8x8/16x16 tiles, all four tilemap sizes, 2/4/8 bpp,
     /// direct-color mode, and offset-per-tile (modes 2/4/6).
-    fn bg_pixel(&self, bg: usize, x: u16, y: u16) -> Option<(u16, bool)> {
+    ///
+    /// `hires_half` selects the half-pixel (0 = even/sub, 1 = odd/main) in true hires
+    /// (modes 5/6), where BG1/BG2 fetch at doubled horizontal resolution; it is 0 otherwise.
+    fn bg_pixel(&self, bg: usize, x: u16, y: u16, hires_half: u16) -> Option<(u16, bool)> {
         let bpp = self.bg_bpp(bg);
         let size16 = self.bg_tile_size_16[bg];
-        let cell_shift = if size16 { 4 } else { 3 };
-        let cell_mask = (1u16 << cell_shift) - 1;
 
         // Apply horizontal mosaic: snap x to the left edge of its block when enabled.
-        let x = if self.mosaic_bg_enabled(bg) {
-            self.mosaic_apply_x(x)
+        // In hires the block-start sample is the even half-pixel, which mosaic then
+        // replicates into both output columns (Mesen2 RenderTilemap mosaic hold).
+        let (x, hires_half) = if self.mosaic_bg_enabled(bg) {
+            (self.mosaic_apply_x(x), 0)
         } else {
-            x
+            (x, hires_half)
         };
+
+        if self.true_hires_enabled() {
+            return self.bg_pixel_hires(bg, bpp, size16, x, y, hires_half);
+        }
+
+        let cell_shift = if size16 { 4 } else { 3 };
+        let cell_mask = (1u16 << cell_shift) - 1;
 
         let (scrolled_x, scrolled_y) = self.effective_offsets(bg, x, y);
 
         let entry = self.read_bg_map_entry(bg, scrolled_x >> cell_shift, scrolled_y >> cell_shift);
-        let char_num = entry & 0x03FF;
-        let palette = ((entry >> 10) & 0x07) as u8;
-        let priority = entry & 0x2000 != 0;
-        let hflip = entry & 0x4000 != 0;
-        let vflip = entry & 0x8000 != 0;
+        let (char_num, palette, priority, hflip, vflip) = decode_bg_map_entry(entry);
 
         // Cell-relative coordinates (0..cell_size), with flip applied to the whole cell.
         let mut within_x = scrolled_x & cell_mask;
@@ -443,6 +453,66 @@ impl Ppu {
         let fine_x = (within_x & 7) as u8;
         let fine_y = (within_y & 7) as u8;
 
+        self.bg_tile_color(bg, bpp, tile, palette, fine_x, fine_y)
+            .map(|color| (color, priority))
+    }
+
+    /// True-hires (modes 5/6) BG fetch at doubled horizontal resolution: a tilemap entry
+    /// spans 16 half-pixel columns pairing chars N/N+1 (regardless of the BGMODE tile-size
+    /// bit, which only pairs vertically), with the horizontal scroll applied in half-pixel
+    /// units (Mesen2 RenderTilemap hires fetch / GetChrData largeTileWidth).
+    fn bg_pixel_hires(
+        &self,
+        bg: usize,
+        bpp: u8,
+        size16: bool,
+        x: u16,
+        y: u16,
+        hires_half: u16,
+    ) -> Option<(u16, bool)> {
+        let hx = (x << 1) | hires_half;
+        let (hoffset, voffset) = self.effective_offsets_hires(bg, hx, y);
+
+        let v_shift = if size16 { 4 } else { 3 };
+        let v_mask = (1u16 << v_shift) - 1;
+        let entry = self.read_bg_map_entry(bg, hoffset >> 4, voffset >> v_shift);
+        let (char_num, palette, priority, hflip, vflip) = decode_bg_map_entry(entry);
+
+        // Flips apply across the whole 16-wide pair (and 16-tall block for size16).
+        let mut within_x = hoffset & 15;
+        if hflip {
+            within_x = 15 - within_x;
+        }
+        let mut within_y = voffset & v_mask;
+        if vflip {
+            within_y = v_mask - within_y;
+        }
+
+        let mut tile = char_num;
+        if within_x & 8 != 0 {
+            tile += 1;
+        }
+        if size16 && within_y & 8 != 0 {
+            tile += 16;
+        }
+        let fine_x = (within_x & 7) as u8;
+        let fine_y = (within_y & 7) as u8;
+
+        self.bg_tile_color(bg, bpp, tile, palette, fine_x, fine_y)
+            .map(|color| (color, priority))
+    }
+
+    /// Decode the tile pixel and resolve its CGRAM (or direct-color) BGR555 value, or
+    /// `None` when transparent; shared tail of the native and hires BG fetch paths.
+    fn bg_tile_color(
+        &self,
+        bg: usize,
+        bpp: u8,
+        tile: u16,
+        palette: u8,
+        fine_x: u8,
+        fine_y: u8,
+    ) -> Option<u16> {
         let color =
             self.decode_tile_pixel(self.bg_char_base[bg], tile & 0x03FF, bpp, fine_x, fine_y);
         if color == 0 {
@@ -450,7 +520,7 @@ impl Ppu {
         }
         // Direct-color mode (CGWSEL.0) resolves 256-color BGs straight to BGR555.
         if bpp == 8 && self.cgwsel & 0x01 != 0 {
-            return Some((direct_color(color, palette), priority));
+            return Some(direct_color(color, palette));
         }
         // 8bpp (256-color) BGs index CGRAM directly; map-entry palette bits are ignored.
         let index = if bpp == 8 {
@@ -459,7 +529,28 @@ impl Ppu {
             let colors_per_palette = if bpp == 2 { 4 } else { 16 };
             self.bg_palette_base(bg) + palette * colors_per_palette + color
         };
-        Some((self.cgram_color(index), priority))
+        Some(self.cgram_color(index))
+    }
+
+    /// Compute the effective hires BG pixel coordinates for layer `bg` at half-pixel
+    /// column `hx` (0..512): horizontal scroll doubled into half-pixel units, vertical
+    /// scroll as in [`Ppu::effective_offsets`]. Mode 6 offset-per-tile is not applied
+    /// here yet (#3016).
+    fn effective_offsets_hires(&self, bg: usize, hx: u16, y: u16) -> (u16, u16) {
+        let hscroll = (self.bg_hofs[bg] & 0x03FF) << 1;
+        let hoffset = hx.wrapping_add(hscroll) & 0x07FF;
+        let voffset = y.wrapping_add(1).wrapping_add(self.bg_vscroll(bg)) & 0x03FF;
+        (hoffset, voffset)
+    }
+
+    /// The layer's vertical scroll with the mosaic block-hold subtraction applied
+    /// (fullsnes: "subtract the vertical index from the vertical scroll register").
+    fn bg_vscroll(&self, bg: usize) -> u16 {
+        if self.mosaic_bg_enabled(bg) {
+            self.bg_vofs[bg].wrapping_sub(self.mosaic_vcount as u16)
+        } else {
+            self.bg_vofs[bg]
+        }
     }
 
     /// Compute the effective BG pixel coordinates `(hoffset, voffset)` for layer `bg` at screen
@@ -467,13 +558,7 @@ impl Ppu {
     /// to BG1/BG2. Algorithm follows bsnes (non-hires; Mode 5/6 hi-res output is #2766).
     fn effective_offsets(&self, bg: usize, x: u16, y: u16) -> (u16, u16) {
         let hscroll = self.bg_hofs[bg] & 0x03FF;
-        // Vertical mosaic: subtract the block-internal scanline index from BGnVOFS before adding
-        // screen Y (fullsnes: "subtract the vertical index from the vertical scroll register").
-        let vscroll = if self.mosaic_bg_enabled(bg) {
-            self.bg_vofs[bg].wrapping_sub(self.mosaic_vcount as u16)
-        } else {
-            self.bg_vofs[bg]
-        } & 0x03FF;
+        let vscroll = self.bg_vscroll(bg) & 0x03FF;
         // Framebuffer row `y` shows display line `y + 1` (line 0 is never rendered), and the BG
         // fetch adds BGnVOFS to the raw display line (ares fetchNameTable: vcounter() + vscroll;
         // Mesen2: realY = _scanline). Same convention as Mode 7's screen_y (mode7.rs).
@@ -594,6 +679,17 @@ impl Ppu {
 
 /// Direct-color conversion for 256-color BGs: combine the 8-bit color index (`BBGGGRRR`) with the
 /// 3-bit BG-map palette (`bgr`) into a 15-bit BGR555 value (per fullsnes Direct Color).
+/// Split a 16-bit BG tilemap entry into `(char_num, palette, priority, hflip, vflip)`.
+fn decode_bg_map_entry(entry: u16) -> (u16, u8, bool, bool, bool) {
+    (
+        entry & 0x03FF,
+        ((entry >> 10) & 0x07) as u8,
+        entry & 0x2000 != 0,
+        entry & 0x4000 != 0,
+        entry & 0x8000 != 0,
+    )
+}
+
 fn direct_color(color: u8, palette: u8) -> u16 {
     let red = ((color as u16 & 0x07) << 2) | ((palette as u16 & 0x01) << 1);
     let green = (((color as u16 >> 3) & 0x07) << 2) | (((palette as u16 >> 1) & 0x01) << 1);
@@ -603,7 +699,9 @@ fn direct_color(color: u8, palette: u8) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu};
+    use super::super::{
+        DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu, SCREEN_WIDTH_MAX,
+    };
 
     fn render_frame(ppu: &mut Ppu) {
         let ticks =
@@ -616,10 +714,7 @@ mod tests {
     /// Render up to and including the first visible scanline, leaving the per-line
     /// buffers holding that line's resolve results.
     fn render_first_visible_line(ppu: &mut Ppu) {
-        let ticks = DOTS_PER_SCANLINE as u32 * 2 * MASTER_CYCLES_PER_DOT;
-        for _ in 0..ticks {
-            ppu.tick();
-        }
+        render_lines(ppu, 1);
     }
 
     fn set_cgram(ppu: &mut Ppu, index: usize, bgr555: u16) {
@@ -687,9 +782,214 @@ mod tests {
         }
     }
 
+    /// Set a single pixel in a 4bpp 8×8 tile at (fine_x, fine_y) to `color` (0-15).
+    fn set_4bpp_tile_pixel(
+        ppu: &mut Ppu,
+        char_base: usize,
+        char_num: usize,
+        fine_x: u8,
+        fine_y: u8,
+        color: u8,
+    ) {
+        let base = (char_base + char_num * 16) * 2;
+        let bit = 7 - fine_x; // bit 7 is left-most
+        for plane in 0..4usize {
+            // Planes 0/1 interleave in the first 16 bytes, planes 2/3 in the next 16.
+            let offset = base + (plane / 2) * 16 + (fine_y as usize) * 2 + (plane % 2);
+            if color & (1 << plane) != 0 {
+                ppu.vram[offset] |= 1 << bit;
+            } else {
+                ppu.vram[offset] &= !(1 << bit);
+            }
+        }
+    }
+
     fn pixel(rgb: &[u8], x: usize, y: usize) -> [u8; 3] {
         let i = (y * 256 + x) * 3;
         [rgb[i], rgb[i + 1], rgb[i + 2]]
+    }
+
+    /// Render `n` scanlines from power-on (framebuffer rows 0..n-1 are completed,
+    /// since display line y+1 renders framebuffer row y).
+    fn render_lines(ppu: &mut Ppu, n: u32) {
+        let ticks = DOTS_PER_SCANLINE as u32 * (n + 1) * MASTER_CYCLES_PER_DOT;
+        for _ in 0..ticks {
+            ppu.tick();
+        }
+    }
+
+    /// Mode 5 with BG1 on both the main and sub screens (sub display enabled via
+    /// CGWSEL bit 1), identity palette (CGRAM word i = i), full brightness.
+    /// True-hires tests then read raw BGR555 words from framebuffer row `y`.
+    fn setup_mode5_bg1_both_screens(ppu: &mut Ppu) {
+        for i in 1..16 {
+            set_cgram(ppu, i, i as u16);
+        }
+        ppu.write_register(0x2105, 0x05); // mode 5 (BG1 4bpp)
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x01); // TS: BG1
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2100, 0x0F); // full brightness
+    }
+
+    /// Write a per-column 4bpp pattern (column c = color c+1) on all 8 tile rows.
+    fn fill_4bpp_tile_column_pattern(ppu: &mut Ppu, char_base: usize, char_num: usize) {
+        for fine_y in 0..8 {
+            for fine_x in 0..8u8 {
+                set_4bpp_tile_pixel(ppu, char_base, char_num, fine_x, fine_y, fine_x + 1);
+            }
+        }
+    }
+
+    #[test]
+    fn mode5_fetches_distinct_even_and_odd_subpixels() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_vram_word(&mut ppu, 0x400, 1); // BG1 entry -> char 1
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        render_lines(&mut ppu, 1);
+
+        // Modes 5/6 fetch BG1 at doubled horizontal resolution: output column X shows
+        // tile hi-res column X (even from the sub fetch, odd from the main fetch),
+        // NOT the same native pixel doubled.
+        for c in 0..8usize {
+            assert_eq!(
+                ppu.framebuffer[c],
+                (c + 1) as u16,
+                "output column {c} shows tile column {c}"
+            );
+        }
+    }
+
+    #[test]
+    fn mode5_pairs_char_n_and_n_plus_1_into_a_16_wide_tile() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1); // entry 0 -> char 1 (pairs with char 2)
+        set_vram_word(&mut ppu, 0x401, 3); // entry 1 -> char 3 (pairs with char 4)
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 2, 2);
+        fill_4bpp_tile(&mut ppu, 0, 3, 3);
+        render_lines(&mut ppu, 1);
+
+        // A map entry spans 16 output columns: char N in the left half, char N+1 in
+        // the right half; the next map entry starts at output column 16.
+        assert_eq!(ppu.framebuffer[0], 1, "columns 0-7 show char 1");
+        assert_eq!(ppu.framebuffer[7], 1, "columns 0-7 show char 1");
+        assert_eq!(ppu.framebuffer[8], 2, "columns 8-15 show char 2");
+        assert_eq!(ppu.framebuffer[15], 2, "columns 8-15 show char 2");
+        assert_eq!(ppu.framebuffer[16], 3, "next map entry starts at column 16");
+    }
+
+    #[test]
+    fn mode5_hflip_mirrors_the_char_pair() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1 | 0x4000); // entry -> char 1, H-flip
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 2, 2);
+        render_lines(&mut ppu, 1);
+
+        // H-flip mirrors the whole 16-wide pair: char 2 (mirrored) lands in the left
+        // half, char 1 (mirrored) in the right half.
+        assert_eq!(ppu.framebuffer[0], 2, "flipped pair leads with char 2");
+        assert_eq!(ppu.framebuffer[7], 2, "columns 0-7 show mirrored char 2");
+        assert_eq!(ppu.framebuffer[8], 1, "columns 8-15 show mirrored char 1");
+    }
+
+    #[test]
+    fn mode5_hscroll_applies_in_half_pixel_units() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        // BG1HOFS = 1 (write-twice: low byte then high byte).
+        ppu.write_register(0x210D, 0x01);
+        ppu.write_register(0x210D, 0x00);
+        render_lines(&mut ppu, 1);
+
+        // A native scroll of 1 shifts the hi-res fetch by 2 half-pixels: output
+        // column 0 shows tile hi-res column 2 (pattern color 3).
+        assert_eq!(ppu.framebuffer[0], 3, "HOFS=1 shifts by two hi-res columns");
+    }
+
+    #[test]
+    fn mode5_tile_size_16_pairs_vertically_but_not_horizontally() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        ppu.write_register(0x2105, 0x15); // mode 5 + BG1 16x16 tiles
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1); // entry 0 -> chars 1/2 (top), 17/18 (bottom)
+        set_vram_word(&mut ppu, 0x401, 5); // entry 1 -> chars 5/6 (top), 21/22 (bottom)
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 17, 4); // vertical pair of char 1
+        fill_4bpp_tile(&mut ppu, 0, 5, 5);
+        fill_4bpp_tile(&mut ppu, 0, 21, 6); // vertical pair of char 5
+        render_lines(&mut ppu, 8);
+
+        // 16x16 tile size still spans only 16 output columns horizontally (the
+        // width-16 fetch is forced in modes 5/6), but pairs vertically: rows 8-15
+        // use char N+16.
+        assert_eq!(ppu.framebuffer[0], 1, "top half shows char 1");
+        assert_eq!(
+            ppu.framebuffer[7 * SCREEN_WIDTH_MAX],
+            4,
+            "bottom half (display line 8) shows char 17"
+        );
+        assert_eq!(
+            ppu.framebuffer[7 * SCREEN_WIDTH_MAX + 16],
+            6,
+            "next map entry still starts at column 16"
+        );
+    }
+
+    #[test]
+    fn mode5_bg2_uses_2bpp_doubled_fetch() {
+        let mut ppu = Ppu::new();
+        for i in 1..4 {
+            set_cgram(&mut ppu, i, i as u16);
+        }
+        ppu.write_register(0x2105, 0x05); // mode 5 (BG2 2bpp)
+        ppu.write_register(0x212C, 0x02); // TM: BG2
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2100, 0x0F);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1); // BG2 entry -> char 1
+        for fine_y in 0..8 {
+            for fine_x in 0..8u8 {
+                // Column pattern 1,2,3,1,2,3,...
+                set_2bpp_tile_pixel(&mut ppu, 0, 1, fine_x, fine_y, (fine_x % 3) + 1);
+            }
+        }
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(ppu.framebuffer[0], 1, "column 0 shows tile column 0");
+        assert_eq!(ppu.framebuffer[1], 2, "column 1 shows tile column 1");
+        assert_eq!(ppu.framebuffer[2], 3, "column 2 shows tile column 2");
+    }
+
+    #[test]
+    fn mode6_bg1_uses_doubled_fetch() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        ppu.write_register(0x2105, 0x06); // mode 6 (BG1 4bpp)
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        render_lines(&mut ppu, 1);
+
+        for c in 0..8usize {
+            assert_eq!(
+                ppu.framebuffer[c],
+                (c + 1) as u16,
+                "output column {c} shows tile column {c}"
+            );
+        }
     }
 
     #[test]
