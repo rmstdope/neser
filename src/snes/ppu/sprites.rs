@@ -953,12 +953,17 @@ mod tests {
     const BG1_COLOR: u16 = 0x0BBB;
     const OBJ_COLOR: u16 = 0x0CCC;
 
+    fn composed_pixel(ppu: &Ppu, x: u16, y: u16) -> u16 {
+        let (main, sub) = ppu.resolve_pixel_pair(x, y);
+        ppu.compose_pixels(x, y, main, sub)
+    }
+
     #[test]
     fn obj_priority_3_draws_in_front_of_high_priority_bg1() {
         let mut ppu = Ppu::new();
         setup_bg1_and_obj(&mut ppu, true, 3, true);
         present_line(&mut ppu, 0);
-        assert_eq!(ppu.compute_pixel(0, 0), OBJ_COLOR);
+        assert_eq!(composed_pixel(&ppu, 0, 0), OBJ_COLOR);
     }
 
     #[test]
@@ -966,7 +971,7 @@ mod tests {
         let mut ppu = Ppu::new();
         setup_bg1_and_obj(&mut ppu, true, 0, true);
         present_line(&mut ppu, 0);
-        assert_eq!(ppu.compute_pixel(0, 0), BG1_COLOR);
+        assert_eq!(composed_pixel(&ppu, 0, 0), BG1_COLOR);
     }
 
     #[test]
@@ -974,7 +979,7 @@ mod tests {
         let mut ppu = Ppu::new();
         setup_bg1_and_obj(&mut ppu, true, 3, false);
         present_line(&mut ppu, 0);
-        assert_eq!(ppu.compute_pixel(0, 0), BG1_COLOR);
+        assert_eq!(composed_pixel(&ppu, 0, 0), BG1_COLOR);
     }
 
     #[test]
@@ -985,7 +990,7 @@ mod tests {
         // Move OBJ to x=8 so only the OBJ (priority 0) covers the backdrop there.
         set_obj(&mut ppu, 0, 8, 0, 0, 0, false);
         present_line(&mut ppu, 0);
-        assert_eq!(ppu.compute_pixel(8, 0), OBJ_COLOR);
+        assert_eq!(composed_pixel(&ppu, 8, 0), OBJ_COLOR);
     }
 
     fn tick_dots(ppu: &mut Ppu, dots: u32) {

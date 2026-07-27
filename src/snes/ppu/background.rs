@@ -20,10 +20,14 @@ pub(crate) enum ScreenTarget {
     Sub,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) enum PixelSource {
     Bg(usize),
-    Obj { priority: u8, palette: u8 },
+    Obj {
+        priority: u8,
+        palette: u8,
+    },
+    #[default]
     Backdrop,
 }
 
@@ -34,7 +38,7 @@ pub(crate) enum WindowLayer {
     Math,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ScreenPixel {
     pub color: u16,
     pub source: PixelSource,
@@ -62,16 +66,22 @@ impl Ppu {
         self.bg_old = value;
     }
 
-    /// Compute the final BGR555 pixel for visible screen coordinate `(x, y)`.
+    /// Resolve the front-most main- and sub-screen pixels at visible screen `(x, y)`.
     ///
-    /// Resolve the front-most main- and sub-screen pixels, then apply color math when enabled.
-    pub(super) fn compute_pixel(&self, x: u16, y: u16) -> u16 {
-        if self.bg_mode == 7 {
-            return self.compute_pixel_mode7(x, y);
+    /// Mode 7 has its own layer resolver; hi-res output keeps the standard resolver even in
+    /// mode 7 (mode 7 + pseudo-hires renders backdrop only, as before this refactor).
+    pub(super) fn resolve_pixel_pair(&self, x: u16, y: u16) -> (ScreenPixel, ScreenPixel) {
+        if self.bg_mode == 7 && !self.hires_output_enabled() {
+            (
+                self.resolve_mode7_screen_pixel(ScreenTarget::Main, x, y),
+                self.resolve_mode7_screen_pixel(ScreenTarget::Sub, x, y),
+            )
+        } else {
+            (
+                self.resolve_screen_pixel(ScreenTarget::Main, x, y),
+                self.resolve_screen_pixel(ScreenTarget::Sub, x, y),
+            )
         }
-        let main = self.resolve_screen_pixel(ScreenTarget::Main, x, y);
-        let sub = self.resolve_screen_pixel(ScreenTarget::Sub, x, y);
-        self.compose_pixels(x, y, main, sub)
     }
 
     pub(super) fn resolve_screen_pixel(&self, target: ScreenTarget, x: u16, y: u16) -> ScreenPixel {
@@ -598,6 +608,15 @@ mod tests {
     fn render_frame(ppu: &mut Ppu) {
         let ticks =
             DOTS_PER_SCANLINE as u32 * NTSC_SCANLINES_PER_FRAME as u32 * MASTER_CYCLES_PER_DOT;
+        for _ in 0..ticks {
+            ppu.tick();
+        }
+    }
+
+    /// Render up to and including the first visible scanline, leaving the per-line
+    /// buffers holding that line's resolve results.
+    fn render_first_visible_line(ppu: &mut Ppu) {
+        let ticks = DOTS_PER_SCANLINE as u32 * 2 * MASTER_CYCLES_PER_DOT;
         for _ in 0..ticks {
             ppu.tick();
         }
@@ -1310,6 +1329,61 @@ mod tests {
             "first half-pixel uses shifted sub"
         );
         assert_eq!(&rgb[3..6], &[255, 255, 255], "second half-pixel uses main");
+    }
+
+    /// Mode 1 scene with white BG1 on the main screen and red BG2 (palette 1) on the
+    /// sub screen (CGWSEL sub-screen BG/OBJ enabled), for the line-buffer tests.
+    fn setup_mode1_main_bg1_sub_bg2(ppu: &mut Ppu) {
+        set_cgram(ppu, 0, 0x0000);
+        set_cgram(ppu, 1, 0x7FFF); // main BG1 color 1 = white
+        set_cgram(ppu, 17, 0x001F); // sub BG2 palette 1 color 1 = red
+        set_bg_map_base(ppu, 0, 0x000);
+        set_bg_map_base(ppu, 1, 0x400);
+        set_vram_word(ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(ppu, 0x400, 2 | (1 << 10)); // BG2 entry -> char 2, palette 1
+        fill_4bpp_tile(ppu, 0, 1, 1);
+        fill_4bpp_tile(ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x01); // mode 1 (BG1 + BG2 both 4bpp)
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2100, 0x0F);
+    }
+
+    #[test]
+    fn render_dot_populates_main_and_sub_line_buffers() {
+        let mut ppu = Ppu::new();
+        setup_mode1_main_bg1_sub_bg2(&mut ppu);
+        render_first_visible_line(&mut ppu);
+
+        assert_eq!(ppu.line_main[0].color, 0x7FFF, "main buffer holds BG1");
+        assert_eq!(ppu.line_main[0].source, super::PixelSource::Bg(0));
+        assert_eq!(ppu.line_sub[0].color, 0x001F, "sub buffer holds BG2");
+        assert_eq!(ppu.line_sub[0].source, super::PixelSource::Bg(1));
+    }
+
+    #[test]
+    fn line_main_final_records_post_color_math_output() {
+        let mut ppu = Ppu::new();
+        setup_mode1_main_bg1_sub_bg2(&mut ppu);
+        ppu.write_register(0x2131, 0x41); // CGADSUB: add-half, BG1 enabled
+        render_first_visible_line(&mut ppu);
+
+        // (white + red) / 2 = (31,15,15) in BGR555.
+        let expected = (15u16 << 10) | (15 << 5) | 31;
+        assert_eq!(
+            ppu.line_main_final[0], expected,
+            "final buffer holds the post-color-math output"
+        );
+        assert_ne!(
+            ppu.line_main_final[0], ppu.line_main[0].color,
+            "final differs from the pre-math resolve"
+        );
+        assert_eq!(
+            ppu.framebuffer[0], expected,
+            "framebuffer matches the finalized pixel"
+        );
     }
 
     #[test]

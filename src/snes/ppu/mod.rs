@@ -255,6 +255,17 @@ pub struct Ppu {
     video_region: SnesVideoRegion,
     /// Visible framebuffer in 15-bit BGR555 (converted to RGB888 at snapshot time).
     framebuffer: Vec<u16>,
+    /// Main-screen resolve results for the scanline in progress, indexed by native x.
+    /// Filled per dot by [`Ppu::render_dot`]; entries at indices >= the current dot hold
+    /// the previous line's values (dots render left-to-right, so reads never see them).
+    line_main: [ScreenPixel; SCREEN_WIDTH],
+    /// Sub-screen resolve results for the scanline in progress, indexed by native x.
+    line_sub: [ScreenPixel; SCREEN_WIDTH],
+    /// Finalized main-screen output for the scanline in progress, indexed by native x:
+    /// the post-color-math pixel on the non-hires path, the raw main resolve on the
+    /// hi-res path (which bypasses color math until #3016's hi-res math lands). Kept so
+    /// hi-res color math can read the finalized main pixel one dot to the left.
+    line_main_final: [u16; SCREEN_WIDTH],
     /// INIDISP ($2100) latched once per scanline, at that scanline's first
     /// visible dot. HDMA commonly rewrites INIDISP every scanline (fade and
     /// scanline-banding effects), so forced-blank/brightness must be applied
@@ -419,6 +430,9 @@ impl Ppu {
             interlace_field: false,
             video_region,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
+            line_main: [ScreenPixel::default(); SCREEN_WIDTH],
+            line_sub: [ScreenPixel::default(); SCREEN_WIDTH],
+            line_main_final: [0; SCREEN_WIDTH],
             line_inidisp: vec![0; SCREEN_HEIGHT_MAX],
             pending_completed_frames: 0,
             auto_joypad_latch: false,
