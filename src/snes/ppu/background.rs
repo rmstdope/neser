@@ -85,9 +85,14 @@ impl Ppu {
     }
 
     pub(super) fn resolve_screen_pixel(&self, target: ScreenTarget, x: u16, y: u16) -> ScreenPixel {
-        let obj_pixel = if self.screen_enable_mask(target) & 0x10 == 0
-            || (target == ScreenTarget::Sub && self.cgwsel & 0x02 == 0)
-        {
+        // CGWSEL bit 1 clear means the color-math operand is the fixed color rather
+        // than the sub screen; outside hires that makes an un-consumed sub resolve
+        // equivalent to backdrop, so it is skipped. In hires output the sub screen is
+        // DISPLAYED (even columns) and always renders from TS (Mesen2 renders the sub
+        // screen unconditionally).
+        let sub_hidden =
+            target == ScreenTarget::Sub && self.cgwsel & 0x02 == 0 && !self.hires_output_enabled();
+        let obj_pixel = if self.screen_enable_mask(target) & 0x10 == 0 || sub_hidden {
             None
         } else {
             self.obj_pixel_at(x, y)
@@ -98,7 +103,7 @@ impl Ppu {
                     if self.screen_enable_mask(target) & (1 << bg) == 0 {
                         continue;
                     }
-                    if target == ScreenTarget::Sub && self.cgwsel & 0x02 == 0 {
+                    if sub_hidden {
                         continue;
                     }
                     if self.layer_disabled_by_window(target, WindowLayer::Bg(bg), x, y) {
@@ -997,6 +1002,66 @@ mod tests {
         assert_eq!(ppu.framebuffer[0], 1, "column 0 shows tile column 0");
         assert_eq!(ppu.framebuffer[1], 2, "column 1 shows tile column 1");
         assert_eq!(ppu.framebuffer[2], 3, "column 2 shows tile column 2");
+    }
+
+    #[test]
+    fn true_hires_displays_sub_layers_without_cgwsel_sub_enable() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // main BG1 color 1 = white
+        set_cgram(&mut ppu, 5, 0x001F); // sub BG2 palette 1 color 1 = red
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(&mut ppu, 0x400, 2 | (1 << 10)); // BG2 entry -> char 2, palette 1
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x05); // mode 5
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        // CGWSEL stays 0: bit 1 selects the color-math operand, it does NOT gate
+        // the sub screen's hires display (Mesen2 renders TS unconditionally).
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            &rgb[0..3],
+            &[255, 0, 0],
+            "even column shows the TS layer without CGWSEL bit 1"
+        );
+        assert_eq!(&rgb[3..6], &[255, 255, 255], "odd column shows main");
+    }
+
+    #[test]
+    fn pseudo_hires_displays_sub_layers_without_cgwsel_sub_enable() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // main BG1 color 1 = white
+        set_cgram(&mut ppu, 33, 0x001F); // sub BG2 color 1 = red (mode 0 region)
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(&mut ppu, 0x400, 2); // BG2 entry -> char 2
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x00); // mode 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2133, 0x08); // pseudo-hires
+        // CGWSEL stays 0, as above.
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            &rgb[0..3],
+            &[255, 0, 0],
+            "first half-pixel shows the TS layer without CGWSEL bit 1"
+        );
+        assert_eq!(&rgb[3..6], &[255, 255, 255], "second half-pixel shows main");
     }
 
     #[test]
