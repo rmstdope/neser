@@ -84,9 +84,9 @@ pub fn dedup_by_crc(entries: &mut Vec<RomEntry>) {
 pub fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
     let platform = platform_from_path(path);
 
-    // GB/GBC ROMs don't use iNES format — create a basic entry.
-    if platform == Platform::Gb || platform == Platform::Gbc {
-        return build_gb_rom_entry(path, platform);
+    // Only NES ROMs use the iNES format — other platforms get a basic entry.
+    if platform != Platform::Nes {
+        return stub_entry(path, platform);
     }
 
     let bytes = match std::fs::read(path) {
@@ -138,10 +138,6 @@ pub fn build_rom_entry(path: &Path, rom_db: &RomDb) -> RomEntry {
     }
 }
 
-fn build_gb_rom_entry(path: &Path, platform: Platform) -> RomEntry {
-    stub_entry(path, platform)
-}
-
 fn unreadable_entry(path: &Path) -> RomEntry {
     stub_entry(path, platform_from_path(path))
 }
@@ -185,6 +181,8 @@ fn platform_from_path(path: &Path) -> Platform {
     {
         Some("gb") => Platform::Gb,
         Some("gbc") => Platform::Gbc,
+        Some("gba") => Platform::Gba,
+        Some("sfc") | Some("smc") => Platform::Snes,
         _ => Platform::Nes,
     }
 }
@@ -755,6 +753,40 @@ mod tests {
     fn test_platform_from_path_gbc() {
         assert_eq!(platform_from_path(Path::new("game.gbc")), Platform::Gbc);
         assert_eq!(platform_from_path(Path::new("game.GBC")), Platform::Gbc);
+    }
+
+    #[test]
+    fn test_platform_from_path_gba() {
+        assert_eq!(platform_from_path(Path::new("game.gba")), Platform::Gba);
+        assert_eq!(platform_from_path(Path::new("game.GBA")), Platform::Gba);
+    }
+
+    #[test]
+    fn test_platform_from_path_snes() {
+        assert_eq!(platform_from_path(Path::new("game.sfc")), Platform::Snes);
+        assert_eq!(platform_from_path(Path::new("game.SFC")), Platform::Snes);
+        assert_eq!(platform_from_path(Path::new("game.smc")), Platform::Snes);
+        assert_eq!(platform_from_path(Path::new("game.SMC")), Platform::Snes);
+    }
+
+    #[test]
+    fn test_build_rom_entry_gba_file_has_gba_platform() {
+        let tmp = NamedTempFile::with_suffix(".gba").unwrap();
+        std::fs::write(tmp.path(), [0u8; 256]).unwrap();
+        let db = RomDb::from_csv_content("");
+
+        let entry = build_rom_entry(tmp.path(), &db);
+        assert_eq!(entry.platform, Platform::Gba);
+    }
+
+    #[test]
+    fn test_build_rom_entry_sfc_file_has_snes_platform() {
+        let tmp = NamedTempFile::with_suffix(".sfc").unwrap();
+        std::fs::write(tmp.path(), [0u8; 256]).unwrap();
+        let db = RomDb::from_csv_content("");
+
+        let entry = build_rom_entry(tmp.path(), &db);
+        assert_eq!(entry.platform, Platform::Snes);
     }
 
     #[test]

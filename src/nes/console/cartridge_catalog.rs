@@ -95,14 +95,16 @@ fn read_dir_if_exists(path: &Path) -> io::Result<Option<fs::ReadDir>> {
 }
 
 fn is_rom_file(path: &Path) -> bool {
-    // The catalog feeds both the ROM browser (NES + Game Boy platforms) and
-    // the in-emulator cartridge switch dialog (which filters to .nes itself).
+    // The catalog feeds both the ROM browser (NES, GB, GBC, GBA, and SNES
+    // platforms) and the in-emulator cartridge switch dialog (which filters
+    // to .nes itself).
+    const ROM_EXTENSIONS: [&str; 6] = ["nes", "gb", "gbc", "gba", "sfc", "smc"];
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| {
-            ext.eq_ignore_ascii_case("nes")
-                || ext.eq_ignore_ascii_case("gb")
-                || ext.eq_ignore_ascii_case("gbc")
+            ROM_EXTENSIONS
+                .iter()
+                .any(|rom_ext| ext.eq_ignore_ascii_case(rom_ext))
         })
 }
 
@@ -294,38 +296,50 @@ mod tests {
         assert_eq!(path, home.join(".neser").join("cartridges.csv"));
     }
 
-    // Updated for the ROM browser (GB/GBC platform filters): the scan must
-    // discover Game Boy ROMs too, not just NES — the browser reads the same
-    // catalog CSV as the in-emulator cartridge switch dialog.
+    // The scan must discover ROMs for every platform the ROM browser can
+    // display (NES, GB, GBC, GBA, SNES) — the browser reads the same catalog
+    // CSV as the in-emulator cartridge switch dialog.
     #[test]
-    fn is_rom_file_accepts_nes_gb_and_gbc_extensions() {
+    fn is_rom_file_accepts_all_browser_platform_extensions() {
         assert!(is_rom_file(Path::new("game.nes")));
         assert!(is_rom_file(Path::new("game.NES")));
         assert!(is_rom_file(Path::new("game.gb")));
         assert!(is_rom_file(Path::new("game.GB")));
         assert!(is_rom_file(Path::new("game.gbc")));
         assert!(is_rom_file(Path::new("game.GBC")));
+        assert!(is_rom_file(Path::new("game.gba")));
+        assert!(is_rom_file(Path::new("game.GBA")));
+        assert!(is_rom_file(Path::new("game.sfc")));
+        assert!(is_rom_file(Path::new("game.SFC")));
+        assert!(is_rom_file(Path::new("game.smc")));
+        assert!(is_rom_file(Path::new("game.SMC")));
         assert!(!is_rom_file(Path::new("game.txt")));
         assert!(!is_rom_file(Path::new("game.zip")));
     }
 
     #[test]
-    fn scan_discovers_nes_gb_and_gbc_files() {
+    fn scan_discovers_all_browser_platform_files() {
         let temp = tempdir().expect("tempdir");
         let root = temp.path().join("roms");
         write_file(&root.join("nes_game.nes"));
         write_file(&root.join("gb_game.gb"));
         write_file(&root.join("gbc_game.gbc"));
+        write_file(&root.join("gba_game.gba"));
+        write_file(&root.join("snes_game.sfc"));
+        write_file(&root.join("snes_game2.smc"));
         write_file(&root.join("notes.txt"));
 
         let catalog_path = temp.path().join("cartridges.csv");
         let options = CartridgeCatalogOptions::new(vec![root], catalog_path);
 
         let entries = refresh_cartridge_catalog(&options).expect("refresh should succeed");
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 6);
         assert!(entries.iter().any(|p| p.ends_with("nes_game.nes")));
         assert!(entries.iter().any(|p| p.ends_with("gb_game.gb")));
         assert!(entries.iter().any(|p| p.ends_with("gbc_game.gbc")));
+        assert!(entries.iter().any(|p| p.ends_with("gba_game.gba")));
+        assert!(entries.iter().any(|p| p.ends_with("snes_game.sfc")));
+        assert!(entries.iter().any(|p| p.ends_with("snes_game2.smc")));
         assert!(!entries.iter().any(|p| p.ends_with("notes.txt")));
     }
 }

@@ -462,19 +462,63 @@ fn platform_filter_narrows_results() {
 }
 
 #[test]
+fn platform_filter_gba_and_snes_narrow_results() {
+    let mut nes = make_entry("Zelda");
+    nes.platform = Platform::Nes;
+    let mut gba = make_entry("Golden Sun");
+    gba.platform = Platform::Gba;
+    let mut snes = make_entry("Super Metroid");
+    snes.platform = Platform::Snes;
+
+    let mut app = test_browser(vec![nes, gba, snes]);
+    assert_eq!(app.filtered_indices.len(), 3);
+
+    app.active_platform = Some(Platform::Gba);
+    app.rebuild_filtered();
+    assert_eq!(app.filtered_indices.len(), 1);
+    assert_eq!(
+        app.catalog[app.filtered_indices[0]].display_name,
+        "Golden Sun"
+    );
+
+    app.active_platform = Some(Platform::Snes);
+    app.rebuild_filtered();
+    assert_eq!(app.filtered_indices.len(), 1);
+    assert_eq!(
+        app.catalog[app.filtered_indices[0]].display_name,
+        "Super Metroid"
+    );
+}
+
+#[test]
+fn filter_panel_offers_all_supported_platforms() {
+    assert_eq!(
+        RomBrowserApp::PLATFORMS,
+        [
+            Platform::Nes,
+            Platform::Gb,
+            Platform::Gbc,
+            Platform::Gba,
+            Platform::Snes
+        ]
+    );
+}
+
+#[test]
 fn filter_panel_cursor_bounded_within_column() {
     let mut app = test_browser(vec![make_entry("Zelda")]);
     app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
     app.filter_panel_active = true;
 
-    // Platform column has 3 items (NES, GB, GBC)
+    // Platform column has 5 items (NES, GB, GBC, GBA, SNES)
     app.filter_panel_column = 0;
     app.filter_panel_cursor = 0;
+    for _ in 0..4 {
+        app.filter_panel_move_cursor_down();
+    }
+    assert_eq!(app.filter_panel_cursor, 4); // last platform
     app.filter_panel_move_cursor_down();
-    app.filter_panel_move_cursor_down();
-    assert_eq!(app.filter_panel_cursor, 2); // last platform
-    app.filter_panel_move_cursor_down();
-    assert_eq!(app.filter_panel_cursor, 2); // bounded
+    assert_eq!(app.filter_panel_cursor, 4); // bounded
 
     // Genre column has 2 items (now column 2)
     app.filter_panel_column = 2;
@@ -569,10 +613,10 @@ fn filter_panel_move_cursor_up_down() {
     app.filter_panel_move_cursor_up();
     assert_eq!(app.filter_panel_cursor, 0);
 
-    // Should not go above max (2 for platforms)
-    app.filter_panel_cursor = 2;
+    // Should not go above max (4 for platforms: NES, GB, GBC, GBA, SNES)
+    app.filter_panel_cursor = 4;
     app.filter_panel_move_cursor_down();
-    assert_eq!(app.filter_panel_cursor, 2);
+    assert_eq!(app.filter_panel_cursor, 4);
 }
 
 #[test]

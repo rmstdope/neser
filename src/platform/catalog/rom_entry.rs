@@ -8,6 +8,8 @@ pub enum Platform {
     Nes,
     Gb,
     Gbc,
+    Gba,
+    Snes,
 }
 
 impl Platform {
@@ -17,15 +19,20 @@ impl Platform {
             Platform::Nes => "NES",
             Platform::Gb => "GB",
             Platform::Gbc => "GBC",
+            Platform::Gba => "GBA",
+            Platform::Snes => "SNES",
         }
     }
 
     /// TheGamesDB platform ID for metadata matching.
+    /// Must stay in sync with PLATFORMS in scripts/metadata-scraper/main.py.
     /// GB and GBC share the same TheGamesDB platform (Nintendo Game Boy = 4).
     pub fn thegamesdb_id(self) -> i64 {
         match self {
             Platform::Nes => 7,
             Platform::Gb | Platform::Gbc => 4,
+            Platform::Gba => 5,
+            Platform::Snes => 6,
         }
     }
 }
@@ -111,6 +118,23 @@ mod tests {
             is_favorite: false,
             platform: Platform::Nes,
         }
+    }
+
+    #[test]
+    fn test_platform_labels_cover_all_platforms() {
+        assert_eq!(Platform::Nes.label(), "NES");
+        assert_eq!(Platform::Gb.label(), "GB");
+        assert_eq!(Platform::Gbc.label(), "GBC");
+        assert_eq!(Platform::Gba.label(), "GBA");
+        assert_eq!(Platform::Snes.label(), "SNES");
+    }
+
+    #[test]
+    fn test_platform_thegamesdb_ids_match_scraper_registry() {
+        // Must match PLATFORMS in scripts/metadata-scraper/main.py.
+        assert_eq!(Platform::Nes.thegamesdb_id(), 7);
+        assert_eq!(Platform::Gba.thegamesdb_id(), 5);
+        assert_eq!(Platform::Snes.thegamesdb_id(), 6);
     }
 
     #[test]

@@ -1204,9 +1204,9 @@ mod tests {
 
     #[test]
     fn cart_switch_catalog_lists_only_nes_entries() {
-        // The catalog CSV also contains GB/GBC ROMs for the ROM browser, but
-        // the in-emulator switch dialog only supports NES cartridges.
-        let csv = "path\n/roms/a.nes\n/roms/b.gb\n/roms/c.gbc\n/roms/d.NES\n";
+        // The catalog CSV also contains GB/GBC/GBA/SNES ROMs for the ROM
+        // browser, but the in-emulator switch dialog only supports NES.
+        let csv = "path\n/roms/a.nes\n/roms/b.gb\n/roms/c.gbc\n/roms/d.NES\n/roms/e.gba\n/roms/f.sfc\n/roms/g.smc\n";
         let entries = nes_catalog_lines(csv);
         assert_eq!(
             entries,

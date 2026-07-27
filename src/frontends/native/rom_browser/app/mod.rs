@@ -322,7 +322,13 @@ impl RomBrowserApp {
     const MAX_CACHED_TEXTURES: usize = 200;
 
     /// Available platform options shown in the filter panel (Platform column).
-    const PLATFORMS: [Platform; 3] = [Platform::Nes, Platform::Gb, Platform::Gbc];
+    const PLATFORMS: [Platform; 5] = [
+        Platform::Nes,
+        Platform::Gb,
+        Platform::Gbc,
+        Platform::Gba,
+        Platform::Snes,
+    ];
 
     const PLAYER_OPTIONS: [(Option<u32>, &'static str); 3] =
         [(None, "Any"), (Some(2), "2+"), (Some(4), "4+")];
