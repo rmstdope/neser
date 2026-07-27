@@ -75,6 +75,7 @@ impl RomBrowserApp {
 
         let search_active = self.search_active;
         let search_query = self.search_query.clone();
+        let no_roms_hint = self.no_roms_hint.clone();
         let genre_filter_active = self.genre_filter_active;
         let filter_panel_active = self.filter_panel_active;
         let filter_panel_cursor = self.filter_panel_cursor;
@@ -288,6 +289,7 @@ impl RomBrowserApp {
                         selected,
                         scroll_offset,
                         &search_query,
+                        &no_roms_hint,
                     );
                 });
 
