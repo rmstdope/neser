@@ -7,14 +7,13 @@
 //!
 //! The ROM was settle-probed per the #2878 baseline workflow: static,
 //! settles at frame 6 (stable for the remaining 1794 probed frames),
-//! sampled at settle + 60 (frame 66). The frame-66 pixel-diff against a
-//! Mesen2 headless capture shows NESER enforces the 32-OBJ range limit
-//! (top row matches exactly) but draws every tile sliver past the
-//! 34-per-line time limit (diamond rows and X=256 sections differ,
-//! 3050/57344 pixels at best shift (0,0)) -- so the golden below is the
-//! *NESER* CRC recorded at divergence time and the test stays ignored
-//! until #2999 fixes the time-over limit and the golden is re-approved
-//! against Mesen2.
+//! sampled at settle + 60 (frame 66). After the #2999 OBJ eval/fetch
+//! pipeline landed (34-sliver time-over limit with reverse-order fetch,
+//! X=256 range/time participation), the frame-66 capture is a
+//! byte-for-byte match for a fresh Mesen2 headless capture (0/57344
+//! differing pixels at shift (0,0); Mesen2 flags per README-SNES.md,
+//! including --snes.disableFrameSkipping=true), so the CRC below is a
+//! Mesen2-approved golden.
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -53,13 +52,10 @@ mod tests {
         );
     }
 
-    /// The recorded CRC is NESER's own frame-66 output from when #2999 was
-    /// filed, NOT a Mesen2-approved golden (see module docs). Once the OBJ
-    /// time-over limit is fixed this must be re-probed, pixel-diffed against
-    /// Mesen2 and re-approved before the ignore attribute is removed.
+    /// Frame 66 is pixel-identical to Mesen2 since the #2999 OBJ pipeline
+    /// (see module docs for the capture/diff evidence).
     #[test]
-    #[ignore = "NESER lacks the OBJ time-over (34 slivers/line) limit; pending #2999"]
     fn object_dropout() {
-        run_ppu_obj_screen_crc("object-dropout-test.sfc", 66, 0xAD22_3C18);
+        run_ppu_obj_screen_crc("object-dropout-test.sfc", 66, 0xE9AF_DDE6);
     }
 }

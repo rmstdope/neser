@@ -344,13 +344,9 @@ pub struct Ppu {
     stat77_range_over: bool,
     /// STAT77 ($213E) bit 7: OBJ time over-limit (>34 8x8 tiles on a line).
     stat77_time_over: bool,
-    /// Scheduled dot within the current scanline at which to raise the range over-limit flag
-    /// (OAM index of the 33rd in-range OBJ × 2), or `None` if no overflow this line.
-    obj_range_over_dot: Option<u16>,
-    /// Time over-limit computed during the current scanline, applied at the next scanline's H=0.
-    obj_time_over_pending: bool,
-    /// True when OBJ per-scanline evaluation caches must be recomputed from live state.
-    obj_eval_dirty: bool,
+    /// Dot-incremental OBJ evaluation/fetch pipeline (transient across save states; the next
+    /// scanline rebuilds it).
+    obj_pipeline: sprites::ObjPipeline,
     /// MOSAIC ($2106) raw register: bits 7-4 = pending vertical block size (0..=15), bits 3-0 =
     /// per-BG enable (bit 0 = BG1 ... bit 3 = BG4). Horizontal mosaic and bg-enable bits take
     /// effect immediately; vertical size change only applies at the start of the next block.
@@ -464,9 +460,7 @@ impl Ppu {
             oam_priority_rotation: false,
             stat77_range_over: false,
             stat77_time_over: false,
-            obj_range_over_dot: None,
-            obj_time_over_pending: false,
-            obj_eval_dirty: true,
+            obj_pipeline: sprites::ObjPipeline::default(),
             mosaic: 0,
             mosaic_vblock_size: 0,
             mosaic_vcount: 0,
@@ -565,7 +559,6 @@ impl Ppu {
     #[cfg(test)]
     pub(super) fn set_oam_byte(&mut self, index: usize, value: u8) {
         self.oam[index] = value;
-        self.obj_eval_dirty = true;
     }
 
     /// Write a raw VRAM byte (test helper, bypassing the VMADD/VMDATA write path).

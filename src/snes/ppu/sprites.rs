@@ -1,4 +1,13 @@
-//! OBJ (sprite) support: OBSEL decoding, OAM evaluation, line buffer, and over-limit flags.
+//! OBJ (sprite) support: OBSEL decoding and the dot-incremental evaluation/fetch pipeline.
+//!
+//! Sprites shown on framebuffer row N are prepared one scanline early, mirroring hardware
+//! (Mesen2 `SnesPpu.cpp`, ares `object.cpp`): during scanline N the evaluation window
+//! (H=0..255) scans one OAM entry per 2 dots into an in-range list of at most 32, then the
+//! fetch window (H=270..339) loads up to 34 8x1 tile slivers from that list in REVERSE order
+//! (so when the time over-limit drops slivers, the front-most sprites lose theirs). At dot 0
+//! of scanline N+1 the slivers are composited into the presented [`ObjLine`], which
+//! [`Ppu::obj_pixel_at`] serves while row N renders. Mid-scanline OAM/OBSEL/OAMADD writes
+//! therefore affect the next row, not the one being drawn.
 //!
 //! OBSEL ($2101) selects one of eight OBJ size pairs (including two undocumented pairs), the OBJ
 //! tile name base (8K-word steps), and the name gap inserted between tiles $0FF and $100 (4K-word
@@ -77,31 +86,14 @@ impl Ppu {
         }
     }
 
-    /// Evaluate which OBJs are in vertical range for display scanline `line`.
-    ///
-    /// OBJs are scanned in priority-rotation order (starting at [`Ppu::obj_first_sprite_index`]),
-    /// keeping at most 32; the 33rd in-range OBJ sets the range over-limit (its OAM index is
-    /// recorded for dot-accurate flag timing). 8-bit Y wrap yields the 224-line wrap behavior.
-    pub(super) fn evaluate_line_objects(&self, line: u16) -> ObjLineEval {
-        let first = self.obj_first_sprite_index() as usize;
-        let mut eval = ObjLineEval::default();
-        for k in 0..128usize {
-            let i = (first + k) % 128;
-            let y = self.oam[i * 4 + 1] as u16;
-            let height = self.obj_size(i).1 as u16;
-            let row = line.wrapping_sub(y) & 0xFF;
-            if row < height {
-                if eval.len < 32 {
-                    eval.indices[eval.len] = i as u8;
-                    eval.len += 1;
-                } else {
-                    eval.range_over = true;
-                    eval.range_over_index = Some(i as u8);
-                    break;
-                }
-            }
+    /// Sign-extended 9-bit X position of OBJ `index` (-256..=255).
+    fn obj_base_x(&self, index: usize) -> i32 {
+        let x9 = self.oam[index * 4] as u16 | (self.obj_x_high(index) << 8);
+        if x9 & 0x100 != 0 {
+            x9 as i32 - 0x200
+        } else {
+            x9 as i32
         }
-        eval
     }
 
     /// The OAM high-table X bit 8 for OBJ `index`.
@@ -109,238 +101,260 @@ impl Ppu {
         ((self.oam[0x200 + (index >> 2)] >> ((index & 3) * 2)) & 1) as u16
     }
 
-    /// Build the composited OBJ pixel line for display scanline `line`: in-range OBJs are drawn
-    /// front-to-back (lowest evaluation order wins), gated by OBJ opacity and the 34-tile-per-line
-    /// fetch budget (tile columns beyond the budget are dropped, matching the time over-limit).
+    /// Whether OBJ `index` is in range for OBJ source line `line`: it must intersect the line
+    /// vertically (8-bit Y wrap) and not be fully off-screen horizontally. Exception: raw X=256
+    /// (sign-extended -256) is always in range -- it consumes range/time budget without being
+    /// drawn (Mesen2 `SpriteInfo::IsVisible`, ares `PPU::Object::onScanline`).
+    fn obj_in_range(&self, index: usize, line: u16) -> bool {
+        let (width, height) = self.obj_size(index);
+        let y = self.oam[index * 4 + 1] as u16;
+        let row = line.wrapping_sub(y) & 0xFF;
+        if row >= height as u16 {
+            return false;
+        }
+        let base_x = self.obj_base_x(index);
+        base_x == -256 || base_x + width as i32 > 0
+    }
+
+    /// Test helper: the full in-range OBJ list for source line `line` in one pass, mirroring the
+    /// incremental eval window (rotation order, 32-entry truncation, X visibility).
     #[cfg(test)]
-    pub(super) fn build_obj_line(&self, line: u16) -> ObjLine {
-        let source_line = self.obj_source_line(line);
-        let eval = self.evaluate_line_objects(source_line);
-        let mut buf = ObjLine::default();
-        let mut tile_budget = 34i32;
-        for &i in eval.indices() {
-            if tile_budget <= 0 {
-                break;
+    pub(super) fn evaluate_line_objects(&self, line: u16) -> ObjLineEval {
+        let first = self.obj_first_sprite_index() as usize;
+        let mut eval = ObjLineEval::default();
+        for k in 0..128usize {
+            let i = (first + k) % 128;
+            if !self.obj_in_range(i, line) {
+                continue;
             }
-            self.render_object_into(&mut buf, i as usize, source_line, &mut tile_budget);
-        }
-        buf
-    }
-
-    /// Resolve the front-most OBJ pixel at visible coordinate `(x, y)` using live state.
-    pub(super) fn obj_pixel_at(&self, x: u16, y: u16) -> Option<ObjPixel> {
-        let source_line = self.obj_source_line(y);
-        let eval = self.evaluate_line_objects(source_line);
-        let mut tile_budget = 34i32;
-        for &i in eval.indices() {
-            if tile_budget <= 0 {
-                break;
-            }
-            if let Some(pixel) =
-                self.render_object_pixel_at(i as usize, source_line, x as i32, &mut tile_budget)
-            {
-                return Some(pixel);
-            }
-        }
-        None
-    }
-
-    /// Count the on-screen 8x8 OBJ tile columns for the given in-range OBJs, reporting whether the
-    /// 34-tile-per-line budget is exceeded (time over-limit). A tile column counts if any of its
-    /// pixels fall within the visible 0..255 region.
-    pub(super) fn count_obj_tiles(&self, indices: &[u8]) -> (u16, bool) {
-        let mut tiles = 0u16;
-        for &i in indices {
-            let i = i as usize;
-            let width = self.obj_size(i).0 as i32;
-            let x9 = self.oam[i * 4] as u16 | (self.obj_x_high(i) << 8);
-            let base_x = if x9 & 0x100 != 0 {
-                x9 as i32 - 0x200
+            if eval.len < 32 {
+                eval.indices[eval.len] = i as u8;
+                eval.len += 1;
             } else {
-                x9 as i32
-            };
-            for col in (0..width).step_by(8) {
-                let tile_x = base_x + col;
-                if tile_x + 8 > 0 && tile_x < 256 {
-                    tiles += 1;
-                    if tiles > 34 {
-                        return (tiles, true);
-                    }
-                }
+                eval.range_over = true;
+                eval.range_over_index = Some(i as u8);
+                break;
             }
         }
-        (tiles, false)
+        eval
     }
 
-    /// Advance the OBJ evaluation pipeline for the current dot, raising the dot-accurate STAT77
-    /// range/time over-limit flags.
+    /// The front-most OBJ pixel at visible coordinate `(x, y)` from the presented line buffer.
     ///
-    /// Following fullsnes STAT77: the line shown on the next scanline is evaluated during the
-    /// current scanline, the range over-limit (bit 6) is raised at `H = OAM_index × 2` of the 33rd
-    /// in-range OBJ, and the time over-limit (bit 7) is raised at `H = 0` of the displayed line.
-    /// Both flags are cleared at the end of VBlank (scanline 0) but not during forced blank.
+    /// Returns `None` unless row `y` is the line currently presented by the OBJ pipeline (rows
+    /// are fetched during the previous scanline and presented at the dot-0 buffer swap). The
+    /// CGRAM color is resolved at query time so mid-scanline palette writes stay live.
+    pub(super) fn obj_pixel_at(&self, x: u16, y: u16) -> Option<ObjPixel> {
+        let pipeline = &self.obj_pipeline;
+        if pipeline.presented_row != Some(y) {
+            return None;
+        }
+        let x = x as usize;
+        if x >= super::SCREEN_WIDTH || !pipeline.line.present[x] {
+            return None;
+        }
+        Some(ObjPixel {
+            color: self.cgram_color(pipeline.line.cgram_index[x]),
+            palette: pipeline.line.palette[x],
+            priority: pipeline.line.priority[x],
+        })
+    }
+
+    /// Advance the dot-incremental OBJ pipeline (hardware model, per Mesen2 `SnesPpu.cpp` and
+    /// ares `object.cpp`):
+    ///
+    /// - Dot 0: present the line fetched during the previous scanline (buffer swap + composite),
+    ///   clear the STAT77 over-limit flags at end of VBlank (scanline 0, not during forced
+    ///   blank), and start a new evaluation window.
+    /// - Dots 0..255 of an active scanline: evaluate one OAM entry per 2 dots for the line shown
+    ///   on the next scanline. The 33rd in-range OBJ raises range over (bit 6) at
+    ///   `H = OAM_index x 2` (fullsnes).
+    /// - Dots 270..339: fetch one 8x1 tile sliver per 2 dots from the in-range list in REVERSE
+    ///   order (34 CHR slots; the 35th attempted fetch raises time over, bit 7).
     pub(super) fn update_obj_pipeline(&mut self, forced_blank: bool) {
         let scanline = self.position.scanline;
         let dot = self.position.dot;
+        let active_height = self.active_screen_height() as u16;
 
         if dot == 0 {
-            if !forced_blank {
-                if scanline == 0 {
-                    self.stat77_range_over = false;
-                    self.stat77_time_over = false;
-                }
-                if self.obj_time_over_pending {
-                    self.stat77_time_over = true;
-                }
+            // Present the line fetched during the previous scanline as row `scanline - 1`.
+            if (1..=active_height).contains(&scanline) {
+                self.composite_obj_line(scanline - 1);
+            } else {
+                self.obj_pipeline.presented_row = None;
             }
-            self.obj_time_over_pending = false;
-            self.obj_range_over_dot = None;
+            if scanline == 0 && !forced_blank {
+                self.stat77_range_over = false;
+                self.stat77_time_over = false;
+            }
+            if scanline < active_height {
+                let first_sprite = self.obj_first_sprite_index();
+                self.obj_pipeline.begin_eval(first_sprite);
+            }
         }
 
-        if !forced_blank && (scanline as usize) < self.active_screen_height() {
-            // During scanline `s` the PPU evaluates the line displayed on scanline `s + 1`
-            // (OAM line index `s`). Recompute lazily: once per scanline, plus mid-scanline writes
-            // to OBJ-affecting registers/data.
-            if dot == 0 || self.obj_eval_dirty {
-                let eval = self.evaluate_line_objects(scanline);
-                self.obj_range_over_dot = if eval.range_over {
-                    eval.range_over_index.map(|i| i as u16 * 2)
-                } else {
-                    None
-                };
-                self.obj_time_over_pending = self.count_obj_tiles(eval.indices()).1;
-                self.obj_eval_dirty = false;
-            }
-            if Some(dot) == self.obj_range_over_dot {
-                self.stat77_range_over = true;
-            }
+        if scanline >= active_height {
+            return;
+        }
+
+        // Evaluation window: one OAM entry per 2 dots during H=0..255.
+        if dot < 256 && dot.is_multiple_of(2) {
+            self.obj_eval_step(forced_blank);
+        }
+        // Raise the scheduled range over-limit flag at H = OAM_index x 2 (or as soon as the
+        // schedule is reached when priority rotation put the index earlier than its scan slot).
+        if !forced_blank && self.obj_pipeline.range_over_dot.is_some_and(|d| dot >= d) {
+            self.stat77_range_over = true;
+            self.obj_pipeline.range_over_dot = None;
+        }
+        // Sliver fetch window: one 2-dot slot per sliver.
+        if dot == OBJ_FETCH_START_DOT {
+            self.obj_pipeline.begin_fetch();
+        }
+        if (OBJ_FETCH_START_DOT..OBJ_FETCH_START_DOT + 2 * OBJ_FETCH_SLOTS).contains(&dot)
+            && (dot - OBJ_FETCH_START_DOT).is_multiple_of(2)
+        {
+            self.obj_fetch_step(forced_blank);
         }
     }
 
-    /// Render OBJ `index` into the line buffer for display scanline `line`, writing each opaque
-    /// pixel only where no nearer (earlier) OBJ has already drawn. On-screen 8x8 tile columns
-    /// consume `tile_budget`; columns past the 34-tile-per-line limit are dropped.
-    #[cfg(test)]
-    fn render_object_into(
-        &self,
-        buf: &mut ObjLine,
-        index: usize,
-        line: u16,
-        tile_budget: &mut i32,
-    ) {
+    /// Evaluate the next OAM entry of the current window (2-dot cadence).
+    ///
+    /// Forced blank PAUSES the evaluation cursor: OAM scanning stops and the pending entries
+    /// are deferred to the dots after blank releases (entries past the window end are lost).
+    /// Mesen2 models the same cursor hold (`_oamEvaluationIndex` only advances on processed
+    /// entries); ares skips blanked entries instead -- the paused model was chosen because it
+    /// preserves the approved `inidisp_enable_display_mid_frame` behavior (see #2999).
+    fn obj_eval_step(&mut self, forced_blank: bool) {
+        if forced_blank {
+            return;
+        }
+        let cursor = self.obj_pipeline.eval_cursor;
+        if cursor >= 128 {
+            return;
+        }
+        self.obj_pipeline.eval_cursor += 1;
+        let index = (self.obj_pipeline.first_sprite as usize + cursor as usize) & 0x7F;
+        let source_line = self.obj_source_line(self.position.scanline);
+        if !self.obj_in_range(index, source_line) {
+            return;
+        }
+        let pipeline = &mut self.obj_pipeline;
+        if (pipeline.item_count as usize) < pipeline.items.len() {
+            pipeline.items[pipeline.item_count as usize] = index as u8;
+            pipeline.item_count += 1;
+        } else if pipeline.range_over_dot.is_none() {
+            pipeline.range_over_dot = Some(index as u16 * 2);
+        }
+    }
+
+    /// Process one sliver-fetch slot: re-read the current sprite's position (so mid-window OAM
+    /// writes affect the remaining slivers, like hardware), consume one of the 34 CHR slots, and
+    /// record the decoded sliver. The 35th attempted fetch only raises the time over-limit.
+    fn obj_fetch_step(&mut self, forced_blank: bool) {
+        if self.obj_pipeline.fetch_remaining == 0 {
+            return;
+        }
+        let sprite = self.obj_pipeline.items[self.obj_pipeline.fetch_remaining as usize - 1];
+        let index = sprite as usize;
         let (width, height) = self.obj_size(index);
         let (width, height) = (width as i32, height as i32);
-        let y = self.oam[index * 4 + 1] as u16;
+        let base_x = self.obj_base_x(index);
+        let col_count = width / 8;
+
+        // "Position fetch": recompute the column cursor when the sprite changes, skipping tiles
+        // fully hidden to the left of the screen (not for X=-256, which fetches its full width).
+        if self.obj_pipeline.fetch_current != Some(sprite) {
+            self.obj_pipeline.fetch_current = Some(sprite);
+            let mut offset = col_count;
+            if base_x <= -8 && base_x != -256 {
+                offset += base_x / 8;
+            }
+            self.obj_pipeline.fetch_column_offset = offset;
+        }
+
+        // "Attribute fetch": consumes one fetch slot; only 34 get their CHR data. Unlike the
+        // range flag (gated on !forced_blank in the eval window), this deliberately raises
+        // even under forced blank: Mesen2 keeps attribute fetches (and the flag) running
+        // while only the CHR read is suppressed, and a fully blanked line produces no items
+        // to fetch anyway.
+        self.obj_pipeline.tile_count += 1;
+        if self.obj_pipeline.tile_count > 34 {
+            self.stat77_time_over = true;
+            return;
+        }
+
+        self.obj_pipeline.fetch_column_offset -= 1;
+        let column_offset = self.obj_pipeline.fetch_column_offset;
+        let col_index = col_count - column_offset - 1;
+
         let attr = self.oam[index * 4 + 3];
         let priority = (attr >> 4) & 0x03;
         let palette = (attr >> 1) & 0x07;
         let hflip = attr & 0x40 != 0;
         let vflip = attr & 0x80 != 0;
-
-        // 9-bit X is sign-extended: 256..511 represent negative on-screen positions.
-        let x9 = self.oam[index * 4] as u16 | (self.obj_x_high(index) << 8);
-        let base_x = if x9 & 0x100 != 0 {
-            x9 as i32 - 0x200
-        } else {
-            x9 as i32
-        };
         let base_tile = self.oam[index * 4 + 2] as u16 | (((attr & 0x01) as u16) << 8);
-
-        let mut within_y = (line.wrapping_sub(y) & 0xFF) as i32;
+        let y = self.oam[index * 4 + 1] as u16;
+        let source_line = self.obj_source_line(self.position.scanline);
+        let mut within_y = (source_line.wrapping_sub(y) & 0xFF) as i32;
         if vflip {
             within_y = height - 1 - within_y;
         }
 
-        // Walk 8x8 tile columns left-to-right; each on-screen column consumes one tile-fetch slot.
-        for tile_col in 0..(width / 8) {
-            let tile_x = base_x + tile_col * 8;
-            let on_screen = tile_x + 8 > 0 && tile_x < 256;
-            if on_screen {
-                if *tile_budget <= 0 {
-                    break;
-                }
-                *tile_budget -= 1;
-            }
-            for sub in 0..8 {
-                let col = tile_col * 8 + sub;
-                let screen_x = base_x + col;
-                if !(0..256).contains(&screen_x) {
-                    continue;
-                }
-                let sx = screen_x as usize;
-                if buf.present[sx] {
-                    continue;
-                }
+        // Under forced blank the slot is consumed but VRAM is not read: nothing is drawn.
+        let mut colors = [0u8; 8];
+        if !forced_blank {
+            for (sub, color) in colors.iter_mut().enumerate() {
+                let col = col_index * 8 + sub as i32;
                 let within_x = if hflip { width - 1 - col } else { col };
-                let color = self.obj_tile_pixel(base_tile, within_x, within_y);
+                *color = self.obj_tile_pixel(base_tile, within_x, within_y);
+            }
+        }
+
+        // X=256 uses X=0 for the off-screen-right cutoff only; DrawX stays at the real
+        // (invisible) position (Mesen2 `FetchSpriteAttributes`).
+        let x_effective = if base_x == -256 { 0 } else { base_x };
+        let end_tile_x = x_effective + col_index * 8 + 8;
+
+        let pipeline = &mut self.obj_pipeline;
+        pipeline.slivers[pipeline.sliver_count as usize] = ObjSliver {
+            x: (base_x + col_index * 8) as i16,
+            colors,
+            palette,
+            priority,
+        };
+        pipeline.sliver_count += 1;
+
+        if column_offset == 0 || end_tile_x >= 256 {
+            // Last tile of the sprite, or the rest is hidden to the right of the screen.
+            pipeline.fetch_remaining -= 1;
+            pipeline.fetch_column_offset = 0;
+        }
+    }
+
+    /// Composite the fetched slivers into the presented line buffer for row `row`. Slivers were
+    /// fetched in reverse evaluation order, so later slivers (front-most OBJs) overwrite earlier
+    /// ones per opaque pixel (ares `PPU::Object::run`).
+    fn composite_obj_line(&mut self, row: u16) {
+        let pipeline = &mut self.obj_pipeline;
+        pipeline.line = ObjLine::default();
+        for sliver in &pipeline.slivers[..pipeline.sliver_count as usize] {
+            for (sub, &color) in sliver.colors.iter().enumerate() {
                 if color == 0 {
                     continue;
                 }
-                let cgindex = 128 + palette * 16 + color;
-                buf.color[sx] = self.cgram_color(cgindex);
-                buf.priority[sx] = priority;
-                buf.palette[sx] = palette;
-                buf.present[sx] = true;
-            }
-        }
-    }
-
-    fn render_object_pixel_at(
-        &self,
-        index: usize,
-        line: u16,
-        x: i32,
-        tile_budget: &mut i32,
-    ) -> Option<ObjPixel> {
-        let (width, height) = self.obj_size(index);
-        let (width, height) = (width as i32, height as i32);
-        let y = self.oam[index * 4 + 1] as u16;
-        let attr = self.oam[index * 4 + 3];
-        let priority = (attr >> 4) & 0x03;
-        let palette = (attr >> 1) & 0x07;
-        let hflip = attr & 0x40 != 0;
-        let vflip = attr & 0x80 != 0;
-
-        let x9 = self.oam[index * 4] as u16 | (self.obj_x_high(index) << 8);
-        let base_x = if x9 & 0x100 != 0 {
-            x9 as i32 - 0x200
-        } else {
-            x9 as i32
-        };
-        let base_tile = self.oam[index * 4 + 2] as u16 | (((attr & 0x01) as u16) << 8);
-
-        let mut within_y = (line.wrapping_sub(y) & 0xFF) as i32;
-        if vflip {
-            within_y = height - 1 - within_y;
-        }
-
-        for tile_col in 0..(width / 8) {
-            let tile_x = base_x + tile_col * 8;
-            let on_screen = tile_x + 8 > 0 && tile_x < 256;
-            if on_screen {
-                if *tile_budget <= 0 {
-                    break;
+                let x = sliver.x as i32 + sub as i32;
+                if !(0..super::SCREEN_WIDTH as i32).contains(&x) {
+                    continue;
                 }
-                *tile_budget -= 1;
+                let x = x as usize;
+                pipeline.line.cgram_index[x] = 128 + sliver.palette * 16 + color;
+                pipeline.line.palette[x] = sliver.palette;
+                pipeline.line.priority[x] = sliver.priority;
+                pipeline.line.present[x] = true;
             }
-
-            if x < tile_x || x >= tile_x + 8 {
-                continue;
-            }
-            let col = x - base_x;
-            let within_x = if hflip { width - 1 - col } else { col };
-            let color = self.obj_tile_pixel(base_tile, within_x, within_y);
-            if color == 0 {
-                continue;
-            }
-            let cgindex = 128 + palette * 16 + color;
-            return Some(ObjPixel {
-                color: self.cgram_color(cgindex),
-                palette,
-                priority,
-            });
         }
-        None
+        pipeline.presented_row = Some(row);
     }
 
     /// Decode an OBJ pixel color index (0-15) at sprite-relative `(within_x, within_y)`, applying
@@ -364,7 +378,13 @@ impl Ppu {
     }
 }
 
-/// Result of per-scanline OAM range evaluation.
+/// First dot of the OBJ sliver-fetch window (Mesen2 fetches sprite CHR at H=270..339).
+const OBJ_FETCH_START_DOT: u16 = 270;
+/// Number of 2-dot fetch slots in the window: 35 attribute fetches, of which 34 get CHR data.
+const OBJ_FETCH_SLOTS: u16 = 35;
+
+/// Result of per-scanline OAM range evaluation (test helper mirroring the eval window).
+#[cfg(test)]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct ObjLineEval {
     /// In-range OBJ indices in evaluation order, truncated to 32.
@@ -377,35 +397,123 @@ pub(super) struct ObjLineEval {
     pub range_over_index: Option<u8>,
 }
 
+#[cfg(test)]
 impl ObjLineEval {
     pub(super) fn indices(&self) -> &[u8] {
         &self.indices[..self.len]
     }
 }
 
-/// Composited OBJ pixels for one scanline (256 visible pixels).
-#[cfg(test)]
-#[derive(Debug, Clone)]
-pub(super) struct ObjLine {
-    /// Resolved BGR555 color per pixel (valid only where `present`).
-    pub color: [u16; 256],
-    /// OBJ palette number (0-7) per pixel, for color math gating.
-    pub palette: [u8; 256],
-    /// OBJ priority level (0-3, OAM attr bits 5-4) per pixel, for BG compositing.
-    pub priority: [u8; 256],
-    /// Whether an opaque OBJ pixel was written at this x.
-    pub present: [bool; 256],
+/// One fetched 8x1 OBJ tile sliver: the unit of the 34-per-line time over-limit budget.
+#[derive(Debug, Clone, Copy, Default)]
+struct ObjSliver {
+    /// Leftmost screen X of the sliver (may be off-screen, e.g. for X=256 OBJs).
+    x: i16,
+    /// Decoded color indices (0-15) in screen order (H-flip already applied).
+    colors: [u8; 8],
+    /// OBJ palette number (0-7).
+    palette: u8,
+    /// OBJ priority level (0-3, OAM attr bits 5-4).
+    priority: u8,
 }
 
-#[cfg(test)]
+/// Composited OBJ pixels for one presented scanline (256 visible pixels).
+#[derive(Debug, Clone)]
+pub(super) struct ObjLine {
+    /// CGRAM color index per pixel (valid only where `present`). The color itself is resolved
+    /// at query time so mid-scanline CGRAM writes stay live.
+    cgram_index: [u8; super::SCREEN_WIDTH],
+    /// OBJ palette number (0-7) per pixel, for color math gating.
+    palette: [u8; super::SCREEN_WIDTH],
+    /// OBJ priority level (0-3, OAM attr bits 5-4) per pixel, for BG compositing.
+    priority: [u8; super::SCREEN_WIDTH],
+    /// Whether an opaque OBJ pixel was written at this x.
+    present: [bool; super::SCREEN_WIDTH],
+}
+
 impl Default for ObjLine {
     fn default() -> Self {
         Self {
-            color: [0; 256],
-            palette: [0; 256],
-            priority: [0; 256],
-            present: [false; 256],
+            cgram_index: [0; super::SCREEN_WIDTH],
+            palette: [0; super::SCREEN_WIDTH],
+            priority: [0; super::SCREEN_WIDTH],
+            present: [false; super::SCREEN_WIDTH],
         }
+    }
+}
+
+/// Dot-incremental OBJ evaluation/fetch pipeline state.
+///
+/// `line` presents the previous scanline's fetch results while the current scanline's
+/// eval/fetch windows prepare `items`/`slivers` for the next. Only `line` is double-buffered;
+/// the ordering within [`Ppu::update_obj_pipeline`] is load-bearing: the dot-0 composite must
+/// consume `slivers` before `begin_fetch` (dot 270) resets them for the new line.
+#[derive(Debug, Clone)]
+pub(super) struct ObjPipeline {
+    /// In-range OAM indices (at most 32) in evaluation order for the line being prepared.
+    items: [u8; 32],
+    /// Number of valid entries in `items`.
+    item_count: u8,
+    /// Next OAM scan offset (0..=128) within the evaluation window.
+    eval_cursor: u8,
+    /// First-OBJ index (priority rotation) latched at the start of the evaluation window.
+    first_sprite: u8,
+    /// Scheduled dot for raising STAT77 range over (33rd in-range OBJ's OAM index x 2).
+    range_over_dot: Option<u16>,
+    /// Items left to fetch (the list is walked in reverse: `items[fetch_remaining - 1]`).
+    fetch_remaining: u8,
+    /// OAM index whose columns are currently being fetched.
+    fetch_current: Option<u8>,
+    /// Remaining tile columns of the current sprite (Mesen2 `ColumnOffset`).
+    fetch_column_offset: i32,
+    /// Attribute fetches consumed this line (the 35th raises time over).
+    tile_count: u8,
+    /// Slivers fetched for the line being prepared.
+    slivers: [ObjSliver; 34],
+    /// Number of valid entries in `slivers`.
+    sliver_count: u8,
+    /// Composited OBJ pixels for `presented_row`.
+    line: ObjLine,
+    /// Framebuffer row that `line` corresponds to, if any.
+    presented_row: Option<u16>,
+}
+
+impl Default for ObjPipeline {
+    fn default() -> Self {
+        Self {
+            items: [0; 32],
+            item_count: 0,
+            eval_cursor: 0,
+            first_sprite: 0,
+            range_over_dot: None,
+            fetch_remaining: 0,
+            fetch_current: None,
+            fetch_column_offset: 0,
+            tile_count: 0,
+            slivers: [ObjSliver::default(); 34],
+            sliver_count: 0,
+            line: ObjLine::default(),
+            presented_row: None,
+        }
+    }
+}
+
+impl ObjPipeline {
+    /// Start a new evaluation window (dot 0 of an active scanline).
+    fn begin_eval(&mut self, first_sprite: u8) {
+        self.item_count = 0;
+        self.eval_cursor = 0;
+        self.first_sprite = first_sprite;
+        self.range_over_dot = None;
+    }
+
+    /// Start the sliver-fetch window (the in-range list is fetched last-to-first).
+    fn begin_fetch(&mut self) {
+        self.fetch_remaining = self.item_count;
+        self.fetch_current = None;
+        self.fetch_column_offset = 0;
+        self.tile_count = 0;
+        self.sliver_count = 0;
     }
 }
 
@@ -648,6 +756,11 @@ mod tests {
         }
     }
 
+    /// Resolved OBJ pixel color at `(x, line)` from the presented pipeline line, if opaque.
+    fn obj_color_at(ppu: &Ppu, x: u16, line: u16) -> Option<u16> {
+        ppu.obj_pixel_at(x, line).map(|p| p.color)
+    }
+
     #[test]
     fn renders_an_8x8_object_at_its_x_position() {
         let mut ppu = Ppu::new();
@@ -657,13 +770,12 @@ mod tests {
         set_cgram(&mut ppu, 128 + 3, 0x1234); // OBJ palette 0, color 3
         set_obj(&mut ppu, 0, 50, 20, 0, 0, false);
 
-        let buf = ppu.build_obj_line(20);
+        present_line(&mut ppu, 20);
         for x in 50..58 {
-            assert!(buf.present[x], "pixel {x} opaque");
-            assert_eq!(buf.color[x], 0x1234);
+            assert_eq!(obj_color_at(&ppu, x, 20), Some(0x1234), "pixel {x} opaque");
         }
-        assert!(!buf.present[49]);
-        assert!(!buf.present[58]);
+        assert_eq!(obj_color_at(&ppu, 49, 20), None);
+        assert_eq!(obj_color_at(&ppu, 58, 20), None);
     }
 
     #[test]
@@ -676,11 +788,14 @@ mod tests {
         set_cgram(&mut ppu, 128 + 5, 0x7FFF);
         set_obj(&mut ppu, 0, 10, 0, 0, 0, false);
 
-        let buf = ppu.build_obj_line(0);
-        assert!(buf.present[12], "only the opaque pixel is written");
-        assert_eq!(buf.color[12], 0x7FFF);
-        assert!(!buf.present[10]);
-        assert!(!buf.present[11]);
+        present_line(&mut ppu, 0);
+        assert_eq!(
+            obj_color_at(&ppu, 12, 0),
+            Some(0x7FFF),
+            "only the opaque pixel is written"
+        );
+        assert_eq!(obj_color_at(&ppu, 10, 0), None);
+        assert_eq!(obj_color_at(&ppu, 11, 0), None);
     }
 
     #[test]
@@ -693,42 +808,39 @@ mod tests {
 
         // X-flip: top-left pixel moves to the right edge (x+7).
         set_obj(&mut ppu, 0, 100, 0, 0, 0x40, false);
-        let buf = ppu.build_obj_line(0);
-        assert!(buf.present[107]);
-        assert!(!buf.present[100]);
+        present_line(&mut ppu, 0);
+        assert!(ppu.obj_pixel_at(107, 0).is_some());
+        assert!(ppu.obj_pixel_at(100, 0).is_none());
 
         // Y-flip: top-left pixel moves to the bottom row (y+7).
         set_obj(&mut ppu, 0, 100, 0, 0, 0x80, false);
-        let buf = ppu.build_obj_line(7);
-        assert!(buf.present[100]);
-        let buf0 = ppu.build_obj_line(0);
-        assert!(!buf0.present[100]);
+        present_line(&mut ppu, 7);
+        assert!(ppu.obj_pixel_at(100, 7).is_some());
+        present_line(&mut ppu, 0); // wraps into the next frame
+        assert!(ppu.obj_pixel_at(100, 0).is_none());
     }
 
     #[test]
     fn obj_interlace_uses_alternating_source_lines_per_field() {
-        let mut ppu = Ppu::new();
-        ppu.write_register(0x2101, 0x00); // 8x8
-        ppu.write_register(0x2133, 0x03); // interlace + OBJ interlace
-        park_all_offscreen(&mut ppu);
-        set_obj_tile_solid(&mut ppu, 0, 0);
-        set_obj_tile_pixel(&mut ppu, 0, 0, 0, 1); // y=0 pixel
-        set_obj_tile_pixel(&mut ppu, 0, 0, 1, 2); // y=1 pixel
-        set_cgram(&mut ppu, 128 + 1, 0x001F); // red
-        set_cgram(&mut ppu, 128 + 2, 0x03E0); // green
-        set_obj(&mut ppu, 0, 10, 0, 0, 0, false);
+        let line_color_for_field = |field: bool| {
+            let mut ppu = Ppu::new();
+            ppu.write_register(0x2101, 0x00); // 8x8
+            ppu.write_register(0x2133, 0x03); // interlace + OBJ interlace
+            park_all_offscreen(&mut ppu);
+            set_obj_tile_solid(&mut ppu, 0, 0);
+            set_obj_tile_pixel(&mut ppu, 0, 0, 0, 1); // y=0 pixel
+            set_obj_tile_pixel(&mut ppu, 0, 0, 1, 2); // y=1 pixel
+            set_cgram(&mut ppu, 128 + 1, 0x001F); // red
+            set_cgram(&mut ppu, 128 + 2, 0x03E0); // green
+            set_obj(&mut ppu, 0, 10, 0, 0, 0, false);
+            ppu.interlace_field = field;
+            present_line(&mut ppu, 0);
+            obj_color_at(&ppu, 10, 0)
+        };
 
-        // Field 0 samples source line 0 for display line 0.
-        ppu.interlace_field = false;
-        let even = ppu.build_obj_line(0);
-        assert!(even.present[10]);
-        assert_eq!(even.color[10], 0x001F);
-
-        // Field 1 samples source line 1 for display line 0.
-        ppu.interlace_field = true;
-        let odd = ppu.build_obj_line(0);
-        assert!(odd.present[10]);
-        assert_eq!(odd.color[10], 0x03E0);
+        // Field 0 samples source line 0 for display line 0; field 1 samples source line 1.
+        assert_eq!(line_color_for_field(false), Some(0x001F));
+        assert_eq!(line_color_for_field(true), Some(0x03E0));
     }
 
     #[test]
@@ -742,9 +854,10 @@ mod tests {
         let attr = (2 << 4) | (5 << 1);
         set_obj(&mut ppu, 0, 0, 0, 0, attr, false);
 
-        let buf = ppu.build_obj_line(0);
-        assert_eq!(buf.color[0], 0x2222);
-        assert_eq!(buf.priority[0], 2);
+        present_line(&mut ppu, 0);
+        let pixel = ppu.obj_pixel_at(0, 0).expect("opaque OBJ pixel");
+        assert_eq!(pixel.color, 0x2222);
+        assert_eq!(pixel.priority, 2);
     }
 
     #[test]
@@ -762,12 +875,12 @@ mod tests {
         }
         set_obj(&mut ppu, 0, 0, 0, 0, 0, true);
 
-        let top = ppu.build_obj_line(0);
-        assert_eq!(top.color[0], 0x0100, "top-left tile");
-        assert_eq!(top.color[8], 0x0200, "top-right tile");
-        let bottom = ppu.build_obj_line(8);
-        assert_eq!(bottom.color[0], 0x0300, "bottom-left tile");
-        assert_eq!(bottom.color[8], 0x0400, "bottom-right tile");
+        present_line(&mut ppu, 0);
+        assert_eq!(obj_color_at(&ppu, 0, 0), Some(0x0100), "top-left tile");
+        assert_eq!(obj_color_at(&ppu, 8, 0), Some(0x0200), "top-right tile");
+        present_line(&mut ppu, 8);
+        assert_eq!(obj_color_at(&ppu, 0, 8), Some(0x0300), "bottom-left tile");
+        assert_eq!(obj_color_at(&ppu, 8, 8), Some(0x0400), "bottom-right tile");
     }
 
     #[test]
@@ -783,8 +896,12 @@ mod tests {
         set_obj(&mut ppu, 0, 30, 0, 0, 0, false);
         set_obj(&mut ppu, 1, 30, 0, 1, 1 << 1, false);
 
-        let buf = ppu.build_obj_line(0);
-        assert_eq!(buf.color[30], 0x1111, "front-most OBJ (lower index) wins");
+        present_line(&mut ppu, 0);
+        assert_eq!(
+            obj_color_at(&ppu, 30, 0),
+            Some(0x1111),
+            "front-most OBJ (lower index) wins"
+        );
     }
 
     #[test]
@@ -798,9 +915,9 @@ mod tests {
         set_obj(&mut ppu, 0, 0xFC, 0, 0, 0, false);
         ppu.set_oam_byte(0x200, 0b01); // OBJ0 X bit8 = 1 -> X = 0x1FC
 
-        let buf = ppu.build_obj_line(0);
-        assert!(buf.present[0] && buf.present[3]);
-        assert!(!buf.present[4]);
+        present_line(&mut ppu, 0);
+        assert!(ppu.obj_pixel_at(0, 0).is_some() && ppu.obj_pixel_at(3, 0).is_some());
+        assert!(ppu.obj_pixel_at(4, 0).is_none());
     }
 
     /// Set up Mode 1 with a single solid BG1 pixel at screen (0,0) and OBJ tiles at a separate
@@ -840,6 +957,7 @@ mod tests {
     fn obj_priority_3_draws_in_front_of_high_priority_bg1() {
         let mut ppu = Ppu::new();
         setup_bg1_and_obj(&mut ppu, true, 3, true);
+        present_line(&mut ppu, 0);
         assert_eq!(ppu.compute_pixel(0, 0), OBJ_COLOR);
     }
 
@@ -847,6 +965,7 @@ mod tests {
     fn obj_priority_0_draws_behind_bg1() {
         let mut ppu = Ppu::new();
         setup_bg1_and_obj(&mut ppu, true, 0, true);
+        present_line(&mut ppu, 0);
         assert_eq!(ppu.compute_pixel(0, 0), BG1_COLOR);
     }
 
@@ -854,6 +973,7 @@ mod tests {
     fn tm_bit4_disabled_hides_objects() {
         let mut ppu = Ppu::new();
         setup_bg1_and_obj(&mut ppu, true, 3, false);
+        present_line(&mut ppu, 0);
         assert_eq!(ppu.compute_pixel(0, 0), BG1_COLOR);
     }
 
@@ -864,6 +984,7 @@ mod tests {
         // x=8 has no BG1 tile (only tile (0,0) was mapped) and no OBJ -> backdrop (0).
         // Move OBJ to x=8 so only the OBJ (priority 0) covers the backdrop there.
         set_obj(&mut ppu, 0, 8, 0, 0, 0, false);
+        present_line(&mut ppu, 0);
         assert_eq!(ppu.compute_pixel(8, 0), OBJ_COLOR);
     }
 
@@ -915,26 +1036,29 @@ mod tests {
     }
 
     #[test]
-    fn time_over_flag_is_raised_when_more_than_34_tiles_on_a_line() {
+    fn time_over_flag_rises_during_the_fetch_window_of_the_eval_scanline() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x2101, 0xA0); // size 5: large = 64x64 (8 tiles wide)
         for i in 0..128 {
             let y = if i < 5 { 50 } else { 224 }; // park at 224 (32px tall, no wrap into visible)
-            set_obj(&mut ppu, i, 0, y, 0, 0, i < 5); // 5 large -> 40 tiles > 34
+            let x = (i as u16 % 5) * 48; // five large OBJs spread across the screen
+            set_obj(&mut ppu, i, x, y, 0, 0, i < 5); // 5 large -> 40 tiles > 34
         }
         ppu.write_register(0x2100, 0x0F); // display on (evaluation skips forced blank)
-        // Time over for line 50 is applied at the start of display scanline 51 (H=0).
-        tick_dots(&mut ppu, 50 * 341 + 200);
+        // Sliver fetching for line 50 occupies H~270..339 of scanline 50; the 35th
+        // attempted fetch raises the flag inside that window (Mesen2/ares timing).
+        tick_dots(&mut ppu, 50 * 341 + 269);
         assert_eq!(
             stat77(&mut ppu) & 0x80,
             0,
-            "time over not set during the eval scanline"
+            "time over clear before the fetch window"
         );
-        tick_dots(&mut ppu, 141); // cross into scanline 51, dot 0
+        tick_dots(&mut ppu, 71); // through dot 340: the fetch window has completed
+        assert_eq!(ppu.position().scanline, 50);
         assert_eq!(
             stat77(&mut ppu) & 0x80,
             0x80,
-            "time over set at H=0 of display line"
+            "time over set inside the fetch window of the eval scanline"
         );
     }
 
@@ -971,30 +1095,118 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tile_columns_beyond_the_34_budget_are_dropped() {
-        let mut ppu = Ppu::new();
-        ppu.write_register(0x2101, 0xA0); // size 5 small = 32x32 (4 tiles wide)
-        park_offscreen_32(&mut ppu);
-        // Eight transparent 32x32 OBJs cover x 0..255 on line 0 -> 32 tile slots consumed.
-        for i in 0..8 {
-            set_obj(&mut ppu, i, (i * 32) as u16, 0, 10, 0, false); // tile 10 -> transparent
+    /// Tick the PPU (display enabled) until the OBJ line for framebuffer row `line` has been
+    /// fetched and presented (scanline `line + 1`, past the dot-0 buffer swap).
+    fn present_line(ppu: &mut Ppu, line: u16) {
+        ppu.write_register(0x2100, 0x0F); // display on (evaluation skips forced blank)
+        loop {
+            ppu.tick();
+            let pos = ppu.position();
+            if pos.scanline == line + 1 && pos.dot >= 1 {
+                break;
+            }
         }
-        // A ninth opaque 32x32 OBJ at x=0: only 2 tile slots remain (34 - 32), so columns past
-        // x=15 must be dropped. Make its whole top tile-row opaque (tiles 0..3 solid color 1).
-        for t in 0..4 {
+    }
+
+    #[test]
+    fn time_over_drops_slivers_of_the_first_evaluated_objects() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0xA0); // size 5: small 32x32, large 64x64
+        park_offscreen_32(&mut ppu);
+        // A 64px-wide OBJ row spans tiles 0..7: make the whole top tile row opaque.
+        for t in 0..8 {
             set_obj_tile_solid(&mut ppu, t * 16, 1);
         }
-        set_cgram(&mut ppu, 128 + 1, 0x1357);
-        set_obj(&mut ppu, 8, 0, 0, 0, 0, false);
+        set_cgram(&mut ppu, 128 + 1, 0x1111);
+        set_cgram(&mut ppu, 128 + 16 + 1, 0x2222);
+        // Five 64x64 OBJs covering line 100 -> 40 slivers, 6 over the 34-per-line budget.
+        // Hardware fetches slivers in REVERSE evaluation order (OBJ 4 first), so the excess
+        // is lost by the FIRST evaluated OBJ: OBJ 0 keeps only its 2 leftmost tile columns.
+        for i in 0..5u16 {
+            let attr = if i == 0 { 0 } else { 1 << 1 }; // OBJ0 palette 0, rest palette 1
+            set_obj(&mut ppu, i as usize, i * 48, 100, 0, attr, true);
+        }
+        present_line(&mut ppu, 100);
 
-        let buf = ppu.build_obj_line(0);
         assert!(
-            buf.present[0] && buf.present[15],
-            "first two tile columns drawn"
+            ppu.obj_pixel_at(0, 100).is_some(),
+            "OBJ0 keeps its first surviving sliver"
         );
-        assert!(!buf.present[16], "tile columns past the budget are dropped");
-        assert!(!buf.present[31]);
+        assert!(ppu.obj_pixel_at(15, 100).is_some());
+        assert!(
+            ppu.obj_pixel_at(16, 100).is_none(),
+            "OBJ0 slivers past the remaining budget are dropped"
+        );
+        assert!(ppu.obj_pixel_at(47, 100).is_none());
+        assert!(
+            ppu.obj_pixel_at(48, 100).is_some(),
+            "later-evaluated OBJ1 (fetched earlier) keeps all slivers"
+        );
+        assert!(
+            ppu.obj_pixel_at(255, 100).is_some(),
+            "last-evaluated OBJ4 is fetched first and fully drawn"
+        );
+        assert_eq!(stat77(&mut ppu) & 0x80, 0x80, "time over flag set");
+    }
+
+    #[test]
+    fn x256_object_consumes_sliver_budget_without_drawing() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0xA0); // size 5: small 32x32, large 64x64
+        park_offscreen_32(&mut ppu);
+        // A 64px-wide OBJ row spans tiles 0..7: make the whole top tile row opaque.
+        for t in 0..8 {
+            set_obj_tile_solid(&mut ppu, t * 16, 1);
+        }
+        set_cgram(&mut ppu, 128 + 1, 0x1111);
+        // OBJs 0..3 on-screen (32 slivers) plus OBJ 4 at raw X=256: off-screen, but its
+        // 8 slivers still consume the fetch budget (as if at X=0) without being drawn.
+        for i in 0..4u16 {
+            set_obj(&mut ppu, i as usize, i * 48, 100, 0, 0, true);
+        }
+        set_obj(&mut ppu, 4, 0x100, 100, 0, 0, true);
+        present_line(&mut ppu, 100);
+
+        // Reverse fetch: OBJ4 (invisible) + OBJ3..OBJ1 consume 32 slots; OBJ0 keeps 2.
+        assert!(ppu.obj_pixel_at(0, 100).is_some());
+        assert!(ppu.obj_pixel_at(15, 100).is_some());
+        assert!(
+            ppu.obj_pixel_at(16, 100).is_none(),
+            "OBJ0 starved by the X=256 OBJ's slivers"
+        );
+        assert!(ppu.obj_pixel_at(47, 100).is_none());
+        assert_eq!(
+            stat77(&mut ppu) & 0x80,
+            0x80,
+            "X=256 slivers count toward the time over flag"
+        );
+    }
+
+    #[test]
+    fn fully_offscreen_left_objects_do_not_count_toward_the_range_limit() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0xA0); // size 5: small 32x32
+        park_offscreen_32(&mut ppu);
+        set_obj_tile_solid(&mut ppu, 0, 1);
+        set_cgram(&mut ppu, 128 + 1, 0x1111);
+        // 32 OBJs fully off-screen left (X = -64, rightmost pixel at -33) on line 100.
+        for i in 0..32 {
+            set_obj(&mut ppu, i, 0x1C0, 100, 0, 0, false);
+        }
+        // A 33rd OBJ on-screen: hardware still evaluates it because horizontally
+        // off-screen OBJs are not in range (Mesen2 IsVisible / ares onScanline).
+        set_obj(&mut ppu, 32, 10, 100, 0, 0, false);
+        present_line(&mut ppu, 100);
+
+        assert!(
+            ppu.obj_pixel_at(10, 100).is_some(),
+            "on-screen OBJ is still evaluated"
+        );
+        assert_eq!(
+            stat77(&mut ppu) & 0x40,
+            0,
+            "no range over: off-screen OBJs do not fill the 32-entry list"
+        );
     }
 
     fn rgb_at(ppu: &Ppu, x: usize, y: usize) -> [u8; 3] {
@@ -1004,7 +1216,7 @@ mod tests {
     }
 
     #[test]
-    fn mid_scanline_oamdata_write_moves_obj_for_subsequent_dots_only() {
+    fn mid_scanline_oamdata_write_affects_the_next_line_not_the_current_one() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x2100, 0x0F); // visible output
         ppu.write_register(0x2101, 0x00); // 8x8
@@ -1014,9 +1226,9 @@ mod tests {
         set_cgram(&mut ppu, 0, 0x001F); // backdrop red
         set_obj_tile_solid(&mut ppu, 0, 1);
         set_cgram(&mut ppu, 128 + 1, 0x03E0); // OBJ green
-        set_obj(&mut ppu, 0, 0, 0, 0, 0, false);
+        set_obj(&mut ppu, 0, 0, 0, 0, 0, false); // OBJ0 at x=0, rows 0..7
 
-        // Enter visible line 0 and render through x=4.
+        // Render row 0 through x=4 (scanline 1, dot 26).
         tick_dots(&mut ppu, 341 + 26);
 
         // Mid-scanline OAMDATA write: move OBJ0 from x=0 to x=40. During active display
@@ -1030,24 +1242,32 @@ mod tests {
         ppu.write_register(0x2104, 0);
         ppu.write_register(0x2100, 0x0F);
 
-        // Render past x=40 on the same scanline.
-        tick_dots(&mut ppu, 40);
+        // Finish row 0 and render row 1 past x=44.
+        tick_dots(&mut ppu, 341 + 44);
 
+        // Row 0 was fetched during scanline 0: the mid-line write must not disturb it.
         assert_eq!(rgb_at(&ppu, 4, 0), [0, 255, 0], "x=4 rendered before write");
         assert_eq!(
             rgb_at(&ppu, 6, 0),
+            [0, 255, 0],
+            "row 0 keeps the pre-write OBJ position after the write"
+        );
+        assert_eq!(rgb_at(&ppu, 40, 0), [255, 0, 0]);
+        // Row 1's sliver fetch (H~270+ of scanline 1) reads the updated OAM.
+        assert_eq!(
+            rgb_at(&ppu, 4, 1),
             [255, 0, 0],
-            "x=6 should reflect moved OBJ (backdrop only)"
+            "row 1 no longer shows the OBJ at its old position"
         );
         assert_eq!(
-            rgb_at(&ppu, 40, 0),
+            rgb_at(&ppu, 40, 1),
             [0, 255, 0],
-            "x=40 should pick up the moved OBJ on later dots"
+            "row 1 shows the OBJ at its new position"
         );
     }
 
     #[test]
-    fn mid_scanline_obsel_write_changes_large_obj_width_for_later_dots() {
+    fn mid_scanline_obsel_write_affects_the_next_line_not_the_current_one() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x2100, 0x0F); // visible output
         ppu.write_register(0x2101, 0x60); // size pair: small 16x16, large 32x32
@@ -1061,25 +1281,31 @@ mod tests {
         set_cgram(&mut ppu, 128 + 1, 0x03E0); // OBJ green
         set_obj(&mut ppu, 0, 0, 0, 0, 0, true); // large OBJ
 
-        // Render through x=8 with 32x32 sizing.
+        // Render row 0 through x=8 with 32x32 sizing.
         tick_dots(&mut ppu, 341 + 30);
 
-        // Mid-scanline OBSEL write shrinks large size to 16x16.
+        // Mid-scanline OBSEL write shrinks the large size to 16x16.
         ppu.write_register(0x2101, 0x00);
 
-        // Render far enough to include x=20 on the same scanline.
-        tick_dots(&mut ppu, 20);
+        // Finish row 0 and render row 1 past x=20.
+        tick_dots(&mut ppu, 341 + 20);
 
         assert_eq!(rgb_at(&ppu, 8, 0), [0, 255, 0], "x=8 rendered before write");
         assert_eq!(
             rgb_at(&ppu, 20, 0),
+            [0, 255, 0],
+            "row 0 keeps the 32px width fetched during the previous scanline"
+        );
+        assert_eq!(rgb_at(&ppu, 8, 1), [0, 255, 0]);
+        assert_eq!(
+            rgb_at(&ppu, 20, 1),
             [255, 0, 0],
-            "x=20 should be clipped after the width shrink"
+            "row 1 is fetched with the shrunk 16px width"
         );
     }
 
     #[test]
-    fn mid_scanline_oamadd_rotation_write_reorders_overlap_for_later_dots() {
+    fn mid_scanline_rotation_write_takes_effect_at_the_next_eval_window() {
         let mut ppu = Ppu::new();
         ppu.write_register(0x2100, 0x0F); // visible output
         ppu.write_register(0x2101, 0x00); // 8x8
@@ -1090,67 +1316,57 @@ mod tests {
         set_obj_tile_solid(&mut ppu, 0, 1);
         set_cgram(&mut ppu, 128 + 1, 0x03E0); // OBJ0 green
         set_cgram(&mut ppu, 128 + 16 + 1, 0x7C00); // OBJ1 blue
-        set_obj(&mut ppu, 0, 40, 0, 0, 0, false); // palette 0
+        set_obj(&mut ppu, 0, 40, 0, 0, 0, false); // palette 0, rows 0..7
         set_obj(&mut ppu, 1, 40, 0, 0, 1 << 1, false); // palette 1, same position
 
-        // Render through x=18 before the overlap region.
+        // Reach scanline 1 dot 40: row 1's eval window latched its start index at dot 0.
         tick_dots(&mut ppu, 341 + 40);
 
-        // Mid-scanline OAMADD + rotation write: start eval from OBJ1.
+        // OAMADD + rotation write: start eval from OBJ1.
         ppu.write_register(0x2102, 0x02); // bits 7-1 = 1
         ppu.write_register(0x2103, 0x80); // rotation enable
 
-        // Render through x=40 on this scanline.
-        tick_dots(&mut ppu, 24);
+        // Render rows 1 and 2 past x=40.
+        tick_dots(&mut ppu, 2 * 341 + 30);
 
-        assert_eq!(rgb_at(&ppu, 18, 0), [255, 0, 0], "backdrop before overlap");
         assert_eq!(
             rgb_at(&ppu, 40, 0),
+            [0, 255, 0],
+            "row 0 fetched before the write: OBJ0 wins"
+        );
+        assert_eq!(
+            rgb_at(&ppu, 40, 1),
+            [0, 255, 0],
+            "row 1's eval order was latched at its window start: OBJ0 still wins"
+        );
+        assert_eq!(
+            rgb_at(&ppu, 40, 2),
             [0, 0, 255],
-            "rotation write should make OBJ1 win for subsequent dots"
+            "row 2 evaluates with the rotated order: OBJ1 wins"
         );
     }
 
     #[test]
-    fn mid_scanline_rotation_write_updates_pixels_and_range_over_timing() {
+    fn rotation_shifts_the_range_over_dot_to_the_new_33rd_oam_index() {
         let mut ppu = Ppu::new();
-        ppu.write_register(0x2100, 0x0F); // visible output
         ppu.write_register(0x2101, 0x00); // 8x8
-        ppu.write_register(0x212C, 0x10); // OBJ on main screen
         park_all_offscreen(&mut ppu);
-        set_obj_tile_solid(&mut ppu, 0, 1);
-        set_cgram(&mut ppu, 0, 0x001F); // backdrop red
-        set_cgram(&mut ppu, 128 + 1, 0x03E0); // OBJ0 green
-        set_cgram(&mut ppu, 128 + 16 + 1, 0x7C00); // OBJ1 blue
-
-        // 40 OBJs in range on this line -> range over is active, with timing depending on eval order.
+        // 40 OBJs in range on line 0; rotation start at OBJ1 makes the 33rd in-range
+        // entry OAM index 33 -> flag at dot 66 (fullsnes H = OAM_INDEX*2).
         for i in 0..40 {
             set_obj(&mut ppu, i, 0, 0, 0, 0, false);
         }
-        set_obj(&mut ppu, 0, 40, 0, 0, 0, false); // palette 0
-        set_obj(&mut ppu, 1, 40, 0, 0, 1 << 1, false); // palette 1 at same position
-
-        // Render to line 0, dot 40 (before x=40 and before the old range-over timing at dot 64).
-        tick_dots(&mut ppu, 341 + 40);
-
-        // Rotate start to OBJ1: overlap winner changes and 33rd in-range index shifts 32->33.
         ppu.write_register(0x2102, 0x02); // bits 7-1 = 1
         ppu.write_register(0x2103, 0x80); // rotation enable
+        ppu.write_register(0x2100, 0x0F); // display on
 
-        // Reach dot 64 (x=42): x=40 has been rendered with the post-write OBJ ordering.
-        tick_dots(&mut ppu, 24);
-        assert_eq!(
-            rgb_at(&ppu, 40, 0),
-            [0, 0, 255],
-            "OBJ1 wins after rotation for later dots"
-        );
-
-        // New 33rd index is OBJ33 -> dot 66.
-        tick_dots(&mut ppu, 2);
+        tick_dots(&mut ppu, 65); // scanline 0, dot 65
         assert_eq!(
             stat77(&mut ppu) & 0x40,
-            0x40,
-            "range over asserts at dot 66"
+            0,
+            "range over not yet set at dot 65"
         );
+        tick_dots(&mut ppu, 1); // dot 66
+        assert_eq!(stat77(&mut ppu) & 0x40, 0x40, "range over set at dot 66");
     }
 }
