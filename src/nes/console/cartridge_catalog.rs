@@ -95,10 +95,15 @@ fn read_dir_if_exists(path: &Path) -> io::Result<Option<fs::ReadDir>> {
 }
 
 fn is_rom_file(path: &Path) -> bool {
-    // This catalog is NES-only (used by the in-emulator cartridge switch dialog).
+    // The catalog feeds both the ROM browser (NES + Game Boy platforms) and
+    // the in-emulator cartridge switch dialog (which filters to .nes itself).
     path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("nes"))
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("nes")
+                || ext.eq_ignore_ascii_case("gb")
+                || ext.eq_ignore_ascii_case("gbc")
+        })
 }
 
 fn read_catalog_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
@@ -289,18 +294,23 @@ mod tests {
         assert_eq!(path, home.join(".neser").join("cartridges.csv"));
     }
 
+    // Updated for the ROM browser (GB/GBC platform filters): the scan must
+    // discover Game Boy ROMs too, not just NES — the browser reads the same
+    // catalog CSV as the in-emulator cartridge switch dialog.
     #[test]
-    fn is_rom_file_accepts_only_nes_extensions() {
+    fn is_rom_file_accepts_nes_gb_and_gbc_extensions() {
         assert!(is_rom_file(Path::new("game.nes")));
         assert!(is_rom_file(Path::new("game.NES")));
-        assert!(!is_rom_file(Path::new("game.gb")));
-        assert!(!is_rom_file(Path::new("game.gbc")));
+        assert!(is_rom_file(Path::new("game.gb")));
+        assert!(is_rom_file(Path::new("game.GB")));
+        assert!(is_rom_file(Path::new("game.gbc")));
+        assert!(is_rom_file(Path::new("game.GBC")));
         assert!(!is_rom_file(Path::new("game.txt")));
         assert!(!is_rom_file(Path::new("game.zip")));
     }
 
     #[test]
-    fn scan_discovers_only_nes_files() {
+    fn scan_discovers_nes_gb_and_gbc_files() {
         let temp = tempdir().expect("tempdir");
         let root = temp.path().join("roms");
         write_file(&root.join("nes_game.nes"));
@@ -312,7 +322,10 @@ mod tests {
         let options = CartridgeCatalogOptions::new(vec![root], catalog_path);
 
         let entries = refresh_cartridge_catalog(&options).expect("refresh should succeed");
-        assert_eq!(entries.len(), 1);
+        assert_eq!(entries.len(), 3);
         assert!(entries.iter().any(|p| p.ends_with("nes_game.nes")));
+        assert!(entries.iter().any(|p| p.ends_with("gb_game.gb")));
+        assert!(entries.iter().any(|p| p.ends_with("gbc_game.gbc")));
+        assert!(!entries.iter().any(|p| p.ends_with("notes.txt")));
     }
 }
