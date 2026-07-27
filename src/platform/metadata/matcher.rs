@@ -71,8 +71,9 @@ fn word_subset_score(a: &str, b: &str) -> f64 {
 
 /// Normalize a title for comparison: lowercase, drop apostrophes, treat all
 /// other punctuation as word separators (so slugified filenames like
-/// "warios-woods" align with "Wario's Woods"), strip leading "the", and
-/// collapse extra spaces.
+/// "warios-woods" align with "Wario's Woods"), drop the article "the"
+/// wherever it appears (so "firemane-the" aligns with "The Firemen" and the
+/// junk DB title "'the" normalizes to nothing), and collapse extra spaces.
 fn normalize(title: &str) -> String {
     let lowered: String = title
         .to_lowercase()
@@ -81,9 +82,11 @@ fn normalize(title: &str) -> String {
         .map(|c| if c.is_alphanumeric() { c } else { ' ' })
         .collect();
 
-    let trimmed = lowered.split_whitespace().collect::<Vec<_>>().join(" ");
-
-    trimmed.strip_prefix("the ").unwrap_or(&trimmed).to_string()
+    lowered
+        .split_whitespace()
+        .filter(|word| *word != "the")
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -154,15 +157,50 @@ mod tests {
         // normalize to the same string as the spaced title.
         assert_eq!(normalize("warios-woods"), "warios woods");
         assert_eq!(normalize("kirbys-dream-land-3"), "kirbys dream land 3");
-        // '&' and ':' separate words too, and runs of separators collapse.
+        // '&' and ':' separate words too, runs of separators collapse, and
+        // the article "the" is dropped on both sides.
         assert_eq!(
             normalize("AD&D: Eye of the Beholder"),
-            "ad d eye of the beholder"
+            "ad d eye of beholder"
         );
         assert_eq!(
             normalize("ad-d---eye-of-the-beholder"),
-            "ad d eye of the beholder"
+            "ad d eye of beholder"
         );
+    }
+
+    #[test]
+    fn normalize_drops_the_everywhere() {
+        // "the" is dropped as a word wherever it appears, so trailing-article
+        // filenames align with leading-article titles, and junk DB titles
+        // consisting only of "the" normalize to nothing.
+        assert_eq!(normalize("firemane-the"), "firemane");
+        assert_eq!(normalize("lost-vikings-the"), "lost vikings");
+        assert_eq!(normalize("All the King's Men"), "all kings men");
+        assert_eq!(normalize("'the"), "");
+    }
+
+    #[test]
+    fn junk_the_title_never_matches() {
+        // TheGamesDB contains a junk SNES entry titled "'the" (id 132115);
+        // it must not swallow every filename containing the word "the".
+        let cands = vec![(132115, "'the".to_string())];
+        assert!(match_title("firemane-the", &cands).is_none());
+        assert!(match_title("legend-of-zelda-the", &cands).is_none());
+    }
+
+    #[test]
+    fn trailing_article_filename_matches_leading_article_title() {
+        // "firemane-the.sfc" must match "The Firemen" (SNES id 44784), not
+        // the junk "'the" entry.
+        let cands = vec![
+            (132115, "'the".to_string()),
+            (44784, "The Firemen".to_string()),
+            (5, "Donkey Kong".to_string()),
+        ];
+        let result = match_title("firemane-the", &cands);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().game_id, 44784);
     }
 
     #[test]
