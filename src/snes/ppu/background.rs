@@ -999,6 +999,74 @@ mod tests {
         assert_eq!(ppu.framebuffer[2], 3, "column 2 shows tile column 2");
     }
 
+    #[test]
+    fn mode5_mosaic_size1_collapses_pairs_to_the_even_subpixel() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        ppu.write_register(0x2106, 0x01); // MOSAIC: size 1, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // Mosaic on a hires layer collapses each half-pixel pair to the even sample,
+        // even at block size 1 (Mesen2 forces the mosaic path on for modes 5/6).
+        assert_eq!(ppu.framebuffer[0], 1, "even column keeps the even sample");
+        assert_eq!(ppu.framebuffer[1], 1, "odd column repeats the even sample");
+        assert_eq!(ppu.framebuffer[2], 3, "next pair samples hires column 2");
+        assert_eq!(ppu.framebuffer[3], 3, "and repeats it");
+    }
+
+    #[test]
+    fn mode5_mosaic_block_replicates_the_block_start_even_sample() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        fill_4bpp_tile(&mut ppu, 0, 2, 9); // paired char: block 2's even sample
+        ppu.write_register(0x2106, 0x31); // MOSAIC: size 4, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // A 4-wide mosaic block spans 8 output columns, all showing the even sample
+        // of the block-start native pixel (hires column 0 -> pattern color 1).
+        for c in 0..8usize {
+            assert_eq!(
+                ppu.framebuffer[c], 1,
+                "output column {c} shows the block-start even sample"
+            );
+        }
+        // The next block starts at native x 4 -> even sample is hires column 8,
+        // the first column of paired char 2.
+        assert_eq!(ppu.framebuffer[8], 9, "next block starts at column 8");
+    }
+
+    #[test]
+    fn mode5_mosaic_only_affects_enabled_layers() {
+        let mut ppu = Ppu::new();
+        for i in 1..4 {
+            set_cgram(&mut ppu, i, i as u16);
+        }
+        ppu.write_register(0x2105, 0x05); // mode 5 (BG2 2bpp)
+        ppu.write_register(0x212C, 0x02); // TM: BG2
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2100, 0x0F);
+        ppu.write_register(0x2106, 0x01); // MOSAIC: BG1 only -- BG2 unaffected
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        for fine_y in 0..8 {
+            for fine_x in 0..8u8 {
+                set_2bpp_tile_pixel(&mut ppu, 0, 1, fine_x, fine_y, (fine_x % 3) + 1);
+            }
+        }
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(ppu.framebuffer[0], 1, "BG2 keeps distinct even subpixels");
+        assert_eq!(ppu.framebuffer[1], 2, "BG2 keeps distinct odd subpixels");
+        assert_eq!(ppu.framebuffer[2], 3, "no collapse on a non-mosaic layer");
+    }
+
     /// Mode 6 scene for offset-per-tile tests: BG1 on both screens with solid char
     /// pairs per map entry (entry 0 -> chars 1/2, entry 1 -> 3/4, entry 2 -> 5/6,
     /// colored by char number), BG1 map at 0x400, BG3 (OPT source) map at 0x800.
