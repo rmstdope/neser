@@ -172,5 +172,7 @@ class TheGamesDbClient:
         return data.get("data", {}).get("countries", {})
 
     def get_api_limit(self) -> dict:
-        data = self._get("/v1/API/Limit", {})
-        return data.get("data", {})
+        # Unlike every other endpoint, /v1/API/Limit has no "data" wrapper:
+        # remaining_monthly_allowance, extra_allowance and
+        # allowance_refresh_timer sit at the top level of the response.
+        return self._get("/v1/API/Limit", {})
