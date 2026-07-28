@@ -242,6 +242,14 @@ Test suites:
   live-B/falling-edge latch semantics, port 2 coverage, and auto-joypad vs
   manual serial layout equivalence. Results are reported through the WRAM
   pass/fail marker; no visual baselines.
+- `input_mouse_tests.rs` -- SNES Mouse protocol fixtures (#2889), assembled
+  in-code via the shared `fixture_rom.rs` builder (no on-disk assets):
+  32-bit packet identification (zero lead byte, hardware ID `0001`, tail
+  ones past bit 32), the issue's scripted example sequence (all four motion
+  directions with fullsnes sign/direction-bit conventions, left/right/both
+  button edges, release), sensitivity cycling 0->1->2->0 on `$4016` clocks
+  while the strobe is high, 7-bit magnitude clamping at +/-127, and a
+  port-2 mouse on `$4017`. Results via the WRAM pass/fail marker.
 - `dsp_audio_golden_tests.rs` -- S-DSP audio sample golden checks: eight
   deterministic 32 kHz capture windows over synthetic in-code BRR fixtures
   (no ROM assets) covering BRR decode, ADSR, GAIN modes, pitch modulation,

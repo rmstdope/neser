@@ -498,6 +498,27 @@
           "notes": "No on-disk assets; fixture programs are emitted at test run time by input_standard_controller_tests.rs via the shared fixture_rom builder."
         }
       ]
+    },
+    {
+      "id": "snes-input-mouse-fixtures",
+      "suite": "input_mouse_tests",
+      "platform": "snes",
+      "source": {
+        "url": "in-repo synthetic fixtures, src/snes/integration_tests/input_mouse_tests.rs",
+        "ref": "issue-2889"
+      },
+      "license": "n/a (synthetic, authored in-repo)",
+      "oracle_type": "rom_pass_fail",
+      "notes": "Deterministic in-code assembled LoROM fixture programs (fixture_rom.rs) verifying the SNES Mouse against the fullsnes/SNESdev serial protocol: 32-bit packet identification (zero lead byte, hardware ID 0001, tail ones past bit 32), the issue's scripted example sequence (motion in all four directions with sign/direction-bit checks, left/right/both button edges, release), sensitivity cycling 0->1->2->0 on $4016 clocks while the strobe is high, 7-bit magnitude clamping at +/-127 with direction bits, and a port-2 mouse shifting its packet out on $4017. Pass/fail results are reported through the rom_runner NSER WRAM marker oracle; no on-disk ROMs or visual baselines.",
+      "variants": [
+        {
+          "id": "in_code_fixtures",
+          "status": "committed_ci",
+          "path": "src/snes/integration_tests",
+          "refresh_command": null,
+          "notes": "No on-disk assets; fixture programs are emitted at test run time by input_mouse_tests.rs via the shared fixture_rom builder."
+        }
+      ]
     }
   ]
 }

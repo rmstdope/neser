@@ -488,6 +488,11 @@ fn capture_is_disabled_for_fixture(name: &str) -> bool {
             | Some("input-script-press")
             | Some("input-script-release")
             | Some("input-script-unsorted")
+            | Some("mouse-clamp")
+            | Some("mouse-example-sequence")
+            | Some("mouse-identify")
+            | Some("mouse-port2")
+            | Some("mouse-speed-cycle")
             | Some("pad-auto-matches-serial")
             | Some("pad-example-sequence")
             | Some("pad-serial-order")
@@ -1085,6 +1090,11 @@ mod tests {
             "input-script-press.sfc",
             "input-script-release.sfc",
             "input-script-unsorted.sfc",
+            "mouse-clamp.sfc",
+            "mouse-example-sequence.sfc",
+            "mouse-identify.sfc",
+            "mouse-port2.sfc",
+            "mouse-speed-cycle.sfc",
             "pad-auto-matches-serial.sfc",
             "pad-example-sequence.sfc",
             "pad-serial-order.sfc",

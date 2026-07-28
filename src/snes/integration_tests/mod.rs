@@ -10,6 +10,7 @@ mod fixture_rom;
 mod gilyon_cpu_tests;
 mod gilyon_spc_tests;
 mod hblank_dma_vram_tests;
+mod input_mouse_tests;
 mod input_standard_controller_tests;
 mod jonasquinn_math_tests;
 mod neser_color_math_tests;
