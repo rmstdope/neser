@@ -274,6 +274,13 @@ impl ApplicationHandler for RomBrowserApp {
 
             WindowEvent::Focused(focused) => {
                 self.window_focused = focused;
+                // Discard gamepad events queued while unfocused: redraws
+                // (which normally drain the queue) may pause when the window
+                // is hidden or minimized, and the backlog would otherwise
+                // apply all at once on refocus.
+                if focused && let Some(ref mut gilrs) = self.gilrs {
+                    while gilrs.next_event().is_some() {}
+                }
                 if let Some(ref mut gl) = self.gl {
                     let _ = gl.on_window_event(&event);
                 }

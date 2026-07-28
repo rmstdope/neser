@@ -47,6 +47,19 @@ it("detects the SDL platform from the user agent", () => {
     expect(sdlPlatformForUserAgent("Mozilla/5.0 (X11; Linux x86_64)")).toBe("Linux");
 });
 
+it("detects iOS despite the 'like Mac OS X' token in its user agents", () => {
+    expect(
+        sdlPlatformForUserAgent(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15"
+        )
+    ).toBe("iOS");
+    expect(
+        sdlPlatformForUserAgent(
+            "Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15"
+        )
+    ).toBe("iOS");
+});
+
 it("parses the SNES replica line into a raw button layout", () => {
     const layouts = parseGameControllerDb(REPLICA_LINE, "Mac OS X");
     const layout = layouts.get("081f:e401");

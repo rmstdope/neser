@@ -57,6 +57,10 @@ export function sdlPlatformForUserAgent(userAgent: string): string | null {
     if (/android/i.test(userAgent)) {
         return "Android";
     }
+    // iOS user agents contain "like Mac OS X", so check them first.
+    if (/iphone|ipad|ipod/i.test(userAgent)) {
+        return "iOS";
+    }
     if (/mac os x|macintosh/i.test(userAgent)) {
         return "Mac OS X";
     }
