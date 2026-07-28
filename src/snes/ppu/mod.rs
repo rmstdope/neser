@@ -492,6 +492,12 @@ impl Ppu {
         self.position
     }
 
+    /// Cumulative master clocks since power-on; the bus keys deferred HDMA B-bus
+    /// write deadlines off this counter (absolute, so deadlines survive line wraps).
+    pub(crate) fn total_master_clocks(&self) -> u64 {
+        self.total_master_clocks
+    }
+
     /// Whether VBlank NMI generation is enabled (NMITIMEN bit 7).
     pub fn nmi_enabled(&self) -> bool {
         self.nmi_enable

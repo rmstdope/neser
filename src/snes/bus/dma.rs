@@ -1,4 +1,5 @@
 use crate::snes::console::save_state::SnesDmaState;
+use std::collections::VecDeque;
 
 const DMA_REG_BYTES: usize = 0x80;
 const B_BUS_PORT_BYTES: usize = 0x100;
@@ -23,6 +24,23 @@ pub struct DmaController {
     hdma_do_transfer: [bool; 8],
     hdma_repeat_mode: [bool; 8],
     hdma_lines_left: [u16; 8],
+    /// HDMA A->B writes scheduled but not yet applied to the real B-bus. On
+    /// hardware the per-scanline transfer's bytes land serially after start/sync
+    /// overhead, so the last visible pixel (x = 255, rendered 4 clocks after the
+    /// dot-276 trigger) never sees them; deadlines are absolute master clocks
+    /// (the burst can cross the scanline wrap). Pushed in increasing deadline
+    /// order.
+    pending_b_bus_writes: VecDeque<PendingBBusWrite>,
+}
+
+/// One deferred HDMA B-bus write: applied by the bus when the PPU's cumulative
+/// master clock reaches `deadline` (a dot rendered at clock N sees only writes
+/// with deadline < N, matching Mesen2's render-before-write flush).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PendingBBusWrite {
+    pub deadline: u64,
+    pub b_addr: u8,
+    pub value: u8,
 }
 
 impl DmaController {
@@ -34,6 +52,24 @@ impl DmaController {
             hdma_do_transfer: [false; 8],
             hdma_repeat_mode: [false; 8],
             hdma_lines_left: [0; 8],
+            pending_b_bus_writes: VecDeque::new(),
+        }
+    }
+
+    /// Whether any scheduled HDMA B-bus write has not yet been applied.
+    pub(crate) fn has_pending_b_bus_writes(&self) -> bool {
+        !self.pending_b_bus_writes.is_empty()
+    }
+
+    /// Pop the front scheduled write if its deadline has been reached (pushes are
+    /// in increasing deadline order, so checking the front suffices).
+    pub(crate) fn pop_due_b_bus_write(&mut self, now: u64) -> Option<(u8, u8)> {
+        match self.pending_b_bus_writes.front() {
+            Some(write) if write.deadline <= now => {
+                let write = self.pending_b_bus_writes.pop_front().unwrap();
+                Some((write.b_addr, write.value))
+            }
+            _ => None,
         }
     }
 
@@ -60,6 +96,11 @@ impl DmaController {
             hdma_do_transfer: self.hdma_do_transfer.to_vec(),
             hdma_repeat_mode: self.hdma_repeat_mode.to_vec(),
             hdma_lines_left: self.hdma_lines_left.to_vec(),
+            pending_b_bus_writes: self
+                .pending_b_bus_writes
+                .iter()
+                .map(|w| (w.deadline, w.b_addr, w.value))
+                .collect(),
         }
     }
 
@@ -91,6 +132,15 @@ impl DmaController {
         self.hdma_repeat_mode
             .copy_from_slice(&state.hdma_repeat_mode);
         self.hdma_lines_left.copy_from_slice(&state.hdma_lines_left);
+        self.pending_b_bus_writes = state
+            .pending_b_bus_writes
+            .iter()
+            .map(|&(deadline, b_addr, value)| PendingBBusWrite {
+                deadline,
+                b_addr,
+                value,
+            })
+            .collect();
         Ok(())
     }
 
@@ -190,6 +240,7 @@ impl DmaController {
         hdmaen: u8,
         abus: &mut B,
         seed_open_bus: u8,
+        base_clock: u64,
     ) -> (u64, u8) {
         if hdmaen == 0 {
             return (0, seed_open_bus);
@@ -211,7 +262,11 @@ impl DmaController {
 
             ticks += 8;
             if self.hdma_do_transfer[channel as usize] {
-                ticks += self.run_hdma_transfer_unit(channel, abus, &mut open_bus);
+                // B-bus writes are scheduled at deadlines derived from the same
+                // running tick total the transfer charges, so the write clocks
+                // mirror the modeled bus occupancy (first byte at trigger + 34).
+                ticks +=
+                    self.run_hdma_transfer_unit(channel, abus, &mut open_bus, base_clock + ticks);
             }
 
             let idx = channel as usize;
@@ -418,6 +473,7 @@ impl DmaController {
         channel: u8,
         abus: &mut B,
         open_bus: &mut u8,
+        write_base: u64,
     ) -> u64 {
         let dmap = self.get_reg(channel, 0x0);
         let bbad = self.get_reg(channel, 0x1);
@@ -436,7 +492,7 @@ impl DmaController {
             u16::from_le_bytes([self.get_reg(channel, 0x8), self.get_reg(channel, 0x9)])
         };
 
-        for offset in pattern {
+        for (index, offset) in pattern.iter().enumerate() {
             let a_addr = ((bank as u32) << 16) | addr as u32;
             let b_addr = bbad.wrapping_add(*offset);
             if direction_b_to_a {
@@ -446,8 +502,15 @@ impl DmaController {
             } else {
                 let value = abus.dma_read_a_bus(a_addr, *open_bus);
                 *open_bus = value;
+                // The internal B-bus stub store stays immediate (it backs B->A
+                // readback within the same burst); only the REAL B-bus application
+                // is deferred to this byte's modeled bus clock.
                 self.write_b_bus(b_addr, value);
-                abus.dma_write_b_bus(b_addr, value);
+                self.pending_b_bus_writes.push_back(PendingBBusWrite {
+                    deadline: write_base + 8 * (index as u64 + 1),
+                    b_addr,
+                    value,
+                });
             }
             addr = addr.wrapping_add(1);
         }

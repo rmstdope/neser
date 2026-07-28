@@ -202,21 +202,22 @@ mod tests {
     // (via H-IRQ at dots 220-232) to enable HDMA channels. Channels activate on the
     // next scanline, producing horizontal striped patterns correctly.
     //
-    // Known minor visual differences from Mesen2:
-    // - Rightmost column timing (#2967): extra red pixels due to rendering order
-    // - Frame-to-frame timing drift (#2971): one extra flickering line in test_2
-    // - INIDISP brightness timing (#2973): ~4% pixel diff at brightness transition edges
+    // Pixel-exact vs Mesen2 since #3020's HDMA write scheduling (which resolved the
+    // previously-documented #2967 rightmost-column delta for this vector).
     undisbeliever_rom_test!(
         hdmaen_latch_test_matches_mesen2,
         "hdmaen_latch_test.sfc",
-        0x88D5_87A5
+        0x22C3_0946
     );
 
-    // Same test as above with different timing. Same known minor visual differences.
+    // Same test as above with different timing. NOT pixel-exact: 6 whole scanlines
+    // phase-flip vs Mesen2 (frame-to-frame timing drift class, #2971; write-clock
+    // jitter follow-up #3042). Cross-checked NESER-current golden, re-approved
+    // after #3020 (previously "one extra flickering line").
     undisbeliever_rom_test!(
         hdmaen_latch_test_2_matches_mesen2,
         "hdmaen_latch_test_2.sfc",
-        0x4D68_EF1A
+        0x67B7_6FBE
     );
 
     // Tests HDMA-driven INIDISP changes. Same known minor visual differences.

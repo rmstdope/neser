@@ -23,8 +23,9 @@
 //! this ROM's VMDATA channels mistook a leftover data byte for the table
 //! terminator right after their first line and never performed the ROM's
 //! mid-frame VRAM update). After the fix, NESER's frame-600 capture matches a
-//! Mesen2 capture of the same ROM file to within 0.66% (best ±1-row
-//! alignment) -- and the bundled real-hardware reference photo
+//! Mesen2 capture of the same ROM file to within 0.66% (1.16% since #3020's
+//! serialized HDMA write clocks, see #3042; best row alignment 0) -- and the
+//! bundled real-hardware reference photo
 //! (`93143-hblank-dma-vram/expected-output.jpg`) confirms this two-region
 //! tile pattern is expected, reliable real-hardware behavior (not a
 //! bus-residual coin-flip), so this golden is a genuine hardware-accuracy
@@ -126,11 +127,17 @@ mod tests {
     // despite the ROM's forced-blank timing; frame-600 row 0 is now a 256/256
     // pixel-exact match for a fresh Mesen2 headless capture (was 116/256),
     // and every other row is byte-identical to the previous golden.
+    // Re-approved after #3020's HDMA write scheduling: the 8-channel burst's
+    // serialized writes cross the scanline wrap, where Mesen2's exact per-byte
+    // clocks carry CPU-alignment jitter NESER's fixed-offset model averages out
+    // (#3042). Frame-600 diff vs a fresh Mesen2 capture: 1.16% (was 0.66%),
+    // best row alignment 0, the documented two-region hardware tile pattern
+    // intact.
     hblank_dma_vram_rom_test!(
         hvdma_matches_mesen2_and_hardware,
         "hvdma.sfc",
         600,
-        0xA35B_BC85
+        0xA2A6_BD36
     );
 
     // Confirmed hardware-accurate: NESER's frame-600 capture is a
