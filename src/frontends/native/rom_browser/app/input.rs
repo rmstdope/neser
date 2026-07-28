@@ -90,7 +90,16 @@ impl RomBrowserApp {
     }
 
     /// Map a gilrs button to a browser action.
-    fn map_button(button: gilrs::Button) -> Option<BrowserAction> {
+    /// Drop gamepad actions while the browser window is unfocused, so pad
+    /// input pressed for another window (e.g. a running game) is ignored.
+    pub(super) fn filter_gamepad_actions(
+        actions: Vec<BrowserAction>,
+        window_focused: bool,
+    ) -> Vec<BrowserAction> {
+        if window_focused { actions } else { Vec::new() }
+    }
+
+    pub(super) fn map_button(button: gilrs::Button) -> Option<BrowserAction> {
         match button {
             gilrs::Button::DPadUp => Some(BrowserAction::Up),
             gilrs::Button::DPadDown => Some(BrowserAction::Down),
@@ -99,7 +108,10 @@ impl RomBrowserApp {
             gilrs::Button::East => Some(BrowserAction::Confirm), // Nintendo A button
             gilrs::Button::South => Some(BrowserAction::Back),   // Nintendo B button
             gilrs::Button::Start | gilrs::Button::RightTrigger2 => Some(BrowserAction::Search),
-            gilrs::Button::North => Some(BrowserAction::Detail), // Nintendo X button
+            // North also acts as Back: NES replica pads share the SNES
+            // replica's GUID, so their B button arrives as North. The detail
+            // view stays reachable via Confirm (A) in the gallery.
+            gilrs::Button::North => Some(BrowserAction::Back),
             gilrs::Button::West => Some(BrowserAction::Favorite), // Nintendo Y button
             gilrs::Button::Select | gilrs::Button::LeftTrigger2 => Some(BrowserAction::Favorite),
             _ => None,

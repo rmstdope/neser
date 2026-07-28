@@ -38,7 +38,10 @@ pub fn map_button_to_nes(button: gilrs::Button) -> Option<Button> {
         gilrs::Button::South => Some(Button::B),
         gilrs::Button::East => Some(Button::A),
         gilrs::Button::West => Some(Button::B),
-        gilrs::Button::North => Some(Button::A),
+        // North acts as B (not A): NES replica pads share the SNES
+        // replica's GUID, so their B button arrives as North through the
+        // shared SDL mapping.
+        gilrs::Button::North => Some(Button::B),
         gilrs::Button::Start | gilrs::Button::RightTrigger2 => Some(Button::Start),
         gilrs::Button::Select | gilrs::Button::LeftTrigger2 => Some(Button::Select),
         gilrs::Button::DPadUp => Some(Button::Up),
@@ -666,8 +669,11 @@ mod tests {
     }
 
     #[test]
-    fn nes_mapping_north_is_a_alternate() {
-        assert_eq!(map_button_to_nes(gilrs::Button::North), Some(Button::A));
+    fn nes_mapping_north_is_b_alternate() {
+        // NES replica pads share the SNES replica's GUID, so their B button
+        // arrives as North through the shared SDL mapping; North must act
+        // as NES B for those pads to work.
+        assert_eq!(map_button_to_nes(gilrs::Button::North), Some(Button::B));
     }
 
     #[test]

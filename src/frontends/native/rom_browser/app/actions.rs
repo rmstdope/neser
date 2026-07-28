@@ -264,9 +264,6 @@ impl RomBrowserApp {
                     self.open_search_panel();
                 }
                 BrowserAction::Favorite => self.toggle_favorite(),
-                BrowserAction::Detail => {
-                    self.open_detail_view();
-                }
             }
         }
     }
