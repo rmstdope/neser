@@ -98,6 +98,56 @@ it("prefers pressed if both d-pad and axes active", () => {
   expect(state.right).toBe(true);
 });
 
+it("remaps the generic SNES USB replica pad when the browser exposes it unmapped", () => {
+  // Chrome id format. Raw HID button order on this pad: 0=X, 1=A, 2=B, 3=Y,
+  // 8=Select, 9=Start — feeding it through the standard-layout reading made
+  // physical X act as SNES B.
+  const gamepad = {
+    id: "USB gamepad (Vendor: 081f Product: e401)",
+    mapping: "",
+    buttons: makeButtons([2]),
+    axes: [0, 0, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.a).toBe(true); // physical B = south position
+  expect(state.x).toBe(false);
+  expect(state.y).toBe(false);
+});
+
+it("maps the replica pad's physical X to the north position, not south", () => {
+  const gamepad = {
+    id: "081f-e401-USB gamepad", // Firefox id format
+    mapping: "",
+    buttons: makeButtons([0, 1, 3, 8, 9]),
+    axes: [0, 0, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.x).toBe(true); // physical X (raw 0) = north
+  expect(state.b).toBe(true); // physical A (raw 1) = east
+  expect(state.y).toBe(true); // physical Y (raw 3) = west
+  expect(state.a).toBe(false); // south (physical B, raw 2) not pressed
+  expect(state.select).toBe(true);
+  expect(state.start).toBe(true);
+});
+
+it("does not remap the replica pad when the browser already standard-maps it", () => {
+  const gamepad = {
+    id: "USB gamepad (STANDARD GAMEPAD Vendor: 081f Product: e401)",
+    mapping: "standard",
+    buttons: makeButtons([0]),
+    axes: [0, 0, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.a).toBe(true); // standard b0 = south
+  expect(state.x).toBe(false);
+});
+
 it("selects first connected gamepad", () => {
   const gamepads = [
     null,
