@@ -228,7 +228,32 @@ When writing code that targets or emulates SNES hardware, always verify against 
   scanline wrap (8-channel hvdma), pixel-exactness additionally needs Mesen2's
   CPU-alignment jitter on the write clocks, which a fixed-offset model without
   a halting CPU can only approximate (#3042).
-- **absindx SA-1 conformance ROM automation traps**: the ROMs' `org $0000` result variables (`TestFinished`: 0=Running, 1=Passed, 255=Failed) are accessed by the SNES CPU via direct page with D=0, i.e. they live in **WRAM `$7E0000`** — polling the SA-1 I-RAM mirror at `$003000` instead reads a stale `$AA` left over from the I-RAM mirroring sub-tests. Even at the right address, a naive every-tick poll false-fails: `SA1RamProtectionTest` transiently `EOR #$FF`s its own result byte while probing I-RAM writability, and its SA-1 CPU parks in its post-test idle loop *before* the SNES finishes the trailing `TestBwRamSize` scan and writes the real result. `SA1VersionCodeTest` never reports Passed **even on real hardware** — disassembly of its release build shows `CheckResult` unconditionally taking the failed path (the `INC TestFinished` pass path at `$9EAB` is unreferenced dead code), deliberate since the true version-code value is unknown; treat its FAILED register-dump screen as the expected result. Its open-bus detection scheme is worth knowing: each register is read twice with different residual bus bytes (`LDA $2300,X` leaves operand `$23`; a `REP`-adjusted `LDA $AA,X` reaching the same register leaves `$AA`), so open-bus entries echo `23`/`AA` while real registers repeat their value. Both ROMs misbehave on Mesen2 (documented upstream and confirmed), so goldens must be navigator-approved captures of the emulator's own rendering.
+- **65816 IRQ recognition uses the I flag from BEFORE a flag-write instruction's
+  effect lands** (from #2985): the interrupt logic polls per cycle with the
+  previous cycle's flags (Mesen2 `DetectNmiSignalEdge` -> `PrevIrqSource`,
+  consumed by `CheckForInterrupts` after each instruction). Consequences:
+  CLI/SEI/PLP/REP/SEP change IRQ dispatchability only after the FOLLOWING
+  instruction executes (their flag write lands after the recognition poll),
+  while RTI's mid-instruction P pull IS visible on its remaining cycles
+  (dispatch immediately after RTI), as are BRK/COP/hardware-dispatch I-sets.
+  Real code depends on it: the `CLI ; RTI` epilogue idiom (absindx
+  SA1RamProtectionTest's message wrapper) relies on the pending IRQ dispatching
+  only AFTER the full RTI unwind at the original interrupted context — an
+  emulator sampling the live flag dispatches between the CLI and RTI, nesting
+  interrupt frames hardware never creates and (in that ROM) re-executing the
+  handler with stale state. fullsnes does not document this; Mesen2's
+  SnesCpu.cpp/SnesCpu.Shared.h is the reference. See `Cpu::irq_i_shadow` in
+  src/snes/cpu/cpu.rs for NESER's per-instruction port.
+- **Trace-diff practicalities for cross-CPU (SA-1) bugs** (from #2985): (1) both
+  cores share `cpu.rs`, so temporary dispatch/RTI eprintln hooks interleave both
+  CPUs' lines — log the stack pointer to disambiguate (SNES stack lives in
+  `$01xx`, the SA-1's in I-RAM `$3xxx`). (2) When a traced control flow seems
+  impossible (handlers running twice without dispatch, RTIs from nowhere), dump
+  the actual ROM BYTES at the anomalous PC immediately (LoROM: file offset =
+  `addr - $8000` per 32KB bank) instead of theorizing from the .asm sources —
+  the decisive $81F1=CLI/$81F2=RTI discovery took one hexdump after several
+  wasted deduction rounds. (3) A synchronous GPDMA in a bus test ticks the PPU
+  past scanline 0's HDMA-init point (see the auto-memory note). the ROMs' `org $0000` result variables (`TestFinished`: 0=Running, 1=Passed, 255=Failed) are accessed by the SNES CPU via direct page with D=0, i.e. they live in **WRAM `$7E0000`** — polling the SA-1 I-RAM mirror at `$003000` instead reads a stale `$AA` left over from the I-RAM mirroring sub-tests. Even at the right address, a naive every-tick poll false-fails: `SA1RamProtectionTest` transiently `EOR #$FF`s its own result byte while probing I-RAM writability, and its SA-1 CPU parks in its post-test idle loop *before* the SNES finishes the trailing `TestBwRamSize` scan and writes the real result. `SA1VersionCodeTest` never reports Passed **even on real hardware** — disassembly of its release build shows `CheckResult` unconditionally taking the failed path (the `INC TestFinished` pass path at `$9EAB` is unreferenced dead code), deliberate since the true version-code value is unknown; treat its FAILED register-dump screen as the expected result. Its open-bus detection scheme is worth knowing: each register is read twice with different residual bus bytes (`LDA $2300,X` leaves operand `$23`; a `REP`-adjusted `LDA $AA,X` reaching the same register leaves `$AA`), so open-bus entries echo `23`/`AA` while real registers repeat their value. Both ROMs misbehave on Mesen2 (documented upstream and confirmed), so goldens must be navigator-approved captures of the emulator's own rendering.
 
 ## Testing Methodology for SNES Emulation
 
