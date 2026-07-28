@@ -165,17 +165,66 @@ impl Ppu {
         main: ScreenPixel,
         sub: ScreenPixel,
     ) -> u16 {
-        let mut main_color = main.color;
+        self.compose_half(x, y, main.color, main.source, sub.color)
+    }
+
+    /// Finalize one output pixel: color-window clip to black, the CGADSUB gate from
+    /// `gate_source`, then color math against `operand`.
+    fn compose_half(
+        &self,
+        x: u16,
+        y: u16,
+        color: u16,
+        gate_source: PixelSource,
+        operand: u16,
+    ) -> u16 {
+        let mut color = color;
         if self.force_main_black_at(x, y) {
-            main_color = 0;
+            color = 0;
         }
-        if !self.color_math_source_enabled(main.source) {
-            return main_color;
+        if !self.color_math_source_enabled(gate_source) {
+            return color;
         }
         if !self.color_math_enabled_at(x, y) {
-            return main_color;
+            return color;
         }
-        self.apply_color_math(main_color, sub.color)
+        self.apply_color_math(color, operand)
+    }
+
+    /// Finalize the hires half-pixel pair at native `(x, y)` from the line buffers,
+    /// returning `(even, odd)` output colors (Mesen2 ApplyColorMath, hires branch).
+    pub(super) fn compose_hires_pair(&self, x: u16, y: u16) -> (u16, u16) {
+        let xi = x as usize;
+        let main = self.line_main[xi];
+        let sub = self.line_sub[xi];
+        // When CGWSEL bit 1 is clear the color-math operand is the COLDATA fixed
+        // color for BOTH halves (Mesen2 ApplyColorMathToPixel's !ColorMathAddSubscreen
+        // branch is unconditional).
+        let add_subscreen = self.cgwsel & 0x02 != 0;
+        let fixed_color = self.coldata & 0x7FFF;
+        // Odd/main half: operand is the pre-math sub color at the same x.
+        let main_operand = if add_subscreen {
+            sub.color
+        } else {
+            fixed_color
+        };
+        let odd = self.compose_half(x, y, main.color, main.source, main_operand);
+        // Even/sub half: operand is the finalized main pixel one dot to the left
+        // (black at x = 0), and the math gate follows the main pixel's source at
+        // x - 1 (Mesen2 passes prevX for the sub half of the hires math loop).
+        let prev_main = if x > 0 {
+            self.line_main_final[xi - 1]
+        } else {
+            0
+        };
+        let even_operand = if add_subscreen {
+            prev_main
+        } else {
+            fixed_color
+        };
+        let gate_source = self.line_main[xi.saturating_sub(1)].source;
+        let even = self.compose_half(x, y, sub.color, gate_source, even_operand);
+        (even, odd)
     }
 
     pub(super) fn color_math_enabled_at(&self, x: u16, y: u16) -> bool {
@@ -1004,6 +1053,137 @@ mod tests {
         assert_eq!(ppu.framebuffer[2], 3, "column 2 shows tile column 2");
     }
 
+    /// Mode 5 color-math scene: BG1 (main) solid red 10, BG2 (sub, palette 1) solid
+    /// red 5, sub display enabled. Raw BGR555 asserts keep the math chains visible.
+    fn setup_mode5_color_math(ppu: &mut Ppu) {
+        set_cgram(ppu, 1, 0x000A); // BG1 color 1 = red 10
+        set_cgram(ppu, 5, 0x0005); // BG2 palette 1 color 1 = red 5
+        set_bg_map_base(ppu, 0, 0x000);
+        set_bg_map_base(ppu, 1, 0x400);
+        set_vram_word(ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(ppu, 0x400, 2 | (1 << 10)); // BG2 entry -> char 2, palette 1
+        fill_4bpp_tile(ppu, 0, 1, 1);
+        fill_2bpp_tile(ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x05); // mode 5
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // CGWSEL: add subscreen
+        ppu.write_register(0x2100, 0x0F);
+    }
+
+    #[test]
+    fn hires_color_math_applies_to_odd_main_pixels_using_pre_math_sub() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        ppu.write_register(0x2131, 0x01); // CGADSUB: add, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // Odd (main) columns get main + pre-math sub = 10 + 5 = 15. At native x 1
+        // the post-math even value is 20, so a post-math operand would yield 30.
+        assert_eq!(ppu.framebuffer[1], 15, "main pixel adds the raw sub color");
+        assert_eq!(
+            ppu.framebuffer[3], 15,
+            "later main pixels still use the pre-math sub color"
+        );
+    }
+
+    #[test]
+    fn hires_color_math_applies_to_even_sub_pixels_using_previous_post_math_main() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        ppu.write_register(0x2131, 0x01); // CGADSUB: add, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // Even (sub) columns add the finalized main pixel one dot to the left:
+        // sub 5 + main_final(10 + 5 = 15) = 20. The pre-math main (10) would give 15.
+        assert_eq!(
+            ppu.framebuffer[2], 20,
+            "sub pixel adds the post-math main pixel of the previous dot"
+        );
+    }
+
+    #[test]
+    fn hires_color_math_even_column_at_x0_uses_black_prev_main() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        ppu.write_register(0x2131, 0x41); // CGADSUB: add-half, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // Add-half against the (black) missing previous main pixel: (5 + 0) / 2 = 2.
+        assert_eq!(
+            ppu.framebuffer[0], 2,
+            "the first even column adds black (no previous main pixel)"
+        );
+    }
+
+    #[test]
+    fn hires_color_math_even_gate_uses_previous_main_source() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        // Math enabled for BG2 only: the main pixel (BG1) is ungated, and the even
+        // half-pixel's gate follows the previous MAIN pixel's source (BG1), not the
+        // sub pixel's own layer (BG2) -- so nothing gets math.
+        ppu.write_register(0x2131, 0x02);
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(ppu.framebuffer[1], 10, "main pixel stays raw");
+        assert_eq!(
+            ppu.framebuffer[2], 5,
+            "sub pixel stays raw: its gate is the main source at x-1"
+        );
+    }
+
+    #[test]
+    fn hires_color_math_without_sub_enable_uses_fixed_color_operand() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        ppu.write_register(0x2130, 0x00); // CGWSEL: fixed-color operand
+        ppu.write_register(0x2131, 0x01); // CGADSUB: add, BG1 enabled
+        ppu.write_register(0x2132, 0x80 | 12); // COLDATA: blue 12
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(
+            ppu.framebuffer[1],
+            (12 << 10) | 10,
+            "main pixel adds COLDATA when CGWSEL bit 1 is clear"
+        );
+        // Mesen2's fixed-color branch applies to BOTH halves (ApplyColorMathToPixel:
+        // otherPixel = FixedColor when ColorMathAddSubscreen is clear).
+        assert_eq!(
+            ppu.framebuffer[2],
+            (12 << 10) | 5,
+            "sub pixel adds COLDATA when CGWSEL bit 1 is clear"
+        );
+    }
+
+    #[test]
+    fn pseudo_hires_applies_color_math_to_both_half_pixels() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 1, 0x000A); // BG1 color 1 = red 10
+        set_cgram(&mut ppu, 33, 0x0005); // BG2 color 1 = red 5 (mode 0 region)
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1);
+        set_vram_word(&mut ppu, 0x400, 2);
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x00); // mode 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // CGWSEL: add subscreen
+        ppu.write_register(0x2131, 0x01); // CGADSUB: add, BG1 enabled
+        ppu.write_register(0x2133, 0x08); // pseudo-hires
+        ppu.write_register(0x2100, 0x0F);
+        render_lines(&mut ppu, 1);
+
+        // Pseudo-hires shares the hires math path: odd = 10 + 5 = 15, and the even
+        // column at native x 1 adds the finalized main to its left: 5 + 15 = 20.
+        assert_eq!(ppu.framebuffer[1], 15, "main half-pixel gets color math");
+        assert_eq!(ppu.framebuffer[2], 20, "sub half-pixel gets color math");
+    }
+
     #[test]
     fn true_hires_displays_sub_layers_without_cgwsel_sub_enable() {
         let mut ppu = Ppu::new();
@@ -1785,7 +1965,6 @@ mod tests {
         ppu.write_register(0x2100, 0x0F);
         render_frame(&mut ppu);
 
-        // Main screen lands on the odd output columns; the even column shows the
         // sub screen (backdrop here, since TS is empty).
         let rgb = ppu.screen_snapshot_rgb();
         assert_eq!(

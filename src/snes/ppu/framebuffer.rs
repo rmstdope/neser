@@ -36,10 +36,12 @@ impl Ppu {
         if self.hires_output_enabled() {
             // The sub screen supplies the even (left) half-pixel and the main screen the
             // odd (right) one, for both true hires (modes 5/6) and pseudo-hires (Mesen2
-            // ApplyHiResMode: out[2x] = sub, out[2x+1] = main).
-            self.framebuffer[base] = sub.color;
-            self.framebuffer[base + 1] = main.color;
-            self.line_main_final[x] = main.color;
+            // ApplyHiResMode: out[2x] = sub, out[2x+1] = main), each finalized through
+            // the hires color-math pair.
+            let (even, odd) = self.compose_hires_pair(x as u16, y as u16);
+            self.framebuffer[base] = even;
+            self.framebuffer[base + 1] = odd;
+            self.line_main_final[x] = odd;
         } else {
             let out = self.compose_pixels(x as u16, y as u16, main, sub);
             self.line_main_final[x] = out;
