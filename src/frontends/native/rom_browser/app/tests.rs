@@ -488,6 +488,27 @@ fn legend_shows_controller_buttons_in_gallery_with_controller() {
 }
 
 #[test]
+fn legend_shows_keyboard_keys_in_search_without_controller() {
+    let items = RomBrowserApp::legend_items(true, false, false, false);
+    assert_eq!(
+        items,
+        [("Tab", "Close"), ("Enter", "Select"), ("Type", "Search")]
+    );
+}
+
+#[test]
+fn legend_shows_controller_buttons_in_search_with_controller() {
+    let items = RomBrowserApp::legend_items(true, false, false, true);
+    assert_eq!(items, [("A", "Select"), ("B", "Close")]);
+}
+
+#[test]
+fn legend_shows_controller_buttons_in_filter_panel_with_controller() {
+    let items = RomBrowserApp::legend_items(false, true, false, true);
+    assert_eq!(items, [("↑↓", "Navigate"), ("A", "Toggle"), ("B", "Close")]);
+}
+
+#[test]
 fn legend_shows_keyboard_keys_in_filter_panel_without_controller() {
     let items = RomBrowserApp::legend_items(false, true, false, false);
     assert_eq!(

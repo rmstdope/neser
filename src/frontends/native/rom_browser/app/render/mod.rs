@@ -297,6 +297,7 @@ impl RomBrowserApp {
                     search_anim,
                     display_w,
                     display_h,
+                    controller_connected,
                 );
             }
             if filter_panel_active || filter_panel_anim > 0.0 {
@@ -307,6 +308,7 @@ impl RomBrowserApp {
                     active_platform,
                     min_players_filter,
                     show_favorites_only,
+                    controller_connected,
                     filter_panel_cursor,
                     filter_panel_column,
                     filter_panel_anim,
@@ -442,7 +444,11 @@ impl RomBrowserApp {
         controller_connected: bool,
     ) -> &'static [(&'static str, &'static str)] {
         if search_active {
-            &[("Tab", "Close"), ("Enter", "Launch")]
+            if controller_connected {
+                &[("A", "Select"), ("B", "Close")]
+            } else {
+                &[("Tab", "Close"), ("Enter", "Select"), ("Type", "Search")]
+            }
         } else if filter_panel_active {
             if controller_connected {
                 &[("↑↓", "Navigate"), ("A", "Toggle"), ("B", "Close")]

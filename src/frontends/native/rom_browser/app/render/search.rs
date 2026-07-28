@@ -2,6 +2,7 @@ use super::super::*;
 
 impl RomBrowserApp {
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_search_panel_egui(
         ctx: &egui::Context,
         query: &str,
@@ -11,6 +12,7 @@ impl RomBrowserApp {
         anim: f32,
         display_w: f32,
         display_h: f32,
+        controller_connected: bool,
     ) {
         // Dim background with animated alpha.
         let dim_alpha = (180.0 * anim) as u8;
@@ -177,7 +179,7 @@ impl RomBrowserApp {
                 ui.add_space(12.0);
                 Self::render_button_legend(
                     ui,
-                    &[("Tab", "Close"), ("Enter", "Select"), ("Type", "Search")],
+                    Self::legend_items(true, false, false, controller_connected),
                 );
             });
     }

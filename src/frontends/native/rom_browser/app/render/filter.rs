@@ -9,6 +9,7 @@ impl RomBrowserApp {
         active_platform: Option<Platform>,
         min_players_filter: Option<u32>,
         show_favorites_only: bool,
+        controller_connected: bool,
         cursor: usize,
         column: usize,
         anim: f32,
@@ -161,7 +162,10 @@ impl RomBrowserApp {
                     // Legend at bottom of Platform column.
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                         ui.add_space(8.0);
-                        Self::render_button_legend(ui, &[("A", "Select"), ("B", "Close")]);
+                        Self::render_button_legend(
+                            ui,
+                            Self::legend_items(false, true, false, controller_connected),
+                        );
                     });
                 });
 
