@@ -505,6 +505,20 @@ fn legend_shows_controller_buttons_in_search_with_controller() {
 }
 
 #[test]
+fn gamepad_north_maps_to_back_for_nes_replica_pads() {
+    // NES replica pads share the SNES replica's GUID, so their B button
+    // arrives as North; it must go Back in the browser, like B does.
+    assert_eq!(
+        RomBrowserApp::map_button(gilrs::Button::North),
+        Some(BrowserAction::Back)
+    );
+    assert_eq!(
+        RomBrowserApp::map_button(gilrs::Button::South),
+        Some(BrowserAction::Back)
+    );
+}
+
+#[test]
 fn search_action_closes_search_but_back_does_not() {
     let mut app = test_browser(vec![make_entry("Zelda")]);
     app.search_active = true;

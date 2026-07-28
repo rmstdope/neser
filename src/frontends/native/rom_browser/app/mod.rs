@@ -89,6 +89,7 @@ struct GamepadRepeatState {
 }
 
 /// Actions that can be triggered by gamepad input.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum BrowserAction {
     Up,
     Down,
@@ -98,7 +99,6 @@ enum BrowserAction {
     Back,
     Search,
     Favorite,
-    Detail,
 }
 
 /// ROM browser winit application.
