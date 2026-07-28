@@ -63,10 +63,8 @@ fn test_browser(entries: Vec<RomEntry>) -> RomBrowserApp {
         search_anim: 0.0,
         search_kb_row: 1,
         search_kb_col: 0,
-        genre_filter_active: false,
         available_genres: Vec::new(),
         active_genres: Vec::new(),
-        genre_cursor: 0,
         detail_view_active: false,
         detail_screenshot_index: 0,
         detail_scroll_last_advance: Instant::now(),
@@ -463,7 +461,7 @@ fn platform_filter_narrows_results() {
 
 #[test]
 fn legend_shows_keyboard_keys_in_gallery_without_controller() {
-    let items = RomBrowserApp::legend_items(false, false, false, false, false);
+    let items = RomBrowserApp::legend_items(false, false, false, false);
     assert_eq!(
         items,
         [
@@ -477,7 +475,7 @@ fn legend_shows_keyboard_keys_in_gallery_without_controller() {
 
 #[test]
 fn legend_shows_controller_buttons_in_gallery_with_controller() {
-    let items = RomBrowserApp::legend_items(false, false, false, false, true);
+    let items = RomBrowserApp::legend_items(false, false, false, true);
     assert_eq!(
         items,
         [
@@ -491,7 +489,7 @@ fn legend_shows_controller_buttons_in_gallery_with_controller() {
 
 #[test]
 fn legend_shows_keyboard_keys_in_filter_panel_without_controller() {
-    let items = RomBrowserApp::legend_items(false, false, true, false, false);
+    let items = RomBrowserApp::legend_items(false, true, false, false);
     assert_eq!(
         items,
         [("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
@@ -500,7 +498,7 @@ fn legend_shows_keyboard_keys_in_filter_panel_without_controller() {
 
 #[test]
 fn legend_shows_keyboard_keys_in_detail_view_without_controller() {
-    let items = RomBrowserApp::legend_items(false, false, false, true, false);
+    let items = RomBrowserApp::legend_items(false, false, true, false);
     assert_eq!(
         items,
         [("Enter", "Launch"), ("Space", "Fav"), ("Esc", "Back")]
@@ -509,7 +507,7 @@ fn legend_shows_keyboard_keys_in_detail_view_without_controller() {
 
 #[test]
 fn legend_shows_controller_buttons_in_detail_view_with_controller() {
-    let items = RomBrowserApp::legend_items(false, false, false, true, true);
+    let items = RomBrowserApp::legend_items(false, false, true, true);
     assert_eq!(items, [("A", "Launch"), ("Y", "Fav"), ("B", "Back")]);
 }
 
@@ -581,6 +579,45 @@ fn filter_panel_offers_all_supported_platforms() {
             Platform::Snes
         ]
     );
+}
+
+#[test]
+fn filter_panel_favorites_column_toggles_favorites_only() {
+    let mut fav = make_entry("Zelda");
+    fav.is_favorite = true;
+    let mut app = test_browser(vec![make_entry("Mario"), make_entry("Metroid")]);
+    app.catalog.push(fav);
+    app.catalog[2].is_favorite = true;
+    app.rebuild_filtered();
+    assert_eq!(app.filtered_indices.len(), 3);
+
+    app.filter_panel_active = true;
+    app.filter_panel_column = 3;
+    app.filter_panel_cursor = 0;
+    app.filter_panel_confirm();
+    assert!(app.show_favorites_only);
+    assert_eq!(app.filtered_indices.len(), 1);
+
+    app.filter_panel_confirm();
+    assert!(!app.show_favorites_only);
+    assert_eq!(app.filtered_indices.len(), 3);
+}
+
+#[test]
+fn filter_panel_move_right_reaches_favorites_column() {
+    let mut app = test_browser(vec![make_entry("Zelda")]);
+    app.available_genres = vec!["Action".to_string()];
+    app.filter_panel_active = true;
+    app.filter_panel_column = 2;
+    app.filter_panel_cursor = 0;
+
+    app.filter_panel_move_right();
+    assert_eq!(app.filter_panel_column, 3);
+    assert_eq!(app.filter_panel_cursor, 0);
+
+    // Favorites is the last column.
+    app.filter_panel_move_right();
+    assert_eq!(app.filter_panel_column, 3);
 }
 
 #[test]
@@ -725,9 +762,11 @@ fn filter_panel_left_right_switches_column() {
     app.filter_panel_move_right();
     assert_eq!(app.filter_panel_column, 2);
 
-    // Can't go right from genre column
+    // Can go right to the favorites column (column 3), which is the last.
     app.filter_panel_move_right();
-    assert_eq!(app.filter_panel_column, 2);
+    assert_eq!(app.filter_panel_column, 3);
+    app.filter_panel_move_right();
+    assert_eq!(app.filter_panel_column, 3);
 }
 
 #[test]

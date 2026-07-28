@@ -80,7 +80,6 @@ impl RomBrowserApp {
             .gilrs
             .as_ref()
             .is_some_and(|g| g.gamepads().next().is_some());
-        let genre_filter_active = self.genre_filter_active;
         let filter_panel_active = self.filter_panel_active;
         let filter_panel_cursor = self.filter_panel_cursor;
         let filter_panel_column = self.filter_panel_column;
@@ -110,7 +109,6 @@ impl RomBrowserApp {
 
         let available_genres = self.available_genres.clone();
         let active_genres = self.active_genres.clone();
-        let genre_cursor = self.genre_cursor;
         let detail_view_active = self.detail_view_active;
         if detail_view_active {
             self.advance_screenshot_auto_scroll();
@@ -243,7 +241,6 @@ impl RomBrowserApp {
                                     ui,
                                     Self::legend_items(
                                         search_active,
-                                        genre_filter_active,
                                         filter_panel_active,
                                         detail_view_active,
                                         controller_connected,
@@ -302,16 +299,6 @@ impl RomBrowserApp {
                     display_h,
                 );
             }
-            if genre_filter_active && !available_genres.is_empty() {
-                Self::render_genre_filter_egui(
-                    ui.ctx(),
-                    &available_genres,
-                    &active_genres,
-                    genre_cursor,
-                    display_w,
-                    display_h,
-                );
-            }
             if filter_panel_active || filter_panel_anim > 0.0 {
                 Self::render_filter_panel_egui(
                     ui.ctx(),
@@ -319,6 +306,7 @@ impl RomBrowserApp {
                     &active_genres,
                     active_platform,
                     min_players_filter,
+                    show_favorites_only,
                     filter_panel_cursor,
                     filter_panel_column,
                     filter_panel_anim,
@@ -449,15 +437,12 @@ impl RomBrowserApp {
     /// labels when a controller is connected, keyboard keys otherwise.
     pub(in super::super) fn legend_items(
         search_active: bool,
-        genre_filter_active: bool,
         filter_panel_active: bool,
         detail_view_active: bool,
         controller_connected: bool,
     ) -> &'static [(&'static str, &'static str)] {
         if search_active {
             &[("Tab", "Close"), ("Enter", "Launch")]
-        } else if genre_filter_active {
-            &[("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
         } else if filter_panel_active {
             if controller_connected {
                 &[("↑↓", "Navigate"), ("A", "Toggle"), ("B", "Close")]

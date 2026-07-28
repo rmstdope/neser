@@ -14,7 +14,6 @@ impl RomBrowserApp {
     /// Open the search panel overlay.
     pub(super) fn open_search_panel(&mut self) {
         self.filter_panel_active = false;
-        self.genre_filter_active = false;
         self.detail_view_active = false;
         self.search_active = true;
         self.search_kb_row = 1;
@@ -89,7 +88,6 @@ impl RomBrowserApp {
     /// Open the filter panel overlay.
     pub(super) fn open_filter_panel(&mut self) {
         self.search_active = false;
-        self.genre_filter_active = false;
         self.detail_view_active = false;
         self.filter_panel_active = true;
         self.filter_panel_cursor = 0;
@@ -126,6 +124,11 @@ impl RomBrowserApp {
                         self.min_players_filter = value;
                     }
                 }
+            }
+            3 => {
+                // Favorites column
+                self.show_favorites_only = !self.show_favorites_only;
+                self.rebuild_filtered();
             }
             2 => {
                 // Genre column
@@ -165,6 +168,8 @@ impl RomBrowserApp {
             0 => Self::PLATFORMS.len(),
             1 => Self::PLAYER_OPTIONS.len(),
             2 => self.available_genres.len(),
+            // Favorites column: a single "favorites only" toggle.
+            3 => 1,
             _ => 0,
         }
     }
@@ -200,31 +205,6 @@ impl RomBrowserApp {
                 BrowserAction::Left => self.search_kb_move_left(),
                 BrowserAction::Right => self.search_kb_move_right(),
                 BrowserAction::Confirm => self.search_kb_confirm(),
-                _ => {}
-            }
-        } else if self.genre_filter_active {
-            match action {
-                BrowserAction::Back => self.genre_filter_active = false,
-                BrowserAction::Up => {
-                    if self.genre_cursor > 0 {
-                        self.genre_cursor -= 1;
-                    }
-                }
-                BrowserAction::Down => {
-                    if self.genre_cursor + 1 < self.available_genres.len() {
-                        self.genre_cursor += 1;
-                    }
-                }
-                BrowserAction::Confirm => {
-                    if let Some(genre) = self.available_genres.get(self.genre_cursor).cloned() {
-                        if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
-                            self.active_genres.remove(pos);
-                        } else {
-                            self.active_genres.push(genre);
-                        }
-                        self.rebuild_filtered();
-                    }
-                }
                 _ => {}
             }
         } else if self.filter_panel_active {
@@ -278,10 +258,6 @@ impl RomBrowserApp {
                 BrowserAction::Favorite => self.toggle_favorite(),
                 BrowserAction::Detail => {
                     self.open_detail_view();
-                }
-                BrowserAction::GenreFilter => {
-                    self.genre_filter_active = true;
-                    self.genre_cursor = 0;
                 }
             }
         }

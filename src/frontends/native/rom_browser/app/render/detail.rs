@@ -272,13 +272,7 @@ impl RomBrowserApp {
                             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                                 Self::render_button_legend(
                                     ui,
-                                    Self::legend_items(
-                                        false,
-                                        false,
-                                        false,
-                                        true,
-                                        controller_connected,
-                                    ),
+                                    Self::legend_items(false, false, true, controller_connected),
                                 );
                             });
                         });

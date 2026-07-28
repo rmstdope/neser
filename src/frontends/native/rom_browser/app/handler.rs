@@ -139,7 +139,6 @@ impl ApplicationHandler for RomBrowserApp {
                     } else {
                         // Close any other overlay first.
                         self.filter_panel_active = false;
-                        self.genre_filter_active = false;
                         self.detail_view_active = false;
                         self.open_search_panel();
                     }
@@ -176,38 +175,6 @@ impl ApplicationHandler for RomBrowserApp {
                         Key::Character(ref ch) => {
                             self.search_query.push_str(ch.as_str());
                             self.rebuild_filtered();
-                        }
-                        _ => {}
-                    }
-                } else if self.genre_filter_active {
-                    // Genre filter mode input handling.
-                    match event.logical_key {
-                        Key::Named(NamedKey::Escape) => {
-                            self.genre_filter_active = false;
-                        }
-                        Key::Named(NamedKey::ArrowUp) => {
-                            if self.genre_cursor > 0 {
-                                self.genre_cursor -= 1;
-                            }
-                        }
-                        Key::Named(NamedKey::ArrowDown) => {
-                            if self.genre_cursor + 1 < self.available_genres.len() {
-                                self.genre_cursor += 1;
-                            }
-                        }
-                        Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
-                            if let Some(genre) =
-                                self.available_genres.get(self.genre_cursor).cloned()
-                            {
-                                if let Some(pos) =
-                                    self.active_genres.iter().position(|g| *g == genre)
-                                {
-                                    self.active_genres.remove(pos);
-                                } else {
-                                    self.active_genres.push(genre);
-                                }
-                                self.rebuild_filtered();
-                            }
                         }
                         _ => {}
                     }
@@ -292,10 +259,6 @@ impl ApplicationHandler for RomBrowserApp {
                         }
                         Key::Character(ref ch) if ch.as_str() == " " => {
                             self.toggle_favorite();
-                        }
-                        Key::Character(ref ch) if ch.as_str() == "F" && !ctrl => {
-                            self.show_favorites_only = !self.show_favorites_only;
-                            self.rebuild_filtered();
                         }
                         _ => {}
                     }

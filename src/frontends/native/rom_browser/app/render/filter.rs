@@ -8,6 +8,7 @@ impl RomBrowserApp {
         active_genres: &[String],
         active_platform: Option<Platform>,
         min_players_filter: Option<u32>,
+        show_favorites_only: bool,
         cursor: usize,
         column: usize,
         anim: f32,
@@ -102,13 +103,14 @@ impl RomBrowserApp {
                 );
                 ui.add_space(16.0);
 
-                // Three-column layout with custom widths: Platform(25%) | Players(20%) | Genre(55%)
+                // Column layout: Platform(20%) | Players(15%) | Genre(48%) | Favs(17%)
                 let total_w = ui.available_width();
                 let spacing = ui.spacing().item_spacing.x;
-                let usable = total_w - spacing * 2.0;
-                let col0_w = usable * 0.25;
-                let col1_w = usable * 0.20;
-                let col2_w = usable * 0.55;
+                let usable = total_w - spacing * 3.0;
+                let col0_w = usable * 0.20;
+                let col1_w = usable * 0.15;
+                let col2_w = usable * 0.48;
+                let col3_w = usable * 0.17;
                 let top = ui.cursor().min;
                 let col_h = ui.available_height();
 
@@ -120,6 +122,13 @@ impl RomBrowserApp {
                 let col2_rect = egui::Rect::from_min_size(
                     egui::pos2(top.x + col0_w + spacing + col1_w + spacing, top.y),
                     egui::vec2(col2_w, col_h),
+                );
+                let col3_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        top.x + col0_w + spacing + col1_w + spacing + col2_w + spacing,
+                        top.y,
+                    ),
+                    egui::vec2(col3_w, col_h),
                 );
 
                 // ── Column 0: Platform ──
@@ -223,6 +232,33 @@ impl RomBrowserApp {
                                 }
                             }
                         });
+                });
+
+                // ── Column 3: Favorites ──
+                ui.scope_builder(egui::UiBuilder::new().max_rect(col3_rect), |ui| {
+                    Self::render_filter_section_header(ui, "FAVS", section_bg);
+                    ui.add_space(8.0);
+
+                    let is_cursor = column == 3 && cursor == 0;
+                    let mut checked = show_favorites_only;
+                    let item_rect = ui
+                        .horizontal(|ui| {
+                            Self::paint_cursor_arrow(ui, is_cursor, accent);
+                            ui.checkbox(
+                                &mut checked,
+                                egui::RichText::new("\u{2665} Only").size(20.0),
+                            );
+                        })
+                        .response
+                        .rect;
+
+                    if is_cursor {
+                        ui.painter().rect_filled(
+                            item_rect.expand2(egui::vec2(4.0, 1.0)),
+                            corner_r,
+                            accent.linear_multiply(0.12),
+                        );
+                    }
                 });
             });
     }
