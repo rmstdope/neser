@@ -81,8 +81,19 @@ SNES integration tests live under `src/snes/integration_tests/`. Run them
 during development with:
 
 ```bash
-./scripts/test-dir.sh src/snes
+./scripts/test-dir.sh src/snes                    # unit + committed integration subsets
+./scripts/test-dir.sh src/snes --skip-integration # unit tests only (fast iteration)
 ```
+
+`--skip-integration` skips the `snes::integration_tests` module (all
+ROM/vector suites below) along with the other consoles' integration modules.
+Run the full `src/snes` selection before creating a PR.
+
+CI runs the SNES suites whenever `src/snes/**` or
+`roms/snes/automated_tests/**` changes (including bumps of the
+`snes_test_roms` submodule pointer); cross-cutting `src/platform` or
+crate-root changes run the whole test suite. Only the committed subsets run
+in CI — no optional corpus is required.
 
 Test suites:
 
@@ -231,6 +242,43 @@ Test suites:
   (sample rate, warmup/window lengths, fixture source, review note) inline
   in the test source.
 
+### Optional full ProcessorTests corpora
+
+The ProcessorTests suites run committed vector subsets
+(`roms/snes/automated_tests/processor_tests/*/v1`). The full upstream
+corpora are intentionally git-ignored, local-only, and never required by
+CI. Fetch them with `scripts/refresh_65816_processor_tests_subset.sh` /
+`scripts/refresh_spc700_processor_tests_subset.sh`; once files exist under
+`.../full/v1`, they transparently override same-named committed subset
+files on the next test run. An `#[ignore]`d debug helper additionally runs
+an arbitrary external SPC700 vector set via
+`NESER_SPC700_EXTERNAL_VECTORS_ROOT`. The subset-regeneration flow and
+provenance rules are in
+[docs/SNES_TEST_ASSET_POLICY.md](docs/SNES_TEST_ASSET_POLICY.md).
+
+### Baseline (golden) approval workflow
+
+Screen and audio goldens are compact committed CRCs approved from review
+artifacts; the artifacts themselves live under the git-ignored `target/`
+directory and are never committed. To approve a new or changed golden:
+
+1. Run the test with `NESER_CAPTURE_SCREEN=1` to write a PNG per test under
+   `target/snes_test_captures/<suite>/` (each suite's source file documents
+   its specific recording steps).
+2. Capture the Mesen2 ground truth for the same ROM/frame (headless
+   `--testRunner` with a Lua screenshot script). Always pass
+   `--Video.VideoFilter=None --Video.AspectRatio=NoStretching
+   --snes.disableFrameSkipping=true` — without the frame-skip switch
+   Mesen2's testRunner renders only every other frame and screenshots of
+   animated content show stale frames (found in #2990); the video overrides
+   keep personal Mesen2 config from rescaling or filtering the capture.
+3. Pixel-diff the two captures programmatically (e.g. with PIL). Never
+   approve a golden from a visual comparison alone — eyeballing has
+   repeatedly missed real divergences.
+4. Only after a 0-pixel diff (or a navigator-reviewed, documented
+   deviation), embed the approved `screen_crc32()` value in the test and
+   note the approval basis.
+
 Most ROM-based suites report pass/fail either through a text shell
 (blargg/gilyon) or by rendering a known-good screen; `rom_runner.rs` provides
 the shared headless runner (tick/frame budgets, WRAM-marker and bus-byte
@@ -239,14 +287,8 @@ rendered screen CRC32 against an approved golden. Interactive ROMs can be
 driven deterministically with `RunConfig::with_input_script`: a sorted list
 of frame-stamped controller-1 button edges applied as the frame counter
 advances (see `byuu_test_oam_tests.rs` for the script-builder pattern and
-the Mesen2 replay recipe used to approve its goldens). Set
-`NESER_CAPTURE_SCREEN=1` to write a PNG per test under
-`target/snes_test_captures/<suite>/` when approving a new golden; each
-suite's own source file documents how to record the result. When comparing
-against Mesen2 headless captures, always pass `--Video.VideoFilter=None
---Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true` -- without
-the frame-skip switch Mesen2's testRunner renders only every other frame and
-screenshots of animated content show stale frames (found in #2990).
+the Mesen2 replay recipe used to approve its goldens). New and changed
+goldens are approved through the workflow above.
 
 Audio goldens follow the same approval workflow with
 `NESER_CAPTURE_AUDIO=1`, which writes a 16-bit stereo 32 kHz WAV per test

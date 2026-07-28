@@ -24,7 +24,12 @@ jobs:
       nes: ${{ steps.filter.outputs.nes }}
       gb: ${{ steps.filter.outputs.gb }}
       gba: ${{ steps.filter.outputs.gba }}
+      snes: ${{ steps.filter.outputs.snes }}
+      nes_test_assets: ${{ steps.filter.outputs.nes_test_assets }}
+      gb_test_assets: ${{ steps.filter.outputs.gb_test_assets }}
       gba_test_assets: ${{ steps.filter.outputs.gba_test_assets }}
+      snes_test_assets: ${{ steps.filter.outputs.snes_test_assets }}
+      test_assets: ${{ steps.filter.outputs.nes_test_assets == 'true' || steps.filter.outputs.gb_test_assets == 'true' || steps.filter.outputs.gba_test_assets == 'true' || steps.filter.outputs.snes_test_assets == 'true' }}
       platform: ${{ steps.filter.outputs.platform }}
       root_rust: ${{ steps.filter.outputs.root_rust }}
 
@@ -66,9 +71,18 @@ jobs:
               - 'src/gb/**'
             gba:
               - 'src/gba/**'
+            snes:
+              - 'src/snes/**'
+            nes_test_assets:
+              - 'roms/nes/automated_tests/**'
+            gb_test_assets:
+              - 'roms/gb/automated_tests/**'
             gba_test_assets:
-              - 'roms/gba/automated_tests/gba-tests'
-              - 'roms/gba/automated_tests/gba-tests/**'
+              - 'roms/gba/automated_tests/**'
+            snes_test_assets:
+              # Bare path entry detects submodule (gitlink) pointer bumps.
+              - 'roms/snes/automated_tests/snes_test_roms'
+              - 'roms/snes/automated_tests/**'
             platform:
               - 'src/platform/**'
             root_rust:
@@ -104,7 +118,7 @@ jobs:
   rust-test-build:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_call'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.test_assets == 'true' || github.event_name == 'workflow_call'
 
     steps:
       - uses: actions/checkout@v6
@@ -137,7 +151,7 @@ jobs:
   rust-test-run:
     runs-on: ubuntu-latest
     needs: [changes, rust-test-build]
-    if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_call'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.test_assets == 'true' || github.event_name == 'workflow_call'
     strategy:
       fail-fast: false
       matrix:
@@ -168,7 +182,11 @@ jobs:
           CHANGED_NES: ${{ needs.changes.outputs.nes }}
           CHANGED_GB: ${{ needs.changes.outputs.gb }}
           CHANGED_GBA: ${{ needs.changes.outputs.gba }}
+          CHANGED_SNES: ${{ needs.changes.outputs.snes }}
+          CHANGED_NES_TEST_ASSETS: ${{ needs.changes.outputs.nes_test_assets }}
+          CHANGED_GB_TEST_ASSETS: ${{ needs.changes.outputs.gb_test_assets }}
           CHANGED_GBA_TEST_ASSETS: ${{ needs.changes.outputs.gba_test_assets }}
+          CHANGED_SNES_TEST_ASSETS: ${{ needs.changes.outputs.snes_test_assets }}
           CHANGED_PLATFORM: ${{ needs.changes.outputs.platform }}
           CHANGED_ROOT: ${{ needs.changes.outputs.root_rust }}
         run: |
@@ -179,21 +197,22 @@ jobs:
             echo "Running all tests (platform or root change detected)"
           else
             FILTER=""
-            [[ "$CHANGED_NES" == "true" ]] && FILTER="${FILTER} nes::"
-            [[ "$CHANGED_GB" == "true" ]] && FILTER="${FILTER} gb::"
+            [[ "$CHANGED_NES" == "true" || "$CHANGED_NES_TEST_ASSETS" == "true" ]] && FILTER="${FILTER} nes::"
+            [[ "$CHANGED_GB" == "true" || "$CHANGED_GB_TEST_ASSETS" == "true" ]] && FILTER="${FILTER} gb::"
             [[ "$CHANGED_GBA" == "true" || "$CHANGED_GBA_TEST_ASSETS" == "true" ]] && FILTER="${FILTER} gba::"
+            [[ "$CHANGED_SNES" == "true" || "$CHANGED_SNES_TEST_ASSETS" == "true" ]] && FILTER="${FILTER} snes::"
             FILTER="$(echo "$FILTER" | xargs)"
             if [[ -n "$FILTER" ]]; then
               echo "mode=filter" >> "$GITHUB_OUTPUT"
               echo "filter=${FILTER}" >> "$GITHUB_OUTPUT"
               echo "Filtered run: '${FILTER}' (includes those areas' integration tests)"
             else
-              # Rust changed but no area filter matched (e.g. snes/frontends):
-              # run all unit tests but skip NES/GBA integration, mirroring the
-              # previous `--skip nes::integration_tests --skip gba::integration_tests`.
+              # Rust changed but no area filter matched (e.g. frontends):
+              # run all unit tests but skip every console's integration tests,
+              # mirroring scripts/test-dir.sh --skip-integration.
               echo "mode=unit" >> "$GITHUB_OUTPUT"
               echo "filter=" >> "$GITHUB_OUTPUT"
-              echo "Running all unit tests (excluding NES/GBA integration)"
+              echo "Running all unit tests (excluding NES/GB/GBA/SNES integration)"
             fi
           fi
       - name: Run tests (shard ${{ matrix.shard }}/4)
@@ -211,7 +230,7 @@ jobs:
             cargo nextest run $ARCHIVE --partition "$PARTITION" $FILTER
           else
             cargo nextest run $ARCHIVE --partition "$PARTITION" \
-              -E 'not (test(nes::integration_tests) | test(gba::integration_tests))'
+              -E 'not (test(nes::integration_tests) | test(gb::integration_tests) | test(gba::integration_tests) | test(snes::integration_tests))'
           fi
 
   rust-lint-pr:
