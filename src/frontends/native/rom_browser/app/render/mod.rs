@@ -580,14 +580,16 @@ impl RomBrowserApp {
     }
 
     /// Get the outline colour for a button pill based on standard gamepad colours.
-    fn button_pill_color(btn: &str) -> egui::Color32 {
+    pub(in super::super) fn button_pill_color(btn: &str) -> egui::Color32 {
         match btn {
             "A" => theme::BUTTON_COLOR_A,
             "B" => theme::BUTTON_COLOR_B,
             "X" => theme::BUTTON_COLOR_X,
             "Y" => theme::BUTTON_COLOR_Y,
             "Select" | "Start" => egui::Color32::from_rgb(160, 160, 175),
-            _ => theme::BUTTON_PILL_BG,
+            // Keyboard keys and other labels: white for contrast against
+            // the grey legend item background.
+            _ => theme::BUTTON_PILL_TEXT,
         }
     }
 

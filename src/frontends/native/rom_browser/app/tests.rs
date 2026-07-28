@@ -511,6 +511,24 @@ fn legend_shows_controller_buttons_in_detail_view_with_controller() {
 }
 
 #[test]
+fn keyboard_key_pills_are_white_for_visibility() {
+    // Keyboard keys have no gamepad button color and fell back to a dark
+    // grey that was near-invisible on the grey legend background.
+    for key in ["Enter", "Esc", "Space", "Tab", "F", "↑↓"] {
+        assert_eq!(
+            RomBrowserApp::button_pill_color(key),
+            egui::Color32::WHITE,
+            "pill for {key} must be white on the grey legend background"
+        );
+    }
+    // Gamepad buttons keep their dedicated colors.
+    assert_eq!(
+        RomBrowserApp::button_pill_color("A"),
+        crate::frontends::native::rom_browser::theme::BUTTON_COLOR_A
+    );
+}
+
+#[test]
 fn new_browser_defaults_to_no_platform_filter() {
     let app = RomBrowserApp::new(crate::platform::app_context::AppContext::new().into_shared());
     assert_eq!(
