@@ -20,10 +20,10 @@
 //! `8x8BGMap8BPP32x32.sfc` is deliberately left un-automated: it scrolls its
 //! map diagonally forever, synced by a $4210 poll loop whose reads race the
 //! vblank flag. Since #2990 NESER reproduces Mesen2's +2,+1 double-step
-//! cadence pixel-exactly, but at a constant +3 frame offset acquired during
-//! the demo's DMA-heavy init because the DRAM-refresh stall is not yet paid
-//! during DMA -- tracked as #2985, whose fix should make the frame-120
-//! Mesen2-derived golden 0xA89D_7D64 match.
+//! cadence pixel-exactly, at a constant init-time frame offset: #2985's
+//! DRAM-refresh-stall-during-DMA fix shrank it from +3 to +1 (NESER frame
+//! 120 is a 0-px match for Mesen2 frame 119). The residual frame comes from
+//! the remaining DMA write-clock/CPU-alignment differences tracked in #3042.
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;

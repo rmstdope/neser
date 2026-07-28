@@ -1179,13 +1179,20 @@ impl DmaABus for SnesSystemBus {
         // Advance the PPU/APU/input while the DMA controller owns the bus. HDMA
         // triggers are deliberately not processed here: `self.dma` is `mem::take`n
         // during a transfer, so `check_hdma_triggers` would operate on an empty
-        // controller (HDMA-during-DMA remains unmodeled, as before). The DRAM-refresh
-        // stall is also not paid here yet: Mesen2 does process it mid-transfer (its
-        // DMA clocks through `Exec()`), but enabling it shifts SNES<->SA-1 phase
-        // alignment in a way that trips a latent handshake bug (absindx
-        // SA1RamProtectionTest TEST ID 160 regresses from Passed) -- deferred to #2985.
+        // controller (HDMA-during-DMA remains unmodeled, as before). The
+        // DRAM-refresh stall IS paid mid-transfer (#2985, matching Mesen2's
+        // `SnesMemoryManager::Exec()`): a transfer crossing the once-per-scanline
+        // refresh trigger takes 40 extra master clocks, ticking the whole bus so
+        // every device stays on the same timeline (see `Ppu::tick`'s stall doc).
+        // (Enabling this was long blocked by the CLI;RTI recognition-delay defect
+        // it exposed in the SNES<->SA-1 handshake -- fixed alongside #2985.)
         for _ in 0..master_clocks {
             self.tick_one_master_clock();
+            if self.ppu.borrow_mut().dram_refresh_due() {
+                for _ in 0..DRAM_REFRESH_STOLEN_CLOCKS {
+                    self.tick_one_master_clock();
+                }
+            }
         }
     }
 
@@ -2036,6 +2043,38 @@ mod tests {
         while bus.ppu.borrow().total_master_clocks() < target {
             bus.tick();
         }
+    }
+
+    #[test]
+    fn general_purpose_dma_pays_the_dram_refresh_stall() {
+        // Mesen2 clocks DMA through SnesMemoryManager::Exec(), which processes the
+        // DRAM-refresh event mid-transfer: a transfer crossing the once-per-line
+        // refresh trigger takes 40 extra master clocks (#2985). A 100-byte DMA
+        // started at line clock 0 crosses exactly one trigger:
+        // 16 (setup) + 8 (channel) + 100*8 (bytes) + 40 (refresh) = 864.
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        set_wmadd_200(&mut bus);
+        for i in 0..100u32 {
+            bus.write(0x7E4000 + i, (i & 0xFF) as u8);
+        }
+        bus.write(0x004300, 0x00); // A->B, mode 0
+        bus.write(0x004301, 0x80); // -> WMDATA $2180
+        bus.write(0x004302, 0x00); // A addr $7E4000
+        bus.write(0x004303, 0x40);
+        bus.write(0x004304, 0x7E);
+        bus.write(0x004305, 100); // count
+        bus.write(0x004306, 0x00);
+
+        let before = bus.ppu.borrow().total_master_clocks();
+        bus.write(0x00420B, 0x01);
+        let consumed = bus.ppu.borrow().total_master_clocks() - before;
+
+        assert_eq!(
+            consumed, 864,
+            "a 100-byte DMA crossing one refresh trigger pays the 40-clock stall"
+        );
+        assert_eq!(bus.read(0x7E0200), 0x00, "transferred bytes landed");
+        assert_eq!(bus.read(0x7E0263), 0x63, "all 100 bytes landed");
     }
 
     /// Point WMDATA's auto-increment pointer at $000200.
