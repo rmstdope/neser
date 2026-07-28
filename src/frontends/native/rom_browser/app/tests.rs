@@ -462,6 +462,15 @@ fn platform_filter_narrows_results() {
 }
 
 #[test]
+fn new_browser_defaults_to_no_platform_filter() {
+    let app = RomBrowserApp::new(crate::platform::app_context::AppContext::new().into_shared());
+    assert_eq!(
+        app.active_platform, None,
+        "browser must start unfiltered, showing all platforms"
+    );
+}
+
+#[test]
 fn platform_filter_gba_and_snes_narrow_results() {
     let mut nes = make_entry("Zelda");
     nes.platform = Platform::Nes;

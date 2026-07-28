@@ -258,7 +258,7 @@ impl RomBrowserApp {
             filter_panel_anim: 0.0,
             filter_panel_cursor: 0,
             filter_panel_column: 0,
-            active_platform: Some(crate::platform::catalog::Platform::Nes),
+            active_platform: None,
             min_players_filter: None,
             favorites: Favorites::load(&favorites_path),
             show_favorites_only: false,
