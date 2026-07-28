@@ -9,6 +9,10 @@ use crate::snes::input::InputPortsState;
 
 pub const SNES_SAVESTATE_VERSION: u32 = 2;
 
+fn default_irq_i_shadow() -> bool {
+    true
+}
+
 fn default_dma_regs() -> Vec<u8> {
     vec![0; 0x80]
 }
@@ -113,6 +117,9 @@ pub struct SnesCpuState {
     pub memory_bus_cycles: u8,
     #[serde(default)]
     pub irq_lock_step: bool,
+    /// See Cpu::irq_i_shadow; defaults to true (I-set at reset) for older saves.
+    #[serde(default = "default_irq_i_shadow")]
+    pub irq_i_shadow: bool,
     #[serde(default)]
     pub block_move_state: Option<SnesBlockMoveState>,
 }

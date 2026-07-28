@@ -119,6 +119,15 @@ pub struct Cpu<B: SnesBus> {
     /// specific hardware events (e.g. writes to `$4200` and DMA start via `$420B`).
     irq_lock_step: bool,
 
+    /// The I flag value the IRQ recognition logic sees, sampled per the 65816's
+    /// pre-effect rule: CLI/SEI/PLP/REP/SEP change I only for the poll AFTER the
+    /// following instruction (their flag write lands after the recognition cycle),
+    /// while RTI's mid-instruction P pull and the hardware interrupt sequences are
+    /// visible immediately (Mesen2 DetectNmiSignalEdge `PrevIrqSource`). Without
+    /// this, a pending IRQ dispatches between a CLI;RTI epilogue pair, nesting
+    /// frames real hardware never creates (#2985, absindx SA1RamProtectionTest).
+    irq_i_shadow: bool,
+
     /// In-progress MVN/MVP transfer state. When present, each `step()` performs one
     /// transfer unit and keeps architectural PC at the post-operand address.
     block_move_state: Option<BlockMoveState>,
@@ -150,6 +159,7 @@ impl<B: SnesBus> Cpu<B> {
             fast_rom: false,
             memory_bus_cycles: 0,
             irq_lock_step: false,
+            irq_i_shadow: true,
             block_move_state: None,
             bus,
         }
@@ -298,6 +308,7 @@ impl<B: SnesBus> Cpu<B> {
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
             irq_lock_step: self.irq_lock_step,
+            irq_i_shadow: self.irq_i_shadow,
             block_move_state: self.block_move_state.map(|state| SnesBlockMoveState {
                 dst_bank: state.dst_bank,
                 src_bank: state.src_bank,
@@ -329,6 +340,7 @@ impl<B: SnesBus> Cpu<B> {
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
         self.irq_lock_step = state.irq_lock_step;
+        self.irq_i_shadow = state.irq_i_shadow;
         self.block_move_state = state.block_move_state.map(|state| BlockMoveState {
             dst_bank: state.dst_bank,
             src_bank: state.src_bank,
@@ -434,6 +446,7 @@ impl<B: SnesBus> Cpu<B> {
         self.irq_pending = false;
         self.abort_pending = false;
         self.irq_lock_step = false;
+        self.irq_i_shadow = true;
         for _ in 0..RESET_STARTUP_DELAY_CLOCKS {
             self.bus.tick();
         }
@@ -487,6 +500,10 @@ impl<B: SnesBus> Cpu<B> {
 
     /// Set interrupt disable flag.
     pub fn set_flag_i(&mut self, value: bool) {
+        // Out-of-band pokes (tests, interrupt sequences) are recognition-visible
+        // immediately; for CLI/SEI/PLP/REP/SEP the post-instruction shadow update
+        // in step() overrides this with the pre-effect value afterwards.
+        self.irq_i_shadow = value;
         if value {
             self.p |= FLAG_INTERRUPT;
         } else {
@@ -661,7 +678,7 @@ impl<B: SnesBus> Cpu<B> {
                 .tick_internal_cycles_for(base)
                 .saturating_add(wai_wake_cycles);
         }
-        if !interrupts_locked && irq_line_asserted && !self.flag_i() {
+        if !interrupts_locked && irq_line_asserted && !self.irq_i_shadow {
             // IRQ is level-triggered: do NOT clear irq_pending here; caller must deassert
             let base = self.dispatch_irq();
             return self
@@ -670,6 +687,7 @@ impl<B: SnesBus> Cpu<B> {
         }
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
+        let i_before = self.flag_i();
         let opcode = self.fetch_byte();
         if crate::platform::debugging::cpu_trace_level() >= 1 {
             let operands = self.exec_trace_operands(opcode);
@@ -932,6 +950,15 @@ impl<B: SnesBus> Cpu<B> {
             0xFD => self.op_sbc_abs_x(),
             0xFE => self.op_inc_abs_x(),
             0xFF => self.op_sbc_abs_long_x(),
+        };
+
+        // 65816 IRQ recognition pre-effect rule: CLI/SEI/PLP/REP/SEP flag writes
+        // land after the recognition poll, so their I change is dispatch-visible
+        // only after the NEXT instruction; everything else (incl. RTI's restored
+        // P and BRK/COP's I set) is visible immediately.
+        self.irq_i_shadow = match opcode {
+            0x58 | 0x78 | 0x28 | 0xC2 | 0xE2 => i_before,
+            _ => self.flag_i(),
         };
         let total_bus_cycles = base + self.extra_cycles;
 
@@ -4021,6 +4048,7 @@ impl<B: SnesBus> Cpu<B> {
             self.push8(self.p & !FLAG_INDEX_WIDTH); // B=0 for hardware interrupts
             self.pbr = 0x00;
             self.set_flag_i(true);
+            self.irq_i_shadow = true;
             self.set_flag_d(false);
             let lo = self.read8(emu_vector) as u16;
             let hi = self.read8(emu_vector + 1) as u16;
@@ -4034,6 +4062,7 @@ impl<B: SnesBus> Cpu<B> {
             self.push8(self.p);
             self.pbr = 0x00;
             self.set_flag_i(true);
+            self.irq_i_shadow = true;
             self.set_flag_d(false);
             let lo = self.read8(native_vector) as u16;
             let hi = self.read8(native_vector + 1) as u16;
@@ -10637,6 +10666,118 @@ mod interrupt_dispatch_tests {
     }
 
     #[test]
+    fn irq_after_cli_executes_one_more_instruction_before_dispatch() {
+        // 65816 IRQ recognition samples the I flag on the cycle BEFORE it takes
+        // effect: CLI's clear only becomes dispatch-visible after the FOLLOWING
+        // instruction (Mesen2 DetectNmiSignalEdge PrevIrqSource; classic 6502
+        // CLI shadow).
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(true);
+        cpu.bus.load(0x008000, &[0x58, 0xEA, 0xEA]); // CLI ; NOP ; NOP
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
+        cpu.bus.irq_level = true;
+
+        cpu.step(); // CLI
+        assert_eq!(cpu.pc, 0x8001, "CLI executes without dispatch");
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x8002,
+            "the instruction after CLI executes before the IRQ dispatches"
+        );
+        cpu.step();
+        assert_eq!(cpu.pc, 0x9100, "the IRQ dispatches one instruction later");
+    }
+
+    #[test]
+    fn cli_rti_dispatches_after_the_full_rti_unwind() {
+        // The CLI;RTI epilogue idiom (absindx SA1RamProtectionTest wrapper): a
+        // pending IRQ must NOT dispatch between the CLI and the RTI -- the RTI
+        // completes first and the IRQ then interrupts the ORIGINAL context.
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FC;
+        cpu.set_flag_i(true);
+        // Fake interrupted frame: P (I clear), PC = $8100.
+        cpu.bus.load(0x0001FD, &[0x00, 0x00, 0x81]);
+        cpu.bus.load(0x008000, &[0x58, 0x40]); // CLI ; RTI
+        cpu.bus.load(0x008100, &[0xEA, 0xEA]); // original context
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
+        cpu.bus.irq_level = true;
+
+        cpu.step(); // CLI
+        assert_eq!(cpu.pc, 0x8001, "CLI executes without dispatch");
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x8100,
+            "the RTI completes before the pending IRQ dispatches"
+        );
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x9100,
+            "the IRQ then interrupts the original context"
+        );
+        // The stacked return address is the original context, not the epilogue.
+        assert_eq!(
+            cpu.bus.read(0x0001FF),
+            0x81,
+            "pushed PCH = original context"
+        );
+        assert_eq!(
+            cpu.bus.read(0x0001FE),
+            0x00,
+            "pushed PCL = original context"
+        );
+    }
+
+    #[test]
+    fn plp_clearing_i_is_delayed_like_cli() {
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FE;
+        cpu.set_flag_i(true);
+        cpu.bus.load(0x0001FF, &[0x00]); // pulled P: I clear
+        cpu.bus.load(0x008000, &[0x28, 0xEA, 0xEA]); // PLP ; NOP ; NOP
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]);
+        cpu.bus.irq_level = true;
+
+        cpu.step(); // PLP (pulls I=0; SetPS lands on its final cycle -> delayed)
+        assert_eq!(cpu.pc, 0x8001, "PLP executes without dispatch");
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x8002,
+            "the instruction after PLP executes before the IRQ dispatches"
+        );
+        cpu.step();
+        assert_eq!(cpu.pc, 0x9100, "the IRQ dispatches one instruction later");
+    }
+
+    #[test]
+    fn rti_restoring_i_clear_dispatches_the_pending_irq_immediately() {
+        // RTI pulls P mid-instruction, so its restored I=0 IS visible to the
+        // recognition poll on its remaining cycles: the IRQ dispatches right
+        // after the RTI (no extra instruction), unlike CLI/PLP.
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FC;
+        cpu.set_flag_i(true);
+        cpu.bus.load(0x0001FD, &[0x00, 0x00, 0x81]); // frame: P (I clear), PC $8100
+        cpu.bus.load(0x008000, &[0x40]); // RTI
+        cpu.bus.load(0x008100, &[0xEA]);
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]);
+        cpu.bus.irq_level = true;
+
+        cpu.step(); // RTI
+        assert_eq!(cpu.pc, 0x8100, "RTI returns to the frame");
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x9100,
+            "the pending IRQ dispatches immediately after RTI"
+        );
+    }
+
+    #[test]
     fn write_420b_defers_irq_dispatch_for_one_step() {
         let mut cpu = Cpu::new(PollIrqBus::new());
         cpu.pc = 0x8000;
@@ -11195,6 +11336,7 @@ mod master_clock_tests {
         cpu.write_pc(0x0000);
         // Native IRQ/BRK vector at $00FFEE -> handler.
         cpu.bus.load(0x00_FFEE, &[0x00, 0x90]);
+        cpu.set_flag_i(false); // sync the recognition shadow past cpu_at's direct p poke
         cpu.set_irq(true);
         cpu.step();
         // 4 pushes (WRAM stack $01xx, 8 each = 32) + 2 vector reads
@@ -11209,6 +11351,7 @@ mod master_clock_tests {
         cpu.write_pc(0x0000);
         // Emulation IRQ vector at $00FFFE -> handler.
         cpu.bus.load(0x00_FFFE, &[0x00, 0x90]);
+        cpu.set_flag_i(false); // sync the recognition shadow past cpu_at's direct p poke
         cpu.set_irq(true);
         cpu.step();
         // 3 pushes (8 each = 24) + 2 vector reads (8 each = 16) + 2 internal
