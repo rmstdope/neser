@@ -765,8 +765,6 @@ impl Ppu {
     }
 }
 
-/// Direct-color conversion for 256-color BGs: combine the 8-bit color index (`BBGGGRRR`) with the
-/// 3-bit BG-map palette (`bgr`) into a 15-bit BGR555 value (per fullsnes Direct Color).
 /// Split a 16-bit BG tilemap entry into `(char_num, palette, priority, hflip, vflip)`.
 fn decode_bg_map_entry(entry: u16) -> (u16, u8, bool, bool, bool) {
     (
@@ -778,6 +776,8 @@ fn decode_bg_map_entry(entry: u16) -> (u16, u8, bool, bool, bool) {
     )
 }
 
+/// Direct-color conversion for 256-color BGs: combine the 8-bit color index (`BBGGGRRR`) with the
+/// 3-bit BG-map palette (`bgr`) into a 15-bit BGR555 value (per fullsnes Direct Color).
 fn direct_color(color: u8, palette: u8) -> u16 {
     let red = ((color as u16 & 0x07) << 2) | ((palette as u16 & 0x01) << 1);
     let green = (((color as u16 >> 3) & 0x07) << 2) | (((palette as u16 >> 1) & 0x01) << 1);

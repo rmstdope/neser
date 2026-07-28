@@ -261,10 +261,10 @@ pub struct Ppu {
     line_main: [ScreenPixel; SCREEN_WIDTH],
     /// Sub-screen resolve results for the scanline in progress, indexed by native x.
     line_sub: [ScreenPixel; SCREEN_WIDTH],
-    /// Finalized main-screen output for the scanline in progress, indexed by native x:
-    /// the post-color-math pixel on the non-hires path, the raw main resolve on the
-    /// hi-res path (which bypasses color math until #3016's hi-res math lands). Kept so
-    /// hi-res color math can read the finalized main pixel one dot to the left.
+    /// Finalized (post-color-math) main-screen output for the scanline in progress,
+    /// indexed by native x — the composed pixel on the non-hires path, the odd/main
+    /// half-pixel on the hires path. Kept so hires color math can read the finalized
+    /// main pixel one dot to the left when composing the even/sub half.
     line_main_final: [u16; SCREEN_WIDTH],
     /// INIDISP ($2100) latched once per scanline, at that scanline's first
     /// visible dot. HDMA commonly rewrites INIDISP every scanline (fade and
