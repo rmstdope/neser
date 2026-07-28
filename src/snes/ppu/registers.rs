@@ -134,7 +134,7 @@ impl Ppu {
                 // output buffer, so the first interlaced frame doesn't weave stale
                 // rows from the persistent framebuffer into the other field.
                 if interlace_rising && self.vblank_active {
-                    self.framebuffer.iter_mut().for_each(|p| *p = 0);
+                    self.framebuffer.fill(0);
                 }
             }
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
