@@ -162,6 +162,9 @@ pub struct RomBrowserApp {
     catalog_state: CatalogState,
     /// Tracks current modifier key state.
     modifiers: winit::keyboard::ModifiersState,
+    /// Whether the browser window currently has focus. Gamepad input is
+    /// ignored while unfocused since gilrs sees the pad globally.
+    window_focused: bool,
     /// Gamepad input via gilrs.
     gilrs: Option<Gilrs>,
     /// Tracks analog stick state for digital D-pad conversion.
@@ -257,6 +260,7 @@ impl RomBrowserApp {
             show_favorites_only: false,
             catalog_state: CatalogState::Idle,
             modifiers: winit::keyboard::ModifiersState::empty(),
+            window_focused: true,
             gilrs: {
                 let mut builder = GilrsBuilder::new()
                     .with_default_filters(true)
@@ -297,6 +301,11 @@ impl RomBrowserApp {
         // Reset transient state for a fresh UI pass but keep catalog/textures.
         self.result = BrowserResult::Closed;
         self.gl = None;
+        // Discard gamepad events queued while the browser was dormant
+        // (e.g. everything pressed during an emulation session).
+        if let Some(ref mut gilrs) = self.gilrs {
+            while gilrs.next_event().is_some() {}
+        }
         event_loop
             .run_app_on_demand(self)
             .map_err(|e| format!("Browser event loop error: {e}"))?;

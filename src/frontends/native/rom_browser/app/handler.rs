@@ -272,12 +272,18 @@ impl ApplicationHandler for RomBrowserApp {
                 }
             }
 
+            WindowEvent::Focused(focused) => {
+                self.window_focused = focused;
+                if let Some(ref mut gl) = self.gl {
+                    let _ = gl.on_window_event(&event);
+                }
+            }
+
             WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseInput { .. }
             | WindowEvent::MouseWheel { .. }
             | WindowEvent::Touch { .. }
             | WindowEvent::ScaleFactorChanged { .. }
-            | WindowEvent::Focused(_)
             | WindowEvent::Ime(_) => {
                 if let Some(ref mut gl) = self.gl {
                     let _ = gl.on_window_event(&event);
@@ -285,8 +291,10 @@ impl ApplicationHandler for RomBrowserApp {
             }
 
             WindowEvent::RedrawRequested => {
-                // Poll gamepad events and apply browser actions.
-                let actions = self.poll_gamepad();
+                // Poll gamepad events; apply them only while focused (gilrs
+                // sees the pad globally, so polling always drains the queue).
+                let actions =
+                    Self::filter_gamepad_actions(self.poll_gamepad(), self.window_focused);
                 for action in actions {
                     self.apply_action(action, event_loop);
                 }

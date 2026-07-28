@@ -79,6 +79,7 @@ fn test_browser(entries: Vec<RomEntry>) -> RomBrowserApp {
         show_favorites_only: false,
         catalog_state: CatalogState::Ready,
         modifiers: winit::keyboard::ModifiersState::empty(),
+        window_focused: true,
         gilrs: None, // No gamepad in tests
         gamepad_axis: GamepadAxisState::default(),
         gamepad_repeat: GamepadRepeatState::default(),
@@ -502,6 +503,18 @@ fn legend_shows_controller_buttons_in_search_with_controller() {
     // Start opened the search view, so Start closes it — not B.
     let items = RomBrowserApp::legend_items(true, false, false, true);
     assert_eq!(items, [("A", "Select"), ("Start", "Close")]);
+}
+
+#[test]
+fn gamepad_actions_are_discarded_while_window_unfocused() {
+    // gilrs sees the pad globally; the browser must only react to it when
+    // its window has focus (e.g. not while a game is being played).
+    let actions = vec![BrowserAction::Up, BrowserAction::Confirm];
+    assert_eq!(
+        RomBrowserApp::filter_gamepad_actions(actions.clone(), true),
+        actions
+    );
+    assert!(RomBrowserApp::filter_gamepad_actions(actions, false).is_empty());
 }
 
 #[test]

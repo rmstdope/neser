@@ -90,6 +90,15 @@ impl RomBrowserApp {
     }
 
     /// Map a gilrs button to a browser action.
+    /// Drop gamepad actions while the browser window is unfocused, so pad
+    /// input pressed for another window (e.g. a running game) is ignored.
+    pub(super) fn filter_gamepad_actions(
+        actions: Vec<BrowserAction>,
+        window_focused: bool,
+    ) -> Vec<BrowserAction> {
+        if window_focused { actions } else { Vec::new() }
+    }
+
     pub(super) fn map_button(button: gilrs::Button) -> Option<BrowserAction> {
         match button {
             gilrs::Button::DPadUp => Some(BrowserAction::Up),
