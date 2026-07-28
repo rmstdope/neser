@@ -96,6 +96,11 @@ impl DmaController {
             hdma_do_transfer: self.hdma_do_transfer.to_vec(),
             hdma_repeat_mode: self.hdma_repeat_mode.to_vec(),
             hdma_lines_left: self.hdma_lines_left.to_vec(),
+            pending_b_bus_writes: self
+                .pending_b_bus_writes
+                .iter()
+                .map(|w| (w.deadline, w.b_addr, w.value))
+                .collect(),
         }
     }
 
@@ -127,6 +132,15 @@ impl DmaController {
         self.hdma_repeat_mode
             .copy_from_slice(&state.hdma_repeat_mode);
         self.hdma_lines_left.copy_from_slice(&state.hdma_lines_left);
+        self.pending_b_bus_writes = state
+            .pending_b_bus_writes
+            .iter()
+            .map(|&(deadline, b_addr, value)| PendingBBusWrite {
+                deadline,
+                b_addr,
+                value,
+            })
+            .collect();
         Ok(())
     }
 

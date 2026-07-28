@@ -2181,6 +2181,56 @@ mod tests {
     }
 
     #[test]
+    fn pending_hdma_b_bus_writes_survive_save_state_round_trip() {
+        // Capture mid-burst (ch0's writes drained, ch1's still scheduled): the
+        // restored bus must land ch1's writes at their original deadlines.
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        set_wmadd_200(&mut bus);
+        write_hdma_channel(&mut bus, 0, 0x02, 0x80, 0x7E3000);
+        bus.write(0x7E3000, 0xFF);
+        bus.write(0x7E3001, 0xA1);
+        bus.write(0x7E3002, 0xA2);
+        write_hdma_channel(&mut bus, 1, 0x02, 0x80, 0x7E3100);
+        bus.write(0x7E3100, 0xFF);
+        bus.write(0x7E3101, 0xB1);
+        bus.write(0x7E3102, 0xB2);
+        bus.write(0x00420C, 0x03);
+
+        tick_until_master_clock(&mut bus, 1150); // ch0 landed (1138/1146), ch1 pending (1162/1170)
+        let bus_state = bus.capture_state();
+        let ppu_state = bus.ppu_capture_state();
+
+        let mut restored = SnesSystemBus::new(lorom_test_cart());
+        restored.restore_state(&bus_state).expect("restore bus");
+        restored.ppu_restore_state(&ppu_state).expect("restore ppu");
+
+        tick_until_master_clock(&mut restored, 1161);
+        assert_eq!(
+            restored.read(0x7E0202),
+            0x00,
+            "restored queue keeps ch1's deadline"
+        );
+        tick_until_master_clock(&mut restored, 1162);
+        assert_eq!(
+            restored.read(0x7E0202),
+            0xB1,
+            "ch1 byte 1 lands after restore"
+        );
+        tick_until_master_clock(&mut restored, 1170);
+        assert_eq!(
+            restored.read(0x7E0203),
+            0xB2,
+            "ch1 byte 2 lands after restore"
+        );
+        assert_eq!(
+            restored.read(0x7E0200),
+            0xA1,
+            "ch0 bytes came via WRAM state"
+        );
+        assert_eq!(restored.read(0x7E0201), 0xA2);
+    }
+
+    #[test]
     fn hdma_b_to_a_transfers_remain_immediate_at_the_trigger() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         // ch0 (A->B) seeds the DMA controller's internal B-bus stub port $2135 at

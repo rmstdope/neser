@@ -131,6 +131,10 @@ pub struct SnesDmaState {
     pub hdma_repeat_mode: Vec<bool>,
     #[serde(default = "default_dma_channel_lines_left")]
     pub hdma_lines_left: Vec<u16>,
+    /// Scheduled-but-unapplied HDMA B-bus writes as `(deadline, b_addr, value)`,
+    /// deadlines in absolute master clocks (see `PendingBBusWrite`).
+    #[serde(default)]
+    pub pending_b_bus_writes: Vec<(u64, u8, u8)>,
 }
 
 /// SA-1 enhancement chip state: control/vector registers (`$2200-$220F`), I-RAM plus its two
