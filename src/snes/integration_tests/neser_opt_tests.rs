@@ -17,12 +17,12 @@
 //! in the never-read second row), and mode 6.
 //!
 //! Baseline results (#2878 settle-probe workflow): every scene settles
-//! by frame 8 and is sampled at frame 68. The five mode 2/4 ROMs match
-//! Mesen2 headless captures pixel-exactly at the identical frame
-//! (approved goldens). `opt-m6.sfc` diverges completely (mode 6 16x8
-//! tile pairing and hires rendering, 114,688 of 114,688 px after
-//! normalizing Mesen2's row-doubled height): committed `#[ignore]`d
-//! with NESER's current CRC pending #3019 (and #3016).
+//! by frame 8 and is sampled at frame 68. All six ROMs match Mesen2
+//! headless captures pixel-exactly at the identical frame (approved
+//! goldens). `opt-m6.sfc` joined them with the #3016 hires rework
+//! (doubled fetch with 16-wide char pairing, hires-domain OPT, CGRAM-0
+//! sub backdrop): 0 of 114,688 px differ after normalizing Mesen2's
+//! row-doubled height.
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -75,13 +75,5 @@ mod tests {
     neser_opt_test!(opt_m2_bg2_select, "opt-m2-bg2-select.sfc", 0x8935_F6DC);
     neser_opt_test!(opt_m4, "opt-m4.sfc", 0x24C0_14F0);
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden: the mode 6
-    /// scene renders completely differently in Mesen2 (16x8 tile
-    /// pairing gives transparent right tile halves NESER lacks, plus
-    /// the mode 5/6 hires column divergence).
-    #[test]
-    #[ignore = "mode 6 rendering diverges from Mesen2 (16x8 tile pairing / hires columns); pending #3019, #3016"]
-    fn opt_m6() {
-        run_opt_screen_crc("opt-m6.sfc", 0x16C5_A0D4);
-    }
+    neser_opt_test!(opt_m6, "opt-m6.sfc", 0x7F6E_FE0F);
 }
