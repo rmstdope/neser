@@ -187,7 +187,13 @@ Run tests for a specific Rust source area:
 ```bash
 ./scripts/test-dir.sh src/gb --skip-integration
 ./scripts/test-dir.sh src/nes/cartridge
+./scripts/test-dir.sh src/snes
 ```
+
+`--skip-integration` skips the integration-test modules of all consoles
+(`nes`/`gb`/`gba`/`snes`) for fast iteration; run without it before creating a
+PR. SNES test commands, asset policy, and the golden-baseline approval
+workflow are documented in [README-SNES.md](README-SNES.md).
 
 Python tooling tests:
 

@@ -12,7 +12,7 @@
 #   ./scripts/test-dir.sh src/nes --skip-integration  # nes unit tests only
 #
 # Options:
-#   --skip-integration   Exclude nes::integration_tests
+#   --skip-integration   Exclude nes/gb/gba/snes integration_tests modules
 #   --list               List matching tests without running them
 #   --                   Pass remaining args directly to cargo test
 #
@@ -86,6 +86,9 @@ done
 # Add --skip for integration tests if requested
 if $SKIP_INTEGRATION; then
     CMD+=(--skip 'nes::integration_tests')
+    CMD+=(--skip 'gb::integration_tests')
+    CMD+=(--skip 'gba::integration_tests')
+    CMD+=(--skip 'snes::integration_tests')
 fi
 
 # Add --list if requested
