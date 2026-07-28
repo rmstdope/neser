@@ -477,6 +477,27 @@
           "notes": "8 locally-built .sfc ROMs plus bass sources (src/ with the shared _mode7-scene.inc), LICENSE and build README; rebuild via the undisbeliever-inidisp/sources mirror (see the folder README)."
         }
       ]
+    },
+    {
+      "id": "snes-input-standard-controller-fixtures",
+      "suite": "input_standard_controller_tests",
+      "platform": "snes",
+      "source": {
+        "url": "in-repo synthetic fixtures, src/snes/integration_tests/input_standard_controller_tests.rs",
+        "ref": "issue-2886"
+      },
+      "license": "n/a (synthetic, authored in-repo)",
+      "oracle_type": "rom_pass_fail",
+      "notes": "Deterministic in-code assembled LoROM fixture programs (fixture_rom.rs) verifying the standard controller against the fullsnes/SNESdev serial protocol: $4016/$4017 serial order (B,Y,Select,Start,Up,Down,Left,Right,A,X,L,R, four ID zeros, connected-pad padding ones), the issue's scripted example input sequence observed via auto-joypad JOY1 reads, strobe-high live-B semantics with falling-edge latch, port 2 coverage, and auto-joypad vs manual serial layout equivalence. Pass/fail results are reported through the rom_runner NSER WRAM marker oracle; no on-disk ROMs or visual baselines.",
+      "variants": [
+        {
+          "id": "in_code_fixtures",
+          "status": "committed_ci",
+          "path": "src/snes/integration_tests",
+          "refresh_command": null,
+          "notes": "No on-disk assets; fixture programs are emitted at test run time by input_standard_controller_tests.rs via the shared fixture_rom builder."
+        }
+      ]
     }
   ]
 }
