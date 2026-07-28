@@ -3316,12 +3316,16 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
         }
     };
 
-    // Button mappings: [state key, SNES button ID, fallback NES button]
+    // Button mappings: [state key, SNES button ID, fallback NES button].
+    // NES fallbacks follow the native frontend's positional convention:
+    // south/west/north act as NES B and east as NES A. North-as-B also
+    // covers NES replica pads that share the SNES replica's ids, whose B
+    // button arrives as north through the shared SDL layout.
     const buttonMappings: Array<[keyof GamepadButtonState, number, number | undefined]> = [
-        ["a", SNES_LEGACY_BUTTON.B, 0],        // South -> SNES B, NES A
-        ["b", SNES_LEGACY_BUTTON.A, 1],        // East -> SNES A, NES B
-        ["y", SNES_LEGACY_BUTTON.Y, undefined], // West -> SNES Y
-        ["x", SNES_LEGACY_BUTTON.X, undefined], // North -> SNES X
+        ["a", SNES_LEGACY_BUTTON.B, 1],        // South -> SNES B, NES B
+        ["b", SNES_LEGACY_BUTTON.A, 0],        // East -> SNES A, NES A
+        ["y", SNES_LEGACY_BUTTON.Y, 1],        // West -> SNES Y, NES B
+        ["x", SNES_LEGACY_BUTTON.X, 1],        // North -> SNES X, NES B
         ["select", SNES_LEGACY_BUTTON.SELECT, 2],
         ["start", SNES_LEGACY_BUTTON.START, 3],
         ["up", SNES_LEGACY_BUTTON.UP, 4],
