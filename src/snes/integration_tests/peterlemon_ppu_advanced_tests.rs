@@ -19,25 +19,24 @@
 //!   approved goldens.
 //! - `StarWars.sfc` (animated HDMA perspective crawl) matches
 //!   pixel-exactly at frame 120 (approved golden) but drifts later
-//!   (964 px at frame 360, 222 px at frame 600, no phase offset
-//!   explains it): the f360/f600 vectors are `#[ignore]`d with NESER's
-//!   current CRCs pending #3021.
-//! - `Perspective.sfc` diverges in exactly the rightmost pixel column
-//!   (53 px, all at x = 255): `#[ignore]`d pending #3020.
+//!   (758 px at frame 360, 217 px at frame 600 since #3020's HDMA
+//!   write scheduling, improved from 964/222 but still inexact): the
+//!   f360/f600 vectors are `#[ignore]`d with NESER's current CRCs
+//!   pending #3021/#3042.
+//! - `Perspective.sfc` matches Mesen2 pixel-exactly since #3020 (its
+//!   per-scanline HDMA matrix writes no longer land before the last
+//!   visible pixel renders): approved golden.
 //! - The four pseudo-hires `HiColor*.sfc` ROMs match Mesen2
 //!   pixel-exactly since the #3016 hires rework (sub-on-even
 //!   interleave, per-dot hires color math): approved goldens after
 //!   normalizing Mesen2's row-doubled height. The main demo and the
 //!   mandrill TEST variant draw the same image, hence their shared CRC.
-//! - `MosaicMode5.sfc` (both vectors) and five of the six
-//!   `Interlace*.sfc` ROMs match Mesen2 pixel-exactly since the #3017
-//!   distinct-field rework (modes 5/6 doubled field fetch, alternating
-//!   263/262 field lengths): approved goldens at the native 512x448
-//!   woven-field geometry, directly comparable to Mesen2's captures.
-//!   `InterlaceSimpsonsHDMA.sfc` alone still differs in 4 px (both
-//!   half-pixels of the rightmost native column, both fields, one
-//!   display line -- the rightmost-dot HDMA timing class of #3020):
-//!   `#[ignore]`d with NESER's current CRC pending #3038.
+//! - `MosaicMode5.sfc` (both vectors) and all six `Interlace*.sfc`
+//!   ROMs match Mesen2 pixel-exactly: approved goldens at the native
+//!   512x448 woven-field geometry (five since the #3017 distinct-field
+//!   rework; `InterlaceSimpsonsHDMA.sfc` joined with #3020's HDMA
+//!   write scheduling, which fixed its 4-px rightmost-column leak,
+//!   closing #3038).
 
 use super::rom_runner::{InputEvent, RunConfig, RunOracle, run_rom_with_oracle};
 use crate::snes::input::SnesButton;
@@ -151,45 +150,40 @@ mod tests {
         0x534A_F4DD
     );
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden (crawl drift).
+    /// NESER's current CRC, NOT a Mesen2-approved golden (crawl drift,
+    /// improved by #3020's HDMA write scheduling: 964 -> 758 px at f360).
     #[test]
-    #[ignore = "Mode 7 HDMA crawl drifts from Mesen2 after frame ~120; pending #3021"]
+    #[ignore = "Mode 7 HDMA crawl drifts from Mesen2 after frame ~120; pending #3021, #3042"]
     fn starwars_f360() {
         run_advanced_screen_crc(
             "SNES-PPU-Mode7/StarWars/StarWars.sfc",
             "",
             &[],
             360,
-            0x5A6E_5802,
+            0xA7C7_7DEB,
         );
     }
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden (crawl drift).
+    /// NESER's current CRC, NOT a Mesen2-approved golden (crawl drift,
+    /// improved by #3020's HDMA write scheduling: 222 -> 217 px at f600).
     #[test]
-    #[ignore = "Mode 7 HDMA crawl drifts from Mesen2 after frame ~120; pending #3021"]
+    #[ignore = "Mode 7 HDMA crawl drifts from Mesen2 after frame ~120; pending #3021, #3042"]
     fn starwars_f600() {
         run_advanced_screen_crc(
             "SNES-PPU-Mode7/StarWars/StarWars.sfc",
             "",
             &[],
             600,
-            0xF4B1_137A,
+            0x0918_3693,
         );
     }
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden (rightmost
-    /// column, 53 px at x = 255).
-    #[test]
-    #[ignore = "Mode 7 rightmost column diverges from Mesen2 in the HDMA-perspective scene; pending #3020"]
-    fn perspective() {
-        run_advanced_screen_crc(
-            "SNES-PPU-Mode7/Perspective/Perspective.sfc",
-            "",
-            &[],
-            67,
-            0x91F5_F669,
-        );
-    }
+    peterlemon_advanced_test!(
+        perspective,
+        "SNES-PPU-Mode7/Perspective/Perspective.sfc",
+        67,
+        0xFCAB_FEA6
+    );
 
     // ---- Mosaic ----
 
@@ -275,20 +269,12 @@ mod tests {
         0x54C8_8315
     );
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden: 4 px differ (both
-    /// half-pixels of the rightmost native column, both fields, one display
-    /// line) -- the rightmost-dot HDMA timing class also seen in #3020.
-    #[test]
-    #[ignore = "rightmost-column HDMA dot timing diverges from Mesen2 by 4 px; pending #3038"]
-    fn interlace_simpsons_hdma() {
-        run_advanced_screen_crc(
-            "SNES-PPU-Interlace/InterlaceSimpsonsHDMA/InterlaceSimpsonsHDMA.sfc",
-            "",
-            &[],
-            80,
-            0x4DD4_E5EA,
-        );
-    }
+    peterlemon_interlace_test!(
+        interlace_simpsons_hdma,
+        "SNES-PPU-Interlace/InterlaceSimpsonsHDMA/InterlaceSimpsonsHDMA.sfc",
+        80,
+        0x9DFD_819C
+    );
 
     // ---- Pseudo-hires (Mesen2-approved goldens since #3016) ----
 
