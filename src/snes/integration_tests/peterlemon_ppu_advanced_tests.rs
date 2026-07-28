@@ -24,17 +24,18 @@
 //!   current CRCs pending #3021.
 //! - `Perspective.sfc` diverges in exactly the rightmost pixel column
 //!   (53 px, all at x = 255): `#[ignore]`d pending #3020.
-//! - `MosaicMode5.sfc` and all six `Interlace*.sfc` ROMs diverge
-//!   broadly (mode 5/6 hires column rendering #3016; line-doubled
-//!   interlace fields instead of distinct odd/even fields #3017):
-//!   `#[ignore]`d with NESER's current CRCs. MosaicMode5's untouched
-//!   screen equals InterlaceMoogle's by design (same Moogle image,
-//!   mosaic size 0), so their recorded CRCs match.
-//! - The four pseudo-hires `HiColor*.sfc` ROMs diverge (72,418 of
-//!   114,688 px for the main demo after normalizing Mesen2's
-//!   row-doubled height; the main demo and the mandrill TEST variant
-//!   draw the same image, hence their shared CRC): `#[ignore]`d
-//!   pending #3018.
+//! - The four pseudo-hires `HiColor*.sfc` ROMs match Mesen2
+//!   pixel-exactly since the #3016 hires rework (sub-on-even
+//!   interleave, per-dot hires color math): approved goldens after
+//!   normalizing Mesen2's row-doubled height. The main demo and the
+//!   mandrill TEST variant draw the same image, hence their shared CRC.
+//! - `MosaicMode5.sfc` and all six `Interlace*.sfc` ROMs still diverge
+//!   (line-doubled interlace fields instead of distinct odd/even
+//!   fields, #3017; the #3016 hires column rendering itself is fixed):
+//!   `#[ignore]`d with NESER's current CRCs, refreshed after #3016.
+//!   MosaicMode5's CRC no longer equals InterlaceMoogle's: mode 5
+//!   forces the mosaic collapse of half-pixel pairs even at size 0's
+//!   block size 1, which InterlaceMoogle (no mosaic) doesn't share.
 
 use super::rom_runner::{InputEvent, RunConfig, RunOracle, run_rom_with_oracle};
 use crate::snes::input::SnesButton;
@@ -208,30 +209,29 @@ mod tests {
         );
     }
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden. Equals
-    /// InterlaceMoogle's recorded CRC by design (same image, size 0).
+    /// NESER's current CRC, NOT a Mesen2-approved golden.
     #[test]
-    #[ignore = "mode 5 hires column rendering and interlace fields diverge from Mesen2; pending #3016, #3017"]
+    #[ignore = "interlace renders line-doubled fields instead of distinct odd/even fields; pending #3017"]
     fn mosaic_mode5() {
         run_advanced_screen_crc(
             "SNES-PPU-Mosaic/Mode5/MosaicMode5.sfc",
             "",
             &[],
             81,
-            0x1875_CEBB,
+            0x1105_5DF5,
         );
     }
 
     /// NESER's current CRC, NOT a Mesen2-approved golden.
     #[test]
-    #[ignore = "mode 5 hires column rendering and interlace fields diverge from Mesen2; pending #3016, #3017"]
+    #[ignore = "interlace renders line-doubled fields instead of distinct odd/even fields; pending #3017"]
     fn mosaic_mode5_sized() {
         run_advanced_screen_crc(
             "SNES-PPU-Mosaic/Mode5/MosaicMode5.sfc",
             "sized",
             &hold(SnesButton::R, 120, 150),
             300,
-            0x3434_46C5,
+            0x96A0_9C1C,
         );
     }
 
@@ -241,7 +241,7 @@ mod tests {
         ($name:ident, $file:expr, $frames:expr, $crc:expr) => {
             /// NESER's current CRC, NOT a Mesen2-approved golden.
             #[test]
-            #[ignore = "mode 5 hires column rendering and interlace fields diverge from Mesen2; pending #3016, #3017"]
+            #[ignore = "interlace renders line-doubled fields instead of distinct odd/even fields; pending #3017"]
             fn $name() {
                 run_advanced_screen_crc($file, "", &[], $frames, $crc);
             }
@@ -252,46 +252,44 @@ mod tests {
         interlace_font,
         "SNES-PPU-Interlace/InterlaceFont/InterlaceFont.sfc",
         79,
-        0xF2FB_6D2D
+        0xB608_0965
     );
     peterlemon_interlace_test!(
         interlace_moogle,
         "SNES-PPU-Interlace/InterlaceMoogle/InterlaceMoogle.sfc",
         79,
-        0x1875_CEBB
+        0xBDF9_FB2F
     );
     peterlemon_interlace_test!(
         interlace_myst_hdma,
         "SNES-PPU-Interlace/InterlaceMystHDMA/InterlaceMystHDMA.sfc",
         81,
-        0x2429_9013
+        0xE0CC_4D17
     );
     peterlemon_interlace_test!(
         interlace_rpg,
         "SNES-PPU-Interlace/InterlaceRPG/InterlaceRPG.sfc",
         80,
-        0x6809_FD77
+        0xE09D_0A46
     );
     peterlemon_interlace_test!(
         interlace_scroll,
         "SNES-PPU-Interlace/InterlaceScroll/InterlaceScroll.sfc",
         80,
-        0x8B5D_6370
+        0x566A_C2D7
     );
     peterlemon_interlace_test!(
         interlace_simpsons_hdma,
         "SNES-PPU-Interlace/InterlaceSimpsonsHDMA/InterlaceSimpsonsHDMA.sfc",
         80,
-        0x4C74_D855
+        0xE159_F195
     );
 
-    // ---- Pseudo-hires (all NESER-current CRCs, not goldens) ----
+    // ---- Pseudo-hires (Mesen2-approved goldens since #3016) ----
 
     macro_rules! peterlemon_pseudohires_test {
         ($name:ident, $file:expr, $crc:expr) => {
-            /// NESER's current CRC, NOT a Mesen2-approved golden.
             #[test]
-            #[ignore = "pseudo-hires rendering diverges from Mesen2; pending #3018"]
             fn $name() {
                 run_advanced_screen_crc($file, "", &[], 67, $crc);
             }
@@ -303,21 +301,21 @@ mod tests {
     peterlemon_pseudohires_test!(
         hicolor_pseudohires,
         "SNES-PPU-HDMA-HiColor64PerTileRowPseudoHiRes/HiColor64PerTileRowPseudoHiRes.sfc",
-        0x28C9_8610
+        0xE0E1_0821
     );
     peterlemon_pseudohires_test!(
         hicolor_pseudohires_rgb_chart,
         "SNES-PPU-HDMA-HiColor64PerTileRowPseudoHiRes/TEST/RGB_24bits_palette_color_test_chart64PerTileRowHiRes.sfc",
-        0xDFEA_7D74
+        0xD0D0_E9FE
     );
     peterlemon_pseudohires_test!(
         hicolor_pseudohires_lenna,
         "SNES-PPU-HDMA-HiColor64PerTileRowPseudoHiRes/TEST/lenna64PerTileRowHiRes.sfc",
-        0x66D2_4E4C
+        0x2BC6_C82D
     );
     peterlemon_pseudohires_test!(
         hicolor_pseudohires_mandrill,
         "SNES-PPU-HDMA-HiColor64PerTileRowPseudoHiRes/TEST/mandrill64PerTileRowHiRes.sfc",
-        0x28C9_8610
+        0xE0E1_0821
     );
 }

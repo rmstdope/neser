@@ -28,16 +28,6 @@ impl Ppu {
         a * b
     }
 
-    /// Compute the final BGR555 pixel for Mode 7 at visible screen coordinate `(x, y)`.
-    ///
-    /// Priority chart (BG only; OBJ is added in #2763): BG2(prio=1) over BG1 over BG2(prio=0) over
-    /// backdrop. BG2 exists only when EXTBG (SETINI bit 6) is enabled.
-    pub(super) fn compute_pixel_mode7(&self, x: u16, y: u16) -> u16 {
-        let main = self.resolve_mode7_screen_pixel(ScreenTarget::Main, x, y);
-        let sub = self.resolve_mode7_screen_pixel(ScreenTarget::Sub, x, y);
-        self.compose_pixels(x, y, main, sub)
-    }
-
     /// Sample the raw 8-bit Mode 7 pixel value at screen `(x, y)`, applying the affine transform,
     /// screen H/V flip, and screen-over handling. Returns 0 (transparent) where appropriate.
     ///
@@ -114,7 +104,12 @@ impl Ppu {
         self.vram[((pixel_word << 1) | 1) & (VRAM_SIZE - 1)]
     }
 
-    fn resolve_mode7_screen_pixel(&self, target: ScreenTarget, x: u16, y: u16) -> ScreenPixel {
+    pub(super) fn resolve_mode7_screen_pixel(
+        &self,
+        target: ScreenTarget,
+        x: u16,
+        y: u16,
+    ) -> ScreenPixel {
         let bg1_enabled = self.screen_enable_mask(target) & 0x01 != 0;
         let bg2_enabled = self.screen_enable_mask(target) & 0x02 != 0;
         let extbg = self.setini & 0x40 != 0;
@@ -292,7 +287,8 @@ mod tests {
     }
 
     fn pixel_at(ppu: &mut Ppu, x: u16, y: u16) -> u16 {
-        ppu.compute_pixel_mode7(x, y)
+        let (main, sub) = ppu.resolve_pixel_pair(x, y);
+        ppu.compose_pixels(x, y, main, sub)
     }
 
     #[test]

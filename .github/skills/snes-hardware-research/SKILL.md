@@ -166,6 +166,29 @@ When writing code that targets or emulates SNES hardware, always verify against 
   byte-for-byte up to the first MDMAEN write and exposed each 64KB DMA completing ~15,800
   clocks early (= ~390 crossed scanlines x 40 unpaid DRAM-refresh clocks, issue #2985) in
   two trace runs.
+- **Mode 5/6 true-hires compositing quirks are Mesen2-source-only territory** (from
+  #3016): fullsnes/anomie describe hires as "512-wide, sub screen on the left
+  half-pixel" and stop there — every load-bearing detail below is absent from the
+  written specs and was pinned by reading Mesen2 source line-by-line
+  (`SnesPpu.cpp` RenderTilemap / GetTilemapData / ApplyColorMath / RenderBgColor)
+  and locking each formula with a unit test before implementing:
+  the sub screen supplies the EVEN output column and main the ODD (ApplyHiResMode
+  `out[2x] = sub`); BGnHOFS applies in half-pixel units with every tilemap entry a
+  forced 16-wide char N/N+1 pair (hflip mirrors across the pair; the BGMODE
+  tile-size bit only pairs vertically); mode 6 offset-per-tile is HALVED — the H
+  value is ORed into the doubled scroll's bits 3-9 then shifted back down, so the
+  entry column moves by `(value & 0x3F0) >> 4` and value bit 3 is dropped, while
+  fine x/char-half always follow BGnHOFS; mosaic on a hires layer collapses each
+  half-pixel pair to the even block-start sample even at block size 1; CGWSEL bit
+  1 does NOT gate the sub screen's hires display (it only selects the math
+  operand), and the DISPLAYED sub backdrop is CGRAM color 0 (RenderBgColor fills
+  both buffers from `cgram[0]`) even though the math-operand fallback is COLDATA;
+  hires color math runs per half-pixel — the odd/main half against the PRE-math
+  sub color at the same x, the even/sub half against the POST-math main pixel at
+  x-1 with the CGADSUB gate following the main source at x-1 (Mesen2 passes
+  `prevX`), window tests at the current x for both halves. For any future PPU
+  compositing work in this area, go straight to Mesen2 source verification with
+  per-formula unit tests; the spec docs will not warn you.
 - **absindx SA-1 conformance ROM automation traps**: the ROMs' `org $0000` result variables (`TestFinished`: 0=Running, 1=Passed, 255=Failed) are accessed by the SNES CPU via direct page with D=0, i.e. they live in **WRAM `$7E0000`** — polling the SA-1 I-RAM mirror at `$003000` instead reads a stale `$AA` left over from the I-RAM mirroring sub-tests. Even at the right address, a naive every-tick poll false-fails: `SA1RamProtectionTest` transiently `EOR #$FF`s its own result byte while probing I-RAM writability, and its SA-1 CPU parks in its post-test idle loop *before* the SNES finishes the trailing `TestBwRamSize` scan and writes the real result. `SA1VersionCodeTest` never reports Passed **even on real hardware** — disassembly of its release build shows `CheckResult` unconditionally taking the failed path (the `INC TestFinished` pass path at `$9EAB` is unreferenced dead code), deliberate since the true version-code value is unknown; treat its FAILED register-dump screen as the expected result. Its open-bus detection scheme is worth knowing: each register is read twice with different residual bus bytes (`LDA $2300,X` leaves operand `$23`; a `REP`-adjusted `LDA $AA,X` reaching the same register leaves `$AA`), so open-bus entries echo `23`/`AA` while real registers repeat their value. Both ROMs misbehave on Mesen2 (documented upstream and confirmed), so goldens must be navigator-approved captures of the emulator's own rendering.
 
 ## Testing Methodology for SNES Emulation
@@ -320,7 +343,8 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    modes (fixed 16x8), so each map entry fetches chars N AND N+1 — a
    scene defining only chars 0-8 gets transparent right tile halves
    wherever char 8 is used (char 9 is empty VRAM). Exploit deliberately
-   or avoid, but decide; NESER missing this pairing is #3019.
+   or avoid, but decide (NESER implements the pairing since #3016,
+   closing #3019).
 11. **Building WLA-DX assets with the modern toolchain** (from #2881):
    Homebrew wla-dx is v10.x; upstream wla.bat recipes from v9.5 need
    `wla-65816 -o out.obj in.asm` and wlalink flags split (`-v -r`, not

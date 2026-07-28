@@ -207,6 +207,11 @@ impl Ppu {
             self.framebuffer.len(),
             super::SCREEN_WIDTH_MAX * super::SCREEN_HEIGHT_MAX
         );
+        // The per-scanline resolve/finalize buffers are transient like the framebuffer;
+        // the next rendered line refills them left-to-right before any read.
+        self.line_main = [super::ScreenPixel::default(); super::SCREEN_WIDTH];
+        self.line_sub = [super::ScreenPixel::default(); super::SCREEN_WIDTH];
+        self.line_main_final = [0; super::SCREEN_WIDTH];
         // Per-scanline latched INIDISP is transient too; the next frame relatches it.
         self.line_inidisp.iter_mut().for_each(|v| *v = 0);
         debug_assert_eq!(self.line_inidisp.len(), super::SCREEN_HEIGHT_MAX);

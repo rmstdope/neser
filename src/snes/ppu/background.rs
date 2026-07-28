@@ -20,10 +20,14 @@ pub(crate) enum ScreenTarget {
     Sub,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) enum PixelSource {
     Bg(usize),
-    Obj { priority: u8, palette: u8 },
+    Obj {
+        priority: u8,
+        palette: u8,
+    },
+    #[default]
     Backdrop,
 }
 
@@ -34,7 +38,7 @@ pub(crate) enum WindowLayer {
     Math,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ScreenPixel {
     pub color: u16,
     pub source: PixelSource,
@@ -62,22 +66,33 @@ impl Ppu {
         self.bg_old = value;
     }
 
-    /// Compute the final BGR555 pixel for visible screen coordinate `(x, y)`.
+    /// Resolve the front-most main- and sub-screen pixels at visible screen `(x, y)`.
     ///
-    /// Resolve the front-most main- and sub-screen pixels, then apply color math when enabled.
-    pub(super) fn compute_pixel(&self, x: u16, y: u16) -> u16 {
-        if self.bg_mode == 7 {
-            return self.compute_pixel_mode7(x, y);
+    /// Mode 7 has its own layer resolver; hi-res output keeps the standard resolver even in
+    /// mode 7 (mode 7 + pseudo-hires renders backdrop only, as before this refactor).
+    pub(super) fn resolve_pixel_pair(&self, x: u16, y: u16) -> (ScreenPixel, ScreenPixel) {
+        if self.bg_mode == 7 && !self.hires_output_enabled() {
+            (
+                self.resolve_mode7_screen_pixel(ScreenTarget::Main, x, y),
+                self.resolve_mode7_screen_pixel(ScreenTarget::Sub, x, y),
+            )
+        } else {
+            (
+                self.resolve_screen_pixel(ScreenTarget::Main, x, y),
+                self.resolve_screen_pixel(ScreenTarget::Sub, x, y),
+            )
         }
-        let main = self.resolve_screen_pixel(ScreenTarget::Main, x, y);
-        let sub = self.resolve_screen_pixel(ScreenTarget::Sub, x, y);
-        self.compose_pixels(x, y, main, sub)
     }
 
     pub(super) fn resolve_screen_pixel(&self, target: ScreenTarget, x: u16, y: u16) -> ScreenPixel {
-        let obj_pixel = if self.screen_enable_mask(target) & 0x10 == 0
-            || (target == ScreenTarget::Sub && self.cgwsel & 0x02 == 0)
-        {
+        // CGWSEL bit 1 clear means the color-math operand is the fixed color rather
+        // than the sub screen; outside hires that makes an un-consumed sub resolve
+        // equivalent to backdrop, so it is skipped. In hires output the sub screen is
+        // DISPLAYED (even columns) and always renders from TS (Mesen2 renders the sub
+        // screen unconditionally).
+        let sub_hidden =
+            target == ScreenTarget::Sub && self.cgwsel & 0x02 == 0 && !self.hires_output_enabled();
+        let obj_pixel = if self.screen_enable_mask(target) & 0x10 == 0 || sub_hidden {
             None
         } else {
             self.obj_pixel_at(x, y)
@@ -88,13 +103,17 @@ impl Ppu {
                     if self.screen_enable_mask(target) & (1 << bg) == 0 {
                         continue;
                     }
-                    if target == ScreenTarget::Sub && self.cgwsel & 0x02 == 0 {
+                    if sub_hidden {
                         continue;
                     }
                     if self.layer_disabled_by_window(target, WindowLayer::Bg(bg), x, y) {
                         continue;
                     }
-                    if let Some((color, pixel_priority)) = self.bg_pixel(bg, x, y)
+                    // In true hires (modes 5/6) the sub screen fetches the even
+                    // half-pixel (2x) and the main screen the odd one (2x+1).
+                    let hires_half =
+                        u16::from(self.true_hires_enabled() && target == ScreenTarget::Main);
+                    if let Some((color, pixel_priority)) = self.bg_pixel(bg, x, y, hires_half)
                         && pixel_priority == priority
                     {
                         return ScreenPixel {
@@ -146,17 +165,74 @@ impl Ppu {
         main: ScreenPixel,
         sub: ScreenPixel,
     ) -> u16 {
-        let mut main_color = main.color;
+        self.compose_half(x, y, main.color, main.source, sub.color)
+    }
+
+    /// Finalize one output pixel: color-window clip to black, the CGADSUB gate from
+    /// `gate_source`, then color math against `operand`.
+    fn compose_half(
+        &self,
+        x: u16,
+        y: u16,
+        color: u16,
+        gate_source: PixelSource,
+        operand: u16,
+    ) -> u16 {
+        let mut color = color;
         if self.force_main_black_at(x, y) {
-            main_color = 0;
+            color = 0;
         }
-        if !self.color_math_source_enabled(main.source) {
-            return main_color;
+        if !self.color_math_source_enabled(gate_source) {
+            return color;
         }
         if !self.color_math_enabled_at(x, y) {
-            return main_color;
+            return color;
         }
-        self.apply_color_math(main_color, sub.color)
+        self.apply_color_math(color, operand)
+    }
+
+    /// Finalize the hires half-pixel pair at native `(x, y)` from the line buffers,
+    /// returning `(even, odd)` output colors (Mesen2 ApplyColorMath, hires branch).
+    pub(super) fn compose_hires_pair(&self, x: u16, y: u16) -> (u16, u16) {
+        let xi = x as usize;
+        let main = self.line_main[xi];
+        let sub = self.line_sub[xi];
+        // When CGWSEL bit 1 is clear the color-math operand is the COLDATA fixed
+        // color for BOTH halves (Mesen2 ApplyColorMathToPixel's !ColorMathAddSubscreen
+        // branch is unconditional).
+        let add_subscreen = self.cgwsel & 0x02 != 0;
+        let fixed_color = self.coldata & 0x7FFF;
+        // Odd/main half: operand is the pre-math sub color at the same x.
+        let main_operand = if add_subscreen {
+            sub.color
+        } else {
+            fixed_color
+        };
+        let odd = self.compose_half(x, y, main.color, main.source, main_operand);
+        // Even/sub half: operand is the finalized main pixel one dot to the left
+        // (black at x = 0), and the math gate follows the main pixel's source at
+        // x - 1 (Mesen2 passes prevX for the sub half of the hires math loop).
+        let prev_main = if x > 0 {
+            self.line_main_final[xi - 1]
+        } else {
+            0
+        };
+        let even_operand = if add_subscreen {
+            prev_main
+        } else {
+            fixed_color
+        };
+        let gate_source = self.line_main[xi.saturating_sub(1)].source;
+        // The sub resolve represents its backdrop with the COLDATA fixed color (the
+        // color-math operand on hardware), but the DISPLAYED sub backdrop is CGRAM
+        // color 0, like the main screen (Mesen2 RenderBgColor).
+        let sub_display = if sub.source == PixelSource::Backdrop {
+            self.cgram_color(0)
+        } else {
+            sub.color
+        };
+        let even = self.compose_half(x, y, sub_display, gate_source, even_operand);
+        (even, odd)
     }
 
     pub(super) fn color_math_enabled_at(&self, x: u16, y: u16) -> bool {
@@ -388,27 +464,33 @@ impl Ppu {
     /// Resolve `(BGR555 color, priority)` for BG layer `bg` at screen `(x, y)`, or `None` if the
     /// pixel is transparent (color 0). Supports 8x8/16x16 tiles, all four tilemap sizes, 2/4/8 bpp,
     /// direct-color mode, and offset-per-tile (modes 2/4/6).
-    fn bg_pixel(&self, bg: usize, x: u16, y: u16) -> Option<(u16, bool)> {
+    ///
+    /// `hires_half` selects the half-pixel (0 = even/sub, 1 = odd/main) in true hires
+    /// (modes 5/6), where BG1/BG2 fetch at doubled horizontal resolution; it is 0 otherwise.
+    fn bg_pixel(&self, bg: usize, x: u16, y: u16, hires_half: u16) -> Option<(u16, bool)> {
         let bpp = self.bg_bpp(bg);
         let size16 = self.bg_tile_size_16[bg];
-        let cell_shift = if size16 { 4 } else { 3 };
-        let cell_mask = (1u16 << cell_shift) - 1;
 
         // Apply horizontal mosaic: snap x to the left edge of its block when enabled.
-        let x = if self.mosaic_bg_enabled(bg) {
-            self.mosaic_apply_x(x)
+        // In hires the block-start sample is the even half-pixel, which mosaic then
+        // replicates into both output columns (Mesen2 RenderTilemap mosaic hold).
+        let (x, hires_half) = if self.mosaic_bg_enabled(bg) {
+            (self.mosaic_apply_x(x), 0)
         } else {
-            x
+            (x, hires_half)
         };
+
+        if self.true_hires_enabled() {
+            return self.bg_pixel_hires(bg, bpp, size16, x, y, hires_half);
+        }
+
+        let cell_shift = if size16 { 4 } else { 3 };
+        let cell_mask = (1u16 << cell_shift) - 1;
 
         let (scrolled_x, scrolled_y) = self.effective_offsets(bg, x, y);
 
         let entry = self.read_bg_map_entry(bg, scrolled_x >> cell_shift, scrolled_y >> cell_shift);
-        let char_num = entry & 0x03FF;
-        let palette = ((entry >> 10) & 0x07) as u8;
-        let priority = entry & 0x2000 != 0;
-        let hflip = entry & 0x4000 != 0;
-        let vflip = entry & 0x8000 != 0;
+        let (char_num, palette, priority, hflip, vflip) = decode_bg_map_entry(entry);
 
         // Cell-relative coordinates (0..cell_size), with flip applied to the whole cell.
         let mut within_x = scrolled_x & cell_mask;
@@ -433,6 +515,66 @@ impl Ppu {
         let fine_x = (within_x & 7) as u8;
         let fine_y = (within_y & 7) as u8;
 
+        self.bg_tile_color(bg, bpp, tile, palette, fine_x, fine_y)
+            .map(|color| (color, priority))
+    }
+
+    /// True-hires (modes 5/6) BG fetch at doubled horizontal resolution: a tilemap entry
+    /// spans 16 half-pixel columns pairing chars N/N+1 (regardless of the BGMODE tile-size
+    /// bit, which only pairs vertically), with the horizontal scroll applied in half-pixel
+    /// units (Mesen2 RenderTilemap hires fetch / GetChrData largeTileWidth).
+    fn bg_pixel_hires(
+        &self,
+        bg: usize,
+        bpp: u8,
+        size16: bool,
+        x: u16,
+        y: u16,
+        hires_half: u16,
+    ) -> Option<(u16, bool)> {
+        let hx = (x << 1) | hires_half;
+        let (entry_col, hoffset, voffset) = self.effective_offsets_hires(bg, hx, y);
+
+        let v_shift = if size16 { 4 } else { 3 };
+        let v_mask = (1u16 << v_shift) - 1;
+        let entry = self.read_bg_map_entry(bg, entry_col, voffset >> v_shift);
+        let (char_num, palette, priority, hflip, vflip) = decode_bg_map_entry(entry);
+
+        // Flips apply across the whole 16-wide pair (and 16-tall block for size16).
+        let mut within_x = hoffset & 15;
+        if hflip {
+            within_x = 15 - within_x;
+        }
+        let mut within_y = voffset & v_mask;
+        if vflip {
+            within_y = v_mask - within_y;
+        }
+
+        let mut tile = char_num;
+        if within_x & 8 != 0 {
+            tile += 1;
+        }
+        if size16 && within_y & 8 != 0 {
+            tile += 16;
+        }
+        let fine_x = (within_x & 7) as u8;
+        let fine_y = (within_y & 7) as u8;
+
+        self.bg_tile_color(bg, bpp, tile, palette, fine_x, fine_y)
+            .map(|color| (color, priority))
+    }
+
+    /// Decode the tile pixel and resolve its CGRAM (or direct-color) BGR555 value, or
+    /// `None` when transparent; shared tail of the native and hires BG fetch paths.
+    fn bg_tile_color(
+        &self,
+        bg: usize,
+        bpp: u8,
+        tile: u16,
+        palette: u8,
+        fine_x: u8,
+        fine_y: u8,
+    ) -> Option<u16> {
         let color =
             self.decode_tile_pixel(self.bg_char_base[bg], tile & 0x03FF, bpp, fine_x, fine_y);
         if color == 0 {
@@ -440,7 +582,7 @@ impl Ppu {
         }
         // Direct-color mode (CGWSEL.0) resolves 256-color BGs straight to BGR555.
         if bpp == 8 && self.cgwsel & 0x01 != 0 {
-            return Some((direct_color(color, palette), priority));
+            return Some(direct_color(color, palette));
         }
         // 8bpp (256-color) BGs index CGRAM directly; map-entry palette bits are ignored.
         let index = if bpp == 8 {
@@ -449,7 +591,54 @@ impl Ppu {
             let colors_per_palette = if bpp == 2 { 4 } else { 16 };
             self.bg_palette_base(bg) + palette * colors_per_palette + color
         };
-        Some((self.cgram_color(index), priority))
+        Some(self.cgram_color(index))
+    }
+
+    /// Compute the effective hires BG coordinates for layer `bg` at half-pixel column
+    /// `hx` (0..512): `(tilemap entry column, hoffset in half-pixel units, voffset)`,
+    /// with the horizontal scroll doubled and mode 6 offset-per-tile applied to the
+    /// entry column only (fine x and the char-pair half always follow BGnHOFS).
+    fn effective_offsets_hires(&self, bg: usize, hx: u16, y: u16) -> (u16, u16, u16) {
+        let hscroll = (self.bg_hofs[bg] & 0x03FF) << 1;
+        let hoffset = hx.wrapping_add(hscroll) & 0x07FF;
+        let mut entry_col = hoffset >> 4;
+        let screen_y = y.wrapping_add(1);
+        let mut voffset = screen_y.wrapping_add(self.bg_vscroll(bg)) & 0x03FF;
+
+        // Offset-per-tile (mode 6 is the only hires OPT mode; mode-2-style dual H/V
+        // entries). The BG3 lookup runs in native units, where one tilemap entry spans
+        // 8 native pixels regardless of the tile-size bit, and the first entry column
+        // is exempt.
+        if self.bg_mode == 6 && bg < 2 {
+            let valid_bit = 0x2000u16 << bg; // BG1 -> bit13, BG2 -> bit14
+            let offset_x = (hx >> 1).wrapping_add(self.bg_hofs[bg] & 7);
+            if offset_x >= 8 {
+                let lookup_x = (offset_x - 8).wrapping_add(self.bg_hofs[2] & 0x03F8);
+                let bg3_vscroll = self.bg_vofs[2] & 0x03FF;
+                let hlookup = self.bg3_offset_entry(lookup_x, bg3_vscroll);
+                let vlookup = self.bg3_offset_entry(lookup_x, bg3_vscroll.wrapping_add(8));
+                if hlookup & valid_bit != 0 {
+                    // Mesen2 GetTilemapData ORs the OPT value into the doubled
+                    // scroll's bits 3-9 and shifts back down: the entry column moves
+                    // by (value & 0x3F0) >> 4 and the value's bit 3 is dropped.
+                    entry_col = (offset_x >> 3).wrapping_add((hlookup & 0x03F0) >> 4);
+                }
+                if vlookup & valid_bit != 0 {
+                    voffset = screen_y.wrapping_add(vlookup & 0x03FF) & 0x03FF;
+                }
+            }
+        }
+        (entry_col, hoffset, voffset)
+    }
+
+    /// The layer's vertical scroll with the mosaic block-hold subtraction applied
+    /// (fullsnes: "subtract the vertical index from the vertical scroll register").
+    fn bg_vscroll(&self, bg: usize) -> u16 {
+        if self.mosaic_bg_enabled(bg) {
+            self.bg_vofs[bg].wrapping_sub(self.mosaic_vcount as u16)
+        } else {
+            self.bg_vofs[bg]
+        }
     }
 
     /// Compute the effective BG pixel coordinates `(hoffset, voffset)` for layer `bg` at screen
@@ -457,13 +646,7 @@ impl Ppu {
     /// to BG1/BG2. Algorithm follows bsnes (non-hires; Mode 5/6 hi-res output is #2766).
     fn effective_offsets(&self, bg: usize, x: u16, y: u16) -> (u16, u16) {
         let hscroll = self.bg_hofs[bg] & 0x03FF;
-        // Vertical mosaic: subtract the block-internal scanline index from BGnVOFS before adding
-        // screen Y (fullsnes: "subtract the vertical index from the vertical scroll register").
-        let vscroll = if self.mosaic_bg_enabled(bg) {
-            self.bg_vofs[bg].wrapping_sub(self.mosaic_vcount as u16)
-        } else {
-            self.bg_vofs[bg]
-        } & 0x03FF;
+        let vscroll = self.bg_vscroll(bg) & 0x03FF;
         // Framebuffer row `y` shows display line `y + 1` (line 0 is never rendered), and the BG
         // fetch adds BGnVOFS to the raw display line (ares fetchNameTable: vcounter() + vscroll;
         // Mesen2: realY = _scanline). Same convention as Mode 7's screen_y (mode7.rs).
@@ -582,6 +765,17 @@ impl Ppu {
     }
 }
 
+/// Split a 16-bit BG tilemap entry into `(char_num, palette, priority, hflip, vflip)`.
+fn decode_bg_map_entry(entry: u16) -> (u16, u8, bool, bool, bool) {
+    (
+        entry & 0x03FF,
+        ((entry >> 10) & 0x07) as u8,
+        entry & 0x2000 != 0,
+        entry & 0x4000 != 0,
+        entry & 0x8000 != 0,
+    )
+}
+
 /// Direct-color conversion for 256-color BGs: combine the 8-bit color index (`BBGGGRRR`) with the
 /// 3-bit BG-map palette (`bgr`) into a 15-bit BGR555 value (per fullsnes Direct Color).
 fn direct_color(color: u8, palette: u8) -> u16 {
@@ -593,7 +787,9 @@ fn direct_color(color: u8, palette: u8) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu};
+    use super::super::{
+        DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu, SCREEN_WIDTH_MAX,
+    };
 
     fn render_frame(ppu: &mut Ppu) {
         let ticks =
@@ -601,6 +797,12 @@ mod tests {
         for _ in 0..ticks {
             ppu.tick();
         }
+    }
+
+    /// Render up to and including the first visible scanline, leaving the per-line
+    /// buffers holding that line's resolve results.
+    fn render_first_visible_line(ppu: &mut Ppu) {
+        render_lines(ppu, 1);
     }
 
     fn set_cgram(ppu: &mut Ppu, index: usize, bgr555: u16) {
@@ -668,9 +870,576 @@ mod tests {
         }
     }
 
+    /// Set a single pixel in a 4bpp 8×8 tile at (fine_x, fine_y) to `color` (0-15).
+    fn set_4bpp_tile_pixel(
+        ppu: &mut Ppu,
+        char_base: usize,
+        char_num: usize,
+        fine_x: u8,
+        fine_y: u8,
+        color: u8,
+    ) {
+        let base = (char_base + char_num * 16) * 2;
+        let bit = 7 - fine_x; // bit 7 is left-most
+        for plane in 0..4usize {
+            // Planes 0/1 interleave in the first 16 bytes, planes 2/3 in the next 16.
+            let offset = base + (plane / 2) * 16 + (fine_y as usize) * 2 + (plane % 2);
+            if color & (1 << plane) != 0 {
+                ppu.vram[offset] |= 1 << bit;
+            } else {
+                ppu.vram[offset] &= !(1 << bit);
+            }
+        }
+    }
+
     fn pixel(rgb: &[u8], x: usize, y: usize) -> [u8; 3] {
         let i = (y * 256 + x) * 3;
         [rgb[i], rgb[i + 1], rgb[i + 2]]
+    }
+
+    /// Render `n` scanlines from power-on (framebuffer rows 0..n-1 are completed,
+    /// since display line y+1 renders framebuffer row y).
+    fn render_lines(ppu: &mut Ppu, n: u32) {
+        let ticks = DOTS_PER_SCANLINE as u32 * (n + 1) * MASTER_CYCLES_PER_DOT;
+        for _ in 0..ticks {
+            ppu.tick();
+        }
+    }
+
+    /// Mode 5 with BG1 on both the main and sub screens (sub display enabled via
+    /// CGWSEL bit 1), identity palette (CGRAM word i = i), full brightness.
+    /// True-hires tests then read raw BGR555 words from framebuffer row `y`.
+    fn setup_mode5_bg1_both_screens(ppu: &mut Ppu) {
+        for i in 1..16 {
+            set_cgram(ppu, i, i as u16);
+        }
+        ppu.write_register(0x2105, 0x05); // mode 5 (BG1 4bpp)
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x01); // TS: BG1
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2100, 0x0F); // full brightness
+    }
+
+    /// Write a per-column 4bpp pattern (column c = color c+1) on all 8 tile rows.
+    fn fill_4bpp_tile_column_pattern(ppu: &mut Ppu, char_base: usize, char_num: usize) {
+        for fine_y in 0..8 {
+            for fine_x in 0..8u8 {
+                set_4bpp_tile_pixel(ppu, char_base, char_num, fine_x, fine_y, fine_x + 1);
+            }
+        }
+    }
+
+    #[test]
+    fn mode5_fetches_distinct_even_and_odd_subpixels() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_vram_word(&mut ppu, 0x400, 1); // BG1 entry -> char 1
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        render_lines(&mut ppu, 1);
+
+        // Modes 5/6 fetch BG1 at doubled horizontal resolution: output column X shows
+        // tile hi-res column X (even from the sub fetch, odd from the main fetch),
+        // NOT the same native pixel doubled.
+        for c in 0..8usize {
+            assert_eq!(
+                ppu.framebuffer[c],
+                (c + 1) as u16,
+                "output column {c} shows tile column {c}"
+            );
+        }
+    }
+
+    #[test]
+    fn mode5_pairs_char_n_and_n_plus_1_into_a_16_wide_tile() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1); // entry 0 -> char 1 (pairs with char 2)
+        set_vram_word(&mut ppu, 0x401, 3); // entry 1 -> char 3 (pairs with char 4)
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 2, 2);
+        fill_4bpp_tile(&mut ppu, 0, 3, 3);
+        render_lines(&mut ppu, 1);
+
+        // A map entry spans 16 output columns: char N in the left half, char N+1 in
+        // the right half; the next map entry starts at output column 16.
+        assert_eq!(ppu.framebuffer[0], 1, "columns 0-7 show char 1");
+        assert_eq!(ppu.framebuffer[7], 1, "columns 0-7 show char 1");
+        assert_eq!(ppu.framebuffer[8], 2, "columns 8-15 show char 2");
+        assert_eq!(ppu.framebuffer[15], 2, "columns 8-15 show char 2");
+        assert_eq!(ppu.framebuffer[16], 3, "next map entry starts at column 16");
+    }
+
+    #[test]
+    fn mode5_hflip_mirrors_the_char_pair() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1 | 0x4000); // entry -> char 1, H-flip
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 2, 2);
+        render_lines(&mut ppu, 1);
+
+        // H-flip mirrors the whole 16-wide pair: char 2 (mirrored) lands in the left
+        // half, char 1 (mirrored) in the right half.
+        assert_eq!(ppu.framebuffer[0], 2, "flipped pair leads with char 2");
+        assert_eq!(ppu.framebuffer[7], 2, "columns 0-7 show mirrored char 2");
+        assert_eq!(ppu.framebuffer[8], 1, "columns 8-15 show mirrored char 1");
+    }
+
+    #[test]
+    fn mode5_hscroll_applies_in_half_pixel_units() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        // BG1HOFS = 1 (write-twice: low byte then high byte).
+        ppu.write_register(0x210D, 0x01);
+        ppu.write_register(0x210D, 0x00);
+        render_lines(&mut ppu, 1);
+
+        // A native scroll of 1 shifts the hi-res fetch by 2 half-pixels: output
+        // column 0 shows tile hi-res column 2 (pattern color 3).
+        assert_eq!(ppu.framebuffer[0], 3, "HOFS=1 shifts by two hi-res columns");
+    }
+
+    #[test]
+    fn mode5_tile_size_16_pairs_vertically_but_not_horizontally() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        ppu.write_register(0x2105, 0x15); // mode 5 + BG1 16x16 tiles
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1); // entry 0 -> chars 1/2 (top), 17/18 (bottom)
+        set_vram_word(&mut ppu, 0x401, 5); // entry 1 -> chars 5/6 (top), 21/22 (bottom)
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 17, 4); // vertical pair of char 1
+        fill_4bpp_tile(&mut ppu, 0, 5, 5);
+        fill_4bpp_tile(&mut ppu, 0, 21, 6); // vertical pair of char 5
+        render_lines(&mut ppu, 8);
+
+        // 16x16 tile size still spans only 16 output columns horizontally (the
+        // width-16 fetch is forced in modes 5/6), but pairs vertically: rows 8-15
+        // use char N+16.
+        assert_eq!(ppu.framebuffer[0], 1, "top half shows char 1");
+        assert_eq!(
+            ppu.framebuffer[7 * SCREEN_WIDTH_MAX],
+            4,
+            "bottom half (display line 8) shows char 17"
+        );
+        assert_eq!(
+            ppu.framebuffer[7 * SCREEN_WIDTH_MAX + 16],
+            6,
+            "next map entry still starts at column 16"
+        );
+    }
+
+    #[test]
+    fn mode5_bg2_uses_2bpp_doubled_fetch() {
+        let mut ppu = Ppu::new();
+        for i in 1..4 {
+            set_cgram(&mut ppu, i, i as u16);
+        }
+        ppu.write_register(0x2105, 0x05); // mode 5 (BG2 2bpp)
+        ppu.write_register(0x212C, 0x02); // TM: BG2
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2100, 0x0F);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1); // BG2 entry -> char 1
+        for fine_y in 0..8 {
+            for fine_x in 0..8u8 {
+                // Column pattern 1,2,3,1,2,3,...
+                set_2bpp_tile_pixel(&mut ppu, 0, 1, fine_x, fine_y, (fine_x % 3) + 1);
+            }
+        }
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(ppu.framebuffer[0], 1, "column 0 shows tile column 0");
+        assert_eq!(ppu.framebuffer[1], 2, "column 1 shows tile column 1");
+        assert_eq!(ppu.framebuffer[2], 3, "column 2 shows tile column 2");
+    }
+
+    /// Mode 5 color-math scene: BG1 (main) solid red 10, BG2 (sub, palette 1) solid
+    /// red 5, sub display enabled. Raw BGR555 asserts keep the math chains visible.
+    fn setup_mode5_color_math(ppu: &mut Ppu) {
+        set_cgram(ppu, 1, 0x000A); // BG1 color 1 = red 10
+        set_cgram(ppu, 5, 0x0005); // BG2 palette 1 color 1 = red 5
+        set_bg_map_base(ppu, 0, 0x000);
+        set_bg_map_base(ppu, 1, 0x400);
+        set_vram_word(ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(ppu, 0x400, 2 | (1 << 10)); // BG2 entry -> char 2, palette 1
+        fill_4bpp_tile(ppu, 0, 1, 1);
+        fill_2bpp_tile(ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x05); // mode 5
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // CGWSEL: add subscreen
+        ppu.write_register(0x2100, 0x0F);
+    }
+
+    #[test]
+    fn hires_color_math_applies_to_odd_main_pixels_using_pre_math_sub() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        ppu.write_register(0x2131, 0x01); // CGADSUB: add, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // Odd (main) columns get main + pre-math sub = 10 + 5 = 15. At native x 1
+        // the post-math even value is 20, so a post-math operand would yield 30.
+        assert_eq!(ppu.framebuffer[1], 15, "main pixel adds the raw sub color");
+        assert_eq!(
+            ppu.framebuffer[3], 15,
+            "later main pixels still use the pre-math sub color"
+        );
+    }
+
+    #[test]
+    fn hires_color_math_applies_to_even_sub_pixels_using_previous_post_math_main() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        ppu.write_register(0x2131, 0x01); // CGADSUB: add, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // Even (sub) columns add the finalized main pixel one dot to the left:
+        // sub 5 + main_final(10 + 5 = 15) = 20. The pre-math main (10) would give 15.
+        assert_eq!(
+            ppu.framebuffer[2], 20,
+            "sub pixel adds the post-math main pixel of the previous dot"
+        );
+    }
+
+    #[test]
+    fn hires_color_math_even_column_at_x0_uses_black_prev_main() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        ppu.write_register(0x2131, 0x41); // CGADSUB: add-half, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // Add-half against the (black) missing previous main pixel: (5 + 0) / 2 = 2.
+        assert_eq!(
+            ppu.framebuffer[0], 2,
+            "the first even column adds black (no previous main pixel)"
+        );
+    }
+
+    #[test]
+    fn hires_color_math_even_gate_uses_previous_main_source() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        // Math enabled for BG2 only: the main pixel (BG1) is ungated, and the even
+        // half-pixel's gate follows the previous MAIN pixel's source (BG1), not the
+        // sub pixel's own layer (BG2) -- so nothing gets math.
+        ppu.write_register(0x2131, 0x02);
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(ppu.framebuffer[1], 10, "main pixel stays raw");
+        assert_eq!(
+            ppu.framebuffer[2], 5,
+            "sub pixel stays raw: its gate is the main source at x-1"
+        );
+    }
+
+    #[test]
+    fn hires_color_math_without_sub_enable_uses_fixed_color_operand() {
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        ppu.write_register(0x2130, 0x00); // CGWSEL: fixed-color operand
+        ppu.write_register(0x2131, 0x01); // CGADSUB: add, BG1 enabled
+        ppu.write_register(0x2132, 0x80 | 12); // COLDATA: blue 12
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(
+            ppu.framebuffer[1],
+            (12 << 10) | 10,
+            "main pixel adds COLDATA when CGWSEL bit 1 is clear"
+        );
+        // Mesen2's fixed-color branch applies to BOTH halves (ApplyColorMathToPixel:
+        // otherPixel = FixedColor when ColorMathAddSubscreen is clear).
+        assert_eq!(
+            ppu.framebuffer[2],
+            (12 << 10) | 5,
+            "sub pixel adds COLDATA when CGWSEL bit 1 is clear"
+        );
+    }
+
+    #[test]
+    fn pseudo_hires_applies_color_math_to_both_half_pixels() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 1, 0x000A); // BG1 color 1 = red 10
+        set_cgram(&mut ppu, 33, 0x0005); // BG2 color 1 = red 5 (mode 0 region)
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1);
+        set_vram_word(&mut ppu, 0x400, 2);
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x00); // mode 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // CGWSEL: add subscreen
+        ppu.write_register(0x2131, 0x01); // CGADSUB: add, BG1 enabled
+        ppu.write_register(0x2133, 0x08); // pseudo-hires
+        ppu.write_register(0x2100, 0x0F);
+        render_lines(&mut ppu, 1);
+
+        // Pseudo-hires shares the hires math path: odd = 10 + 5 = 15, and the even
+        // column at native x 1 adds the finalized main to its left: 5 + 15 = 20.
+        assert_eq!(ppu.framebuffer[1], 15, "main half-pixel gets color math");
+        assert_eq!(ppu.framebuffer[2], 20, "sub half-pixel gets color math");
+    }
+
+    #[test]
+    fn hires_even_backdrop_shows_cgram_zero_not_coldata() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0842); // backdrop = dark gray (2,2,2)
+        set_cgram(&mut ppu, 1, 0x7FFF); // BG1 color 1 = white
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_vram_word(&mut ppu, 0x000, 1);
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x05); // mode 5
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2 (empty -> sub backdrop)
+        ppu.write_register(0x2132, 0x80 | 12); // COLDATA: blue 12
+        ppu.write_register(0x2100, 0x0F);
+        render_lines(&mut ppu, 1);
+
+        // Mesen2 RenderBgColor fills the sub-screen backdrop with CGRAM color 0
+        // (like main); COLDATA is only ever a color-math operand, so an empty even
+        // column displays the backdrop color, not the fixed color and not black.
+        assert_eq!(
+            ppu.framebuffer[0], 0x0842,
+            "empty even column shows the CGRAM 0 backdrop"
+        );
+        assert_eq!(ppu.framebuffer[1], 0x7FFF, "odd column shows main");
+    }
+
+    #[test]
+    fn true_hires_displays_sub_layers_without_cgwsel_sub_enable() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // main BG1 color 1 = white
+        set_cgram(&mut ppu, 5, 0x001F); // sub BG2 palette 1 color 1 = red
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(&mut ppu, 0x400, 2 | (1 << 10)); // BG2 entry -> char 2, palette 1
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x05); // mode 5
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        // CGWSEL stays 0: bit 1 selects the color-math operand, it does NOT gate
+        // the sub screen's hires display (Mesen2 renders TS unconditionally).
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            &rgb[0..3],
+            &[255, 0, 0],
+            "even column shows the TS layer without CGWSEL bit 1"
+        );
+        assert_eq!(&rgb[3..6], &[255, 255, 255], "odd column shows main");
+    }
+
+    #[test]
+    fn pseudo_hires_displays_sub_layers_without_cgwsel_sub_enable() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x7FFF); // main BG1 color 1 = white
+        set_cgram(&mut ppu, 33, 0x001F); // sub BG2 color 1 = red (mode 0 region)
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(&mut ppu, 0x400, 2); // BG2 entry -> char 2
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x00); // mode 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2133, 0x08); // pseudo-hires
+        // CGWSEL stays 0, as above.
+        ppu.write_register(0x2100, 0x0F);
+        render_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(
+            &rgb[0..3],
+            &[255, 0, 0],
+            "first half-pixel shows the TS layer without CGWSEL bit 1"
+        );
+        assert_eq!(&rgb[3..6], &[255, 255, 255], "second half-pixel shows main");
+    }
+
+    #[test]
+    fn mode5_mosaic_size1_collapses_pairs_to_the_even_subpixel() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        ppu.write_register(0x2106, 0x01); // MOSAIC: size 1, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // Mosaic on a hires layer collapses each half-pixel pair to the even sample,
+        // even at block size 1 (Mesen2 forces the mosaic path on for modes 5/6).
+        assert_eq!(ppu.framebuffer[0], 1, "even column keeps the even sample");
+        assert_eq!(ppu.framebuffer[1], 1, "odd column repeats the even sample");
+        assert_eq!(ppu.framebuffer[2], 3, "next pair samples hires column 2");
+        assert_eq!(ppu.framebuffer[3], 3, "and repeats it");
+    }
+
+    #[test]
+    fn mode5_mosaic_block_replicates_the_block_start_even_sample() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        fill_4bpp_tile(&mut ppu, 0, 2, 9); // paired char: block 2's even sample
+        ppu.write_register(0x2106, 0x31); // MOSAIC: size 4, BG1 enabled
+        render_lines(&mut ppu, 1);
+
+        // A 4-wide mosaic block spans 8 output columns, all showing the even sample
+        // of the block-start native pixel (hires column 0 -> pattern color 1).
+        for c in 0..8usize {
+            assert_eq!(
+                ppu.framebuffer[c], 1,
+                "output column {c} shows the block-start even sample"
+            );
+        }
+        // The next block starts at native x 4 -> even sample is hires column 8,
+        // the first column of paired char 2.
+        assert_eq!(ppu.framebuffer[8], 9, "next block starts at column 8");
+    }
+
+    #[test]
+    fn mode5_mosaic_only_affects_enabled_layers() {
+        let mut ppu = Ppu::new();
+        for i in 1..4 {
+            set_cgram(&mut ppu, i, i as u16);
+        }
+        ppu.write_register(0x2105, 0x05); // mode 5 (BG2 2bpp)
+        ppu.write_register(0x212C, 0x02); // TM: BG2
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2100, 0x0F);
+        ppu.write_register(0x2106, 0x01); // MOSAIC: BG1 only -- BG2 unaffected
+        set_bg_map_base(&mut ppu, 1, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        for fine_y in 0..8 {
+            for fine_x in 0..8u8 {
+                set_2bpp_tile_pixel(&mut ppu, 0, 1, fine_x, fine_y, (fine_x % 3) + 1);
+            }
+        }
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(ppu.framebuffer[0], 1, "BG2 keeps distinct even subpixels");
+        assert_eq!(ppu.framebuffer[1], 2, "BG2 keeps distinct odd subpixels");
+        assert_eq!(ppu.framebuffer[2], 3, "no collapse on a non-mosaic layer");
+    }
+
+    /// Mode 6 scene for offset-per-tile tests: BG1 on both screens with solid char
+    /// pairs per map entry (entry 0 -> chars 1/2, entry 1 -> 3/4, entry 2 -> 5/6,
+    /// colored by char number), BG1 map at 0x400, BG3 (OPT source) map at 0x800.
+    fn setup_mode6_opt(ppu: &mut Ppu) {
+        setup_mode5_bg1_both_screens(ppu);
+        ppu.write_register(0x2105, 0x06); // mode 6 (BG1 4bpp + BG3 offset-per-tile)
+        set_bg_map_base(ppu, 0, 0x400);
+        set_bg_map_base(ppu, 2, 0x800);
+        for entry in 0..3u16 {
+            set_vram_word(ppu, 0x400 + entry as usize, entry * 2 + 1);
+            fill_4bpp_tile(ppu, 0, (entry * 2 + 1) as usize, (entry * 2 + 1) as u8);
+            fill_4bpp_tile(ppu, 0, (entry * 2 + 2) as usize, (entry * 2 + 2) as u8);
+        }
+    }
+
+    #[test]
+    fn mode6_opt_h_offset_shifts_tilemap_in_hires_units() {
+        // An OPT H value of 16 moves the BG1 tilemap by one entry (8 native px);
+        // Mesen2 ORs the value into the doubled scroll and shifts back down, so
+        // bit 3 (value 8) is dropped in modes 5/6 (halved-OPT quirk).
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        set_vram_word(&mut ppu, 0x800, 16 | 0x2000); // H entry for BG1, value 16
+        render_lines(&mut ppu, 1);
+        assert_eq!(
+            ppu.framebuffer[16], 5,
+            "H offset 16 shifts native x 8 from entry 1 to entry 2"
+        );
+
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        set_vram_word(&mut ppu, 0x800, 8 | 0x2000); // H entry for BG1, value 8
+        render_lines(&mut ppu, 1);
+        assert_eq!(
+            ppu.framebuffer[16], 3,
+            "H offset 8 is dropped by the hires halving"
+        );
+    }
+
+    #[test]
+    fn mode6_opt_v_offset_replaces_vertical_scroll_natively() {
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        set_vram_word(&mut ppu, 0x421, 7); // BG1 map row 1, col 1 -> char 7
+        fill_4bpp_tile(&mut ppu, 0, 7, 7);
+        // BG3 row 1 holds the V entries in mode 6 (mode-2-style dual lookup):
+        // V offset 8 moves the OPT-affected columns one tile row down.
+        set_vram_word(&mut ppu, 0x820, 8 | 0x2000);
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(
+            ppu.framebuffer[16], 7,
+            "V offset 8 fetches the map row below for native x 8"
+        );
+        assert_eq!(
+            ppu.framebuffer[0], 1,
+            "exempt first tile column is unshifted"
+        );
+    }
+
+    #[test]
+    fn mode6_opt_first_tile_column_exempt_in_hires() {
+        // The exemption boundary stays at 8 native pixels (one hires map entry)
+        // even with the BGMODE 16x16 tile-size bit set.
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        ppu.write_register(0x2105, 0x16); // mode 6 + BG1 16x16 tiles
+        set_vram_word(&mut ppu, 0x800, 16 | 0x2000);
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(ppu.framebuffer[0], 1, "native x 0-7 are exempt from OPT");
+        assert_eq!(
+            ppu.framebuffer[16], 5,
+            "native x 8 is past the exemption despite 16x16 tiles"
+        );
+    }
+
+    #[test]
+    fn mode6_bg1_uses_doubled_fetch() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        ppu.write_register(0x2105, 0x06); // mode 6 (BG1 4bpp)
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1);
+        fill_4bpp_tile_column_pattern(&mut ppu, 0, 1);
+        render_lines(&mut ppu, 1);
+
+        for c in 0..8usize {
+            assert_eq!(
+                ppu.framebuffer[c],
+                (c + 1) as u16,
+                "output column {c} shows tile column {c}"
+            );
+        }
     }
 
     #[test]
@@ -1230,8 +1999,13 @@ mod tests {
         ppu.write_register(0x2100, 0x0F);
         render_frame(&mut ppu);
 
+        // sub screen (backdrop here, since TS is empty).
         let rgb = ppu.screen_snapshot_rgb();
-        assert_eq!(pixel(&rgb, 0, 0), [255, 255, 255], "mode 6 BG1 renders");
+        assert_eq!(
+            &rgb[3..6],
+            [255, 255, 255],
+            "mode 6 BG1 renders on odd columns"
+        );
     }
 
     #[test]
@@ -1247,16 +2021,14 @@ mod tests {
         ppu.write_register(0x2100, 0x0F);
         render_frame(&mut ppu);
 
+        // Main screen lands on the odd output columns; the even column shows the
+        // sub screen (backdrop here, since TS is empty).
         let rgb = ppu.screen_snapshot_rgb();
-        assert_eq!(
-            pixel(&rgb, 0, 0),
-            [0, 0, 255],
-            "mode 5 BG1 renders at 256-wide"
-        );
+        assert_eq!(&rgb[3..6], [0, 0, 255], "mode 5 BG1 renders on odd columns");
     }
 
     #[test]
-    fn mode5_hi_res_interleaves_main_and_sub_pixels() {
+    fn mode5_hi_res_places_sub_on_even_and_main_on_odd_columns() {
         let mut ppu = Ppu::new();
         set_cgram(&mut ppu, 0, 0x0000);
         set_cgram(&mut ppu, 1, 0x7FFF); // main BG1 color 1 = white
@@ -1277,8 +2049,10 @@ mod tests {
 
         let rgb = ppu.screen_snapshot_rgb();
         assert_eq!(rgb.len(), 512 * 224 * 3);
-        assert_eq!(&rgb[0..3], &[255, 255, 255], "even column uses main screen");
-        assert_eq!(&rgb[3..6], &[255, 0, 0], "odd column uses sub screen");
+        // Hardware/Mesen2: the sub screen supplies the even (left) half-pixel and the
+        // main screen the odd (right) one (Mesen2 ApplyHiResMode).
+        assert_eq!(&rgb[0..3], &[255, 0, 0], "even column uses sub screen");
+        assert_eq!(&rgb[3..6], &[255, 255, 255], "odd column uses main screen");
     }
 
     #[test]
@@ -1310,6 +2084,61 @@ mod tests {
             "first half-pixel uses shifted sub"
         );
         assert_eq!(&rgb[3..6], &[255, 255, 255], "second half-pixel uses main");
+    }
+
+    /// Mode 1 scene with white BG1 on the main screen and red BG2 (palette 1) on the
+    /// sub screen (CGWSEL sub-screen BG/OBJ enabled), for the line-buffer tests.
+    fn setup_mode1_main_bg1_sub_bg2(ppu: &mut Ppu) {
+        set_cgram(ppu, 0, 0x0000);
+        set_cgram(ppu, 1, 0x7FFF); // main BG1 color 1 = white
+        set_cgram(ppu, 17, 0x001F); // sub BG2 palette 1 color 1 = red
+        set_bg_map_base(ppu, 0, 0x000);
+        set_bg_map_base(ppu, 1, 0x400);
+        set_vram_word(ppu, 0x000, 1); // BG1 entry -> char 1
+        set_vram_word(ppu, 0x400, 2 | (1 << 10)); // BG2 entry -> char 2, palette 1
+        fill_4bpp_tile(ppu, 0, 1, 1);
+        fill_4bpp_tile(ppu, 0, 2, 1);
+
+        ppu.write_register(0x2105, 0x01); // mode 1 (BG1 + BG2 both 4bpp)
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
+        ppu.write_register(0x2100, 0x0F);
+    }
+
+    #[test]
+    fn render_dot_populates_main_and_sub_line_buffers() {
+        let mut ppu = Ppu::new();
+        setup_mode1_main_bg1_sub_bg2(&mut ppu);
+        render_first_visible_line(&mut ppu);
+
+        assert_eq!(ppu.line_main[0].color, 0x7FFF, "main buffer holds BG1");
+        assert_eq!(ppu.line_main[0].source, super::PixelSource::Bg(0));
+        assert_eq!(ppu.line_sub[0].color, 0x001F, "sub buffer holds BG2");
+        assert_eq!(ppu.line_sub[0].source, super::PixelSource::Bg(1));
+    }
+
+    #[test]
+    fn line_main_final_records_post_color_math_output() {
+        let mut ppu = Ppu::new();
+        setup_mode1_main_bg1_sub_bg2(&mut ppu);
+        ppu.write_register(0x2131, 0x41); // CGADSUB: add-half, BG1 enabled
+        render_first_visible_line(&mut ppu);
+
+        // (white + red) / 2 = (31,15,15) in BGR555.
+        let expected = (15u16 << 10) | (15 << 5) | 31;
+        assert_eq!(
+            ppu.line_main_final[0], expected,
+            "final buffer holds the post-color-math output"
+        );
+        assert_ne!(
+            ppu.line_main_final[0], ppu.line_main[0].color,
+            "final differs from the pre-math resolve"
+        );
+        assert_eq!(
+            ppu.framebuffer[0], expected,
+            "framebuffer matches the finalized pixel"
+        );
     }
 
     #[test]

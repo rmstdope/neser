@@ -30,20 +30,22 @@ impl Ppu {
         }
         let base_x = self.framebuffer_x(x);
         let base = row * self.framebuffer_stride() + base_x;
+        let (main, sub) = self.resolve_pixel_pair(x as u16, y as u16);
+        self.line_main[x] = main;
+        self.line_sub[x] = sub;
         if self.hires_output_enabled() {
-            let main = self.resolve_screen_pixel(super::ScreenTarget::Main, x as u16, y as u16);
-            let sub = self.resolve_screen_pixel(super::ScreenTarget::Sub, x as u16, y as u16);
-            if self.pseudo_hires_enabled() {
-                // Pseudo-hires shifts sub-screen half a dot left: sub lands in the first
-                // half-pixel column, main in the second.
-                self.framebuffer[base] = sub.color;
-                self.framebuffer[base + 1] = main.color;
-            } else {
-                self.framebuffer[base] = main.color;
-                self.framebuffer[base + 1] = sub.color;
-            }
+            // The sub screen supplies the even (left) half-pixel and the main screen the
+            // odd (right) one, for both true hires (modes 5/6) and pseudo-hires (Mesen2
+            // ApplyHiResMode: out[2x] = sub, out[2x+1] = main), each finalized through
+            // the hires color-math pair.
+            let (even, odd) = self.compose_hires_pair(x as u16, y as u16);
+            self.framebuffer[base] = even;
+            self.framebuffer[base + 1] = odd;
+            self.line_main_final[x] = odd;
         } else {
-            self.framebuffer[base] = self.compute_pixel(x as u16, y as u16);
+            let out = self.compose_pixels(x as u16, y as u16, main, sub);
+            self.line_main_final[x] = out;
+            self.framebuffer[base] = out;
         }
         // Mesen2's render pipeline ends every pixel chunk with `RenderBgColor`, which
         // fetches the backdrop for any pixel the sub screen doesn't cover. With no
