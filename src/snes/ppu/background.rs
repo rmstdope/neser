@@ -603,7 +603,16 @@ impl Ppu {
         let hoffset = hx.wrapping_add(hscroll) & 0x07FF;
         let mut entry_col = hoffset >> 4;
         let screen_y = y.wrapping_add(1);
-        let mut voffset = screen_y.wrapping_add(self.bg_vscroll(bg)) & 0x03FF;
+        // Screen interlace doubles the vertical fetch in modes 5/6 (the only modes
+        // that reach this path): Mesen2 GetTilemapData/GetChrData compute
+        // realY = (scanline << 1) | oddFrame when IsDoubleHeight, so each field
+        // samples a distinct source line.
+        let real_y = if self.interlace_enabled() {
+            (screen_y << 1) | u16::from(self.interlace_field)
+        } else {
+            screen_y
+        };
+        let mut voffset = real_y.wrapping_add(self.bg_vscroll(bg)) & 0x03FF;
 
         // Offset-per-tile (mode 6 is the only hires OPT mode; mode-2-style dual H/V
         // entries). The BG3 lookup runs in native units, where one tilemap entry spans
@@ -624,7 +633,7 @@ impl Ppu {
                     entry_col = (offset_x >> 3).wrapping_add((hlookup & 0x03F0) >> 4);
                 }
                 if vlookup & valid_bit != 0 {
-                    voffset = screen_y.wrapping_add(vlookup & 0x03FF) & 0x03FF;
+                    voffset = real_y.wrapping_add(vlookup & 0x03FF) & 0x03FF;
                 }
             }
         }
@@ -929,6 +938,15 @@ mod tests {
         }
     }
 
+    /// Write a per-row 4bpp pattern (row r = color r+1) on all 8 tile columns.
+    fn fill_4bpp_tile_row_pattern(ppu: &mut Ppu, char_base: usize, char_num: usize) {
+        for fine_y in 0..8u8 {
+            for fine_x in 0..8u8 {
+                set_4bpp_tile_pixel(ppu, char_base, char_num, fine_x, fine_y, fine_y + 1);
+            }
+        }
+    }
+
     #[test]
     fn mode5_fetches_distinct_even_and_odd_subpixels() {
         let mut ppu = Ppu::new();
@@ -1032,6 +1050,171 @@ mod tests {
             ppu.framebuffer[7 * SCREEN_WIDTH_MAX + 16],
             6,
             "next map entry still starts at column 16"
+        );
+    }
+
+    /// Mode 5 scene with a row-pattern char for field-content tests: BG1 entry 0 ->
+    /// char 1 whose tile row r is solid color r+1, screen interlace enabled.
+    fn setup_mode5_interlace_row_pattern(ppu: &mut Ppu) {
+        setup_mode5_bg1_both_screens(ppu);
+        set_bg_map_base(ppu, 0, 0x400);
+        set_vram_word(ppu, 0x400, 1);
+        fill_4bpp_tile_row_pattern(ppu, 0, 1);
+        ppu.write_register(0x2133, 0x01); // SETINI: screen interlace
+    }
+
+    #[test]
+    fn mode5_interlace_even_field_fetches_doubled_tile_row() {
+        let mut ppu = Ppu::new();
+        setup_mode5_interlace_row_pattern(&mut ppu);
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 1);
+
+        // Mesen2 GetTilemapData/GetChrData: realY = (scanline << 1) | field in modes
+        // 5/6 + interlace; display line 1, even field -> tile row 2 -> color 3.
+        // The even field writes framebuffer row 0 (y*2 + 0).
+        assert_eq!(
+            ppu.framebuffer[0], 3,
+            "even field fetches tile row 2 for display line 1"
+        );
+    }
+
+    #[test]
+    fn mode5_interlace_odd_field_fetches_the_next_tile_row() {
+        let mut ppu = Ppu::new();
+        setup_mode5_interlace_row_pattern(&mut ppu);
+        ppu.interlace_field = true;
+        render_lines(&mut ppu, 1);
+
+        // Odd field: realY = 3 -> tile row 3 -> color 4, written to framebuffer
+        // row 1 (y*2 + 1).
+        assert_eq!(
+            ppu.framebuffer[SCREEN_WIDTH_MAX], 4,
+            "odd field fetches tile row 3 for display line 1"
+        );
+    }
+
+    #[test]
+    fn mode5_interlace_tile_size_16_pairs_vertically_at_doubled_rate() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        ppu.write_register(0x2105, 0x15); // mode 5 + BG1 16x16 tiles
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1); // entry 0 -> chars 1/2 (top), 17/18 (bottom)
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 17, 4); // vertical pair of char 1
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 4);
+
+        // The doubled realY crosses the 8-line half-tile boundary twice as fast:
+        // display line 3 (realY 6) still shows the top char, display line 4
+        // (realY 8) already shows the vertical pair char 17.
+        assert_eq!(
+            ppu.framebuffer[4 * SCREEN_WIDTH_MAX],
+            1,
+            "display line 3 (realY 6) shows the top half"
+        );
+        assert_eq!(
+            ppu.framebuffer[6 * SCREEN_WIDTH_MAX],
+            4,
+            "display line 4 (realY 8) shows the bottom half"
+        );
+    }
+
+    #[test]
+    fn mode6_interlace_opt_v_replacement_uses_doubled_line() {
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        set_vram_word(&mut ppu, 0x421, 7); // BG1 map row 1, col 1 -> char 7
+        fill_4bpp_tile(&mut ppu, 0, 7, 7);
+        set_vram_word(&mut ppu, 0x820, 6 | 0x2000); // OPT V entry, value 6
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 1);
+
+        // The OPT V replacement adds the entry to the DOUBLED line: realY 2 + 6 = 8
+        // -> map row 1 -> char 7 (undoubled 1 + 6 = 7 would stay on row 0).
+        assert_eq!(
+            ppu.framebuffer[16], 7,
+            "OPT V offset applies to the doubled display line"
+        );
+    }
+
+    #[test]
+    fn mode5_interlace_vflip_mirrors_the_doubled_row() {
+        let mut ppu = Ppu::new();
+        setup_mode5_interlace_row_pattern(&mut ppu);
+        set_vram_word(&mut ppu, 0x400, 1 | 0x8000); // add V-flip
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 1);
+        assert_eq!(
+            ppu.framebuffer[0], 6,
+            "even field: realY 2 flips to tile row 5"
+        );
+
+        let mut ppu = Ppu::new();
+        setup_mode5_interlace_row_pattern(&mut ppu);
+        set_vram_word(&mut ppu, 0x400, 1 | 0x8000);
+        ppu.interlace_field = true;
+        render_lines(&mut ppu, 1);
+        assert_eq!(
+            ppu.framebuffer[SCREEN_WIDTH_MAX], 5,
+            "odd field: realY 3 flips to tile row 4"
+        );
+    }
+
+    #[test]
+    fn mode5_interlace_leaves_horizontal_pairing_and_hflip_unchanged() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1 | 0x4000); // char 1, H-flip
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 2, 2);
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 1);
+
+        // Interlace only doubles the vertical fetch; the 16-wide char pairing and
+        // hflip mirroring across the pair are unchanged.
+        assert_eq!(
+            ppu.framebuffer[0], 2,
+            "flipped pair still leads with char 2"
+        );
+        assert_eq!(
+            ppu.framebuffer[8], 1,
+            "columns 8-15 still show mirrored char 1"
+        );
+    }
+
+    #[test]
+    fn interlace_outside_modes_5_6_keeps_identical_field_content() {
+        // Mesen2's IsDoubleHeight requires mode 5/6: in other modes + interlace both
+        // fields fetch the SAME source row and only the output row parity differs.
+        let render_mode1_field = |field: bool| {
+            let mut ppu = Ppu::new();
+            for i in 1..16 {
+                set_cgram(&mut ppu, i, i as u16);
+            }
+            ppu.write_register(0x2105, 0x01); // mode 1 (BG1 4bpp)
+            ppu.write_register(0x212C, 0x01); // TM: BG1
+            ppu.write_register(0x2100, 0x0F);
+            ppu.write_register(0x2133, 0x01);
+            set_bg_map_base(&mut ppu, 0, 0x400);
+            set_vram_word(&mut ppu, 0x400, 1);
+            fill_4bpp_tile_row_pattern(&mut ppu, 0, 1);
+            ppu.interlace_field = field;
+            render_lines(&mut ppu, 1);
+            ppu
+        };
+
+        let even = render_mode1_field(false);
+        let odd = render_mode1_field(true);
+        assert_eq!(even.framebuffer[0], 2, "even field: undoubled tile row 1");
+        assert_eq!(
+            odd.framebuffer[SCREEN_WIDTH_MAX], 2,
+            "odd field: same source row on the odd output row"
         );
     }
 
