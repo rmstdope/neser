@@ -2,7 +2,6 @@ use super::super::*;
 
 impl RomBrowserApp {
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_search_panel_egui(
         ctx: &egui::Context,
         query: &str,

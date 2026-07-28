@@ -21,7 +21,7 @@ class ApiError(Exception):
     was not an HTTP error status (e.g. an invalid JSON body).
     """
 
-    def __init__(self, message: str, status_code: int = None):
+    def __init__(self, message: str, status_code: int | None = None):
         super().__init__(message)
         self.status_code = status_code
 
