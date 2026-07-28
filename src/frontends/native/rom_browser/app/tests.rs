@@ -499,8 +499,35 @@ fn legend_shows_keyboard_keys_in_search_without_controller() {
 
 #[test]
 fn legend_shows_controller_buttons_in_search_with_controller() {
+    // Start opened the search view, so Start closes it — not B.
     let items = RomBrowserApp::legend_items(true, false, false, true);
-    assert_eq!(items, [("A", "Select"), ("B", "Close")]);
+    assert_eq!(items, [("A", "Select"), ("Start", "Close")]);
+}
+
+#[test]
+fn search_action_closes_search_but_back_does_not() {
+    let mut app = test_browser(vec![make_entry("Zelda")]);
+    app.search_active = true;
+
+    app.apply_search_action(BrowserAction::Back);
+    assert!(app.search_active, "B must not close the search view");
+
+    app.apply_search_action(BrowserAction::Search);
+    assert!(!app.search_active, "Start must close the search view");
+}
+
+#[test]
+fn button_pill_colors_follow_snes_controller_scheme() {
+    use crate::frontends::native::rom_browser::theme;
+    // SNES controller: A red, B yellow, X blue, Y green.
+    let a = theme::BUTTON_COLOR_A;
+    assert!(a.r() > a.g() && a.r() > a.b(), "A must be red");
+    let b = theme::BUTTON_COLOR_B;
+    assert!(b.r() > b.b() && b.g() > b.b(), "B must be yellow");
+    let x = theme::BUTTON_COLOR_X;
+    assert!(x.b() > x.r() && x.b() > x.g(), "X must be blue");
+    let y = theme::BUTTON_COLOR_Y;
+    assert!(y.g() > y.r() && y.g() > y.b(), "Y must be green");
 }
 
 #[test]

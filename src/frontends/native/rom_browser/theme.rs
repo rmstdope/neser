@@ -88,11 +88,11 @@ pub const BUTTON_PILL_LABEL: Color32 = Color32::from_rgb(190, 190, 200);
 /// Outer wrapper pill for legend items.
 pub const LEGEND_ITEM_BG: Color32 = Color32::from_rgb(45, 45, 58);
 
-/// Standard gamepad face button colours.
-pub const BUTTON_COLOR_A: Color32 = Color32::from_rgb(52, 168, 83); // Green
-pub const BUTTON_COLOR_B: Color32 = Color32::from_rgb(217, 72, 72); // Red
+/// Gamepad face button colours, following the SNES controller.
+pub const BUTTON_COLOR_A: Color32 = Color32::from_rgb(217, 72, 72); // Red
+pub const BUTTON_COLOR_B: Color32 = Color32::from_rgb(224, 187, 42); // Yellow
 pub const BUTTON_COLOR_X: Color32 = Color32::from_rgb(51, 115, 217); // Blue
-pub const BUTTON_COLOR_Y: Color32 = Color32::from_rgb(224, 187, 42); // Yellow
+pub const BUTTON_COLOR_Y: Color32 = Color32::from_rgb(52, 168, 83); // Green
 
 /// Calculate the number of grid columns and cover width for a given area.
 ///

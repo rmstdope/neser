@@ -195,18 +195,26 @@ impl RomBrowserApp {
         }
     }
 
+    /// Handle a browser action while the search overlay is active.
+    ///
+    /// Search (the Start button) closes the overlay since it also opened it;
+    /// Back deliberately does nothing here.
+    pub(super) fn apply_search_action(&mut self, action: BrowserAction) {
+        match action {
+            BrowserAction::Search => self.close_search_panel(),
+            BrowserAction::Up => self.search_kb_move_up(),
+            BrowserAction::Down => self.search_kb_move_down(),
+            BrowserAction::Left => self.search_kb_move_left(),
+            BrowserAction::Right => self.search_kb_move_right(),
+            BrowserAction::Confirm => self.search_kb_confirm(),
+            _ => {}
+        }
+    }
+
     /// Apply a browser action (shared between keyboard and gamepad).
     pub(super) fn apply_action(&mut self, action: BrowserAction, event_loop: &ActiveEventLoop) {
         if self.search_active {
-            match action {
-                BrowserAction::Back => self.close_search_panel(),
-                BrowserAction::Up => self.search_kb_move_up(),
-                BrowserAction::Down => self.search_kb_move_down(),
-                BrowserAction::Left => self.search_kb_move_left(),
-                BrowserAction::Right => self.search_kb_move_right(),
-                BrowserAction::Confirm => self.search_kb_confirm(),
-                _ => {}
-            }
+            self.apply_search_action(action);
         } else if self.filter_panel_active {
             match action {
                 BrowserAction::Back => self.close_filter_panel(),

@@ -445,7 +445,7 @@ impl RomBrowserApp {
     ) -> &'static [(&'static str, &'static str)] {
         if search_active {
             if controller_connected {
-                &[("A", "Select"), ("B", "Close")]
+                &[("A", "Select"), ("Start", "Close")]
             } else {
                 &[("Tab", "Close"), ("Enter", "Select"), ("Type", "Search")]
             }
