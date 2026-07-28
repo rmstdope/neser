@@ -406,8 +406,8 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | `src/frontends/native/egui_texture.rs` | Shared egui native texture metadata used by ROM browser textures and future emulator egui rendering. |
 | `src/frontends/native/ui_geometry.rs` | Shared pure geometry helpers for letterboxed frames, overlays, toasts, and crosshair layout. |
 | `src/frontends/native/shader_manager.rs` | Shader pipeline using librashader — loads `.slangp` presets (CRT, NTSC, xBRZ). |
-| `src/frontends/native/rom_browser/` | Graphical ROM browser — a console-style launcher with cover art grid, search, genre filter, detail view, and favorites. |
-| `src/frontends/native/rom_browser/app.rs` | `RomBrowserApp` — winit `ApplicationHandler` implementing the browser state machine, grid rendering, overlay modes (search, genre filter, detail view), input handling, and favorites. |
+| `src/frontends/native/rom_browser/` | Graphical ROM browser — a console-style launcher with cover art grid, search, a filter panel (platform, players, genre, favorites), and a detail view. |
+| `src/frontends/native/rom_browser/app.rs` | `RomBrowserApp` — winit `ApplicationHandler` implementing the browser state machine, grid rendering, overlay modes (search, filter panel, detail view), input handling, and favorites. |
 | `src/frontends/native/rom_browser/renderer.rs` | `BrowserGl` — egui_glow + egui_winit setup, texture loading from image files, and frame lifecycle management for the browser window. |
 | `src/frontends/native/rom_browser/theme.rs` | Visual theme constants — colours, spacing, layout calculations (`grid_layout`, `cell_height`, `sidebar_width`). |
 | `src/frontends/tui/` | Terminal UI ROM launcher using `ratatui` + `crossterm`. |
@@ -580,7 +580,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 - **Mapper trait pattern**: All mappers implement the `Mapper` trait with a standard interface for PRG/CHR reads/writes, IRQ management, and state snapshots. Common banking logic is provided by `BaseMapper`.
 - **Deterministic testing**: RAM initialization modes and autorun recordings enable fully deterministic regression testing against reference CRC checksums.
 - **Save state serialization**: The primary save-state path uses JSON (via serde) with a versioned format; mapper state is serialized as opaque byte vectors to keep the format flexible. NES autorun recordings and the NES compact-binary save path use postcard.
-- **ROM browser architecture**: The native frontend includes a console-style graphical ROM browser as the default landing screen. It uses the shared `platform/catalog` module for ROM discovery, `platform/metadata` for TheGamesDB fuzzy matching via `rusqlite` + `strsim`, and `platform/image_cache` for cover art downloading via `reqwest`. The browser renders a cover art grid with egui (`egui_glow` + `egui_winit`), supports real-time search, genre filtering, a detail view overlay, and persistent favorites. When launched without a ROM path, the browser opens first; selecting a ROM transitions to emulation mode via an application state machine.
+- **ROM browser architecture**: The native frontend includes a console-style graphical ROM browser as the default landing screen. It uses the shared `platform/catalog` module for ROM discovery, `platform/metadata` for TheGamesDB fuzzy matching via `rusqlite` + `strsim`, and `platform/image_cache` for cover art downloading via `reqwest`. The browser renders a cover art grid with egui (`egui_glow` + `egui_winit`), supports real-time search, a filter panel (platform, players, genre, favorites-only), a detail view overlay, and persistent favorites. When launched without a ROM path, the browser opens first; selecting a ROM transitions to emulation mode via an application state machine.
 
 ## Testing Strategy
 
