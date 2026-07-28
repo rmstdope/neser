@@ -127,7 +127,16 @@ impl Ppu {
             0x212B => self.wobjlog = value,
             // SETINI: Display Control 2. Bits used in this core: bit 6 (EXTBG), bit 3
             // (pseudo-hires), bit 1 (OBJ interlace), bit 0 (interlace).
-            0x2133 => self.setini = value,
+            0x2133 => {
+                let interlace_rising = value & 0x01 != 0 && self.setini & 0x01 == 0;
+                self.setini = value;
+                // Mesen2 $2133: enabling screen interlace during vblank clears the
+                // output buffer, so the first interlaced frame doesn't weave stale
+                // rows from the persistent framebuffer into the other field.
+                if interlace_rising && self.vblank_active {
+                    self.framebuffer.iter_mut().for_each(|p| *p = 0);
+                }
+            }
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
             // while the VBlank flag is already set raises an edge.
             0x4200 => {
@@ -538,6 +547,62 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::super::Ppu;
+
+    #[test]
+    fn setini_interlace_rising_edge_in_vblank_clears_the_framebuffer() {
+        let mut ppu = Ppu::new();
+        ppu.framebuffer[0] = 0x7FFF;
+        ppu.framebuffer[123] = 0x1234;
+        ppu.vblank_active = true;
+
+        // Mesen2 $2133: enabling screen interlace during vblank clears the output
+        // buffer so the first interlaced frame doesn't weave in stale rows.
+        ppu.write_register(0x2133, 0x01);
+
+        assert_eq!(ppu.framebuffer[0], 0, "framebuffer cleared on rising edge");
+        assert_eq!(ppu.framebuffer[123], 0, "whole framebuffer cleared");
+    }
+
+    #[test]
+    fn setini_interlace_rising_edge_outside_vblank_preserves_the_framebuffer() {
+        let mut ppu = Ppu::new();
+        ppu.framebuffer[0] = 0x7FFF;
+        ppu.vblank_active = false;
+
+        ppu.write_register(0x2133, 0x01);
+
+        assert_eq!(ppu.framebuffer[0], 0x7FFF, "no clear mid-visible-frame");
+    }
+
+    #[test]
+    fn setini_rewrite_with_interlace_already_on_does_not_clear() {
+        let mut ppu = Ppu::new();
+        ppu.vblank_active = true;
+        ppu.write_register(0x2133, 0x01);
+        ppu.framebuffer[0] = 0x7FFF;
+
+        ppu.write_register(0x2133, 0x01); // no edge
+
+        assert_eq!(
+            ppu.framebuffer[0], 0x7FFF,
+            "rewrite without an edge keeps pixels"
+        );
+    }
+
+    #[test]
+    fn setini_interlace_falling_edge_does_not_clear() {
+        let mut ppu = Ppu::new();
+        ppu.vblank_active = true;
+        ppu.write_register(0x2133, 0x01);
+        ppu.framebuffer[0] = 0x7FFF;
+
+        ppu.write_register(0x2133, 0x00); // falling edge
+
+        assert_eq!(
+            ppu.framebuffer[0], 0x7FFF,
+            "disabling interlace keeps pixels"
+        );
+    }
 
     #[test]
     fn vram_writes_should_store_a_word_and_increment_after_high_byte() {
