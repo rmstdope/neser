@@ -16,18 +16,16 @@ const STANDARD_LAYOUT: RawButtonLayout = { a: 0, b: 1, y: 2, x: 3, select: 8, st
 
 /**
  * Raw layouts for pads the browser exposes without a "standard" mapping,
- * keyed by "vendor:product". Seeded with the generic SNES USB replica pad
- * (raw HID order X, A, B, Y, ..., Select, Start) so it works even before —
- * or without — gamecontrollerdb.txt loading; loading merges over the seeds.
+ * keyed by "vendor:product". Populated from the bundled
+ * gamecontrollerdb.txt, which is the single source of truth for pad
+ * layouts (shared with the native frontend).
  */
-const rawLayoutRegistry = new Map<string, RawButtonLayout>([
-    ["081f:e401", { a: 2, b: 1, y: 3, x: 0, select: 8, start: 9, l: 4, r: 5 }],
-]);
+const rawLayoutRegistry = new Map<string, RawButtonLayout>();
 
 /**
  * Load raw button layouts for the current platform from the bundled SDL
- * gamecontrollerdb.txt (the same file the native frontend uses). Failures
- * leave the built-in seeds in place.
+ * gamecontrollerdb.txt (the same file the native frontend uses). On
+ * failure, unmapped pads fall back to the standard interpretation.
  */
 export async function loadRawButtonLayoutsFromDb(
     fetchFn: typeof fetch = fetch,
@@ -47,8 +45,8 @@ export async function loadRawButtonLayoutsFromDb(
             rawLayoutRegistry.set(key, layout);
         }
     } catch {
-        // Keep the built-in seeds; unmapped unknown pads fall back to the
-        // standard interpretation.
+        // Unmapped pads fall back to the standard interpretation until the
+        // db can be loaded.
     }
 }
 

@@ -98,7 +98,17 @@ it("prefers pressed if both d-pad and axes active", () => {
   expect(state.right).toBe(true);
 });
 
-it("remaps the generic SNES USB replica pad when the browser exposes it unmapped", () => {
+const REPLICA_DB_LINE =
+  "030000001f08000001e4000006010000,USB SNES gamepad,a:b2,b:b1,x:b3,y:b0,back:b8,start:b9,leftshoulder:b4,rightshoulder:b5,leftx:a0,lefty:a1,platform:Mac OS X,";
+const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)";
+
+async function loadReplicaDb() {
+  const fetchStub = (async () => ({ ok: true, text: async () => REPLICA_DB_LINE })) as unknown as typeof fetch;
+  await loadRawButtonLayoutsFromDb(fetchStub, MAC_UA);
+}
+
+it("remaps the generic SNES USB replica pad when the browser exposes it unmapped", async () => {
+  await loadReplicaDb();
   // Chrome id format. Raw HID button order on this pad: 0=X, 1=A, 2=B, 3=Y,
   // 8=Select, 9=Start — feeding it through the standard-layout reading made
   // physical X act as SNES B.
@@ -116,11 +126,12 @@ it("remaps the generic SNES USB replica pad when the browser exposes it unmapped
   expect(state.y).toBe(false);
 });
 
-it("maps the replica pad's physical X to the north position, not south", () => {
+it("maps the replica pad's physical X to the north position, not south", async () => {
+  await loadReplicaDb();
   const gamepad = {
     id: "081f-e401-USB gamepad", // Firefox id format
     mapping: "",
-    buttons: makeButtons([0, 1, 3, 8, 9]),
+    buttons: makeButtons([0, 1, 3, 4, 5, 8, 9]),
     axes: [0, 0, 0, 0]
   };
 
@@ -132,6 +143,8 @@ it("maps the replica pad's physical X to the north position, not south", () => {
   expect(state.a).toBe(false); // south (physical B, raw 2) not pressed
   expect(state.select).toBe(true);
   expect(state.start).toBe(true);
+  expect(state.l).toBe(true); // verified on hardware: L is raw b4
+  expect(state.r).toBe(true); // verified on hardware: R is raw b5
 });
 
 it("does not remap the replica pad when the browser already standard-maps it", () => {
@@ -173,20 +186,17 @@ it("uses layouts loaded from gamecontrollerdb.txt for other unmapped pads", asyn
   expect(state.x).toBe(false);
 });
 
-it("keeps the built-in SNES replica layout after loading a db without it", async () => {
-  const fetchStub = (async () => ({ ok: true, text: async () => "" })) as unknown as typeof fetch;
-  await loadRawButtonLayoutsFromDb(fetchStub, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
-
+it("falls back to the standard layout for unmapped pads absent from the db", () => {
   const gamepad = {
-    id: "USB gamepad (Vendor: 081f Product: e401)",
+    id: "Mystery pad (Vendor: 1234 Product: abcd)",
     mapping: "",
-    buttons: makeButtons([2]),
+    buttons: makeButtons([0]),
     axes: [0, 0, 0, 0]
   };
 
   const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
 
-  expect(state.a).toBe(true);
+  expect(state.a).toBe(true); // standard b0 = south
 });
 
 it("selects first connected gamepad", () => {

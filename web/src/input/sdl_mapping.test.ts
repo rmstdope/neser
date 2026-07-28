@@ -8,7 +8,7 @@ import {
 } from "./sdl_mapping";
 
 const REPLICA_LINE =
-    "030000001f08000001e4000006010000,USB SNES gamepad,a:b2,b:b1,x:b3,y:b0,back:b8,start:b9,leftx:a0,lefty:a1,platform:Mac OS X,";
+    "030000001f08000001e4000006010000,USB SNES gamepad,a:b2,b:b1,x:b3,y:b0,back:b8,start:b9,leftshoulder:b4,rightshoulder:b5,leftx:a0,lefty:a1,platform:Mac OS X,";
 
 it("extracts vendor and product from an SDL GUID (little-endian fields)", () => {
     expect(vendorProductFromGuid("030000001f08000001e4000006010000")).toEqual({
@@ -52,7 +52,7 @@ it("parses the SNES replica line into a raw button layout", () => {
     const layout = layouts.get("081f:e401");
     // SDL a=south, b=east, x=west, y=north; our fields are a=south, b=east,
     // y=west, x=north.
-    expect(layout).toEqual({ a: 2, b: 1, y: 3, x: 0, select: 8, start: 9, l: -1, r: -1 });
+    expect(layout).toEqual({ a: 2, b: 1, y: 3, x: 0, select: 8, start: 9, l: 4, r: 5 });
 });
 
 it("skips lines for other platforms and comments", () => {
