@@ -223,7 +223,15 @@ impl Ppu {
             fixed_color
         };
         let gate_source = self.line_main[xi.saturating_sub(1)].source;
-        let even = self.compose_half(x, y, sub.color, gate_source, even_operand);
+        // The sub resolve represents its backdrop with the COLDATA fixed color (the
+        // color-math operand on hardware), but the DISPLAYED sub backdrop is CGRAM
+        // color 0, like the main screen (Mesen2 RenderBgColor).
+        let sub_display = if sub.source == PixelSource::Backdrop {
+            self.cgram_color(0)
+        } else {
+            sub.color
+        };
+        let even = self.compose_half(x, y, sub_display, gate_source, even_operand);
         (even, odd)
     }
 
@@ -1182,6 +1190,32 @@ mod tests {
         // column at native x 1 adds the finalized main to its left: 5 + 15 = 20.
         assert_eq!(ppu.framebuffer[1], 15, "main half-pixel gets color math");
         assert_eq!(ppu.framebuffer[2], 20, "sub half-pixel gets color math");
+    }
+
+    #[test]
+    fn hires_even_backdrop_shows_cgram_zero_not_coldata() {
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0842); // backdrop = dark gray (2,2,2)
+        set_cgram(&mut ppu, 1, 0x7FFF); // BG1 color 1 = white
+        set_bg_map_base(&mut ppu, 0, 0x000);
+        set_vram_word(&mut ppu, 0x000, 1);
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+
+        ppu.write_register(0x2105, 0x05); // mode 5
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2 (empty -> sub backdrop)
+        ppu.write_register(0x2132, 0x80 | 12); // COLDATA: blue 12
+        ppu.write_register(0x2100, 0x0F);
+        render_lines(&mut ppu, 1);
+
+        // Mesen2 RenderBgColor fills the sub-screen backdrop with CGRAM color 0
+        // (like main); COLDATA is only ever a color-math operand, so an empty even
+        // column displays the backdrop color, not the fixed color and not black.
+        assert_eq!(
+            ppu.framebuffer[0], 0x0842,
+            "empty even column shows the CGRAM 0 backdrop"
+        );
+        assert_eq!(ppu.framebuffer[1], 0x7FFF, "odd column shows main");
     }
 
     #[test]
