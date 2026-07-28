@@ -245,7 +245,10 @@ impl ApplicationHandler for RomBrowserApp {
                                 event_loop.exit();
                             }
                         }
-                        Key::Character(ref ch) if ch.as_str() == "f" && !ctrl => {
+                        Key::Named(NamedKey::Space) => {
+                            self.toggle_favorite();
+                        }
+                        Key::Character(ref ch) if ch.as_str() == " " => {
                             self.toggle_favorite();
                         }
                         Key::Named(NamedKey::ArrowUp)
@@ -288,16 +291,6 @@ impl ApplicationHandler for RomBrowserApp {
                             self.toggle_favorite();
                         }
                         Key::Character(ref ch) if ch.as_str() == " " => {
-                            self.toggle_favorite();
-                        }
-                        Key::Character(ref ch) if ch.as_str() == "g" && !ctrl => {
-                            self.genre_filter_active = true;
-                            self.genre_cursor = 0;
-                        }
-                        Key::Character(ref ch) if ch.as_str() == "d" && !ctrl => {
-                            self.open_detail_view();
-                        }
-                        Key::Character(ref ch) if ch.as_str() == "f" && !ctrl => {
                             self.toggle_favorite();
                         }
                         Key::Character(ref ch) if ch.as_str() == "F" && !ctrl => {

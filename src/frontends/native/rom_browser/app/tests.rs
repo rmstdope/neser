@@ -501,7 +501,10 @@ fn legend_shows_keyboard_keys_in_filter_panel_without_controller() {
 #[test]
 fn legend_shows_keyboard_keys_in_detail_view_without_controller() {
     let items = RomBrowserApp::legend_items(false, false, false, true, false);
-    assert_eq!(items, [("Enter", "Launch"), ("F", "Fav"), ("Esc", "Back")]);
+    assert_eq!(
+        items,
+        [("Enter", "Launch"), ("Space", "Fav"), ("Esc", "Back")]
+    );
 }
 
 #[test]

@@ -468,7 +468,7 @@ impl RomBrowserApp {
             if controller_connected {
                 &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")]
             } else {
-                &[("Enter", "Launch"), ("F", "Fav"), ("Esc", "Back")]
+                &[("Enter", "Launch"), ("Space", "Fav"), ("Esc", "Back")]
             }
         } else if controller_connected {
             &[
