@@ -533,11 +533,12 @@ impl Ppu {
         hires_half: u16,
     ) -> Option<(u16, bool)> {
         let hx = (x << 1) | hires_half;
-        let (entry_col, hoffset, voffset) = self.effective_offsets_hires(bg, hx, y);
+        let (entry_col, hoffset, voffset_map, voffset_chr) =
+            self.effective_offsets_hires(bg, hx, y);
 
         let v_shift = if size16 { 4 } else { 3 };
         let v_mask = (1u16 << v_shift) - 1;
-        let entry = self.read_bg_map_entry(bg, entry_col, voffset >> v_shift);
+        let entry = self.read_bg_map_entry(bg, entry_col, voffset_map >> v_shift);
         let (char_num, palette, priority, hflip, vflip) = decode_bg_map_entry(entry);
 
         // Flips apply across the whole 16-wide pair (and 16-tall block for size16).
@@ -545,7 +546,7 @@ impl Ppu {
         if hflip {
             within_x = 15 - within_x;
         }
-        let mut within_y = voffset & v_mask;
+        let mut within_y = voffset_chr & v_mask;
         if vflip {
             within_y = v_mask - within_y;
         }
@@ -595,15 +596,44 @@ impl Ppu {
     }
 
     /// Compute the effective hires BG coordinates for layer `bg` at half-pixel column
-    /// `hx` (0..512): `(tilemap entry column, hoffset in half-pixel units, voffset)`,
-    /// with the horizontal scroll doubled and mode 6 offset-per-tile applied to the
-    /// entry column only (fine x and the char-pair half always follow BGnHOFS).
-    fn effective_offsets_hires(&self, bg: usize, hx: u16, y: u16) -> (u16, u16, u16) {
+    /// `hx` (0..512): `(tilemap entry column, hoffset in half-pixel units, voffset for
+    /// the tilemap row, voffset for the chr row)`, with the horizontal scroll doubled
+    /// and mode 6 offset-per-tile applied to the entry column only (fine x and the
+    /// char-pair half always follow BGnHOFS). The two vertical offsets differ only
+    /// under mosaic + interlace (see below).
+    fn effective_offsets_hires(&self, bg: usize, hx: u16, y: u16) -> (u16, u16, u16, u16) {
         let hscroll = (self.bg_hofs[bg] & 0x03FF) << 1;
         let hoffset = hx.wrapping_add(hscroll) & 0x07FF;
         let mut entry_col = hoffset >> 4;
         let screen_y = y.wrapping_add(1);
-        let mut voffset = screen_y.wrapping_add(self.bg_vscroll(bg)) & 0x03FF;
+        // Screen interlace doubles the vertical fetch in modes 5/6 (the only modes
+        // that reach this path): Mesen2 GetTilemapData/GetChrData compute
+        // realY = (scanline << 1) | oddFrame when IsDoubleHeight, so each field
+        // samples a distinct source line.
+        let doubled = self.interlace_enabled();
+        let field = u16::from(self.interlace_field);
+        let base = if doubled {
+            (screen_y << 1) | field
+        } else {
+            screen_y
+        };
+        // Mosaic holds the block-start line; under the doubled fetch the subtraction
+        // doubles, and Mesen2's two fetch steps diverge: GetTilemapData keeps the
+        // field term (map row = 2*block_start + field), GetChrData subtracts it too
+        // (chr row = 2*block_start, identical in both fields).
+        let (mut real_y_map, mut real_y_chr) = (base, base);
+        if self.mosaic_bg_enabled(bg) {
+            let m = self.mosaic_vcount as u16;
+            real_y_map = real_y_map.wrapping_sub(m);
+            real_y_chr = real_y_chr.wrapping_sub(m);
+            if doubled {
+                real_y_map = real_y_map.wrapping_sub(m);
+                real_y_chr = real_y_chr.wrapping_sub(m).wrapping_sub(field);
+            }
+        }
+        let vscroll = self.bg_vofs[bg] & 0x03FF;
+        let mut voffset_map = real_y_map.wrapping_add(vscroll) & 0x03FF;
+        let mut voffset_chr = real_y_chr.wrapping_add(vscroll) & 0x03FF;
 
         // Offset-per-tile (mode 6 is the only hires OPT mode; mode-2-style dual H/V
         // entries). The BG3 lookup runs in native units, where one tilemap entry spans
@@ -624,11 +654,13 @@ impl Ppu {
                     entry_col = (offset_x >> 3).wrapping_add((hlookup & 0x03F0) >> 4);
                 }
                 if vlookup & valid_bit != 0 {
-                    voffset = screen_y.wrapping_add(vlookup & 0x03FF) & 0x03FF;
+                    let v = vlookup & 0x03FF;
+                    voffset_map = real_y_map.wrapping_add(v) & 0x03FF;
+                    voffset_chr = real_y_chr.wrapping_add(v) & 0x03FF;
                 }
             }
         }
-        (entry_col, hoffset, voffset)
+        (entry_col, hoffset, voffset_map, voffset_chr)
     }
 
     /// The layer's vertical scroll with the mosaic block-hold subtraction applied
@@ -658,6 +690,14 @@ impl Ppu {
             let tile_width = if self.bg_tile_size_16[bg] { 4 } else { 3 };
             let valid_bit = 0x2000u16 << bg; // BG1 -> bit13, BG2 -> bit14
             let offset_x = x.wrapping_add(hscroll & 7);
+            // Mosaic adjusts the line BEFORE the OPT vScroll replacement applies
+            // (Mesen2 GetTilemapData: realY loses the mosaic offset first), so
+            // OPT-shifted rows are held to the block start too.
+            let mosaic_y = if self.mosaic_bg_enabled(bg) {
+                screen_y.wrapping_sub(self.mosaic_vcount as u16)
+            } else {
+                screen_y
+            };
             // The first tile column is exempt from offset-per-tile.
             if offset_x >= (1u16 << tile_width) {
                 let lookup_x =
@@ -671,7 +711,7 @@ impl Ppu {
                             hoffset = offset_x.wrapping_add(hlookup & 0x03F8);
                         } else {
                             // V offset: full 10-bit field.
-                            voffset = screen_y.wrapping_add(hlookup & 0x03FF);
+                            voffset = mosaic_y.wrapping_add(hlookup & 0x03FF);
                         }
                     }
                 } else {
@@ -680,7 +720,7 @@ impl Ppu {
                         hoffset = offset_x.wrapping_add(hlookup & 0x03F8);
                     }
                     if vlookup & valid_bit != 0 {
-                        voffset = screen_y.wrapping_add(vlookup & 0x03FF);
+                        voffset = mosaic_y.wrapping_add(vlookup & 0x03FF);
                     }
                 }
             }
@@ -929,6 +969,15 @@ mod tests {
         }
     }
 
+    /// Write a per-row 4bpp pattern (row r = color r+1) on all 8 tile columns.
+    fn fill_4bpp_tile_row_pattern(ppu: &mut Ppu, char_base: usize, char_num: usize) {
+        for fine_y in 0..8u8 {
+            for fine_x in 0..8u8 {
+                set_4bpp_tile_pixel(ppu, char_base, char_num, fine_x, fine_y, fine_y + 1);
+            }
+        }
+    }
+
     #[test]
     fn mode5_fetches_distinct_even_and_odd_subpixels() {
         let mut ppu = Ppu::new();
@@ -1032,6 +1081,283 @@ mod tests {
             ppu.framebuffer[7 * SCREEN_WIDTH_MAX + 16],
             6,
             "next map entry still starts at column 16"
+        );
+    }
+
+    /// Mode 5 scene with a row-pattern char for field-content tests: BG1 entry 0 ->
+    /// char 1 whose tile row r is solid color r+1, screen interlace enabled.
+    fn setup_mode5_interlace_row_pattern(ppu: &mut Ppu) {
+        setup_mode5_bg1_both_screens(ppu);
+        set_bg_map_base(ppu, 0, 0x400);
+        set_vram_word(ppu, 0x400, 1);
+        fill_4bpp_tile_row_pattern(ppu, 0, 1);
+        ppu.write_register(0x2133, 0x01); // SETINI: screen interlace
+    }
+
+    #[test]
+    fn mode5_interlace_even_field_fetches_doubled_tile_row() {
+        let mut ppu = Ppu::new();
+        setup_mode5_interlace_row_pattern(&mut ppu);
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 1);
+
+        // Mesen2 GetTilemapData/GetChrData: realY = (scanline << 1) | field in modes
+        // 5/6 + interlace; display line 1, even field -> tile row 2 -> color 3.
+        // The even field writes framebuffer row 0 (y*2 + 0).
+        assert_eq!(
+            ppu.framebuffer[0], 3,
+            "even field fetches tile row 2 for display line 1"
+        );
+    }
+
+    #[test]
+    fn mode5_interlace_odd_field_fetches_the_next_tile_row() {
+        let mut ppu = Ppu::new();
+        setup_mode5_interlace_row_pattern(&mut ppu);
+        ppu.interlace_field = true;
+        render_lines(&mut ppu, 1);
+
+        // Odd field: realY = 3 -> tile row 3 -> color 4, written to framebuffer
+        // row 1 (y*2 + 1).
+        assert_eq!(
+            ppu.framebuffer[SCREEN_WIDTH_MAX], 4,
+            "odd field fetches tile row 3 for display line 1"
+        );
+    }
+
+    #[test]
+    fn mode5_interlace_tile_size_16_pairs_vertically_at_doubled_rate() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        ppu.write_register(0x2105, 0x15); // mode 5 + BG1 16x16 tiles
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1); // entry 0 -> chars 1/2 (top), 17/18 (bottom)
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 17, 4); // vertical pair of char 1
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 4);
+
+        // The doubled realY crosses the 8-line half-tile boundary twice as fast:
+        // display line 3 (realY 6) still shows the top char, display line 4
+        // (realY 8) already shows the vertical pair char 17.
+        assert_eq!(
+            ppu.framebuffer[4 * SCREEN_WIDTH_MAX],
+            1,
+            "display line 3 (realY 6) shows the top half"
+        );
+        assert_eq!(
+            ppu.framebuffer[6 * SCREEN_WIDTH_MAX],
+            4,
+            "display line 4 (realY 8) shows the bottom half"
+        );
+    }
+
+    #[test]
+    fn mode6_interlace_opt_v_replacement_uses_doubled_line() {
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        set_vram_word(&mut ppu, 0x421, 7); // BG1 map row 1, col 1 -> char 7
+        fill_4bpp_tile(&mut ppu, 0, 7, 7);
+        set_vram_word(&mut ppu, 0x820, 6 | 0x2000); // OPT V entry, value 6
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 1);
+
+        // The OPT V replacement adds the entry to the DOUBLED line: realY 2 + 6 = 8
+        // -> map row 1 -> char 7 (undoubled 1 + 6 = 7 would stay on row 0).
+        assert_eq!(
+            ppu.framebuffer[16], 7,
+            "OPT V offset applies to the doubled display line"
+        );
+    }
+
+    #[test]
+    fn mode5_interlace_vflip_mirrors_the_doubled_row() {
+        let mut ppu = Ppu::new();
+        setup_mode5_interlace_row_pattern(&mut ppu);
+        set_vram_word(&mut ppu, 0x400, 1 | 0x8000); // add V-flip
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 1);
+        assert_eq!(
+            ppu.framebuffer[0], 6,
+            "even field: realY 2 flips to tile row 5"
+        );
+
+        let mut ppu = Ppu::new();
+        setup_mode5_interlace_row_pattern(&mut ppu);
+        set_vram_word(&mut ppu, 0x400, 1 | 0x8000);
+        ppu.interlace_field = true;
+        render_lines(&mut ppu, 1);
+        assert_eq!(
+            ppu.framebuffer[SCREEN_WIDTH_MAX], 5,
+            "odd field: realY 3 flips to tile row 4"
+        );
+    }
+
+    #[test]
+    fn mode5_interlace_leaves_horizontal_pairing_and_hflip_unchanged() {
+        let mut ppu = Ppu::new();
+        setup_mode5_bg1_both_screens(&mut ppu);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_vram_word(&mut ppu, 0x400, 1 | 0x4000); // char 1, H-flip
+        fill_4bpp_tile(&mut ppu, 0, 1, 1);
+        fill_4bpp_tile(&mut ppu, 0, 2, 2);
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = false;
+        render_lines(&mut ppu, 1);
+
+        // Interlace only doubles the vertical fetch; the 16-wide char pairing and
+        // hflip mirroring across the pair are unchanged.
+        assert_eq!(
+            ppu.framebuffer[0], 2,
+            "flipped pair still leads with char 2"
+        );
+        assert_eq!(
+            ppu.framebuffer[8], 1,
+            "columns 8-15 still show mirrored char 1"
+        );
+    }
+
+    #[test]
+    fn interlace_outside_modes_5_6_keeps_identical_field_content() {
+        // Mesen2's IsDoubleHeight requires mode 5/6: in other modes + interlace both
+        // fields fetch the SAME source row and only the output row parity differs.
+        let render_mode1_field = |field: bool| {
+            let mut ppu = Ppu::new();
+            for i in 1..16 {
+                set_cgram(&mut ppu, i, i as u16);
+            }
+            ppu.write_register(0x2105, 0x01); // mode 1 (BG1 4bpp)
+            ppu.write_register(0x212C, 0x01); // TM: BG1
+            ppu.write_register(0x2100, 0x0F);
+            ppu.write_register(0x2133, 0x01);
+            set_bg_map_base(&mut ppu, 0, 0x400);
+            set_vram_word(&mut ppu, 0x400, 1);
+            fill_4bpp_tile_row_pattern(&mut ppu, 0, 1);
+            ppu.interlace_field = field;
+            render_lines(&mut ppu, 1);
+            ppu
+        };
+
+        let even = render_mode1_field(false);
+        let odd = render_mode1_field(true);
+        assert_eq!(even.framebuffer[0], 2, "even field: undoubled tile row 1");
+        assert_eq!(
+            odd.framebuffer[SCREEN_WIDTH_MAX], 2,
+            "odd field: same source row on the odd output row"
+        );
+    }
+
+    #[test]
+    fn mode5_interlace_mosaic_chr_row_is_field_independent() {
+        // Mesen2 GetChrData subtracts the mosaic offset twice PLUS the field bit
+        // under IsDoubleHeight, so the whole block samples one source row in both
+        // fields: chr row = 2 * (line - vcount).
+        for field in [false, true] {
+            let mut ppu = Ppu::new();
+            setup_mode5_interlace_row_pattern(&mut ppu);
+            ppu.write_register(0x2106, 0x11); // MOSAIC: size 1 (2-line blocks), BG1
+            ppu.interlace_field = field;
+            render_lines(&mut ppu, 4);
+
+            let f = field as usize;
+            for (y, color) in [(0usize, 3u16), (1, 3), (2, 7), (3, 7)] {
+                assert_eq!(
+                    ppu.framebuffer[(y * 2 + f) * SCREEN_WIDTH_MAX],
+                    color,
+                    "field {field}: display line {} shows block chr row color {color}",
+                    y + 1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mode5_interlace_mosaic_map_row_keeps_the_field_bit() {
+        // Mesen2 GetTilemapData subtracts the mosaic offset twice with NO field
+        // term: the map row is 2*block_start + field + vscroll, so the two fields
+        // can select different tilemap rows within one mosaic block.
+        for (field, expected) in [(false, 1u16), (true, 3)] {
+            let mut ppu = Ppu::new();
+            setup_mode5_bg1_both_screens(&mut ppu);
+            set_bg_map_base(&mut ppu, 0, 0x400);
+            set_vram_word(&mut ppu, 0x400, 1); // map row 0 -> char 1
+            set_vram_word(&mut ppu, 0x420, 3); // map row 1 -> char 3
+            fill_4bpp_tile(&mut ppu, 0, 1, 1);
+            fill_4bpp_tile(&mut ppu, 0, 3, 3);
+            ppu.write_register(0x210E, 0x05); // BG1VOFS = 5
+            ppu.write_register(0x210E, 0x00);
+            ppu.write_register(0x2133, 0x01);
+            ppu.write_register(0x2106, 0x11); // MOSAIC: size 1 (2-line blocks), BG1
+            ppu.interlace_field = field;
+            render_lines(&mut ppu, 2);
+
+            // Block lines 1-2: map voffset = 2*1 + field + 5 = 7 + field ->
+            // map row 0 (even field) / row 1 (odd field), held across the block.
+            let f = field as usize;
+            assert_eq!(
+                ppu.framebuffer[f * SCREEN_WIDTH_MAX],
+                expected,
+                "field {field}: line 1 map row"
+            );
+            assert_eq!(
+                ppu.framebuffer[(2 + f) * SCREEN_WIDTH_MAX],
+                expected,
+                "field {field}: line 2 holds the block's map row"
+            );
+        }
+    }
+
+    #[test]
+    fn mode6_opt_v_replacement_applies_mosaic_to_real_y() {
+        // Mesen2 adjusts realY for mosaic BEFORE the OPT vScroll replacement adds
+        // its entry, so mosaic holds the OPT-shifted rows too (non-interlace).
+        let mut ppu = Ppu::new();
+        setup_mode6_opt(&mut ppu);
+        set_vram_word(&mut ppu, 0x421, 7); // BG1 map row 1, col 1 -> char 7
+        set_vram_word(&mut ppu, 0x441, 9); // BG1 map row 2, col 1 -> char 9
+        fill_4bpp_tile(&mut ppu, 0, 7, 7);
+        fill_4bpp_tile(&mut ppu, 0, 9, 9);
+        set_vram_word(&mut ppu, 0x820, 8 | 0x2000); // OPT V entry, value 8
+        ppu.write_register(0x2106, 0x31); // MOSAIC: size 3 (4-line blocks), BG1
+        render_lines(&mut ppu, 8);
+
+        // Display line 8 has vcount 3: realY = 8 - 3 = 5, voffset = 5 + 8 = 13 ->
+        // map row 1 -> char 7. Without the mosaic adjustment: 8 + 8 = 16 -> row 2.
+        assert_eq!(
+            ppu.framebuffer[7 * SCREEN_WIDTH_MAX + 16],
+            7,
+            "OPT V rows are mosaic-held to the block start"
+        );
+    }
+
+    #[test]
+    fn mode2_opt_v_replacement_applies_mosaic_to_screen_y() {
+        // Native-path equivalent of the above (modes 2/4 OPT).
+        let mut ppu = Ppu::new();
+        for i in 1..16 {
+            set_cgram(&mut ppu, i, i as u16);
+        }
+        ppu.write_register(0x2105, 0x02); // mode 2 (BG1 4bpp + OPT)
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x2100, 0x0F);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_bg_map_base(&mut ppu, 2, 0x800);
+        set_vram_word(&mut ppu, 0x421, 7); // BG1 map row 1, col 1 -> char 7
+        set_vram_word(&mut ppu, 0x441, 9); // BG1 map row 2, col 1 -> char 9
+        fill_4bpp_tile(&mut ppu, 0, 7, 7);
+        fill_4bpp_tile(&mut ppu, 0, 9, 9);
+        set_vram_word(&mut ppu, 0x820, 8 | 0x2000); // OPT V entry, value 8
+        ppu.write_register(0x2106, 0x31); // MOSAIC: size 3 (4-line blocks), BG1
+        render_lines(&mut ppu, 8);
+
+        // Display line 8, vcount 3: voffset = (8 - 3) + 8 = 13 -> map row 1 ->
+        // char 7 at native x 8 (the first OPT-affected column).
+        assert_eq!(
+            ppu.framebuffer[7 * SCREEN_WIDTH_MAX + 8],
+            7,
+            "native OPT V rows are mosaic-held to the block start"
         );
     }
 

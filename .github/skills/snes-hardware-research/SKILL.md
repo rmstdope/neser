@@ -189,6 +189,27 @@ When writing code that targets or emulates SNES hardware, always verify against 
   `prevX`), window tests at the current x for both halves. For any future PPU
   compositing work in this area, go straight to Mesen2 source verification with
   per-formula unit tests; the spec docs will not warn you.
+- **Screen-interlace field content is mode 5/6-only, with alternating field lengths**
+  (from #3017): Mesen2's `IsDoubleHeight() = ScreenInterlace && (BgMode == 5 || 6)` —
+  only those modes fetch a doubled field line (`realY = (scanline << 1) | oddFrame`,
+  GetTilemapData/GetChrData); in modes 0-4/7 + interlace both fields legitimately
+  render IDENTICAL content and only the output row parity alternates
+  (`row = scanline*2 + oddFrame`). Don't "fix" non-hires interlace to differ per
+  field — that diverges from the reference. Supporting behaviors that ARE part of
+  the model: interlaced even fields ($213F.7 = 0) run one extra scanline (263
+  NTSC / 313 PAL), latched once per frame right after the field toggle
+  (UpdateNmiScanline) so mid-frame SETINI writes never retime the frame in
+  progress, and the non-interlace scanline-240 short-line rule is suppressed;
+  under IsDoubleHeight the mosaic block-hold subtraction doubles with an
+  asymmetry — the tilemap fetch keeps the field term but the CHR fetch also
+  subtracts it (GetTilemapData :177-182 vs GetChrData :223-228), so the chr row
+  is field-independent while the map row can differ per field; enabling
+  interlace during vblank memsets the output buffer ($2133 handler); and the
+  previous field's rows persist into the next frame's output (Mesen2 memcpys the
+  prior interlaced frame forward), so captures weave frames N-1 and N — verify
+  FIELD PARITY alignment when pixel-diffing (a mismatch shows as globally
+  swapped row parity). Sprites never use screen interlace for fetch (only SETINI
+  bit 1 OBJ interlace); Mode 7 has no field term at all.
 - **absindx SA-1 conformance ROM automation traps**: the ROMs' `org $0000` result variables (`TestFinished`: 0=Running, 1=Passed, 255=Failed) are accessed by the SNES CPU via direct page with D=0, i.e. they live in **WRAM `$7E0000`** — polling the SA-1 I-RAM mirror at `$003000` instead reads a stale `$AA` left over from the I-RAM mirroring sub-tests. Even at the right address, a naive every-tick poll false-fails: `SA1RamProtectionTest` transiently `EOR #$FF`s its own result byte while probing I-RAM writability, and its SA-1 CPU parks in its post-test idle loop *before* the SNES finishes the trailing `TestBwRamSize` scan and writes the real result. `SA1VersionCodeTest` never reports Passed **even on real hardware** — disassembly of its release build shows `CheckResult` unconditionally taking the failed path (the `INC TestFinished` pass path at `$9EAB` is unreferenced dead code), deliberate since the true version-code value is unknown; treat its FAILED register-dump screen as the expected result. Its open-bus detection scheme is worth knowing: each register is read twice with different residual bus bytes (`LDA $2300,X` leaves operand `$23`; a `REP`-adjusted `LDA $AA,X` reaching the same register leaves `$AA`), so open-bus entries echo `23`/`AA` while real registers repeat their value. Both ROMs misbehave on Mesen2 (documented upstream and confirmed), so goldens must be navigator-approved captures of the emulator's own rendering.
 
 ## Testing Methodology for SNES Emulation

@@ -252,6 +252,11 @@ pub struct Ppu {
     irq_edge_age: u32,
     /// STAT78 ($213F) bit 7: interlace field flag.
     interlace_field: bool,
+    /// Latched once per frame at the wrap, after the field toggle (Mesen2
+    /// UpdateNmiScanline): the even field of an interlaced frame runs one extra
+    /// scanline (263 NTSC / 313 PAL). Mid-frame SETINI writes don't retime the
+    /// frame in progress.
+    frame_has_extra_scanline: bool,
     video_region: SnesVideoRegion,
     /// Visible framebuffer in 15-bit BGR555 (converted to RGB888 at snapshot time).
     framebuffer: Vec<u16>,
@@ -428,6 +433,7 @@ impl Ppu {
             irq_line: false,
             irq_edge_age: 0,
             interlace_field: false,
+            frame_has_extra_scanline: false,
             video_region,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
             line_main: [ScreenPixel::default(); SCREEN_WIDTH],
@@ -622,6 +628,12 @@ impl Ppu {
             SnesVideoRegion::Ntsc => NTSC_SCANLINES_PER_FRAME,
             SnesVideoRegion::Pal => PAL_SCANLINES_PER_FRAME,
         }
+    }
+
+    /// The current frame's actual scanline count, including the latched interlace
+    /// extra scanline on even fields.
+    pub(super) fn effective_scanlines_per_frame(&self) -> u16 {
+        self.scanlines_per_frame() + u16::from(self.frame_has_extra_scanline)
     }
 
     pub(super) fn obj_interlace_enabled(&self) -> bool {
