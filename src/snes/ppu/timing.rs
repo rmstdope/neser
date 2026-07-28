@@ -134,7 +134,7 @@ impl Ppu {
         if self.position.dot >= self.dots_in_current_scanline() {
             self.position.dot = 0;
             self.position.scanline += 1;
-            if self.position.scanline >= self.scanlines_per_frame() {
+            if self.position.scanline >= self.effective_scanlines_per_frame() {
                 self.position.scanline = 0;
             }
             self.on_scanline_start();
@@ -231,6 +231,9 @@ impl Ppu {
                 // The field parity still advances even when interlace output is disabled, because
                 // the short/long scanline exceptions are keyed off the latched field state.
                 self.interlace_field = !self.interlace_field;
+                // Latch this frame's length (Mesen2 UpdateNmiScanline, run after the
+                // toggle): interlaced even fields get one extra scanline.
+                self.frame_has_extra_scanline = self.interlace_enabled() && !self.interlace_field;
                 trace_ppu!(1; "frame wrap y={} x={} field={} inidisp={:02X} mode={} tm={:02X} ts={:02X}",
                     self.position.scanline,
                     self.position.dot,
@@ -302,7 +305,7 @@ impl Ppu {
             } else if v > 0 {
                 v - 1
             } else {
-                self.scanlines_per_frame() - 1
+                self.effective_scanlines_per_frame() - 1
             };
             // "IRQs cannot trigger on the last dot of the field": bsnes blocks a match whose
             // 6-clock-delayed position is the frame origin (vcounter(6) == 0 && hcounter(6) == 0).
@@ -316,7 +319,7 @@ impl Ppu {
             } else if v > 0 {
                 v - 1
             } else {
-                self.scanlines_per_frame() - 1
+                self.effective_scanlines_per_frame() - 1
             };
             let not_last_dot = v6 != 0 || hc6 != 0;
             let triggered = not_last_dot
@@ -960,6 +963,185 @@ mod tests {
                 dot: 0
             }
         );
+    }
+
+    #[test]
+    fn ntsc_interlace_even_field_frame_is_263_scanlines() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2133, 0x01); // screen interlace
+        ppu.interlace_field = true;
+        tick_scanlines(&mut ppu, 262); // first (power-on, unlatched) frame
+
+        // The wrap toggled to the even field and latched the long frame (Mesen2
+        // UpdateNmiScanline: extra scanline when ScreenInterlace && !oddFrame).
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            }
+        );
+        assert!(!ppu.interlace_field, "wrap toggled to the even field");
+
+        tick_scanlines(&mut ppu, 262);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 262,
+                dot: 0
+            },
+            "the even field has an extra scanline 262"
+        );
+        tick_scanlines(&mut ppu, 1);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            }
+        );
+        assert!(ppu.interlace_field, "long frame wrapped into the odd field");
+    }
+
+    #[test]
+    fn ntsc_interlace_odd_field_frame_is_262_scanlines() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = false;
+        tick_scanlines(&mut ppu, 262); // unlatched power-on frame; wrap -> odd field
+
+        assert!(ppu.interlace_field, "wrap toggled to the odd field");
+        tick_scanlines(&mut ppu, 262);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            },
+            "the odd field keeps the normal 262-scanline length"
+        );
+    }
+
+    #[test]
+    fn pal_interlace_even_field_frame_is_313_scanlines() {
+        let mut ppu = Ppu::new_with_region(SnesVideoRegion::Pal);
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = true;
+        // First (power-on, unlatched) frame runs on the odd field, whose line 311
+        // is the Long 1368-cycle line: spend the 4 extra cycles explicitly.
+        tick_scanlines(&mut ppu, 312);
+        tick_cycles(&mut ppu, 4);
+
+        assert!(!ppu.interlace_field);
+        // Even-field lines are all Normal (the PAL Long exception needs field 1),
+        // so plain scanline ticking is cycle-exact here.
+        tick_scanlines(&mut ppu, 312);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 312,
+                dot: 0
+            },
+            "the even field has an extra scanline 312"
+        );
+        tick_scanlines(&mut ppu, 1);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            }
+        );
+    }
+
+    #[test]
+    fn interlace_enabled_mid_frame_does_not_extend_the_current_frame() {
+        let mut ppu = Ppu::new();
+        tick_scanlines(&mut ppu, 100);
+        ppu.write_register(0x2133, 0x01); // enable mid-frame
+        tick_scanlines(&mut ppu, 162);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            },
+            "the in-progress frame keeps its latched 262 scanlines"
+        );
+
+        // Power-on field was even -> this wrap enters the odd field: still 262.
+        tick_scanlines(&mut ppu, 262);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            }
+        );
+        // Next wrap enters the even field: the long frame latches now.
+        tick_scanlines(&mut ppu, 262);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 262,
+                dot: 0
+            },
+            "the first even-field frame after enabling is 263 scanlines"
+        );
+    }
+
+    #[test]
+    fn interlace_disabled_mid_frame_keeps_the_latched_263() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = true;
+        tick_scanlines(&mut ppu, 262); // wrap -> even field, long frame latched
+
+        tick_scanlines(&mut ppu, 10);
+        ppu.write_register(0x2133, 0x00); // disable mid-frame
+        tick_scanlines(&mut ppu, 252);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 262,
+                dot: 0
+            },
+            "the latched long frame keeps its extra scanline"
+        );
+        tick_scanlines(&mut ppu, 1);
+        assert_eq!(
+            ppu.position(),
+            ScanPosition {
+                scanline: 0,
+                dot: 0
+            }
+        );
+    }
+
+    #[test]
+    fn save_state_round_trips_the_latched_extra_scanline() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2133, 0x01);
+        ppu.interlace_field = true;
+        tick_scanlines(&mut ppu, 262); // wrap -> even field, long frame latched
+        tick_scanlines(&mut ppu, 100); // mid-frame
+
+        let state = ppu.capture_state();
+        let mut restored = Ppu::new();
+        restored.restore_state(&state).expect("restore");
+
+        tick_scanlines(&mut ppu, 162);
+        tick_scanlines(&mut restored, 162);
+        for p in [&ppu, &restored] {
+            assert_eq!(
+                p.position(),
+                ScanPosition {
+                    scanline: 262,
+                    dot: 0
+                },
+                "the latched extra scanline survives capture/restore"
+            );
+        }
     }
 
     #[test]

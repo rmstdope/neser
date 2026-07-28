@@ -54,6 +54,7 @@ impl Ppu {
             irq_line: self.irq_line,
             irq_edge_age: self.irq_edge_age,
             interlace_field: self.interlace_field,
+            frame_has_extra_scanline: self.frame_has_extra_scanline,
             video_region: match self.video_region {
                 SnesVideoRegion::Ntsc => 0,
                 SnesVideoRegion::Pal => 1,
@@ -149,6 +150,7 @@ impl Ppu {
         self.irq_line = state.irq_line;
         self.irq_edge_age = state.irq_edge_age;
         self.interlace_field = state.interlace_field;
+        self.frame_has_extra_scanline = state.frame_has_extra_scanline;
         self.video_region = match state.video_region {
             1 => SnesVideoRegion::Pal,
             _ => SnesVideoRegion::Ntsc,
