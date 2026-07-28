@@ -76,6 +76,10 @@ impl RomBrowserApp {
         let search_active = self.search_active;
         let search_query = self.search_query.clone();
         let no_roms_hint = self.no_roms_hint.clone();
+        let controller_connected = self
+            .gilrs
+            .as_ref()
+            .is_some_and(|g| g.gamepads().next().is_some());
         let genre_filter_active = self.genre_filter_active;
         let filter_panel_active = self.filter_panel_active;
         let filter_panel_cursor = self.filter_panel_cursor;
@@ -235,23 +239,16 @@ impl RomBrowserApp {
 
                             // Button legend at the bottom of the sidebar.
                             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                                let legend_items: &[(&str, &str)] = if search_active {
-                                    &[("Tab", "Close"), ("Enter", "Launch")]
-                                } else if genre_filter_active {
-                                    &[("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
-                                } else if filter_panel_active {
-                                    &[("↑↓", "Navigate"), ("A", "Toggle"), ("B", "Close")]
-                                } else if detail_view_active {
-                                    &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")]
-                                } else {
-                                    &[
-                                        ("A", "Details"),
-                                        ("B", "Filter"),
-                                        ("Select", "Favorite"),
-                                        ("Tab", "Search"),
-                                    ]
-                                };
-                                Self::render_button_legend(ui, legend_items);
+                                Self::render_button_legend(
+                                    ui,
+                                    Self::legend_items(
+                                        search_active,
+                                        genre_filter_active,
+                                        filter_panel_active,
+                                        detail_view_active,
+                                        controller_connected,
+                                    ),
+                                );
                             });
                         });
                 });
@@ -338,6 +335,7 @@ impl RomBrowserApp {
                     detail_screenshot_index,
                     display_w,
                     display_h,
+                    controller_connected,
                 );
             }
         });
@@ -444,6 +442,48 @@ impl RomBrowserApp {
         } else {
             let prefix: String = chars[..lo].iter().collect();
             format!("{prefix}...")
+        }
+    }
+
+    /// Choose the button legend for the current UI mode: gamepad button
+    /// labels when a controller is connected, keyboard keys otherwise.
+    pub(in super::super) fn legend_items(
+        search_active: bool,
+        genre_filter_active: bool,
+        filter_panel_active: bool,
+        detail_view_active: bool,
+        controller_connected: bool,
+    ) -> &'static [(&'static str, &'static str)] {
+        if search_active {
+            &[("Tab", "Close"), ("Enter", "Launch")]
+        } else if genre_filter_active {
+            &[("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
+        } else if filter_panel_active {
+            if controller_connected {
+                &[("↑↓", "Navigate"), ("A", "Toggle"), ("B", "Close")]
+            } else {
+                &[("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
+            }
+        } else if detail_view_active {
+            if controller_connected {
+                &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")]
+            } else {
+                &[("Enter", "Launch"), ("F", "Fav"), ("Esc", "Back")]
+            }
+        } else if controller_connected {
+            &[
+                ("A", "Details"),
+                ("B", "Filter"),
+                ("Select", "Favorite"),
+                ("Tab", "Search"),
+            ]
+        } else {
+            &[
+                ("Enter", "Details"),
+                ("Esc", "Filter"),
+                ("Space", "Favorite"),
+                ("Tab", "Search"),
+            ]
         }
     }
 

@@ -1,6 +1,7 @@
 use super::super::*;
 
 impl RomBrowserApp {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_detail_view_egui(
         ctx: &egui::Context,
         entry: &RomEntry,
@@ -9,6 +10,7 @@ impl RomBrowserApp {
         screenshot_index: usize,
         display_w: f32,
         display_h: f32,
+        controller_connected: bool,
     ) {
         // Dim background.
         let painter = ctx.layer_painter(egui::LayerId::new(
@@ -270,7 +272,13 @@ impl RomBrowserApp {
                             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                                 Self::render_button_legend(
                                     ui,
-                                    &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")],
+                                    Self::legend_items(
+                                        false,
+                                        false,
+                                        false,
+                                        true,
+                                        controller_connected,
+                                    ),
                                 );
                             });
                         });

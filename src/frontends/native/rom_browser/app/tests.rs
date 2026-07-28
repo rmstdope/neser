@@ -462,6 +462,55 @@ fn platform_filter_narrows_results() {
 }
 
 #[test]
+fn legend_shows_keyboard_keys_in_gallery_without_controller() {
+    let items = RomBrowserApp::legend_items(false, false, false, false, false);
+    assert_eq!(
+        items,
+        [
+            ("Enter", "Details"),
+            ("Esc", "Filter"),
+            ("Space", "Favorite"),
+            ("Tab", "Search"),
+        ]
+    );
+}
+
+#[test]
+fn legend_shows_controller_buttons_in_gallery_with_controller() {
+    let items = RomBrowserApp::legend_items(false, false, false, false, true);
+    assert_eq!(
+        items,
+        [
+            ("A", "Details"),
+            ("B", "Filter"),
+            ("Select", "Favorite"),
+            ("Tab", "Search"),
+        ]
+    );
+}
+
+#[test]
+fn legend_shows_keyboard_keys_in_filter_panel_without_controller() {
+    let items = RomBrowserApp::legend_items(false, false, true, false, false);
+    assert_eq!(
+        items,
+        [("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
+    );
+}
+
+#[test]
+fn legend_shows_keyboard_keys_in_detail_view_without_controller() {
+    let items = RomBrowserApp::legend_items(false, false, false, true, false);
+    assert_eq!(items, [("Enter", "Launch"), ("F", "Fav"), ("Esc", "Back")]);
+}
+
+#[test]
+fn legend_shows_controller_buttons_in_detail_view_with_controller() {
+    let items = RomBrowserApp::legend_items(false, false, false, true, true);
+    assert_eq!(items, [("A", "Launch"), ("Y", "Fav"), ("B", "Back")]);
+}
+
+#[test]
 fn new_browser_defaults_to_no_platform_filter() {
     let app = RomBrowserApp::new(crate::platform::app_context::AppContext::new().into_shared());
     assert_eq!(

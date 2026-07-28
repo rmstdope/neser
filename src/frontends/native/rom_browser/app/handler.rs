@@ -245,6 +245,9 @@ impl ApplicationHandler for RomBrowserApp {
                                 event_loop.exit();
                             }
                         }
+                        Key::Character(ref ch) if ch.as_str() == "f" && !ctrl => {
+                            self.toggle_favorite();
+                        }
                         Key::Named(NamedKey::ArrowUp)
                         | Key::Named(NamedKey::ArrowLeft)
                         | Key::Named(NamedKey::ArrowDown)
@@ -280,6 +283,12 @@ impl ApplicationHandler for RomBrowserApp {
                         Key::Named(NamedKey::Enter) => {
                             // Open detail view; launch is done from the detail view.
                             self.open_detail_view();
+                        }
+                        Key::Named(NamedKey::Space) => {
+                            self.toggle_favorite();
+                        }
+                        Key::Character(ref ch) if ch.as_str() == " " => {
+                            self.toggle_favorite();
                         }
                         Key::Character(ref ch) if ch.as_str() == "g" && !ctrl => {
                             self.genre_filter_active = true;
