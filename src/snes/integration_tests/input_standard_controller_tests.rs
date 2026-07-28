@@ -127,14 +127,16 @@ mod tests {
     }
 
     /// The issue's example sequence, observed through auto-joypad reads:
-    /// no buttons, then A, B, Start, direct Up->Down->Left->Right
-    /// transitions (release+press applied atomically on the same frame),
-    /// then all released. Each step requires the exact `(JOY1H, JOY1L)`
-    /// pair, so the four ID bits must read zero throughout.
+    /// no buttons (verified after a completed auto-joypad read cycle), then
+    /// A, B, Start, direct Up->Down->Left->Right transitions
+    /// (release+press applied atomically on the same frame), then all
+    /// released. Each step requires the exact `(JOY1H, JOY1L)` pair, so the
+    /// four ID bits must read zero throughout.
     #[test]
     fn example_sequence_transitions_are_observed_via_auto_joypad() {
         // (JOY1H, JOY1L) per step, in the order the ROM must observe them.
-        const STEPS: [(u8, u8); 8] = [
+        const STEPS: [(u8, u8); 9] = [
+            (0x00, 0x00), // no buttons (after a completed auto-read)
             (0x00, 0x80), // A
             (0x80, 0x00), // B
             (0x10, 0x00), // Start
@@ -147,6 +149,17 @@ mod tests {
 
         let mut fx = FixtureRom::new(b"NESER PAD SEQUENCE");
         fx.write_long(0x00_4200, 0x01); // enable auto-joypad reads
+        // Baseline is only meaningful once an auto-read has actually
+        // populated JOY1: wait for HVBJOY ($4212) auto-read busy (bit 0) to
+        // set, then clear, before requiring the all-zero step.
+        let busy_set = fx.pos();
+        fx.lda_abs(0x4212);
+        fx.lsr_a();
+        fx.bcc_to(busy_set);
+        let busy_clear = fx.pos();
+        fx.lda_abs(0x4212);
+        fx.lsr_a();
+        fx.bcs_to(busy_clear);
         for (joy_h, joy_l) in STEPS {
             wait_for_joy(&mut fx, JOY1H, joy_h, JOY1L, joy_l);
         }

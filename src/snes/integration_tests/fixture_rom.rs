@@ -110,6 +110,35 @@ impl FixtureRom {
         self.emit(&[0x4C, (addr & 0xFF) as u8, (addr >> 8) as u8]);
     }
 
+    /// `LSR A` — shifts bit 0 of the accumulator into the carry flag.
+    pub(crate) fn lsr_a(&mut self) {
+        self.emit(&[0x4A]);
+    }
+
+    /// Branches to `target` while the carry flag is clear. Emits a short
+    /// `BCC` when the displacement fits, otherwise `BCS +3; JMP target`.
+    pub(crate) fn bcc_to(&mut self, target: usize) {
+        self.carry_branch_to(target, 0x90, 0xB0);
+    }
+
+    /// Branches to `target` while the carry flag is set. Emits a short
+    /// `BCS` when the displacement fits, otherwise `BCC +3; JMP target`.
+    pub(crate) fn bcs_to(&mut self, target: usize) {
+        self.carry_branch_to(target, 0xB0, 0x90);
+    }
+
+    fn carry_branch_to(&mut self, target: usize, opcode: u8, inverse_opcode: u8) {
+        let after = self.cursor as i64 + 2;
+        let rel = target as i64 - after;
+        if let Ok(rel) = i8::try_from(rel) {
+            self.emit(&[opcode, rel as u8]);
+        } else {
+            let addr = 0x8000 + target as u16;
+            self.emit(&[inverse_opcode, 0x03]); // skip over the JMP
+            self.jmp_abs(addr);
+        }
+    }
+
     /// Pulses the controller strobe: `$4016 <- 1` then `$4016 <- 0`.
     pub(crate) fn strobe_pulse(&mut self) {
         self.emit(&[
@@ -129,7 +158,10 @@ impl FixtureRom {
     /// Serially reads `bits` bits from `joy_addr` (`$4016` or `$4017`) data1
     /// (bit 0), packing them MSB-first into consecutive WRAM bytes starting
     /// at `wram_addr`: the first bit read lands in bit 7 of the first byte.
-    /// `bits` must be a multiple of 8.
+    /// `bits` must be a multiple of 8, so every destination byte receives
+    /// exactly eight `ROL`s and is fully overwritten by the bits read —
+    /// prior WRAM contents never survive, and the scratch bytes can be
+    /// reused freely across poll iterations.
     pub(crate) fn serial_read_bits(&mut self, joy_addr: u16, bits: usize, wram_addr: u16) {
         assert!(
             bits > 0 && bits.is_multiple_of(8),

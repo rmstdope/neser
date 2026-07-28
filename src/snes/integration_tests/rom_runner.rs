@@ -488,6 +488,11 @@ fn capture_is_disabled_for_fixture(name: &str) -> bool {
             | Some("input-script-press")
             | Some("input-script-release")
             | Some("input-script-unsorted")
+            | Some("pad-auto-matches-serial")
+            | Some("pad-example-sequence")
+            | Some("pad-serial-order")
+            | Some("pad-strobe-semantics")
+            | Some("pad2-serial-order")
             | Some("pass")
             | Some("screen-crc-match")
             | Some("screen-crc-mismatch")
@@ -1080,6 +1085,11 @@ mod tests {
             "input-script-press.sfc",
             "input-script-release.sfc",
             "input-script-unsorted.sfc",
+            "pad-auto-matches-serial.sfc",
+            "pad-example-sequence.sfc",
+            "pad-serial-order.sfc",
+            "pad-strobe-semantics.sfc",
+            "pad2-serial-order.sfc",
             "pass.sfc",
             "screen-crc-match.sfc",
             "screen-crc-mismatch.sfc",
