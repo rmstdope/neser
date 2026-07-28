@@ -287,14 +287,12 @@ impl RomBrowserApp {
     /// paths, mirroring the fallback used by the catalog scan: when no paths
     /// are configured, ROMs are read from ~/.neser/roms/.
     fn no_roms_hint(search_paths: &[String]) -> String {
-        if search_paths.is_empty() {
-            "No ROMs found. Add ROM files to ~/.neser/roms/".to_string()
+        let paths = if search_paths.is_empty() {
+            "~/.neser/roms/".to_string()
         } else {
-            format!(
-                "No ROMs found. Add ROM files to {}",
-                search_paths.join(", ")
-            )
-        }
+            search_paths.join(", ")
+        };
+        format!("No ROMs found. Add ROM files to {}", paths)
     }
 
     /// Run the ROM browser using the provided event loop and return the result.
