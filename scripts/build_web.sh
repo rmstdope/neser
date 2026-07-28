@@ -1,6 +1,10 @@
 #!/bin/sh
 set -e
 
+# Always run from the repository root: cargo would find the workspace from any
+# cwd, but the wasm-bindgen/web/pkg/vite paths below are root-relative.
+cd "$(dirname "$0")/.."
+
 # Only skip the WASM build when explicitly requested (e.g. in CI with pre-built artifacts)
 SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST="${SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST:-0}"
 if [ "$SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST" = "1" ] && [ -f web/pkg/neser_bg.wasm ] && [ -f web/pkg/neser.js ]; then
