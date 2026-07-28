@@ -99,7 +99,6 @@ enum BrowserAction {
     Search,
     Favorite,
     Detail,
-    GenreFilter,
 }
 
 /// ROM browser winit application.
@@ -131,14 +130,10 @@ pub struct RomBrowserApp {
     /// On-screen keyboard cursor position (row, col).
     search_kb_row: usize,
     search_kb_col: usize,
-    /// Genre filter overlay state.
-    genre_filter_active: bool,
     /// All available genres (collected from catalog).
     available_genres: Vec<String>,
     /// Currently active genre filters (genre names that must match).
     active_genres: Vec<String>,
-    /// Cursor position in the genre filter list.
-    genre_cursor: usize,
     /// Detail view overlay active.
     detail_view_active: bool,
     /// Currently selected screenshot index in the detail view.
@@ -153,7 +148,7 @@ pub struct RomBrowserApp {
     filter_panel_anim: f32,
     /// Cursor position within the current filter panel column.
     filter_panel_cursor: usize,
-    /// Active column in filter panel (0 = Platform, 1 = Players, 2 = Genre).
+    /// Active column in filter panel (0 = Platform, 1 = Players, 2 = Genre, 3 = Favorites).
     filter_panel_column: usize,
     /// Active platform filter (`None` = show all platforms).
     active_platform: Option<crate::platform::catalog::Platform>,
@@ -246,10 +241,8 @@ impl RomBrowserApp {
             search_anim: 0.0,
             search_kb_row: 1,
             search_kb_col: 0,
-            genre_filter_active: false,
             available_genres: Vec::new(),
             active_genres: Vec::new(),
-            genre_cursor: 0,
             detail_view_active: false,
             detail_screenshot_index: 0,
             detail_scroll_last_advance: Instant::now(),
@@ -258,7 +251,7 @@ impl RomBrowserApp {
             filter_panel_anim: 0.0,
             filter_panel_cursor: 0,
             filter_panel_column: 0,
-            active_platform: Some(crate::platform::catalog::Platform::Nes),
+            active_platform: None,
             min_players_filter: None,
             favorites: Favorites::load(&favorites_path),
             show_favorites_only: false,
@@ -320,7 +313,13 @@ impl RomBrowserApp {
     const MAX_CACHED_TEXTURES: usize = 200;
 
     /// Available platform options shown in the filter panel (Platform column).
-    const PLATFORMS: [Platform; 3] = [Platform::Nes, Platform::Gb, Platform::Gbc];
+    const PLATFORMS: [Platform; 5] = [
+        Platform::Nes,
+        Platform::Gb,
+        Platform::Gbc,
+        Platform::Gba,
+        Platform::Snes,
+    ];
 
     const PLAYER_OPTIONS: [(Option<u32>, &'static str); 3] =
         [(None, "Any"), (Some(2), "2+"), (Some(4), "4+")];

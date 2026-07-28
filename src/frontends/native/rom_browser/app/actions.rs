@@ -14,7 +14,6 @@ impl RomBrowserApp {
     /// Open the search panel overlay.
     pub(super) fn open_search_panel(&mut self) {
         self.filter_panel_active = false;
-        self.genre_filter_active = false;
         self.detail_view_active = false;
         self.search_active = true;
         self.search_kb_row = 1;
@@ -89,7 +88,6 @@ impl RomBrowserApp {
     /// Open the filter panel overlay.
     pub(super) fn open_filter_panel(&mut self) {
         self.search_active = false;
-        self.genre_filter_active = false;
         self.detail_view_active = false;
         self.filter_panel_active = true;
         self.filter_panel_cursor = 0;
@@ -126,6 +124,11 @@ impl RomBrowserApp {
                         self.min_players_filter = value;
                     }
                 }
+            }
+            3 => {
+                // Favorites column
+                self.show_favorites_only = !self.show_favorites_only;
+                self.rebuild_filtered();
             }
             2 => {
                 // Genre column
@@ -165,6 +168,8 @@ impl RomBrowserApp {
             0 => Self::PLATFORMS.len(),
             1 => Self::PLAYER_OPTIONS.len(),
             2 => self.available_genres.len(),
+            // Favorites column: a single "favorites only" toggle.
+            3 => 1,
             _ => 0,
         }
     }
@@ -190,43 +195,26 @@ impl RomBrowserApp {
         }
     }
 
+    /// Handle a browser action while the search overlay is active.
+    ///
+    /// Search (the Start button) closes the overlay since it also opened it;
+    /// Back deliberately does nothing here.
+    pub(super) fn apply_search_action(&mut self, action: BrowserAction) {
+        match action {
+            BrowserAction::Search => self.close_search_panel(),
+            BrowserAction::Up => self.search_kb_move_up(),
+            BrowserAction::Down => self.search_kb_move_down(),
+            BrowserAction::Left => self.search_kb_move_left(),
+            BrowserAction::Right => self.search_kb_move_right(),
+            BrowserAction::Confirm => self.search_kb_confirm(),
+            _ => {}
+        }
+    }
+
     /// Apply a browser action (shared between keyboard and gamepad).
     pub(super) fn apply_action(&mut self, action: BrowserAction, event_loop: &ActiveEventLoop) {
         if self.search_active {
-            match action {
-                BrowserAction::Back => self.close_search_panel(),
-                BrowserAction::Up => self.search_kb_move_up(),
-                BrowserAction::Down => self.search_kb_move_down(),
-                BrowserAction::Left => self.search_kb_move_left(),
-                BrowserAction::Right => self.search_kb_move_right(),
-                BrowserAction::Confirm => self.search_kb_confirm(),
-                _ => {}
-            }
-        } else if self.genre_filter_active {
-            match action {
-                BrowserAction::Back => self.genre_filter_active = false,
-                BrowserAction::Up => {
-                    if self.genre_cursor > 0 {
-                        self.genre_cursor -= 1;
-                    }
-                }
-                BrowserAction::Down => {
-                    if self.genre_cursor + 1 < self.available_genres.len() {
-                        self.genre_cursor += 1;
-                    }
-                }
-                BrowserAction::Confirm => {
-                    if let Some(genre) = self.available_genres.get(self.genre_cursor).cloned() {
-                        if let Some(pos) = self.active_genres.iter().position(|g| *g == genre) {
-                            self.active_genres.remove(pos);
-                        } else {
-                            self.active_genres.push(genre);
-                        }
-                        self.rebuild_filtered();
-                    }
-                }
-                _ => {}
-            }
+            self.apply_search_action(action);
         } else if self.filter_panel_active {
             match action {
                 BrowserAction::Back => self.close_filter_panel(),
@@ -278,10 +266,6 @@ impl RomBrowserApp {
                 BrowserAction::Favorite => self.toggle_favorite(),
                 BrowserAction::Detail => {
                     self.open_detail_view();
-                }
-                BrowserAction::GenreFilter => {
-                    self.genre_filter_active = true;
-                    self.genre_cursor = 0;
                 }
             }
         }

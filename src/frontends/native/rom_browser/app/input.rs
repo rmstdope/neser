@@ -100,7 +100,7 @@ impl RomBrowserApp {
             gilrs::Button::South => Some(BrowserAction::Back),   // Nintendo B button
             gilrs::Button::Start | gilrs::Button::RightTrigger2 => Some(BrowserAction::Search),
             gilrs::Button::North => Some(BrowserAction::Detail), // Nintendo X button
-            gilrs::Button::West => Some(BrowserAction::GenreFilter), // Nintendo Y button
+            gilrs::Button::West => Some(BrowserAction::Favorite), // Nintendo Y button
             gilrs::Button::Select | gilrs::Button::LeftTrigger2 => Some(BrowserAction::Favorite),
             _ => None,
         }

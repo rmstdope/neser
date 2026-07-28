@@ -63,10 +63,8 @@ fn test_browser(entries: Vec<RomEntry>) -> RomBrowserApp {
         search_anim: 0.0,
         search_kb_row: 1,
         search_kb_col: 0,
-        genre_filter_active: false,
         available_genres: Vec::new(),
         active_genres: Vec::new(),
-        genre_cursor: 0,
         detail_view_active: false,
         detail_screenshot_index: 0,
         detail_scroll_last_advance: Instant::now(),
@@ -462,19 +460,230 @@ fn platform_filter_narrows_results() {
 }
 
 #[test]
+fn legend_shows_keyboard_keys_in_gallery_without_controller() {
+    let items = RomBrowserApp::legend_items(false, false, false, false);
+    assert_eq!(
+        items,
+        [
+            ("Enter", "Details"),
+            ("Esc", "Filter"),
+            ("Space", "Favorite"),
+            ("Tab", "Search"),
+        ]
+    );
+}
+
+#[test]
+fn legend_shows_controller_buttons_in_gallery_with_controller() {
+    // Search opens with the Start button on a controller, not Tab.
+    let items = RomBrowserApp::legend_items(false, false, false, true);
+    assert_eq!(
+        items,
+        [
+            ("A", "Details"),
+            ("B", "Filter"),
+            ("Select", "Favorite"),
+            ("Start", "Search"),
+        ]
+    );
+}
+
+#[test]
+fn legend_shows_keyboard_keys_in_search_without_controller() {
+    let items = RomBrowserApp::legend_items(true, false, false, false);
+    assert_eq!(
+        items,
+        [("Tab", "Close"), ("Enter", "Select"), ("Type", "Search")]
+    );
+}
+
+#[test]
+fn legend_shows_controller_buttons_in_search_with_controller() {
+    // Start opened the search view, so Start closes it — not B.
+    let items = RomBrowserApp::legend_items(true, false, false, true);
+    assert_eq!(items, [("A", "Select"), ("Start", "Close")]);
+}
+
+#[test]
+fn search_action_closes_search_but_back_does_not() {
+    let mut app = test_browser(vec![make_entry("Zelda")]);
+    app.search_active = true;
+
+    app.apply_search_action(BrowserAction::Back);
+    assert!(app.search_active, "B must not close the search view");
+
+    app.apply_search_action(BrowserAction::Search);
+    assert!(!app.search_active, "Start must close the search view");
+}
+
+#[test]
+fn button_pill_colors_follow_snes_controller_scheme() {
+    use crate::frontends::native::rom_browser::theme;
+    // SNES controller: A red, B yellow, X blue, Y green.
+    let a = theme::BUTTON_COLOR_A;
+    assert!(a.r() > a.g() && a.r() > a.b(), "A must be red");
+    let b = theme::BUTTON_COLOR_B;
+    assert!(b.r() > b.b() && b.g() > b.b(), "B must be yellow");
+    let x = theme::BUTTON_COLOR_X;
+    assert!(x.b() > x.r() && x.b() > x.g(), "X must be blue");
+    let y = theme::BUTTON_COLOR_Y;
+    assert!(y.g() > y.r() && y.g() > y.b(), "Y must be green");
+}
+
+#[test]
+fn legend_shows_controller_buttons_in_filter_panel_with_controller() {
+    let items = RomBrowserApp::legend_items(false, true, false, true);
+    assert_eq!(items, [("↑↓", "Navigate"), ("A", "Toggle"), ("B", "Close")]);
+}
+
+#[test]
+fn legend_shows_keyboard_keys_in_filter_panel_without_controller() {
+    let items = RomBrowserApp::legend_items(false, true, false, false);
+    assert_eq!(
+        items,
+        [("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
+    );
+}
+
+#[test]
+fn legend_shows_keyboard_keys_in_detail_view_without_controller() {
+    let items = RomBrowserApp::legend_items(false, false, true, false);
+    assert_eq!(
+        items,
+        [("Enter", "Launch"), ("Space", "Fav"), ("Esc", "Back")]
+    );
+}
+
+#[test]
+fn legend_shows_controller_buttons_in_detail_view_with_controller() {
+    let items = RomBrowserApp::legend_items(false, false, true, true);
+    assert_eq!(items, [("A", "Launch"), ("Y", "Fav"), ("B", "Back")]);
+}
+
+#[test]
+fn keyboard_key_pills_are_white_for_visibility() {
+    // Keyboard keys have no gamepad button color and fell back to a dark
+    // grey that was near-invisible on the grey legend background.
+    for key in ["Enter", "Esc", "Space", "Tab", "F", "↑↓"] {
+        assert_eq!(
+            RomBrowserApp::button_pill_color(key),
+            egui::Color32::WHITE,
+            "pill for {key} must be white on the grey legend background"
+        );
+    }
+    // Gamepad buttons keep their dedicated colors.
+    assert_eq!(
+        RomBrowserApp::button_pill_color("A"),
+        crate::frontends::native::rom_browser::theme::BUTTON_COLOR_A
+    );
+}
+
+#[test]
+fn new_browser_defaults_to_no_platform_filter() {
+    let app = RomBrowserApp::new(crate::platform::app_context::AppContext::new().into_shared());
+    assert_eq!(
+        app.active_platform, None,
+        "browser must start unfiltered, showing all platforms"
+    );
+}
+
+#[test]
+fn platform_filter_gba_and_snes_narrow_results() {
+    let mut nes = make_entry("Zelda");
+    nes.platform = Platform::Nes;
+    let mut gba = make_entry("Golden Sun");
+    gba.platform = Platform::Gba;
+    let mut snes = make_entry("Super Metroid");
+    snes.platform = Platform::Snes;
+
+    let mut app = test_browser(vec![nes, gba, snes]);
+    assert_eq!(app.filtered_indices.len(), 3);
+
+    app.active_platform = Some(Platform::Gba);
+    app.rebuild_filtered();
+    assert_eq!(app.filtered_indices.len(), 1);
+    assert_eq!(
+        app.catalog[app.filtered_indices[0]].display_name,
+        "Golden Sun"
+    );
+
+    app.active_platform = Some(Platform::Snes);
+    app.rebuild_filtered();
+    assert_eq!(app.filtered_indices.len(), 1);
+    assert_eq!(
+        app.catalog[app.filtered_indices[0]].display_name,
+        "Super Metroid"
+    );
+}
+
+#[test]
+fn filter_panel_offers_all_supported_platforms() {
+    assert_eq!(
+        RomBrowserApp::PLATFORMS,
+        [
+            Platform::Nes,
+            Platform::Gb,
+            Platform::Gbc,
+            Platform::Gba,
+            Platform::Snes
+        ]
+    );
+}
+
+#[test]
+fn filter_panel_favorites_column_toggles_favorites_only() {
+    let mut fav = make_entry("Zelda");
+    fav.is_favorite = true;
+    let mut app = test_browser(vec![make_entry("Mario"), make_entry("Metroid")]);
+    app.catalog.push(fav);
+    app.catalog[2].is_favorite = true;
+    app.rebuild_filtered();
+    assert_eq!(app.filtered_indices.len(), 3);
+
+    app.filter_panel_active = true;
+    app.filter_panel_column = 3;
+    app.filter_panel_cursor = 0;
+    app.filter_panel_confirm();
+    assert!(app.show_favorites_only);
+    assert_eq!(app.filtered_indices.len(), 1);
+
+    app.filter_panel_confirm();
+    assert!(!app.show_favorites_only);
+    assert_eq!(app.filtered_indices.len(), 3);
+}
+
+#[test]
+fn filter_panel_move_right_reaches_favorites_column() {
+    let mut app = test_browser(vec![make_entry("Zelda")]);
+    app.available_genres = vec!["Action".to_string()];
+    app.filter_panel_active = true;
+    app.filter_panel_column = 2;
+    app.filter_panel_cursor = 0;
+
+    app.filter_panel_move_right();
+    assert_eq!(app.filter_panel_column, 3);
+    assert_eq!(app.filter_panel_cursor, 0);
+
+    // Favorites is the last column.
+    app.filter_panel_move_right();
+    assert_eq!(app.filter_panel_column, 3);
+}
+
+#[test]
 fn filter_panel_cursor_bounded_within_column() {
     let mut app = test_browser(vec![make_entry("Zelda")]);
     app.available_genres = vec!["Action".to_string(), "RPG".to_string()];
     app.filter_panel_active = true;
 
-    // Platform column has 3 items (NES, GB, GBC)
+    // Platform column has 5 items (NES, GB, GBC, GBA, SNES)
     app.filter_panel_column = 0;
     app.filter_panel_cursor = 0;
+    for _ in 0..4 {
+        app.filter_panel_move_cursor_down();
+    }
+    assert_eq!(app.filter_panel_cursor, 4); // last platform
     app.filter_panel_move_cursor_down();
-    app.filter_panel_move_cursor_down();
-    assert_eq!(app.filter_panel_cursor, 2); // last platform
-    app.filter_panel_move_cursor_down();
-    assert_eq!(app.filter_panel_cursor, 2); // bounded
+    assert_eq!(app.filter_panel_cursor, 4); // bounded
 
     // Genre column has 2 items (now column 2)
     app.filter_panel_column = 2;
@@ -569,10 +778,10 @@ fn filter_panel_move_cursor_up_down() {
     app.filter_panel_move_cursor_up();
     assert_eq!(app.filter_panel_cursor, 0);
 
-    // Should not go above max (2 for platforms)
-    app.filter_panel_cursor = 2;
+    // Should not go above max (4 for platforms: NES, GB, GBC, GBA, SNES)
+    app.filter_panel_cursor = 4;
     app.filter_panel_move_cursor_down();
-    assert_eq!(app.filter_panel_cursor, 2);
+    assert_eq!(app.filter_panel_cursor, 4);
 }
 
 #[test]
@@ -602,9 +811,11 @@ fn filter_panel_left_right_switches_column() {
     app.filter_panel_move_right();
     assert_eq!(app.filter_panel_column, 2);
 
-    // Can't go right from genre column
+    // Can go right to the favorites column (column 3), which is the last.
     app.filter_panel_move_right();
-    assert_eq!(app.filter_panel_column, 2);
+    assert_eq!(app.filter_panel_column, 3);
+    app.filter_panel_move_right();
+    assert_eq!(app.filter_panel_column, 3);
 }
 
 #[test]

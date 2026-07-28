@@ -135,8 +135,12 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Improve runtime performance in debug builds (helps reduce audio underruns) while
 # keeping debuggability. This is a common setup for emulator-style workloads.
+# Incremental compilation is disabled because its cache (target/debug/incremental)
+# grows to several GB and has repeatedly filled the disk; full crate rebuilds
+# are the accepted trade-off.
 [profile.dev]
 opt-level = 1
+incremental = false
 
 [profile.release]
 incremental = false

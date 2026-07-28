@@ -15,7 +15,15 @@ _ALL_FIELDS = ",".join([
 
 
 class ApiError(Exception):
-    """Raised when the API returns a non-200 status code."""
+    """Raised when the API returns a non-200 status code.
+
+    ``status_code`` holds the HTTP status code, or ``None`` when the failure
+    was not an HTTP error status (e.g. an invalid JSON body).
+    """
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class TheGamesDbClient:
@@ -44,7 +52,8 @@ class TheGamesDbClient:
         self._last_request_time = time.time()
 
         if resp.status_code != 200:
-            raise ApiError(f"API error {resp.status_code}: {path}")
+            raise ApiError(f"API error {resp.status_code}: {path}",
+                           status_code=resp.status_code)
         try:
             return resp.json()
         except Exception as exc:
@@ -163,5 +172,7 @@ class TheGamesDbClient:
         return data.get("data", {}).get("countries", {})
 
     def get_api_limit(self) -> dict:
-        data = self._get("/v1/API/Limit", {})
-        return data.get("data", {})
+        # Unlike every other endpoint, /v1/API/Limit has no "data" wrapper:
+        # remaining_monthly_allowance, extra_allowance and
+        # allowance_refresh_timer sit at the top level of the response.
+        return self._get("/v1/API/Limit", {})

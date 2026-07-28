@@ -76,7 +76,10 @@ impl RomBrowserApp {
         let search_active = self.search_active;
         let search_query = self.search_query.clone();
         let no_roms_hint = self.no_roms_hint.clone();
-        let genre_filter_active = self.genre_filter_active;
+        let controller_connected = self
+            .gilrs
+            .as_ref()
+            .is_some_and(|g| g.gamepads().next().is_some());
         let filter_panel_active = self.filter_panel_active;
         let filter_panel_cursor = self.filter_panel_cursor;
         let filter_panel_column = self.filter_panel_column;
@@ -106,7 +109,6 @@ impl RomBrowserApp {
 
         let available_genres = self.available_genres.clone();
         let active_genres = self.active_genres.clone();
-        let genre_cursor = self.genre_cursor;
         let detail_view_active = self.detail_view_active;
         if detail_view_active {
             self.advance_screenshot_auto_scroll();
@@ -235,23 +237,15 @@ impl RomBrowserApp {
 
                             // Button legend at the bottom of the sidebar.
                             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                                let legend_items: &[(&str, &str)] = if search_active {
-                                    &[("Tab", "Close"), ("Enter", "Launch")]
-                                } else if genre_filter_active {
-                                    &[("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
-                                } else if filter_panel_active {
-                                    &[("↑↓", "Navigate"), ("A", "Toggle"), ("B", "Close")]
-                                } else if detail_view_active {
-                                    &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")]
-                                } else {
-                                    &[
-                                        ("A", "Details"),
-                                        ("B", "Filter"),
-                                        ("Select", "Favorite"),
-                                        ("Tab", "Search"),
-                                    ]
-                                };
-                                Self::render_button_legend(ui, legend_items);
+                                Self::render_button_legend(
+                                    ui,
+                                    Self::legend_items(
+                                        search_active,
+                                        filter_panel_active,
+                                        detail_view_active,
+                                        controller_connected,
+                                    ),
+                                );
                             });
                         });
                 });
@@ -303,16 +297,7 @@ impl RomBrowserApp {
                     search_anim,
                     display_w,
                     display_h,
-                );
-            }
-            if genre_filter_active && !available_genres.is_empty() {
-                Self::render_genre_filter_egui(
-                    ui.ctx(),
-                    &available_genres,
-                    &active_genres,
-                    genre_cursor,
-                    display_w,
-                    display_h,
+                    controller_connected,
                 );
             }
             if filter_panel_active || filter_panel_anim > 0.0 {
@@ -322,6 +307,8 @@ impl RomBrowserApp {
                     &active_genres,
                     active_platform,
                     min_players_filter,
+                    show_favorites_only,
+                    controller_connected,
                     filter_panel_cursor,
                     filter_panel_column,
                     filter_panel_anim,
@@ -338,6 +325,7 @@ impl RomBrowserApp {
                     detail_screenshot_index,
                     display_w,
                     display_h,
+                    controller_connected,
                 );
             }
         });
@@ -447,6 +435,49 @@ impl RomBrowserApp {
         }
     }
 
+    /// Choose the button legend for the current UI mode: gamepad button
+    /// labels when a controller is connected, keyboard keys otherwise.
+    pub(in super::super) fn legend_items(
+        search_active: bool,
+        filter_panel_active: bool,
+        detail_view_active: bool,
+        controller_connected: bool,
+    ) -> &'static [(&'static str, &'static str)] {
+        if search_active {
+            if controller_connected {
+                &[("A", "Select"), ("Start", "Close")]
+            } else {
+                &[("Tab", "Close"), ("Enter", "Select"), ("Type", "Search")]
+            }
+        } else if filter_panel_active {
+            if controller_connected {
+                &[("↑↓", "Navigate"), ("A", "Toggle"), ("B", "Close")]
+            } else {
+                &[("↑↓", "Navigate"), ("Enter", "Toggle"), ("Esc", "Close")]
+            }
+        } else if detail_view_active {
+            if controller_connected {
+                &[("A", "Launch"), ("Y", "Fav"), ("B", "Back")]
+            } else {
+                &[("Enter", "Launch"), ("Space", "Fav"), ("Esc", "Back")]
+            }
+        } else if controller_connected {
+            &[
+                ("A", "Details"),
+                ("B", "Filter"),
+                ("Select", "Favorite"),
+                ("Start", "Search"),
+            ]
+        } else {
+            &[
+                ("Enter", "Details"),
+                ("Esc", "Filter"),
+                ("Space", "Favorite"),
+                ("Tab", "Search"),
+            ]
+        }
+    }
+
     /// Render a row of pill-shaped button prompts (e.g., `[A] Launch`).
     fn render_button_legend(ui: &mut egui::Ui, items: &[(&str, &str)]) {
         let pill_font = egui::FontId::new(14.0, egui::FontFamily::Monospace);
@@ -540,14 +571,16 @@ impl RomBrowserApp {
     }
 
     /// Get the outline colour for a button pill based on standard gamepad colours.
-    fn button_pill_color(btn: &str) -> egui::Color32 {
+    pub(in super::super) fn button_pill_color(btn: &str) -> egui::Color32 {
         match btn {
             "A" => theme::BUTTON_COLOR_A,
             "B" => theme::BUTTON_COLOR_B,
             "X" => theme::BUTTON_COLOR_X,
             "Y" => theme::BUTTON_COLOR_Y,
             "Select" | "Start" => egui::Color32::from_rgb(160, 160, 175),
-            _ => theme::BUTTON_PILL_BG,
+            // Keyboard keys and other labels: white for contrast against
+            // the grey legend item background.
+            _ => theme::BUTTON_PILL_TEXT,
         }
     }
 

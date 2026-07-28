@@ -138,6 +138,30 @@ class TestGetGamesByPlatform(unittest.TestCase):
 
     @patch("api_client.time.sleep")
     @patch("api_client.requests.get")
+    def test_api_error_carries_http_status_code(self, mock_get, _sleep):
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.json.return_value = {"code": 429, "status": "Too Many Requests"}
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        with self.assertRaises(ApiError) as ctx:
+            client.get_games_by_platform(7)
+        self.assertEqual(ctx.exception.status_code, 429)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_api_error_status_code_is_none_for_invalid_json(self, mock_get, _sleep):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("not json")
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        with self.assertRaises(ApiError) as ctx:
+            client.get_games_by_platform(7)
+        self.assertIsNone(ctx.exception.status_code)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
     def test_returns_base_url_when_boxart_present(self, mock_get, _sleep):
         resp = MagicMock()
         resp.status_code = 200
@@ -440,18 +464,36 @@ class TestGetApiLimit(unittest.TestCase):
     @patch("api_client.time.sleep")
     @patch("api_client.requests.get")
     def test_returns_remaining_allowance(self, mock_get, _sleep):
+        # Unlike every other endpoint, /v1/API/Limit has no "data" wrapper:
+        # the allowance fields sit at the top level of the response (see
+        # API/include/routes.php in TheGamesDB/TheGamesDBv2).
         resp = MagicMock()
         resp.status_code = 200
         resp.json.return_value = {
-            "code": 200, "status": "Success",
-            "data": {"remaining_monthly_allowance": 750, "extra_allowance": 5},
             "remaining_monthly_allowance": 750,
             "extra_allowance": 5,
+            "allowance_refresh_timer": 1728000,
         }
         mock_get.return_value = resp
         client = TheGamesDbClient(api_key=FAKE_KEY)
         result = client.get_api_limit()
-        self.assertIn("remaining_monthly_allowance", result)
+        self.assertEqual(result.get("remaining_monthly_allowance"), 750)
+        self.assertEqual(result.get("extra_allowance"), 5)
+
+    @patch("api_client.time.sleep")
+    @patch("api_client.requests.get")
+    def test_returns_allowance_when_exhausted(self, mock_get, _sleep):
+        # When the allowance is used up the server omits extra_allowance.
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "remaining_monthly_allowance": 0,
+            "allowance_refresh_timer": 86400,
+        }
+        mock_get.return_value = resp
+        client = TheGamesDbClient(api_key=FAKE_KEY)
+        result = client.get_api_limit()
+        self.assertEqual(result.get("remaining_monthly_allowance"), 0)
 
 
 # ── _paginate progress bar ────────────────────────────────────────────────────

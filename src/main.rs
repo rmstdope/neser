@@ -258,7 +258,6 @@ fn run_native_frontend(
     app_context: Rc<RefCell<AppContext>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use frontends::native::rom_browser::{BrowserResult, RomBrowserApp};
-    use winit::event_loop::EventLoop;
 
     let rom_path = app_context.borrow().config().frontend.rom_path.clone();
 
@@ -268,8 +267,7 @@ fn run_native_frontend(
     } else {
         // No ROM path — launch the ROM browser in a loop.
         // After emulation ends, return to the browser for another selection.
-        let mut event_loop =
-            EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
+        let mut event_loop = frontends::native::create_event_loop()?;
         let mut browser = RomBrowserApp::new(app_context.clone());
         loop {
             match browser.run(&mut event_loop)? {

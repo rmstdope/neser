@@ -168,8 +168,7 @@ impl NativeEventLoop {
         if self.headless {
             return self.run_headless();
         }
-        let mut event_loop =
-            EventLoop::new().map_err(|e| format!("Failed to create event loop: {e}"))?;
+        let mut event_loop = super::create_event_loop()?;
         self.run_with_event_loop(&mut event_loop)
     }
 
@@ -361,13 +360,7 @@ impl NativeEventLoop {
                 std::path::PathBuf::from(home).as_path(),
             );
             if let Ok(content) = std::fs::read_to_string(&catalog_path) {
-                self.state.cart_switch.entries = content
-                    .lines()
-                    .skip(1)
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(ToString::to_string)
-                    .collect();
+                self.state.cart_switch.entries = nes_catalog_lines(&content);
             }
         }
     }
@@ -1182,9 +1175,43 @@ fn needs_frame_guard(using_manual_throttle: bool, is_game_boy: bool, audio_disab
     using_manual_throttle || is_game_boy || audio_disabled
 }
 
+/// Extracts the NES ROM paths from catalog CSV content, skipping the header.
+///
+/// The catalog CSV also lists Game Boy ROMs for the ROM browser, but the
+/// in-emulator cartridge switch dialog can only load NES cartridges.
+fn nes_catalog_lines(content: &str) -> Vec<String> {
+    content
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| {
+            std::path::Path::new(line)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("nes"))
+        })
+        .map(ToString::to_string)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── cartridge switch dialog catalog filter ────────────────────────────────
+
+    #[test]
+    fn cart_switch_catalog_lists_only_nes_entries() {
+        // The catalog CSV also contains GB/GBC/GBA/SNES ROMs for the ROM
+        // browser, but the in-emulator switch dialog only supports NES.
+        let csv = "path\n/roms/a.nes\n/roms/b.gb\n/roms/c.gbc\n/roms/d.NES\n/roms/e.gba\n/roms/f.sfc\n/roms/g.smc\n";
+        let entries = nes_catalog_lines(csv);
+        assert_eq!(
+            entries,
+            vec!["/roms/a.nes".to_string(), "/roms/d.NES".to_string()]
+        );
+    }
 
     #[test]
     fn manual_throttle_required_when_vsync_enabled_but_unfocused() {

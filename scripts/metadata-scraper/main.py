@@ -11,7 +11,7 @@ try:
 except ImportError:
     _HAVE_REQUESTS_CACHE = False
 
-from api_client import TheGamesDbClient
+from api_client import ApiError, TheGamesDbClient
 from metadata_db import MetadataDb
 from sync import Syncer
 
@@ -249,19 +249,29 @@ def main(output: IO[str] = None):
         )
         print(f"[cache] HTTP responses cached to {cache_path}.sqlite", file=sys.stderr)
 
-    with MetadataDb(args.db) as db:
-        if args.command == "sync":
-            _cmd_sync(args, db, output)
-        elif args.command == "list":
-            _cmd_list(args, db, output)
-        elif args.command == "images":
-            _cmd_images(args, db, output)
-        elif args.command == "status":
-            key = _resolve_api_key(args)
-            client = TheGamesDbClient(api_key=key)
-            _cmd_status(args, db, client, output)
-        elif args.command == "info":
-            _cmd_info(args, db, output)
+    try:
+        with MetadataDb(args.db) as db:
+            if args.command == "sync":
+                _cmd_sync(args, db, output)
+            elif args.command == "list":
+                _cmd_list(args, db, output)
+            elif args.command == "images":
+                _cmd_images(args, db, output)
+            elif args.command == "status":
+                key = _resolve_api_key(args)
+                client = TheGamesDbClient(api_key=key)
+                _cmd_status(args, db, client, output)
+            elif args.command == "info":
+                _cmd_info(args, db, output)
+    except ApiError as exc:
+        if exc.status_code == 429:
+            print("ERROR: TheGamesDB request limit reached (HTTP 429).", file=sys.stderr)
+            print("Your monthly API allowance appears to be used up. Check what is left with", file=sys.stderr)
+            print("the 'status' command, wait for the allowance to reset, or use --cache during", file=sys.stderr)
+            print("development to avoid re-spending quota on repeated requests.", file=sys.stderr)
+        else:
+            print(f"ERROR: TheGamesDB request failed: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
