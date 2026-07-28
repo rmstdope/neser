@@ -1,31 +1,56 @@
+import gamecontrollerDbUrl from "../../../gamecontrollerdb.txt?url";
+
+import {
+    extractVendorProduct,
+    parseGameControllerDb,
+    sdlPlatformForUserAgent,
+    type RawButtonLayout,
+} from "./sdl_mapping";
+
 // Default analog stick axis threshold used to interpret directional input.
 // Callers can override this by passing a custom `axisThreshold` value.
 const DEFAULT_AXIS_THRESHOLD = 0.5;
 
-/**
- * Raw button indices for the returned positional fields (a=south, b=east,
- * y=west, x=north), used for pads the browser exposes without a "standard"
- * mapping. Values index directly into `gamepad.buttons`.
- */
-interface RawButtonLayout {
-    a: number;
-    b: number;
-    y: number;
-    x: number;
-    select: number;
-    start: number;
-    l: number;
-    r: number;
-}
-
 // The W3C standard gamepad layout.
 const STANDARD_LAYOUT: RawButtonLayout = { a: 0, b: 1, y: 2, x: 3, select: 8, start: 9, l: 4, r: 5 };
 
-// Generic SNES USB replica pads (vendor 081f, product e401) enumerate their
-// buttons in raw HID order X, A, B, Y, ..., Select, Start. Browsers expose
-// them without a standard mapping, so reading them positionally made
-// physical X act as the south button.
-const SNES_REPLICA_LAYOUT: RawButtonLayout = { a: 2, b: 1, y: 3, x: 0, select: 8, start: 9, l: 4, r: 5 };
+/**
+ * Raw layouts for pads the browser exposes without a "standard" mapping,
+ * keyed by "vendor:product". Seeded with the generic SNES USB replica pad
+ * (raw HID order X, A, B, Y, ..., Select, Start) so it works even before —
+ * or without — gamecontrollerdb.txt loading; loading merges over the seeds.
+ */
+const rawLayoutRegistry = new Map<string, RawButtonLayout>([
+    ["081f:e401", { a: 2, b: 1, y: 3, x: 0, select: 8, start: 9, l: 4, r: 5 }],
+]);
+
+/**
+ * Load raw button layouts for the current platform from the bundled SDL
+ * gamecontrollerdb.txt (the same file the native frontend uses). Failures
+ * leave the built-in seeds in place.
+ */
+export async function loadRawButtonLayoutsFromDb(
+    fetchFn: typeof fetch = fetch,
+    userAgent: string = typeof navigator !== "undefined" ? navigator.userAgent : ""
+): Promise<void> {
+    const platform = sdlPlatformForUserAgent(userAgent);
+    if (!platform) {
+        return;
+    }
+    try {
+        const response = await fetchFn(gamecontrollerDbUrl);
+        if (!response.ok) {
+            return;
+        }
+        const layouts = parseGameControllerDb(await response.text(), platform);
+        for (const [key, layout] of layouts) {
+            rawLayoutRegistry.set(key, layout);
+        }
+    } catch {
+        // Keep the built-in seeds; unmapped unknown pads fall back to the
+        // standard interpretation.
+    }
+}
 
 /**
  * Pick the raw button layout for a pad: known non-standard pads are matched
@@ -37,9 +62,12 @@ function rawButtonLayoutFor(gamepad: Gamepad | null): RawButtonLayout {
     if (!gamepad || gamepad.mapping === "standard") {
         return STANDARD_LAYOUT;
     }
-    const id = (gamepad.id ?? "").toLowerCase();
-    if (id.includes("081f") && id.includes("e401")) {
-        return SNES_REPLICA_LAYOUT;
+    const key = extractVendorProduct(gamepad.id ?? "");
+    if (key) {
+        const layout = rawLayoutRegistry.get(`${key.vendor}:${key.product}`);
+        if (layout) {
+            return layout;
+        }
     }
     return STANDARD_LAYOUT;
 }

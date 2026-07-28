@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { mapStandardGamepadState, selectPrimaryGamepad } from "./gamepad";
+import { loadRawButtonLayoutsFromDb, mapStandardGamepadState, selectPrimaryGamepad } from "./gamepad";
 
 function makeButtons(pressedIndexes: number[] = []) {
   const buttons = Array.from({ length: 16 }, () => ({ pressed: false }));
@@ -146,6 +146,47 @@ it("does not remap the replica pad when the browser already standard-maps it", (
 
   expect(state.a).toBe(true); // standard b0 = south
   expect(state.x).toBe(false);
+});
+
+it("uses layouts loaded from gamecontrollerdb.txt for other unmapped pads", async () => {
+  // Fake db entry for vendor 045e / product 028e with a scrambled layout.
+  const dbLine =
+    "030000005e0400008e02000000000000,Fake pad,a:b3,b:b2,x:b1,y:b0,back:b6,start:b7,platform:Mac OS X,";
+  const fetchStub = (async () => ({
+    ok: true,
+    text: async () => dbLine
+  })) as unknown as typeof fetch;
+
+  await loadRawButtonLayoutsFromDb(fetchStub, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+
+  const gamepad = {
+    id: "Fake pad (Vendor: 045e Product: 028e)",
+    mapping: "",
+    buttons: makeButtons([3, 6]),
+    axes: [0, 0, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.a).toBe(true); // db says south is raw b3
+  expect(state.select).toBe(true); // back -> raw b6
+  expect(state.x).toBe(false);
+});
+
+it("keeps the built-in SNES replica layout after loading a db without it", async () => {
+  const fetchStub = (async () => ({ ok: true, text: async () => "" })) as unknown as typeof fetch;
+  await loadRawButtonLayoutsFromDb(fetchStub, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+
+  const gamepad = {
+    id: "USB gamepad (Vendor: 081f Product: e401)",
+    mapping: "",
+    buttons: makeButtons([2]),
+    axes: [0, 0, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad as unknown as Gamepad);
+
+  expect(state.a).toBe(true);
 });
 
 it("selects first connected gamepad", () => {

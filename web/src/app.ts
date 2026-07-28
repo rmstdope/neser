@@ -1,5 +1,10 @@
 import init, { WasmNes, WasmGb, WasmGba, WasmSnes, gamepad_init_toast_message } from "../pkg/neser";
-import { mapStandardGamepadState, selectGamepads } from "./input/gamepad";
+import { loadRawButtonLayoutsFromDb, mapStandardGamepadState, selectGamepads } from "./input/gamepad";
+
+// Load per-pad raw button layouts for browser-unmapped gamepads from the
+// bundled gamecontrollerdb.txt. Fire-and-forget: until (or without) the db,
+// built-in seeds and the standard layout apply.
+void loadRawButtonLayoutsFromDb();
 import {
     createRomSaveKey,
     hasState,
