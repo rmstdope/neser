@@ -115,16 +115,8 @@ fn build_mask_logic_script(combo: MaskLogicCombo) -> (Vec<InputEvent>, u32) {
     let mut frame = MENU_READY_FRAME;
 
     let mut tap = |button: SnesButton, frame: &mut u32| {
-        script.push(InputEvent {
-            frame: *frame,
-            button,
-            pressed: true,
-        });
-        script.push(InputEvent {
-            frame: *frame + 1,
-            button,
-            pressed: false,
-        });
+        script.push(InputEvent::button(*frame, button, true));
+        script.push(InputEvent::button(*frame + 1, button, false));
         *frame += KEY_PERIOD;
     };
 
@@ -150,16 +142,8 @@ fn build_shape_script(index: u32) -> (Vec<InputEvent>, u32) {
     let mut frame = MENU_READY_FRAME;
 
     let mut tap = |button: SnesButton, frame: &mut u32| {
-        script.push(InputEvent {
-            frame: *frame,
-            button,
-            pressed: true,
-        });
-        script.push(InputEvent {
-            frame: *frame + 1,
-            button,
-            pressed: false,
-        });
+        script.push(InputEvent::button(*frame, button, true));
+        script.push(InputEvent::button(*frame + 1, button, false));
         *frame += KEY_PERIOD;
     };
 

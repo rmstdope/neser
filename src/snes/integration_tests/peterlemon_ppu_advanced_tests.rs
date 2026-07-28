@@ -91,16 +91,8 @@ mod tests {
     /// Hold `button` from `from` to `to` (exclusive).
     const fn hold(button: SnesButton, from: u32, to: u32) -> [InputEvent; 2] {
         [
-            InputEvent {
-                frame: from,
-                button,
-                pressed: true,
-            },
-            InputEvent {
-                frame: to,
-                button,
-                pressed: false,
-            },
+            InputEvent::button(from, button, true),
+            InputEvent::button(to, button, false),
         ]
     }
 

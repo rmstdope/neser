@@ -44,11 +44,7 @@ mod tests {
         fx.pass_marker_and_idle();
         let rom = fx.build();
 
-        let script = [InputEvent {
-            frame: 2,
-            button: SnesButton::Start,
-            pressed: true,
-        }];
+        let script = [InputEvent::button(2, SnesButton::Start, true)];
         let result = run_rom(
             &rom,
             "pad-serial-order.sfc",
