@@ -475,6 +475,7 @@ fn legend_shows_keyboard_keys_in_gallery_without_controller() {
 
 #[test]
 fn legend_shows_controller_buttons_in_gallery_with_controller() {
+    // Search opens with the Start button on a controller, not Tab.
     let items = RomBrowserApp::legend_items(false, false, false, true);
     assert_eq!(
         items,
@@ -482,7 +483,7 @@ fn legend_shows_controller_buttons_in_gallery_with_controller() {
             ("A", "Details"),
             ("B", "Filter"),
             ("Select", "Favorite"),
-            ("Tab", "Search"),
+            ("Start", "Search"),
         ]
     );
 }

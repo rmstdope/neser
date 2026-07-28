@@ -466,7 +466,7 @@ impl RomBrowserApp {
                 ("A", "Details"),
                 ("B", "Filter"),
                 ("Select", "Favorite"),
-                ("Tab", "Search"),
+                ("Start", "Search"),
             ]
         } else {
             &[
