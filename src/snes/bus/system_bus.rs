@@ -1192,11 +1192,6 @@ impl DmaABus for SnesSystemBus {
                 for _ in 0..DRAM_REFRESH_STOLEN_CLOCKS {
                     self.tick_one_master_clock();
                 }
-                self.ticks.set(
-                    self.ticks
-                        .get()
-                        .wrapping_add(u64::from(DRAM_REFRESH_STOLEN_CLOCKS)),
-                );
             }
         }
     }
