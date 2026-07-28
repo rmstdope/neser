@@ -127,17 +127,15 @@ mod tests {
     // despite the ROM's forced-blank timing; frame-600 row 0 is now a 256/256
     // pixel-exact match for a fresh Mesen2 headless capture (was 116/256),
     // and every other row is byte-identical to the previous golden.
-    // Re-approved after #3020's HDMA write scheduling: the 8-channel burst's
-    // serialized writes cross the scanline wrap, where Mesen2's exact per-byte
-    // clocks carry CPU-alignment jitter NESER's fixed-offset model averages out
-    // (#3042). Frame-600 diff vs a fresh Mesen2 capture: 1.16% (was 0.66%),
-    // best row alignment 0, the documented two-region hardware tile pattern
-    // intact.
+    // Re-approved after #2985 (GPDMA now pays the DRAM-refresh stall): the
+    // frame-600 diff vs a fresh Mesen2 capture collapsed from 1.16% to 0.03%
+    // (20 px) -- the unpaid stall was the dominant divergence. The residual is
+    // the per-byte write-clock CPU-alignment jitter tracked in #3042.
     hblank_dma_vram_rom_test!(
         hvdma_matches_mesen2_and_hardware,
         "hvdma.sfc",
         600,
-        0xA2A6_BD36
+        0x8DAD_BEF4
     );
 
     // Confirmed hardware-accurate: NESER's frame-600 capture is a
