@@ -67,16 +67,8 @@ mod tests {
     /// Tap `button` for one frame at `frame`.
     const fn tap(button: SnesButton, frame: u32) -> [InputEvent; 2] {
         [
-            InputEvent {
-                frame,
-                button,
-                pressed: true,
-            },
-            InputEvent {
-                frame: frame + 1,
-                button,
-                pressed: false,
-            },
+            InputEvent::button(frame, button, true),
+            InputEvent::button(frame + 1, button, false),
         ]
     }
 

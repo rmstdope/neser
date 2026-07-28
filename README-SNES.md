@@ -234,6 +234,14 @@ Test suites:
 - `sa1_boot_tests.rs` / `sa1_iram_tests.rs` / `sa1_bwram_tests.rs` /
   `sa1_irq_tests.rs` -- hand-assembled SA-1 fixture-ROM tests for dual-CPU
   boot, shared I-RAM/BW-RAM exchange, and the cross-CPU IRQ handshake.
+- `input_standard_controller_tests.rs` -- standard-controller protocol
+  fixtures (#2886), assembled in-code via the shared `fixture_rom.rs`
+  builder (no on-disk assets): `$4016`/`$4017` serial order incl. the four
+  ID zeros and connected-pad padding ones, the issue's scripted example
+  press/release sequence observed through auto-joypad JOY1 reads, strobe-high
+  live-B/falling-edge latch semantics, port 2 coverage, and auto-joypad vs
+  manual serial layout equivalence. Results are reported through the WRAM
+  pass/fail marker; no visual baselines.
 - `dsp_audio_golden_tests.rs` -- S-DSP audio sample golden checks: eight
   deterministic 32 kHz capture windows over synthetic in-code BRR fixtures
   (no ROM assets) covering BRR decode, ADSR, GAIN modes, pitch modulation,

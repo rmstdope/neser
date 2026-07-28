@@ -1,7 +1,7 @@
 use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
-use crate::snes::input::SnesButton;
+use crate::snes::input::{SnesButton, SnesControllerType};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -30,10 +30,38 @@ pub(crate) enum RunOracle {
     },
 }
 
-/// A scripted controller-1 button edge, applied once the runner's completed-frame
-/// counter reaches `frame`: the button state is set before any tick of the
+/// A mouse button on a scripted SNES Mouse device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MouseButton {
+    Left,
+    Right,
+}
+
+/// The device change a scripted [`InputEvent`] applies. `port` is 0 for
+/// controller port 1 and 1 for controller port 2, matching the `Snes`
+/// input-injection APIs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InputAction {
+    /// A standard-pad button edge.
+    Button {
+        port: u8,
+        button: SnesButton,
+        pressed: bool,
+    },
+    /// Relative SNES Mouse motion in host-space units.
+    MouseDelta { port: u8, dx: i16, dy: i16 },
+    /// An SNES Mouse button edge.
+    MouseButton {
+        port: u8,
+        button: MouseButton,
+        pressed: bool,
+    },
+}
+
+/// A scripted input change, applied once the runner's completed-frame
+/// counter reaches `frame`: the device state is set before any tick of the
 /// following frame executes, so the change is picked up by the auto-joypad
-/// read ($4218/$4219) at most one frame later (the frame counter advances at
+/// read ($4218-$421B) at most one frame later (the frame counter advances at
 /// VBlank entry, slightly before the auto-joypad latch dot, so exact pickup
 /// depends on where the CPU instruction boundary falls). Events sharing a
 /// frame stamp are applied in list order as one atomic update before any
@@ -41,8 +69,22 @@ pub(crate) enum RunOracle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct InputEvent {
     pub frame: u32,
-    pub button: SnesButton,
-    pub pressed: bool,
+    pub action: InputAction,
+}
+
+impl InputEvent {
+    /// A controller-port-1 standard-pad button edge — the shape every
+    /// pre-existing scripted suite uses.
+    pub(crate) const fn button(frame: u32, button: SnesButton, pressed: bool) -> Self {
+        Self {
+            frame,
+            action: InputAction::Button {
+                port: 0,
+                button,
+                pressed,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,10 +96,14 @@ pub(crate) struct RunConfig<'a> {
     /// jumping into zeroed-out low WRAM ($0000), which the real test rig/hardware answers
     /// with a physical reset button press; this models that handshake for automated runs.
     pub reset_on_pc_trap: Option<u16>,
-    /// Scripted controller-1 input edges, sorted by [`InputEvent::frame`]
-    /// (ascending; validated at run start). Used to drive interactive test
-    /// ROMs (e.g. byuu's `test_oam` menu) deterministically.
+    /// Scripted input edges, sorted by [`InputEvent::frame`] (ascending;
+    /// validated at run start). Used to drive interactive test ROMs (e.g.
+    /// byuu's `test_oam` menu) deterministically.
     pub input_script: &'a [InputEvent],
+    /// Device connected to controller port 1 (default: standard pad).
+    pub controller_port1: SnesControllerType,
+    /// Device connected to controller port 2 (default: standard pad).
+    pub controller_port2: SnesControllerType,
 }
 
 impl<'a> RunConfig<'a> {
@@ -67,7 +113,20 @@ impl<'a> RunConfig<'a> {
             max_frames,
             reset_on_pc_trap: None,
             input_script: &[],
+            controller_port1: SnesControllerType::Standard,
+            controller_port2: SnesControllerType::Standard,
         }
+    }
+
+    /// Selects the devices connected to controller ports 1 and 2.
+    pub(crate) const fn with_controller_ports(
+        mut self,
+        port1: SnesControllerType,
+        port2: SnesControllerType,
+    ) -> Self {
+        self.controller_port1 = port1;
+        self.controller_port2 = port2;
+        self
     }
 
     /// Enables the reset-on-PC-trap handshake (see [`RunConfig::reset_on_pc_trap`]).
@@ -199,7 +258,10 @@ fn run_rom_with_oracle_and_capture(
     oracle: RunOracle,
     capture_screen: bool,
 ) -> RunResult {
-    let mut snes = Snes::new(AppContext::default());
+    let mut app_config = crate::platform::config::Config::default();
+    app_config.snes.controller_port1 = config.controller_port1;
+    app_config.snes.controller_port2 = config.controller_port2;
+    let mut snes = Snes::new(AppContext::new_with_config(app_config));
     snes.load_rom(rom, name)
         .unwrap_or_else(|err| panic!("failed to load SNES runner ROM {name}: {err}"));
 
@@ -228,11 +290,26 @@ fn run_rom_with_oracle_and_capture(
     loop {
         while next_input < script.len() && script[next_input].frame <= frames {
             let event = script[next_input];
-            snes.set_button(
-                0,
-                crate::snes::input::button_to_id(event.button),
-                event.pressed,
-            );
+            match event.action {
+                InputAction::Button {
+                    port,
+                    button,
+                    pressed,
+                } => {
+                    snes.set_button(port, crate::snes::input::button_to_id(button), pressed);
+                }
+                InputAction::MouseDelta { port, dx, dy } => {
+                    snes.add_mouse_delta(port, dx, dy);
+                }
+                InputAction::MouseButton {
+                    port,
+                    button,
+                    pressed,
+                } => match button {
+                    MouseButton::Left => snes.set_mouse_left_button(port, pressed),
+                    MouseButton::Right => snes.set_mouse_right_button(port, pressed),
+                },
+            }
             next_input += 1;
         }
 
@@ -402,10 +479,20 @@ fn capture_is_disabled_for_fixture(name: &str) -> bool {
         stem,
         Some("bus-byte-pass")
             | Some("fail")
+            | Some("input-mouse-delta")
+            | Some("input-mouse-id")
+            | Some("input-mouse-left")
+            | Some("input-mouse-right")
+            | Some("input-port2-press")
             | Some("input-script-none")
             | Some("input-script-press")
             | Some("input-script-release")
             | Some("input-script-unsorted")
+            | Some("pad-auto-matches-serial")
+            | Some("pad-example-sequence")
+            | Some("pad-serial-order")
+            | Some("pad-strobe-semantics")
+            | Some("pad2-serial-order")
             | Some("pass")
             | Some("screen-crc-match")
             | Some("screen-crc-mismatch")
@@ -440,6 +527,7 @@ pub(crate) fn capture_output_path(suite: &str, stem: &str, crc: u32) -> PathBuf 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::snes::integration_tests::fixture_rom::FixtureRom;
 
     fn pass_marker_rom() -> Vec<u8> {
         fixture_rom(Some(PASS_STATUS), PASS_IDLE_PC)
@@ -725,11 +813,7 @@ mod tests {
 
     #[test]
     fn scripted_press_edge_reaches_the_rom_via_auto_joypad() {
-        let script = [InputEvent {
-            frame: 5,
-            button: SnesButton::Start,
-            pressed: true,
-        }];
+        let script = [InputEvent::button(5, SnesButton::Start, true)];
         let result = run_rom(
             &joypad_press_wait_rom(START_BIT_JOY1H),
             "input-script-press.sfc",
@@ -748,16 +832,8 @@ mod tests {
     #[test]
     fn scripted_release_edge_reaches_the_rom_via_auto_joypad() {
         let script = [
-            InputEvent {
-                frame: 5,
-                button: SnesButton::Start,
-                pressed: true,
-            },
-            InputEvent {
-                frame: 30,
-                button: SnesButton::Start,
-                pressed: false,
-            },
+            InputEvent::button(5, SnesButton::Start, true),
+            InputEvent::button(30, SnesButton::Start, false),
         ];
         let result = run_rom(
             &joypad_press_release_wait_rom(START_BIT_JOY1H),
@@ -793,22 +869,173 @@ mod tests {
     #[should_panic(expected = "input_script must be sorted by frame")]
     fn unsorted_input_script_panics_at_run_start() {
         let script = [
-            InputEvent {
-                frame: 9,
-                button: SnesButton::Start,
-                pressed: true,
-            },
-            InputEvent {
-                frame: 5,
-                button: SnesButton::Start,
-                pressed: false,
-            },
+            InputEvent::button(9, SnesButton::Start, true),
+            InputEvent::button(5, SnesButton::Start, false),
         ];
         run_rom(
             &joypad_press_wait_rom(START_BIT_JOY1H),
             "input-script-unsorted.sfc",
             RunConfig::new(400_000_000, 120).with_input_script(&script),
         );
+    }
+
+    /// Builds a fixture that enables auto-joypad reads and polls the given
+    /// JOY register until it equals `expected`, then reports PASS.
+    fn autojoy_poll_rom(joy_addr: u16, expected: u8) -> Vec<u8> {
+        let mut fx = FixtureRom::new(b"NESER AUTOJOY POLL");
+        fx.write_long(0x00_4200, 0x01);
+        let poll = fx.pos();
+        fx.lda_abs(joy_addr);
+        fx.cmp_imm(expected);
+        fx.bne_to(poll);
+        fx.pass_marker_and_idle();
+        fx.build()
+    }
+
+    /// Builds a fixture that manually strobes and serially reads a full
+    /// 32-bit mouse packet from `$4016`, polling until byte 2 shows an idle
+    /// mouse (ID only) and bytes 3/4 match the expected vertical/horizontal
+    /// motion bytes, then reports PASS.
+    fn mouse_serial_delta_rom(expected_vertical: u8, expected_horizontal: u8) -> Vec<u8> {
+        let mut fx = FixtureRom::new(b"NESER MOUSE DELTA");
+        let poll = fx.pos();
+        fx.strobe_pulse();
+        fx.serial_read_bits(0x4016, 32, 0x0010);
+        fx.lda_abs(0x0011); // buttons | speed | ID
+        fx.cmp_imm(0x01);
+        fx.bne_to(poll);
+        fx.lda_abs(0x0012); // vertical direction + magnitude
+        fx.cmp_imm(expected_vertical);
+        fx.bne_to(poll);
+        fx.lda_abs(0x0013); // horizontal direction + magnitude
+        fx.cmp_imm(expected_horizontal);
+        fx.bne_to(poll);
+        fx.pass_marker_and_idle();
+        fx.build()
+    }
+
+    #[test]
+    fn scripted_port2_button_press_reaches_the_rom_via_joy2() {
+        let script = [InputEvent {
+            frame: 5,
+            action: InputAction::Button {
+                port: 1,
+                button: SnesButton::Start,
+                pressed: true,
+            },
+        }];
+        let result = run_rom(
+            &autojoy_poll_rom(0x421B, START_BIT_JOY1H),
+            "input-port2-press.sfc",
+            RunConfig::new(400_000_000, 120).with_input_script(&script),
+        );
+
+        assert!(
+            result.passed,
+            "ROM should observe the scripted port-2 Start press via $421B \
+             (exit={:?} frames={})",
+            result.exit_reason, result.frames
+        );
+        assert_eq!(result.exit_reason, RunExitReason::PassMarker);
+    }
+
+    #[test]
+    fn mouse_on_port1_reports_its_id_through_auto_joypad() {
+        let result = run_rom(
+            &autojoy_poll_rom(0x4218, 0x01),
+            "input-mouse-id.sfc",
+            RunConfig::new(400_000_000, 120)
+                .with_controller_ports(SnesControllerType::Mouse, SnesControllerType::Standard),
+        );
+
+        assert!(
+            result.passed,
+            "with a mouse on port 1, JOY1L should read the mouse ID 0x01 \
+             (exit={:?} frames={})",
+            result.exit_reason, result.frames
+        );
+        assert_eq!(result.exit_reason, RunExitReason::PassMarker);
+    }
+
+    #[test]
+    fn scripted_mouse_left_button_press_reaches_joy1l() {
+        let script = [InputEvent {
+            frame: 5,
+            action: InputAction::MouseButton {
+                port: 0,
+                button: MouseButton::Left,
+                pressed: true,
+            },
+        }];
+        let result = run_rom(
+            &autojoy_poll_rom(0x4218, 0x41),
+            "input-mouse-left.sfc",
+            RunConfig::new(400_000_000, 120)
+                .with_controller_ports(SnesControllerType::Mouse, SnesControllerType::Standard)
+                .with_input_script(&script),
+        );
+
+        assert!(
+            result.passed,
+            "JOY1L should show the mouse left button (0x40) plus ID (0x01) \
+             (exit={:?} frames={})",
+            result.exit_reason, result.frames
+        );
+        assert_eq!(result.exit_reason, RunExitReason::PassMarker);
+    }
+
+    #[test]
+    fn scripted_mouse_right_button_press_reaches_joy1l() {
+        let script = [InputEvent {
+            frame: 5,
+            action: InputAction::MouseButton {
+                port: 0,
+                button: MouseButton::Right,
+                pressed: true,
+            },
+        }];
+        let result = run_rom(
+            &autojoy_poll_rom(0x4218, 0x81),
+            "input-mouse-right.sfc",
+            RunConfig::new(400_000_000, 120)
+                .with_controller_ports(SnesControllerType::Mouse, SnesControllerType::Standard)
+                .with_input_script(&script),
+        );
+
+        assert!(
+            result.passed,
+            "JOY1L should show the mouse right button (0x80) plus ID (0x01) \
+             (exit={:?} frames={})",
+            result.exit_reason, result.frames
+        );
+        assert_eq!(result.exit_reason, RunExitReason::PassMarker);
+    }
+
+    #[test]
+    fn scripted_mouse_delta_is_visible_in_the_serial_packet() {
+        let script = [InputEvent {
+            frame: 5,
+            action: InputAction::MouseDelta {
+                port: 0,
+                dx: 5,
+                dy: 0,
+            },
+        }];
+        let result = run_rom(
+            &mouse_serial_delta_rom(0x00, 0x05),
+            "input-mouse-delta.sfc",
+            RunConfig::new(400_000_000, 120)
+                .with_controller_ports(SnesControllerType::Mouse, SnesControllerType::Standard)
+                .with_input_script(&script),
+        );
+
+        assert!(
+            result.passed,
+            "a +5 horizontal delta should appear as magnitude 5 with the \
+             direction bit clear in the serial packet (exit={:?} frames={})",
+            result.exit_reason, result.frames
+        );
+        assert_eq!(result.exit_reason, RunExitReason::PassMarker);
     }
 
     #[test]
@@ -849,10 +1076,20 @@ mod tests {
         for name in [
             "bus-byte-pass.sfc",
             "fail.sfc",
+            "input-mouse-delta.sfc",
+            "input-mouse-id.sfc",
+            "input-mouse-left.sfc",
+            "input-mouse-right.sfc",
+            "input-port2-press.sfc",
             "input-script-none.sfc",
             "input-script-press.sfc",
             "input-script-release.sfc",
             "input-script-unsorted.sfc",
+            "pad-auto-matches-serial.sfc",
+            "pad-example-sequence.sfc",
+            "pad-serial-order.sfc",
+            "pad-strobe-semantics.sfc",
+            "pad2-serial-order.sfc",
             "pass.sfc",
             "screen-crc-match.sfc",
             "screen-crc-mismatch.sfc",
