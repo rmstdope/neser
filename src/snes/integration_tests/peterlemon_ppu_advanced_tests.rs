@@ -29,13 +29,15 @@
 //!   interleave, per-dot hires color math): approved goldens after
 //!   normalizing Mesen2's row-doubled height. The main demo and the
 //!   mandrill TEST variant draw the same image, hence their shared CRC.
-//! - `MosaicMode5.sfc` and all six `Interlace*.sfc` ROMs still diverge
-//!   (line-doubled interlace fields instead of distinct odd/even
-//!   fields, #3017; the #3016 hires column rendering itself is fixed):
-//!   `#[ignore]`d with NESER's current CRCs, refreshed after #3016.
-//!   MosaicMode5's CRC no longer equals InterlaceMoogle's: mode 5
-//!   forces the mosaic collapse of half-pixel pairs even at size 0's
-//!   block size 1, which InterlaceMoogle (no mosaic) doesn't share.
+//! - `MosaicMode5.sfc` (both vectors) and five of the six
+//!   `Interlace*.sfc` ROMs match Mesen2 pixel-exactly since the #3017
+//!   distinct-field rework (modes 5/6 doubled field fetch, alternating
+//!   263/262 field lengths): approved goldens at the native 512x448
+//!   woven-field geometry, directly comparable to Mesen2's captures.
+//!   `InterlaceSimpsonsHDMA.sfc` alone still differs in 4 px (both
+//!   half-pixels of the rightmost native column, both fields, one
+//!   display line -- the rightmost-dot HDMA timing class of #3020):
+//!   `#[ignore]`d with NESER's current CRC pending #3038.
 
 use super::rom_runner::{InputEvent, RunConfig, RunOracle, run_rom_with_oracle};
 use crate::snes::input::SnesButton;
@@ -209,29 +211,25 @@ mod tests {
         );
     }
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden.
     #[test]
-    #[ignore = "interlace renders line-doubled fields instead of distinct odd/even fields; pending #3017"]
     fn mosaic_mode5() {
         run_advanced_screen_crc(
             "SNES-PPU-Mosaic/Mode5/MosaicMode5.sfc",
             "",
             &[],
             81,
-            0x1105_5DF5,
+            0x8763_5487,
         );
     }
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden.
     #[test]
-    #[ignore = "interlace renders line-doubled fields instead of distinct odd/even fields; pending #3017"]
     fn mosaic_mode5_sized() {
         run_advanced_screen_crc(
             "SNES-PPU-Mosaic/Mode5/MosaicMode5.sfc",
             "sized",
             &hold(SnesButton::R, 120, 150),
             300,
-            0x96A0_9C1C,
+            0x6DA7_0C73,
         );
     }
 
@@ -239,9 +237,7 @@ mod tests {
 
     macro_rules! peterlemon_interlace_test {
         ($name:ident, $file:expr, $frames:expr, $crc:expr) => {
-            /// NESER's current CRC, NOT a Mesen2-approved golden.
             #[test]
-            #[ignore = "interlace renders line-doubled fields instead of distinct odd/even fields; pending #3017"]
             fn $name() {
                 run_advanced_screen_crc($file, "", &[], $frames, $crc);
             }
@@ -252,38 +248,47 @@ mod tests {
         interlace_font,
         "SNES-PPU-Interlace/InterlaceFont/InterlaceFont.sfc",
         79,
-        0xB608_0965
+        0x8891_5DE1
     );
     peterlemon_interlace_test!(
         interlace_moogle,
         "SNES-PPU-Interlace/InterlaceMoogle/InterlaceMoogle.sfc",
         79,
-        0xBDF9_FB2F
+        0x748A_7B88
     );
     peterlemon_interlace_test!(
         interlace_myst_hdma,
         "SNES-PPU-Interlace/InterlaceMystHDMA/InterlaceMystHDMA.sfc",
         81,
-        0xE0CC_4D17
+        0x5C36_BC81
     );
     peterlemon_interlace_test!(
         interlace_rpg,
         "SNES-PPU-Interlace/InterlaceRPG/InterlaceRPG.sfc",
         80,
-        0xE09D_0A46
+        0xCEF8_EAF4
     );
     peterlemon_interlace_test!(
         interlace_scroll,
         "SNES-PPU-Interlace/InterlaceScroll/InterlaceScroll.sfc",
         80,
-        0x566A_C2D7
+        0x54C8_8315
     );
-    peterlemon_interlace_test!(
-        interlace_simpsons_hdma,
-        "SNES-PPU-Interlace/InterlaceSimpsonsHDMA/InterlaceSimpsonsHDMA.sfc",
-        80,
-        0xE159_F195
-    );
+
+    /// NESER's current CRC, NOT a Mesen2-approved golden: 4 px differ (both
+    /// half-pixels of the rightmost native column, both fields, one display
+    /// line) -- the rightmost-dot HDMA timing class also seen in #3020.
+    #[test]
+    #[ignore = "rightmost-column HDMA dot timing diverges from Mesen2 by 4 px; pending #3038"]
+    fn interlace_simpsons_hdma() {
+        run_advanced_screen_crc(
+            "SNES-PPU-Interlace/InterlaceSimpsonsHDMA/InterlaceSimpsonsHDMA.sfc",
+            "",
+            &[],
+            80,
+            0x4DD4_E5EA,
+        );
+    }
 
     // ---- Pseudo-hires (Mesen2-approved goldens since #3016) ----
 
