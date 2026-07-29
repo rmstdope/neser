@@ -119,12 +119,30 @@ impl Ppu {
                 }
             }
             // Window control registers.
-            0x2123 => self.w12sel = value,
-            0x2124 => self.w34sel = value,
-            0x2125 => self.wobjsel = value,
-            0x2126..=0x2129 => self.wh[(addr - 0x2126) as usize] = value,
-            0x212A => self.wbglog = value,
-            0x212B => self.wobjlog = value,
+            0x2123 => {
+                self.w12sel = value;
+                self.decode_window_registers();
+            }
+            0x2124 => {
+                self.w34sel = value;
+                self.decode_window_registers();
+            }
+            0x2125 => {
+                self.wobjsel = value;
+                self.decode_window_registers();
+            }
+            0x2126..=0x2129 => {
+                self.wh[(addr - 0x2126) as usize] = value;
+                self.decode_window_registers();
+            }
+            0x212A => {
+                self.wbglog = value;
+                self.decode_window_registers();
+            }
+            0x212B => {
+                self.wobjlog = value;
+                self.decode_window_registers();
+            }
             // SETINI: Display Control 2. Bits used in this core: bit 6 (EXTBG), bit 3
             // (pseudo-hires), bit 1 (OBJ interlace), bit 0 (interlace).
             0x2133 => {

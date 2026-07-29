@@ -167,6 +167,42 @@ impl VramAddressTranslation {
     }
 }
 
+/// Number of independently-windowable layers: BG1-BG4, OBJ, and the colour
+/// window, in that order (Mesen2 `SnesPpu::ColorWindowIndex` = 5).
+pub(crate) const WINDOW_LAYERS: usize = 6;
+
+/// One of the two hardware windows, decoded from W12SEL/W34SEL/WOBJSEL and
+/// WH0-WH3.
+///
+/// Each of those three registers holds two `EIei` nibbles; within every 2-bit
+/// pair the HIGH bit enables the window for that layer and the LOW bit inverts
+/// it (Mesen2 `ProcessWindowMaskSettings`, ares `sfc/ppu/io.cpp`, and the
+/// vendored hardware header's `WSEL` constants -- `win1.enable = %0010`,
+/// `win1.outside = %0001`). Reading those two bits the other way round is what
+/// made every windowed NESER vector render inverted (#3011).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WindowConfig {
+    /// Per-layer "this window participates" flag.
+    pub active_layers: [bool; WINDOW_LAYERS],
+    /// Per-layer "the masked area is OUTSIDE [left, right]" flag.
+    pub inverted_layers: [bool; WINDOW_LAYERS],
+    /// Inclusive left edge (WH0 / WH2).
+    pub left: u8,
+    /// Inclusive right edge (WH1 / WH3). `left > right` is an empty window.
+    pub right: u8,
+}
+
+impl WindowConfig {
+    /// Whether `x` falls in this window's masked area for `layer`, before the
+    /// two-window combination (Mesen2 `WindowConfig::PixelNeedsMasking`). An
+    /// empty window (`left > right`) is never "inside", so inverting it covers
+    /// the whole line.
+    pub(crate) fn pixel_in_area(&self, layer: usize, x: u8) -> bool {
+        let inside = self.left <= self.right && x >= self.left && x <= self.right;
+        inside != self.inverted_layers[layer]
+    }
+}
+
 /// SNES Picture Processing Unit.
 #[derive(Debug, Clone)]
 pub struct Ppu {
@@ -329,6 +365,14 @@ pub struct Ppu {
     wbglog: u8,
     /// WOBJLOG ($212B): window logic for OBJ/MATH.
     wobjlog: u8,
+    /// Windows 1 and 2 decoded from the raw registers above (see
+    /// [`Ppu::decode_window_registers`]). Derived state: the raw registers stay
+    /// the save-state source of truth and this cache is rebuilt on restore.
+    pub(crate) windows: [WindowConfig; 2],
+    /// Per-layer two-window combination operator (0 = OR, 1 = AND, 2 = XOR,
+    /// 3 = XNOR), indexed like [`WindowConfig::active_layers`]. Decoded from
+    /// WBGLOG/WOBJLOG.
+    pub(crate) mask_logic: [u8; WINDOW_LAYERS],
     /// SETINI ($2133): implemented bits are bit 6 (EXTBG), bit 3 (pseudo-hires),
     /// bit 1 (OBJ interlace), and bit 0 (interlace enable).
     setini: u8,
@@ -464,6 +508,8 @@ impl Ppu {
             wh: [0; 4],
             wbglog: 0,
             wobjlog: 0,
+            windows: [WindowConfig::default(); 2],
+            mask_logic: [0; WINDOW_LAYERS],
             setini: 0,
             m7a: 0,
             m7b: 0,

@@ -177,6 +177,9 @@ impl Ppu {
         self.wh = state.wh;
         self.wbglog = state.wbglog;
         self.wobjlog = state.wobjlog;
+        // The decoded window cache is derived from the raw registers above, so
+        // it must be rebuilt rather than persisted (#3011).
+        self.decode_window_registers();
         self.setini = state.setini;
         self.m7a = state.m7a;
         self.m7b = state.m7b;
