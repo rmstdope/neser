@@ -165,11 +165,39 @@ impl Ppu {
         main: ScreenPixel,
         sub: ScreenPixel,
     ) -> u16 {
-        self.compose_half(x, y, main.color, main.source, sub.color)
+        let (operand, fixed_color_fallback) = self.math_operand(sub);
+        self.compose_half(x, y, main.color, main.source, operand, fixed_color_fallback)
     }
 
-    /// Finalize one output pixel: color-window clip to black, the CGADSUB gate from
-    /// `gate_source`, then color math against `operand`.
+    /// The colour-math operand for `sub`, plus whether it is the
+    /// **empty-sub-screen fallback**.
+    ///
+    /// CGWSEL bit 1 asks for the sub screen as the operand; when nothing is on
+    /// the sub screen at this dot the fixed colour is substituted *and* halving
+    /// is disabled (Mesen2's `_subScreenPriority[x] == 0` branch, #3012). With
+    /// bit 1 clear the fixed colour is the operand by design and halving still
+    /// applies -- the two cases look alike but behave differently.
+    fn math_operand(&self, sub: ScreenPixel) -> (u16, bool) {
+        let fixed_color = self.coldata & 0x7FFF;
+        if self.cgwsel & 0x02 == 0 {
+            (fixed_color, false)
+        } else if sub.source == PixelSource::Backdrop {
+            (fixed_color, true)
+        } else {
+            (sub.color, false)
+        }
+    }
+
+    /// Finalize one output pixel: colour-window clip to black, the CGADSUB gate
+    /// from `gate_source`, then colour math against `operand`.
+    ///
+    /// Ordering follows Mesen2 `ApplyColorMathToPixel`: the clip applies first
+    /// and unconditionally (it is NOT gated by the per-layer CGADSUB bit), then
+    /// the layer gate, then the prevent-window, then the maths.
+    ///
+    /// Halving (CGADSUB bit 6) is suppressed in two independent cases: when the
+    /// main pixel was clipped to black, and when `operand` is the
+    /// empty-sub-screen fixed-colour fallback.
     fn compose_half(
         &self,
         x: u16,
@@ -177,10 +205,17 @@ impl Ppu {
         color: u16,
         gate_source: PixelSource,
         operand: u16,
+        fixed_color_fallback: bool,
     ) -> u16 {
         let mut color = color;
+        let mut half = self.cgadsub & 0x40 != 0;
         if self.force_main_black_at(x, y) {
             color = 0;
+            // A blacked-out main pixel takes the operand at full strength.
+            // ares applies this uniformly (`colorHalve && above.colorEnable`),
+            // CGWSEL clip mode 3 included; Mesen2 omits it for mode 3 alone,
+            // and NESER deliberately follows ares here (#3011).
+            half = false;
         }
         if !self.color_math_source_enabled(gate_source) {
             return color;
@@ -188,7 +223,10 @@ impl Ppu {
         if !self.color_math_enabled_at(x, y) {
             return color;
         }
-        self.apply_color_math(color, operand)
+        if fixed_color_fallback {
+            half = false;
+        }
+        self.apply_color_math(color, operand, half)
     }
 
     /// Finalize the hires half-pixel pair at native `(x, y)` from the line buffers,
@@ -202,13 +240,10 @@ impl Ppu {
         // branch is unconditional).
         let add_subscreen = self.cgwsel & 0x02 != 0;
         let fixed_color = self.coldata & 0x7FFF;
-        // Odd/main half: operand is the pre-math sub color at the same x.
-        let main_operand = if add_subscreen {
-            sub.color
-        } else {
-            fixed_color
-        };
-        let odd = self.compose_half(x, y, main.color, main.source, main_operand);
+        // Odd/main half: operand is the pre-math sub color at the same x, and an
+        // empty sub screen there is the halve-disabling fallback (#3012).
+        let (main_operand, main_fallback) = self.math_operand(sub);
+        let odd = self.compose_half(x, y, main.color, main.source, main_operand, main_fallback);
         // Even/sub half: operand is the finalized main pixel one dot to the left
         // (black at x = 0), and the math gate follows the main pixel's source at
         // x - 1 (Mesen2 passes prevX for the sub half of the hires math loop).
@@ -217,6 +252,8 @@ impl Ppu {
         } else {
             0
         };
+        // The even/sub half's operand is a MAIN pixel, not a sub one, so the
+        // empty-sub-screen fallback does not apply to it.
         let even_operand = if add_subscreen {
             prev_main
         } else {
@@ -231,28 +268,34 @@ impl Ppu {
         } else {
             sub.color
         };
-        let even = self.compose_half(x, y, sub_display, gate_source, even_operand);
+        let even = self.compose_half(x, y, sub_display, gate_source, even_operand, false);
         (even, odd)
     }
 
+    /// Whether colour math runs at this dot (CGWSEL bits 5-4).
+    ///
+    /// The field names where maths is **prevented**, not where it is enabled:
+    /// 1 = prevented outside the colour window (so maths runs INSIDE), 2 =
+    /// prevented inside (so maths runs OUTSIDE). NESER had those two the wrong
+    /// way round (#3011); see the vendored `CGWSEL::prevent` constants.
     pub(super) fn color_math_enabled_at(&self, x: u16, y: u16) -> bool {
         match (self.cgwsel >> 4) & 0x03 {
             0 => true,
-            // 01 = outside color window only, 10 = inside color window only.
-            1 => !self.window_area(WindowLayer::Math, x, y),
-            2 => self.window_area(WindowLayer::Math, x, y),
-            3 => false,
-            _ => unreachable!(),
+            1 => self.window_area(WindowLayer::Math, x, y),
+            2 => !self.window_area(WindowLayer::Math, x, y),
+            _ => false,
         }
     }
 
+    /// Whether the main pixel is clipped to black at this dot (CGWSEL bits
+    /// 7-6), naming where the clip **applies**: 1 = outside the colour window,
+    /// 2 = inside, 3 = always.
     pub(super) fn force_main_black_at(&self, x: u16, y: u16) -> bool {
         match (self.cgwsel >> 6) & 0x03 {
             0 => false,
             1 => !self.window_area(WindowLayer::Math, x, y),
             2 => self.window_area(WindowLayer::Math, x, y),
-            3 => true,
-            _ => unreachable!(),
+            _ => true,
         }
     }
 
@@ -286,62 +329,85 @@ impl Ppu {
         self.window_area(layer, x, y)
     }
 
+    /// Rebuild the decoded window cache from the raw W12SEL/W34SEL/WOBJSEL,
+    /// WH0-WH3 and WBGLOG/WOBJLOG registers.
+    ///
+    /// Called from every one of those register writes and from save-state
+    /// restore -- the raw registers are the persisted state, this is a cache.
+    ///
+    /// Each selector register holds two `EIei` nibbles, one per layer, and
+    /// within every 2-bit pair the HIGH bit is the enable and the LOW bit the
+    /// invert (see [`WindowConfig`]). The mask-logic bit pair is indexed by
+    /// LAYER, independently of which nibble of the selector that layer used:
+    /// WBGLOG is `44332211` (BG1 = bits 1-0 ... BG4 = bits 7-6) and WOBJLOG is
+    /// `----ccoo` (OBJ = bits 1-0, colour window = bits 3-2). Deriving the two
+    /// from a single "high nibble?" flag is what made BG3/BG4 read BG1/BG2's
+    /// mask logic (#3011).
+    pub(super) fn decode_window_registers(&mut self) {
+        for (selector, base_layer) in [(self.w12sel, 0), (self.w34sel, 2), (self.wobjsel, 4)] {
+            for nibble in 0..2 {
+                let layer = base_layer + nibble;
+                let bits = selector >> (nibble * 4);
+                self.windows[0].active_layers[layer] = bits & 0x02 != 0;
+                self.windows[0].inverted_layers[layer] = bits & 0x01 != 0;
+                self.windows[1].active_layers[layer] = bits & 0x08 != 0;
+                self.windows[1].inverted_layers[layer] = bits & 0x04 != 0;
+            }
+        }
+        self.windows[0].left = self.wh[0];
+        self.windows[0].right = self.wh[1];
+        self.windows[1].left = self.wh[2];
+        self.windows[1].right = self.wh[3];
+        for layer in 0..4 {
+            self.mask_logic[layer] = (self.wbglog >> (layer * 2)) & 0x03;
+        }
+        self.mask_logic[4] = self.wobjlog & 0x03;
+        self.mask_logic[5] = (self.wobjlog >> 2) & 0x03;
+    }
+
+    /// Whether `x` is in `layer`'s combined window area.
+    ///
+    /// Mirrors Mesen2 `ProcessMaskWindow`: with both windows enabled the
+    /// per-layer mask-logic operator combines them; with exactly ONE enabled
+    /// that window's area is used directly and the operator is bypassed (so an
+    /// AND setting does not turn a lone window into "masked nowhere"); with
+    /// neither enabled nothing is masked, XNOR included.
     pub(super) fn window_area(&self, layer: WindowLayer, x: u16, _y: u16) -> bool {
+        let layer = Self::window_layer_index(layer);
         let x = x as u8;
-        let (sel, logic, high_bits) = match layer {
-            WindowLayer::Bg(0) => (self.w12sel, self.wbglog, false),
-            WindowLayer::Bg(1) => (self.w12sel, self.wbglog, true),
-            WindowLayer::Bg(2) => (self.w34sel, self.wbglog, false),
-            WindowLayer::Bg(3) => (self.w34sel, self.wbglog, true),
-            WindowLayer::Obj => (self.wobjsel, self.wobjlog, false),
-            WindowLayer::Math => (self.wobjsel, self.wobjlog, true),
-            _ => unreachable!(),
-        };
-        let (one_shift, two_shift, logic_shift) = if high_bits { (4, 6, 2) } else { (0, 2, 0) };
-        let one_enabled = (sel >> one_shift) & 0x03 != 0;
-        let two_enabled = (sel >> two_shift) & 0x03 != 0;
-        match (one_enabled, two_enabled) {
+        let one_active = self.windows[0].active_layers[layer];
+        let two_active = self.windows[1].active_layers[layer];
+        match (one_active, two_active) {
             (false, false) => false,
-            (true, false) => self.window_select(sel, one_shift, x),
-            (false, true) => self.window_select(sel, two_shift, x),
+            (true, false) => self.windows[0].pixel_in_area(layer, x),
+            (false, true) => self.windows[1].pixel_in_area(layer, x),
             (true, true) => {
-                let one = self.window_select(sel, one_shift, x);
-                let two = self.window_select(sel, two_shift, x);
-                match (logic >> logic_shift) & 0x03 {
+                let one = self.windows[0].pixel_in_area(layer, x);
+                let two = self.windows[1].pixel_in_area(layer, x);
+                match self.mask_logic[layer] {
                     0 => one || two,
                     1 => one && two,
-                    2 => one ^ two,
-                    3 => !(one ^ two),
-                    _ => unreachable!(),
+                    2 => one != two,
+                    _ => one == two,
                 }
             }
         }
     }
 
-    pub(super) fn window_select(&self, sel: u8, shift: u8, x: u8) -> bool {
-        let mode = (sel >> shift) & 0x03;
-        // WxxSEL 2-bit encoding: 0=disabled, 1=inside (not inverted), 2=outside (inverted), 3=outside.
-        let enable = mode != 0;
-        let invert = mode & 0x02 != 0;
-        if !enable {
-            return false;
-        }
-        let one = self.window_contains(x, self.wh[0], self.wh[1]);
-        let two = self.window_contains(x, self.wh[2], self.wh[3]);
-        if shift & 0x02 == 0 {
-            one ^ invert
-        } else {
-            two ^ invert
+    /// BG1-BG4 = 0-3, OBJ = 4, colour window = 5 (Mesen2's layer indices).
+    fn window_layer_index(layer: WindowLayer) -> usize {
+        match layer {
+            WindowLayer::Bg(bg) => bg,
+            WindowLayer::Obj => 4,
+            WindowLayer::Math => 5,
         }
     }
 
-    pub(super) fn window_contains(&self, x: u8, left: u8, right: u8) -> bool {
-        left <= right && x >= left && x <= right
-    }
-
-    fn apply_color_math(&self, main: u16, sub: u16) -> u16 {
+    /// CGADSUB add/subtract with an explicit `half`; the caller decides halving
+    /// because hardware suppresses it in cases CGADSUB bit 6 alone cannot express
+    /// (see [`Self::compose_half`]).
+    fn apply_color_math(&self, main: u16, sub: u16, half: bool) -> u16 {
         let subtract = self.cgadsub & 0x80 != 0;
-        let half = self.cgadsub & 0x40 != 0;
         let mut out = 0u16;
         for shift in [0, 5, 10] {
             let a = ((main >> shift) & 0x1F) as i16;
@@ -2644,7 +2710,10 @@ mod tests {
 
         ppu.write_register(0x2105, 0x00);
         ppu.write_register(0x212C, 0x01); // main screen: BG1
-        ppu.write_register(0x2123, 0x01); // BG1 window1 enabled, inside (not inverted)
+        // W12SEL BG1 nibble is `EIei`: bit 1 = window-1 enable, bit 0 = window-1
+        // invert. %0010 is "enabled, inside" (see the vendored hardware header
+        // undisbeliever-inidisp/sources/src/_common/registers.inc, WSEL::win1).
+        ppu.write_register(0x2123, 0x02);
         ppu.write_register(0x2126, 0x00); // WH0 = 0
         ppu.write_register(0x2127, 0x7F); // WH1 = 127
         ppu.write_register(0x212E, 0x01); // disable BG1 inside the window
@@ -2672,7 +2741,7 @@ mod tests {
 
         ppu.write_register(0x2105, 0x00);
         ppu.write_register(0x212C, 0x02); // main screen: BG2
-        ppu.write_register(0x2123, 0x10); // BG2 window1 enabled, inside (not inverted)
+        ppu.write_register(0x2123, 0x20); // BG2 window1 enabled, inside (not inverted)
         ppu.write_register(0x2126, 0x00);
         ppu.write_register(0x2127, 0x7F);
         ppu.write_register(0x212E, 0x02); // disable BG2 inside the window
@@ -2711,10 +2780,14 @@ mod tests {
         render_frame(&mut ppu);
 
         let rgb = ppu.screen_snapshot_rgb();
+        // TS = 0 with CGWSEL bit 1 set is the empty-sub-screen fallback: the
+        // fixed colour is substituted AND halving is disabled (#3012), so the
+        // green arrives at full strength rather than halved to olive. This
+        // expectation previously encoded the missing rule.
         assert_eq!(
             pixel(&rgb, 0, 0),
-            [123, 123, 0],
-            "sub-screen fixed color should blend with the main screen"
+            [255, 255, 0],
+            "sub-screen fixed color blends at full strength"
         );
     }
 
@@ -2736,7 +2809,7 @@ mod tests {
         ppu.write_register(0x2105, 0x00);
         ppu.write_register(0x212C, 0x01); // main screen: BG1
         // W1=[0,40], W2=[60,100]; both enabled as "inside" for BG1 window1 and window2.
-        ppu.write_register(0x2123, 0x05); // BG1 window1=01 (inside), window2=01 (inside) at bits 3-2
+        ppu.write_register(0x2123, 0x0A); // BG1 window1=%10, window2=%10 (both enabled, inside)
         ppu.write_register(0x2126, 0x00); // WH0=0
         ppu.write_register(0x2127, 0x28); // WH1=40
         ppu.write_register(0x2128, 0x3C); // WH2=60
@@ -2781,7 +2854,7 @@ mod tests {
         ppu.write_register(0x2105, 0x00);
         ppu.write_register(0x212C, 0x01); // main screen: BG1
         // W1=[0,80], W2=[40,120]; overlap [40,80]. Only overlap (AND) should be masked.
-        ppu.write_register(0x2123, 0x05); // BG1 window1=01 (inside), window2=01 (inside)
+        ppu.write_register(0x2123, 0x0A); // BG1 window1=%10, window2=%10 (both enabled, inside)
         ppu.write_register(0x2126, 0x00); // WH0=0
         ppu.write_register(0x2127, 0x50); // WH1=80
         ppu.write_register(0x2128, 0x28); // WH2=40
@@ -2806,6 +2879,517 @@ mod tests {
             pixel(&rgb, 60, 0),
             [0, 0, 0],
             "x=60 inside both W1 and W2, masked with AND"
+        );
+    }
+
+    // ── Colour-window regions and halve suppression (#3011 / #3012) ──────────
+
+    /// Red BG1 on the main screen, black main backdrop, and a fixed colour of
+    /// full green in COLDATA -- so an add shows up as yellow, a halved add as
+    /// olive, and a clipped main as pure green.
+    fn setup_red_bg1_green_fixed(ppu: &mut Ppu) {
+        set_cgram(ppu, 0, 0x0000);
+        set_cgram(ppu, 1, 0x001F); // BG1 colour 1 = red
+        fill_2bpp_tile(ppu, 0, 1, 1);
+        set_bg_map_base(ppu, 0, 0x400);
+        for col in 0..32usize {
+            set_vram_word(ppu, 0x400 + col, 1);
+        }
+        ppu.write_register(0x2105, 0x00); // Mode 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x00); // TS: nothing
+        ppu.write_register(0x2132, 0xE0); // COLDATA: all planes 0
+        ppu.write_register(0x2132, 0x5F); // COLDATA: green = 31
+        ppu.write_register(0x2100, 0x0F);
+    }
+
+    /// Colour window 1 spanning x = 64..191 (WOBJSEL bit 5 = enable, bit 4 =
+    /// invert, so 0x20 is "enabled, inside").
+    fn set_color_window_64_191(ppu: &mut Ppu) {
+        ppu.write_register(0x2125, 0x20);
+        ppu.write_register(0x2126, 64);
+        ppu.write_register(0x2127, 191);
+    }
+
+    const YELLOW: [u8; 3] = [255, 255, 0];
+    const RED: [u8; 3] = [255, 0, 0];
+    const GREEN: [u8; 3] = [0, 255, 0];
+    const OLIVE: [u8; 3] = [123, 123, 0];
+
+    #[test]
+    fn prevent_color_math_region_is_where_math_is_suppressed() {
+        // CGWSEL bits 5-4 name where colour math is PREVENTED: 1 = prevented
+        // outside the window (so maths runs INSIDE), 2 = prevented inside (so
+        // maths runs OUTSIDE). NESER had the two the wrong way round (#3011).
+        // Vendored registers.inc: CGWSEL::prevent { outside = %00010000,
+        // inside = %00100000 }.
+        for (prevent, math_at_100, math_at_0, name) in [
+            (0x10u8, true, false, "prevent outside -> math inside"),
+            (0x20, false, true, "prevent inside -> math outside"),
+        ] {
+            let mut ppu = Ppu::new();
+            setup_red_bg1_green_fixed(&mut ppu);
+            set_color_window_64_191(&mut ppu);
+            ppu.write_register(0x2130, prevent); // no clip, fixed-colour operand
+            ppu.write_register(0x2131, 0x01); // add, BG1 enabled, no half
+
+            let row = render_row0(&mut ppu);
+            assert_eq!(
+                row[100],
+                if math_at_100 { YELLOW } else { RED },
+                "{name} @100"
+            );
+            assert_eq!(row[0], if math_at_0 { YELLOW } else { RED }, "{name} @0");
+        }
+    }
+
+    #[test]
+    fn clip_to_black_region_is_where_the_main_pixel_is_blacked() {
+        // CGWSEL bits 7-6: 1 = clip outside the window, 2 = clip inside.
+        for (clip, black_at_100, name) in
+            [(0x40u8, false, "clip outside"), (0x80, true, "clip inside")]
+        {
+            let mut ppu = Ppu::new();
+            setup_red_bg1_green_fixed(&mut ppu);
+            set_color_window_64_191(&mut ppu);
+            ppu.write_register(0x2130, clip);
+            ppu.write_register(0x2131, 0x00); // no colour math at all
+
+            let row = render_row0(&mut ppu);
+            assert_eq!(
+                row[100],
+                if black_at_100 { BLACK } else { RED },
+                "{name} @100"
+            );
+            assert_eq!(row[0], if black_at_100 { RED } else { BLACK }, "{name} @0");
+        }
+    }
+
+    #[test]
+    fn clip_to_black_applies_even_when_the_layer_has_no_color_math() {
+        // Mesen2 applies the clip before the CGADSUB per-layer gate, so a layer
+        // with its math bit clear is still blacked out inside the clip region.
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        set_color_window_64_191(&mut ppu);
+        ppu.write_register(0x2130, 0x80); // clip inside
+        ppu.write_register(0x2131, 0x00); // BG1 NOT enabled for colour math
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(
+            row[100], BLACK,
+            "clipped despite the math gate being closed"
+        );
+        assert_eq!(row[0], RED, "untouched outside the clip region");
+    }
+
+    #[test]
+    fn clipping_the_main_pixel_to_black_suppresses_halving() {
+        // Hardware disables the CGADSUB half when the main pixel was clipped to
+        // black, so the operand lands at FULL strength (Mesen2 sets
+        // halfShift = 0 alongside pixelA = 0).
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        set_color_window_64_191(&mut ppu);
+        ppu.write_register(0x2130, 0x80); // clip inside, fixed-colour operand
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(row[100], GREEN, "clipped: full-strength green, not halved");
+        assert_eq!(row[0], OLIVE, "unclipped: red + green, halved");
+    }
+
+    #[test]
+    fn clip_always_also_suppresses_halving() {
+        // CGWSEL clip mode 3 ("always"). ares applies one uniform rule --
+        // halving is off whenever the main pixel is black -- while Mesen2
+        // omits it in this branch only. NESER deliberately follows ares here;
+        // no vendored ROM exercises mode 3, so no golden depends on it.
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        ppu.write_register(0x2130, 0xC0); // clip always
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert!(
+            row.iter().all(|&px| px == GREEN),
+            "always-clipped pixels take the operand at full strength"
+        );
+    }
+
+    #[test]
+    fn empty_sub_screen_fallback_suppresses_halving() {
+        // CGWSEL bit 1 set asks for the sub screen as the operand, but nothing
+        // is on the sub screen here. Hardware substitutes the fixed colour AND
+        // disables halving (Mesen2's _subScreenPriority[x] == 0 branch) -- the
+        // rule NESER was missing (#3012).
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        ppu.write_register(0x2130, 0x02); // add subscreen, no clip, no prevent
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert!(
+            row.iter().all(|&px| px == YELLOW),
+            "fixed-colour fallback is added at full strength"
+        );
+    }
+
+    #[test]
+    fn fixed_color_operand_still_halves_when_add_subscreen_is_clear() {
+        // The suppression above is specific to the empty-SUB-SCREEN fallback.
+        // With CGWSEL bit 1 clear the fixed colour is the operand by design and
+        // halving applies normally -- the guard against over-applying #3012.
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        ppu.write_register(0x2130, 0x00); // fixed-colour operand by design
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert!(
+            row.iter().all(|&px| px == OLIVE),
+            "a deliberate fixed-colour operand is still halved"
+        );
+    }
+
+    #[test]
+    fn populated_sub_screen_operand_halves_normally() {
+        // And with a real sub-screen layer present, halving applies.
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        set_cgram(&mut ppu, 33, 0x03E0); // BG2 colour 1 = green
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+        set_bg_map_base(&mut ppu, 1, 0x500);
+        for col in 0..32usize {
+            set_vram_word(&mut ppu, 0x500 + col, 2);
+        }
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // add subscreen
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(row[0], OLIVE, "a present sub-screen layer halves normally");
+    }
+
+    // ── Window mask decode and evaluation (#3011) ────────────────────────────
+
+    /// Render one frame of a full-width white BG1 and return the row-0 pixels,
+    /// so window tests can assert on the masked/unmasked spans directly.
+    fn render_row0(ppu: &mut Ppu) -> Vec<[u8; 3]> {
+        render_frame(ppu);
+        let rgb = ppu.screen_snapshot_rgb();
+        (0..256).map(|x| pixel(&rgb, x, 0)).collect()
+    }
+
+    /// White BG1 across the whole screen at CGRAM colour 1, black backdrop.
+    fn setup_white_bg1(ppu: &mut Ppu) {
+        set_cgram(ppu, 0, 0x0000);
+        set_cgram(ppu, 1, 0x7FFF);
+        fill_2bpp_tile(ppu, 0, 1, 1);
+        set_bg_map_base(ppu, 0, 0x400);
+        for col in 0..32usize {
+            set_vram_word(ppu, 0x400 + col, 1);
+        }
+        ppu.write_register(0x2105, 0x00); // Mode 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x2100, 0x0F);
+    }
+
+    const WHITE: [u8; 3] = [255, 255, 255];
+    const BLACK: [u8; 3] = [0, 0, 0];
+
+    #[test]
+    fn window_mask_settings_decode_enable_from_the_high_bit_of_each_pair() {
+        // W12SEL/W34SEL/WOBJSEL nibbles are `EIei`: within each 2-bit pair the
+        // HIGH bit enables the window and the LOW bit inverts it (Mesen2
+        // ProcessWindowMaskSettings, ares io.cpp:478, and the vendored
+        // registers.inc WSEL constants: win1 enable = %0010, outside = %0001).
+        let mut ppu = Ppu::new();
+
+        // Every layer's window-1 enable bit, one register at a time.
+        ppu.write_register(0x2123, 0x02);
+        assert!(ppu.windows[0].active_layers[0], "BG1 win1 enable = bit 1");
+        assert!(!ppu.windows[0].inverted_layers[0], "bit 1 is not invert");
+
+        ppu.write_register(0x2123, 0x01);
+        assert!(
+            !ppu.windows[0].active_layers[0],
+            "bit 0 alone must NOT enable the window"
+        );
+        assert!(ppu.windows[0].inverted_layers[0], "BG1 win1 invert = bit 0");
+
+        // Full per-bit map for all three registers.
+        ppu.write_register(0x2123, 0xFF);
+        ppu.write_register(0x2124, 0xFF);
+        ppu.write_register(0x2125, 0xFF);
+        for layer in 0..6 {
+            assert!(ppu.windows[0].active_layers[layer], "layer {layer} win1 on");
+            assert!(ppu.windows[1].active_layers[layer], "layer {layer} win2 on");
+            assert!(
+                ppu.windows[0].inverted_layers[layer],
+                "layer {layer} w1 inv"
+            );
+            assert!(
+                ppu.windows[1].inverted_layers[layer],
+                "layer {layer} w2 inv"
+            );
+        }
+
+        // Layer indices: 0-3 = BG1-4, 4 = OBJ, 5 = colour window.
+        ppu.write_register(0x2123, 0x00);
+        ppu.write_register(0x2124, 0x00);
+        ppu.write_register(0x2125, 0x00);
+        ppu.write_register(0x2124, 0x20); // W34SEL high nibble = BG4 win1 enable
+        assert!(ppu.windows[0].active_layers[3], "W34SEL bit 5 = BG4 win1");
+        assert!(!ppu.windows[0].active_layers[2], "BG3 untouched");
+        ppu.write_register(0x2125, 0x20); // WOBJSEL high nibble = colour win1 enable
+        assert!(
+            ppu.windows[0].active_layers[5],
+            "WOBJSEL bit 5 = colour-window win1"
+        );
+        assert!(!ppu.windows[0].active_layers[4], "OBJ untouched");
+    }
+
+    #[test]
+    fn window_coordinates_populate_both_window_configs() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2126, 10); // WH0 = window 1 left
+        ppu.write_register(0x2127, 20); // WH1 = window 1 right
+        ppu.write_register(0x2128, 30); // WH2 = window 2 left
+        ppu.write_register(0x2129, 40); // WH3 = window 2 right
+        assert_eq!((ppu.windows[0].left, ppu.windows[0].right), (10, 20));
+        assert_eq!((ppu.windows[1].left, ppu.windows[1].right), (30, 40));
+    }
+
+    #[test]
+    fn mask_logic_registers_map_each_bit_pair_to_its_layer() {
+        // WBGLOG ($212A) is `44332211`: BG1 = bits 1-0, BG2 = 3-2, BG3 = 5-4,
+        // BG4 = 7-6. WOBJLOG ($212B) is `----ccoo`: OBJ = bits 1-0, colour
+        // window = bits 3-2. Deriving BG3/BG4's pair from the W34SEL nibble
+        // instead made them read BG1/BG2's logic bits (#3011).
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x212A, 0b11_10_01_00);
+        assert_eq!(ppu.mask_logic[0], 0, "BG1 = OR");
+        assert_eq!(ppu.mask_logic[1], 1, "BG2 = AND");
+        assert_eq!(ppu.mask_logic[2], 2, "BG3 = XOR");
+        assert_eq!(ppu.mask_logic[3], 3, "BG4 = XNOR");
+
+        ppu.write_register(0x212B, 0b0000_10_01);
+        assert_eq!(ppu.mask_logic[4], 1, "OBJ = AND");
+        assert_eq!(ppu.mask_logic[5], 2, "colour window = XOR");
+    }
+
+    #[test]
+    fn window_decode_is_rederived_after_a_save_state_restore() {
+        // The decoded window cache is derived state; the raw registers stay the
+        // save-state source of truth, so a restore must rebuild it.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2123, 0x0A);
+        ppu.write_register(0x2126, 64);
+        ppu.write_register(0x2127, 191);
+        ppu.write_register(0x212A, 0x01);
+        let state = ppu.capture_state();
+
+        let mut restored = Ppu::new();
+        restored.restore_state(&state).expect("restore");
+        assert!(restored.windows[0].active_layers[0], "win1 enable restored");
+        assert!(restored.windows[1].active_layers[0], "win2 enable restored");
+        assert_eq!(
+            (restored.windows[0].left, restored.windows[0].right),
+            (64, 191)
+        );
+        assert_eq!(restored.mask_logic[0], 1, "BG1 mask logic restored");
+    }
+
+    #[test]
+    fn single_window_inverted_masks_outside_the_span() {
+        // %0011 = enabled + inverted: the masked area is everything OUTSIDE
+        // [WH0, WH1]. NESER used to decode %0010 and %0011 identically, which
+        // is why the ROM suite rendered the same picture for both (#3011).
+        let mut ppu = Ppu::new();
+        setup_white_bg1(&mut ppu);
+        ppu.write_register(0x2123, 0x03); // BG1 win1: enable + invert
+        ppu.write_register(0x2126, 64);
+        ppu.write_register(0x2127, 191);
+        ppu.write_register(0x212E, 0x01); // TMW: BG1
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(row[0], BLACK, "x=0 outside the span is masked");
+        assert_eq!(row[63], BLACK, "x=63 outside the span is masked");
+        assert_eq!(row[64], WHITE, "x=64 is the inclusive left edge");
+        assert_eq!(row[191], WHITE, "x=191 is the inclusive right edge");
+        assert_eq!(row[192], BLACK, "x=192 outside the span is masked");
+    }
+
+    #[test]
+    fn invert_bit_without_enable_leaves_the_layer_unmasked() {
+        // %0001 sets only the invert bit. The window is DISABLED, so with no
+        // other window enabled nothing is masked. NESER used to treat any
+        // nonzero pair as enabled.
+        let mut ppu = Ppu::new();
+        setup_white_bg1(&mut ppu);
+        ppu.write_register(0x2123, 0x01); // BG1 win1: invert only, not enabled
+        ppu.write_register(0x2126, 64);
+        ppu.write_register(0x2127, 191);
+        ppu.write_register(0x212E, 0x01);
+
+        let row = render_row0(&mut ppu);
+        assert!(
+            row.iter().all(|&px| px == WHITE),
+            "a disabled window must not mask anything"
+        );
+    }
+
+    #[test]
+    fn no_enabled_window_never_masks_even_with_xnor_logic() {
+        // Mesen2 ProcessMaskWindow returns false for activeWindowCount == 0 --
+        // XNOR does NOT degenerate into "always masked".
+        let mut ppu = Ppu::new();
+        setup_white_bg1(&mut ppu);
+        ppu.write_register(0x2123, 0x00); // no windows enabled for BG1
+        ppu.write_register(0x212A, 0x03); // BG1 logic = XNOR
+        ppu.write_register(0x212E, 0x01);
+
+        let row = render_row0(&mut ppu);
+        assert!(row.iter().all(|&px| px == WHITE), "nothing masked");
+    }
+
+    #[test]
+    fn single_enabled_window_bypasses_the_mask_logic() {
+        // With exactly one window enabled the WBGLOG operator is not applied at
+        // all (Mesen2 ProcessMaskWindow case 1) -- an AND setting must not turn
+        // a lone window into "masked nowhere".
+        let mut ppu = Ppu::new();
+        setup_white_bg1(&mut ppu);
+        ppu.write_register(0x2123, 0x02); // BG1: window 1 only
+        ppu.write_register(0x2126, 64);
+        ppu.write_register(0x2127, 191);
+        ppu.write_register(0x212A, 0x01); // BG1 logic = AND
+        ppu.write_register(0x212E, 0x01);
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(row[0], WHITE, "outside the lone window");
+        assert_eq!(row[100], BLACK, "inside the lone window, AND is bypassed");
+    }
+
+    #[test]
+    fn two_window_xor_and_xnor_combinations() {
+        // W1 = [0,80], W2 = [40,120]. XOR masks the symmetric difference;
+        // XNOR masks its complement.
+        for (logic, name, expected) in [
+            (0x02u8, "XOR", [false, true, false, true]),
+            (0x03, "XNOR", [true, false, true, false]),
+        ] {
+            let mut ppu = Ppu::new();
+            setup_white_bg1(&mut ppu);
+            ppu.write_register(0x2123, 0x0A); // both windows enabled, inside
+            ppu.write_register(0x2126, 0);
+            ppu.write_register(0x2127, 80);
+            ppu.write_register(0x2128, 40);
+            ppu.write_register(0x2129, 120);
+            ppu.write_register(0x212A, logic);
+            ppu.write_register(0x212E, 0x01);
+
+            let row = render_row0(&mut ppu);
+            // x=200: neither; x=20: W1 only; x=60: both; x=100: W2 only.
+            for (x, want_masked) in [200usize, 20, 60, 100].iter().zip(expected) {
+                let px = row[*x];
+                let masked = px == BLACK;
+                assert_eq!(masked, want_masked, "{name} at x={x} (px {px:?})");
+            }
+        }
+    }
+
+    #[test]
+    fn empty_window_masks_nothing_and_inverted_masks_everything() {
+        // left > right is an empty window (Mesen2 PixelNeedsMasking): never
+        // inside, so inverting it covers the whole line.
+        for (sel, all_masked, name) in [(0x02u8, false, "empty"), (0x03, true, "empty inverted")] {
+            let mut ppu = Ppu::new();
+            setup_white_bg1(&mut ppu);
+            ppu.write_register(0x2123, sel);
+            ppu.write_register(0x2126, 200); // WH0 > WH1
+            ppu.write_register(0x2127, 100);
+            ppu.write_register(0x212E, 0x01);
+
+            let row = render_row0(&mut ppu);
+            let want = if all_masked { BLACK } else { WHITE };
+            assert!(
+                row.iter().all(|&px| px == want),
+                "{name} window should render entirely {want:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bg3_uses_its_own_wbglog_bit_pair() {
+        // BG3's mask logic lives in WBGLOG bits 5-4. NESER used to read BG1's
+        // bits 1-0 for BG3 (and BG2's for BG4), so a BG3-only AND setting was
+        // silently evaluated as whatever BG1 was configured for (#3011).
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 65, 0x7FFF); // Mode 0 gives BG3 palette base 64
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        set_bg_map_base(&mut ppu, 2, 0x400);
+        for col in 0..32usize {
+            set_vram_word(&mut ppu, 0x400 + col, 1);
+        }
+        ppu.write_register(0x2105, 0x00); // Mode 0: BG3 uses palette 0 too
+        ppu.write_register(0x212C, 0x04); // TM: BG3
+        ppu.write_register(0x2100, 0x0F);
+
+        ppu.write_register(0x2124, 0x0A); // W34SEL BG3: both windows, inside
+        ppu.write_register(0x2126, 0);
+        ppu.write_register(0x2127, 80);
+        ppu.write_register(0x2128, 40);
+        ppu.write_register(0x2129, 120);
+        // BG3 = AND (bits 5-4), while BG1's pair (bits 1-0) is set to OR. If
+        // the wrong pair is read, x=20 masks as OR instead of staying visible.
+        ppu.write_register(0x212A, 0b00_01_00_00);
+        ppu.write_register(0x212E, 0x04); // TMW: BG3
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(row[20], WHITE, "x=20 is W1-only: AND leaves it visible");
+        assert_eq!(row[60], BLACK, "x=60 is in both windows: AND masks it");
+        assert_eq!(row[100], WHITE, "x=100 is W2-only: AND leaves it visible");
+    }
+
+    #[test]
+    fn sub_screen_window_masking_uses_tsw() {
+        // TSW ($212F) gates the same window evaluation for the sub screen. With
+        // the sub screen as the colour-math operand, masking BG2 out of it
+        // removes its contribution inside the window.
+        let mut ppu = Ppu::new();
+        set_cgram(&mut ppu, 0, 0x0000);
+        set_cgram(&mut ppu, 1, 0x001F); // BG1 red on the main screen
+        set_cgram(&mut ppu, 33, 0x03E0); // BG2 green on the sub screen
+        fill_2bpp_tile(&mut ppu, 0, 1, 1);
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+        set_bg_map_base(&mut ppu, 0, 0x400);
+        set_bg_map_base(&mut ppu, 1, 0x500);
+        for col in 0..32usize {
+            set_vram_word(&mut ppu, 0x400 + col, 1);
+            set_vram_word(&mut ppu, 0x500 + col, 2);
+        }
+        ppu.write_register(0x2105, 0x00);
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // add subscreen
+        ppu.write_register(0x2131, 0x01); // add, BG1 math enabled
+        ppu.write_register(0x2132, 0xE0); // fixed colour black
+        ppu.write_register(0x2100, 0x0F);
+
+        ppu.write_register(0x2123, 0x20); // W12SEL BG2 win1: enable, inside
+        ppu.write_register(0x2126, 64);
+        ppu.write_register(0x2127, 191);
+        ppu.write_register(0x212F, 0x02); // TSW: mask BG2 on the sub screen
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(row[0], [255, 255, 0], "outside: red + green sub");
+        assert_eq!(
+            row[100],
+            [255, 0, 0],
+            "inside: BG2 masked off the sub screen"
         );
     }
 

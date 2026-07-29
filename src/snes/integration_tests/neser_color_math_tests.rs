@@ -22,14 +22,17 @@
 //!   covering add/clamp, subtract/floor and both fixed-colour math
 //!   paths.
 //! - `cm-add-half`, `cm-sub-half`, `cm-obj-palettes` and
-//!   `cm-sub-backdrop` diverge ONLY in the transparent-sub fallback
-//!   regions (pixel-count-exact: 7424 = fallback area minus
+//!   `cm-sub-backdrop` match Mesen2 pixel-exactly since #3012 taught the
+//!   compositor to suppress halving for the transparent-sub fixed-colour
+//!   fallback. They used to diverge ONLY in the fallback regions, by a
+//!   pixel-count-exact margin (7424 = fallback area minus
 //!   halve-invariant black bars; 38912 = the enlarged fallback area of
-//!   the centre-only scene): NESER fails to suppress halving for the
-//!   fixed-colour fallback. `#[ignore]`d pending issue #3012. The 64
-//!   sub-opaque crossings and the OBJ palette 4-7 rule match Mesen2.
-//! - `cm-window-clip` and `win-layer-masks` diverge (NESER window
-//!   masking regions are inverted). `#[ignore]`d pending issue #3011.
+//!   the centre-only scene) -- which is what identified the rule.
+//! - `cm-window-clip` and `win-layer-masks` match Mesen2 pixel-exactly
+//!   since #3011. `cm-window-clip` covers the CGWSEL clip/prevent
+//!   regions plus the unhalved-when-clipped rule; `win-layer-masks`
+//!   covers the per-layer invert bits and the WBGLOG AND operator with
+//!   no colour math at all, so it isolates layer windowing.
 //! - `brightness-steps.sfc` steps INIDISP through all 16 brightness
 //!   levels from the NMI frame counter (probed plateaus: level N shown
 //!   for frames 64N+8 through 64N+71, N >= 1; level 0 from frame 1;
@@ -96,40 +99,22 @@ mod tests {
     colormath_test!(fixed_add, "cm-fixed-add.sfc", 0x0B4F_9F53);
     colormath_test!(fixed_sub_half, "cm-fixed-sub-half.sfc", 0xEFFE_5313);
 
-    /// NESER halves the fixed-colour fallback for transparent
-    /// sub-screen pixels (hardware and Mesen2 suppress halving there),
-    /// so these record NESER's current CRCs until #3012 is fixed. The
-    /// sub-opaque crossings (and the OBJ palette 4-7 rule in
-    /// `cm-obj-palettes`) already match Mesen2.
-    macro_rules! colormath_test_ignored_3012 {
-        ($name:ident, $file:expr, $crc:expr) => {
-            #[test]
-            #[ignore = "NESER does not suppress halving for the transparent-sub fixed-colour fallback; pending #3012"]
-            fn $name() {
-                run_colormath_screen_crc($file, "", SAMPLE_FRAME, $crc);
-            }
-        };
-    }
+    // Un-ignored and re-approved in #3012: hardware suppresses halving for
+    // the transparent-sub fixed-colour fallback, which NESER was missing.
+    // All four are now byte-for-byte (0 px) matches for fresh Mesen2 headless
+    // captures at frame 66, so these are genuine hardware-accuracy claims.
+    colormath_test!(add_half, "cm-add-half.sfc", 0x2F1B_3C45);
+    colormath_test!(sub_half, "cm-sub-half.sfc", 0x4E6E_8B72);
+    colormath_test!(obj_palettes, "cm-obj-palettes.sfc", 0xD3DC_67A6);
+    colormath_test!(sub_backdrop, "cm-sub-backdrop.sfc", 0xF36F_C92A);
 
-    colormath_test_ignored_3012!(add_half, "cm-add-half.sfc", 0x0929_94A1);
-    colormath_test_ignored_3012!(sub_half, "cm-sub-half.sfc", 0x685C_2396);
-    colormath_test_ignored_3012!(obj_palettes, "cm-obj-palettes.sfc", 0xF5EE_CF42);
-    colormath_test_ignored_3012!(sub_backdrop, "cm-sub-backdrop.sfc", 0xCAFF_1B44);
-
-    /// NESER renders inverted window masking regions, so these record
-    /// NESER's current CRCs until #3011 is fixed.
-    macro_rules! colormath_test_ignored_3011 {
-        ($name:ident, $file:expr, $crc:expr) => {
-            #[test]
-            #[ignore = "NESER window masking regions are inverted vs Mesen2; pending #3011"]
-            fn $name() {
-                run_colormath_screen_crc($file, "", SAMPLE_FRAME, $crc);
-            }
-        };
-    }
-
-    colormath_test_ignored_3011!(window_clip, "cm-window-clip.sfc", 0xDD03_4E93);
-    colormath_test_ignored_3011!(layer_masks, "win-layer-masks.sfc", 0xF1B3_F2CD);
+    // Un-ignored and re-approved in #3011 (window enable/invert decode, and
+    // the CGWSEL prevent regions). `cm-window-clip` additionally exercises the
+    // unhalved-when-clipped rule and `win-layer-masks` the per-layer invert
+    // bits plus the WBGLOG AND operator; both are now 0-px matches for fresh
+    // Mesen2 captures.
+    colormath_test!(window_clip, "cm-window-clip.sfc", 0xEF59_1B0E);
+    colormath_test!(layer_masks, "win-layer-masks.sfc", 0x822C_63E8);
 
     macro_rules! brightness_test {
         ($name:ident, $label:expr, $sample_frame:expr, $crc:expr) => {
