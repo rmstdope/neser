@@ -42,6 +42,13 @@ pub struct SnesSystemBus {
     memsel: u8,
     hdmaen: u8,
     dma: DmaController,
+    /// A `$420B` write armed a general-purpose DMA: `(cycles_until_start,
+    /// mdmaen, fallback_clock)`. The CPU's cycle hook decrements the countdown
+    /// and runs the transfer at the start of the second CPU cycle after the
+    /// write (Mesen2 start delay); the fallback clock (armed + 8) covers
+    /// CPU-less callers (unit tests) at the same boundary an 8-clock fetch
+    /// would produce.
+    pending_gpdma: Option<(u8, u8, u64)>,
     apu: RefCell<SnesApu>,
     /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
     /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`, and in
@@ -123,6 +130,7 @@ impl SnesSystemBus {
             memsel: 0,
             hdmaen: 0,
             dma: DmaController::new(),
+            pending_gpdma: None,
             apu: RefCell::new(SnesApu::new(spc_ipl)),
             ppu,
             input: RefCell::new(InputPorts::new()),
@@ -477,7 +485,9 @@ impl SnesSystemBus {
         // `start_dma` advances the system live via `dma_tick` (which increments
         // `self.ticks` one clock at a time), so the returned tick total must not be
         // added again here.
-        let (_consumed_ticks, dma_open_bus) = dma.start_dma(mdmaen, self, self.mdr.get());
+        let base_clock = self.ppu.borrow().total_master_clocks();
+        let (_consumed_ticks, dma_open_bus) =
+            dma.start_dma(mdmaen, self, self.mdr.get(), base_clock);
 
         self.mdr.set(dma_open_bus);
         self.dma = dma;
@@ -1061,7 +1071,14 @@ impl SnesSystemBus {
                 true
             }
             0x420B => {
-                self.start_dma_transfer(value);
+                // The transfer does not start at the write: the CPU runs one
+                // more full cycle first (Mesen2 _dmaStartDelay), then the DMA
+                // begins at the START of the second cycle after the write --
+                // see gpdma_cycle_hook.
+                if value != 0 {
+                    let fallback = self.ppu.borrow().total_master_clocks() + 8;
+                    self.pending_gpdma = Some((2, value, fallback));
+                }
                 true
             }
             0x2100..=0x213F => {
@@ -1320,8 +1337,25 @@ impl SnesBus for SnesSystemBus {
         }
     }
 
+    fn gpdma_cycle_hook(&mut self) {
+        if let Some((countdown, mdmaen, fallback)) = self.pending_gpdma {
+            if countdown > 1 {
+                self.pending_gpdma = Some((countdown - 1, mdmaen, fallback));
+            } else {
+                self.pending_gpdma = None;
+                self.start_dma_transfer(mdmaen);
+            }
+        }
+    }
+
     fn tick(&mut self) {
         self.tick_one_master_clock();
+        if let Some((_, mdmaen, fallback)) = self.pending_gpdma {
+            if self.ppu.borrow().total_master_clocks() >= fallback {
+                self.pending_gpdma = None;
+                self.start_dma_transfer(mdmaen);
+            }
+        }
         self.check_hdma_triggers();
         self.drain_due_hdma_b_bus_writes();
         if self.ppu.borrow_mut().dram_refresh_due() {
@@ -1747,10 +1781,12 @@ mod tests {
         bus.write(0x7E0100, 0x3A);
         write_dma_channel(&mut bus, 0, 0x00, 0x00, 0x7E0100, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
 
         // Read back from B-bus via reverse DMA to verify data landed at $2100.
         write_dma_channel(&mut bus, 0, 0x80, 0x00, 0x7E0200, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         assert_eq!(bus.read(0x7E0200), 0x3A);
 
         // DAS reaches zero and A1T advances by transfer byte count.
@@ -1771,6 +1807,7 @@ mod tests {
         bus.write(0x7E0100, 0x42);
         write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E0100, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
 
         // The byte must land at $000123 (via WRAM, not silently dropped).
         assert_eq!(bus.read(0x7E0123), 0x42);
@@ -1788,6 +1825,7 @@ mod tests {
         bus.write(0x7E0191, 0x00); // high byte
         write_dma_channel(&mut bus, 0, 0x00, 0x22, 0x7E0190, 2);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         tick_one_ppu_frame(&mut bus);
 
         let rgb = bus.ppu_screen_snapshot();
@@ -1804,15 +1842,18 @@ mod tests {
 
         let ticks_before = bus.ticks.get();
         bus.write(0x00420B, 0x03);
+        run_pending_gpdma(&mut bus);
         let ticks_after = bus.ticks.get();
 
         // Channel 1 must run after channel 0, so final B-bus value is from channel 1.
         write_dma_channel(&mut bus, 0, 0x80, 0x10, 0x7E0300, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         assert_eq!(bus.read(0x7E0300), 0x22);
 
-        // 8/byte + 8/channel + fixed 16 global transfer overhead.
-        assert_eq!(ticks_after - ticks_before, 16 + 2 * 8 + 2 * 8);
+        // Hardware envelope (#3021): 8 start pad (clock 8-aligned) + 8 overhead
+        // + per channel (8 + 8/byte) + 8 end pad (counter 8-aligned).
+        assert_eq!(ticks_after - ticks_before, 8 + 8 + 2 * 8 + 2 * 8 + 8);
     }
 
     #[test]
@@ -1826,6 +1867,7 @@ mod tests {
         write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E0100, 1024);
         let scanline_before = bus.ppu.borrow().position().scanline;
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         let scanline_after = bus.ppu.borrow().position().scanline;
 
         assert_eq!(scanline_before, 0);
@@ -1844,8 +1886,10 @@ mod tests {
         bus.write(0x7E1001, 0xB2);
         write_dma_channel(&mut bus, 0, 0x05, 0x20, 0x7E1000, 2);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         write_dma_channel(&mut bus, 0, 0x81, 0x20, 0x7E1100, 2);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         assert_eq!(bus.read(0x7E1100), 0xA1);
         assert_eq!(bus.read(0x7E1101), 0xB2);
 
@@ -1854,8 +1898,10 @@ mod tests {
         bus.write(0x7E1201, 0xD4);
         write_dma_channel(&mut bus, 0, 0x06, 0x24, 0x7E1200, 2);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         write_dma_channel(&mut bus, 0, 0x82, 0x24, 0x7E1300, 2);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         assert_eq!(bus.read(0x7E1300), 0xD4);
         assert_eq!(bus.read(0x7E1301), 0xD4);
 
@@ -1866,8 +1912,10 @@ mod tests {
         bus.write(0x7E1403, 0x40);
         write_dma_channel(&mut bus, 0, 0x07, 0x28, 0x7E1400, 4);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         write_dma_channel(&mut bus, 0, 0x83, 0x28, 0x7E1500, 4);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         assert_eq!(bus.read(0x7E1500), 0x20);
         assert_eq!(bus.read(0x7E1501), 0x20);
         assert_eq!(bus.read(0x7E1502), 0x40);
@@ -1950,8 +1998,10 @@ mod tests {
         // A-bus source points to excluded MMIO space ($4300); DMA must read open bus (MDR=0x9A).
         write_dma_channel(&mut bus, 0, 0x00, 0x30, 0x004300, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         write_dma_channel(&mut bus, 0, 0x80, 0x30, 0x7E1600, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
 
         assert_eq!(bus.read(0x7E1600), 0x9A);
     }
@@ -1962,6 +2012,7 @@ mod tests {
         bus.write(0x7E1700, 0x6E);
         write_dma_channel(&mut bus, 0, 0x08, 0x38, 0x7E1700, 0x0000); // fixed A-bus step
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
 
         assert_eq!(bus.read(0x004305), 0x00);
         assert_eq!(bus.read(0x004306), 0x00);
@@ -1976,6 +2027,7 @@ mod tests {
         bus.write(0x7E1800, 0x5C);
         write_dma_channel(&mut bus, 0, 0x00, 0x40, 0x7E1800, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
 
         // Unmapped read returns MDR; after DMA it should be the last transferred byte.
         assert_eq!(bus.read(0x002200), 0x5C);
@@ -2045,13 +2097,83 @@ mod tests {
         }
     }
 
+    /// Run a just-armed general-purpose DMA immediately by simulating the two
+    /// CPU cycle entries of the hardware start delay (unit tests drive the bus
+    /// without a CPU, so the cycle hook never fires on its own).
+    fn run_pending_gpdma(bus: &mut SnesSystemBus) {
+        bus.gpdma_cycle_hook();
+        bus.gpdma_cycle_hook();
+    }
+
+    #[test]
+    fn gpdma_starts_one_cpu_cycle_after_the_mdmaen_write() {
+        // Mesen2 _dmaStartDelay: the $420B write arms the transfer; it runs at
+        // the start of the SECOND CPU cycle after the write (or, without a CPU
+        // driving cycle hooks, at the +8-clock fallback).
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        set_wmadd_200(&mut bus);
+        bus.write(0x7E4000, 0x5A);
+        bus.write(0x004300, 0x00);
+        bus.write(0x004301, 0x80);
+        bus.write(0x004302, 0x00);
+        bus.write(0x004303, 0x40);
+        bus.write(0x004304, 0x7E);
+        bus.write(0x004305, 0x01);
+        bus.write(0x004306, 0x00);
+
+        bus.write(0x00420B, 0x01);
+        assert_eq!(bus.read(0x7E0200), 0x00, "nothing runs at the write");
+        bus.gpdma_cycle_hook();
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x00,
+            "first cycle entry only consumes the delay"
+        );
+        bus.gpdma_cycle_hook();
+        assert_eq!(bus.read(0x7E0200), 0x5A, "runs at the second cycle entry");
+    }
+
+    #[test]
+    fn gpdma_start_pad_aligns_to_eight_master_clocks() {
+        // SyncStartDma: the envelope pads 1-8 clocks so the transfer starts on
+        // a multiple of 8 master clocks since reset -- the charged total varies
+        // with the start alignment.
+        let mut totals = Vec::new();
+        for skew in [0u64, 3] {
+            let mut bus = SnesSystemBus::new(lorom_test_cart());
+            set_wmadd_200(&mut bus);
+            bus.write(0x7E4000, 0x5A);
+            bus.write(0x004300, 0x00);
+            bus.write(0x004301, 0x80);
+            bus.write(0x004302, 0x00);
+            bus.write(0x004303, 0x40);
+            bus.write(0x004304, 0x7E);
+            bus.write(0x004305, 0x01);
+            bus.write(0x004306, 0x00);
+            tick_until_master_clock(&mut bus, skew);
+            let before = bus.ppu.borrow().total_master_clocks();
+            bus.write(0x00420B, 0x01);
+            run_pending_gpdma(&mut bus);
+            totals.push(bus.ppu.borrow().total_master_clocks() - before);
+        }
+        // Aligned start (clock 0): pad 8 + 8 + 8 + 8 + pad_end 8 = 40.
+        // Skewed start (clock 3): pad 5 + 8 + 8 + 8 + pad_end (8 - 29 % 8) = 32.
+        assert_eq!(
+            totals,
+            vec![40, 32],
+            "charged total tracks the start alignment"
+        );
+    }
+
     #[test]
     fn general_purpose_dma_pays_the_dram_refresh_stall() {
         // Mesen2 clocks DMA through SnesMemoryManager::Exec(), which processes the
         // DRAM-refresh event mid-transfer: a transfer crossing the once-per-line
-        // refresh trigger takes 40 extra master clocks (#2985). A 100-byte DMA
-        // started at line clock 0 crosses exactly one trigger:
-        // 16 (setup) + 8 (channel) + 100*8 (bytes) + 40 (refresh) = 864.
+        // refresh trigger takes 40 extra master clocks (#2985). With the #3021
+        // hardware start envelope, a 100-byte DMA started at master clock 0
+        // costs: 8 (SyncStartDma pad, clock already 8-aligned) + 8 (overhead) +
+        // 8 (channel) + 100*8 (bytes) + 8 (SyncEndDma pad, counter 8-aligned) +
+        // 40 (refresh) = 872.
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         set_wmadd_200(&mut bus);
         for i in 0..100u32 {
@@ -2067,10 +2189,11 @@ mod tests {
 
         let before = bus.ppu.borrow().total_master_clocks();
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         let consumed = bus.ppu.borrow().total_master_clocks() - before;
 
         assert_eq!(
-            consumed, 864,
+            consumed, 872,
             "a 100-byte DMA crossing one refresh trigger pays the 40-clock stall"
         );
         assert_eq!(bus.read(0x7E0200), 0x00, "transferred bytes landed");
@@ -2311,6 +2434,7 @@ mod tests {
 
         write_dma_channel(&mut bus, 0, 0x80, 0x30, 0x7E2210, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         assert_eq!(bus.read(0x7E2210), 0xC3);
     }
 
@@ -2345,6 +2469,7 @@ mod tests {
 
         write_dma_channel(&mut bus, 0, 0x80, 0x50, 0x7E2410, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         assert_eq!(bus.read(0x7E2410), 0x00);
     }
 
@@ -2366,6 +2491,7 @@ mod tests {
 
         write_dma_channel(&mut bus, 0, 0x80, 0x60, 0x7E2610, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         assert_eq!(bus.read(0x7E2610), 0x22);
     }
 
@@ -2414,6 +2540,7 @@ mod tests {
         write_dma_channel(&mut bus, 0, 0x80, 0x60, 0x7E2B10, 1);
         write_dma_channel(&mut bus, 1, 0x80, 0x61, 0x7E2B11, 1);
         bus.write(0x00420B, 0x03);
+        run_pending_gpdma(&mut bus);
         assert_eq!(
             bus.read(0x7E2B10),
             0x77,
@@ -2443,6 +2570,7 @@ mod tests {
 
         write_dma_channel(&mut bus, 0, 0x80, 0x70, 0x7E2710, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
         assert_eq!(bus.read(0x7E2710), 0x55);
     }
 
@@ -2942,6 +3070,7 @@ mod tests {
 
         write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x00_3000, 1);
         bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
 
         assert_eq!(bus.read(0x7E0010), 0x55);
     }

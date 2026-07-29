@@ -149,13 +149,22 @@ impl DmaController {
         mdmaen: u8,
         abus: &mut B,
         seed_open_bus: u8,
+        base_clock: u64,
     ) -> (u64, u8) {
         if mdmaen == 0 {
             return (0, seed_open_bus);
         }
 
-        let mut ticks = 16u64;
-        abus.dma_tick(16);
+        // Hardware start envelope (Mesen2 SyncStartDma): the caller invokes this
+        // one full CPU cycle after the $420B write (the start-delay cycle runs
+        // normally); the transfer then pauses 1-8 clocks to reach a whole
+        // multiple of 8 master clocks since reset, then 8 clocks of setup
+        // overhead.
+        let pad_start = 8 - (base_clock & 7);
+        abus.dma_tick(pad_start);
+        let mut counter = pad_start;
+        counter += 8;
+        abus.dma_tick(8);
         let mut open_bus = seed_open_bus;
 
         for channel in 0u8..8 {
@@ -163,12 +172,20 @@ impl DmaController {
                 continue;
             }
 
-            ticks += 8;
+            counter += 8;
             abus.dma_tick(8);
-            ticks += self.run_channel(channel, abus, &mut open_bus);
+            counter += self.run_channel(channel, abus, &mut open_bus);
         }
 
-        (ticks, open_bus)
+        // SyncEndDma: pause 1-8 clocks so the charged transfer length is a whole
+        // number of CPU cycles (the last speed-setting access is the SlowROM
+        // A-bus read, 8 clocks; empirically fitted against Mesen2 across five
+        // transfers -- see #3021).
+        let pad_end = 8 - (counter % 8);
+        abus.dma_tick(pad_end);
+        counter += pad_end;
+
+        (counter, open_bus)
     }
 
     pub fn hdma_init<B: DmaABus>(
@@ -317,21 +334,23 @@ impl DmaController {
             let a_addr = ((bank as u32) << 16) | ((a_high as u32) << 8) | (a_low as u32);
             let b_addr = bbad.wrapping_add(pattern[i % pattern.len()]);
 
-            // Each byte occupies an 8-master-clock bus slot: the read fills the first
-            // half, the write lands at the slot's midpoint (Mesen2 `CopyDmaByte`, where
-            // ReadDma/WriteDma each advance 4 clocks).
+            // Each byte occupies an 8-master-clock bus slot: the read fills the
+            // first 4 clocks, and the destination write lands at the END of the
+            // slot (Mesen2 `CopyDmaByte`: ReadDma advances 4, then WriteDma
+            // advances 4 more BEFORE calling the register handler).
             abus.dma_tick(4);
             if direction_b_to_a {
                 let value = self.read_b_bus(b_addr);
                 *open_bus = value;
+                abus.dma_tick(4);
                 abus.dma_write_a_bus(a_addr, value);
             } else {
                 let value = abus.dma_read_a_bus(a_addr, *open_bus);
                 *open_bus = value;
                 self.write_b_bus(b_addr, value);
+                abus.dma_tick(4);
                 abus.dma_write_b_bus(b_addr, value);
             }
-            abus.dma_tick(4);
 
             ticks += 8;
             count = count.wrapping_sub(1);

@@ -22,6 +22,12 @@ pub trait SnesBus {
     /// Advance the bus state by one master clock cycle.
     fn tick(&mut self);
 
+    /// Called by the CPU at the start of every CPU cycle (memory access or
+    /// internal). Buses that model the general-purpose DMA start delay run a
+    /// pending transfer here, one full CPU cycle after the `$420B` write
+    /// (Mesen2 `ProcessPendingTransfers`' `_dmaStartDelay`). Default: no-op.
+    fn gpdma_cycle_hook(&mut self) {}
+
     /// Poll for a pending NMI edge from the bus (e.g. PPU VBlank NMI).
     ///
     /// NMI is edge-triggered: this returns `true` once per rising edge and consumes it.

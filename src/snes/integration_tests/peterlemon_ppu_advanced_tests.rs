@@ -210,10 +210,16 @@ mod tests {
 
     #[test]
     fn mosaic_mode5_sized() {
+        // Release margin (150 -> 151): the runner applies input edges at
+        // vblank ENTRY, racing frame 150's auto-joypad latch inside the same
+        // vblank line (run_tick-granularity sensitive; surfaced by #3021's DMA
+        // envelope). One extra held frame decides the f149-latch race the same
+        // way as Mesen2's startFrame-anchored replay without adding a dial
+        // step (the next would need a press at f157).
         run_advanced_screen_crc(
             "SNES-PPU-Mosaic/Mode5/MosaicMode5.sfc",
             "sized",
-            &hold(SnesButton::R, 120, 150),
+            &hold(SnesButton::R, 120, 151),
             300,
             0x6DA7_0C73,
         );
