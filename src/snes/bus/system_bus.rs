@@ -1214,7 +1214,7 @@ impl SnesBus for SnesSystemBus {
     fn read(&self, addr: u32) -> u8 {
         if std::env::var_os("NESER_BUS_LOG").is_some() {
             let ticks = self.ppu.borrow().total_master_clocks();
-            if ticks < 320_000 {
+            if ticks < 500_000 {
                 eprintln!("neser busR {addr:06X} ticks={ticks}");
             }
         }
@@ -1290,7 +1290,7 @@ impl SnesBus for SnesSystemBus {
     fn write(&mut self, addr: u32, value: u8) {
         if std::env::var_os("NESER_BUS_LOG").is_some() {
             let ticks = self.ppu.borrow().total_master_clocks();
-            if ticks < 320_000 {
+            if ticks < 500_000 {
                 eprintln!("neser busW {addr:06X} ticks={ticks}");
             }
         }
