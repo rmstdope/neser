@@ -18,13 +18,28 @@ Use this order when researching SNES / Super Famicom hardware details:
    - SNESdev / Super Famicom wiki: `https://snes.nesdev.org/wiki/` and `https://wiki.superfamicom.org/`.
    - Use these for register bit meanings, timing diagrams, and behavior fullsnes summarizes only briefly.
 
-4. **Test-ROM references for precise behavior**
+4. **Vendored test-ROM hardware headers (fast and self-consistent)**
+   - `roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/sources/src/_common/registers.inc`
+     documents every PPU/CPU register's bit layout with named constants, and it is the
+     header the vendored undisbeliever *and* NESER-authored test ROMs actually assemble
+     against -- so it is guaranteed consistent with what those ROMs do.
+   - Reach for this FIRST for "which bit is which" questions. In #3011 it settled the
+     W12SEL enable-vs-invert layout in one `grep`
+     (`WSEL::win1 { enable = %0010, outside = %0001 }`) and the CGWSEL clip/prevent
+     region encodings (`clip { never/outside/inside/always }`), which reading emulator
+     source alone would have taken far longer to establish with the same confidence.
+   - Caveat: its prose comments can contradict its constants -- the W12SEL comment says
+     `i = Window 1 In/Out(1 = Inside, 0 = Outside)` while the constants say
+     `inside = %0000, outside = %0001`. **Trust the constants**: they are what the ROMs
+     assemble, and they are what agrees with ares/Mesen2.
+
+5. **Test-ROM references for precise behavior**
    - 65816 CPU: Tom Harte / ProcessorTests `65816` vectors.
    - APU/SPC700 + S-DSP: blargg's SNES APU and SPC700 tests.
    - PPU: PeterLemon / krom SNES PPU test ROMs.
    - Treat passing/failing test vectors as authoritative for observable behavior.
 
-5. **ares (preferred) and Mesen2 for implementation evidence**
+6. **ares (preferred) and Mesen2 for implementation evidence**
    
    **Locating sources and binaries**:
    - **Sources**: Check for cloned repositories alongside the current repo first (e.g., `../ares`, `../Mesen2`)
@@ -58,9 +73,17 @@ Use this order when researching SNES / Super Famicom hardware details:
    - Use only after checking fullsnes, anomie's docs, and the SNESdev wiki
    - Treat as implementation evidence, not as equal authority with written specifications
    - **When both ares and Mesen2 agree** on unspecified behavior, that's strong evidence
-   - **When they disagree**, state both approaches and investigate against hardware specs
+   - **When they disagree**, state both approaches and investigate against hardware specs.
+     Worked example (#3011): for CGWSEL clip mode 3 ("always clip main to black") ares
+     disables colour-math halving via one uniform rule
+     (`colorHalve = io.colorHalve && above.colorEnable`) while Mesen2 clears its
+     `halfShift` in the two *windowed* clip branches only. NESER followed ares -- one
+     coherent rule beats a special case, and no vendored ROM reaches mode 3 so no golden
+     was at stake. Deliberate divergences from the project's designated ground-truth
+     emulator must be commented at the call site, so a future Mesen2 cross-check that
+     hits the case is not mistaken for a regression.
 
-6. **bsnes / higan (legacy reference)**
+7. **bsnes / higan (legacy reference)**
    - Repo: `https://github.com/bsnes-emu/bsnes` (or higan)
    - Prefer ares (Near/byuu's current work) over bsnes/higan for newer issues.
    - Still useful for historical context and cross-checking edge cases.
