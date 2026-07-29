@@ -165,11 +165,39 @@ impl Ppu {
         main: ScreenPixel,
         sub: ScreenPixel,
     ) -> u16 {
-        self.compose_half(x, y, main.color, main.source, sub.color)
+        let (operand, fixed_color_fallback) = self.math_operand(sub);
+        self.compose_half(x, y, main.color, main.source, operand, fixed_color_fallback)
     }
 
-    /// Finalize one output pixel: color-window clip to black, the CGADSUB gate from
-    /// `gate_source`, then color math against `operand`.
+    /// The colour-math operand for `sub`, plus whether it is the
+    /// **empty-sub-screen fallback**.
+    ///
+    /// CGWSEL bit 1 asks for the sub screen as the operand; when nothing is on
+    /// the sub screen at this dot the fixed colour is substituted *and* halving
+    /// is disabled (Mesen2's `_subScreenPriority[x] == 0` branch, #3012). With
+    /// bit 1 clear the fixed colour is the operand by design and halving still
+    /// applies -- the two cases look alike but behave differently.
+    fn math_operand(&self, sub: ScreenPixel) -> (u16, bool) {
+        let fixed_color = self.coldata & 0x7FFF;
+        if self.cgwsel & 0x02 == 0 {
+            (fixed_color, false)
+        } else if sub.source == PixelSource::Backdrop {
+            (fixed_color, true)
+        } else {
+            (sub.color, false)
+        }
+    }
+
+    /// Finalize one output pixel: colour-window clip to black, the CGADSUB gate
+    /// from `gate_source`, then colour math against `operand`.
+    ///
+    /// Ordering follows Mesen2 `ApplyColorMathToPixel`: the clip applies first
+    /// and unconditionally (it is NOT gated by the per-layer CGADSUB bit), then
+    /// the layer gate, then the prevent-window, then the maths.
+    ///
+    /// Halving (CGADSUB bit 6) is suppressed in two independent cases: when the
+    /// main pixel was clipped to black, and when `operand` is the
+    /// empty-sub-screen fixed-colour fallback.
     fn compose_half(
         &self,
         x: u16,
@@ -177,10 +205,17 @@ impl Ppu {
         color: u16,
         gate_source: PixelSource,
         operand: u16,
+        fixed_color_fallback: bool,
     ) -> u16 {
         let mut color = color;
+        let mut half = self.cgadsub & 0x40 != 0;
         if self.force_main_black_at(x, y) {
             color = 0;
+            // A blacked-out main pixel takes the operand at full strength.
+            // ares applies this uniformly (`colorHalve && above.colorEnable`),
+            // CGWSEL clip mode 3 included; Mesen2 omits it for mode 3 alone,
+            // and NESER deliberately follows ares here (#3011).
+            half = false;
         }
         if !self.color_math_source_enabled(gate_source) {
             return color;
@@ -188,7 +223,10 @@ impl Ppu {
         if !self.color_math_enabled_at(x, y) {
             return color;
         }
-        self.apply_color_math(color, operand)
+        if fixed_color_fallback {
+            half = false;
+        }
+        self.apply_color_math(color, operand, half)
     }
 
     /// Finalize the hires half-pixel pair at native `(x, y)` from the line buffers,
@@ -202,13 +240,10 @@ impl Ppu {
         // branch is unconditional).
         let add_subscreen = self.cgwsel & 0x02 != 0;
         let fixed_color = self.coldata & 0x7FFF;
-        // Odd/main half: operand is the pre-math sub color at the same x.
-        let main_operand = if add_subscreen {
-            sub.color
-        } else {
-            fixed_color
-        };
-        let odd = self.compose_half(x, y, main.color, main.source, main_operand);
+        // Odd/main half: operand is the pre-math sub color at the same x, and an
+        // empty sub screen there is the halve-disabling fallback (#3012).
+        let (main_operand, main_fallback) = self.math_operand(sub);
+        let odd = self.compose_half(x, y, main.color, main.source, main_operand, main_fallback);
         // Even/sub half: operand is the finalized main pixel one dot to the left
         // (black at x = 0), and the math gate follows the main pixel's source at
         // x - 1 (Mesen2 passes prevX for the sub half of the hires math loop).
@@ -217,6 +252,8 @@ impl Ppu {
         } else {
             0
         };
+        // The even/sub half's operand is a MAIN pixel, not a sub one, so the
+        // empty-sub-screen fallback does not apply to it.
         let even_operand = if add_subscreen {
             prev_main
         } else {
@@ -231,28 +268,34 @@ impl Ppu {
         } else {
             sub.color
         };
-        let even = self.compose_half(x, y, sub_display, gate_source, even_operand);
+        let even = self.compose_half(x, y, sub_display, gate_source, even_operand, false);
         (even, odd)
     }
 
+    /// Whether colour math runs at this dot (CGWSEL bits 5-4).
+    ///
+    /// The field names where maths is **prevented**, not where it is enabled:
+    /// 1 = prevented outside the colour window (so maths runs INSIDE), 2 =
+    /// prevented inside (so maths runs OUTSIDE). NESER had those two the wrong
+    /// way round (#3011); see the vendored `CGWSEL::prevent` constants.
     pub(super) fn color_math_enabled_at(&self, x: u16, y: u16) -> bool {
         match (self.cgwsel >> 4) & 0x03 {
             0 => true,
-            // 01 = outside color window only, 10 = inside color window only.
-            1 => !self.window_area(WindowLayer::Math, x, y),
-            2 => self.window_area(WindowLayer::Math, x, y),
-            3 => false,
-            _ => unreachable!(),
+            1 => self.window_area(WindowLayer::Math, x, y),
+            2 => !self.window_area(WindowLayer::Math, x, y),
+            _ => false,
         }
     }
 
+    /// Whether the main pixel is clipped to black at this dot (CGWSEL bits
+    /// 7-6), naming where the clip **applies**: 1 = outside the colour window,
+    /// 2 = inside, 3 = always.
     pub(super) fn force_main_black_at(&self, x: u16, y: u16) -> bool {
         match (self.cgwsel >> 6) & 0x03 {
             0 => false,
             1 => !self.window_area(WindowLayer::Math, x, y),
             2 => self.window_area(WindowLayer::Math, x, y),
-            3 => true,
-            _ => unreachable!(),
+            _ => true,
         }
     }
 
@@ -360,9 +403,11 @@ impl Ppu {
         }
     }
 
-    fn apply_color_math(&self, main: u16, sub: u16) -> u16 {
+    /// CGADSUB add/subtract with an explicit `half`; the caller decides halving
+    /// because hardware suppresses it in cases CGADSUB bit 6 alone cannot express
+    /// (see [`Self::compose_half`]).
+    fn apply_color_math(&self, main: u16, sub: u16, half: bool) -> u16 {
         let subtract = self.cgadsub & 0x80 != 0;
-        let half = self.cgadsub & 0x40 != 0;
         let mut out = 0u16;
         for shift in [0, 5, 10] {
             let a = ((main >> shift) & 0x1F) as i16;
@@ -2735,10 +2780,14 @@ mod tests {
         render_frame(&mut ppu);
 
         let rgb = ppu.screen_snapshot_rgb();
+        // TS = 0 with CGWSEL bit 1 set is the empty-sub-screen fallback: the
+        // fixed colour is substituted AND halving is disabled (#3012), so the
+        // green arrives at full strength rather than halved to olive. This
+        // expectation previously encoded the missing rule.
         assert_eq!(
             pixel(&rgb, 0, 0),
-            [123, 123, 0],
-            "sub-screen fixed color should blend with the main screen"
+            [255, 255, 0],
+            "sub-screen fixed color blends at full strength"
         );
     }
 
@@ -2831,6 +2880,195 @@ mod tests {
             [0, 0, 0],
             "x=60 inside both W1 and W2, masked with AND"
         );
+    }
+
+    // ── Colour-window regions and halve suppression (#3011 / #3012) ──────────
+
+    /// Red BG1 on the main screen, black main backdrop, and a fixed colour of
+    /// full green in COLDATA -- so an add shows up as yellow, a halved add as
+    /// olive, and a clipped main as pure green.
+    fn setup_red_bg1_green_fixed(ppu: &mut Ppu) {
+        set_cgram(ppu, 0, 0x0000);
+        set_cgram(ppu, 1, 0x001F); // BG1 colour 1 = red
+        fill_2bpp_tile(ppu, 0, 1, 1);
+        set_bg_map_base(ppu, 0, 0x400);
+        for col in 0..32usize {
+            set_vram_word(ppu, 0x400 + col, 1);
+        }
+        ppu.write_register(0x2105, 0x00); // Mode 0
+        ppu.write_register(0x212C, 0x01); // TM: BG1
+        ppu.write_register(0x212D, 0x00); // TS: nothing
+        ppu.write_register(0x2132, 0xE0); // COLDATA: all planes 0
+        ppu.write_register(0x2132, 0x5F); // COLDATA: green = 31
+        ppu.write_register(0x2100, 0x0F);
+    }
+
+    /// Colour window 1 spanning x = 64..191 (WOBJSEL bit 5 = enable, bit 4 =
+    /// invert, so 0x20 is "enabled, inside").
+    fn set_color_window_64_191(ppu: &mut Ppu) {
+        ppu.write_register(0x2125, 0x20);
+        ppu.write_register(0x2126, 64);
+        ppu.write_register(0x2127, 191);
+    }
+
+    const YELLOW: [u8; 3] = [255, 255, 0];
+    const RED: [u8; 3] = [255, 0, 0];
+    const GREEN: [u8; 3] = [0, 255, 0];
+    const OLIVE: [u8; 3] = [123, 123, 0];
+
+    #[test]
+    fn prevent_color_math_region_is_where_math_is_suppressed() {
+        // CGWSEL bits 5-4 name where colour math is PREVENTED: 1 = prevented
+        // outside the window (so maths runs INSIDE), 2 = prevented inside (so
+        // maths runs OUTSIDE). NESER had the two the wrong way round (#3011).
+        // Vendored registers.inc: CGWSEL::prevent { outside = %00010000,
+        // inside = %00100000 }.
+        for (prevent, math_at_100, math_at_0, name) in [
+            (0x10u8, true, false, "prevent outside -> math inside"),
+            (0x20, false, true, "prevent inside -> math outside"),
+        ] {
+            let mut ppu = Ppu::new();
+            setup_red_bg1_green_fixed(&mut ppu);
+            set_color_window_64_191(&mut ppu);
+            ppu.write_register(0x2130, prevent); // no clip, fixed-colour operand
+            ppu.write_register(0x2131, 0x01); // add, BG1 enabled, no half
+
+            let row = render_row0(&mut ppu);
+            assert_eq!(
+                row[100],
+                if math_at_100 { YELLOW } else { RED },
+                "{name} @100"
+            );
+            assert_eq!(row[0], if math_at_0 { YELLOW } else { RED }, "{name} @0");
+        }
+    }
+
+    #[test]
+    fn clip_to_black_region_is_where_the_main_pixel_is_blacked() {
+        // CGWSEL bits 7-6: 1 = clip outside the window, 2 = clip inside.
+        for (clip, black_at_100, name) in
+            [(0x40u8, false, "clip outside"), (0x80, true, "clip inside")]
+        {
+            let mut ppu = Ppu::new();
+            setup_red_bg1_green_fixed(&mut ppu);
+            set_color_window_64_191(&mut ppu);
+            ppu.write_register(0x2130, clip);
+            ppu.write_register(0x2131, 0x00); // no colour math at all
+
+            let row = render_row0(&mut ppu);
+            assert_eq!(
+                row[100],
+                if black_at_100 { BLACK } else { RED },
+                "{name} @100"
+            );
+            assert_eq!(row[0], if black_at_100 { RED } else { BLACK }, "{name} @0");
+        }
+    }
+
+    #[test]
+    fn clip_to_black_applies_even_when_the_layer_has_no_color_math() {
+        // Mesen2 applies the clip before the CGADSUB per-layer gate, so a layer
+        // with its math bit clear is still blacked out inside the clip region.
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        set_color_window_64_191(&mut ppu);
+        ppu.write_register(0x2130, 0x80); // clip inside
+        ppu.write_register(0x2131, 0x00); // BG1 NOT enabled for colour math
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(
+            row[100], BLACK,
+            "clipped despite the math gate being closed"
+        );
+        assert_eq!(row[0], RED, "untouched outside the clip region");
+    }
+
+    #[test]
+    fn clipping_the_main_pixel_to_black_suppresses_halving() {
+        // Hardware disables the CGADSUB half when the main pixel was clipped to
+        // black, so the operand lands at FULL strength (Mesen2 sets
+        // halfShift = 0 alongside pixelA = 0).
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        set_color_window_64_191(&mut ppu);
+        ppu.write_register(0x2130, 0x80); // clip inside, fixed-colour operand
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(row[100], GREEN, "clipped: full-strength green, not halved");
+        assert_eq!(row[0], OLIVE, "unclipped: red + green, halved");
+    }
+
+    #[test]
+    fn clip_always_also_suppresses_halving() {
+        // CGWSEL clip mode 3 ("always"). ares applies one uniform rule --
+        // halving is off whenever the main pixel is black -- while Mesen2
+        // omits it in this branch only. NESER deliberately follows ares here;
+        // no vendored ROM exercises mode 3, so no golden depends on it.
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        ppu.write_register(0x2130, 0xC0); // clip always
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert!(
+            row.iter().all(|&px| px == GREEN),
+            "always-clipped pixels take the operand at full strength"
+        );
+    }
+
+    #[test]
+    fn empty_sub_screen_fallback_suppresses_halving() {
+        // CGWSEL bit 1 set asks for the sub screen as the operand, but nothing
+        // is on the sub screen here. Hardware substitutes the fixed colour AND
+        // disables halving (Mesen2's _subScreenPriority[x] == 0 branch) -- the
+        // rule NESER was missing (#3012).
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        ppu.write_register(0x2130, 0x02); // add subscreen, no clip, no prevent
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert!(
+            row.iter().all(|&px| px == YELLOW),
+            "fixed-colour fallback is added at full strength"
+        );
+    }
+
+    #[test]
+    fn fixed_color_operand_still_halves_when_add_subscreen_is_clear() {
+        // The suppression above is specific to the empty-SUB-SCREEN fallback.
+        // With CGWSEL bit 1 clear the fixed colour is the operand by design and
+        // halving applies normally -- the guard against over-applying #3012.
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        ppu.write_register(0x2130, 0x00); // fixed-colour operand by design
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert!(
+            row.iter().all(|&px| px == OLIVE),
+            "a deliberate fixed-colour operand is still halved"
+        );
+    }
+
+    #[test]
+    fn populated_sub_screen_operand_halves_normally() {
+        // And with a real sub-screen layer present, halving applies.
+        let mut ppu = Ppu::new();
+        setup_red_bg1_green_fixed(&mut ppu);
+        set_cgram(&mut ppu, 33, 0x03E0); // BG2 colour 1 = green
+        fill_2bpp_tile(&mut ppu, 0, 2, 1);
+        set_bg_map_base(&mut ppu, 1, 0x500);
+        for col in 0..32usize {
+            set_vram_word(&mut ppu, 0x500 + col, 2);
+        }
+        ppu.write_register(0x212D, 0x02); // TS: BG2
+        ppu.write_register(0x2130, 0x02); // add subscreen
+        ppu.write_register(0x2131, 0x41); // add + half + BG1
+
+        let row = render_row0(&mut ppu);
+        assert_eq!(row[0], OLIVE, "a present sub-screen layer halves normally");
     }
 
     // ── Window mask decode and evaluation (#3011) ────────────────────────────
