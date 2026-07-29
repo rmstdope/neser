@@ -1167,14 +1167,11 @@ mod tests {
             .as_object_mut()
             .expect("dma map")
             .remove("hdma_lines_left");
-        json["bus"]
-            .as_object_mut()
-            .expect("bus object")
-            .get_mut("dma")
-            .expect("dma object")
-            .as_object_mut()
-            .expect("dma map")
-            .remove("pending_b_bus_writes");
+        {
+            let bus = json["bus"].as_object_mut().expect("bus object");
+            bus.remove("pending_gpdma");
+            bus.remove("pending_hdma");
+        }
         let ppu = json["ppu"].as_object_mut().expect("ppu object");
         ppu.remove("irq_mode");
         ppu.remove("htime");
@@ -1200,7 +1197,8 @@ mod tests {
             crate::snes::console::save_state::SNES_SAVESTATE_VERSION
         );
         assert_eq!(loaded.bus.dma.hdma_lines_left, vec![0; 8]);
-        assert!(loaded.bus.dma.pending_b_bus_writes.is_empty());
+        assert!(loaded.bus.pending_gpdma.is_none());
+        assert!(loaded.bus.pending_hdma.is_none());
         assert_eq!(loaded.ppu.irq_mode, 0);
         assert_eq!(loaded.ppu.htime, 0);
         assert_eq!(loaded.ppu.vtime, 0);

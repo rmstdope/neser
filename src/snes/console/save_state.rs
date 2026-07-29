@@ -138,10 +138,6 @@ pub struct SnesDmaState {
     pub hdma_repeat_mode: Vec<bool>,
     #[serde(default = "default_dma_channel_lines_left")]
     pub hdma_lines_left: Vec<u16>,
-    /// Scheduled-but-unapplied HDMA B-bus writes as `(deadline, b_addr, value)`,
-    /// deadlines in absolute master clocks (see `PendingBBusWrite`).
-    #[serde(default)]
-    pub pending_b_bus_writes: Vec<(u64, u8, u8)>,
 }
 
 /// SA-1 enhancement chip state: control/vector registers (`$2200-$220F`), I-RAM plus its two
@@ -246,6 +242,14 @@ pub struct SnesBusState {
     /// (`#[serde(default)]` keeps those loadable).
     #[serde(default)]
     pub sa1: Option<SnesSa1State>,
+    /// Armed-but-not-started GPDMA as `(cpu_cycle_countdown, mdmaen, fallback_clock)`
+    /// (see `SystemBus::pending_gpdma`); `None` when no transfer is pending.
+    #[serde(default)]
+    pub pending_gpdma: Option<(u8, u8, u64)>,
+    /// Armed-but-not-run HDMA line/init work as `(cpu_cycle_countdown, kind, fallback_clock)`
+    /// (see `SystemBus::pending_hdma`); `None` when nothing is pending.
+    #[serde(default)]
+    pub pending_hdma: Option<(u8, u8, u64)>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
