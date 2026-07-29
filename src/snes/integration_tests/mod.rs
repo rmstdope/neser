@@ -13,6 +13,7 @@ mod hblank_dma_vram_tests;
 mod input_mouse_tests;
 mod input_standard_controller_tests;
 mod jonasquinn_math_tests;
+mod kungfufurby_nmi_tests;
 mod neser_color_math_tests;
 mod neser_mode7_tests;
 mod neser_obj_tests;
