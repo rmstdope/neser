@@ -111,6 +111,15 @@ pub struct Cpu<B: SnesBus> {
     /// recognizing it (#3049).
     nmi_arm_counter: u8,
 
+    /// Most recently sampled H/V-IRQ line level (mirrors Mesen2's
+    /// `PrevIrqSource`). Unlike NMI's edge, the line is non-consuming and
+    /// live, so no arm/latch counter is needed -- this is simply resampled
+    /// from `bus.poll_irq()` once per CPU cycle, at the start of
+    /// [`Self::tick_read`]/[`Self::tick_write`]/[`Self::tick_internal_cycle`]
+    /// (mirroring Mesen2's `DetectNmiSignalEdge`, called once per
+    /// `ProcessCpuCycle`), instead of once per `step()` call (#3049).
+    irq_line_shadow: bool,
+
     /// True while the CPU is halted by a WAI instruction, waiting for a
     /// hardware interrupt (NMI, IRQ, or ABORT) to be asserted.
     waiting: bool,
@@ -164,6 +173,7 @@ impl<B: SnesBus> Cpu<B> {
             irq_pending: false,
             abort_pending: false,
             nmi_arm_counter: 0,
+            irq_line_shadow: false,
             waiting: false,
             fast_rom: false,
             memory_bus_cycles: 0,
@@ -314,6 +324,7 @@ impl<B: SnesBus> Cpu<B> {
             irq_pending: self.irq_pending,
             abort_pending: self.abort_pending,
             nmi_arm_counter: self.nmi_arm_counter,
+            irq_line_shadow: self.irq_line_shadow,
             waiting: self.waiting,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
@@ -347,6 +358,7 @@ impl<B: SnesBus> Cpu<B> {
         self.irq_pending = state.irq_pending;
         self.abort_pending = state.abort_pending;
         self.nmi_arm_counter = state.nmi_arm_counter;
+        self.irq_line_shadow = state.irq_line_shadow;
         self.waiting = state.waiting;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
@@ -457,6 +469,7 @@ impl<B: SnesBus> Cpu<B> {
         self.irq_pending = false;
         self.abort_pending = false;
         self.nmi_arm_counter = 0;
+        self.irq_line_shadow = false;
         self.irq_lock_step = false;
         self.irq_i_shadow = true;
         for _ in 0..RESET_STARTUP_DELAY_CLOCKS {
@@ -647,16 +660,17 @@ impl<B: SnesBus> Cpu<B> {
         }
 
         // `nmi_pending` is kept continuously up to date by
-        // `resolve_nmi_arm_counter`/`poll_and_arm_nmi_edge` (called once per
+        // `resolve_nmi_arm_counter`/`poll_and_arm_nmi_edge`, and
+        // `irq_line_shadow` by `resample_irq_line` -- both called once per
         // CPU cycle from `tick_read`/`tick_write`/`tick_internal_cycle`,
-        // mirroring Mesen2's `DetectNmiSignalEdge`), so by the time this
-        // `step()` call starts it already reflects the correct
-        // one-CPU-cycle-latched state -- proven via a bus-trace diff
+        // mirroring Mesen2's `DetectNmiSignalEdge`/`PrevIrqSource`, so by the
+        // time this `step()` call starts they already reflect state as of
+        // the end of the previous cycle -- proven via a bus-trace diff
         // against Mesen2 on the KungFuFurby nmi.smc ROM (#2883/#3049): a
-        // freshly polled edge now resolves in time to dispatch right after
-        // the instruction it occurred in, not an entire extra instruction
-        // later. No separate top-of-step() poll or snapshot is needed.
-        let irq_line_asserted = self.bus.poll_irq() || self.irq_pending;
+        // freshly polled edge/level now resolves in time to dispatch right
+        // after the instruction it occurred in, not an entire extra
+        // instruction later. No separate top-of-step() poll is needed.
+        let irq_line_asserted = self.irq_line_shadow || self.irq_pending;
 
         // WAI: while halted, the CPU idles (advancing the master clock) until any
         // hardware interrupt (NMI, IRQ, or ABORT) is asserted — regardless of the
@@ -1035,6 +1049,7 @@ impl<B: SnesBus> Cpu<B> {
     /// and the $2137 H/V counter latch both observe the sampling instant.
     fn tick_read(&mut self, addr: u32) -> u8 {
         self.resolve_nmi_arm_counter();
+        self.resample_irq_line();
         self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      read  ${:06X}", addr);
@@ -1054,6 +1069,7 @@ impl<B: SnesBus> Cpu<B> {
     /// Also intercepts MEMSEL ($420D) writes to update the fast_rom flag.
     fn tick_write(&mut self, addr: u32, value: u8) {
         self.resolve_nmi_arm_counter();
+        self.resample_irq_line();
         self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      write ${:06X} = ${:02X}", addr, value);
@@ -3618,6 +3634,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn tick_internal_cycle(&mut self) {
         self.resolve_nmi_arm_counter();
+        self.resample_irq_line();
         self.bus.gpdma_cycle_hook();
         trace_cpu!(2; "      internal");
         for _ in 0..6u8 {
@@ -3677,6 +3694,17 @@ impl<B: SnesBus> Cpu<B> {
         if self.bus.poll_nmi() {
             self.nmi_arm_counter = 1;
         }
+    }
+
+    /// Resamples the H/V-IRQ line into `irq_line_shadow`, once per CPU cycle
+    /// (mirrors Mesen2's `PrevIrqSource` update inside `DetectNmiSignalEdge`).
+    /// Unlike NMI's edge, `bus.poll_irq()` is a live, non-consuming level, so
+    /// there's no arm/latch counter to split across cycle start/end -- a
+    /// single resample at the start of each cycle (before that cycle's own
+    /// clock ticks, observing state as of the end of the *previous* cycle) is
+    /// enough (#3049).
+    fn resample_irq_line(&mut self) {
+        self.irq_line_shadow = self.bus.poll_irq();
     }
 
     /// Read two bytes little-endian using linear 24-bit addressing.
@@ -10677,6 +10705,14 @@ mod interrupt_dispatch_tests {
     struct PollIrqBus {
         mem: Vec<u8>,
         irq_level: bool,
+        /// `poll_irq` takes `&self` (level-triggered, non-consuming), so this
+        /// needs interior mutability to count calls for tests that need the
+        /// level to become live starting from a specific *cycle* rather than
+        /// from the very start.
+        poll_count: std::cell::Cell<u32>,
+        /// If set, `poll_irq` ignores `irq_level` and instead returns true
+        /// starting from the Nth call (0-indexed) and for every call after.
+        level_from_poll: Option<u32>,
     }
 
     impl PollIrqBus {
@@ -10684,6 +10720,8 @@ mod interrupt_dispatch_tests {
             Self {
                 mem: vec![0; 0x100_0000],
                 irq_level: false,
+                poll_count: std::cell::Cell::new(0),
+                level_from_poll: None,
             }
         }
 
@@ -10702,7 +10740,12 @@ mod interrupt_dispatch_tests {
         }
         fn tick(&mut self) {}
         fn poll_irq(&self) -> bool {
-            self.irq_level
+            let count = self.poll_count.get();
+            self.poll_count.set(count + 1);
+            match self.level_from_poll {
+                Some(threshold) => count >= threshold,
+                None => self.irq_level,
+            }
         }
     }
 
@@ -10819,11 +10862,54 @@ mod interrupt_dispatch_tests {
         cpu.set_flag_i(false);
         cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
         cpu.bus.irq_level = true;
+        // The dispatch decision reads `irq_line_shadow` (resampled once per
+        // CPU cycle, #3049), not a fresh poll -- pre-seed it to simulate the
+        // line already having been asserted for at least one prior cycle.
+        // Without this, BRK's opcode ($00, the fetch this test's empty
+        // memory would otherwise produce) shares emulation mode's $FFFE
+        // vector and 7-cycle cost with IRQ dispatch, so the assertions below
+        // would pass even if IRQ never actually dispatched.
+        cpu.irq_line_shadow = true;
 
         let cycles = cpu.step();
 
         assert_eq!(cycles, 7, "IRQ dispatch cycles in emulation mode");
         assert_eq!(cpu.pc, 0x9100, "step() should dispatch IRQ from bus level");
+    }
+
+    #[test]
+    fn irq_level_mid_instruction_resolves_in_time_to_dispatch_right_after_that_instruction() {
+        // Same principle as the NMI edge test: NESER's H/V-IRQ line is
+        // level-triggered and non-consuming (Ppu::poll_irq_dispatch), so it
+        // doesn't need an arm/latch counter like NMI's edge -- but the
+        // shadow that step()'s dispatch check reads must still be sampled
+        // once per CPU cycle (mirroring Mesen2's PrevIrqSource, updated
+        // every ProcessCpuCycle), not once per instruction. A level that
+        // becomes asserted mid-instruction -- not on the instruction's very
+        // first cycle -- must still resolve in time to dispatch right after
+        // THAT SAME instruction (#3049).
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x008000, &[0xAD, 0x34, 0x12]); // LDA $1234
+        cpu.bus.load(0x008003, &[0xEA]); // NOP -- must never execute; IRQ takes this slot
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
+        cpu.bus.level_from_poll = Some(2);
+
+        let cycles = cpu.step();
+        assert_eq!(
+            cpu.pc, 0x8003,
+            "LDA executes in full; the level doesn't interrupt it mid-flight"
+        );
+        assert_eq!(cycles, 4, "LDA absolute's normal cycle cost");
+
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x9100,
+            "the level, visible during LDA's own cycles, dispatches IRQ \
+             right after LDA -- not one more instruction later"
+        );
     }
 
     #[test]
@@ -10833,10 +10919,19 @@ mod interrupt_dispatch_tests {
         cpu.set_flag_i(false);
         cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
         cpu.bus.irq_level = true;
+        cpu.irq_line_shadow = true; // see step_polls_bus_irq_level_and_dispatches_irq
         assert_eq!(cpu.step(), 7, "first IRQ dispatch");
 
         cpu.set_flag_i(false);
         cpu.bus.irq_level = false;
+        // The line has genuinely deasserted by the time the next dispatch
+        // decision is made -- the dispatch's own dummy-read/push/vector-read
+        // cycles would otherwise resample the (still-true, at that point)
+        // line into the shadow, since the test only flips `irq_level` after
+        // step() already returned (#3049: the shadow reflects state as of
+        // the end of the *previous* cycle, not "whatever the test set right
+        // before calling step()").
+        cpu.irq_line_shadow = false;
         cpu.bus.load(cpu.pc as u32, &[0xEA]); // NOP
         assert_eq!(
             cpu.step(),
@@ -11095,6 +11190,28 @@ mod interrupt_dispatch_tests {
         assert_eq!(
             restored.pc, 0x9000,
             "an in-flight (armed but unresolved) NMI edge must survive save/restore"
+        );
+    }
+
+    #[test]
+    fn irq_line_shadow_round_trips_through_cpu_state() {
+        // A live IRQ level cached in the shadow must survive save/restore,
+        // same as nmi_arm_counter's in-flight edge above (#3049).
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.irq_line_shadow = true;
+
+        let state = cpu.capture_state_inner();
+        let mut restored = Cpu::new(PollIrqBus::new());
+        restored.restore_state_inner(&state);
+        // Bus/memory contents aren't part of CpuState; reload what's needed.
+        restored.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
+
+        restored.step();
+        assert_eq!(
+            restored.pc, 0x9100,
+            "a live IRQ level cached in the shadow must survive save/restore"
         );
     }
 
