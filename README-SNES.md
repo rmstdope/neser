@@ -153,10 +153,14 @@ Test suites:
   `window-shapes-single.sfc` (14 HDMA window shapes, locked against its
   auto-advance with an A tap only the initial any-button check reads), the
   two free-running precalculated bouncing-window demos, and
-  `inidisp_fadein_fadeout.sfc` sampled mid-plateau at 7 probed frames. The
-  7 fade samples and the no-window state carry Mesen2-approved goldens; all
-  36 window-enabled vectors are `#[ignore]`d because NESER renders inverted
-  window-masking regions (#3011).
+  `inidisp_fadein_fadeout.sfc` sampled mid-plateau at 7 probed frames. All
+  44 vectors carry Mesen2-approved 0-px goldens since #3011 fixed the window
+  enable/invert decode; before that only the 7 fade samples and the
+  no-window state matched. When re-approving the 14 shape goldens, first
+  prove the scripted replay lands on the same shape index in both emulators
+  by matching each NESER capture against all 14 Mesen2 shape captures -- a
+  misaligned index compares two different pictures and looks exactly like a
+  rendering bug.
 - `neser_color_math_tests.rs` -- NESER-authored colour-math, window and
   brightness ROMs written against the undisbeliever bass framework
   (`roms/snes/automated_tests/snes_test_roms/neser-colormath-tests/`,
@@ -166,10 +170,9 @@ Test suites:
   COLDATA fixed-colour math, the transparent-sub fallback rule, the OBJ
   palette 4-7 rule, colour-window clip/prevent and layer window masks;
   `brightness-steps.sfc` steps INIDISP through all 16 levels plus the
-  force-blank cut (17 samples). add-clamp, sub-floor, both fixed-colour
-  ROMs and all 17 brightness samples carry Mesen2-approved goldens; the
-  half-math ROMs are `#[ignore]`d pending the transparent-sub
-  halve-suppression rule (#3012) and the two window ROMs pending #3011.
+  force-blank cut (17 samples). All 27 vectors carry Mesen2-approved 0-px
+  goldens since #3012 (transparent-sub halve suppression) and #3011 (window
+  decode plus the CGWSEL prevent regions).
 - `jonasquinn_math_tests.rs` -- `color_halve_proof/demo.smc` from the
   jonasquinn collection
   (`roms/snes/automated_tests/snes_test_roms/jonasquinn-test-roms/`),
