@@ -243,11 +243,11 @@ pub struct SnesBusState {
     #[serde(default)]
     pub sa1: Option<SnesSa1State>,
     /// Armed-but-not-started GPDMA as `(cpu_cycle_countdown, mdmaen, fallback_clock)`
-    /// (see `SystemBus::pending_gpdma`); `None` when no transfer is pending.
+    /// (see `SnesSystemBus::pending_gpdma`); `None` when no transfer is pending.
     #[serde(default)]
     pub pending_gpdma: Option<(u8, u8, u64)>,
     /// Armed-but-not-run HDMA line/init work as `(cpu_cycle_countdown, kind, fallback_clock)`
-    /// (see `SystemBus::pending_hdma`); `None` when nothing is pending.
+    /// (see `SnesSystemBus::pending_hdma`); `None` when nothing is pending.
     #[serde(default)]
     pub pending_hdma: Option<(u8, u8, u64)>,
 }

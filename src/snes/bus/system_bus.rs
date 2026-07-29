@@ -553,8 +553,9 @@ impl SnesSystemBus {
 
     /// Arms the once-per-frame HDMA channel reload and once-per-active-scanline HDMA
     /// transfer at their hardware-timed trigger clocks (see [`Ppu::hdma_init_due`] /
-    /// [`Ppu::hdma_transfer_due`]). The armed work runs at the start of the next CPU
-    /// cycle (Mesen2 `ProcessPendingTransfers`), see `gpdma_cycle_hook`.
+    /// [`Ppu::hdma_transfer_due`]). The armed work runs at the start of the SECOND
+    /// CPU cycle after the trigger -- the first cycle entry only consumes Mesen2's
+    /// `_dmaStartDelay` -- see `gpdma_cycle_hook` and the `pending_hdma` field doc.
     fn check_hdma_triggers(&mut self) {
         // Both `_due` checks are read-only; compute them under a single immutable borrow
         // instead of two separate `RefCell` runtime checks on this once-per-tick hot path.
