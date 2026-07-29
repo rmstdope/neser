@@ -255,6 +255,30 @@ When writing code that targets or emulates SNES hardware, always verify against 
   wasted deduction rounds. (3) A synchronous GPDMA in a bus test ticks the PPU
   past scanline 0's HDMA-init point (see the auto-memory note). the ROMs' `org $0000` result variables (`TestFinished`: 0=Running, 1=Passed, 255=Failed) are accessed by the SNES CPU via direct page with D=0, i.e. they live in **WRAM `$7E0000`** — polling the SA-1 I-RAM mirror at `$003000` instead reads a stale `$AA` left over from the I-RAM mirroring sub-tests. Even at the right address, a naive every-tick poll false-fails: `SA1RamProtectionTest` transiently `EOR #$FF`s its own result byte while probing I-RAM writability, and its SA-1 CPU parks in its post-test idle loop *before* the SNES finishes the trailing `TestBwRamSize` scan and writes the real result. `SA1VersionCodeTest` never reports Passed **even on real hardware** — disassembly of its release build shows `CheckResult` unconditionally taking the failed path (the `INC TestFinished` pass path at `$9EAB` is unreferenced dead code), deliberate since the true version-code value is unknown; treat its FAILED register-dump screen as the expected result. Its open-bus detection scheme is worth knowing: each register is read twice with different residual bus bytes (`LDA $2300,X` leaves operand `$23`; a `REP`-adjusted `LDA $AA,X` reaching the same register leaves `$AA`), so open-bus entries echo `23`/`AA` while real registers repeat their value. Both ROMs misbehave on Mesen2 (documented upstream and confirmed), so goldens must be navigator-approved captures of the emulator's own rendering.
 
+- **DMA/HDMA transfers are ARMED at their trigger and RUN a CPU cycle later, and
+  the two moments read different state** (from #3021, Mesen2 `SnesDmaController`):
+  `BeginHdmaTransfer` sets the pending flag **only if HDMAEN is non-zero at the
+  dot-276 trigger clock**, and also sets `_dmaStartDelay`; `ProcessPendingTransfers`
+  then burns one CPU cycle on the delay and runs the burst at the start of the
+  **second** CPU cycle after the trigger -- where `ProcessHdmaChannels` re-reads
+  HDMAEN to decide which channels participate. So a ROM enabling a channel
+  mid-scanline *after* the trigger must wait for the next line even though the
+  run itself sees the new value. The same arm-then-delay shape applies to `$420B`
+  general-purpose DMA. Getting the gate wrong (arming unconditionally) makes an
+  emulator run HDMA lines hardware skips; getting the delay wrong shifts every
+  B-bus write by 8-16 clocks. Both are visible in `hdmaen_latch_test*.sfc`.
+- **The rest of the envelope**: `SyncStartDma` pads 1-8 clocks to the next
+  8-master-clock boundary and *resets* the clock counter; 8 clocks of setup; 8
+  per channel and 8 per byte (a byte slot is 4 clocks to the A-bus read then 4
+  more before the B-bus write, so writes land at the slot's **end**);
+  `SyncEndDma` pads `cpuSpeed - (counter % cpuSpeed)` to a whole CPU cycle.
+  HDMA's per-line work is two-phase -- all transfers first, then per-channel
+  bookkeeping with a **speculative descriptor read every line** (8 clocks; the
+  table pointer advances only when the line counter expires), indirect pointer
+  loads **before** the termination check, and a last-active-channel oddity where
+  a `$00` descriptor loads only one pointer byte (8 clocks, not 16) into the
+  high byte. Modelling this as a flat per-line constant is what #3021 replaced.
+
 ## Testing Methodology for SNES Emulation
 
 When verifying SNES emulator accuracy:
@@ -519,6 +543,55 @@ Design NESER-authored scenes to make this possible: give each rule its
 own screen region (quadrant layouts) and include degenerate values
 (black bars, white bars) whose invariance under the suspect operation
 is predictable.
+
+### Measure the pre-change baseline BEFORE touching golden-shifting code (from #3021)
+
+Any change to shared timing (DMA cost models, CPU cycle counts, PPU trigger
+positions) will move several screen-CRC goldens at once, and a raw "N pixels
+differ vs Mesen2" number after the change is **uninterpretable on its own** --
+it cannot distinguish an improvement from a regression. Before implementing,
+capture the current NESER frames and record each vector's pixel diff against a
+fresh Mesen2 capture. If you only realise this afterwards, recover the baseline
+with `git stash push -u` -> capture -> `git stash pop` rather than guessing;
+in #3021 that recovery is what turned an apparent "the HDMA envelope regressed
+StarWars" into the actual result (2 vectors improved, 1 regressed, net
+positive), and it changed the recommendation given to the navigator.
+
+Tabulate every affected vector before/after. A mixed result is a legitimate
+outcome to report -- what is not legitimate is reporting only the vectors that
+moved in the direction you expected.
+
+### Source-tag and clock-gate trace hooks (from #3021)
+
+Two cheap additions make register traces far more diagnostic:
+
+- **Tag the writer.** Emit `src=C` for CPU stores and `src=D` for DMA/HDMA
+  B-bus writes. An ordinal-aligned diff then shows immediately when one
+  emulator performs an HDMA burst the other skips -- invisible if both look
+  like anonymous `$21xx` writes.
+- **Gate on a clock range** (`NESER_TRACE_FROM` / `NESER_TRACE_TO` env vars,
+  matched by an `if clk >= LO and clk <= HI` guard in the Mesen2 Lua callback).
+  Tracing every write for 365 frames produces 100k+ lines; gating to the
+  window of interest keeps both logs comparable and fast.
+
+Diff by **event ordinal**, not by clock, then histogram the per-ordinal clock
+offsets. A single-valued histogram with zero transitions means clock-exact; a
+histogram whose mode steps by a constant at specific ordinals localises the
+divergence to those events.
+
+### Mesen2 headless produces silent empty output when another instance runs (from #3021)
+
+`Mesen --testRunner` can exit 0 having printed nothing at all -- no error, no
+partial log -- if another Mesen process (often from a different worktree or an
+earlier backgrounded run) is still alive. Two separate captures were lost to
+this before the cause was found. Guard every capture:
+
+```bash
+until ! pgrep -f "Mesen --testRunner" >/dev/null 2>&1; do sleep 5; done
+```
+
+Treat an empty capture log as "check for a concurrent instance" first, not as
+a bad Lua script -- the script is usually fine.
 
 ### Automating Screenshot Capture at Specific Frames
 
