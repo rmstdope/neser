@@ -23,13 +23,16 @@
 //! `$00FF`, not `$FFFF`. The golden CRC below reflects the Mesen2-verified
 //! screen, not the README table.
 //!
-//! NESER currently diverges from Mesen2 on 8 of the 19 sub-cases (the ones
-//! whose result value depends on exact IRQ/NMI dispatch timing: #1, #2, #4,
-//! #5, #7, #8, #10, #15) -- every diverging value is exactly one less than
-//! Mesen2's, i.e. one fewer instruction runs before dispatch. This is the
-//! same signature (dispatch resolves a few master clocks early) already
-//! tracked in #3049, not a new bug; the sub-cases that don't depend on
-//! interrupt timing (#3, #6, #9, #11-14, #16-19) already match.
+//! NESER originally diverged from Mesen2 on 8 of the 19 sub-cases (every
+//! diverging value exactly one less than Mesen2's, i.e. one fewer
+//! instruction ran before dispatch). #3049's per-CPU-cycle NMI and H/V-IRQ
+//! dispatch fixes closed 2 of those 8 (#5 `IRQ-CLI+INC`, #15
+//! `W16:IRQ-CLI+INC`); 6 remain (#1, #2, #4, #7 `IRQ-*`, #8, #10 `NMI-*`),
+//! same off-by-one-instruction signature, root cause not yet identified
+//! (matches `kungfufurby_nmi_tests::test_nmi_passes` and
+//! `kungfufurby_irq_tests`' remaining 5 ROMs' status). The sub-cases that
+//! don't depend on interrupt timing (#3, #6, #9, #11-14, #16-19) already
+//! matched before and still do.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -41,11 +44,11 @@ const ROOT: &str = "roms/snes/automated_tests/snes_test_roms/Sour/SnesTests/dma_
 mod tests {
     use super::*;
 
-    /// NESER's current CRC (screen has 8/19 sub-case values off by one
-    /// instruction), NOT a Mesen2-approved golden. See #3049: shares the
-    /// KungFuFurby NMI/IRQ suites' interrupt-dispatch-precision root cause.
+    /// NESER's current CRC (screen has 6/19 sub-case values off by one
+    /// instruction, down from 8/19 before #3049's per-cycle dispatch
+    /// fixes), NOT a Mesen2-approved golden. See #3049.
     #[test]
-    #[ignore = "8/19 sub-cases off by one dispatched instruction; pending #3049"]
+    #[ignore = "6/19 sub-cases off by one dispatched instruction; pending #3049 follow-up"]
     fn dma_irq_test_passes() {
         let path = Path::new(ROOT).join("dma_irq_test.sfc");
         let rom = fs::read(&path)
@@ -57,7 +60,7 @@ mod tests {
             RunConfig::new(400_000_000, 0),
             RunOracle::ScreenCrc {
                 frames: 600,
-                expected_crc: 0x0B2D_1707,
+                expected_crc: 0xF5F5_37A7,
             },
         );
         assert!(
