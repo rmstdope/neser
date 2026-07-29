@@ -31,8 +31,7 @@
 //! tracked in #3049, not a new bug; the sub-cases that don't depend on
 //! interrupt timing (#3, #6, #9, #11-14, #16-19) already match.
 
-use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
-use std::fs;
+use super::rom_screen_crc_helpers::assert_rom_screen_crc;
 use std::path::Path;
 
 const ROOT: &str = "roms/snes/automated_tests/snes_test_roms/Sour/SnesTests/dma_irq_test";
@@ -48,25 +47,12 @@ mod tests {
     #[ignore = "8/19 sub-cases off by one dispatched instruction; pending #3049"]
     fn dma_irq_test_passes() {
         let path = Path::new(ROOT).join("dma_irq_test.sfc");
-        let rom = fs::read(&path)
-            .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
-        let result = run_rom_with_oracle(
-            &rom,
+        assert_rom_screen_crc(
+            &path,
             "dma_irq_test.sfc",
             "sour_dma_irq_tests",
-            RunConfig::new(400_000_000, 0),
-            RunOracle::ScreenCrc {
-                frames: 600,
-                expected_crc: 0x0B2D_1707,
-            },
-        );
-        assert!(
-            result.passed && result.exit_reason == RunExitReason::ScreenCrcFrame,
-            "dma_irq_test.sfc: expected screen-CRC PASS at frame 600, \
-             got crc=0x{:08X} passed={} exit={:?}",
-            result.screen_crc32,
-            result.passed,
-            result.exit_reason
+            600,
+            0x0B2D_1707,
         );
     }
 }

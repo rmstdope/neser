@@ -13,8 +13,7 @@
 //! test_nmi.smc between ~30-60; demo_nmitest.smc is stable blue from
 //! frame 5).
 
-use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
-use std::fs;
+use super::rom_screen_crc_helpers::assert_rom_screen_crc;
 use std::path::Path;
 
 const ROOT: &str = "roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-ROMs";
@@ -23,39 +22,16 @@ const ROOT: &str = "roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-RO
 mod tests {
     use super::*;
 
-    /// Runs a KungFuFurby NMI ROM to `frames` and asserts the rendered
-    /// screen matches the Mesen2-approved PASS golden CRC32.
-    ///
-    /// To approve a new golden, run with NESER_CAPTURE_SCREEN=1, visually
-    /// confirm the capture under target/snes_test_captures/ against a
-    /// Mesen2 headless capture at the same frame, then record the CRC here.
-    fn run_rom_screen_crc(file: &str, frames: u32, expected_crc: u32) {
-        let path = Path::new(ROOT).join(file);
-        let rom = fs::read(&path)
-            .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
-        let result = run_rom_with_oracle(
-            &rom,
-            file,
-            "kungfufurby_nmi_tests",
-            RunConfig::new(400_000_000, 0),
-            RunOracle::ScreenCrc {
-                frames,
-                expected_crc,
-            },
-        );
-        assert!(
-            result.passed && result.exit_reason == RunExitReason::ScreenCrcFrame,
-            "{file}: expected screen-CRC PASS (blue) at frame {frames}, \
-             got crc=0x{:08X} passed={} exit={:?}",
-            result.screen_crc32,
-            result.passed,
-            result.exit_reason
-        );
-    }
-
     #[test]
     fn demo_nmitest_passes() {
-        run_rom_screen_crc("demo_nmitest.smc", 600, 0x8695_BBB0);
+        let path = Path::new(ROOT).join("demo_nmitest.smc");
+        assert_rom_screen_crc(
+            &path,
+            "demo_nmitest.smc",
+            "kungfufurby_nmi_tests",
+            600,
+            0x8695_BBB0,
+        );
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
@@ -70,7 +46,8 @@ mod tests {
     #[test]
     #[ignore = "NMI dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn nmi_passes() {
-        run_rom_screen_crc("nmi.smc", 600, 0xDEAD_FA89);
+        let path = Path::new(ROOT).join("nmi.smc");
+        assert_rom_screen_crc(&path, "nmi.smc", "kungfufurby_nmi_tests", 600, 0xDEAD_FA89);
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
@@ -81,6 +58,13 @@ mod tests {
     #[test]
     #[ignore = "NMI dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn test_nmi_passes() {
-        run_rom_screen_crc("test_nmi.smc", 120, 0x8662_6F50);
+        let path = Path::new(ROOT).join("test_nmi.smc");
+        assert_rom_screen_crc(
+            &path,
+            "test_nmi.smc",
+            "kungfufurby_nmi_tests",
+            120,
+            0x8662_6F50,
+        );
     }
 }

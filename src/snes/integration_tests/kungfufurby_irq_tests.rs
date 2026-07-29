@@ -25,8 +25,7 @@
 //! which ROM produced it -- confirmed by capturing each independently with
 //! `NESER_CAPTURE_SCREEN=1`.
 
-use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
-use std::fs;
+use super::rom_screen_crc_helpers::assert_rom_screen_crc;
 use std::path::Path;
 
 const ROOT: &str = "roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-ROMs";
@@ -35,43 +34,14 @@ const ROOT: &str = "roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-RO
 mod tests {
     use super::*;
 
-    /// Runs a KungFuFurby IRQ ROM to `frames` and asserts the rendered
-    /// screen matches the Mesen2-approved PASS golden CRC32.
-    ///
-    /// To approve a new golden, run with NESER_CAPTURE_SCREEN=1, visually
-    /// confirm the capture under target/snes_test_captures/ against a
-    /// Mesen2 headless capture at the same frame, then record the CRC here.
-    fn run_rom_screen_crc(file: &str, frames: u32, expected_crc: u32) {
-        let path = Path::new(ROOT).join(file);
-        let rom = fs::read(&path)
-            .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
-        let result = run_rom_with_oracle(
-            &rom,
-            file,
-            "kungfufurby_irq_tests",
-            RunConfig::new(400_000_000, 0),
-            RunOracle::ScreenCrc {
-                frames,
-                expected_crc,
-            },
-        );
-        assert!(
-            result.passed && result.exit_reason == RunExitReason::ScreenCrcFrame,
-            "{file}: expected screen-CRC PASS (blue) at frame {frames}, \
-             got crc=0x{:08X} passed={} exit={:?}",
-            result.screen_crc32,
-            result.passed,
-            result.exit_reason
-        );
-    }
-
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
     /// See #3049: shares the NMI suite's interrupt-dispatch-precision root
     /// cause (V-IRQ mode, VTIME=225, fires ~18 master clocks early).
     #[test]
     #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn irq_passes() {
-        run_rom_screen_crc("irq.smc", 1200, 0xDEAD_FA89);
+        let path = Path::new(ROOT).join("irq.smc");
+        assert_rom_screen_crc(&path, "irq.smc", "kungfufurby_irq_tests", 1200, 0xDEAD_FA89);
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
@@ -79,7 +49,14 @@ mod tests {
     #[test]
     #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn test_irq_passes() {
-        run_rom_screen_crc("test_irq.smc", 600, 0x0B56_4EEF);
+        let path = Path::new(ROOT).join("test_irq.smc");
+        assert_rom_screen_crc(
+            &path,
+            "test_irq.smc",
+            "kungfufurby_irq_tests",
+            600,
+            0x0B56_4EEF,
+        );
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
@@ -87,7 +64,14 @@ mod tests {
     #[test]
     #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn test_irq4200_passes() {
-        run_rom_screen_crc("test_irq4200.smc", 600, 0x0B56_4EEF);
+        let path = Path::new(ROOT).join("test_irq4200.smc");
+        assert_rom_screen_crc(
+            &path,
+            "test_irq4200.smc",
+            "kungfufurby_irq_tests",
+            600,
+            0x0B56_4EEF,
+        );
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
@@ -95,7 +79,14 @@ mod tests {
     #[test]
     #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn test_irq4209_passes() {
-        run_rom_screen_crc("test_irq4209.smc", 600, 0x0B56_4EEF);
+        let path = Path::new(ROOT).join("test_irq4209.smc");
+        assert_rom_screen_crc(
+            &path,
+            "test_irq4209.smc",
+            "kungfufurby_irq_tests",
+            600,
+            0x0B56_4EEF,
+        );
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
@@ -103,7 +94,14 @@ mod tests {
     #[test]
     #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn test_irqb_passes() {
-        run_rom_screen_crc("test_irqb.smc", 600, 0xDEAD_FA89);
+        let path = Path::new(ROOT).join("test_irqb.smc");
+        assert_rom_screen_crc(
+            &path,
+            "test_irqb.smc",
+            "kungfufurby_irq_tests",
+            600,
+            0xDEAD_FA89,
+        );
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
@@ -111,6 +109,13 @@ mod tests {
     #[test]
     #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn demo_irqtest_passes() {
-        run_rom_screen_crc("demo_irqtest.smc", 600, 0xDEAD_FA89);
+        let path = Path::new(ROOT).join("demo_irqtest.smc");
+        assert_rom_screen_crc(
+            &path,
+            "demo_irqtest.smc",
+            "kungfufurby_irq_tests",
+            600,
+            0xDEAD_FA89,
+        );
     }
 }

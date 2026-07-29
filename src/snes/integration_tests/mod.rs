@@ -26,6 +26,7 @@ mod peterlemon_spc_tests;
 mod processor_tests_65816;
 mod processor_tests_spc700;
 mod rom_runner;
+mod rom_screen_crc_helpers;
 mod sa1_absindx_tests;
 mod sa1_boot_tests;
 mod sa1_bwram_tests;
