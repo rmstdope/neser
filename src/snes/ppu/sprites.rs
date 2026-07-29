@@ -253,8 +253,9 @@ impl Ppu {
         }
         let sprite = self.obj_pipeline.items[self.obj_pipeline.fetch_remaining as usize - 1];
         let index = sprite as usize;
-        let (width, height) = self.obj_size(index);
-        let (width, height) = (width as i32, height as i32);
+        // Only the width matters here: V-flip mirrors within width-sized blocks, and the
+        // height merely bounds `within_y`, which `obj_in_range` already guaranteed.
+        let width = self.obj_size(index).0 as i32;
         let base_x = self.obj_base_x(index);
         let col_count = width / 8;
 
@@ -291,15 +292,34 @@ impl Ppu {
         let vflip = attr & 0x80 != 0;
         let base_tile = self.oam[index * 4 + 2] as u16 | (((attr & 0x01) as u16) << 8);
         let y = self.oam[index * 4 + 1] as u16;
+        // The line-within-sprite is taken in 8-bit space, so a sprite near Y=255 wraps to
+        // the top of the screen (ares `object.cpp` and Snes9x mask identically). Keeping the
+        // mask also keeps `obj_tile_pixel`'s truncating `within_y / 8` valid, since it can
+        // then only be reached with a non-negative value.
         let mut within_y = (self.position.scanline.wrapping_sub(y) & 0xFF) as i32;
         // OBJ interlace: each field shows alternate source lines of the half-height sprite --
         // double the line-within-sprite and OR in the field, then V-flip mirrors the doubled
-        // coordinate against the full height (Mesen2 `FetchSpriteAttributes`, ares equivalent).
+        // coordinate within its width block (Mesen2 `FetchSpriteAttributes`, ares equivalent).
+        // Interlace combined with a RECTANGULAR size is not hardware-verified (deferred to
+        // #3000); the mirror below is well-defined there and stays in range regardless.
         if self.obj_interlace_enabled() {
             within_y = (within_y << 1) | self.interlace_field as i32;
         }
         if vflip {
-            within_y = height - 1 - within_y;
+            // Rectangular OBJs (the OBSEL 6/7 sizes 16x32 and 32x64) flip as two stacked
+            // squares -- each width-sized block mirrors in place and the blocks do NOT swap:
+            // "rows 01234567 flip to 32107654, not 76543210" (SNESdev wiki OAM page). Every
+            // OBJ width is a power of two and `within_y < height <= 2 * width`, so that is a
+            // plain XOR, identical to `height - 1 - within_y` for the six square sizes
+            // (Snes9x `line ^ (OBJWidths[S] - 1)`, ares accurate/performance and higan
+            // `object.cpp`). NESER mirrored against the height, which was wrong for the
+            // rectangular sizes and produced the wrong rows once Y wrapped (#3003).
+            //
+            // Deliberate Mesen2 divergence: Mesen2 computes the row as an unmasked SIGNED
+            // difference, so for a wrapped sprite its branch -- the one its own comment
+            // labels "Square sprites" -- is taken for a rectangular one, selecting tile rows
+            // 15/14 where the four implementations above select 3/2. NESER follows them.
+            within_y ^= width - 1;
         }
 
         // Under forced blank the slot is consumed but VRAM is not read: nothing is drawn.
@@ -362,6 +382,13 @@ impl Ppu {
     /// non-carrying large-tile composition (right wraps the low nibble, down wraps the high nibble)
     /// and the OBSEL name base/gap addressing.
     fn obj_tile_pixel(&self, base_tile: u16, within_x: i32, within_y: i32) -> u8 {
+        // Both coordinates are non-negative by construction (the 8-bit row mask and the
+        // H-flip mirror keep them so), which is what makes the truncating `/ 8` below agree
+        // with the flooring `& 7`.
+        debug_assert!(
+            within_x >= 0 && within_y >= 0,
+            "OBJ tile coords must be non-negative, got ({within_x}, {within_y})"
+        );
         let tile_col = (within_x / 8) as u16;
         let tile_row = (within_y / 8) as u16;
         let page = base_tile & 0x100;
@@ -760,6 +787,32 @@ mod tests {
     /// Resolved OBJ pixel color at `(x, line)` from the presented pipeline line, if opaque.
     fn obj_color_at(ppu: &Ppu, x: u16, line: u16) -> Option<u16> {
         ppu.obj_pixel_at(x, line).map(|p| p.color)
+    }
+
+    /// Label every source line of a `tile_rows`-tall OBJ at base tile 0 so a test can
+    /// identify which one landed on a given screen row.
+    ///
+    /// Source line `s` lights exactly one pixel, at x offset `s & 7` of its tile row's
+    /// LEFT tile, using color index `(s / 8) + 1` -- a diagonal per tile. CGRAM maps that
+    /// index to `0x1000 | tile_row`, so a read-back of (color, x offset) recovers
+    /// `s = tile_row * 8 + x_offset`.
+    fn mark_obj_source_lines(ppu: &mut Ppu, tile_rows: u16) {
+        for row in 0..tile_rows {
+            let color = (row + 1) as u8;
+            for fine in 0..8usize {
+                // Tile `row * 0x10` (hi nibble = tile row) lives at word address row * 0x100.
+                set_obj_tile_pixel(ppu, row * 0x100, fine, fine, color);
+            }
+            set_cgram(ppu, 128 + color, 0x1000 | row);
+        }
+    }
+
+    /// The OBJ source line presented on framebuffer `row`, read back from the marker set up
+    /// by [`mark_obj_source_lines`]. `x_base` is the sprite's left edge.
+    fn marked_source_line(ppu: &mut Ppu, x_base: u16, row: u16) -> Option<u16> {
+        present_line(ppu, row);
+        (0..8)
+            .find_map(|dx| obj_color_at(ppu, x_base + dx, row).map(|color| (color & 0x0F) * 8 + dx))
     }
 
     #[test]
@@ -1555,5 +1608,102 @@ mod tests {
         );
         tick_dots(&mut ppu, 1); // dot 66
         assert_eq!(stat77(&mut ppu) & 0x40, 0x40, "range over set at dot 66");
+    }
+
+    // -- OBJ vertical flip: width-block mirroring (#3003) ---------------------
+
+    #[test]
+    fn rectangular_object_vflip_mirrors_within_each_square_half() {
+        // Rectangular OBJs (the OBSEL 6/7 sizes) flip as two stacked squares, NOT against
+        // the full height: "rows 01234567 flip to 32107654, not 76543210" (SNESdev wiki
+        // OAM page; Snes9x `line ^ (OBJWidths[S] - 1)`; ares/higan `object.cpp`).
+        // For a 16x32 sprite each 16-row half mirrors inside itself and the halves keep
+        // their positions.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0xC0); // OBSEL size select 6: small 16x32
+        park_offscreen_32(&mut ppu); // parked at Y=224: 224..255, never wraps
+        mark_obj_source_lines(&mut ppu, 4);
+        set_obj(&mut ppu, 0, 50, 100, 0, 0x80, false); // V-flip, fully visible
+
+        let expected: [u16; 32] = [
+            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+            0, // top half, mirrored in place
+            31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, // bottom half
+        ];
+        for (offset, want) in expected.iter().enumerate() {
+            let row = 100 + offset as u16;
+            assert_eq!(
+                marked_source_line(&mut ppu, 50, row),
+                Some(*want),
+                "screen row {row} must show source line {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn rectangular_object_vflip_mirrors_within_the_half_when_y_wraps() {
+        // Regression test for #3003. A 16x32 V-flipped sprite at Y=240 puts its lower
+        // 16-row square half on screen lines 0-15, and that half mirrors within itself:
+        // line 0 shows source line 31, line 15 shows source line 16. NESER used to mirror
+        // against the full height, yielding source lines 15..0 instead.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0xC0); // small 16x32
+        park_offscreen_32(&mut ppu);
+        mark_obj_source_lines(&mut ppu, 4);
+        set_obj(&mut ppu, 0, 50, 240, 0, 0x80, false); // V-flip, wraps past 255
+
+        for row in 0..16u16 {
+            let want = 31 - row;
+            assert_eq!(
+                marked_source_line(&mut ppu, 50, row),
+                Some(want),
+                "wrapped V-flipped row {row} must show source line {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn square_object_vflip_still_mirrors_the_full_height_when_y_wraps() {
+        // Equivalence guard: for the six square sizes the width-block mirror is identical
+        // to the old full-height mirror, so this must pass both before and after #3003.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // small 8x8
+        park_all_offscreen(&mut ppu); // parked at Y=240: 240..247, never wraps
+        mark_obj_source_lines(&mut ppu, 1);
+        set_obj(&mut ppu, 0, 50, 252, 0, 0x80, false); // V-flip, wraps: rows 252..255, 0..3
+
+        for row in 0..4u16 {
+            let within = row + 4; // (row - 252) & 0xFF
+            let want = 7 - within;
+            assert_eq!(
+                marked_source_line(&mut ppu, 50, row),
+                Some(want),
+                "wrapped square V-flipped row {row} must show source line {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn large_rectangular_object_vflip_mirrors_within_each_32_row_half() {
+        // The 32x64 large size of OBSEL 6 exercises the second bit of the width mask:
+        // each 32-row half mirrors in place.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0xC0); // OBSEL 6: large 32x64
+        // Park at Y=224: the filler sprites take the SMALL size here (16x32), so they cover
+        // 224..255 without wrapping, and they must not share a row with the test sprite
+        // (100..163) -- the fetch window walks items in reverse, so a filler overlapping the
+        // test sprite starves OBJ 0's slivers via time-over and reads back as `None`.
+        park_offscreen_32(&mut ppu);
+        mark_obj_source_lines(&mut ppu, 8);
+        set_obj(&mut ppu, 0, 50, 100, 0, 0x80, true); // large, V-flip, fully visible
+
+        for (offset, want) in [(0u16, 31u16), (31, 0), (32, 63), (63, 32)] {
+            let row = 100 + offset;
+            assert_eq!(
+                marked_source_line(&mut ppu, 50, row),
+                Some(want),
+                "32x64 V-flipped row {row} must show source line {want}"
+            );
+        }
     }
 }
