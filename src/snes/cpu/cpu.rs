@@ -635,6 +635,18 @@ impl<B: SnesBus> Cpu<B> {
         }
 
         // Sync hardware NMI edges from the bus (e.g. PPU VBlank NMI) into the pending latch.
+        // `nmi_dispatch_ready` snapshots whether NMI was already pending *before* this
+        // poll: a freshly polled edge resolves one CPU cycle later than the edge itself
+        // on real hardware (Mesen2 `SnesCpu::DetectNmiSignalEdge`/`NmiFlagCounter` -- the
+        // edge detector samples once per CPU cycle, so `NeedNmi` only becomes true on the
+        // cycle *after* the one during which the line rose), so dispatch must wait one
+        // more `step()` call -- proven via a bus-trace diff against Mesen2 on the
+        // KungFuFurby nmi.smc ROM (#2883): at the exact clock both emulators read $4210
+        // inside a polling loop, NESER dispatched immediately while Mesen2 executed one
+        // more loop instruction first. WAI wake (below) is unaffected -- it still wakes
+        // on the freshly latched `nmi_pending`, matching the already-Mesen2-verified
+        // #2914 two-idle-cycle wake timing.
+        let mut nmi_dispatch_ready = self.nmi_pending;
         if self.bus.poll_nmi() {
             self.nmi_pending = true;
         }
@@ -652,11 +664,16 @@ impl<B: SnesBus> Cpu<B> {
                 // detecting idle completes, and one more idle runs before the
                 // core leaves the halted state (Mesen ProcessHaltedState
                 // samples `_waiOver` before each Idle). Verified against
-                // Mesen with the #2914 boot bus trace.
+                // Mesen with the #2914 boot bus trace. This wake-then-dispatch
+                // sequence is a distinct, already-verified mechanic from the
+                // freshly-polled-edge delay above -- a NMI that just woke WAI
+                // dispatches in this same call, so re-sync the dispatch-ready
+                // snapshot to the live (post-poll) pending state.
                 self.waiting = false;
                 self.tick_internal_cycle();
                 self.tick_internal_cycle();
                 wai_wake_cycles = 2;
+                nmi_dispatch_ready = self.nmi_pending;
             } else {
                 self.tick_internal_cycle();
                 return 1;
@@ -671,7 +688,7 @@ impl<B: SnesBus> Cpu<B> {
                 .tick_internal_cycles_for(base)
                 .saturating_add(wai_wake_cycles);
         }
-        if !interrupts_locked && self.nmi_pending {
+        if !interrupts_locked && nmi_dispatch_ready {
             self.nmi_pending = false;
             let base = self.dispatch_nmi();
             return self
@@ -10597,18 +10614,37 @@ mod interrupt_dispatch_tests {
     }
 
     #[test]
-    fn step_polls_the_bus_nmi_edge_and_dispatches_nmi() {
+    fn step_polls_the_bus_nmi_edge_and_dispatches_nmi_on_the_next_step() {
+        // A bus-polled edge that becomes visible during the *current*
+        // instruction's own bus ticks resolves one CPU cycle later than the
+        // edge itself on real hardware (Mesen2 `SnesCpu::DetectNmiSignalEdge`
+        // / `NmiFlagCounter`: the edge detector samples once per CPU cycle,
+        // so `NeedNmi` only becomes true on the cycle *after* the one during
+        // which the line rose). Proven against Mesen2 via a bus-trace diff
+        // on the KungFuFurby nmi.smc ROM (#2883): at the exact clock where
+        // both emulators read $4210 inside a polling loop, NESER dispatched
+        // NMI immediately while Mesen2 executed one more loop instruction
+        // first. So a *freshly* polled edge must not dispatch on the same
+        // `step()` call that discovers it -- only once it was already
+        // pending going into a call.
         let mut cpu = Cpu::new(PollNmiBus::new()); // emulation mode
         cpu.pc = 0x8000;
         cpu.s = 0x01FF;
+        cpu.bus.load(0x008000, &[0xEA]); // NOP at $8000
         cpu.bus.load(0x00FFFA, &[0x00, 0x90]); // NMI emulation vector -> $9000
         cpu.bus.nmi_once = true;
 
-        cpu.step();
+        let cycles = cpu.step();
+        assert_eq!(
+            cpu.pc, 0x8001,
+            "a freshly polled edge must not interrupt the in-flight instruction"
+        );
+        assert_eq!(cycles, 2, "the NOP's normal cycle cost, not NMI dispatch");
 
+        cpu.step();
         assert_eq!(
             cpu.pc, 0x9000,
-            "step() polled the bus NMI edge and dispatched NMI"
+            "the edge, now pending from the previous step(), dispatches NMI"
         );
     }
 

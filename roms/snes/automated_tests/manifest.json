@@ -519,6 +519,48 @@
           "notes": "No on-disk assets; fixture programs are emitted at test run time by input_mouse_tests.rs via the shared fixture_rom builder."
         }
       ]
+    },
+    {
+      "id": "snes-tests-kungfufurby-nmi-irq",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://forums.nesdev.com/viewtopic.php?p=237153#p237153",
+        "ref": "kungfufurby-2016-collection"
+      },
+      "license": "unknown",
+      "oracle_type": "screen_crc",
+      "notes": "KungFuFurby's 2005-2008 NMI/H-V-IRQ test ROM collection (issue #2883, epic #2724), posted on the nesdev forum in 2016 (informal find, no LICENSE file, recorded as unknown). Blue backdrop = PASS, red/maroon = FAIL. Both suites self-check by capturing the opcode byte at the interrupted PC via a stack-relative-indirect-indexed LDA off the auto-pushed interrupt frame and comparing it against the expected in-flight opcode. demo_nmitest.smc matches Mesen2 exactly and carries an approved golden (snes::integration_tests::kungfufurby_nmi_tests). nmi.smc, test_nmi.smc (NMI) and irq.smc, test_irq.smc, test_irq4200.smc, test_irq4209.smc, test_irqb.smc, demo_irqtest.smc (H/V-IRQ) all currently fail: NESER's interrupt dispatch resolves a few master clocks early relative to Mesen2 (an interrupt-pending-check granularity gap below current per-instruction dispatch resolution, not a mis-implemented register), tracked as #3049 and partially improved by a one-instruction NMI dispatch delay fix landed with this issue. All 7 are #[ignore]d with their current (still-diverging) CRC recorded for regression tracking, pending #3049; kungfufurby_irq_tests.rs and the shared per-frame drift investigation (see #3049) confirmed IRQ shares NMI's root cause rather than being a separate bug. test_irq.smc and test_irq4200.smc are byte-identical to the tukuyomi-bsnes-tests mirror copies of the same names; nmi.smc is byte-identical to jonasquinn-test-roms' nmi_irq/nmi.smc. tukuyomi's test_nmi.smc/demo_nmitest.smc/demo_irqtest.smc and jonasquinn's nmi_irq/demo_nmi.smc, demo_irq.smc and nmi_pf/test_nmi.smc are different revisions despite matching or similar names (sha256-verified) and remain documented-only candidates, not separately automated. snes_test_tsc.smc, test_hdma.smc, test_hdmasync.smc and test_hdmatiming.smc from the same collection are HDMA-focused and out of scope for #2883.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-ROMs",
+          "refresh_command": null,
+          "notes": "All ROMs in the collection are vendored; demo_nmitest.smc has a visually-approved screen-CRC golden. nmi.smc, test_nmi.smc, irq.smc, test_irq.smc, test_irq4200.smc, test_irq4209.smc, test_irqb.smc and demo_irqtest.smc are committed with current (fail-state) CRCs tracked by snes::integration_tests::kungfufurby_nmi_tests / kungfufurby_irq_tests, #[ignore]d pending #3049."
+        }
+      ]
+    },
+    {
+      "id": "snes-tests-sour-dma-irq",
+      "suite": "rom_pass_fail",
+      "platform": "snes",
+      "source": {
+        "url": "https://github.com/SourMesen/SnesTests",
+        "ref": "master (git subtree under Sour/SnesTests; expected-results table recorded at upstream revision 71c50e3)"
+      },
+      "license": "unknown",
+      "oracle_type": "screen_crc",
+      "notes": "Sour/SnesTests' dma_irq_test.sfc (issue #2883, epic #2724): validates how many instructions run after a manual DMA ($420B write) before a pending IRQ or NMI dispatches, across 19 sub-cases rendered as text. Rebuilt byte-identical from source (ca65 -g + ld65 --dbgfile, sha256-verified against the vendored .sfc) to recover the WRAM result-table address from the debug symbol table. The upstream README's expected-results table has a transcription error (lists $FFFF for the two SEI+INC no-interrupt sub-cases; the real, Mesen2-confirmed sentinel is $00FF, since the captured byte is a single-byte WRAM location written via an 8-bit STA) -- the golden CRC reflects the Mesen2-verified screen, not the README table. NESER currently diverges on 8/19 sub-cases, each off by exactly one fewer dispatched instruction than Mesen2 -- the same interrupt-dispatch-precision signature already tracked in #3049 (see snes-tests-kungfufurby-nmi-irq), not a new bug. #[ignore]d with the current CRC recorded, pending #3049. op_timing_test (65816 opcode cycle-count validation, a CPU-timing concern rather than IRQ/NMI/DMA) and timing_test (upstream README: 'WIP... attempts to validate rough timings', no stable oracle) are vendored in the same source tree but out of scope for #2883 and remain documented-only candidates for future work.",
+      "variants": [
+        {
+          "id": "ci_subset",
+          "status": "committed_ci",
+          "path": "roms/snes/automated_tests/snes_test_roms/Sour",
+          "refresh_command": "roms/snes/automated_tests/snes_test_roms/Sour/update-sources",
+          "notes": "dma_irq_test.sfc (+ source and build config) plus the full SnesTests source subtree (including op_timing_test and timing_test, not automated). dma_irq_test.sfc has a current (fail-state) CRC tracked by snes::integration_tests::sour_dma_irq_tests, #[ignore]d pending #3049."
+        }
+      ]
     }
   ]
 }
