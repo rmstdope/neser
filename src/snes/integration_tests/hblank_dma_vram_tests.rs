@@ -23,8 +23,8 @@
 //! this ROM's VMDATA channels mistook a leftover data byte for the table
 //! terminator right after their first line and never performed the ROM's
 //! mid-frame VRAM update). After the fix, NESER's frame-600 capture matches a
-//! Mesen2 capture of the same ROM file to within 0.66% (1.16% since #3020's
-//! serialized HDMA write clocks, see #3042; best row alignment 0) -- and the
+//! Mesen2 capture of the same ROM file to within 0.007% (4 px since #3021's
+//! hardware HDMA envelope; best row alignment 0) -- and the
 //! bundled real-hardware reference photo
 //! (`93143-hblank-dma-vram/expected-output.jpg`) confirms this two-region
 //! tile pattern is expected, reliable real-hardware behavior (not a
@@ -129,13 +129,17 @@ mod tests {
     // and every other row is byte-identical to the previous golden.
     // Re-approved after #2985 (GPDMA now pays the DRAM-refresh stall): the
     // frame-600 diff vs a fresh Mesen2 capture collapsed from 1.16% to 0.03%
-    // (20 px) -- the unpaid stall was the dominant divergence. The residual is
-    // the per-byte write-clock CPU-alignment jitter tracked in #3042.
+    // (20 px) -- the unpaid stall was the dominant divergence.
+    // Re-approved again for #3021 (hardware HDMA start/end envelope: arming at
+    // the trigger, SyncStartDma/SyncEndDma pads, per-slot B-bus writes at
+    // their true bus clocks instead of the #3020 deadline queue). That took
+    // the same diff from 20 px down to 4 px on a single row (row 107) --
+    // essentially all of the per-byte write-clock jitter that #3042 tracks.
     hblank_dma_vram_rom_test!(
         hvdma_matches_mesen2_and_hardware,
         "hvdma.sfc",
         600,
-        0x8DAD_BEF4
+        0xA207_1FF8
     );
 
     // Confirmed hardware-accurate: NESER's frame-600 capture is a

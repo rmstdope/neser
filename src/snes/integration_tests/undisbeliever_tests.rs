@@ -202,22 +202,33 @@ mod tests {
     // (via H-IRQ at dots 220-232) to enable HDMA channels. Channels activate on the
     // next scanline, producing horizontal striped patterns correctly.
     //
-    // Pixel-exact vs Mesen2 since #3020's HDMA write scheduling (which resolved the
-    // previously-documented #2967 rightmost-column delta for this vector).
+    // Re-approved for #3021 (hardware HDMA start/end envelope). NO LONGER
+    // pixel-exact: 5 isolated scanlines (rows 18/70/122/148/200, 1280 px)
+    // differ from a fresh Mesen2 capture. Cause, from a clock-stamped
+    // register trace of both emulators: this ROM re-enables HDMAEN a few
+    // clocks either side of the dot-276 HDMA trigger, and NESER's CPU reaches
+    // that store 2-8 master clocks earlier than Mesen2's. On the affected
+    // lines NESER's write lands 2 clocks BEFORE its trigger (so the line is
+    // armed) while Mesen2's lands at/after its own trigger (so it is not).
+    // Both emulators apply the same hardware rule -- arm only if HDMAEN is
+    // non-zero at the trigger clock -- so the residual is CPU-side clock
+    // skew, tracked separately as #3050.
     undisbeliever_rom_test!(
         hdmaen_latch_test_matches_mesen2,
         "hdmaen_latch_test.sfc",
-        0x22C3_0946
+        0xC810_A54A
     );
 
-    // Same test as above with different timing. NOT pixel-exact: 6 whole scanlines
-    // phase-flip vs Mesen2 (frame-to-frame timing drift class, #2971; write-clock
-    // jitter follow-up #3042). Cross-checked NESER-current golden, re-approved
-    // after #3020 (previously "one extra flickering line").
+    // Same test as above with different timing. Now a byte-for-byte (0 px)
+    // match for a fresh Mesen2 capture, re-approved for #3021's HDMA
+    // envelope: the 6 phase-flipped scanlines documented here since #3020 --
+    // and the "one extra flickering line" before that -- were the flat
+    // 18-clock HDMA cost model mis-timing this ROM's mid-scanline HDMAEN
+    // races. A genuine hardware-accuracy claim now, not a stability snapshot.
     undisbeliever_rom_test!(
         hdmaen_latch_test_2_matches_mesen2,
         "hdmaen_latch_test_2.sfc",
-        0x67B7_6FBE
+        0x7EDB_74D1
     );
 
     // Tests HDMA-driven INIDISP changes. Same known minor visual differences.

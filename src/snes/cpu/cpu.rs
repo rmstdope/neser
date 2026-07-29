@@ -1016,6 +1016,7 @@ impl<B: SnesBus> Cpu<B> {
     /// that race asynchronous hardware: APU port polls at $2140-$2143 (#2914)
     /// and the $2137 H/V counter latch both observe the sampling instant.
     fn tick_read(&mut self, addr: u32) -> u8 {
+        self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      read  ${:06X}", addr);
         for _ in 0..cycles - 4 {
@@ -1032,6 +1033,7 @@ impl<B: SnesBus> Cpu<B> {
     /// Advance the master clock N cycles for `addr`, then write one byte.
     /// Also intercepts MEMSEL ($420D) writes to update the fast_rom flag.
     fn tick_write(&mut self, addr: u32, value: u8) {
+        self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      write ${:06X} = ${:02X}", addr, value);
         for _ in 0..cycles {
@@ -3593,6 +3595,7 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn tick_internal_cycle(&mut self) {
+        self.bus.gpdma_cycle_hook();
         trace_cpu!(2; "      internal");
         for _ in 0..6u8 {
             self.bus.tick();

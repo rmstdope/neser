@@ -1,5 +1,4 @@
 use crate::snes::console::save_state::SnesDmaState;
-use std::collections::VecDeque;
 
 const DMA_REG_BYTES: usize = 0x80;
 const B_BUS_PORT_BYTES: usize = 0x100;
@@ -24,23 +23,6 @@ pub struct DmaController {
     hdma_do_transfer: [bool; 8],
     hdma_repeat_mode: [bool; 8],
     hdma_lines_left: [u16; 8],
-    /// HDMA A->B writes scheduled but not yet applied to the real B-bus. On
-    /// hardware the per-scanline transfer's bytes land serially after start/sync
-    /// overhead, so the last visible pixel (x = 255, rendered 4 clocks after the
-    /// dot-276 trigger) never sees them; deadlines are absolute master clocks
-    /// (the burst can cross the scanline wrap). Pushed in increasing deadline
-    /// order.
-    pending_b_bus_writes: VecDeque<PendingBBusWrite>,
-}
-
-/// One deferred HDMA B-bus write: applied by the bus when the PPU's cumulative
-/// master clock reaches `deadline` (a dot rendered at clock N sees only writes
-/// with deadline < N, matching Mesen2's render-before-write flush).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PendingBBusWrite {
-    pub deadline: u64,
-    pub b_addr: u8,
-    pub value: u8,
 }
 
 impl DmaController {
@@ -52,24 +34,6 @@ impl DmaController {
             hdma_do_transfer: [false; 8],
             hdma_repeat_mode: [false; 8],
             hdma_lines_left: [0; 8],
-            pending_b_bus_writes: VecDeque::new(),
-        }
-    }
-
-    /// Whether any scheduled HDMA B-bus write has not yet been applied.
-    pub(crate) fn has_pending_b_bus_writes(&self) -> bool {
-        !self.pending_b_bus_writes.is_empty()
-    }
-
-    /// Pop the front scheduled write if its deadline has been reached (pushes are
-    /// in increasing deadline order, so checking the front suffices).
-    pub(crate) fn pop_due_b_bus_write(&mut self, now: u64) -> Option<(u8, u8)> {
-        match self.pending_b_bus_writes.front() {
-            Some(write) if write.deadline <= now => {
-                let write = self.pending_b_bus_writes.pop_front().unwrap();
-                Some((write.b_addr, write.value))
-            }
-            _ => None,
         }
     }
 
@@ -96,11 +60,6 @@ impl DmaController {
             hdma_do_transfer: self.hdma_do_transfer.to_vec(),
             hdma_repeat_mode: self.hdma_repeat_mode.to_vec(),
             hdma_lines_left: self.hdma_lines_left.to_vec(),
-            pending_b_bus_writes: self
-                .pending_b_bus_writes
-                .iter()
-                .map(|w| (w.deadline, w.b_addr, w.value))
-                .collect(),
         }
     }
 
@@ -132,15 +91,6 @@ impl DmaController {
         self.hdma_repeat_mode
             .copy_from_slice(&state.hdma_repeat_mode);
         self.hdma_lines_left.copy_from_slice(&state.hdma_lines_left);
-        self.pending_b_bus_writes = state
-            .pending_b_bus_writes
-            .iter()
-            .map(|&(deadline, b_addr, value)| PendingBBusWrite {
-                deadline,
-                b_addr,
-                value,
-            })
-            .collect();
         Ok(())
     }
 
@@ -149,13 +99,22 @@ impl DmaController {
         mdmaen: u8,
         abus: &mut B,
         seed_open_bus: u8,
+        base_clock: u64,
     ) -> (u64, u8) {
         if mdmaen == 0 {
             return (0, seed_open_bus);
         }
 
-        let mut ticks = 16u64;
-        abus.dma_tick(16);
+        // Hardware start envelope (Mesen2 SyncStartDma): the caller invokes this
+        // one full CPU cycle after the $420B write (the start-delay cycle runs
+        // normally); the transfer then pauses 1-8 clocks to reach a whole
+        // multiple of 8 master clocks since reset, then 8 clocks of setup
+        // overhead.
+        let pad_start = 8 - (base_clock & 7);
+        abus.dma_tick(pad_start);
+        let mut counter = pad_start;
+        counter += 8;
+        abus.dma_tick(8);
         let mut open_bus = seed_open_bus;
 
         for channel in 0u8..8 {
@@ -163,12 +122,20 @@ impl DmaController {
                 continue;
             }
 
-            ticks += 8;
+            counter += 8;
             abus.dma_tick(8);
-            ticks += self.run_channel(channel, abus, &mut open_bus);
+            counter += self.run_channel(channel, abus, &mut open_bus);
         }
 
-        (ticks, open_bus)
+        // SyncEndDma: pause 1-8 clocks so the charged transfer length is a whole
+        // number of CPU cycles (the last speed-setting access is the SlowROM
+        // A-bus read, 8 clocks; empirically fitted against Mesen2 across five
+        // transfers -- see #3021).
+        let pad_end = 8 - (counter % 8);
+        abus.dma_tick(pad_end);
+        counter += pad_end;
+
+        (counter, open_bus)
     }
 
     pub fn hdma_init<B: DmaABus>(
@@ -176,6 +143,7 @@ impl DmaController {
         hdmaen: u8,
         abus: &mut B,
         seed_open_bus: u8,
+        base_clock: u64,
     ) -> (u64, u8) {
         // Initialize active_mask to 0xFF (all channels potentially active).
         // Channels will be cleared from active_mask when they terminate (descriptor=$00).
@@ -190,7 +158,12 @@ impl DmaController {
             return (0, seed_open_bus);
         }
 
-        let mut ticks = 18u64;
+        // Hardware envelope (Mesen2 InitHdmaChannels): SyncStartDma pad + 8
+        // clocks of setup overhead; SyncEndDma pad at the end.
+        let pad_start = 8 - (base_clock & 7);
+        abus.dma_tick(pad_start);
+        let mut ticks = pad_start + 8;
+        abus.dma_tick(8);
         let mut open_bus = seed_open_bus;
 
         for channel in 0u8..8 {
@@ -200,35 +173,59 @@ impl DmaController {
 
             let dmap = self.get_reg(channel, 0x0);
             let indirect = (dmap & 0x40) != 0;
-            ticks += 8;
 
             let a1t_low = self.get_reg(channel, 0x2);
             let a1t_high = self.get_reg(channel, 0x3);
             self.set_reg(channel, 0x8, a1t_low);
             self.set_reg(channel, 0x9, a1t_high);
 
-            let descriptor = self.read_hdma_table_byte(channel, abus, &mut open_bus);
+            // Line-counter load: one 8-clock slot per enabled channel.
+            abus.dma_tick(4);
+            let descriptor = self.read_hdma_table_byte_raw(channel, abus, &mut open_bus);
+            abus.dma_tick(4);
+            ticks += 8;
             self.set_reg(channel, 0xA, descriptor);
-            if descriptor == 0 {
+            let finished = descriptor == 0;
+            if finished {
                 // Terminator: clear this channel's bit so it's not treated as active
                 self.hdma_active_mask &= !(1 << channel);
-                continue;
+            } else {
+                let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
+                self.hdma_repeat_mode[channel as usize] = repeat_mode;
+                self.hdma_lines_left[channel as usize] = lines_left;
             }
-            let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
-            self.hdma_repeat_mode[channel as usize] = repeat_mode;
-            self.hdma_lines_left[channel as usize] = lines_left;
 
             if indirect {
-                ticks += 16;
-                let indirect_low = self.read_hdma_table_byte(channel, abus, &mut open_bus);
-                let indirect_high = self.read_hdma_table_byte(channel, abus, &mut open_bus);
-                self.set_reg(channel, 0x5, indirect_low);
-                self.set_reg(channel, 0x6, indirect_high);
+                // A terminated channel still pays for (and performs) the LSB
+                // read, which lands in the pointer's HIGH byte with a zero low
+                // byte (Mesen2 InitHdmaChannels' one-byte case).
+                abus.dma_tick(4);
+                let indirect_low = self.read_hdma_table_byte_raw(channel, abus, &mut open_bus);
+                abus.dma_tick(4);
+                ticks += 8;
+                if finished {
+                    self.set_reg(channel, 0x5, 0x00);
+                    self.set_reg(channel, 0x6, indirect_low);
+                } else {
+                    abus.dma_tick(4);
+                    let indirect_high = self.read_hdma_table_byte_raw(channel, abus, &mut open_bus);
+                    abus.dma_tick(4);
+                    ticks += 8;
+                    self.set_reg(channel, 0x5, indirect_low);
+                    self.set_reg(channel, 0x6, indirect_high);
+                }
             }
 
-            // active_mask already 0xFF; do_transfer enables this channel
-            self.hdma_do_transfer[channel as usize] = true;
+            if !finished {
+                // active_mask already 0xFF; do_transfer enables this channel
+                self.hdma_do_transfer[channel as usize] = true;
+            }
         }
+
+        // SyncEndDma: round the charged total up to a whole 8-clock CPU cycle.
+        let pad_end = 8 - (ticks % 8);
+        abus.dma_tick(pad_end);
+        ticks += pad_end;
 
         (ticks, open_bus)
     }
@@ -246,34 +243,36 @@ impl DmaController {
             return (0, seed_open_bus);
         }
 
-        let mut ticks = 18u64;
+        // Hardware envelope (Mesen2 ProcessHdmaChannels): SyncStartDma pads
+        // 1-8 clocks to a multiple of 8 master clocks since reset, then 8
+        // clocks of setup overhead.
+        let pad_start = 8 - (base_clock & 7);
+        abus.dma_tick(pad_start);
+        let mut counter = pad_start + 8;
+        abus.dma_tick(8);
         let mut open_bus = seed_open_bus;
 
+        // Phase A: run every active channel's transfer for this line first.
         for channel in 0u8..8 {
-            // Check HDMAEN (like Mesen2), not active_mask
-            if (hdmaen & (1 << channel)) == 0 {
+            if (hdmaen & (1 << channel)) == 0 || (self.hdma_active_mask & (1 << channel)) == 0 {
                 continue;
             }
-
-            // Skip if channel has terminated (active_mask tracks this)
-            if (self.hdma_active_mask & (1 << channel)) == 0 {
-                continue;
-            }
-
-            ticks += 8;
             if self.hdma_do_transfer[channel as usize] {
-                // B-bus writes are scheduled at deadlines derived from the same
-                // running tick total the transfer charges, so the write clocks
-                // mirror the modeled bus occupancy (first byte at trigger + 34).
-                ticks +=
-                    self.run_hdma_transfer_unit(channel, abus, &mut open_bus, base_clock + ticks);
+                counter += self.run_hdma_transfer_unit(channel, abus, &mut open_bus);
             }
+        }
 
+        // Phase B: per-channel bookkeeping. The next table byte is read EVERY
+        // line (8 clocks, Mesen2 "Read the next byte from Address into $43xA");
+        // its value is only consumed when the line counter expires.
+        for channel in 0u8..8 {
+            if (hdmaen & (1 << channel)) == 0 || (self.hdma_active_mask & (1 << channel)) == 0 {
+                continue;
+            }
             let idx = channel as usize;
             // Use wrapping_sub to match hardware (0 - 1 = 0xFF, not 0)
             self.hdma_lines_left[idx] = self.hdma_lines_left[idx].wrapping_sub(1);
 
-            // Update line counter register
             let line_counter =
                 Self::encode_hdma_counter(self.hdma_repeat_mode[idx], self.hdma_lines_left[idx]);
             self.set_reg(channel, 0xA, line_counter);
@@ -282,17 +281,94 @@ impl DmaController {
             // not internal repeat_mode. This allows mid-scanline activation to work (#2943).
             self.hdma_do_transfer[idx] = (line_counter & 0x80) != 0;
 
+            // Speculative descriptor read (pointer NOT advanced unless consumed).
+            abus.dma_tick(4);
+            let descriptor = abus.dma_read_a_bus(self.hdma_table_address(channel), open_bus);
+            open_bus = descriptor;
+            abus.dma_tick(4);
+            counter += 8;
+
             if self.hdma_lines_left[idx] == 0 {
-                if !self.reload_hdma_entry(channel, abus, &mut open_bus, &mut ticks) {
+                // Consume the descriptor: advance the table pointer.
+                let next =
+                    u16::from_le_bytes([self.get_reg(channel, 0x8), self.get_reg(channel, 0x9)])
+                        .wrapping_add(1);
+                let [next_low, next_high] = next.to_le_bytes();
+                self.set_reg(channel, 0x8, next_low);
+                self.set_reg(channel, 0x9, next_high);
+                self.set_reg(channel, 0xA, descriptor);
+
+                let indirect = (self.get_reg(channel, 0x0) & 0x40) != 0;
+                if indirect {
+                    // Indirect pointer load happens BEFORE the termination
+                    // check; a $00 descriptor on the last active channel loads
+                    // only the high byte (Mesen2's one-byte oddity).
+                    if descriptor == 0 && self.is_last_active_hdma_channel(hdmaen, channel) {
+                        abus.dma_tick(4);
+                        let msb = self.read_hdma_table_byte_raw(channel, abus, &mut open_bus);
+                        abus.dma_tick(4);
+                        counter += 8;
+                        self.set_reg(channel, 0x5, 0x00);
+                        self.set_reg(channel, 0x6, msb);
+                    } else {
+                        abus.dma_tick(4);
+                        let lsb = self.read_hdma_table_byte_raw(channel, abus, &mut open_bus);
+                        abus.dma_tick(4);
+                        abus.dma_tick(4);
+                        let msb = self.read_hdma_table_byte_raw(channel, abus, &mut open_bus);
+                        abus.dma_tick(4);
+                        counter += 16;
+                        self.set_reg(channel, 0x5, lsb);
+                        self.set_reg(channel, 0x6, msb);
+                    }
+                }
+
+                if descriptor == 0 {
                     self.hdma_active_mask &= !(1 << channel);
                     self.hdma_do_transfer[idx] = false;
+                    self.hdma_repeat_mode[idx] = false;
+                    self.hdma_lines_left[idx] = 0;
                 } else {
+                    let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
+                    self.hdma_repeat_mode[idx] = repeat_mode;
+                    self.hdma_lines_left[idx] = lines_left;
                     self.hdma_do_transfer[idx] = true;
                 }
             }
         }
 
-        (ticks, open_bus)
+        // SyncEndDma: 1-8 pad clocks rounding the charged total to a whole
+        // 8-clock CPU cycle.
+        let pad_end = 8 - (counter % 8);
+        abus.dma_tick(pad_end);
+        counter += pad_end;
+
+        (counter, open_bus)
+    }
+
+    /// True when `channel` is the highest-numbered still-active enabled HDMA
+    /// channel this line (Mesen2 `IsLastActiveHdmaChannel`).
+    fn is_last_active_hdma_channel(&self, hdmaen: u8, channel: u8) -> bool {
+        ((channel + 1)..8)
+            .all(|c| (hdmaen & (1 << c)) == 0 || (self.hdma_active_mask & (1 << c)) == 0)
+    }
+
+    /// Read one HDMA table byte and advance the channel's table pointer,
+    /// WITHOUT charging clocks (the caller places the 4/4 slot ticks).
+    fn read_hdma_table_byte_raw<B: DmaABus>(
+        &mut self,
+        channel: u8,
+        abus: &mut B,
+        open_bus: &mut u8,
+    ) -> u8 {
+        let value = abus.dma_read_a_bus(self.hdma_table_address(channel), *open_bus);
+        *open_bus = value;
+        let next = u16::from_le_bytes([self.get_reg(channel, 0x8), self.get_reg(channel, 0x9)])
+            .wrapping_add(1);
+        let [next_low, next_high] = next.to_le_bytes();
+        self.set_reg(channel, 0x8, next_low);
+        self.set_reg(channel, 0x9, next_high);
+        value
     }
 
     fn run_channel<B: DmaABus>(&mut self, channel: u8, abus: &mut B, open_bus: &mut u8) -> u64 {
@@ -317,21 +393,23 @@ impl DmaController {
             let a_addr = ((bank as u32) << 16) | ((a_high as u32) << 8) | (a_low as u32);
             let b_addr = bbad.wrapping_add(pattern[i % pattern.len()]);
 
-            // Each byte occupies an 8-master-clock bus slot: the read fills the first
-            // half, the write lands at the slot's midpoint (Mesen2 `CopyDmaByte`, where
-            // ReadDma/WriteDma each advance 4 clocks).
+            // Each byte occupies an 8-master-clock bus slot: the read fills the
+            // first 4 clocks, and the destination write lands at the END of the
+            // slot (Mesen2 `CopyDmaByte`: ReadDma advances 4, then WriteDma
+            // advances 4 more BEFORE calling the register handler).
             abus.dma_tick(4);
             if direction_b_to_a {
                 let value = self.read_b_bus(b_addr);
                 *open_bus = value;
+                abus.dma_tick(4);
                 abus.dma_write_a_bus(a_addr, value);
             } else {
                 let value = abus.dma_read_a_bus(a_addr, *open_bus);
                 *open_bus = value;
                 self.write_b_bus(b_addr, value);
+                abus.dma_tick(4);
                 abus.dma_write_b_bus(b_addr, value);
             }
-            abus.dma_tick(4);
 
             ticks += 8;
             count = count.wrapping_sub(1);
@@ -450,30 +528,11 @@ impl DmaController {
         ((bank as u32) << 16) | u16::from_le_bytes([low, high]) as u32
     }
 
-    fn read_hdma_table_byte<B: DmaABus>(
-        &mut self,
-        channel: u8,
-        abus: &mut B,
-        open_bus: &mut u8,
-    ) -> u8 {
-        let table_addr = self.hdma_table_address(channel);
-        let value = abus.dma_read_a_bus(table_addr, *open_bus);
-        *open_bus = value;
-
-        let next = u16::from_le_bytes([self.get_reg(channel, 0x8), self.get_reg(channel, 0x9)])
-            .wrapping_add(1);
-        let [next_low, next_high] = next.to_le_bytes();
-        self.set_reg(channel, 0x8, next_low);
-        self.set_reg(channel, 0x9, next_high);
-        value
-    }
-
     fn run_hdma_transfer_unit<B: DmaABus>(
         &mut self,
         channel: u8,
         abus: &mut B,
         open_bus: &mut u8,
-        write_base: u64,
     ) -> u64 {
         let dmap = self.get_reg(channel, 0x0);
         let bbad = self.get_reg(channel, 0x1);
@@ -492,25 +551,23 @@ impl DmaController {
             u16::from_le_bytes([self.get_reg(channel, 0x8), self.get_reg(channel, 0x9)])
         };
 
-        for (index, offset) in pattern.iter().enumerate() {
+        for offset in pattern {
             let a_addr = ((bank as u32) << 16) | addr as u32;
             let b_addr = bbad.wrapping_add(*offset);
+            // 8-clock byte slot with the destination write at the slot's end
+            // (Mesen2 CopyDmaByte), landing at its true bus clock.
+            abus.dma_tick(4);
             if direction_b_to_a {
                 let value = self.read_b_bus(b_addr);
                 *open_bus = value;
+                abus.dma_tick(4);
                 abus.dma_write_a_bus(a_addr, value);
             } else {
                 let value = abus.dma_read_a_bus(a_addr, *open_bus);
                 *open_bus = value;
-                // The internal B-bus stub store stays immediate (it backs B->A
-                // readback within the same burst); only the REAL B-bus application
-                // is deferred to this byte's modeled bus clock.
                 self.write_b_bus(b_addr, value);
-                self.pending_b_bus_writes.push_back(PendingBBusWrite {
-                    deadline: write_base + 8 * (index as u64 + 1),
-                    b_addr,
-                    value,
-                });
+                abus.dma_tick(4);
+                abus.dma_write_b_bus(b_addr, value);
             }
             addr = addr.wrapping_add(1);
         }
@@ -526,39 +583,198 @@ impl DmaController {
 
         (pattern.len() as u64) * 8
     }
-
-    fn reload_hdma_entry<B: DmaABus>(
-        &mut self,
-        channel: u8,
-        abus: &mut B,
-        open_bus: &mut u8,
-        ticks: &mut u64,
-    ) -> bool {
-        let descriptor = self.read_hdma_table_byte(channel, abus, open_bus);
-        self.set_reg(channel, 0xA, descriptor);
-        if descriptor == 0 {
-            self.hdma_repeat_mode[channel as usize] = false;
-            self.hdma_lines_left[channel as usize] = 0;
-            return false;
-        }
-        let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
-        self.hdma_repeat_mode[channel as usize] = repeat_mode;
-        self.hdma_lines_left[channel as usize] = lines_left;
-
-        if (self.get_reg(channel, 0x0) & 0x40) != 0 {
-            let low = self.read_hdma_table_byte(channel, abus, open_bus);
-            let high = self.read_hdma_table_byte(channel, abus, open_bus);
-            self.set_reg(channel, 0x5, low);
-            self.set_reg(channel, 0x6, high);
-            *ticks += 16;
-        }
-
-        true
-    }
 }
 
 impl Default for DmaController {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A-bus stub with its own master-clock counter: `dma_tick` advances it and
+    /// every B-bus write is recorded with the clock it lands at, so tests can
+    /// pin the hardware envelope's per-byte write clocks exactly.
+    struct RecordingBus {
+        clock: u64,
+        a_bus: Vec<u8>,
+        b_bus_writes: Vec<(u64, u8, u8)>,
+    }
+
+    impl RecordingBus {
+        fn new(clock: u64) -> Self {
+            Self {
+                clock,
+                a_bus: vec![0; 0x1_0000],
+                b_bus_writes: Vec::new(),
+            }
+        }
+    }
+
+    impl DmaABus for RecordingBus {
+        fn dma_read_a_bus(&mut self, addr: u32, _open_bus: u8) -> u8 {
+            self.a_bus[(addr & 0xFFFF) as usize]
+        }
+
+        fn dma_write_a_bus(&mut self, addr: u32, value: u8) {
+            self.a_bus[(addr & 0xFFFF) as usize] = value;
+        }
+
+        fn dma_write_b_bus(&mut self, addr: u8, value: u8) {
+            self.b_bus_writes.push((self.clock, addr, value));
+        }
+
+        fn dma_tick(&mut self, master_clocks: u64) {
+            self.clock += master_clocks;
+        }
+    }
+
+    fn write_hdma_channel(dma: &mut DmaController, channel: u8, dmap: u8, bbad: u8, a_addr: u16) {
+        let base = 0x4300 + u16::from(channel) * 0x10;
+        dma.write_register(base, dmap);
+        dma.write_register(base + 0x1, bbad);
+        dma.write_register(base + 0x2, (a_addr & 0xFF) as u8);
+        dma.write_register(base + 0x3, (a_addr >> 8) as u8);
+        dma.write_register(base + 0x4, 0x00);
+    }
+
+    #[test]
+    fn hdma_do_line_write_clocks_follow_the_hardware_envelope() {
+        // Two mode-2 channels (2 bytes to one register). Run at an 8-aligned
+        // clock (1112): SyncStartDma pad 8 -> 1120, overhead 8 -> 1128, then
+        // Phase A byte slots of 8 clocks each with the B-bus write at the
+        // slot's END (Mesen2 CopyDmaByte: 4 clocks to the A-bus read, 4 more
+        // before the B-bus write): ch0 at 1136/1144, ch1 -- with NO
+        // per-channel overhead between Phase A transfers -- at 1152/1160.
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(1112);
+        write_hdma_channel(&mut dma, 0, 0x02, 0x22, 0x3000);
+        bus.a_bus[0x3000] = 0xFF; // repeat, 127 lines
+        bus.a_bus[0x3001] = 0xA1;
+        bus.a_bus[0x3002] = 0xA2;
+        write_hdma_channel(&mut dma, 1, 0x02, 0x24, 0x3100);
+        bus.a_bus[0x3100] = 0xFF;
+        bus.a_bus[0x3101] = 0xB1;
+        bus.a_bus[0x3102] = 0xB2;
+
+        let init_clock = bus.clock;
+        dma.hdma_init(0x03, &mut bus, 0, init_clock);
+        let base_clock = bus.clock;
+        assert_eq!(base_clock % 8, 0, "init ends on a CPU cycle boundary");
+
+        let start = bus.clock;
+        let (counter, _) = dma.hdma_do_line(0x03, &mut bus, 0, base_clock);
+
+        assert_eq!(
+            bus.b_bus_writes,
+            vec![
+                (start + 24, 0x22, 0xA1),
+                (start + 32, 0x22, 0xA2),
+                (start + 40, 0x24, 0xB1),
+                (start + 48, 0x24, 0xB2),
+            ],
+            "per-byte write clocks follow the envelope"
+        );
+        // pad 8 + overhead 8 + 4 byte slots (32) + 2 speculative descriptor
+        // reads (16) + pad_end 8.
+        assert_eq!(counter, 72, "charged total");
+        assert_eq!(bus.clock - start, 72, "bus advanced in lockstep");
+    }
+
+    #[test]
+    fn hdma_do_line_speculative_descriptor_read_does_not_advance_the_table() {
+        // The next table byte is read EVERY line (8 clocks) but the pointer
+        // only advances when the line counter expires (Mesen2 "read the next
+        // byte from Address into $43xA ... value discarded if the line counter
+        // isn't 0").
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        write_hdma_channel(&mut dma, 0, 0x00, 0x22, 0x3000);
+        bus.a_bus[0x3000] = 0x83; // repeat, 3 lines
+        bus.a_bus[0x3001] = 0x11;
+
+        dma.hdma_init(0x01, &mut bus, 0, 0);
+        let table_before = u16::from_le_bytes([dma.get_reg(0, 0x8), dma.get_reg(0, 0x9)]);
+
+        let base = bus.clock;
+        dma.hdma_do_line(0x01, &mut bus, 0, base);
+
+        let table_after = u16::from_le_bytes([dma.get_reg(0, 0x8), dma.get_reg(0, 0x9)]);
+        assert_eq!(
+            table_after,
+            table_before + 1,
+            "only the transferred byte advanced the pointer"
+        );
+        assert_eq!(
+            dma.get_reg(0, 0xA),
+            0x82,
+            "counter decremented, not reloaded"
+        );
+    }
+
+    #[test]
+    fn hdma_do_line_expiry_charges_indirect_pointer_load() {
+        // A one-line indirect entry followed by a real next entry: on expiry
+        // the burst charges the 8-clock descriptor consume plus 16 clocks for
+        // the two indirect pointer bytes (Mesen2 "if a new indirect address is
+        // required, 16 master cycles are taken to load it").
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        write_hdma_channel(&mut dma, 0, 0x40, 0x22, 0x3000);
+        dma.write_register(0x4307, 0x00); // indirect bank
+        bus.a_bus[0x3000] = 0x01; // 1 line, no repeat
+        bus.a_bus[0x3001] = 0x00; // indirect ptr -> $4000
+        bus.a_bus[0x3002] = 0x40;
+        bus.a_bus[0x4000] = 0x77;
+        bus.a_bus[0x3003] = 0x02; // next entry: 2 lines
+        bus.a_bus[0x3004] = 0x10; // its indirect ptr -> $4010
+        bus.a_bus[0x3005] = 0x40;
+
+        dma.hdma_init(0x01, &mut bus, 0, 0);
+        let base = bus.clock;
+        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base);
+
+        // pad 8 + overhead 8 + 1 byte slot 8 + descriptor consume 8 +
+        // indirect pointer load 16 + pad_end 8.
+        assert_eq!(counter, 56, "expiry charges the indirect pointer load");
+        assert_eq!(
+            u16::from_le_bytes([dma.get_reg(0, 0x5), dma.get_reg(0, 0x6)]),
+            0x4010,
+            "the new indirect pointer is loaded"
+        );
+    }
+
+    #[test]
+    fn hdma_do_line_terminator_on_last_indirect_channel_loads_single_msb_byte() {
+        // Mesen2's one-byte oddity: a $00 descriptor on the LAST active
+        // indirect channel loads only ONE pointer byte (8 clocks, not 16) and
+        // uses it as the HIGH byte with a zero low byte.
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        write_hdma_channel(&mut dma, 0, 0x40, 0x22, 0x3000);
+        dma.write_register(0x4307, 0x00);
+        bus.a_bus[0x3000] = 0x01; // 1 line
+        bus.a_bus[0x3001] = 0x00; // indirect ptr -> $4000
+        bus.a_bus[0x3002] = 0x40;
+        bus.a_bus[0x4000] = 0x77;
+        bus.a_bus[0x3003] = 0x00; // terminator
+        bus.a_bus[0x3004] = 0x5D; // the single MSB byte
+
+        dma.hdma_init(0x01, &mut bus, 0, 0);
+        let base = bus.clock;
+        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base);
+
+        // pad 8 + overhead 8 + 1 byte slot 8 + descriptor consume 8 +
+        // one-byte pointer load 8 + pad_end 8.
+        assert_eq!(counter, 48, "the terminator load is a single 8-clock slot");
+        assert_eq!(dma.get_reg(0, 0x5), 0x00, "low byte forced to zero");
+        assert_eq!(
+            dma.get_reg(0, 0x6),
+            0x5D,
+            "loaded byte lands in the high byte"
+        );
     }
 }
