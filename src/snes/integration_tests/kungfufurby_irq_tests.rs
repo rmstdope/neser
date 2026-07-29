@@ -16,6 +16,14 @@
 //! interrupt-pending check granularity gap, not an IRQ-specific bug; see
 //! the #3049 issue comment for the investigation and disproven alternate
 //! hypothesis).
+//!
+//! `irq.smc`, `test_irqb.smc` and `demo_irqtest.smc` (and separately
+//! `kungfufurby_nmi_tests::nmi.smc`) all share the literal CRC
+//! `0xDEAD_FA89` below. This is not a copy-pasted placeholder: their FAIL
+//! screen is a flat solid-red fill (see the module doc above), and a flat
+//! fill of the same colour and dimensions hashes identically regardless of
+//! which ROM produced it -- confirmed by capturing each independently with
+//! `NESER_CAPTURE_SCREEN=1`.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
