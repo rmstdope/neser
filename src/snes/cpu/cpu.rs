@@ -103,6 +103,14 @@ pub struct Cpu<B: SnesBus> {
     irq_pending: bool,
     abort_pending: bool,
 
+    /// One-CPU-cycle NMI edge-to-dispatch latch (mirrors Mesen2's `NmiFlagCounter`).
+    /// 0 = idle. [`Self::poll_and_arm_nmi_edge`] arms this to 1 on a freshly
+    /// polled bus edge; the *next* cycle's [`Self::resolve_nmi_arm_counter`]
+    /// decrements it to 0 and sets `nmi_pending`, modeling the real one-cycle
+    /// latency between the NMI line rising and the CPU's edge detector
+    /// recognizing it (#3049).
+    nmi_arm_counter: u8,
+
     /// True while the CPU is halted by a WAI instruction, waiting for a
     /// hardware interrupt (NMI, IRQ, or ABORT) to be asserted.
     waiting: bool,
@@ -155,6 +163,7 @@ impl<B: SnesBus> Cpu<B> {
             nmi_pending: false,
             irq_pending: false,
             abort_pending: false,
+            nmi_arm_counter: 0,
             waiting: false,
             fast_rom: false,
             memory_bus_cycles: 0,
@@ -304,6 +313,7 @@ impl<B: SnesBus> Cpu<B> {
             nmi_pending: self.nmi_pending,
             irq_pending: self.irq_pending,
             abort_pending: self.abort_pending,
+            nmi_arm_counter: self.nmi_arm_counter,
             waiting: self.waiting,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
@@ -336,6 +346,7 @@ impl<B: SnesBus> Cpu<B> {
         self.nmi_pending = state.nmi_pending;
         self.irq_pending = state.irq_pending;
         self.abort_pending = state.abort_pending;
+        self.nmi_arm_counter = state.nmi_arm_counter;
         self.waiting = state.waiting;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
@@ -445,6 +456,7 @@ impl<B: SnesBus> Cpu<B> {
         self.nmi_pending = false;
         self.irq_pending = false;
         self.abort_pending = false;
+        self.nmi_arm_counter = 0;
         self.irq_lock_step = false;
         self.irq_i_shadow = true;
         for _ in 0..RESET_STARTUP_DELAY_CLOCKS {
@@ -634,22 +646,16 @@ impl<B: SnesBus> Cpu<B> {
             return self.step_block_move_unit(state);
         }
 
-        // Sync hardware NMI edges from the bus (e.g. PPU VBlank NMI) into the pending latch.
-        // `nmi_dispatch_ready` snapshots whether NMI was already pending *before* this
-        // poll: a freshly polled edge resolves one CPU cycle later than the edge itself
-        // on real hardware (Mesen2 `SnesCpu::DetectNmiSignalEdge`/`NmiFlagCounter` -- the
-        // edge detector samples once per CPU cycle, so `NeedNmi` only becomes true on the
-        // cycle *after* the one during which the line rose), so dispatch must wait one
-        // more `step()` call -- proven via a bus-trace diff against Mesen2 on the
-        // KungFuFurby nmi.smc ROM (#2883): at the exact clock both emulators read $4210
-        // inside a polling loop, NESER dispatched immediately while Mesen2 executed one
-        // more loop instruction first. WAI wake (below) is unaffected -- it still wakes
-        // on the freshly latched `nmi_pending`, matching the already-Mesen2-verified
-        // #2914 two-idle-cycle wake timing.
-        let mut nmi_dispatch_ready = self.nmi_pending;
-        if self.bus.poll_nmi() {
-            self.nmi_pending = true;
-        }
+        // `nmi_pending` is kept continuously up to date by
+        // `resolve_nmi_arm_counter`/`poll_and_arm_nmi_edge` (called once per
+        // CPU cycle from `tick_read`/`tick_write`/`tick_internal_cycle`,
+        // mirroring Mesen2's `DetectNmiSignalEdge`), so by the time this
+        // `step()` call starts it already reflects the correct
+        // one-CPU-cycle-latched state -- proven via a bus-trace diff
+        // against Mesen2 on the KungFuFurby nmi.smc ROM (#2883/#3049): a
+        // freshly polled edge now resolves in time to dispatch right after
+        // the instruction it occurred in, not an entire extra instruction
+        // later. No separate top-of-step() poll or snapshot is needed.
         let irq_line_asserted = self.bus.poll_irq() || self.irq_pending;
 
         // WAI: while halted, the CPU idles (advancing the master clock) until any
@@ -664,16 +670,11 @@ impl<B: SnesBus> Cpu<B> {
                 // detecting idle completes, and one more idle runs before the
                 // core leaves the halted state (Mesen ProcessHaltedState
                 // samples `_waiOver` before each Idle). Verified against
-                // Mesen with the #2914 boot bus trace. This wake-then-dispatch
-                // sequence is a distinct, already-verified mechanic from the
-                // freshly-polled-edge delay above -- a NMI that just woke WAI
-                // dispatches in this same call, so re-sync the dispatch-ready
-                // snapshot to the live (post-poll) pending state.
+                // Mesen with the #2914 boot bus trace.
                 self.waiting = false;
                 self.tick_internal_cycle();
                 self.tick_internal_cycle();
                 wai_wake_cycles = 2;
-                nmi_dispatch_ready = self.nmi_pending;
             } else {
                 self.tick_internal_cycle();
                 return 1;
@@ -688,7 +689,7 @@ impl<B: SnesBus> Cpu<B> {
                 .tick_internal_cycles_for(base)
                 .saturating_add(wai_wake_cycles);
         }
-        if !interrupts_locked && nmi_dispatch_ready {
+        if !interrupts_locked && self.nmi_pending {
             self.nmi_pending = false;
             let base = self.dispatch_nmi();
             return self
@@ -1033,6 +1034,7 @@ impl<B: SnesBus> Cpu<B> {
     /// that race asynchronous hardware: APU port polls at $2140-$2143 (#2914)
     /// and the $2137 H/V counter latch both observe the sampling instant.
     fn tick_read(&mut self, addr: u32) -> u8 {
+        self.resolve_nmi_arm_counter();
         self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      read  ${:06X}", addr);
@@ -1044,12 +1046,14 @@ impl<B: SnesBus> Cpu<B> {
         for _ in 0..4 {
             self.bus.tick();
         }
+        self.poll_and_arm_nmi_edge();
         value
     }
 
     /// Advance the master clock N cycles for `addr`, then write one byte.
     /// Also intercepts MEMSEL ($420D) writes to update the fast_rom flag.
     fn tick_write(&mut self, addr: u32, value: u8) {
+        self.resolve_nmi_arm_counter();
         self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      write ${:06X} = ${:02X}", addr, value);
@@ -1076,6 +1080,7 @@ impl<B: SnesBus> Cpu<B> {
             }
         }
         self.bus.write(addr, value);
+        self.poll_and_arm_nmi_edge();
     }
 
     /// Fetch a 16-bit little-endian word at PBR:PC and advance PC by 2.
@@ -3612,10 +3617,65 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn tick_internal_cycle(&mut self) {
+        self.resolve_nmi_arm_counter();
         self.bus.gpdma_cycle_hook();
         trace_cpu!(2; "      internal");
         for _ in 0..6u8 {
             self.bus.tick();
+        }
+        self.poll_and_arm_nmi_edge();
+    }
+
+    /// Ticks one internal cycle that hardware spends BEFORE a subsequent bus
+    /// access within the same opcode/dispatch sequence (e.g. PHA/PHX/PHY's
+    /// pre-push idle, or a hardware interrupt's pre-push idle) -- as opposed
+    /// to the generic leftover-internal-cycle tick the caller normally adds
+    /// AFTER an opcode function returns. Bumping `memory_bus_cycles` here
+    /// prevents that generic leftover computation from also re-ticking this
+    /// already-ticked cycle (double counting it). See `op_pha`/`op_phx`/
+    /// `op_phy`/`dispatch_hw_interrupt` for the Mesen2 references (#3049).
+    fn tick_pre_access_internal_cycle(&mut self) {
+        self.tick_internal_cycle();
+        self.memory_bus_cycles += 1;
+    }
+
+    /// Advances the NMI edge-to-dispatch latch by one CPU cycle. Called once
+    /// from each of the three CPU-cycle-boundary functions ([`Self::tick_read`],
+    /// [`Self::tick_write`], [`Self::tick_internal_cycle`]) -- i.e. exactly once
+    /// per real CPU cycle. Split into two halves, called at the start and end
+    /// of each of the three CPU-cycle-boundary functions, mirroring Mesen2's
+    /// `DetectNmiSignalEdge` (`ProcessCpuCycle`, called from every
+    /// `Read`/`Write`/`Idle` *before* that call's own clock-advance) plus the
+    /// PPU's eager, mid-clock-advance `SetNmiFlag` push:
+    ///
+    /// - [`Self::resolve_nmi_arm_counter`] runs BEFORE this cycle's own
+    ///   master-clock ticking, resolving whatever was armed by the
+    ///   *previous* cycle's poll.
+    /// - [`Self::poll_and_arm_nmi_edge`] runs AFTER this cycle's own
+    ///   master-clock ticking, discovering an edge that rose *during* this
+    ///   cycle's own ticking and arming it for the next cycle to resolve.
+    ///
+    /// Splitting these matters: a single combined poll-then-resolve call
+    /// (both running before the clock advances) discovers an edge one whole
+    /// cycle later than this -- the edge can't be seen until the *following*
+    /// cycle's own pre-advance poll, adding an extra cycle of latency beyond
+    /// the intended one and reproducing the exact one-instruction overshoot
+    /// this fix targets (proven via a Mesen2 bus-trace diff on KungFuFurby's
+    /// nmi.smc, #3049: Mesen2 pushes the not-yet-executed branch opcode's own
+    /// address as the interrupted PC, meaning it recognizes NMI before that
+    /// instruction starts at all).
+    fn resolve_nmi_arm_counter(&mut self) {
+        if self.nmi_arm_counter > 0 {
+            self.nmi_arm_counter -= 1;
+            if self.nmi_arm_counter == 0 {
+                self.nmi_pending = true;
+            }
+        }
+    }
+
+    fn poll_and_arm_nmi_edge(&mut self) {
+        if self.bus.poll_nmi() {
+            self.nmi_arm_counter = 1;
         }
     }
 
@@ -4061,6 +4121,18 @@ impl<B: SnesBus> Cpu<B> {
     /// Emulation mode (E=1): push PCH, PCL, P (B=0); set PBR=0, I=1, D=0; load `emu_vector`.  7 cycles.
     fn dispatch_hw_interrupt(&mut self, native_vector: u32, emu_vector: u32) -> u8 {
         let pc = self.pc;
+        // Hardware interrupts (NMI/IRQ/ABORT) waste their first two cycles
+        // before pushing the return state: a dummy re-read of the interrupted
+        // PC's own opcode (result discarded), then one internal/idle cycle
+        // (Mesen2 `ProcessInterrupt`: "IRQ/NMI waste 2 cycles here ... BRK/COP
+        // do not, because they do those 2 cycles while loading the OP code +
+        // signature byte"). Both must happen HERE, before the pushes -- not
+        // via the caller's generic leftover-internal-cycle tick added after
+        // this function returns, which would tick them too late and desync
+        // every subsequent bus timestamp from Mesen2's (proven via a bus-trace
+        // diff on KungFuFurby's nmi.smc, #3049).
+        self.read8(((self.pbr as u32) << 16) | pc as u32);
+        self.tick_pre_access_internal_cycle();
         if self.e {
             // Emulation mode: 3 pushes, no PBR push, B flag cleared; PBR forced to bank 0
             self.push8((pc >> 8) as u8);
@@ -4120,6 +4192,9 @@ impl<B: SnesBus> Cpu<B> {
     // -------------------------------------------------------------------------
 
     fn op_pha(&mut self) -> u8 {
+        // Mesen2 PHA: Idle() before PushRegister -- the internal cycle ticks
+        // before the push, not after (#3049).
+        self.tick_pre_access_internal_cycle();
         if self.m_flag() {
             self.push8(self.a as u8);
         } else {
@@ -4144,6 +4219,8 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_phx(&mut self) -> u8 {
+        // See op_pha: Mesen2 PHX ticks its internal cycle before the push (#3049).
+        self.tick_pre_access_internal_cycle();
         if self.x_flag() {
             self.push8(self.x as u8);
         } else {
@@ -4165,6 +4242,8 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_phy(&mut self) -> u8 {
+        // See op_pha: Mesen2 PHY ticks its internal cycle before the push (#3049).
+        self.tick_pre_access_internal_cycle();
         if self.x_flag() {
             self.push8(self.y as u8);
         } else {
@@ -10547,9 +10626,17 @@ mod interrupt_dispatch_tests {
     }
 
     /// Minimal bus that delivers a single NMI edge via `poll_nmi`, to test the `step()` sync.
+    ///
+    /// `arm_nmi_at_poll` (if set) arms the edge on the Nth call to `poll_nmi`
+    /// (0-indexed) rather than on the very first call, so tests can model an
+    /// edge that rises mid-instruction -- e.g. on a multi-cycle instruction's
+    /// 3rd bus access rather than its opcode fetch -- once `poll_nmi` is
+    /// polled once per CPU cycle instead of once per `step()`.
     struct PollNmiBus {
         mem: Vec<u8>,
         nmi_once: bool,
+        poll_count: u32,
+        arm_nmi_at_poll: Option<u32>,
     }
 
     impl PollNmiBus {
@@ -10557,6 +10644,8 @@ mod interrupt_dispatch_tests {
             Self {
                 mem: vec![0; 0x100_0000],
                 nmi_once: false,
+                poll_count: 0,
+                arm_nmi_at_poll: None,
             }
         }
 
@@ -10575,6 +10664,10 @@ mod interrupt_dispatch_tests {
         }
         fn tick(&mut self) {}
         fn poll_nmi(&mut self) -> bool {
+            if self.arm_nmi_at_poll == Some(self.poll_count) {
+                self.nmi_once = true;
+            }
+            self.poll_count += 1;
             let n = self.nmi_once;
             self.nmi_once = false;
             n
@@ -10645,6 +10738,76 @@ mod interrupt_dispatch_tests {
         assert_eq!(
             cpu.pc, 0x9000,
             "the edge, now pending from the previous step(), dispatches NMI"
+        );
+    }
+
+    #[test]
+    fn nmi_edge_mid_instruction_resolves_in_time_to_dispatch_right_after_that_instruction() {
+        // Real hardware (and Mesen2's `DetectNmiSignalEdge`, called once per
+        // CPU cycle from every Read/Write/Idle) samples the NMI line on
+        // EVERY cycle, not just once per instruction. So an edge that rises
+        // mid-instruction -- not on the instruction's very first cycle --
+        // still resolves in time to dispatch right after THAT SAME
+        // instruction; it must not cost an entire extra instruction of
+        // delay just because it wasn't visible on the opcode fetch. LDA
+        // $1234 (absolute, 4 cycles: opcode fetch + 2 operand bytes + 1
+        // data read) is the edge-bearing instruction; the edge arises on
+        // its 3rd cycle (poll index 2), partway through, not on the opcode
+        // fetch itself (#3049).
+        let mut cpu = Cpu::new(PollNmiBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x008000, &[0xAD, 0x34, 0x12]); // LDA $1234
+        cpu.bus.load(0x008003, &[0xEA]); // NOP -- must never execute; NMI takes this slot
+        cpu.bus.load(0x00FFFA, &[0x00, 0x90]); // NMI emulation vector -> $9000
+        cpu.bus.arm_nmi_at_poll = Some(2);
+
+        let cycles = cpu.step();
+        assert_eq!(
+            cpu.pc, 0x8003,
+            "LDA executes in full; the edge doesn't interrupt it mid-flight"
+        );
+        assert_eq!(cycles, 4, "LDA absolute's normal cycle cost");
+
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x9000,
+            "the edge, resolved during LDA's own cycles, dispatches NMI right \
+             after LDA -- not one more instruction later"
+        );
+    }
+
+    #[test]
+    fn nmi_edge_that_wakes_wai_dispatches_in_the_same_step_call() {
+        // While parked in WAI, `nmi_pending` is kept live by the per-cycle
+        // resolve/poll running inside each waiting step()'s own
+        // tick_internal_cycle() call -- so once it's visible at the TOP of a
+        // step() call (the same check point WAI's wake condition reads), that
+        // call must both clear `waiting` AND dispatch, not merely wake and
+        // leave dispatch for a later call (#3049; this is the scenario the
+        // pre-#3049 `nmi_dispatch_ready` WAI-wake resync existed for).
+        let mut cpu = Cpu::new(PollNmiBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x008000, &[0xCB]); // WAI
+        cpu.bus.load(0x00FFFA, &[0x00, 0x90]); // NMI emulation vector -> $9000
+
+        assert_eq!(cpu.step(), 4, "WAI opcode timing");
+        assert!(cpu.waiting);
+
+        cpu.bus.nmi_once = true;
+        let mut dispatched = false;
+        for _ in 0..5 {
+            cpu.step();
+            if !cpu.waiting {
+                dispatched = true;
+                break;
+            }
+        }
+        assert!(dispatched, "WAI never woke");
+        assert_eq!(
+            cpu.pc, 0x9000,
+            "the step() call that wakes WAI must also dispatch NMI, not a later call"
         );
     }
 
@@ -10897,6 +11060,42 @@ mod interrupt_dispatch_tests {
         cpu.bus.load(vector_pc as u32, &[0xEA]); // NOP
         let cycles = cpu.step(); // should execute NOP, not another NMI
         assert_eq!(cycles, 2, "NMI not re-dispatched after first dispatch");
+    }
+
+    #[test]
+    fn nmi_arm_counter_round_trips_through_cpu_state_before_it_resolves() {
+        // Save/restore mid-arm-window (armed but not yet resolved) must not
+        // silently drop an in-flight NMI edge (#3049).
+        let mut cpu = Cpu::new(PollNmiBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x008000, &[0xAD, 0x34, 0x12]); // LDA $1234 (4 cycles)
+        cpu.bus.load(0x00FFFA, &[0x00, 0x90]); // NMI emulation vector -> $9000
+        cpu.bus.arm_nmi_at_poll = Some(3); // arm during LDA's last cycle
+
+        cpu.step(); // LDA executes in full; edge arms but doesn't resolve yet
+        assert!(
+            !cpu.nmi_pending,
+            "edge should be armed but not yet resolved"
+        );
+        assert_eq!(
+            cpu.nmi_arm_counter, 1,
+            "counter should be armed, one cycle from resolving"
+        );
+
+        let state = cpu.capture_state_inner();
+        let mut restored = Cpu::new(PollNmiBus::new());
+        restored.restore_state_inner(&state);
+        // Bus/memory contents aren't part of CpuState; reload what's needed.
+        restored.bus.load(0x008003, &[0xEA]); // NOP
+        restored.bus.load(0x00FFFA, &[0x00, 0x90]);
+
+        restored.step(); // counter resolves mid-NOP; doesn't interrupt it
+        restored.step(); // NMI dispatches now that nmi_pending is set
+        assert_eq!(
+            restored.pc, 0x9000,
+            "an in-flight (armed but unresolved) NMI edge must survive save/restore"
+        );
     }
 
     // =========================================================================
@@ -11362,10 +11561,14 @@ mod master_clock_tests {
 
     // -------------------------------------------------------------------------
     // Hardware interrupt dispatch must tick the bus for the full 8/7-cycle
-    // sequence, including the two CPU-internal cycles — not only the memory
-    // accesses. The 65816 native IRQ/NMI sequence is 8 cycles (2 internal +
-    // 4 stack pushes + 2 vector reads); the emulation-mode sequence is 7
-    // cycles (2 internal + 3 stack pushes + 2 vector reads).
+    // sequence, including the two wasted cycles before the pushes — not only
+    // the memory accesses. The 65816 native IRQ/NMI sequence is 8 cycles (a
+    // dummy re-read of the interrupted PC + 1 internal + 4 stack pushes + 2
+    // vector reads); the emulation-mode sequence is 7 cycles (dummy read + 1
+    // internal + 3 stack pushes + 2 vector reads). The dummy read genuinely
+    // re-reads the interrupted PC's own memory region (Mesen2
+    // `ProcessInterrupt`'s `ReadCode(_state.PC)`, #3049), so its cost is
+    // region-dependent like any other read, not a flat internal-cycle tick.
     // -------------------------------------------------------------------------
 
     #[test]
@@ -11378,9 +11581,10 @@ mod master_clock_tests {
         cpu.set_flag_i(false); // sync the recognition shadow past cpu_at's direct p poke
         cpu.set_irq(true);
         cpu.step();
-        // 4 pushes (WRAM stack $01xx, 8 each = 32) + 2 vector reads
-        // ($00FFEE/EF, WS1 ROM slow 8 each = 16) + 2 internal (6 each = 12) = 60.
-        assert_eq!(cpu.bus.tick_count(), 60);
+        // Dummy read at the interrupted PC ($0000, WRAM, 8) + 4 pushes (WRAM
+        // stack $01xx, 8 each = 32) + 2 vector reads ($00FFEE/EF, WS1 ROM
+        // slow 8 each = 16) + 1 internal (6) = 62.
+        assert_eq!(cpu.bus.tick_count(), 62);
     }
 
     #[test]
@@ -11393,9 +11597,115 @@ mod master_clock_tests {
         cpu.set_flag_i(false); // sync the recognition shadow past cpu_at's direct p poke
         cpu.set_irq(true);
         cpu.step();
-        // 3 pushes (8 each = 24) + 2 vector reads (8 each = 16) + 2 internal
-        // (6 each = 12) = 52.
-        assert_eq!(cpu.bus.tick_count(), 52);
+        // Dummy read at the interrupted PC ($0000, WRAM, 8) + 3 pushes (8
+        // each = 24) + 2 vector reads (8 each = 16) + 1 internal (6) = 54.
+        assert_eq!(cpu.bus.tick_count(), 54);
+    }
+
+    /// Minimal bus that records the cumulative tick count at the moment of
+    /// the *first* write, to distinguish "internal cycle before the push"
+    /// from "internal cycle after the push" -- both orderings tick the same
+    /// TOTAL count by the time step() returns, so only an intermediate
+    /// checkpoint like this can tell them apart.
+    struct FirstWriteTickBus {
+        mem: Vec<u8>,
+        tick_count: u64,
+        first_write_tick: Option<u64>,
+    }
+
+    impl FirstWriteTickBus {
+        fn new() -> Self {
+            Self {
+                mem: vec![0; 0x100_0000],
+                tick_count: 0,
+                first_write_tick: None,
+            }
+        }
+
+        fn load(&mut self, addr: u32, data: &[u8]) {
+            let a = (addr & 0xFF_FFFF) as usize;
+            self.mem[a..a + data.len()].copy_from_slice(data);
+        }
+    }
+
+    impl crate::snes::bus::SnesBus for FirstWriteTickBus {
+        fn read(&self, addr: u32) -> u8 {
+            self.mem[(addr & 0xFF_FFFF) as usize]
+        }
+        fn write(&mut self, addr: u32, value: u8) {
+            if self.first_write_tick.is_none() {
+                self.first_write_tick = Some(self.tick_count);
+            }
+            self.mem[(addr & 0xFF_FFFF) as usize] = value;
+        }
+        fn tick(&mut self) {
+            self.tick_count += 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // PHA/PHX/PHY's internal cycle happens BEFORE the push on real hardware
+    // (Mesen2: `PHA`/`PHX`/`PHY` all call `Idle()` before `PushRegister`), not
+    // after. NESER's generic "tick the opcode's leftover internal cycles after
+    // the opcode function returns" model got this backwards, ticking the
+    // internal cycle after the push instead -- harmless to the TOTAL cycle
+    // count (both orderings tick the same number of master clocks overall),
+    // but it desyncs the bus-visible timestamp of the push itself from
+    // Mesen2's, breaking bit-exact bus-trace diffs for any code that pushes
+    // A/X/Y right after an interrupt dispatch (as KungFuFurby's nmi.smc/
+    // test_nmi.smc do, #3049).
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn pha_ticks_its_internal_cycle_before_the_push() {
+        // PHA at $00:0000 (WRAM, 8 clocks/access), native 8-bit A.
+        let mut cpu = Cpu::new(FirstWriteTickBus::new());
+        cpu.e = false;
+        cpu.p = 0b0011_0000; // M=1, X=1 (8-bit)
+        cpu.write_pbr(0x00);
+        cpu.write_pc(0x0000);
+        cpu.bus.load(0x00_0000, &[0x48]); // PHA
+        cpu.step();
+        // opcode fetch (8) + internal (6) = 14 ticked before the push's own
+        // clock-advance begins; the write happens once that access completes
+        // (writes hold the bus until the very end), i.e. at 14 + 8 = 22.
+        assert_eq!(
+            cpu.bus.first_write_tick,
+            Some(22),
+            "PHA's internal cycle must tick before the push, not after"
+        );
+    }
+
+    #[test]
+    fn phx_ticks_its_internal_cycle_before_the_push() {
+        let mut cpu = Cpu::new(FirstWriteTickBus::new());
+        cpu.e = false;
+        cpu.p = 0b0011_0000;
+        cpu.write_pbr(0x00);
+        cpu.write_pc(0x0000);
+        cpu.bus.load(0x00_0000, &[0xDA]); // PHX
+        cpu.step();
+        assert_eq!(
+            cpu.bus.first_write_tick,
+            Some(22),
+            "PHX's internal cycle must tick before the push, not after"
+        );
+    }
+
+    #[test]
+    fn phy_ticks_its_internal_cycle_before_the_push() {
+        let mut cpu = Cpu::new(FirstWriteTickBus::new());
+        cpu.e = false;
+        cpu.p = 0b0011_0000;
+        cpu.write_pbr(0x00);
+        cpu.write_pc(0x0000);
+        cpu.bus.load(0x00_0000, &[0x5A]); // PHY
+        cpu.step();
+        assert_eq!(
+            cpu.bus.first_write_tick,
+            Some(22),
+            "PHY's internal cycle must tick before the push, not after"
+        );
     }
 }
 
