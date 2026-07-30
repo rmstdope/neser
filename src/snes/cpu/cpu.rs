@@ -114,10 +114,11 @@ pub struct Cpu<B: SnesBus> {
     /// Most recently sampled H/V-IRQ line level (mirrors Mesen2's
     /// `PrevIrqSource`). Unlike NMI's edge, the line is non-consuming and
     /// live, so no arm/latch counter is needed -- this is simply resampled
-    /// from `bus.poll_irq()` once per CPU cycle, at the start of
+    /// from `bus.poll_irq()` once per CPU cycle, at the end of
     /// [`Self::tick_read`]/[`Self::tick_write`]/[`Self::tick_internal_cycle`]
     /// (mirroring Mesen2's `DetectNmiSignalEdge`, called once per
-    /// `ProcessCpuCycle`), instead of once per `step()` call (#3049).
+    /// `ProcessCpuCycle`), instead of once per `step()` call (#3049). See
+    /// [`Self::resample_irq_line`] for why end-of-cycle placement matters.
     irq_line_shadow: bool,
 
     /// True while the CPU is halted by a WAI instruction, waiting for a
@@ -1049,7 +1050,6 @@ impl<B: SnesBus> Cpu<B> {
     /// and the $2137 H/V counter latch both observe the sampling instant.
     fn tick_read(&mut self, addr: u32) -> u8 {
         self.resolve_nmi_arm_counter();
-        self.resample_irq_line();
         self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      read  ${:06X}", addr);
@@ -1062,6 +1062,7 @@ impl<B: SnesBus> Cpu<B> {
             self.bus.tick();
         }
         self.poll_and_arm_nmi_edge();
+        self.resample_irq_line();
         value
     }
 
@@ -1069,7 +1070,6 @@ impl<B: SnesBus> Cpu<B> {
     /// Also intercepts MEMSEL ($420D) writes to update the fast_rom flag.
     fn tick_write(&mut self, addr: u32, value: u8) {
         self.resolve_nmi_arm_counter();
-        self.resample_irq_line();
         self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         trace_cpu!(2; "      write ${:06X} = ${:02X}", addr, value);
@@ -1097,6 +1097,7 @@ impl<B: SnesBus> Cpu<B> {
         }
         self.bus.write(addr, value);
         self.poll_and_arm_nmi_edge();
+        self.resample_irq_line();
     }
 
     /// Fetch a 16-bit little-endian word at PBR:PC and advance PC by 2.
@@ -3634,13 +3635,13 @@ impl<B: SnesBus> Cpu<B> {
 
     fn tick_internal_cycle(&mut self) {
         self.resolve_nmi_arm_counter();
-        self.resample_irq_line();
         self.bus.gpdma_cycle_hook();
         trace_cpu!(2; "      internal");
         for _ in 0..6u8 {
             self.bus.tick();
         }
         self.poll_and_arm_nmi_edge();
+        self.resample_irq_line();
     }
 
     /// Ticks one internal cycle that hardware spends BEFORE a subsequent bus
@@ -3699,10 +3700,18 @@ impl<B: SnesBus> Cpu<B> {
     /// Resamples the H/V-IRQ line into `irq_line_shadow`, once per CPU cycle
     /// (mirrors Mesen2's `PrevIrqSource` update inside `DetectNmiSignalEdge`).
     /// Unlike NMI's edge, `bus.poll_irq()` is a live, non-consuming level, so
-    /// there's no arm/latch counter to split across cycle start/end -- a
-    /// single resample at the start of each cycle (before that cycle's own
-    /// clock ticks, observing state as of the end of the *previous* cycle) is
-    /// enough (#3049).
+    /// there's no arm/latch counter to split across cycle start/end -- but
+    /// the single resample must still run AFTER this cycle's own
+    /// master-clock ticking (mirroring [`Self::poll_and_arm_nmi_edge`]'s
+    /// placement), not before. Placing it before observes the line as of the
+    /// end of the cycle *before* the previous one -- one whole cycle (6
+    /// master clocks) stale -- which delays WAI's wake by one extra idle
+    /// iteration whenever the wait loop is the one polling. Caught via a
+    /// bus-trace diff against a pre-fix build on undisbeliever's
+    /// `inidisp_forgot_to_force_blank.sfc` (#3049): the stale wake corrupted
+    /// a DMA-timed palette/tile setup that follows, leaving the screen
+    /// permanently unpainted. See
+    /// `interrupt_dispatch_tests::irq_level_during_wai_wakes_as_soon_as_the_preceding_cycle_observes_it`.
     fn resample_irq_line(&mut self) {
         self.irq_line_shadow = self.bus.poll_irq();
     }
@@ -10747,6 +10756,95 @@ mod interrupt_dispatch_tests {
                 None => self.irq_level,
             }
         }
+    }
+
+    /// Unlike [`PollIrqBus::level_from_poll`] (keyed to a call *count*, which
+    /// can't distinguish resampling before vs. after a cycle's own clock tick
+    /// -- both placements make exactly one `poll_irq` call per cycle either
+    /// way), this bus keys the line's visibility to *elapsed master clocks*
+    /// via `tick`, matching how the real PPU's H/V-IRQ line actually works.
+    /// This is what's needed to catch a resample that's one whole cycle
+    /// stale (#3049).
+    struct ClockedIrqBus {
+        mem: Vec<u8>,
+        clocks: u64,
+        visible_at: u64,
+    }
+
+    impl ClockedIrqBus {
+        fn new(visible_at: u64) -> Self {
+            Self {
+                mem: vec![0; 0x100_0000],
+                clocks: 0,
+                visible_at,
+            }
+        }
+
+        fn load(&mut self, addr: u32, data: &[u8]) {
+            let a = (addr & 0xFF_FFFF) as usize;
+            self.mem[a..a + data.len()].copy_from_slice(data);
+        }
+    }
+
+    impl crate::snes::bus::SnesBus for ClockedIrqBus {
+        fn read(&self, addr: u32) -> u8 {
+            self.mem[(addr & 0xFF_FFFF) as usize]
+        }
+        fn write(&mut self, addr: u32, value: u8) {
+            self.mem[(addr & 0xFF_FFFF) as usize] = value;
+        }
+        fn tick(&mut self) {
+            self.clocks += 1;
+        }
+        fn poll_irq(&self) -> bool {
+            self.clocks >= self.visible_at
+        }
+    }
+
+    #[test]
+    fn irq_level_during_wai_wakes_as_soon_as_the_preceding_cycle_observes_it() {
+        // The shadow WAI's wait loop reads at the top of each step() call
+        // must reflect the line's state as of the end of the *immediately
+        // preceding* internal cycle -- not one whole cycle before that.
+        // Resampling before a cycle's own clock tick (rather than after,
+        // mirroring poll_and_arm_nmi_edge's placement) makes the shadow lag
+        // by a full internal cycle (6 master clocks), delaying WAI's wake by
+        // one extra "still waiting" iteration. Caught via a Mesen2-vs-NESER
+        // bus-trace diff on undisbeliever's inidisp_forgot_to_force_blank.sfc
+        // (#3049): NESER's WAI woke 6 master clocks late, corrupting a
+        // subsequent DMA-timed palette/tile setup and leaving the screen
+        // permanently unpainted.
+        let mut cpu = Cpu::new(ClockedIrqBus::new(u64::MAX)); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.set_flag_i(true); // I=1: WAI wakes without dispatching, isolating wake timing
+        cpu.bus.load(0x008000, &[0xCB, 0xEA]); // WAI ; NOP
+
+        assert_eq!(cpu.step(), 4, "WAI opcode timing");
+        assert!(cpu.waiting);
+
+        // The line becomes visible exactly 2 internal cycles (12 master
+        // clocks) after WAI starts waiting.
+        let baseline = cpu.bus.clocks;
+        cpu.bus.visible_at = baseline + 12;
+
+        // Two "still waiting" iterations must elapse before the line is
+        // visible to the wait loop's own check.
+        for _ in 0..2 {
+            assert_eq!(cpu.step(), 1, "still waiting: one idle internal cycle");
+            assert!(cpu.waiting);
+        }
+
+        // The third step() call must see the now-visible line and wake --
+        // not require a fourth (stale-by-one-cycle) call. It falls through
+        // to fetch and run the following NOP in the same call (masked
+        // dispatch), so the total is 2 wake cycles + NOP's own 2.
+        let cycles = cpu.step();
+        assert!(!cpu.waiting, "WAI must wake once the line is 12 clocks old");
+        assert_eq!(
+            cycles, 4,
+            "two wake cycles plus NOP's own 2 (masked resume)"
+        );
+        assert_eq!(cpu.pc, 0x8002, "execution resumes at the following NOP");
     }
 
     #[test]

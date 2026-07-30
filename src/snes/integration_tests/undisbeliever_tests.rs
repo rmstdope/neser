@@ -213,6 +213,8 @@ mod tests {
     // Both emulators apply the same hardware rule -- arm only if HDMAEN is
     // non-zero at the trigger clock -- so the residual is CPU-side clock
     // skew, tracked separately as #3050.
+    // Unaffected by #3049 (per-CPU-cycle NMI/H-V-IRQ dispatch precision):
+    // the CRC below is unchanged since #3021.
     undisbeliever_rom_test!(
         hdmaen_latch_test_matches_mesen2,
         "hdmaen_latch_test.sfc",

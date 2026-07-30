@@ -135,11 +135,15 @@ mod tests {
     // their true bus clocks instead of the #3020 deadline queue). That took
     // the same diff from 20 px down to 4 px on a single row (row 107) --
     // essentially all of the per-byte write-clock jitter that #3042 tracks.
+    // Re-approved again for #3049 (per-CPU-cycle NMI/H-V-IRQ dispatch
+    // precision): still confined to row 107, now 16 px (was 4) vs a fresh
+    // Mesen2 capture -- the same CPU-side clock-skew category #3050 already
+    // tracks, just a different exact skew now that dispatch timing moved.
     hblank_dma_vram_rom_test!(
         hvdma_matches_mesen2_and_hardware,
         "hvdma.sfc",
         600,
-        0xA207_1FF8
+        0x7D62_80B2
     );
 
     // Confirmed hardware-accurate: NESER's frame-600 capture is a
