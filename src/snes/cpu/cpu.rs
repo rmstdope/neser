@@ -11294,8 +11294,14 @@ mod interrupt_dispatch_tests {
     #[test]
     fn irq_line_shadow_round_trips_through_cpu_state() {
         // A live IRQ level cached in the shadow must survive save/restore,
-        // same as nmi_arm_counter's in-flight edge above (#3049).
-        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
+        // same as nmi_arm_counter's in-flight edge above (#3049). Uses native
+        // mode so IRQ's vector ($00FFEE) doesn't collide with BRK's
+        // ($00FFE6, emulation mode shares $00FFFE with IRQ) -- a silently
+        // dropped shadow would otherwise still land at the same PC via BRK
+        // fetched from the zeroed test bus, making the dispatch assertion
+        // pass vacuously (see step_polls_bus_irq_level_and_dispatches_irq).
+        let mut cpu = Cpu::new(PollIrqBus::new());
+        cpu.e = false; // native mode
         cpu.s = 0x01FF;
         cpu.set_flag_i(false);
         cpu.irq_line_shadow = true;
@@ -11304,8 +11310,12 @@ mod interrupt_dispatch_tests {
         let mut restored = Cpu::new(PollIrqBus::new());
         restored.restore_state_inner(&state);
         // Bus/memory contents aren't part of CpuState; reload what's needed.
-        restored.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
+        restored.bus.load(0x00FFEE, &[0x00, 0x91]); // IRQ native vector -> $9100
 
+        assert!(
+            restored.irq_line_shadow,
+            "the live IRQ level must survive save/restore"
+        );
         restored.step();
         assert_eq!(
             restored.pc, 0x9100,

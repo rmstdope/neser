@@ -1253,13 +1253,6 @@ impl DmaABus for SnesSystemBus {
 
 impl SnesBus for SnesSystemBus {
     fn read(&self, addr: u32) -> u8 {
-        // Temporary #3049 diagnostic (remove before merge): bus trace vs Mesen2.
-        if std::env::var_os("NESER_BUS_LOG").is_some() {
-            let ticks = self.ppu.borrow().total_master_clocks();
-            if ticks < 500_000 {
-                eprintln!("neser busR {addr:06X} ticks={ticks}");
-            }
-        }
         if let Some(value) = self.read_mmio(addr) {
             self.mdr.set(value);
             return value;
@@ -1330,13 +1323,6 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn write(&mut self, addr: u32, value: u8) {
-        // Temporary #3049 diagnostic (remove before merge): bus trace vs Mesen2.
-        if std::env::var_os("NESER_BUS_LOG").is_some() {
-            let ticks = self.ppu.borrow().total_master_clocks();
-            if ticks < 500_000 {
-                eprintln!("neser busW {addr:06X} ticks={ticks}");
-            }
-        }
         if self.write_mmio(addr, value) {
             return;
         }
