@@ -142,9 +142,15 @@ Test suites:
   (`roms/snes/automated_tests/snes_test_roms/neser-obj-tests/`, sources
   included; see its README): all eight OBSEL size pairs, OBJ palettes,
   OBJ-vs-OBJ priority, OAM X bit 8, mode-1 OBJ-vs-BG layering and OAMADDH
-  first-sprite rotation, 13 of 14 with Mesen2-approved goldens.
-  `obj-y-wrap.sfc` is `#[ignore]`d pending the V-flip+Y-wrap divergence
-  (#3003).
+  first-sprite rotation, plus OBJ vertical wrap-around. All 14 goldens
+  approved; 13 are Mesen2 cross-checks. `obj-y-wrap.sfc` is the exception:
+  Mesen2 disagrees with ares, ares-performance, higan and Snes9x on V-flip
+  across a Y wrap (#3003), so its golden rests on that four-implementation
+  majority plus the SNESdev wiki, and the suite additionally carries a
+  **golden-independent structural assertion** that derives the expected
+  wrapped rows from the ROM's own output (`RunResult::screen_rgb` exposes
+  the sampled frame for that). The residual Mesen2 diff is confined to the
+  flipped band with zero pixels outside it.
 - `undisbeliever_ppu_window_tests.rs` -- window mask and INIDISP fade demo
   ROMs built from the undisbeliever source mirror
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window/`, see

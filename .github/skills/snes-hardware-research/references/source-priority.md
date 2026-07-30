@@ -73,6 +73,16 @@ Use this order when researching SNES / Super Famicom hardware details:
    - Use only after checking fullsnes, anomie's docs, and the SNESdev wiki
    - Treat as implementation evidence, not as equal authority with written specifications
    - **When both ares and Mesen2 agree** on unspecified behavior, that's strong evidence
+   - **Count LINEAGES, not implementations.** ares, ares-performance, higan and bsnes all
+     descend from byuu/Near's work and routinely share an expression verbatim, so
+     "three implementations agree" can be one opinion cited three times. Snes9x is the
+     genuinely independent SNES lineage; an ares-vs-Mesen2 split is 1-vs-1 until you check
+     it. In #3003 Snes9x is what turned a stand-off into a decision -- it had the rule ares
+     had (`line ^ (OBJWidths[S] - 1)`) *and* an explanatory comment ("Yes, Width not
+     Height"), which is stronger evidence than a third byuu-derived copy would have been.
+     Snes9x is not usually cloned locally; fetch it from
+     `raw.githubusercontent.com/snes9xgit/snes9x/master/` (OBJ/sprite logic lives in
+     `gfx.cpp`'s `SetupOBJ`, not `ppu.cpp`).
    - **When they disagree**, state both approaches and investigate against hardware specs.
      Worked example (#3011): for CGWSEL clip mode 3 ("always clip main to black") ares
      disables colour-math halving via one uniform rule

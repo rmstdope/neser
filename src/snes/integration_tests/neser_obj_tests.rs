@@ -10,13 +10,20 @@
 //!
 //! Every golden was approved via the #2878/#2879 baseline workflow: all 14
 //! ROMs settle at frame 6 (probed to 900), are sampled at settle + 60
-//! (frame 66), and were pixel-diffed against Mesen2 headless captures at
-//! the same frame -- the 13 goldens below match exactly at shift (0,0).
-//! `obj-y-wrap.sfc` matches for its control and unflipped wrapped sprites
-//! but NESER renders the V-flipped wrapped sprite with wrong rows (issue
-//! #3003), so that test is `#[ignore]`d with NESER's current CRC recorded.
+//! (frame 66). Thirteen were pixel-diffed against Mesen2 headless captures
+//! at the same frame and match exactly at shift (0,0).
+//!
+//! `obj-y-wrap.sfc` is the exception (#3003). Mesen2 disagrees with ares,
+//! ares-performance, higan and Snes9x on V-flip across an 8-bit Y wrap, so
+//! its golden rests on that majority plus the SNESdev wiki rather than on a
+//! Mesen2 cross-check, and the residual 40-pixel Mesen2 diff is confined
+//! entirely to the flipped band with zero pixels outside it. Because no
+//! reference capture can arbitrate it, the suite also carries a
+//! **golden-independent structural assertion** that derives the expected
+//! wrapped rows from the ROM's own output -- see
+//! `obj_y_wrap_vflipped_sprite_mirrors_the_unflipped_wrapped_sprite`.
 
-use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
+use super::rom_runner::{RunConfig, RunOracle, RunResult, run_rom_with_oracle};
 use std::fs;
 use std::path::Path;
 
@@ -29,13 +36,13 @@ const SAMPLE_FRAME: u32 = 66;
 mod tests {
     use super::*;
 
-    /// Like the other visual PPU suites, a mismatch here means the approved
-    /// golden screen changed, not that the ROM itself reported a failure.
-    fn run_neser_obj_screen_crc(file: &str, expected_crc: u32) {
+    /// Run a suite ROM to [`SAMPLE_FRAME`] and return the full result, including the
+    /// sampled frame's pixels.
+    fn run_neser_obj(file: &str, expected_crc: u32) -> RunResult {
         let path = Path::new(NESER_OBJ_ROOT).join(file);
         let rom = fs::read(&path)
             .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
-        let result = run_rom_with_oracle(
+        run_rom_with_oracle(
             &rom,
             file,
             "neser_obj_tests",
@@ -44,7 +51,13 @@ mod tests {
                 frames: SAMPLE_FRAME,
                 expected_crc,
             },
-        );
+        )
+    }
+
+    /// Like the other visual PPU suites, a mismatch here means the approved
+    /// golden screen changed, not that the ROM itself reported a failure.
+    fn run_neser_obj_screen_crc(file: &str, expected_crc: u32) {
+        let result = run_neser_obj(file, expected_crc);
         assert_eq!(
             result.screen_crc32, expected_crc,
             "{file}: rendered screen at frame {SAMPLE_FRAME} no longer \
@@ -97,13 +110,81 @@ mod tests {
         0x0D78_01A1
     );
 
-    /// Control and unflipped wrapped sprites match Mesen2; the V-flipped
-    /// wrapped sprite renders wrong rows in NESER, so this CRC is NESER's
-    /// own output from when #3003 was filed, NOT a Mesen2-approved golden.
-    /// Re-probe and re-approve once #3003 is fixed.
-    #[test]
-    #[ignore = "V-flipped OBJ renders wrong rows when wrapping past Y=255; pending #3003"]
-    fn obj_y_wrap() {
-        run_neser_obj_screen_crc("obj-y-wrap.sfc", 0xBDA5_8124);
+    /// `obj-y-wrap.sfc` renders three 16x32 sprites (OBSEL size select 6): a fully
+    /// visible control at (64,64), an unflipped one at (128,240) whose bottom half wraps
+    /// to screen lines 0-15, and a V-flipped one at (192,240) that wraps the same way.
+    const OBJ_Y_WRAP_CRC: u32 = 0x8EA2_EF1E;
+
+    /// One 16-px-wide sprite row of the capture as a lit/unlit mask.
+    ///
+    /// The two wrapped sprites are drawn through different OBJ palettes, so their colours
+    /// differ; but the ROM's `hex8` glyph tiles use only colour indices 1-2 and index 0 is
+    /// the black backdrop, so "not black" is exactly "opaque OBJ pixel" for both and the
+    /// masks are directly comparable.
+    fn lit_row(rgb: &[u8], x: usize, y: usize) -> [bool; 16] {
+        std::array::from_fn(|dx| {
+            let i = ((y * 256) + x + dx) * 3;
+            rgb[i..i + 3] != [0, 0, 0]
+        })
     }
+
+    /// Golden-independent check that the wrapped V-flipped sprite mirrors the wrapped
+    /// unflipped one (#3003).
+    ///
+    /// This vector has no reference capture to diff against: Mesen2 disagrees with ares,
+    /// ares-performance, higan and Snes9x here (see the comment on the V-flip mirror in
+    /// `sprites.rs`), so its CRC golden rests on that four-implementation majority rather
+    /// than on a cross-emulator pixel diff. This test is the substitute oracle, and it
+    /// depends on no emulator at all -- it derives the expectation from the ROM's own
+    /// output.
+    ///
+    /// Both wrapped sprites are the same 16x32 sprite at the same Y, differing only in the
+    /// V-flip bit, and the visible window is exactly the sprite's lower 16x16 square half.
+    /// Screen row `L` of the unflipped sprite shows source line `16 + L`; the flipped one
+    /// shows `(16 + L) ^ 15 = 16 + (15 - L)`. So `flipped(L)` must equal `unflipped(15 - L)`
+    /// -- which IS the "rectangular OBJs flip as two stacked squares" claim, stated without
+    /// reference to absolute screen rows or to the OAM-Y-to-framebuffer-row convention.
+    #[test]
+    fn obj_y_wrap_vflipped_sprite_mirrors_the_unflipped_wrapped_sprite() {
+        let result = run_neser_obj("obj-y-wrap.sfc", OBJ_Y_WRAP_CRC);
+        let rgb = result
+            .screen_rgb
+            .expect("a ScreenCrc run that reached its frame captures the pixels");
+        assert_eq!(rgb.len(), 256 * 224 * 3);
+
+        // Non-triviality: the unflipped wrapped band must actually be drawn, or the
+        // mirror assertion below would hold vacuously over two blank bands.
+        assert!(
+            (0..16).any(|row| lit_row(&rgb, 128, row).iter().any(|&lit| lit)),
+            "the unflipped wrapped sprite must render on lines 0-15"
+        );
+        // And the flip must not be a no-op: every hex glyph's top row is blank, so the
+        // unflipped band's row 0 is empty while the flipped band's is not.
+        assert_ne!(
+            lit_row(&rgb, 192, 0),
+            lit_row(&rgb, 128, 0),
+            "the V-flip must change what lands on line 0"
+        );
+
+        for row in 0..16usize {
+            assert_eq!(
+                lit_row(&rgb, 192, row),
+                lit_row(&rgb, 128, 15 - row),
+                "V-flipped wrapped row {row} must mirror unflipped wrapped row {}",
+                15 - row
+            );
+        }
+    }
+
+    /// Re-approved in #3003. NOT a Mesen2 cross-check: Mesen2 selects tile rows 15/14 in
+    /// the flipped band where ares, ares-performance, higan and Snes9x all select 3/2, and
+    /// NESER follows those four plus the SNESdev wiki. The flipped band's self-labelling
+    /// glyphs read `30/31` above `20/21`, confirmed empirically against a real ares
+    /// screenshot of this ROM: ares renders the same glyph shapes, and the mirror relation
+    /// the test above asserts holds on ares' OWN output (its unflipped and V-flipped
+    /// wrapped bands have equal lit-pixel counts, 196 vs 196) while failing on Mesen2's
+    /// (98 vs 90). The remaining 40-pixel diff against a fresh Mesen2 capture is entirely
+    /// inside that band (x 192-207, lines 0-15) with zero pixels outside it, and the
+    /// structural test pins the semantics independently of this CRC.
+    neser_obj_test!(obj_y_wrap, "obj-y-wrap.sfc", OBJ_Y_WRAP_CRC);
 }

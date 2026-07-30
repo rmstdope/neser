@@ -544,6 +544,32 @@ own screen region (quadrant layouts) and include degenerate values
 (black bars, white bars) whose invariance under the suspect operation
 is predictable.
 
+### Self-verifying goldens for vectors no reference can arbitrate (from #3003)
+
+When the references disagree, a screen-CRC golden rests entirely on your reasoning being
+right, and there is no capture to diff against. Look for a way to derive the expectation
+from the ROM's **own output** instead -- an internal relation that must hold whatever the
+correct absolute answer is.
+
+`obj-y-wrap.sfc` is the worked example. It renders the same 16x32 sprite twice at the same
+Y, differing only in the V-flip bit, and the visible wrapped window is exactly the sprite's
+lower square half. So unflipped screen row `L` shows source line `16 + L`, the flipped one
+shows `(16 + L) ^ 15 = 16 + (15 - L)`, and therefore `flipped(L) == unflipped(15 - L)` --
+which IS the "rectangular OBJs flip as two stacked squares" claim, expressed without any
+absolute screen row, without the OAM-Y-to-framebuffer-row convention, and without a
+reference emulator. It fails on 8 of 16 rows before the fix and 0 of 16 after.
+
+Two things make this stronger than a cross-emulator diff:
+
+- It cannot be wrong about the reference, because it does not consult one.
+- It is **scale-invariant**, so it can be evaluated on a GUI emulator's own screenshot even
+  when that emulator has no headless mode and saves at a scaled size. Checking the relation
+  on ares' screenshot (equal lit-pixel counts in the two bands, 196 vs 196) while it fails
+  on Mesen2's (98 vs 90) settled #3003 empirically without any pixel alignment work.
+
+Prefer relations over absolute expectations whenever a ROM renders the same content twice
+under different register settings -- design NESER-authored ROMs to make that possible.
+
 ### Measure the pre-change baseline BEFORE touching golden-shifting code (from #3021)
 
 Any change to shared timing (DMA cost models, CPU cycle counts, PPU trigger
