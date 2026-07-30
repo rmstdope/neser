@@ -178,13 +178,24 @@ impl Ppu {
     /// bit 1 clear the fixed colour is the operand by design and halving still
     /// applies -- the two cases look alike but behave differently.
     fn math_operand(&self, sub: ScreenPixel) -> (u16, bool) {
+        self.math_operand_with(sub, sub.color)
+    }
+
+    /// As [`Self::math_operand`], but with the coverage test and the operand given
+    /// separately.
+    ///
+    /// `coverage` decides whether the sub screen has a pixel at the dot being
+    /// tested; `covered_operand` is the operand to use when it does. The two
+    /// coincide everywhere except the hires even half, where Mesen2 gates a
+    /// MAIN-pixel operand on SUB coverage at x-1 (#3035).
+    fn math_operand_with(&self, coverage: ScreenPixel, covered_operand: u16) -> (u16, bool) {
         let fixed_color = self.coldata & 0x7FFF;
         if self.cgwsel & 0x02 == 0 {
             (fixed_color, false)
-        } else if sub.source == PixelSource::Backdrop {
+        } else if coverage.source == PixelSource::Backdrop {
             (fixed_color, true)
         } else {
-            (sub.color, false)
+            (covered_operand, false)
         }
     }
 
@@ -235,13 +246,11 @@ impl Ppu {
         let xi = x as usize;
         let main = self.line_main[xi];
         let sub = self.line_sub[xi];
-        // When CGWSEL bit 1 is clear the color-math operand is the COLDATA fixed
-        // color for BOTH halves (Mesen2 ApplyColorMathToPixel's !ColorMathAddSubscreen
-        // branch is unconditional).
-        let add_subscreen = self.cgwsel & 0x02 != 0;
-        let fixed_color = self.coldata & 0x7FFF;
         // Odd/main half: operand is the pre-math sub color at the same x, and an
-        // empty sub screen there is the halve-disabling fallback (#3012).
+        // empty sub screen there is the halve-disabling fallback (#3012). When
+        // CGWSEL bit 1 is clear both halves take the COLDATA fixed colour instead
+        // (Mesen2 ApplyColorMathToPixel's !ColorMathAddSubscreen branch is
+        // unconditional); `math_operand_with` handles that for either half.
         let (main_operand, main_fallback) = self.math_operand(sub);
         let odd = self.compose_half(x, y, main.color, main.source, main_operand, main_fallback);
         // Even/sub half: operand is the finalized main pixel one dot to the left
@@ -252,13 +261,18 @@ impl Ppu {
         } else {
             0
         };
-        // The even/sub half's operand is a MAIN pixel, not a sub one, so the
-        // empty-sub-screen fallback does not apply to it.
-        let even_operand = if add_subscreen {
-            prev_main
-        } else {
-            fixed_color
-        };
+        // Mesen2's hires loop calls the same helper for both halves and passes
+        // `prevX` for this one, and that parameter is what indexes
+        // `_subScreenPriority` -- so the even half's operand, a MAIN pixel at x-1,
+        // is gated on SUB coverage at x-1. Where the sub screen is empty there the
+        // operand becomes COLDATA and halving is dropped, even though the intended
+        // operand was a main pixel. Semantically odd but hardware-modelled: NESER
+        // follows Mesen2 here, unlike the ares-favouring splits in #3011/#3003,
+        // because ares composes hires colour math differently and offers no
+        // competing cross-index model -- absence of evidence, not counter-evidence
+        // (#3035).
+        let prev_sub = self.line_sub[xi.saturating_sub(1)];
+        let (even_operand, even_fallback) = self.math_operand_with(prev_sub, prev_main);
         let gate_source = self.line_main[xi.saturating_sub(1)].source;
         // The sub resolve represents its backdrop with the COLDATA fixed color (the
         // color-math operand on hardware), but the DISPLAYED sub backdrop is CGRAM
@@ -268,7 +282,7 @@ impl Ppu {
         } else {
             sub.color
         };
-        let even = self.compose_half(x, y, sub_display, gate_source, even_operand, false);
+        let even = self.compose_half(x, y, sub_display, gate_source, even_operand, even_fallback);
         (even, odd)
     }
 
@@ -1531,6 +1545,64 @@ mod tests {
         assert_eq!(
             ppu.framebuffer[2], 5,
             "sub pixel stays raw: its gate is the main source at x-1"
+        );
+    }
+
+    #[test]
+    fn hires_even_half_falls_back_to_fixed_color_when_sub_screen_is_empty() {
+        // Mesen2's hires loop passes `prevX` to the SAME helper that reads
+        // `_subScreenPriority`, so the even half's operand -- a MAIN pixel at x-1 --
+        // is gated on SUB coverage at x-1. With nothing on the sub screen the fixed
+        // colour is substituted and halving is disabled, even though the intended
+        // operand was a main pixel (#3035).
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        ppu.write_register(0x212D, 0x00); // TS: nothing -- sub is backdrop everywhere
+        ppu.write_register(0x2131, 0x41); // CGADSUB: add + half, BG1 enabled
+        ppu.write_register(0x2132, 0x80 | 12); // COLDATA: blue 12
+        render_lines(&mut ppu, 1);
+
+        // The main half already had this rule (#3012): 10 + COLDATA at full strength.
+        assert_eq!(
+            ppu.framebuffer[1],
+            (12 << 10) | 10,
+            "odd/main half takes the fallback operand unhalved"
+        );
+        // Even half at x = 1. Three outcomes are distinguishable here:
+        //   prev_main halved    = (12298) / 2 per channel = (6 << 10) | 5
+        //   prev_main unhalved  = 12298
+        //   COLDATA unhalved    = 12 << 10          <- Mesen2
+        assert_eq!(
+            ppu.framebuffer[2],
+            12 << 10,
+            "even/sub half falls back to COLDATA at full strength, not the halved prev main"
+        );
+    }
+
+    #[test]
+    fn hires_even_half_reads_sub_coverage_at_the_previous_dot() {
+        // The load-bearing index test. BG2 (sub) covers native x 0..3 only, while BG1
+        // (main) additionally covers x 8..11 via a second tilemap entry. The even
+        // half's coverage lookup must use x-1, not x:
+        //   x = 4: sub covered at x-1 = 3  -> operand stays the previous main pixel
+        //   x = 9: sub empty   at x-1 = 8  -> operand falls back to COLDATA
+        // Reading coverage at x instead would make x = 4 fall back too, so the first
+        // assertion pins the index and the second pins the rule.
+        let mut ppu = Ppu::new();
+        setup_mode5_color_math(&mut ppu);
+        set_vram_word(&mut ppu, 0x001, 1); // BG1 tilemap entry 1 -> covers x 8..11
+        ppu.write_register(0x2131, 0x01); // CGADSUB: add (no half), BG1 enabled
+        ppu.write_register(0x2132, 0x80 | 12); // COLDATA: blue 12
+        render_lines(&mut ppu, 1);
+
+        assert_eq!(
+            ppu.framebuffer[8], 15,
+            "x=4: sub is covered at x-1=3, so the operand is the previous main pixel"
+        );
+        assert_eq!(
+            ppu.framebuffer[18],
+            12 << 10,
+            "x=9: sub is empty at x-1=8, so the operand falls back to COLDATA"
         );
     }
 
