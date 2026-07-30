@@ -247,6 +247,20 @@ impl Ppu {
     /// Process one sliver-fetch slot: re-read the current sprite's position (so mid-window OAM
     /// writes affect the remaining slivers, like hardware), consume one of the 34 CHR slots, and
     /// record the decoded sliver. The 35th attempted fetch only raises the time over-limit.
+    ///
+    /// The live re-read is deliberate and matches both references (#3026): evaluation stores
+    /// only the OAM INDEX, exactly as Mesen2's `_spriteIndexes[32]` and ares-accurate's
+    /// `{valid, index}` do, and neither re-checks range at fetch either. So a write landing in
+    /// the H=256..269 gap between the windows -- SETINI, the high-table size bit, or OAM Y
+    /// behind a forced-blank round trip -- changes what this fetch samples, and can take the
+    /// line-within-sprite outside the sprite's own extent. That is modelled, not a defect; see
+    /// the `*_between_the_windows_*` tests.
+    ///
+    /// The 8-bit mask on `within_y` below is likewise not a divergence from Mesen2's signed
+    /// unmasked form: the two differ by a multiple of 256, and the OBJ tile lookup cannot see
+    /// that -- the fine row is `& 7` and 256 is a multiple of 8, while the tile row is `>> 3`
+    /// then `& 0x0F` and 256/8 = 32 is a multiple of 16. `masked_and_signed_source_lines_agree`
+    /// pins that equivalence so it fails loudly if any of those three is changed.
     fn obj_fetch_step(&mut self, forced_blank: bool) {
         if self.obj_pipeline.fetch_remaining == 0 {
             return;
@@ -811,6 +825,12 @@ mod tests {
     /// by [`mark_obj_source_lines`]. `x_base` is the sprite's left edge.
     fn marked_source_line(ppu: &mut Ppu, x_base: u16, row: u16) -> Option<u16> {
         present_line(ppu, row);
+        read_marked_source_line(ppu, x_base, row)
+    }
+
+    /// The read-back half of [`marked_source_line`], for tests that must tick the PPU
+    /// themselves (e.g. to land a register write at a specific dot).
+    fn read_marked_source_line(ppu: &Ppu, x_base: u16, row: u16) -> Option<u16> {
         (0..8)
             .find_map(|dx| obj_color_at(ppu, x_base + dx, row).map(|color| (color & 0x0F) * 8 + dx))
     }
@@ -976,8 +996,10 @@ mod tests {
 
     #[test]
     fn obj_interlace_applies_vflip_to_the_doubled_source_line() {
-        // With V-flip, the mirror applies to the doubled coordinate against the full height:
-        // source line = height - 1 - ((r - Y) * 2 + field).
+        // With V-flip, the mirror applies to the doubled coordinate within its width block:
+        // source line = ((r - Y) * 2 + field) ^ (width - 1). This sprite is 8x8, where that
+        // is the same as the full-height mirror; the two differ only for the rectangular
+        // OBSEL 6/7 sizes (#3003).
         let color_at_row = |row: u16, field: bool| {
             let mut ppu = Ppu::new();
             ppu.write_register(0x2101, 0x00); // 8x8
@@ -1608,6 +1630,190 @@ mod tests {
         );
         tick_dots(&mut ppu, 1); // dot 66
         assert_eq!(stat77(&mut ppu) & 0x40, 0x40, "range over set at dot 66");
+    }
+
+    // -- OBJ eval/fetch race: live re-read at fetch (#3026) -------------------
+
+    /// Tick to `dot` of `scanline`, from a freshly-reset PPU.
+    fn tick_to(ppu: &mut Ppu, scanline: u16, dot: u16) {
+        ppu.write_register(0x2100, 0x0F); // display on: evaluation skips forced blank
+        while ppu.position().scanline != scanline || ppu.position().dot != dot {
+            ppu.tick();
+        }
+    }
+
+    #[test]
+    fn setini_toggled_between_the_eval_and_fetch_windows_is_read_live() {
+        // The OBJ pipeline evaluates which sprites are on a line during H=0..255 and
+        // fetches their slivers during H=270..339, storing only the OAM INDEX in between.
+        // Everything else is re-read at fetch, so a SETINI write in the H=256..269 gap
+        // changes the fetched source line for a line whose range check already ran.
+        //
+        // This matches both references: Mesen2 keeps only `_spriteIndexes[32]` and re-reads
+        // via `FetchSpritePosition`, and ares-accurate keeps `{valid, index}` and re-reads
+        // `oam.object[...]`. Neither re-checks range at fetch either (#3026).
+        //
+        // SETINI is the most legitimate lever for this: it is a plain register write with
+        // no OAM address redirect, and the vendored hardware header marks it h-blank-legal
+        // while marking OAMDATA/OBSEL v-blank-only.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // 8x8
+        park_all_offscreen(&mut ppu);
+        mark_obj_source_lines(&mut ppu, 2); // source lines 0..15
+        set_obj(&mut ppu, 0, 50, 40, 0, 0x00, false);
+
+        // Row 47 is the sprite's last row: evaluated with interlace OFF it is in range
+        // (40..47) and its source line is 7.
+        // Control: with no mid-gap write the row shows its own source line 7.
+        let mut control = Ppu::new();
+        control.write_register(0x2101, 0x00);
+        park_all_offscreen(&mut control);
+        mark_obj_source_lines(&mut control, 2);
+        set_obj(&mut control, 0, 50, 40, 0, 0x00, false);
+        assert_eq!(
+            marked_source_line(&mut control, 50, 47),
+            Some(7),
+            "control: row 47 is the sprite's own last row"
+        );
+
+        tick_to(&mut ppu, 47, 260); // inside the eval -> fetch gap
+        ppu.write_register(0x2133, 0x02); // OBJ interlace on, after the range check
+        present_line(&mut ppu, 47);
+
+        // The fetch doubles the line-within-sprite from the live SETINI, giving source
+        // line 14 -- outside the 8-row sprite, and read from the next tile row down. A
+        // value latched at evaluation would still be 7, as the control shows.
+        assert_eq!(
+            read_marked_source_line(&ppu, 50, 47),
+            Some(14),
+            "the fetch re-reads SETINI live, doubling the source line out of the sprite"
+        );
+    }
+
+    #[test]
+    fn oam_y_rewritten_between_the_windows_is_read_live() {
+        // Same race via OAM Y. Note this is NOT reachable the way #3026 describes it: an
+        // OAMDATA write during active display is redirected to the HIGH table, and Y lives
+        // in the low table, so a game must bracket the write in forced blank (as Mario
+        // Kart does). Driving the real $2104 path here rather than the `set_oam_byte`
+        // helper is the point -- it proves the scenario is reachable at all.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // 8x8
+        park_all_offscreen(&mut ppu);
+        mark_obj_source_lines(&mut ppu, 8); // source lines 0..63
+        set_obj(&mut ppu, 0, 50, 40, 0, 0x00, false);
+
+        // Control: without the rewrite, row 40 is the sprite's own first row.
+        let mut control = Ppu::new();
+        control.write_register(0x2101, 0x00);
+        park_all_offscreen(&mut control);
+        mark_obj_source_lines(&mut control, 8);
+        set_obj(&mut control, 0, 50, 40, 0, 0x00, false);
+        assert_eq!(
+            marked_source_line(&mut control, 50, 40),
+            Some(0),
+            "control: row 40 is the sprite's own first row"
+        );
+
+        tick_to(&mut ppu, 40, 260); // gap: range check for row 40 already ran (line 0)
+        ppu.write_register(0x2100, 0x80); // forced blank, so the write is not redirected
+        ppu.write_register(0x2102, 0x00); // OAMADD word 0 -> sprite 0's X/Y pair
+        ppu.write_register(0x2104, 50); // X (even byte latches)
+        ppu.write_register(0x2104, 0); // Y = 0 (odd byte commits the word)
+        ppu.write_register(0x2100, 0x0F); // display back on before the fetch window
+        present_line(&mut ppu, 40);
+
+        // (40 - 0) & 0xFF = 40: five tile rows below the sprite's own single row. A Y
+        // latched at evaluation would give source line 0.
+        //
+        // The masked arithmetic here is not a divergence from Mesen2's signed model: the
+        // two differ by a multiple of 256, and 256 is a multiple of 8 (so the fine row is
+        // unchanged) while 256/8 = 32 is a multiple of 16 (so the non-carrying tile-row
+        // wrap absorbs it). See `masked_and_signed_source_lines_agree` below.
+        assert_eq!(
+            read_marked_source_line(&ppu, 50, 40),
+            Some(40),
+            "the fetch re-reads OAM Y live, sampling well outside the sprite"
+        );
+        assert_eq!(
+            ppu.oam_byte(1),
+            0,
+            "the forced-blank window let the write reach the low table"
+        );
+    }
+
+    #[test]
+    fn oam_size_rewritten_between_the_windows_changes_the_vflip_mask() {
+        // The third lever, and the only one reachable with NO forced blank: an OAMDATA
+        // write during active display is redirected to the high table, which is exactly
+        // where the per-sprite size bit lives. The fetch re-reads the size, so this
+        // changes `width` -- and with V-flip that changes the mirror's XOR mask, not just
+        // the sprite's footprint.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // OBSEL 0: small 8x8, large 16x16
+        park_all_offscreen(&mut ppu);
+        mark_obj_source_lines(&mut ppu, 2); // source lines 0..15
+        set_obj(&mut ppu, 0, 50, 40, 0, 0x80, false); // V-flip, small
+
+        // Control: staying small, row 43 mirrors within 8 rows -> 3 ^ 7 = 4.
+        let mut control = Ppu::new();
+        control.write_register(0x2101, 0x00);
+        park_all_offscreen(&mut control);
+        mark_obj_source_lines(&mut control, 2);
+        set_obj(&mut control, 0, 50, 40, 0, 0x80, false);
+        assert_eq!(
+            marked_source_line(&mut control, 50, 43),
+            Some(4),
+            "control: an 8-wide sprite mirrors row 3 to source line 4"
+        );
+
+        // Row 43 of a small 8x8 sprite: line-within-sprite 3, mirrored to 3 ^ 7 = 4.
+        tick_to(&mut ppu, 43, 260);
+        // Redirected write: $2104 during active display lands at
+        // 0x200 | ((addr & 0x1F0) >> 4), so an OAMADD word address of 0 targets high-table
+        // byte 0x200 -- sprite 0's size/X8 bits. 0b10 = large, X bit 8 clear.
+        ppu.write_register(0x2102, 0x00);
+        ppu.write_register(0x2104, 0x02);
+        present_line(&mut ppu, 43);
+
+        // Now 16 wide, so the mirror masks against 15 instead of 7: 3 ^ 15 = 12.
+        assert_eq!(
+            read_marked_source_line(&ppu, 50, 43),
+            Some(12),
+            "the fetch re-reads the size live, widening the V-flip mirror mask"
+        );
+    }
+
+    #[test]
+    fn masked_and_signed_source_lines_agree() {
+        // Why #3026 needs no behaviour change. NESER takes the line-within-sprite in 8-bit
+        // space; Mesen2 leaves it a signed unmasked difference. Those differ by a multiple
+        // of 256, and the OBJ tile lookup cannot see that difference:
+        //   - the fine row is `& 7`, and 256 is a multiple of 8;
+        //   - the tile row is `>> 3` then `& 0x0F`, and 256/8 = 32 is a multiple of 16.
+        // So off the V-flip path the two models are indistinguishable for EVERY input, in
+        // range or not. (On the V-flip path they can differ, but via Mesen2's branch
+        // predicate rather than the masking -- settled in #3003 in favour of
+        // ares/higan/Snes9x and the SNESdev wiki.)
+        //
+        // This test exists so that claim fails loudly if the mask, the `/ 8` or the
+        // `& 0x0F` is ever changed.
+        for scanline in [0i32, 1, 39, 40, 100, 200, 224, 255] {
+            for y in [0i32, 1, 40, 100, 200, 240, 255] {
+                let signed = scanline - y;
+                let masked = signed & 0xFF;
+                assert_eq!(
+                    masked & 7,
+                    signed & 7,
+                    "fine row differs for scanline {scanline}, Y {y}"
+                );
+                assert_eq!(
+                    (masked >> 3) & 0x0F,
+                    (signed >> 3) & 0x0F,
+                    "tile row differs for scanline {scanline}, Y {y}"
+                );
+            }
+        }
     }
 
     // -- OBJ vertical flip: width-block mirroring (#3003) ---------------------
