@@ -73,6 +73,18 @@ Use this order when researching SNES / Super Famicom hardware details:
    - Use only after checking fullsnes, anomie's docs, and the SNESdev wiki
    - Treat as implementation evidence, not as equal authority with written specifications
    - **When both ares and Mesen2 agree** on unspecified behavior, that's strong evidence
+   - **Distinguish counter-evidence from absence of evidence** before deciding a split. Ask
+     whether the second reference makes a CONTRARY claim about the *same quantity*, or simply
+     has no model for it because it is structured differently. Those look alike and point
+     opposite ways:
+     - #3011 (CGWSEL clip mode 3 halving) and #3003 (OBJ V-flip mirror): ares computed the
+       same quantity and disagreed → genuine counter-evidence, NESER followed ares.
+     - #3035 (hires even-half sub coverage at x-1): ares composes hires colour math
+       differently and has no cross-index lookup at all → absence of evidence, NESER
+       followed Mesen2.
+     Without this test the decisions read as arbitrary reference-shopping. Whichever way it
+     lands, record the reasoning at the call site so the next reader can see why two nearby
+     divergences resolved in opposite directions.
    - **Count LINEAGES, not implementations.** ares, ares-performance, higan and bsnes all
      descend from byuu/Near's work and routinely share an expression verbatim, so
      "three implementations agree" can be one opinion cited three times. Snes9x is the
