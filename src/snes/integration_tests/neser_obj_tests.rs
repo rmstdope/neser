@@ -10,11 +10,18 @@
 //!
 //! Every golden was approved via the #2878/#2879 baseline workflow: all 14
 //! ROMs settle at frame 6 (probed to 900), are sampled at settle + 60
-//! (frame 66), and were pixel-diffed against Mesen2 headless captures at
-//! the same frame -- the 13 goldens below match exactly at shift (0,0).
-//! `obj-y-wrap.sfc` matches for its control and unflipped wrapped sprites
-//! but NESER renders the V-flipped wrapped sprite with wrong rows (issue
-//! #3003), so that test is `#[ignore]`d with NESER's current CRC recorded.
+//! (frame 66). Thirteen were pixel-diffed against Mesen2 headless captures
+//! at the same frame and match exactly at shift (0,0).
+//!
+//! `obj-y-wrap.sfc` is the exception (#3003). Mesen2 disagrees with ares,
+//! ares-performance, higan and Snes9x on V-flip across an 8-bit Y wrap, so
+//! its golden rests on that majority plus the SNESdev wiki rather than on a
+//! Mesen2 cross-check, and the residual 40-pixel Mesen2 diff is confined
+//! entirely to the flipped band with zero pixels outside it. Because no
+//! reference capture can arbitrate it, the suite also carries a
+//! **golden-independent structural assertion** that derives the expected
+//! wrapped rows from the ROM's own output -- see
+//! `obj_y_wrap_vflipped_sprite_mirrors_the_unflipped_wrapped_sprite`.
 
 use super::rom_runner::{RunConfig, RunOracle, RunResult, run_rom_with_oracle};
 use std::fs;

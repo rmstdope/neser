@@ -441,9 +441,16 @@ fn finish_result(
     marker: [u8; 5],
     capture_screen: bool,
 ) -> RunResult {
-    let screen_crc32 = snes.screen_crc32();
-    let capture_path = maybe_write_capture_png(snes, name, suite, screen_crc32, capture_screen);
-    let screen_rgb = (exit_reason == RunExitReason::ScreenCrcFrame).then(|| snes.screen_snapshot());
+    // A single snapshot serves all three consumers: the golden CRC, the optional PNG
+    // capture, and `screen_rgb`. `Snes::screen_crc32` is defined as crc32 over exactly
+    // these bytes -- an invariant pinned by
+    // `snes::console::snes::tests::screen_crc32_matches_snapshot_crc` -- so deriving the
+    // CRC from them here cannot drift from the golden's definition.
+    let rgb = snes.screen_snapshot();
+    let screen_crc32 = crate::platform::crc32::crc32(&[&rgb]);
+    let capture_path =
+        maybe_write_capture_png(snes, name, suite, screen_crc32, capture_screen, &rgb);
+    let screen_rgb = (exit_reason == RunExitReason::ScreenCrcFrame).then_some(rgb);
 
     RunResult {
         passed,
@@ -464,16 +471,16 @@ fn maybe_write_capture_png(
     suite: &str,
     crc: u32,
     capture_screen: bool,
+    rgb: &[u8],
 ) -> Option<PathBuf> {
     if !capture_screen || capture_is_disabled_for_fixture(name) {
         return None;
     }
 
     let path = capture_output_path(suite, &capture_stem(name), crc);
-    let rgb = snes.screen_snapshot();
     crate::platform::png_utils::write_rgb_png(
         &path,
-        &rgb,
+        rgb,
         snes.screen_width(),
         snes.screen_height(),
     );
