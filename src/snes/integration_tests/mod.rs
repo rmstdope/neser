@@ -16,6 +16,8 @@ mod jonasquinn_math_tests;
 mod kungfufurby_irq_tests;
 mod kungfufurby_nmi_tests;
 mod neser_color_math_tests;
+mod neser_dma_tests;
+mod neser_hdma_tests;
 mod neser_mode7_tests;
 mod neser_obj_tests;
 mod neser_opt_tests;
