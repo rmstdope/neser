@@ -58,28 +58,39 @@ mod tests {
         run_rom_screen_crc("demo_nmitest.smc", 600, 0x8695_BBB0);
     }
 
-    /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// A real NMI dispatch-timing bug was found and partially fixed (#2883,
-    /// `Cpu::step`'s freshly-polled-edge dispatch delay) -- proven via a
-    /// byte-exact Mesen2 bus-trace diff and confirmed to measurably improve
-    /// dispatch precision for this ROM's first NMI (14 clocks early -> 2
-    /// clocks late relative to Mesen2) -- but this ROM's actual divergence
-    /// is a slower ~300-frame cumulative drift the fix doesn't fully zero
-    /// out. Closing the residual gap needs a finer-than-per-instruction
-    /// interrupt-pending check; see #3049.
+    /// Fixed by #3049: NMI dispatch is now checked per-CPU-cycle (an
+    /// arm-this-cycle/latch-next-cycle counter, mirroring Mesen2's
+    /// `NmiFlagCounter`/`DetectNmiSignalEdge`, hooked into `tick_read`/
+    /// `tick_write`/`tick_internal_cycle`) instead of once per `step()` call,
+    /// plus two related opcode-timing fixes surfaced while verifying this
+    /// ROM's bus trace: the hardware-interrupt dispatch sequence's two wasted
+    /// cycles now happen before the pushes (matching Mesen2's
+    /// `ProcessInterrupt`), and PHA/PHX/PHY's internal cycle now ticks before
+    /// the push (matching Mesen2's `PHA`/`PHX`/`PHY`). Verified pixel-exact
+    /// against a Mesen2 capture at frame 600 (this ROM's NMI handler PHAs A
+    /// as its very first instruction), and a bus-trace diff against Mesen2
+    /// across the first 500k+ master clocks is byte-identical except for one
+    /// pull sequence right before this ROM's RTI (`PLA` and friends have the
+    /// mirror-image "internal cycle before the pull" issue, out of scope for
+    /// this fix -- see `test_nmi_passes` below and #3049's follow-up).
     #[test]
-    #[ignore = "NMI dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn nmi_passes() {
-        run_rom_screen_crc("nmi.smc", 600, 0xDEAD_FA89);
+        run_rom_screen_crc("nmi.smc", 600, 0x8695_BBB0);
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// Same #2883/#3049 root cause as `nmi_passes`: the #2883 dispatch-delay
-    /// fix changes which loop iteration this ROM's early self-check
-    /// captures (different crash-loop CRC than pre-fix), but the check
-    /// still fails -- needs the same finer-grained interrupt-pending check.
+    /// `nmi_passes`' #3049 per-cycle dispatch fix does NOT change this ROM's
+    /// outcome (identical CRC before/after) -- this self-checking ROM's
+    /// divergence is a different residual gap. A spike extending the
+    /// PHA/PHX/PHY internal-cycle-before-the-push fix to the full push/pull
+    /// family (PLA/PLX/PLY/PLP/PLB/PLD/PHP/PHB/PHD/PHK) was tried and
+    /// disproven -- it did not change this ROM's CRC either, so the pull-side
+    /// mirror of the PHA fix (needed to close `nmi.smc`'s own remaining
+    /// 5-line bus-trace residual, see `nmi_passes`) is NOT this ROM's root
+    /// cause. Root cause not yet identified; needs fresh investigation.
+    /// Tracked as a follow-up to #3049.
     #[test]
-    #[ignore = "NMI dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
+    #[ignore = "root cause not yet identified (push/pull cycle-ordering ruled out); pending #3049 follow-up"]
     fn test_nmi_passes() {
         run_rom_screen_crc("test_nmi.smc", 120, 0x8662_6F50);
     }

@@ -537,17 +537,17 @@ impl SnesSystemBus {
     /// (one CPU cycle after arming).
     fn run_overdue_pending_dma(&mut self) {
         let now = self.ppu.borrow().total_master_clocks();
-        if let Some((_, kind, fallback)) = self.pending_hdma {
-            if now >= fallback {
-                self.pending_hdma = None;
-                self.run_pending_hdma(kind);
-            }
+        if let Some((_, kind, fallback)) = self.pending_hdma
+            && now >= fallback
+        {
+            self.pending_hdma = None;
+            self.run_pending_hdma(kind);
         }
-        if let Some((_, mdmaen, fallback)) = self.pending_gpdma {
-            if now >= fallback {
-                self.pending_gpdma = None;
-                self.start_dma_transfer(mdmaen);
-            }
+        if let Some((_, mdmaen, fallback)) = self.pending_gpdma
+            && now >= fallback
+        {
+            self.pending_gpdma = None;
+            self.start_dma_transfer(mdmaen);
         }
     }
 

@@ -9,20 +9,21 @@
 //! show blue for all six ROMs by frame 600 (`irq.smc` needs longer,
 //! matching `demo_irqtest.smc` transitioning well after frame 600 too).
 //!
-//! All six currently fail in NESER: investigated as issue #2883 increment
-//! 2 and found to share the same root cause as `kungfufurby_nmi_tests`'
-//! `nmi.smc`/`test_nmi.smc` divergences (tracked in #3049) -- NESER's H/V
-//! IRQ dispatch resolves a few master clocks early relative to Mesen2 (an
-//! interrupt-pending check granularity gap, not an IRQ-specific bug; see
-//! the #3049 issue comment for the investigation and disproven alternate
-//! hypothesis).
+//! All six originally failed in NESER (investigated as issue #2883
+//! increment 2, found to share `kungfufurby_nmi_tests`' interrupt-dispatch
+//! root cause, tracked in #3049). #3049's per-CPU-cycle NMI and H/V-IRQ
+//! dispatch fixes (see `src/snes/cpu/cpu.rs`) fixed `demo_irqtest.smc`,
+//! pixel-verified against Mesen2 at frame 600. The remaining five are
+//! unaffected by either fix (identical CRCs before/after) -- their
+//! divergence is a different residual gap, not yet identified, matching
+//! `kungfufurby_nmi_tests::test_nmi_passes`'s status.
 //!
-//! `irq.smc`, `test_irqb.smc` and `demo_irqtest.smc` (and separately
-//! `kungfufurby_nmi_tests::nmi.smc`) all share the literal CRC
-//! `0xDEAD_FA89` below. This is not a copy-pasted placeholder: their FAIL
-//! screen is a flat solid-red fill (see the module doc above), and a flat
-//! fill of the same colour and dimensions hashes identically regardless of
-//! which ROM produced it -- confirmed by capturing each independently with
+//! `irq.smc` and `test_irqb.smc` share the literal CRC `0xDEAD_FA89` below
+//! (also shared with `kungfufurby_nmi_tests::nmi.smc`'s old, no-longer-used
+//! placeholder). This is not a copy-pasted placeholder: their FAIL screen is
+//! a flat solid-red fill (see the module doc above), and a flat fill of the
+//! same colour and dimensions hashes identically regardless of which ROM
+//! produced it -- confirmed by capturing each independently with
 //! `NESER_CAPTURE_SCREEN=1`.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
@@ -66,51 +67,55 @@ mod tests {
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// See #3049: shares the NMI suite's interrupt-dispatch-precision root
-    /// cause (V-IRQ mode, VTIME=225, fires ~18 master clocks early).
+    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
+    /// before/after); root cause not yet identified.
     #[test]
-    #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
+    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
     fn irq_passes() {
         run_rom_screen_crc("irq.smc", 1200, 0xDEAD_FA89);
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// See #3049.
+    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
+    /// before/after); root cause not yet identified.
     #[test]
-    #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
+    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
     fn test_irq_passes() {
         run_rom_screen_crc("test_irq.smc", 600, 0x0B56_4EEF);
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// See #3049.
+    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
+    /// before/after); root cause not yet identified.
     #[test]
-    #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
+    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
     fn test_irq4200_passes() {
         run_rom_screen_crc("test_irq4200.smc", 600, 0x0B56_4EEF);
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// See #3049.
+    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
+    /// before/after); root cause not yet identified.
     #[test]
-    #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
+    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
     fn test_irq4209_passes() {
         run_rom_screen_crc("test_irq4209.smc", 600, 0x0B56_4EEF);
     }
 
     /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// See #3049.
+    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
+    /// before/after); root cause not yet identified.
     #[test]
-    #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
+    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
     fn test_irqb_passes() {
         run_rom_screen_crc("test_irqb.smc", 600, 0xDEAD_FA89);
     }
 
-    /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// See #3049.
+    /// Fixed by #3049's per-cycle H/V-IRQ dispatch fix (`irq_line_shadow`,
+    /// resampled once per CPU cycle instead of once per instruction).
+    /// Verified pixel-exact against a Mesen2 capture at frame 600.
     #[test]
-    #[ignore = "H/V-IRQ dispatch timing not yet bit-exact vs Mesen2; pending #3049"]
     fn demo_irqtest_passes() {
-        run_rom_screen_crc("demo_irqtest.smc", 600, 0xDEAD_FA89);
+        run_rom_screen_crc("demo_irqtest.smc", 600, 0x8695_BBB0);
     }
 }

@@ -109,6 +109,12 @@ pub struct SnesCpuState {
     pub irq_pending: bool,
     #[serde(default)]
     pub abort_pending: bool,
+    /// See Cpu::nmi_arm_counter (#3049): one-CPU-cycle NMI edge-to-dispatch latch.
+    #[serde(default)]
+    pub nmi_arm_counter: u8,
+    /// See Cpu::irq_line_shadow (#3049): most recently sampled H/V-IRQ level.
+    #[serde(default)]
+    pub irq_line_shadow: bool,
     #[serde(default)]
     pub waiting: bool,
     #[serde(default)]
