@@ -162,6 +162,12 @@ pub(crate) struct RunResult {
     pub pc: u16,
     pub marker: [u8; 5],
     pub screen_crc32: u32,
+    /// Final RGB888 frame (`256 * 224 * 3`, row-major, the same layout as
+    /// `Snes::screen_snapshot`), for tests that need to assert on pixels rather than on a
+    /// golden CRC. Populated only when the [`RunOracle::ScreenCrc`] oracle actually reached
+    /// its target frame, so the marker/bus-byte suites pay no allocation -- a ScreenCrc run
+    /// that instead hits the tick limit carries `None`.
+    pub screen_rgb: Option<Vec<u8>>,
     pub capture_path: Option<PathBuf>,
 }
 
@@ -437,6 +443,7 @@ fn finish_result(
 ) -> RunResult {
     let screen_crc32 = snes.screen_crc32();
     let capture_path = maybe_write_capture_png(snes, name, suite, screen_crc32, capture_screen);
+    let screen_rgb = (exit_reason == RunExitReason::ScreenCrcFrame).then(|| snes.screen_snapshot());
 
     RunResult {
         passed,
@@ -446,6 +453,7 @@ fn finish_result(
         pc,
         marker,
         screen_crc32,
+        screen_rgb,
         capture_path,
     }
 }
@@ -738,6 +746,35 @@ mod tests {
         assert_eq!(result.exit_reason, RunExitReason::FrameLimit);
         assert_eq!(result.frames, 1);
         assert!(result.ticks > 0);
+    }
+
+    #[test]
+    fn screen_crc_oracle_exposes_the_final_frame_pixels() {
+        // `screen_rgb` is the substitute oracle for vectors that cannot be cross-checked
+        // against a reference emulator (see neser_obj_tests' obj-y-wrap structural test).
+        let rom = pass_marker_rom();
+        let with_pixels = run_rom_with_oracle(
+            &rom,
+            "screen-rgb-probe.sfc",
+            "rom_runner",
+            RunConfig::new(20_000_000, 0),
+            RunOracle::ScreenCrc {
+                frames: 3,
+                expected_crc: 0xDEAD_BEEF,
+            },
+        );
+        assert_eq!(with_pixels.exit_reason, RunExitReason::ScreenCrcFrame);
+        let rgb = with_pixels
+            .screen_rgb
+            .expect("a ScreenCrc run that reached its frame captures the pixels");
+        assert_eq!(rgb.len(), 256 * 224 * 3, "RGB888 at the SNES screen size");
+
+        // Other oracles must not pay for a snapshot they never look at.
+        let marker = run_rom(&rom, "screen-rgb-marker.sfc", RunConfig::new(20_000_000, 0));
+        assert!(
+            marker.screen_rgb.is_none(),
+            "non-ScreenCrc runs carry no frame"
+        );
     }
 
     #[test]
