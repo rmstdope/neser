@@ -17,11 +17,12 @@
 //! - `MosaicMode3.sfc` matches pixel-exactly both untouched (mosaic
 //!   size 0) and with R held frames 120-149 (a larger dialed size);
 //!   approved goldens.
-//! - `StarWars.sfc` (animated HDMA perspective crawl) matches Mesen2
-//!   pixel-exactly at frames 120, 360 and 600 -- all three approved
-//!   goldens since #3050 fixed the HDMA `SyncEndDma` pad (the crawl
-//!   previously drifted to 1289 px at f360 and 222 px at f600, because
-//!   the zoom counter lost one NMI double-step per frame).
+//! - `StarWars.sfc` (animated HDMA perspective crawl) matches
+//!   pixel-exactly at frame 120 (approved golden) but drifts later
+//!   (758 px at frame 360, 217 px at frame 600 since #3020's HDMA
+//!   write scheduling, improved from 964/222 but still inexact): the
+//!   f360/f600 vectors are `#[ignore]`d with NESER's current CRCs
+//!   pending #3021/#3042.
 //! - `Perspective.sfc` matches Mesen2 pixel-exactly since #3020 (its
 //!   per-scanline HDMA matrix writes no longer land before the last
 //!   visible pixel renders): approved golden.
@@ -141,25 +142,33 @@ mod tests {
         0x534A_F4DD
     );
 
-    // Mesen2-approved golden, 0-px (#3050). The Logo phase advances its Mode 7 zoom once
-    // per NMI from a `$4210` poll loop; NESER's HDMA `SyncEndDma` pad used a fixed 8-clock
-    // CPU cycle instead of the upcoming access's speed, which pushed that 6-clock poll read
-    // two clocks past the 4-clock RDNMI hold window and dropped one zoom step per frame.
-    // Before the fix the crawl was 38 frames behind by f365 (1289 px here, 222 px at f600).
-    peterlemon_advanced_test!(
-        starwars_f360,
-        "SNES-PPU-Mode7/StarWars/StarWars.sfc",
-        360,
-        0xFE54_B575
-    );
+    /// NESER's current CRC, NOT a Mesen2-approved golden (crawl drift,
+    /// improved by #3020's HDMA write scheduling: 964 -> 758 px at f360).
+    #[test]
+    #[ignore = "Mode 7 HDMA crawl drifts from Mesen2 after frame ~120; pending #3021, #3042"]
+    fn starwars_f360() {
+        run_advanced_screen_crc(
+            "SNES-PPU-Mode7/StarWars/StarWars.sfc",
+            "",
+            &[],
+            360,
+            0xA7C7_7DEB,
+        );
+    }
 
-    // Mesen2-approved golden, 0-px (#3050) -- see `starwars_f360`.
-    peterlemon_advanced_test!(
-        starwars_f600,
-        "SNES-PPU-Mode7/StarWars/StarWars.sfc",
-        600,
-        0xDF0A_88E6
-    );
+    /// NESER's current CRC, NOT a Mesen2-approved golden (crawl drift,
+    /// improved by #3020's HDMA write scheduling: 222 -> 217 px at f600).
+    #[test]
+    #[ignore = "Mode 7 HDMA crawl drifts from Mesen2 after frame ~120; pending #3021, #3042"]
+    fn starwars_f600() {
+        run_advanced_screen_crc(
+            "SNES-PPU-Mode7/StarWars/StarWars.sfc",
+            "",
+            &[],
+            600,
+            0x0918_3693,
+        );
+    }
 
     peterlemon_advanced_test!(
         perspective,

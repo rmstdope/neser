@@ -9,15 +9,15 @@ use super::{
     CGRAM_SIZE, CPU_VERSION, HBLANK_START_DOT, PPU1_VERSION, PPU2_VERSION, Ppu, VISIBLE_DOT_START,
     VRAM_SIZE, VramAddressTranslation,
 };
-use crate::platform::debugging::{ppu_trace_level, trace_clock_in_window};
+use crate::platform::debugging::ppu_trace_level;
 use crate::trace_ppu;
 
 impl Ppu {
     /// Write a PPU register by its 16-bit address offset.
     pub fn write_register(&mut self, addr: u16, value: u8) {
-        let trace = ppu_trace_level() >= 3 && trace_clock_in_window(self.total_master_clocks);
+        let trace = ppu_trace_level() >= 3;
         if trace {
-            trace_ppu!(3; "write {:04X}={:02X} y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X} nmi={} vblank={} irq={} frame={} clk={} lc={}",
+            trace_ppu!(3; "write {:04X}={:02X} y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X} nmi={} vblank={} irq={} frame={}",
                 addr,
                 value,
                 self.position.scanline,
@@ -30,8 +30,6 @@ impl Ppu {
                 self.vblank_active as u8,
                 self.irq_line as u8,
                 (self.pending_completed_frames > 0) as u8,
-                self.total_master_clocks,
-                self.line_clock,
             );
         }
         match addr {
@@ -291,7 +289,7 @@ impl Ppu {
             _ => {}
         }
         if trace {
-            trace_ppu!(3; "after {:04X}={:02X} y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X} nmi={} vblank={} irq={} frame={} clk={} lc={}",
+            trace_ppu!(3; "after {:04X}={:02X} y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X} nmi={} vblank={} irq={} frame={}",
                 addr,
                 value,
                 self.position.scanline,
@@ -304,15 +302,13 @@ impl Ppu {
                 self.vblank_active as u8,
                 self.irq_line as u8,
                 (self.pending_completed_frames > 0) as u8,
-                self.total_master_clocks,
-                self.line_clock,
             );
         }
     }
 
     /// Read a PPU register by its 16-bit address offset.
     pub fn read_register(&mut self, addr: u16) -> u8 {
-        let trace = ppu_trace_level() >= 3 && trace_clock_in_window(self.total_master_clocks);
+        let trace = ppu_trace_level() >= 3;
         let value = match addr {
             // MPYL/MPYM/MPYH: PPU1 signed multiply result, M7A (16-bit) * M7B (8-bit, most-recent
             // byte) = 24-bit signed product. We always expose the product (drawing-period
@@ -458,7 +454,7 @@ impl Ppu {
             _ => 0,
         };
         if trace {
-            trace_ppu!(3; "read {:04X} -> {:02X} y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X} nmi={} vblank={} irq={} frame={} clk={} lc={}",
+            trace_ppu!(3; "read {:04X} -> {:02X} y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X} nmi={} vblank={} irq={} frame={}",
                 addr,
                 value,
                 self.position.scanline,
@@ -471,8 +467,6 @@ impl Ppu {
                 self.vblank_active as u8,
                 self.irq_line as u8,
                 (self.pending_completed_frames > 0) as u8,
-                self.total_master_clocks,
-                self.line_clock,
             );
         }
         value

@@ -115,6 +115,11 @@ pub struct SnesCpuState {
     /// See Cpu::irq_line_shadow (#3049): most recently sampled H/V-IRQ level.
     #[serde(default)]
     pub irq_line_shadow: bool,
+    /// See Cpu::dma_suppress_cycles (#3065): remaining cycles of GPDMA interrupt-sample
+    /// suppression (can be nonzero at an instruction boundary when a DMA ran on the
+    /// previous instruction's last cycle).
+    #[serde(default)]
+    pub dma_suppress_cycles: u8,
     #[serde(default)]
     pub waiting: bool,
     #[serde(default)]

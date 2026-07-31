@@ -3246,9 +3246,7 @@ mod tests {
         assert_eq!(ppu.mask_logic[2], 2, "BG3 = XOR");
         assert_eq!(ppu.mask_logic[3], 3, "BG4 = XNOR");
 
-        // WOBJLOG: bits 3-2 = colour-window logic (10 = XOR), bits 1-0 = OBJ logic (01 = AND).
-        // Written as one even-grouped literal because clippy rejects the 2-bit field grouping.
-        ppu.write_register(0x212B, 0b0000_1001);
+        ppu.write_register(0x212B, 0b00_00_10_01);
         assert_eq!(ppu.mask_logic[4], 1, "OBJ = AND");
         assert_eq!(ppu.mask_logic[5], 2, "colour window = XOR");
     }

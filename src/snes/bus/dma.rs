@@ -94,30 +94,12 @@ impl DmaController {
         Ok(())
     }
 
-    /// Mesen2 `SnesDmaController::SyncEndDma`: after the transfer, "wait 2-8 master cycles
-    /// to reach a whole number of CPU clock cycles since the pause".
-    ///
-    /// The cycle length to round to is the speed of the CPU access the transfer is standing
-    /// in front of, not a fixed 8 -- `SnesCpu::Read`/`Write` call `SetCpuSpeed` for the
-    /// upcoming access *before* `ProcessCpuCycle`, which is where a pending transfer runs
-    /// (`Idle` sets 6). Rounding to a fixed 8 makes every DMA that lands in front of a
-    /// 6-clock register access two clocks too long; in StarWars.sfc that pushed the `$4210`
-    /// poll read past the 4-clock RDNMI hold window and cost one Mode 7 zoom step per frame
-    /// (#3050).
-    ///
-    /// The pad is never zero: an already-aligned total still pays a full cycle.
-    fn sync_end_pad(charged: u64, cpu_speed: u8) -> u64 {
-        let speed = u64::from(cpu_speed);
-        speed - (charged % speed)
-    }
-
     pub fn start_dma<B: DmaABus>(
         &mut self,
         mdmaen: u8,
         abus: &mut B,
         seed_open_bus: u8,
         base_clock: u64,
-        _cpu_speed: u8,
     ) -> (u64, u8) {
         if mdmaen == 0 {
             return (0, seed_open_bus);
@@ -145,18 +127,11 @@ impl DmaController {
             counter += self.run_channel(channel, abus, &mut open_bus);
         }
 
-        // SyncEndDma. Deliberately still rounds to a fixed 8-clock cycle rather than to
-        // `cpu_speed` the way the HDMA envelopes do (see `sync_end_pad`).
-        //
-        // Making this speed-aware too is what Mesen2's shared `SyncEndDma` appears to do,
-        // but it renders undisbeliever's `inidisp_forgot_to_force_blank.sfc` as a fully
-        // black screen (that ROM's DMA-timed CGRAM/tile setup collapses; it is pixel-exact
-        // against Mesen2 with the fixed 8). NESER arms a general-purpose transfer through a
-        // two-cycle `pending_gpdma` countdown rather than Mesen2's `_dmaStartDelay`, so the
-        // CPU cycle whose speed is live when the transfer runs is not necessarily the one
-        // Mesen2 would have published. Left alone pending its own bus-trace diff (#3067);
-        // every vector #3050 set out to fix is 0-px without it.
-        let pad_end = Self::sync_end_pad(counter, 8);
+        // SyncEndDma: pause 1-8 clocks so the charged transfer length is a whole
+        // number of CPU cycles (the last speed-setting access is the SlowROM
+        // A-bus read, 8 clocks; empirically fitted against Mesen2 across five
+        // transfers -- see #3021).
+        let pad_end = 8 - (counter % 8);
         abus.dma_tick(pad_end);
         counter += pad_end;
 
@@ -169,7 +144,6 @@ impl DmaController {
         abus: &mut B,
         seed_open_bus: u8,
         base_clock: u64,
-        cpu_speed: u8,
     ) -> (u64, u8) {
         // Initialize active_mask to 0xFF (all channels potentially active).
         // Channels will be cleared from active_mask when they terminate (descriptor=$00).
@@ -248,8 +222,8 @@ impl DmaController {
             }
         }
 
-        // SyncEndDma: round the charged total up to a whole CPU cycle (see `sync_end_pad`).
-        let pad_end = Self::sync_end_pad(ticks, cpu_speed);
+        // SyncEndDma: round the charged total up to a whole 8-clock CPU cycle.
+        let pad_end = 8 - (ticks % 8);
         abus.dma_tick(pad_end);
         ticks += pad_end;
 
@@ -264,7 +238,6 @@ impl DmaController {
         abus: &mut B,
         seed_open_bus: u8,
         base_clock: u64,
-        cpu_speed: u8,
     ) -> (u64, u8) {
         if hdmaen == 0 {
             return (0, seed_open_bus);
@@ -364,9 +337,9 @@ impl DmaController {
             }
         }
 
-        // SyncEndDma: pad clocks rounding the charged total to a whole CPU cycle
-        // (see `sync_end_pad`).
-        let pad_end = Self::sync_end_pad(counter, cpu_speed);
+        // SyncEndDma: 1-8 pad clocks rounding the charged total to a whole
+        // 8-clock CPU cycle.
+        let pad_end = 8 - (counter % 8);
         abus.dma_tick(pad_end);
         counter += pad_end;
 
@@ -688,12 +661,12 @@ mod tests {
         bus.a_bus[0x3102] = 0xB2;
 
         let init_clock = bus.clock;
-        dma.hdma_init(0x03, &mut bus, 0, init_clock, 8);
+        dma.hdma_init(0x03, &mut bus, 0, init_clock);
         let base_clock = bus.clock;
         assert_eq!(base_clock % 8, 0, "init ends on a CPU cycle boundary");
 
         let start = bus.clock;
-        let (counter, _) = dma.hdma_do_line(0x03, &mut bus, 0, base_clock, 8);
+        let (counter, _) = dma.hdma_do_line(0x03, &mut bus, 0, base_clock);
 
         assert_eq!(
             bus.b_bus_writes,
@@ -711,117 +684,6 @@ mod tests {
         assert_eq!(bus.clock - start, 72, "bus advanced in lockstep");
     }
 
-    /// Mesen2 `SyncEndDma` rounds the charged transfer up to a whole *current* CPU cycle:
-    /// `cpuSpeed - (_dmaClockCounter % cpuSpeed)`, where `_cpuSpeed` was set by
-    /// `SnesCpu::Read`/`Write` for the access that is about to run (`SetCpuSpeed` precedes
-    /// `ProcessCpuCycle`, which is where the pending transfer executes). A 6-clock access
-    /// therefore ends the DMA two clocks earlier than an 8-clock one.
-    ///
-    /// #3050: StarWars' Mode 7 zoom counter is advanced from a `$4210` poll loop, and
-    /// `$4210` is a 6-clock access. Padding to a fixed 8 delayed that poll read past the
-    /// 4-clock RDNMI hold window, costing one zoom step per frame.
-    #[test]
-    fn sync_end_pad_rounds_up_to_a_whole_cpu_cycle_and_is_never_zero() {
-        // An already-aligned total still pays a full cycle ("wait 2-8 master cycles").
-        assert_eq!(DmaController::sync_end_pad(40, 8), 8);
-        assert_eq!(DmaController::sync_end_pad(40, 6), 2);
-        assert_eq!(DmaController::sync_end_pad(40, 12), 8);
-        assert_eq!(DmaController::sync_end_pad(42, 6), 6);
-        for speed in [6u8, 8, 12] {
-            for charged in 0..64u64 {
-                let pad = DmaController::sync_end_pad(charged, speed);
-                assert!((1..=u64::from(speed)).contains(&pad), "pad in 1..=speed");
-                assert_eq!(
-                    (charged + pad) % u64::from(speed),
-                    0,
-                    "ends on a whole cycle"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn hdma_do_line_end_pad_rounds_to_the_upcoming_cpu_access_speed() {
-        // One mode-2 channel from an 8-aligned base: pad_start 8 + overhead 8 + 2 byte
-        // slots (16) + speculative descriptor read (8) = 40 charged before the end pad.
-        // `hdma_init` always runs at speed 8 here so only the line transfer's end pad varies.
-        let charged = |cpu_speed: u8| {
-            let mut dma = DmaController::new();
-            let mut bus = RecordingBus::new(1112);
-            write_hdma_channel(&mut dma, 0, 0x02, 0x22, 0x3000);
-            bus.a_bus[0x3000] = 0xFF;
-            bus.a_bus[0x3001] = 0xA1;
-            bus.a_bus[0x3002] = 0xA2;
-            let init_clock = bus.clock;
-            dma.hdma_init(0x01, &mut bus, 0, init_clock, 8);
-            let base_clock = bus.clock;
-            let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base_clock, cpu_speed);
-            assert_eq!(bus.clock - base_clock, counter, "bus advanced in lockstep");
-            counter
-        };
-
-        assert_eq!(
-            charged(8),
-            48,
-            "8-clock access pads to a whole 8-clock cycle"
-        );
-        assert_eq!(
-            charged(6),
-            42,
-            "6-clock access pads to a whole 6-clock cycle"
-        );
-        assert_eq!(
-            charged(12),
-            48,
-            "12-clock access pads to a whole 12-clock cycle"
-        );
-    }
-
-    /// Same rule for the once-per-frame HDMA init and for general-purpose DMA -- all three
-    /// envelopes share Mesen2's single `SyncEndDma`.
-    #[test]
-    fn hdma_init_end_pad_rounds_to_the_upcoming_cpu_access_speed() {
-        let charged = |cpu_speed: u8| {
-            let mut dma = DmaController::new();
-            let mut bus = RecordingBus::new(0);
-            write_hdma_channel(&mut dma, 0, 0x00, 0x22, 0x3000);
-            bus.a_bus[0x3000] = 0x83;
-            bus.a_bus[0x3001] = 0x11;
-            dma.hdma_init(0x01, &mut bus, 0, 0, cpu_speed).0
-        };
-        assert_eq!(charged(6) % 6, 0, "init ends on a whole 6-clock CPU cycle");
-        assert_eq!(charged(8) % 8, 0, "init ends on a whole 8-clock CPU cycle");
-        assert_ne!(charged(6), charged(8), "the speed must change the end pad");
-    }
-
-    /// General-purpose DMA is the deliberate exception: its end pad stays on a fixed 8-clock
-    /// cycle. Pinning that here so the difference from the HDMA envelopes is a decision on
-    /// record rather than an oversight -- see the comment in `start_dma` for why, and for
-    /// what a follow-up would have to demonstrate before changing it.
-    #[test]
-    fn general_purpose_dma_end_pad_stays_on_a_fixed_eight_clock_cycle() {
-        let charged = |cpu_speed: u8| {
-            let mut dma = DmaController::new();
-            let mut bus = RecordingBus::new(0);
-            // One channel, 4 bytes, mode 0, A-bus $3000 -> B-bus $2118.
-            dma.write_register(0x4300, 0x00);
-            dma.write_register(0x4301, 0x18);
-            dma.write_register(0x4302, 0x00);
-            dma.write_register(0x4303, 0x30);
-            dma.write_register(0x4304, 0x00);
-            dma.write_register(0x4305, 0x04);
-            dma.write_register(0x4306, 0x00);
-            dma.start_dma(0x01, &mut bus, 0, 0, cpu_speed).0
-        };
-        assert_eq!(charged(8) % 8, 0, "GPDMA ends on a whole 8-clock CPU cycle");
-        assert_eq!(
-            charged(6),
-            charged(8),
-            "the CPU speed does NOT change the GPDMA pad"
-        );
-        assert_eq!(charged(12), charged(8));
-    }
-
     #[test]
     fn hdma_do_line_speculative_descriptor_read_does_not_advance_the_table() {
         // The next table byte is read EVERY line (8 clocks) but the pointer
@@ -834,11 +696,11 @@ mod tests {
         bus.a_bus[0x3000] = 0x83; // repeat, 3 lines
         bus.a_bus[0x3001] = 0x11;
 
-        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x01, &mut bus, 0, 0);
         let table_before = u16::from_le_bytes([dma.get_reg(0, 0x8), dma.get_reg(0, 0x9)]);
 
         let base = bus.clock;
-        dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        dma.hdma_do_line(0x01, &mut bus, 0, base);
 
         let table_after = u16::from_le_bytes([dma.get_reg(0, 0x8), dma.get_reg(0, 0x9)]);
         assert_eq!(
@@ -871,9 +733,9 @@ mod tests {
         bus.a_bus[0x3004] = 0x10; // its indirect ptr -> $4010
         bus.a_bus[0x3005] = 0x40;
 
-        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x01, &mut bus, 0, 0);
         let base = bus.clock;
-        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base);
 
         // pad 8 + overhead 8 + 1 byte slot 8 + descriptor consume 8 +
         // indirect pointer load 16 + pad_end 8.
@@ -901,9 +763,9 @@ mod tests {
         bus.a_bus[0x3003] = 0x00; // terminator
         bus.a_bus[0x3004] = 0x5D; // the single MSB byte
 
-        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x01, &mut bus, 0, 0);
         let base = bus.clock;
-        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base);
 
         // pad 8 + overhead 8 + 1 byte slot 8 + descriptor consume 8 +
         // one-byte pointer load 8 + pad_end 8.
