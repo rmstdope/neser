@@ -4381,6 +4381,12 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_pla(&mut self) -> u8 {
+        // Mesen2 PLA/PLX/PLY/PLP/PLB/PLD: two Idle()s BEFORE the pull -- the mirror of
+        // PHA/PHX/PHY's pre-push idle (#3049 fixed the push side for those three; #3067
+        // finishes the family, #3070). Charging them after the read keeps the instruction total
+        // right but lands the stack access 12 clocks early.
+        self.tick_pre_access_internal_cycle();
+        self.tick_pre_access_internal_cycle();
         if self.m_flag() {
             let val = self.pull8() as u16;
             self.write_a(val);
@@ -4407,6 +4413,12 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_plx(&mut self) -> u8 {
+        // Mesen2 PLA/PLX/PLY/PLP/PLB/PLD: two Idle()s BEFORE the pull -- the mirror of
+        // PHA/PHX/PHY's pre-push idle (#3049 fixed the push side for those three; #3067
+        // finishes the family, #3070). Charging them after the read keeps the instruction total
+        // right but lands the stack access 12 clocks early.
+        self.tick_pre_access_internal_cycle();
+        self.tick_pre_access_internal_cycle();
         if self.x_flag() {
             let val = self.pull8() as u16;
             self.write_x(val);
@@ -4430,6 +4442,12 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_ply(&mut self) -> u8 {
+        // Mesen2 PLA/PLX/PLY/PLP/PLB/PLD: two Idle()s BEFORE the pull -- the mirror of
+        // PHA/PHX/PHY's pre-push idle (#3049 fixed the push side for those three; #3067
+        // finishes the family, #3070). Charging them after the read keeps the instruction total
+        // right but lands the stack access 12 clocks early.
+        self.tick_pre_access_internal_cycle();
+        self.tick_pre_access_internal_cycle();
         if self.x_flag() {
             let val = self.pull8() as u16;
             self.write_y(val);
@@ -4442,11 +4460,19 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_php(&mut self) -> u8 {
+        // Mesen2 PHP/PHB/PHD/PHK: one Idle() before the push, as in `op_pha` (#3067/#3070).
+        self.tick_pre_access_internal_cycle();
         self.push8(self.p);
         3
     }
 
     fn op_plp(&mut self) -> u8 {
+        // Mesen2 PLA/PLX/PLY/PLP/PLB/PLD: two Idle()s BEFORE the pull -- the mirror of
+        // PHA/PHX/PHY's pre-push idle (#3049 fixed the push side for those three; #3067
+        // finishes the family, #3070). Charging them after the read keeps the instruction total
+        // right but lands the stack access 12 clocks early.
+        self.tick_pre_access_internal_cycle();
+        self.tick_pre_access_internal_cycle();
         let old_x = self.x_flag();
         let p = self.pull8();
         self.p = p;
@@ -4461,11 +4487,19 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_phb(&mut self) -> u8 {
+        // Mesen2 PHP/PHB/PHD/PHK: one Idle() before the push, as in `op_pha` (#3067/#3070).
+        self.tick_pre_access_internal_cycle();
         self.push8(self.dbr);
         3
     }
 
     fn op_plb(&mut self) -> u8 {
+        // Mesen2 PLA/PLX/PLY/PLP/PLB/PLD: two Idle()s BEFORE the pull -- the mirror of
+        // PHA/PHX/PHY's pre-push idle (#3049 fixed the push side for those three; #3067
+        // finishes the family, #3070). Charging them after the read keeps the instruction total
+        // right but lands the stack access 12 clocks early.
+        self.tick_pre_access_internal_cycle();
+        self.tick_pre_access_internal_cycle();
         // Unlike the 6502-heritage single-byte pulls (PLA/PLX/PLY/PLP), PLB
         // is 65816-exclusive: it reads from the natural (unclamped)
         // incremented address in emulation mode, clamping only the final S
@@ -4489,11 +4523,19 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_phd(&mut self) -> u8 {
+        // Mesen2 PHP/PHB/PHD/PHK: one Idle() before the push, as in `op_pha` (#3067/#3070).
+        self.tick_pre_access_internal_cycle();
         self.push16(self.d);
         4
     }
 
     fn op_pld(&mut self) -> u8 {
+        // Mesen2 PLA/PLX/PLY/PLP/PLB/PLD: two Idle()s BEFORE the pull -- the mirror of
+        // PHA/PHX/PHY's pre-push idle (#3049 fixed the push side for those three; #3067
+        // finishes the family, #3070). Charging them after the read keeps the instruction total
+        // right but lands the stack access 12 clocks early.
+        self.tick_pre_access_internal_cycle();
+        self.tick_pre_access_internal_cycle();
         let val = self.pull16();
         self.d = val;
         self.set_nz(val, 0x8000);
@@ -4501,6 +4543,8 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_phk(&mut self) -> u8 {
+        // Mesen2 PHP/PHB/PHD/PHK: one Idle() before the push, as in `op_pha` (#3067/#3070).
+        self.tick_pre_access_internal_cycle();
         self.push8(self.pbr);
         3
     }
@@ -4712,6 +4756,95 @@ mod tests {
         expected.extend([Tick; 6]); // index penalty, BEFORE the write
         expected.extend([Tick; 6]); // the write drives the bus for its whole 6-clock cycle
         expected.push(Write(0x00_2140));
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// #3067: the pull-side mirror of `op_pha`'s pre-push idle. Mesen2 `PLA`/`PLX`/`PLY`/
+    /// `PLP`/`PLB`/`PLD` call `Idle()` **twice** before the pull; NESER charged both cycles
+    /// after the read, which keeps the total right but moves the stack access 12 clocks early.
+    #[test]
+    fn pulls_pay_both_internal_cycles_before_the_stack_read() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0x68]); // PLA
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x20; // native, 8-bit A -> a single-byte pull
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+
+        cpu.step();
+
+        let mut expected = Vec::new();
+        expected.extend([Tick; 4]);
+        expected.push(Read(0x00_8000)); // opcode fetch, 8 clocks
+        expected.extend([Tick; 4]);
+        expected.extend([Tick; 6]); // idle 1, BEFORE the pull
+        expected.extend([Tick; 6]); // idle 2, BEFORE the pull
+        expected.extend([Tick; 4]);
+        expected.push(Read(0x00_0200)); // the pull itself, 8-clock stack read
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// `PLB` is the one member of the family with its own address path: in emulation mode it
+    /// pulls from the *unclamped* incremented S and only clamps afterwards. The two pre-pull
+    /// idles must not disturb that, and it is the case the other tests here do not reach.
+    #[test]
+    fn plb_pays_its_idles_before_an_emulation_mode_unclamped_pull() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0xAB]); // PLB
+        // S = $01FF, so the UNCLAMPED S+1 is $0200 while a page-1-clamped pull would read
+        // $0100. Distinct addresses, so the test actually reaches the emulation-mode branch.
+        bus.load(0x00_0100, &[0xAA]); // what a (wrong) clamped pull would fetch
+        bus.load(0x00_0200, &[0x7E]); // what the unclamped pull must fetch
+        let mut cpu = Cpu::new(bus);
+        cpu.e = true;
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+
+        cpu.step();
+
+        let mut expected = Vec::new();
+        expected.extend([Tick; 4]);
+        expected.push(Read(0x00_8000)); // opcode fetch
+        expected.extend([Tick; 4]);
+        expected.extend([Tick; 6]); // idle 1, BEFORE the pull
+        expected.extend([Tick; 6]); // idle 2, BEFORE the pull
+        expected.extend([Tick; 4]);
+        expected.push(Read(0x00_0200)); // the unclamped S+1 read, NOT the clamped $0100
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+        assert_eq!(cpu.dbr, 0x7E, "DBR came from the unclamped address");
+        assert_eq!(cpu.s, 0x0100, "S is clamped back into page 1 afterwards");
+    }
+
+    /// The push side of the same family: Mesen2 `PHP`/`PHB`/`PHD`/`PHK` idle **once** before
+    /// the push, exactly as `PHA`/`PHX`/`PHY` already do in NESER.
+    #[test]
+    fn single_byte_pushes_pay_their_internal_cycle_before_the_stack_write() {
+        use BusCycleEvent::{Read, Tick, Write};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0x08]); // PHP
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x20;
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+
+        cpu.step();
+
+        let mut expected = Vec::new();
+        expected.extend([Tick; 4]);
+        expected.push(Read(0x00_8000));
+        expected.extend([Tick; 4]);
+        expected.extend([Tick; 6]); // idle, BEFORE the push
+        expected.extend([Tick; 8]); // the 8-clock stack write drives the bus to its end
+        expected.push(Write(0x00_01FF));
         assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
     }
 

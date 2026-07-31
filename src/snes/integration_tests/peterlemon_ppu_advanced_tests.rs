@@ -207,6 +207,19 @@ mod tests {
         // envelope). One extra held frame decides the f149-latch race the same
         // way as Mesen2's startFrame-anchored replay without adding a dial
         // step (the next would need a press at f157).
+        //
+        // Because that margin is hand-tuned, movement here is tempting to dismiss as a
+        // tuning artifact. It is not: replay Mesen2 with the SAME script before concluding
+        // anything (#3067 -- doing so turned an assumed tuning artifact into real evidence).
+        // The
+        // replay template is in .github/skills/snes-hardware-research/SKILL.md ("Scripted-input
+        // Mesen2 replay"); set:
+        //
+        //     local target = 300
+        //     local edges = { {120, "r", true}, {151, "r", false} }
+        //
+        // i.e. the numeric edges of the `hold(...)` below, unchanged. Under that script the
+        // approved golden is 0 px against Mesen2.
         run_advanced_screen_crc(
             "SNES-PPU-Mosaic/Mode5/MosaicMode5.sfc",
             "sized",

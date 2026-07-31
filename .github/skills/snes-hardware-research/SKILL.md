@@ -641,12 +641,104 @@ ordinal at offset 0: everything after it has drifted for good. Compute both.
 In #3050 the first divergence was an `abs,X` penalty-cycle ordering issue 5638
 cycles *before* the actual cause, which was a 2-clock DMA end pad.
 
+### Matching the reference's *rule* is not the same as matching its *quantity* (from #3067)
+
+Porting a formula from Mesen2 is only valid if the value you feed it means the same thing in
+both emulators. #3067 set out to adopt Mesen2's speed-aware `SyncEndDma` rounding for
+general-purpose DMA -- the rule is right there in the source, and the identical change had
+already made the two HDMA envelopes pixel-exact. Measured, it broke a Mesen2-approved
+golden instead.
+
+The reason was upstream of the formula: Mesen2 re-enters `ProcessPendingTransfers` from inside
+`RunDma`, so an HDMA firing mid-transfer runs nested, pays no sync pads and folds its clocks
+into the very counter the outer `SyncEndDma` rounds. NESER cannot nest, so its counter is a
+different quantity. The rounding rule was correct and the input was not.
+
+Two process lessons, both learned the hard way here.
+
+First, screen CRCs alone produced a defensible-sounding but under-evidenced answer that review
+correctly rejected. Second -- and this is the one that cost the most -- every absolute clock
+number quoted in that investigation had to be retracted. One measurement attributed a delta to
+the end pad that the mechanism could not produce; a later one used an undocumented anchor and
+was not reproducible; and all of them were taken on a tree state that a concurrently-merged PR
+then invalidated. What survived was the anchor-free statement: flip the literal, run the
+vector, see which one diverges from its Mesen2 golden.
+
+Prefer evidence of that shape. An absolute master-clock figure in a comment is a hostage to the
+exact build, the exact anchor convention and the exact state of main; a "change X and this
+named test fails" instruction stays true and is reproducible by the next reader in one command.
+
+Before porting a formula, ask what feeds its inputs in each emulator, not just what the
+formula says. If the surrounding structure differs, the local approximation you already have
+may be the better model of the *net* behaviour, and "it matches the reference's source" is not
+evidence that it matches the reference's behaviour.
+
+### Scripted-input Mesen2 replay (testRunner) -- complete template
+
+`--testRunner` uses a different Lua environment from `--loadScript`; this is the form that
+works there, and it is what a scripted NESER vector must be compared against. `edges` takes the
+numeric frame stamps straight from the Rust `hold(...)`/`InputEvent` list, and `target` is the
+test's capture frame. Button names are Mesen2's (`"a"`, `"b"`, `"x"`, `"y"`, `"l"`, `"r"`,
+`"up"`, `"down"`, `"left"`, `"right"`, `"start"`, `"select"`).
+
+`--enableStdout` is required or `print()` reaches nothing. Note this section deliberately uses
+`--testRunner`, unlike the file-I/O screenshot recipe further down, which needs `--loadScript`;
+the two Lua environments differ and only the `print()`-based form works under `--testRunner`.
+
+```lua
+local target = 300
+local edges = { {120, "r", true}, {151, "r", false} }
+local state = {}
+local frameCount = 0
+
+emu.addEventCallback(function()
+  frameCount = frameCount + 1
+  if frameCount == target then
+    local png = emu.takeScreenshot()
+    local hex = {}
+    for i = 1, #png do hex[i] = string.format("%02X", string.byte(png, i)) end
+    print("SCREENSHOT_BEGIN")
+    print(table.concat(hex))
+    print("SCREENSHOT_END")
+    emu.stop(0)
+  end
+end, emu.eventType.startFrame)
+
+emu.addEventCallback(function()
+  for _, e in ipairs(edges) do
+    if e[1] <= frameCount - 1 then state[e[2]] = e[3] end
+  end
+  emu.setInput(state, 0)
+end, emu.eventType.inputPolled)
+```
+
+Run it, then decode the hex between the markers to a PNG and pixel-diff:
+
+```bash
+until ! pgrep -f "Mesen --testRunner" >/dev/null 2>&1; do sleep 3; done
+Mesen --testRunner <rom> <script.lua> \
+  --Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true
+```
+
+### Prove a fragile input-scripted vector with the SAME script on both sides (from #3067)
+
+`peterlemon_ppu_advanced_tests::mosaic_mode5_sized` carries a doc comment saying its input
+release margin was hand-tuned (150 -> 151) to win a latch race, which makes it tempting to
+dismiss any movement as a tuning artifact and re-tune again. It is not dismissible: replaying
+Mesen2 with the *identical* input script (`emu.setInput` edges matching the Rust
+`hold(SnesButton::R, 120, 151)`) showed the approved golden at 0 px and the changed output at
+12484 px. That turned "fragile test, probably fine" into decisive evidence against the change.
+
+Whenever a scripted vector moves, script the reference the same way before concluding
+anything. Re-tuning the margin to make the test pass again would have buried a real regression.
+
 ### A 0-px golden can depend on two errors cancelling (from #3050)
 
 Fixing a real, Mesen2-verified timing bug turned undisbeliever's
 `inidisp_forgot_to_force_blank.sfc` from pixel-exact to a fully black screen:
-its previous perfection depended on the DMA error offsetting a separate,
-still-unfixed CPU one. When a fix improves several vectors and destroys one,
+its previous perfection depended on the DMA error offsetting a separate CPU one
+(the 65816 push/pull cycle ordering, since fixed in #3070). When a fix improves
+several vectors and destroys one,
 that is evidence about the *other* bug, not necessarily about the fix -- but do
 not ship it. Narrow the change to the part the trace actually proves (there,
 HDMA but not general-purpose DMA), pin the exclusion with a test, and say so.
