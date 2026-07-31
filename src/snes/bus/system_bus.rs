@@ -62,6 +62,11 @@ pub struct SnesSystemBus {
     /// the fallback clock (trigger + two CPU cycles) covers bus-only callers
     /// with no CPU driving the cycle hook.
     pending_hdma: Option<(u8, u8, u64)>,
+    /// Master clocks the CPU cycle currently being entered will take (Mesen2
+    /// `SnesMemoryManager::_cpuSpeed`). The CPU sets it before every cycle; the only reader
+    /// is `DmaController::sync_end_pad`, so it is always written before it is read and needs
+    /// no save-state entry. Initialised to the SlowROM 8 that the reset vector fetch uses.
+    cpu_speed: u8,
     apu: RefCell<SnesApu>,
     /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
     /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`, and in
@@ -146,6 +151,7 @@ impl SnesSystemBus {
             pending_gpdma: None,
             gpdma_ran_this_cpu_cycle: false,
             pending_hdma: None,
+            cpu_speed: 8,
             apu: RefCell::new(SnesApu::new(spc_ipl)),
             ppu,
             input: RefCell::new(InputPorts::new()),
@@ -501,7 +507,7 @@ impl SnesSystemBus {
         // added again here.
         let base_clock = self.ppu.borrow().total_master_clocks();
         let (_consumed_ticks, dma_open_bus) =
-            dma.start_dma(mdmaen, self, self.mdr.get(), base_clock);
+            dma.start_dma(mdmaen, self, self.mdr.get(), base_clock, self.cpu_speed);
 
         self.mdr.set(dma_open_bus);
         self.dma = dma;
@@ -513,8 +519,13 @@ impl SnesSystemBus {
         // `self.ticks` one clock at a time), so the returned tick total must
         // not be added again here.
         let base_clock = self.ppu.borrow().total_master_clocks();
-        let (_consumed_ticks, dma_open_bus) =
-            dma.hdma_init(self.hdmaen, self, self.mdr.get(), base_clock);
+        let (_consumed_ticks, dma_open_bus) = dma.hdma_init(
+            self.hdmaen,
+            self,
+            self.mdr.get(),
+            base_clock,
+            self.cpu_speed,
+        );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
     }
@@ -526,8 +537,13 @@ impl SnesSystemBus {
     pub fn hdma_do_line(&mut self) {
         let base_clock = self.ppu.borrow().total_master_clocks();
         let mut dma = std::mem::take(&mut self.dma);
-        let (_consumed_ticks, dma_open_bus) =
-            dma.hdma_do_line(self.hdmaen, self, self.mdr.get(), base_clock);
+        let (_consumed_ticks, dma_open_bus) = dma.hdma_do_line(
+            self.hdmaen,
+            self,
+            self.mdr.get(),
+            base_clock,
+            self.cpu_speed,
+        );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
     }
@@ -1421,6 +1437,14 @@ impl SnesBus for SnesSystemBus {
                 .sa1_registers
                 .as_ref()
                 .is_some_and(|registers| registers.borrow().snes_irq_line())
+    }
+
+    fn set_cpu_speed(&mut self, speed: u8) {
+        self.cpu_speed = speed;
+    }
+
+    fn master_clock(&self) -> u64 {
+        self.ppu.borrow().total_master_clocks()
     }
 
     fn screen_dimensions(&self) -> (u32, u32) {

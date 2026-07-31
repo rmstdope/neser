@@ -502,6 +502,14 @@ impl Sa1Bus {
 }
 
 impl SnesBus for Sa1Bus {
+    /// SA-1's CPU shares the main PPU's master clock, so its trace lines carry real stamps
+    /// rather than the trait default's 0 -- otherwise an SA-1 title traced at `--trace-cpu=2`
+    /// interleaves `clk=0` lines with the main CPU's real ones (or, with a clock window set,
+    /// silently drops every SA-1 line), which makes an ordinal-aligned diff meaningless.
+    fn master_clock(&self) -> u64 {
+        self.ppu.borrow().total_master_clocks()
+    }
+
     fn read(&self, addr: u32) -> u8 {
         let addr = addr & 0xFF_FFFF;
         if let Some(byte) = Self::vector_override_byte(addr, &self.registers.borrow()) {
