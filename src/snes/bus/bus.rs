@@ -22,28 +22,22 @@ pub trait SnesBus {
     /// Advance the bus state by one master clock cycle.
     fn tick(&mut self);
 
-    /// Called by the CPU at the start of every CPU cycle (memory access or
-    /// internal). Buses that model the general-purpose DMA start delay run a
-    /// pending transfer here, one full CPU cycle after the `$420B` write
-    /// (Mesen2 `ProcessPendingTransfers`' `_dmaStartDelay`). Default: no-op.
-    fn gpdma_cycle_hook(&mut self) {}
-
-    /// Returns (and clears) whether a general-purpose DMA transfer ran during
-    /// the CPU cycle just completed. While a GPDMA holds the bus the 65816 is
-    /// halted and samples no interrupt lines, and -- crucially -- the
-    /// instruction the DMA interrupts does not recognize a line that asserts
-    /// mid-DMA either; only the first *full* instruction after the transfer
-    /// does (matching Mesen2; see the Sour dma_irq_test, #3065). Default:
-    /// `false`.
-    fn take_dma_ran_this_cpu_cycle(&mut self) -> bool {
-        false
-    }
-
-    /// Peeks (without clearing) whether a GPDMA has already run this CPU cycle.
-    /// Checked just before an opcode read so the CPU can tell whether the DMA
-    /// preceded the opcode fetch (that instruction is the first full one after
-    /// the transfer) or follows it (that instruction is split) -- #3065.
-    fn peek_dma_ran_this_cpu_cycle(&self) -> bool {
+    /// Called by the CPU at the start of every CPU cycle (memory access or internal), before
+    /// any of that cycle's `tick`s. Buses that model the DMA start delay run a pending
+    /// transfer here, one full CPU cycle after the `$420B` write (Mesen2
+    /// `ProcessPendingTransfers`' `_dmaStartDelay`).
+    ///
+    /// **Returns whether a transfer actually ran in this cycle**, which is exactly the return
+    /// value Mesen2 assigns to `_state.IrqLock`:
+    ///
+    /// ```text
+    /// _state.IrqLock = _dmaController->ProcessPendingTransfers();   // SnesCpu.cpp
+    /// ```
+    ///
+    /// The CPU uses it to lock interrupt recognition for that one cycle -- while a transfer
+    /// holds the bus the 65816 is not clocking cycles, so it cannot notice a line that
+    /// asserts during it. Default: `false` (no DMA modelled).
+    fn gpdma_cycle_hook(&mut self) -> bool {
         false
     }
 
