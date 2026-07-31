@@ -1739,9 +1739,9 @@ mod tests {
     #[test]
     fn exhirom_maps_80_bf_6000_window_to_sram() {
         // Canonical ExHiROM SRAM window $80-BF:6000-7FFF (#3076). Two distinct
-        // cells + read-back defeat an open-bus/MDR false pass: before the fix
-        // $80/$81 are unmapped, so reading $80:6000 back returns the
-        // last-written 0xA5 (MDR) rather than the stored 0x5A.
+        // cells guard against both aliasing and open-bus false passes: before
+        // the fix $80/$81 are unmapped, so the writes are dropped and reading
+        // $80:6000 back returns open bus (0x00), not the stored 0x5A.
         let mut bus = SnesSystemBus::new(exhirom_cart_with_sram());
         bus.write(0x806000, 0x5A); // $80:6000 -> SRAM cell 0
         bus.write(0x816000, 0xA5); // $81:6000 -> SRAM cell 0x2000
