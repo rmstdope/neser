@@ -145,17 +145,31 @@ impl DmaController {
             counter += self.run_channel(channel, abus, &mut open_bus);
         }
 
-        // SyncEndDma. Deliberately still rounds to a fixed 8-clock cycle rather than to
-        // `cpu_speed` the way the HDMA envelopes do (see `sync_end_pad`).
+        // SyncEndDma: general-purpose DMA rounds to a FIXED 8-clock cycle, unlike the two
+        // HDMA envelopes and unlike Mesen2's single speed-aware `SyncEndDma`. #3067 settled
+        // this on measurement rather than by reading Mesen2's source, and the measurement
+        // says the fixed 8 is the better model *for NESER as it currently stands*:
         //
-        // Making this speed-aware too is what Mesen2's shared `SyncEndDma` appears to do,
-        // but it renders undisbeliever's `inidisp_forgot_to_force_blank.sfc` as a fully
-        // black screen (that ROM's DMA-timed CGRAM/tile setup collapses; it is pixel-exact
-        // against Mesen2 with the fixed 8). NESER arms a general-purpose transfer through a
-        // two-cycle `pending_gpdma` countdown rather than Mesen2's `_dmaStartDelay`, so the
-        // CPU cycle whose speed is live when the transfer runs is not necessarily the one
-        // Mesen2 would have published. Left alone pending its own bus-trace diff (#3067);
-        // every vector #3050 set out to fix is 0-px without it.
+        //   config                                   inidisp_forgot   mosaic_mode5_sized
+        //   fixed 8 (this)                           0 px             0 px
+        //   speed-aware                              fully black      12484 px
+        //   speed-aware + push/pull ordering fixed    0 px            12484 px
+        //
+        // Both figures are against fresh Mesen2 captures, the mosaic one against Mesen2's own
+        // scripted replay driven by the identical input script, so it is apples-to-apples.
+        //
+        // The likely reason is a structural difference #3067 deliberately did not rework:
+        // Mesen2 re-enters `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing
+        // during a general-purpose transfer runs nested, pays NO sync pads of its own
+        // (`needSync == false` while a channel is DmaActive) and folds its clocks into the
+        // same `_dmaClockCounter` that the outer `SyncEndDma` then rounds. NESER cannot do
+        // that -- `self.dma` is `mem::take`n for the duration -- so its charged total is not
+        // the same quantity Mesen2 is rounding, and copying the rounding rule alone makes the
+        // net envelope worse rather than better. Revisit together with that re-entrancy.
+        //
+        // The two HDMA envelopes DO use `cpu_speed`: there the charged total is the same
+        // quantity in both emulators, and it is what made StarWars and hdmaen_latch_test
+        // pixel-exact in #3050.
         let pad_end = Self::sync_end_pad(counter, 8);
         abus.dma_tick(pad_end);
         counter += pad_end;
@@ -794,10 +808,11 @@ mod tests {
         assert_ne!(charged(6), charged(8), "the speed must change the end pad");
     }
 
-    /// General-purpose DMA is the deliberate exception: its end pad stays on a fixed 8-clock
-    /// cycle. Pinning that here so the difference from the HDMA envelopes is a decision on
-    /// record rather than an oversight -- see the comment in `start_dma` for why, and for
-    /// what a follow-up would have to demonstrate before changing it.
+    /// General-purpose DMA keeps a FIXED 8-clock end pad while the two HDMA envelopes round
+    /// to the upcoming access's speed. #3067 settled that on measurement -- see the table in
+    /// `start_dma` for the numbers and the re-entrancy argument for why. This test exists so
+    /// the asymmetry is a recorded decision, and so that a future attempt to "fix" it has to
+    /// confront the evidence rather than just Mesen2's source.
     #[test]
     fn general_purpose_dma_end_pad_stays_on_a_fixed_eight_clock_cycle() {
         let charged = |cpu_speed: u8| {
@@ -811,15 +826,20 @@ mod tests {
             dma.write_register(0x4304, 0x00);
             dma.write_register(0x4305, 0x04);
             dma.write_register(0x4306, 0x00);
-            dma.start_dma(0x01, &mut bus, 0, 0, cpu_speed).0
+            let (counter, _) = dma.start_dma(0x01, &mut bus, 0, 0, cpu_speed);
+            assert_eq!(bus.clock, counter, "bus advanced in lockstep");
+            counter
         };
-        assert_eq!(charged(8) % 8, 0, "GPDMA ends on a whole 8-clock CPU cycle");
+        // pad_start 8 + overhead 8 + channel 8 + 4 byte slots (32) = 56 charged before the pad,
+        // so a fixed-8 pad gives 64 whatever the caller passes. A speed-aware pad would give
+        // 60 for both 6 and 12, which is what the two equalities below rule out.
+        assert_eq!(charged(8), 64, "ends on a whole 8-clock CPU cycle");
         assert_eq!(
             charged(6),
-            charged(8),
+            64,
             "the CPU speed does NOT change the GPDMA pad"
         );
-        assert_eq!(charged(12), charged(8));
+        assert_eq!(charged(12), 64);
     }
 
     #[test]
