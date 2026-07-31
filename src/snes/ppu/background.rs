@@ -3246,7 +3246,7 @@ mod tests {
         assert_eq!(ppu.mask_logic[2], 2, "BG3 = XOR");
         assert_eq!(ppu.mask_logic[3], 3, "BG4 = XNOR");
 
-        ppu.write_register(0x212B, 0b0000_10_01);
+        ppu.write_register(0x212B, 0b00_00_10_01);
         assert_eq!(ppu.mask_logic[4], 1, "OBJ = AND");
         assert_eq!(ppu.mask_logic[5], 2, "colour window = XOR");
     }
