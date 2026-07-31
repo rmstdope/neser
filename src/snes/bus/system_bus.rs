@@ -238,8 +238,14 @@ impl SnesSystemBus {
                     Some((bank as usize - 0xC0) * 0x10000 + offset as usize)
                 } else if (0x40..=0x7D).contains(&bank) {
                     Some(0x400000 + (bank as usize - 0x40) * 0x10000 + offset as usize)
-                } else if (matches!(bank, 0x00..=0x3F | 0x80..=0xBF)) && offset >= 0x8000 {
+                } else if (0x80..=0xBF).contains(&bank) && offset >= 0x8000 {
+                    // First-half system-bank mirror.
                     Some((bank as usize & 0x3F) * 0x10000 + offset as usize)
+                } else if (0x00..=0x3F).contains(&bank) && offset >= 0x8000 {
+                    // A22-inverted second-half mirror: the $00-3F system window
+                    // (including the reset/interrupt vectors at $00:FFxx) maps to
+                    // the upper 4 MiB.
+                    Some(0x400000 + (bank as usize & 0x3F) * 0x10000 + offset as usize)
                 } else {
                     None
                 }
@@ -270,7 +276,10 @@ impl SnesSystemBus {
                 }
             }
             Mapping::ExHiRom => {
-                if (matches!(bank, 0x20..=0x3F | 0xA0..=0xBF))
+                // ExHiROM SRAM lives at $80-BF:6000-7FFF (the $80-BF system
+                // banks' sub-$8000 region is free, unlike HiROM's $A0-BF), with
+                // $20-3F:6000-7FFF kept as a romhack-compat mirror.
+                if (matches!(bank, 0x20..=0x3F | 0x80..=0xBF))
                     && (0x6000..=0x7FFF).contains(&offset)
                 {
                     Some((bank as usize & 0x1F) * 0x2000 + (offset as usize - 0x6000))
@@ -1550,6 +1559,13 @@ mod tests {
         Cartridge::from_bytes(&rom).expect("valid test cartridge")
     }
 
+    /// 8 MiB ExHiROM image (header at `0x40FFC0`) with 32 KB SRAM, for the
+    /// ExHiROM SRAM-window tests.
+    fn exhirom_cart_with_sram() -> Cartridge {
+        let mut rom = vec![0u8; 0x800000];
+        build_cart(&mut rom, 0x40FFC0, 0x35, 0x05)
+    }
+
     fn write_dma_channel(
         bus: &mut SnesSystemBus,
         channel: u8,
@@ -1689,12 +1705,60 @@ mod tests {
     }
 
     #[test]
-    fn exhirom_reads_from_low_bank_upper_window() {
+    fn exhirom_00_3f_system_window_maps_to_second_half() {
+        // Was `exhirom_reads_from_low_bank_upper_window`, which asserted
+        // $00:8000 read rom[0x8000] -- it passed only because it matched the
+        // #3076 decode bug. ExHiROM inverts A22: $80-BF:8000 mirrors the FIRST
+        // 4 MiB half, but $00-3F:8000 mirrors the SECOND half (0x400000+).
         let mut rom = vec![0u8; 0x800000];
-        rom[0x008000] = 0x88; // 00:8000
+        rom[0x008000] = 0x77; // first half, reached via $80:8000
+        rom[0x408000] = 0x88; // second half, reached via $00:8000
         let cart = build_cart(&mut rom, 0x40FFC0, 0x35, 0x00);
         let bus = SnesSystemBus::new(cart);
-        assert_eq!(bus.read(0x008000), 0x88);
+        assert_eq!(bus.read(0x808000), 0x77, "$80:8000 -> first half");
+        assert_eq!(bus.read(0x008000), 0x88, "$00:8000 -> second half");
+    }
+
+    #[test]
+    fn exhirom_reset_vector_reads_from_upper_half() {
+        // ExHiROM reads its emulation vectors from $00:FFxx, which -- like the
+        // rest of the $00-3F:8000-FFFF system window -- must resolve to the
+        // second 4 MiB half (0x40FFxx), not 0xFFxx. The decoy bytes at the
+        // first-half 0xFFFC/D location must NOT be returned.
+        let mut rom = vec![0u8; 0x800000];
+        rom[0xFFFC] = 0x34; // decoy at the first-half $xx:FFFC
+        rom[0xFFFD] = 0x12;
+        // build_cart writes the real reset vector ($8000) at header+0x3C/0x3D
+        // == 0x40FFFC/0x40FFFD.
+        let cart = build_cart(&mut rom, 0x40FFC0, 0x35, 0x00);
+        let bus = SnesSystemBus::new(cart);
+        assert_eq!(bus.read(0x00FFFC), 0x00, "reset vector low <- 0x40FFFC");
+        assert_eq!(bus.read(0x00FFFD), 0x80, "reset vector high <- 0x40FFFD");
+    }
+
+    #[test]
+    fn exhirom_maps_80_bf_6000_window_to_sram() {
+        // Canonical ExHiROM SRAM window $80-BF:6000-7FFF (#3076). Two distinct
+        // cells guard against both aliasing and open-bus false passes: before
+        // the fix $80/$81 are unmapped, so the writes are dropped and reading
+        // $80:6000 back returns open bus (0x00), not the stored 0x5A.
+        let mut bus = SnesSystemBus::new(exhirom_cart_with_sram());
+        bus.write(0x806000, 0x5A); // $80:6000 -> SRAM cell 0
+        bus.write(0x816000, 0xA5); // $81:6000 -> SRAM cell 0x2000
+        assert_eq!(bus.read(0x806000), 0x5A);
+        assert_eq!(bus.read(0x816000), 0xA5);
+        // $A0:6000 aliases the same SRAM cell as $80:6000 (bank & 0x1F).
+        assert_eq!(bus.read(0xA06000), 0x5A);
+    }
+
+    #[test]
+    fn exhirom_keeps_20_3f_6000_romhack_sram_window() {
+        // The $20-3F:6000-7FFF romhack-compat window is retained by the fix.
+        let mut bus = SnesSystemBus::new(exhirom_cart_with_sram());
+        bus.write(0x206000, 0x3C); // $20:6000 -> SRAM cell 0
+        bus.write(0x216000, 0xC3); // $21:6000 -> SRAM cell 0x2000
+        assert_eq!(bus.read(0x206000), 0x3C);
+        assert_eq!(bus.read(0x216000), 0xC3);
     }
 
     #[test]
