@@ -418,6 +418,7 @@ mod tests {
                 apu: 0,
                 mapper: 0,
                 nestest: true,
+                ..Tracing::default()
             });
 
             assert_eq!(expected, actual);

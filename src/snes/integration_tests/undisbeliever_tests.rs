@@ -202,23 +202,18 @@ mod tests {
     // (via H-IRQ at dots 220-232) to enable HDMA channels. Channels activate on the
     // next scanline, producing horizontal striped patterns correctly.
     //
-    // Re-approved for #3021 (hardware HDMA start/end envelope). NO LONGER
-    // pixel-exact: 5 isolated scanlines (rows 18/70/122/148/200, 1280 px)
-    // differ from a fresh Mesen2 capture. Cause, from a clock-stamped
-    // register trace of both emulators: this ROM re-enables HDMAEN a few
-    // clocks either side of the dot-276 HDMA trigger, and NESER's CPU reaches
-    // that store 2-8 master clocks earlier than Mesen2's. On the affected
-    // lines NESER's write lands 2 clocks BEFORE its trigger (so the line is
-    // armed) while Mesen2's lands at/after its own trigger (so it is not).
-    // Both emulators apply the same hardware rule -- arm only if HDMAEN is
-    // non-zero at the trigger clock -- so the residual is CPU-side clock
-    // skew, tracked separately as #3050.
-    // Unaffected by #3049 (per-CPU-cycle NMI/H-V-IRQ dispatch precision):
-    // the CRC below is unchanged since #3021.
+    // Re-approved for #3050 and pixel-exact (0 px) against a fresh Mesen2 capture.
+    //
+    // #3021 left this at 5 differing scanlines (rows 18/70/122/148/200, 1280 px): this ROM
+    // re-enables HDMAEN a few clocks either side of the dot-276 HDMA trigger, and NESER's
+    // CPU reached that store 2-8 master clocks early, so those lines armed when Mesen2's did
+    // not. #3050 found the cause -- the HDMA `SyncEndDma` pad rounded to a fixed 8-clock CPU
+    // cycle instead of the speed of the access the transfer stands in front of -- and with
+    // it fixed the store lands on Mesen2's clock exactly.
     undisbeliever_rom_test!(
         hdmaen_latch_test_matches_mesen2,
         "hdmaen_latch_test.sfc",
-        0xC810_A54A
+        0x22C3_0946
     );
 
     // Same test as above with different timing. Now a byte-for-byte (0 px)

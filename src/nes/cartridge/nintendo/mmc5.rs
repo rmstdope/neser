@@ -2311,6 +2311,7 @@ mod tests {
             apu: 0,
             mapper: 1,
             nestest: false,
+            ..Tracing::default()
         });
         clear_mapper_traces();
 

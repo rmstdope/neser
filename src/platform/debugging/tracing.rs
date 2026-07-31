@@ -253,6 +253,30 @@ macro_rules! trace_mapper {
     };
 }
 
+/// Whether a clock-stamped trace line for `master_clock` falls inside the configured
+/// `--trace-from`/`--trace-to` window.
+///
+/// Clock-gating exists because a full bus trace of a real game runs to millions of lines;
+/// narrowing both emulators to the same master-clock window keeps two logs comparable and
+/// small enough to diff (see the SNES `$4210` skew investigation, #3050). An unset bound is
+/// unbounded on that side, so the default configuration traces everything.
+#[cfg(not(test))]
+pub fn trace_clock_in_window(master_clock: u64) -> bool {
+    TRACING
+        .get()
+        .map(|lock| {
+            lock.read()
+                .unwrap_or_else(|e| e.into_inner())
+                .window(master_clock)
+        })
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+pub fn trace_clock_in_window(master_clock: u64) -> bool {
+    TRACING.with(|cell| cell.borrow().window(master_clock))
+}
+
 /// Tracing configuration with per-subsystem trace levels.
 ///
 /// Each subsystem has a trace level (0 = off, 1+ = increasing verbosity).
@@ -270,6 +294,10 @@ pub struct Tracing {
     pub mapper: u8,
     /// Enable nestest-compatible output format
     pub nestest: bool,
+    /// Lowest master clock a clock-stamped trace line is emitted for (`None` = unbounded).
+    pub clock_from: Option<u64>,
+    /// Highest master clock a clock-stamped trace line is emitted for (`None` = unbounded).
+    pub clock_to: Option<u64>,
 }
 
 impl Tracing {
@@ -296,9 +324,19 @@ impl Tracing {
                     self.apu = Self::parse_level(rest);
                 } else if let Some(rest) = arg.strip_prefix("--trace-mapper") {
                     self.mapper = Self::clamp_mapper_level(Self::parse_level(rest));
+                } else if let Some(rest) = arg.strip_prefix("--trace-from") {
+                    self.clock_from = Self::parse_clock(rest);
+                } else if let Some(rest) = arg.strip_prefix("--trace-to") {
+                    self.clock_to = Self::parse_clock(rest);
                 }
             }
         }
+    }
+
+    /// Whether `master_clock` falls inside this config's clock window.
+    fn window(&self, master_clock: u64) -> bool {
+        self.clock_from.is_none_or(|from| master_clock >= from)
+            && self.clock_to.is_none_or(|to| master_clock <= to)
     }
 
     /// Parse a level from "" or "=N" suffix. Returns 1 if empty, N if "=N".
@@ -310,6 +348,13 @@ impl Tracing {
         } else {
             1
         }
+    }
+
+    /// Parse a master-clock bound from an "=N" suffix. Returns `None` (unbounded) for a
+    /// missing or unparseable value, so a typo widens the window rather than silently
+    /// suppressing every trace line.
+    fn parse_clock(suffix: &str) -> Option<u64> {
+        suffix.strip_prefix('=')?.parse().ok()
     }
 
     pub(crate) fn clamp_mapper_level(level: u8) -> u8 {
@@ -420,6 +465,66 @@ mod tests {
     }
 
     #[test]
+    fn tracing_clock_window_defaults_to_unbounded() {
+        let tracing = parse_tracing(&["neser".to_string(), "--trace-cpu=2".to_string()]);
+        assert_eq!(tracing.clock_from, None);
+        assert_eq!(tracing.clock_to, None);
+    }
+
+    #[test]
+    fn trace_from_and_to_flags_parse_a_clock_window() {
+        let args = vec![
+            "neser".to_string(),
+            "--trace-cpu=2".to_string(),
+            "--trace-from=1000".to_string(),
+            "--trace-to=2000".to_string(),
+        ];
+        let tracing = parse_tracing(&args);
+        assert!(tracing.enabled);
+        assert_eq!(tracing.cpu, 2);
+        assert_eq!(tracing.clock_from, Some(1000));
+        assert_eq!(tracing.clock_to, Some(2000));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn clock_window_gates_clocks_outside_the_range() {
+        init_tracing(Tracing {
+            enabled: true,
+            cpu: 2,
+            clock_from: Some(100),
+            clock_to: Some(200),
+            ..Tracing::default()
+        });
+        assert!(!trace_clock_in_window(99));
+        assert!(trace_clock_in_window(100));
+        assert!(trace_clock_in_window(200));
+        assert!(!trace_clock_in_window(201));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn an_unset_clock_window_bound_is_unbounded_on_that_side() {
+        init_tracing(Tracing {
+            enabled: true,
+            cpu: 2,
+            clock_from: Some(100),
+            ..Tracing::default()
+        });
+        assert!(!trace_clock_in_window(99));
+        assert!(trace_clock_in_window(u64::MAX));
+
+        init_tracing(Tracing {
+            enabled: true,
+            cpu: 2,
+            clock_to: Some(200),
+            ..Tracing::default()
+        });
+        assert!(trace_clock_in_window(0));
+        assert!(!trace_clock_in_window(201));
+    }
+
+    #[test]
     fn tracing_multiple_flags_can_be_combined() {
         let args = vec![
             "neser".to_string(),
@@ -447,6 +552,7 @@ mod tests {
             apu: 0,
             mapper: 0,
             nestest: false,
+            ..Tracing::default()
         };
         init_tracing(tracing);
 
@@ -468,6 +574,7 @@ mod tests {
             apu: 0,
             mapper: 0,
             nestest: false,
+            ..Tracing::default()
         };
         init_tracing(tracing_on);
 
@@ -491,6 +598,7 @@ mod tests {
             apu: 0,
             mapper: 0,
             nestest: false,
+            ..Tracing::default()
         });
 
         let main_tracing = get_tracing().unwrap();
@@ -507,6 +615,7 @@ mod tests {
                 apu: 0,
                 mapper: 0,
                 nestest: false,
+                ..Tracing::default()
             });
 
             let updated = get_tracing().unwrap();

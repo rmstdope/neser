@@ -48,6 +48,22 @@ pub trait SnesBus {
         false
     }
 
+    /// Tell the bus how many master clocks the CPU cycle that is about to run will take
+    /// (6, 8 or 12 for a memory access; 6 for an internal cycle).
+    ///
+    /// This mirrors Mesen2's `SnesMemoryManager::SetCpuSpeed`, which `SnesCpu::Read`/`Write`
+    /// call *before* `ProcessCpuCycle` -- so a DMA that runs at the start of this cycle ends
+    /// its `SyncEndDma` pad on a whole cycle of the *upcoming* access (see
+    /// `DmaController::sync_end_pad`, #3050). Buses that don't model DMA ignore it.
+    fn set_cpu_speed(&mut self, _speed: u8) {}
+
+    /// The cumulative master-clock count, used only to stamp trace lines so a NESER bus
+    /// trace can be diffed clock-for-clock against a reference emulator (#3050). Buses
+    /// without a clock source report 0.
+    fn master_clock(&self) -> u64 {
+        0
+    }
+
     /// Return the active screen dimensions for the current frame.
     ///
     /// Buses without a video source use the default SNES visible size.

@@ -264,6 +264,8 @@ fn run_rom_with_oracle_and_capture(
     oracle: RunOracle,
     capture_screen: bool,
 ) -> RunResult {
+    init_tracing_from_env();
+
     let mut app_config = crate::platform::config::Config::default();
     app_config.snes.controller_port1 = config.controller_port1;
     app_config.snes.controller_port2 = config.controller_port2;
@@ -538,10 +540,108 @@ fn capture_stem(name: &str) -> String {
         .collect()
 }
 
+/// Enable tracing for a headless suite run from the environment, so a ROM can be traced
+/// without a frontend: `NESER_TRACE_CPU=2 NESER_TRACE_FROM=.. NESER_TRACE_TO=.. cargo test
+/// <test> -- --ignored --nocapture`. This is the SNES counterpart of the NES runner's
+/// `init_tracing_from_env`, and the mechanism used to diff NESER's bus trace against a
+/// reference emulator's over a master-clock window (#3050).
+fn init_tracing_from_env() {
+    if let Some(tracing) = tracing_from_env_vars(|key| std::env::var(key).ok()) {
+        crate::platform::debugging::init_tracing(tracing);
+    }
+}
+
+/// Build a [`Tracing`] config from `NESER_TRACE_*` variables, or `None` when no subsystem
+/// level is requested. Split from [`init_tracing_from_env`] so the parsing is testable
+/// without mutating process-wide environment state.
+///
+/// Each subsystem level is independent: `NESER_TRACE_CPU` alone is enough. The clock bounds
+/// only narrow an already-requested trace, so setting them on their own does nothing.
+fn tracing_from_env_vars(
+    var: impl Fn(&str) -> Option<String>,
+) -> Option<crate::platform::debugging::Tracing> {
+    use crate::platform::debugging::Tracing;
+
+    let level = |key: &str| var(key).map(|value| value.parse::<u8>().unwrap_or(1));
+    let cpu = level("NESER_TRACE_CPU");
+    let ppu = level("NESER_TRACE_PPU");
+    let apu = level("NESER_TRACE_APU");
+    if cpu.is_none() && ppu.is_none() && apu.is_none() {
+        return None;
+    }
+
+    let clock = |key: &str| var(key).and_then(|value| value.parse::<u64>().ok());
+    Some(Tracing {
+        enabled: true,
+        cpu: cpu.unwrap_or(0),
+        ppu: Tracing::clamp_ppu_level(ppu.unwrap_or(0)),
+        apu: apu.unwrap_or(0),
+        clock_from: clock("NESER_TRACE_FROM"),
+        clock_to: clock("NESER_TRACE_TO"),
+        ..Tracing::default()
+    })
+}
+
 pub(crate) fn capture_output_path(suite: &str, stem: &str, crc: u32) -> PathBuf {
     PathBuf::from("target/snes_test_captures")
         .join(suite)
         .join(format!("{stem}_crc_{crc:08X}.png"))
+}
+
+#[cfg(test)]
+mod env_tracing_tests {
+    use super::tracing_from_env_vars;
+    use std::collections::HashMap;
+
+    fn from(pairs: &[(&str, &str)]) -> Option<crate::platform::debugging::Tracing> {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
+        tracing_from_env_vars(|key| map.get(key).cloned())
+    }
+
+    #[test]
+    fn no_trace_env_vars_leaves_tracing_uninitialised() {
+        assert_eq!(from(&[]), None);
+        assert_eq!(from(&[("NESER_CAPTURE_SCREEN", "1")]), None);
+    }
+
+    #[test]
+    fn each_subsystem_level_is_honoured_on_its_own() {
+        let cpu = from(&[("NESER_TRACE_CPU", "2")]).expect("cpu level alone must enable tracing");
+        assert!(cpu.enabled);
+        assert_eq!(cpu.cpu, 2);
+        assert_eq!(cpu.ppu, 0);
+
+        let ppu = from(&[("NESER_TRACE_PPU", "3")]).expect("ppu level alone must enable tracing");
+        assert_eq!(ppu.cpu, 0);
+        assert_eq!(ppu.ppu, 3);
+    }
+
+    #[test]
+    fn a_valueless_level_defaults_to_one_and_ppu_is_capped() {
+        assert_eq!(from(&[("NESER_TRACE_CPU", "")]).unwrap().cpu, 1);
+        assert_eq!(from(&[("NESER_TRACE_CPU", "nonsense")]).unwrap().cpu, 1);
+        assert_eq!(from(&[("NESER_TRACE_PPU", "9")]).unwrap().ppu, 5);
+    }
+
+    #[test]
+    fn clock_bounds_are_read_from_the_env() {
+        let tracing = from(&[
+            ("NESER_TRACE_CPU", "2"),
+            ("NESER_TRACE_FROM", "1000"),
+            ("NESER_TRACE_TO", "2000"),
+        ])
+        .expect("tracing must be enabled");
+        assert_eq!(tracing.clock_from, Some(1000));
+        assert_eq!(tracing.clock_to, Some(2000));
+    }
+
+    #[test]
+    fn clock_bounds_alone_do_not_enable_tracing() {
+        assert_eq!(from(&[("NESER_TRACE_FROM", "1000")]), None);
+    }
 }
 
 #[cfg(test)]

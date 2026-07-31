@@ -176,15 +176,15 @@ mod tests {
         }
     }
 
-    /// Re-approved in #3003. NOT a Mesen2 cross-check: Mesen2 selects tile rows 15/14 in
-    /// the flipped band where ares, ares-performance, higan and Snes9x all select 3/2, and
-    /// NESER follows those four plus the SNESdev wiki. The flipped band's self-labelling
-    /// glyphs read `30/31` above `20/21`, confirmed empirically against a real ares
-    /// screenshot of this ROM: ares renders the same glyph shapes, and the mirror relation
-    /// the test above asserts holds on ares' OWN output (its unflipped and V-flipped
-    /// wrapped bands have equal lit-pixel counts, 196 vs 196) while failing on Mesen2's
-    /// (98 vs 90). The remaining 40-pixel diff against a fresh Mesen2 capture is entirely
-    /// inside that band (x 192-207, lines 0-15) with zero pixels outside it, and the
-    /// structural test pins the semantics independently of this CRC.
+    // Re-approved in #3003. NOT a Mesen2 cross-check: Mesen2 selects tile rows 15/14 in
+    // the flipped band where ares, ares-performance, higan and Snes9x all select 3/2, and
+    // NESER follows those four plus the SNESdev wiki. The flipped band's self-labelling
+    // glyphs read `30/31` above `20/21`, confirmed empirically against a real ares
+    // screenshot of this ROM: ares renders the same glyph shapes, and the mirror relation
+    // the test above asserts holds on ares' OWN output (its unflipped and V-flipped
+    // wrapped bands have equal lit-pixel counts, 196 vs 196) while failing on Mesen2's
+    // (98 vs 90). The remaining 40-pixel diff against a fresh Mesen2 capture is entirely
+    // inside that band (x 192-207, lines 0-15) with zero pixels outside it, and the
+    // structural test pins the semantics independently of this CRC.
     neser_obj_test!(obj_y_wrap, "obj-y-wrap.sfc", OBJ_Y_WRAP_CRC);
 }
