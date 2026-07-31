@@ -736,8 +736,9 @@ anything. Re-tuning the margin to make the test pass again would have buried a r
 
 Fixing a real, Mesen2-verified timing bug turned undisbeliever's
 `inidisp_forgot_to_force_blank.sfc` from pixel-exact to a fully black screen:
-its previous perfection depended on the DMA error offsetting a separate,
-still-unfixed CPU one. When a fix improves several vectors and destroys one,
+its previous perfection depended on the DMA error offsetting a separate CPU one
+(the 65816 push/pull cycle ordering, since fixed in #3070). When a fix improves
+several vectors and destroys one,
 that is evidence about the *other* bug, not necessarily about the fix -- but do
 not ship it. Narrow the change to the part the trace actually proves (there,
 HDMA but not general-purpose DMA), pin the exclusion with a test, and say so.

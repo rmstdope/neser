@@ -157,7 +157,7 @@ impl DmaController {
         // `inidisp_forgot_to_force_blank.sfc` diverge from its Mesen2-approved golden, with
         // every other vector unchanged; the fixed 8 passes all of them. That is the whole of
         // the evidence -- reproduce it by changing the literal below and running
-        // `cargo test --no-default-features --lib -- --include-ignored inidisp_forgot`.
+        // `cargo test --no-default-features --lib inidisp_forgot`.
         //
         // Why the rule that is right for HDMA is not obviously right here: Mesen2 re-enters
         // `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing during a
@@ -812,8 +812,8 @@ mod tests {
     }
 
     /// General-purpose DMA keeps a FIXED 8-clock end pad while the two HDMA envelopes round
-    /// to the upcoming access's speed. #3067 settled that on measurement -- see the table in
-    /// `start_dma` for the numbers and the re-entrancy argument for why. This test exists so
+    /// to the upcoming access's speed. #3067 settled that on measurement -- see the
+    /// `SyncEndDma` comment in `start_dma` for the evidence and the re-entrancy argument. This test exists so
     /// the asymmetry is a recorded decision, and so that a future attempt to "fix" it has to
     /// confront the evidence rather than just Mesen2's source.
     #[test]
