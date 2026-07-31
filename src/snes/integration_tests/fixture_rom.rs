@@ -1,5 +1,5 @@
 //! Shared in-code LoROM fixture-ROM builder for the input verification
-//! suites (#2886/#2889).
+//! suites (#2886/#2889) and the custom DMA/HDMA fixture suites (#2884).
 //!
 //! Builds 64 KiB LoROM images whose 65816 programs are emitted as raw opcode
 //! bytes and report results through the `rom_runner` WRAM marker protocol.

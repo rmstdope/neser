@@ -271,9 +271,12 @@ mod tests {
     /// `bbus_ports` shadow (unwritten for `$2180` here, so it returns 0) instead
     /// of the live B-bus register. The assertions below are the spec-correct
     /// (hardware) expectations; un-ignore once #3061 routes B->A reads to the
-    /// real bus.
+    /// real bus. Unlike the screen-CRC divergence tests (which record NESER's
+    /// current CRC and so pass under `--ignored`), this marker test asserts the
+    /// correct result and therefore FAILs under `cargo test --include-ignored`
+    /// until #3061 lands -- that is expected, not a regression.
     #[test]
-    #[ignore = "B->A reads the bbus_ports shadow, not the live B-bus register; pending #3061"]
+    #[ignore = "B->A reads the bbus_ports shadow, not the live B-bus register; asserts correct behaviour so FAILs under --include-ignored until #3061"]
     fn gpdma_b_to_a_copies_wram_through_wmdata() {
         let mut fx = FixtureRom::new(b"NESER DMA B2A");
         fx.force_blank_on();
