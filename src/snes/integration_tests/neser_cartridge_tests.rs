@@ -105,25 +105,23 @@ mod tests {
     }
 
     #[test]
-    fn exhirom_address_translation_reads_bank_regions() {
+    fn exhirom_address_translation_reads_all_bank_regions() {
         // ExHiROM: $C0:0000 -> ROM offset 0 (first half, at the end of the image),
         //          $40:0000 -> ROM offset 0x400000 (second half, at the start),
-        //          $80:8000 -> ROM offset 0x8000 (system-bank mirror of the first half).
-        //
-        // The A22-inverted $00-3F:8000 system window (which hardware maps to the
-        // SECOND half, e.g. $00:8000 -> 0x408000) is intentionally NOT asserted
-        // here: NESER currently maps it to the first half like $80-BF, a
-        // divergence tracked in #3076. Pinning the current behaviour would encode
-        // that bug, so only the hardware-correct windows are asserted.
+        //          $80:8000 -> ROM offset 0x8000 (first-half system-bank mirror),
+        //          $00:8000 -> ROM offset 0x408000 (second-half system-bank
+        //                      mirror, A22-inverted per hardware; fixed in #3076).
         let image = CartFixture::new(Mapping::ExHiRom)
             .sentinel(0x000000, 0x55)
             .sentinel(0x400000, 0x66)
             .sentinel(0x008000, 0x77)
+            .sentinel(0x408000, 0x88)
             .build();
         let snes = load_fixture(&image, "exhirom_addr.sfc");
         assert_eq!(snes.read_bus_for_debugger_for_tests(0xC0_0000), Some(0x55));
         assert_eq!(snes.read_bus_for_debugger_for_tests(0x40_0000), Some(0x66));
         assert_eq!(snes.read_bus_for_debugger_for_tests(0x80_8000), Some(0x77));
+        assert_eq!(snes.read_bus_for_debugger_for_tests(0x00_8000), Some(0x88));
     }
 
     // ---- Copier-header fixture --------------------------------------------
