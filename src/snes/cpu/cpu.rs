@@ -133,6 +133,19 @@ pub struct Cpu<B: SnesBus> {
     /// Count of memory bus accesses (tick_read/tick_write calls) in the current step.
     /// Reset at the start of each step() call; used to compute internal-cycle tick counts.
     memory_bus_cycles: u8,
+    /// Number of upcoming CPU cycles whose interrupt sample is suppressed
+    /// because a GPDMA held the bus. A transfer that runs mid-instruction (after
+    /// the current opcode was fetched) halts the CPU for its cycle and one more,
+    /// so a line asserted during the DMA is recognized only from the second
+    /// cycle after it -- reproducing hardware/Mesen2 (Sour dma_irq_test, #3065),
+    /// where e.g. a 2-cycle `INC A` split by a DMA yields recognition one
+    /// instruction later while a 3-cycle `LDA #imm16` still recognizes at its
+    /// last cycle. A DMA that runs *before* an opcode read leaves that
+    /// instruction as the first full one after the transfer (no suppression).
+    /// Set at each cycle a GPDMA runs; decremented per cycle. Can be nonzero at
+    /// an instruction boundary (a DMA on the previous instruction's last cycle),
+    /// so it is part of the save state.
+    dma_suppress_cycles: u8,
 
     /// One-step interrupt lock used to emulate delayed IRQ/NMI recognition after
     /// specific hardware events (e.g. writes to `$4200` and DMA start via `$420B`).
@@ -180,6 +193,7 @@ impl<B: SnesBus> Cpu<B> {
             p: FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_INTERRUPT, // M=1, X=1, I=1
             e: true,                                                 // Start in emulation mode
             extra_cycles: 0,
+            dma_suppress_cycles: 0,
             last_page_crossed: false,
             nmi_pending: false,
             irq_pending: false,
@@ -337,6 +351,7 @@ impl<B: SnesBus> Cpu<B> {
             abort_pending: self.abort_pending,
             nmi_arm_counter: self.nmi_arm_counter,
             irq_line_shadow: self.irq_line_shadow,
+            dma_suppress_cycles: self.dma_suppress_cycles,
             waiting: self.waiting,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
@@ -371,6 +386,7 @@ impl<B: SnesBus> Cpu<B> {
         self.abort_pending = state.abort_pending;
         self.nmi_arm_counter = state.nmi_arm_counter;
         self.irq_line_shadow = state.irq_line_shadow;
+        self.dma_suppress_cycles = state.dma_suppress_cycles;
         self.waiting = state.waiting;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
@@ -481,6 +497,7 @@ impl<B: SnesBus> Cpu<B> {
         self.irq_pending = false;
         self.abort_pending = false;
         self.nmi_arm_counter = 0;
+        self.dma_suppress_cycles = 0;
         self.irq_line_shadow = false;
         self.irq_lock_step = false;
         self.irq_i_shadow = true;
@@ -732,7 +749,7 @@ impl<B: SnesBus> Cpu<B> {
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
         let i_before = self.flag_i();
-        let opcode = self.fetch_byte();
+        let opcode = self.fetch_opcode();
         if cpu_trace_level() >= 1 && trace_clock_in_window(self.bus.master_clock()) {
             let operands = self.exec_trace_operands(opcode);
             trace_cpu!(1; "{}", self.format_exec_trace_line(pc_before, &operands));
@@ -1051,6 +1068,16 @@ impl<B: SnesBus> Cpu<B> {
         byte
     }
 
+    /// Fetches the next instruction's opcode byte. Identical to
+    /// [`Self::fetch_byte`] except the read is flagged as an opcode fetch so
+    /// interrupt sampling resumes correctly after a GPDMA (#3065).
+    fn fetch_opcode(&mut self) -> u8 {
+        let addr = (self.pbr as u32) << 16 | self.pc as u32;
+        let byte = self.tick_read_opcode(addr);
+        self.pc = self.pc.wrapping_add(1);
+        byte
+    }
+
     /// Run one read bus cycle for `addr` and return the byte.
     ///
     /// The 65816 samples the data bus 4 master clocks before the end of the
@@ -1060,6 +1087,17 @@ impl<B: SnesBus> Cpu<B> {
     /// that race asynchronous hardware: APU port polls at $2140-$2143 (#2914)
     /// and the $2137 H/V counter latch both observe the sampling instant.
     fn tick_read(&mut self, addr: u32) -> u8 {
+        self.tick_read_inner(addr, false)
+    }
+
+    /// A read whose byte is the next instruction's opcode. Interrupt sampling
+    /// resumes here (a new instruction begins) unless a GPDMA runs during this
+    /// cycle *after* the opcode read, which splits the new instruction (#3065).
+    fn tick_read_opcode(&mut self, addr: u32) -> u8 {
+        self.tick_read_inner(addr, true)
+    }
+
+    fn tick_read_inner(&mut self, addr: u32, is_opcode: bool) -> u8 {
         self.resolve_nmi_arm_counter();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         // Mesen2 `SnesCpu::Read`: SetCpuSpeed for the upcoming access happens BEFORE
@@ -1070,14 +1108,26 @@ impl<B: SnesBus> Cpu<B> {
         for _ in 0..cycles - 4 {
             self.bus.tick();
         }
+        // Did a GPDMA run before this opcode is read? Then the transfer precedes
+        // the new instruction, which becomes the first full instruction after
+        // the DMA and samples normally (#3065).
+        let dma_before_read = is_opcode && self.bus.peek_dma_ran_this_cpu_cycle();
         self.memory_bus_cycles += 1;
         self.trace_bus_cycle(format_args!("read  ${addr:06X}"));
         let value = self.bus.read(addr);
         for _ in 0..4 {
             self.bus.tick();
         }
-        self.poll_and_arm_nmi_edge();
-        self.resample_irq_line();
+        if is_opcode {
+            // A GPDMA that ran *before* the opcode read leaves this new
+            // instruction as the first full one after the transfer (samples
+            // normally); one that ran *after* the read splits it (opens a fresh
+            // suppression window).
+            let dma_ran = self.bus.take_dma_ran_this_cpu_cycle();
+            self.sample_interrupts_end_of_cycle(dma_ran && !dma_before_read);
+        } else {
+            self.end_of_cycle_interrupt_poll();
+        }
         value
     }
 
@@ -1113,8 +1163,7 @@ impl<B: SnesBus> Cpu<B> {
         }
         self.trace_bus_cycle(format_args!("write ${addr:06X} = ${value:02X}"));
         self.bus.write(addr, value);
-        self.poll_and_arm_nmi_edge();
-        self.resample_irq_line();
+        self.end_of_cycle_interrupt_poll();
     }
 
     /// Fetch a 16-bit little-endian word at PBR:PC and advance PC by 2.
@@ -3701,8 +3750,7 @@ impl<B: SnesBus> Cpu<B> {
         for _ in 0..6u8 {
             self.bus.tick();
         }
-        self.poll_and_arm_nmi_edge();
-        self.resample_irq_line();
+        self.end_of_cycle_interrupt_poll();
     }
 
     /// Ticks one internal cycle that hardware spends BEFORE a subsequent bus
@@ -3775,6 +3823,37 @@ impl<B: SnesBus> Cpu<B> {
     /// `interrupt_dispatch_tests::irq_level_during_wai_wakes_as_soon_as_the_preceding_cycle_observes_it`.
     fn resample_irq_line(&mut self) {
         self.irq_line_shadow = self.bus.poll_irq();
+    }
+
+    /// End-of-CPU-cycle interrupt sampling for a non-opcode cycle (operand read,
+    /// internal cycle, or write). A GPDMA running this cycle opens a fresh
+    /// suppression window (#3065).
+    fn end_of_cycle_interrupt_poll(&mut self) {
+        let dma_ran = self.bus.take_dma_ran_this_cpu_cycle();
+        self.sample_interrupts_end_of_cycle(dma_ran);
+    }
+
+    /// Samples the NMI edge and IRQ level at the end of a CPU cycle, honouring
+    /// the GPDMA suppression window (#3065). `open_suppression` starts a fresh
+    /// 2-cycle window (a DMA ran this cycle and splits the current instruction).
+    /// The NMI edge is un-suppressed one cycle before the IRQ level, because its
+    /// arm-then-resolve latch adds a cycle of latency -- so both dispatch at the
+    /// same instruction boundary coming out of a DMA (proven by the Sour
+    /// dma_irq_test's IRQ vs NMI 16-bit-load sub-cases #3/#9).
+    fn sample_interrupts_end_of_cycle(&mut self, open_suppression: bool) {
+        if open_suppression {
+            self.dma_suppress_cycles = 2;
+        }
+        let remaining = self.dma_suppress_cycles;
+        if remaining > 0 {
+            self.dma_suppress_cycles = remaining - 1;
+        }
+        if remaining < 2 {
+            self.poll_and_arm_nmi_edge();
+        }
+        if remaining == 0 {
+            self.resample_irq_line();
+        }
     }
 
     /// Read two bytes little-endian using linear 24-bit addressing.

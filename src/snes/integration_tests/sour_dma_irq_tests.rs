@@ -24,15 +24,15 @@
 //! screen, not the README table.
 //!
 //! NESER originally diverged from Mesen2 on 8 of the 19 sub-cases (every
-//! diverging value exactly one less than Mesen2's, i.e. one fewer
-//! instruction ran before dispatch). #3049's per-CPU-cycle NMI and H/V-IRQ
-//! dispatch fixes closed 2 of those 8 (#5 `IRQ-CLI+INC`, #15
-//! `W16:IRQ-CLI+INC`); 6 remain (#1, #2, #4, #7 `IRQ-*`, #8, #10 `NMI-*`),
-//! same off-by-one-instruction signature, root cause not yet identified
-//! (matches `kungfufurby_nmi_tests::test_nmi_passes` and
-//! `kungfufurby_irq_tests`' remaining 5 ROMs' status). The sub-cases that
-//! don't depend on interrupt timing (#3, #6, #9, #11-14, #16-19) already
-//! matched before and still do.
+//! diverging value exactly one less than Mesen2's, i.e. one fewer instruction
+//! ran before dispatch). #3049's per-CPU-cycle dispatch fixes closed 2 (#5, #15);
+//! the remaining 6 (#1, #2, #4, #7 `IRQ-*`, #8, #10 `NMI-*`) were closed by #3065,
+//! which models the GPDMA halting the CPU: an interrupt asserted mid-DMA is
+//! recognized only from the second cycle after the transfer (NMI one cycle
+//! earlier than the level IRQ, for its arm-then-resolve latch), so the
+//! instruction the DMA splits does not recognize it and the write width shifts
+//! the count by one exactly as on hardware. All 19 sub-cases now match Mesen2
+//! (WRAM values and a 0-pixel-diff frame-600 screen).
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -44,17 +44,10 @@ const ROOT: &str = "roms/snes/automated_tests/snes_test_roms/Sour/SnesTests/dma_
 mod tests {
     use super::*;
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden. See #3049.
-    ///
-    /// Improved by #3067's cycle-hook fix: the pixel diff against a fresh Mesen2 capture
-    /// went from 154 px / 42 rows to 100 px / 28 rows when `run_overdue_pending_dma` stopped
-    /// preempting `gpdma_cycle_hook`. This ROM races DMA against IRQ dispatch, so it is the
-    /// most direct witness that the fallback really was running transfers a cycle early.
-    /// Still not a PASS. The pre-#3067 note said 6 of 19 sub-cases were off by one dispatched
-    /// instruction; that count was NOT re-derived after the screen changed, so treat only the
-    /// pixel/row figures above as measured.
+    /// Mesen2-approved golden (#3065): NESER's frame-600 screen is a
+    /// 0-pixel-diff match for a Mesen2 headless capture of the same ROM, all 19
+    /// sub-case values now correct.
     #[test]
-    #[ignore = "sub-cases still off by one dispatched instruction; pending #3049 follow-up"]
     fn dma_irq_test_passes() {
         let path = Path::new(ROOT).join("dma_irq_test.sfc");
         let rom = fs::read(&path)
@@ -66,7 +59,7 @@ mod tests {
             RunConfig::new(400_000_000, 0),
             RunOracle::ScreenCrc {
                 frames: 600,
-                expected_crc: 0x9E95_2DB5,
+                expected_crc: 0xFC3B_465C,
             },
         );
         assert!(
@@ -76,6 +69,56 @@ mod tests {
             result.screen_crc32,
             result.passed,
             result.exit_reason
+        );
+    }
+
+    /// Precise per-sub-case oracle for the #3049 dispatch follow-up (#3065):
+    /// reads all 19 dma_irq_test result words from WRAM (`testResults` at
+    /// `$7E:0011 + N*2`, N=1..19) and asserts them against the hardware/Mesen2
+    /// expected table (`$00FF` sentinels for the two no-interrupt SEI+INC cases
+    /// #6/#16, per the README `$FFFF` transcription fix).
+    ///
+    /// Fixed by #3065: all 19 sub-cases now match. (Previously 6 -- #1/#2/#4/#7
+    /// IRQ and #8/#10 NMI, all 8-bit `$420B` writes -- dispatched one
+    /// instruction early.)
+    #[test]
+    fn dma_irq_test_wram_results_match_hardware() {
+        use crate::platform::app_context::AppContext;
+        use crate::platform::emulator::Emulator;
+        use crate::snes::console::Snes;
+        let path = Path::new(ROOT).join("dma_irq_test.sfc");
+        let rom = fs::read(&path).unwrap();
+        let mut snes = Snes::new(AppContext::new_with_config(
+            crate::platform::config::Config::default(),
+        ));
+        snes.load_rom(&rom, "dma_irq_test.sfc").unwrap();
+        let mut frames = 0u32;
+        while frames < 350 {
+            snes.run_tick();
+            if snes.is_ready_to_render() {
+                frames += 1;
+                snes.clear_ready_to_render();
+            }
+        }
+        let rd = |a: u32| snes.read_bus_for_debugger_for_tests(a).unwrap_or(0) as u16;
+        let word = |a: u32| rd(a) | (rd(a + 1) << 8);
+        let expected = [
+            0x0002u16, 0x0002, 0x0001, 0x0002, 0x0001, 0x00FF, 0x0001, 0x0002, 0x0001, 0x0001,
+            0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x00FF, 0x0001, 0x0001, 0x0000,
+        ];
+        let mismatches: Vec<String> = expected
+            .iter()
+            .enumerate()
+            .filter_map(|(i, exp)| {
+                let n = i + 1;
+                let got = word(0x7E_0011 + (n as u32) * 2);
+                (got != *exp).then(|| format!("#{n}: expected {exp:04X} got {got:04X}"))
+            })
+            .collect();
+        assert!(
+            mismatches.is_empty(),
+            "dma_irq_test sub-case divergences (#3065): {}",
+            mismatches.join(", ")
         );
     }
 }
