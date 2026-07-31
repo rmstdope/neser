@@ -595,10 +595,61 @@ Two cheap additions make register traces far more diagnostic:
   B-bus writes. An ordinal-aligned diff then shows immediately when one
   emulator performs an HDMA burst the other skips -- invisible if both look
   like anonymous `$21xx` writes.
-- **Gate on a clock range** (`NESER_TRACE_FROM` / `NESER_TRACE_TO` env vars,
-  matched by an `if clk >= LO and clk <= HI` guard in the Mesen2 Lua callback).
+- **Gate on a clock range** (`NESER_TRACE_FROM` / `NESER_TRACE_TO` env vars).
   Tracing every write for 365 frames produces 100k+ lines; gating to the
   window of interest keeps both logs comparable and fast.
+
+Both are implemented as of #3050 -- this is no longer a recipe to build from
+scratch:
+
+- **NESER**: `--trace-cpu=2` (or `NESER_TRACE_CPU=2` for the headless
+  integration runner) emits one clock-stamped line per CPU bus cycle --
+  `read`/`write`/`internal` with `clk=<master clock>`. `--trace-ppu=3` /
+  `NESER_TRACE_PPU=3` adds `clk=`/`lc=` to every register access.
+  `--trace-from=`/`--trace-to=` (or `NESER_TRACE_FROM`/`NESER_TRACE_TO`)
+  narrow every clock-stamped line to a master-clock window. Any ROM suite can
+  be traced headless:
+
+  ```bash
+  NESER_TRACE_CPU=2 NESER_TRACE_FROM=53605200 NESER_TRACE_TO=54900000 \
+    cargo test --no-default-features --lib starwars_f600 -- --ignored --nocapture
+  ```
+
+- **Mesen2**: `Core/SNES/NeserBusLog.h` (a local, non-upstream hook) logs
+  `mesen busR/busW/idle <addr> ticks=<clk>` to stderr under `NESER_BUS_LOG=1`,
+  gated by the same two env var names. It is called from
+  `SnesMemoryManager::Read`/`Write` (which sample `_masterClock` at the instant
+  the data moves) and from `SnesCpu::Idle` / the native-mode branch of
+  `IdleOrDummyWrite`. Logging idles matters: an ordering divergence shows up as
+  `idle` on one side against `busR` on the other, which a read/write-only log
+  cannot see.
+
+- **Diff**: `python -m scripts.diff_bus_traces <neser.log> <mesen.log>`.
+
+Stamp both sides at the *same point within the cycle* or every line is offset
+by the access speed. NESER's reads are stamped `speed - 4` clocks into the
+cycle and writes at its end, matching Mesen2's `_execRead`/`_execWrite` split.
+
+### Distinguish a transient divergence from a persistent one (from #3050)
+
+The first ordinal whose clock offset leaves the baseline is often **not** the
+bug. Intra-instruction ordering differences (an idle charged after an access
+instead of before) show up as a `-4`/`+2` pair that returns to `0` on the very
+next cycle -- real, but self-correcting. The one that matters is the last
+ordinal at offset 0: everything after it has drifted for good. Compute both.
+
+In #3050 the first divergence was an `abs,X` penalty-cycle ordering issue 5638
+cycles *before* the actual cause, which was a 2-clock DMA end pad.
+
+### A 0-px golden can depend on two errors cancelling (from #3050)
+
+Fixing a real, Mesen2-verified timing bug turned undisbeliever's
+`inidisp_forgot_to_force_blank.sfc` from pixel-exact to a fully black screen:
+its previous perfection depended on the DMA error offsetting a separate,
+still-unfixed CPU one. When a fix improves several vectors and destroys one,
+that is evidence about the *other* bug, not necessarily about the fix -- but do
+not ship it. Narrow the change to the part the trace actually proves (there,
+HDMA but not general-purpose DMA), pin the exclusion with a test, and say so.
 
 Diff by **event ordinal**, not by clock, then histogram the per-ordinal clock
 offsets. A single-valued histogram with zero transitions means clock-exact; a
