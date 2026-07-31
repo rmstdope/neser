@@ -98,7 +98,7 @@ def best_alignment(a: list[Event], b: list[Event]) -> tuple[int, int]:
     best_score = -1
     best = (0, 0)
     for shift in range(MAX_ALIGNMENT_SHIFT + 1):
-        for start_a, start_b in {(shift, 0), (0, shift)}:
+        for start_a, start_b in ((shift, 0), (0, shift)):
             depth = min(ALIGNMENT_SCORE_DEPTH, len(a) - start_a, len(b) - start_b)
             if depth <= 0:
                 continue
@@ -117,6 +117,7 @@ def best_alignment(a: list[Event], b: list[Event]) -> tuple[int, int]:
 class DiffResult:
     """The outcome of an ordinal-aligned comparison of two traces."""
 
+    #: Lengths of the traces as handed in, before any alignment trim.
     length_a: int
     length_b: int
     compared: int
@@ -127,8 +128,18 @@ class DiffResult:
 
     @property
     def clock_exact(self) -> bool:
-        """True when every compared ordinal shares one offset, i.e. the traces never drift."""
-        return self.compared > 0 and len(self.offset_histogram) == 1
+        """True when the two traces ran the same cycles and never drifted apart.
+
+        Both halves matter. A single offset bucket alone is not enough: if the shapes
+        disagree the two runs were not executing the same cycles at all, and a uniform delta
+        across a long run of same-speed accesses (the likeliest symptom of `best_alignment`
+        settling on a bogus shift) would otherwise be reported as a clean all-clear.
+        """
+        return (
+            self.compared > 0
+            and len(self.offset_histogram) == 1
+            and self.first_shape_mismatch is None
+        )
 
 
 def diff_traces(a: list[Event], b: list[Event]) -> DiffResult:
@@ -138,12 +149,13 @@ def diff_traces(a: list[Event], b: list[Event]) -> DiffResult:
     their master clocks start -- only on how many clocks elapse between cycles.
     """
     start_a, start_b = best_alignment(a, b)
+    length_a, length_b = len(a), len(b)
     a = a[start_a:]
     b = b[start_b:]
     compared = min(len(a), len(b))
     result = DiffResult(
-        length_a=len(a),
-        length_b=len(b),
+        length_a=length_a,
+        length_b=length_b,
         compared=compared,
         alignment=(start_a, start_b),
     )

@@ -3515,6 +3515,13 @@ impl<B: SnesBus> Cpu<B> {
     /// the end of the instruction would keep the total cost correct but move the data access
     /// six clocks early -- invisible on ROM operands, observable on every indexed access to
     /// an I/O register (#3050).
+    ///
+    /// The direct-page `DL != 0` penalty has the identical defect and is NOT fixed here: the
+    /// `addr_dp*` modes still add it to `extra_cycles`, so it is paid as an end-of-instruction
+    /// leftover where Mesen2 spends it right after the operand byte (`ReadDirectOperandByte`).
+    /// Any instruction using a direct-page mode with `D & 0xFF != 0` therefore still runs its
+    /// accesses six clocks early relative to Mesen2. Out of scope for #3050 (no current vector
+    /// exercises it); tracked as #3068.
     fn tick_index_penalty(&mut self, access: IndexedAccess) {
         if access == IndexedAccess::Write || self.last_page_crossed {
             self.tick_pre_access_internal_cycle();

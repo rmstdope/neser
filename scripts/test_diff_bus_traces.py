@@ -20,6 +20,11 @@ MESEN = [
 ]
 
 
+def _stream(n, start=0):
+    """A run of same-speed reads; `start` drops leading events to simulate a window edge."""
+    return [Event("read", 0x8000 + i, 100 + 8 * i) for i in range(start, n)]
+
+
 class ParseLinesTest(unittest.TestCase):
     def test_neser_bus_lines_are_normalised(self):
         self.assertEqual(
@@ -67,6 +72,34 @@ class DiffTracesTest(unittest.TestCase):
         self.assertEqual(dict(result.offset_histogram), {0: 2, 6: 1})
         self.assertFalse(result.clock_exact)
 
+    def test_a_uniform_offset_is_not_clock_exact_when_the_shapes_disagree(self):
+        """A shape mismatch means the two runs are not executing the same cycles at all, so a
+        single offset bucket says nothing. Reporting CLOCK-EXACT (and exiting 0) there would
+        hand back a false all-clear -- the likeliest way to see it is best_alignment settling
+        on a bogus shift over a long run of same-speed accesses."""
+        a = [Event("read", 0x10 + i, 8 * i) for i in range(20)]
+        b = [Event("idle", None, 8 * i) for i in range(20)]
+        result = diff_traces(a, b)
+        self.assertEqual(len(result.offset_histogram), 1)
+        self.assertIsNotNone(result.first_shape_mismatch)
+        self.assertFalse(result.clock_exact)
+
+    def test_reported_lengths_are_the_input_lengths_not_the_trimmed_ones(self):
+        a = _stream(50, start=3)  # 47 events
+        b = _stream(50)  # 50 events
+        result = diff_traces(a, b)
+        self.assertEqual((result.length_a, result.length_b), (47, 50))
+        self.assertEqual(result.alignment, (0, 3))
+        self.assertEqual(result.compared, 47)
+
+    def test_alignment_tie_breaking_is_deterministic_and_prefers_trimming_a(self):
+        # Both candidate shifts score identically here; the winner must not depend on set
+        # iteration order.
+        a = [Event("read", 0x10, 0)] * 8
+        b = [Event("read", 0x10, 0)] * 8
+        for _ in range(5):
+            self.assertEqual(best_alignment(a, b), (0, 0))
+
     def test_a_kind_mismatch_is_reported_as_a_shape_mismatch(self):
         a = [Event("read", 0x10, 0), Event("idle", None, 10)]
         b = [Event("read", 0x10, 0), Event("read", 0x8000, 10)]
@@ -99,26 +132,23 @@ class BestAlignmentTest(unittest.TestCase):
     few clocks ahead catches an extra event at the leading edge. Aligning on ordinal 0
     blindly would then report a spurious divergence at every single ordinal."""
 
-    def _stream(self, n, start=0):
-        return [Event("read", 0x8000 + i, 100 + 8 * i) for i in range(start, n)]
-
     def test_identical_streams_need_no_shift(self):
-        stream = self._stream(50)
+        stream = _stream(50)
         self.assertEqual(best_alignment(stream, stream), (0, 0))
 
     def test_a_leading_extra_event_in_b_is_trimmed(self):
-        a = self._stream(50, start=3)
-        b = self._stream(50)
+        a = _stream(50, start=3)
+        b = _stream(50)
         self.assertEqual(best_alignment(a, b), (0, 3))
 
     def test_a_leading_extra_event_in_a_is_trimmed(self):
-        a = self._stream(50)
-        b = self._stream(50, start=2)
+        a = _stream(50)
+        b = _stream(50, start=2)
         self.assertEqual(best_alignment(a, b), (2, 0))
 
     def test_alignment_survives_a_divergence_later_in_the_stream(self):
-        a = self._stream(50, start=4)
-        b = self._stream(50)
+        a = _stream(50, start=4)
+        b = _stream(50)
         b = b[:30] + [Event("idle", None, e.clk) for e in b[30:]]
         self.assertEqual(best_alignment(a, b), (0, 4))
 
@@ -128,8 +158,8 @@ class BestAlignmentTest(unittest.TestCase):
         self.assertEqual(best_alignment(a, b), (0, 0))
 
     def test_diff_traces_applies_the_alignment_and_reports_clock_exact(self):
-        a = self._stream(50, start=3)
-        b = self._stream(50)
+        a = _stream(50, start=3)
+        b = _stream(50)
         result = diff_traces(a, b)
         self.assertTrue(result.clock_exact)
         self.assertEqual(result.alignment, (0, 3))

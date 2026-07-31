@@ -117,7 +117,7 @@ impl DmaController {
         abus: &mut B,
         seed_open_bus: u8,
         base_clock: u64,
-        cpu_speed: u8,
+        _cpu_speed: u8,
     ) -> (u64, u8) {
         if mdmaen == 0 {
             return (0, seed_open_bus);
@@ -154,9 +154,8 @@ impl DmaController {
         // against Mesen2 with the fixed 8). NESER arms a general-purpose transfer through a
         // two-cycle `pending_gpdma` countdown rather than Mesen2's `_dmaStartDelay`, so the
         // CPU cycle whose speed is live when the transfer runs is not necessarily the one
-        // Mesen2 would have published. Left alone pending its own bus-trace diff (#3050
-        // follow-up); every vector this issue set out to fix is 0-px without it.
-        let _ = cpu_speed;
+        // Mesen2 would have published. Left alone pending its own bus-trace diff (#3067);
+        // every vector #3050 set out to fix is 0-px without it.
         let pad_end = Self::sync_end_pad(counter, 8);
         abus.dma_tick(pad_end);
         counter += pad_end;
