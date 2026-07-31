@@ -320,14 +320,14 @@
       },
       "license": "unknown",
       "oracle_type": "screen_crc",
-      "notes": "Jonas Quinn's BBoard collection of SNES test ROMs by various authors (incl. byuu), vendored under jonasquinn-test-roms/. No license file exists in the collection, recorded as unknown. Two ROMs are automated: test_oam/test_oam.smc (byuu's interactive OAM size test, 34 input-scripted combos in snes::integration_tests::byuu_test_oam_tests, automated with #2879 -- this entry backfills provenance for that suite, which predates enforced manifest coverage) and color_halve_proof/demo.smc (proves half colour math halves AFTER the add via per-scanline COLDATA rewrites; settles at frame 2, sampled at 66, matches Mesen2 pixel-exactly; snes::integration_tests::jonasquinn_math_tests, issue #2880). test_math/test_math.sfc was evaluated for #2880 and deliberately NOT automated: it is a CPU multiply/divide ($4202-$4217) latency test that writes results to SRAM and ends on a solid-colour screen, so a screen CRC would only prove the ROM ran to completion -- it remains a candidate asset for CPU-focused work. The rest of the collection is vendored but not yet automated.",
+      "notes": "Jonas Quinn's BBoard collection of SNES test ROMs by various authors (incl. byuu), vendored under jonasquinn-test-roms/. No license file exists in the collection, recorded as unknown. Two ROMs are automated: test_oam/test_oam.smc (byuu's interactive OAM size test, 34 input-scripted combos in snes::integration_tests::byuu_test_oam_tests, automated with #2879 -- this entry backfills provenance for that suite, which predates enforced manifest coverage) and color_halve_proof/demo.smc (proves half colour math halves AFTER the add via per-scanline COLDATA rewrites; settles at frame 2, sampled at 66, matches Mesen2 pixel-exactly; snes::integration_tests::jonasquinn_math_tests, issue #2880). test_math/test_math.sfc was evaluated for #2880 and deliberately NOT automated: it is a CPU multiply/divide ($4202-$4217) latency test that writes results to SRAM and ends on a solid-colour screen, so a screen CRC would only prove the ROM ran to completion -- it remains a candidate asset for CPU-focused work. The rest of the collection is vendored but not yet automated. DMA/HDMA ROMs are now automated in snes::integration_tests::jonasquinn_dma_tests (issue #2884): test_mdrhdma2/test_mdrhdma.sfc (MDR-during-HDMA, solid blue PASS) and hdma_midframe/demo.smc (mid-frame HDMA visual, also matches the bundled image001.bmp reference) have 0-pixel-diff Mesen2-approved goldens; test_dmavalid, test_hdmadisable (self-check FAIL, red vs Mesen2 blue) and test_dmatiming (~0.93% diff) are #[ignore]d pending #3063; test_hdma/test_hdmasync.smc and test_hdma/test_hdmatiming.smc are byte-identical byuu mirrors of the KungFuFurby ROMs and share the #3062 divergence.",
       "variants": [
         {
           "id": "ci_subset",
           "status": "committed_ci",
           "path": "roms/snes/automated_tests/snes_test_roms/jonasquinn-test-roms",
           "refresh_command": null,
-          "notes": "Vendored collection; test_oam and color_halve_proof have visually-approved screen-CRC goldens."
+          "notes": "Vendored collection; test_oam, color_halve_proof, test_mdrhdma and hdma_midframe have visually-approved screen-CRC goldens; other DMA/HDMA ROMs are #[ignore]d divergences (#3062/#3063)."
         }
       ]
     },
@@ -530,7 +530,7 @@
       },
       "license": "unknown",
       "oracle_type": "screen_crc",
-      "notes": "KungFuFurby's 2005-2008 NMI/H-V-IRQ test ROM collection (issue #2883/#3049, epic #2724), posted on the nesdev forum in 2016 (informal find, no LICENSE file, recorded as unknown). Blue backdrop = PASS, red/maroon = FAIL. Both suites self-check by capturing the opcode byte at the interrupted PC via a stack-relative-indirect-indexed LDA off the auto-pushed interrupt frame and comparing it against the expected in-flight opcode. demo_nmitest.smc, nmi.smc and demo_irqtest.smc match Mesen2 exactly and carry approved goldens (snes::integration_tests::kungfufurby_nmi_tests / kungfufurby_irq_tests) after #3049's per-CPU-cycle NMI and H/V-IRQ dispatch fixes (Cpu::step() now checks interrupt-pending state at per-cycle rather than per-instruction granularity, mirroring Mesen2's DetectNmiSignalEdge/PrevIrqSource). test_nmi.smc, irq.smc, test_irq.smc, test_irq4200.smc, test_irq4209.smc and test_irqb.smc remain #[ignore]d: unaffected by either fix (identical CRCs before/after), root cause not yet identified. test_irq.smc and test_irq4200.smc are byte-identical to the tukuyomi-bsnes-tests mirror copies of the same names; nmi.smc is byte-identical to jonasquinn-test-roms' nmi_irq/nmi.smc. tukuyomi's test_nmi.smc/demo_nmitest.smc/demo_irqtest.smc and jonasquinn's nmi_irq/demo_nmi.smc, demo_irq.smc and nmi_pf/test_nmi.smc are different revisions despite matching or similar names (sha256-verified) and remain documented-only candidates, not separately automated. snes_test_tsc.smc, test_hdma.smc, test_hdmasync.smc and test_hdmatiming.smc from the same collection are HDMA-focused and out of scope for #2883/#3049.",
+      "notes": "KungFuFurby's 2005-2008 NMI/H-V-IRQ test ROM collection (issue #2883/#3049, epic #2724), posted on the nesdev forum in 2016 (informal find, no LICENSE file, recorded as unknown). Blue backdrop = PASS, red/maroon = FAIL. Both suites self-check by capturing the opcode byte at the interrupted PC via a stack-relative-indirect-indexed LDA off the auto-pushed interrupt frame and comparing it against the expected in-flight opcode. demo_nmitest.smc, nmi.smc and demo_irqtest.smc match Mesen2 exactly and carry approved goldens (snes::integration_tests::kungfufurby_nmi_tests / kungfufurby_irq_tests) after #3049's per-CPU-cycle NMI and H/V-IRQ dispatch fixes (Cpu::step() now checks interrupt-pending state at per-cycle rather than per-instruction granularity, mirroring Mesen2's DetectNmiSignalEdge/PrevIrqSource). test_nmi.smc, irq.smc, test_irq.smc, test_irq4200.smc, test_irq4209.smc and test_irqb.smc remain #[ignore]d: unaffected by either fix (identical CRCs before/after), root cause not yet identified. test_irq.smc and test_irq4200.smc are byte-identical to the tukuyomi-bsnes-tests mirror copies of the same names; nmi.smc is byte-identical to jonasquinn-test-roms' nmi_irq/nmi.smc. tukuyomi's test_nmi.smc/demo_nmitest.smc/demo_irqtest.smc and jonasquinn's nmi_irq/demo_nmi.smc, demo_irq.smc and nmi_pf/test_nmi.smc are different revisions despite matching or similar names (sha256-verified) and remain documented-only candidates, not separately automated. snes_test_tsc.smc remains out of scope. The HDMA ROMs test_hdma.smc, test_hdmasync.smc and test_hdmatiming.smc are now automated in snes::integration_tests::kungfufurby_hdma_tests (issue #2884) as #[ignore]d divergences: test_hdma/test_hdmasync render black and test_hdmatiming FAILs (red) where Mesen2 PASSes (blue), rooted in HDMA H-position timing (#3062, #3042/#3050).",
       "variants": [
         {
           "id": "ci_subset",
@@ -559,6 +559,48 @@
           "path": "roms/snes/automated_tests/snes_test_roms/Sour",
           "refresh_command": "roms/snes/automated_tests/snes_test_roms/Sour/update-sources",
           "notes": "dma_irq_test.sfc (+ source and build config) plus the full SnesTests source subtree (including op_timing_test and timing_test, not automated). dma_irq_test.sfc has a current (fail-state) CRC tracked by snes::integration_tests::sour_dma_irq_tests, #[ignore]d pending a #3049 follow-up."
+        }
+      ]
+    },
+    {
+      "id": "snes-neser-dma-fixtures",
+      "suite": "neser_dma_tests",
+      "platform": "snes",
+      "source": {
+        "url": "in-repo synthetic fixtures, src/snes/integration_tests/neser_dma_tests.rs",
+        "ref": "issue-2884"
+      },
+      "license": "n/a (synthetic, authored in-repo)",
+      "oracle_type": "rom_pass_fail",
+      "notes": "Deterministic in-code assembled LoROM fixture programs (fixture_rom.rs) for general-purpose DMA (issue #2884), authored against the fullsnes register spec without reading the DMA implementation. Black-box, end-to-end: real 65816 code arms $43xx/$420B, the real PPU runs the transfer, and the result is read back through the actual B-bus target path. Covers mode 0/1 A->B to WRAM (via WMDATA) and VRAM, palette to CGRAM, words to OAM, A-bus increment/decrement/fixed, byte-count 0 == 65536, ascending multi-channel priority, and #2944 active-display write gating. VRAM/CGRAM/OAM readback instruments are each proven by a CPU write/read self-check. Pass/fail via the rom_runner NSER WRAM marker; no on-disk ROMs or visual baselines. gpdma_b_to_a_copies_wram_through_wmdata is #[ignore]d pending #3061 (B->A reads an internal shadow, not the live B-bus register).",
+      "variants": [
+        {
+          "id": "in_code_fixtures",
+          "status": "committed_ci",
+          "path": "src/snes/integration_tests",
+          "refresh_command": null,
+          "notes": "No on-disk assets; fixture programs are emitted at test run time by neser_dma_tests.rs via the shared fixture_rom builder."
+        }
+      ]
+    },
+    {
+      "id": "snes-neser-hdma-fixtures",
+      "suite": "neser_hdma_tests",
+      "platform": "snes",
+      "source": {
+        "url": "in-repo synthetic fixtures, src/snes/integration_tests/neser_hdma_tests.rs",
+        "ref": "issue-2884"
+      },
+      "license": "n/a (synthetic, authored in-repo)",
+      "oracle_type": "rom_pass_fail",
+      "notes": "Deterministic in-code assembled LoROM fixture programs (fixture_rom.rs) for HDMA (issue #2884), authored against the fullsnes spec. An HDMA channel targets the WMDATA port with WMADD preset so each per-scanline transfer deposits into consecutive WRAM, and the CPU reads the captured buffer back after the frame -- pinning line-counter, repeat, indirect and terminator behaviour driven by the real per-scanline PPU timing. Covers direct-mode one-byte-per-line, non-repeat idle, repeat-every-line, indirect pointer deref, and $00 terminator. Pass/fail via the rom_runner NSER WRAM marker; no on-disk ROMs or visual baselines.",
+      "variants": [
+        {
+          "id": "in_code_fixtures",
+          "status": "committed_ci",
+          "path": "src/snes/integration_tests",
+          "refresh_command": null,
+          "notes": "No on-disk assets; fixture programs are emitted at test run time by neser_hdma_tests.rs via the shared fixture_rom builder."
         }
       ]
     }
