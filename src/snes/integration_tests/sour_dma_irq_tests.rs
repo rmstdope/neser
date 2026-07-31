@@ -24,15 +24,15 @@
 //! screen, not the README table.
 //!
 //! NESER originally diverged from Mesen2 on 8 of the 19 sub-cases (every
-//! diverging value exactly one less than Mesen2's, i.e. one fewer
-//! instruction ran before dispatch). #3049's per-CPU-cycle NMI and H/V-IRQ
-//! dispatch fixes closed 2 of those 8 (#5 `IRQ-CLI+INC`, #15
-//! `W16:IRQ-CLI+INC`); 6 remain (#1, #2, #4, #7 `IRQ-*`, #8, #10 `NMI-*`),
-//! same off-by-one-instruction signature, root cause not yet identified
-//! (matches `kungfufurby_nmi_tests::test_nmi_passes` and
-//! `kungfufurby_irq_tests`' remaining 5 ROMs' status). The sub-cases that
-//! don't depend on interrupt timing (#3, #6, #9, #11-14, #16-19) already
-//! matched before and still do.
+//! diverging value exactly one less than Mesen2's, i.e. one fewer instruction
+//! ran before dispatch). #3049's per-CPU-cycle dispatch fixes closed 2 (#5, #15);
+//! the remaining 6 (#1, #2, #4, #7 `IRQ-*`, #8, #10 `NMI-*`) were closed by #3065,
+//! which models the GPDMA halting the CPU: an interrupt asserted mid-DMA is
+//! recognized only from the second cycle after the transfer (NMI one cycle
+//! earlier than the level IRQ, for its arm-then-resolve latch), so the
+//! instruction the DMA splits does not recognize it and the write width shifts
+//! the count by one exactly as on hardware. All 19 sub-cases now match Mesen2
+//! (WRAM values and a 0-pixel-diff frame-600 screen).
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -44,11 +44,10 @@ const ROOT: &str = "roms/snes/automated_tests/snes_test_roms/Sour/SnesTests/dma_
 mod tests {
     use super::*;
 
-    /// NESER's current CRC (screen has 6/19 sub-case values off by one
-    /// instruction, down from 8/19 before #3049's per-cycle dispatch
-    /// fixes), NOT a Mesen2-approved golden. See #3049.
+    /// Mesen2-approved golden (#3065): NESER's frame-600 screen is a
+    /// 0-pixel-diff match for a Mesen2 headless capture of the same ROM, all 19
+    /// sub-case values now correct.
     #[test]
-    #[ignore = "6/19 sub-cases off by one dispatched instruction; pending #3049 follow-up"]
     fn dma_irq_test_passes() {
         let path = Path::new(ROOT).join("dma_irq_test.sfc");
         let rom = fs::read(&path)
@@ -60,7 +59,7 @@ mod tests {
             RunConfig::new(400_000_000, 0),
             RunOracle::ScreenCrc {
                 frames: 600,
-                expected_crc: 0xF5F5_37A7,
+                expected_crc: 0xFC3B_465C,
             },
         );
         assert!(
@@ -79,12 +78,10 @@ mod tests {
     /// expected table (`$00FF` sentinels for the two no-interrupt SEI+INC cases
     /// #6/#16, per the README `$FFFF` transcription fix).
     ///
-    /// Currently 6 sub-cases dispatch one instruction early -- #1/#2/#4/#7
-    /// (IRQ) and #8/#10 (NMI), all of them 8-bit `$420B` writes (every 16-bit
-    /// `W16` variant already matches). Un-ignore once #3065 aligns the
-    /// DMA-start-vs-interrupt-recognition timing.
+    /// Fixed by #3065: all 19 sub-cases now match. (Previously 6 -- #1/#2/#4/#7
+    /// IRQ and #8/#10 NMI, all 8-bit `$420B` writes -- dispatched one
+    /// instruction early.)
     #[test]
-    #[ignore = "6/19 sub-cases dispatch one instruction early (all 8-bit $420B writes); pending #3065"]
     fn dma_irq_test_wram_results_match_hardware() {
         use crate::platform::app_context::AppContext;
         use crate::platform::emulator::Emulator;

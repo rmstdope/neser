@@ -49,6 +49,11 @@ pub struct SnesSystemBus {
     /// CPU-less callers (unit tests) at the same boundary an 8-clock fetch
     /// would produce.
     pending_gpdma: Option<(u8, u8, u64)>,
+    /// Set for one CPU cycle when a GPDMA transfer runs, so the CPU can begin
+    /// suppressing interrupt recognition for the rest of the interrupted
+    /// instruction (#3065). Transient (always `false` at cycle boundaries), so
+    /// not part of the save state.
+    gpdma_ran_this_cpu_cycle: bool,
     /// Armed-but-not-run HDMA work as `(cpu_cycle_countdown, kind, fallback_clock)`
     /// where kind 0 = frame init, 1 = per-line transfer. Mesen2's
     /// `BeginHdmaTransfer`/`BeginHdmaInit` set `_dmaStartDelay` alongside the
@@ -139,6 +144,7 @@ impl SnesSystemBus {
             hdmaen: 0,
             dma: DmaController::new(),
             pending_gpdma: None,
+            gpdma_ran_this_cpu_cycle: false,
             pending_hdma: None,
             apu: RefCell::new(SnesApu::new(spc_ipl)),
             ppu,
@@ -486,6 +492,9 @@ impl SnesSystemBus {
     }
 
     fn start_dma_transfer(&mut self, mdmaen: u8) {
+        // The bus is DMA-held this CPU cycle: the CPU must not sample interrupt
+        // lines for the remainder of the interrupted instruction (#3065).
+        self.gpdma_ran_this_cpu_cycle = true;
         let mut dma = std::mem::take(&mut self.dma);
         // `start_dma` advances the system live via `dma_tick` (which increments
         // `self.ticks` one clock at a time), so the returned tick total must not be
@@ -1375,6 +1384,14 @@ impl SnesBus for SnesSystemBus {
                 self.start_dma_transfer(mdmaen);
             }
         }
+    }
+
+    fn take_dma_ran_this_cpu_cycle(&mut self) -> bool {
+        std::mem::take(&mut self.gpdma_ran_this_cpu_cycle)
+    }
+
+    fn peek_dma_ran_this_cpu_cycle(&self) -> bool {
+        self.gpdma_ran_this_cpu_cycle
     }
 
     fn tick(&mut self) {
