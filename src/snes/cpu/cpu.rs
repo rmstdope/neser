@@ -1,5 +1,6 @@
 //! WDC 65C816 CPU core.
 
+use crate::platform::debugging::{cpu_trace_level, trace_clock_in_window};
 use crate::platform::save_state::{SaveStateError, Stateful};
 use crate::snes::bus::SnesBus;
 use crate::snes::bus::SnesSystemBus;
@@ -152,6 +153,16 @@ pub struct Cpu<B: SnesBus> {
 
     /// Bus for memory access
     bus: B,
+}
+
+/// Whether an indexed addressing mode is forming an address for a store (or a
+/// read-modify-write), which always pays the index penalty cycle, or for a plain read, which
+/// pays it only with 16-bit index registers or across a page boundary. Mirrors the `isWrite`
+/// argument of Mesen2's `AddrMode_AbsIdxX`/`AbsIdxY`/`DirIndIdxY`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IndexedAccess {
+    Read,
+    Write,
 }
 
 impl<B: SnesBus> Cpu<B> {
@@ -722,7 +733,7 @@ impl<B: SnesBus> Cpu<B> {
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
         let i_before = self.flag_i();
         let opcode = self.fetch_byte();
-        if crate::platform::debugging::cpu_trace_level() >= 1 {
+        if cpu_trace_level() >= 1 && trace_clock_in_window(self.bus.master_clock()) {
             let operands = self.exec_trace_operands(opcode);
             trace_cpu!(1; "{}", self.format_exec_trace_line(pc_before, &operands));
         }
@@ -1050,13 +1061,17 @@ impl<B: SnesBus> Cpu<B> {
     /// and the $2137 H/V counter latch both observe the sampling instant.
     fn tick_read(&mut self, addr: u32) -> u8 {
         self.resolve_nmi_arm_counter();
-        self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
-        trace_cpu!(2; "      read  ${:06X}", addr);
+        // Mesen2 `SnesCpu::Read`: SetCpuSpeed for the upcoming access happens BEFORE
+        // ProcessCpuCycle, so a DMA that runs at the start of this cycle ends on a whole
+        // cycle of *this* access's speed (#3050).
+        self.bus.set_cpu_speed(cycles);
+        self.bus.gpdma_cycle_hook();
         for _ in 0..cycles - 4 {
             self.bus.tick();
         }
         self.memory_bus_cycles += 1;
+        self.trace_bus_cycle(format_args!("read  ${addr:06X}"));
         let value = self.bus.read(addr);
         for _ in 0..4 {
             self.bus.tick();
@@ -1070,9 +1085,10 @@ impl<B: SnesBus> Cpu<B> {
     /// Also intercepts MEMSEL ($420D) writes to update the fast_rom flag.
     fn tick_write(&mut self, addr: u32, value: u8) {
         self.resolve_nmi_arm_counter();
-        self.bus.gpdma_cycle_hook();
         let cycles = mem_access_cycles(addr, self.fast_rom);
-        trace_cpu!(2; "      write ${:06X} = ${:02X}", addr, value);
+        // See `tick_read`: the speed is published before the cycle hook runs any DMA.
+        self.bus.set_cpu_speed(cycles);
+        self.bus.gpdma_cycle_hook();
         for _ in 0..cycles {
             self.bus.tick();
         }
@@ -1095,6 +1111,7 @@ impl<B: SnesBus> Cpu<B> {
                 _ => {}
             }
         }
+        self.trace_bus_cycle(format_args!("write ${addr:06X} = ${value:02X}"));
         self.bus.write(addr, value);
         self.poll_and_arm_nmi_edge();
         self.resample_irq_line();
@@ -1436,7 +1453,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_lda_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.lda_store(val);
         4 + self.last_page_crossed as u8
@@ -1444,7 +1461,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_lda_abs_y(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_y(abs);
+        let ea = self.addr_abs_y(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.lda_store(val);
         4 + self.last_page_crossed as u8
@@ -1476,7 +1493,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_lda_dp_ind_y(&mut self) -> u8 {
         let off = self.fetch_byte();
-        let ea = self.addr_dp_ind_y(off);
+        let ea = self.addr_dp_ind_y(off, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.lda_store(val);
         5 + self.last_page_crossed as u8
@@ -1562,7 +1579,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_ldx_abs_y(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_y(abs);
+        let ea = self.addr_abs_y(abs, IndexedAccess::Read);
         let val = self.read_idx(ea);
         self.ldx_store(val);
         4 + self.last_page_crossed as u8
@@ -1608,7 +1625,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_ldy_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Read);
         let val = self.read_idx(ea);
         self.ldy_store(val);
         4 + self.last_page_crossed as u8
@@ -1644,7 +1661,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_sta_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.a;
         self.write_m(ea, val);
         5
@@ -1652,7 +1669,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_sta_abs_y(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_y(abs);
+        let ea = self.addr_abs_y(abs, IndexedAccess::Write);
         let val = self.a;
         self.write_m(ea, val);
         5
@@ -1684,7 +1701,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_sta_dp_ind_y(&mut self) -> u8 {
         let off = self.fetch_byte();
-        let ea = self.addr_dp_ind_y(off);
+        let ea = self.addr_dp_ind_y(off, IndexedAccess::Write);
         let val = self.a;
         self.write_m(ea, val);
         6
@@ -1813,7 +1830,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_stz_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         self.write_m(ea, 0);
         5
     }
@@ -1991,7 +2008,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_adc_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.adc_perform(val);
         4 + self.last_page_crossed as u8
@@ -1999,7 +2016,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_adc_abs_y(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_y(abs);
+        let ea = self.addr_abs_y(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.adc_perform(val);
         4 + self.last_page_crossed as u8
@@ -2030,7 +2047,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_adc_dp_ind_y(&mut self) -> u8 {
         let off = self.fetch_byte();
-        let ea = self.addr_dp_ind_y(off);
+        let ea = self.addr_dp_ind_y(off, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.adc_perform(val);
         5 + self.last_page_crossed as u8
@@ -2116,7 +2133,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_sbc_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.sbc_perform(val);
         4 + self.last_page_crossed as u8
@@ -2124,7 +2141,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_sbc_abs_y(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_y(abs);
+        let ea = self.addr_abs_y(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.sbc_perform(val);
         4 + self.last_page_crossed as u8
@@ -2155,7 +2172,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_sbc_dp_ind_y(&mut self) -> u8 {
         let off = self.fetch_byte();
-        let ea = self.addr_dp_ind_y(off);
+        let ea = self.addr_dp_ind_y(off, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.sbc_perform(val);
         5 + self.last_page_crossed as u8
@@ -2248,7 +2265,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_and_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.and_perform(val);
         4 + self.last_page_crossed as u8
@@ -2256,7 +2273,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_and_abs_y(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_y(abs);
+        let ea = self.addr_abs_y(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.and_perform(val);
         4 + self.last_page_crossed as u8
@@ -2287,7 +2304,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_and_dp_ind_y(&mut self) -> u8 {
         let off = self.fetch_byte();
-        let ea = self.addr_dp_ind_y(off);
+        let ea = self.addr_dp_ind_y(off, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.and_perform(val);
         5 + self.last_page_crossed as u8
@@ -2380,7 +2397,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_ora_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.ora_perform(val);
         4 + self.last_page_crossed as u8
@@ -2388,7 +2405,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_ora_abs_y(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_y(abs);
+        let ea = self.addr_abs_y(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.ora_perform(val);
         4 + self.last_page_crossed as u8
@@ -2419,7 +2436,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_ora_dp_ind_y(&mut self) -> u8 {
         let off = self.fetch_byte();
-        let ea = self.addr_dp_ind_y(off);
+        let ea = self.addr_dp_ind_y(off, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.ora_perform(val);
         5 + self.last_page_crossed as u8
@@ -2512,7 +2529,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_eor_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.eor_perform(val);
         4 + self.last_page_crossed as u8
@@ -2520,7 +2537,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_eor_abs_y(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_y(abs);
+        let ea = self.addr_abs_y(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.eor_perform(val);
         4 + self.last_page_crossed as u8
@@ -2551,7 +2568,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_eor_dp_ind_y(&mut self) -> u8 {
         let off = self.fetch_byte();
-        let ea = self.addr_dp_ind_y(off);
+        let ea = self.addr_dp_ind_y(off, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.eor_perform(val);
         5 + self.last_page_crossed as u8
@@ -2665,7 +2682,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_bit_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         self.bit_mem_perform(val);
         4 + self.last_page_crossed as u8
@@ -2741,7 +2758,7 @@ impl<B: SnesBus> Cpu<B> {
     fn op_cmp_abs_x(&mut self) -> u8 {
         let wide = !self.m_flag();
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         let a = self.a;
         self.cmp_perform(a, val, wide);
@@ -2751,7 +2768,7 @@ impl<B: SnesBus> Cpu<B> {
     fn op_cmp_abs_y(&mut self) -> u8 {
         let wide = !self.m_flag();
         let abs = self.fetch_word();
-        let ea = self.addr_abs_y(abs);
+        let ea = self.addr_abs_y(abs, IndexedAccess::Read);
         let val = self.read_m(ea);
         let a = self.a;
         self.cmp_perform(a, val, wide);
@@ -2790,7 +2807,7 @@ impl<B: SnesBus> Cpu<B> {
     fn op_cmp_dp_ind_y(&mut self) -> u8 {
         let wide = !self.m_flag();
         let off = self.fetch_byte();
-        let ea = self.addr_dp_ind_y(off);
+        let ea = self.addr_dp_ind_y(off, IndexedAccess::Read);
         let val = self.read_m(ea);
         let a = self.a;
         self.cmp_perform(a, val, wide);
@@ -2978,7 +2995,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_inc_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.inc_perform_m(val);
         self.write_m(ea, result);
@@ -3014,7 +3031,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_dec_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.dec_perform_m(val);
         self.write_m(ea, result);
@@ -3121,7 +3138,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_asl_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.asl_perform(val);
         self.write_m(ea, result);
@@ -3180,7 +3197,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_lsr_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.lsr_perform(val);
         self.write_m(ea, result);
@@ -3240,7 +3257,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_rol_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.rol_perform(val);
         self.write_m(ea, result);
@@ -3300,7 +3317,7 @@ impl<B: SnesBus> Cpu<B> {
 
     fn op_ror_abs_x(&mut self) -> u8 {
         let abs = self.fetch_word();
-        let ea = self.addr_abs_x(abs);
+        let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.ror_perform(val);
         self.write_m(ea, result);
@@ -3473,19 +3490,42 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Absolute Indexed X: EA = (DBR:abs + X) & 0xFF_FFFF
-    fn addr_abs_x(&mut self, abs: u16) -> u32 {
+    fn addr_abs_x(&mut self, abs: u16, access: IndexedAccess) -> u32 {
         let ea = ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.x as u32) & 0xFF_FFFF;
         self.last_page_crossed =
             !self.x_flag() || (abs & 0xFF00) != (abs.wrapping_add(self.x) & 0xFF00);
+        self.tick_index_penalty(access);
         ea
     }
 
     /// Absolute Indexed Y: EA = (DBR:abs + Y) & 0xFF_FFFF
-    fn addr_abs_y(&mut self, abs: u16) -> u32 {
+    fn addr_abs_y(&mut self, abs: u16, access: IndexedAccess) -> u32 {
         let ea = ((self.dbr as u32) << 16 | abs as u32).wrapping_add(self.y as u32) & 0xFF_FFFF;
         self.last_page_crossed =
             !self.x_flag() || (abs & 0xFF00) != (abs.wrapping_add(self.y) & 0xFF00);
+        self.tick_index_penalty(access);
         ea
+    }
+
+    /// Charge the indexed-addressing penalty cycle, if this access pays one.
+    ///
+    /// It is charged HERE, between forming the effective address and touching it, because
+    /// that is where the hardware spends it (Mesen2 `AddrMode_AbsIdxX` calls `Idle()` right
+    /// after `ReadOperandWord()`). Leaving it to the generic leftover-internal-cycle tick at
+    /// the end of the instruction would keep the total cost correct but move the data access
+    /// six clocks early -- invisible on ROM operands, observable on every indexed access to
+    /// an I/O register (#3050).
+    ///
+    /// The direct-page `DL != 0` penalty has the identical defect and is NOT fixed here: the
+    /// `addr_dp*` modes still add it to `extra_cycles`, so it is paid as an end-of-instruction
+    /// leftover where Mesen2 spends it right after the operand byte (`ReadDirectOperandByte`).
+    /// Any instruction using a direct-page mode with `D & 0xFF != 0` therefore still runs its
+    /// accesses six clocks early relative to Mesen2. Out of scope for #3050 (no current vector
+    /// exercises it); tracked as #3068.
+    fn tick_index_penalty(&mut self, access: IndexedAccess) {
+        if access == IndexedAccess::Write || self.last_page_crossed {
+            self.tick_pre_access_internal_cycle();
+        }
     }
 
     /// Absolute Long: EA = 24-bit operand (pass-through, masked to 24 bits)
@@ -3568,7 +3608,7 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     /// Direct Page Indirect Indexed Y: ptr16 at (D+offset), EA = (DBR:ptr16+Y) & 0xFF_FFFF
-    fn addr_dp_ind_y(&mut self, offset: u8) -> u32 {
+    fn addr_dp_ind_y(&mut self, offset: u8, access: IndexedAccess) -> u32 {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
         }
@@ -3587,7 +3627,9 @@ impl<B: SnesBus> Cpu<B> {
         let ptr16 = lo as u16 | (hi as u16) << 8;
         self.last_page_crossed =
             !self.x_flag() || (ptr16 & 0xFF00) != (ptr16.wrapping_add(self.y) & 0xFF00);
-        ((self.dbr as u32) << 16 | ptr16 as u32).wrapping_add(self.y as u32) & 0xFF_FFFF
+        let ea = ((self.dbr as u32) << 16 | ptr16 as u32).wrapping_add(self.y as u32) & 0xFF_FFFF;
+        self.tick_index_penalty(access);
+        ea
     }
 
     /// Direct Page Indirect Long Indexed Y: 24-bit ptr at (D+offset), EA = (ptr+Y) & 0xFF_FFFF
@@ -3633,10 +3675,29 @@ impl<B: SnesBus> Cpu<B> {
         self.tick_write(addr & 0xFF_FFFF, value);
     }
 
+    /// Emit one clock-stamped level-2 bus-cycle trace line.
+    ///
+    /// The stamp is taken at the instant the cycle's data actually moves -- for a read that
+    /// is `speed - 4` clocks into the cycle, for a write the very end of it, matching where
+    /// Mesen2's `SnesMemoryManager::Read`/`Write` sample `_masterClock`. Stamping at the
+    /// cycle *boundary* instead would offset every NESER line from its Mesen2 counterpart by
+    /// the access speed and make an ordinal-aligned clock diff unreadable (#3050).
+    fn trace_bus_cycle(&self, what: std::fmt::Arguments<'_>) {
+        if cpu_trace_level() < 2 {
+            return;
+        }
+        let clk = self.bus.master_clock();
+        if trace_clock_in_window(clk) {
+            trace_cpu!(2; "      {} clk={}", what, clk);
+        }
+    }
+
     fn tick_internal_cycle(&mut self) {
         self.resolve_nmi_arm_counter();
+        // Mesen2 `SnesCpu::Idle` forces the CPU speed to 6 for the idle cycle.
+        self.bus.set_cpu_speed(6);
         self.bus.gpdma_cycle_hook();
-        trace_cpu!(2; "      internal");
+        self.trace_bus_cycle(format_args!("internal"));
         for _ in 0..6u8 {
             self.bus.tick();
         }
@@ -4450,6 +4511,7 @@ mod tests {
     enum BusCycleEvent {
         Tick,
         Read(u32),
+        Write(u32),
     }
 
     impl BusCycleRecordingBus {
@@ -4473,6 +4535,9 @@ mod tests {
         }
 
         fn write(&mut self, addr: u32, value: u8) {
+            self.events
+                .borrow_mut()
+                .push(BusCycleEvent::Write(addr & 0xFF_FFFF));
             self.mem.insert(addr & 0xFF_FFFF, value);
         }
 
@@ -4506,6 +4571,150 @@ mod tests {
         expected.push(Read(0x00_2140));
         expected.extend([Tick; 4]);
         assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// #3050: the indexed-addressing penalty cycle belongs to the *addressing mode*, so it
+    /// runs between forming the effective address and touching it -- Mesen2
+    /// `AddrMode_AbsIdxX` calls `Idle()` right after `ReadOperandWord()`, before the operand
+    /// access. Charging it at the end of the instruction instead leaves the total cost right
+    /// but moves the data access six clocks early, which is observable on any indexed access
+    /// to an I/O register.
+    #[test]
+    fn indexed_addressing_pays_its_penalty_cycle_before_the_data_access() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        // $00:8000 (WS1 ROM, 8 clocks): LDA $2140,X with X = 0 ($2140 = 6 clocks).
+        bus.load(0x00_8000, &[0xBD, 0x40, 0x21]);
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x20; // native, 8-bit A (M=1), 16-bit X (X=0) -> penalty is unconditional
+        cpu.pc = 0x8000;
+        cpu.x = 0;
+
+        cpu.step();
+
+        let mut expected = Vec::new();
+        for operand in 0u32..3 {
+            expected.extend([Tick; 4]);
+            expected.push(Read(0x00_8000 + operand));
+            expected.extend([Tick; 4]);
+        }
+        expected.extend([Tick; 6]); // index penalty, BEFORE the data access
+        expected.extend([Tick; 2]);
+        expected.push(Read(0x00_2140));
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// The store form pays the penalty unconditionally (Mesen2 `AddrMode_AbsIdxX(true)`),
+    /// and still before the access.
+    #[test]
+    fn indexed_store_pays_its_penalty_cycle_before_the_write() {
+        use BusCycleEvent::{Read, Tick, Write};
+
+        let mut bus = BusCycleRecordingBus::default();
+        // STA $2140,X with X = 0, 8-bit index and no page cross: the penalty applies anyway.
+        bus.load(0x00_8000, &[0x9D, 0x40, 0x21]);
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x30; // native, 8-bit A and 8-bit X
+        cpu.pc = 0x8000;
+        cpu.x = 0;
+
+        cpu.step();
+
+        let mut expected = Vec::new();
+        for operand in 0u32..3 {
+            expected.extend([Tick; 4]);
+            expected.push(Read(0x00_8000 + operand));
+            expected.extend([Tick; 4]);
+        }
+        expected.extend([Tick; 6]); // index penalty, BEFORE the write
+        expected.extend([Tick; 6]); // the write drives the bus for its whole 6-clock cycle
+        expected.push(Write(0x00_2140));
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// Records what the CPU publishes through `SnesBus::set_cpu_speed`, and when relative to
+    /// the DMA cycle hook.
+    #[derive(Default)]
+    struct CpuSpeedRecordingBus {
+        mem: BTreeMap<u32, u8>,
+        /// `Speed(n)` for each `set_cpu_speed`, `Hook` for each `gpdma_cycle_hook`.
+        events: Vec<SpeedEvent>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SpeedEvent {
+        Speed(u8),
+        Hook,
+    }
+
+    impl SnesBus for CpuSpeedRecordingBus {
+        fn read(&self, addr: u32) -> u8 {
+            *self.mem.get(&(addr & 0xFF_FFFF)).unwrap_or(&0)
+        }
+
+        fn write(&mut self, addr: u32, value: u8) {
+            self.mem.insert(addr & 0xFF_FFFF, value);
+        }
+
+        fn tick(&mut self) {}
+
+        fn set_cpu_speed(&mut self, speed: u8) {
+            self.events.push(SpeedEvent::Speed(speed));
+        }
+
+        fn gpdma_cycle_hook(&mut self) {
+            self.events.push(SpeedEvent::Hook);
+        }
+    }
+
+    /// #3050: a DMA runs from the cycle hook, and its `SyncEndDma` pad rounds to a whole CPU
+    /// cycle at the speed of the access the transfer is standing in front of. Mesen2's
+    /// `SnesCpu::Read`/`Write` therefore call `SetCpuSpeed` for the *upcoming* access before
+    /// `ProcessCpuCycle`; `Idle` publishes 6. If the CPU published the speed after the hook
+    /// (or not at all), every DMA landing before a 6- or 12-clock register access would be
+    /// padded as if the CPU were on SlowROM.
+    #[test]
+    fn each_cycle_publishes_its_access_speed_before_the_dma_hook() {
+        use SpeedEvent::{Hook, Speed};
+
+        let mut bus = CpuSpeedRecordingBus::default();
+        // $00:8000 (WS1 ROM, 8 clocks): LDA $4210 ($4210 = 6 clocks), then NOP (internal).
+        bus.mem.extend([
+            (0x00_8000, 0xAD),
+            (0x00_8001, 0x10),
+            (0x00_8002, 0x42),
+            (0x00_8003, 0xEA),
+        ]);
+        let mut cpu = Cpu::new(bus);
+        cpu.pc = 0x8000;
+
+        cpu.step(); // LDA $4210: three 8-clock fetches + one 6-clock data read
+        assert_eq!(
+            cpu.bus.events,
+            vec![
+                Speed(8),
+                Hook, // opcode
+                Speed(8),
+                Hook, // operand low
+                Speed(8),
+                Hook, // operand high
+                Speed(6),
+                Hook, // $4210 -- the access the poll loop turns on
+            ],
+            "every cycle publishes its own speed, and always before the DMA hook"
+        );
+
+        cpu.bus.events.clear();
+        cpu.step(); // NOP: one 8-clock fetch + one internal cycle
+        assert_eq!(
+            cpu.bus.events,
+            vec![Speed(8), Hook, Speed(6), Hook],
+            "an internal cycle publishes 6, matching Mesen2's Idle()"
+        );
     }
 
     struct TraceReset;
@@ -5029,7 +5238,7 @@ mod tests {
             cpu.write_dbr(0x01);
             cpu.write_x(0x0100);
             // 0x01_FF00 + 0x100 = 0x02_0000
-            assert_eq!(cpu.addr_abs_x(0xFF00), 0x02_0000);
+            assert_eq!(cpu.addr_abs_x(0xFF00, IndexedAccess::Read), 0x02_0000);
         }
 
         #[test]
@@ -5037,7 +5246,7 @@ mod tests {
             let mut cpu = cpu_with_bus();
             cpu.write_dbr(0x02);
             cpu.write_y(0x0050);
-            assert_eq!(cpu.addr_abs_y(0x1200), 0x02_1250);
+            assert_eq!(cpu.addr_abs_y(0x1200, IndexedAccess::Read), 0x02_1250);
         }
 
         // -- Absolute Long -----------------------------------------------------
@@ -5205,7 +5414,7 @@ mod tests {
             // Place ptr $1000 at D + offset = $0210
             cpu.bus.load(0x0000_0210, &[0x00, 0x10]);
             // EA = DBR:$1000 + Y = $02_1004
-            assert_eq!(cpu.addr_dp_ind_y(0x10), 0x02_1004);
+            assert_eq!(cpu.addr_dp_ind_y(0x10, IndexedAccess::Read), 0x02_1004);
         }
 
         #[test]
@@ -5216,7 +5425,7 @@ mod tests {
             cpu.write_y(0x0100);
             // ptr = $FF00, EA = $01_FF00 + $100 = $02_0000
             cpu.bus.load(0x0000_0210, &[0x00, 0xFF]);
-            assert_eq!(cpu.addr_dp_ind_y(0x10), 0x02_0000);
+            assert_eq!(cpu.addr_dp_ind_y(0x10, IndexedAccess::Read), 0x02_0000);
         }
 
         // -- Direct Page Indirect Long Indexed Y [dp],Y ------------------------
@@ -5306,7 +5515,7 @@ mod tests {
             cpu.bus.load(0x0000_FFFF, &[0xFF]);
             cpu.bus.load(0x0000_0000, &[0x00]);
             // ptr = $00FF, EA = $01_00FF + 1 = $01_0100
-            assert_eq!(cpu.addr_dp_ind_y(0x00), 0x01_0100);
+            assert_eq!(cpu.addr_dp_ind_y(0x00, IndexedAccess::Read), 0x01_0100);
         }
 
         #[test]
