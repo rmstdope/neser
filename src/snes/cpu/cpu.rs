@@ -142,8 +142,9 @@ pub struct Cpu<B: SnesBus> {
     /// instruction later while a 3-cycle `LDA #imm16` still recognizes at its
     /// last cycle. A DMA that runs *before* an opcode read leaves that
     /// instruction as the first full one after the transfer (no suppression).
-    /// Set at each cycle a GPDMA runs; decremented per cycle. Zero at
-    /// instruction boundaries where saves happen, so not part of the save state.
+    /// Set at each cycle a GPDMA runs; decremented per cycle. Can be nonzero at
+    /// an instruction boundary (a DMA on the previous instruction's last cycle),
+    /// so it is part of the save state.
     dma_suppress_cycles: u8,
 
     /// One-step interrupt lock used to emulate delayed IRQ/NMI recognition after
@@ -350,6 +351,7 @@ impl<B: SnesBus> Cpu<B> {
             abort_pending: self.abort_pending,
             nmi_arm_counter: self.nmi_arm_counter,
             irq_line_shadow: self.irq_line_shadow,
+            dma_suppress_cycles: self.dma_suppress_cycles,
             waiting: self.waiting,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
@@ -384,6 +386,7 @@ impl<B: SnesBus> Cpu<B> {
         self.abort_pending = state.abort_pending;
         self.nmi_arm_counter = state.nmi_arm_counter;
         self.irq_line_shadow = state.irq_line_shadow;
+        self.dma_suppress_cycles = state.dma_suppress_cycles;
         self.waiting = state.waiting;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
@@ -494,6 +497,7 @@ impl<B: SnesBus> Cpu<B> {
         self.irq_pending = false;
         self.abort_pending = false;
         self.nmi_arm_counter = 0;
+        self.dma_suppress_cycles = 0;
         self.irq_line_shadow = false;
         self.irq_lock_step = false;
         self.irq_i_shadow = true;
