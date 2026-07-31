@@ -653,17 +653,67 @@ The reason was upstream of the formula: Mesen2 re-enters `ProcessPendingTransfer
 into the very counter the outer `SyncEndDma` rounds. NESER cannot nest, so its counter is a
 different quantity. The rounding rule was correct and the input was not.
 
-The decisive measurement was a bus-trace diff of the transfers themselves -- Mesen2 and the
-fixed-8 build both charged 4288 and 296 master clocks for two adjacent general-purpose
-transfers, the speed-aware build 4288 and 288. Get to that number. The first attempt at this
-issue concluded from screen CRCs alone and produced a defensible-sounding but under-evidenced
-answer that an independent review correctly pushed back on; the trace took one probe and
-settled it on the exact cycle in dispute.
+The decisive measurement was a bus-trace diff of the ONE transfer that could discriminate.
+Of the ROM's eight general-purpose transfers, seven ran with a live CPU speed of 8, where the
+two rounding rules are bit-identical; only the 64 KB upload at clock 25894 ran at speed 6.
+There, Mesen2 and the fixed-8 build both stalled 540156 master clocks and the speed-aware build
+540160.
+
+Two process lessons, both learned the hard way here. First, screen CRCs alone produced a
+defensible-sounding but under-evidenced answer that review correctly rejected. Second, the
+first trace attempt measured a *later* transfer and reported an 8-clock delta as if it were the
+end pad -- but `sync_end_pad` returns `1..=speed`, so two rules can differ by at most 7 clocks
+at one transfer, and the extra was earlier divergence compounding through `pad_start`. When a
+measured delta exceeds what the mechanism can produce, the measurement is attributing it to the
+wrong cause: find the site where the mechanism actually differs and measure there.
 
 Before porting a formula, ask what feeds its inputs in each emulator, not just what the
 formula says. If the surrounding structure differs, the local approximation you already have
 may be the better model of the *net* behaviour, and "it matches the reference's source" is not
 evidence that it matches the reference's behaviour.
+
+### Scripted-input Mesen2 replay (testRunner) -- complete template
+
+`--testRunner` uses a different Lua environment from `--loadScript`; this is the form that
+works there, and it is what a scripted NESER vector must be compared against. `edges` takes the
+numeric frame stamps straight from the Rust `hold(...)`/`InputEvent` list, and `target` is the
+test's capture frame. Button names are Mesen2's (`"a"`, `"b"`, `"x"`, `"y"`, `"l"`, `"r"`,
+`"up"`, `"down"`, `"left"`, `"right"`, `"start"`, `"select"`).
+
+```lua
+local target = 300
+local edges = { {120, "r", true}, {151, "r", false} }
+local state = {}
+local frameCount = 0
+
+emu.addEventCallback(function()
+  frameCount = frameCount + 1
+  if frameCount == target then
+    local png = emu.takeScreenshot()
+    local hex = {}
+    for i = 1, #png do hex[i] = string.format("%02X", string.byte(png, i)) end
+    print("SCREENSHOT_BEGIN")
+    print(table.concat(hex))
+    print("SCREENSHOT_END")
+    emu.stop(0)
+  end
+end, emu.eventType.startFrame)
+
+emu.addEventCallback(function()
+  for _, e in ipairs(edges) do
+    if e[1] <= frameCount - 1 then state[e[2]] = e[3] end
+  end
+  emu.setInput(state, 0)
+end, emu.eventType.inputPolled)
+```
+
+Run it, then decode the hex between the markers to a PNG and pixel-diff:
+
+```bash
+until ! pgrep -f "Mesen --testRunner" >/dev/null 2>&1; do sleep 3; done
+Mesen --testRunner <rom> <script.lua> \
+  --Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true
+```
 
 ### Prove a fragile input-scripted vector with the SAME script on both sides (from #3067)
 

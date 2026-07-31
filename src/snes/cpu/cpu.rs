@@ -4718,11 +4718,14 @@ mod tests {
 
         let mut bus = BusCycleRecordingBus::default();
         bus.load(0x00_8000, &[0xAB]); // PLB
-        bus.load(0x00_0100, &[0x00, 0x7E]); // $0100 = wrap target, $0101 = the pulled DBR
+        // S = $01FF, so the UNCLAMPED S+1 is $0200 while a page-1-clamped pull would read
+        // $0100. Distinct addresses, so the test actually reaches the emulation-mode branch.
+        bus.load(0x00_0100, &[0xAA]); // what a (wrong) clamped pull would fetch
+        bus.load(0x00_0200, &[0x7E]); // what the unclamped pull must fetch
         let mut cpu = Cpu::new(bus);
         cpu.e = true;
         cpu.pc = 0x8000;
-        cpu.s = 0x0100; // S+1 = $0101, inside the page -- no wrap, so the read is unambiguous
+        cpu.s = 0x01FF;
 
         cpu.step();
 
@@ -4733,11 +4736,11 @@ mod tests {
         expected.extend([Tick; 6]); // idle 1, BEFORE the pull
         expected.extend([Tick; 6]); // idle 2, BEFORE the pull
         expected.extend([Tick; 4]);
-        expected.push(Read(0x00_0101)); // the unclamped S+1 read
+        expected.push(Read(0x00_0200)); // the unclamped S+1 read, NOT the clamped $0100
         expected.extend([Tick; 4]);
         assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
-        assert_eq!(cpu.dbr, 0x7E, "DBR came from the pulled byte");
-        assert_eq!(cpu.s, 0x0101, "S is clamped back into page 1 afterwards");
+        assert_eq!(cpu.dbr, 0x7E, "DBR came from the unclamped address");
+        assert_eq!(cpu.s, 0x0100, "S is clamped back into page 1 afterwards");
     }
 
     /// The push side of the same family: Mesen2 `PHP`/`PHB`/`PHD`/`PHK` idle **once** before

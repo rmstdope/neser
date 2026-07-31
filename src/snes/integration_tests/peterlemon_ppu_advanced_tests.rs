@@ -211,7 +211,8 @@ mod tests {
         // Because that margin is hand-tuned, movement here is tempting to dismiss as a
         // tuning artifact. It is not: replay Mesen2 with the SAME script before concluding
         // anything (#3067 -- doing so is what proved a candidate DMA change wrong). The
-        // replay is the standard screenshot Lua from README-SNES.md with:
+        // replay template is in .github/skills/snes-hardware-research/SKILL.md ("Scripted-input
+        // Mesen2 replay"); set:
         //
         //     local target = 300
         //     local edges = { {120, "r", true}, {151, "r", false} }

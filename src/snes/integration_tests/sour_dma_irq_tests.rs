@@ -54,7 +54,7 @@ mod tests {
     /// instruction; that count was NOT re-derived after the screen changed, so treat only the
     /// pixel/row figures above as measured.
     #[test]
-    #[ignore = "6/19 sub-cases off by one dispatched instruction; pending #3049 follow-up"]
+    #[ignore = "sub-cases still off by one dispatched instruction; pending #3049 follow-up"]
     fn dma_irq_test_passes() {
         let path = Path::new(ROOT).join("dma_irq_test.sfc");
         let rom = fs::read(&path)

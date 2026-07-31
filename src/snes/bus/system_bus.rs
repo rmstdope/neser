@@ -1467,7 +1467,9 @@ impl SnesBus for SnesSystemBus {
 mod tests {
     use super::*;
     use crate::snes::input::SnesControllerType;
-    use crate::snes::ppu::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME};
+    use crate::snes::ppu::{
+        DOTS_PER_SCANLINE, HDMA_TRANSFER_POSITION, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME,
+    };
 
     fn build_cart(
         rom: &mut [u8],
@@ -2249,6 +2251,49 @@ mod tests {
         assert_eq!(bus.read(0x7E0200), 0x5A, "it runs at the next hook entry");
     }
 
+    /// #3067 made `gpdma_cycle_hook`'s HDMA branch the SOLE route by which HDMA runs under a
+    /// real CPU -- `run_overdue_pending_dma` no longer covers for it. It had no unit coverage
+    /// (deleting the branch left every bus test green; only integration goldens caught it),
+    /// which is a poor place for a load-bearing path to sit.
+    ///
+    /// The hook is driven once up front so `cpu_drives_dma_hook` latches BEFORE any tick --
+    /// otherwise the clock fallback runs the transfer and the test passes no matter what the
+    /// hook's HDMA branch does.
+    #[test]
+    fn an_armed_hdma_transfer_runs_from_the_cycle_hook() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        set_wmadd_200(&mut bus);
+        // One direct mode-0 channel writing a single byte per line through WMDATA ($2180),
+        // so the transfer's effect is readable back out of WRAM.
+        bus.write(0x7E5000, 0x01); // one line, no repeat
+        bus.write(0x7E5001, 0x3C); // the transferred byte
+        bus.write(0x7E5002, 0x00); // terminator
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E5000, 0);
+        bus.write(0x00420C, 0x01); // HDMAEN
+        bus.hdma_init();
+
+        // A CPU owns the cycle boundaries from here on, so the clock fallback stands down.
+        bus.gpdma_cycle_hook();
+        assert_eq!(bus.read(0x7E0200), 0x00, "nothing transferred yet");
+
+        // Past the fallback's own trigger+16 deadline, so an ungated fallback would have run
+        // the transfer by now and the assertion below would catch it.
+        tick_until_master_clock(&mut bus, u64::from(HDMA_TRANSFER_POSITION) + 20);
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x00,
+            "the trigger only ARMS: the fallback must not run it behind the hook's back"
+        );
+
+        bus.gpdma_cycle_hook();
+        bus.gpdma_cycle_hook();
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x3C,
+            "the cycle hook's HDMA branch is what actually performs the transfer"
+        );
+    }
+
     /// The converse: a bus-only caller never calls the hook, so the fallback still has to run
     /// the transfer or those tests would hang forever.
     #[test]
@@ -2493,6 +2538,10 @@ mod tests {
         assert_eq!(bus.read(0x7E0200), 0x7A, "ch7's byte landed");
     }
 
+    /// Like `pending_gpdma_survives_save_state_round_trip`, this drives no cycle hook, so it
+    /// exercises the BUS-ONLY fallback path; under a real CPU the restored bus re-latches
+    /// `cpu_drives_dma_hook` on its first cycle and the hook runs the transfer instead. What
+    /// is pinned here is that the arming survives the round trip (#3067).
     #[test]
     fn pending_hdma_survives_save_state_round_trip() {
         // Capture inside the armed window (trigger 1104, run 1120): the

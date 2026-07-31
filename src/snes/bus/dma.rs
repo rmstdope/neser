@@ -97,13 +97,16 @@ impl DmaController {
     /// Mesen2 `SnesDmaController::SyncEndDma`: after the transfer, "wait 2-8 master cycles
     /// to reach a whole number of CPU clock cycles since the pause".
     ///
-    /// The cycle length to round to is the speed of the CPU access the transfer is standing
-    /// in front of, not a fixed 8 -- `SnesCpu::Read`/`Write` call `SetCpuSpeed` for the
-    /// upcoming access *before* `ProcessCpuCycle`, which is where a pending transfer runs
-    /// (`Idle` sets 6). Rounding to a fixed 8 makes every DMA that lands in front of a
-    /// 6-clock register access two clocks too long; in StarWars.sfc that pushed the `$4210`
-    /// poll read past the 4-clock RDNMI hold window and cost one Mode 7 zoom step per frame
-    /// (#3050).
+    /// Callers pass the cycle length to round to. For the two HDMA envelopes that is the
+    /// speed of the CPU access the transfer is standing in front of -- `SnesCpu::Read`/`Write`
+    /// call `SetCpuSpeed` for the upcoming access *before* `ProcessCpuCycle`, which is where a
+    /// pending transfer runs (`Idle` sets 6). Rounding an HDMA to a fixed 8 makes one that
+    /// lands in front of a 6-clock register access two clocks too long; in StarWars.sfc that
+    /// pushed the `$4210` poll read past the 4-clock RDNMI hold window and cost one Mode 7
+    /// zoom step per frame (#3050).
+    ///
+    /// General-purpose DMA deliberately passes a literal 8 instead, on trace evidence -- see
+    /// `start_dma` (#3067). Do not "fix" that from this doc alone.
     ///
     /// The pad is never zero: an already-aligned total still pays a full cycle.
     fn sync_end_pad(charged: u64, cpu_speed: u8) -> u64 {
@@ -117,6 +120,8 @@ impl DmaController {
         abus: &mut B,
         seed_open_bus: u8,
         base_clock: u64,
+        // Deliberately unused: general-purpose DMA rounds to a fixed 8. Kept so the three
+        // envelopes share a signature and so revisiting the decision is a one-word change.
         _cpu_speed: u8,
     ) -> (u64, u8) {
         if mdmaen == 0 {
@@ -147,20 +152,24 @@ impl DmaController {
 
         // SyncEndDma: general-purpose DMA rounds to a FIXED 8-clock cycle, unlike the two
         // HDMA envelopes and unlike Mesen2's single speed-aware `SyncEndDma`. That asymmetry
-        // is a measured decision (#3067), and the measurement is a bus-trace diff of the
-        // transfers themselves, not a downstream pixel comparison.
+        // is a measured decision (#3067), taken on a bus-trace diff of the transfer itself.
         //
-        // MosaicMode5.sfc, the two general-purpose transfers around master clock 1.65M,
-        // stall length in master clocks:
+        // MosaicMode5.sfc runs 8 general-purpose transfers, and in exactly ONE of them is the
+        // live CPU speed something other than 8 -- the 64 KB upload at master clock 25894,
+        // where it is 6. That is the only transfer where the two rules can differ at all, so
+        // it is the only one that discriminates. Wall stall in master clocks:
         //
-        //   transfer at clk   Mesen2   fixed 8 (this)   speed-aware
-        //   1646822           4288     4288             4288
-        //   1651468            296      296              288
+        //   Mesen2                540156
+        //   fixed 8 (this)        540156   <- clock-exact across the window
+        //   speed-aware           540160   <- +4, diverges
         //
-        // The fixed 8 reproduces Mesen2 exactly and is clock-exact across the surrounding
-        // window; the speed-aware pad is 8 clocks short. Downstream that shifts the whole
-        // timeline and flips `mosaic_mode5_sized`'s input-latch race 150 frames later
-        // (0 px -> 12484 px against Mesen2's replay driven by the identical input script).
+        // Every later transfer has a live speed of 8, where the two rules are bit-identical;
+        // any difference visible there is this +4 compounding through `pad_start`, not the
+        // end pad. (`sync_end_pad` returns 1..=speed, so two rules can never differ by more
+        // than 7 clocks at one transfer -- a larger apparent delta is always compounding.)
+        //
+        // Downstream, that 4-clock shift is what flips `mosaic_mode5_sized`'s input-latch
+        // race 150 frames later.
         //
         // Why the rule that is right for HDMA is wrong here: Mesen2 re-enters
         // `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing during a
