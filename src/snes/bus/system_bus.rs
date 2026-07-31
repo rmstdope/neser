@@ -62,6 +62,12 @@ pub struct SnesSystemBus {
     /// is `DmaController::sync_end_pad`, so it is always written before it is read and needs
     /// no save-state entry. Initialised to the SlowROM 8 that the reset vector fetch uses.
     cpu_speed: u8,
+    /// Whether anything has ever driven `gpdma_cycle_hook`, i.e. whether a CPU is defining
+    /// this bus's CPU-cycle boundaries. Latches true and never clears: it selects between the
+    /// real hook and the bus-only clock fallback (see `run_overdue_pending_dma`), not a
+    /// per-cycle state, so it needs no save-state entry -- a restored bus is driven by the
+    /// same CPU that was driving it before.
+    cpu_drives_dma_hook: bool,
     apu: RefCell<SnesApu>,
     /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
     /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`, and in
@@ -146,6 +152,7 @@ impl SnesSystemBus {
             pending_gpdma: None,
             pending_hdma: None,
             cpu_speed: 8,
+            cpu_drives_dma_hook: false,
             apu: RefCell::new(SnesApu::new(spc_ipl)),
             ppu,
             input: RefCell::new(InputPorts::new()),
@@ -551,7 +558,20 @@ impl SnesSystemBus {
     /// Fallback for bus-only callers with no CPU driving `gpdma_cycle_hook`:
     /// run any armed transfer once the clock reaches its fallback deadline
     /// (one CPU cycle after arming).
+    ///
+    /// Inert as soon as anything has driven the cycle hook. The deadline is only 8-16 clocks
+    /// after arming, and this runs after EVERY master clock, so with a real CPU it used to
+    /// win the race whenever the start-delay cycle was 8 or 12 clocks -- the common case,
+    /// since `STA $420B` is normally followed by a SlowROM opcode fetch. The transfer then
+    /// ran on the last tick of that cycle instead of at the start of the next one, which is
+    /// the only point where the upcoming access's speed has been published; `SyncEndDma`
+    /// consequently rounded to the previous cycle's length (and with a 12-clock cycle the
+    /// transfer also started 4 clocks early, shifting `pad_start` too). Mesen2 has no such
+    /// path at all -- `ProcessPendingTransfers` runs only from `ProcessCpuCycle`. See #3067.
     fn run_overdue_pending_dma(&mut self) {
+        if self.cpu_drives_dma_hook {
+            return;
+        }
         let now = self.ppu.borrow().total_master_clocks();
         if let Some((_, kind, fallback)) = self.pending_hdma
             && now >= fallback
@@ -1371,6 +1391,9 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn gpdma_cycle_hook(&mut self) {
+        // Being called at all means a CPU owns the cycle boundaries, so the clock-based
+        // fallback must stand down (see `run_overdue_pending_dma`).
+        self.cpu_drives_dma_hook = true;
         // Pending HDMA has priority over an armed GPDMA (Mesen2's
         // ProcessPendingTransfers checks _hdmaPending first), and only one
         // pending transfer runs per CPU cycle.
@@ -2178,6 +2201,64 @@ mod tests {
         );
         bus.gpdma_cycle_hook();
         assert_eq!(bus.read(0x7E0200), 0x5A, "runs at the second cycle entry");
+    }
+
+    /// Arms a one-byte GPDMA from `$7E4000` to WMDATA; `bus.read(0x7E0200)` becomes `0x5A`
+    /// once it has actually run.
+    fn arm_one_byte_gpdma(bus: &mut SnesSystemBus) {
+        set_wmadd_200(bus);
+        bus.write(0x7E4000, 0x5A);
+        write_dma_channel(bus, 0, 0x00, 0x80, 0x7E4000, 1);
+        bus.write(0x00420B, 0x01);
+    }
+
+    /// #3067: `run_overdue_pending_dma` exists only for bus-only callers that never drive
+    /// `gpdma_cycle_hook`. It must not preempt a CPU that IS driving the hook.
+    ///
+    /// Its deadline is `arming + 8`, and it is evaluated after every master clock, so with a
+    /// real CPU the transfer used to run on the last tick of the start-delay cycle whenever
+    /// that cycle was 8 or 12 clocks -- the common case, since `STA $420B` is normally
+    /// followed by a SlowROM opcode fetch. Mesen2 always runs it at the START of the next
+    /// cycle, which is the only point where the upcoming access's speed has been published;
+    /// running it a tick early means `SyncEndDma` rounds to the wrong cycle length.
+    #[test]
+    fn an_armed_gpdma_waits_for_the_cycle_hook_when_a_cpu_is_driving() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        arm_one_byte_gpdma(&mut bus);
+
+        // A CPU is driving: this is the start-delay cycle's hook entry.
+        bus.gpdma_cycle_hook();
+        assert_eq!(bus.read(0x7E0200), 0x00, "the delay cycle must not run it");
+
+        // Now burn well past the +8 fallback deadline, as an 8- or 12-clock access would.
+        for _ in 0..16 {
+            bus.tick();
+        }
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x00,
+            "the fallback must not preempt a CPU-driven hook, however long the cycle is"
+        );
+
+        bus.gpdma_cycle_hook();
+        assert_eq!(bus.read(0x7E0200), 0x5A, "it runs at the next hook entry");
+    }
+
+    /// The converse: a bus-only caller never calls the hook, so the fallback still has to run
+    /// the transfer or those tests would hang forever.
+    #[test]
+    fn an_armed_gpdma_still_runs_from_the_fallback_without_a_cpu() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        arm_one_byte_gpdma(&mut bus);
+
+        for _ in 0..16 {
+            bus.tick();
+        }
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x5A,
+            "with nothing driving the hook the fallback must still run it"
+        );
     }
 
     #[test]

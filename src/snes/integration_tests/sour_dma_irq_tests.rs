@@ -44,9 +44,14 @@ const ROOT: &str = "roms/snes/automated_tests/snes_test_roms/Sour/SnesTests/dma_
 mod tests {
     use super::*;
 
-    /// NESER's current CRC (screen has 6/19 sub-case values off by one
-    /// instruction, down from 8/19 before #3049's per-cycle dispatch
-    /// fixes), NOT a Mesen2-approved golden. See #3049.
+    /// NESER's current CRC, NOT a Mesen2-approved golden. See #3049.
+    ///
+    /// Improved by #3067's cycle-hook fix: the pixel diff against a fresh Mesen2 capture
+    /// went from 154 px / 42 rows to 100 px / 28 rows when `run_overdue_pending_dma` stopped
+    /// preempting `gpdma_cycle_hook`. This ROM races DMA against IRQ dispatch, so it is the
+    /// most direct witness that the fallback really was running transfers a cycle early.
+    /// Still not a PASS -- the remaining sub-cases keep the off-by-one-dispatched-instruction
+    /// signature shared with `kungfufurby_nmi_tests::test_nmi_passes`.
     #[test]
     #[ignore = "6/19 sub-cases off by one dispatched instruction; pending #3049 follow-up"]
     fn dma_irq_test_passes() {
@@ -60,7 +65,7 @@ mod tests {
             RunConfig::new(400_000_000, 0),
             RunOracle::ScreenCrc {
                 frames: 600,
-                expected_crc: 0xF5F5_37A7,
+                expected_crc: 0x9E95_2DB5,
             },
         );
         assert!(
