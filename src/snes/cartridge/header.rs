@@ -110,9 +110,9 @@ mod tests {
     }
 
     /// Writes every SNES-header field with a distinct sentinel so a misread of
-    /// any single field fails the assertion (see the mutation proof in the
-    /// #2885 RED evidence). `base - 1` is the chipset-subtype byte that
-    /// immediately precedes the header.
+    /// any single field fails the assertion (each field's parse is verified by
+    /// mutation). `base - 1` is the chipset-subtype byte that immediately
+    /// precedes the header.
     fn write_all_fields(rom: &mut [u8], base: usize) {
         let title = b"FULL FIELD TEST      ";
         rom[base..base + TITLE_LEN].copy_from_slice(&title[..TITLE_LEN]);

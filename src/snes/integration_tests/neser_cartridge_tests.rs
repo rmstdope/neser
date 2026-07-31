@@ -70,9 +70,11 @@ mod tests {
             .build();
         let cart = Cartridge::from_bytes(&image).expect("cart");
         assert_eq!(cart.mapping(), Mapping::ExHiRom);
+        assert_eq!(cart.title(), "NESER CART FIXTURE");
         assert_eq!(cart.country(), 0x00);
         assert_eq!(cart.sram_size(), 8 * 1024);
         assert!(cart.has_battery());
+        assert_eq!(cart.speed(), RomSpeed::Slow);
         assert!(cart.enhancement_chip().is_none());
     }
 
@@ -103,11 +105,16 @@ mod tests {
     }
 
     #[test]
-    fn exhirom_address_translation_reads_all_bank_regions() {
-        // ExHiROM: $C0:0000 -> ROM offset 0 (lower half),
-        //          $40:0000 -> ROM offset 0x400000 (upper half),
-        //          $00:8000 and $80:8000 (system banks, offset >= $8000) ->
-        //          ROM offset 0x8000 (both map identically via bank & 0x3F).
+    fn exhirom_address_translation_reads_bank_regions() {
+        // ExHiROM: $C0:0000 -> ROM offset 0 (first half, at the end of the image),
+        //          $40:0000 -> ROM offset 0x400000 (second half, at the start),
+        //          $80:8000 -> ROM offset 0x8000 (system-bank mirror of the first half).
+        //
+        // The A22-inverted $00-3F:8000 system window (which hardware maps to the
+        // SECOND half, e.g. $00:8000 -> 0x408000) is intentionally NOT asserted
+        // here: NESER currently maps it to the first half like $80-BF, a
+        // divergence tracked in #3076. Pinning the current behaviour would encode
+        // that bug, so only the hardware-correct windows are asserted.
         let image = CartFixture::new(Mapping::ExHiRom)
             .sentinel(0x000000, 0x55)
             .sentinel(0x400000, 0x66)
@@ -116,7 +123,6 @@ mod tests {
         let snes = load_fixture(&image, "exhirom_addr.sfc");
         assert_eq!(snes.read_bus_for_debugger_for_tests(0xC0_0000), Some(0x55));
         assert_eq!(snes.read_bus_for_debugger_for_tests(0x40_0000), Some(0x66));
-        assert_eq!(snes.read_bus_for_debugger_for_tests(0x00_8000), Some(0x77));
         assert_eq!(snes.read_bus_for_debugger_for_tests(0x80_8000), Some(0x77));
     }
 
