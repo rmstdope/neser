@@ -4709,6 +4709,37 @@ mod tests {
         assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
     }
 
+    /// `PLB` is the one member of the family with its own address path: in emulation mode it
+    /// pulls from the *unclamped* incremented S and only clamps afterwards. The two pre-pull
+    /// idles must not disturb that, and it is the case the other tests here do not reach.
+    #[test]
+    fn plb_pays_its_idles_before_an_emulation_mode_unclamped_pull() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0xAB]); // PLB
+        bus.load(0x00_0100, &[0x00, 0x7E]); // $0100 = wrap target, $0101 = the pulled DBR
+        let mut cpu = Cpu::new(bus);
+        cpu.e = true;
+        cpu.pc = 0x8000;
+        cpu.s = 0x0100; // S+1 = $0101, inside the page -- no wrap, so the read is unambiguous
+
+        cpu.step();
+
+        let mut expected = Vec::new();
+        expected.extend([Tick; 4]);
+        expected.push(Read(0x00_8000)); // opcode fetch
+        expected.extend([Tick; 4]);
+        expected.extend([Tick; 6]); // idle 1, BEFORE the pull
+        expected.extend([Tick; 6]); // idle 2, BEFORE the pull
+        expected.extend([Tick; 4]);
+        expected.push(Read(0x00_0101)); // the unclamped S+1 read
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+        assert_eq!(cpu.dbr, 0x7E, "DBR came from the pulled byte");
+        assert_eq!(cpu.s, 0x0101, "S is clamped back into page 1 afterwards");
+    }
+
     /// The push side of the same family: Mesen2 `PHP`/`PHB`/`PHD`/`PHK` idle **once** before
     /// the push, exactly as `PHA`/`PHX`/`PHY` already do in NESER.
     #[test]

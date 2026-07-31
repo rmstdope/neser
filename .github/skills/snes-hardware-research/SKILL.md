@@ -653,6 +653,13 @@ The reason was upstream of the formula: Mesen2 re-enters `ProcessPendingTransfer
 into the very counter the outer `SyncEndDma` rounds. NESER cannot nest, so its counter is a
 different quantity. The rounding rule was correct and the input was not.
 
+The decisive measurement was a bus-trace diff of the transfers themselves -- Mesen2 and the
+fixed-8 build both charged 4288 and 296 master clocks for two adjacent general-purpose
+transfers, the speed-aware build 4288 and 288. Get to that number. The first attempt at this
+issue concluded from screen CRCs alone and produced a defensible-sounding but under-evidenced
+answer that an independent review correctly pushed back on; the trace took one probe and
+settled it on the exact cycle in dispute.
+
 Before porting a formula, ask what feeds its inputs in each emulator, not just what the
 formula says. If the surrounding structure differs, the local approximation you already have
 may be the better model of the *net* behaviour, and "it matches the reference's source" is not

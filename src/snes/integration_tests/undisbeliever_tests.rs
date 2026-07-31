@@ -243,13 +243,12 @@ mod tests {
     // striped pattern. The frame-600 capture is pixel-identical to Mesen2's
     // (0.00% diff, byte-for-byte).
     //
-    // CAUTION (#3050, resolved in #3067): this vector is highly sensitive to the
-    // general-purpose DMA envelope -- rounding `start_dma`'s `SyncEndDma` pad to the
-    // upcoming access's speed instead of a fixed 8 renders it FULLY BLACK. #3067 measured
-    // that across every combination and concluded the fixed 8 is correct for NESER as it
-    // stands (see the table in `DmaController::start_dma`), so this 0-px result is now
-    // corroborating rather than coincidental. It is still one of the two witnesses for that
-    // decision -- treat a change to this CRC as a signal about the DMA envelope.
+    // History (#3050, resolved in #3067): this vector was once the reason the general-purpose
+    // DMA `SyncEndDma` pad could not be made speed-aware -- doing so rendered it FULLY BLACK.
+    // That turned out to be a compensating error, not a property of the pad: with the 65816
+    // push/pull ordering corrected (#3070) the ROM is 0 px under either pad rule, and the pad
+    // question was settled instead by a bus-trace diff of the transfers themselves (see
+    // `DmaController::start_dma`). This golden is no longer evidence about the DMA envelope.
     undisbeliever_rom_test!(
         inidisp_forgot_to_force_blank_matches_mesen2,
         "inidisp_forgot_to_force_blank.sfc",

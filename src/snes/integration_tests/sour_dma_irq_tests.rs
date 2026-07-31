@@ -50,8 +50,9 @@ mod tests {
     /// went from 154 px / 42 rows to 100 px / 28 rows when `run_overdue_pending_dma` stopped
     /// preempting `gpdma_cycle_hook`. This ROM races DMA against IRQ dispatch, so it is the
     /// most direct witness that the fallback really was running transfers a cycle early.
-    /// Still not a PASS -- the remaining sub-cases keep the off-by-one-dispatched-instruction
-    /// signature shared with `kungfufurby_nmi_tests::test_nmi_passes`.
+    /// Still not a PASS. The pre-#3067 note said 6 of 19 sub-cases were off by one dispatched
+    /// instruction; that count was NOT re-derived after the screen changed, so treat only the
+    /// pixel/row figures above as measured.
     #[test]
     #[ignore = "6/19 sub-cases off by one dispatched instruction; pending #3049 follow-up"]
     fn dma_irq_test_passes() {

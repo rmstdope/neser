@@ -146,29 +146,33 @@ impl DmaController {
         }
 
         // SyncEndDma: general-purpose DMA rounds to a FIXED 8-clock cycle, unlike the two
-        // HDMA envelopes and unlike Mesen2's single speed-aware `SyncEndDma`. #3067 settled
-        // this on measurement rather than by reading Mesen2's source, and the measurement
-        // says the fixed 8 is the better model *for NESER as it currently stands*:
+        // HDMA envelopes and unlike Mesen2's single speed-aware `SyncEndDma`. That asymmetry
+        // is a measured decision (#3067), and the measurement is a bus-trace diff of the
+        // transfers themselves, not a downstream pixel comparison.
         //
-        //   config                                   inidisp_forgot   mosaic_mode5_sized
-        //   fixed 8 (this)                           0 px             0 px
-        //   speed-aware                              fully black      12484 px
-        //   speed-aware + push/pull ordering fixed    0 px            12484 px
+        // MosaicMode5.sfc, the two general-purpose transfers around master clock 1.65M,
+        // stall length in master clocks:
         //
-        // Both figures are against fresh Mesen2 captures, the mosaic one against Mesen2's own
-        // scripted replay driven by the identical input script, so it is apples-to-apples.
+        //   transfer at clk   Mesen2   fixed 8 (this)   speed-aware
+        //   1646822           4288     4288             4288
+        //   1651468            296      296              288
         //
-        // The likely reason is a structural difference #3067 deliberately did not rework:
-        // Mesen2 re-enters `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing
-        // during a general-purpose transfer runs nested, pays NO sync pads of its own
-        // (`needSync == false` while a channel is DmaActive) and folds its clocks into the
-        // same `_dmaClockCounter` that the outer `SyncEndDma` then rounds. NESER cannot do
-        // that -- `self.dma` is `mem::take`n for the duration -- so its charged total is not
-        // the same quantity Mesen2 is rounding, and copying the rounding rule alone makes the
-        // net envelope worse rather than better. Revisit together with that re-entrancy.
+        // The fixed 8 reproduces Mesen2 exactly and is clock-exact across the surrounding
+        // window; the speed-aware pad is 8 clocks short. Downstream that shifts the whole
+        // timeline and flips `mosaic_mode5_sized`'s input-latch race 150 frames later
+        // (0 px -> 12484 px against Mesen2's replay driven by the identical input script).
         //
-        // The two HDMA envelopes DO use `cpu_speed`: there the charged total is the same
-        // quantity in both emulators, and it is what made StarWars and hdmaen_latch_test
+        // Why the rule that is right for HDMA is wrong here: Mesen2 re-enters
+        // `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing during a
+        // general-purpose transfer runs NESTED -- it pays no sync pads of its own
+        // (`needSync == false` while any channel is `DmaActive`) and folds its clocks into the
+        // same `_dmaClockCounter` that the outer `SyncEndDma` then rounds. NESER cannot nest
+        // (`self.dma` is `mem::take`n for the duration), so `counter` is not the quantity
+        // Mesen2 is rounding. The rounding rule is right; the input is not. Revisit only
+        // together with that re-entrancy.
+        //
+        // The two HDMA envelopes DO use `cpu_speed`: there the charged total IS the same
+        // quantity in both emulators, which is what made StarWars and hdmaen_latch_test
         // pixel-exact in #3050.
         let pad_end = Self::sync_end_pad(counter, 8);
         abus.dma_tick(pad_end);

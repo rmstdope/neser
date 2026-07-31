@@ -63,10 +63,15 @@ pub struct SnesSystemBus {
     /// no save-state entry. Initialised to the SlowROM 8 that the reset vector fetch uses.
     cpu_speed: u8,
     /// Whether anything has ever driven `gpdma_cycle_hook`, i.e. whether a CPU is defining
-    /// this bus's CPU-cycle boundaries. Latches true and never clears: it selects between the
-    /// real hook and the bus-only clock fallback (see `run_overdue_pending_dma`), not a
-    /// per-cycle state, so it needs no save-state entry -- a restored bus is driven by the
-    /// same CPU that was driving it before.
+    /// this bus's CPU-cycle boundaries. Latches true and never clears; it selects between the
+    /// real hook and the bus-only clock fallback (see `run_overdue_pending_dma`).
+    ///
+    /// Not save-stated, and safe not to be, but not because a restored bus keeps its driver:
+    /// the real invariant is that `Cpu` calls the hook at the START of every cycle, before
+    /// any `bus.tick()` of that cycle. A restored CPU-driven bus therefore re-latches this on
+    /// its very first cycle, before the fallback can observe a single clock. A restored
+    /// bus-only harness never latches it and keeps the fallback, which is the intended
+    /// behaviour for that case.
     cpu_drives_dma_hook: bool,
     apu: RefCell<SnesApu>,
     /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
@@ -2528,6 +2533,14 @@ mod tests {
     fn pending_gpdma_survives_save_state_round_trip() {
         // Capture between the $420B write (arms only) and the transfer start:
         // the restored bus must still start the transfer via the fallback.
+        //
+        // NOTE (#3067): this exercises the BUS-ONLY path. `cpu_drives_dma_hook` is not
+        // save-stated and this harness never drives the hook, so the restored bus keeps the
+        // clock fallback -- which is what makes the assertions below reachable. In real
+        // emulation the restored CPU re-latches the flag on its first cycle, before any tick,
+        // and the transfer runs from `gpdma_cycle_hook` instead. What this pins is that the
+        // ARMING survives the round trip; which of the two paths then runs it is covered by
+        // `an_armed_gpdma_waits_for_the_cycle_hook_when_a_cpu_is_driving` and its sibling.
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         set_wmadd_200(&mut bus);
         bus.write(0x7E4000, 0x5A);
