@@ -120,8 +120,8 @@ impl DmaController {
         abus: &mut B,
         seed_open_bus: u8,
         base_clock: u64,
-        // Deliberately unused: general-purpose DMA rounds to a fixed 8. Kept so the three
-        // envelopes share a signature and so revisiting the decision is a one-word change.
+        // Deliberately unused: general-purpose DMA rounds to a fixed 8 (see the SyncEndDma
+        // comment below). Kept so all three envelopes share a signature.
         _cpu_speed: u8,
     ) -> (u64, u8) {
         if mdmaen == 0 {
@@ -151,38 +151,28 @@ impl DmaController {
         }
 
         // SyncEndDma: general-purpose DMA rounds to a FIXED 8-clock cycle, unlike the two
-        // HDMA envelopes and unlike Mesen2's single speed-aware `SyncEndDma`. That asymmetry
-        // is a measured decision (#3067), taken on a bus-trace diff of the transfer itself.
+        // HDMA envelopes and unlike Mesen2's single speed-aware `SyncEndDma`.
         //
-        // MosaicMode5.sfc runs 8 general-purpose transfers, and in exactly ONE of them is the
-        // live CPU speed something other than 8 -- the 64 KB upload at master clock 25894,
-        // where it is 6. That is the only transfer where the two rules can differ at all, so
-        // it is the only one that discriminates. Wall stall in master clocks:
+        // Kept deliberately (#3067). Flipping this to `cpu_speed` makes undisbeliever's
+        // `inidisp_forgot_to_force_blank.sfc` diverge from its Mesen2-approved golden, with
+        // every other vector unchanged; the fixed 8 passes all of them. That is the whole of
+        // the evidence -- reproduce it by changing the literal below and running
+        // `cargo test --no-default-features --lib -- --include-ignored inidisp_forgot`.
         //
-        //   Mesen2                540156
-        //   fixed 8 (this)        540156   <- clock-exact across the window
-        //   speed-aware           540160   <- +4, diverges
-        //
-        // Every later transfer has a live speed of 8, where the two rules are bit-identical;
-        // any difference visible there is this +4 compounding through `pad_start`, not the
-        // end pad. (`sync_end_pad` returns 1..=speed, so two rules can never differ by more
-        // than 7 clocks at one transfer -- a larger apparent delta is always compounding.)
-        //
-        // Downstream, that 4-clock shift is what flips `mosaic_mode5_sized`'s input-latch
-        // race 150 frames later.
-        //
-        // Why the rule that is right for HDMA is wrong here: Mesen2 re-enters
+        // Why the rule that is right for HDMA is not obviously right here: Mesen2 re-enters
         // `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing during a
         // general-purpose transfer runs NESTED -- it pays no sync pads of its own
         // (`needSync == false` while any channel is `DmaActive`) and folds its clocks into the
-        // same `_dmaClockCounter` that the outer `SyncEndDma` then rounds. NESER cannot nest
-        // (`self.dma` is `mem::take`n for the duration), so `counter` is not the quantity
-        // Mesen2 is rounding. The rounding rule is right; the input is not. Revisit only
-        // together with that re-entrancy.
+        // same `_dmaClockCounter` that the outer `SyncEndDma` rounds. NESER cannot nest
+        // (`self.dma` is `mem::take`n for the duration), so `counter` is not necessarily the
+        // quantity Mesen2 is rounding. Revisit together with that re-entrancy, and with #3074
+        // (`run_overdue_pending_dma` preempting the cycle hook, which decides WHICH cycle's
+        // speed is live when a transfer runs and so decides whether this literal matters at
+        // all -- with the preemption in place every transfer in the ROMs measured so far runs
+        // at a live speed of 8, where the two rules are bit-identical).
         //
-        // The two HDMA envelopes DO use `cpu_speed`: there the charged total IS the same
-        // quantity in both emulators, which is what made StarWars and hdmaen_latch_test
-        // pixel-exact in #3050.
+        // The two HDMA envelopes DO use `cpu_speed`, which is what made StarWars and
+        // hdmaen_latch_test pixel-exact in #3050.
         let pad_end = Self::sync_end_pad(counter, 8);
         abus.dma_tick(pad_end);
         counter += pad_end;

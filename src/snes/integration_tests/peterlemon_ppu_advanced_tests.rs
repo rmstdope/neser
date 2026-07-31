@@ -210,7 +210,8 @@ mod tests {
         //
         // Because that margin is hand-tuned, movement here is tempting to dismiss as a
         // tuning artifact. It is not: replay Mesen2 with the SAME script before concluding
-        // anything (#3067 -- doing so is what proved a candidate DMA change wrong). The
+        // anything (#3067 -- doing so turned an assumed tuning artifact into real evidence).
+        // The
         // replay template is in .github/skills/snes-hardware-research/SKILL.md ("Scripted-input
         // Mesen2 replay"); set:
         //

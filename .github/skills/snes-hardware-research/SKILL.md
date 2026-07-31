@@ -646,26 +646,27 @@ cycles *before* the actual cause, which was a 2-clock DMA end pad.
 Porting a formula from Mesen2 is only valid if the value you feed it means the same thing in
 both emulators. #3067 set out to adopt Mesen2's speed-aware `SyncEndDma` rounding for
 general-purpose DMA -- the rule is right there in the source, and the identical change had
-already made the two HDMA envelopes pixel-exact. Measured, it regressed two vectors instead.
+already made the two HDMA envelopes pixel-exact. Measured, it broke a Mesen2-approved
+golden instead.
 
 The reason was upstream of the formula: Mesen2 re-enters `ProcessPendingTransfers` from inside
 `RunDma`, so an HDMA firing mid-transfer runs nested, pays no sync pads and folds its clocks
 into the very counter the outer `SyncEndDma` rounds. NESER cannot nest, so its counter is a
 different quantity. The rounding rule was correct and the input was not.
 
-The decisive measurement was a bus-trace diff of the ONE transfer that could discriminate.
-Of the ROM's eight general-purpose transfers, seven ran with a live CPU speed of 8, where the
-two rounding rules are bit-identical; only the 64 KB upload at clock 25894 ran at speed 6.
-There, Mesen2 and the fixed-8 build both stalled 540156 master clocks and the speed-aware build
-540160.
+Two process lessons, both learned the hard way here.
 
-Two process lessons, both learned the hard way here. First, screen CRCs alone produced a
-defensible-sounding but under-evidenced answer that review correctly rejected. Second, the
-first trace attempt measured a *later* transfer and reported an 8-clock delta as if it were the
-end pad -- but `sync_end_pad` returns `1..=speed`, so two rules can differ by at most 7 clocks
-at one transfer, and the extra was earlier divergence compounding through `pad_start`. When a
-measured delta exceeds what the mechanism can produce, the measurement is attributing it to the
-wrong cause: find the site where the mechanism actually differs and measure there.
+First, screen CRCs alone produced a defensible-sounding but under-evidenced answer that review
+correctly rejected. Second -- and this is the one that cost the most -- every absolute clock
+number quoted in that investigation had to be retracted. One measurement attributed a delta to
+the end pad that the mechanism could not produce; a later one used an undocumented anchor and
+was not reproducible; and all of them were taken on a tree state that a concurrently-merged PR
+then invalidated. What survived was the anchor-free statement: flip the literal, run the
+vector, see which one diverges from its Mesen2 golden.
+
+Prefer evidence of that shape. An absolute master-clock figure in a comment is a hostage to the
+exact build, the exact anchor convention and the exact state of main; a "change X and this
+named test fails" instruction stays true and is reproducible by the next reader in one command.
 
 Before porting a formula, ask what feeds its inputs in each emulator, not just what the
 formula says. If the surrounding structure differs, the local approximation you already have
@@ -679,6 +680,10 @@ works there, and it is what a scripted NESER vector must be compared against. `e
 numeric frame stamps straight from the Rust `hold(...)`/`InputEvent` list, and `target` is the
 test's capture frame. Button names are Mesen2's (`"a"`, `"b"`, `"x"`, `"y"`, `"l"`, `"r"`,
 `"up"`, `"down"`, `"left"`, `"right"`, `"start"`, `"select"`).
+
+`--enableStdout` is required or `print()` reaches nothing. Note this section deliberately uses
+`--testRunner`, unlike the file-I/O screenshot recipe further down, which needs `--loadScript`;
+the two Lua environments differ and only the `print()`-based form works under `--testRunner`.
 
 ```lua
 local target = 300

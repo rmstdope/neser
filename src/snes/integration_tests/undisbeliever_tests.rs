@@ -243,12 +243,12 @@ mod tests {
     // striped pattern. The frame-600 capture is pixel-identical to Mesen2's
     // (0.00% diff, byte-for-byte).
     //
-    // History (#3050, resolved in #3067): this vector was once the reason the general-purpose
-    // DMA `SyncEndDma` pad could not be made speed-aware -- doing so rendered it FULLY BLACK.
-    // That turned out to be a compensating error, not a property of the pad: with the 65816
-    // push/pull ordering corrected (#3070) the ROM is 0 px under either pad rule, and the pad
-    // question was settled instead by a bus-trace diff of the transfers themselves (see
-    // `DmaController::start_dma`). This golden is no longer evidence about the DMA envelope.
+    // This vector is the current witness for the general-purpose DMA end pad staying on a
+    // fixed 8 (#3067): flip `DmaController::start_dma`'s literal to `cpu_speed` and this
+    // golden diverges while every other vector is unchanged. It was ALSO the reason #3050
+    // could not make that change -- then for a different reason (a compensating 65816
+    // push/pull ordering error, since fixed in #3070). Treat a change to this CRC as a signal
+    // about the DMA envelope, and re-derive rather than trusting either history.
     undisbeliever_rom_test!(
         inidisp_forgot_to_force_blank_matches_mesen2,
         "inidisp_forgot_to_force_blank.sfc",
