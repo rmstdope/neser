@@ -245,6 +245,19 @@ Test suites:
   WRAM pass/fail marker. `gpdma_b_to_a_copies_wram_through_wmdata` is
   `#[ignore]`d pending #3061 (B->A reads an internal shadow, not the live
   B-bus register).
+- `cartridge_fixtures.rs` / `neser_cartridge_tests.rs` -- NESER-authored base
+  cartridge fixtures (#2885), built in-code from the SNES header spec (no
+  on-disk assets). Minimal LoROM/HiROM/ExHiROM and copier-header images are
+  loaded through the real cartridge/bus paths to verify mapping detection,
+  title/country metadata, SRAM size + battery flags, ROM address translation
+  (a sentinel byte read back at the mapped CPU address per mapping's
+  banks/halves), and 512-byte copier-header stripping. An executable LoROM
+  battery-SRAM fixture writes two distinct SRAM addresses and reads one back
+  with a CPU self-check (defeating open-bus/MDR false passes). No-enhancement-
+  chip carts only; results via the WRAM pass/fail marker plus direct
+  cartridge/debugger assertions. Header-field parsing and HiROM/ExHiROM `.sav`
+  persistence coverage lives in the `src/snes/cartridge` and
+  `src/snes/console/snes.rs` unit tests.
 - `jonasquinn_dma_tests.rs` -- canonical DMA/HDMA ROMs from the jonasquinn
   collection (#2884). `test_mdrhdma2/test_mdrhdma.sfc` (MDR-during-HDMA) and
   `hdma_midframe/demo.smc` (mid-frame HDMA visual, also matches the bundled

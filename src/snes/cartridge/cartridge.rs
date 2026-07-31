@@ -433,4 +433,108 @@ mod tests {
         let cart = Cartridge::from_bytes(&rom).expect("cart");
         assert_eq!(cart.enhancement_chip(), None);
     }
+
+    #[test]
+    fn from_bytes_exposes_country_code() {
+        // Country lives at header+0x19 and is surfaced verbatim; NTSC codes are
+        // 0x00/0x01 and PAL codes span 0x02..=0x0C (region derivation is the
+        // console's job -- see console::snes::country_implies_pal).
+        for country in [0x00u8, 0x01, 0x02, 0x0C] {
+            let mut rom = vec![0u8; 0x10000];
+            write_header(
+                &mut rom,
+                0x7FC0,
+                0x20,
+                0x00,
+                0x00,
+                b"COUNTRY TEST       \0\0",
+            );
+            rom[0x7FC0 + 0x19] = country;
+            let cart = Cartridge::from_bytes(&rom).expect("cart");
+            assert_eq!(cart.country(), country);
+        }
+    }
+
+    #[test]
+    fn from_bytes_reports_speed_from_map_mode_fast_bit() {
+        let mut slow = vec![0u8; 0x10000];
+        write_header(
+            &mut slow,
+            0x7FC0,
+            0x20,
+            0x00,
+            0x00,
+            b"SLOW TEST          \0\0",
+        );
+        assert_eq!(
+            Cartridge::from_bytes(&slow).expect("cart").speed(),
+            RomSpeed::Slow
+        );
+
+        let mut fast = vec![0u8; 0x10000];
+        write_header(
+            &mut fast,
+            0x7FC0,
+            0x30,
+            0x00,
+            0x00,
+            b"FAST TEST          \0\0",
+        );
+        assert_eq!(
+            Cartridge::from_bytes(&fast).expect("cart").speed(),
+            RomSpeed::Fast
+        );
+    }
+
+    #[test]
+    fn from_bytes_strips_copier_header_for_hirom() {
+        let mut rom = vec![0xAAu8; 0x200 + 0x10000];
+        rom[0x200] = 0x55;
+        write_header(
+            &mut rom,
+            0x200 + 0xFFC0,
+            0x21,
+            0x00,
+            0x00,
+            b"HIROM COPIER TEST  \0\0",
+        );
+        rom[0x200 + 0xFFFC] = 0x00;
+        rom[0x200 + 0xFFFD] = 0x80;
+
+        let cart = Cartridge::from_bytes(&rom).expect("cart");
+        assert_eq!(cart.mapping(), Mapping::HiRom);
+        assert_eq!(cart.rom().len(), 0x10000);
+        assert_eq!(cart.rom()[0], 0x55);
+    }
+
+    #[test]
+    fn from_bytes_does_not_strip_when_length_not_copier_multiple() {
+        // A clean 0x10000 image (len % 0x400 == 0, not 0x200) must be kept
+        // whole -- the first byte is NOT a copier header to discard.
+        let mut rom = vec![0u8; 0x10000];
+        rom[0] = 0x99;
+        write_header(
+            &mut rom,
+            0x7FC0,
+            0x20,
+            0x00,
+            0x00,
+            b"NO COPIER TEST     \0\0",
+        );
+
+        let cart = Cartridge::from_bytes(&rom).expect("cart");
+        assert_eq!(cart.rom().len(), 0x10000);
+        assert_eq!(cart.rom()[0], 0x99);
+    }
+
+    #[test]
+    fn from_bytes_rejects_rom_shorter_than_min_header_end() {
+        // One byte below the 0x8000 minimum: the header can't fully fit, so the
+        // length precondition must reject it as TooShort before detection.
+        let rom = vec![0u8; 0x8000 - 1];
+        let err = Cartridge::from_bytes(&rom)
+            .err()
+            .expect("sub-minimum image should be rejected");
+        assert_eq!(err, CartridgeError::TooShort);
+    }
 }

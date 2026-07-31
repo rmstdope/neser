@@ -505,6 +505,7 @@ mod tests {
     use super::*;
     use crate::platform::app_context::AppContext;
     use crate::platform::config::Config;
+    use crate::snes::cartridge::Mapping;
     use crate::snes::console::config::SnesHardware;
     use crate::snes::input::SnesControllerType;
     use std::time::Instant;
@@ -909,22 +910,37 @@ mod tests {
         assert_eq!(snapshot.len(), (256 * 224 * 3) as usize);
     }
 
-    fn lorom_rom_with_battery_sram(ram_size_field: u8) -> Vec<u8> {
-        let mut rom = vec![0u8; 0x20000];
-        let header = 0x7FC0;
+    /// Builds a minimal battery-SRAM cartridge image for `mapping`, placing a
+    /// valid internal header at that mapping's offset (LoROM `0x7FC0` / HiROM
+    /// `0xFFC0` / ExHiROM `0x40FFC0`) with chipset `0x02` (ROM+RAM+battery, no
+    /// enhancement chip). `ram_size_field` drives the decoded SRAM size. The
+    /// checksum/complement sum to `0xFFFF` and the reset vector points at
+    /// `$8000` so `detect_mapping` scores the intended mapping.
+    fn rom_with_battery_sram(mapping: Mapping, ram_size_field: u8) -> Vec<u8> {
+        let (size, header, map_mode, rom_size_field) = match mapping {
+            Mapping::LoRom => (0x20000usize, 0x7FC0usize, 0x20u8, 0x07u8),
+            Mapping::HiRom => (0x20000, 0xFFC0, 0x21, 0x07),
+            // ExHiROM's header sits at 0x40FFC0, so the image must be >= 4 MiB.
+            Mapping::ExHiRom => (0x41_0000, 0x40FFC0, 0x25, 0x0C),
+        };
+        let mut rom = vec![0u8; size];
         rom[header..header + 21].copy_from_slice(b"SNES BATTERY TEST    ");
-        rom[header + 0x3C] = 0x00;
+        rom[header + 0x3C] = 0x00; // Reset vector -> $8000.
         rom[header + 0x3D] = 0x80;
-        rom[header + 0x15] = 0x20;
-        rom[header + 0x16] = 0x02; // Battery-backed RAM chipset
-        rom[header + 0x17] = 0x07;
+        rom[header + 0x15] = map_mode;
+        rom[header + 0x16] = 0x02; // ROM + RAM + battery (no enhancement chip).
+        rom[header + 0x17] = rom_size_field;
         rom[header + 0x18] = ram_size_field;
-        rom[header + 0x1C] = 0x34;
+        rom[header + 0x1C] = 0x34; // Complement + checksum sum to 0xFFFF.
         rom[header + 0x1D] = 0x12;
         rom[header + 0x1E] = 0xCB;
         rom[header + 0x1F] = 0xED;
-        rom[0x0000] = 0xEA; // NOP at $00:8000
+        rom[0x0000] = 0xEA; // NOP.
         rom
+    }
+
+    fn lorom_rom_with_battery_sram(ram_size_field: u8) -> Vec<u8> {
+        rom_with_battery_sram(Mapping::LoRom, ram_size_field)
     }
 
     #[test]
@@ -946,20 +962,22 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[test]
+    /// Loads a battery-SRAM cartridge of `mapping`, writes a marker pattern into
+    /// SRAM, saves it to a `.sav`, then loads a fresh console from the same ROM
+    /// path and asserts the SRAM auto-loaded byte-for-byte. Shared by the
+    /// LoROM/HiROM/ExHiROM round-trip tests so all three mappings exercise the
+    /// `.sav` persistence path.
     #[cfg(not(target_arch = "wasm32"))]
-    fn sram_round_trip_preserves_contents() {
+    fn assert_sram_round_trips_for_mapping(mapping: Mapping) {
         use std::fs;
 
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let rom_path = temp_dir.path().join("test.sfc");
         let sav_path = temp_dir.path().join("test.sav");
 
-        // Create and write test data
-        let rom = lorom_rom_with_battery_sram(0x05); // 32 KB SRAM
+        let rom = rom_with_battery_sram(mapping, 0x05); // 32 KB SRAM
         fs::write(&rom_path, &rom).expect("failed to write test ROM");
 
-        // Create test SRAM data
         let mut test_sram = vec![0u8; 32 * 1024];
         test_sram[0] = 0xAA;
         test_sram[1] = 0xBB;
@@ -967,41 +985,38 @@ mod tests {
         test_sram[100] = 0xDD;
         test_sram[1000] = 0xEE;
 
-        // First console: load ROM, restore SRAM, save to disk
+        // First console: load ROM, restore SRAM, save to disk.
         {
             let mut snes1 = Snes::new(AppContext::new_with_config(Config::default()));
             snes1
                 .load_rom(&rom, rom_path.to_str().unwrap())
                 .expect("failed to load ROM");
-
-            // Restore test SRAM data
             if let Some(cpu) = snes1.cpu.as_mut() {
                 cpu.restore_sram(&test_sram);
             }
-
-            // Save to disk
             snes1.save_ram().expect("failed to save RAM");
         }
 
-        // Verify .sav file was created
         assert!(sav_path.exists(), ".sav file should be created");
 
-        // Read the saved file and verify contents
         let saved_data = fs::read(&sav_path).expect("failed to read saved .sav file");
+        assert_eq!(
+            saved_data.len(),
+            32 * 1024,
+            "saved SRAM size for {mapping:?}"
+        );
         assert_eq!(saved_data[0], 0xAA);
         assert_eq!(saved_data[1], 0xBB);
         assert_eq!(saved_data[2], 0xCC);
         assert_eq!(saved_data[100], 0xDD);
         assert_eq!(saved_data[1000], 0xEE);
 
-        // Second console: load ROM (which auto-loads SRAM from .sav), verify contents
+        // Second console: load ROM (auto-loads SRAM from .sav), verify contents.
         {
             let mut snes2 = Snes::new(AppContext::new_with_config(Config::default()));
             snes2
                 .load_rom(&rom, rom_path.to_str().unwrap())
                 .expect("failed to load ROM");
-
-            // Verify SRAM was loaded via snapshot
             if let Some(cpu) = snes2.cpu.as_ref() {
                 let snapshot = cpu.sram_snapshot();
                 assert_eq!(snapshot[0], 0xAA, "SRAM byte 0 should be restored");
@@ -1015,14 +1030,34 @@ mod tests {
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
-    fn load_rom_ignores_incompatible_sav_size() {
+    fn sram_round_trip_preserves_contents() {
+        assert_sram_round_trips_for_mapping(Mapping::LoRom);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn sram_round_trip_preserves_contents_hirom() {
+        assert_sram_round_trips_for_mapping(Mapping::HiRom);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn sram_round_trip_preserves_contents_exhirom() {
+        assert_sram_round_trips_for_mapping(Mapping::ExHiRom);
+    }
+
+    /// A `.sav` whose length does not match the cartridge's SRAM size must be
+    /// ignored entirely (exact-length validation in `load_save_ram_from_disk`).
+    /// Shared by the LoROM/HiROM/ExHiROM variants.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn assert_incompatible_sav_ignored_for_mapping(mapping: Mapping) {
         use std::fs;
 
         let temp = tempfile::tempdir().expect("tempdir");
         let rom_path = temp.path().join("test.sfc");
         let sav_path = temp.path().join("test.sav");
 
-        let rom = lorom_rom_with_battery_sram(0x05); // 32 KB SRAM
+        let rom = rom_with_battery_sram(mapping, 0x05); // 32 KB SRAM
         fs::write(&rom_path, &rom).expect("write rom");
 
         // Wrong size (should be 32 KB), must be ignored.
@@ -1039,6 +1074,24 @@ mod tests {
             "mismatched save file should be ignored entirely"
         );
         assert_eq!(snapshot[63], 0x00);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_rom_ignores_incompatible_sav_size() {
+        assert_incompatible_sav_ignored_for_mapping(Mapping::LoRom);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_rom_ignores_incompatible_sav_size_hirom() {
+        assert_incompatible_sav_ignored_for_mapping(Mapping::HiRom);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_rom_ignores_incompatible_sav_size_exhirom() {
+        assert_incompatible_sav_ignored_for_mapping(Mapping::ExHiRom);
     }
 
     fn dirty_cpu_for_save_state(cpu: &mut Cpu<SnesSystemBus>) {

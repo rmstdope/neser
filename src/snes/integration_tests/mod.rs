@@ -4,6 +4,7 @@
 
 mod blargg_apu_tests;
 mod byuu_test_oam_tests;
+mod cartridge_fixtures;
 mod ddribin_hdrv_tests;
 mod dsp_audio_golden_tests;
 mod fixture_rom;
@@ -17,6 +18,7 @@ mod jonasquinn_math_tests;
 mod kungfufurby_hdma_tests;
 mod kungfufurby_irq_tests;
 mod kungfufurby_nmi_tests;
+mod neser_cartridge_tests;
 mod neser_color_math_tests;
 mod neser_dma_tests;
 mod neser_hdma_tests;

@@ -108,4 +108,72 @@ mod tests {
         assert_eq!(parsed.checksum_complement, 0x1234);
         assert_eq!(parsed.checksum, 0xABCD);
     }
+
+    /// Writes every SNES-header field with a distinct sentinel so a misread of
+    /// any single field fails the assertion (see the mutation proof in the
+    /// #2885 RED evidence). `base - 1` is the chipset-subtype byte that
+    /// immediately precedes the header.
+    fn write_all_fields(rom: &mut [u8], base: usize) {
+        let title = b"FULL FIELD TEST      ";
+        rom[base..base + TITLE_LEN].copy_from_slice(&title[..TITLE_LEN]);
+        rom[base - 1] = 0x5A; // chipset subtype
+        rom[base + HEADER_MODE_OFFSET] = 0x30;
+        rom[base + HEADER_CHIPSET_OFFSET] = 0x02;
+        rom[base + HEADER_ROM_SIZE_OFFSET] = 0x0A;
+        rom[base + HEADER_RAM_SIZE_OFFSET] = 0x03;
+        rom[base + HEADER_COUNTRY_OFFSET] = 0x0D;
+        rom[base + HEADER_DEVELOPER_OFFSET] = 0xC3;
+        rom[base + HEADER_VERSION_OFFSET] = 0x07;
+        rom[base + HEADER_CHECKSUM_COMPLEMENT_OFFSET] = 0x34;
+        rom[base + HEADER_CHECKSUM_COMPLEMENT_OFFSET + 1] = 0x12;
+        rom[base + HEADER_CHECKSUM_OFFSET] = 0xCB;
+        rom[base + HEADER_CHECKSUM_OFFSET + 1] = 0xED;
+    }
+
+    #[test]
+    fn parse_header_reads_every_field_at_lorom_offset() {
+        let mut rom = vec![0u8; 0x10000];
+        let base = 0x7FC0;
+        write_all_fields(&mut rom, base);
+
+        let parsed = parse_header_at(&rom, Mapping::LoRom, base).expect("header");
+        assert_eq!(parsed.title, "FULL FIELD TEST");
+        assert_eq!(parsed.map_mode, 0x30);
+        assert_eq!(parsed.chipset, 0x02);
+        assert_eq!(parsed.chipset_subtype, Some(0x5A));
+        assert_eq!(parsed.rom_size_field, 0x0A);
+        assert_eq!(parsed.ram_size_field, 0x03);
+        assert_eq!(parsed.country, 0x0D);
+        assert_eq!(parsed.developer_id, 0xC3);
+        assert_eq!(parsed.version, 0x07);
+        assert_eq!(parsed.checksum_complement, 0x1234);
+        assert_eq!(parsed.checksum, 0xEDCB);
+    }
+
+    #[test]
+    fn parse_header_reads_every_field_at_hirom_offset() {
+        let mut rom = vec![0u8; 0x10000];
+        let base = 0xFFC0;
+        write_all_fields(&mut rom, base);
+
+        let parsed = parse_header_at(&rom, Mapping::HiRom, base).expect("header");
+        assert_eq!(parsed.title, "FULL FIELD TEST");
+        assert_eq!(parsed.map_mode, 0x30);
+        assert_eq!(parsed.chipset, 0x02);
+        assert_eq!(parsed.chipset_subtype, Some(0x5A));
+        assert_eq!(parsed.rom_size_field, 0x0A);
+        assert_eq!(parsed.ram_size_field, 0x03);
+        assert_eq!(parsed.country, 0x0D);
+        assert_eq!(parsed.developer_id, 0xC3);
+        assert_eq!(parsed.version, 0x07);
+        assert_eq!(parsed.checksum_complement, 0x1234);
+        assert_eq!(parsed.checksum, 0xEDCB);
+    }
+
+    #[test]
+    fn parse_header_returns_none_when_header_exceeds_rom_length() {
+        // One byte short of the 0x40-byte header at the LoROM offset.
+        let rom = vec![0u8; 0x7FC0 + 0x3F];
+        assert!(parse_header_at(&rom, Mapping::LoRom, 0x7FC0).is_none());
+    }
 }
