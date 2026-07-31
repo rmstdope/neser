@@ -67,6 +67,15 @@ impl FixtureRom {
         self.cursor
     }
 
+    /// Marks this fixture as a battery-backed SRAM cartridge: chipset `$02`
+    /// (ROM+RAM+battery, no enhancement chip) and the given RAM-size field
+    /// (`$05` = 32 KiB). The LoROM SRAM window then lives at banks `$70-$7D`,
+    /// offset `$0000-$7FFF`.
+    pub(crate) fn with_battery_sram(&mut self, ram_size_field: u8) {
+        self.rom[HEADER + 0x16] = 0x02;
+        self.rom[HEADER + 0x18] = ram_size_field;
+    }
+
     fn emit(&mut self, bytes: &[u8]) {
         assert!(
             self.cursor + bytes.len() <= HEADER,
@@ -91,6 +100,17 @@ impl FixtureRom {
     /// `LDA #value`.
     pub(crate) fn lda_imm(&mut self, value: u8) {
         self.emit(&[0xA9, value]);
+    }
+
+    /// `LDA long addr` (24-bit) — reads an 8-bit value from anywhere in the
+    /// address space, e.g. the LoROM SRAM window at `$70:0000`.
+    pub(crate) fn lda_long(&mut self, addr: u32) {
+        self.emit(&[
+            0xAF, // LDA long
+            (addr & 0xFF) as u8,
+            ((addr >> 8) & 0xFF) as u8,
+            ((addr >> 16) & 0xFF) as u8,
+        ]);
     }
 
     /// `LDA abs addr` (bank 0).

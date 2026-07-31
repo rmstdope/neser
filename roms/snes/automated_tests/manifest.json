@@ -603,6 +603,27 @@
           "notes": "No on-disk assets; fixture programs are emitted at test run time by neser_hdma_tests.rs via the shared fixture_rom builder."
         }
       ]
+    },
+    {
+      "id": "snes-neser-cartridge-fixtures",
+      "suite": "neser_cartridge_tests",
+      "platform": "snes",
+      "source": {
+        "url": "in-repo synthetic fixtures, src/snes/integration_tests/neser_cartridge_tests.rs",
+        "ref": "issue-2885"
+      },
+      "license": "n/a (synthetic, authored in-repo)",
+      "oracle_type": "rom_pass_fail",
+      "notes": "Deterministic in-code SNES cartridge images (issue #2885, epic #2724) for base-cartridge verification, built by cartridge_fixtures.rs and authored from the SNES header spec (fullsnes/nesdev) rather than the loader. Minimal LoROM/HiROM/ExHiROM and copier-header fixtures are loaded through the real Cartridge/bus paths to assert mapping detection, title/country region metadata, SRAM size + battery flags, ROM address translation (a sentinel byte read back at the mapped CPU address for each mapping's banks/halves), and 512-byte copier-header stripping. An executable LoROM battery-SRAM fixture (via the fixture_rom builder) writes two distinct SRAM addresses and reads one back with a CPU self-check, defeating open-bus/MDR false passes and pinning the SRAM read/write decode. No-enhancement-chip cartridges only. Pass/fail via the rom_runner NSER WRAM marker (executable fixture) plus direct Cartridge/debugger assertions; no on-disk ROMs or visual baselines. Complements the header/persistence unit coverage in src/snes/cartridge and src/snes/console/snes.rs.",
+      "variants": [
+        {
+          "id": "in_code_fixtures",
+          "status": "committed_ci",
+          "path": "src/snes/integration_tests",
+          "refresh_command": null,
+          "notes": "No on-disk assets; cartridge images are built at test run time by cartridge_fixtures.rs, and the executable battery-SRAM fixture via the shared fixture_rom builder."
+        }
+      ]
     }
   ]
 }
