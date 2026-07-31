@@ -49,11 +49,6 @@ pub struct SnesSystemBus {
     /// CPU-less callers (unit tests) at the same boundary an 8-clock fetch
     /// would produce.
     pending_gpdma: Option<(u8, u8, u64)>,
-    /// Set for one CPU cycle when a GPDMA transfer runs, so the CPU can begin
-    /// suppressing interrupt recognition for the rest of the interrupted
-    /// instruction (#3065). Transient (always `false` at cycle boundaries), so
-    /// not part of the save state.
-    gpdma_ran_this_cpu_cycle: bool,
     /// Armed-but-not-run HDMA work as `(cpu_cycle_countdown, kind, fallback_clock)`
     /// where kind 0 = frame init, 1 = per-line transfer. Mesen2's
     /// `BeginHdmaTransfer`/`BeginHdmaInit` set `_dmaStartDelay` alongside the
@@ -62,6 +57,11 @@ pub struct SnesSystemBus {
     /// the fallback clock (trigger + two CPU cycles) covers bus-only callers
     /// with no CPU driving the cycle hook.
     pending_hdma: Option<(u8, u8, u64)>,
+    /// Master clocks the CPU cycle currently being entered will take (Mesen2
+    /// `SnesMemoryManager::_cpuSpeed`). The CPU sets it before every cycle; the only reader
+    /// is `DmaController::sync_end_pad`, so it is always written before it is read and needs
+    /// no save-state entry. Initialised to the SlowROM 8 that the reset vector fetch uses.
+    cpu_speed: u8,
     apu: RefCell<SnesApu>,
     /// The PPU. Wrapped in a `RefCell` because PPU register reads have side effects
     /// (address auto-increment, RDNMI acknowledge) yet the bus read path takes `&self`, and in
@@ -144,8 +144,8 @@ impl SnesSystemBus {
             hdmaen: 0,
             dma: DmaController::new(),
             pending_gpdma: None,
-            gpdma_ran_this_cpu_cycle: false,
             pending_hdma: None,
+            cpu_speed: 8,
             apu: RefCell::new(SnesApu::new(spc_ipl)),
             ppu,
             input: RefCell::new(InputPorts::new()),
@@ -492,16 +492,13 @@ impl SnesSystemBus {
     }
 
     fn start_dma_transfer(&mut self, mdmaen: u8) {
-        // The bus is DMA-held this CPU cycle: the CPU must not sample interrupt
-        // lines for the remainder of the interrupted instruction (#3065).
-        self.gpdma_ran_this_cpu_cycle = true;
         let mut dma = std::mem::take(&mut self.dma);
         // `start_dma` advances the system live via `dma_tick` (which increments
         // `self.ticks` one clock at a time), so the returned tick total must not be
         // added again here.
         let base_clock = self.ppu.borrow().total_master_clocks();
         let (_consumed_ticks, dma_open_bus) =
-            dma.start_dma(mdmaen, self, self.mdr.get(), base_clock);
+            dma.start_dma(mdmaen, self, self.mdr.get(), base_clock, self.cpu_speed);
 
         self.mdr.set(dma_open_bus);
         self.dma = dma;
@@ -513,8 +510,13 @@ impl SnesSystemBus {
         // `self.ticks` one clock at a time), so the returned tick total must
         // not be added again here.
         let base_clock = self.ppu.borrow().total_master_clocks();
-        let (_consumed_ticks, dma_open_bus) =
-            dma.hdma_init(self.hdmaen, self, self.mdr.get(), base_clock);
+        let (_consumed_ticks, dma_open_bus) = dma.hdma_init(
+            self.hdmaen,
+            self,
+            self.mdr.get(),
+            base_clock,
+            self.cpu_speed,
+        );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
     }
@@ -526,8 +528,13 @@ impl SnesSystemBus {
     pub fn hdma_do_line(&mut self) {
         let base_clock = self.ppu.borrow().total_master_clocks();
         let mut dma = std::mem::take(&mut self.dma);
-        let (_consumed_ticks, dma_open_bus) =
-            dma.hdma_do_line(self.hdmaen, self, self.mdr.get(), base_clock);
+        let (_consumed_ticks, dma_open_bus) = dma.hdma_do_line(
+            self.hdmaen,
+            self,
+            self.mdr.get(),
+            base_clock,
+            self.cpu_speed,
+        );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
     }
@@ -1386,14 +1393,6 @@ impl SnesBus for SnesSystemBus {
         }
     }
 
-    fn take_dma_ran_this_cpu_cycle(&mut self) -> bool {
-        std::mem::take(&mut self.gpdma_ran_this_cpu_cycle)
-    }
-
-    fn peek_dma_ran_this_cpu_cycle(&self) -> bool {
-        self.gpdma_ran_this_cpu_cycle
-    }
-
     fn tick(&mut self) {
         self.tick_one_master_clock();
         self.check_hdma_triggers();
@@ -1421,6 +1420,14 @@ impl SnesBus for SnesSystemBus {
                 .sa1_registers
                 .as_ref()
                 .is_some_and(|registers| registers.borrow().snes_irq_line())
+    }
+
+    fn set_cpu_speed(&mut self, speed: u8) {
+        self.cpu_speed = speed;
+    }
+
+    fn master_clock(&self) -> u64 {
+        self.ppu.borrow().total_master_clocks()
     }
 
     fn screen_dimensions(&self) -> (u32, u32) {

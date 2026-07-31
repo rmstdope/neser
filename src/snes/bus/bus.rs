@@ -28,25 +28,6 @@ pub trait SnesBus {
     /// (Mesen2 `ProcessPendingTransfers`' `_dmaStartDelay`). Default: no-op.
     fn gpdma_cycle_hook(&mut self) {}
 
-    /// Returns (and clears) whether a general-purpose DMA transfer ran during
-    /// the CPU cycle just completed. While a GPDMA holds the bus the 65816 is
-    /// halted and samples no interrupt lines, and -- crucially -- the
-    /// instruction the DMA interrupts does not recognize a line that asserts
-    /// mid-DMA either; only the first *full* instruction after the transfer
-    /// does (matching Mesen2; see the Sour dma_irq_test, #3065). Default:
-    /// `false`.
-    fn take_dma_ran_this_cpu_cycle(&mut self) -> bool {
-        false
-    }
-
-    /// Peeks (without clearing) whether a GPDMA has already run this CPU cycle.
-    /// Checked just before an opcode read so the CPU can tell whether the DMA
-    /// preceded the opcode fetch (that instruction is the first full one after
-    /// the transfer) or follows it (that instruction is split) -- #3065.
-    fn peek_dma_ran_this_cpu_cycle(&self) -> bool {
-        false
-    }
-
     /// Poll for a pending NMI edge from the bus (e.g. PPU VBlank NMI).
     ///
     /// NMI is edge-triggered: this returns `true` once per rising edge and consumes it.
@@ -65,6 +46,22 @@ pub trait SnesBus {
     /// must not use this method. The default returns `false` for buses without an IRQ source.
     fn poll_irq(&self) -> bool {
         false
+    }
+
+    /// Tell the bus how many master clocks the CPU cycle that is about to run will take
+    /// (6, 8 or 12 for a memory access; 6 for an internal cycle).
+    ///
+    /// This mirrors Mesen2's `SnesMemoryManager::SetCpuSpeed`, which `SnesCpu::Read`/`Write`
+    /// call *before* `ProcessCpuCycle` -- so a DMA that runs at the start of this cycle ends
+    /// its `SyncEndDma` pad on a whole cycle of the *upcoming* access (see
+    /// `DmaController::sync_end_pad`, #3050). Buses that don't model DMA ignore it.
+    fn set_cpu_speed(&mut self, _speed: u8) {}
+
+    /// The cumulative master-clock count, used only to stamp trace lines so a NESER bus
+    /// trace can be diffed clock-for-clock against a reference emulator (#3050). Buses
+    /// without a clock source report 0.
+    fn master_clock(&self) -> u64 {
+        0
     }
 
     /// Return the active screen dimensions for the current frame.
