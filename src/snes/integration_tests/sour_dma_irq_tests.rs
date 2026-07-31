@@ -72,4 +72,56 @@ mod tests {
             result.exit_reason
         );
     }
+
+    /// Precise per-sub-case oracle for the #3049 dispatch follow-up (#3065):
+    /// reads all 19 dma_irq_test result words from WRAM (`testResults` at
+    /// `$7E:0011 + N*2`, N=1..19) and asserts them against the hardware/Mesen2
+    /// expected table (`$00FF` sentinels for the two no-interrupt SEI+INC cases
+    /// #6/#16, per the README `$FFFF` transcription fix).
+    ///
+    /// Currently 6 sub-cases dispatch one instruction early -- #1/#2/#4/#7
+    /// (IRQ) and #8/#10 (NMI), all of them 8-bit `$420B` writes (every 16-bit
+    /// `W16` variant already matches). Un-ignore once #3065 aligns the
+    /// DMA-start-vs-interrupt-recognition timing.
+    #[test]
+    #[ignore = "6/19 sub-cases dispatch one instruction early (all 8-bit $420B writes); pending #3065"]
+    fn dma_irq_test_wram_results_match_hardware() {
+        use crate::platform::app_context::AppContext;
+        use crate::platform::emulator::Emulator;
+        use crate::snes::console::Snes;
+        let path = Path::new(ROOT).join("dma_irq_test.sfc");
+        let rom = fs::read(&path).unwrap();
+        let mut snes = Snes::new(AppContext::new_with_config(
+            crate::platform::config::Config::default(),
+        ));
+        snes.load_rom(&rom, "dma_irq_test.sfc").unwrap();
+        let mut frames = 0u32;
+        while frames < 350 {
+            snes.run_tick();
+            if snes.is_ready_to_render() {
+                frames += 1;
+                snes.clear_ready_to_render();
+            }
+        }
+        let rd = |a: u32| snes.read_bus_for_debugger_for_tests(a).unwrap_or(0) as u16;
+        let word = |a: u32| rd(a) | (rd(a + 1) << 8);
+        let expected = [
+            0x0002u16, 0x0002, 0x0001, 0x0002, 0x0001, 0x00FF, 0x0001, 0x0002, 0x0001, 0x0001,
+            0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x00FF, 0x0001, 0x0001, 0x0000,
+        ];
+        let mismatches: Vec<String> = expected
+            .iter()
+            .enumerate()
+            .filter_map(|(i, exp)| {
+                let n = i + 1;
+                let got = word(0x7E_0011 + (n as u32) * 2);
+                (got != *exp).then(|| format!("#{n}: expected {exp:04X} got {got:04X}"))
+            })
+            .collect();
+        assert!(
+            mismatches.is_empty(),
+            "dma_irq_test sub-case divergences (#3065): {}",
+            mismatches.join(", ")
+        );
+    }
 }
