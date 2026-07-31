@@ -232,6 +232,30 @@ Test suites:
   match Mesen2 pixel-exactly with approved goldens.
 - `hblank_dma_vram_tests.rs` -- HDMA-to-VRAM timing ROMs
   (`roms/snes/automated_tests/snes_test_roms/93143-hblank-dma-vram/`).
+- `neser_dma_tests.rs` / `neser_hdma_tests.rs` -- NESER-authored custom
+  DMA/HDMA fixtures (#2884), assembled in-code via the shared `fixture_rom.rs`
+  builder (no on-disk assets), authored against the fullsnes register spec
+  without reading the DMA implementation. GPDMA: mode 0/1 to WRAM/VRAM,
+  palette to CGRAM, words to OAM, A-bus increment/decrement/fixed, byte-count
+  0 == 65536, ascending multi-channel priority, and #2944 active-display write
+  gating (VRAM/CGRAM/OAM readback instruments each proven by a CPU
+  write/read self-check). HDMA (targeting WMDATA so per-scanline transfers
+  land in readable WRAM): direct-mode line counter, non-repeat idle,
+  repeat-every-line, indirect pointer deref, and terminator. Results via the
+  WRAM pass/fail marker. `gpdma_b_to_a_copies_wram_through_wmdata` is
+  `#[ignore]`d pending #3061 (B->A reads an internal shadow, not the live
+  B-bus register).
+- `jonasquinn_dma_tests.rs` -- canonical DMA/HDMA ROMs from the jonasquinn
+  collection (#2884). `test_mdrhdma2/test_mdrhdma.sfc` (MDR-during-HDMA) and
+  `hdma_midframe/demo.smc` (mid-frame HDMA visual, also matches the bundled
+  `image001.bmp`) have 0-pixel-diff Mesen2 goldens; `test_dmavalid`,
+  `test_hdmadisable` and `test_dmatiming` are `#[ignore]`d divergences
+  (#3063), and the `test_hdma/test_hdmasync.smc`/`test_hdmatiming.smc` byuu
+  mirrors share the #3062 divergence.
+- `kungfufurby_hdma_tests.rs` -- KungFuFurby HDMA ROMs (#2884,
+  `test_hdma`/`test_hdmasync`/`test_hdmatiming`). All three are `#[ignore]`d
+  recording NESER's diverging CRC (black or red-FAIL) where Mesen2 renders a
+  blue PASS; rooted in HDMA H-position timing (#3062, #3042/#3050).
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs
   (`roms/snes/automated_tests/snes_test_roms/absindx/`), verified with
   human-approved screen-CRC goldens. `SA1RamProtectionTest.sfc` passes all 222 sub-tests
