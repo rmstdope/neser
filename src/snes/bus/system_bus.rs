@@ -2288,6 +2288,10 @@ mod tests {
     /// transfer can only have come from the hook. Ticking past it instead makes the fallback
     /// run the transfer and the test passes regardless of what the hook does -- which is how
     /// the first version of this test managed to be vacuous.
+    ///
+    /// #3074: the hook now also REPORTS the transfer, which the CPU turns into Mesen2's
+    /// one-cycle `IrqLock`; that contract is pinned by
+    /// `the_cycle_hook_reports_a_transfer_for_both_dma_kinds`.
     #[test]
     fn an_armed_hdma_transfer_runs_from_the_cycle_hook() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
@@ -2317,6 +2321,51 @@ mod tests {
             0x3C,
             "the cycle hook's HDMA branch is what actually performs the transfer"
         );
+    }
+
+    /// #3074: the cycle hook reports whether it ran a transfer, which the CPU turns into
+    /// Mesen2's one-cycle `IrqLock`. Both DMA kinds must report it -- `ProcessHdmaChannels`
+    /// and `InitHdmaChannels` return true just as the general-purpose branch does, so an HDMA
+    /// burst locks interrupt recognition for its cycle too. NESER previously reported nothing
+    /// for HDMA at all, so HDMA suppressed no interrupts.
+    #[test]
+    fn the_cycle_hook_reports_a_transfer_for_both_dma_kinds() {
+        // General-purpose.
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        arm_one_byte_gpdma(&mut bus);
+        assert!(
+            !bus.gpdma_cycle_hook(),
+            "the start-delay cycle runs no transfer, so it must not lock"
+        );
+        assert!(
+            bus.gpdma_cycle_hook(),
+            "the cycle that runs the general-purpose transfer locks"
+        );
+        assert!(
+            !bus.gpdma_cycle_hook(),
+            "with nothing left armed the lock is not asserted again"
+        );
+
+        // HDMA: same contract, and the reason NESER's model was previously half of Mesen2's.
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        set_wmadd_200(&mut bus);
+        bus.write(0x7E5000, 0x01);
+        bus.write(0x7E5001, 0x3C);
+        bus.write(0x7E5002, 0x00);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E5000, 0);
+        bus.write(0x00420C, 0x01);
+        bus.hdma_init();
+        bus.gpdma_cycle_hook(); // latch CPU ownership so the clock fallback stands down
+        tick_until_master_clock(&mut bus, u64::from(HDMA_TRANSFER_POSITION) + 4);
+        assert!(
+            !bus.gpdma_cycle_hook(),
+            "the armed HDMA's delay cycle runs no transfer"
+        );
+        assert!(
+            bus.gpdma_cycle_hook(),
+            "the cycle that runs the HDMA transfer locks, as in Mesen2"
+        );
+        assert_eq!(bus.read(0x7E0200), 0x3C, "and the transfer really happened");
     }
 
     /// #3074: the clock fallback exists only for callers that never drive `gpdma_cycle_hook`.
