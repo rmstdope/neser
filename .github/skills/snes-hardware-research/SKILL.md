@@ -641,6 +641,35 @@ ordinal at offset 0: everything after it has drifted for good. Compute both.
 In #3050 the first divergence was an `abs,X` penalty-cycle ordering issue 5638
 cycles *before* the actual cause, which was a 2-clock DMA end pad.
 
+### Matching the reference's *rule* is not the same as matching its *quantity* (from #3067)
+
+Porting a formula from Mesen2 is only valid if the value you feed it means the same thing in
+both emulators. #3067 set out to adopt Mesen2's speed-aware `SyncEndDma` rounding for
+general-purpose DMA -- the rule is right there in the source, and the identical change had
+already made the two HDMA envelopes pixel-exact. Measured, it regressed two vectors instead.
+
+The reason was upstream of the formula: Mesen2 re-enters `ProcessPendingTransfers` from inside
+`RunDma`, so an HDMA firing mid-transfer runs nested, pays no sync pads and folds its clocks
+into the very counter the outer `SyncEndDma` rounds. NESER cannot nest, so its counter is a
+different quantity. The rounding rule was correct and the input was not.
+
+Before porting a formula, ask what feeds its inputs in each emulator, not just what the
+formula says. If the surrounding structure differs, the local approximation you already have
+may be the better model of the *net* behaviour, and "it matches the reference's source" is not
+evidence that it matches the reference's behaviour.
+
+### Prove a fragile input-scripted vector with the SAME script on both sides (from #3067)
+
+`peterlemon_ppu_advanced_tests::mosaic_mode5_sized` carries a doc comment saying its input
+release margin was hand-tuned (150 -> 151) to win a latch race, which makes it tempting to
+dismiss any movement as a tuning artifact and re-tune again. It is not dismissible: replaying
+Mesen2 with the *identical* input script (`emu.setInput` edges matching the Rust
+`hold(SnesButton::R, 120, 151)`) showed the approved golden at 0 px and the changed output at
+12484 px. That turned "fragile test, probably fine" into decisive evidence against the change.
+
+Whenever a scripted vector moves, script the reference the same way before concluding
+anything. Re-tuning the margin to make the test pass again would have buried a real regression.
+
 ### A 0-px golden can depend on two errors cancelling (from #3050)
 
 Fixing a real, Mesen2-verified timing bug turned undisbeliever's

@@ -243,13 +243,13 @@ mod tests {
     // striped pattern. The frame-600 capture is pixel-identical to Mesen2's
     // (0.00% diff, byte-for-byte).
     //
-    // CAUTION (#3050): this 0-px result is NOT independent corroboration of NESER's DMA
-    // timing. It depends on general-purpose DMA keeping a deliberately Mesen2-divergent
-    // fixed-8 `SyncEndDma` pad, which cancels a separate, still-unfixed CPU-side
-    // ordering error. Rounding that pad to the upcoming access's speed -- the change
-    // that made StarWars.sfc and hdmaen_latch_test.sfc pixel-exact -- renders this ROM
-    // FULLY BLACK. Treat a change to this CRC as a signal about the CPU-side error, and
-    // see `DmaController::start_dma` and #3067 before touching either.
+    // CAUTION (#3050, resolved in #3067): this vector is highly sensitive to the
+    // general-purpose DMA envelope -- rounding `start_dma`'s `SyncEndDma` pad to the
+    // upcoming access's speed instead of a fixed 8 renders it FULLY BLACK. #3067 measured
+    // that across every combination and concluded the fixed 8 is correct for NESER as it
+    // stands (see the table in `DmaController::start_dma`), so this 0-px result is now
+    // corroborating rather than coincidental. It is still one of the two witnesses for that
+    // decision -- treat a change to this CRC as a signal about the DMA envelope.
     undisbeliever_rom_test!(
         inidisp_forgot_to_force_blank_matches_mesen2,
         "inidisp_forgot_to_force_blank.sfc",
