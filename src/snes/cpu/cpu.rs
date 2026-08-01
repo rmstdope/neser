@@ -8,6 +8,7 @@ use crate::snes::console::save_state::{
     SnesBlockMoveDirection, SnesBlockMoveState, SnesCpuState, SnesSaveState, SnesSaveStateError,
 };
 use crate::snes::cpu::mem_speed::mem_access_cycles;
+use crate::snes::ppu::SnesVideoRegion;
 use crate::trace_cpu;
 
 // Status register P flags (8 bits)
@@ -9661,6 +9662,16 @@ impl Cpu<SnesSystemBus> {
             });
         }
 
+        // The APU's clock ratio and audio pacing are derived from the console
+        // region, and the saved PPU state is the authority on what that was.
+        // Retune first: everything the APU restore then writes (cycles per
+        // sample, the resampler accumulators, the queued samples) was computed
+        // against the saving console's master clock, so it is only
+        // self-consistent alongside that console's denominator. Retuning after
+        // the restore would instead discard the restored resampler state and
+        // reverse-compute the output rate against the wrong denominator.
+        self.bus
+            .apu_set_video_region(SnesVideoRegion::from_state_byte(state.ppu.video_region));
         self.bus
             .restore_state(&state.bus)
             .map_err(SaveStateError::RestoreFailed)?;

@@ -58,10 +58,7 @@ impl Ppu {
             irq_edge_age: self.irq_edge_age,
             interlace_field: self.interlace_field,
             frame_has_extra_scanline: self.frame_has_extra_scanline,
-            video_region: match self.video_region {
-                SnesVideoRegion::Ntsc => 0,
-                SnesVideoRegion::Pal => 1,
-            },
+            video_region: self.video_region.to_state_byte(),
             bg_mode: self.bg_mode,
             bg3_priority: self.bg3_priority,
             bg_tile_size_16: self.bg_tile_size_16,
@@ -157,10 +154,7 @@ impl Ppu {
         self.irq_edge_age = state.irq_edge_age;
         self.interlace_field = state.interlace_field;
         self.frame_has_extra_scanline = state.frame_has_extra_scanline;
-        self.video_region = match state.video_region {
-            1 => SnesVideoRegion::Pal,
-            _ => SnesVideoRegion::Ntsc,
-        };
+        self.video_region = SnesVideoRegion::from_state_byte(state.video_region);
         self.bg_mode = state.bg_mode;
         self.bg3_priority = state.bg3_priority;
         self.bg_tile_size_16 = state.bg_tile_size_16;

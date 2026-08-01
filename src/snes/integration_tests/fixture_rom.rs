@@ -23,6 +23,14 @@ const ROM_SIZE: usize = 0x1_0000;
 const HEADER: usize = 0x7FC0;
 const STROBE_PORT: u16 = 0x4016;
 
+/// APU communication ports as the 65816 sees them (`$2140-$2143`); the SPC700
+/// sees the same four mailboxes at `$F4-$F7`. Each port is two independent
+/// registers -- reads return what the SPC wrote, writes are seen by the SPC.
+const APU_PORT0: u16 = 0x2140;
+const APU_PORT1: u16 = 0x2141;
+const APU_PORT2: u16 = 0x2142;
+const APU_PORT3: u16 = 0x2143;
+
 pub(crate) struct FixtureRom {
     rom: Vec<u8>,
     cursor: usize,
@@ -76,6 +84,16 @@ impl FixtureRom {
         self.rom[HEADER + 0x18] = ram_size_field;
     }
 
+    /// Sets the header country code (`$FFD9`), which the console uses to
+    /// auto-detect the video region when no `snes-hardware` override is
+    /// configured. fullsnes "Country (also implies PAL/NTSC) (FFD9h)":
+    /// `00h` Japan and `01h` USA/Canada are NTSC, `02h..0Ch` and `11h`
+    /// (Australia) are PAL. Defaults to `00h` (Japan/NTSC) for fixtures that
+    /// never call this.
+    pub(crate) fn country(&mut self, country: u8) {
+        self.rom[HEADER + 0x19] = country;
+    }
+
     fn emit(&mut self, bytes: &[u8]) {
         assert!(
             self.cursor + bytes.len() <= HEADER,
@@ -100,6 +118,17 @@ impl FixtureRom {
     /// `LDA #value`.
     pub(crate) fn lda_imm(&mut self, value: u8) {
         self.emit(&[0xA9, value]);
+    }
+
+    /// `STA long addr` (24-bit) — stores the current accumulator anywhere in
+    /// the address space, e.g. the `rom_runner` result block in WRAM.
+    pub(crate) fn sta_long(&mut self, addr: u32) {
+        self.emit(&[
+            0x8F, // STA long
+            (addr & 0xFF) as u8,
+            ((addr >> 8) & 0xFF) as u8,
+            ((addr >> 16) & 0xFF) as u8,
+        ]);
     }
 
     /// `LDA long addr` (24-bit) — reads an 8-bit value from anywhere in the
@@ -148,6 +177,54 @@ impl FixtureRom {
     /// `CMP #value`.
     pub(crate) fn cmp_imm(&mut self, value: u8) {
         self.emit(&[0xC9, value]);
+    }
+
+    /// `CMP abs addr` (bank 0) — compares the accumulator against memory,
+    /// which is how a poll loop waits for a hardware port to reach a value the
+    /// accumulator already holds.
+    pub(crate) fn cmp_abs(&mut self, addr: u16) {
+        self.emit(&[0xCD, (addr & 0xFF) as u8, (addr >> 8) as u8]);
+    }
+
+    // ---- 8-bit index register (X) primitives ------------------------------
+    //
+    // Emitted programs run in the CPU's post-reset emulation mode, so X is
+    // 8 bits wide and indexed loops are limited to 256 iterations.
+
+    /// `LDX #value`.
+    pub(crate) fn ldx_imm(&mut self, value: u8) {
+        self.emit(&[0xA2, value]);
+    }
+
+    /// `INX`.
+    pub(crate) fn inx(&mut self) {
+        self.emit(&[0xE8]);
+    }
+
+    /// `CPX #value`.
+    pub(crate) fn cpx_imm(&mut self, value: u8) {
+        self.emit(&[0xE0, value]);
+    }
+
+    /// `TXA` — copies the loop index into the accumulator so it can be stored
+    /// or compared.
+    pub(crate) fn txa(&mut self) {
+        self.emit(&[0x8A]);
+    }
+
+    /// `LDA abs,X` (bank 0).
+    pub(crate) fn lda_abs_x(&mut self, addr: u16) {
+        self.emit(&[0xBD, (addr & 0xFF) as u8, (addr >> 8) as u8]);
+    }
+
+    /// `STA abs,X` (bank 0).
+    pub(crate) fn sta_abs_x(&mut self, addr: u16) {
+        self.emit(&[0x9D, (addr & 0xFF) as u8, (addr >> 8) as u8]);
+    }
+
+    /// `CLC` followed by `ADC #value`.
+    pub(crate) fn add_imm(&mut self, value: u8) {
+        self.emit(&[0x18, 0x69, value]);
     }
 
     /// `AND #value`.
@@ -371,6 +448,93 @@ impl FixtureRom {
         self.marker_and_idle(PASS_STATUS, PASS_IDLE_PC);
     }
 
+    /// Copies `len` bytes from `src` to `dst` (both bank 0) with an indexed
+    /// loop, leaving `X` at `len`. `len` must be 1-255: `X` is 8 bits wide in
+    /// the CPU's post-reset emulation mode.
+    pub(crate) fn copy_block(&mut self, src: u16, dst: u16, len: u8) {
+        assert!(len > 0, "copy_block needs at least one byte");
+        self.ldx_imm(0x00);
+        let loop_start = self.pos();
+        self.lda_abs_x(src);
+        self.sta_abs_x(dst);
+        self.inx();
+        self.cpx_imm(len);
+        self.bne_to(loop_start);
+    }
+
+    /// Emits the SPC700 boot-ROM upload handshake: transfers `program` into
+    /// ARAM at `dest` and hands control to `entry`. Blocks until the transfer
+    /// completes, so the SPC program is already running when the next emitted
+    /// instruction executes.
+    ///
+    /// The protocol is the one the 64-byte IPL boot ROM implements (fullsnes
+    /// "SNES APU Boot ROM"; our `apu::ipl::EMBEDDED_IPL` is byte-identical to
+    /// it):
+    ///
+    /// 1. The IPL signals readiness with `$AA`/`$BB` in ports 0/1.
+    /// 2. The CPU puts the destination address in ports 2/3, a non-zero
+    ///    "transfer data" kick in port 1, `$CC` in port 0, and waits for the
+    ///    IPL to echo `$CC`.
+    /// 3. Per byte: data to port 1, the running index to port 0, then wait for
+    ///    the IPL to echo that index back. The two directions of `$2140` are
+    ///    separate registers -- the CPU reads what the SPC wrote -- so the
+    ///    echo wait is a real wait and the loop cannot outrun the IPL.
+    /// 4. To finish: entry address in ports 2/3, kick 0 in port 1, and
+    ///    `index + 2` in port 0. The IPL's `cmp y,[F4]` then goes negative,
+    ///    which drops it out of the transfer loop and into `jmp [0000+x]`.
+    ///
+    /// `program` is limited to 255 bytes: the index loop runs on the 8-bit X
+    /// register (see the index primitives above).
+    pub(crate) fn upload_spc_program(&mut self, dest: u16, entry: u16, program: &[u8]) {
+        let len = u8::try_from(program.len())
+            .ok()
+            .filter(|len| *len > 0)
+            .expect("SPC payload must be 1-255 bytes for the 8-bit index loop");
+        let data = self.place_data(program);
+
+        // 1. Wait for the IPL's $AA/$BB ready signal.
+        let wait_ready = self.pos();
+        self.lda_abs(APU_PORT0);
+        self.cmp_imm(0xAA);
+        self.bne_to(wait_ready);
+        self.lda_abs(APU_PORT1);
+        self.cmp_imm(0xBB);
+        self.bne_to(wait_ready);
+
+        // 2. Destination address + "transfer data" kick, then wait for the
+        //    $CC echo that acknowledges the transfer has begun.
+        self.store_imm_abs(APU_PORT2, (dest & 0xFF) as u8);
+        self.store_imm_abs(APU_PORT3, (dest >> 8) as u8);
+        self.store_imm_abs(APU_PORT1, 0x01);
+        self.store_imm_abs(APU_PORT0, 0xCC);
+        let wait_cc = self.pos();
+        self.lda_abs(APU_PORT0);
+        self.cmp_imm(0xCC);
+        self.bne_to(wait_cc);
+
+        // 3. Byte loop.
+        self.ldx_imm(0x00);
+        let byte_loop = self.pos();
+        self.lda_abs_x(data);
+        self.sta_abs(APU_PORT1);
+        self.txa();
+        self.sta_abs(APU_PORT0);
+        let wait_echo = self.pos();
+        self.cmp_abs(APU_PORT0);
+        self.bne_to(wait_echo);
+        self.inx();
+        self.cpx_imm(len);
+        self.bne_to(byte_loop);
+
+        // 4. Entry address, kick 0, and index + 2 to leave the transfer loop.
+        self.store_imm_abs(APU_PORT2, (entry & 0xFF) as u8);
+        self.store_imm_abs(APU_PORT3, (entry >> 8) as u8);
+        self.store_imm_abs(APU_PORT1, 0x00);
+        self.txa();
+        self.add_imm(0x02);
+        self.sta_abs(APU_PORT0);
+    }
+
     /// Finalizes the image: writes the marker idle loops at the canonical
     /// PASS/FAIL/TIMEOUT PCs and returns the ROM bytes.
     pub(crate) fn build(mut self) -> Vec<u8> {
@@ -381,5 +545,86 @@ impl FixtureRom {
             self.rom[offset + 2] = (idle_pc >> 8) as u8;
         }
         self.rom
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::rom_runner::{RunConfig, RunExitReason, run_rom};
+    use super::FixtureRom;
+
+    /// The index-register primitives exist to drive the SPC upload loop
+    /// (#2888), so they get their own end-to-end proof: a fixture that copies
+    /// a ROM data block into WRAM with an indexed loop and reads every byte
+    /// back. If `INX`/`CPX`/`LDA abs,X`/`STA abs,X` were mis-encoded the
+    /// readback would diverge (or the loop would never terminate) rather than
+    /// silently doing nothing.
+    #[test]
+    fn indexed_loop_copies_a_data_block_into_wram() {
+        const PAYLOAD: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut fixture = FixtureRom::new(b"INDEXED COPY");
+        let src = fixture.place_data(&PAYLOAD);
+        fixture.copy_block(src, 0x0200, PAYLOAD.len() as u8);
+        for (offset, expected) in PAYLOAD.iter().copied().enumerate() {
+            fixture.lda_abs(0x0200 + offset as u16);
+            fixture.branch_fail_if_ne(expected);
+        }
+        fixture.pass_marker_and_idle();
+
+        let result = run_rom(&fixture.build(), "indexed-copy.sfc", RunConfig::new(0, 4));
+
+        assert!(
+            result.passed && result.exit_reason == RunExitReason::PassMarker,
+            "indexed copy fixture should pass: {result:?}"
+        );
+    }
+
+    /// Proves the IPL upload handshake end-to-end: a five-byte SPC program is
+    /// transferred into ARAM and started, and the 65816 only reports PASS once
+    /// that program has written its signature byte back through port 0. Any
+    /// break in the handshake (wrong kick value, missed echo, bad exit
+    /// condition) leaves the SPC parked in the boot ROM and the fixture times
+    /// out instead of passing -- verified by mutating both the kick value and
+    /// the `index + 2` exit write.
+    #[test]
+    fn spc_upload_hands_control_to_the_transferred_program() {
+        // MOV $F4, #$55 (write the signature to port 0), then BRA to itself.
+        const SPC_PROGRAM: [u8; 5] = [0x8F, 0x55, 0xF4, 0x2F, 0xFE];
+        const SPC_ORIGIN: u16 = 0x0200;
+
+        let mut fixture = FixtureRom::new(b"SPC UPLOAD");
+        fixture.upload_spc_program(SPC_ORIGIN, SPC_ORIGIN, &SPC_PROGRAM);
+        let wait = fixture.pos();
+        fixture.lda_abs(0x2140);
+        fixture.cmp_imm(0x55);
+        fixture.bne_to(wait);
+        fixture.pass_marker_and_idle();
+
+        let result = run_rom(&fixture.build(), "spc-upload.sfc", RunConfig::new(0, 30));
+
+        assert!(
+            result.passed && result.exit_reason == RunExitReason::PassMarker,
+            "uploaded SPC program should signal back through port 0: {result:?}"
+        );
+    }
+
+    /// `TXA` must land the loop index in the accumulator: the upload handshake
+    /// stores it to `$2140` and then polls the SPC's echo against it.
+    #[test]
+    fn txa_moves_the_loop_index_into_the_accumulator() {
+        let mut fixture = FixtureRom::new(b"TXA");
+        fixture.ldx_imm(0x07);
+        fixture.txa();
+        fixture.branch_fail_if_ne(0x07);
+        fixture.add_imm(0x02);
+        fixture.branch_fail_if_ne(0x09);
+        fixture.pass_marker_and_idle();
+
+        let result = run_rom(&fixture.build(), "txa.sfc", RunConfig::new(0, 4));
+
+        assert!(
+            result.passed && result.exit_reason == RunExitReason::PassMarker,
+            "TXA/ADC fixture should pass: {result:?}"
+        );
     }
 }

@@ -6,8 +6,8 @@
 //! [`Ppu::read_register`].
 
 use super::{
-    CGRAM_SIZE, CPU_VERSION, HBLANK_START_DOT, PPU1_VERSION, PPU2_VERSION, Ppu, VISIBLE_DOT_START,
-    VRAM_SIZE, VramAddressTranslation,
+    CGRAM_SIZE, CPU_VERSION, HBLANK_START_DOT, PPU1_VERSION, PPU2_VERSION, Ppu, SnesVideoRegion,
+    VISIBLE_DOT_START, VRAM_SIZE, VramAddressTranslation,
 };
 use crate::platform::debugging::{ppu_trace_level, trace_clock_in_window};
 use crate::trace_ppu;
@@ -444,10 +444,22 @@ impl Ppu {
                     | ((self.stat77_range_over as u8) << 6)
             }
             // STAT78: PPU2 status + version. Reports/clears the latch flag and resets the
-            // OPHCT/OPVCT read flipflops.
+            // OPHCT/OPVCT read flipflops. Bit 4 is the PPU2 pin-30 frame-rate strap
+            // (fullsnes: "Frame Rate (PPU2.Pin30) (0=NTSC/60Hz, 1=PAL/50Hz)"), the only
+            // runtime signal a ROM has for which console region it is running on. Bit 5
+            // is unused and reads PPU2 open bus ("same as last value read from PPU2"), so
+            // it must be carried over rather than rebuilt as 0 -- otherwise the assignment
+            // below pins it low forever, and the OPHCT/OPVCT high-byte reads that echo
+            // open bus inherit the corruption. Same construction as Mesen2 (`SnesPpu.cpp`).
             0x213F => {
                 let value = ((self.interlace_field as u8) << 7)
                     | ((self.counter_latch_flag as u8) << 6)
+                    | (self.ppu2_open_bus & 0x20)
+                    | if self.video_region == SnesVideoRegion::Pal {
+                        0x10
+                    } else {
+                        0x00
+                    }
                     | PPU2_VERSION;
                 self.counter_latch_flag = false;
                 self.ophct_read_high = false;

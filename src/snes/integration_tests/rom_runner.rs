@@ -1,12 +1,21 @@
 use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
+use crate::snes::console::config::SnesHardware;
 use crate::snes::input::{SnesButton, SnesControllerType};
 use std::path::Path;
 use std::path::PathBuf;
 
 pub(crate) const MARKER_ADDR: u32 = 0x7E_1FF0;
 pub(crate) const MARKER_MAGIC: [u8; 4] = *b"NSER";
+/// Start of the fixture result block: the WRAM bytes immediately behind the
+/// 5-byte marker, always captured into [`RunResult::result_bytes`]. Fixtures
+/// that need to hand a *measurement* (rather than a pass/fail verdict) back to
+/// the Rust test write it here; fixtures that don't simply leave it zeroed.
+pub(crate) const RESULT_ADDR: u32 = MARKER_ADDR + 5;
+/// Size of the result block: everything from [`RESULT_ADDR`] up to the end of
+/// the `$7E:1FFx` line the marker lives on.
+pub(crate) const RESULT_LEN: usize = 11;
 pub(crate) const PASS_STATUS: u8 = 0x01;
 pub(crate) const FAIL_STATUS: u8 = 0x02;
 pub(crate) const PASS_IDLE_PC: u16 = 0x8100;
@@ -114,6 +123,10 @@ pub(crate) struct RunConfig<'a> {
     pub controller_port1: SnesControllerType,
     /// Device connected to controller port 2 (default: standard pad).
     pub controller_port2: SnesControllerType,
+    /// Video-timing override. `None` (the default) leaves the region to
+    /// auto-detection from the cartridge header country, matching what a
+    /// frontend does when `snes-hardware` is not configured.
+    pub hardware: Option<SnesHardware>,
 }
 
 impl<'a> RunConfig<'a> {
@@ -125,7 +138,15 @@ impl<'a> RunConfig<'a> {
             input_script: &[],
             controller_port1: SnesControllerType::Standard,
             controller_port2: SnesControllerType::Standard,
+            hardware: None,
         }
+    }
+
+    /// Forces the video-timing region, as `--snes-hardware` / `snes-hardware`
+    /// does for a frontend. Overrides the cartridge header's country code.
+    pub(crate) const fn with_hardware(mut self, hardware: SnesHardware) -> Self {
+        self.hardware = Some(hardware);
+        self
     }
 
     /// Selects the devices connected to controller ports 1 and 2.
@@ -171,6 +192,14 @@ pub(crate) struct RunResult {
     pub frames: u32,
     pub pc: u16,
     pub marker: [u8; 5],
+    /// The [`RESULT_LEN`] WRAM bytes at [`RESULT_ADDR`], captured when the run
+    /// ends. Lets a fixture return a measurement (e.g. a 16-bit counter) that
+    /// the Rust test asserts on, instead of hiding the number behind a
+    /// pass/fail marker.
+    pub result_bytes: [u8; RESULT_LEN],
+    /// Active PPU output dimensions at the end of the run (256x224, or 256x239
+    /// once a fixture enables SETINI overscan).
+    pub screen_dimensions: (u32, u32),
     pub screen_crc32: u32,
     /// Final RGB888 frame (`256 * 224 * 3`, row-major, the same layout as
     /// `Snes::screen_snapshot`), for tests that need to assert on pixels rather than on a
@@ -279,6 +308,7 @@ fn run_rom_with_oracle_and_capture(
     let mut app_config = crate::platform::config::Config::default();
     app_config.snes.controller_port1 = config.controller_port1;
     app_config.snes.controller_port2 = config.controller_port2;
+    app_config.snes.hardware = config.hardware;
     let mut snes = Snes::new(AppContext::new_with_config(app_config));
     snes.load_rom(rom, name)
         .unwrap_or_else(|err| panic!("failed to load SNES runner ROM {name}: {err}"));
@@ -455,6 +485,13 @@ fn read_marker(snes: &Snes) -> [u8; 5] {
     })
 }
 
+fn read_result_block(snes: &Snes) -> [u8; RESULT_LEN] {
+    std::array::from_fn(|offset| {
+        snes.read_bus_for_debugger_for_tests(RESULT_ADDR + offset as u32)
+            .unwrap_or(0)
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn finish_result(
     snes: &Snes,
@@ -486,6 +523,8 @@ fn finish_result(
         frames,
         pc,
         marker,
+        result_bytes: read_result_block(snes),
+        screen_dimensions: (snes.screen_width(), snes.screen_height()),
         screen_crc32,
         screen_rgb,
         capture_path,
@@ -832,6 +871,85 @@ mod tests {
 
     fn short_config() -> RunConfig<'static> {
         RunConfig::new(10_000, 2)
+    }
+
+    // ---- Region selection + result-block plumbing (#2888) ------------------
+
+    /// Runs an idle ROM for two full frames and reports how many master clocks
+    /// that took. A PAL frame is 312 scanlines against NTSC's 262, so the tick
+    /// count is the region-independent way to observe which timing the runner
+    /// actually selected -- it needs no PPU register support of its own.
+    fn ticks_for_two_frames(rom: &[u8], hardware: Option<SnesHardware>) -> u64 {
+        let mut config = RunConfig::new(0, 2);
+        if let Some(hardware) = hardware {
+            config = config.with_hardware(hardware);
+        }
+        let result = run_rom(rom, "region.sfc", config);
+        assert_eq!(result.exit_reason, RunExitReason::FrameLimit);
+        result.ticks
+    }
+
+    fn country_rom(country: u8) -> Vec<u8> {
+        let mut fixture = FixtureRom::new(b"PAL REGION");
+        fixture.country(country);
+        fixture.jmp_abs(TIMEOUT_IDLE_PC);
+        fixture.build()
+    }
+
+    #[test]
+    fn pal_hardware_override_stretches_the_frame_beyond_ntsc() {
+        let rom = country_rom(0x01);
+        let ntsc = ticks_for_two_frames(&rom, Some(SnesHardware::Ntsc));
+        let pal = ticks_for_two_frames(&rom, Some(SnesHardware::Pal));
+        // 312/262 scanlines = 1.19; allow slack for where the CPU instruction
+        // boundary lands relative to the frame edge.
+        assert!(
+            pal > ntsc * 11 / 10,
+            "PAL two-frame ticks ({pal}) should far exceed NTSC ({ntsc})"
+        );
+    }
+
+    #[test]
+    fn header_country_selects_pal_timing_without_a_config_override() {
+        let ntsc = ticks_for_two_frames(&country_rom(0x01), None);
+        let pal = ticks_for_two_frames(&country_rom(0x02), None);
+        assert!(
+            pal > ntsc * 11 / 10,
+            "Europe (0x02) header should auto-select PAL: pal={pal} ntsc={ntsc}"
+        );
+    }
+
+    #[test]
+    fn config_hardware_override_beats_a_pal_header_country() {
+        let forced = ticks_for_two_frames(&country_rom(0x02), Some(SnesHardware::Ntsc));
+        let native = ticks_for_two_frames(&country_rom(0x01), Some(SnesHardware::Ntsc));
+        assert_eq!(
+            forced, native,
+            "an explicit NTSC override must ignore the PAL header country"
+        );
+    }
+
+    #[test]
+    fn result_block_is_captured_from_wram_behind_the_marker() {
+        let mut fixture = FixtureRom::new(b"RESULT BLOCK");
+        for (offset, value) in [0x11u8, 0x22, 0x33].into_iter().enumerate() {
+            fixture.write_long(RESULT_ADDR + offset as u32, value);
+        }
+        fixture.pass_marker_and_idle();
+        let result = run_rom(&fixture.build(), "result.sfc", RunConfig::new(0, 4));
+
+        assert!(result.passed, "fixture should pass: {result:?}");
+        assert_eq!(&result.result_bytes[..3], &[0x11, 0x22, 0x33]);
+        assert!(
+            result.result_bytes[3..].iter().all(|byte| *byte == 0),
+            "untouched result bytes should stay zero"
+        );
+    }
+
+    #[test]
+    fn run_result_reports_the_active_screen_dimensions() {
+        let result = run_rom(&pass_marker_rom(), "dimensions.sfc", short_config());
+        assert_eq!(result.screen_dimensions, (256, 224));
     }
 
     #[test]

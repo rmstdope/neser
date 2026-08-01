@@ -666,6 +666,27 @@
           "notes": "No on-disk assets; cartridge images are built at test run time by cartridge_fixtures.rs, and the executable battery-SRAM fixture via the shared fixture_rom builder."
         }
       ]
+    },
+    {
+      "id": "snes-pal-region-fixtures",
+      "suite": "neser_pal_tests",
+      "platform": "snes",
+      "source": {
+        "url": "in-repo synthetic fixtures, src/snes/integration_tests/neser_pal_tests.rs",
+        "ref": "issue-2888"
+      },
+      "license": "n/a (synthetic, authored in-repo)",
+      "oracle_type": "rom_pass_fail",
+      "notes": "Deterministic in-code assembled LoROM fixture programs (fixture_rom.rs) verifying PAL timing and video-region behaviour against fullsnes, cross-checked against ares and Mesen2: STAT78 $213F bit 4 (0=NTSC/60Hz, 1=PAL/50Hz) read back per header country code across every boundary in the fullsnes $FFD9 table plus both directions of the snes-hardware override; V-IRQ existence probes pinning the 262/312 scanline counts (261 vs 311 as the last scanline index); an OPVCT latch on the VBlank rising edge proving VBlank starts at 225 (240 with SETINI overscan) in BOTH regions; a 40-byte SPC700 counter uploaded through the real $2140-$2143 IPL handshake, measuring the 1.201808 PAL/NTSC ratio of frame length x master-clock rate; HDMA-banded screens compared across regions for identical 256x224 / 256x239 dimensions and pixels; and auto-joypad reads on a PAL cartridge. Pass/fail results are reported through the rom_runner NSER WRAM marker oracle, with measurements returned via the result block behind the marker. No on-disk ROMs and no committed visual baselines: the NTSC and PAL runs are each other's oracle for rendering.",
+      "variants": [
+        {
+          "id": "in_code_fixtures",
+          "status": "committed_ci",
+          "path": "src/snes/integration_tests",
+          "refresh_command": null,
+          "notes": "No on-disk assets; fixture programs are emitted at test run time by neser_pal_tests.rs via the shared fixture_rom builder."
+        }
+      ]
     }
   ]
 }

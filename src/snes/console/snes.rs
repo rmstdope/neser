@@ -65,9 +65,22 @@ impl Snes {
         }
     }
 
+    /// Whether the header's `$FFD9` destination code implies 50 Hz PAL timing.
+    ///
+    /// fullsnes "Country (also implies PAL/NTSC) (FFD9h)" lists, in order:
+    /// `00h` Japan and `01h` USA/Canada as NTSC; `02h..0Ch`
+    /// (Europe/Scandinavia/Finland/Denmark/France/Holland/Spain/Germany/Italy/
+    /// China/Indonesia) as PAL -- France is SECAM but still 50 Hz; `0Dh` South
+    /// Korea and `0Fh` Canada as NTSC; `10h` Brazil as PAL-M, which is 60 Hz
+    /// and therefore NTSC *timing*; and `11h` Australia as PAL.
+    ///
+    /// Every remaining code is marked "(?)" by fullsnes -- `0Eh` "Common" and
+    /// `12h`-`14h` "Other variation" -- so they fall through to the NTSC
+    /// default rather than being guessed at. (Mesen2 additionally treats `12h`
+    /// as PAL and ares treats every non-NTSC code as PAL; neither is
+    /// spec-supported, and no real cartridge is known to use those codes.)
     fn country_implies_pal(country: u8) -> bool {
-        // Fullsnes FFD9 country codes: 0x02..=0x0C are PAL/50Hz territories.
-        (0x02..=0x0C).contains(&country)
+        matches!(country, 0x02..=0x0C | 0x11)
     }
 
     fn resolve_hardware_mode(
@@ -634,6 +647,54 @@ mod tests {
         );
     }
 
+    /// The whole fullsnes `$FFD9` table, code by code, including both sides of
+    /// every NTSC/PAL boundary. Brazil (`10h`) is PAL-M -- a 60 Hz variant --
+    /// so it takes NTSC timing despite the "PAL" in its name, and Australia
+    /// (`11h`) sits immediately after it on the PAL side.
+    #[test]
+    fn header_country_codes_follow_the_fullsnes_pal_ntsc_table() {
+        for country in [0x00u8, 0x01, 0x0D, 0x0E, 0x0F, 0x10, 0x12, 0x13, 0x14, 0xFF] {
+            assert!(
+                !Snes::country_implies_pal(country),
+                "country {country:#04X} should select NTSC timing"
+            );
+        }
+        for country in [
+            0x02u8, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x11,
+        ] {
+            assert!(
+                Snes::country_implies_pal(country),
+                "country {country:#04X} should select PAL timing"
+            );
+        }
+    }
+
+    #[test]
+    fn target_frame_duration_auto_detects_pal_for_australia() {
+        // fullsnes: "11h U Australia (PAL)". Sits one code past Brazil's
+        // 60 Hz PAL-M, so it is the boundary the old 0x02..=0x0C range missed.
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom_with_country(0x11), "aus.sfc")
+            .unwrap();
+
+        assert_eq!(
+            snes.target_frame_duration(),
+            Duration::from_nanos(FRAME_DURATION_PAL_NANOS)
+        );
+    }
+
+    #[test]
+    fn target_frame_duration_keeps_ntsc_for_brazils_60hz_pal_m() {
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom_with_country(0x10), "bra.sfc")
+            .unwrap();
+
+        assert_eq!(
+            snes.target_frame_duration(),
+            Duration::from_nanos(FRAME_DURATION_NANOS)
+        );
+    }
+
     #[test]
     fn target_frame_duration_prefers_config_ntsc_over_pal_header_country() {
         let mut config = Config::default();
@@ -1170,6 +1231,67 @@ mod tests {
         let bytes2 = restored.save_state_bytes().expect("re-save state");
 
         assert_eq!(bytes, bytes2, "PPU state survives the save/load round-trip");
+    }
+
+    /// A save state carries the console region, and the APU's clock ratio and
+    /// audio pacing are derived from it. Restoring a PAL state into an
+    /// emulator configured for NTSC (the `snes-hardware` override changed
+    /// between save and load) must land on the PAL ratio *and* keep the audio
+    /// pipeline the state carried: the pacing values in the state were
+    /// computed against PAL's master clock, so the region has to be retuned
+    /// before the APU state is applied, not after.
+    #[test]
+    fn cross_region_state_restore_keeps_pal_pacing_and_the_audio_pipeline() {
+        const OUTPUT_RATE: f32 = 48_000.0;
+        let rom = valid_lorom_nop_rom_with_country(0x00); // Japan: NTSC by header
+
+        let mut source = make_snes_with_hardware(Some(SnesHardware::Pal));
+        source
+            .load_rom(&rom, "pal_source.sfc")
+            .expect("load source");
+        source
+            .cpu
+            .as_mut()
+            .expect("cpu")
+            .bus_mut()
+            .set_audio_sample_rate(OUTPUT_RATE);
+        for _ in 0..20_000 {
+            source.run_tick();
+        }
+        let saved_pending = source
+            .cpu
+            .as_ref()
+            .expect("cpu")
+            .bus()
+            .apu_pending_sample_count_for_test();
+        assert!(saved_pending > 0, "the source should have queued samples");
+        let bytes = source.save_state_bytes().expect("save state");
+
+        // Load it on a console configured for NTSC.
+        let mut restored = make_snes_with_hardware(Some(SnesHardware::Ntsc));
+        restored
+            .load_rom(&rom, "ntsc_restore.sfc")
+            .expect("load restore");
+        restored
+            .cpu
+            .as_mut()
+            .expect("cpu")
+            .bus_mut()
+            .set_audio_sample_rate(OUTPUT_RATE);
+        restored.load_state_bytes(&bytes).expect("restore");
+
+        let bus = restored.cpu.as_ref().expect("cpu").bus();
+        assert_eq!(
+            bus.apu_pending_sample_count_for_test(),
+            saved_pending,
+            "the restored output-sample queue must survive the region retune"
+        );
+        assert_eq!(
+            bus.apu_output_sample_rate_for_test(),
+            OUTPUT_RATE,
+            "the output rate must still be {OUTPUT_RATE} Hz after restoring a \
+             PAL state onto an NTSC-configured console"
+        );
     }
 
     #[test]

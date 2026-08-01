@@ -41,7 +41,7 @@ Equivalent config keys in `neser.conf`:
 
 Notes:
 
-- `snes-hardware` defaults to auto-detect from the cartridge header country (PAL territories map to `snes-pal`, otherwise `snes-ntsc`).
+- `snes-hardware` defaults to auto-detect from the cartridge header country (PAL territories map to `snes-pal`, otherwise `snes-ntsc`); see [PAL and video region](#pal-and-video-region) for the country-code table and what the two modes change.
 - `snes-spc-ipl-path` must point to a 64-byte file; invalid files are ignored and NESER falls back to the built-in clean-room IPL ROM.
 - `multitap` on port 1 currently falls back to `standard`.
 
@@ -314,6 +314,10 @@ Test suites:
   (slot 1 A, slot 2 B, slot 3 Start, slot 4 Right, then released) with
   held/released transitions, and the auto-joypad path latching the selected
   pair into JOY2/JOY4. Results via the WRAM pass/fail marker.
+- `neser_pal_tests.rs` -- PAL timing and video-region fixtures (#2888),
+  assembled in-code via the shared `fixture_rom.rs` builder (no on-disk
+  assets), authored from fullsnes and cross-checked against ares and Mesen2.
+  See [PAL and video region](#pal-and-video-region) below.
 - `kungfufurby_nmi_tests.rs` / `kungfufurby_irq_tests.rs` -- KungFuFurby's
   2005-2008 NMI/H-V-IRQ test ROM collection (#2883/#3049,
   `roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-ROMs/`, see its
@@ -345,6 +349,46 @@ Test suites:
   noise LFSR. Each window's baseline is an approved CRC32 plus metadata
   (sample rate, warmup/window lengths, fixture source, review note) inline
   in the test source.
+
+### PAL and video region
+
+The active region is resolved once at ROM load: the `snes-hardware` override
+wins if set, otherwise it is auto-detected from the cartridge header's country
+code at `$FFD9`. Following fullsnes "Country (also implies PAL/NTSC)", `02h`
+through `0Ch` and `11h` (Australia) select PAL; everything else — including
+`10h` Brazil, whose PAL-M is a 60 Hz variant, and the codes fullsnes marks
+"(?)" — selects NTSC. A ROM can read the active region back at runtime from
+STAT78 `$213F` bit 4 (0 = NTSC/60 Hz, 1 = PAL/50 Hz).
+
+What actually differs between the two consoles:
+
+| Behaviour | NTSC | PAL |
+| --- | --- | --- |
+| Scanlines per frame | 262 (263 interlaced) | 312 (313 interlaced) |
+| Last scanline index | 261 | 311 |
+| Master clock | 21,477,270 Hz | 21,281,370 Hz |
+| Refresh rate | ~60.099 Hz | ~50.007 Hz |
+| STAT78 `$213F` bit 4 | 0 | 1 |
+| First VBlank scanline | 225 | 225 |
+| …with SETINI overscan | 240 | 240 |
+| Output dimensions | 256x224 / 256x239 | 256x224 / 256x239 |
+| SPC700 clock | ~1.025 MHz | ~1.025 MHz |
+
+PAL's extra 50 scanlines are therefore *all* blanking: the active area, the
+VBlank boundary and the framebuffer are region-independent, and only the
+frame's total length changes. Because the SPC700 runs off its own 24.576 MHz
+crystal while the 65816's master clock drops, the SPC runs ~0.92% fast
+relative to the CPU on PAL — so the APU derives its clock ratio and audio
+sample pacing from the active region too.
+
+`neser_pal_tests.rs` verifies all of the above from fixture ROMs: STAT78
+readback per country code and both override directions, V-IRQ existence
+probes for the 262/312 scanline counts, an OPVCT latch on the VBlank rising
+edge, an SPC700 counter uploaded through the real IPL handshake to measure
+the 1.201808 PAL/NTSC time ratio, and cross-region screen comparisons. It
+commits no visual baselines — for rendering, the NTSC and PAL runs are each
+other's oracle. Region selection in the shared runner is
+`RunConfig::with_hardware`; header-driven detection is `FixtureRom::country`.
 
 ### Optional full ProcessorTests corpora
 

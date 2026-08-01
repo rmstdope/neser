@@ -100,6 +100,27 @@ pub enum SnesVideoRegion {
     Pal,
 }
 
+impl SnesVideoRegion {
+    /// Save-state encoding. Kept next to its decoder so the two can't drift;
+    /// the console restore path reads the region out of the PPU state to
+    /// retune the APU, so this mapping has more than one consumer.
+    pub fn to_state_byte(self) -> u8 {
+        match self {
+            Self::Ntsc => 0,
+            Self::Pal => 1,
+        }
+    }
+
+    /// Decodes [`Self::to_state_byte`]. Unknown values fall back to NTSC, so a
+    /// state written by a future format never fails the restore outright.
+    pub fn from_state_byte(value: u8) -> Self {
+        match value {
+            1 => Self::Pal,
+            _ => Self::Ntsc,
+        }
+    }
+}
+
 /// Current scan position (scanline + dot within the scanline).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ScanPosition {
@@ -686,6 +707,12 @@ impl Ppu {
         } else {
             VBLANK_START_LINE
         }
+    }
+
+    /// The console region this PPU is timing to. Also the authority the bus
+    /// uses to retune the APU's clock ratio after a save-state restore.
+    pub fn video_region(&self) -> SnesVideoRegion {
+        self.video_region
     }
 
     pub(super) fn scanlines_per_frame(&self) -> u16 {
