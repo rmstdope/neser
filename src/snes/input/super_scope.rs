@@ -134,10 +134,13 @@ impl SnesController for SuperScopeController {
     fn superscope_latch_request(&self) -> Option<(u16, u16)> {
         // The light sensor latches only while the trigger or cursor is held and
         // the scope is aimed at the visible screen. Mirror Mesen2's centering
-        // offset: OPHCT = aimX + 10, OPVCT = max(0, aimY - 3).
+        // offset: OPHCT = aimX + 10, OPVCT = max(0, aimY - 3). Widen to i32
+        // before offsetting so extreme aim coordinates cannot overflow (the
+        // on-screen guard already bounds x/y to the visible raster; the clamp
+        // keeps this correct even if that guard ever changes).
         if (self.trigger_pressed || self.cursor_pressed) && !self.offscreen {
-            let x = (self.x + 10).max(0) as u16;
-            let y = (self.y - 3).max(0) as u16;
+            let x = (i32::from(self.x) + 10).clamp(0, u16::MAX as i32) as u16;
+            let y = (i32::from(self.y) - 3).clamp(0, u16::MAX as i32) as u16;
             Some((x, y))
         } else {
             None
