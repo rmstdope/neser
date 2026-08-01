@@ -34,8 +34,11 @@
 #[cfg(test)]
 mod tests {
     use super::super::fixture_rom::FixtureRom;
-    use super::super::rom_runner::{RESULT_ADDR, RunConfig, RunExitReason, RunResult, run_rom};
+    use super::super::rom_runner::{
+        InputEvent, RESULT_ADDR, RunConfig, RunExitReason, RunResult, run_rom,
+    };
     use crate::snes::console::config::SnesHardware;
+    use crate::snes::input::SnesButton;
 
     /// STAT78: PPU2 status and version. Bit 4 is the frame-rate strap.
     const STAT78: u16 = 0x213F;
@@ -506,6 +509,40 @@ mod tests {
             bands.screen_crc32, tall.screen_crc32,
             "224-line and 239-line renders must differ"
         );
+    }
+
+    // ---- Group E: input on the PAL VBlank boundary ------------------------
+
+    /// Start button bit in JOY1H `$4219` (B Y Select Start Up Down Left Right,
+    /// bit 7 down to bit 0).
+    const START_BIT_JOY1H: u8 = 0x10;
+
+    /// Automatic joypad reading starts a fixed distance into the *first*
+    /// VBlank scanline (fullsnes: "between H=32.5 and H=95.5 of the first
+    /// V-Blank scanline"), so it hangs off the same region-independent line
+    /// 225 boundary that `vblank_starts_on_the_same_scanline_in_both_regions`
+    /// pins. This guards the interaction end-to-end: a scripted press must
+    /// still reach `$4219` on a PAL console, where the VBlank the latch lives
+    /// in is 88 scanlines long instead of 38.
+    #[test]
+    fn auto_joypad_reads_still_land_on_a_pal_console() {
+        let mut fixture = FixtureRom::new(b"PAL AUTO JOYPAD");
+        fixture.country(0x02); // Europe: PAL by header, no override needed
+        fixture.store_imm_abs(0x4200, 0x01); // NMITIMEN bit 0: auto-joypad enable
+        let poll = fixture.pos();
+        fixture.lda_abs(0x4219);
+        fixture.cmp_imm(START_BIT_JOY1H);
+        fixture.bne_to(poll);
+        fixture.pass_marker_and_idle();
+
+        let script = [InputEvent::button(5, SnesButton::Start, true)];
+        let result = run_rom(
+            &fixture.build(),
+            "pal-auto-joypad.sfc",
+            RunConfig::new(0, 120).with_input_script(&script),
+        );
+
+        assert_passed(&result, "PAL auto-joypad read");
     }
 
     /// The result-block plumbing the measurement fixtures rely on: a fixture
