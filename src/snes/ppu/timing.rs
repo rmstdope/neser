@@ -586,6 +586,32 @@ mod tests {
     }
 
     #[test]
+    fn stat78_frame_rate_bit_reports_the_video_region() {
+        // fullsnes "213Fh - STAT78": bit 4 is "Frame Rate (PPU2.Pin30)
+        // (0=NTSC/60Hz, 1=PAL/50Hz)". ares agrees (sfc/ppu/io.cpp:
+        // `ppu2.mdr.bit(4) = Region::PAL()`), as does Mesen2 (SnesPpu.cpp
+        // ORs 0x10 when the console region is PAL). This is the only way a
+        // ROM can discover at runtime which console it is running on.
+        let mut ntsc = Ppu::new_with_region(SnesVideoRegion::Ntsc);
+        let mut pal = Ppu::new_with_region(SnesVideoRegion::Pal);
+
+        assert_eq!(ntsc.read_register(0x213F) & 0x10, 0x00);
+        assert_eq!(pal.read_register(0x213F) & 0x10, 0x10);
+    }
+
+    #[test]
+    fn stat78_frame_rate_bit_does_not_disturb_the_other_fields() {
+        let mut pal = Ppu::new_with_region(SnesVideoRegion::Pal);
+        pal.read_register(0x2137); // latch (WRIO bit7 set on reset)
+
+        let status = pal.read_register(0x213F);
+
+        assert_eq!(status & 0x0F, 3, "PPU2 version must still read 3");
+        assert_ne!(status & 0x40, 0, "latch flag must still be reported");
+        assert_eq!(status & 0x10, 0x10, "PAL frame-rate bit must be set");
+    }
+
+    #[test]
     fn stat78_reports_and_clears_the_latch_flag() {
         let mut ppu = Ppu::new();
         ppu.read_register(0x2137); // latch (WRIO bit7 set on reset)
