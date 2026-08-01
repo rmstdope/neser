@@ -160,6 +160,54 @@ impl FixtureRom {
         self.emit(&[0xC9, value]);
     }
 
+    /// `CMP abs addr` (bank 0) — compares the accumulator against memory,
+    /// which is how a poll loop waits for a hardware port to reach a value the
+    /// accumulator already holds.
+    pub(crate) fn cmp_abs(&mut self, addr: u16) {
+        self.emit(&[0xCD, (addr & 0xFF) as u8, (addr >> 8) as u8]);
+    }
+
+    // ---- 8-bit index register (X) primitives ------------------------------
+    //
+    // Emitted programs run in the CPU's post-reset emulation mode, so X is
+    // 8 bits wide and indexed loops are limited to 256 iterations.
+
+    /// `LDX #value`.
+    pub(crate) fn ldx_imm(&mut self, value: u8) {
+        self.emit(&[0xA2, value]);
+    }
+
+    /// `INX`.
+    pub(crate) fn inx(&mut self) {
+        self.emit(&[0xE8]);
+    }
+
+    /// `CPX #value`.
+    pub(crate) fn cpx_imm(&mut self, value: u8) {
+        self.emit(&[0xE0, value]);
+    }
+
+    /// `TXA` — copies the loop index into the accumulator so it can be stored
+    /// or compared.
+    pub(crate) fn txa(&mut self) {
+        self.emit(&[0x8A]);
+    }
+
+    /// `LDA abs,X` (bank 0).
+    pub(crate) fn lda_abs_x(&mut self, addr: u16) {
+        self.emit(&[0xBD, (addr & 0xFF) as u8, (addr >> 8) as u8]);
+    }
+
+    /// `STA abs,X` (bank 0).
+    pub(crate) fn sta_abs_x(&mut self, addr: u16) {
+        self.emit(&[0x9D, (addr & 0xFF) as u8, (addr >> 8) as u8]);
+    }
+
+    /// `CLC` followed by `ADC #value`.
+    pub(crate) fn add_imm(&mut self, value: u8) {
+        self.emit(&[0x18, 0x69, value]);
+    }
+
     /// `AND #value`.
     pub(crate) fn and_imm(&mut self, value: u8) {
         self.emit(&[0x29, value]);
@@ -381,6 +429,20 @@ impl FixtureRom {
         self.marker_and_idle(PASS_STATUS, PASS_IDLE_PC);
     }
 
+    /// Copies `len` bytes from `src` to `dst` (both bank 0) with an indexed
+    /// loop, leaving `X` at `len`. `len` must be 1-255: `X` is 8 bits wide in
+    /// the CPU's post-reset emulation mode.
+    pub(crate) fn copy_block(&mut self, src: u16, dst: u16, len: u8) {
+        assert!(len > 0, "copy_block needs at least one byte");
+        self.ldx_imm(0x00);
+        let loop_start = self.pos();
+        self.lda_abs_x(src);
+        self.sta_abs_x(dst);
+        self.inx();
+        self.cpx_imm(len);
+        self.bne_to(loop_start);
+    }
+
     /// Finalizes the image: writes the marker idle loops at the canonical
     /// PASS/FAIL/TIMEOUT PCs and returns the ROM bytes.
     pub(crate) fn build(mut self) -> Vec<u8> {
@@ -391,5 +453,57 @@ impl FixtureRom {
             self.rom[offset + 2] = (idle_pc >> 8) as u8;
         }
         self.rom
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::rom_runner::{RunConfig, RunExitReason, run_rom};
+    use super::FixtureRom;
+
+    /// The index-register primitives exist to drive the SPC upload loop
+    /// (#2888), so they get their own end-to-end proof: a fixture that copies
+    /// a ROM data block into WRAM with an indexed loop and reads every byte
+    /// back. If `INX`/`CPX`/`LDA abs,X`/`STA abs,X` were mis-encoded the
+    /// readback would diverge (or the loop would never terminate) rather than
+    /// silently doing nothing.
+    #[test]
+    fn indexed_loop_copies_a_data_block_into_wram() {
+        const PAYLOAD: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut fixture = FixtureRom::new(b"INDEXED COPY");
+        let src = fixture.place_data(&PAYLOAD);
+        fixture.copy_block(src, 0x0200, PAYLOAD.len() as u8);
+        for (offset, expected) in PAYLOAD.iter().copied().enumerate() {
+            fixture.lda_abs(0x0200 + offset as u16);
+            fixture.branch_fail_if_ne(expected);
+        }
+        fixture.pass_marker_and_idle();
+
+        let result = run_rom(&fixture.build(), "indexed-copy.sfc", RunConfig::new(0, 4));
+
+        assert!(
+            result.passed && result.exit_reason == RunExitReason::PassMarker,
+            "indexed copy fixture should pass: {result:?}"
+        );
+    }
+
+    /// `TXA` must land the loop index in the accumulator: the upload handshake
+    /// stores it to `$2140` and then polls the SPC's echo against it.
+    #[test]
+    fn txa_moves_the_loop_index_into_the_accumulator() {
+        let mut fixture = FixtureRom::new(b"TXA");
+        fixture.ldx_imm(0x07);
+        fixture.txa();
+        fixture.branch_fail_if_ne(0x07);
+        fixture.add_imm(0x02);
+        fixture.branch_fail_if_ne(0x09);
+        fixture.pass_marker_and_idle();
+
+        let result = run_rom(&fixture.build(), "txa.sfc", RunConfig::new(0, 4));
+
+        assert!(
+            result.passed && result.exit_reason == RunExitReason::PassMarker,
+            "TXA/ADC fixture should pass: {result:?}"
+        );
     }
 }
