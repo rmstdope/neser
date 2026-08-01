@@ -257,6 +257,145 @@ mod tests {
         assert_eq!(probe_vblank_start_line(0x04, SnesHardware::Pal), 240);
     }
 
+    // ---- Group C: refresh rate and the SPC clock ratio ---------------------
+
+    /// SPC700 program that counts free-running loop iterations for as long as
+    /// the 65816 lets it, and publishes the 16-bit total on demand. Assembled
+    /// by hand from the SPC700 opcode table (fullsnes "SPC700 CPU"):
+    ///
+    /// ```text
+    /// wait_start:                      ; $F7 is port 3 (CPU -> SPC)
+    ///   E4 F7      MOV A,$F7
+    ///   68 3C      CMP A,#$3C          ; start token
+    ///   D0 FA      BNE wait_start
+    ///   E8 00      MOV A,#$00          ; zero the 16-bit counter at $10/$11
+    ///   C4 10      MOV $10,A
+    ///   C4 11      MOV $11,A
+    /// loop:
+    ///   E4 F7      MOV A,$F7
+    ///   68 5A      CMP A,#$5A          ; stop token
+    ///   F0 08      BEQ stop
+    ///   AB 10      INC $10
+    ///   D0 F6      BNE loop
+    ///   AB 11      INC $11
+    ///   2F F2      BRA loop
+    /// stop:
+    ///   E4 10      MOV A,$10
+    ///   C4 F4      MOV $F4,A           ; counter low  -> CPU $2140
+    ///   E4 11      MOV A,$11
+    ///   C4 F5      MOV $F5,A           ; counter high -> CPU $2141
+    ///   E8 A5      MOV A,#$A5
+    ///   C4 F6      MOV $F6,A           ; "published"  -> CPU $2142
+    /// spin:
+    ///   2F FE      BRA spin
+    /// ```
+    ///
+    /// The start token matters: after the upload handshake port 3 still holds
+    /// the entry address's high byte, so the counter must not begin until the
+    /// CPU has aligned it to a frame boundary.
+    #[rustfmt::skip]
+    const SPC_FRAME_COUNTER: [u8; 40] = [
+        0xE4, 0xF7, 0x68, 0x3C, 0xD0, 0xFA,
+        0xE8, 0x00, 0xC4, 0x10, 0xC4, 0x11,
+        0xE4, 0xF7, 0x68, 0x5A, 0xF0, 0x08,
+        0xAB, 0x10, 0xD0, 0xF6, 0xAB, 0x11, 0x2F, 0xF2,
+        0xE4, 0x10, 0xC4, 0xF4, 0xE4, 0x11, 0xC4, 0xF5,
+        0xE8, 0xA5, 0xC4, 0xF6, 0x2F, 0xFE,
+    ];
+    const SPC_ORIGIN: u16 = 0x0200;
+    const SPC_START_TOKEN: u8 = 0x3C;
+    const SPC_STOP_TOKEN: u8 = 0x5A;
+    const SPC_PUBLISHED: u8 = 0xA5;
+    /// Frames the SPC counter is left running for. Long enough that the ~0.9%
+    /// clock-ratio term is thousands of counts wide, short enough that both
+    /// regions' counters stay inside 16 bits.
+    const MEASURED_FRAMES: u8 = 20;
+
+    /// Emits a wait for the VBlank flag's next rising edge (low first, so a
+    /// mid-VBlank start still lands on a real edge).
+    fn emit_wait_vblank_edge(fixture: &mut FixtureRom) {
+        let wait_low = fixture.pos();
+        fixture.lda_abs(HVBJOY);
+        fixture.and_imm(0x80);
+        fixture.bne_to(wait_low);
+        let wait_high = fixture.pos();
+        fixture.lda_abs(HVBJOY);
+        fixture.and_imm(0x80);
+        fixture.beq_to(wait_high);
+    }
+
+    /// Uploads [`SPC_FRAME_COUNTER`], runs it across exactly
+    /// [`MEASURED_FRAMES`] frames, and publishes the 16-bit count to the
+    /// result block.
+    fn spc_frame_counter_rom() -> Vec<u8> {
+        let mut fixture = FixtureRom::new(b"PAL SPC RATE");
+        fixture.upload_spc_program(SPC_ORIGIN, SPC_ORIGIN, &SPC_FRAME_COUNTER);
+
+        // Align the measurement window to a frame boundary before starting.
+        emit_wait_vblank_edge(&mut fixture);
+        fixture.store_imm_abs(0x2143, SPC_START_TOKEN);
+
+        fixture.ldx_imm(0x00);
+        let frame_loop = fixture.pos();
+        emit_wait_vblank_edge(&mut fixture);
+        fixture.inx();
+        fixture.cpx_imm(MEASURED_FRAMES);
+        fixture.bne_to(frame_loop);
+
+        fixture.store_imm_abs(0x2143, SPC_STOP_TOKEN);
+        let wait_published = fixture.pos();
+        fixture.lda_abs(0x2142);
+        fixture.cmp_imm(SPC_PUBLISHED);
+        fixture.bne_to(wait_published);
+
+        fixture.lda_abs(0x2140);
+        fixture.sta_long(RESULT_ADDR);
+        fixture.lda_abs(0x2141);
+        fixture.sta_long(RESULT_ADDR + 1);
+        fixture.pass_marker_and_idle();
+        fixture.build()
+    }
+
+    fn measure_spc_counts(hardware: SnesHardware) -> u32 {
+        let label = format!("spc-rate-{hardware:?}.sfc");
+        let config = RunConfig::new(0, 60).with_hardware(hardware);
+        let result = run_rom(&spc_frame_counter_rom(), &label, config);
+        assert_passed(&result, &label);
+        u32::from(result.result_bytes[0]) | (u32::from(result.result_bytes[1]) << 8)
+    }
+
+    /// The end-to-end refresh-rate and APU-clock check.
+    ///
+    /// Over the same number of frames, a PAL console gives the SPC700 more
+    /// wall-clock time for two independent reasons, and this ratio is the
+    /// product of both:
+    ///
+    /// * the frame is longer -- 312x1364 = 425,568 master clocks against
+    ///   NTSC's 357,366 average (a factor of 1.190846); and
+    /// * each master clock is longer -- 21,281,370 Hz against 21,477,270 Hz,
+    ///   while the SPC700's own 24.576 MHz crystal is unchanged (a factor of
+    ///   1.009205).
+    ///
+    /// Expected ratio 1.201808. Had the APU kept the NTSC clock denominator
+    /// only the first term would apply and the ratio would be 1.190846, which
+    /// the tolerance here deliberately excludes. Comparing the two runs rather
+    /// than asserting absolute counts makes the check independent of how many
+    /// SPC cycles the counting loop itself takes.
+    #[test]
+    fn pal_frames_give_the_spc700_proportionally_more_time() {
+        let ntsc = measure_spc_counts(SnesHardware::Ntsc);
+        let pal = measure_spc_counts(SnesHardware::Pal);
+
+        assert!(ntsc > 1_000, "NTSC counter should have advanced: {ntsc}");
+        let ratio = f64::from(pal) / f64::from(ntsc);
+        assert!(
+            (ratio - 1.201808).abs() < 0.004,
+            "PAL/NTSC SPC counts should be in the 1.201808 frame-length x \
+             clock-rate ratio (1.190846 would mean the APU still runs on the \
+             NTSC master clock), got {ratio:.6} from ntsc={ntsc} pal={pal}"
+        );
+    }
+
     /// The result-block plumbing the measurement fixtures rely on: a fixture
     /// stores a byte behind the marker and the runner hands it back.
     #[test]
