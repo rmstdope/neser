@@ -256,6 +256,28 @@ impl FixtureRom {
         }
     }
 
+    /// Serially reads `bits` bits from both data lines of `joy_addr` in a
+    /// single pass: data1 (bit 0) is packed MSB-first into consecutive WRAM
+    /// bytes at `wram0`, data2 (bit 1) at `wram1`. Each bit reads `joy_addr`
+    /// exactly once (one clock), so the two controllers a multitap presents on
+    /// data1/data2 are captured simultaneously, as on hardware. `bits` must be a
+    /// multiple of 8 so every destination byte is fully overwritten.
+    pub(crate) fn serial_read_pair(&mut self, joy_addr: u16, bits: usize, wram0: u16, wram1: u16) {
+        assert!(
+            bits > 0 && bits.is_multiple_of(8),
+            "serial read must be whole bytes"
+        );
+        for bit in 0..bits {
+            let d0 = wram0 + (bit / 8) as u16;
+            let d1 = wram1 + (bit / 8) as u16;
+            self.lda_abs(joy_addr);
+            self.emit(&[0x4A]); // LSR A: data1 (bit 0) -> carry
+            self.emit(&[0x2E, (d0 & 0xFF) as u8, (d0 >> 8) as u8]); // ROL wram0
+            self.emit(&[0x4A]); // LSR A: data2 (bit 1) -> carry
+            self.emit(&[0x2E, (d1 & 0xFF) as u8, (d1 >> 8) as u8]); // ROL wram1
+        }
+    }
+
     /// `INIDISP ($2100) <- $8F`: force blank on at full brightness, so
     /// VRAM/CGRAM/OAM are freely accessible by CPU and DMA.
     pub(crate) fn force_blank_on(&mut self) {

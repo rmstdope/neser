@@ -523,6 +523,11 @@ fn capture_is_disabled_for_fixture(name: &str) -> bool {
         return true;
     }
 
+    // The multitap input fixtures (#2891) render nothing meaningful either.
+    if stem.is_some_and(|stem| stem.starts_with("multitap-")) {
+        return true;
+    }
+
     matches!(
         stem,
         Some("bus-byte-pass")
@@ -1282,6 +1287,12 @@ mod tests {
             // Super Scope family, disabled by the `super-scope-*` prefix (#2890).
             "super-scope-idle.sfc",
             "super-scope-latch-fire.sfc",
+            // Multitap family, disabled by the `multitap-*` prefix (#2891).
+            "multitap-detect.sfc",
+            "multitap-idle.sfc",
+            "multitap-isolate.sfc",
+            "multitap-example-sequence.sfc",
+            "multitap-auto-joypad.sfc",
             "timeout.sfc",
         ] {
             let result = run_rom_with_capture(&pass_marker_rom(), name, short_config(), true);

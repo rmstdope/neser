@@ -305,6 +305,15 @@ Test suites:
   (`$4016`/`$4017`), and the aim latch reading back OPHCT/OPVCT
   (`$213C`/`$213D`) with the Mesen2 centering offset (aimX+10, aimY-3).
   Results via the WRAM pass/fail marker.
+- `input_multitap_tests.rs` -- Super Multitap fixtures (#2891), assembled
+  in-code via the shared `fixture_rom.rs` builder (no on-disk assets) and
+  cross-checked against Mesen2: the strobe-high detection signature
+  (`$4017` reads `0x02` while OUT0 is high), a no-buttons baseline and per-slot
+  isolation across all four slots, the WRIO `$4201` bit-7 pair select with
+  data1/data2 controller ordering, the issue's scripted example sequence
+  (slot 1 A, slot 2 B, slot 3 Start, slot 4 Right, then released) with
+  held/released transitions, and the auto-joypad path latching the selected
+  pair into JOY2/JOY4. Results via the WRAM pass/fail marker.
 - `kungfufurby_nmi_tests.rs` / `kungfufurby_irq_tests.rs` -- KungFuFurby's
   2005-2008 NMI/H-V-IRQ test ROM collection (#2883/#3049,
   `roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-ROMs/`, see its
