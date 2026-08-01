@@ -36,6 +36,11 @@ pub(super) const SCREEN_HEIGHT_TALL: usize = 239;
 pub(super) const SCREEN_WIDTH_MAX: usize = 512;
 /// Maximum framebuffer height supported by the SNES PPU.
 pub(super) const SCREEN_HEIGHT_MAX: usize = 478;
+/// Lines cropped from the top of a 239-line overscan frame to produce the
+/// Mesen2-compatible 224-line output window (NESER rows 7..231, Rust-exclusive).
+/// Mesen2 centres the 224-line window inside the 239-line region, cutting 7 lines
+/// from the top and 8 from the bottom (#3001, verified in #2879).
+pub(super) const OVERSCAN_CROP_TOP: usize = 7;
 /// First visible dot within a scanline (active display is dots 22..=277).
 pub(super) const VISIBLE_DOT_START: u16 = 22;
 /// First visible scanline (active display is lines 1..=224).
@@ -647,16 +652,20 @@ impl Ppu {
 
     /// Active output geometry for the current frame.
     pub fn frame_dimensions(&self) -> (u32, u32) {
-        let width = if self.hires_output_enabled() {
+        // Screen interlace ($2133 bit 0) column-doubles to 512 px wide in Mesen2
+        // even when no hires mode is active; NESER matches that convention (#3001).
+        let width = if self.hires_output_enabled() || self.interlace_enabled() {
             SCREEN_WIDTH_MAX
         } else {
             SCREEN_WIDTH
         };
-        let active_height = self.active_screen_height();
+        // 239-line overscan is cropped to the standard 224-line window to match
+        // Mesen2's output geometry (#3001).  Internal rendering still covers all
+        // 239 lines; only the snapshot clips.
         let height = if self.interlace_enabled() {
-            active_height * 2
+            SCREEN_HEIGHT * 2
         } else {
-            active_height
+            SCREEN_HEIGHT
         };
         (width as u32, height as u32)
     }
@@ -855,10 +864,15 @@ mod tests {
 
         assert_eq!(ppu.frame_dimensions(), (256, 224));
 
+        // Mode 5 (hires) + screen interlace: already 512 wide from hires.
         ppu.write_register(0x2105, 0x05);
         ppu.write_register(0x2133, 0x01);
-
         assert_eq!(ppu.frame_dimensions(), (512, 448));
+
+        // Non-hires screen interlace: column-doubled to 512 wide to match Mesen2 (#3001).
+        let mut ppu2 = Ppu::new();
+        ppu2.write_register(0x2133, 0x01);
+        assert_eq!(ppu2.frame_dimensions(), (512, 448));
     }
 
     #[test]
@@ -871,15 +885,19 @@ mod tests {
     }
 
     #[test]
-    fn setini_overscan_mode_enables_239_line_output_height() {
+    fn setini_overscan_mode_clips_output_to_224_lines_to_match_mesen2() {
+        // Internal rendering still covers 239 lines, but the snapshot is clipped
+        // to the Mesen2-compatible 224-line window (#3001).
         let mut ppu = Ppu::new();
         assert_eq!(ppu.frame_dimensions(), (256, 224));
 
+        // Overscan only: clipped to 256×224.
         ppu.write_register(0x2133, 0x04);
-        assert_eq!(ppu.frame_dimensions(), (256, 239));
+        assert_eq!(ppu.frame_dimensions(), (256, 224));
 
+        // Overscan + screen interlace: both normalizations applied → 512×448.
         ppu.write_register(0x2133, 0x05);
-        assert_eq!(ppu.frame_dimensions(), (256, 478));
+        assert_eq!(ppu.frame_dimensions(), (512, 448));
     }
 
     #[test]

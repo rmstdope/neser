@@ -469,16 +469,17 @@ mod tests {
         );
     }
 
-    /// SETINI bit 2 selects the 239-line tall screen. It is a PPU mode, not a
-    /// region property: both consoles grow the active area to 239 lines and
-    /// take their extra lines out of blanking.
+    /// SETINI bit 2 selects the 239-line tall screen.  It is a PPU mode, not a
+    /// region property: both consoles grow the active area to 239 lines.  The
+    /// Mesen2-compatible snapshot clips the output to the standard 224-line
+    /// window (#3001) so both regions report 256×224.
     #[test]
-    fn overscan_output_is_239_lines_in_both_regions() {
+    fn overscan_output_is_224_lines_mesen2_compat_in_both_regions() {
         let ntsc = render_banded_screen(0x04, SnesHardware::Ntsc);
         let pal = render_banded_screen(0x04, SnesHardware::Pal);
 
-        assert_eq!(ntsc.screen_dimensions, (256, 239));
-        assert_eq!(pal.screen_dimensions, (256, 239));
+        assert_eq!(ntsc.screen_dimensions, (256, 224));
+        assert_eq!(pal.screen_dimensions, (256, 224));
         assert_eq!(
             ntsc.screen_crc32, pal.screen_crc32,
             "overscan output must match across regions (ntsc=0x{:08X} pal=0x{:08X})",
