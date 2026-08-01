@@ -65,9 +65,22 @@ impl Snes {
         }
     }
 
+    /// Whether the header's `$FFD9` destination code implies 50 Hz PAL timing.
+    ///
+    /// fullsnes "Country (also implies PAL/NTSC) (FFD9h)" lists, in order:
+    /// `00h` Japan and `01h` USA/Canada as NTSC; `02h..0Ch`
+    /// (Europe/Scandinavia/Finland/Denmark/France/Holland/Spain/Germany/Italy/
+    /// China/Indonesia) as PAL -- France is SECAM but still 50 Hz; `0Dh` South
+    /// Korea and `0Fh` Canada as NTSC; `10h` Brazil as PAL-M, which is 60 Hz
+    /// and therefore NTSC *timing*; and `11h` Australia as PAL.
+    ///
+    /// Every remaining code is marked "(?)" by fullsnes -- `0Eh` "Common" and
+    /// `12h`-`14h` "Other variation" -- so they fall through to the NTSC
+    /// default rather than being guessed at. (Mesen2 additionally treats `12h`
+    /// as PAL and ares treats every non-NTSC code as PAL; neither is
+    /// spec-supported, and no real cartridge is known to use those codes.)
     fn country_implies_pal(country: u8) -> bool {
-        // Fullsnes FFD9 country codes: 0x02..=0x0C are PAL/50Hz territories.
-        (0x02..=0x0C).contains(&country)
+        matches!(country, 0x02..=0x0C | 0x11)
     }
 
     fn resolve_hardware_mode(
@@ -631,6 +644,54 @@ mod tests {
         assert_eq!(
             snes.target_frame_duration(),
             Duration::from_nanos(FRAME_DURATION_PAL_NANOS)
+        );
+    }
+
+    /// The whole fullsnes `$FFD9` table, code by code, including both sides of
+    /// every NTSC/PAL boundary. Brazil (`10h`) is PAL-M -- a 60 Hz variant --
+    /// so it takes NTSC timing despite the "PAL" in its name, and Australia
+    /// (`11h`) sits immediately after it on the PAL side.
+    #[test]
+    fn header_country_codes_follow_the_fullsnes_pal_ntsc_table() {
+        for country in [0x00u8, 0x01, 0x0D, 0x0E, 0x0F, 0x10, 0x12, 0x13, 0x14, 0xFF] {
+            assert!(
+                !Snes::country_implies_pal(country),
+                "country {country:#04X} should select NTSC timing"
+            );
+        }
+        for country in [
+            0x02u8, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x11,
+        ] {
+            assert!(
+                Snes::country_implies_pal(country),
+                "country {country:#04X} should select PAL timing"
+            );
+        }
+    }
+
+    #[test]
+    fn target_frame_duration_auto_detects_pal_for_australia() {
+        // fullsnes: "11h U Australia (PAL)". Sits one code past Brazil's
+        // 60 Hz PAL-M, so it is the boundary the old 0x02..=0x0C range missed.
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom_with_country(0x11), "aus.sfc")
+            .unwrap();
+
+        assert_eq!(
+            snes.target_frame_duration(),
+            Duration::from_nanos(FRAME_DURATION_PAL_NANOS)
+        );
+    }
+
+    #[test]
+    fn target_frame_duration_keeps_ntsc_for_brazils_60hz_pal_m() {
+        let mut snes = make_snes();
+        snes.load_rom(&valid_lorom_nop_rom_with_country(0x10), "bra.sfc")
+            .unwrap();
+
+        assert_eq!(
+            snes.target_frame_duration(),
+            Duration::from_nanos(FRAME_DURATION_NANOS)
         );
     }
 
