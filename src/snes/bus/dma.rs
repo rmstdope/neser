@@ -160,11 +160,10 @@ impl DmaController {
         //
         //     cargo test --no-default-features --lib mosaic_mode5_sized
         //
-        // The witness has now changed TWICE -- before #3070 it was
-        // `inidisp_forgot_to_force_blank`, after #3070 and before #3074 it was
-        // `mosaic_mode5_sized`, and #3074 moved which CPU cycle a transfer runs in again. So
-        // re-derive which vector objects rather than trusting this paragraph; only the
-        // conclusion (keep the 8) has survived every re-measurement.
+        // The witness has already moved once -- before #3070 it was
+        // `inidisp_forgot_to_force_blank` -- and #3074 changed which CPU cycle a transfer runs
+        // in, so it can move again. Re-derive which vector objects rather than trusting this
+        // paragraph; only the conclusion (keep the 8) has survived every re-measurement.
         //
         // Why the rule that is right for HDMA is not obviously right here: Mesen2 re-enters
         // `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing during a

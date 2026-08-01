@@ -1116,6 +1116,12 @@ impl<B: SnesBus> Cpu<B> {
                 }
                 0x420B => {
                     // Starting DMA introduces the same lock window before IRQ/NMI recognition.
+                    //
+                    // NOTE (#3081): this instruction-granular lock has NO Mesen2 counterpart --
+                    // the reference's only DMA interrupt lock is the per-cycle `IrqLock` that
+                    // #3074 ported. Deleting this arm leaves the whole `snes::` suite green,
+                    // including the 19-value Sour hardware oracle, so it is both unpinned and
+                    // unmeasured. Left alone here rather than changed unmeasured; see #3081.
                     if value != 0 {
                         self.irq_lock_step = true;
                     }
@@ -3729,6 +3735,16 @@ impl<B: SnesBus> Cpu<B> {
         self.memory_bus_cycles += 1;
     }
 
+    /// Opens a CPU cycle: run any pending DMA, then resolve the NMI arm counter -- Mesen2's
+    /// `ProcessCpuCycle` order (`IrqLock = ProcessPendingTransfers()` then
+    /// `DetectNmiSignalEdge()`). The hook must come first because the lock it returns governs
+    /// this very cycle's sampling (#3074); it stays ahead of every `bus.tick()`, so #3049's
+    /// reason for resolving at cycle start is unaffected.
+    fn begin_cpu_cycle(&mut self) {
+        self.dma_locked_this_cycle = self.bus.gpdma_cycle_hook();
+        self.resolve_nmi_arm_counter();
+    }
+
     /// Advances the NMI edge-to-dispatch latch by one CPU cycle. Called once
     /// from each of the three CPU-cycle-boundary functions ([`Self::tick_read`],
     /// [`Self::tick_write`], [`Self::tick_internal_cycle`]) -- i.e. exactly once
@@ -3754,16 +3770,7 @@ impl<B: SnesBus> Cpu<B> {
     /// nmi.smc, #3049: Mesen2 pushes the not-yet-executed branch opcode's own
     /// address as the interrupted PC, meaning it recognizes NMI before that
     /// instruction starts at all).
-    /// Opens a CPU cycle: run any pending DMA, then resolve the NMI arm counter -- Mesen2's
-    /// `ProcessCpuCycle` order (`IrqLock = ProcessPendingTransfers()` then
-    /// `DetectNmiSignalEdge()`). The hook must come first because the lock it returns governs
-    /// this very cycle's sampling (#3074); it stays ahead of every `bus.tick()`, so #3049's
-    /// reason for resolving at cycle start is unaffected.
-    fn begin_cpu_cycle(&mut self) {
-        self.dma_locked_this_cycle = self.bus.gpdma_cycle_hook();
-        self.resolve_nmi_arm_counter();
-    }
-
+    ///
     /// Mesen2 `DetectNmiSignalEdge`'s counter half:
     ///
     /// ```text
@@ -3782,7 +3789,11 @@ impl<B: SnesBus> Cpu<B> {
             self.nmi_arm_counter -= 1;
             if self.nmi_arm_counter == 0 {
                 if self.dma_locked_this_cycle {
+                    // Re-arm rather than drop: the edge must survive the locked cycle and
+                    // resolve on the next one. Collapsing this to a bare `if !locked { ... }`
+                    // loses the re-arm and costs four Sour dma_irq_test sub-cases.
                     self.nmi_arm_counter = 1;
+                    self.nmi_pending = false;
                 } else {
                     self.nmi_pending = true;
                 }
@@ -3825,6 +3836,8 @@ impl<B: SnesBus> Cpu<B> {
         self.poll_and_arm_nmi_edge();
         self.resample_irq_line();
     }
+
+    /// Read two bytes little-endian using linear 24-bit addressing.
     fn read16(&mut self, addr: u32) -> u16 {
         let lo_addr = addr & 0xFF_FFFF;
         let hi_addr = lo_addr.wrapping_add(1) & 0xFF_FFFF;

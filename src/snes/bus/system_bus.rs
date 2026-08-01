@@ -559,12 +559,26 @@ impl SnesSystemBus {
     }
 
     /// Run an armed `pending_hdma` slot (kind 0 = frame init, 1 = line transfer).
-    fn run_pending_hdma(&mut self, kind: u8) {
+    /// Runs an armed HDMA slot and reports whether it actually transferred anything, which
+    /// is what the CPU turns into its one-cycle interrupt lock.
+    ///
+    /// With HDMAEN == 0 both `hdma_init` and `hdma_do_line` return immediately having charged
+    /// no clocks, and Mesen2 reports that as no lock -- `InitHdmaChannels` and
+    /// `ProcessHdmaChannels` both `return false` when `!_state.HdmaChannels`. The frame-init
+    /// slot is armed unconditionally (as in Mesen2's `BeginHdmaInit`), so without this check
+    /// every ROM would take one spurious lock cycle per frame (#3074).
+    fn run_pending_hdma(&mut self, kind: u8) -> bool {
+        // Sampled BEFORE the run, and the run happens either way: `hdma_init` resets the
+        // channel bookkeeping (active mask, per-channel line counters) and only THEN returns
+        // early on HDMAEN == 0, exactly as Mesen2's `InitHdmaChannels` does. Skipping the
+        // call to avoid the lock would drop that reset and desynchronise HDMA state.
+        let did_work = self.hdmaen != 0;
         if kind == 0 {
             self.hdma_init();
         } else {
             self.hdma_do_line();
         }
+        did_work
     }
 
     /// Fallback for bus-only callers with no CPU driving `gpdma_cycle_hook`:
@@ -1412,8 +1426,7 @@ impl SnesBus for SnesSystemBus {
                 self.pending_hdma = Some((countdown - 1, kind, fallback));
             } else {
                 self.pending_hdma = None;
-                self.run_pending_hdma(kind);
-                return true;
+                return self.run_pending_hdma(kind);
             }
         }
         if let Some((countdown, mdmaen, fallback)) = self.pending_gpdma {
@@ -2366,6 +2379,36 @@ mod tests {
             "the cycle that runs the HDMA transfer locks, as in Mesen2"
         );
         assert_eq!(bus.read(0x7E0200), 0x3C, "and the transfer really happened");
+    }
+
+    /// #3074/#3080 review: the frame-init HDMA slot is armed unconditionally (matching
+    /// Mesen2's `BeginHdmaInit`), but a run with HDMAEN == 0 does no work at all --
+    /// `DmaController::hdma_init` returns immediately. Mesen2 reports that as NO lock:
+    /// `InitHdmaChannels` and `ProcessHdmaChannels` both `return false` when
+    /// `!_state.HdmaChannels`. Reporting a lock there gives every ROM one spurious
+    /// interrupt-lock cycle per frame, including ROMs that never touch HDMA.
+    #[test]
+    fn an_hdma_run_with_no_channels_enabled_reports_no_lock() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        assert_eq!(bus.read(0x00420C), 0x00, "HDMAEN starts clear");
+
+        // Drive to the once-per-frame init trigger with a CPU owning the cycle boundaries,
+        // then run the armed slot from the hook.
+        bus.gpdma_cycle_hook();
+        let mut locked_with_no_channels = false;
+        for _ in 0..2_000 {
+            bus.tick();
+            if bus.pending_hdma.is_some() {
+                // Consume the two-cycle arming delay, then the run itself.
+                bus.gpdma_cycle_hook();
+                locked_with_no_channels |= bus.gpdma_cycle_hook();
+                break;
+            }
+        }
+        assert!(
+            !locked_with_no_channels,
+            "an HDMA slot that transfers nothing must not lock interrupt recognition"
+        );
     }
 
     /// #3074: the clock fallback exists only for callers that never drive `gpdma_cycle_hook`.
