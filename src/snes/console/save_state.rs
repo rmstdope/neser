@@ -345,6 +345,14 @@ pub struct SnesPpuState {
     pub ophct_read_high: bool,
     #[serde(default)]
     pub opvct_read_high: bool,
+    /// Super Scope aim-latch request (pending until the beam reaches it).
+    /// Defaults to none for states saved before it existed.
+    #[serde(default)]
+    pub location_latch_request: bool,
+    #[serde(default)]
+    pub location_latch_x: u16,
+    #[serde(default)]
+    pub location_latch_y: u16,
     #[serde(default)]
     pub ppu2_open_bus: u8,
     #[serde(default)]

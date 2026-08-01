@@ -35,13 +35,10 @@ impl SuperScopeController {
 
     fn current_bit(&self) -> bool {
         match self.counter {
-            0 => {
-                if self.offscreen {
-                    false
-                } else {
-                    self.trigger_output
-                }
-            }
+            // The fire button is reported regardless of aim (games shoot
+            // off-screen to reload); only the Null/offscreen bit (bit 6)
+            // reflects the aim. Matches Mesen2 `SuperScope::ToByte`.
+            0 => self.trigger_output,
             1 => self.cursor_pressed,
             2 => self.turbo_enabled,
             3 => self.pause_output,
@@ -134,6 +131,19 @@ impl SnesController for SuperScopeController {
         true
     }
 
+    fn superscope_latch_request(&self) -> Option<(u16, u16)> {
+        // The light sensor latches only while the trigger or cursor is held and
+        // the scope is aimed at the visible screen. Mirror Mesen2's centering
+        // offset: OPHCT = aimX + 10, OPVCT = max(0, aimY - 3).
+        if (self.trigger_pressed || self.cursor_pressed) && !self.offscreen {
+            let x = (self.x + 10).max(0) as u16;
+            let y = (self.y - 3).max(0) as u16;
+            Some((x, y))
+        } else {
+            None
+        }
+    }
+
     fn capture_state(&self) -> SnesControllerState {
         SnesControllerState {
             superscope_x: self.x,
@@ -205,5 +215,57 @@ mod tests {
             bits,
             [true, true, false, true, false, false, false, false, true]
         );
+    }
+
+    #[test]
+    fn trigger_bit_is_reported_even_when_aim_is_off_screen() {
+        // The fire button is a physical button: it must be reported regardless
+        // of where the scope is aimed (games shoot off-screen to reload). Only
+        // the separate Null/offscreen bit (bit 6) reflects the aim. Matches
+        // Mesen2 `SuperScope::ToByte` (fire bit set independent of coordinates).
+        let mut scope = SuperScopeController::new();
+        scope.set_superscope_position(-1, 120); // off-screen (negative X)
+        scope.set_superscope_trigger(true);
+        latch(&mut scope);
+
+        let mut bits = Vec::new();
+        for _ in 0..9 {
+            bits.push(scope.read().0);
+        }
+
+        // bit0 trigger = 1 (button reported), bit6 offscreen = 1, signature tail = 1.
+        assert_eq!(
+            bits,
+            [true, false, false, false, false, false, true, false, true]
+        );
+    }
+
+    #[test]
+    fn latch_request_offsets_aim_and_requires_button_and_onscreen() {
+        let mut scope = SuperScopeController::new();
+        scope.set_superscope_position(100, 80);
+        // No button held: no latch request.
+        assert_eq!(scope.superscope_latch_request(), None);
+
+        // Trigger held on-screen: request carries the Mesen2 centering offset.
+        scope.set_superscope_trigger(true);
+        assert_eq!(scope.superscope_latch_request(), Some((110, 77)));
+
+        // The cursor button also latches.
+        scope.set_superscope_trigger(false);
+        scope.set_superscope_cursor(true);
+        assert_eq!(scope.superscope_latch_request(), Some((110, 77)));
+
+        // Aimed off-screen: no latch even with a button held.
+        scope.set_superscope_position(-1, 80);
+        assert_eq!(scope.superscope_latch_request(), None);
+    }
+
+    #[test]
+    fn latch_request_clamps_low_vertical_aim_to_zero() {
+        let mut scope = SuperScopeController::new();
+        scope.set_superscope_position(0, 1); // aimY - 3 would be negative
+        scope.set_superscope_cursor(true);
+        assert_eq!(scope.superscope_latch_request(), Some((10, 0)));
     }
 }

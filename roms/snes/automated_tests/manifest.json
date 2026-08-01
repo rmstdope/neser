@@ -521,6 +521,27 @@
       ]
     },
     {
+      "id": "snes-input-super-scope-fixtures",
+      "suite": "input_super_scope_tests",
+      "platform": "snes",
+      "source": {
+        "url": "in-repo synthetic fixtures, src/snes/integration_tests/input_super_scope_tests.rs",
+        "ref": "issue-2890"
+      },
+      "license": "n/a (synthetic, authored in-repo)",
+      "oracle_type": "rom_pass_fail",
+      "notes": "Deterministic in-code assembled LoROM fixture programs (fixture_rom.rs) verifying the Super Scope against the fullsnes/SNESdev serial protocol and cross-checked against Mesen2: the 16-bit packet bit layout (fire, cursor, turbo, pause, offscreen/Null, signature ones), fire and pause single-shot semantics, cursor as a level, turbo toggle plus auto-fire, the offscreen/Null bit tracking on/off-screen aim, fire reported off-screen (shoot-to-reload), the issue's scripted example sequence, port-1 vs port-2 routing ($4016/$4017), and the aim-latch feature reading back OPHCT/OPVCT ($213C/$213D) with the Mesen2 centering offset (aimX+10, aimY-3). Pass/fail results are reported through the rom_runner NSER WRAM marker oracle; no on-disk ROMs or visual baselines.",
+      "variants": [
+        {
+          "id": "in_code_fixtures",
+          "status": "committed_ci",
+          "path": "src/snes/integration_tests",
+          "refresh_command": null,
+          "notes": "No on-disk assets; fixture programs are emitted at test run time by input_super_scope_tests.rs via the shared fixture_rom builder."
+        }
+      ]
+    },
+    {
       "id": "snes-tests-kungfufurby-nmi-irq",
       "suite": "rom_pass_fail",
       "platform": "snes",

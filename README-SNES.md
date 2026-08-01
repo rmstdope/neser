@@ -296,6 +296,15 @@ Test suites:
   button edges, release), sensitivity cycling 0->1->2->0 on `$4016` clocks
   while the strobe is high, 7-bit magnitude clamping at +/-127, and a
   port-2 mouse on `$4017`. Results via the WRAM pass/fail marker.
+- `input_super_scope_tests.rs` -- Super Scope fixtures (#2890), assembled
+  in-code via the shared `fixture_rom.rs` builder (no on-disk assets) and
+  cross-checked against Mesen2: the 16-bit packet bit layout, fire/pause
+  single-shot vs cursor level, turbo toggle plus auto-fire, the offscreen/Null
+  bit tracking on/off-screen aim, fire reported off-screen (shoot-to-reload),
+  the issue's scripted example sequence, port-1/port-2 routing
+  (`$4016`/`$4017`), and the aim latch reading back OPHCT/OPVCT
+  (`$213C`/`$213D`) with the Mesen2 centering offset (aimX+10, aimY-3).
+  Results via the WRAM pass/fail marker.
 - `kungfufurby_nmi_tests.rs` / `kungfufurby_irq_tests.rs` -- KungFuFurby's
   2005-2008 NMI/H-V-IRQ test ROM collection (#2883/#3049,
   `roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-ROMs/`, see its

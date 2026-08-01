@@ -249,6 +249,13 @@ pub trait SnesController {
         false
     }
 
+    /// Super Scope only: the `(OPHCT, OPVCT)` aim-latch request to forward to
+    /// the PPU when the fire or cursor button is held and the aim is on-screen,
+    /// or `None` otherwise. The coordinates carry the Mesen2 centering offset.
+    fn superscope_latch_request(&self) -> Option<(u16, u16)> {
+        None
+    }
+
     /// Whether this device is an SNES mouse.
     fn is_mouse(&self) -> bool {
         false
@@ -641,6 +648,15 @@ impl InputPorts {
     /// Returns true if any controller port currently hosts a Super Scope.
     pub fn has_superscope(&self) -> bool {
         self.port1.is_superscope() || self.port2.is_superscope()
+    }
+
+    /// The `(OPHCT, OPVCT)` aim-latch request from a Super Scope on either port,
+    /// or `None` when no scope is aimed on-screen with the fire/cursor held. The
+    /// bus polls this once per frame to re-arm the PPU location latch.
+    pub fn superscope_latch_request(&self) -> Option<(u16, u16)> {
+        self.port1
+            .superscope_latch_request()
+            .or_else(|| self.port2.superscope_latch_request())
     }
 
     /// Returns true if the given physical SNES port hosts a mouse.

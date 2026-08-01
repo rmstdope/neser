@@ -92,6 +92,8 @@ impl Ppu {
         } else {
             self.line_clock += 1;
         }
+        // Super Scope: latch the aimed coordinates once the beam reaches them.
+        self.process_location_latch_request();
         // H/V IRQ is evaluated every master clock so it can fire at the exact
         // sub-dot clock offset used by the hardware ((HTIME+1)*4 + 10).
         self.evaluate_hv_irq();
@@ -228,6 +230,9 @@ impl Ppu {
                 // End of VBlank / top of a new frame. The RDNMI flag falls at intra-line
                 // clock 2 (see `evaluate_nmi_flag_events`).
                 self.vblank_active = false;
+                // Raise the once-per-frame edge the bus uses to re-arm the Super Scope
+                // aim latch before the beam sweeps the visible area.
+                self.frame_start_edge = true;
                 // The field parity still advances even when interlace output is disabled, because
                 // the short/long scanline exceptions are keyed off the latched field state.
                 self.interlace_field = !self.interlace_field;
@@ -275,6 +280,37 @@ impl Ppu {
     pub(super) fn latch_strobe(&mut self) {
         if self.wrio & 0x80 != 0 {
             self.latch_counters();
+        }
+    }
+
+    /// Super Scope: request a latch of OPHCT/OPVCT at `(x, y)` once the beam
+    /// sweeps past that position this frame (Mesen2 `SetLocationLatchRequest`).
+    pub fn set_location_latch_request(&mut self, x: u16, y: u16) {
+        self.location_latch_request = true;
+        self.location_latch_x = x;
+        self.location_latch_y = y;
+    }
+
+    /// Consume the once-per-frame frame-start edge (top of scanline 0). The bus
+    /// polls the Super Scope and re-arms the aim latch when this returns `true`.
+    pub fn take_frame_start(&mut self) -> bool {
+        std::mem::take(&mut self.frame_start_edge)
+    }
+
+    /// Latch the requested Super Scope aim into OPHCT/OPVCT once the beam
+    /// reaches it (Mesen2 `ProcessLocationLatchRequest`). The latched values are
+    /// the *requested* coordinates, so they are deterministic regardless of the
+    /// exact dot numbering; the beam comparison only decides the timing.
+    fn process_location_latch_request(&mut self) {
+        if !self.location_latch_request {
+            return;
+        }
+        let (x, y) = (self.location_latch_x, self.location_latch_y);
+        if self.position.scanline > y || (self.position.scanline == y && self.position.dot >= x) {
+            self.ophct_latch = x;
+            self.opvct_latch = y;
+            self.counter_latch_flag = true;
+            self.location_latch_request = false;
         }
     }
 
