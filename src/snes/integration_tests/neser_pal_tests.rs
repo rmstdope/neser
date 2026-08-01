@@ -396,6 +396,118 @@ mod tests {
         );
     }
 
+    // ---- Group D: output dimensions and overscan --------------------------
+
+    /// HDMA table driving INIDISP `$2100` master brightness in three
+    /// horizontal bands (80 scanlines each): line-count byte then data byte
+    /// per entry, terminated by a zero line count (fullsnes "HDMA Table
+    /// Format"). Bands give the screen real vertical structure, so the
+    /// cross-region comparison below would notice content shifting rows --
+    /// which a flat backdrop could not.
+    const BRIGHTNESS_BANDS: [u8; 7] = [0x50, 0x0F, 0x50, 0x0A, 0x50, 0x05, 0x00];
+    /// Backdrop colour: BGR555 R=31 G=20 B=8, so the three channels scale
+    /// differently under each band's brightness.
+    const BACKDROP_LOW: u8 = 0x9F;
+    const BACKDROP_HIGH: u8 = 0x22;
+
+    /// Renders the banded screen, lets it settle for four frames, and reports
+    /// PASS from inside VBlank so the runner's snapshot always sees a complete
+    /// frame rather than a partially drawn one.
+    fn banded_screen_rom(setini: u8) -> Vec<u8> {
+        let mut fixture = FixtureRom::new(b"PAL SCREEN BANDS");
+        fixture.force_blank_on();
+        fixture.store_imm_abs(0x2121, 0x00); // CGADD = backdrop entry
+        fixture.store_imm_abs(0x2122, BACKDROP_LOW);
+        fixture.store_imm_abs(0x2122, BACKDROP_HIGH);
+        fixture.store_imm_abs(0x2133, setini);
+
+        let table = fixture.place_data(&BRIGHTNESS_BANDS);
+        fixture.setup_hdma(0, 0x00, 0x00, table, 0x00);
+        fixture.enable_hdma(0x01);
+        fixture.force_blank_off();
+
+        fixture.ldx_imm(0x00);
+        let frame_loop = fixture.pos();
+        emit_wait_vblank_edge(&mut fixture);
+        fixture.inx();
+        fixture.cpx_imm(4);
+        fixture.bne_to(frame_loop);
+        fixture.pass_marker_and_idle();
+        fixture.build()
+    }
+
+    fn render_banded_screen(setini: u8, hardware: SnesHardware) -> RunResult {
+        let label = format!("bands-{setini:02X}-{hardware:?}.sfc");
+        let result = run_pal_fixture(&banded_screen_rom(setini), &label, Some(hardware));
+        assert_passed(&result, &label);
+        result
+    }
+
+    /// PAL changes *when* frames end, never *what* they contain. The active
+    /// area is 224 lines (239 with SETINI overscan) on both consoles, and the
+    /// output framebuffer is the same 256-pixel-wide image -- Mesen2 derives
+    /// its frame height from the overscan flag alone, with no region term.
+    ///
+    /// The two runs are each other's oracle here: identical CRCs over the same
+    /// banded screen prove PAL neither resizes the output nor shifts content
+    /// down the extra 50 blanking lines, and no approved golden is needed.
+    #[test]
+    fn dimensions_and_pixels_are_region_independent() {
+        let ntsc = render_banded_screen(0x00, SnesHardware::Ntsc);
+        let pal = render_banded_screen(0x00, SnesHardware::Pal);
+
+        assert_eq!(ntsc.screen_dimensions, (256, 224));
+        assert_eq!(pal.screen_dimensions, (256, 224));
+        assert_eq!(
+            ntsc.screen_crc32, pal.screen_crc32,
+            "the same banded screen must render identically on both consoles \
+             (ntsc=0x{:08X} pal=0x{:08X})",
+            ntsc.screen_crc32, pal.screen_crc32
+        );
+    }
+
+    /// SETINI bit 2 selects the 239-line tall screen. It is a PPU mode, not a
+    /// region property: both consoles grow the active area to 239 lines and
+    /// take their extra lines out of blanking.
+    #[test]
+    fn overscan_output_is_239_lines_in_both_regions() {
+        let ntsc = render_banded_screen(0x04, SnesHardware::Ntsc);
+        let pal = render_banded_screen(0x04, SnesHardware::Pal);
+
+        assert_eq!(ntsc.screen_dimensions, (256, 239));
+        assert_eq!(pal.screen_dimensions, (256, 239));
+        assert_eq!(
+            ntsc.screen_crc32, pal.screen_crc32,
+            "overscan output must match across regions (ntsc=0x{:08X} pal=0x{:08X})",
+            ntsc.screen_crc32, pal.screen_crc32
+        );
+    }
+
+    /// Guards the comparison above against passing vacuously: a blank or
+    /// uniform screen would satisfy "the CRCs match" without proving anything.
+    /// The banded fixture must differ from an all-black screen, from a
+    /// force-blanked one, and between its 224- and 239-line variants.
+    #[test]
+    fn the_banded_screen_is_a_discriminating_oracle() {
+        let bands = render_banded_screen(0x00, SnesHardware::Pal);
+        let tall = render_banded_screen(0x04, SnesHardware::Pal);
+
+        let mut blank = FixtureRom::new(b"PAL BLANK");
+        blank.force_blank_on();
+        blank.pass_marker_and_idle();
+        let blank = run_pal_fixture(&blank.build(), "blank.sfc", Some(SnesHardware::Pal));
+        assert_passed(&blank, "blank screen");
+
+        assert_ne!(
+            bands.screen_crc32, blank.screen_crc32,
+            "banded screen must not be a blank screen"
+        );
+        assert_ne!(
+            bands.screen_crc32, tall.screen_crc32,
+            "224-line and 239-line renders must differ"
+        );
+    }
+
     /// The result-block plumbing the measurement fixtures rely on: a fixture
     /// stores a byte behind the marker and the runner hands it back.
     #[test]
