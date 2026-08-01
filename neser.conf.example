@@ -406,10 +406,13 @@ nes-vertical_overscan=8
 # -----------------------------------------------------------------------------
 # SNES hardware timing mode.
 # Valid values:
-#   - snes-ntsc: 262 scanlines/frame, ~60 Hz
-#   - snes-pal:  312 scanlines/frame, ~50 Hz
-# Default: auto-detect from cartridge header country (PAL territories -> snes-pal),
-#          with fallback to snes-ntsc.
+#   - snes-ntsc: 262 scanlines/frame, ~60.099 Hz, 21,477,270 Hz master clock
+#   - snes-pal:  312 scanlines/frame, ~50.007 Hz, 21,281,370 Hz master clock
+# The extra PAL scanlines are all blanking: the active display stays 224 lines
+# (239 with overscan) and the output image is the same size in both modes.
+# Default: auto-detect from the cartridge header country code at $FFD9 --
+#          02h-0Ch and 11h (Australia) are PAL territories, everything else
+#          (including 10h Brazil, whose PAL-M is a 60 Hz variant) is NTSC.
 #snes-hardware=snes-ntsc
 #
 # Optional path to a custom SPC700 IPL ROM image.
