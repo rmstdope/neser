@@ -745,7 +745,7 @@ impl<B: SnesBus> Cpu<B> {
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
         let i_before = self.flag_i();
-        let opcode = self.fetch_opcode();
+        let opcode = self.fetch_byte();
         if cpu_trace_level() >= 1 && trace_clock_in_window(self.bus.master_clock()) {
             let operands = self.exec_trace_operands(opcode);
             trace_cpu!(1; "{}", self.format_exec_trace_line(pc_before, &operands));
@@ -1064,16 +1064,6 @@ impl<B: SnesBus> Cpu<B> {
         byte
     }
 
-    /// Fetches the next instruction's opcode byte. Identical to
-    /// [`Self::fetch_byte`] except the read is flagged as an opcode fetch so
-    /// interrupt sampling resumes correctly after a GPDMA (#3065).
-    fn fetch_opcode(&mut self) -> u8 {
-        let addr = (self.pbr as u32) << 16 | self.pc as u32;
-        let byte = self.tick_read_opcode(addr);
-        self.pc = self.pc.wrapping_add(1);
-        byte
-    }
-
     /// Run one read bus cycle for `addr` and return the byte.
     ///
     /// The 65816 samples the data bus 4 master clocks before the end of the
@@ -1082,18 +1072,11 @@ impl<B: SnesBus> Cpu<B> {
     /// then IncMasterClock4 finishes the cycle). The split matters for reads
     /// that race asynchronous hardware: APU port polls at $2140-$2143 (#2914)
     /// and the $2137 H/V counter latch both observe the sampling instant.
+    /// #3065 needed to know whether a read was an opcode fetch, because its suppression
+    /// window opened only for a DMA that ran *after* the opcode byte was sampled. The
+    /// one-cycle lock (#3074) is per-cycle rather than per-instruction, so every read is
+    /// treated alike and that distinction is gone.
     fn tick_read(&mut self, addr: u32) -> u8 {
-        self.tick_read_inner(addr, false)
-    }
-
-    /// A read whose byte is the next instruction's opcode. Interrupt sampling
-    /// resumes here (a new instruction begins) unless a GPDMA runs during this
-    /// cycle *after* the opcode read, which splits the new instruction (#3065).
-    fn tick_read_opcode(&mut self, addr: u32) -> u8 {
-        self.tick_read_inner(addr, true)
-    }
-
-    fn tick_read_inner(&mut self, addr: u32, _is_opcode: bool) -> u8 {
         let cycles = mem_access_cycles(addr, self.fast_rom);
         // Mesen2 `SnesCpu::Read`: SetCpuSpeed for the upcoming access happens BEFORE
         // ProcessCpuCycle, so a DMA that runs at the start of this cycle ends on a whole
@@ -11168,6 +11151,8 @@ mod interrupt_dispatch_tests {
     /// Reports a DMA transfer on a chosen CPU cycle and makes the IRQ line visible from a
     /// chosen cycle, so the one-cycle interrupt lock (#3074) can be tested without a ROM.
     struct DmaLockBus {
+        /// Bank $00 only -- these tests touch nothing else, and a full 16 MB store would be
+        /// allocated once per `run_nops_with` call.
         mem: Vec<u8>,
         cycle: u32,
         /// Cycle index (0-based, counted at the hook) on which a transfer runs.
@@ -11182,7 +11167,7 @@ mod interrupt_dispatch_tests {
     impl DmaLockBus {
         fn new() -> Self {
             Self {
-                mem: vec![0; 0x100_0000],
+                mem: vec![0; 0x1_0000],
                 cycle: 0,
                 dma_on_cycle: None,
                 irq_from_cycle: None,
@@ -11191,18 +11176,29 @@ mod interrupt_dispatch_tests {
             }
         }
 
+        /// Panics outside bank $00 so a test that strays off the modelled region fails loudly
+        /// rather than silently reading zeros.
+        fn offset(addr: u32) -> usize {
+            let addr = addr & 0xFF_FFFF;
+            assert!(
+                addr < 0x1_0000,
+                "DmaLockBus models bank $00 only; got ${addr:06X}"
+            );
+            addr as usize
+        }
+
         fn load(&mut self, addr: u32, data: &[u8]) {
-            let a = (addr & 0xFF_FFFF) as usize;
+            let a = Self::offset(addr);
             self.mem[a..a + data.len()].copy_from_slice(data);
         }
     }
 
     impl crate::snes::bus::SnesBus for DmaLockBus {
         fn read(&self, addr: u32) -> u8 {
-            self.mem[(addr & 0xFF_FFFF) as usize]
+            self.mem[Self::offset(addr)]
         }
         fn write(&mut self, addr: u32, value: u8) {
-            self.mem[(addr & 0xFF_FFFF) as usize] = value;
+            self.mem[Self::offset(addr)] = value;
         }
         fn tick(&mut self) {}
 
