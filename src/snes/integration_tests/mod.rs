@@ -27,6 +27,7 @@ mod neser_hdma_tests;
 mod neser_mode7_tests;
 mod neser_obj_tests;
 mod neser_opt_tests;
+mod neser_pal_tests;
 mod peterlemon_cpu_tests;
 mod peterlemon_ppu_advanced_tests;
 mod peterlemon_ppu_bg_tests;

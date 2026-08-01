@@ -120,6 +120,17 @@ impl FixtureRom {
         self.emit(&[0xA9, value]);
     }
 
+    /// `STA long addr` (24-bit) — stores the current accumulator anywhere in
+    /// the address space, e.g. the `rom_runner` result block in WRAM.
+    pub(crate) fn sta_long(&mut self, addr: u32) {
+        self.emit(&[
+            0x8F, // STA long
+            (addr & 0xFF) as u8,
+            ((addr >> 8) & 0xFF) as u8,
+            ((addr >> 16) & 0xFF) as u8,
+        ]);
+    }
+
     /// `LDA long addr` (24-bit) — reads an 8-bit value from anywhere in the
     /// address space, e.g. the LoROM SRAM window at `$70:0000`.
     pub(crate) fn lda_long(&mut self, addr: u32) {
