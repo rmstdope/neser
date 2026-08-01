@@ -1289,7 +1289,10 @@ mod tests {
             "super-scope-latch-fire.sfc",
             // Multitap family, disabled by the `multitap-*` prefix (#2891).
             "multitap-detect.sfc",
+            "multitap-idle.sfc",
+            "multitap-isolate.sfc",
             "multitap-example-sequence.sfc",
+            "multitap-auto-joypad.sfc",
             "timeout.sfc",
         ] {
             let result = run_rom_with_capture(&pass_marker_rom(), name, short_config(), true);
