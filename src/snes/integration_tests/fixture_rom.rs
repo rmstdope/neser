@@ -76,6 +76,16 @@ impl FixtureRom {
         self.rom[HEADER + 0x18] = ram_size_field;
     }
 
+    /// Sets the header country code (`$FFD9`), which the console uses to
+    /// auto-detect the video region when no `snes-hardware` override is
+    /// configured. fullsnes "Country (also implies PAL/NTSC) (FFD9h)":
+    /// `00h` Japan and `01h` USA/Canada are NTSC, `02h..0Ch` and `11h`
+    /// (Australia) are PAL. Defaults to `00h` (Japan/NTSC) for fixtures that
+    /// never call this.
+    pub(crate) fn country(&mut self, country: u8) {
+        self.rom[HEADER + 0x19] = country;
+    }
+
     fn emit(&mut self, bytes: &[u8]) {
         assert!(
             self.cursor + bytes.len() <= HEADER,
