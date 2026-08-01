@@ -131,6 +131,132 @@ mod tests {
         assert_passed(&result, "PAL STAT78 version field");
     }
 
+    // ---- Group B: scanline count and frame timing -------------------------
+
+    /// NMITIMEN `$4200` bits 5-4 = 2: "IRQ at V=V (H=0)" (fullsnes "4200h
+    /// NMITIMEN"). Bit 4 stays clear so the H counter is ignored.
+    const NMITIMEN_V_IRQ: u8 = 0x20;
+    const VTIMEL: u16 = 0x4209;
+    const VTIMEH: u16 = 0x420A;
+    /// TIMEUP `$4211` bit 7 is the H/V-timer IRQ flag; reading acknowledges.
+    const TIMEUP: u16 = 0x4211;
+    /// HVBJOY `$4212` bit 7 is the VBlank flag.
+    const HVBJOY: u16 = 0x4212;
+    /// OPVCT `$213D`: latched vertical counter, read low byte then high bit.
+    const OPVCT: u16 = 0x213D;
+    /// SLHV `$2137`: a read strobes the H/V counter latch.
+    const SLHV: u16 = 0x2137;
+
+    /// A fixture that arms a V-IRQ at scanline `line` and spins until it
+    /// fires. If the scanline does not exist on the console it is running on,
+    /// the IRQ never fires and the fixture runs out the runner's frame budget
+    /// instead of reaching the PASS marker.
+    fn virq_at_line_rom(line: u16) -> Vec<u8> {
+        let mut fixture = FixtureRom::new(b"PAL VIRQ LINE");
+        fixture.store_imm_abs(VTIMEL, (line & 0xFF) as u8);
+        fixture.store_imm_abs(VTIMEH, ((line >> 8) & 0x01) as u8);
+        fixture.store_imm_abs(0x4200, NMITIMEN_V_IRQ);
+        fixture.lda_abs(TIMEUP); // acknowledge any stale flag
+        let poll = fixture.pos();
+        fixture.lda_abs(TIMEUP);
+        fixture.and_imm(0x80);
+        fixture.beq_to(poll);
+        fixture.pass_marker_and_idle();
+        fixture.build()
+    }
+
+    fn virq_fires(line: u16, hardware: SnesHardware) -> bool {
+        let label = format!("virq-{line}-{hardware:?}.sfc");
+        let result = run_pal_fixture(&virq_at_line_rom(line), &label, Some(hardware));
+        match result.exit_reason {
+            RunExitReason::PassMarker => true,
+            RunExitReason::FrameLimit => false,
+            other => panic!("{label}: unexpected exit {other:?} ({result:?})"),
+        }
+    }
+
+    /// A V-IRQ can only fire on a scanline the console actually generates, so
+    /// arming one is a direct probe for "does this scanline exist?". NTSC runs
+    /// 262 scanlines (last index 261) and PAL 312 (last index 311), both
+    /// non-interlaced -- fullsnes "SNES Timing"; Mesen2
+    /// `SnesPpu::UpdateNmiScanline` uses the same 261/311 last-line indices.
+    #[test]
+    fn v_irq_reaches_only_the_scanlines_its_region_generates() {
+        // Inside the visible area: exists on both.
+        assert!(virq_fires(200, SnesHardware::Ntsc));
+        assert!(virq_fires(200, SnesHardware::Pal));
+
+        // NTSC's last scanline: exists on both.
+        assert!(virq_fires(261, SnesHardware::Ntsc));
+        assert!(virq_fires(261, SnesHardware::Pal));
+
+        // One past NTSC's last scanline: PAL only.
+        assert!(!virq_fires(262, SnesHardware::Ntsc));
+        assert!(virq_fires(262, SnesHardware::Pal));
+
+        // PAL's last scanline: PAL only.
+        assert!(!virq_fires(311, SnesHardware::Ntsc));
+        assert!(virq_fires(311, SnesHardware::Pal));
+
+        // Past PAL's last scanline: neither.
+        assert!(!virq_fires(312, SnesHardware::Ntsc));
+        assert!(!virq_fires(312, SnesHardware::Pal));
+    }
+
+    /// A fixture that waits for the VBlank flag's rising edge, latches the H/V
+    /// counters there and publishes OPVCT (low byte, then high bit) to the
+    /// result block. `setini` is written before probing so the caller can turn
+    /// on 239-line overscan.
+    fn vblank_start_probe_rom(setini: u8) -> Vec<u8> {
+        let mut fixture = FixtureRom::new(b"PAL VBLANK START");
+        fixture.store_imm_abs(0x2133, setini);
+
+        // Wait for VBlank low, then for its rising edge, so the latch below
+        // always lands on the first VBlank scanline rather than mid-VBlank.
+        let wait_low = fixture.pos();
+        fixture.lda_abs(HVBJOY);
+        fixture.and_imm(0x80);
+        fixture.bne_to(wait_low);
+        let wait_high = fixture.pos();
+        fixture.lda_abs(HVBJOY);
+        fixture.and_imm(0x80);
+        fixture.beq_to(wait_high);
+
+        // STAT78 resets the OPHCT/OPVCT read flip-flops, SLHV latches the
+        // counters, then OPVCT reads low byte and high bit in that order.
+        fixture.lda_abs(STAT78);
+        fixture.lda_abs(SLHV);
+        fixture.lda_abs(OPVCT);
+        fixture.sta_long(RESULT_ADDR);
+        fixture.lda_abs(OPVCT);
+        fixture.and_imm(0x01);
+        fixture.sta_long(RESULT_ADDR + 1);
+        fixture.pass_marker_and_idle();
+        fixture.build()
+    }
+
+    fn probe_vblank_start_line(setini: u8, hardware: SnesHardware) -> u16 {
+        let label = format!("vblank-start-{setini:02X}-{hardware:?}.sfc");
+        let result = run_pal_fixture(&vblank_start_probe_rom(setini), &label, Some(hardware));
+        assert_passed(&result, &label);
+        u16::from(result.result_bytes[0]) | (u16::from(result.result_bytes[1]) << 8)
+    }
+
+    /// VBlank starts at scanline 225 (240 with overscan) on **both** consoles:
+    /// PAL's extra 50 scanlines are all blanking, appended after the active
+    /// area rather than extending it. Mesen2 `SnesPpu::UpdateNmiScanline` sets
+    /// `_vblankStartScanline = _state.OverscanMode ? 240 : 225` with no region
+    /// term at all, while only the last-scanline index is region-dependent.
+    #[test]
+    fn vblank_starts_on_the_same_scanline_in_both_regions() {
+        assert_eq!(probe_vblank_start_line(0x00, SnesHardware::Ntsc), 225);
+        assert_eq!(probe_vblank_start_line(0x00, SnesHardware::Pal), 225);
+
+        // SETINI bit 2 = 239-line overscan.
+        assert_eq!(probe_vblank_start_line(0x04, SnesHardware::Ntsc), 240);
+        assert_eq!(probe_vblank_start_line(0x04, SnesHardware::Pal), 240);
+    }
+
     /// The result-block plumbing the measurement fixtures rely on: a fixture
     /// stores a byte behind the marker and the runner hands it back.
     #[test]
