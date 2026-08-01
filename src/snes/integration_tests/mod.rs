@@ -12,6 +12,7 @@ mod gilyon_cpu_tests;
 mod gilyon_spc_tests;
 mod hblank_dma_vram_tests;
 mod input_mouse_tests;
+mod input_multitap_tests;
 mod input_standard_controller_tests;
 mod input_super_scope_tests;
 mod jonasquinn_dma_tests;
