@@ -133,19 +133,17 @@ pub struct Cpu<B: SnesBus> {
     /// Count of memory bus accesses (tick_read/tick_write calls) in the current step.
     /// Reset at the start of each step() call; used to compute internal-cycle tick counts.
     memory_bus_cycles: u8,
-    /// Number of upcoming CPU cycles whose interrupt sample is suppressed
-    /// because a GPDMA held the bus. A transfer that runs mid-instruction (after
-    /// the current opcode was fetched) halts the CPU for its cycle and one more,
-    /// so a line asserted during the DMA is recognized only from the second
-    /// cycle after it -- reproducing hardware/Mesen2 (Sour dma_irq_test, #3065),
-    /// where e.g. a 2-cycle `INC A` split by a DMA yields recognition one
-    /// instruction later while a 3-cycle `LDA #imm16` still recognizes at its
-    /// last cycle. A DMA that runs *before* an opcode read leaves that
-    /// instruction as the first full one after the transfer (no suppression).
-    /// Set at each cycle a GPDMA runs; decremented per cycle. Can be nonzero at
-    /// an instruction boundary (a DMA on the previous instruction's last cycle),
-    /// so it is part of the save state.
-    dma_suppress_cycles: u8,
+    /// Whether a DMA transfer ran in the CPU cycle currently being executed -- Mesen2's
+    /// `_state.IrqLock`. Set from `gpdma_cycle_hook`'s return value at the top of every cycle
+    /// and read by `resolve_nmi_arm_counter` / `resample_irq_line`, so it is overwritten each
+    /// cycle and never outlives one. Mesen2 likewise clears `IrqLock` unconditionally at the
+    /// end of `DetectNmiSignalEdge`.
+    ///
+    /// Not part of the save state: it is written before it is read within the same cycle, and
+    /// a restored CPU re-establishes it on its first cycle. This replaces #3065's
+    /// `dma_suppress_cycles`, a 2-cycle window that had no Mesen2 counterpart and was
+    /// calibrated against the clock fallback running transfers a cycle early (#3074).
+    dma_locked_this_cycle: bool,
 
     /// One-step interrupt lock used to emulate delayed IRQ/NMI recognition after
     /// specific hardware events (e.g. writes to `$4200` and DMA start via `$420B`).
@@ -193,7 +191,7 @@ impl<B: SnesBus> Cpu<B> {
             p: FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_INTERRUPT, // M=1, X=1, I=1
             e: true,                                                 // Start in emulation mode
             extra_cycles: 0,
-            dma_suppress_cycles: 0,
+            dma_locked_this_cycle: false,
             last_page_crossed: false,
             nmi_pending: false,
             irq_pending: false,
@@ -351,7 +349,6 @@ impl<B: SnesBus> Cpu<B> {
             abort_pending: self.abort_pending,
             nmi_arm_counter: self.nmi_arm_counter,
             irq_line_shadow: self.irq_line_shadow,
-            dma_suppress_cycles: self.dma_suppress_cycles,
             waiting: self.waiting,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
@@ -386,7 +383,6 @@ impl<B: SnesBus> Cpu<B> {
         self.abort_pending = state.abort_pending;
         self.nmi_arm_counter = state.nmi_arm_counter;
         self.irq_line_shadow = state.irq_line_shadow;
-        self.dma_suppress_cycles = state.dma_suppress_cycles;
         self.waiting = state.waiting;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
@@ -497,7 +493,7 @@ impl<B: SnesBus> Cpu<B> {
         self.irq_pending = false;
         self.abort_pending = false;
         self.nmi_arm_counter = 0;
-        self.dma_suppress_cycles = 0;
+        self.dma_locked_this_cycle = false;
         self.irq_line_shadow = false;
         self.irq_lock_step = false;
         self.irq_i_shadow = true;
@@ -749,7 +745,7 @@ impl<B: SnesBus> Cpu<B> {
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
         let i_before = self.flag_i();
-        let opcode = self.fetch_opcode();
+        let opcode = self.fetch_byte();
         if cpu_trace_level() >= 1 && trace_clock_in_window(self.bus.master_clock()) {
             let operands = self.exec_trace_operands(opcode);
             trace_cpu!(1; "{}", self.format_exec_trace_line(pc_before, &operands));
@@ -1068,16 +1064,6 @@ impl<B: SnesBus> Cpu<B> {
         byte
     }
 
-    /// Fetches the next instruction's opcode byte. Identical to
-    /// [`Self::fetch_byte`] except the read is flagged as an opcode fetch so
-    /// interrupt sampling resumes correctly after a GPDMA (#3065).
-    fn fetch_opcode(&mut self) -> u8 {
-        let addr = (self.pbr as u32) << 16 | self.pc as u32;
-        let byte = self.tick_read_opcode(addr);
-        self.pc = self.pc.wrapping_add(1);
-        byte
-    }
-
     /// Run one read bus cycle for `addr` and return the byte.
     ///
     /// The 65816 samples the data bus 4 master clocks before the end of the
@@ -1086,59 +1072,37 @@ impl<B: SnesBus> Cpu<B> {
     /// then IncMasterClock4 finishes the cycle). The split matters for reads
     /// that race asynchronous hardware: APU port polls at $2140-$2143 (#2914)
     /// and the $2137 H/V counter latch both observe the sampling instant.
+    /// #3065 needed to know whether a read was an opcode fetch, because its suppression
+    /// window opened only for a DMA that ran *after* the opcode byte was sampled. The
+    /// one-cycle lock (#3074) is per-cycle rather than per-instruction, so every read is
+    /// treated alike and that distinction is gone.
     fn tick_read(&mut self, addr: u32) -> u8 {
-        self.tick_read_inner(addr, false)
-    }
-
-    /// A read whose byte is the next instruction's opcode. Interrupt sampling
-    /// resumes here (a new instruction begins) unless a GPDMA runs during this
-    /// cycle *after* the opcode read, which splits the new instruction (#3065).
-    fn tick_read_opcode(&mut self, addr: u32) -> u8 {
-        self.tick_read_inner(addr, true)
-    }
-
-    fn tick_read_inner(&mut self, addr: u32, is_opcode: bool) -> u8 {
-        self.resolve_nmi_arm_counter();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         // Mesen2 `SnesCpu::Read`: SetCpuSpeed for the upcoming access happens BEFORE
         // ProcessCpuCycle, so a DMA that runs at the start of this cycle ends on a whole
         // cycle of *this* access's speed (#3050).
         self.bus.set_cpu_speed(cycles);
-        self.bus.gpdma_cycle_hook();
+        self.begin_cpu_cycle();
         for _ in 0..cycles - 4 {
             self.bus.tick();
         }
-        // Did a GPDMA run before this opcode is read? Then the transfer precedes
-        // the new instruction, which becomes the first full instruction after
-        // the DMA and samples normally (#3065).
-        let dma_before_read = is_opcode && self.bus.peek_dma_ran_this_cpu_cycle();
         self.memory_bus_cycles += 1;
         self.trace_bus_cycle(format_args!("read  ${addr:06X}"));
         let value = self.bus.read(addr);
         for _ in 0..4 {
             self.bus.tick();
         }
-        if is_opcode {
-            // A GPDMA that ran *before* the opcode read leaves this new
-            // instruction as the first full one after the transfer (samples
-            // normally); one that ran *after* the read splits it (opens a fresh
-            // suppression window).
-            let dma_ran = self.bus.take_dma_ran_this_cpu_cycle();
-            self.sample_interrupts_end_of_cycle(dma_ran && !dma_before_read);
-        } else {
-            self.end_of_cycle_interrupt_poll();
-        }
+        self.end_of_cycle_interrupt_poll();
         value
     }
 
     /// Advance the master clock N cycles for `addr`, then write one byte.
     /// Also intercepts MEMSEL ($420D) writes to update the fast_rom flag.
     fn tick_write(&mut self, addr: u32, value: u8) {
-        self.resolve_nmi_arm_counter();
         let cycles = mem_access_cycles(addr, self.fast_rom);
         // See `tick_read`: the speed is published before the cycle hook runs any DMA.
         self.bus.set_cpu_speed(cycles);
-        self.bus.gpdma_cycle_hook();
+        self.begin_cpu_cycle();
         for _ in 0..cycles {
             self.bus.tick();
         }
@@ -1152,6 +1116,12 @@ impl<B: SnesBus> Cpu<B> {
                 }
                 0x420B => {
                     // Starting DMA introduces the same lock window before IRQ/NMI recognition.
+                    //
+                    // NOTE (#3081): this instruction-granular lock has NO Mesen2 counterpart --
+                    // the reference's only DMA interrupt lock is the per-cycle `IrqLock` that
+                    // #3074 ported. Deleting this arm leaves the whole `snes::` suite green,
+                    // including the 19-value Sour hardware oracle, so it is both unpinned and
+                    // unmeasured. Left alone here rather than changed unmeasured; see #3081.
                     if value != 0 {
                         self.irq_lock_step = true;
                     }
@@ -3742,10 +3712,9 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn tick_internal_cycle(&mut self) {
-        self.resolve_nmi_arm_counter();
         // Mesen2 `SnesCpu::Idle` forces the CPU speed to 6 for the idle cycle.
         self.bus.set_cpu_speed(6);
-        self.bus.gpdma_cycle_hook();
+        self.begin_cpu_cycle();
         self.trace_bus_cycle(format_args!("internal"));
         for _ in 0..6u8 {
             self.bus.tick();
@@ -3764,6 +3733,16 @@ impl<B: SnesBus> Cpu<B> {
     fn tick_pre_access_internal_cycle(&mut self) {
         self.tick_internal_cycle();
         self.memory_bus_cycles += 1;
+    }
+
+    /// Opens a CPU cycle: run any pending DMA, then resolve the NMI arm counter -- Mesen2's
+    /// `ProcessCpuCycle` order (`IrqLock = ProcessPendingTransfers()` then
+    /// `DetectNmiSignalEdge()`). The hook must come first because the lock it returns governs
+    /// this very cycle's sampling (#3074); it stays ahead of every `bus.tick()`, so #3049's
+    /// reason for resolving at cycle start is unaffected.
+    fn begin_cpu_cycle(&mut self) {
+        self.dma_locked_this_cycle = self.bus.gpdma_cycle_hook();
+        self.resolve_nmi_arm_counter();
     }
 
     /// Advances the NMI edge-to-dispatch latch by one CPU cycle. Called once
@@ -3791,11 +3770,33 @@ impl<B: SnesBus> Cpu<B> {
     /// nmi.smc, #3049: Mesen2 pushes the not-yet-executed branch opcode's own
     /// address as the interrupted PC, meaning it recognizes NMI before that
     /// instruction starts at all).
+    ///
+    /// Mesen2 `DetectNmiSignalEdge`'s counter half:
+    ///
+    /// ```text
+    /// if(NmiFlagCounter) { NmiFlagCounter--;
+    ///     if(NmiFlagCounter == 0) {
+    ///         if(!IrqLock) { NeedNmi = true; }
+    ///         else { NmiFlagCounter = 1; NeedNmi = false; }   // re-arm, try next cycle
+    ///     } }
+    /// ```
+    ///
+    /// Re-arming rather than simply skipping is what keeps the edge alive across the locked
+    /// cycle, and it is why NMI and IRQ come out of a DMA on the SAME instruction boundary
+    /// without any asymmetric special case (#3074 replaced #3065's hand-tuned window).
     fn resolve_nmi_arm_counter(&mut self) {
         if self.nmi_arm_counter > 0 {
             self.nmi_arm_counter -= 1;
             if self.nmi_arm_counter == 0 {
-                self.nmi_pending = true;
+                if self.dma_locked_this_cycle {
+                    // Re-arm rather than drop: the edge must survive the locked cycle and
+                    // resolve on the next one. Collapsing this to a bare `if !locked { ... }`
+                    // loses the re-arm and costs four Sour dma_irq_test sub-cases.
+                    self.nmi_arm_counter = 1;
+                    self.nmi_pending = false;
+                } else {
+                    self.nmi_pending = true;
+                }
             }
         }
     }
@@ -3821,39 +3822,19 @@ impl<B: SnesBus> Cpu<B> {
     /// a DMA-timed palette/tile setup that follows, leaving the screen
     /// permanently unpainted. See
     /// `interrupt_dispatch_tests::irq_level_during_wai_wakes_as_soon_as_the_preceding_cycle_observes_it`.
+    /// Mesen2 `DetectNmiSignalEdge`'s level half: `PrevIrqSource` is forced to 0 for the
+    /// locked cycle, so an instruction boundary right after a DMA does not take the IRQ.
+    /// The line is a live level, so the next unlocked cycle re-latches it (#3074).
     fn resample_irq_line(&mut self) {
-        self.irq_line_shadow = self.bus.poll_irq();
+        self.irq_line_shadow = !self.dma_locked_this_cycle && self.bus.poll_irq();
     }
 
-    /// End-of-CPU-cycle interrupt sampling for a non-opcode cycle (operand read,
-    /// internal cycle, or write). A GPDMA running this cycle opens a fresh
-    /// suppression window (#3065).
+    /// End-of-CPU-cycle interrupt sampling. The edge poll is never gated -- it is NESER's
+    /// stand-in for Mesen2's PPU-side `SetNmiFlag`, which keeps running during a DMA. Only
+    /// the *resolution* of the armed edge and the IRQ level latch honour the lock (#3074).
     fn end_of_cycle_interrupt_poll(&mut self) {
-        let dma_ran = self.bus.take_dma_ran_this_cpu_cycle();
-        self.sample_interrupts_end_of_cycle(dma_ran);
-    }
-
-    /// Samples the NMI edge and IRQ level at the end of a CPU cycle, honouring
-    /// the GPDMA suppression window (#3065). `open_suppression` starts a fresh
-    /// 2-cycle window (a DMA ran this cycle and splits the current instruction).
-    /// The NMI edge is un-suppressed one cycle before the IRQ level, because its
-    /// arm-then-resolve latch adds a cycle of latency -- so both dispatch at the
-    /// same instruction boundary coming out of a DMA (proven by the Sour
-    /// dma_irq_test's IRQ vs NMI 16-bit-load sub-cases #3/#9).
-    fn sample_interrupts_end_of_cycle(&mut self, open_suppression: bool) {
-        if open_suppression {
-            self.dma_suppress_cycles = 2;
-        }
-        let remaining = self.dma_suppress_cycles;
-        if remaining > 0 {
-            self.dma_suppress_cycles = remaining - 1;
-        }
-        if remaining < 2 {
-            self.poll_and_arm_nmi_edge();
-        }
-        if remaining == 0 {
-            self.resample_irq_line();
-        }
+        self.poll_and_arm_nmi_edge();
+        self.resample_irq_line();
     }
 
     /// Read two bytes little-endian using linear 24-bit addressing.
@@ -4878,8 +4859,9 @@ mod tests {
             self.events.push(SpeedEvent::Speed(speed));
         }
 
-        fn gpdma_cycle_hook(&mut self) {
+        fn gpdma_cycle_hook(&mut self) -> bool {
             self.events.push(SpeedEvent::Hook);
+            false
         }
     }
 
@@ -11177,6 +11159,219 @@ mod interrupt_dispatch_tests {
                 None => self.irq_level,
             }
         }
+    }
+
+    /// Reports a DMA transfer on a chosen CPU cycle and makes the IRQ line visible from a
+    /// chosen cycle, so the one-cycle interrupt lock (#3074) can be tested without a ROM.
+    struct DmaLockBus {
+        /// Bank $00 only -- these tests touch nothing else, and a full 16 MB store would be
+        /// allocated once per `run_nops_with` call.
+        mem: Vec<u8>,
+        cycle: u32,
+        /// Cycle index (0-based, counted at the hook) on which a transfer runs.
+        dma_on_cycle: Option<u32>,
+        /// The IRQ line reads high from this cycle index onwards.
+        irq_from_cycle: Option<u32>,
+        /// One-shot NMI edge, delivered at the poll of this cycle index.
+        nmi_on_cycle: Option<u32>,
+        nmi_fired: bool,
+    }
+
+    impl DmaLockBus {
+        fn new() -> Self {
+            Self {
+                mem: vec![0; 0x1_0000],
+                cycle: 0,
+                dma_on_cycle: None,
+                irq_from_cycle: None,
+                nmi_on_cycle: None,
+                nmi_fired: false,
+            }
+        }
+
+        /// Panics outside bank $00 so a test that strays off the modelled region fails loudly
+        /// rather than silently reading zeros.
+        fn offset(addr: u32) -> usize {
+            let addr = addr & 0xFF_FFFF;
+            assert!(
+                addr < 0x1_0000,
+                "DmaLockBus models bank $00 only; got ${addr:06X}"
+            );
+            addr as usize
+        }
+
+        fn load(&mut self, addr: u32, data: &[u8]) {
+            let a = Self::offset(addr);
+            self.mem[a..a + data.len()].copy_from_slice(data);
+        }
+    }
+
+    impl crate::snes::bus::SnesBus for DmaLockBus {
+        fn read(&self, addr: u32) -> u8 {
+            self.mem[Self::offset(addr)]
+        }
+        fn write(&mut self, addr: u32, value: u8) {
+            self.mem[Self::offset(addr)] = value;
+        }
+        fn tick(&mut self) {}
+
+        fn gpdma_cycle_hook(&mut self) -> bool {
+            // The hook opens every CPU cycle, so it is where this bus counts them.
+            let now = self.cycle;
+            self.cycle += 1;
+            self.dma_on_cycle == Some(now)
+        }
+
+        fn poll_irq(&self) -> bool {
+            // `cycle` has already been advanced by this cycle's hook.
+            self.irq_from_cycle
+                .is_some_and(|from| self.cycle.saturating_sub(1) >= from)
+        }
+
+        fn poll_nmi(&mut self) -> bool {
+            if self.nmi_fired {
+                return false;
+            }
+            if self.nmi_on_cycle == Some(self.cycle.saturating_sub(1)) {
+                self.nmi_fired = true;
+                return true;
+            }
+            false
+        }
+    }
+
+    /// Runs `steps` instructions of NOPs from $8000 and reports the PC after each, so a test
+    /// can say which instruction boundary took the interrupt.
+    fn run_nops_with(bus_setup: impl FnOnce(&mut DmaLockBus), steps: usize) -> Vec<u16> {
+        let mut bus = DmaLockBus::new();
+        bus.load(0x00_8000, &[0xEA; 8]); // NOPs, 2 cycles each
+        bus.load(0x00_FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
+        bus.load(0x00_FFFA, &[0x00, 0x92]); // NMI emulation vector -> $9200
+        bus_setup(&mut bus);
+        let mut cpu = Cpu::new(bus);
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        (0..steps)
+            .map(|_| {
+                cpu.step();
+                cpu.pc
+            })
+            .collect()
+    }
+
+    /// #3074: Mesen2 delays an interrupt asserted during a DMA by exactly ONE CPU cycle --
+    /// `_state.IrqLock = ProcessPendingTransfers()` zeroes `PrevIrqSource` for that single
+    /// cycle (`SnesCpu.Shared.h::DetectNmiSignalEdge`). It has no multi-cycle suppression
+    /// window; NESER's previous 2-cycle `dma_suppress_cycles` was an approximation of this.
+    ///
+    /// One cycle of delay only moves an instruction *boundary* when the locked cycle is the
+    /// instruction's LAST one -- otherwise a later cycle of the same instruction latches the
+    /// line and dispatch is unchanged. This test uses the boundary-moving case (NOP is two
+    /// cycles, so cycle 3 is the second NOP's final cycle); the non-moving case is covered by
+    /// `a_dma_lock_on_a_non_final_cycle_does_not_move_the_boundary`.
+    #[test]
+    fn a_dma_locks_interrupt_recognition_for_exactly_one_cycle() {
+        let unlocked = run_nops_with(
+            |b| {
+                b.irq_from_cycle = Some(3);
+            },
+            5,
+        );
+        assert_eq!(
+            unlocked[2], 0x9100,
+            "sanity: with no DMA the IRQ latches on the instruction's last cycle and \
+             dispatches at the boundary right after it"
+        );
+
+        let locked = run_nops_with(
+            |b| {
+                b.irq_from_cycle = Some(3);
+                b.dma_on_cycle = Some(3);
+            },
+            5,
+        );
+        assert_ne!(locked[2], 0x9100, "the locked cycle must not latch the IRQ");
+        assert_eq!(
+            locked[3], 0x9100,
+            "recognition slips by exactly one instruction boundary, not two"
+        );
+    }
+
+    /// The other half of the one-cycle rule: a lock on a cycle that is not the instruction's
+    /// last changes nothing, because a later cycle of the same instruction still latches the
+    /// line before its boundary. #3065's 2-cycle window could not express this.
+    #[test]
+    fn a_dma_lock_on_a_non_final_cycle_does_not_move_the_boundary() {
+        let r = run_nops_with(
+            |b| {
+                b.irq_from_cycle = Some(2);
+                b.dma_on_cycle = Some(2);
+            },
+            5,
+        );
+        assert_eq!(
+            r[2], 0x9100,
+            "cycle 2 is the second NOP's opcode fetch; its internal cycle still latches"
+        );
+    }
+
+    /// The lock is scoped to the cycle the transfer ran in. Mesen2 clears `IrqLock`
+    /// unconditionally at the end of `DetectNmiSignalEdge`, so the very next cycle samples
+    /// normally.
+    #[test]
+    fn the_dma_interrupt_lock_does_not_outlast_its_own_cycle() {
+        // Transfer on cycle 2, IRQ first visible on cycle 3: the lock has already expired.
+        let r = run_nops_with(
+            |b| {
+                b.dma_on_cycle = Some(2);
+                b.irq_from_cycle = Some(3);
+            },
+            5,
+        );
+        assert_eq!(
+            r[2], 0x9100,
+            "an IRQ appearing after the locked cycle is not delayed at all"
+        );
+    }
+
+    /// #3065 needed an asymmetric window (NMI un-suppressed one cycle before IRQ) to make the
+    /// Sour dma_irq_test's IRQ/NMI 16-bit-load pair (#3 and #9) agree. With Mesen2's model the
+    /// symmetry falls out instead.
+    ///
+    /// The NMI path has one more step than the IRQ path: an edge polled at the end of cycle N
+    /// arms the counter, which *resolves* at the start of N+1. So to lock the NMI you must
+    /// lock the cycle it RESOLVES on, not the one it arrives on -- hence the edge at cycle 2
+    /// and the transfer at cycle 3 below. Locking there makes Mesen2 re-arm the counter
+    /// (`NmiFlagCounter = 1`) so it retries on the next cycle, which is precisely what lands
+    /// it on the same boundary as an IRQ locked on that same cycle.
+    #[test]
+    fn a_locked_nmi_dispatches_at_the_same_boundary_as_a_locked_irq() {
+        let irq = run_nops_with(
+            |b| {
+                b.irq_from_cycle = Some(3);
+                b.dma_on_cycle = Some(3);
+            },
+            6,
+        );
+        let nmi = run_nops_with(
+            |b| {
+                b.nmi_on_cycle = Some(2);
+                b.dma_on_cycle = Some(3);
+            },
+            6,
+        );
+        let irq_at = irq.iter().position(|&pc| pc == 0x9100);
+        let nmi_at = nmi.iter().position(|&pc| pc == 0x9200);
+        assert!(
+            irq_at.is_some() && nmi_at.is_some(),
+            "both must dispatch: irq={irq:04X?} nmi={nmi:04X?}"
+        );
+        assert_eq!(
+            irq_at, nmi_at,
+            "NMI and IRQ locked on the same cycle dispatch at the same boundary: \
+             irq={irq:04X?} nmi={nmi:04X?}"
+        );
     }
 
     /// Unlike [`PollIrqBus::level_from_poll`] (keyed to a call *count*, which

@@ -153,11 +153,17 @@ impl DmaController {
         // SyncEndDma: general-purpose DMA rounds to a FIXED 8-clock cycle, unlike the two
         // HDMA envelopes and unlike Mesen2's single speed-aware `SyncEndDma`.
         //
-        // Kept deliberately (#3067). Flipping this to `cpu_speed` makes undisbeliever's
-        // `inidisp_forgot_to_force_blank.sfc` diverge from its Mesen2-approved golden, with
-        // every other vector unchanged; the fixed 8 passes all of them. That is the whole of
-        // the evidence -- reproduce it by changing the literal below and running
-        // `cargo test --no-default-features --lib inidisp_forgot`.
+        // Kept deliberately (#3067, re-verified after #3074). Flipping this to `cpu_speed`
+        // makes `mosaic_mode5_sized` diverge from its Mesen2-approved golden, with every other
+        // vector unchanged; the fixed 8 passes all of them. Reproduce by changing the literal
+        // below and running:
+        //
+        //     cargo test --no-default-features --lib mosaic_mode5_sized
+        //
+        // The witness has already moved once -- before #3070 it was
+        // `inidisp_forgot_to_force_blank` -- and #3074 changed which CPU cycle a transfer runs
+        // in, so it can move again. Re-derive which vector objects rather than trusting this
+        // paragraph; only the conclusion (keep the 8) has survived every re-measurement.
         //
         // Why the rule that is right for HDMA is not obviously right here: Mesen2 re-enters
         // `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing during a
@@ -165,11 +171,7 @@ impl DmaController {
         // (`needSync == false` while any channel is `DmaActive`) and folds its clocks into the
         // same `_dmaClockCounter` that the outer `SyncEndDma` rounds. NESER cannot nest
         // (`self.dma` is `mem::take`n for the duration), so `counter` is not necessarily the
-        // quantity Mesen2 is rounding. Revisit together with that re-entrancy, and with #3074
-        // (`run_overdue_pending_dma` preempting the cycle hook, which decides WHICH cycle's
-        // speed is live when a transfer runs and so decides whether this literal matters at
-        // all -- with the preemption in place every transfer in the ROMs measured so far runs
-        // at a live speed of 8, where the two rules are bit-identical).
+        // quantity Mesen2 is rounding. Revisit together with that re-entrancy.
         //
         // The two HDMA envelopes DO use `cpu_speed`, which is what made StarWars and
         // hdmaen_latch_test pixel-exact in #3050.
