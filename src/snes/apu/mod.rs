@@ -11,6 +11,7 @@ pub mod spc700;
 pub mod timers;
 
 use crate::snes::apu::dsp::Sdsp;
+use crate::snes::ppu::SnesVideoRegion;
 use serde::{Deserialize, Serialize};
 use spc700::{Spc700, Spc700Bus};
 use std::collections::VecDeque;
@@ -31,9 +32,19 @@ const NATIVE_AUDIO_SAMPLE_RATE_HZ: f32 = 32_000.0;
 // master clocks and flips handshake-latch verdicts at knife-edge writes
 // (#2914 round 13).
 const SPC_PER_MASTER_NUM: i64 = 1_025_280;
-const SPC_PER_MASTER_DEN: i64 = 21_477_270;
-// The same master-clock rate as an f32, used only for audio sample pacing.
-const SNES_MASTER_CLOCK_HZ: f32 = SPC_PER_MASTER_DEN as f32;
+const SPC_PER_MASTER_DEN_NTSC: i64 = 21_477_270;
+// PAL consoles clock the 65816 side from a slower crystal (Mesen2
+// `SnesConsole::UpdateRegion`: 21,281,370 Hz), while the APU keeps its own
+// 24.576 MHz crystal. The SPC700 therefore runs ~0.92% fast relative to the
+// CPU on PAL hardware -- only the denominator moves, never the numerator.
+const SPC_PER_MASTER_DEN_PAL: i64 = 21_281_370;
+
+const fn spc_per_master_den(region: SnesVideoRegion) -> i64 {
+    match region {
+        SnesVideoRegion::Ntsc => SPC_PER_MASTER_DEN_NTSC,
+        SnesVideoRegion::Pal => SPC_PER_MASTER_DEN_PAL,
+    }
+}
 
 fn default_test_reg() -> u8 {
     0x0A
@@ -141,6 +152,14 @@ pub struct SnesApu {
     timers: SpcTimers,
     /// Signed budget in numerator units for fractional SPC catch-up.
     spc_cycle_budget: i64,
+    /// Master clocks per second on the console this APU is wired into: the
+    /// denominator of the SPC-cycles-per-master-clock ratio and the divisor
+    /// for audio sample pacing. Region-dependent, see [`spc_per_master_den`].
+    spc_per_master_den: i64,
+    /// SPC cycles executed since power-on, for tests that need to observe the
+    /// clock ratio directly.
+    #[cfg(test)]
+    spc_cycles_executed: u64,
     dsp: Sdsp,
     dsp_addr: u8,
     sample_acc: f32,
@@ -154,6 +173,11 @@ pub struct SnesApu {
 
 impl SnesApu {
     pub fn new(ipl: Option<[u8; 64]>) -> Self {
+        Self::new_with_region(ipl, SnesVideoRegion::Ntsc)
+    }
+
+    pub fn new_with_region(ipl: Option<[u8; 64]>, video_region: SnesVideoRegion) -> Self {
+        let den = spc_per_master_den(video_region);
         let mut apu = Self {
             spc700: Spc700::new(),
             aram: [0; ARAM_SIZE],
@@ -168,12 +192,15 @@ impl SnesApu {
             spc_frozen: false,
             timers: SpcTimers::default(),
             spc_cycle_budget: 0,
+            spc_per_master_den: den,
+            #[cfg(test)]
+            spc_cycles_executed: 0,
             dsp: Sdsp::new(),
             dsp_addr: 0,
             sample_acc: 0.0,
             cycles_per_sample: 0.0,
             native_sample_acc: 0.0,
-            native_cycles_per_sample: SNES_MASTER_CLOCK_HZ / NATIVE_AUDIO_SAMPLE_RATE_HZ,
+            native_cycles_per_sample: den as f32 / NATIVE_AUDIO_SAMPLE_RATE_HZ,
             native_samples: VecDeque::with_capacity(MAX_PENDING_SAMPLES),
             resample_phase: 0.0,
             pending_samples: VecDeque::with_capacity(MAX_PENDING_SAMPLES),
@@ -182,6 +209,26 @@ impl SnesApu {
         apu.aram[0x00F9] = 0x00;
         apu.reset_spc700();
         apu
+    }
+
+    /// Retunes the SPC-to-master clock ratio and the audio sample pacing for
+    /// `video_region`. Called on save-state restore, where the console's
+    /// stored region is the authority: a state captured on PAL must resume at
+    /// the PAL ratio even if the emulator happened to be constructed for NTSC.
+    pub fn set_video_region(&mut self, video_region: SnesVideoRegion) {
+        let den = spc_per_master_den(video_region);
+        if den == self.spc_per_master_den {
+            return;
+        }
+        // The output sample rate is a frontend setting expressed in Hz, so it
+        // has to be re-derived against the new master clock rather than kept.
+        let output_rate = (self.cycles_per_sample > 0.0)
+            .then(|| self.spc_per_master_den as f32 / self.cycles_per_sample);
+        self.spc_per_master_den = den;
+        self.native_cycles_per_sample = den as f32 / NATIVE_AUDIO_SAMPLE_RATE_HZ;
+        if let Some(rate) = output_rate {
+            self.set_sample_rate(rate);
+        }
     }
 
     pub fn read_main_port(&self, port: usize) -> u8 {
@@ -200,7 +247,7 @@ impl SnesApu {
         // the end of the next executed SPC cycle. `budget/DEN` is the
         // fractional position of the master clock inside the current SPC
         // cycle, so "first half" is `2*budget <= DEN`.
-        if 2 * self.spc_cycle_budget <= SPC_PER_MASTER_DEN {
+        if 2 * self.spc_cycle_budget <= self.spc_per_master_den {
             self.main_to_spc_ports[port] = value;
         } else {
             self.pending_main_port_update = true;
@@ -218,13 +265,13 @@ impl SnesApu {
     pub fn tick(&mut self) {
         self.spc_cycle_budget += SPC_PER_MASTER_NUM;
 
-        while self.spc_cycle_budget >= SPC_PER_MASTER_DEN {
+        while self.spc_cycle_budget >= self.spc_per_master_den {
             // The SPC700 deadlocks permanently once the glitchy internal-speed
             // divider (value 2) has been engaged during an internal access
             // (blargg `speed_2_freezes`). Keep draining the budget so the rest
             // of the system advances, but never execute the halted core.
             if self.spc_frozen {
-                self.spc_cycle_budget -= SPC_PER_MASTER_DEN;
+                self.spc_cycle_budget -= self.spc_per_master_den;
                 continue;
             }
 
@@ -255,7 +302,11 @@ impl SnesApu {
                 // wait states (see SpcBusView::consumed_cycles).
                 i64::from(bus_view.consumed_cycles.max(1))
             };
-            self.spc_cycle_budget -= consumed_cycles * SPC_PER_MASTER_DEN;
+            self.spc_cycle_budget -= consumed_cycles * self.spc_per_master_den;
+            #[cfg(test)]
+            {
+                self.spc_cycles_executed += consumed_cycles as u64;
+            }
 
             // A second-half CPU port write becomes SPC-visible at the end of
             // the next executed SPC cycle (see `write_main_port`).
@@ -266,6 +317,20 @@ impl SnesApu {
         }
 
         self.step_audio_clock();
+    }
+
+    /// SPC700 cycles executed since power-on. Lets a test observe the
+    /// SPC-to-master clock ratio directly rather than inferring it.
+    #[cfg(test)]
+    pub(crate) fn spc_cycles_executed_for_test(&self) -> u64 {
+        self.spc_cycles_executed
+    }
+
+    /// Number of 32 kHz DSP samples produced since power-on (the raw native
+    /// stream, before any frontend resampling).
+    #[cfg(test)]
+    pub(crate) fn native_sample_count_for_test(&self) -> usize {
+        self.native_samples.len()
     }
 
     /// Read the byte at `addr` from the SPC700 address space without ticking
@@ -334,7 +399,8 @@ impl SnesApu {
             self.sample_acc = 0.0;
             self.cycles_per_sample = 0.0;
             self.native_sample_acc = 0.0;
-            self.native_cycles_per_sample = SNES_MASTER_CLOCK_HZ / NATIVE_AUDIO_SAMPLE_RATE_HZ;
+            self.native_cycles_per_sample =
+                self.spc_per_master_den as f32 / NATIVE_AUDIO_SAMPLE_RATE_HZ;
             self.native_samples.clear();
             self.resample_phase = 0.0;
             self.pending_samples.clear();
@@ -384,7 +450,7 @@ impl SnesApu {
         self.native_sample_acc = sanitize_non_negative_f32(state.native_sample_acc);
         self.native_cycles_per_sample = sanitize_positive_f32(
             state.native_cycles_per_sample,
-            SNES_MASTER_CLOCK_HZ / NATIVE_AUDIO_SAMPLE_RATE_HZ,
+            self.spc_per_master_den as f32 / NATIVE_AUDIO_SAMPLE_RATE_HZ,
         );
         self.resample_phase = sanitize_non_negative_f32(state.resample_phase);
         self.native_samples.clear();
@@ -441,7 +507,7 @@ impl SnesApu {
         // cycles: the two bus reads above step the DSP and the timer
         // prescalers, and the budget charge delays the first instruction
         // accordingly (#2914/#2938, Mesen-verified).
-        self.spc_cycle_budget -= 2 * SPC_PER_MASTER_DEN;
+        self.spc_cycle_budget -= 2 * self.spc_per_master_den;
     }
 
     fn step_audio_clock(&mut self) {
@@ -510,7 +576,7 @@ impl SnesApu {
         if self.cycles_per_sample <= 0.0 {
             return NATIVE_AUDIO_SAMPLE_RATE_HZ;
         }
-        SNES_MASTER_CLOCK_HZ / self.cycles_per_sample
+        self.spc_per_master_den as f32 / self.cycles_per_sample
     }
 
     pub fn sample_ready(&self) -> bool {
@@ -530,7 +596,7 @@ impl SnesApu {
         if !rate.is_finite() || rate <= 0.0 {
             return;
         }
-        self.cycles_per_sample = SNES_MASTER_CLOCK_HZ / rate;
+        self.cycles_per_sample = self.spc_per_master_den as f32 / rate;
         self.sample_acc = 0.0;
         self.resample_phase = 0.0;
         self.pending_samples.clear();
@@ -911,6 +977,77 @@ impl Spc700Bus for SpcBusView<'_> {
 #[cfg(test)]
 mod tests {
     use super::{SnesApu, SnesApuState};
+    use crate::snes::ppu::SnesVideoRegion;
+
+    /// Master clocks in one tenth of an NTSC second -- long enough for the
+    /// ~0.9% NTSC/PAL master-clock difference to be many samples wide.
+    const TENTH_SECOND_MASTER_CLOCKS: u32 = 2_147_727;
+
+    fn tick_master_clocks(apu: &mut SnesApu, clocks: u32) {
+        for _ in 0..clocks {
+            apu.tick();
+        }
+    }
+
+    /// The SPC700 has its own 24.576 MHz crystal, so it runs at the same
+    /// ~1.02 MHz on both console revisions while the 65816's master clock
+    /// drops from 21,477,270 Hz (NTSC) to 21,281,370 Hz (PAL). A PAL console
+    /// therefore executes ~0.92% *more* SPC cycles per master clock. Rates
+    /// from Mesen2 `SnesConsole::UpdateRegion`.
+    #[test]
+    fn pal_executes_more_spc_cycles_per_master_clock_than_ntsc() {
+        let mut ntsc = SnesApu::new_with_region(None, SnesVideoRegion::Ntsc);
+        let mut pal = SnesApu::new_with_region(None, SnesVideoRegion::Pal);
+
+        tick_master_clocks(&mut ntsc, TENTH_SECOND_MASTER_CLOCKS);
+        tick_master_clocks(&mut pal, TENTH_SECOND_MASTER_CLOCKS);
+
+        let ntsc_cycles = ntsc.spc_cycles_executed_for_test();
+        let pal_cycles = pal.spc_cycles_executed_for_test();
+        let expected = ntsc_cycles as f64 * (21_477_270.0 / 21_281_370.0);
+        assert!(
+            (pal_cycles as f64 - expected).abs() <= 2.0,
+            "PAL should execute ~{expected:.0} SPC cycles where NTSC executes \
+             {ntsc_cycles}, got {pal_cycles}"
+        );
+    }
+
+    /// The DSP emits its 32 kHz stream on the same SPC clock, so a PAL frame's
+    /// worth of master clocks carries proportionally more native samples.
+    #[test]
+    fn pal_paces_native_audio_samples_off_the_pal_master_clock() {
+        let mut ntsc = SnesApu::new_with_region(None, SnesVideoRegion::Ntsc);
+        let mut pal = SnesApu::new_with_region(None, SnesVideoRegion::Pal);
+
+        tick_master_clocks(&mut ntsc, TENTH_SECOND_MASTER_CLOCKS);
+        tick_master_clocks(&mut pal, TENTH_SECOND_MASTER_CLOCKS);
+
+        assert_eq!(ntsc.native_sample_count_for_test(), 3200);
+        assert_eq!(pal.native_sample_count_for_test(), 3229);
+    }
+
+    /// Restoring a state captured on one console into an emulator built for
+    /// the other must re-derive the clock ratio, otherwise a PAL save state
+    /// resumed after an `snes-hardware` change keeps running the SPC at the
+    /// NTSC ratio.
+    #[test]
+    fn set_video_region_retunes_the_clock_ratio_after_a_state_restore() {
+        let mut apu = SnesApu::new_with_region(None, SnesVideoRegion::Ntsc);
+        apu.set_video_region(SnesVideoRegion::Pal);
+        tick_master_clocks(&mut apu, TENTH_SECOND_MASTER_CLOCKS);
+
+        let mut native_pal = SnesApu::new_with_region(None, SnesVideoRegion::Pal);
+        tick_master_clocks(&mut native_pal, TENTH_SECOND_MASTER_CLOCKS);
+
+        assert_eq!(
+            apu.spc_cycles_executed_for_test(),
+            native_pal.spc_cycles_executed_for_test()
+        );
+        assert_eq!(
+            apu.native_sample_count_for_test(),
+            native_pal.native_sample_count_for_test()
+        );
+    }
 
     #[test]
     fn ipl_rom_has_sixty_four_bytes() {
@@ -1694,7 +1831,7 @@ mod tests {
         assert_eq!(apu.read_main_port(1), 0, "SPC->CPU ports clear on reset");
         assert_eq!(
             apu.spc_cycle_budget,
-            -2 * super::SPC_PER_MASTER_DEN,
+            -2 * super::SPC_PER_MASTER_DEN_NTSC,
             "SPC clock re-anchors to the reset instant plus the vector fetch"
         );
         assert_eq!(
@@ -1724,7 +1861,7 @@ mod tests {
         );
         assert_eq!(
             apu.spc_cycle_budget,
-            -2 * super::SPC_PER_MASTER_DEN,
+            -2 * super::SPC_PER_MASTER_DEN_NTSC,
             "reset vector fetch must delay the first instruction by 2 SPC cycles"
         );
     }
@@ -1746,11 +1883,11 @@ mod tests {
             apu.tick();
         }
         assert!(
-            2 * apu.spc_cycle_budget > super::SPC_PER_MASTER_DEN,
+            2 * apu.spc_cycle_budget > super::SPC_PER_MASTER_DEN_NTSC,
             "master tick 31,574,540 must land in the second half of the \
              current SPC cycle; got budget {} of {}",
             apu.spc_cycle_budget,
-            super::SPC_PER_MASTER_DEN,
+            super::SPC_PER_MASTER_DEN_NTSC,
         );
     }
 

@@ -688,6 +688,12 @@ impl Ppu {
         }
     }
 
+    /// The console region this PPU is timing to. Also the authority the bus
+    /// uses to retune the APU's clock ratio after a save-state restore.
+    pub fn video_region(&self) -> SnesVideoRegion {
+        self.video_region
+    }
+
     pub(super) fn scanlines_per_frame(&self) -> u16 {
         match self.video_region {
             SnesVideoRegion::Ntsc => NTSC_SCANLINES_PER_FRAME,

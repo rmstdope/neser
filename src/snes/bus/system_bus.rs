@@ -156,7 +156,7 @@ impl SnesSystemBus {
             pending_hdma: None,
             cpu_speed: 8,
             cpu_drives_dma_hook: false,
-            apu: RefCell::new(SnesApu::new(spc_ipl)),
+            apu: RefCell::new(SnesApu::new_with_region(spc_ipl, video_region)),
             ppu,
             input: RefCell::new(InputPorts::new()),
             mdr: Cell::new(0),
@@ -763,8 +763,16 @@ impl SnesSystemBus {
     }
 
     /// Restore the PPU state from a save-state.
+    ///
+    /// The PPU state carries the console's video region, so this is also where
+    /// the APU's SPC-to-master clock ratio is retuned: a state captured on PAL
+    /// must resume at the PAL ratio even if this emulator was constructed for
+    /// NTSC (e.g. the `snes-hardware` override changed between save and load).
     pub(crate) fn ppu_restore_state(&mut self, state: &SnesPpuState) -> Result<(), String> {
-        self.ppu.borrow_mut().restore_state(state)
+        self.ppu.borrow_mut().restore_state(state)?;
+        let video_region = self.ppu.borrow().video_region();
+        self.apu.get_mut().set_video_region(video_region);
+        Ok(())
     }
 
     /// Restores SRAM from a byte slice. If the slice is larger than SRAM,
