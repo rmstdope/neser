@@ -73,12 +73,8 @@ const shortcutActionByCode = {
     KeyH: "toggleHelp"
 };
 
-function hasControlModifier(event: ShortcutEvent) {
-    return Boolean(event.ctrlKey) && !event.altKey;
-}
-
 function shortcutActionForEvent(event: ShortcutEvent, actions: ShortcutActions) {
-    if (hasControlModifier(event)) {
+    if (event.ctrlKey && !event.altKey) {
         if (event.code === "KeyR") {
             return event.shiftKey ? actions.hardReset : actions.reset;
         }
@@ -88,8 +84,7 @@ function shortcutActionForEvent(event: ShortcutEvent, actions: ShortcutActions) 
         }
     }
 
-    const code = event.code;
-    const actionName = shortcutActionByCode[code as keyof typeof shortcutActionByCode];
+    const actionName = shortcutActionByCode[event.code as keyof typeof shortcutActionByCode];
     if (!actionName) {
         return null;
     }
