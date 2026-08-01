@@ -56,6 +56,16 @@ pub(crate) enum InputAction {
         button: MouseButton,
         pressed: bool,
     },
+    /// Super Scope aim position in screen-pixel space.
+    SuperScopePosition { port: u8, x: i16, y: i16 },
+    /// Super Scope trigger (fire) button edge.
+    SuperScopeTrigger { port: u8, pressed: bool },
+    /// Super Scope cursor button edge.
+    SuperScopeCursor { port: u8, pressed: bool },
+    /// Super Scope turbo switch edge.
+    SuperScopeTurbo { port: u8, pressed: bool },
+    /// Super Scope pause button edge.
+    SuperScopePause { port: u8, pressed: bool },
 }
 
 /// A scripted input change, applied once the runner's completed-frame
@@ -317,6 +327,21 @@ fn run_rom_with_oracle_and_capture(
                     MouseButton::Left => snes.set_mouse_left_button(port, pressed),
                     MouseButton::Right => snes.set_mouse_right_button(port, pressed),
                 },
+                InputAction::SuperScopePosition { port, x, y } => {
+                    snes.set_superscope_position(port, x, y);
+                }
+                InputAction::SuperScopeTrigger { port, pressed } => {
+                    snes.set_superscope_trigger(port, pressed);
+                }
+                InputAction::SuperScopeCursor { port, pressed } => {
+                    snes.set_superscope_cursor(port, pressed);
+                }
+                InputAction::SuperScopeTurbo { port, pressed } => {
+                    snes.set_superscope_turbo(port, pressed);
+                }
+                InputAction::SuperScopePause { port, pressed } => {
+                    snes.set_superscope_pause(port, pressed);
+                }
             }
             next_input += 1;
         }
@@ -491,6 +516,12 @@ fn maybe_write_capture_png(
 
 fn capture_is_disabled_for_fixture(name: &str) -> bool {
     let stem = Path::new(name).file_stem().and_then(|stem| stem.to_str());
+
+    // The Super Scope input fixtures (#2890) render nothing meaningful; disable
+    // captures for the whole `super-scope-*` family by prefix.
+    if stem.is_some_and(|stem| stem.starts_with("super-scope-")) {
+        return true;
+    }
 
     matches!(
         stem,
@@ -1248,6 +1279,9 @@ mod tests {
             "screen-crc-match.sfc",
             "screen-crc-mismatch.sfc",
             "screen-crc-probe.sfc",
+            // Super Scope family, disabled by the `super-scope-*` prefix (#2890).
+            "super-scope-idle.sfc",
+            "super-scope-latch-fire.sfc",
             "timeout.sfc",
         ] {
             let result = run_rom_with_capture(&pass_marker_rom(), name, short_config(), true);

@@ -262,6 +262,15 @@ pub struct Ppu {
     ophct_read_high: bool,
     /// OPVCT read-twice flipflop (false = next read is the low byte).
     opvct_read_high: bool,
+    /// Super Scope aim latch: a pending request to latch OPHCT/OPVCT at a
+    /// specific (x, y) once the beam sweeps past it (Mesen2 `_latchRequest`).
+    /// The latched values are the requested coordinates, not the live counter.
+    location_latch_request: bool,
+    location_latch_x: u16,
+    location_latch_y: u16,
+    /// One-shot edge raised at the top of each frame (start of scanline 0).
+    /// The bus consumes it once per frame to re-arm the Super Scope aim latch.
+    frame_start_edge: bool,
     /// PPU2 open bus: bits 1-7 of the OPHCT/OPVCT high-byte read (and the RDCGRAM/STAT78
     /// reads) are not real data -- they reflect whatever byte the PPU2 data bus last drove.
     /// Updated by every $213B/$213C/$213D/$213F read to that read's own return value.
@@ -468,6 +477,10 @@ impl Ppu {
             counter_latch_flag: false,
             ophct_read_high: false,
             opvct_read_high: false,
+            location_latch_request: false,
+            location_latch_x: 0,
+            location_latch_y: 0,
+            frame_start_edge: false,
             ppu2_open_bus: 0,
             wrio: 0xFF,
             irq_mode: 0,
@@ -739,6 +752,54 @@ mod tests {
         for _ in 0..ticks {
             ppu.tick();
         }
+    }
+
+    fn tick_scanlines(ppu: &mut Ppu, lines: u32) {
+        let ticks = DOTS_PER_SCANLINE as u32 * MASTER_CYCLES_PER_DOT * lines;
+        for _ in 0..ticks {
+            ppu.tick();
+        }
+    }
+
+    /// Super Scope aim latch (Mesen2 `SetLocationLatchRequest` /
+    /// `ProcessLocationLatchRequest`): an armed request latches OPHCT/OPVCT to
+    /// the *requested* coordinates and sets the STAT78 latch flag only once the
+    /// beam sweeps past (scanline, dot) == (y, x) -- not before.
+    #[test]
+    fn super_scope_aim_latch_latches_requested_coords_when_beam_passes() {
+        let mut ppu = Ppu::new();
+        ppu.set_location_latch_request(110, 77);
+
+        // Beam is still above the aimed scanline: nothing latched yet.
+        tick_scanlines(&mut ppu, 10);
+        assert!(
+            !ppu.counter_latch_flag,
+            "latch must not fire before the beam reaches the aim"
+        );
+
+        // Sweep well past the aimed (scanline 77, dot 110).
+        tick_scanlines(&mut ppu, 100);
+        assert!(
+            ppu.counter_latch_flag,
+            "latch should fire once the beam passes"
+        );
+        assert_eq!(ppu.ophct_latch, 110, "OPHCT = requested X");
+        assert_eq!(ppu.opvct_latch, 77, "OPVCT = requested Y");
+    }
+
+    /// The frame-start edge is a once-per-frame one-shot consumed by the bus to
+    /// re-arm the Super Scope latch at the top of each frame.
+    #[test]
+    fn frame_start_edge_pulses_once_per_frame() {
+        let mut ppu = Ppu::new();
+        // Consume any startup edge, then confirm it stays clear mid-frame.
+        ppu.take_frame_start();
+        tick_scanlines(&mut ppu, 5);
+        assert!(!ppu.take_frame_start(), "no edge mid-frame");
+        // Crossing the frame boundary raises it exactly once.
+        render_full_frame(&mut ppu);
+        assert!(ppu.take_frame_start(), "edge set at the top of the frame");
+        assert!(!ppu.take_frame_start(), "edge is a one-shot");
     }
 
     #[test]

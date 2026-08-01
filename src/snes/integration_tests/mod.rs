@@ -13,6 +13,7 @@ mod gilyon_spc_tests;
 mod hblank_dma_vram_tests;
 mod input_mouse_tests;
 mod input_standard_controller_tests;
+mod input_super_scope_tests;
 mod jonasquinn_dma_tests;
 mod jonasquinn_math_tests;
 mod kungfufurby_hdma_tests;

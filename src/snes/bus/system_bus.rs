@@ -1226,13 +1226,19 @@ impl SnesSystemBus {
         self.apu.borrow_mut().tick();
         // Single `borrow_mut()` scope for both calls -- this runs once per master clock, so two
         // separate `RefCell` runtime checks here would be needless overhead on a hot path.
-        let auto_joypad_latch = {
+        let (auto_joypad_latch, frame_start) = {
             let mut ppu = self.ppu.borrow_mut();
             ppu.tick();
-            ppu.poll_auto_joypad_latch()
+            (ppu.poll_auto_joypad_latch(), ppu.take_frame_start())
         };
         if auto_joypad_latch {
             self.input.get_mut().trigger_auto_read();
+        }
+        // At the top of each frame, re-arm the PPU location latch from a Super
+        // Scope aimed on-screen with the fire/cursor held, so the beam can latch
+        // OPHCT/OPVCT at the aimed position during this frame's rendering.
+        if frame_start && let Some((x, y)) = self.input.get_mut().superscope_latch_request() {
+            self.ppu.borrow_mut().set_location_latch_request(x, y);
         }
         self.input.get_mut().tick();
         if let Some(sa1_core) = &mut self.sa1_core {
