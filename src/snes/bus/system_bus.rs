@@ -763,16 +763,26 @@ impl SnesSystemBus {
     }
 
     /// Restore the PPU state from a save-state.
-    ///
-    /// The PPU state carries the console's video region, so this is also where
-    /// the APU's SPC-to-master clock ratio is retuned: a state captured on PAL
-    /// must resume at the PAL ratio even if this emulator was constructed for
-    /// NTSC (e.g. the `snes-hardware` override changed between save and load).
     pub(crate) fn ppu_restore_state(&mut self, state: &SnesPpuState) -> Result<(), String> {
-        self.ppu.borrow_mut().restore_state(state)?;
-        let video_region = self.ppu.borrow().video_region();
+        self.ppu.borrow_mut().restore_state(state)
+    }
+
+    /// Retunes the APU's region-derived SPC-to-master clock ratio and audio
+    /// pacing. The console calls this *before* restoring any state, so the
+    /// APU's own restore lands its saved (and therefore saved-region-derived)
+    /// pacing values on top of an already-correct denominator.
+    pub(crate) fn apu_set_video_region(&mut self, video_region: SnesVideoRegion) {
         self.apu.get_mut().set_video_region(video_region);
-        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apu_output_sample_rate_for_test(&self) -> f32 {
+        self.apu.borrow().output_sample_rate_for_test()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apu_pending_sample_count_for_test(&self) -> usize {
+        self.apu.borrow().pending_sample_count_for_test()
     }
 
     /// Restores SRAM from a byte slice. If the slice is larger than SRAM,

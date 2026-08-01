@@ -333,6 +333,23 @@ impl SnesApu {
         self.native_samples.len()
     }
 
+    /// Queued resampled output samples awaiting the frontend.
+    #[cfg(test)]
+    pub(crate) fn pending_sample_count_for_test(&self) -> usize {
+        self.pending_samples.len()
+    }
+
+    /// The configured output sample rate in Hz, recovered from the
+    /// master-clocks-per-sample pacing value. 0 when output resampling has
+    /// not been configured.
+    #[cfg(test)]
+    pub(crate) fn output_sample_rate_for_test(&self) -> f32 {
+        if self.cycles_per_sample <= 0.0 {
+            return 0.0;
+        }
+        self.spc_per_master_den as f32 / self.cycles_per_sample
+    }
+
     /// Read the byte at `addr` from the SPC700 address space without ticking
     /// timers or moving any other state (no read side effects).
     #[cfg(test)]
@@ -1024,6 +1041,49 @@ mod tests {
 
         assert_eq!(ntsc.native_sample_count_for_test(), 3200);
         assert_eq!(pal.native_sample_count_for_test(), 3229);
+    }
+
+    /// The audio pacing fields in a save state (`cycles_per_sample`,
+    /// `native_cycles_per_sample`, the accumulators and the queued samples)
+    /// were all derived from the *saving* console's master clock, so they are
+    /// only self-consistent alongside that console's denominator.
+    ///
+    /// The console therefore retunes the region **before** handing the APU its
+    /// state, so the restored values are the ones that survive. Retuning
+    /// afterwards would both clobber the restored resampler state and
+    /// reverse-compute the output rate against a denominator the restored
+    /// `cycles_per_sample` never belonged to.
+    #[test]
+    fn a_cross_region_restore_keeps_the_saved_audio_pacing() {
+        let mut saver = SnesApu::new_with_region(None, SnesVideoRegion::Ntsc);
+        saver.set_sample_rate(48_000.0);
+        tick_master_clocks(&mut saver, 100_000);
+        let state = saver.capture_state();
+        assert!(
+            !state.pending_samples.is_empty(),
+            "the saved state should carry queued output samples"
+        );
+
+        // A console built for PAL loading an NTSC state: region first, state second.
+        let mut loader = SnesApu::new_with_region(None, SnesVideoRegion::Pal);
+        loader.set_video_region(SnesVideoRegion::Ntsc);
+        loader.restore_state(&state).expect("restore");
+
+        assert_eq!(
+            loader.pending_sample_count_for_test(),
+            state.pending_samples.len(),
+            "restored output samples must not be discarded by the retune"
+        );
+        assert_eq!(
+            loader.output_sample_rate_for_test(),
+            48_000.0,
+            "the output rate is a frontend setting in Hz and must survive the restore"
+        );
+        assert_eq!(
+            loader.native_sample_count_for_test(),
+            0,
+            "restore_state clears the native queue"
+        );
     }
 
     /// Restoring a state captured on one console into an emulator built for

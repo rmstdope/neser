@@ -1233,6 +1233,67 @@ mod tests {
         assert_eq!(bytes, bytes2, "PPU state survives the save/load round-trip");
     }
 
+    /// A save state carries the console region, and the APU's clock ratio and
+    /// audio pacing are derived from it. Restoring a PAL state into an
+    /// emulator configured for NTSC (the `snes-hardware` override changed
+    /// between save and load) must land on the PAL ratio *and* keep the audio
+    /// pipeline the state carried: the pacing values in the state were
+    /// computed against PAL's master clock, so the region has to be retuned
+    /// before the APU state is applied, not after.
+    #[test]
+    fn cross_region_state_restore_keeps_pal_pacing_and_the_audio_pipeline() {
+        const OUTPUT_RATE: f32 = 48_000.0;
+        let rom = valid_lorom_nop_rom_with_country(0x00); // Japan: NTSC by header
+
+        let mut source = make_snes_with_hardware(Some(SnesHardware::Pal));
+        source
+            .load_rom(&rom, "pal_source.sfc")
+            .expect("load source");
+        source
+            .cpu
+            .as_mut()
+            .expect("cpu")
+            .bus_mut()
+            .set_audio_sample_rate(OUTPUT_RATE);
+        for _ in 0..20_000 {
+            source.run_tick();
+        }
+        let saved_pending = source
+            .cpu
+            .as_ref()
+            .expect("cpu")
+            .bus()
+            .apu_pending_sample_count_for_test();
+        assert!(saved_pending > 0, "the source should have queued samples");
+        let bytes = source.save_state_bytes().expect("save state");
+
+        // Load it on a console configured for NTSC.
+        let mut restored = make_snes_with_hardware(Some(SnesHardware::Ntsc));
+        restored
+            .load_rom(&rom, "ntsc_restore.sfc")
+            .expect("load restore");
+        restored
+            .cpu
+            .as_mut()
+            .expect("cpu")
+            .bus_mut()
+            .set_audio_sample_rate(OUTPUT_RATE);
+        restored.load_state_bytes(&bytes).expect("restore");
+
+        let bus = restored.cpu.as_ref().expect("cpu").bus();
+        assert_eq!(
+            bus.apu_pending_sample_count_for_test(),
+            saved_pending,
+            "the restored output-sample queue must survive the region retune"
+        );
+        assert_eq!(
+            bus.apu_output_sample_rate_for_test(),
+            OUTPUT_RATE,
+            "the output rate must still be {OUTPUT_RATE} Hz after restoring a \
+             PAL state onto an NTSC-configured console"
+        );
+    }
+
     #[test]
     fn load_state_bytes_rejects_version_mismatch() {
         let rom = lorom_rom_with_battery_sram(0x05);

@@ -611,6 +611,42 @@ mod tests {
         assert_eq!(status & 0x10, 0x10, "PAL frame-rate bit must be set");
     }
 
+    /// fullsnes "213Fh - STAT78" bit 5: "Not used (PPU2 open bus) (same as
+    /// last value read from PPU2)". Mesen2 builds the same value with
+    /// `(_state.Ppu2OpenBus & 0x20)` ORed in. Building STAT78 without an
+    /// open-bus term and then latching the result back into PPU2 open bus
+    /// pins bit 5 to 0 forever, which also corrupts the following
+    /// OPHCT/OPVCT high-byte reads that echo open bus.
+    #[test]
+    fn stat78_bit_5_echoes_the_last_value_read_from_ppu2() {
+        let mut ppu = Ppu::new();
+
+        // Latch at H=32 (0x20, bit 5 set) and read OPHCT's low byte, which
+        // leaves 0x20 in PPU2 open bus.
+        tick_dots(&mut ppu, 32);
+        ppu.read_register(0x2137);
+        assert_eq!(ppu.read_register(0x213C), 32);
+
+        assert_eq!(
+            ppu.read_register(0x213F) & 0x20,
+            0x20,
+            "STAT78 bit 5 must echo the 0x20 the OPHCT read left in PPU2 open bus"
+        );
+
+        // Now leave a value WITHOUT bit 5 in open bus and confirm it follows.
+        tick_dots(&mut ppu, 40); // H=72 (0x48): bit 5 clear
+        ppu.read_register(0x2137);
+        let low = ppu.read_register(0x213C);
+        assert_eq!(low, 72);
+        assert_eq!(low & 0x20, 0x00, "H={low} should have bit 5 clear");
+
+        assert_eq!(
+            ppu.read_register(0x213F) & 0x20,
+            0x00,
+            "STAT78 bit 5 must follow open bus down as well as up"
+        );
+    }
+
     #[test]
     fn stat78_reports_and_clears_the_latch_flag() {
         let mut ppu = Ppu::new();
