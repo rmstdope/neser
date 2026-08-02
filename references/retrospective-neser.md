@@ -1384,3 +1384,43 @@ No feedback provided (navigator unavailable/pending)
 #### What to improve
 
 No feedback provided (navigator unavailable/pending)
+
+---
+
+## 2026-08-01 — PR #3089: SNES: align interlace/overscan capture dimensions with Mesen2
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/3089
+**Linked issues:** #3001
+
+### Customizations used
+
+| Type         | Name                              | Purpose                                                                                                                                              |
+| ------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Skill        | `snes-hardware-research`          | Provided exact Mesen2 binary path, `--testRunner` headless syntax, `--snes.disableFrameSkipping=true` flag, and the Lua testRunner template — eliminating all tooling re-research. |
+| Skill        | `test-driven-development`         | Implicitly governed the workflow shape (probe → failing test → fix → re-enable ignored tests → green run).                                           |
+| Instructions | `.github/copilot-instructions.md` | Applied repo-wide rules for incremental changes, validation gates, and retrospective capture.                                                        |
+
+### What went well
+
+- ✅ The `snes-hardware-research` skill contained the exact Mesen2 oracle tooling details (binary path, `--testRunner` flag, `--snes.disableFrameSkipping=true`, Lua template), making the ground-truth comparison pipeline immediately executable without any tooling re-research.
+- ✅ The plan → navigator approval → implement loop (superplanner + `exit_plan_mode`) kept changes scoped to exactly two files with zero unrelated churn.
+- ✅ The layered validation strategy — NESER probe first, then 5 Mesen2 headless comparisons, then 0-pixel diff — gave concrete, evidence-backed confidence before re-enabling tests rather than relying on assertion alone.
+- ✅ Re-enabling 4 previously `#[ignore]`d integration tests converted silent dead coverage back into live regression guards, turning the fix into a net improvement in test health.
+- ✅ The final run produced 12 790 passed / 0 failed in a single clean execution.
+
+### What to improve
+
+- ❌ The `test-driven-development` skill was not explicitly invoked even though it governed the workflow shape (probe → red test → fix → green). Future sessions should activate it explicitly at the start so its guidance is consciously applied rather than implicitly followed.
+- ❌ The CRC discovery → Mesen2 headless → pixel-diff pipeline is reusable across all SNES golden-update work but exists only implicitly in this PR. It should be captured as a named procedure or referenced example in `snes-hardware-research` skill notes so future sessions can invoke it by name without reconstructing the steps.
+- ❌ When re-enabling `#[ignore]`d tests is part of the fix scope, the plan step should call this out explicitly so it is treated as a deliverable rather than a clean-up detail discovered during implementation.
+
+### Navigator feedback
+
+#### What went well
+
+No additional feedback provided.
+
+#### What to improve
+
+No additional feedback provided.

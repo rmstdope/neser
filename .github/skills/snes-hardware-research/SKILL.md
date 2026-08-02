@@ -339,6 +339,11 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    (hdrvtest ignores input until ~frame 300): schedule taps after the
    first screen's settle frame, and compare each scripted combo's CRC
    against the no-input CRC — equality means the taps were swallowed.
+   **Always convert probe decimal CRC output to hex via Python**
+   (`python3 -c "print(hex(N))"`) before comparing against Mesen2
+   values — mental arithmetic on 10-digit decimals is error-prone and
+   produces silent false mismatches (caught in #3021: `4015300223` was
+   misread as `0xEFB6E03F` instead of the correct `0xEF549E7F`).
 2. **Capture and pixel-diff**: write NESER PNGs during the probe, capture
    Mesen2 headless at the same frame (`--testRunner` + Lua `print()` hex
    dump; flags above), then diff programmatically with a ±1-row shift
