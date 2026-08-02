@@ -7,6 +7,11 @@
 //! completion (blue = PASS, red/maroon = FAIL), cross-checked against a Mesen2
 //! headless capture (`--Video.VideoFilter=None --Video.AspectRatio=NoStretching
 //! --snes.disableFrameSkipping=true`) of the identical ROM file.
+//!
+//! **Golden convention (#3092).** All three tests assert the Mesen2-correct
+//! blue PASS screen, not NESER's current output, so they FAIL under
+//! `cargo test --include-ignored` until #3062 lands -- the designed state, not
+//! a regression. See `kungfufurby_irq_tests`' module doc for the rationale.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -26,7 +31,12 @@ mod tests {
             &rom,
             file,
             "kungfufurby_hdma_tests",
-            RunConfig::new(400_000_000, 0),
+            // Headroom for `test_hdmasync`'s frame-1100 sample point, which
+            // needs ~393M master clocks (1100 x 1364 x 262). The previous
+            // 400M cap cleared that by only ~19 frames; overshooting it would
+            // exit on TickLimit and report a confusing budget failure instead
+            // of the golden mismatch the test is actually about.
+            RunConfig::new(600_000_000, 0),
             RunOracle::ScreenCrc {
                 frames,
                 expected_crc,
@@ -41,34 +51,37 @@ mod tests {
         );
     }
 
-    // The three CRCs below are NESER's *current* (diverging) renders, NOT
-    // Mesen2-approved goldens: Mesen2 shows a solid blue PASS backdrop for all
-    // three at frame 600. Ignored pending #3062; re-approve against Mesen2 and
-    // un-ignore once NESER renders the PASS backdrop.
+    // All three goldens below are the Mesen2-approved blue PASS screen,
+    // verified by a fresh headless capture at each test's own sample frame.
+    // Un-ignore each one once NESER renders the PASS backdrop (#3062).
 
-    /// #3062: NESER renders solid black (self-check appears to crash/hang before
-    /// painting the backdrop); Mesen2 renders blue PASS. Same black CRC as
-    /// #2953.
+    /// #3062: NESER paints a brief red flash at frames 12-13 and then settles
+    /// on solid black from frame 14 onward; Mesen2 renders blue PASS. Same
+    /// black CRC as #2953.
     #[test]
-    #[ignore = "renders black instead of Mesen2's blue PASS; pending #3062"]
+    #[ignore = "settles on black instead of Mesen2's blue PASS; asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdma_passes() {
-        run_rom_screen_crc("test_hdma.smc", 600, 0x6E8D_8520);
+        run_rom_screen_crc("test_hdma.smc", 600, 0x8695_BBB0);
     }
 
-    /// #3062: NESER renders solid black (as `test_hdma`); Mesen2 renders blue
-    /// PASS.
+    /// #3062: this ROM is slow -- BOTH emulators render solid black until
+    /// ~frame 1027, so the frame-600 sample this test used before #3092 could
+    /// never see the divergence (it asserted "still black", which Mesen2 also
+    /// produces). Sampled at frame 1100 instead, comfortably past the
+    /// transition: Mesen2 is stable blue PASS from frame 1029, while NESER
+    /// paints red FAIL at 1029 and settles on `0x7F21_BBD7` from frame 1031.
     #[test]
-    #[ignore = "renders black instead of Mesen2's blue PASS; pending #3062"]
+    #[ignore = "settles on a non-PASS screen where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdmasync_passes() {
-        run_rom_screen_crc("test_hdmasync.smc", 600, 0x6E8D_8520);
+        run_rom_screen_crc("test_hdmasync.smc", 1100, 0x8695_BBB0);
     }
 
-    /// #3062: NESER runs to completion but the ROM's self-check FAILS (red
-    /// backdrop) where Mesen2 PASSes (blue) -- an HDMA timing behaviour NESER
-    /// gets wrong.
+    /// #3062: NESER runs to completion but the ROM's self-check FAILS (a flat
+    /// `(66, 0, 0)` fill, settled from frame 30) where Mesen2 PASSes (blue) --
+    /// an HDMA timing behaviour NESER gets wrong.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); pending #3062"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdmatiming_passes() {
-        run_rom_screen_crc("test_hdmatiming.smc", 600, 0x8662_6F50);
+        run_rom_screen_crc("test_hdmatiming.smc", 600, 0x8695_BBB0);
     }
 }

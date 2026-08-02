@@ -1384,3 +1384,87 @@ No feedback provided (navigator unavailable/pending)
 #### What to improve
 
 No feedback provided (navigator unavailable/pending)
+
+---
+
+## 2026-08-01 — PR #3089: SNES: align interlace/overscan capture dimensions with Mesen2
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/3089
+**Linked issues:** #3001
+
+### Customizations used
+
+| Type         | Name                              | Purpose                                                                                                                                              |
+| ------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Skill        | `snes-hardware-research`          | Provided exact Mesen2 binary path, `--testRunner` headless syntax, `--snes.disableFrameSkipping=true` flag, and the Lua testRunner template — eliminating all tooling re-research. |
+| Skill        | `test-driven-development`         | Implicitly governed the workflow shape (probe → failing test → fix → re-enable ignored tests → green run).                                           |
+| Instructions | `.github/copilot-instructions.md` | Applied repo-wide rules for incremental changes, validation gates, and retrospective capture.                                                        |
+
+### What went well
+
+- ✅ The `snes-hardware-research` skill contained the exact Mesen2 oracle tooling details (binary path, `--testRunner` flag, `--snes.disableFrameSkipping=true`, Lua template), making the ground-truth comparison pipeline immediately executable without any tooling re-research.
+- ✅ The plan → navigator approval → implement loop (superplanner + `exit_plan_mode`) kept changes scoped to exactly two files with zero unrelated churn.
+- ✅ The layered validation strategy — NESER probe first, then 5 Mesen2 headless comparisons, then 0-pixel diff — gave concrete, evidence-backed confidence before re-enabling tests rather than relying on assertion alone.
+- ✅ Re-enabling 4 previously `#[ignore]`d integration tests converted silent dead coverage back into live regression guards, turning the fix into a net improvement in test health.
+- ✅ The final run produced 12 790 passed / 0 failed in a single clean execution.
+
+### What to improve
+
+- ❌ The `test-driven-development` skill was not explicitly invoked even though it governed the workflow shape (probe → red test → fix → green). Future sessions should activate it explicitly at the start so its guidance is consciously applied rather than implicitly followed.
+- ❌ The CRC discovery → Mesen2 headless → pixel-diff pipeline is reusable across all SNES golden-update work but exists only implicitly in this PR. It should be captured as a named procedure or referenced example in `snes-hardware-research` skill notes so future sessions can invoke it by name without reconstructing the steps.
+- ❌ When re-enabling `#[ignore]`d tests is part of the fix scope, the plan step should call this out explicitly so it is treated as a deliverable rather than a clean-up detail discovered during implementation.
+
+### Navigator feedback
+
+#### What went well
+
+No additional feedback provided.
+
+#### What to improve
+
+No additional feedback provided.
+
+---
+
+## 2026-08-02 — PR #3098: SNES: assert Mesen2 PASS goldens for screen-CRC divergence tests, fix stale and rotted ignores
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/3098
+**Linked issues:** #3092 (closes), #3093, #3062, #3063; opened #3096, #3097
+
+### Customizations used
+
+| Type         | Name                       | Purpose                                                                                                                                   |
+| ------------ | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Skill        | `snes-hardware-research`   | Mesen2 binary path, `--testRunner` headless syntax, scripted-input Lua template, concurrent-instance guard, settle-probe workflow.          |
+| Skill        | `github-issue-designer`    | Structure for the rewritten #3092, the #3093 correction, and the two new issues.                                                           |
+| Skill        | `github-administration`    | `--body-file` discipline and post-mutation verification across 5 issue mutations.                                                          |
+| Skill        | `test-driven-development`  | Mutation-verification of both newly un-ignored goldens before trusting them.                                                               |
+| Skill        | `self-learning-skills`     | This retrospective.                                                                                                                        |
+
+### What went well
+
+- ✅ Verifying the issue's premise before implementing was the single highest-value act of the session. #3092 asserted the five IRQ tests "pass today"; capturing the screens showed the ROMs render red FAIL and the goldens recorded that failure. Implementing as written would have frozen five known-wrong screens into CI and inverted the fix signal.
+- ✅ The `snes-hardware-research` skill's Mesen2 recipe (binary path, flags, testRunner Lua template, the concurrent-instance guard) made 15 ground-truth captures executable with no tooling re-research — exactly the reuse PR #3089's retrospective hoped for.
+- ✅ Proving the capture pipeline with a control golden first (Mesen2's `colorbars_default` reproducing NESER's approved `0xF7459692` byte-for-byte) meant every later capture rested on a validated pipeline rather than assumption.
+- ✅ Sweeping every `#[ignore]` in `src/` against the state of its cited issue turned one reported defect into four real ones: a golden belonging to a different ROM, a sample frame that could never see its divergence, and two tests a closed issue had actually fixed (+2 live CI guards).
+- ✅ Mutation-checking both re-approved goldens (one-bit perturbation → confirmed failure → revert) proved they have power instead of assuming it.
+- ✅ Auditing my own prose caught two overstatements before review: a "not a flat fill" claim from a five-colour scan, and a tick-budget comment claiming 400M "would expire" at frame 1100 when ~393M is needed.
+
+### What to improve
+
+- ❌ Scope grew from 5 tests to 15 across 5 modules and 5 issues. Each step was navigator-approved, but CLAUDE.md asks for small increments and the natural three-way split (interrupt / DMA-HDMA / ddribin tests) was identified yet not taken. Offer the split as the default recommendation rather than the fallback.
+- ❌ Two `gh issue edit` calls silently failed by running from the scratchpad directory piped through `tail`, and were only caught by a later verification query. Now encoded as rules 15-16 in `github-administration`.
+- ❌ The first colour scan for an unknown CRC tried five hand-picked colours and produced a confidently wrong conclusion. Exhaustive enumeration over the 32768-colour BGR555 space takes seconds; now documented in `snes-hardware-research`.
+- ❌ The `screen_crc32` oracle's lack of PASS/FAIL semantics had already been recorded as a lesson in an earlier session yet was rediscovered from scratch here. Lessons about an oracle's semantics belong in the skill next to the workflow that uses it, not only in session memory.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided (navigator selected "No feedback").
+
+#### What to improve
+
+No feedback provided (navigator selected "No feedback").

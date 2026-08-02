@@ -18,13 +18,13 @@
 //! - The interlace combo (X tap at frame 340, sampled at frame 650) and
 //!   the overscan combo (Y tap at frame 340, same frame) were parked on
 //!   a capture-geometry mismatch: NESER rendered 256x448 and 256x239
-//!   against Mesen2's 512x448 and 256x224. Their content was verified
-//!   (0-pixel diffs after halving Mesen2's width, resp. at crop offset
-//!   0), but the raw framebuffers were not comparable. #3001 aligned
-//!   both dimensions and #3034 moved interlace column-doubling to write
-//!   time, so the mismatch is gone and both are re-approvable -- but
-//!   that needs fresh input-scripted Mesen2 captures, so they stay
-//!   `#[ignore]`d with refreshed NESER-current CRCs for now.
+//!   against Mesen2's 512x448 and 256x224. #3001 aligned both
+//!   dimensions and #3034 moved interlace column-doubling to write
+//!   time, which changed NESER's output and left the recorded CRCs
+//!   stale -- unnoticed because the tests were ignored. #3092 supplied
+//!   the fresh input-scripted Mesen2 captures those changes called for:
+//!   both now match Mesen2 exactly at the same geometry, so they are
+//!   ordinary committed goldens rather than divergence records.
 
 use super::rom_runner::{InputEvent, RunConfig, RunOracle, run_rom_with_oracle};
 use crate::snes::input::SnesButton;
@@ -86,26 +86,41 @@ mod tests {
         run_hdrv_screen_crc("graybars", &script, 520, 0x0AC8_BD62);
     }
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden. The geometry
-    /// mismatch these two were parked on is gone -- #3001 aligned the
-    /// interlace and overscan capture dimensions with Mesen2 and #3034
-    /// moved interlace column-doubling to write time -- so both now render
-    /// at Mesen2's geometry and are re-approvable. Doing so needs fresh
-    /// input-scripted Mesen2 captures (the #2879 `emu.setInput` recipe),
-    /// which is why it is deferred rather than done here; the CRCs below
-    /// were refreshed to NESER's current output so they describe reality.
+    /// Mesen2-approved golden (#3092): since #3001 aligned the capture
+    /// dimensions and #3034 moved interlace column-doubling to write
+    /// time, NESER renders this combo at Mesen2's own 512x448 interlace
+    /// geometry, and a fresh input-scripted headless capture at frame
+    /// 650 hashes to the same value -- so the raw framebuffers are
+    /// directly comparable at last.
     #[test]
-    #[ignore = "re-approvable since #3001/#3034 but needs a fresh input-replay Mesen2 capture"]
     fn interlace_toggle() {
         run_hdrv_screen_crc("interlace", &tap(SnesButton::X, 340), 650, 0x902F_E4EE);
     }
 
-    /// As above. Note for whoever re-approves this one: its current CRC is
-    /// byte-identical to `colorbars_default`'s, which would mean the Y tap
-    /// left the screen unchanged. Check that the overscan toggle actually
-    /// registers before treating a matching capture as confirmation.
+    /// Mesen2-approved golden (#3092): since #3001 NESER captures the
+    /// standard 224-line window for this combo, matching Mesen2's frame
+    /// exactly.
+    ///
+    /// Known limitation, tracked in #3096: this CRC is byte-identical to
+    /// `colorbars_default`'s golden, and the test cannot tell you why.
+    /// With overscan on, `screen_snapshot_rgb` crops the 239-line frame
+    /// to 224 rows starting at internal row `OVERSCAN_CROP_TOP` (7); with
+    /// it off, from row 0. hdrvtest's colorbars are *vertical* bars with
+    /// no horizontal structure, so a 7-row vertical shift is invisible
+    /// and both crops hash the same. The equal CRC is therefore exactly
+    /// what you would see if the Y tap registered AND exactly what you
+    /// would see if it were swallowed -- it is evidence for neither.
+    ///
+    /// #3095 raised the swallowed-tap possibility; this comment does not
+    /// settle it, and neither does a matching Mesen2 capture (Mesen2's
+    /// overscan and non-overscan captures are identical for the same
+    /// reason). Deciding it needs an oracle that observes the overscan
+    /// state or the rows the crop discards -- that is #3096's job.
+    ///
+    /// Un-ignored anyway because the value is Mesen2-verified and does
+    /// guard rows 0-223 against corruption; it simply asserts less than
+    /// its name suggests.
     #[test]
-    #[ignore = "re-approvable since #3001/#3034 but needs a fresh input-replay Mesen2 capture"]
     fn overscan_toggle() {
         run_hdrv_screen_crc("overscan", &tap(SnesButton::Y, 340), 650, 0xF745_9692);
     }

@@ -13,18 +13,26 @@
 //! increment 2, found to share `kungfufurby_nmi_tests`' interrupt-dispatch
 //! root cause, tracked in #3049). #3049's per-CPU-cycle NMI and H/V-IRQ
 //! dispatch fixes (see `src/snes/cpu/cpu.rs`) fixed `demo_irqtest.smc`,
-//! pixel-verified against Mesen2 at frame 600. The remaining five are
-//! unaffected by either fix (identical CRCs before/after) -- their
-//! divergence is a different residual gap, not yet identified, matching
-//! `kungfufurby_nmi_tests::test_nmi_passes`'s status.
+//! pixel-verified against Mesen2 at frame 600. The remaining five still
+//! render their FAIL backdrop and are tracked in #3093 together with
+//! `kungfufurby_nmi_tests::test_nmi_passes`: both families show the same
+//! shape (the `demo_*` ROM passes, every other ROM renders the identical
+//! maroon FAIL fill), which is evidence of one shared residual gap.
 //!
-//! `irq.smc` and `test_irqb.smc` share the literal CRC `0xDEAD_FA89` below
-//! (also shared with `kungfufurby_nmi_tests::nmi.smc`'s old, no-longer-used
-//! placeholder). This is not a copy-pasted placeholder: their FAIL screen is
-//! a flat solid-red fill (see the module doc above), and a flat fill of the
-//! same colour and dimensions hashes identically regardless of which ROM
-//! produced it -- confirmed by capturing each independently with
-//! `NESER_CAPTURE_SCREEN=1`.
+//! **Golden convention (#3092).** The five ignored tests below assert the
+//! *Mesen2-correct* blue PASS screen, not NESER's current output. They
+//! therefore FAIL under `cargo test --include-ignored` until #3093 lands --
+//! that is the designed state, not a regression -- and turn green exactly
+//! when the underlying gap is fixed. Recording NESER's own diverging CRC
+//! instead (the convention these tests used before #3092) inverts that
+//! signal: a real fix would turn them red and read as a breakage.
+//!
+//! Every golden here was verified against a fresh Mesen2 headless capture
+//! (`--testRunner`, flags per the `snes-hardware-research` skill) at the
+//! same frame the test samples: each is a uniform `(0, 0, 255)` 256x224
+//! fill hashing to `0x8695_BBB0`. That one literal recurs across every
+//! blue-PASS golden in the SNES suite because a flat fill of a given
+//! colour and size hashes identically whichever ROM produced it.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -39,9 +47,10 @@ mod tests {
     /// Runs a KungFuFurby IRQ ROM to `frames` and asserts the rendered
     /// screen matches the Mesen2-approved PASS golden CRC32.
     ///
-    /// To approve a new golden, run with NESER_CAPTURE_SCREEN=1, visually
-    /// confirm the capture under target/snes_test_captures/ against a
-    /// Mesen2 headless capture at the same frame, then record the CRC here.
+    /// To approve a new golden, run with NESER_CAPTURE_SCREEN=1 and diff the
+    /// capture under target/snes_test_captures/ against a Mesen2 headless
+    /// capture at the same frame *programmatically* (never by eye), then
+    /// record the CRC here.
     fn run_rom_screen_crc(file: &str, frames: u32, expected_crc: u32) {
         let path = Path::new(ROOT).join(file);
         let rom = fs::read(&path)
@@ -66,49 +75,49 @@ mod tests {
         );
     }
 
-    /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
+    /// #3093: NESER's self-check FAILs (flat red) where Mesen2 PASSes (blue).
     /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
-    /// before/after); root cause not yet identified.
+    /// before/after).
     #[test]
-    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
+    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn irq_passes() {
-        run_rom_screen_crc("irq.smc", 1200, 0xDEAD_FA89);
+        run_rom_screen_crc("irq.smc", 1200, 0x8695_BBB0);
     }
 
-    /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
-    /// before/after); root cause not yet identified.
+    /// #3093: NESER's self-check FAILs (flat maroon, settled from frame 9)
+    /// where Mesen2 PASSes (blue). Unaffected by #3049's per-cycle NMI/IRQ
+    /// dispatch fixes (identical CRC before/after).
     #[test]
-    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq_passes() {
-        run_rom_screen_crc("test_irq.smc", 600, 0x0B56_4EEF);
+        run_rom_screen_crc("test_irq.smc", 600, 0x8695_BBB0);
     }
 
-    /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
-    /// before/after); root cause not yet identified.
+    /// #3093: NESER's self-check FAILs (flat maroon) where Mesen2 PASSes
+    /// (blue). Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes
+    /// (identical CRC before/after).
     #[test]
-    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq4200_passes() {
-        run_rom_screen_crc("test_irq4200.smc", 600, 0x0B56_4EEF);
+        run_rom_screen_crc("test_irq4200.smc", 600, 0x8695_BBB0);
     }
 
-    /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
-    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
-    /// before/after); root cause not yet identified.
+    /// #3093: NESER's self-check FAILs (flat maroon) where Mesen2 PASSes
+    /// (blue). Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes
+    /// (identical CRC before/after).
     #[test]
-    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq4209_passes() {
-        run_rom_screen_crc("test_irq4209.smc", 600, 0x0B56_4EEF);
+        run_rom_screen_crc("test_irq4209.smc", 600, 0x8695_BBB0);
     }
 
-    /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
+    /// #3093: NESER's self-check FAILs (flat red) where Mesen2 PASSes (blue).
     /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
-    /// before/after); root cause not yet identified.
+    /// before/after).
     #[test]
-    #[ignore = "root cause not yet identified; pending #3049 follow-up"]
+    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irqb_passes() {
-        run_rom_screen_crc("test_irqb.smc", 600, 0xDEAD_FA89);
+        run_rom_screen_crc("test_irqb.smc", 600, 0x8695_BBB0);
     }
 
     /// Fixed by #3049's per-cycle H/V-IRQ dispatch fix (`irq_line_shadow`,

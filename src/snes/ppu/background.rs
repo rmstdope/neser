@@ -1134,15 +1134,15 @@ mod tests {
         ppu.write_register(0x2105, 0x05); // mode 5 from SWITCH_COLUMN on
         render_lines(&mut ppu, 1);
 
-        for x in 0..SWITCH_COLUMN {
+        for (x, &native) in native_row.iter().enumerate() {
             assert_eq!(
                 ppu.framebuffer[x * 2],
-                native_row[x],
+                native,
                 "converted column {x} keeps the colour it was drawn with"
             );
             assert_eq!(
                 ppu.framebuffer[x * 2 + 1],
-                native_row[x],
+                native,
                 "converted column {x} is doubled into the odd output column"
             );
         }
