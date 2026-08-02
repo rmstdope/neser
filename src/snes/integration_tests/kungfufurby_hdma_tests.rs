@@ -80,7 +80,7 @@ mod tests {
     /// `(66, 0, 0)` fill, settled from frame 30) where Mesen2 PASSes (blue) --
     /// an HDMA timing behaviour NESER gets wrong.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdmatiming.smc", 600, 0x8695_BBB0);
     }

@@ -87,7 +87,7 @@ mod tests {
 
     /// #3063: NESER's self-check FAILs (flat maroon) where Mesen2 PASSes (blue).
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3063"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3063"]
     fn test_dmavalid_passes() {
         run_rom_screen_crc("test_dmavalid_v01/test_dmavalid.smc", 600, 0x8695_BBB0);
     }
@@ -96,7 +96,7 @@ mod tests {
     /// The CPU clears $420C mid-frame; NESER gets the mid-frame HDMA-disable
     /// behaviour wrong.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3063"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3063"]
     fn test_hdmadisable_passes() {
         run_rom_screen_crc("test_hdmadisable/test_hdmadisable.smc", 600, 0x8695_BBB0);
     }
@@ -128,7 +128,7 @@ mod tests {
     /// #3062 (byte-identical byuu mirror of KungFuFurby test_hdmatiming): NESER
     /// self-check FAILs (flat `(66, 0, 0)`) where Mesen2 PASSes (blue).
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdma/test_hdmatiming.smc", 600, 0x8695_BBB0);
     }

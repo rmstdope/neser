@@ -88,7 +88,7 @@ mod tests {
     /// where Mesen2 PASSes (blue). Unaffected by #3049's per-cycle NMI/IRQ
     /// dispatch fixes (identical CRC before/after).
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq_passes() {
         run_rom_screen_crc("test_irq.smc", 600, 0x8695_BBB0);
     }
@@ -97,7 +97,7 @@ mod tests {
     /// (blue). Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes
     /// (identical CRC before/after).
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq4200_passes() {
         run_rom_screen_crc("test_irq4200.smc", 600, 0x8695_BBB0);
     }
@@ -106,7 +106,7 @@ mod tests {
     /// (blue). Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes
     /// (identical CRC before/after).
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq4209_passes() {
         run_rom_screen_crc("test_irq4209.smc", 600, 0x8695_BBB0);
     }
