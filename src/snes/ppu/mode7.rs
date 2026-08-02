@@ -576,4 +576,58 @@ mod tests {
         // Top-left visible pixel should be white.
         assert_eq!(&rgb[0..3], &[255, 255, 255]);
     }
+
+    // ---- Arithmetic coverage: mode7_clip, sign_extend_13, write_m7_twice ----
+    // These functions are verified bit-identical to Mesen2 during #3021 investigation
+    // (bsnes `clip()`/sign-extend paths); the tests below pin them against regression.
+
+    #[test]
+    fn mode7_clip_positive_values_keep_lower_10_bits() {
+        // When bit 13 is clear, the result is the lower 10 bits of n (unsigned).
+        assert_eq!(super::mode7_clip(0), 0);
+        assert_eq!(super::mode7_clip(1), 1);
+        assert_eq!(super::mode7_clip(511), 511); // well within 10-bit positive range
+        assert_eq!(super::mode7_clip(1023), 1023); // maximum representable (bits 0-9 all set)
+        assert_eq!(super::mode7_clip(1024), 0); // 1024 = 0x400 (bit 10 set); n & 1023 keeps only bits 0-9, all of which are 0
+        assert_eq!(super::mode7_clip(0x1FFF), 1023); // bit 13 = 0, only bits 0-9 survive
+    }
+
+    #[test]
+    fn mode7_clip_bit13_sign_extends_lower_10_bits_to_negative() {
+        // When bit 13 is set, the lower 10 bits are sign-extended as a 10-bit two's-complement
+        // value: bit 9 is the sign, so 0 → -1024, 1 → -1023, 0x3FF → -1.
+        assert_eq!(super::mode7_clip(0x2000), -1024); // lower 10 = 0x000 → most negative
+        assert_eq!(super::mode7_clip(0x2001), -1023); // lower 10 = 0x001
+        assert_eq!(super::mode7_clip(0x23FF), -1); // lower 10 = 0x3FF = 1023 → -1 in 10-bit
+        // Bits 10-12 are discarded: 0x3FFF has same lower 10 as 0x23FF; bit 13 = 1.
+        assert_eq!(super::mode7_clip(0x3FFF), -1);
+    }
+
+    #[test]
+    fn sign_extend_13_bit12_is_sign() {
+        // Positive range: bits 0-11 preserved, bit 12 = 0.
+        assert_eq!(super::sign_extend_13(0), 0);
+        assert_eq!(super::sign_extend_13(1), 1);
+        assert_eq!(super::sign_extend_13(0x0FFF), 4095); // maximum positive 13-bit value
+        // Negative range: bit 12 set → sign-extend to i32.
+        assert_eq!(super::sign_extend_13(0x1000), -4096); // most negative 13-bit value
+        assert_eq!(super::sign_extend_13(0x1FFF), -1); // all 13 bits set
+        // Bits above 12 are stripped by the mask: high bit irrelevant.
+        assert_eq!(super::sign_extend_13(0x2000), 0); // bit 13 stripped → 0
+        assert_eq!(super::sign_extend_13(0xFFFF), -1); // strip to 13 bits → 0x1FFF → -1
+    }
+
+    #[test]
+    fn write_m7_twice_latches_low_byte_then_assembles_high_byte() {
+        // Each call: combined = (value << 8) | m7_old, then m7_old = value.
+        // Initial m7_old is 0 (Ppu::new()).
+        let mut ppu = Ppu::new();
+        // First write: low byte 0xCD.
+        assert_eq!(ppu.write_m7_twice(0xCD), 0xCD00); // combined = (0xCD<<8) | 0x00
+        // m7_old is now 0xCD.
+        // Second write: high byte 0xAB → register = 0xABCD.
+        assert_eq!(ppu.write_m7_twice(0xAB), 0xABCD); // combined = (0xAB<<8) | 0xCD
+        // m7_old is now 0xAB; a subsequent first write uses it as the low byte.
+        assert_eq!(ppu.write_m7_twice(0x01), 0x01AB); // combined = (0x01<<8) | 0xAB
+    }
 }
