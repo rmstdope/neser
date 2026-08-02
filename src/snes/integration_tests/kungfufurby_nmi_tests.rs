@@ -12,6 +12,14 @@
 //! at frame 600 (nmi.smc transitions blue between frames ~450-600;
 //! test_nmi.smc between ~30-60; demo_nmitest.smc is stable blue from
 //! frame 5).
+//!
+//! **Golden convention (#3092).** `test_nmi_passes` below asserts the
+//! Mesen2-correct blue PASS screen, not NESER's current output, so it FAILs
+//! under `cargo test --include-ignored` until #3093 lands -- the designed
+//! state, not a regression. See `kungfufurby_irq_tests`' module doc for the
+//! rationale; the IRQ family is tracked on the same issue because both show
+//! the same shape (the `demo_*` ROM passes, every other ROM renders the
+//! identical maroon FAIL fill).
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -26,9 +34,10 @@ mod tests {
     /// Runs a KungFuFurby NMI ROM to `frames` and asserts the rendered
     /// screen matches the Mesen2-approved PASS golden CRC32.
     ///
-    /// To approve a new golden, run with NESER_CAPTURE_SCREEN=1, visually
-    /// confirm the capture under target/snes_test_captures/ against a
-    /// Mesen2 headless capture at the same frame, then record the CRC here.
+    /// To approve a new golden, run with NESER_CAPTURE_SCREEN=1 and diff the
+    /// capture under target/snes_test_captures/ against a Mesen2 headless
+    /// capture at the same frame *programmatically* (never by eye), then
+    /// record the CRC here.
     fn run_rom_screen_crc(file: &str, frames: u32, expected_crc: u32) {
         let path = Path::new(ROOT).join(file);
         let rom = fs::read(&path)
@@ -78,7 +87,10 @@ mod tests {
         run_rom_screen_crc("nmi.smc", 600, 0x8695_BBB0);
     }
 
-    /// NESER's current CRC (red/fail state), NOT a Mesen2-approved golden.
+    /// #3093: NESER's self-check FAILs where Mesen2 PASSes (blue). NESER
+    /// settles on a flat maroon `(82, 0, 0)` fill from frame 61 onward, so
+    /// frame 120 samples a stable screen.
+    ///
     /// `nmi_passes`' #3049 per-cycle dispatch fix does NOT change this ROM's
     /// outcome (identical CRC before/after) -- this self-checking ROM's
     /// divergence is a different residual gap. A spike extending the
@@ -88,10 +100,15 @@ mod tests {
     /// mirror of the PHA fix (needed to close `nmi.smc`'s own remaining
     /// 5-line bus-trace residual, see `nmi_passes`) is NOT this ROM's root
     /// cause. Root cause not yet identified; needs fresh investigation.
-    /// Tracked as a follow-up to #3049.
+    ///
+    /// Until #3092 this test asserted `0x8662_6F50`, which matched neither a
+    /// PASS nor NESER's own output -- that literal is a flat `(66, 0, 0)`
+    /// fill, the settled screen of `test_hdmatiming.smc`, not of this ROM.
+    /// Being `#[ignore]`d, the mismatch went unnoticed from #2883 until the
+    /// #3092 audit.
     #[test]
-    #[ignore = "root cause not yet identified (push/pull cycle-ordering ruled out); pending #3049 follow-up"]
+    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_nmi_passes() {
-        run_rom_screen_crc("test_nmi.smc", 120, 0x8662_6F50);
+        run_rom_screen_crc("test_nmi.smc", 120, 0x8695_BBB0);
     }
 }
