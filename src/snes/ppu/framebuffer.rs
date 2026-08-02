@@ -308,14 +308,16 @@ mod tests {
         use super::super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT};
         let ticks_per_line = u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT;
 
-        // Rows 0..6: blue backdrop.
+        // Rendered rows 0..6 (scanlines 1..7) must be blue.  Scanline 0 is not
+        // visible (VISIBLE_LINE_START = 1), so we must tick 8 scanlines (0..7)
+        // to cause scanlines 1..7 to be rendered, giving us 7 blue rows.
         set_backdrop(&mut ppu, 0x7C00); // full blue
-        for _ in 0..(ticks_per_line * 7) {
+        for _ in 0..(ticks_per_line * 8) {
             ppu.tick();
         }
         // Rows 7..238: red backdrop.
         set_backdrop(&mut ppu, 0x001F); // full red
-        let remaining = NTSC_SCANLINES_PER_FRAME as u32 - 7;
+        let remaining = NTSC_SCANLINES_PER_FRAME as u32 - 8;
         for _ in 0..(ticks_per_line * remaining) {
             ppu.tick();
         }
