@@ -447,6 +447,82 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    bass-untech clang patch (`git -C .../bass-untech checkout -- .`)
    before any subtree operation, re-apply to build (hit twice in #2881).
 
+### A passing screen-CRC test proves the screen is UNCHANGED, not that the ROM passes (from #3092)
+
+`RunOracle::ScreenCrc` sets `passed = (actual_crc == expected_crc)` and has
+no notion of a self-checking ROM's own PASS/FAIL backdrop. So a green
+screen-CRC test means only "the screen still hashes to the recorded value" —
+which may be a recorded *failure*. Never read one as evidence the ROM passes,
+and never conclude a fix worked because such a test is green.
+
+**Two conventions exist for a divergence record; pick deliberately and say
+which in the reason string.**
+
+- *Aspirational* — record the Mesen2-correct PASS CRC, keep `#[ignore]`. The
+  test FAILs under `--include-ignored` today and turns green exactly when the
+  bug is fixed. **Prefer this** for anything you intend to fix.
+- *Record-current* — record NESER's own diverging CRC. Passes under
+  `--include-ignored`, meaning "still diverging as recorded". This **inverts
+  the fix signal**: a correct fix turns the test red and reads as a
+  regression. Only justifiable when there is no single correct value to
+  assert (e.g. a pixel-diff comparison against a picture, not a PASS/FAIL
+  backdrop).
+
+Consequences worth knowing before touching such a suite:
+
+- A test named `*_passes` asserting a record-current golden is a lie in
+  waiting. Under the aspirational convention the name and the usual
+  "expected screen-CRC PASS (blue)" assert message become true for free, so
+  conversion needs no renaming.
+- `#[ignore]`d goldens rot silently. #3092 found one asserting a CRC that
+  belonged to a **different ROM**, undetected from #2883 onward, and two more
+  invalidated by a capture-geometry change (#3001) nobody re-ran. Audit
+  ignored goldens whenever a rendering or capture convention changes.
+
+### Check the sample frame can actually SEE the divergence (from #3092)
+
+Before trusting any screen-CRC divergence record, capture **both** emulators
+at the test's own sample frame. If NESER and Mesen2 agree there, the test is
+asserting agreement with the reference, not a divergence — it cannot fail no
+matter how the feature under test behaves.
+
+`test_hdmasync.smc` sampled frame 600 for two years. Both emulators render
+flat black until frame ~1027; Mesen2 reaches blue PASS at 1029 while NESER
+paints red. The frame-600 assertion was recording a shared black screen, so
+it would have passed under any HDMA-sync behaviour whatsoever.
+
+Run a settle probe out to several times the sample frame before believing a
+"renders black / hangs" description — a slow ROM and a hung one look
+identical at a frame sampled too early. Binary-search the reference's
+transition frame, then sample well past it with margin on both sides.
+
+### Identify a mystery flat-fill CRC by enumerating BGR555 (from #3092)
+
+When a golden's literal means nothing to you, test whether it is a uniform
+fill before assuming it is structured content. SNES 5-bit channels expand as
+`(v << 3) | (v >> 2)`, so all 32768 representable colours can be brute-forced
+against a target CRC in seconds:
+
+```python
+exp = lambda v: (v << 3) | (v >> 2)
+for r in range(32):
+    for g in range(32):
+        for b in range(32):
+            px = bytes((exp(r), exp(g), exp(b)))
+            if zlib.crc32(px * (256 * 224)) == target:
+                print(r, g, b)
+```
+
+Scan the full space, not a handful of guessed colours: a five-colour probe in
+#3092 wrongly concluded `0x8662_6F50` was "not a flat fill" when it is a flat
+`(66,0,0)`. Identical CRCs across unrelated ROMs are expected and not
+evidence of copy-paste — a flat fill of one colour and size hashes the same
+whichever ROM produced it.
+
+Useful corollary: this ROM family encodes FAIL detail in the backdrop's red
+level (r=31, 14, 10, 8 seen), so the shade may say *which* sub-check failed —
+a free diagnostic worth confirming against the ROM source before tracing.
+
 ### Mesen2 capture-dimension conventions (from #2879, extended #2881; settled by #3001/#3034)
 
 **Current state: no normalization is needed.** NESER's display-mode

@@ -1424,3 +1424,47 @@ No additional feedback provided.
 #### What to improve
 
 No additional feedback provided.
+
+---
+
+## 2026-08-02 — PR #3098: SNES: assert Mesen2 PASS goldens for screen-CRC divergence tests, fix stale and rotted ignores
+
+**Repository:** rmstdope/neser
+**PR URL:** https://github.com/rmstdope/neser/pull/3098
+**Linked issues:** #3092 (closes), #3093, #3062, #3063; opened #3096, #3097
+
+### Customizations used
+
+| Type         | Name                       | Purpose                                                                                                                                   |
+| ------------ | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Skill        | `snes-hardware-research`   | Mesen2 binary path, `--testRunner` headless syntax, scripted-input Lua template, concurrent-instance guard, settle-probe workflow.          |
+| Skill        | `github-issue-designer`    | Structure for the rewritten #3092, the #3093 correction, and the two new issues.                                                           |
+| Skill        | `github-administration`    | `--body-file` discipline and post-mutation verification across 5 issue mutations.                                                          |
+| Skill        | `test-driven-development`  | Mutation-verification of both newly un-ignored goldens before trusting them.                                                               |
+| Skill        | `self-learning-skills`     | This retrospective.                                                                                                                        |
+
+### What went well
+
+- ✅ Verifying the issue's premise before implementing was the single highest-value act of the session. #3092 asserted the five IRQ tests "pass today"; capturing the screens showed the ROMs render red FAIL and the goldens recorded that failure. Implementing as written would have frozen five known-wrong screens into CI and inverted the fix signal.
+- ✅ The `snes-hardware-research` skill's Mesen2 recipe (binary path, flags, testRunner Lua template, the concurrent-instance guard) made 15 ground-truth captures executable with no tooling re-research — exactly the reuse PR #3089's retrospective hoped for.
+- ✅ Proving the capture pipeline with a control golden first (Mesen2's `colorbars_default` reproducing NESER's approved `0xF7459692` byte-for-byte) meant every later capture rested on a validated pipeline rather than assumption.
+- ✅ Sweeping every `#[ignore]` in `src/` against the state of its cited issue turned one reported defect into four real ones: a golden belonging to a different ROM, a sample frame that could never see its divergence, and two tests a closed issue had actually fixed (+2 live CI guards).
+- ✅ Mutation-checking both re-approved goldens (one-bit perturbation → confirmed failure → revert) proved they have power instead of assuming it.
+- ✅ Auditing my own prose caught two overstatements before review: a "not a flat fill" claim from a five-colour scan, and a tick-budget comment claiming 400M "would expire" at frame 1100 when ~393M is needed.
+
+### What to improve
+
+- ❌ Scope grew from 5 tests to 15 across 5 modules and 5 issues. Each step was navigator-approved, but CLAUDE.md asks for small increments and the natural three-way split (interrupt / DMA-HDMA / ddribin tests) was identified yet not taken. Offer the split as the default recommendation rather than the fallback.
+- ❌ Two `gh issue edit` calls silently failed by running from the scratchpad directory piped through `tail`, and were only caught by a later verification query. Now encoded as rules 15-16 in `github-administration`.
+- ❌ The first colour scan for an unknown CRC tried five hand-picked colours and produced a confidently wrong conclusion. Exhaustive enumeration over the 32768-colour BGR555 space takes seconds; now documented in `snes-hardware-research`.
+- ❌ The `screen_crc32` oracle's lack of PASS/FAIL semantics had already been recorded as a lesson in an earlier session yet was rediscovered from scratch here. Lessons about an oracle's semantics belong in the skill next to the workflow that uses it, not only in session memory.
+
+### Navigator feedback
+
+#### What went well
+
+No feedback provided (navigator selected "No feedback").
+
+#### What to improve
+
+No feedback provided (navigator selected "No feedback").
