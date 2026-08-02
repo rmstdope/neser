@@ -101,20 +101,25 @@ mod tests {
     /// standard 224-line window for this combo, matching Mesen2's frame
     /// exactly.
     ///
-    /// Known limitation, tracked in #3096: this CRC is byte-identical
-    /// to `colorbars_default`'s golden, because overscan only adds lines
-    /// *below* row 223 and both emulators crop the capture to 224 rows.
-    /// The test therefore guards rows 0-223 against corruption but
-    /// cannot detect overscan being ignored altogether -- it needs a
-    /// different oracle, not a re-approved CRC. This is a property of
-    /// the capture convention, not a NESER defect: Mesen2's overscan and
-    /// non-overscan captures are identical too.
+    /// Known limitation, tracked in #3096: this CRC is byte-identical to
+    /// `colorbars_default`'s golden, and the test cannot tell you why.
+    /// With overscan on, `screen_snapshot_rgb` crops the 239-line frame
+    /// to 224 rows starting at internal row `OVERSCAN_CROP_TOP` (7); with
+    /// it off, from row 0. hdrvtest's colorbars are *vertical* bars with
+    /// no horizontal structure, so a 7-row vertical shift is invisible
+    /// and both crops hash the same. The equal CRC is therefore exactly
+    /// what you would see if the Y tap registered AND exactly what you
+    /// would see if it were swallowed -- it is evidence for neither.
     ///
-    /// #3095 rightly asked whether the equal CRC instead means the Y tap
-    /// never registered. It does register: `Ppu::frame_dimensions`
-    /// deliberately clips the 239-line frame to 224 ("internal rendering
-    /// still covers all 239 lines; only the snapshot clips"), and the
-    /// overscan flag was confirmed set at the sample frame -- see #3096.
+    /// #3095 raised the swallowed-tap possibility; this comment does not
+    /// settle it, and neither does a matching Mesen2 capture (Mesen2's
+    /// overscan and non-overscan captures are identical for the same
+    /// reason). Deciding it needs an oracle that observes the overscan
+    /// state or the rows the crop discards -- that is #3096's job.
+    ///
+    /// Un-ignored anyway because the value is Mesen2-verified and does
+    /// guard rows 0-223 against corruption; it simply asserts less than
+    /// its name suggests.
     #[test]
     fn overscan_toggle() {
         run_hdrv_screen_crc("overscan", &tap(SnesButton::Y, 340), 650, 0xF745_9692);
