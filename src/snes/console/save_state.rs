@@ -452,6 +452,17 @@ pub struct SnesPpuState {
     pub mosaic_vblock_size: u8,
     #[serde(default)]
     pub mosaic_vcount: u8,
+    /// The frame-sticky hi-res output latch (#3034). `None` in states written
+    /// before the field existed, which restore fills in by deriving it from the
+    /// registers -- the best guess available for such a state.
+    ///
+    /// It has to be carried rather than always derived: the latch never clears
+    /// mid-frame, so a frame that started hi-res and switched back to a native
+    /// mode still has it set while its registers read native. Deriving in that
+    /// case would shrink the resumed frame and change every remaining dot's
+    /// pixel addressing.
+    #[serde(default)]
+    pub use_high_res_output: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]

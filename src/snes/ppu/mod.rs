@@ -339,8 +339,13 @@ pub struct Ppu {
     /// Keeping the *layout* frame-sticky while the *content* decision stays per dot is
     /// what makes a mid-frame or mid-line BGMODE/SETINI switch well defined (#3034): a
     /// frame can never end up with some rows in 512 layout and others in 256, which no
-    /// output geometry can represent. Not serialized (Mesen2 doesn't either); the
-    /// framebuffer is transient across save states, so restore re-derives it.
+    /// output geometry can represent.
+    ///
+    /// Serialized, unlike the transient framebuffer it describes, because it is not a
+    /// function of the registers: after a mid-frame hires -> native switch it is still
+    /// set while the registers read native, so a state captured there would resume in
+    /// the wrong (narrower) layout if restore tried to derive it. States predating the
+    /// field fall back to deriving -- see [`Ppu::restore_state`].
     use_high_res_output: bool,
     /// Main-screen resolve results for the scanline in progress, indexed by native x.
     /// Filled per dot by [`Ppu::render_dot`]; entries at indices >= the current dot hold

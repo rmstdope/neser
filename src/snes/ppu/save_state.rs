@@ -100,6 +100,7 @@ impl Ppu {
             mosaic: self.mosaic,
             mosaic_vblock_size: self.mosaic_vblock_size,
             mosaic_vcount: self.mosaic_vcount,
+            use_high_res_output: Some(self.use_high_res_output),
         }
     }
 
@@ -208,10 +209,16 @@ impl Ppu {
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);
-        // The hires layout latch is transient with it (Mesen2 doesn't serialize
-        // `_useHighResOutput` either): re-derive it from the restored registers so the
-        // resumed frame keeps writing a consistent layout until the next frame relatches.
-        self.use_high_res_output = self.hires_output_enabled() || self.interlace_enabled();
+        // The hires layout latch is NOT derivable from the restored registers, even
+        // though the framebuffer it describes is transient: it never clears mid-frame,
+        // so a state captured after a hires -> native switch has it set while the
+        // registers read native. Deriving there would shrink the resumed frame to
+        // 256x224 and change every remaining dot's pixel addressing. States written
+        // before the field existed carry `None` and fall back to deriving, which is the
+        // best guess available for them.
+        self.use_high_res_output = state
+            .use_high_res_output
+            .unwrap_or_else(|| self.hires_output_enabled() || self.interlace_enabled());
         debug_assert_eq!(
             self.framebuffer.len(),
             super::SCREEN_WIDTH_MAX * super::SCREEN_HEIGHT_MAX
@@ -263,7 +270,13 @@ fn restore_memory(dst: &mut [u8], src: &[u8], expected: usize, name: &str) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Ppu, PpuLineTimingProfile};
+    use super::super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, PpuLineTimingProfile};
+
+    fn tick_scanlines(ppu: &mut Ppu, lines: u32) {
+        for _ in 0..(u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT * lines) {
+            ppu.tick();
+        }
+    }
 
     #[test]
     fn save_state_round_trips_the_cgram_render_index() {
@@ -279,29 +292,85 @@ mod tests {
     }
 
     #[test]
-    fn restore_re_derives_the_hires_layout_latch_from_the_registers() {
-        // The latch is transient with the framebuffer it describes (Mesen2 doesn't
-        // serialize `_useHighResOutput` either), so restore must re-derive it -- a
-        // stale `false` would make the resumed frame write 256-column rows into a
-        // framebuffer the snapshot reads as 512 wide (#3034).
+    fn restore_keeps_the_hires_latch_of_a_frame_that_already_left_hires() {
+        // The latch is deliberately NOT a function of the live registers: it never
+        // clears mid-frame, so a frame that started hires and switched back to a
+        // native mode is still a hires frame. Re-deriving it from the restored
+        // registers would shrink the resumed frame to 256x224 and change every
+        // remaining dot's pixel addressing -- save/restore has to reproduce the
+        // frame the run would have produced, not a narrower one.
         let mut ppu = Ppu::new();
-        ppu.write_register(0x2105, 0x05); // mode 5
-        let hires_state = ppu.capture_state();
+        ppu.write_register(0x2105, 0x05); // mode 5 before the frame starts
+        tick_scanlines(&mut ppu, 20);
+        assert!(ppu.use_high_res_output, "the frame latched hires");
+
+        ppu.write_register(0x2105, 0x01); // back to a native mode, mid-frame
+        assert!(
+            ppu.use_high_res_output,
+            "the latch must not clear mid-frame -- precondition for this test"
+        );
+        let state = ppu.capture_state();
 
         let mut restored = Ppu::new();
-        assert!(!restored.use_high_res_output, "starts native");
-        restored.restore_state(&hires_state).expect("restore");
+        restored.restore_state(&state).expect("restore");
         assert!(
             restored.use_high_res_output,
-            "a state saved in mode 5 resumes in the hires layout"
+            "a mid-frame state captured after a hires->native switch must resume \
+             in the hires layout, even though its registers now read native"
+        );
+        assert_eq!(restored.frame_dimensions(), (512, 448));
+    }
+
+    #[test]
+    fn the_hires_layout_latch_round_trips_in_both_directions() {
+        let latched = {
+            let mut ppu = Ppu::new();
+            ppu.write_register(0x2133, 0x08); // pseudo-hires before the frame starts
+            tick_scanlines(&mut ppu, 3);
+            assert!(ppu.use_high_res_output);
+            ppu.capture_state()
+        };
+        let native = Ppu::new().capture_state();
+
+        let mut restored = Ppu::new();
+        restored.restore_state(&latched).expect("restore");
+        assert!(
+            restored.use_high_res_output,
+            "a latched frame resumes hires"
         );
 
         // ...and the converse, so this isn't just "always true".
-        let native_state = Ppu::new().capture_state();
-        restored.restore_state(&native_state).expect("restore");
+        restored.restore_state(&native).expect("restore");
         assert!(
             !restored.use_high_res_output,
-            "a state saved in a native mode resumes native"
+            "an unlatched frame resumes native"
+        );
+    }
+
+    #[test]
+    fn a_state_written_before_the_latch_field_existed_derives_it_from_the_registers() {
+        // `use_high_res_output` is `None` in states saved before #3034 added it.
+        // Deriving from the registers is wrong only for the mid-frame-downgrade case
+        // covered above -- for every other state it reproduces the right value, and it
+        // is the best guess available for a state that never recorded one.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2105, 0x05); // mode 5
+        let mut legacy = ppu.capture_state();
+        legacy.use_high_res_output = None;
+
+        let mut restored = Ppu::new();
+        restored.restore_state(&legacy).expect("restore");
+        assert!(
+            restored.use_high_res_output,
+            "a legacy state whose registers say mode 5 resumes hires"
+        );
+
+        let mut legacy_native = Ppu::new().capture_state();
+        legacy_native.use_high_res_output = None;
+        restored.restore_state(&legacy_native).expect("restore");
+        assert!(
+            !restored.use_high_res_output,
+            "a legacy state whose registers say native resumes native"
         );
     }
 
