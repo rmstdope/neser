@@ -101,5 +101,6 @@ When creating the PR:
 
 ## Exit conditions
 
-- If a valid bug was selected and fixed, emit `create_pull_request`.
-- If no suitable bug exists (or it cannot be safely completed in this run), emit `noop` with a clear reason.
+- You MUST finish by calling exactly one safe-output tool (never plain-text-only completion).
+- If a valid bug was selected and fixed, call `create_pull_request`.
+- If no suitable bug exists (or it cannot be safely completed in this run), call `noop` with a clear reason.
