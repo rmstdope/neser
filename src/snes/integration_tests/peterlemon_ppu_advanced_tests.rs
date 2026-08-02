@@ -20,9 +20,8 @@
 //! - `StarWars.sfc` (animated HDMA perspective crawl) matches Mesen2
 //!   pixel-exactly at all five agreed vectors (f120/360/600/1200/1500) --
 //!   approved goldens since #3050 fixed the HDMA `SyncEndDma` pad
-//!   (zoom counter was losing one NMI double-step per frame: 1289 px
-//!   at f360, 222 px at f600 before the fix); f1200/f1500 sample the
-//!   Scroller/crawl phase (starts ~frame 1130), closing #3021.
+//!   (details in #3021); f1200/f1500 sample the Scroller/crawl phase
+//!   (starts ~frame 1130), closing #3021.
 //! - `Perspective.sfc` matches Mesen2 pixel-exactly since #3020 (its
 //!   per-scanline HDMA matrix writes no longer land before the last
 //!   visible pixel renders): approved golden.

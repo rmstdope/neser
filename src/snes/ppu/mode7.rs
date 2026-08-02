@@ -588,7 +588,7 @@ mod tests {
         assert_eq!(super::mode7_clip(1), 1);
         assert_eq!(super::mode7_clip(511), 511); // well within 10-bit positive range
         assert_eq!(super::mode7_clip(1023), 1023); // maximum representable (bits 0-9 all set)
-        assert_eq!(super::mode7_clip(1024), 0); // bit 10 cleared, lower 9 are 0
+        assert_eq!(super::mode7_clip(1024), 0); // 1024 = 0x400 (bit 10 set); n & 1023 keeps only bits 0-9, all of which are 0
         assert_eq!(super::mode7_clip(0x1FFF), 1023); // bit 13 = 0, only bits 0-9 survive
     }
 
