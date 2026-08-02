@@ -442,18 +442,29 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    bass-untech clang patch (`git -C .../bass-untech checkout -- .`)
    before any subtree operation, re-apply to build (hit twice in #2881).
 
-### Mesen2 capture-dimension conventions (from #2879, extended #2881)
+### Mesen2 capture-dimension conventions (from #2879, extended #2881; settled by #3001/#3034)
 
-Mesen2 screenshots are not always the PPU's native frame geometry; know
-these before pixel-diffing display-mode captures:
+**Current state: no normalization is needed.** NESER's display-mode
+output now matches Mesen2's raw framebuffer geometry, so diff captures
+directly and expect 0 differing pixels at the native size. A nonzero
+diff is a bug, not a convention mismatch.
 
-- **Screen interlace** ($2133 bit 0, lo-res modes): Mesen2 emits 512x448
-  by column-doubling; NESER renders 256x448. Halve Mesen2's width
-  (`Image.resize((256, 448), NEAREST)`) before diffing.
-- **Mode 5/6 hires and pseudo-hires, non-interlace**: Mesen2 emits
-  512x448 by row-doubling (verified: all even/odd row pairs identical);
-  NESER renders 512x224. Halve Mesen2's height before diffing. Mode 5/6
-  WITH interlace is 512x448 native in both (directly comparable).
+- **Any hires or interlaced frame** is 512x448 in both. #3001 aligned
+  the width and the overscan window; #3034 made the layout a single
+  frame-sticky latch and adopted Mesen2's row doubling, so a
+  progressive hires frame fills both rows of each display line instead
+  of NESER's earlier 512x224.
+- **239-line overscan** ($2133 bit 2) is the standard 224-line window
+  in both (NESER renders all 239 lines internally and clips rows
+  7-231; #2879 measured the exact offset, #3001 applied it).
+
+The history matters when reading older test-file comments, which still
+describe the pre-#3001/#3034 world: NESER used to render 256x448 for
+interlace and 512x224 for progressive hires, so goldens approved back
+then were verified only *after* halving Mesen2's width or height. Those
+goldens were re-approved at the native geometry in #3034. If a comment
+tells you to halve a Mesen2 capture, it is stale -- check the code.
+
 - **Structure sampling attributes hires/interlace divergences fast**
   (from #2881): before deep analysis, sample whether each capture is
   column-doubled and/or row-doubled (compare px[x,y] vs px[x+1,y] /
@@ -461,14 +472,19 @@ these before pixel-diffing display-mode captures:
   the broken axis immediately, and upstream reference screenshots can
   arbitrate which structure is correct (that's how #3016 hires columns
   and #3017 line-doubled interlace fields were separated in minutes).
-- **239-line overscan** ($2133 bit 2): Mesen2 shows the standard
-  224-line window; NESER renders all 239 lines. NESER rows 7-231 equal
-  Mesen2's frame (search crop offsets; #2879 measured an exact match at
-  offset 7).
-- Because the raw framebuffers differ in geometry, such combos cannot
-  carry Mesen2-approved screen-CRC goldens until #3001 settles a
-  canonical convention -- commit them `#[ignore]`d with NESER's current
-  CRC recorded, like the policy for real divergences.
+- **Sample the reference capture's structure to confirm a model, not
+  just to localise a bug** (from #3034). Before adopting Mesen2's row
+  doubling, asking "are all of Mesen2's even/odd row pairs identical?"
+  turned a claim read out of `ApplyHiResMode` into a measured fact
+  about its output -- and the same query on a mid-frame-switch capture
+  showed rows 0-199 column-doubled and 200-447 in half-pixel pairs,
+  which is the whole retroactive-conversion model visible in one
+  measurement. Source reading tells you what to look for; the capture
+  tells you whether it is true.
+- Where a genuine geometry divergence does appear, the old policy still
+  applies: commit the vector `#[ignore]`d with NESER's current CRC
+  recorded, and say in the comment what was content-verified and what
+  was not.
 
 ### Replaying scripted input in Mesen2 (interactive-ROM baselining, from #2879)
 
