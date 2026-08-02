@@ -1150,15 +1150,16 @@ mod tests {
 
         // 16x16 tile size still spans only 16 output columns horizontally (the
         // width-16 fetch is forced in modes 5/6), but pairs vertically: rows 8-15
-        // use char N+16.
+        // use char N+16.  A progressive hires frame owns two framebuffer rows per
+        // display line (#3034), so display line 7 lives at framebuffer row 14.
+        let line7 = 14 * SCREEN_WIDTH_MAX;
         assert_eq!(ppu.framebuffer[0], 1, "top half shows char 1");
         assert_eq!(
-            ppu.framebuffer[7 * SCREEN_WIDTH_MAX],
-            4,
+            ppu.framebuffer[line7], 4,
             "bottom half (display line 8) shows char 17"
         );
         assert_eq!(
-            ppu.framebuffer[7 * SCREEN_WIDTH_MAX + 16],
+            ppu.framebuffer[line7 + 16],
             6,
             "next map entry still starts at column 16"
         );
@@ -2512,7 +2513,7 @@ mod tests {
         render_frame(&mut ppu);
 
         let rgb = ppu.screen_snapshot_rgb();
-        assert_eq!(rgb.len(), 512 * 224 * 3);
+        assert_eq!(rgb.len(), 512 * 448 * 3);
         // Hardware/Mesen2: the sub screen supplies the even (left) half-pixel and the
         // main screen the odd (right) one (Mesen2 ApplyHiResMode).
         assert_eq!(&rgb[0..3], &[255, 0, 0], "even column uses sub screen");
@@ -2541,7 +2542,7 @@ mod tests {
         render_frame(&mut ppu);
 
         let rgb = ppu.screen_snapshot_rgb();
-        assert_eq!(rgb.len(), 512 * 224 * 3);
+        assert_eq!(rgb.len(), 512 * 448 * 3);
         assert_eq!(
             &rgb[0..3],
             &[255, 0, 0],

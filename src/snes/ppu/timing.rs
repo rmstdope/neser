@@ -251,6 +251,13 @@ impl Ppu {
             }
             _ => {}
         }
+        if scanline == VISIBLE_LINE_START {
+            // Latch this frame's output layout (Mesen2 ProcessEndOfScanline resets
+            // `_useHighResOutput` after rendering scanline 0, i.e. at exactly this
+            // instant). From here on only `convert_to_hires` may change it, and only
+            // upwards, so every row of the frame shares one layout (#3034).
+            self.use_high_res_output = self.hires_output_enabled() || self.interlace_enabled();
+        }
     }
 
     /// Re-evaluate the NMI line (`nmi_enable && nmi_flag`) and latch a rising edge for the CPU.

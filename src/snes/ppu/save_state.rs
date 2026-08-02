@@ -208,6 +208,10 @@ impl Ppu {
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);
+        // The hires layout latch is transient with it (Mesen2 doesn't serialize
+        // `_useHighResOutput` either): re-derive it from the restored registers so the
+        // resumed frame keeps writing a consistent layout until the next frame relatches.
+        self.use_high_res_output = self.hires_output_enabled() || self.interlace_enabled();
         debug_assert_eq!(
             self.framebuffer.len(),
             super::SCREEN_WIDTH_MAX * super::SCREEN_HEIGHT_MAX
@@ -232,6 +236,9 @@ impl Ppu {
             let y = (self.position.scanline - VISIBLE_LINE_START) as usize;
             let row = self.framebuffer_row(y);
             self.line_inidisp[row] = self.inidisp;
+            if self.duplicates_row() {
+                self.line_inidisp[row + 1] = self.inidisp;
+            }
         }
         Ok(())
     }

@@ -331,6 +331,17 @@ pub struct Ppu {
     video_region: SnesVideoRegion,
     /// Visible framebuffer in 15-bit BGR555 (converted to RGB888 at snapshot time).
     framebuffer: Vec<u16>,
+    /// Mesen2 `_useHighResOutput`: whether *this frame's* framebuffer rows use the
+    /// 512-column, row-doubled hires layout. Latched once per frame at the top of the
+    /// first visible scanline from `hires_output_enabled() || interlace_enabled()`, and
+    /// from there only ever upgraded -- never cleared -- by [`Ppu::convert_to_hires`].
+    ///
+    /// Keeping the *layout* frame-sticky while the *content* decision stays per dot is
+    /// what makes a mid-frame or mid-line BGMODE/SETINI switch well defined (#3034): a
+    /// frame can never end up with some rows in 512 layout and others in 256, which no
+    /// output geometry can represent. Not serialized (Mesen2 doesn't either); the
+    /// framebuffer is transient across save states, so restore re-derives it.
+    use_high_res_output: bool,
     /// Main-screen resolve results for the scanline in progress, indexed by native x.
     /// Filled per dot by [`Ppu::render_dot`]; entries at indices >= the current dot hold
     /// the previous line's values (dots render left-to-right, so reads never see them).
@@ -519,6 +530,7 @@ impl Ppu {
             frame_has_extra_scanline: false,
             video_region,
             framebuffer: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
+            use_high_res_output: false,
             line_main: [ScreenPixel::default(); SCREEN_WIDTH],
             line_sub: [ScreenPixel::default(); SCREEN_WIDTH],
             line_main_final: [0; SCREEN_WIDTH],
@@ -650,24 +662,23 @@ impl Ppu {
         self.oam[index]
     }
 
-    /// Active output geometry for the current frame.
+    /// Active output geometry for the frame just rendered.
+    ///
+    /// Both dimensions key off the single frame-sticky [`Ppu::use_high_res_output`]
+    /// latch, exactly like Mesen2's `SendFrame` (`width = flag ? 512 : 256`,
+    /// `height = flag ? 478 : 239`, the latter cropped to the 448/224 window here).
+    /// A hires or interlaced frame is therefore always 512x448, whether the extra
+    /// columns/rows carry true half-pixels or duplicates (#3034).
+    ///
+    /// 239-line overscan is cropped to the standard 224-line window to match Mesen2's
+    /// output geometry (#3001). Internal rendering still covers all 239 lines; only
+    /// the snapshot clips.
     pub fn frame_dimensions(&self) -> (u32, u32) {
-        // Screen interlace ($2133 bit 0) column-doubles to 512 px wide in Mesen2
-        // even when no hires mode is active; NESER matches that convention (#3001).
-        let width = if self.hires_output_enabled() || self.interlace_enabled() {
-            SCREEN_WIDTH_MAX
+        if self.use_high_res_output {
+            (SCREEN_WIDTH_MAX as u32, (SCREEN_HEIGHT * 2) as u32)
         } else {
-            SCREEN_WIDTH
-        };
-        // 239-line overscan is cropped to the standard 224-line window to match
-        // Mesen2's output geometry (#3001).  Internal rendering still covers all
-        // 239 lines; only the snapshot clips.
-        let height = if self.interlace_enabled() {
-            SCREEN_HEIGHT * 2
-        } else {
-            SCREEN_HEIGHT
-        };
-        (width as u32, height as u32)
+            (SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32)
+        }
     }
 
     /// Write a raw OAM byte (test helper, bypassing the OAMADD/OAMDATA write path).
@@ -745,20 +756,36 @@ impl Ppu {
         SCREEN_WIDTH_MAX
     }
 
+    /// The framebuffer row display line `y` renders into.
+    ///
+    /// In the hires layout every display line owns a *pair* of rows (Mesen2's 478-row
+    /// buffer): interlace writes only its own field's row of the pair and leaves the
+    /// other holding the previous field, while a progressive hires frame writes both
+    /// (see [`Ppu::duplicates_row`]).
     pub(super) fn framebuffer_row(&self, y: usize) -> usize {
-        if self.interlace_enabled() {
-            y * 2 + self.interlace_field as usize
+        if self.use_high_res_output {
+            y * 2
+                + if self.interlace_enabled() {
+                    self.interlace_field as usize
+                } else {
+                    0
+                }
         } else {
             y
         }
     }
 
+    /// Whether a rendered line is copied into the following framebuffer row.
+    ///
+    /// Mesen2 `ApplyHiResMode` ends every non-interlaced chunk of a hires frame with a
+    /// memcpy to `baseAddr + 512`, so a progressive hires frame fills all 448 output
+    /// rows with 224 distinct lines. Interlace instead weaves the two fields.
+    pub(super) fn duplicates_row(&self) -> bool {
+        self.use_high_res_output && !self.interlace_enabled()
+    }
+
     pub(super) fn framebuffer_x(&self, x: usize) -> usize {
-        if self.hires_output_enabled() {
-            x * 2
-        } else {
-            x
-        }
+        if self.use_high_res_output { x * 2 } else { x }
     }
 
     pub(super) fn format_trace_tick_line(&self) -> String {
@@ -858,46 +885,72 @@ mod tests {
         );
     }
 
-    #[test]
-    fn frame_dimensions_reflect_hires_and_interlace_settings() {
+    /// Apply a register setup and enter the frame far enough for the hires layout
+    /// latch to sample it (start of the first visible scanline, #3034).
+    fn dimensions_after_latch(setup: &[(u16, u8)]) -> (u32, u32) {
         let mut ppu = Ppu::new();
-
-        assert_eq!(ppu.frame_dimensions(), (256, 224));
-
-        // Mode 5 (hires) + screen interlace: already 512 wide from hires.
-        ppu.write_register(0x2105, 0x05);
-        ppu.write_register(0x2133, 0x01);
-        assert_eq!(ppu.frame_dimensions(), (512, 448));
-
-        // Non-hires screen interlace: column-doubled to 512 wide to match Mesen2 (#3001).
-        let mut ppu2 = Ppu::new();
-        ppu2.write_register(0x2133, 0x01);
-        assert_eq!(ppu2.frame_dimensions(), (512, 448));
+        for &(addr, value) in setup {
+            ppu.write_register(addr, value);
+        }
+        tick_scanlines(&mut ppu, 2);
+        ppu.frame_dimensions()
     }
 
     #[test]
-    fn pseudo_hires_enables_512_pixel_width_outside_modes_5_and_6() {
+    fn frame_dimensions_reflect_hires_and_interlace_settings() {
+        assert_eq!(dimensions_after_latch(&[]), (256, 224));
+
+        // Mode 5 (hires) + screen interlace: already 512 wide from hires.
+        assert_eq!(
+            dimensions_after_latch(&[(0x2105, 0x05), (0x2133, 0x01)]),
+            (512, 448)
+        );
+
+        // Non-hires screen interlace: column-doubled to 512 wide to match Mesen2 (#3001).
+        assert_eq!(dimensions_after_latch(&[(0x2133, 0x01)]), (512, 448));
+    }
+
+    #[test]
+    fn pseudo_hires_enables_512x448_output_outside_modes_5_and_6() {
+        // Both dimensions follow the one hires latch, matching Mesen2's 512x478
+        // buffer (row-doubled, #3034) rather than the earlier 512x224 convention.
+        assert_eq!(dimensions_after_latch(&[(0x2133, 0x08)]), (512, 448));
+    }
+
+    #[test]
+    fn the_hires_layout_latch_never_clears_mid_frame() {
+        // Mesen2's `_useHighResOutput` is reset only at the top of a frame, so
+        // leaving a hires mode mid-frame cannot shrink the frame in progress --
+        // the rows already written are 512 wide and nothing can un-write them.
         let mut ppu = Ppu::new();
+        ppu.write_register(0x2133, 0x08); // pseudo-hires before the frame starts
+        tick_scanlines(&mut ppu, 20);
+        assert_eq!(ppu.frame_dimensions(), (512, 448));
 
-        ppu.write_register(0x2133, 0x08);
+        ppu.write_register(0x2133, 0x00); // back to native, mid-frame
+        tick_scanlines(&mut ppu, 20);
+        assert_eq!(
+            ppu.frame_dimensions(),
+            (512, 448),
+            "the layout latch never clears mid-frame"
+        );
 
-        assert_eq!(ppu.frame_dimensions(), (512, 224));
+        // The next frame relatches from the live registers.
+        render_full_frame(&mut ppu);
+        assert_eq!(ppu.frame_dimensions(), (256, 224));
     }
 
     #[test]
     fn setini_overscan_mode_clips_output_to_224_lines_to_match_mesen2() {
         // Internal rendering still covers 239 lines, but the snapshot is clipped
         // to the Mesen2-compatible 224-line window (#3001).
-        let mut ppu = Ppu::new();
-        assert_eq!(ppu.frame_dimensions(), (256, 224));
+        assert_eq!(dimensions_after_latch(&[]), (256, 224));
 
         // Overscan only: clipped to 256×224.
-        ppu.write_register(0x2133, 0x04);
-        assert_eq!(ppu.frame_dimensions(), (256, 224));
+        assert_eq!(dimensions_after_latch(&[(0x2133, 0x04)]), (256, 224));
 
         // Overscan + screen interlace: both normalizations applied → 512×448.
-        ppu.write_register(0x2133, 0x05);
-        assert_eq!(ppu.frame_dimensions(), (512, 448));
+        assert_eq!(dimensions_after_latch(&[(0x2133, 0x05)]), (512, 448));
     }
 
     #[test]

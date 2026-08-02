@@ -21,8 +21,9 @@
 //! headless captures pixel-exactly at the identical frame (approved
 //! goldens). `opt-m6.sfc` joined them with the #3016 hires rework
 //! (doubled fetch with 16-wide char pairing, hires-domain OPT, CGRAM-0
-//! sub backdrop): 0 of 114,688 px differ after normalizing Mesen2's
-//! row-doubled height.
+//! sub backdrop), and since #3034 adopted Mesen2's row-doubled hires
+//! geometry it matches at the native 512x448 with no normalization at
+//! all: 0 of 229,376 px differ.
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -75,5 +76,5 @@ mod tests {
     neser_opt_test!(opt_m2_bg2_select, "opt-m2-bg2-select.sfc", 0x8935_F6DC);
     neser_opt_test!(opt_m4, "opt-m4.sfc", 0x24C0_14F0);
 
-    neser_opt_test!(opt_m6, "opt-m6.sfc", 0x7F6E_FE0F);
+    neser_opt_test!(opt_m6, "opt-m6.sfc", 0x6248_86CB);
 }

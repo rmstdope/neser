@@ -27,9 +27,11 @@
 //!   visible pixel renders): approved golden.
 //! - The four pseudo-hires `HiColor*.sfc` ROMs match Mesen2
 //!   pixel-exactly since the #3016 hires rework (sub-on-even
-//!   interleave, per-dot hires color math): approved goldens after
-//!   normalizing Mesen2's row-doubled height. The main demo and the
-//!   mandrill TEST variant draw the same image, hence their shared CRC.
+//!   interleave, per-dot hires color math). Since #3034 adopted
+//!   Mesen2's row-doubled hires geometry the match is at the native
+//!   512x448 with no height normalization at all (0 of 229,376 px);
+//!   goldens re-approved there. The main demo and the mandrill TEST
+//!   variant draw the same image, hence their shared CRC.
 //! - `MosaicMode5.sfc` (both vectors) and all six `Interlace*.sfc`
 //!   ROMs match Mesen2 pixel-exactly: approved goldens at the native
 //!   512x448 woven-field geometry (five since the #3017 distinct-field
@@ -312,21 +314,21 @@ mod tests {
     peterlemon_pseudohires_test!(
         hicolor_pseudohires,
         "SNES-PPU-HDMA-HiColor64PerTileRowPseudoHiRes/HiColor64PerTileRowPseudoHiRes.sfc",
-        0xE0E1_0821
+        0xA57F_74B1
     );
     peterlemon_pseudohires_test!(
         hicolor_pseudohires_rgb_chart,
         "SNES-PPU-HDMA-HiColor64PerTileRowPseudoHiRes/TEST/RGB_24bits_palette_color_test_chart64PerTileRowHiRes.sfc",
-        0xD0D0_E9FE
+        0x682C_0B0E
     );
     peterlemon_pseudohires_test!(
         hicolor_pseudohires_lenna,
         "SNES-PPU-HDMA-HiColor64PerTileRowPseudoHiRes/TEST/lenna64PerTileRowHiRes.sfc",
-        0x2BC6_C82D
+        0x0523_93F7
     );
     peterlemon_pseudohires_test!(
         hicolor_pseudohires_mandrill,
         "SNES-PPU-HDMA-HiColor64PerTileRowPseudoHiRes/TEST/mandrill64PerTileRowHiRes.sfc",
-        0xE0E1_0821
+        0xA57F_74B1
     );
 }
