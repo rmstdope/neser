@@ -137,8 +137,31 @@ mod tests {
     // essentially all of the per-byte write-clock jitter that #3042 tracks.
     // Re-approved again for #3049 (per-CPU-cycle NMI/H-V-IRQ dispatch
     // precision): still confined to row 107, now 16 px (was 4) vs a fresh
-    // Mesen2 capture -- the same CPU-side clock-skew category #3050 already
-    // tracks, just a different exact skew now that dispatch timing moved.
+    // Mesen2 capture.
+    //
+    // Issue 3042 localised that remaining 16 px, and it is NOT a DMA timing
+    // problem -- which is what that issue was originally filed against. Both
+    // emulators' bus traces were compared over the burst that immediately
+    // precedes the divergent row (the ROM force-blanks at scanline 107 dot 284,
+    // sets VMADD, bursts VMDATA, unblanks at dot 330). All 24 B-bus writes are
+    // identical: same registers, same values, same master clocks. The HDMA
+    // envelope is exact.
+    //
+    // What is left is a renderer model difference. NESER has no BG tile
+    // pre-fetch stage -- `bg_pixel` indexes VRAM at the dot being rendered --
+    // whereas Mesen2 pre-fetches tilemap and CHR into `_layerData` in chunks
+    // bounded by H=263 and skips fetching entirely while forced blank is set.
+    // On the transition row, where the burst is still rewriting the tiles the
+    // beam is about to draw, the two models disagree about which tiles carry
+    // old versus new data. Both emulators show a partial-update artifact there;
+    // they place it at different columns (NESER at 42-55, Mesen2 at 242-255).
+    //
+    // Closing that gap means giving NESER a fetch stage, which is a renderer
+    // change far larger than this residual justifies, so it is recorded rather
+    // than chased. The mechanism is pinned by
+    // `snes::ppu::background::tests::a_vram_write_mid_scanline_changes_the_pixels_to_its_right_on_the_same_line`
+    // -- that test explains the model and will fail if a fetch stage is added,
+    // which is the moment to re-measure this golden.
     hblank_dma_vram_rom_test!(
         hvdma_matches_mesen2_and_hardware,
         "hvdma.sfc",

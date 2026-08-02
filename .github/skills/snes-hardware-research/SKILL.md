@@ -723,9 +723,47 @@ scratch:
 
 - **Diff**: `python -m scripts.diff_bus_traces <neser.log> <mesen.log>`.
 
+Two traps when tracing DMA specifically, both hit in issue 3042:
+
+- **Mesen2's DMA traffic does not go through `Read`/`Write`.** `CopyDmaByte` uses
+  `_memoryManager->ReadDma`/`WriteDma`, which the original hook did not cover, so a
+  window spanning a transfer logged *nothing but `idle`* -- easy to misread as "the CPU
+  is halted and there is nothing to see" when in fact the entire burst was invisible.
+  `NeserBusLog::LogDma` now covers both; it also logs the value, because clocks alone
+  cannot tell two adjacent VMDATA bytes apart when comparing against NESER's
+  `write 2118=03` PPU trace.
+- **Rebuilding `make core` is not enough.** The app extracts its embedded copy of
+  `MesenCore.dylib` into `~/Library/Application Support/Mesen2/` on every start and
+  *overwrites* whatever is there, so a hand-copied dylib is silently reverted. Run
+  `make ui` (which re-embeds the freshly built core) and use the binary under
+  `bin/osx-arm64/Release/osx-arm64/publish/`. To confirm which copy is live:
+  `DYLD_PRINT_LIBRARIES=1 <mesen> ... 2>&1 | grep -i mesencore`, and check the new code
+  is really in it with `strings <dylib> | grep '<your new format string>'`.
+
+Anchors line up better than expected: over 214 million master clocks both emulators were
+within a few hundred of each other on the same ROM, so a window derived from NESER's
+clocks can be reused verbatim on the Mesen2 side.
+
 Stamp both sides at the *same point within the cycle* or every line is offset
 by the access speed. NESER's reads are stamped `speed - 4` clocks into the
 cycle and writes at its end, matching Mesen2's `_execRead`/`_execWrite` split.
+
+### An exact bus-clock match does not imply matching pixels (from 3042)
+
+A trace diff answers "do both emulators put the same values on the bus at the same
+clocks". It says nothing about when each one *consumes* them. Issue 3042 was filed
+against HDMA B-bus write-clock jitter and survived three rounds of DMA work; the trace
+finally showed all 24 writes of the relevant burst identical in register, value **and**
+master clock, while the frame still differed by 16 px. The cause was downstream: NESER
+samples VRAM per dot inside `bg_pixel`, whereas Mesen2 pre-fetches tilemap and CHR into
+`_layerData` in chunks bounded by H=263 and skips fetching while forced blank is set. On
+a row the beam is drawing while a burst rewrites it, those two models disagree.
+
+So when a pixel divergence outlives an exact bus match, stop looking at the producer and
+go and read the consumer. The corollary is worth stating too: a residual's *name* can be
+wrong for a long time. Three separate re-approvals attributed this one to write-clock
+jitter because it moved whenever DMA or CPU timing changed -- moving with a change proves
+sensitivity, not causation.
 
 ### Distinguish a transient divergence from a persistent one (from #3050)
 

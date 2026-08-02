@@ -3286,6 +3286,74 @@ mod tests {
     const WHITE: [u8; 3] = [255, 255, 255];
     const BLACK: [u8; 3] = [0, 0, 0];
 
+    /// NESER has **no BG tile pre-fetch stage**: `bg_pixel` indexes `self.vram` at the
+    /// dot being rendered, so a VRAM write landing mid-scanline is visible to every dot
+    /// after it on that same line. Mesen2 instead pre-fetches tilemap and CHR into
+    /// `_layerData` in chunks bounded by H=263 (`SnesPpu::FetchTileData`), and skips
+    /// fetching altogether while forced blank is set -- so there, the same write reaches
+    /// a tile only if it precedes that tile's fetch.
+    ///
+    /// This model difference is what is left of issue 3042. The HDMA B-bus write clocks
+    /// it was filed against are **not** the cause: over the burst preceding the divergent
+    /// row, both emulators issue the identical 24 B-bus writes -- same registers, same
+    /// values, same master clocks. What differs is when each one SAMPLES what was written.
+    ///
+    /// This is a characterisation test, not a correctness claim. Real hardware fetches
+    /// ahead of the beam, which is closer to Mesen2's model than to NESER's. It is pinned
+    /// so that introducing a fetch stage trips a named test that explains itself, instead
+    /// of silently moving a screen-CRC golden.
+    #[test]
+    fn a_vram_write_mid_scanline_changes_the_pixels_to_its_right_on_the_same_line() {
+        let render_row0_with_midline_vram_write = |write_at: Option<u16>| {
+            let mut ppu = Ppu::new();
+            setup_white_bg1(&mut ppu);
+            if let Some(column) = write_at {
+                tick_to_column(&mut ppu, column);
+                // VRAM is CPU-writable only in VBlank or forced blank, so take the same
+                // route the hvdma ROM does: force-blank, then burst. The row still
+                // renders, because INIDISP is latched once per scanline at its first
+                // visible dot and this write lands after that (the #2973 limitation).
+                ppu.write_register(0x2100, 0x8F);
+                // Blank char 1 so its pixels fall through to the backdrop. A 2bpp char is
+                // 8 words, so char 1 starts at word 8.
+                ppu.write_register(0x2115, 0x80); // VMAIN: increment after high byte
+                ppu.write_register(0x2116, 0x08);
+                ppu.write_register(0x2117, 0x00);
+                for _ in 0..8 {
+                    ppu.write_register(0x2118, 0x00);
+                    ppu.write_register(0x2119, 0x00);
+                }
+            }
+            render_lines(&mut ppu, 1);
+            let rgb = ppu.screen_snapshot_rgb();
+            (0..256).map(|x| pixel(&rgb, x, 0)).collect::<Vec<_>>()
+        };
+
+        // Control: no mid-line write, so the whole row keeps the original tile.
+        let control = render_row0_with_midline_vram_write(None);
+        assert!(
+            control.iter().all(|&px| px == WHITE),
+            "control row must be uniformly white, or the split below proves nothing"
+        );
+
+        // Two split points, so the boundary is shown to track the write rather than
+        // landing at one column by coincidence.
+        for column in [60u16, 120] {
+            let split = render_row0_with_midline_vram_write(Some(column));
+            let boundary = usize::from(column);
+            assert!(
+                split[..=boundary].iter().all(|&px| px == WHITE),
+                "write at {column}: columns rendered before it keep the tile data they \
+                 were drawn with"
+            );
+            assert!(
+                split[boundary + 1..].iter().all(|&px| px == BLACK),
+                "write at {column}: columns rendered after it already see the new VRAM \
+                 contents -- NESER samples VRAM per dot, with no fetch stage in between"
+            );
+        }
+    }
+
     #[test]
     fn window_mask_settings_decode_enable_from_the_high_bit_of_each_pair() {
         // W12SEL/W34SEL/WOBJSEL nibbles are `EIei`: within each 2-bit pair the
