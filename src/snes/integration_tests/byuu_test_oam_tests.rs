@@ -23,13 +23,13 @@
 //! - The menu screen, all 16 OBSEL base x size-bit combos, all flip combos
 //!   and all character-number variants match Mesen2 exactly at shift (0,0)
 //!   and carry approved goldens.
-//! - `setini1_*` (screen interlace, $2133=1) and `setini4_*` (239-line
-//!   overscan, $2133=4) are content-verified against Mesen2 (halving
-//!   Mesen2's column-doubled 512x448 interlace frame, resp. comparing
-//!   NESER rows 7..231 of the 239-line frame with Mesen2's 224-line
-//!   window, both give 0-pixel diffs) but the raw frame dimensions differ,
-//!   so they stay `#[ignore]`d without goldens until #3001 settles the
-//!   capture convention.
+//! - `setini1_*` (screen interlace, $2133=1): NESER now emits 512×448 by
+//!   column-doubling each pixel (matching Mesen2's convention); both combos
+//!   approved against Mesen2 headless replay at 0-pixel diff (#3001).
+//! - `setini4_*` (239-line overscan, $2133=4): NESER now clips the 239-line
+//!   frame to the Mesen2-compatible 224-line window (rows 7..231,
+//!   Rust-exclusive); both combos approved against Mesen2 at 0-pixel diff
+//!   (#3001).
 //! - `setini2_*` (OBJ interlace, $2133=2): the sprite renders half-height
 //!   with field-interleaved lines since issue #3000; both combos match
 //!   Mesen2 exactly at shift (0,0) (re-approved via the same replay
@@ -231,32 +231,15 @@ mod tests {
     test_oam_combo!(char255_small, "c255-s0", { chr: 255, size: 0 }, 0x90EB_9069);
     test_oam_combo!(char255_large, "c255-s1", { chr: 255, size: 1 }, 0x37C6_490A);
 
-    // $2133 (SETINI) display modes. Screen interlace and 239-line overscan
-    // are content-verified against Mesen2 (see module docs) but the raw
-    // frame dimensions differ (NESER 256x448 vs Mesen2 512x448; NESER
-    // 256x239 vs Mesen2's 224-line window), so per the #2879 approval
-    // policy they carry no golden until #3001 settles the capture
-    // convention. The recorded CRCs are NESER's current output for
-    // post-fix comparison.
-    macro_rules! test_oam_combo_ignored_3001 {
-        ($name:ident, $label:expr, { $($field:ident : $value:expr),* $(,)? }, $crc:expr) => {
-            #[test]
-            #[ignore = "capture dimensions differ from Mesen2 in this display mode; pending #3001"]
-            fn $name() {
-                let combo = OamCombo {
-                    $($field: $value,)*
-                    ..OamCombo::default_menu()
-                };
-                let (script, sample_frame) = build_combo_script(combo);
-                assert_test_oam_screen_crc($label, &script, sample_frame, $crc);
-            }
-        };
-    }
-
-    test_oam_combo_ignored_3001!(setini1_small, "i1-s0", { setini: 1, size: 0 }, 0xD750_B115);
-    test_oam_combo_ignored_3001!(setini1_large, "i1-s1", { setini: 1, size: 1 }, 0xDA0C_5377);
-    test_oam_combo_ignored_3001!(setini4_small, "i4-s0", { setini: 4, size: 0 }, 0x5E52_C62B);
-    test_oam_combo_ignored_3001!(setini4_large, "i4-s1", { setini: 4, size: 1 }, 0x78AE_B7C8);
+    // $2133 (SETINI) display modes: screen interlace and 239-line overscan.
+    // NESER now emits Mesen2-compatible dimensions for both modes (#3001):
+    // screen interlace → 512×448 (column-doubled), overscan → 256×224
+    // (cropped to rows 7..231, Rust-exclusive).  All four combos carry
+    // Mesen2-approved goldens verified at 0-pixel diff via testRunner replay.
+    test_oam_combo!(setini1_small, "i1-s0", { setini: 1, size: 0 }, 0xF3AB_FC7C);
+    test_oam_combo!(setini1_large, "i1-s1", { setini: 1, size: 1 }, 0xD678_64B6);
+    test_oam_combo!(setini4_small, "i4-s0", { setini: 4, size: 0 }, 0xFD9E_A997);
+    test_oam_combo!(setini4_large, "i4-s1", { setini: 4, size: 1 }, 0x2476_20AA);
 
     // OBJ interlace ($2133=2, issue #3000): the sprite renders half-height
     // with field-interleaved lines. Goldens re-approved against Mesen2

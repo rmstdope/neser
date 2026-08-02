@@ -5,7 +5,7 @@
 //! [`Ppu::screen_snapshot_rgb`] applies INIDISP forced-blank and master brightness at output,
 //! converting to packed RGB888.
 
-use super::{Ppu, SCREEN_WIDTH, VISIBLE_DOT_START, VISIBLE_LINE_START};
+use super::{OVERSCAN_CROP_TOP, Ppu, SCREEN_WIDTH, VISIBLE_DOT_START, VISIBLE_LINE_START};
 
 impl Ppu {
     /// Render the pixel at the current dot (called once per dot from the timing loop).
@@ -71,6 +71,10 @@ impl Ppu {
 
     /// Snapshot the visible framebuffer as packed RGB888, applying INIDISP forced-blank and
     /// master brightness. Forced blank or brightness 0 yields a black screen.
+    ///
+    /// The output dimensions match [`Self::frame_dimensions`]:
+    /// - Screen interlace (non-hires): each pixel is column-doubled to 512 wide (Mesen2 convention, #3001).
+    /// - 239-line overscan: clipped to the 224-line Mesen2 window starting at internal row 7 (#3001).
     pub fn screen_snapshot_rgb(&self) -> Vec<u8> {
         let (width, height) = self.frame_dimensions();
         let width = width as usize;
@@ -78,15 +82,32 @@ impl Ppu {
         let mut out = vec![0u8; width * height * 3];
 
         let stride = self.framebuffer_stride();
+
+        // Overscan: the Mesen2-compatible window starts 7 lines into the rendered
+        // 239-line frame.  In interlace mode each source line occupies two framebuffer
+        // rows, so the framebuffer offset is doubled.
+        let interlace_mult = if self.interlace_enabled() { 2 } else { 1 };
+        let y_fb_offset = if self.overscan_239_enabled() {
+            OVERSCAN_CROP_TOP * interlace_mult
+        } else {
+            0
+        };
+
+        // Non-hires screen interlace: pixels were written at columns 0..255 but the
+        // output is 512 wide (column-doubled), matching Mesen2.
+        let col_double = self.interlace_enabled() && !self.hires_output_enabled();
+
         for y in 0..height {
-            let line_inidisp = self.line_inidisp[y];
+            let fb_y = y + y_fb_offset;
+            let line_inidisp = self.line_inidisp[fb_y];
             let forced_blank = line_inidisp & 0x80 != 0;
             let brightness = (line_inidisp & 0x0F) as u32;
             if forced_blank || brightness == 0 {
                 continue; // row already all-black
             }
             for x in 0..width {
-                let pixel = self.framebuffer[y * stride + x];
+                let fb_x = if col_double { x / 2 } else { x };
+                let pixel = self.framebuffer[fb_y * stride + fb_x];
                 let (r, g, b) = bgr555_to_rgb888(pixel, brightness);
                 let idx = (y * width + x) * 3;
                 out[idx] = r;
@@ -243,7 +264,10 @@ mod tests {
     }
 
     #[test]
-    fn overscan_239_mode_renders_a_239_line_snapshot() {
+    fn overscan_239_mode_outputs_mesen2_compatible_224_line_snapshot() {
+        // Internal rendering still covers 239 lines, but the Mesen2-compatible
+        // snapshot is clipped to the 224-line window starting at rendered row 7
+        // (#3001: rows 7..231, Rust-exclusive = 224 rows).
         let mut ppu = Ppu::new();
         set_backdrop(&mut ppu, 0x001F); // full red
         ppu.write_register(0x2100, 0x0F);
@@ -251,10 +275,63 @@ mod tests {
         render_full_frame(&mut ppu);
 
         let rgb = ppu.screen_snapshot_rgb();
-        assert_eq!(rgb.len(), 256 * 239 * 3);
-        assert_eq!(&rgb[0..3], &[255, 0, 0], "top-left pixel is rendered");
-        let last = (256 * 239 - 1) * 3;
-        assert_eq!(&rgb[last..last + 3], &[255, 0, 0], "line 239 is rendered");
+        assert_eq!(
+            rgb.len(),
+            256 * 224 * 3,
+            "output is 256×224 (Mesen2-compatible)"
+        );
+        assert_eq!(
+            &rgb[0..3],
+            &[255, 0, 0],
+            "top output row is red (rendered row 7)"
+        );
+        let last = (256 * 224 - 1) * 3;
+        assert_eq!(
+            &rgb[last..last + 3],
+            &[255, 0, 0],
+            "bottom output row is red (rendered row 230)"
+        );
+    }
+
+    #[test]
+    fn overscan_snapshot_skips_top_7_rendered_rows() {
+        // Sets rendered rows 0..6 to blue, rows 7..238 to red.  The output
+        // window starts at row 7, so the snapshot must be fully red (no blue).
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2100, 0x0F);
+        ppu.write_register(0x2133, 0x04); // overscan
+
+        // Render a frame: the backdrop color changes mid-frame by writing CGRAM
+        // at the start of lines 0 and 7 via a simple tick-step approach.
+        // Because changing the backdrop mid-frame is done indirectly, we use the
+        // lower-level API: render lines manually with two different colors.
+        use super::super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT};
+        let ticks_per_line = u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT;
+
+        // Rendered rows 0..6 (scanlines 1..7) must be blue.  Scanline 0 is not
+        // visible (VISIBLE_LINE_START = 1), so we must tick 8 scanlines (0..7)
+        // to cause scanlines 1..7 to be rendered, giving us 7 blue rows.
+        set_backdrop(&mut ppu, 0x7C00); // full blue
+        for _ in 0..(ticks_per_line * 8) {
+            ppu.tick();
+        }
+        // Rows 7..238: red backdrop.
+        set_backdrop(&mut ppu, 0x001F); // full red
+        let remaining = NTSC_SCANLINES_PER_FRAME as u32 - 8;
+        for _ in 0..(ticks_per_line * remaining) {
+            ppu.tick();
+        }
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(rgb.len(), 256 * 224 * 3);
+        // Every pixel in the output must be red (none of the blue rows 0..6 leaked in).
+        for chunk in rgb.chunks_exact(3) {
+            assert_eq!(
+                chunk,
+                &[255, 0, 0],
+                "overscan output must start at rendered row 7"
+            );
+        }
     }
 
     #[test]
