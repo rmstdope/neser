@@ -909,6 +909,7 @@ fn direct_color(color: u8, palette: u8) -> u16 {
 mod tests {
     use super::super::{
         DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu, SCREEN_WIDTH_MAX,
+        VISIBLE_DOT_START,
     };
 
     fn render_frame(ppu: &mut Ppu) {
@@ -1038,6 +1039,120 @@ mod tests {
         ppu.write_register(0x212D, 0x01); // TS: BG1
         ppu.write_register(0x2130, 0x02); // enable sub-screen BG/OBJ
         ppu.write_register(0x2100, 0x0F); // full brightness
+    }
+
+    /// Mode 5 scene with a per-column pattern on BG1 (both screens), so hires
+    /// half-pixels and column-doubled native pixels are told apart by whether the
+    /// two columns of a pair carry the same colour.
+    fn setup_hires_column_pattern_scene(ppu: &mut Ppu) {
+        setup_mode5_bg1_both_screens(ppu);
+        set_bg_map_base(ppu, 0, 0x400);
+        for entry in 0..64usize {
+            set_vram_word(ppu, 0x400 + entry, 1);
+        }
+        fill_4bpp_tile_column_pattern(ppu, 0, 1);
+    }
+
+    /// Tick to the dot at which native column `x` has just been rendered on the first
+    /// visible scanline, so a register write here first takes effect at column `x + 1`.
+    fn tick_to_column(ppu: &mut Ppu, x: u16) {
+        let dots = u32::from(DOTS_PER_SCANLINE) + u32::from(VISIBLE_DOT_START + x);
+        for _ in 0..(dots * MASTER_CYCLES_PER_DOT) {
+            ppu.tick();
+        }
+    }
+
+    /// Whether the two output columns of native column `x` on framebuffer row 0 differ
+    /// (i.e. the dot was rendered as a true hires half-pixel pair).
+    fn pair_differs(ppu: &Ppu, x: usize) -> bool {
+        ppu.framebuffer[x * 2] != ppu.framebuffer[x * 2 + 1]
+    }
+
+    /// The scene's mode-5 signature: each tilemap entry spans 16 output columns as a
+    /// char 1 / char 2 pair, and char 2 is blank, so the two half-pixels of native
+    /// column `x` differ exactly when `x % 8 < 4`. A native column never differs, so
+    /// checking this signature column by column pins where a mid-line switch took
+    /// effect to a single dot.
+    fn hires_signature(x: usize) -> bool {
+        x % 8 < 4
+    }
+
+    /// Native column at which the mid-line tests switch BGMODE. Chosen so the first
+    /// two columns on each side of it carry the *opposite* signature, which is what
+    /// makes the boundary exact rather than merely bracketed.
+    const SWITCH_COLUMN: usize = 66;
+
+    /// A mid-line switch *out* of hires: the columns already rendered keep their
+    /// half-pixel pairs and every column from the switch dot on is column-doubled.
+    /// The row's layout stays uniform because the frame latched hires at its top
+    /// (#3034 -- Mesen2 splits the same row into chunks at each register write).
+    #[test]
+    fn a_mid_line_switch_out_of_hires_column_doubles_from_the_switch_dot() {
+        let mut ppu = Ppu::new();
+        setup_hires_column_pattern_scene(&mut ppu);
+        tick_to_column(&mut ppu, SWITCH_COLUMN as u16 - 1);
+        ppu.write_register(0x2105, 0x01); // mode 1 from SWITCH_COLUMN on
+        render_lines(&mut ppu, 1);
+
+        for x in 0..SWITCH_COLUMN {
+            assert_eq!(
+                pair_differs(&ppu, x),
+                hires_signature(x),
+                "column {x} was rendered before the switch and must stay hires"
+            );
+        }
+        for x in SWITCH_COLUMN..256 {
+            assert!(
+                !pair_differs(&ppu, x),
+                "native column {x} must fill both output columns"
+            );
+        }
+    }
+
+    /// A mid-line switch *into* hires: the prefix already drawn is converted in place
+    /// (column-doubled, preserving its native colours) and the rest of the row renders
+    /// as half-pixel pairs.
+    #[test]
+    fn a_mid_line_switch_into_hires_converts_the_prefix_already_drawn() {
+        // Control: the same scene left in mode 1 for the whole line, so the expected
+        // pre-switch colours come from a real render rather than from the code under
+        // test's own arithmetic.
+        let mut control = Ppu::new();
+        setup_hires_column_pattern_scene(&mut control);
+        control.write_register(0x2105, 0x01);
+        render_lines(&mut control, 1);
+        let native_row: Vec<u16> = (0..SWITCH_COLUMN).map(|x| control.framebuffer[x]).collect();
+        assert!(
+            native_row.iter().any(|&c| c != native_row[0]),
+            "the control row must vary by column, or the comparison is vacuous"
+        );
+
+        let mut ppu = Ppu::new();
+        setup_hires_column_pattern_scene(&mut ppu);
+        ppu.write_register(0x2105, 0x01); // start the frame native
+        tick_to_column(&mut ppu, SWITCH_COLUMN as u16 - 1);
+        ppu.write_register(0x2105, 0x05); // mode 5 from SWITCH_COLUMN on
+        render_lines(&mut ppu, 1);
+
+        for x in 0..SWITCH_COLUMN {
+            assert_eq!(
+                ppu.framebuffer[x * 2],
+                native_row[x],
+                "converted column {x} keeps the colour it was drawn with"
+            );
+            assert_eq!(
+                ppu.framebuffer[x * 2 + 1],
+                native_row[x],
+                "converted column {x} is doubled into the odd output column"
+            );
+        }
+        for x in SWITCH_COLUMN..256 {
+            assert_eq!(
+                pair_differs(&ppu, x),
+                hires_signature(x),
+                "column {x} was rendered after the switch and must be hires"
+            );
+        }
     }
 
     /// Write a per-column 4bpp pattern (column c = color c+1) on all 8 tile rows.

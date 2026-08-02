@@ -46,6 +46,8 @@ impl Ppu {
                 for bg in 0..4 {
                     self.bg_tile_size_16[bg] = value & (0x10 << bg) != 0;
                 }
+                // Entering mode 5/6 part-way down a frame upgrades its layout.
+                self.convert_to_hires();
             }
             // MOSAIC: mosaic size (bits 7-4) and per-BG enable (bits 3-0).
             0x2106 => self.mosaic = value,
@@ -156,6 +158,9 @@ impl Ppu {
                 if interlace_rising && self.vblank_active {
                     self.framebuffer.fill(0);
                 }
+                // Pseudo-hires (bit 3) and screen interlace (bit 0) both upgrade the
+                // frame's layout, exactly as BGMODE 5/6 does.
+                self.convert_to_hires();
             }
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
             // while the VBlank flag is already set raises an edge.

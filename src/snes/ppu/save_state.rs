@@ -279,6 +279,33 @@ mod tests {
     }
 
     #[test]
+    fn restore_re_derives_the_hires_layout_latch_from_the_registers() {
+        // The latch is transient with the framebuffer it describes (Mesen2 doesn't
+        // serialize `_useHighResOutput` either), so restore must re-derive it -- a
+        // stale `false` would make the resumed frame write 256-column rows into a
+        // framebuffer the snapshot reads as 512 wide (#3034).
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2105, 0x05); // mode 5
+        let hires_state = ppu.capture_state();
+
+        let mut restored = Ppu::new();
+        assert!(!restored.use_high_res_output, "starts native");
+        restored.restore_state(&hires_state).expect("restore");
+        assert!(
+            restored.use_high_res_output,
+            "a state saved in mode 5 resumes in the hires layout"
+        );
+
+        // ...and the converse, so this isn't just "always true".
+        let native_state = Ppu::new().capture_state();
+        restored.restore_state(&native_state).expect("restore");
+        assert!(
+            !restored.use_high_res_output,
+            "a state saved in a native mode resumes native"
+        );
+    }
+
+    #[test]
     fn capture_restore_round_trips_ppu_state() {
         let mut ppu = Ppu::new();
         // Mutate a representative slice of state.

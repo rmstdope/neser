@@ -96,6 +96,55 @@ impl Ppu {
         }
     }
 
+    /// Upgrade the frame in progress to the hires layout, re-laying-out every row
+    /// already drawn (Mesen2 `SnesPpu::ConvertToHiRes`).
+    ///
+    /// Called from the `$2105` and `$2133` write paths. The upgrade is one-way: a
+    /// frame that has committed to 512-column rows can never go back, because the
+    /// rows already written cannot be un-written. Two write positions are skipped,
+    /// both because the per-frame latch already covers them:
+    ///
+    /// - **scanline 0**, which the latch at the top of scanline 1 samples anyway;
+    /// - **VBlank**, where there is nothing left to draw and the *next* frame's
+    ///   latch will pick the new mode up.
+    ///
+    /// The rewrite walks rows downwards and columns rightwards to leftwards. Row `y`
+    /// lands on rows `2y`/`2y+1`, and `2y` is never below any row still to be read,
+    /// so the in-place expansion cannot clobber an unconverted source -- the same
+    /// argument as Mesen2's backwards loop. The row in progress is converted whole:
+    /// the columns to the right of the beam hold stale pixels either way, and this
+    /// line's remaining dots overwrite them.
+    pub(super) fn convert_to_hires(&mut self) {
+        let wanted = self.hires_output_enabled() || self.interlace_enabled();
+        let line = self.position.scanline;
+        if !wanted
+            || self.use_high_res_output
+            || line < VISIBLE_LINE_START
+            || line >= self.vblank_start_line()
+        {
+            return;
+        }
+        self.use_high_res_output = true;
+
+        let current = (line - VISIBLE_LINE_START) as usize;
+        let stride = self.framebuffer_stride();
+        for y in (0..=current).rev() {
+            let src = y * stride;
+            let dst = y * 2 * stride;
+            for x in (0..SCREEN_WIDTH).rev() {
+                let color = self.framebuffer[src + x];
+                self.framebuffer[dst + x * 2] = color;
+                self.framebuffer[dst + x * 2 + 1] = color;
+            }
+            self.framebuffer
+                .copy_within(dst..dst + stride, dst + stride);
+            // The per-row brightness latch moves with its row, or the converted rows
+            // would render black.
+            self.line_inidisp[y * 2 + 1] = self.line_inidisp[y];
+            self.line_inidisp[y * 2] = self.line_inidisp[y];
+        }
+    }
+
     /// The backdrop color (CGRAM entry 0) as a 15-bit BGR555 word.
     ///
     /// Records palette word 0 as the renderer's current fetch address, mirroring Mesen2's
@@ -520,6 +569,125 @@ mod tests {
                 "row {y} must carry this line's brightness"
             );
         }
+    }
+
+    /// Render `lines` scanlines' worth of ticks.
+    fn tick_lines(ppu: &mut Ppu, lines: u32) {
+        let ticks = u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT * lines;
+        for _ in 0..ticks {
+            ppu.tick();
+        }
+    }
+
+    /// Render a frame that starts native and turns hires at display line 40, then
+    /// return its RGB snapshot. `switch` performs the mid-frame register write.
+    fn frame_with_midframe_hires_switch(switch: &[(u16, u8)]) -> (Ppu, Vec<u8>) {
+        let mut ppu = Ppu::new();
+        set_clipped_backdrop(&mut ppu, 0x001F); // red, blacked out at native x 64..191
+        tick_lines(&mut ppu, 41); // scanlines 0..40 -> display lines 0..39 drawn native
+        for &(addr, value) in switch {
+            ppu.write_register(addr, value);
+        }
+        tick_lines(&mut ppu, NTSC_SCANLINES_PER_FRAME as u32 - 41);
+        let rgb = ppu.screen_snapshot_rgb();
+        (ppu, rgb)
+    }
+
+    /// Assert that display line `y` of a converted frame carries the clipped-backdrop
+    /// column pattern, column-doubled, in both of its framebuffer rows.
+    fn assert_converted_line(rgb: &[u8], y: usize, label: &str) {
+        const W: usize = 512;
+        for row in [y * 2, y * 2 + 1] {
+            assert_eq!(
+                pixel(rgb, W, 0, row),
+                RED,
+                "{label}: row {row} must keep its pre-switch colour"
+            );
+            assert_eq!(pixel(rgb, W, 127, row), RED, "{label}: row {row} @127");
+            assert_eq!(pixel(rgb, W, 128, row), BLACK, "{label}: row {row} @128");
+            assert_eq!(pixel(rgb, W, 383, row), BLACK, "{label}: row {row} @383");
+            assert_eq!(pixel(rgb, W, 384, row), RED, "{label}: row {row} @384");
+        }
+    }
+
+    #[test]
+    fn a_mid_frame_bgmode_switch_to_hires_converts_the_rows_already_drawn() {
+        // Mesen2 `ConvertToHiRes`: turning on a double-width mode part-way down a
+        // frame re-lays-out everything drawn so far, so the whole frame ends up in
+        // one layout (#3034). Without it, display lines 0..39 would still sit in the
+        // 256-column rows 0..39 while the snapshot reads 512-column rows 0..447.
+        let (ppu, rgb) = frame_with_midframe_hires_switch(&[(0x2105, 0x05)]);
+
+        assert_eq!(ppu.frame_dimensions(), (512, 448));
+        assert_converted_line(&rgb, 0, "first line of the frame");
+        assert_converted_line(&rgb, 39, "last line before the switch");
+    }
+
+    #[test]
+    fn a_mid_frame_setini_pseudo_hires_switch_converts_the_rows_already_drawn() {
+        // SETINI bit 3 reaches ConvertToHiRes exactly like BGMODE does.
+        let (ppu, rgb) = frame_with_midframe_hires_switch(&[(0x2133, 0x08)]);
+
+        assert_eq!(ppu.frame_dimensions(), (512, 448));
+        assert_converted_line(&rgb, 0, "first line of the frame");
+        assert_converted_line(&rgb, 39, "last line before the switch");
+    }
+
+    #[test]
+    fn a_mid_frame_switch_to_interlace_converts_the_rows_already_drawn() {
+        // Mesen2 folds ScreenInterlace into the same latch and the same conversion,
+        // so enabling it mid-frame upgrades the layout just like hires does.
+        let (ppu, rgb) = frame_with_midframe_hires_switch(&[(0x2133, 0x01)]);
+
+        assert_eq!(ppu.frame_dimensions(), (512, 448));
+        assert_converted_line(&rgb, 0, "first line of the frame");
+    }
+
+    #[test]
+    fn leaving_hires_mid_frame_neither_shrinks_nor_converts_the_frame() {
+        // The conversion is one-way. A frame that began hires stays 512 wide, and
+        // its native rows are simply column-doubled as they are written.
+        let mut ppu = Ppu::new();
+        set_clipped_backdrop(&mut ppu, 0x001F);
+        ppu.write_register(0x2133, 0x08); // pseudo-hires before the frame starts
+        tick_lines(&mut ppu, 41);
+        ppu.write_register(0x2133, 0x00); // back to native, mid-frame
+        tick_lines(&mut ppu, NTSC_SCANLINES_PER_FRAME as u32 - 41);
+
+        assert_eq!(ppu.frame_dimensions(), (512, 448));
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_converted_line(&rgb, 10, "line drawn while hires");
+        assert_converted_line(&rgb, 100, "line drawn after leaving hires");
+    }
+
+    #[test]
+    fn a_hires_write_during_vblank_defers_to_the_next_frame_latch() {
+        // Mesen2 `ConvertToHiRes` bails once the beam is past the last visible
+        // scanline: there is nothing to convert, and the next frame's latch picks
+        // the new mode up anyway.
+        let mut ppu = Ppu::new();
+        set_backdrop(&mut ppu, 0x001F);
+        ppu.write_register(0x2100, 0x0F);
+        render_full_frame(&mut ppu); // finish a native frame, land in the next one
+        tick_lines(&mut ppu, 230); // into VBlank
+        assert!(
+            ppu.vblank_active,
+            "the beam must be in VBlank for this test"
+        );
+
+        ppu.write_register(0x2133, 0x08);
+        assert_eq!(
+            ppu.frame_dimensions(),
+            (256, 224),
+            "the frame just rendered keeps its native geometry"
+        );
+
+        render_full_frame(&mut ppu);
+        assert_eq!(
+            ppu.frame_dimensions(),
+            (512, 448),
+            "the next frame latches the new mode"
+        );
     }
 
     #[test]
