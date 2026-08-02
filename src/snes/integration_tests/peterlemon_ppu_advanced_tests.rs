@@ -18,10 +18,11 @@
 //!   size 0) and with R held frames 120-149 (a larger dialed size);
 //!   approved goldens.
 //! - `StarWars.sfc` (animated HDMA perspective crawl) matches Mesen2
-//!   pixel-exactly at frames 120, 360 and 600 -- all three approved
-//!   goldens since #3050 fixed the HDMA `SyncEndDma` pad (the crawl
-//!   previously drifted to 1289 px at f360 and 222 px at f600, because
-//!   the zoom counter lost one NMI double-step per frame).
+//!   pixel-exactly at all five agreed vectors (f120/360/600/1200/1500) --
+//!   approved goldens since #3050 fixed the HDMA `SyncEndDma` pad
+//!   (zoom counter was losing one NMI double-step per frame: 1289 px
+//!   at f360, 222 px at f600 before the fix); f1200/f1500 sample the
+//!   Scroller/crawl phase (starts ~frame 1130), closing #3021.
 //! - `Perspective.sfc` matches Mesen2 pixel-exactly since #3020 (its
 //!   per-scanline HDMA matrix writes no longer land before the last
 //!   visible pixel renders): approved golden.
@@ -159,6 +160,24 @@ mod tests {
         "SNES-PPU-Mode7/StarWars/StarWars.sfc",
         600,
         0xDF0A_88E6
+    );
+
+    // Mesen2-approved golden, 0-px (#3021). The Scroller/crawl phase starts around frame 1130;
+    // f1200 and f1500 sample it at two spread-out points, completing the five-vector bar
+    // (f120/360/600/1200/1500) agreed during the #3021 investigation.
+    peterlemon_advanced_test!(
+        starwars_f1200,
+        "SNES-PPU-Mode7/StarWars/StarWars.sfc",
+        1200,
+        0xEF54_9E7F
+    );
+
+    // Mesen2-approved golden, 0-px (#3021) -- see `starwars_f1200`.
+    peterlemon_advanced_test!(
+        starwars_f1500,
+        "SNES-PPU-Mode7/StarWars/StarWars.sfc",
+        1500,
+        0xAA61_6763
     );
 
     peterlemon_advanced_test!(
