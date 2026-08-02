@@ -24,6 +24,7 @@ mod neser_cartridge_tests;
 mod neser_color_math_tests;
 mod neser_dma_tests;
 mod neser_hdma_tests;
+mod neser_hires_tests;
 mod neser_mode7_tests;
 mod neser_obj_tests;
 mod neser_opt_tests;

@@ -15,15 +15,16 @@
 //! - The default 256x224 colorbars (frame 371) and the graybars
 //!   pattern (two A taps at frames 340/355, sampled at frame 520)
 //!   match Mesen2 pixel-exactly: approved goldens.
-//! - The interlace combo (X tap at frame 340, sampled at frame 650)
-//!   renders 256x448 in NESER vs Mesen2's 512x448; halving Mesen2's
-//!   width leaves a 0-pixel diff, so the content is verified but the
-//!   raw framebuffers are not comparable: `#[ignore]`d with NESER's
-//!   current CRC pending the #3001 capture-geometry convention.
-//! - The overscan combo (Y tap at frame 340, sampled at frame 650)
-//!   renders 256x239 in NESER vs Mesen2's 256x224; NESER rows 0-223
-//!   equal Mesen2's frame exactly (0-pixel diff at crop offset 0), so
-//!   the content is verified: `#[ignore]`d likewise pending #3001.
+//! - The interlace combo (X tap at frame 340, sampled at frame 650) and
+//!   the overscan combo (Y tap at frame 340, same frame) were parked on
+//!   a capture-geometry mismatch: NESER rendered 256x448 and 256x239
+//!   against Mesen2's 512x448 and 256x224. Their content was verified
+//!   (0-pixel diffs after halving Mesen2's width, resp. at crop offset
+//!   0), but the raw framebuffers were not comparable. #3001 aligned
+//!   both dimensions and #3034 moved interlace column-doubling to write
+//!   time, so the mismatch is gone and both are re-approvable -- but
+//!   that needs fresh input-scripted Mesen2 captures, so they stay
+//!   `#[ignore]`d with refreshed NESER-current CRCs for now.
 
 use super::rom_runner::{InputEvent, RunConfig, RunOracle, run_rom_with_oracle};
 use crate::snes::input::SnesButton;
@@ -85,21 +86,27 @@ mod tests {
         run_hdrv_screen_crc("graybars", &script, 520, 0x0AC8_BD62);
     }
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden: the rendered
-    /// content matches Mesen2 exactly after halving Mesen2's 512-wide
-    /// interlace capture, but the raw framebuffer geometries differ.
+    /// NESER's current CRC, NOT a Mesen2-approved golden. The geometry
+    /// mismatch these two were parked on is gone -- #3001 aligned the
+    /// interlace and overscan capture dimensions with Mesen2 and #3034
+    /// moved interlace column-doubling to write time -- so both now render
+    /// at Mesen2's geometry and are re-approvable. Doing so needs fresh
+    /// input-scripted Mesen2 captures (the #2879 `emu.setInput` recipe),
+    /// which is why it is deferred rather than done here; the CRCs below
+    /// were refreshed to NESER's current output so they describe reality.
     #[test]
-    #[ignore = "interlace capture geometry differs from Mesen2 (content verified via width-halving); pending #3001"]
+    #[ignore = "re-approvable since #3001/#3034 but needs a fresh input-replay Mesen2 capture"]
     fn interlace_toggle() {
-        run_hdrv_screen_crc("interlace", &tap(SnesButton::X, 340), 650, 0xD5DD_F545);
+        run_hdrv_screen_crc("interlace", &tap(SnesButton::X, 340), 650, 0x902F_E4EE);
     }
 
-    /// NESER's current CRC, NOT a Mesen2-approved golden: NESER rows
-    /// 0-223 equal Mesen2's 224-line frame exactly, but NESER renders
-    /// all 239 overscan lines.
+    /// As above. Note for whoever re-approves this one: its current CRC is
+    /// byte-identical to `colorbars_default`'s, which would mean the Y tap
+    /// left the screen unchanged. Check that the overscan toggle actually
+    /// registers before treating a matching capture as confirmation.
     #[test]
-    #[ignore = "239-line overscan capture geometry differs from Mesen2 (content verified rows 0-223); pending #3001"]
+    #[ignore = "re-approvable since #3001/#3034 but needs a fresh input-replay Mesen2 capture"]
     fn overscan_toggle() {
-        run_hdrv_screen_crc("overscan", &tap(SnesButton::Y, 340), 650, 0x8DE1_20EC);
+        run_hdrv_screen_crc("overscan", &tap(SnesButton::Y, 340), 650, 0xF745_9692);
     }
 }
