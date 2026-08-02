@@ -192,12 +192,11 @@ Test suites:
   Mode 7 rotozoom (static plus input-scripted rotate/zoom holds), the HDMA
   Perspective and animated StarWars crawl demos, mosaic in modes 3 and 5,
   six true-hires/interlace demos and four pseudo-hires HiColor demos.
-  RotZoom (3 vectors), MosaicMode3 (2) and StarWars frame 120 carry
-  Mesen2-approved goldens. `#[ignore]`d with NESER's current CRCs:
-  Perspective (rightmost-column divergence, #3020), StarWars f360/f600
-  (crawl drift, #3021), MosaicMode5 and the six Interlace demos (mode 5/6
-  hires column rendering #3016 and line-doubled interlace fields #3017),
-  and the four pseudo-hires demos (#3018).
+  All 23 vectors carry Mesen2-approved goldens and none is `#[ignore]`d:
+  the pseudo-hires demos were approved with #3016, MosaicMode5 and the
+  Interlace suite with #3017, Perspective and InterlaceSimpsonsHDMA with
+  #3020, and the StarWars crawl frames with #3021/#3050. The four
+  pseudo-hires goldens were re-approved at the native 512x448 with #3034.
 - `undisbeliever_ppu_mode7_tests.rs` -- Mode 7 VRAM-layout and tilemap
   demos built from the undisbeliever source mirror
   (`roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-mode7/`, see
@@ -213,17 +212,28 @@ Test suites:
   Default colorbars and the graybars pattern carry Mesen2-approved
   goldens; the interlace (X) and 239-line overscan (Y) combos are
   content-verified against Mesen2 (0-pixel diffs after width-halving resp.
-  at crop offset 0) but `#[ignore]`d with NESER CRCs pending the #3001
-  capture-geometry convention.
+  at crop offset 0). The capture-geometry mismatch they were parked on is
+  gone since #3001/#3034, so both are re-approvable, but they stay
+  `#[ignore]`d with NESER CRCs until someone re-runs the input-scripted
+  Mesen2 capture.
 - `neser_opt_tests.rs` -- NESER-authored offset-per-tile ROMs for BG modes
   2/4/6 (`roms/snes/automated_tests/snes_test_roms/neser-opt-tests/`,
   sources included; see its README) -- no redistributable third-party OPT
   ROM exists. Cover V/H offsets with per-entry BG1/BG2 apply-flag gating,
   the OPT-exempt leftmost column and entry-to-column+1 mapping, the
   ignored low 3 bits of horizontal entries with BG1HOFS fine scroll
-  retained, and mode 4's single offset row with bit-15 H/V selection. The
-  five mode 2/4 ROMs carry Mesen2-approved goldens; `opt-m6.sfc` is
-  `#[ignore]`d (mode 6 16x8 tile pairing / hires columns, #3019/#3016).
+  retained, and mode 4's single offset row with bit-15 H/V selection. All
+  six carry Mesen2-approved goldens; `opt-m6.sfc` joined them with the
+  #3016 hires rework and was re-approved at the native 512x448 with #3034.
+- `neser_hires_tests.rs` -- NESER-authored mid-frame hires-transition ROMs
+  (`roms/snes/automated_tests/snes_test_roms/neser-hires-tests/`, sources
+  included; see its README) -- no vendored ROM switches hires part-way
+  down a frame. One HDMA channel turns a hires mode on at display line
+  100: `hires-hdma-bgmode.sfc` writes BGMODE 1 -> 5, `hires-hdma-setini.sfc`
+  writes SETINI bit 3 (pseudo-hires). Both match Mesen2 pixel-exactly
+  (0 of 229,376 px) and additionally assert the structure the golden
+  stands for -- rows above the switch column-doubled, rows below carrying
+  half-pixel pairs, every row pair identical (#3034).
 - `neser_mode7_tests.rs` -- NESER-authored static-matrix Mode 7 ROMs
   (`roms/snes/automated_tests/snes_test_roms/neser-mode7-tests/`, sources
   included; see its README): identity baseline, M7SEL out-of-screen
@@ -371,7 +381,7 @@ What actually differs between the two consoles:
 | STAT78 `$213F` bit 4 | 0 | 1 |
 | First VBlank scanline | 225 | 225 |
 | …with SETINI overscan | 240 | 240 |
-| Output dimensions | 256x224 / 256x239 | 256x224 / 256x239 |
+| Output dimensions | 256x224, or 512x448 in hi-res/interlace | same |
 | SPC700 clock | ~1.025 MHz | ~1.025 MHz |
 
 PAL's extra 50 scanlines are therefore *all* blanking: the active area, the
