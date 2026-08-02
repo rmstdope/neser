@@ -228,7 +228,29 @@ mod tests {
         0x7EDB_74D1
     );
 
-    // Tests HDMA-driven INIDISP changes. Same known minor visual differences.
+    // Tests mid-scanline INIDISP (brightness) changes: an H-IRQ at dot 309
+    // writes INIDISP directly (no HDMA involved, despite this ROM's name
+    // implying otherwise) to step the master brightness up/down on specific
+    // scanlines. NESER latches INIDISP once per scanline at
+    // `VISIBLE_DOT_START` (`Ppu::render_dot`/`line_inidisp` in
+    // `framebuffer.rs`), applying the whole row's brightness at once, while
+    // real hardware has some (undocumented) pixel-level delay between the
+    // write and the visible change. This produces a 4.45% pixel diff vs
+    // Mesen2 concentrated at brightness band edges (issue #2973).
+    //
+    // Investigated and left as a documented known limitation rather than a
+    // bug fix: fullsnes itself is explicitly unsure of the exact delay
+    // ("Forced blank doesn't apply immediately... so one must wait whatever
+    // (maybe a scanline)... or is it only vice-versa... shows garbage
+    // pixels?"), and no cycle-accurate real-hardware measurement is
+    // documented anywhere -- undisbeliever's `inidisp_brightness_delay.asm`
+    // source (designed to visualize the effect via real-hardware photos)
+    // asserts no specific delay value either. Any "fix" here would just
+    // mean picking one undocumented emulator's model over another, not
+    // matching a known-correct reference -- same shared-limitation
+    // reasoning as the `inidisp_hammer_*` glitch tests above (#2949) and
+    // related low-severity timing issues #2967/#2971. The golden CRC is
+    // unchanged; no behavior/timing code was modified for this issue.
     undisbeliever_rom_test!(
         inidisp_brightness_delay_matches_mesen2,
         "inidisp_brightness_delay.sfc",
