@@ -1,23 +1,23 @@
 import { isSupportedWebRomName } from "./rom_extensions";
 
 export function parseDirectoryListing(html: string) {
-    const dirs = [];
-    const roms = [];
+    const dirs = new Set<string>();
+    const roms = new Set<string>();
     const hrefRegex = /href\s*=\s*["']([^"']+)["']/gi;
     let match;
     while ((match = hrefRegex.exec(html)) !== null) {
-        const href = match[1] || "";
+        const href = match[1];
         if (!href || href === "../") continue;
         if (href.endsWith("/")) {
-            dirs.push(href);
+            dirs.add(href);
         } else if (isSupportedWebRomName(href)) {
-            roms.push(href);
+            roms.add(href);
         }
     }
 
     return {
-        dirs: Array.from(new Set(dirs)).sort(),
-        roms: Array.from(new Set(roms)).sort()
+        dirs: Array.from(dirs).sort(),
+        roms: Array.from(roms).sort()
     };
 }
 
