@@ -1382,12 +1382,24 @@ mod tests {
     }
 
     /// Regenerates the committed golden save-state fixture used by
-    /// `test_golden_save_state_v2_loads`. Run manually only after an
-    /// intentional, reviewed change to the save-state format:
-    /// `cargo test --no-default-features --lib \
+    /// `test_golden_save_state_v2_loads`.
+    ///
+    /// Appropriate only when `SNES_SAVESTATE_VERSION` is bumped -- at which
+    /// point the old fixture fails that test's version assertion anyway.
+    /// Regenerating at an unchanged version is destructive, and this fixture is
+    /// the clearest example in the repo: the committed file predates the
+    /// `nmi_arm_counter` / `irq_line_shadow` / `waiting` / `irq_lock_step` /
+    /// `irq_i_shadow` CPU fields added by #2985, #3049 and #3081, all of which
+    /// arrived without a version bump. It is the only fixture still proving
+    /// that a genuinely older v2 file loads. Overwrite it and that evidence is
+    /// gone, behind an opaque `.gz` diff.
+    ///
+    /// Writing is therefore opt-in, so `cargo test -- --include-ignored` cannot
+    /// clobber the fixture (#3107):
+    /// `NESER_REGENERATE_FIXTURES=1 cargo test --no-default-features --lib \
     ///   snes::console::snes::tests::regenerate_golden_save_state_fixture -- --ignored`
     #[test]
-    #[ignore = "regenerates a committed fixture; run manually"]
+    #[ignore = "regenerates a committed fixture; run manually with NESER_REGENERATE_FIXTURES=1"]
     fn regenerate_golden_save_state_fixture() {
         let rom = lorom_rom_with_battery_sram(0x05);
         let mut snes = make_snes();
@@ -1400,6 +1412,9 @@ mod tests {
             .to_bytes()
             .expect("serialize save state");
         let compressed = crate::platform::save_state::gzip_compress(&bytes);
+        if !crate::platform::save_state::fixture_regeneration_enabled() {
+            return;
+        }
         let dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/snes/console/testdata");
         std::fs::create_dir_all(&dir).expect("create testdata dir");
@@ -1410,7 +1425,9 @@ mod tests {
     fn test_golden_save_state_v2_loads() {
         // A save-state captured from a previous build must still load, proving
         // the on-disk format stayed backward-compatible across the
-        // shared-helper refactor.
+        // shared-helper refactor. Do not regenerate the fixture to "refresh"
+        // it: it is meaningful precisely because an older build produced it,
+        // predating several CPU fields that current code emits.
         let compressed = include_bytes!("testdata/savestate_golden_v2.json.gz");
         let bytes = crate::platform::save_state::gzip_decompress(compressed);
         let state =

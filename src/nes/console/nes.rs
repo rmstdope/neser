@@ -2437,18 +2437,37 @@ mod tests {
         }
     }
 
+    /// Fixed RAM seed for the golden fixture, so regenerating produces a
+    /// reviewable diff instead of fresh noise. `Config::default()` uses
+    /// `RamInitMode::Random` off wasm, which made every regeneration differ in
+    /// its RAM contents and hid whether the *format* had actually changed --
+    /// unhelpful when the diff is an opaque `.gz` (#3107).
+    const GOLDEN_FIXTURE_RAM_SEED: u64 = 0x3107;
+
     /// Regenerates the committed golden save-state fixture used by
-    /// `test_golden_save_state_v8_loads`. Run manually only after an
-    /// intentional, reviewed change to the save-state format:
-    /// `cargo test --no-default-features --lib \
+    /// `test_golden_save_state_v8_loads`.
+    ///
+    /// Appropriate only when `SAVESTATE_VERSION` is bumped -- at which point the
+    /// old fixture fails that test's version assertion anyway. Regenerating at
+    /// an unchanged version is destructive: the fixture's whole value is that an
+    /// *older* build wrote it, so replacing it with current output leaves a file
+    /// that still claims the same version while containing today's schema, and
+    /// the load test then proves nothing.
+    ///
+    /// Writing is therefore opt-in, so `cargo test -- --include-ignored` cannot
+    /// clobber the fixture (#3107):
+    /// `NESER_REGENERATE_FIXTURES=1 cargo test --no-default-features --lib \
     ///   nes::console::nes::tests::regenerate_golden_save_state_fixture -- --ignored`
     #[test]
-    #[ignore = "regenerates a committed fixture; run manually"]
+    #[ignore = "regenerates a committed fixture; run manually with NESER_REGENERATE_FIXTURES=1"]
     fn regenerate_golden_save_state_fixture() {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
+        let mut config = Config::default();
+        config.frontend.ram_init_mode =
+            crate::platform::config::RamInitMode::SeededRandom(GOLDEN_FIXTURE_RAM_SEED);
         let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
-            Config::default(),
+            config,
         ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -2457,6 +2476,9 @@ mod tests {
         }
         let bytes = nes.save_state().to_bytes().expect("serialize save state");
         let compressed = crate::platform::save_state::gzip_compress(&bytes);
+        if !crate::platform::save_state::fixture_regeneration_enabled() {
+            return;
+        }
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/nes/console/testdata");
         std::fs::create_dir_all(&dir).expect("create testdata dir");
         std::fs::write(dir.join("savestate_golden_v8.json.gz"), compressed).expect("write fixture");
@@ -2466,7 +2488,8 @@ mod tests {
     fn test_golden_save_state_v8_loads() {
         // A save-state captured from a previous build must still load, proving
         // the on-disk format stayed backward-compatible across the
-        // shared-helper refactor.
+        // shared-helper refactor. Do not regenerate the fixture to "refresh"
+        // it: it is meaningful precisely because an older build produced it.
         let compressed = include_bytes!("testdata/savestate_golden_v8.json.gz");
         let bytes = crate::platform::save_state::gzip_decompress(compressed);
         let state = SaveState::from_bytes(&bytes).expect("golden save state should deserialize");
