@@ -528,19 +528,21 @@ class RomDatabase:
                     else:
                         _print_column_conflict(crc, key, old_value, value)
                         has_conflict = True
-                # Extra merge of controller types
+                # Extra merge of controller types. Scraped records carry every
+                # field as a string while the column is INTEGER, so both sides
+                # are compared as strings (as the hardware branch above does).
                 elif key == RomDbKey.EXPANSION_TYPE.value:
                     # if new value is multicart, update to that
-                    if value == ControllerType.MULTICART.value:
+                    if str(value) == str(ControllerType.MULTICART.value):
                         updates[key] = value
                     # If old is multicaart, do nothing
-                    elif old_value == ControllerType.MULTICART.value:
+                    elif str(old_value) == str(ControllerType.MULTICART.value):
                         pass
                     # If old value says standard controller, select the other one
-                    elif old_value == ControllerType.STANDARD_CONTROLLERS.value:
+                    elif str(old_value) == str(ControllerType.STANDARD_CONTROLLERS.value):
                         updates[key] = value
                     # If new value says standard controller, do nothing
-                    elif value == ControllerType.STANDARD_CONTROLLERS.value:
+                    elif str(value) == str(ControllerType.STANDARD_CONTROLLERS.value):
                         pass
                     else:
                         _print_column_conflict(crc, key, old_value, value)

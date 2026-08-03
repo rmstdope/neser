@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 from scripts.nes_rom_db_scraper.rom_database import (
+    ControllerType,
     HardwareType,
     RomDatabase,
     RomDbKey,
@@ -397,6 +398,59 @@ class TestHardwareFromConsoleTypeAndRegion(unittest.TestCase):
         """NTSC without Japan country must remain NES_NTSC."""
         result = hardware_from_console_type_and_region("0", "0", country="USA")
         self.assertEqual(result, HardwareType.NES_NTSC.value)
+
+
+class TestExpansionTypeMerge(unittest.TestCase):
+    """Merge rules for the ``expansion_type`` column in process_record_by_crc.
+
+    Scraped records carry every field as a string, while the column is INTEGER
+    so existing values read back as ints. The merge rules must therefore compare
+    the two sides as strings, exactly as the ``hardware`` branch does.
+    """
+
+    def setUp(self) -> None:
+        fd, self.db_path = tempfile.mkstemp(prefix="romdb_expansion_", suffix=".sqlite")
+        os.close(fd)
+        self.db = RomDatabase(self.db_path)
+
+    def tearDown(self) -> None:
+        with contextlib.suppress(Exception):
+            self.db.close()
+        with contextlib.suppress(Exception):
+            os.unlink(self.db_path)
+
+    def _seed(self, crc: str, expansion: ControllerType) -> None:
+        self.db.insert_rom_by_crc({RomDbKey.CRC.value: crc, RomDbKey.EXPANSION_TYPE.value: str(expansion.value)})
+
+    def _stored(self, crc: str) -> object:
+        return self.db.get_rom_by_crc(crc).get(RomDbKey.EXPANSION_TYPE.value)
+
+    def test_incoming_multicart_replaces_a_specific_expansion_type(self):
+        """Given a specific type, when a multicart arrives, then it wins."""
+        crc = "EXPMULTI1"
+        self._seed(crc, ControllerType.ZAPPER_4017)
+
+        result = self.db.process_record_by_crc(
+            {RomDbKey.CRC.value: crc, RomDbKey.EXPANSION_TYPE.value: str(ControllerType.MULTICART.value)}
+        )
+
+        self.assertEqual(result, (0, 1, 0, 0), "multicart should be merged, not reported as a conflict")
+        self.assertEqual(int(self._stored(crc)), ControllerType.MULTICART.value)
+
+    def test_incoming_standard_controller_never_overwrites_a_specific_type(self):
+        """Given a specific type, when the generic standard controller arrives, then it is ignored."""
+        crc = "EXPSTD1"
+        self._seed(crc, ControllerType.ZAPPER_4017)
+
+        result = self.db.process_record_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.EXPANSION_TYPE.value: str(ControllerType.STANDARD_CONTROLLERS.value),
+            }
+        )
+
+        self.assertEqual(result, (0, 0, 1, 0), "generic standard controller should be skipped, not a conflict")
+        self.assertEqual(int(self._stored(crc)), ControllerType.ZAPPER_4017.value)
 
 
 if __name__ == "__main__":
