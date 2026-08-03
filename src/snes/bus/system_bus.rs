@@ -17,6 +17,12 @@ use std::rc::Rc;
 
 const WRAM_SIZE: usize = 128 * 1024;
 
+/// Cap on the test-only B-bus write log (see [`SnesSystemBus::b_bus_writes`]).
+/// Far above anything an assertion inspects; it exists so ROM integration
+/// tests, which never drain the log, cannot grow it without bound.
+#[cfg(test)]
+const B_BUS_WRITE_LOG_LIMIT: usize = 1024;
+
 /// SNES system bus.
 ///
 /// This bus currently implements:
@@ -95,6 +101,19 @@ pub struct SnesSystemBus {
     sa1_memory_control: Option<Rc<RefCell<Sa1MemoryControl>>>,
     /// The second 65816 CPU core for SA-1. `None` for non-SA-1 cartridges.
     sa1_core: Option<Sa1Core>,
+    /// Every `(b_addr, value)` pair a DMA/HDMA A->B transfer has driven onto the
+    /// B-bus, in order. Test-only instrument: it observes what the controller
+    /// actually wrote, which is what the transfer tests are about, and replaces
+    /// the non-physical readback they used to perform (a B->A transfer back
+    /// through an internal port shadow -- see #3061).
+    ///
+    /// Recording stops at [`B_BUS_WRITE_LOG_LIMIT`] entries. Assertions drain
+    /// a handful of bytes right after the burst that produced them, but this
+    /// field is compiled into the whole `--lib` test binary, including the ROM
+    /// integration tests, where an HDMA-heavy title would otherwise accumulate
+    /// millions of entries nobody reads.
+    #[cfg(test)]
+    b_bus_writes: RefCell<Vec<(u8, u8)>>,
 }
 
 impl SnesSystemBus {
@@ -165,7 +184,15 @@ impl SnesSystemBus {
             sa1_iram,
             sa1_memory_control,
             sa1_core,
+            #[cfg(test)]
+            b_bus_writes: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Drains the recorded A->B B-bus write log (see [`SnesSystemBus::b_bus_writes`]).
+    #[cfg(test)]
+    fn take_b_bus_writes(&self) -> Vec<(u8, u8)> {
+        self.b_bus_writes.borrow_mut().drain(..).collect()
     }
 
     fn load_spc_ipl_override(path: Option<&str>) -> Option<[u8; 64]> {
@@ -886,12 +913,6 @@ impl SnesSystemBus {
                 state.dma.regs.len()
             ));
         }
-        if state.dma.bbus_ports.len() != 0x100 {
-            return Err(format!(
-                "DMA B-bus state size mismatch (expected 256, found {})",
-                state.dma.bbus_ports.len()
-            ));
-        }
         if state.dma.hdma_do_transfer.len() != 8
             || state.dma.hdma_repeat_mode.len() != 8
             || state.dma.hdma_lines_left.len() != 8
@@ -1332,6 +1353,30 @@ impl DmaABus for SnesSystemBus {
             }
             _ => {}
         }
+        #[cfg(test)]
+        {
+            let mut log = self.b_bus_writes.borrow_mut();
+            if log.len() < B_BUS_WRITE_LOG_LIMIT {
+                log.push((addr, value));
+            }
+        }
+    }
+
+    fn dma_read_b_bus(&mut self, addr: u8, open_bus: u8) -> u8 {
+        // Publish the DMA's current open-bus byte as MDR before the read, so
+        // the open-bus-blended arms inside `read_mmio` (within the B-bus
+        // window, only $2137 SLHV) see what the DMA itself last drove rather
+        // than whatever the CPU left there before the pause. ares gets the
+        // same effect by assigning `cpu.r.mdr` on every B-bus read and passing
+        // it back in as the next read's fallback. The controller keeps
+        // threading its own `open_bus` either way; this only affects reads
+        // that return MDR.
+        self.mdr.set(open_bus);
+        // `read_mmio` is the live, side-effecting register path and already
+        // decodes the whole $2100-$21FF B-bus window; every port with no read
+        // driver falls through to `None`, which is open bus.
+        self.read_mmio(0x00_2100 | u32::from(addr))
+            .unwrap_or(open_bus)
     }
 }
 
@@ -1959,17 +2004,17 @@ mod tests {
         bus.write(0x00420B, 0x01);
         run_pending_gpdma(&mut bus);
 
-        // Read back from B-bus via reverse DMA to verify data landed at $2100.
-        write_dma_channel(&mut bus, 0, 0x80, 0x00, 0x7E0200, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-        assert_eq!(bus.read(0x7E0200), 0x3A);
+        assert_eq!(bus.take_b_bus_writes(), vec![(0x00, 0x3A)]);
 
-        // DAS reaches zero and A1T advances by transfer byte count.
+        // DAS reaches zero and A1T advances by the transfer byte count, from
+        // $0100 to $0101. (The old $0201 expectation belonged to a second,
+        // B->A readback transfer that stood in for a B-bus write log; B->A
+        // register bookkeeping is now asserted by
+        // `gpdma_b_to_a_reads_wmdata_live_and_advances_wmadd`.)
         assert_eq!(bus.read(0x004305), 0x00);
         assert_eq!(bus.read(0x004306), 0x00);
         assert_eq!(bus.read(0x004302), 0x01);
-        assert_eq!(bus.read(0x004303), 0x02);
+        assert_eq!(bus.read(0x004303), 0x01);
     }
 
     #[test]
@@ -2021,11 +2066,12 @@ mod tests {
         run_pending_gpdma(&mut bus);
         let ticks_after = bus.ticks.get();
 
-        // Channel 1 must run after channel 0, so final B-bus value is from channel 1.
-        write_dma_channel(&mut bus, 0, 0x80, 0x10, 0x7E0300, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-        assert_eq!(bus.read(0x7E0300), 0x22);
+        // Channel 1 must run after channel 0.
+        assert_eq!(
+            bus.take_b_bus_writes(),
+            vec![(0x10, 0x11), (0x10, 0x22)],
+            "channels drive the B-bus in ascending order"
+        );
 
         // Hardware envelope (#3021): 8 start pad (clock 8-aligned) + 8 overhead
         // + per channel (8 + 8/byte) + 8 end pad (counter 8-aligned).
@@ -2063,11 +2109,7 @@ mod tests {
         write_dma_channel(&mut bus, 0, 0x05, 0x20, 0x7E1000, 2);
         bus.write(0x00420B, 0x01);
         run_pending_gpdma(&mut bus);
-        write_dma_channel(&mut bus, 0, 0x81, 0x20, 0x7E1100, 2);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-        assert_eq!(bus.read(0x7E1100), 0xA1);
-        assert_eq!(bus.read(0x7E1101), 0xB2);
+        assert_eq!(bus.take_b_bus_writes(), vec![(0x20, 0xA1), (0x21, 0xB2)]);
 
         // mode 6 should alias mode 2 (p, p)
         bus.write(0x7E1200, 0xC3);
@@ -2075,11 +2117,7 @@ mod tests {
         write_dma_channel(&mut bus, 0, 0x06, 0x24, 0x7E1200, 2);
         bus.write(0x00420B, 0x01);
         run_pending_gpdma(&mut bus);
-        write_dma_channel(&mut bus, 0, 0x82, 0x24, 0x7E1300, 2);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-        assert_eq!(bus.read(0x7E1300), 0xD4);
-        assert_eq!(bus.read(0x7E1301), 0xD4);
+        assert_eq!(bus.take_b_bus_writes(), vec![(0x24, 0xC3), (0x24, 0xD4)]);
 
         // mode 7 should alias mode 3 (p, p, p+1, p+1)
         bus.write(0x7E1400, 0x10);
@@ -2089,13 +2127,10 @@ mod tests {
         write_dma_channel(&mut bus, 0, 0x07, 0x28, 0x7E1400, 4);
         bus.write(0x00420B, 0x01);
         run_pending_gpdma(&mut bus);
-        write_dma_channel(&mut bus, 0, 0x83, 0x28, 0x7E1500, 4);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-        assert_eq!(bus.read(0x7E1500), 0x20);
-        assert_eq!(bus.read(0x7E1501), 0x20);
-        assert_eq!(bus.read(0x7E1502), 0x40);
-        assert_eq!(bus.read(0x7E1503), 0x40);
+        assert_eq!(
+            bus.take_b_bus_writes(),
+            vec![(0x28, 0x10), (0x28, 0x20), (0x29, 0x30), (0x29, 0x40)]
+        );
     }
 
     #[test]
@@ -2162,6 +2197,174 @@ mod tests {
         assert_eq!(bus.read(0x004212) & 0x3E, 0x00);
     }
 
+    /// #3061: a B->A transfer reads the live B-bus register, so `$2180` returns
+    /// the WRAM byte WMADD points at and advances WMADD -- exactly as a CPU load
+    /// from `$2180` would.
+    ///
+    /// The destination is cartridge SRAM, not WRAM: fullsnes "DMA Notes" says
+    /// WRAM-to-WRAM DMA isn't possible in either direction, so `$2180` -> WRAM
+    /// is not a transfer hardware performs (tracked separately; NESER does not
+    /// model the restriction yet, and this vector deliberately stays clear of
+    /// it).
+    #[test]
+    fn gpdma_b_to_a_reads_wmdata_live_and_advances_wmadd() {
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        for (i, byte) in [0x11u8, 0x22, 0x33, 0x44].iter().enumerate() {
+            bus.write(0x7E0500 + i as u32, *byte);
+        }
+        // A fifth byte, read back through $2180 afterwards to prove where
+        // WMADD ended up. (Reading $2181/$2182 would be simpler but those are
+        // write-only on hardware, so asserting on them would lean on a
+        // NESER-specific readback.)
+        bus.write(0x7E0504, 0x99);
+        // WMADD -> $000500, so WMDATA reads walk the seeded region.
+        bus.write(0x002181, 0x00);
+        bus.write(0x002182, 0x05);
+        bus.write(0x002183, 0x00);
+
+        // DMAP $80: B->A, increment, mode 0. Destination is the LoROM SRAM window.
+        write_dma_channel(&mut bus, 0, 0x80, 0x80, 0x70_0000, 4);
+        bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
+
+        assert_eq!(
+            [
+                bus.read(0x70_0000),
+                bus.read(0x70_0001),
+                bus.read(0x70_0002),
+                bus.read(0x70_0003),
+            ],
+            [0x11, 0x22, 0x33, 0x44],
+            "the live WMDATA port drives the transfer"
+        );
+        // Four reads advanced WMADD from $000500 to $000504, so the next
+        // WMDATA read returns the byte seeded there.
+        assert_eq!(
+            bus.read(0x002180),
+            0x99,
+            "each B->A read advanced WMADD by one"
+        );
+        // A B->A channel keeps the same register bookkeeping as A->B: DAS
+        // drains to zero and A1T advances by the byte count.
+        assert_eq!(bus.read(0x004305), 0x00);
+        assert_eq!(bus.read(0x004306), 0x00);
+        assert_eq!(bus.read(0x004302), 0x04);
+        assert_eq!(bus.read(0x004303), 0x00);
+    }
+
+    /// A write-only PPU register has no read driver, so a B->A transfer of it
+    /// copies open bus -- the byte the DMA itself last drove -- not the value a
+    /// previous A->B transfer sent to that port. ares reads
+    /// `bus.read(0x2100 | address, cpu.r.mdr)`; Mesen2's `SnesPpu::Read`
+    /// returns `GetOpenBus()` for the same registers.
+    #[test]
+    fn gpdma_b_to_a_reads_a_write_only_port_as_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        // Send a byte A->B to $2130 (CGWSEL, write-only) first: a controller
+        // serving B->A from a shadow of past A->B writes would return this.
+        bus.write(0x7E0100, 0x5A);
+        write_dma_channel(&mut bus, 0, 0x00, 0x30, 0x7E0100, 1);
+        bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
+        let _ = bus.take_b_bus_writes();
+
+        // MDR seeds the transfer's open bus (writes don't drive it, so this
+        // read is the last thing on the bus before $420B arms the channel).
+        prime_mdr(&mut bus, 0x9A);
+        write_dma_channel(&mut bus, 0, 0x80, 0x30, 0x7E0200, 1);
+        bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
+
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x9A,
+            "an unreadable B-bus port drives open bus, not the last A->B byte"
+        );
+    }
+
+    /// The DMA's open bus is threaded *through* the burst: each byte read
+    /// updates it, so a port that returns open bus yields the byte the DMA
+    /// itself drove one slot earlier -- not whatever the CPU left in MDR
+    /// before the transfer. ares does the same by assigning `cpu.r.mdr` on
+    /// every B-bus read and passing it back in as the next read's fallback.
+    ///
+    /// `$2137` (SLHV) is the discriminating port: it latches H/V and returns
+    /// open bus rather than a value of its own. A mode-4 transfer from `$34`
+    /// reads MPYL/MPYM/MPYH and then SLHV, so the fourth byte must equal the
+    /// third (MPYH) rather than the primed MDR.
+    #[test]
+    fn gpdma_b_to_a_threads_its_own_open_bus_through_the_burst() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        // M7A = $1234, M7B high byte = $56 -> product $1234 * $56 = $061D78,
+        // so MPYL/MPYM/MPYH ($2134/$2135/$2136) read $78/$1D/$06.
+        bus.write(0x00211B, 0x34);
+        bus.write(0x00211B, 0x12);
+        bus.write(0x00211C, 0x00);
+        bus.write(0x00211C, 0x56);
+
+        // A value the DMA must NOT still be carrying by its fourth byte.
+        prime_mdr(&mut bus, 0xA5);
+
+        // DMAP $84: B->A, increment, mode 4 (four registers) -> $34/$35/$36/$37.
+        write_dma_channel(&mut bus, 0, 0x84, 0x34, 0x7E0400, 4);
+        bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
+
+        assert_eq!(
+            [
+                bus.read(0x7E0400),
+                bus.read(0x7E0401),
+                bus.read(0x7E0402),
+                bus.read(0x7E0403),
+            ],
+            [0x78, 0x1D, 0x06, 0x06],
+            "SLHV returns the byte the DMA drove one slot earlier, not the primed MDR"
+        );
+    }
+
+    /// The read side effects come with the read: under VMAIN bit 7 (increment
+    /// after the high byte) `$2139` returns the prefetch latch's low byte,
+    /// while `$213A` returns the high byte, reloads the latch from the
+    /// *pre-increment* address and only then advances VMADD. fullsnes
+    /// "Increment/Prefetch in detail" -- so the first word after setting
+    /// `$2116`/`$2117` is received twice, and a mode-1 B->A transfer of 6
+    /// bytes yields word0, word0, word1.
+    ///
+    /// That doubled word is the discriminating detail: no shadow of past A->B
+    /// writes can produce it.
+    #[test]
+    fn gpdma_b_to_a_reads_vram_through_the_read_port_with_prefetch_side_effects() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x002100, 0x80); // forced blank: CPU VRAM access allowed
+        bus.write(0x002115, 0x80); // VMAIN: increment after the high byte
+        bus.write(0x002116, 0x00);
+        bus.write(0x002117, 0x00);
+        for (i, byte) in [0x11u8, 0x22, 0x33, 0x44].iter().enumerate() {
+            bus.write(0x002118 + u32::from(i as u8 & 1), *byte);
+        }
+        // Rewind VMADD; writing $2117 reloads the prefetch latch from it.
+        bus.write(0x002116, 0x00);
+        bus.write(0x002117, 0x00);
+
+        // DMAP $81: B->A, increment, mode 1 -> reads $2139 then $213A per word.
+        write_dma_channel(&mut bus, 0, 0x81, 0x39, 0x7E0300, 6);
+        bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
+
+        assert_eq!(
+            [
+                bus.read(0x7E0300),
+                bus.read(0x7E0301),
+                bus.read(0x7E0302),
+                bus.read(0x7E0303),
+                bus.read(0x7E0304),
+                bus.read(0x7E0305),
+            ],
+            [0x11, 0x22, 0x11, 0x22, 0x33, 0x44],
+            "the VRAM read port's prefetch/increment side effects drive the transfer"
+        );
+    }
+
     #[test]
     fn dma_a_bus_mmio_regions_are_treated_as_open_bus() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
@@ -2175,11 +2378,8 @@ mod tests {
         write_dma_channel(&mut bus, 0, 0x00, 0x30, 0x004300, 1);
         bus.write(0x00420B, 0x01);
         run_pending_gpdma(&mut bus);
-        write_dma_channel(&mut bus, 0, 0x80, 0x30, 0x7E1600, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
 
-        assert_eq!(bus.read(0x7E1600), 0x9A);
+        assert_eq!(bus.take_b_bus_writes(), vec![(0x30, 0x9A)]);
     }
 
     #[test]
@@ -2777,26 +2977,29 @@ mod tests {
     #[test]
     fn hdma_b_to_a_transfers_apply_within_the_line_burst() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
-        // ch0 (A->B) seeds the DMA controller's internal B-bus stub port $2135 at
-        // the trigger (the stub store stays immediate by design); ch1 (B->A) reads
-        // it back into its own table's data slot in the same line's burst.
-        write_hdma_channel(&mut bus, 0, 0x00, 0x35, 0x7E3100);
-        bus.write(0x7E3100, 0x01); // 1 line
-        bus.write(0x7E3101, 0x5C); // data byte -> stub $2135
-        bus.write(0x7E3102, 0x00); // terminator
-        write_hdma_channel(&mut bus, 1, 0x80, 0x35, 0x7E3000);
+        // MPYL ($2134, B-bus $34) is a genuinely readable port with a value we
+        // control: the Mode 7 general-purpose multiply M7A * M7B. Each M7
+        // register takes two writes through the shared low-byte latch, so
+        // M7A = $0007 and M7B's high byte = $03 give a product of 21 ($15).
+        bus.write(0x00211B, 0x07);
+        bus.write(0x00211B, 0x00);
+        bus.write(0x00211C, 0x00);
+        bus.write(0x00211C, 0x03);
+
+        // A single B->A channel reading MPYL into its own table's data slot.
+        write_hdma_channel(&mut bus, 0, 0x80, 0x34, 0x7E3000);
         bus.write(0x7E3000, 0x01); // 1 line
         bus.write(0x7E3001, 0x00); // data slot (written by the B->A transfer)
         bus.write(0x7E3002, 0x00); // terminator
-        bus.write(0x00420C, 0x03);
+        bus.write(0x00420C, 0x01);
 
         tick_until_master_clock(&mut bus, 1119);
         assert_eq!(bus.read(0x7E3001), 0x00, "nothing before the burst runs");
         tick_until_master_clock(&mut bus, 1120);
         assert_eq!(
             bus.read(0x7E3001),
-            0x5C,
-            "ch1's B->A read sees ch0's same-burst stub write"
+            0x15,
+            "the B->A read of the live MPYL port lands within the line burst"
         );
     }
 
@@ -2816,10 +3019,11 @@ mod tests {
         bus.hdma_do_line(); // pause
         bus.hdma_do_line(); // transfer 0xC3
 
-        write_dma_channel(&mut bus, 0, 0x80, 0x30, 0x7E2210, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-        assert_eq!(bus.read(0x7E2210), 0xC3);
+        assert_eq!(
+            bus.take_b_bus_writes(),
+            vec![(0x30, 0x5A), (0x30, 0xC3)],
+            "the paused line drives nothing between the two transfers"
+        );
     }
 
     #[test]
@@ -2851,10 +3055,10 @@ mod tests {
 
         bus.hdma_do_line();
 
-        write_dma_channel(&mut bus, 0, 0x80, 0x50, 0x7E2410, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-        assert_eq!(bus.read(0x7E2410), 0x00);
+        assert!(
+            bus.take_b_bus_writes().is_empty(),
+            "an uninitialized channel drives nothing"
+        );
     }
 
     #[test]
@@ -2873,10 +3077,7 @@ mod tests {
         bus.hdma_init();
         bus.hdma_do_line();
 
-        write_dma_channel(&mut bus, 0, 0x80, 0x60, 0x7E2610, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-        assert_eq!(bus.read(0x7E2610), 0x22);
+        assert_eq!(bus.take_b_bus_writes(), vec![(0x60, 0x11), (0x60, 0x22)]);
     }
 
     #[test]
@@ -2917,23 +3118,21 @@ mod tests {
         bus.hdma_do_line(); // transfers entry1's 4 bytes; reloads entry2 at the end
         bus.hdma_do_line(); // transfers entry2's 4 bytes
 
-        // The B-bus port sees the *last* write to each of the 2 registers in
-        // the B,B+1,B,B+1 pattern, so entry2's transfer should leave 0x77 (3rd
-        // byte) / 0x88 (4th byte) behind -- not entry1's leftover bytes or a
-        // misread descriptor, which is what the truncated-pattern bug produces.
-        write_dma_channel(&mut bus, 0, 0x80, 0x60, 0x7E2B10, 1);
-        write_dma_channel(&mut bus, 1, 0x80, 0x61, 0x7E2B11, 1);
-        bus.write(0x00420B, 0x03);
-        run_pending_gpdma(&mut bus);
+        // Both lines must drive all four bytes in the B, B+1, B, B+1 order --
+        // not entry1's bytes twice, and not a misread descriptor, which is what
+        // the truncated-pattern bug produces.
         assert_eq!(
-            bus.read(0x7E2B10),
-            0x77,
-            "B-bus port 0x60 after entry2's transfer"
-        );
-        assert_eq!(
-            bus.read(0x7E2B11),
-            0x88,
-            "B-bus port 0x61 after entry2's transfer"
+            bus.take_b_bus_writes(),
+            vec![
+                (0x60, 0x11),
+                (0x61, 0x22),
+                (0x60, 0x33),
+                (0x61, 0x44),
+                (0x60, 0x55),
+                (0x61, 0x66),
+                (0x60, 0x77),
+                (0x61, 0x88),
+            ]
         );
     }
 
@@ -2952,10 +3151,7 @@ mod tests {
         bus.hdma_do_line(); // transfer 0x55
         bus.hdma_do_line(); // should pause, not transfer 0x77
 
-        write_dma_channel(&mut bus, 0, 0x80, 0x70, 0x7E2710, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-        assert_eq!(bus.read(0x7E2710), 0x55);
+        assert_eq!(bus.take_b_bus_writes(), vec![(0x70, 0x55)]);
     }
 
     #[test]

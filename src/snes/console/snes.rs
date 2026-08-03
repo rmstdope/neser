@@ -1430,6 +1430,16 @@ mod tests {
         // predating several CPU fields that current code emits.
         let compressed = include_bytes!("testdata/savestate_golden_v2.json.gz");
         let bytes = crate::platform::save_state::gzip_decompress(compressed);
+
+        // The fixture still carries `bbus_ports`, a DMA field removed in
+        // #3061. That is the whole reason it proves unknown-field tolerance,
+        // so assert it explicitly: regenerating the fixture would silently
+        // drop the key and leave this test proving nothing.
+        assert!(
+            String::from_utf8_lossy(&bytes).contains("\"bbus_ports\""),
+            "golden must predate the #3061 field removal to prove old states still load"
+        );
+
         let state =
             SnesSaveState::from_bytes(&bytes).expect("golden save state should deserialize");
         assert_eq!(

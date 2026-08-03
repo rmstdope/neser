@@ -252,9 +252,9 @@ Test suites:
   write/read self-check). HDMA (targeting WMDATA so per-scanline transfers
   land in readable WRAM): direct-mode line counter, non-repeat idle,
   repeat-every-line, indirect pointer deref, and terminator. Results via the
-  WRAM pass/fail marker. `gpdma_b_to_a_copies_wram_through_wmdata` is
-  `#[ignore]`d pending #3061 (B->A reads an internal shadow, not the live
-  B-bus register).
+  WRAM pass/fail marker. B->A direction (#3061): WMDATA `$2180` into cartridge
+  SRAM, and the VRAM read port `$2139`/`$213A` into WRAM including its
+  prefetch/increment side effects.
 - `cartridge_fixtures.rs` / `neser_cartridge_tests.rs` -- NESER-authored base
   cartridge fixtures (#2885), built in-code from the SNES header spec (no
   on-disk assets). Minimal LoROM/HiROM/ExHiROM and copier-header images are
