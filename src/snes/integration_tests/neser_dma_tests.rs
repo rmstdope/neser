@@ -22,6 +22,10 @@ use super::rom_runner::{RunConfig, RunExitReason, run_rom};
 /// B-bus address of the WMDATA port (`$2180`).
 const BBAD_WMDATA: u8 = 0x80;
 
+/// B-bus address of the VRAM read port (`$2139` RDVRAML; `$213A` RDVRAMH is the
+/// `+1` slot a mode-1 transfer pairs with it).
+const BBAD_VMDATAREAD: u8 = 0x39;
+
 /// Presets WMADD (`$2181/2/3`) to a low-WRAM address in bank `$7E`, so
 /// subsequent WMDATA writes land at `addr` and auto-increment. `addr` is a
 /// 16-bit offset into the first 64 KiB of WRAM (bank bit forced to 0).
@@ -35,6 +39,14 @@ fn set_wmadd(fx: &mut FixtureRom, addr: u16) {
 /// `expected`.
 fn assert_wram(fx: &mut FixtureRom, addr: u16, expected: u8) {
     fx.lda_abs(addr);
+    fx.branch_fail_if_ne(expected);
+}
+
+/// Emits CPU code that reads the 24-bit address `addr` and fails the fixture
+/// unless it holds `expected`. Used for targets outside the bank-`$00` window,
+/// e.g. the LoROM SRAM window at `$70:0000`.
+fn assert_long(fx: &mut FixtureRom, addr: u32, expected: u8) {
+    fx.lda_long(addr);
     fx.branch_fail_if_ne(expected);
 }
 
@@ -263,37 +275,72 @@ mod tests {
         run_fixture(fx.build(), "gpdma-fixed.sfc");
     }
 
-    /// B->A GPDMA reads the B-bus target (WMDATA read port `$2180`, which
-    /// returns WRAM and auto-increments WMADD) and writes the A-bus, copying
-    /// one WRAM region into another.
+    /// B->A GPDMA reads the live B-bus target -- here the WMDATA read port
+    /// `$2180`, which returns the WRAM byte WMADD points at and then
+    /// auto-increments WMADD -- and writes the A-bus (#3061).
     ///
-    /// Ignored pending #3061: NESER's B->A path reads the controller's internal
-    /// `bbus_ports` shadow (unwritten for `$2180` here, so it returns 0) instead
-    /// of the live B-bus register. The assertions below are the spec-correct
-    /// (hardware) expectations; un-ignore once #3061 routes B->A reads to the
-    /// real bus. Unlike the screen-CRC divergence tests (which record NESER's
-    /// current CRC and so pass under `--ignored`), this marker test asserts the
-    /// correct result and therefore FAILs under `cargo test --include-ignored`
-    /// until #3061 lands -- that is expected, not a regression.
+    /// The A-bus destination is cartridge SRAM rather than WRAM on purpose.
+    /// fullsnes "DMA Notes": *"WRAM-to-WRAM DMA isn't possible (neither in
+    /// A-Bus to B-Bus direction, nor vice-versa)"*, and both references
+    /// implement the restriction (ares `CPU::Channel::transfer`'s `valid`
+    /// predicate, Mesen2 `SnesDmaController::CopyDmaByte`). An earlier version
+    /// of this vector targeted the WRAM mirror at `$0600` and so asserted a
+    /// transfer hardware does not perform; NESER does not model the restriction
+    /// yet (#3111), so this vector deliberately stays clear of it.
+    ///
+    /// The restriction is specific to WRAM on *both* sides, i.e. B-bus `$80`
+    /// against a WRAM A-bus address -- a WRAM destination is perfectly legal
+    /// for any other B-bus port, as the VRAM vector below relies on.
     #[test]
-    #[ignore = "B->A reads the bbus_ports shadow, not the live B-bus register; asserts correct behaviour so FAILs under --include-ignored until #3061"]
-    fn gpdma_b_to_a_copies_wram_through_wmdata() {
+    fn gpdma_b_to_a_copies_wram_to_sram_through_wmdata() {
         let mut fx = FixtureRom::new(b"NESER DMA B2A");
+        fx.with_battery_sram(0x05); // 32 KiB, LoROM window at $70:0000
         fx.force_blank_on();
         // Seed the source region $0500..$0503.
         for (i, byte) in [0x11u8, 0x22, 0x33, 0x44].iter().enumerate() {
             fx.store_imm_abs(0x0500 + i as u16, *byte);
         }
         set_wmadd(&mut fx, 0x0500);
-        // DMAP $80: B->A, increment A-bus, mode 0. A-bus dest $0600.
-        fx.setup_gpdma(0, 0x80, BBAD_WMDATA, 0x00_0600, 4);
+        // DMAP $80: B->A, increment A-bus, mode 0. A-bus dest = SRAM $70:0000.
+        fx.setup_gpdma(0, 0x80, BBAD_WMDATA, 0x70_0000, 4);
         fx.trigger_gpdma(0x01);
-        assert_wram(&mut fx, 0x0600, 0x11);
-        assert_wram(&mut fx, 0x0601, 0x22);
-        assert_wram(&mut fx, 0x0602, 0x33);
-        assert_wram(&mut fx, 0x0603, 0x44);
+        assert_long(&mut fx, 0x70_0000, 0x11);
+        assert_long(&mut fx, 0x70_0001, 0x22);
+        assert_long(&mut fx, 0x70_0002, 0x33);
+        assert_long(&mut fx, 0x70_0003, 0x44);
         fx.pass_marker_and_idle();
-        run_fixture(fx.build(), "gpdma-b2a.sfc");
+        run_fixture(fx.build(), "gpdma-b2a-wmdata.sfc");
+    }
+
+    /// B->A GPDMA through a PPU read port carries that port's read side
+    /// effects. Under VMAIN bit 7 (increment after the high byte) `$2139`
+    /// returns the prefetch latch's low byte, while `$213A` returns the high
+    /// byte, reloads the latch from the *pre-increment* address and only then
+    /// advances VMADD (fullsnes "Increment/Prefetch in detail"), so the first
+    /// word after `$2116`/`$2117` is received twice: a 6-byte mode-1 transfer
+    /// yields word0, word0, word1.
+    ///
+    /// That doubled word is what makes this a live-read vector -- no stored
+    /// copy of previously written bytes reproduces it.
+    #[test]
+    fn gpdma_b_to_a_reads_vram_with_prefetch_side_effects() {
+        let mut fx = FixtureRom::new(b"NESER DMA B2A VRAM");
+        fx.force_blank_on();
+        cpu_write_vram(&mut fx, 0x0000, 0x2211);
+        cpu_write_vram(&mut fx, 0x0001, 0x4433);
+        // Rewind VMADD to 0; the $2117 store reloads the prefetch latch from it.
+        fx.store_imm_abs(0x2115, 0x80);
+        fx.store_imm_abs(0x2116, 0x00);
+        fx.store_imm_abs(0x2117, 0x00);
+
+        // DMAP $81: B->A, increment A-bus, mode 1 -> $2139 then $213A per word.
+        fx.setup_gpdma(0, 0x81, BBAD_VMDATAREAD, 0x00_0600, 6);
+        fx.trigger_gpdma(0x01);
+        for (i, expected) in [0x11u8, 0x22, 0x11, 0x22, 0x33, 0x44].iter().enumerate() {
+            assert_wram(&mut fx, 0x0600 + i as u16, *expected);
+        }
+        fx.pass_marker_and_idle();
+        run_fixture(fx.build(), "gpdma-b2a-vram.sfc");
     }
 
     /// A byte count of 0 means 65536 bytes (not zero): a fixed-source fill of

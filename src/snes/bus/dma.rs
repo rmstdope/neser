@@ -1,12 +1,24 @@
 use crate::snes::console::save_state::SnesDmaState;
 
 const DMA_REG_BYTES: usize = 0x80;
-const B_BUS_PORT_BYTES: usize = 0x100;
 
 pub trait DmaABus {
     fn dma_read_a_bus(&mut self, addr: u32, open_bus: u8) -> u8;
     fn dma_write_a_bus(&mut self, addr: u32, value: u8);
     fn dma_write_b_bus(&mut self, addr: u8, value: u8);
+    /// Read the live B-bus register at `$2100 + addr`, honoring its real read
+    /// side effects (VRAM prefetch reload/increment, OAM/CGRAM auto-increment,
+    /// OPHCT/OPVCT flip-flops, WMDATA/WMADD auto-increment).
+    ///
+    /// `open_bus` is the byte the DMA controller last drove on the shared data
+    /// bus; a port with no read driver returns it unchanged. Both references
+    /// model it that way: ares `CPU::Channel::readB` reads
+    /// `bus.read(0x2100 | address, cpu.r.mdr)`, and Mesen2's `ReadDma` ->
+    /// `RegisterHandlerB::Read` -> `SnesPpu::Read` returns `GetOpenBus()`.
+    /// Which ports those are is the bus implementation's business -- on
+    /// hardware it is every write-only PPU register plus the unused
+    /// `$2184-$21FF` window.
+    fn dma_read_b_bus(&mut self, addr: u8, open_bus: u8) -> u8;
     /// Advance the rest of the system (PPU/APU/input) by `master_clocks` while the DMA
     /// controller owns the bus. Real hardware keeps rendering during a general-purpose DMA
     /// (Mesen2 `SnesDmaController` advances the master clock per transferred byte), so B-bus
@@ -18,7 +30,6 @@ pub trait DmaABus {
 #[derive(Clone)]
 pub struct DmaController {
     regs: [u8; DMA_REG_BYTES],
-    bbus_ports: [u8; B_BUS_PORT_BYTES],
     hdma_active_mask: u8,
     hdma_do_transfer: [bool; 8],
     hdma_repeat_mode: [bool; 8],
@@ -29,7 +40,6 @@ impl DmaController {
     pub fn new() -> Self {
         Self {
             regs: [0; DMA_REG_BYTES],
-            bbus_ports: [0; B_BUS_PORT_BYTES],
             hdma_active_mask: 0,
             hdma_do_transfer: [false; 8],
             hdma_repeat_mode: [false; 8],
@@ -55,7 +65,6 @@ impl DmaController {
     pub(crate) fn capture_state(&self) -> SnesDmaState {
         SnesDmaState {
             regs: self.regs.to_vec(),
-            bbus_ports: self.bbus_ports.to_vec(),
             hdma_active_mask: self.hdma_active_mask,
             hdma_do_transfer: self.hdma_do_transfer.to_vec(),
             hdma_repeat_mode: self.hdma_repeat_mode.to_vec(),
@@ -70,12 +79,6 @@ impl DmaController {
                 state.regs.len()
             ));
         }
-        if state.bbus_ports.len() != B_BUS_PORT_BYTES {
-            return Err(format!(
-                "DMA B-bus state size mismatch (expected {B_BUS_PORT_BYTES}, found {})",
-                state.bbus_ports.len()
-            ));
-        }
         if state.hdma_do_transfer.len() != 8
             || state.hdma_repeat_mode.len() != 8
             || state.hdma_lines_left.len() != 8
@@ -84,7 +87,6 @@ impl DmaController {
         }
 
         self.regs.copy_from_slice(&state.regs);
-        self.bbus_ports.copy_from_slice(&state.bbus_ports);
         self.hdma_active_mask = state.hdma_active_mask;
         self.hdma_do_transfer
             .copy_from_slice(&state.hdma_do_transfer);
@@ -445,14 +447,13 @@ impl DmaController {
             // advances 4 more BEFORE calling the register handler).
             abus.dma_tick(4);
             if direction_b_to_a {
-                let value = self.read_b_bus(b_addr);
+                let value = abus.dma_read_b_bus(b_addr, *open_bus);
                 *open_bus = value;
                 abus.dma_tick(4);
                 abus.dma_write_a_bus(a_addr, value);
             } else {
                 let value = abus.dma_read_a_bus(a_addr, *open_bus);
                 *open_bus = value;
-                self.write_b_bus(b_addr, value);
                 abus.dma_tick(4);
                 abus.dma_write_b_bus(b_addr, value);
             }
@@ -522,14 +523,6 @@ impl DmaController {
         }
         let [next_low, next_high] = addr.to_le_bytes();
         (next_low, next_high)
-    }
-
-    fn read_b_bus(&self, addr: u8) -> u8 {
-        self.bbus_ports[addr as usize]
-    }
-
-    fn write_b_bus(&mut self, addr: u8, value: u8) {
-        self.bbus_ports[addr as usize] = value;
     }
 
     fn get_reg(&self, channel: u8, reg: usize) -> u8 {
@@ -604,14 +597,13 @@ impl DmaController {
             // (Mesen2 CopyDmaByte), landing at its true bus clock.
             abus.dma_tick(4);
             if direction_b_to_a {
-                let value = self.read_b_bus(b_addr);
+                let value = abus.dma_read_b_bus(b_addr, *open_bus);
                 *open_bus = value;
                 abus.dma_tick(4);
                 abus.dma_write_a_bus(a_addr, value);
             } else {
                 let value = abus.dma_read_a_bus(a_addr, *open_bus);
                 *open_bus = value;
-                self.write_b_bus(b_addr, value);
                 abus.dma_tick(4);
                 abus.dma_write_b_bus(b_addr, value);
             }
@@ -644,10 +636,18 @@ mod tests {
     /// A-bus stub with its own master-clock counter: `dma_tick` advances it and
     /// every B-bus write is recorded with the clock it lands at, so tests can
     /// pin the hardware envelope's per-byte write clocks exactly.
+    ///
+    /// `b_bus_ports` is a flat, always-readable port file. That is *not* how the
+    /// real B-bus behaves (see #3061), but this is a fake bus: its job is to let
+    /// the controller's own tests pin transfer patterns and slot clocks without
+    /// dragging in PPU register physics. The production path reads live
+    /// registers via `SnesSystemBus::dma_read_b_bus`.
     struct RecordingBus {
         clock: u64,
         a_bus: Vec<u8>,
         b_bus_writes: Vec<(u64, u8, u8)>,
+        b_bus_ports: Vec<u8>,
+        b_bus_reads: Vec<(u64, u8)>,
     }
 
     impl RecordingBus {
@@ -656,6 +656,8 @@ mod tests {
                 clock,
                 a_bus: vec![0; 0x1_0000],
                 b_bus_writes: Vec::new(),
+                b_bus_ports: vec![0; 0x100],
+                b_bus_reads: Vec::new(),
             }
         }
     }
@@ -671,6 +673,11 @@ mod tests {
 
         fn dma_write_b_bus(&mut self, addr: u8, value: u8) {
             self.b_bus_writes.push((self.clock, addr, value));
+        }
+
+        fn dma_read_b_bus(&mut self, addr: u8, _open_bus: u8) -> u8 {
+            self.b_bus_reads.push((self.clock, addr));
+            self.b_bus_ports[addr as usize]
         }
 
         fn dma_tick(&mut self, master_clocks: u64) {
@@ -845,6 +852,49 @@ mod tests {
             "the CPU speed does NOT change the GPDMA pad"
         );
         assert_eq!(charged(12), 64);
+    }
+
+    /// #3061: a B->A transfer must read the B-bus itself, at the same point in
+    /// the 8-clock byte slot an A->B transfer reads the A-bus (Mesen2
+    /// `CopyDmaByte`: `ReadDma` after 4 clocks, `WriteDma` 4 clocks later;
+    /// ares `Channel::readB` is `step(4); read; step(4)`).
+    ///
+    /// Nothing is ever written A->B here, so a controller serving B->A reads
+    /// from an internal write-through shadow of past A->B bytes copies zeros.
+    #[test]
+    fn gpdma_b_to_a_reads_the_live_b_bus_at_the_slot_read_clock() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        bus.b_bus_ports[0x39] = 0x11;
+        bus.b_bus_ports[0x3A] = 0x22;
+        // ch0: DMAP $81 = B->A, increment, mode 1 (two registers). 4 bytes from
+        // B-bus $39/$3A into A-bus $0600.
+        dma.write_register(0x4300, 0x81);
+        dma.write_register(0x4301, 0x39);
+        dma.write_register(0x4302, 0x00);
+        dma.write_register(0x4303, 0x06);
+        dma.write_register(0x4304, 0x00);
+        dma.write_register(0x4305, 0x04);
+        dma.write_register(0x4306, 0x00);
+
+        dma.start_dma(0x01, &mut bus, 0, 0, 8);
+
+        assert_eq!(
+            &bus.a_bus[0x0600..0x0604],
+            &[0x11, 0x22, 0x11, 0x22],
+            "the live B-bus ports drive the transfer"
+        );
+        assert_eq!(
+            bus.b_bus_reads,
+            // pad_start 8 + overhead 8 + channel 8 = 24 before the first slot;
+            // each 8-clock slot reads 4 clocks in.
+            vec![(28, 0x39), (36, 0x3A), (44, 0x39), (52, 0x3A)],
+            "mode 1 alternates the two ports, each read 4 clocks into its slot"
+        );
+        assert!(
+            bus.b_bus_writes.is_empty(),
+            "a B->A transfer drives no B-bus writes"
+        );
     }
 
     #[test]

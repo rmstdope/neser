@@ -17,10 +17,6 @@ fn default_dma_regs() -> Vec<u8> {
     vec![0; 0x80]
 }
 
-fn default_dma_bbus_ports() -> Vec<u8> {
-    vec![0; 0x100]
-}
-
 fn default_dma_channel_bools() -> Vec<bool> {
     vec![false; 8]
 }
@@ -130,12 +126,21 @@ pub struct SnesCpuState {
     pub block_move_state: Option<SnesBlockMoveState>,
 }
 
+/// The DMA/HDMA controller's persisted state: the `$4300-$437F` channel
+/// register file plus the per-channel HDMA bookkeeping the registers don't
+/// hold (active mask, do-transfer and repeat flags, remaining line counts).
+///
+/// Note: a `bbus_ports` field (256 bytes) was persisted here until #3061. It
+/// mirrored every A->B byte so B->A transfers could read it back, which is not
+/// how the B-bus works; B->A now reads the live register and the mirror is
+/// gone. Older save states still carry the key and load fine -- serde ignores
+/// unknown fields -- which is why no version bump was needed. The committed
+/// `testdata/savestate_golden_v2.json.gz` predates the removal and still
+/// contains it, so `test_golden_save_state_v2_loads` is the standing proof.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct SnesDmaState {
     #[serde(default = "default_dma_regs")]
     pub regs: Vec<u8>,
-    #[serde(default = "default_dma_bbus_ports")]
-    pub bbus_ports: Vec<u8>,
     #[serde(default)]
     pub hdma_active_mask: u8,
     #[serde(default = "default_dma_channel_bools")]
