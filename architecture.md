@@ -591,6 +591,7 @@ Shader presets using the Slang shading language, loaded via librashader:
 | `playwright.config.mjs` | Playwright configuration for web integration tests. |
 | `vite.config.js` | Vite bundler configuration — root: `web/`, build output: `dist/`, dev/preview server on port 8000, Vitest test pattern. |
 | `package.json` | Node.js project for web frontend — Vite bundler, Vitest unit tests, and Playwright integration tests. |
+| `scripts/pyproject.toml` | Tooling configuration for the Python tools — ruff (lint + format, line length 120), mypy (silent by default, strict for the shared data-access modules), and PEP 735 dependency groups (`test`, `dev`, `deploy`) with exact pins. Declares no `[project]` table and no build backend; the modules are imported from the repository root as `scripts.<tool>.<module>` rather than installed. |
 
 ## Key Design Decisions
 

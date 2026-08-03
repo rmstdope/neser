@@ -180,6 +180,9 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --no-default-features --lib
 npm test
+ruff check scripts
+ruff format --check scripts
+mypy --config-file scripts/pyproject.toml scripts
 ```
 
 Run tests for a specific Rust source area:
@@ -195,12 +198,39 @@ Run tests for a specific Rust source area:
 PR. SNES test commands, asset policy, and the golden-baseline approval
 workflow are documented in [README-SNES.md](README-SNES.md).
 
-Python tooling tests:
+### Python tooling
+
+The tools under `scripts/` are configured by
+[`scripts/pyproject.toml`](scripts/pyproject.toml), which holds the ruff and
+mypy settings and pins the dependencies as [PEP 735][pep735] dependency groups.
+Create the virtualenv once, from the repository root:
 
 ```bash
+python3 -m venv .venv
 source .venv/bin/activate
-python -m unittest discover -s scripts -t . -p "test_*.py"
+python -m pip install --group scripts/pyproject.toml:test --group scripts/pyproject.toml:dev
 ```
+
+The `test` group holds the runtime dependencies of the tools; `dev` holds ruff
+and mypy. A third group, `deploy`, is only needed for `scripts/deploy.py`.
+Installing the groups requires pip 25.1 or newer.
+
+Then, with the virtualenv active:
+
+```bash
+python -m unittest discover -s scripts -t . -p "test_*.py"
+ruff check scripts
+ruff format --check scripts
+mypy --config-file scripts/pyproject.toml scripts
+```
+
+CI runs exactly these four commands on Python 3.14. `ruff format` rewrites in
+place, so enabling the pre-commit hook above keeps the formatting check green
+without thinking about it. mypy is silent by default and strict only for the
+shared data-access modules listed in `scripts/pyproject.toml`; adding a module
+to that list is how type coverage grows.
+
+[pep735]: https://peps.python.org/pep-0735/
 
 ## Repository guide
 
