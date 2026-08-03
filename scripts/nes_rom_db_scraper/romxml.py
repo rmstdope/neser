@@ -3,10 +3,12 @@ import xml.etree.ElementTree as ET
 from typing import Dict, Optional
 
 
-try:
-    from .rom_database import ControllerType, RomDbKey, hardware_from_console_type_and_region, HardwareType
-except ImportError:  # pragma: no cover - allow running as a script
-    from rom_database import ControllerType, RomDbKey, hardware_from_console_type_and_region, HardwareType
+from scripts.nes_rom_db_scraper.rom_database import (
+    ControllerType,
+    HardwareType,
+    RomDbKey,
+    hardware_from_console_type_and_region,
+)
 
 
 class RomXml:

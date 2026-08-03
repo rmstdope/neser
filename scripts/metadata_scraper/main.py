@@ -11,9 +11,9 @@ try:
 except ImportError:
     _HAVE_REQUESTS_CACHE = False
 
-from api_client import ApiError, TheGamesDbClient
-from metadata_db import MetadataDb
-from sync import Syncer
+from scripts.metadata_scraper.api_client import ApiError, TheGamesDbClient
+from scripts.metadata_scraper.metadata_db import MetadataDb
+from scripts.metadata_scraper.sync import Syncer
 
 # ── platform registry ─────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="SQLite cache file path without extension (default: thegamesdb_cache)")
 
     parser = argparse.ArgumentParser(
-        prog="metadata-scraper",
+        prog="metadata_scraper",
         description="Fetch and cache game metadata from TheGamesDB.",
         parents=[common],
     )

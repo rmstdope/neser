@@ -199,9 +199,7 @@ Python tooling tests:
 
 ```bash
 source .venv/bin/activate
-python -m unittest discover -s scripts -t scripts -p "test_*.py"
-python -m unittest discover -s scripts/metadata-scraper -t scripts/metadata-scraper -p "test_*.py"
-python -m unittest discover -s scripts/nes-rom-db-scraper -t scripts/nes-rom-db-scraper -p "test_*.py"
+python -m unittest discover -s scripts -t . -p "test_*.py"
 ```
 
 ## Repository guide

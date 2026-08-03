@@ -83,7 +83,7 @@ Run these commands and ensure success before creating the PR:
 - `cargo fmt`
 - `cargo nextest --all-features`
 - `wasm-pack test --headless --chrome --no-default-features --features wasm`
-- `source .venv/bin/activate && python -m unittest discover -s scripts/scraper -p "test_*.py"`
+- `source .venv/bin/activate && python -m unittest discover -s scripts -t . -p "test_*.py"`
 - `cd web && npm test`
 
 ## Investigation allowances

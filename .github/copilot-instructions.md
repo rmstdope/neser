@@ -84,7 +84,7 @@ Before merging or committing to main, the following checkpoint shall pass:
   ```
 - Run `cargo test --no-default-features --lib` to verify the full test suite passes before creating a PR
 - Run `wasm-pack test --headless --chrome --no-default-features --features wasm` and fix all warnings and ensure all tests pass
-- Run `source .venv/bin/activate && python -m unittest discover -s scripts -t scripts -p "test_*.py" && python -m unittest discover -s scripts/metadata-scraper -t scripts/metadata-scraper -p "test_*.py" && python -m unittest discover -s scripts/nes-rom-db-scraper -t scripts/nes-rom-db-scraper -p "test_*.py"` and ensure all tests pass
+- Run `source .venv/bin/activate && python -m unittest discover -s scripts -t . -p "test_*.py"` and ensure all tests pass
 - Run `npm test` and ensure all tests pass (runs Vitest for web frontend JS unit tests)
 
 Note that it is ok to commit to a feature branch that does not pass all checkpoints, but it is NOT ok to merge to main if any checkpoint fails. Always ensure that all checkpoints pass before merging to main.

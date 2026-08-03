@@ -108,7 +108,8 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 | `scripts/disassemble_rom.py` | Disassembles a NES ROM file and prints 6502 assembly output. |
 | `scripts/display_audio_output.py` | Visualizes APU audio output data for debugging audio issues. |
 | `scripts/mappertool/` | A Textual-based TUI application for browsing and managing a ROM database, inspecting mapper assignments, and cross-referencing ROM files with the embedded ROM database. |
-| `scripts/scraper/` | Scrapes NES cartridge databases (NesCartDB, NES 2.0 XML) into a local SQLite database for ROM identification and mapper research. |
+| `scripts/nes_rom_db_scraper/` | Scrapes NES cartridge databases (NesCartDB, NES 2.0 XML) into a local SQLite database for ROM identification and mapper research. |
+| `scripts/metadata_scraper/` | Scrapes game metadata and artwork references from TheGamesDB into `metadata.db`, which the ROM browser uses to enrich catalog entries. |
 
 ## Directory Structure
 

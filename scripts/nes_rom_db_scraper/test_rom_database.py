@@ -1,4 +1,4 @@
-"""Unit tests for the ``RomDatabase`` helper in ``scripts.scraper.rom_database``.
+"""Unit tests for the ``RomDatabase`` helper in ``scripts.nes_rom_db_scraper.rom_database``.
 
 These tests exercise schema creation, inserts, updates, upserts,
 processing of parsed records and utility functions.
@@ -8,10 +8,12 @@ import os
 import tempfile
 import unittest
 
-try:
-    from .rom_database import RomDatabase, RomDbKey, HardwareType, hardware_from_console_type_and_region
-except ImportError:  # pragma: no cover - allow running as a script
-    from rom_database import RomDatabase, RomDbKey, HardwareType, hardware_from_console_type_and_region
+from scripts.nes_rom_db_scraper.rom_database import (
+    HardwareType,
+    RomDatabase,
+    RomDbKey,
+    hardware_from_console_type_and_region,
+)
 
 class TestRomDatabase(unittest.TestCase):
     """Tests for RomDatabase: schema, insert/update, queries and helpers."""

@@ -826,7 +826,7 @@ mod tests {
     fn test_enrich_catalog_with_metadata_db() {
         let db_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("scripts")
-            .join("metadata-scraper")
+            .join("metadata_scraper")
             .join("metadata.db");
         if !db_path.exists() {
             eprintln!("Skipping test: metadata.db not found at {db_path:?}");

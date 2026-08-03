@@ -5,7 +5,6 @@ import unittest
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 class TestMainCliArgParsing(unittest.TestCase):
     """Verify argument parsing without invoking real DB or network."""
@@ -13,9 +12,9 @@ class TestMainCliArgParsing(unittest.TestCase):
     def _run(self, args):
         """Run main.main() with the given argv list and capture stdout."""
         with patch("sys.argv", ["main.py"] + args):
-            with patch("main.MetadataDb") as MockDb, \
-                 patch("main.TheGamesDbClient") as MockClient, \
-                 patch("main.Syncer") as MockSyncer:
+            with patch("scripts.metadata_scraper.main.MetadataDb") as MockDb, \
+                 patch("scripts.metadata_scraper.main.TheGamesDbClient") as MockClient, \
+                 patch("scripts.metadata_scraper.main.Syncer") as MockSyncer:
                 mock_db_instance = MagicMock()
                 mock_client_instance = MagicMock()
                 mock_syncer_instance = MagicMock()
@@ -31,7 +30,7 @@ class TestMainCliArgParsing(unittest.TestCase):
                 mock_db_instance.get_game_images.return_value = []
                 mock_db_instance.get_image_base_urls.return_value = {}
                 captured = StringIO()
-                import main as m
+                from scripts.metadata_scraper import main as m
                 m.main(output=captured)
                 return mock_db_instance, mock_client_instance, mock_syncer_instance, captured.getvalue()
 
@@ -55,22 +54,22 @@ class TestMainCliArgParsing(unittest.TestCase):
     def test_sync_without_api_key_raises(self):
         with patch("sys.argv", ["main.py", "sync", "--platform", "nes"]), \
              patch.dict("os.environ", {}, clear=True):
-            import main as m
+            from scripts.metadata_scraper import main as m
             with self.assertRaises(SystemExit):
                 m.main(output=StringIO())
 
     def test_sync_reads_api_key_from_env(self):
         with patch("sys.argv", ["main.py", "sync", "--platform", "nes"]), \
              patch.dict("os.environ", {"THEGAMESDB_API_KEY": "envkey"}), \
-             patch("main.MetadataDb") as MockDb, \
-             patch("main.TheGamesDbClient") as MockClient, \
-             patch("main.Syncer") as MockSyncer:
+             patch("scripts.metadata_scraper.main.MetadataDb") as MockDb, \
+             patch("scripts.metadata_scraper.main.TheGamesDbClient") as MockClient, \
+             patch("scripts.metadata_scraper.main.Syncer") as MockSyncer:
             mock_db_instance = MagicMock()
             MockDb.return_value.__enter__ = MagicMock(return_value=mock_db_instance)
             MockDb.return_value.__exit__ = MagicMock(return_value=False)
             MockClient.return_value = MagicMock()
             MockSyncer.return_value = MagicMock()
-            import main as m
+            from scripts.metadata_scraper import main as m
             m.main(output=StringIO())
             MockClient.assert_called_once()
             init_kwargs = MockClient.call_args[1]
@@ -79,15 +78,15 @@ class TestMainCliArgParsing(unittest.TestCase):
     def test_sync_cli_api_key_overrides_env(self):
         with patch("sys.argv", ["main.py", "sync", "--platform", "nes", "--api-key", "clikey"]), \
              patch.dict("os.environ", {"THEGAMESDB_API_KEY": "envkey"}), \
-             patch("main.MetadataDb") as MockDb, \
-             patch("main.TheGamesDbClient") as MockClient, \
-             patch("main.Syncer") as MockSyncer:
+             patch("scripts.metadata_scraper.main.MetadataDb") as MockDb, \
+             patch("scripts.metadata_scraper.main.TheGamesDbClient") as MockClient, \
+             patch("scripts.metadata_scraper.main.Syncer") as MockSyncer:
             mock_db_instance = MagicMock()
             MockDb.return_value.__enter__ = MagicMock(return_value=mock_db_instance)
             MockDb.return_value.__exit__ = MagicMock(return_value=False)
             MockClient.return_value = MagicMock()
             MockSyncer.return_value = MagicMock()
-            import main as m
+            from scripts.metadata_scraper import main as m
             m.main(output=StringIO())
             init_kwargs = MockClient.call_args[1]
             self.assertEqual(init_kwargs["api_key"], "clikey")
@@ -112,9 +111,9 @@ class TestMainCliArgParsing(unittest.TestCase):
 
     def test_status_command_prints_game_counts(self):
         with patch("sys.argv", ["main.py", "status", "--api-key", "testkey"]), \
-             patch("main.MetadataDb") as MockDb, \
-             patch("main.TheGamesDbClient") as MockClient, \
-             patch("main.Syncer"):
+             patch("scripts.metadata_scraper.main.MetadataDb") as MockDb, \
+             patch("scripts.metadata_scraper.main.TheGamesDbClient") as MockClient, \
+             patch("scripts.metadata_scraper.main.Syncer"):
             mock_db_instance = MagicMock()
             MockDb.return_value.__enter__ = MagicMock(return_value=mock_db_instance)
             MockDb.return_value.__exit__ = MagicMock(return_value=False)
@@ -126,16 +125,16 @@ class TestMainCliArgParsing(unittest.TestCase):
                 "remaining_monthly_allowance": 900, "extra_allowance": 5
             }
             captured = StringIO()
-            import main as m
+            from scripts.metadata_scraper import main as m
             m.main(output=captured)
             output = captured.getvalue()
             self.assertIn("42", output)
 
     def test_images_command_prints_urls(self):
         with patch("sys.argv", ["main.py", "images", "135", "--api-key", "testkey"]), \
-             patch("main.MetadataDb") as MockDb, \
-             patch("main.TheGamesDbClient"), \
-             patch("main.Syncer"):
+             patch("scripts.metadata_scraper.main.MetadataDb") as MockDb, \
+             patch("scripts.metadata_scraper.main.TheGamesDbClient"), \
+             patch("scripts.metadata_scraper.main.Syncer"):
             mock_db_instance = MagicMock()
             MockDb.return_value.__enter__ = MagicMock(return_value=mock_db_instance)
             MockDb.return_value.__exit__ = MagicMock(return_value=False)
@@ -147,7 +146,7 @@ class TestMainCliArgParsing(unittest.TestCase):
                 "https://cdn.thegamesdb.net/images/original/boxart/back/135-2.jpg"
             )
             captured = StringIO()
-            import main as m
+            from scripts.metadata_scraper import main as m
             m.main(output=captured)
             output = captured.getvalue()
             self.assertIn("boxart/back/135-2.jpg", output)
@@ -168,9 +167,9 @@ class TestInfoCommand(unittest.TestCase):
     def _run_info(self, args, search_results=None):
         search_results = search_results or []
         with patch("sys.argv", ["main.py", "info"] + args), \
-             patch("main.MetadataDb") as MockDb, \
-             patch("main.TheGamesDbClient"), \
-             patch("main.Syncer"):
+             patch("scripts.metadata_scraper.main.MetadataDb") as MockDb, \
+             patch("scripts.metadata_scraper.main.TheGamesDbClient"), \
+             patch("scripts.metadata_scraper.main.Syncer"):
             mock_db = MagicMock()
             MockDb.return_value.__enter__ = MagicMock(return_value=mock_db)
             MockDb.return_value.__exit__ = MagicMock(return_value=False)
@@ -181,7 +180,7 @@ class TestInfoCommand(unittest.TestCase):
             mock_db.get_game_images.return_value = []
             mock_db.get_reference.return_value = None
             captured = StringIO()
-            import main as m
+            from scripts.metadata_scraper import main as m
             m.main(output=captured)
             return mock_db, captured.getvalue()
 
@@ -226,9 +225,9 @@ class TestInfoCommand(unittest.TestCase):
             "alternates": None, "last_updated": "",
         }
         with patch("sys.argv", ["main.py", "info", "castlevania"]), \
-             patch("main.MetadataDb") as MockDb, \
-             patch("main.TheGamesDbClient"), \
-             patch("main.Syncer"):
+             patch("scripts.metadata_scraper.main.MetadataDb") as MockDb, \
+             patch("scripts.metadata_scraper.main.TheGamesDbClient"), \
+             patch("scripts.metadata_scraper.main.Syncer"):
             mock_db = MagicMock()
             MockDb.return_value.__enter__ = MagicMock(return_value=mock_db)
             MockDb.return_value.__exit__ = MagicMock(return_value=False)
@@ -241,7 +240,7 @@ class TestInfoCommand(unittest.TestCase):
                 {"id": 15, "name": "Action"} if table == "genres" and eid == 15 else None
             )
             captured = StringIO()
-            import main as m
+            from scripts.metadata_scraper import main as m
             m.main(output=captured)
             self.assertIn("Action", captured.getvalue())
 
@@ -253,9 +252,9 @@ class TestInfoCommand(unittest.TestCase):
             "alternates": None, "last_updated": "",
         }
         with patch("sys.argv", ["main.py", "info", "castlevania"]), \
-             patch("main.MetadataDb") as MockDb, \
-             patch("main.TheGamesDbClient"), \
-             patch("main.Syncer"):
+             patch("scripts.metadata_scraper.main.MetadataDb") as MockDb, \
+             patch("scripts.metadata_scraper.main.TheGamesDbClient"), \
+             patch("scripts.metadata_scraper.main.Syncer"):
             mock_db = MagicMock()
             MockDb.return_value.__enter__ = MagicMock(return_value=mock_db)
             MockDb.return_value.__exit__ = MagicMock(return_value=False)
@@ -268,7 +267,7 @@ class TestInfoCommand(unittest.TestCase):
             }
             mock_db.get_reference.return_value = None
             captured = StringIO()
-            import main as m
+            from scripts.metadata_scraper import main as m
             m.main(output=captured)
             output = captured.getvalue()
             self.assertIn("boxart", output)
@@ -285,9 +284,9 @@ class TestMainApiErrorHandling(unittest.TestCase):
     def _run_sync_failing_with(self, error):
         """Run a sync where the syncer raises, capturing exit code and stderr."""
         with patch("sys.argv", ["main.py", "sync", "--platform", "nes", "--api-key", "testkey"]), \
-             patch("main.MetadataDb") as MockDb, \
-             patch("main.TheGamesDbClient") as MockClient, \
-             patch("main.Syncer") as MockSyncer:
+             patch("scripts.metadata_scraper.main.MetadataDb") as MockDb, \
+             patch("scripts.metadata_scraper.main.TheGamesDbClient") as MockClient, \
+             patch("scripts.metadata_scraper.main.Syncer") as MockSyncer:
             mock_db_instance = MagicMock()
             MockDb.return_value.__enter__ = MagicMock(return_value=mock_db_instance)
             MockDb.return_value.__exit__ = MagicMock(return_value=False)
@@ -295,7 +294,7 @@ class TestMainApiErrorHandling(unittest.TestCase):
             mock_syncer = MagicMock()
             mock_syncer.sync.side_effect = error
             MockSyncer.return_value = mock_syncer
-            import main as m
+            from scripts.metadata_scraper import main as m
             captured_err = StringIO()
             with patch("sys.stderr", captured_err):
                 with self.assertRaises(SystemExit) as ctx:
@@ -303,7 +302,7 @@ class TestMainApiErrorHandling(unittest.TestCase):
             return ctx.exception.code, captured_err.getvalue()
 
     def test_sync_429_exits_with_friendly_allowance_message(self):
-        from api_client import ApiError
+        from scripts.metadata_scraper.api_client import ApiError
         code, stderr = self._run_sync_failing_with(
             ApiError("API error 429: /v1/Games/Updates", status_code=429)
         )
@@ -313,7 +312,7 @@ class TestMainApiErrorHandling(unittest.TestCase):
         self.assertNotIn("Traceback", stderr)
 
     def test_sync_other_api_error_exits_with_error_message(self):
-        from api_client import ApiError
+        from scripts.metadata_scraper.api_client import ApiError
         code, stderr = self._run_sync_failing_with(
             ApiError("API error 500: /v1/Games/Updates", status_code=500)
         )

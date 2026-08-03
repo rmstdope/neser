@@ -8,12 +8,8 @@ of NES ROM XML files, including handling of all relevant cartridge metadata fiel
 import os
 import tempfile
 import unittest
-try:
-    from .romxml import RomXml
-    from .rom_database import RomDbKey
-except ImportError:  # pragma: no cover - allow running as a script
-    from romxml import RomXml
-    from rom_database import RomDbKey
+from scripts.nes_rom_db_scraper.rom_database import RomDbKey
+from scripts.nes_rom_db_scraper.romxml import RomXml
 
 class TestRomXml(unittest.TestCase):
     """

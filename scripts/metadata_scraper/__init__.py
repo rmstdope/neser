@@ -1,0 +1,1 @@
+"""TheGamesDB metadata scraper package."""

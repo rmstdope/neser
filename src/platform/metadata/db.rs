@@ -247,7 +247,7 @@ mod tests {
     fn test_db_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("scripts")
-            .join("metadata-scraper")
+            .join("metadata_scraper")
             .join("metadata.db")
     }
 

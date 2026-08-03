@@ -1,11 +1,8 @@
 """Tests for Syncer — MetadataDb and TheGamesDbClient are both mocked."""
-import os
-import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sync import Syncer
+from scripts.metadata_scraper.sync import Syncer
 
 # ── tqdm passthrough helper ───────────────────────────────────────────────────
 
@@ -348,7 +345,7 @@ class TestSyncerProgress(unittest.TestCase):
         syncer = Syncer(db=db, client=client, verbose=True)
         self.assertIsNotNone(syncer)
 
-    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    @patch("scripts.metadata_scraper.sync.tqdm", side_effect=_passthrough_tqdm)
     def test_full_sync_verbose_shows_game_progress_bar(self, mock_tqdm):
         db, client = self._make_full_sync_mocks()
         syncer = Syncer(db=db, client=client, verbose=True)
@@ -361,7 +358,7 @@ class TestSyncerProgress(unittest.TestCase):
             f"Expected a tqdm bar with 'game' in desc, got: {descs}",
         )
 
-    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    @patch("scripts.metadata_scraper.sync.tqdm", side_effect=_passthrough_tqdm)
     def test_full_sync_verbose_shows_reference_data_progress_bar(self, mock_tqdm):
         db, client = self._make_full_sync_mocks()
         syncer = Syncer(db=db, client=client, verbose=True)
@@ -374,7 +371,7 @@ class TestSyncerProgress(unittest.TestCase):
             f"Expected a tqdm bar with 'reference' in desc, got: {descs}",
         )
 
-    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    @patch("scripts.metadata_scraper.sync.tqdm", side_effect=_passthrough_tqdm)
     def test_full_sync_verbose_shows_image_progress_bar(self, mock_tqdm):
         db, client = self._make_full_sync_mocks()
         syncer = Syncer(db=db, client=client, verbose=True)
@@ -387,7 +384,7 @@ class TestSyncerProgress(unittest.TestCase):
             f"Expected a tqdm bar with 'image' in desc, got: {descs}",
         )
 
-    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    @patch("scripts.metadata_scraper.sync.tqdm", side_effect=_passthrough_tqdm)
     def test_full_sync_not_verbose_passes_disable_true_to_tqdm(self, mock_tqdm):
         db, client = self._make_full_sync_mocks()
         syncer = Syncer(db=db, client=client, verbose=False)
@@ -400,7 +397,7 @@ class TestSyncerProgress(unittest.TestCase):
                 f"Expected disable=True when verbose=False, got: {c}",
             )
 
-    @patch("sync.tqdm", side_effect=_passthrough_tqdm)
+    @patch("scripts.metadata_scraper.sync.tqdm", side_effect=_passthrough_tqdm)
     def test_incremental_sync_verbose_shows_game_progress_bar(self, mock_tqdm):
         db = MagicMock()
         client = MagicMock()

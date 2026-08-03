@@ -92,4 +92,4 @@ test.state
 .env
 
 # TheGamesDB metadata cache
-scripts/metadata-scraper/thegamesdb_cache.sqlite
+scripts/metadata_scraper/thegamesdb_cache.sqlite

@@ -1,11 +1,8 @@
 """Tests for TheGamesDbClient — all HTTP is mocked, no real network calls."""
-import os
-import sys
 import unittest
 from unittest.mock import MagicMock, patch, call
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from api_client import TheGamesDbClient, ApiError
+from scripts.metadata_scraper.api_client import TheGamesDbClient, ApiError
 
 FAKE_KEY = "fake_api_key"
 
@@ -55,8 +52,8 @@ class TestTheGamesDbClientConstruction(unittest.TestCase):
 # ── rate limiting ─────────────────────────────────────────────────────────────
 
 class TestTheGamesDbClientRateLimiting(unittest.TestCase):
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_sleep_called_between_requests(self, mock_get, mock_sleep):
         game = {"id": 5, "game_title": "Donkey Kong", "release_date": "1986-06-01",
                 "platform": 7, "region_id": 2, "country_id": 50}
@@ -66,8 +63,8 @@ class TestTheGamesDbClientRateLimiting(unittest.TestCase):
         client.get_games_by_platform(7)
         self.assertGreaterEqual(mock_sleep.call_count, 1)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_sleep_duration_matches_configured_delay(self, mock_get, mock_sleep):
         mock_get.return_value = _page([])
         client = TheGamesDbClient(api_key=FAKE_KEY, request_delay=0.123)
@@ -80,8 +77,8 @@ class TestTheGamesDbClientRateLimiting(unittest.TestCase):
 # ── get_games_by_platform ─────────────────────────────────────────────────────
 
 class TestGetGamesByPlatform(unittest.TestCase):
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_returns_games_from_single_page(self, mock_get, _sleep):
         games = [{"id": 5, "game_title": "Donkey Kong", "release_date": "1986-06-01",
                   "platform": 7, "region_id": 2, "country_id": 50}]
@@ -91,8 +88,8 @@ class TestGetGamesByPlatform(unittest.TestCase):
         self.assertEqual(len(result["games"]), 1)
         self.assertEqual(result["games"][0]["id"], 5)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_paginates_through_all_pages(self, mock_get, _sleep):
         page1_games = [{"id": i, "game_title": f"Game {i}", "release_date": "",
                         "platform": 7, "region_id": 0, "country_id": 0} for i in range(20)]
@@ -105,8 +102,8 @@ class TestGetGamesByPlatform(unittest.TestCase):
         self.assertEqual(len(result["games"]), 21)
         self.assertEqual(mock_get.call_count, 2)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_includes_all_fields_parameter(self, mock_get, _sleep):
         mock_get.return_value = _page([])
         client = TheGamesDbClient(api_key=FAKE_KEY)
@@ -115,8 +112,8 @@ class TestGetGamesByPlatform(unittest.TestCase):
         self.assertIn("fields=", url)
         self.assertIn("overview", url)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_includes_boxart_in_include_parameter(self, mock_get, _sleep):
         mock_get.return_value = _page([])
         client = TheGamesDbClient(api_key=FAKE_KEY)
@@ -125,8 +122,8 @@ class TestGetGamesByPlatform(unittest.TestCase):
         self.assertIn("include=", url)
         self.assertIn("boxart", url)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_raises_api_error_on_http_error(self, mock_get, _sleep):
         resp = MagicMock()
         resp.status_code = 429
@@ -136,8 +133,8 @@ class TestGetGamesByPlatform(unittest.TestCase):
         with self.assertRaises(ApiError):
             client.get_games_by_platform(7)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_api_error_carries_http_status_code(self, mock_get, _sleep):
         resp = MagicMock()
         resp.status_code = 429
@@ -148,8 +145,8 @@ class TestGetGamesByPlatform(unittest.TestCase):
             client.get_games_by_platform(7)
         self.assertEqual(ctx.exception.status_code, 429)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_api_error_status_code_is_none_for_invalid_json(self, mock_get, _sleep):
         resp = MagicMock()
         resp.status_code = 200
@@ -160,8 +157,8 @@ class TestGetGamesByPlatform(unittest.TestCase):
             client.get_games_by_platform(7)
         self.assertIsNone(ctx.exception.status_code)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_returns_base_url_when_boxart_present(self, mock_get, _sleep):
         resp = MagicMock()
         resp.status_code = 200
@@ -188,8 +185,8 @@ class TestGetGamesByPlatform(unittest.TestCase):
 # ── get_games_by_id ───────────────────────────────────────────────────────────
 
 class TestGetGamesById(unittest.TestCase):
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_fetches_multiple_ids_in_one_call(self, mock_get, _sleep):
         resp = MagicMock()
         resp.status_code = 200
@@ -208,8 +205,8 @@ class TestGetGamesById(unittest.TestCase):
         self.assertEqual(len(result["games"]), 2)
         self.assertEqual(mock_get.call_count, 1)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_batches_large_id_lists(self, mock_get, _sleep):
         """When more than BATCH_SIZE ids, splits into multiple requests."""
         resp = MagicMock()
@@ -225,8 +222,8 @@ class TestGetGamesById(unittest.TestCase):
         client.get_games_by_id(list(range(25)))
         self.assertEqual(mock_get.call_count, 3)  # 10+10+5
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_handles_list_response_from_api(self, mock_get, _sleep):
         """ByGameID may return games as a list instead of a dict."""
         resp = MagicMock()
@@ -249,8 +246,8 @@ class TestGetGamesById(unittest.TestCase):
 # ── get_games_images ──────────────────────────────────────────────────────────
 
 class TestGetGamesImages(unittest.TestCase):
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_returns_images_for_given_ids(self, mock_get, _sleep):
         resp = MagicMock()
         resp.status_code = 200
@@ -273,8 +270,8 @@ class TestGetGamesImages(unittest.TestCase):
         self.assertIn("images", result)
         self.assertIn("135", result["images"])
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_batches_large_id_lists(self, mock_get, _sleep):
         resp = MagicMock()
         resp.status_code = 200
@@ -289,8 +286,8 @@ class TestGetGamesImages(unittest.TestCase):
         client.get_games_images(list(range(25)))
         self.assertEqual(mock_get.call_count, 3)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_paginates_images_within_a_batch(self, mock_get, _sleep):
         """Images endpoint may return multiple pages; all should be fetched."""
         base_url = {"original": "https://cdn.thegamesdb.net/images/original/"}
@@ -340,8 +337,8 @@ class TestGetGamesImages(unittest.TestCase):
         ids = {img["id"] for img in images_135}
         self.assertEqual(ids, {1, 2})
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_merges_images_across_pages_for_same_game(self, mock_get, _sleep):
         """Images for the same game id on different pages must be merged, not overwritten."""
         base_url = {"original": "https://cdn.thegamesdb.net/images/original/"}
@@ -374,8 +371,8 @@ class TestGetGamesImages(unittest.TestCase):
 # ── get_games_updates ─────────────────────────────────────────────────────────
 
 class TestGetGamesUpdates(unittest.TestCase):
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_returns_list_of_updated_game_ids(self, mock_get, _sleep):
         resp = MagicMock()
         resp.status_code = 200
@@ -401,8 +398,8 @@ class TestGetGamesUpdates(unittest.TestCase):
 # ── reference data endpoints ──────────────────────────────────────────────────
 
 class TestReferenceEndpoints(unittest.TestCase):
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_get_genres_returns_dict_keyed_by_id(self, mock_get, _sleep):
         mock_get.return_value = _ok({
             "count": 1,
@@ -413,8 +410,8 @@ class TestReferenceEndpoints(unittest.TestCase):
         self.assertIn("15", result)
         self.assertEqual(result["15"]["name"], "Action")
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_get_developers_returns_dict_keyed_by_id(self, mock_get, _sleep):
         mock_get.return_value = _ok({
             "count": 1,
@@ -424,8 +421,8 @@ class TestReferenceEndpoints(unittest.TestCase):
         result = client.get_developers()
         self.assertIn("389", result)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_get_publishers_returns_dict_keyed_by_id(self, mock_get, _sleep):
         mock_get.return_value = _ok({
             "count": 1,
@@ -435,8 +432,8 @@ class TestReferenceEndpoints(unittest.TestCase):
         result = client.get_publishers()
         self.assertIn("252", result)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_get_regions_returns_list(self, mock_get, _sleep):
         mock_get.return_value = _ok({
             "count": 1,
@@ -446,8 +443,8 @@ class TestReferenceEndpoints(unittest.TestCase):
         result = client.get_regions()
         self.assertIn("1", result)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_get_countries_returns_list(self, mock_get, _sleep):
         mock_get.return_value = _ok({
             "count": 1,
@@ -461,8 +458,8 @@ class TestReferenceEndpoints(unittest.TestCase):
 # ── get_api_limit ─────────────────────────────────────────────────────────────
 
 class TestGetApiLimit(unittest.TestCase):
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_returns_remaining_allowance(self, mock_get, _sleep):
         # Unlike every other endpoint, /v1/API/Limit has no "data" wrapper:
         # the allowance fields sit at the top level of the response (see
@@ -480,8 +477,8 @@ class TestGetApiLimit(unittest.TestCase):
         self.assertEqual(result.get("remaining_monthly_allowance"), 750)
         self.assertEqual(result.get("extra_allowance"), 5)
 
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_returns_allowance_when_exhausted(self, mock_get, _sleep):
         # When the allowance is used up the server omits extra_allowance.
         resp = MagicMock()
@@ -499,8 +496,8 @@ class TestGetApiLimit(unittest.TestCase):
 # ── _paginate progress bar ────────────────────────────────────────────────────
 
 class TestPaginateProgress(unittest.TestCase):
-    @patch("api_client.time.sleep")
-    @patch("api_client.requests.get")
+    @patch("scripts.metadata_scraper.api_client.time.sleep")
+    @patch("scripts.metadata_scraper.api_client.requests.get")
     def test_progress_bar_shows_page_and_game_count(self, mock_get, _sleep):
         """_paginate updates the bar once per page with accumulated game count."""
         page1_games = [{"id": i} for i in range(20)]
@@ -516,7 +513,7 @@ class TestPaginateProgress(unittest.TestCase):
             def close(self): pass
 
         client = TheGamesDbClient(api_key=FAKE_KEY, verbose=True)
-        with patch("api_client.tqdm", return_value=_FakeBar()):
+        with patch("scripts.metadata_scraper.api_client.tqdm", return_value=_FakeBar()):
             client._paginate("/v1/Games/ByPlatformID", {"id": 7})
 
         self.assertEqual(postfixes[0], "20 games fetched")

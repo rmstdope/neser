@@ -1,10 +1,7 @@
 """Tests for MetadataDb — runs entirely in-memory, no network."""
-import os
-import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from metadata_db import MetadataDb
+from scripts.metadata_scraper.metadata_db import MetadataDb
 
 class TestMetadataDbSchema(unittest.TestCase):
     def setUp(self):
