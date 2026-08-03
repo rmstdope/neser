@@ -32,8 +32,6 @@ pub struct DmaController {
     regs: [u8; DMA_REG_BYTES],
     hdma_active_mask: u8,
     hdma_do_transfer: [bool; 8],
-    hdma_repeat_mode: [bool; 8],
-    hdma_lines_left: [u16; 8],
 }
 
 impl DmaController {
@@ -42,8 +40,6 @@ impl DmaController {
             regs: [0; DMA_REG_BYTES],
             hdma_active_mask: 0,
             hdma_do_transfer: [false; 8],
-            hdma_repeat_mode: [false; 8],
-            hdma_lines_left: [0; 8],
         }
     }
 
@@ -67,8 +63,6 @@ impl DmaController {
             regs: self.regs.to_vec(),
             hdma_active_mask: self.hdma_active_mask,
             hdma_do_transfer: self.hdma_do_transfer.to_vec(),
-            hdma_repeat_mode: self.hdma_repeat_mode.to_vec(),
-            hdma_lines_left: self.hdma_lines_left.to_vec(),
         }
     }
 
@@ -79,10 +73,7 @@ impl DmaController {
                 state.regs.len()
             ));
         }
-        if state.hdma_do_transfer.len() != 8
-            || state.hdma_repeat_mode.len() != 8
-            || state.hdma_lines_left.len() != 8
-        {
+        if state.hdma_do_transfer.len() != 8 {
             return Err("DMA HDMA state size mismatch".to_string());
         }
 
@@ -90,9 +81,6 @@ impl DmaController {
         self.hdma_active_mask = state.hdma_active_mask;
         self.hdma_do_transfer
             .copy_from_slice(&state.hdma_do_transfer);
-        self.hdma_repeat_mode
-            .copy_from_slice(&state.hdma_repeat_mode);
-        self.hdma_lines_left.copy_from_slice(&state.hdma_lines_left);
         Ok(())
     }
 
@@ -198,8 +186,6 @@ impl DmaController {
         // process, while active_mask only tracks termination (#2943).
         self.hdma_active_mask = 0xFF;
         self.hdma_do_transfer = [false; 8];
-        self.hdma_repeat_mode = [false; 8];
-        self.hdma_lines_left = [0; 8];
 
         if hdmaen == 0 {
             return (0, seed_open_bus);
@@ -236,10 +222,6 @@ impl DmaController {
             if finished {
                 // Terminator: clear this channel's bit so it's not treated as active
                 self.hdma_active_mask &= !(1 << channel);
-            } else {
-                let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
-                self.hdma_repeat_mode[channel as usize] = repeat_mode;
-                self.hdma_lines_left[channel as usize] = lines_left;
             }
 
             if indirect {
@@ -318,15 +300,17 @@ impl DmaController {
                 continue;
             }
             let idx = channel as usize;
-            // Use wrapping_sub to match hardware (0 - 1 = 0xFF, not 0)
-            self.hdma_lines_left[idx] = self.hdma_lines_left[idx].wrapping_sub(1);
-
-            let line_counter =
-                Self::encode_hdma_counter(self.hdma_repeat_mode[idx], self.hdma_lines_left[idx]);
+            // `$43xA` IS the line counter and repeat flag -- there is no separate
+            // internal copy to decrement (Mesen2 `ch.HdmaLineCounterAndRepeat--`).
+            // Keeping one meant a CPU write to `$43xA` was ignored until the next
+            // frame's init, so a ROM that arms HDMA mid-frame decremented a stale
+            // zero to `$FF` instead of the value it had just written (#3062).
+            // Use wrapping_sub to match hardware (0 - 1 = 0xFF, not 0).
+            let line_counter = self.get_reg(channel, 0xA).wrapping_sub(1);
             self.set_reg(channel, 0xA, line_counter);
 
-            // Set do_transfer based on repeat bit (bit 7) of line counter register,
-            // not internal repeat_mode. This allows mid-scanline activation to work (#2943).
+            // Set do_transfer based on repeat bit (bit 7) of line counter register.
+            // This also allows mid-scanline activation to work (#2943).
             self.hdma_do_transfer[idx] = (line_counter & 0x80) != 0;
 
             // Speculative descriptor read (pointer NOT advanced unless consumed).
@@ -336,7 +320,9 @@ impl DmaController {
             abus.dma_tick(4);
             counter += 8;
 
-            if self.hdma_lines_left[idx] == 0 {
+            // Expiry is tested on the low 7 bits only, so a repeat-mode counter
+            // expires at `$80` (Mesen2 `(ch.HdmaLineCounterAndRepeat & 0x7F) == 0`).
+            if (line_counter & 0x7F) == 0 {
                 // Consume the descriptor: advance the table pointer.
                 let next =
                     u16::from_le_bytes([self.get_reg(channel, 0x8), self.get_reg(channel, 0x9)])
@@ -374,12 +360,7 @@ impl DmaController {
                 if descriptor == 0 {
                     self.hdma_active_mask &= !(1 << channel);
                     self.hdma_do_transfer[idx] = false;
-                    self.hdma_repeat_mode[idx] = false;
-                    self.hdma_lines_left[idx] = 0;
                 } else {
-                    let (repeat_mode, lines_left) = Self::decode_hdma_descriptor(descriptor);
-                    self.hdma_repeat_mode[idx] = repeat_mode;
-                    self.hdma_lines_left[idx] = lines_left;
                     self.hdma_do_transfer[idx] = true;
                 }
             }
@@ -531,33 +512,6 @@ impl DmaController {
 
     fn set_reg(&mut self, channel: u8, reg: usize, value: u8) {
         self.regs[(channel as usize) * 0x10 + reg] = value;
-    }
-
-    fn decode_hdma_descriptor(descriptor: u8) -> (bool, u16) {
-        if descriptor == 0 {
-            return (false, 0);
-        }
-        if descriptor <= 0x80 {
-            if descriptor == 0x80 {
-                (false, 128)
-            } else {
-                (false, descriptor as u16)
-            }
-        } else {
-            (true, (descriptor - 0x80) as u16)
-        }
-    }
-
-    fn encode_hdma_counter(repeat_mode: bool, lines_left: u16) -> u8 {
-        if lines_left == 0 {
-            0
-        } else if repeat_mode {
-            0x80 | (lines_left as u8)
-        } else if lines_left == 128 {
-            0x80
-        } else {
-            lines_left as u8
-        }
     }
 
     fn hdma_table_address(&self, channel: u8) -> u32 {
@@ -925,6 +879,154 @@ mod tests {
             dma.get_reg(0, 0xA),
             0x82,
             "counter decremented, not reloaded"
+        );
+    }
+
+    // $43xA IS the line counter -- there is no separate internal copy. A ROM
+    // that arms HDMA mid-frame writes the counter and the table pointer by hand
+    // and enables $420C after the frame's HDMA init has already run, so the
+    // per-line decrement must start from what the CPU wrote (Mesen2 keeps only
+    // `HdmaLineCounterAndRepeat`, decrements it in place, and `$430A` writes
+    // land straight on it).
+    //
+    // This is byuu `test_hdmatiming.smc`'s sub-test 1 as a unit test: counter
+    // 2, no transfer, no line load -- the ROM reads back $430A == $01 (#3062).
+    #[test]
+    fn hdma_line_counter_decrements_the_value_the_cpu_wrote_to_43xa() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        write_hdma_channel(&mut dma, 0, 0x00, 0x22, 0x3000);
+        bus.a_bus[0x3000] = 0xAA;
+
+        // Frame init runs with HDMA disabled, exactly as the ROM arranges.
+        dma.hdma_init(0x00, &mut bus, 0, 0, 8);
+
+        // The CPU then writes the table pointer and counter by hand.
+        dma.write_register(0x4308, 0x00);
+        dma.write_register(0x4309, 0x30);
+        dma.write_register(0x430A, 0x02);
+
+        let base = bus.clock;
+        dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+
+        assert_eq!(
+            dma.get_reg(0, 0xA),
+            0x01,
+            "counter must decrement the CPU-written $430A, not a stale internal copy"
+        );
+    }
+
+    // byuu `test_hdmatiming.smc` sub-test 2: a CPU-written counter of 1 expires
+    // on the first line, so the descriptor is consumed into $43xA and the table
+    // pointer advances.
+    #[test]
+    fn hdma_cpu_written_counter_of_one_consumes_the_descriptor() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        write_hdma_channel(&mut dma, 0, 0x00, 0x22, 0x3000);
+        bus.a_bus[0x3000] = 0xAA;
+
+        dma.hdma_init(0x00, &mut bus, 0, 0, 8);
+
+        dma.write_register(0x4308, 0x00);
+        dma.write_register(0x4309, 0x30);
+        dma.write_register(0x430A, 0x01);
+
+        let base = bus.clock;
+        dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+
+        assert_eq!(
+            dma.get_reg(0, 0xA),
+            0xAA,
+            "an expiring CPU-written counter must load the next descriptor"
+        );
+        assert_eq!(
+            u16::from_le_bytes([dma.get_reg(0, 0x8), dma.get_reg(0, 0x9)]),
+            0x3001,
+            "consuming the descriptor advances the table pointer"
+        );
+    }
+
+    // The expiry test is on the low 7 bits, not the whole byte: a repeat-mode
+    // counter reaches $80 (repeat set, zero lines left) and must consume there
+    // (Mesen2 `if((ch.HdmaLineCounterAndRepeat & 0x7F) == 0)`).
+    #[test]
+    fn hdma_repeat_counter_expires_on_the_low_seven_bits() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        write_hdma_channel(&mut dma, 0, 0x00, 0x22, 0x3000);
+        bus.a_bus[0x3000] = 0x05;
+
+        dma.hdma_init(0x00, &mut bus, 0, 0, 8);
+
+        dma.write_register(0x4308, 0x00);
+        dma.write_register(0x4309, 0x30);
+        dma.write_register(0x430A, 0x81); // repeat, one line left
+
+        let base = bus.clock;
+        dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+
+        assert_eq!(
+            dma.get_reg(0, 0xA),
+            0x05,
+            "$81 decrements to $80, whose low 7 bits are zero, so it expires"
+        );
+    }
+
+    // byuu `test_hdma.smc` sub-test 4: "if $43xa is 0 when an HDMA transfer
+    // begins (before the decrement), it will wrap to 0xff and begin a
+    // continuous transfer". The ROM arms a mode-3 channel mid-frame with
+    // $430A = 0 and its table pointer one byte past the leading terminator,
+    // then lets three lines run and checks that CGRAM ends up holding the
+    // SECOND data pair -- i.e. the first line transfers nothing, and the two
+    // after it each move one 4-byte group (#3062).
+    #[test]
+    fn hdma_zero_counter_wraps_into_a_continuous_transfer() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        // Mode 3 (p, p, p+1, p+1) to $2121/$2122, direct addressing.
+        write_hdma_channel(&mut dma, 0, 0x03, 0x21, 0x3000);
+        // Table: a leading $00 the ROM deliberately skips, then two 4-byte groups.
+        bus.a_bus[0x3000] = 0x00;
+        for (offset, byte) in [0x00, 0x00, 0x78, 0x56, 0x00, 0x00, 0xBC, 0x9A]
+            .into_iter()
+            .enumerate()
+        {
+            bus.a_bus[0x3001 + offset] = byte;
+        }
+
+        // Frame init runs with HDMA disabled; the CPU then points the table one
+        // byte in and zeroes the counter before enabling $420C.
+        dma.hdma_init(0x00, &mut bus, 0, 0, 8);
+        dma.write_register(0x4308, 0x01);
+        dma.write_register(0x4309, 0x30);
+        dma.write_register(0x430A, 0x00);
+
+        for _ in 0..3 {
+            let base = bus.clock;
+            dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        }
+
+        let written: Vec<(u8, u8)> = bus
+            .b_bus_writes
+            .iter()
+            .map(|&(_, port, value)| (port, value))
+            .collect();
+        assert_eq!(
+            written,
+            vec![
+                // Line 1 transfers nothing: DoTransfer is only set by the
+                // decrement that wraps $00 to $FF.
+                (0x21, 0x00),
+                (0x21, 0x00),
+                (0x22, 0x78),
+                (0x22, 0x56),
+                (0x21, 0x00),
+                (0x21, 0x00),
+                (0x22, 0xBC),
+                (0x22, 0x9A),
+            ],
+            "two continuous-mode lines move one 4-byte group each"
         );
     }
 

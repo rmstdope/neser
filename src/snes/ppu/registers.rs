@@ -359,7 +359,19 @@ impl Ppu {
             // open bus like the other $213B/$213C/$213D/$213F reads (see OPHCT below).
             0x213B => {
                 let index = self.cgram_index();
-                let value = self.cgram[index];
+                // CGRAM stores 15-bit colours, so the high byte's bit 7 does not
+                // exist to be read back: PPU2 open bus drives it instead (Mesen2
+                // `((_cgram[cgAddr] >> 8) & 0x7F) | (_state.Ppu2OpenBus & 0x80)`).
+                // Since the preceding low-byte read leaves that byte on the open
+                // bus, a colour whose low byte has bit 7 set reads its high byte
+                // back with bit 7 set too -- which byuu's `test_hdma.smc`
+                // sub-test 4 checks by HDMA-ing $9ABC into CGRAM and reading it
+                // back as $BC, $9A (#3062).
+                let value = if index & 1 == 1 {
+                    (self.cgram[index] & 0x7F) | (self.ppu2_open_bus & 0x80)
+                } else {
+                    self.cgram[index]
+                };
                 self.increment_cgram_address();
                 self.ppu2_open_bus = value;
                 value
@@ -894,6 +906,48 @@ mod tests {
         ppu.write_register(0x2121, 0x10);
         assert_eq!(ppu.read_register(0x213B), 0x34);
         assert_eq!(ppu.read_register(0x213B), 0x12);
+    }
+
+    // CGRAM holds 15-bit colours, so bit 15 does not exist to be read back.
+    // Reading the odd byte returns the 7 stored bits with PPU2 open bus
+    // supplying bit 7 (Mesen2 `SnesPpu.cpp` $213B:
+    // `((_cgram[cgAddr] >> 8) & 0x7F) | (_state.Ppu2OpenBus & 0x80)`).
+    //
+    // byuu's `test_hdma.smc` sub-test 4 depends on exactly this: it HDMAs
+    // $9ABC into CGRAM[0] and reads it back as $BC, $9A. The first read
+    // leaves $BC on PPU2 open bus, whose bit 7 then completes the second
+    // (#3062). `cgram_reads_should_return_stored_bytes_and_increment` above
+    // never caught it because both its bytes have bit 7 clear.
+    #[test]
+    fn cgram_high_byte_read_takes_bit_7_from_ppu2_open_bus() {
+        let mut ppu = Ppu::new();
+        // Both colours store the SAME high byte ($9A and $1A are identical once
+        // masked to 15 bits); only their low bytes differ, and with them the
+        // open-bus value left behind by the preceding read.
+        ppu.write_register(0x2121, 0x00);
+        ppu.write_register(0x2122, 0xBC);
+        ppu.write_register(0x2122, 0x9A);
+        ppu.write_register(0x2122, 0x34);
+        ppu.write_register(0x2122, 0x1A);
+
+        ppu.write_register(0x2121, 0x00);
+        assert_eq!(ppu.read_register(0x213B), 0xBC, "low byte is stored whole");
+        assert_eq!(
+            ppu.read_register(0x213B),
+            0x9A,
+            "high byte takes bit 7 from the $BC left on PPU2 open bus"
+        );
+
+        // Control: same stored high byte, but the preceding read leaves bit 7
+        // clear, so it reads back without it. The bit comes from the open bus,
+        // not from anything CGRAM retained across the write.
+        ppu.write_register(0x2121, 0x01);
+        assert_eq!(ppu.read_register(0x213B), 0x34);
+        assert_eq!(
+            ppu.read_register(0x213B),
+            0x1A,
+            "bit 7 stays clear when the open bus has it clear"
+        );
     }
 
     #[test]

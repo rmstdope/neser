@@ -11,11 +11,11 @@
 //! #3116 NESER ran through that halt and every screen here was post-halt
 //! garbage rather than the ROM's verdict.
 //!
-//! **Golden convention (#3092).** The two still-`#[ignore]`d tests assert the
-//! Mesen2-correct blue PASS screen, not NESER's current output, so they FAIL
-//! under `cargo test --include-ignored` until #3062 lands -- the designed
-//! state, not a regression. See `kungfufurby_irq_tests`' module doc for the
-//! rationale.
+//! **Golden convention (#3092).** `test_hdmatiming_passes`, the one test still
+//! `#[ignore]`d, asserts the Mesen2-correct blue PASS screen rather than
+//! NESER's current output, so it FAILs under `cargo test --include-ignored`
+//! until #3120 lands -- the designed state, not a regression. See
+//! `kungfufurby_irq_tests`' module doc for the rationale.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -57,19 +57,23 @@ mod tests {
 
     // All three goldens below are the Mesen2-approved blue PASS screen,
     // verified by a fresh headless capture at each test's own sample frame.
-    // Un-ignore each one once NESER renders the PASS backdrop (#3062).
+    // Two of the three now render it; un-ignore the last once it does too.
 
-    /// #3062: the ROM's self-check FAILs -- a flat `(255, 0, 0)` fill, byuu's
-    /// `fail()` backdrop. Its four sub-tests cover HDMA init semantics, so the
-    /// verdict is now a usable HDMA finding: the ROM records which one failed
-    /// in SRAM byte 0 (`!test_number`; 0 = pass, 1-4 = the failing sub-test),
-    /// readable from the emitted `.sav`.
+    /// Four sub-tests covering HDMA init semantics. Passes since #3062, which
+    /// took two fixes, both found by reading the sub-test number the ROM leaves
+    /// in SRAM byte 0 (`!test_number`; 0 = pass, 1-4 = the failing sub-test):
     ///
-    /// Before #3116 this settled on solid black instead, because STP did not
-    /// halt: `pass()`/`fail()` ran on into `get_dma_counter`, which starts a
-    /// GPDMA and then `rts` on a stack it never set up.
+    /// - `$43xA` is the line counter itself, not an internal copy, so the
+    ///   counter a ROM writes by hand before enabling `$420C` mid-frame is the
+    ///   one that gets decremented.
+    /// - `$213B` reads of a CGRAM high byte take bit 7 from PPU2 open bus.
+    ///   Sub-test 4 HDMAs `$9ABC` into CGRAM and reads it back as `$BC, $9A`;
+    ///   CGRAM only stores 15 bits, so without the open-bus bit it read `$1A`.
+    ///
+    /// Before #3116 it settled on solid black, because STP did not halt:
+    /// `pass()`/`fail()` ran on into `get_dma_counter`, which starts a GPDMA
+    /// and then `rts` on a stack it never set up.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdma_passes() {
         run_rom_screen_crc("test_hdma.smc", 600, 0x8695_BBB0);
     }
@@ -88,17 +92,23 @@ mod tests {
         run_rom_screen_crc("test_hdmasync.smc", 1100, 0x8695_BBB0);
     }
 
-    /// #3062: the ROM's self-check FAILs -- a flat `(255, 0, 0)` fill, byuu's
-    /// `fail()` backdrop -- where Mesen2 PASSes. A real HDMA timing divergence:
-    /// the ROM compares 8 rows of latched H positions and channel registers
-    /// against an in-ROM `compdata` table, and leaves both in SRAM `$00..$3F`,
-    /// so the failing row is readable from the emitted `.sav`.
+    /// #3062: the ROM compares 8 rows of latched H positions and channel
+    /// registers against an in-ROM `compdata` table (ROM offset `0x153D`) and
+    /// leaves both in SRAM `$00..$3F`, so the failing row is readable from the
+    /// emitted `.sav`.
     ///
-    /// Before #3116 this settled on a flat `(66, 0, 0)` instead -- not a FAIL
-    /// shade at all, but whatever the `compdata` bytes did when executed as
-    /// code past the unimplemented `stp`.
+    /// Down to **one** differing value. Rows 2-8 match exactly, including the
+    /// H=1104 trigger and `$2137` latch checks in rows 7-8. Row 1 differs only
+    /// in its first latch -- `want $014E, got $014F` -- while the second latch
+    /// in the same row matches, so it is a 4-master-clock CPU arrival
+    /// difference at one alignment, not an HDMA envelope error: `SyncStartDma`
+    /// and `SyncEndDma` are already formula-identical to Mesen2's. That places
+    /// it in the #3050 CPU-alignment family. Rows 9-12 also differ but the ROM
+    /// records them without comparing them (`cpx.w #64` stops at row 8), so
+    /// they do not affect the verdict -- they are the unmodelled
+    /// HDMA-during-GPDMA nesting noted in `src/snes/bus/dma.rs`.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
+    #[ignore = "one residual value (row 1's first latch, 4 master clocks); asserts the correct PASS golden so FAILs under --include-ignored until #3120"]
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdmatiming.smc", 600, 0x8695_BBB0);
     }

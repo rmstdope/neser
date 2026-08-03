@@ -913,10 +913,7 @@ impl SnesSystemBus {
                 state.dma.regs.len()
             ));
         }
-        if state.dma.hdma_do_transfer.len() != 8
-            || state.dma.hdma_repeat_mode.len() != 8
-            || state.dma.hdma_lines_left.len() != 8
-        {
+        if state.dma.hdma_do_transfer.len() != 8 {
             return Err("DMA HDMA state size mismatch".to_string());
         }
         if state.sram.len() != self.sram.borrow().len() {
