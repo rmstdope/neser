@@ -1,29 +1,53 @@
 #!/bin/sh
-# Pre-commit hook: auto-format staged Rust files with cargo fmt.
+# Pre-commit hook: auto-format staged Rust and Python files.
 #
-# If any .rs files are staged for commit, cargo fmt is run and the
-# originally staged files are re-staged with the formatted content.
+# If any .rs files are staged, cargo fmt is run; if any .py files are staged,
+# ruff format is run on them. The originally staged files are re-staged with
+# the formatted content.
 #
 # NOTE: If you staged only a partial hunk (git add -p), re-staging the
 # formatted file will include any unstaged changes in that file too.
 # In that case, review the staged diff after the commit with git show HEAD.
 
 staged_rs=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.rs$')
+staged_py=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.py$')
 
-if [ -z "$staged_rs" ]; then
+if [ -z "$staged_rs" ] && [ -z "$staged_py" ]; then
     exit 0
 fi
 
-echo "Running cargo fmt on staged Rust files..."
-cargo fmt
-fmt_exit=$?
+if [ -n "$staged_rs" ]; then
+    echo "Running cargo fmt on staged Rust files..."
+    cargo fmt
+    fmt_exit=$?
 
-if [ $fmt_exit -ne 0 ]; then
-    echo "cargo fmt failed (exit $fmt_exit). Aborting commit."
-    exit 1
+    if [ $fmt_exit -ne 0 ]; then
+        echo "cargo fmt failed (exit $fmt_exit). Aborting commit."
+        exit 1
+    fi
+
+    # Re-stage the originally staged .rs files so formatting changes are included.
+    echo "$staged_rs" | xargs git add
 fi
 
-# Re-stage the originally staged .rs files so formatting changes are included.
-echo "$staged_rs" | xargs git add
+if [ -n "$staged_py" ]; then
+    # ruff is installed from the dev dependency group; skip rather than block a
+    # commit when it is missing, since CI enforces formatting regardless.
+    if command -v ruff >/dev/null 2>&1; then
+        echo "Running ruff format on staged Python files..."
+        echo "$staged_py" | xargs ruff format --quiet
+        fmt_exit=$?
+
+        if [ $fmt_exit -ne 0 ]; then
+            echo "ruff format failed (exit $fmt_exit). Aborting commit."
+            exit 1
+        fi
+
+        echo "$staged_py" | xargs git add
+    else
+        echo "WARNING: ruff not found on PATH; skipping Python formatting."
+        echo "         Install it with: pip install --group scripts/pyproject.toml:dev"
+    fi
+fi
 
 exit 0

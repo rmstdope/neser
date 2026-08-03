@@ -1,5 +1,0 @@
-beautifulsoup4>=4.12
-textual>=0.68
-requests>=2.31
-requests-cache>=1.0
-tqdm>=4.66
