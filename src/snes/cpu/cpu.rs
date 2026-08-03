@@ -38,8 +38,8 @@ const FLAG_NEGATIVE: u8 = 0b1000_0000;
 /// land on the same 186-clock total observed in Mesen.
 const RESET_STARTUP_DELAY_CLOCKS: u32 = 170;
 
-/// Master clocks a STP-halted CPU advances the system by per [`Cpu::step`] call. Mesen2's
-/// `SnesCpu::ProcessHaltedState` spends a stopped CPU's time through
+/// Master clocks by which a STP-halted CPU advances the system on each [`Cpu::step`] call.
+/// Mesen2's `SnesCpu::ProcessHaltedState` spends a stopped CPU's time through
 /// `SnesMemoryManager::IncMasterClock4()`, and -- unlike its WAI branch, which goes through
 /// `Idle()` -- deliberately never calls `ProcessCpuCycle`. So the PPU/APU keep running and
 /// the screen keeps displaying, but no CPU cycle begins: pending DMA is never dispatched and
