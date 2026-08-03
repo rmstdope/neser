@@ -1,15 +1,18 @@
-""" Scraper for nescartdb.com """
+"""Scraper for nescartdb.com"""
+
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Union
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
 
-try:
-    from .rom_database import HardwareType, ControllerType, RomDbKey, hardware_from_console_type_and_region
-except ImportError:  # pragma: no cover - allow running as a script
-    from rom_database import HardwareType, ControllerType, RomDbKey, hardware_from_console_type_and_region
+from scripts.nes_rom_db_scraper.rom_database import (
+    ControllerType,
+    HardwareType,
+    RomDbKey,
+    hardware_from_console_type_and_region,
+)
 
 BASE_URL = "https://nescartdb.com/profile/view/{}"
 
@@ -23,7 +26,7 @@ class NesCartDb:
     when exhausted.
     """
 
-    def __init__(self, ids: Union[str, List[int], int], base_url: Optional[str] = None):
+    def __init__(self, ids: str | list[int] | int, base_url: str | None = None):
         """Create a scraper backed by an iterable of numeric ids.
 
         ids may be:
@@ -34,7 +37,7 @@ class NesCartDb:
         """
         # Normalize input into an iterator of ints
         max_id = 4800
-        ids_list: List[int]
+        ids_list: list[int]
         if isinstance(ids, str):
             s = ids.strip().lower()
             if s == "all":
@@ -84,14 +87,14 @@ class NesCartDb:
         return html
 
     @staticmethod
-    def _normalize_label(text: Optional[str]) -> str:
+    def _normalize_label(text: str | None) -> str:
         if not text:
             return ""
         return re.sub(r"\s+", " ", text.strip().rstrip(":")).lower()
 
     @staticmethod
-    def _extract_key_value_pairs(soup: BeautifulSoup) -> Dict[str, str]:
-        values: Dict[str, str] = {}
+    def _extract_key_value_pairs(soup: BeautifulSoup) -> dict[str, str]:
+        values: dict[str, str] = {}
         for table in soup.find_all("table"):
             for row in table.find_all("tr"):
                 cells = row.find_all(["th", "td"])
@@ -105,7 +108,7 @@ class NesCartDb:
         return values
 
     @staticmethod
-    def _table_title(table) -> Optional[str]:
+    def _table_title(table) -> str | None:
         first_row = table.find("tr")
         if not first_row:
             return None
@@ -115,7 +118,7 @@ class NesCartDb:
         return NesCartDb._normalize_label(cells[0].get_text(" ", strip=True))
 
     @staticmethod
-    def _find_titled_table(soup: "BeautifulSoup", title: str):
+    def _find_titled_table(soup: BeautifulSoup, title: str):
         normalized = NesCartDb._normalize_label(title)
         for table in soup.find_all("table"):
             if NesCartDb._table_title(table) == normalized:
@@ -123,11 +126,11 @@ class NesCartDb:
         return None
 
     @staticmethod
-    def _parse_eeprom_size_from_chip_info(table) -> Optional[int]:
+    def _parse_eeprom_size_from_chip_info(table) -> int | None:
         if table is None:
             return None
         for row in table.find_all("tr"):
-            cells = [cell.get_text(" ", strip=True) for cell in row.find_all(["th", "td"]) ]
+            cells = [cell.get_text(" ", strip=True) for cell in row.find_all(["th", "td"])]
             if len(cells) < 4:
                 continue
             designation = cells[0].lower()
@@ -146,12 +149,12 @@ class NesCartDb:
         return None
 
     @staticmethod
-    def _parse_rom_details(table) -> Dict[str, str]:
-        results: Dict[str, str] = {}
+    def _parse_rom_details(table) -> dict[str, str]:
+        results: dict[str, str] = {}
         if table is None:
             return results
         for row in table.find_all("tr"):
-            cells = [cell.get_text(" ", strip=True) for cell in row.find_all(["th", "td"]) ]
+            cells = [cell.get_text(" ", strip=True) for cell in row.find_all(["th", "td"])]
             if len(cells) < 4:
                 continue
             kind = NesCartDb._normalize_label(cells[0])
@@ -170,7 +173,7 @@ class NesCartDb:
         return results
 
     @staticmethod
-    def _first_value(values: Dict[str, str], labels) -> Optional[str]:
+    def _first_value(values: dict[str, str], labels) -> str | None:
         for label in labels:
             key = NesCartDb._normalize_label(label)
             if key in values:
@@ -178,7 +181,7 @@ class NesCartDb:
         return None
 
     @staticmethod
-    def _parse_video_system(region_value: Optional[str]) -> Optional[str]:
+    def _parse_video_system(region_value: str | None) -> str | None:
         if not region_value:
             return None
         m = re.search(r"\b(NTSC|PAL)\b", region_value, re.IGNORECASE)
@@ -187,7 +190,7 @@ class NesCartDb:
         return None
 
     @staticmethod
-    def _parse_int(value: Optional[str]) -> Optional[int]:
+    def _parse_int(value: str | None) -> int | None:
         if not value:
             return None
         m = re.search(r"(\d+)", value.replace(",", ""))
@@ -196,7 +199,7 @@ class NesCartDb:
         return int(m.group(1))
 
     @staticmethod
-    def _parse_size(value: Optional[str]) -> Optional[int]:
+    def _parse_size(value: str | None) -> int | None:
         if not value:
             return None
         cleaned = value.replace(",", "").strip().lower()
@@ -212,7 +215,7 @@ class NesCartDb:
         return size
 
     @staticmethod
-    def _parse_yes_no(value: Optional[str]) -> Optional[int]:
+    def _parse_yes_no(value: str | None) -> int | None:
         if not value:
             return None
         normalized = value.strip().lower()
@@ -223,7 +226,10 @@ class NesCartDb:
         return None
 
     @staticmethod
-    def _match_non_standard_controller(rom_id: int, value: str,) -> Optional[int]:
+    def _match_non_standard_controller(
+        rom_id: int,
+        value: str,
+    ) -> int | None:
         normalized = value.strip().lower()
         if "4-player adapter" in normalized:
             # Smash T.V. is double fisted, which implies a four score
@@ -293,12 +299,12 @@ class NesCartDb:
         return None
 
     @staticmethod
-    def _parse_periphereals(rom_id: int, value: str) -> Optional[int]:
+    def _parse_periphereals(rom_id: int, value: str) -> int | None:
         # If there are more than one value, one is bound to be Famicom/NES controller,
         # so ignore that. Accommodate for an empty value bug on the web page
         value = ",".join(v.strip() for v in value.split(",") if v.strip())
-        if ',' in value:
-            for val in value.split(','):
+        if "," in value:
+            for val in value.split(","):
                 matched = NesCartDb._match_non_standard_controller(rom_id, val)
                 if matched is not None:
                     return matched
@@ -312,7 +318,7 @@ class NesCartDb:
         print(f"\nUnrecognized peripherals value: '{value}'")
         exit(1)
 
-    def _build_result(self, rom_id: int, html: str) -> Optional[Dict[str, str]]:
+    def _build_result(self, rom_id: int, html: str) -> dict[str, str] | None:
         soup = BeautifulSoup(html, "html.parser")
         invalid_header = soup.find("h3")
         if invalid_header and invalid_header.get_text(strip=True) == "Invalid profile specified!":
@@ -329,7 +335,7 @@ class NesCartDb:
         if h1_tag and h1_tag.text:
             game_name = h1_tag.text.strip()
 
-        result: Dict[str, str] = {}
+        result: dict[str, str] = {}
         if game_name:
             result[RomDbKey.NAME.value] = game_name
         if rom_details.get("crc"):
@@ -349,7 +355,7 @@ class NesCartDb:
         batt = self._first_value(kv, ["Battery present", "Battery"])
         # In iNES 2.0, battery means "battery or other non-volatile memory"
         if eeprom_size is not None and eeprom_size > 0:
-            batt = '1'
+            batt = "1"
         peri = self._first_value(kv, ["Peripherals", "Controllers"])
         if mapper:
             result[RomDbKey.MAPPER.value] = self._parse_int(mapper)
@@ -382,7 +388,7 @@ class NesCartDb:
         """Return the number of records left to parse."""
         return self._remaining
 
-    def _patch(self, rom_id: int, record: Optional[Dict[str, str]]) -> None:
+    def _patch(self, rom_id: int, record: dict[str, str] | None) -> None:
         """Apply hardcoded patches for known bad/missing data."""
         # Startropics I and II (41, 814, 1896, 2449, 2769, 2780, 4171, 4365) has a 1kB PRG RAM in
         # the MMC6 chip.
@@ -404,8 +410,27 @@ class NesCartDb:
         # Kyuukyoku Harikiri Stadium (ROM_IDs 1765, 1766, 3071, 3147, 3148, 3149, 3150, 3303) too
         # Yamamura Misa Suspense: Kyouto Ryuu no Tera Satsujin Jiken (3954) too
         # Minelvaton Saga: Ragon no Fukkatsu (3955) too
-        if rom_id in [1559, 3151, 3152, 3153, 3300, 1758, 1762, 1763, 3163, 1765, 1766, 3071,
-                        3147, 3148, 3149, 3150, 3303, 3954, 3955]:
+        if rom_id in [
+            1559,
+            3151,
+            3152,
+            3153,
+            3300,
+            1758,
+            1762,
+            1763,
+            3163,
+            1765,
+            1766,
+            3071,
+            3147,
+            3148,
+            3149,
+            3150,
+            3303,
+            3954,
+            3955,
+        ]:
             record[RomDbKey.PRG_NVRAM_SIZE.value] = 128
         # Kyuukyoku Harikiri Stadium: Heisei Gannen Ban (1767, 2254, 3161) has a Taito X1-017 with
         # Save RAM
@@ -495,9 +520,9 @@ class NesCartDb:
         if rom_id in [4424, 4461]:
             record[RomDbKey.NAME.value] = "Goal! 2"
 
-    def next_record(self) -> Optional[Dict[str, str]]:
+    def next_record(self) -> dict[str, str] | None:
         """Fetch and return the next parsed profile record, or None if done."""
-        record  = None
+        record = None
         while record is None:
             try:
                 rom_id = next(self._ids_iter)

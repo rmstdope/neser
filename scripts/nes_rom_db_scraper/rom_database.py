@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Dict, Optional
-from enum import Enum
-from enum import IntEnum
+from collections.abc import Mapping
+from enum import IntEnum, StrEnum
+
 
 class HardwareType(IntEnum):
-    """ ROM database hardware types (merged console type + region) """
+    """ROM database hardware types (merged console type + region)"""
+
     NES_NTSC = 0
     NES_PAL = 1
     FAMICOM = 2
@@ -52,9 +53,10 @@ _REGION_TEXT_MAP = {
 
 
 def hardware_from_console_type_and_region(
-    console_type_str: Optional[str], region_str: Optional[str],
-    country: Optional[str] = None,
-) -> Optional[int]:
+    console_type_str: str | None,
+    region_str: str | None,
+    country: str | None = None,
+) -> int | None:
     """Compute a HardwareType integer from iNES 2.0 console type and region strings.
 
     For console type 0 (NES/Famicom), the region normally selects between
@@ -88,9 +90,10 @@ def hardware_from_console_type_and_region(
     try:
         cr = int(region_str)
     except (ValueError, TypeError):
-        cr = _REGION_TEXT_MAP.get(str(region_str).strip().lower())
-        if cr is None:
+        mapped = _REGION_TEXT_MAP.get(str(region_str).strip().lower())
+        if mapped is None:
             return None
+        cr = mapped
 
     # iNES 2.0 spec: region 2=Multi-region, 3=Dendy
     region_map = {
@@ -108,18 +111,24 @@ def hardware_from_console_type_and_region(
         return HardwareType.FAMICOM.value
     return hw.value
 
+
 class NametableLayout(IntEnum):
-    """ iNES 2.0 Hardwired nametable layouts """
+    """iNES 2.0 Hardwired nametable layouts"""
+
     HORIZONTAL = 0
     VERTICAL = 1
 
+
 class Battery(IntEnum):
-    """ iNES 2.0 Battery presence """
+    """iNES 2.0 Battery presence"""
+
     NO = 0
     YES = 1
 
+
 class ControllerType(IntEnum):
-    """ iNES 2.0 Controller types """
+    """iNES 2.0 Controller types"""
+
     UNSPECIFIED = 0x00
     STANDARD_CONTROLLERS = 0x01
     NES_FOUR_SCORE = 0x02
@@ -204,8 +213,10 @@ class ControllerType(IntEnum):
     POWER_GLOVE = 0x51
     ALADDIN_DECK_ENHANCER = 0x52
 
+
 class VsHardwareType(IntEnum):
-    """ iNES 2.0 Vs Hardware types """
+    """iNES 2.0 Vs Hardware types"""
+
     VS_UNISYSTEM = 0x00
     VS_UNISYSTEM_RBI_BASEBALL = 0x01
     VS_UNISYSTEM_TKO_BOXING = 0x02
@@ -214,8 +225,10 @@ class VsHardwareType(IntEnum):
     VS_DUALSYSTEM = 0x05
     VS_DUALSYSTEM_BUNGELING_BAY = 0x06
 
+
 class VsPpuType(IntEnum):
-    """ iNES 2.0 Vs PPU types """
+    """iNES 2.0 Vs PPU types"""
+
     RP2C03_ANY = 0x00
     RP2C04_0001 = 0x02
     RP2C04_0002 = 0x03
@@ -226,8 +239,10 @@ class VsPpuType(IntEnum):
     RC2C05_03 = 0x0A
     RC2C05_04 = 0x0B
 
-class RomDbKey(str, Enum):
+
+class RomDbKey(StrEnum):
     """ROM database field keys."""
+
     ROM_ID = "rom_id"
     CRC = "crc"
     NAME = "name"
@@ -250,11 +265,21 @@ class RomDbKey(str, Enum):
     VS_PPU_TYPE = "vs_ppu_type"
     EXPANSION_TYPE = "expansion_type"
 
+
+def _print_column_conflict(crc: str, key: str, old_value: object, new_value: object) -> None:
+    """Report a per-column merge conflict for a ROM identified by CRC."""
+    print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{new_value}'")
+
+
 class RomDatabase:
+    # Several queries below interpolate column names taken from the table
+    # schema itself (PRAGMA table_info) or from RomDbKey constants. SQL cannot
+    # bind identifiers as parameters, so those f-strings carry an S608
+    # suppression; every *value* is still bound via ? or :name placeholders.
     """Store and update ROM metadata in a SQLite database."""
 
     @staticmethod
-    def _expected_columns() -> Dict[str, str]:
+    def _expected_columns() -> dict[str, str]:
         return {
             RomDbKey.NAME.value: "TEXT",
             RomDbKey.COUNTRY.value: "TEXT",
@@ -292,14 +317,14 @@ class RomDatabase:
         self._conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS roms (
-                {', '.join(schema_cols)}
+                {", ".join(schema_cols)}
             ) STRICT
             """
         )
         self._ensure_columns(expected)
         self._conn.commit()
 
-    def _ensure_columns(self, columns: Dict[str, str]) -> None:
+    def _ensure_columns(self, columns: dict[str, str]) -> None:
         """Ensure the named columns exist on the `roms` table.
 
         `columns` is a mapping of column name to SQLite column type
@@ -316,7 +341,7 @@ class RomDatabase:
         self._conn.commit()
         self._conn.close()
 
-    def list_columns_with_types(self) -> Dict[str, str]:
+    def list_columns_with_types(self) -> dict[str, str]:
         """Return current column names mapped to their declared types."""
         cursor = self._conn.execute("PRAGMA table_info(roms)")
         return {row[1]: row[2].upper() for row in cursor.fetchall()}
@@ -326,7 +351,7 @@ class RomDatabase:
         return list(self.list_columns_with_types().keys())
 
     @staticmethod
-    def _coerce_value(value: Optional[str], col_type: str) -> Optional[object]:
+    def _coerce_value(value: object | None, col_type: str) -> object | None:
         if value is None or value == "":
             return None
         if col_type == "INTEGER":
@@ -340,11 +365,11 @@ class RomDatabase:
                 return None
         return value
 
-    def _coerce_params(self, params: Dict[str, Optional[str]], columns: list[str]) -> Dict[str, Optional[object]]:
+    def _coerce_params(self, params: Mapping[str, object | None], columns: list[str]) -> dict[str, object | None]:
         types = self.list_columns_with_types()
         return {col: self._coerce_value(params.get(col), types.get(col, "")) for col in columns}
 
-    def get_rom(self, rom_id: int) -> Optional[Dict[str, Optional[str]]]:
+    def get_rom(self, rom_id: int) -> dict[str, str | None] | None:
         """Return a single ROM record by numeric ``rom_id``.
 
         The returned mapping uses the names defined in ``RomDbKey`` as keys.
@@ -355,7 +380,7 @@ class RomDatabase:
         if not cols:
             return None
         cursor = self._conn.execute(
-            f"SELECT {', '.join(cols)} FROM roms WHERE rom_id = ?",
+            f"SELECT {', '.join(cols)} FROM roms WHERE rom_id = ?",  # noqa: S608
             (rom_id,),
         )
         row = cursor.fetchone()
@@ -363,7 +388,7 @@ class RomDatabase:
             return None
         return {col: row[idx] for idx, col in enumerate(cols)}
 
-    def get_rom_by_crc(self, crc: str) -> Optional[Dict[str, Optional[str]]]:
+    def get_rom_by_crc(self, crc: str) -> dict[str, str | None] | None:
         """Return a single ROM record matching the given ``crc`` string.
 
         The returned mapping uses the names defined in ``RomDbKey`` as keys.
@@ -373,7 +398,7 @@ class RomDatabase:
         if not cols:
             return None
         cursor = self._conn.execute(
-            f"SELECT {', '.join(cols)} FROM roms WHERE crc = ?",
+            f"SELECT {', '.join(cols)} FROM roms WHERE crc = ?",  # noqa: S608
             (crc,),
         )
         row = cursor.fetchone()
@@ -381,7 +406,7 @@ class RomDatabase:
             return None
         return {col: row[idx] for idx, col in enumerate(cols)}
 
-    def upsert_rom(self, rom_id: int, data: Dict[str, Optional[str]]) -> None:
+    def upsert_rom(self, rom_id: int, data: dict[str, str | None]) -> None:
         """Insert or update a ROM identified by ``rom_id``.
 
         ``data`` should be a mapping keyed by the string values in
@@ -396,7 +421,7 @@ class RomDatabase:
                 f"upsert_rom: ignoring unknown fields {unknown_keys}",
                 file=__import__("sys").stderr,
             )
-        col_list = ", ".join([RomDbKey.ROM_ID.value] + cols)
+        col_list = ", ".join([RomDbKey.ROM_ID.value, *cols])
         placeholder_list = ", ".join([f":{RomDbKey.ROM_ID.value}"] + [f":{c}" for c in cols])
         update_list = ", \n                ".join([f"{c}=excluded.{c}" for c in cols])
         sql = f"""
@@ -407,14 +432,14 @@ class RomDatabase:
             )
             ON CONFLICT(rom_id) DO UPDATE SET
                 {update_list}
-            """
+            """  # noqa: S608
         params = {RomDbKey.ROM_ID.value: rom_id}
         params.update({c: data.get(c) for c in cols})
-        coerced = self._coerce_params(params, [RomDbKey.ROM_ID.value] + cols)
+        coerced = self._coerce_params(params, [RomDbKey.ROM_ID.value, *cols])
         self._conn.execute(sql, coerced)
         self._conn.commit()
 
-    def insert_rom_by_crc(self, data: Dict[str, Optional[str]]) -> None:
+    def insert_rom_by_crc(self, data: Mapping[str, str | None]) -> None:
         """Insert a minimal row using the CRC and any minimal columns provided.
 
         This creates a row with the supplied columns; other columns remain
@@ -422,7 +447,7 @@ class RomDatabase:
         """
         cursor = self._conn.execute("PRAGMA table_info(roms)")
         existing = {row[1] for row in cursor.fetchall()}
-        columns = [k for k in data.keys() if k in existing]
+        columns = [k for k in data if k in existing]
         if RomDbKey.CRC.value not in columns:
             columns.insert(0, RomDbKey.CRC.value)
         if not columns:
@@ -434,29 +459,29 @@ class RomDatabase:
             f"""
             INSERT INTO roms ({", ".join(columns)})
             VALUES ({placeholders})
-            """,
+            """,  # noqa: S608
             coerced,
         )
         self._conn.commit()
 
-    def update_rom_by_crc(self, crc: str, updates: Dict[str, Optional[str]]) -> None:
+    def update_rom_by_crc(self, crc: str, updates: Mapping[str, str | None]) -> None:
         """Apply in-place `updates` (column -> value) to the row matching ``crc``.
 
         No-op if ``updates`` is empty.
         """
         if not updates:
             return
-        set_clause = ", ".join([f"{k} = :{k}" for k in updates.keys()])
+        set_clause = ", ".join([f"{k} = :{k}" for k in updates])
         params = {**updates, "crc": crc}
         coerced = self._coerce_params(params, list(updates.keys()))
         coerced["crc"] = crc
         self._conn.execute(
-            f"UPDATE roms SET {set_clause} WHERE crc = :crc",
+            f"UPDATE roms SET {set_clause} WHERE crc = :crc",  # noqa: S608
             coerced,
         )
         self._conn.commit()
 
-    def process_record_by_crc(self, data: Dict[str, str]) -> tuple[int, int, int, int]:
+    def process_record_by_crc(self, data: dict[str, str]) -> tuple[int, int, int, int]:
         """Process a single parsed record (identified by CRC) and update DB.
 
         Returns a tuple (added_count, updated_count, skipped_count, conflict_count)
@@ -474,7 +499,7 @@ class RomDatabase:
             self.insert_rom_by_crc(data)
             return (1, 0, 0, 0)
 
-        updates: Dict[str, str] = {}
+        updates: dict[str, str] = {}
         has_conflict = False
         for key, value in data.items():
             if key == RomDbKey.CRC.value or value is None or value == "":
@@ -496,39 +521,47 @@ class RomDatabase:
                         pass  # keep existing value, no conflict
                     elif str(old_value) == str(HardwareType.NES_MULTI_REGION.value):
                         pass  # NES_MULTI_REGION is authoritative, keep it
-                    elif (str(old_value) == str(HardwareType.NES_NTSC.value)
-                            and str(value) == str(HardwareType.FAMICOM.value)):
+                    elif str(old_value) == str(HardwareType.NES_NTSC.value) and str(value) == str(
+                        HardwareType.FAMICOM.value
+                    ):
                         updates[key] = value  # FAMICOM upgrades generic NES_NTSC
                     else:
-                        print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
+                        _print_column_conflict(crc, key, old_value, value)
                         has_conflict = True
-                # Extra merge of controller types
+                # Extra merge of controller types. Scraped records carry every
+                # field as a string while the column is INTEGER, so both sides
+                # are compared as strings (as the hardware branch above does).
                 elif key == RomDbKey.EXPANSION_TYPE.value:
                     # if new value is multicart, update to that
-                    if value == ControllerType.MULTICART.value:
+                    if str(value) == str(ControllerType.MULTICART.value):
                         updates[key] = value
                     # If old is multicaart, do nothing
-                    elif old_value == ControllerType.MULTICART.value:
+                    elif str(old_value) == str(ControllerType.MULTICART.value):
                         pass
                     # If old value says standard controller, select the other one
-                    elif old_value == ControllerType.STANDARD_CONTROLLERS.value:
+                    elif str(old_value) == str(ControllerType.STANDARD_CONTROLLERS.value):
                         updates[key] = value
                     # If new value says standard controller, do nothing
-                    elif value == ControllerType.STANDARD_CONTROLLERS.value:
+                    elif str(value) == str(ControllerType.STANDARD_CONTROLLERS.value):
                         pass
                     else:
-                        print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
+                        _print_column_conflict(crc, key, old_value, value)
                         has_conflict = True
-                elif key == RomDbKey.PRG_RAM_SIZE.value or key == RomDbKey.CHR_RAM_SIZE.value or key == RomDbKey.PRG_NVRAM_SIZE.value or key == RomDbKey.CHR_NVRAM_SIZE.value:
+                elif key in (
+                    RomDbKey.PRG_RAM_SIZE.value,
+                    RomDbKey.CHR_RAM_SIZE.value,
+                    RomDbKey.PRG_NVRAM_SIZE.value,
+                    RomDbKey.CHR_NVRAM_SIZE.value,
+                ):
                     # RAM checks are handled below in one go
                     pass
                 else:
-                    print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
+                    _print_column_conflict(crc, key, old_value, value)
                     # print(f"Old={existing}, New={data}")
                     has_conflict = True
 
         # Special handling for RAM sizes
-        def to_int(value: Optional[object]) -> Optional[int]:
+        def to_int(value: object | None) -> int | None:
             if value is None or value == "":
                 return None
             if isinstance(value, int):
@@ -538,7 +571,7 @@ class RomDatabase:
             except (TypeError, ValueError):
                 return None
 
-        def ram_sum(source: Dict[str, Optional[object]], ram_key: RomDbKey, nvram_key: RomDbKey) -> Optional[int]:
+        def ram_sum(source: Mapping[str, object | None], ram_key: RomDbKey, nvram_key: RomDbKey) -> int | None:
             ram = to_int(source.get(ram_key.value))
             nvram = to_int(source.get(nvram_key.value))
             if ram is None and nvram is None:
@@ -547,17 +580,21 @@ class RomDatabase:
 
         existing_prg_sum = ram_sum(existing, RomDbKey.PRG_RAM_SIZE, RomDbKey.PRG_NVRAM_SIZE)
         update_prg_sum = ram_sum(data, RomDbKey.PRG_RAM_SIZE, RomDbKey.PRG_NVRAM_SIZE)
-        if existing_prg_sum is not None and update_prg_sum is not None:
-            if existing_prg_sum != update_prg_sum:
-                print(f"\nConflict on CRC {crc}: PRG RAM+NVRAM size sum mismatch existing={existing_prg_sum}, new={update_prg_sum}")
-                has_conflict = True
+        if existing_prg_sum is not None and update_prg_sum is not None and existing_prg_sum != update_prg_sum:
+            print(
+                f"\nConflict on CRC {crc}: PRG RAM+NVRAM size sum mismatch "
+                f"existing={existing_prg_sum}, new={update_prg_sum}"
+            )
+            has_conflict = True
 
         existing_chr_sum = ram_sum(existing, RomDbKey.CHR_RAM_SIZE, RomDbKey.CHR_NVRAM_SIZE)
         update_chr_sum = ram_sum(data, RomDbKey.CHR_RAM_SIZE, RomDbKey.CHR_NVRAM_SIZE)
-        if existing_chr_sum is not None and update_chr_sum is not None:
-            if existing_chr_sum != update_chr_sum:
-                print(f"\nConflict on CRC {crc}: CHR RAM+NVRAM size sum mismatch existing={existing_chr_sum}, new={update_chr_sum}")
-                has_conflict = True
+        if existing_chr_sum is not None and update_chr_sum is not None and existing_chr_sum != update_chr_sum:
+            print(
+                f"\nConflict on CRC {crc}: CHR RAM+NVRAM size sum mismatch "
+                f"existing={existing_chr_sum}, new={update_chr_sum}"
+            )
+            has_conflict = True
 
         if len(updates) > 0 and not has_conflict:
             self.update_rom_by_crc(crc, updates)
@@ -566,7 +603,7 @@ class RomDatabase:
             return (0, 0, 1, 0)
         return (0, 0, 0, 1)
 
-    def list_roms(self) -> list[Dict[str, Optional[str]]]:
+    def list_roms(self) -> list[dict[str, str | None]]:
         """Return all ROM rows ordered by ``rom_id`` ascending.
 
         Each row is returned as a dict keyed by the string values from
@@ -576,7 +613,7 @@ class RomDatabase:
         if not cols:
             return []
         cursor = self._conn.execute(
-            f"SELECT {', '.join(cols)} FROM roms ORDER BY rom_id ASC"
+            f"SELECT {', '.join(cols)} FROM roms ORDER BY rom_id ASC"  # noqa: S608
         )
         rows = []
         for row in cursor.fetchall():
@@ -596,7 +633,7 @@ class RomDatabase:
         self._conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS roms (
-                {', '.join(schema_cols)}
+                {", ".join(schema_cols)}
             ) STRICT
             """,
         )

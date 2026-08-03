@@ -546,8 +546,8 @@ stabilized the affected modules.
 
 #### I5.2 — Python tooling baseline
 - **Impact:** Medium · **Effort:** Low–Med
-- **Problem:** Python tools (`scripts/`, `scripts/mappertool/`, `scripts/metadata-scraper/`,
-  `scripts/nes-rom-db-scraper/`) have only `requirements-*.txt`; no `pyproject.toml`, no
+- **Problem:** Python tools (`scripts/`, `scripts/mappertool/`, `scripts/metadata_scraper/`,
+  `scripts/nes_rom_db_scraper/`) have only `requirements-*.txt`; no `pyproject.toml`, no
   `ruff`/`black`/`mypy`/`pyright` config. Tests run via `unittest discover`.
 - **Proposed approach:** Add a `scripts/pyproject.toml` configuring `ruff` (lint + format)
   and pinning test deps; keep `unittest` (or adopt `pytest`). Add type hints incrementally

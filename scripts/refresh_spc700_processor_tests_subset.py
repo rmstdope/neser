@@ -12,14 +12,9 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_FULL_ROOT = (
-    REPO_ROOT / "roms/snes/automated_tests/processor_tests/spc700/full/v1"
-)
+DEFAULT_FULL_ROOT = REPO_ROOT / "roms/snes/automated_tests/processor_tests/spc700/full/v1"
 DEFAULT_SUBSET_ROOT = REPO_ROOT / "roms/snes/automated_tests/processor_tests/spc700/v1"
-DEFAULT_REPORT_JSON = (
-    REPO_ROOT
-    / "roms/snes/automated_tests/processor_tests/spc700/subset_coverage_report.json"
-)
+DEFAULT_REPORT_JSON = REPO_ROOT / "roms/snes/automated_tests/processor_tests/spc700/subset_coverage_report.json"
 
 VECTOR_FILE_RE = re.compile(r"^(?P<opcode>[0-9a-f]{2})\.json$")
 
@@ -109,9 +104,7 @@ def discover_vector_files(root: Path) -> list[VectorFile]:
     return files
 
 
-def select_subset_files(
-    files: list[VectorFile], opcodes_per_family: int
-) -> list[VectorFile]:
+def select_subset_files(files: list[VectorFile], opcodes_per_family: int) -> list[VectorFile]:
     if opcodes_per_family <= 0:
         raise ValueError("opcodes_per_family must be > 0")
 
@@ -175,9 +168,7 @@ def build_report(
     for item in sorted_selected:
         payload = _materialize_payload(item, max_vectors_per_file)
         total_size_bytes += len(payload)
-        per_file_records.append(
-            f"{hashlib.sha256(payload).hexdigest()}  {item.filename}"
-        )
+        per_file_records.append(f"{hashlib.sha256(payload).hexdigest()}  {item.filename}")
 
         family = _family_for_opcode(item.opcode)
         bucket = families.setdefault(

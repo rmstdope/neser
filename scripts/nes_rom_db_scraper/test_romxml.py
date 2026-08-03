@@ -1,24 +1,23 @@
-
 """
 TestRomXml: Unit tests for the RomXml streaming XML parser.
 
 This module provides a suite of tests for the RomXml class, verifying correct parsing
 of NES ROM XML files, including handling of all relevant cartridge metadata fields.
 """
+
 import os
 import tempfile
 import unittest
-try:
-    from .romxml import RomXml
-    from .rom_database import RomDbKey
-except ImportError:  # pragma: no cover - allow running as a script
-    from romxml import RomXml
-    from rom_database import RomDbKey
+
+from scripts.nes_rom_db_scraper.rom_database import RomDbKey
+from scripts.nes_rom_db_scraper.romxml import RomXml
+
 
 class TestRomXml(unittest.TestCase):
     """
     Unit tests for the RomXml streaming XML parser.
     """
+
     def _write_xml(self, xml_text: str) -> str:
         """
         Write the given XML string to a temporary file.
@@ -33,6 +32,7 @@ class TestRomXml(unittest.TestCase):
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(xml_text)
         return path
+
     def test_next_record_parses_fields_and_uppercases_crc(self) -> None:
         """
         Test that RomXml parses fields and uppercases CRC values.
@@ -64,8 +64,8 @@ class TestRomXml(unittest.TestCase):
                 RomDbKey.PRG_NVRAM_SIZE.value: "0",
                 RomDbKey.CHR_ROM_SIZE.value: "0",
                 RomDbKey.CHR_RAM_SIZE.value: "0",
-                RomDbKey.CHR_NVRAM_SIZE.value: "0"
-            }
+                RomDbKey.CHR_NVRAM_SIZE.value: "0",
+            },
         )
 
     def test_next_record_handles_missing_fields(self) -> None:
@@ -88,14 +88,17 @@ class TestRomXml(unittest.TestCase):
         finally:
             os.unlink(path)
 
-        self.assertEqual(record, {
-            RomDbKey.PRG_ROM_SIZE.value: "0",
-            RomDbKey.PRG_RAM_SIZE.value: "0",
-            RomDbKey.PRG_NVRAM_SIZE.value: "0",
-            RomDbKey.CHR_ROM_SIZE.value: "0",
-            RomDbKey.CHR_RAM_SIZE.value: "0",
-            RomDbKey.CHR_NVRAM_SIZE.value: "0"
-        })
+        self.assertEqual(
+            record,
+            {
+                RomDbKey.PRG_ROM_SIZE.value: "0",
+                RomDbKey.PRG_RAM_SIZE.value: "0",
+                RomDbKey.PRG_NVRAM_SIZE.value: "0",
+                RomDbKey.CHR_ROM_SIZE.value: "0",
+                RomDbKey.CHR_RAM_SIZE.value: "0",
+                RomDbKey.CHR_NVRAM_SIZE.value: "0",
+            },
+        )
 
     def test_next_record_multiple_games(self) -> None:
         """
@@ -121,25 +124,31 @@ class TestRomXml(unittest.TestCase):
         finally:
             os.unlink(path)
 
-        self.assertEqual(first, {
-            RomDbKey.CRC.value: "00000001",
-            RomDbKey.PRG_ROM_SIZE.value: "0",
-            RomDbKey.PRG_RAM_SIZE.value: "0",
-            RomDbKey.PRG_NVRAM_SIZE.value: "0",
-            RomDbKey.CHR_ROM_SIZE.value: "0",
-            RomDbKey.CHR_RAM_SIZE.value: "0",
-            RomDbKey.CHR_NVRAM_SIZE.value: "0"
-        })
-        self.assertEqual(second, {
-            RomDbKey.CRC.value: "00000002", 
-            RomDbKey.NAMETABLE_LAYOUT.value: "vertical",
-            RomDbKey.PRG_ROM_SIZE.value: "0",
-            RomDbKey.PRG_RAM_SIZE.value: "0",
-            RomDbKey.PRG_NVRAM_SIZE.value: "0",
-            RomDbKey.CHR_ROM_SIZE.value: "0",
-            RomDbKey.CHR_RAM_SIZE.value: "0",
-            RomDbKey.CHR_NVRAM_SIZE.value: "0"
-        })
+        self.assertEqual(
+            first,
+            {
+                RomDbKey.CRC.value: "00000001",
+                RomDbKey.PRG_ROM_SIZE.value: "0",
+                RomDbKey.PRG_RAM_SIZE.value: "0",
+                RomDbKey.PRG_NVRAM_SIZE.value: "0",
+                RomDbKey.CHR_ROM_SIZE.value: "0",
+                RomDbKey.CHR_RAM_SIZE.value: "0",
+                RomDbKey.CHR_NVRAM_SIZE.value: "0",
+            },
+        )
+        self.assertEqual(
+            second,
+            {
+                RomDbKey.CRC.value: "00000002",
+                RomDbKey.NAMETABLE_LAYOUT.value: "vertical",
+                RomDbKey.PRG_ROM_SIZE.value: "0",
+                RomDbKey.PRG_RAM_SIZE.value: "0",
+                RomDbKey.PRG_NVRAM_SIZE.value: "0",
+                RomDbKey.CHR_ROM_SIZE.value: "0",
+                RomDbKey.CHR_RAM_SIZE.value: "0",
+                RomDbKey.CHR_NVRAM_SIZE.value: "0",
+            },
+        )
         self.assertIsNone(third)
 
     def test_next_record_ignores_non_game_elements(self) -> None:
@@ -161,15 +170,18 @@ class TestRomXml(unittest.TestCase):
         finally:
             os.unlink(path)
 
-        self.assertEqual(record, {
-            RomDbKey.CRC.value: "DEADBEEF",
-            RomDbKey.PRG_ROM_SIZE.value: "0",
-            RomDbKey.PRG_RAM_SIZE.value: "0",
-            RomDbKey.PRG_NVRAM_SIZE.value: "0",
-            RomDbKey.CHR_ROM_SIZE.value: "0",
-            RomDbKey.CHR_RAM_SIZE.value: "0",
-            RomDbKey.CHR_NVRAM_SIZE.value: "0"
-        })
+        self.assertEqual(
+            record,
+            {
+                RomDbKey.CRC.value: "DEADBEEF",
+                RomDbKey.PRG_ROM_SIZE.value: "0",
+                RomDbKey.PRG_RAM_SIZE.value: "0",
+                RomDbKey.PRG_NVRAM_SIZE.value: "0",
+                RomDbKey.CHR_ROM_SIZE.value: "0",
+                RomDbKey.CHR_RAM_SIZE.value: "0",
+                RomDbKey.CHR_NVRAM_SIZE.value: "0",
+            },
+        )
 
     def test_next_record_missing_crc_is_omitted(self) -> None:
         """
@@ -189,14 +201,17 @@ class TestRomXml(unittest.TestCase):
         finally:
             os.unlink(path)
 
-        self.assertEqual(record, {
-            RomDbKey.PRG_ROM_SIZE.value: "0",
-            RomDbKey.PRG_RAM_SIZE.value: "0",
-            RomDbKey.PRG_NVRAM_SIZE.value: "0",
-            RomDbKey.CHR_ROM_SIZE.value: "0",
-            RomDbKey.CHR_RAM_SIZE.value: "0",
-            RomDbKey.CHR_NVRAM_SIZE.value: "0"            
-        })
+        self.assertEqual(
+            record,
+            {
+                RomDbKey.PRG_ROM_SIZE.value: "0",
+                RomDbKey.PRG_RAM_SIZE.value: "0",
+                RomDbKey.PRG_NVRAM_SIZE.value: "0",
+                RomDbKey.CHR_ROM_SIZE.value: "0",
+                RomDbKey.CHR_RAM_SIZE.value: "0",
+                RomDbKey.CHR_NVRAM_SIZE.value: "0",
+            },
+        )
 
     def test_next_record_parses_extended_rom_info(self) -> None:
         """
@@ -247,7 +262,7 @@ class TestRomXml(unittest.TestCase):
                 RomDbKey.EXPANSION_TYPE.value: "1",
                 RomDbKey.VS_HARDWARE_TYPE.value: "0",
                 RomDbKey.VS_PPU_TYPE.value: "5",
-                RomDbKey.CONSOLE_CLASS.value: "Licensed Japan 10-Yard Fight (rev0).nes"
+                RomDbKey.CONSOLE_CLASS.value: "Licensed Japan 10-Yard Fight (rev0).nes",
             },
         )
 
@@ -270,16 +285,19 @@ class TestRomXml(unittest.TestCase):
         finally:
             os.unlink(path)
 
-        self.assertEqual(record, {
-            RomDbKey.CRC.value: "1234ABCD",
-            RomDbKey.MAPPER.value: "2",
-            RomDbKey.PRG_ROM_SIZE.value: "0",
-            RomDbKey.PRG_RAM_SIZE.value: "0",
-            RomDbKey.PRG_NVRAM_SIZE.value: "0",
-            RomDbKey.CHR_ROM_SIZE.value: "0",
-            RomDbKey.CHR_RAM_SIZE.value: "0",
-            RomDbKey.CHR_NVRAM_SIZE.value: "0"
-        })
+        self.assertEqual(
+            record,
+            {
+                RomDbKey.CRC.value: "1234ABCD",
+                RomDbKey.MAPPER.value: "2",
+                RomDbKey.PRG_ROM_SIZE.value: "0",
+                RomDbKey.PRG_RAM_SIZE.value: "0",
+                RomDbKey.PRG_NVRAM_SIZE.value: "0",
+                RomDbKey.CHR_ROM_SIZE.value: "0",
+                RomDbKey.CHR_RAM_SIZE.value: "0",
+                RomDbKey.CHR_NVRAM_SIZE.value: "0",
+            },
+        )
 
     def test_normalize_label(self) -> None:
         """

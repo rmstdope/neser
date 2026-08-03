@@ -2,6 +2,7 @@
 """Deploy the neser web app to a remote server via SFTP."""
 
 import argparse
+import contextlib
 import getpass
 import shutil
 import stat
@@ -10,7 +11,6 @@ import sys
 from pathlib import Path
 
 import paramiko
-
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DIST_DIR = REPO_ROOT / "dist"
@@ -50,29 +50,21 @@ def git_current_ref() -> str:
 
 
 def check_clean_worktree() -> None:
-    result = subprocess.run(
-        ["git", "diff", "--quiet"], cwd=REPO_ROOT
-    )
+    result = subprocess.run(["git", "diff", "--quiet"], cwd=REPO_ROOT)
     if result.returncode != 0:
         abort("Working tree has unstaged changes. Commit or stash them first.")
-    result = subprocess.run(
-        ["git", "diff", "--cached", "--quiet"], cwd=REPO_ROOT
-    )
+    result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=REPO_ROOT)
     if result.returncode != 0:
         abort("Index has staged but uncommitted changes. Commit or stash them first.")
 
 
 def resolve_tag(tag: str) -> str:
     """Return the actual git tag name, trying both the given name and a 'v' prefix."""
-    result = subprocess.run(
-        ["git", "tag", "-l", tag], cwd=REPO_ROOT, capture_output=True, text=True
-    )
+    result = subprocess.run(["git", "tag", "-l", tag], cwd=REPO_ROOT, capture_output=True, text=True)
     if result.stdout.strip():
         return tag
     prefixed = f"v{tag}"
-    result = subprocess.run(
-        ["git", "tag", "-l", prefixed], cwd=REPO_ROOT, capture_output=True, text=True
-    )
+    result = subprocess.run(["git", "tag", "-l", prefixed], cwd=REPO_ROOT, capture_output=True, text=True)
     if result.stdout.strip():
         return prefixed
     raise RuntimeError(f"Tag '{tag}' not found (also tried '{prefixed}')")
@@ -127,10 +119,8 @@ def upload_dir(sftp: paramiko.SFTPClient, local_path: Path, remote_path: str) ->
     for item in sorted(local_path.iterdir()):
         remote_item = f"{remote_path}/{item.name}"
         if item.is_dir():
-            try:
+            with contextlib.suppress(OSError):  # directory may already exist
                 sftp.mkdir(remote_item)
-            except OSError:
-                pass  # directory may already exist
             upload_dir(sftp, item, remote_item)
         else:
             print(f"  Uploading {item.relative_to(DIST_DIR)} -> {remote_item}")
@@ -159,12 +149,15 @@ def deploy(username: str, hostname: str, password: str, dry_run: bool = False) -
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Deploy the neser web app to a remote server."
-    )
+    parser = argparse.ArgumentParser(description="Deploy the neser web app to a remote server.")
     parser.add_argument("username", help="SSH username for the remote host")
     parser.add_argument("hostname", help="Hostname or IP of the remote server")
-    parser.add_argument("tag", nargs="?", default=None, help="Git tag to checkout and deploy (omit to deploy current branch)")
+    parser.add_argument(
+        "tag",
+        nargs="?",
+        default=None,
+        help="Git tag to checkout and deploy (omit to deploy current branch)",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",

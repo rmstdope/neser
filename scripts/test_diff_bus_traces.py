@@ -4,7 +4,6 @@ import unittest
 
 from scripts.diff_bus_traces import Event, best_alignment, diff_traces, parse_lines
 
-
 NESER = [
     "[CPU] exec PC=00:8002 STA $7E1FF0        A=004E X=0000",
     "[CPU]       read  $008007 clk=254",

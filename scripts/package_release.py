@@ -28,9 +28,7 @@ def collect_shader_dependencies(repo_root: Path) -> set[Path]:
     dependencies: set[Path] = set()
     processing: set[Path] = set()
     for shader_path in shader_paths:
-        _collect_shader_file(
-            repo_root, repo_root / shader_path, dependencies, processing
-        )
+        _collect_shader_file(repo_root, repo_root / shader_path, dependencies, processing)
     return dependencies
 
 
@@ -47,15 +45,11 @@ def create_release_archive(config: ReleasePackageConfig) -> Path:
 
     if config.archive_format == "tar.gz":
         with tarfile.open(archive_path, "w:gz") as archive:
-            for source_path, archive_path_in_package in _package_files(
-                config, repo_root
-            ):
+            for source_path, archive_path_in_package in _package_files(config, repo_root):
                 _add_file_to_tar(archive, source_path, archive_path_in_package)
     else:
         with zipfile.ZipFile(archive_path, "w") as archive:
-            for source_path, archive_path_in_package in _package_files(
-                config, repo_root
-            ):
+            for source_path, archive_path_in_package in _package_files(config, repo_root):
                 archive.write(source_path, archive_path_in_package.as_posix())
 
     return archive_path
@@ -137,9 +131,7 @@ def _collect_preset_dependencies(
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         reference_match = _REFERENCE_RE.match(line)
         if reference_match:
-            _collect_relative_shader_file(
-                repo_root, path, reference_match.group(1), dependencies, processing
-            )
+            _collect_relative_shader_file(repo_root, path, reference_match.group(1), dependencies, processing)
             continue
 
         if path.suffix.lower() == ".slangp":
@@ -176,9 +168,7 @@ def _collect_include_dependencies(
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         include_match = _INCLUDE_RE.match(line)
         if include_match:
-            _collect_relative_shader_file(
-                repo_root, path, include_match.group(1), dependencies, processing
-            )
+            _collect_relative_shader_file(repo_root, path, include_match.group(1), dependencies, processing)
 
 
 def _collect_relative_shader_file(
@@ -210,20 +200,14 @@ def _collect_existing_lut(
 
 def _clean_path(path: str) -> str:
     path = path.strip()
-    if (path.startswith('"') and path.endswith('"')) or (
-        path.startswith("'") and path.endswith("'")
-    ):
+    if (path.startswith('"') and path.endswith('"')) or (path.startswith("'") and path.endswith("'")):
         return path[1:-1]
     return path
 
 
-def _package_files(
-    config: ReleasePackageConfig, repo_root: Path
-) -> list[tuple[Path, Path]]:
+def _package_files(config: ReleasePackageConfig, repo_root: Path) -> list[tuple[Path, Path]]:
     package_files = [(config.binary_path, Path("neser") / config.binary_name)]
-    package_files.extend(
-        _tree_files(repo_root / "assets/fonts", Path("neser/assets/fonts"))
-    )
+    package_files.extend(_tree_files(repo_root / "assets/fonts", Path("neser/assets/fonts")))
     for required_file in (
         "gamecontrollerdb.txt",
         "neser.conf.example",
@@ -236,9 +220,7 @@ def _package_files(
         package_files.append((repo_root / required_file, Path("neser") / required_file))
 
     for shader_dependency in sorted(collect_shader_dependencies(repo_root)):
-        package_files.append(
-            (repo_root / shader_dependency, Path("neser") / shader_dependency)
-        )
+        package_files.append((repo_root / shader_dependency, Path("neser") / shader_dependency))
 
     return package_files
 
@@ -248,15 +230,11 @@ def _tree_files(source_dir: Path, archive_dir: Path) -> list[tuple[Path, Path]]:
         raise FileNotFoundError(source_dir)
 
     return [
-        (path, archive_dir / path.relative_to(source_dir))
-        for path in sorted(source_dir.rglob("*"))
-        if path.is_file()
+        (path, archive_dir / path.relative_to(source_dir)) for path in sorted(source_dir.rglob("*")) if path.is_file()
     ]
 
 
-def _add_file_to_tar(
-    archive: tarfile.TarFile, source_path: Path, archive_path: Path
-) -> None:
+def _add_file_to_tar(archive: tarfile.TarFile, source_path: Path, archive_path: Path) -> None:
     archive.add(source_path, arcname=archive_path.as_posix(), recursive=False)
 
 

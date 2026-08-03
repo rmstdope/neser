@@ -6,9 +6,6 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-# Pylint can mis-infer exported symbols and keyword-only parameters across
-# module boundaries depending on interpreter/plugin configuration.
-# pylint: disable=no-name-in-module,unexpected-keyword-arg
 from scripts.sort_roms import (
     calculate_rom_crc32,
     parse_args,
@@ -30,7 +27,7 @@ def make_ines_rom(
     """Build a minimal iNES/NES 2.0 ROM image for tests."""
 
     header = bytearray(16)
-    header[0:4] = b"NES\x1A"
+    header[0:4] = b"NES\x1a"
     header[4] = prg_size // (16 * 1024)
     header[5] = chr_size // (8 * 1024)
 
@@ -264,7 +261,7 @@ class TestSortRoms(unittest.TestCase):
             valid_rom_path.write_bytes(make_ines_rom(mapper=3, submapper=None))
 
             invalid_rom_path = collection_root / "Broken.nes"
-            invalid_rom_path.write_bytes(b"NES\x1A")
+            invalid_rom_path.write_bytes(b"NES\x1a")
 
             rom_db_path = temp_dir / "rom_db.csv"
             rom_db_path.write_text("# header\n", encoding="utf-8")

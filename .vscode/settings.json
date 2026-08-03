@@ -1,10 +1,16 @@
 {
   "cSpell.enabled": false,
-  "python.testing.pytestArgs": [
-    // "scripts/scraper",
-    // "scripts/mappertool",
-    "scripts"
+  // Mirrors the discovery command in .github/workflows/ci.yml so the editor and
+  // the gate agree. pytest is deliberately not a dependency of this project.
+  "python.testing.unittestEnabled": true,
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestArgs": [
+    "-s",
+    "scripts",
+    "-t",
+    ".",
+    "-p",
+    "test_*.py"
   ],
-  "python.testing.pytestEnabled": true,
   "python.terminal.useEnvFile": true,
 }

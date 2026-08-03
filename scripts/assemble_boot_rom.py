@@ -11,9 +11,9 @@ rom[0x03:0x0C] = [0x21, 0x00, 0x80, 0xAF, 0x22, 0xCB, 0x6C, 0x28, 0xFB]
 
 # ── $000C: APU init WITHOUT trigger ──
 rom[0x0C:0x10] = [0x3E, 0x80, 0xE0, 0x26]  # LD A,$80; LDH [$FF26] → NR52
-rom[0x10:0x12] = [0xE0, 0x11]               # LDH [$FF11] → NR11=$80 (50% duty)
+rom[0x10:0x12] = [0xE0, 0x11]  # LDH [$FF11] → NR11=$80 (50% duty)
 rom[0x12:0x16] = [0x3E, 0xF3, 0xE0, 0x12]  # LD A,$F3; LDH [$FF12] → NR12
-rom[0x16:0x18] = [0xE0, 0x25]               # LDH [$FF25] → NR51=$F3
+rom[0x16:0x18] = [0xE0, 0x25]  # LDH [$FF25] → NR51=$F3
 rom[0x18:0x1C] = [0x3E, 0x77, 0xE0, 0x24]  # LD A,$77; LDH [$FF24] → NR50
 
 # ── $001C: BGP = $FC ──
@@ -23,29 +23,29 @@ rom[0x1C:0x20] = [0x3E, 0xFC, 0xE0, 0x47]
 rom[0x20:0x23] = [0x11, 0x04, 0x01]  # LD DE, $0104
 rom[0x23:0x26] = [0x21, 0x10, 0x80]  # LD HL, $8010
 # .logoLoop ($0026):
-rom[0x26:0x28] = [0x1A, 0x47]        # LD A,[DE]; LD B,A
+rom[0x26:0x28] = [0x1A, 0x47]  # LD A,[DE]; LD B,A
 rom[0x28:0x2B] = [0xCD, 0xA7, 0x00]  # CALL $00A7
 rom[0x2B:0x2E] = [0xCD, 0xA7, 0x00]  # CALL $00A7
-rom[0x2E] = 0x13                      # INC DE
+rom[0x2E] = 0x13  # INC DE
 rom[0x2F:0x32] = [0x7B, 0xEE, 0x34]  # LD A,E; XOR $34
-rom[0x32:0x34] = [0x20, 0xF2]        # JR NZ, .logoLoop (→$0026)
+rom[0x32:0x34] = [0x20, 0xF2]  # JR NZ, .logoLoop (→$0026)
 
 # ── $0034: Build BG tile map ──
-rom[0x34:0x36] = [0x3E, 0x19]        # LD A, $19
+rom[0x34:0x36] = [0x3E, 0x19]  # LD A, $19
 rom[0x36:0x39] = [0x21, 0x2F, 0x99]  # LD HL, $992F
-rom[0x39:0x3B] = [0x0E, 0x0C]        # LD C, 12
+rom[0x39:0x3B] = [0x0E, 0x0C]  # LD C, 12
 # .tmapLoop ($003B):
-rom[0x3B] = 0x3D                      # DEC A
-rom[0x3C:0x3E] = [0x28, 0x08]        # JR Z, .tmapDone (+8 → $0046)
-rom[0x3E] = 0x32                      # LD [HL-], A
-rom[0x3F] = 0x0D                      # DEC C
-rom[0x40:0x42] = [0x20, 0xF9]        # JR NZ, .tmapLoop (→$003B)
-rom[0x42:0x44] = [0x2E, 0x0F]        # LD L, $0F
-rom[0x44:0x46] = [0x18, 0xF5]        # JR .tmapLoop (→$003B)
+rom[0x3B] = 0x3D  # DEC A
+rom[0x3C:0x3E] = [0x28, 0x08]  # JR Z, .tmapDone (+8 → $0046)
+rom[0x3E] = 0x32  # LD [HL-], A
+rom[0x3F] = 0x0D  # DEC C
+rom[0x40:0x42] = [0x20, 0xF9]  # JR NZ, .tmapLoop (→$003B)
+rom[0x42:0x44] = [0x2E, 0x0F]  # LD L, $0F
+rom[0x44:0x46] = [0x18, 0xF5]  # JR .tmapLoop (→$003B)
 
 # ── $0046: Pre-LCD delay ──
 rom[0x46:0x49] = [0x21, 0xFE, 0x07]  # LD HL, $07FE (2046)
-rom[0x49:0x4B] = [0x00, 0x00]        # 2 × NOP
+rom[0x49:0x4B] = [0x00, 0x00]  # 2 × NOP
 # .preLoop ($004B):
 rom[0x4B:0x50] = [0x2B, 0x7C, 0xB5, 0x20, 0xFB]  # DEC HL; LD A,H; OR L; JR NZ
 
@@ -122,7 +122,7 @@ rom[0x83:0x85] = [0x18, offset & 0xFF]  # JR .noSound
 
 # .noSound ($0085):
 rom[0x85:0x87] = [0xF0, 0x42]  # LDH A, [$FF42] (read SCY)
-rom[0x87] = 0x90               # SUB B (SCY -= B)
+rom[0x87] = 0x90  # SUB B (SCY -= B)
 rom[0x88:0x8A] = [0xE0, 0x42]  # LDH [$FF42], A
 
 # ── $008A: Loop control ──
@@ -149,16 +149,16 @@ rom[0x92:0x94] = [0x18, offset & 0xFF]  # JR .loop
 rom[0xA7:0xA9] = [0x3E, 0x04]  # LD A, 4
 rom[0xA9:0xAB] = [0x0E, 0x00]  # LD C, 0
 rom[0xAB:0xAD] = [0xCB, 0x20]  # SLA B
-rom[0xAD] = 0xF5               # PUSH AF
+rom[0xAD] = 0xF5  # PUSH AF
 rom[0xAE:0xB0] = [0xCB, 0x11]  # RL C
-rom[0xB0] = 0xF1               # POP AF
+rom[0xB0] = 0xF1  # POP AF
 rom[0xB1:0xB3] = [0xCB, 0x11]  # RL C
-rom[0xB3] = 0x3D               # DEC A
+rom[0xB3] = 0x3D  # DEC A
 rom[0xB4:0xB6] = [0x20, 0xF5]  # JR NZ, .dblLoop (→$00AB)
-rom[0xB6] = 0x79               # LD A, C
+rom[0xB6] = 0x79  # LD A, C
 rom[0xB7:0xB9] = [0x22, 0x23]  # LD [HL+],A; INC HL
 rom[0xB9:0xBB] = [0x22, 0x23]  # LD [HL+],A; INC HL
-rom[0xBB] = 0xC9               # RET
+rom[0xBB] = 0xC9  # RET
 
 # ═══════════════════════════════════════════════════════════════
 # ── $00BC: Post-loop (.done) ──
@@ -170,12 +170,12 @@ rom[0xBC:0xC0] = [0x3E, 0xE1, 0xE0, 0x0F]  # LD A,$E1; LDH [$FF0F]
 # Fine-tune delay: placeholder LD HL,$0000 + loop
 # Will calibrate after measuring total M-cycles
 rom[0xC0:0xC3] = [0x21, 0x00, 0x00]  # LD HL, $0000 (placeholder)
-rom[0xC3:0xC5] = [0x00, 0x00]        # 2 × NOP
+rom[0xC3:0xC5] = [0x00, 0x00]  # 2 × NOP
 rom[0xC5:0xCA] = [0x2B, 0x7C, 0xB5, 0x20, 0xFB]  # DEC HL; LD A,H; OR L; JR NZ
 
 # Set post-boot register state
 rom[0xCA:0xCD] = [0x21, 0xB0, 0x01]  # LD HL, $01B0
-rom[0xCD:0xCF] = [0xE5, 0xF1]        # PUSH HL; POP AF → AF=$01B0
+rom[0xCD:0xCF] = [0xE5, 0xF1]  # PUSH HL; POP AF → AF=$01B0
 rom[0xCF:0xD2] = [0x21, 0x4D, 0x01]  # LD HL, $014D
 rom[0xD2:0xD5] = [0x01, 0x13, 0x00]  # LD BC, $0013
 rom[0xD5:0xD8] = [0x11, 0xD8, 0x00]  # LD DE, $00D8
@@ -190,19 +190,20 @@ rom[0xFE:0x100] = [0xE0, 0x50]  # LDH [$FF50], A
 
 print("ROM assembled successfully!")
 print(f"Total non-zero bytes: {sum(1 for b in rom if b != 0)}")
-print(f"Scroll section: $005C-$0093 ({0x94-0x5C} bytes)")
-print(f"Post-loop: $00BC-$00DA ({0xDB-0xBC} bytes)")
+print(f"Scroll section: $005C-$0093 ({0x94 - 0x5C} bytes)")
+print(f"Post-loop: $00BC-$00DA ({0xDB - 0xBC} bytes)")
 print()
+
 
 # Verify jump offsets
 def check_jr(addr, target, name):
-    opcode = rom[addr]
     offset_byte = rom[addr + 1]
     signed_offset = offset_byte if offset_byte < 128 else offset_byte - 256
     actual_target = addr + 2 + signed_offset
     ok = "OK" if actual_target == target else f"FAIL (goes to ${actual_target:04X})"
     print(f"  JR at ${addr:04X} → ${target:04X}: offset={signed_offset:+d} (${offset_byte:02X}) {ok}")
     assert actual_target == target, f"{name}: expected ${target:04X}, got ${actual_target:04X}"
+
 
 print("Jump offset verification:")
 check_jr(0x32, 0x26, "logoLoop")
@@ -228,15 +229,15 @@ assert rom[0x10] == 0xE0 and rom[0x11] == 0x11, "NR11 write"
 print("  ✓ NR11 duty cycle write present")
 
 apu_init = rom[0x0C:0x1C]
-assert not any(apu_init[i] == 0xE0 and apu_init[i+1] == 0x14 for i in range(len(apu_init)-1))
-assert not any(apu_init[i] == 0xE0 and apu_init[i+1] == 0x13 for i in range(len(apu_init)-1))
+assert not any(apu_init[i] == 0xE0 and apu_init[i + 1] == 0x14 for i in range(len(apu_init) - 1))
+assert not any(apu_init[i] == 0xE0 and apu_init[i + 1] == 0x13 for i in range(len(apu_init) - 1))
 print("  ✓ No NR13/NR14 trigger in APU init")
 
 assert rom[0x54:0x58] == [0x3E, 0x64, 0xE0, 0x42]
 print("  ✓ SCY starts at $64 (100)")
 
 scroll = rom[0x5A:0xFE]
-assert any(scroll[i] == 0xF0 and scroll[i+1] == 0x44 for i in range(len(scroll)-1))
+assert any(scroll[i] == 0xF0 and scroll[i + 1] == 0x44 for i in range(len(scroll) - 1))
 print("  ✓ LY polling (F0 44) present")
 
 assert 0x83 in scroll and 0xC1 in scroll
@@ -245,7 +246,7 @@ print("  ✓ Two note frequencies ($83, $C1) present")
 assert 0x62 in scroll and 0x64 in scroll
 print("  ✓ Trigger thresholds ($62, $64) present")
 
-assert any(scroll[i] == 0x16 and scroll[i+1] == 0x20 for i in range(len(scroll)-1))
+assert any(scroll[i] == 0x16 and scroll[i + 1] == 0x20 for i in range(len(scroll) - 1))
 print("  ✓ Hold phase LD D,$20 (32 iterations) present")
 
 print()
@@ -255,7 +256,7 @@ print()
 # Output as Rust array format
 print("Rust array bytes:")
 for i in range(0, 256, 16):
-    chunk = rom[i:i+16]
-    hex_vals = ', '.join(f'0x{b:02X}' for b in chunk)
+    chunk = rom[i : i + 16]
+    hex_vals = ", ".join(f"0x{b:02X}" for b in chunk)
     addr_end = min(i + 15, 255)
-    print(f'    {hex_vals}, // ${i:04X}–${addr_end:04X}')
+    print(f"    {hex_vals}, // ${i:04X}–${addr_end:04X}")

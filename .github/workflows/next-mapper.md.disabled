@@ -137,7 +137,7 @@ It is VERY IMPORTANT that you run and pass all of the following:
 - `cargo fmt`
 - `cargo nextest --all-features --libs`
 - `wasm-pack test --headless --chrome --no-default-features --features wasm`
-- `source .venv/bin/activate && python -m unittest discover -s scripts/scraper -p "test_*.py"`
+- `source .venv/bin/activate && python -m unittest discover -s scripts -t . -p "test_*.py"`
 - `cd web && npm test`
 
 THIS VALIDATION IS MANDATORY. Do not skip or ignore any of these steps. If you encounter issues, debug and fix them until all pass before proceeding to PR creation.

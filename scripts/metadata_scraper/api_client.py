@@ -1,17 +1,35 @@
 """HTTP client for TheGamesDB REST API v1."""
+
 import time
 from urllib.parse import urlencode
 
 import requests
 from tqdm import tqdm
 
+from scripts.metadata_scraper import JsonDict
+
 _BASE_URL = "https://api.thegamesdb.net"
 
-_ALL_FIELDS = ",".join([
-    "players", "publishers", "genres", "overview", "last_updated",
-    "rating", "platform", "coop", "youtube", "os", "processor",
-    "ram", "hdd", "video", "sound", "alternates",
-])
+_ALL_FIELDS = ",".join(
+    [
+        "players",
+        "publishers",
+        "genres",
+        "overview",
+        "last_updated",
+        "rating",
+        "platform",
+        "coop",
+        "youtube",
+        "os",
+        "processor",
+        "ram",
+        "hdd",
+        "video",
+        "sound",
+        "alternates",
+    ]
+)
 
 
 class ApiError(Exception):
@@ -21,7 +39,7 @@ class ApiError(Exception):
     was not an HTTP error status (e.g. an invalid JSON body).
     """
 
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(self, message: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
 
@@ -29,8 +47,7 @@ class ApiError(Exception):
 class TheGamesDbClient:
     """Thin, rate-limited client for TheGamesDB REST API."""
 
-    def __init__(self, api_key: str, request_delay: float = 0.2, batch_size: int = 100,
-                 verbose: bool = False):
+    def __init__(self, api_key: str, request_delay: float = 0.2, batch_size: int = 100, verbose: bool = False) -> None:
         if not api_key:
             raise ValueError("api_key must not be empty")
         self._api_key = api_key
@@ -41,7 +58,7 @@ class TheGamesDbClient:
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
-    def _get(self, path: str, params: dict) -> dict:
+    def _get(self, path: str, params: JsonDict) -> JsonDict:
         if self._last_request_time:
             time.sleep(self._request_delay)
 
@@ -52,18 +69,18 @@ class TheGamesDbClient:
         self._last_request_time = time.time()
 
         if resp.status_code != 200:
-            raise ApiError(f"API error {resp.status_code}: {path}",
-                           status_code=resp.status_code)
+            raise ApiError(f"API error {resp.status_code}: {path}", status_code=resp.status_code)
         try:
-            return resp.json()
+            payload: JsonDict = resp.json()
+            return payload
         except Exception as exc:
             raise ApiError(f"Invalid JSON from {path}: {exc}") from exc
 
-    def _paginate(self, path: str, params: dict) -> dict:
+    def _paginate(self, path: str, params: JsonDict) -> JsonDict:
         """Fetch all pages and merge the games lists."""
-        all_games: list[dict] = []
-        base_url: dict = {}
-        boxart: dict = {}
+        all_games: list[JsonDict] = []
+        base_url: JsonDict = {}
+        boxart: JsonDict = {}
         page = 1
         pbar = tqdm(
             desc="  Fetching pages",
@@ -97,11 +114,11 @@ class TheGamesDbClient:
         return {"games": all_games, "base_url": base_url, "boxart": boxart}
 
     def _batch_ids(self, ids: list[int]) -> list[list[int]]:
-        return [ids[i: i + self._batch_size] for i in range(0, len(ids), self._batch_size)]
+        return [ids[i : i + self._batch_size] for i in range(0, len(ids), self._batch_size)]
 
     # ── public API ────────────────────────────────────────────────────────────
 
-    def get_games_by_platform(self, platform_id: int) -> dict:
+    def get_games_by_platform(self, platform_id: int) -> JsonDict:
         """Fetch all games for a platform (all pages), with all fields and boxart."""
         params = {
             "id": platform_id,
@@ -110,9 +127,9 @@ class TheGamesDbClient:
         }
         return self._paginate("/v1/Games/ByPlatformID", params)
 
-    def get_games_by_id(self, game_ids: list[int]) -> dict:
+    def get_games_by_id(self, game_ids: list[int]) -> JsonDict:
         """Fetch game(s) by id; batches automatically."""
-        all_games: list = []
+        all_games: list[JsonDict] = []
         for batch in self._batch_ids(game_ids):
             params = {
                 "id": ",".join(str(i) for i in batch),
@@ -126,10 +143,10 @@ class TheGamesDbClient:
                 all_games.extend(games)
         return {"games": all_games}
 
-    def get_games_images(self, game_ids: list[int]) -> dict:
+    def get_games_images(self, game_ids: list[int]) -> JsonDict:
         """Fetch all image types for the given game ids; batches and paginates automatically."""
-        all_images: dict = {}
-        combined_base_url: dict = {}
+        all_images: dict[str, list[JsonDict]] = {}
+        combined_base_url: JsonDict = {}
         for batch in self._batch_ids(game_ids):
             page = 1
             while True:
@@ -146,32 +163,38 @@ class TheGamesDbClient:
                 page += 1
         return {"images": all_images, "base_url": combined_base_url}
 
-    def get_games_updates(self, last_edit_id: int) -> dict:
+    def get_games_updates(self, last_edit_id: int) -> JsonDict:
         """Fetch game update log since last_edit_id."""
         data = self._get("/v1/Games/Updates", {"last_edit_id": last_edit_id})
-        return data.get("data", {})
+        updates: JsonDict = data.get("data", {})
+        return updates
 
-    def get_genres(self) -> dict:
+    def get_genres(self) -> JsonDict:
         data = self._get("/v1/Genres", {})
-        return data.get("data", {}).get("genres", {})
+        result: JsonDict = data.get("data", {}).get("genres", {})
+        return result
 
-    def get_developers(self) -> dict:
+    def get_developers(self) -> JsonDict:
         data = self._get("/v1/Developers", {})
-        return data.get("data", {}).get("developers", {})
+        result: JsonDict = data.get("data", {}).get("developers", {})
+        return result
 
-    def get_publishers(self) -> dict:
+    def get_publishers(self) -> JsonDict:
         data = self._get("/v1/Publishers", {})
-        return data.get("data", {}).get("publishers", {})
+        result: JsonDict = data.get("data", {}).get("publishers", {})
+        return result
 
-    def get_regions(self) -> dict:
+    def get_regions(self) -> JsonDict:
         data = self._get("/v1/Regions", {})
-        return data.get("data", {}).get("regions", {})
+        result: JsonDict = data.get("data", {}).get("regions", {})
+        return result
 
-    def get_countries(self) -> dict:
+    def get_countries(self) -> JsonDict:
         data = self._get("/v1/Countries", {})
-        return data.get("data", {}).get("countries", {})
+        result: JsonDict = data.get("data", {}).get("countries", {})
+        return result
 
-    def get_api_limit(self) -> dict:
+    def get_api_limit(self) -> JsonDict:
         # Unlike every other endpoint, /v1/API/Limit has no "data" wrapper:
         # remaining_monthly_allowance, extra_allowance and
         # allowance_refresh_timer sit at the top level of the response.

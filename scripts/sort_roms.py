@@ -12,14 +12,13 @@ import shutil
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 __all__ = [
     "calculate_rom_crc32",
+    "main",
+    "parse_args",
     "parse_ines_header",
     "sort_collection",
-    "parse_args",
-    "main",
 ]
 
 ROM_DB_COLUMN_COUNT = 22
@@ -52,7 +51,7 @@ def parse_ines_header(rom_data: bytes) -> HeaderInfo:
         raise ValueError("File too small for iNES header")
 
     header = rom_data[:16]
-    if header[0:4] != b"NES\x1A":
+    if header[0:4] != b"NES\x1a":
         raise ValueError("Invalid iNES header magic")
 
     flags6 = header[6]
@@ -173,11 +172,7 @@ def _resolve_mapper_and_submapper(
 def _iter_nes_files(collection_root: Path) -> list[Path]:
     """Return all `.nes` files under collection root recursively."""
 
-    return sorted(
-        path
-        for path in collection_root.rglob("*")
-        if path.is_file() and path.suffix.lower() == ".nes"
-    )
+    return sorted(path for path in collection_root.rglob("*") if path.is_file() and path.suffix.lower() == ".nes")
 
 
 def _collect_existing_destination_entries(
@@ -266,7 +261,7 @@ def sort_collection(
     return copied
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for source/destination paths and dry-run mode."""
 
     parser = argparse.ArgumentParser(description="Sort NES ROMs by mapper/submapper")
@@ -302,7 +297,7 @@ def _resolve_path(path: Path, repo_root: Path) -> Path:
     return path if path.is_absolute() else repo_root / path
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     """Run the ROM sorting command-line workflow."""
 
     args = parse_args(argv)

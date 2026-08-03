@@ -19,9 +19,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("python scripts/verify_release_package.py", workflow)
         self.assertIn("--smoke-command", workflow)
         self.assertIn("--version", workflow)
-        self.assertIn(
-            "neser-${{ matrix.target }}.${{ matrix.archive_format }}", workflow
-        )
+        self.assertIn("neser-${{ matrix.target }}.${{ matrix.archive_format }}", workflow)
         self.assertNotIn("archive_extension", workflow)
         self.assertIn("*.tar.gz", workflow)
         self.assertIn("*.zip", workflow)
@@ -35,8 +33,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         workflow = workflow_path.read_text(encoding="utf-8")
 
         self.assertIn(
-            "- os: macos-15-intel\n"
-            "            target: x86_64-apple-darwin",
+            "- os: macos-15-intel\n            target: x86_64-apple-darwin",
             workflow,
         )
         self.assertNotIn("os: macos-13", workflow)

@@ -25,7 +25,7 @@ impl Platform {
     }
 
     /// TheGamesDB platform ID for metadata matching.
-    /// Must stay in sync with PLATFORMS in scripts/metadata-scraper/main.py.
+    /// Must stay in sync with PLATFORMS in scripts/metadata_scraper/main.py.
     pub fn thegamesdb_id(self) -> i64 {
         match self {
             Platform::Nes => 7,
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn test_platform_thegamesdb_ids_match_scraper_registry() {
-        // Must match PLATFORMS in scripts/metadata-scraper/main.py.
+        // Must match PLATFORMS in scripts/metadata_scraper/main.py.
         assert_eq!(Platform::Nes.thegamesdb_id(), 7);
         assert_eq!(Platform::Gb.thegamesdb_id(), 4);
         assert_eq!(Platform::Gbc.thegamesdb_id(), 41);

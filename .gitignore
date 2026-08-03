@@ -65,6 +65,8 @@ __pycache__/
 *.pyc
 .venv/
 .html_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Playwright
 playwright-report/
@@ -92,4 +94,4 @@ test.state
 .env
 
 # TheGamesDB metadata cache
-scripts/metadata-scraper/thegamesdb_cache.sqlite
+scripts/metadata_scraper/thegamesdb_cache.sqlite

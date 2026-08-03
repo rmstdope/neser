@@ -105,9 +105,7 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
             errors.append(f"asset '{asset_id}': platform must be 'snes'")
 
         if asset.get("oracle_type") not in ALLOWED_ORACLE_TYPES:
-            errors.append(
-                f"asset '{asset_id}': oracle_type must be one of {sorted(ALLOWED_ORACLE_TYPES)}"
-            )
+            errors.append(f"asset '{asset_id}': oracle_type must be one of {sorted(ALLOWED_ORACLE_TYPES)}")
 
         _validate_source(asset, errors, asset_id)
 
@@ -140,9 +138,7 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
 
             variant_id = variant.get("id", f"variants[{variant_index}]")
             if not _is_non_empty_string(variant.get("id")):
-                errors.append(
-                    f"asset '{asset_id}': variants[{variant_index}].id must be a non-empty string"
-                )
+                errors.append(f"asset '{asset_id}': variants[{variant_index}].id must be a non-empty string")
                 continue
             if variant_id in seen_variant_ids:
                 errors.append(f"asset '{asset_id}': duplicate variant id '{variant_id}'")
@@ -154,9 +150,7 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
                     f"asset '{asset_id}' variant '{variant_id}': status must be one of {sorted(ALLOWED_STATUS)}"
                 )
 
-            path_obj = _validate_variant_path(
-                variant.get("path"), repo_root, errors, asset_id, variant_id
-            )
+            path_obj = _validate_variant_path(variant.get("path"), repo_root, errors, asset_id, variant_id)
 
             if not _is_non_empty_string(variant.get("notes")):
                 errors.append(f"asset '{asset_id}' variant '{variant_id}': notes must be non-empty")
@@ -171,7 +165,8 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
                 variant_dir = repo_root / path_obj
                 if not variant_dir.exists() or not variant_dir.is_dir():
                     errors.append(
-                        f"asset '{asset_id}' variant '{variant_id}': committed_ci path does not exist: {variant['path']}"
+                        f"asset '{asset_id}' variant '{variant_id}': "
+                        f"committed_ci path does not exist: {variant['path']}"
                     )
 
     for source_url, refs_by_asset in sorted(processor_tests_refs_by_source.items()):
@@ -179,9 +174,7 @@ def validate_manifest(manifest: dict[str, Any], repo_root: Path = REPO_ROOT) -> 
         if len(unique_refs) <= 1:
             continue
 
-        details = ", ".join(
-            f"{asset_id}={asset_ref}" for asset_id, asset_ref in sorted(refs_by_asset.items())
-        )
+        details = ", ".join(f"{asset_id}={asset_ref}" for asset_id, asset_ref in sorted(refs_by_asset.items()))
         errors.append(
             "processor_tests assets sharing source.url must use the same source.ref: "
             f"url={source_url}; assets={details}"

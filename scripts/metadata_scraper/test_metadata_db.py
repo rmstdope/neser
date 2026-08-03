@@ -1,10 +1,9 @@
 """Tests for MetadataDb — runs entirely in-memory, no network."""
-import os
-import sys
+
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from metadata_db import MetadataDb
+from scripts.metadata_scraper.metadata_db import MetadataDb
+
 
 class TestMetadataDbSchema(unittest.TestCase):
     def setUp(self):
@@ -14,9 +13,7 @@ class TestMetadataDbSchema(unittest.TestCase):
         self.db.close()
 
     def _table_names(self):
-        cur = self.db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        )
+        cur = self.db._conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         return {row[0] for row in cur.fetchall()}
 
     def test_all_expected_tables_are_created(self):
@@ -244,24 +241,28 @@ class TestMetadataDbImages(unittest.TestCase):
         self.db.close()
 
     def test_upsert_image_stores_filename_and_type(self):
-        self.db.upsert_image({
-            "id": 718,
-            "game_id": 135,
-            "type": "boxart",
-            "side": "back",
-            "filename": "boxart/back/135-2.jpg",
-            "resolution": "1000x1435",
-        })
+        self.db.upsert_image(
+            {
+                "id": 718,
+                "game_id": 135,
+                "type": "boxart",
+                "side": "back",
+                "filename": "boxart/back/135-2.jpg",
+                "resolution": "1000x1435",
+            }
+        )
         images = self.db.get_game_images(135)
         self.assertEqual(len(images), 1)
         self.assertEqual(images[0]["filename"], "boxart/back/135-2.jpg")
         self.assertEqual(images[0]["type"], "boxart")
 
     def test_upsert_image_updates_existing_by_id(self):
-        self.db.upsert_image({"id": 718, "game_id": 135, "type": "boxart", "side": "back",
-                               "filename": "old.jpg", "resolution": None})
-        self.db.upsert_image({"id": 718, "game_id": 135, "type": "boxart", "side": "back",
-                               "filename": "new.jpg", "resolution": None})
+        self.db.upsert_image(
+            {"id": 718, "game_id": 135, "type": "boxart", "side": "back", "filename": "old.jpg", "resolution": None}
+        )
+        self.db.upsert_image(
+            {"id": 718, "game_id": 135, "type": "boxart", "side": "back", "filename": "new.jpg", "resolution": None}
+        )
         images = self.db.get_game_images(135)
         self.assertEqual(len(images), 1)
         self.assertEqual(images[0]["filename"], "new.jpg")
@@ -277,20 +278,34 @@ class TestMetadataDbImages(unittest.TestCase):
     def test_get_game_image_counts_by_type_groups_by_type(self):
         self.db.upsert_game({"id": 135, "game_title": "Castlevania", "platform": 7})
         for img_id, img_type in [
-            (1, "boxart"), (2, "boxart"), (3, "screenshot"),
-            (4, "screenshot"), (5, "screenshot"), (6, "fanart"),
+            (1, "boxart"),
+            (2, "boxart"),
+            (3, "screenshot"),
+            (4, "screenshot"),
+            (5, "screenshot"),
+            (6, "fanart"),
         ]:
-            self.db.upsert_image({"id": img_id, "game_id": 135, "type": img_type,
-                                   "side": None, "filename": f"{img_id}.jpg", "resolution": None})
+            self.db.upsert_image(
+                {
+                    "id": img_id,
+                    "game_id": 135,
+                    "type": img_type,
+                    "side": None,
+                    "filename": f"{img_id}.jpg",
+                    "resolution": None,
+                }
+            )
         counts = self.db.get_game_image_counts_by_type(135)
         self.assertEqual(counts, {"boxart": 2, "screenshot": 3, "fanart": 1})
 
     def test_get_game_image_counts_by_type_handles_null_type(self):
         self.db.upsert_game({"id": 135, "game_title": "Castlevania", "platform": 7})
-        self.db.upsert_image({"id": 1, "game_id": 135, "type": None,
-                               "side": None, "filename": "1.jpg", "resolution": None})
-        self.db.upsert_image({"id": 2, "game_id": 135, "type": "boxart",
-                               "side": None, "filename": "2.jpg", "resolution": None})
+        self.db.upsert_image(
+            {"id": 1, "game_id": 135, "type": None, "side": None, "filename": "1.jpg", "resolution": None}
+        )
+        self.db.upsert_image(
+            {"id": 2, "game_id": 135, "type": "boxart", "side": None, "filename": "2.jpg", "resolution": None}
+        )
         counts = self.db.get_game_image_counts_by_type(135)
         self.assertEqual(counts.get("boxart"), 1)
         self.assertEqual(counts.get(None), 1)
@@ -310,17 +325,35 @@ class TestMetadataDbImages(unittest.TestCase):
             self.assertEqual(stored[size], url)
 
     def test_build_image_url_combines_base_and_filename(self):
-        self.db.upsert_image_base_urls({
-            "original": "https://cdn.thegamesdb.net/images/original/",
-        })
-        self.db.upsert_image({"id": 718, "game_id": 135, "type": "boxart", "side": "back",
-                               "filename": "boxart/back/135-2.jpg", "resolution": None})
+        self.db.upsert_image_base_urls(
+            {
+                "original": "https://cdn.thegamesdb.net/images/original/",
+            }
+        )
+        self.db.upsert_image(
+            {
+                "id": 718,
+                "game_id": 135,
+                "type": "boxart",
+                "side": "back",
+                "filename": "boxart/back/135-2.jpg",
+                "resolution": None,
+            }
+        )
         url = self.db.build_image_url(718, "original")
         self.assertEqual(url, "https://cdn.thegamesdb.net/images/original/boxart/back/135-2.jpg")
 
     def test_build_image_url_raises_for_unknown_size(self):
-        self.db.upsert_image({"id": 718, "game_id": 135, "type": "boxart", "side": "back",
-                               "filename": "boxart/back/135-2.jpg", "resolution": None})
+        self.db.upsert_image(
+            {
+                "id": 718,
+                "game_id": 135,
+                "type": "boxart",
+                "side": "back",
+                "filename": "boxart/back/135-2.jpg",
+                "resolution": None,
+            }
+        )
         with self.assertRaises(KeyError):
             self.db.build_image_url(718, "nonexistent_size")
 
@@ -356,10 +389,22 @@ class TestMetadataDbSyncLog(unittest.TestCase):
     def test_get_game_count_per_platform(self):
         self.db.upsert_platform({"id": 4, "name": "GB", "alias": "gb"})
         game_nes = {
-            "id": 135, "game_title": "Castlevania", "release_date": "", "platform": 7,
-            "region_id": 0, "country_id": 0, "players": 1, "overview": "",
-            "last_updated": "", "rating": "", "coop": "", "youtube": "",
-            "alternates": None, "developers": [], "genres": [], "publishers": [],
+            "id": 135,
+            "game_title": "Castlevania",
+            "release_date": "",
+            "platform": 7,
+            "region_id": 0,
+            "country_id": 0,
+            "players": 1,
+            "overview": "",
+            "last_updated": "",
+            "rating": "",
+            "coop": "",
+            "youtube": "",
+            "alternates": None,
+            "developers": [],
+            "genres": [],
+            "publishers": [],
         }
         self.db.upsert_game(game_nes)
         counts = self.db.get_game_counts()
@@ -375,9 +420,19 @@ class TestMetadataDbSearchGames(unittest.TestCase):
         self.db.upsert_platform({"id": 7, "name": "NES", "alias": "nes"})
         self.db.upsert_platform({"id": 4, "name": "GB", "alias": "gb"})
         self._base = {
-            "release_date": "", "region_id": 0, "country_id": 0, "players": 1,
-            "overview": "", "last_updated": "", "rating": "", "coop": "",
-            "youtube": "", "alternates": None, "developers": [], "genres": [], "publishers": [],
+            "release_date": "",
+            "region_id": 0,
+            "country_id": 0,
+            "players": 1,
+            "overview": "",
+            "last_updated": "",
+            "rating": "",
+            "coop": "",
+            "youtube": "",
+            "alternates": None,
+            "developers": [],
+            "genres": [],
+            "publishers": [],
         }
 
     def tearDown(self):

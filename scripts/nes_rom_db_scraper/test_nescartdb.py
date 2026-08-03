@@ -2,12 +2,8 @@
 
 import unittest
 
-try:
-    from .nescartdb import NesCartDb, BeautifulSoup
-    from .rom_database import RomDbKey, HardwareType
-except ImportError:  # pragma: no cover - allow running as a script
-    from nescartdb import NesCartDb, BeautifulSoup
-    from rom_database import RomDbKey, HardwareType
+from scripts.nes_rom_db_scraper.nescartdb import BeautifulSoup, NesCartDb
+from scripts.nes_rom_db_scraper.rom_database import HardwareType, RomDbKey
 
 
 @unittest.skipIf(BeautifulSoup is None, "BeautifulSoup4 is required for nescartdb tests")
@@ -731,18 +727,14 @@ class TestNesCartDb(unittest.TestCase):
 
     def test_build_result_pal_region_sets_nes_pal_hardware(self) -> None:
         """A PAL entry (Region = 'PAL (Europe)') must set hardware to NES_PAL, not NES_NTSC."""
-        pal_html = self._static_html().replace(
-            "USA (NTSC)", "PAL (Europe)"
-        )
+        pal_html = self._static_html().replace("USA (NTSC)", "PAL (Europe)")
         scraper = NesCartDb(1)
         result = scraper._build_result(1, pal_html)
         self.assertEqual(result[RomDbKey.HARDWARE.value], HardwareType.NES_PAL)
 
     def test_build_result_japan_ntsc_sets_famicom_hardware(self) -> None:
         """A Japan (NTSC) entry must set hardware to FAMICOM, not NES_NTSC."""
-        japan_html = self._static_html().replace(
-            "USA (NTSC)", "Japan (NTSC)"
-        )
+        japan_html = self._static_html().replace("USA (NTSC)", "Japan (NTSC)")
         scraper = NesCartDb(1)
         result = scraper._build_result(1, japan_html)
         self.assertEqual(result[RomDbKey.HARDWARE.value], HardwareType.FAMICOM)

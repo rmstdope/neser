@@ -2,18 +2,14 @@
 
 import asyncio
 import inspect
-from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from rich.text import Text
-from textual.widgets import Button
-from textual.widgets import DataTable
-from textual.widgets import Checkbox
-from textual.widgets import Input
-from textual.widgets import TextArea
+from textual.widgets import Button, Checkbox, DataTable, Input, TextArea
 
 from .constants import REPO_ROOT
 from .mapper_tool_app import MapperToolApp
@@ -76,9 +72,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
             async with app.run_test() as pilot:
                 await pilot.pause()
                 self.assertEqual(app.query_one("#rom-pane").border_title, app.ROM_PANE_TITLE)
-                self.assertEqual(
-                    app.query_one("#config-editor").border_title, app.CONFIG_PANE_TITLE
-                )
+                self.assertEqual(app.query_one("#config-editor").border_title, app.CONFIG_PANE_TITLE)
                 self.assertEqual(app.query_one("#logs-pane").border_title, app.LOGS_PANE_TITLE)
                 self.assertEqual(app.CONFIG_PANE_TITLE, "Actions")
 
@@ -519,9 +513,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     await pilot.pause()
                     table = app.query_one("#rom-database", DataTable)
 
-                    app.on_data_table_row_highlighted(
-                        SimpleNamespace(data_table=table, cursor_row=0)
-                    )
+                    app.on_data_table_row_highlighted(SimpleNamespace(data_table=table, cursor_row=0))
 
                     self.assertEqual(table.tooltip, "nested/sample.nes")
 
@@ -552,9 +544,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     table = app.query_one("#rom-database", DataTable)
                     app.call_after_refresh = Mock()  # type: ignore[method-assign]
 
-                    app.on_data_table_row_highlighted(
-                        SimpleNamespace(data_table=table, cursor_row=0)
-                    )
+                    app.on_data_table_row_highlighted(SimpleNamespace(data_table=table, cursor_row=0))
 
                     app.call_after_refresh.assert_called_once_with(
                         table._scroll_cursor_into_view,
@@ -590,9 +580,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     initial_display = str(table.get_row_at(0)[2])
                     self.assertEqual(initial_display, "abcdefghijklmnopqrstuvwxyz1...")
 
-                    app.on_data_table_row_highlighted(
-                        SimpleNamespace(data_table=table, cursor_row=0)
-                    )
+                    app.on_data_table_row_highlighted(SimpleNamespace(data_table=table, cursor_row=0))
                     app._rom_name_scroll_active = True
                     app._advance_highlighted_rom_name_scroll()
 
@@ -627,9 +615,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 async with app.run_test() as pilot:
                     await pilot.pause()
                     table = app.query_one("#rom-database", DataTable)
-                    app.on_data_table_row_selected(
-                        SimpleNamespace(data_table=table, cursor_row=0)
-                    )
+                    app.on_data_table_row_selected(SimpleNamespace(data_table=table, cursor_row=0))
                     self.assertTrue(pushed)
                     dialog = pushed[-1]
                     self.assertEqual(type(dialog).__name__, "RomCommandModal")
@@ -667,9 +653,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 async with app.run_test() as pilot:
                     await pilot.pause()
                     table = app.query_one("#rom-database", DataTable)
-                    app.on_data_table_row_selected(
-                        SimpleNamespace(data_table=table, cursor_row=0)
-                    )
+                    app.on_data_table_row_selected(SimpleNamespace(data_table=table, cursor_row=0))
                     self.assertTrue(pushed)
                     dialog = pushed[-1]
                     self.assertEqual(type(dialog).__name__, "RomCommandModal")
@@ -712,9 +696,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     await pilot.pause()
                     app._set_record_autorun_status("sample.nes", "passed")
                     table = app.query_one("#rom-database", DataTable)
-                    app.on_data_table_row_selected(
-                        SimpleNamespace(data_table=table, cursor_row=0)
-                    )
+                    app.on_data_table_row_selected(SimpleNamespace(data_table=table, cursor_row=0))
                     dialog = pushed[-1]
                     self.assertEqual(
                         dialog.autorun_summary,
@@ -876,11 +858,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     await pilot.pause()
 
                     dialog = app.screen.query_one("#rom-command-dialog")
-                    button_ids = [
-                        child.id
-                        for child in dialog.children
-                        if isinstance(child, Button)
-                    ]
+                    button_ids = [child.id for child in dialog.children if isinstance(child, Button)]
                     recalculate_index = button_ids.index("rom-command-recalculate-crcs")
                     delete_index = button_ids.index("rom-command-delete")
                     self.assertEqual(recalculate_index + 1, delete_index)
@@ -914,11 +892,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     await pilot.pause()
 
                     dialog = app.screen.query_one("#rom-command-dialog")
-                    button_ids = [
-                        child.id
-                        for child in dialog.children
-                        if isinstance(child, Button)
-                    ]
+                    button_ids = [child.id for child in dialog.children if isinstance(child, Button)]
                     run_index = button_ids.index("rom-command-run-rom")
                     create_index = button_ids.index("rom-command-create")
                     cancel_index = button_ids.index("rom-command-cancel")
@@ -958,11 +932,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     await pilot.pause()
 
                     dialog = app.screen.query_one("#rom-command-dialog")
-                    button_ids = [
-                        child.id
-                        for child in dialog.children
-                        if isinstance(child, Button)
-                    ]
+                    button_ids = [child.id for child in dialog.children if isinstance(child, Button)]
                     self.assertEqual(button_ids[0], "rom-command-run-rom")
                     self.assertEqual(button_ids[1], "rom-command-playback-headless")
 
@@ -1150,9 +1120,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     app.on_input_changed(SimpleNamespace(input=mapper_filter, value="24,25"))
                     name_filter.value = "mario"
                     app.on_input_changed(SimpleNamespace(input=name_filter, value="mario"))
-                    app.on_checkbox_changed(
-                        SimpleNamespace(checkbox=autorun_filter, value=True)
-                    )
+                    app.on_checkbox_changed(SimpleNamespace(checkbox=autorun_filter, value=True))
 
                 app_restarted = MapperToolApp(
                     rom_db_csv_path=rom_db_path,
@@ -1174,9 +1142,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                         app_restarted.query_one("#name-filter-input", Input).value,
                         "mario",
                     )
-                    self.assertTrue(
-                        app_restarted.query_one("#autorun-only-filter", Checkbox).value
-                    )
+                    self.assertTrue(app_restarted.query_one("#autorun-only-filter", Checkbox).value)
 
             asyncio.run(run_assertions())
 
@@ -1239,9 +1205,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 async with app.run_test() as pilot:
                     await pilot.pause()
                     rom_root_input = app.query_one("#rom-root-input", Input)
-                    app.on_input_changed(
-                        SimpleNamespace(input=rom_root_input, value=str(app.rom_root))
-                    )
+                    app.on_input_changed(SimpleNamespace(input=rom_root_input, value=str(app.rom_root)))
                     app._save_settings.assert_not_called()
 
             asyncio.run(run_assertions())
@@ -1275,9 +1239,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
 
                     app.on_input_changed(SimpleNamespace(input=mapper_filter, value="24"))
                     app.on_input_changed(SimpleNamespace(input=name_filter, value="demo"))
-                    app.on_checkbox_changed(
-                        SimpleNamespace(checkbox=autorun_filter, value=True)
-                    )
+                    app.on_checkbox_changed(SimpleNamespace(checkbox=autorun_filter, value=True))
 
                     app._save_settings.assert_not_called()
 
@@ -1310,9 +1272,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     first_rom.unlink()
                     (rom_root / "second.nes").write_bytes(make_ines_rom(mapper=2, submapper=0))
 
-                    app.on_button_pressed(
-                        SimpleNamespace(button=SimpleNamespace(id="drop-rescan-button"))
-                    )
+                    app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="drop-rescan-button")))
                     await pilot.pause()
                     await pilot.pause()
 
@@ -1348,9 +1308,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     self.assertTrue(pushed)
                     self.assertEqual(type(pushed[0]).__name__, "ScanProgressModal")
 
-                    app.on_button_pressed(
-                        SimpleNamespace(button=SimpleNamespace(id="drop-rescan-button"))
-                    )
+                    app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="drop-rescan-button")))
                     await pilot.pause()
                     self.assertGreaterEqual(len(pushed), 2)
                     self.assertEqual(type(pushed[1]).__name__, "ScanProgressModal")
@@ -1397,9 +1355,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
         app = MapperToolApp()
         run_worker_mock = _install_run_worker_mock(app)
 
-        app.on_button_pressed(
-            SimpleNamespace(button=SimpleNamespace(id="recalculate-failing-crcs-button"))
-        )
+        app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="recalculate-failing-crcs-button")))
 
         run_worker_mock.assert_called_once()
         call_kwargs = run_worker_mock.call_args.kwargs
@@ -1702,9 +1658,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
     def test_extract_checkpoint_progress_from_output_parses_recalculate_line(self) -> None:
         """Checkpoint parser extracts X/Y from recalculation progress output."""
 
-        progress = MapperToolApp._extract_checkpoint_progress_from_output(
-            "Recalculating checkpoint CRC(s): 7/17"
-        )
+        progress = MapperToolApp._extract_checkpoint_progress_from_output("Recalculating checkpoint CRC(s): 7/17")
         self.assertEqual(progress, (7, 17))
 
     def test_request_autorun_cancel_terminates_running_process(self) -> None:
@@ -1753,9 +1707,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                 async with app.run_test() as pilot:
                     await pilot.pause()
                     checkbox = app.query_one("#rebuild-before-run-checkbox", Checkbox)
-                    app.on_checkbox_changed(
-                        SimpleNamespace(checkbox=checkbox, value=False)
-                    )
+                    app.on_checkbox_changed(SimpleNamespace(checkbox=checkbox, value=False))
 
                 app_restarted = MapperToolApp(
                     rom_db_csv_path=rom_db_path,
@@ -1794,9 +1746,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     full_set_progress_status: str = "",
                     current_file_progress_status: str = "",
                 ) -> str | None:
-                    captured_calls.append(
-                        (command, command_id, full_set_progress_status, current_file_progress_status)
-                    )
+                    captured_calls.append((command, command_id, full_set_progress_status, current_file_progress_status))
                     return "passed"
 
                 app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
@@ -1839,9 +1789,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     full_set_progress_status: str = "",
                     current_file_progress_status: str = "",
                 ) -> str | None:
-                    captured_calls.append(
-                        (command, command_id, full_set_progress_status, current_file_progress_status)
-                    )
+                    captured_calls.append((command, command_id, full_set_progress_status, current_file_progress_status))
                     return "passed"
 
                 app._run_autorun_command_with_status_modal = fake_run  # type: ignore[method-assign]
@@ -1885,11 +1833,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     await pilot.pause()
 
                     dialog = app.screen.query_one("#rom-command-dialog")
-                    button_ids = [
-                        child.id
-                        for child in dialog.children
-                        if isinstance(child, Button)
-                    ]
+                    button_ids = [child.id for child in dialog.children if isinstance(child, Button)]
                     self.assertEqual(button_ids[0], "rom-command-run-rom")
                     self.assertEqual(button_ids[1], "rom-command-create")
 
@@ -1926,11 +1870,7 @@ class MapperToolAppLayoutTests(unittest.TestCase):
                     await pilot.pause()
 
                     dialog = app.screen.query_one("#rom-command-dialog")
-                    button_ids = [
-                        child.id
-                        for child in dialog.children
-                        if isinstance(child, Button)
-                    ]
+                    button_ids = [child.id for child in dialog.children if isinstance(child, Button)]
                     self.assertEqual(button_ids[0], "rom-command-run-rom")
 
             asyncio.run(run_assertions())

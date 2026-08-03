@@ -3,16 +3,17 @@
 import asyncio
 import contextlib
 import json
-from pathlib import Path
 import re
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual.app import App, ComposeResult, ScreenStackError
+from textual.containers import Horizontal, Vertical
 from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
-from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, TextArea
@@ -28,7 +29,7 @@ class MapperToolApp(App[None]):
     """Initial full-screen layout for autorun tooling."""
 
     TITLE = "Neser Mappertool"
-    BINDINGS = [
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("meta+c", "copy_log_selection", "Copy log selection"),
         ("ctrl+shift+c", "copy_log_selection", "Copy log selection"),
     ]
@@ -184,7 +185,7 @@ class MapperToolApp(App[None]):
     class ScanProgressModal(ModalScreen[None]):
         """Modal shown while scan is running."""
 
-        BINDINGS = [
+        BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
             ("escape", "cancel_scan", "Cancel"),
         ]
 
@@ -209,7 +210,7 @@ class MapperToolApp(App[None]):
     class RomCommandModal(ModalScreen[None]):
         """Modal showing available commands for selected ROM."""
 
-        BINDINGS = [
+        BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
             ("escape", "dismiss", "Close"),
         ]
 
@@ -289,7 +290,7 @@ class MapperToolApp(App[None]):
     class AutorunRunModal(ModalScreen[None]):
         """Modal showing autorun execution status and cancellation."""
 
-        BINDINGS = [
+        BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
             ("escape", "cancel_autorun", "Cancel autorun"),
         ]
 
@@ -322,9 +323,7 @@ class MapperToolApp(App[None]):
                 if full_set_progress_status is not None:
                     self.query_one("#autorun-run-status-file-set", Label).update(full_set_progress_status)
                 if current_file_progress_status is not None:
-                    self.query_one("#autorun-run-status-current-file", Label).update(
-                        current_file_progress_status
-                    )
+                    self.query_one("#autorun-run-status-current-file", Label).update(current_file_progress_status)
             except NoMatches:
                 return
 
@@ -355,9 +354,7 @@ class MapperToolApp(App[None]):
             configured_rom_root = Path(str(raw_rom_root))
 
         self.rom_root = self._resolve_repo_path(configured_rom_root)
-        self.rom_files_csv_path = self._resolve_repo_path(
-            rom_files_csv_path or self.DEFAULT_ROM_FILES_DB_PATH
-        )
+        self.rom_files_csv_path = self._resolve_repo_path(rom_files_csv_path or self.DEFAULT_ROM_FILES_DB_PATH)
         self.rom_db_index = RomDbIndex({})
         self.rom_file_records: dict[str, RomFileRecord] = {}
         self._rom_table_full_paths: list[str] = []
@@ -373,9 +370,7 @@ class MapperToolApp(App[None]):
             self._rom_mapper_filter_text = ""
             self._show_only_autorun = False
             self._rebuild_before_run = True
-        self._rom_mapper_filter_values: set[int] = self.parse_mapper_filter_values(
-            self._rom_mapper_filter_text
-        )
+        self._rom_mapper_filter_values: set[int] = self.parse_mapper_filter_values(self._rom_mapper_filter_text)
         self._scan_cancel_event = threading.Event()
         self._scan_in_progress = False
         self._scan_modal: MapperToolApp.ScanProgressModal | None = None
@@ -418,31 +413,30 @@ class MapperToolApp(App[None]):
 
             config_editor = Vertical(id="config-editor", classes="pane")
             config_editor.border_title = self.CONFIG_PANE_TITLE
-            with config_editor:
-                with Vertical(id="rom-inventory-section"):
-                    yield Label("ROM Inventory")
-                    yield Input(value=str(self.rom_root), id="rom-root-input")
-                    yield Checkbox(
-                        "Rebuild before running",
-                        id="rebuild-before-run-checkbox",
-                        value=self._rebuild_before_run,
-                    )
-                    yield Button("Drop and rescan", id="drop-rescan-button", variant="warning")
-                    yield Button(
-                        "Playback All Recordings",
-                        id="playback-all-button",
-                        variant="warning",
-                    )
-                    yield Button(
-                        "Playback Not run",
-                        id="playback-not-run-button",
-                        variant="warning",
-                    )
-                    yield Button(
-                        "Recalculate failing CRCs",
-                        id="recalculate-failing-crcs-button",
-                        variant="warning",
-                    )
+            with config_editor, Vertical(id="rom-inventory-section"):
+                yield Label("ROM Inventory")
+                yield Input(value=str(self.rom_root), id="rom-root-input")
+                yield Checkbox(
+                    "Rebuild before running",
+                    id="rebuild-before-run-checkbox",
+                    value=self._rebuild_before_run,
+                )
+                yield Button("Drop and rescan", id="drop-rescan-button", variant="warning")
+                yield Button(
+                    "Playback All Recordings",
+                    id="playback-all-button",
+                    variant="warning",
+                )
+                yield Button(
+                    "Playback Not run",
+                    id="playback-not-run-button",
+                    variant="warning",
+                )
+                yield Button(
+                    "Recalculate failing CRCs",
+                    id="recalculate-failing-crcs-button",
+                    variant="warning",
+                )
 
         with Horizontal(id="bottom-panes"):
             logs_pane = Vertical(id="logs-pane", classes="pane")
@@ -459,9 +453,7 @@ class MapperToolApp(App[None]):
 
         try:
             self.rom_db_index = RomDbIndex.from_csv(self.rom_db_csv_path)
-            self._append_log(
-                f"Loaded ROM database: {self.rom_db_index.size} entries from {self.rom_db_csv_path}"
-            )
+            self._append_log(f"Loaded ROM database: {self.rom_db_index.size} entries from {self.rom_db_csv_path}")
         except FileNotFoundError:
             self._append_log(f"ROM database not found: {self.rom_db_csv_path}")
 
@@ -628,8 +620,7 @@ class MapperToolApp(App[None]):
         summary_parts: list[str] = []
         if self._rom_sort_column_index is not None:
             summary_parts.append(
-                f"Sort: {self._column_label(self._rom_sort_column_index)}"
-                f" {'desc' if self._rom_sort_reverse else 'asc'}"
+                f"Sort: {self._column_label(self._rom_sort_column_index)} {'desc' if self._rom_sort_reverse else 'asc'}"
             )
         if self._rom_name_filter.strip():
             summary_parts.append(f"Name: {self._rom_name_filter.strip()}")
@@ -687,10 +678,7 @@ class MapperToolApp(App[None]):
             if mapper_value not in self._rom_mapper_filter_values:
                 return False
 
-        if self._show_only_autorun and not record.has_autorun:
-            return False
-
-        return True
+        return not (self._show_only_autorun and not record.has_autorun)
 
     @staticmethod
     def _parse_mapper_number(value: str) -> int | None:
@@ -761,9 +749,7 @@ class MapperToolApp(App[None]):
             if self._settings_persistence_enabled:
                 self._save_settings()
         elif event.input.id == "rom-root-input":
-            new_rom_root = self._resolve_repo_path(
-                Path(event.value.strip() or str(self.DEFAULT_ROM_ROOT))
-            )
+            new_rom_root = self._resolve_repo_path(Path(event.value.strip() or str(self.DEFAULT_ROM_ROOT)))
             if new_rom_root == self.rom_root:
                 return
             self.rom_root = new_rom_root
@@ -896,11 +882,7 @@ class MapperToolApp(App[None]):
         checkpoint_text = str(checkpoint_count) if checkpoint_count is not None else "unknown"
         last_run = self._autorun_last_run_label(record.autorun_status)
 
-        return (
-            f"Autorun: {length_text} frames, "
-            f"{checkpoint_text} CRCs, "
-            f"{last_run}"
-        )
+        return f"Autorun: {length_text} frames, {checkpoint_text} CRCs, {last_run}"
 
     @staticmethod
     def _read_autorun_metadata(autorun_path: Path) -> tuple[int | None, int | None]:
@@ -970,17 +952,17 @@ class MapperToolApp(App[None]):
         prefix = self._neser_command_prefix()
         command: list[str] | None = None
         if command_id == "rom-command-create":
-            command = prefix + ["--create-recording"]
+            command = [*prefix, "--create-recording"]
         elif command_id == "rom-command-extend":
-            command = prefix + ["--extend-recording"]
+            command = [*prefix, "--extend-recording"]
         elif command_id == "rom-command-playback-headed":
-            command = prefix + ["--playback"]
+            command = [*prefix, "--playback"]
         elif command_id == "rom-command-playback-headless":
-            command = prefix + ["--playback-headless"]
+            command = [*prefix, "--playback-headless"]
         elif command_id == "rom-command-run-rom":
             command = list(prefix)
         elif command_id == "rom-command-recalculate-crcs":
-            command = prefix + ["--recalculate-autorun"]
+            command = [*prefix, "--recalculate-autorun"]
 
         if command is None:
             self._append_log(f"Unknown ROM command: {command_id}")
@@ -993,9 +975,8 @@ class MapperToolApp(App[None]):
             "rom-command-playback-headed",
             "rom-command-playback-headless",
             "rom-command-recalculate-crcs",
-        }:
-            if playback_result in {"passed", "failed"}:
-                self._set_record_autorun_status(rom_relative_path, playback_result)
+        } and playback_result in {"passed", "failed"}:
+            self._set_record_autorun_status(rom_relative_path, playback_result)
         self._refresh_record_autorun_state(rom_relative_path)
 
     async def _playback_all_autorun_files(self) -> None:
@@ -1075,10 +1056,7 @@ class MapperToolApp(App[None]):
                 break
 
             rom_absolute_path = self.rom_root / Path(record.rom_path)
-            command = self._neser_command_prefix() + [
-                command_argument,
-                str(rom_absolute_path),
-            ]
+            command = [*self._neser_command_prefix(), command_argument, str(rom_absolute_path)]
             file_progress = f"{index}/{total_records}"
             status_context = f"File {file_progress}: {Path(record.rom_path).name}"
             self._append_log(f"{title} running ({file_progress}): {record.rom_path}")
@@ -1147,8 +1125,7 @@ class MapperToolApp(App[None]):
                         "Running",
                         full_set_progress_status=full_set_progress_status,
                         current_file_progress_status=(
-                            f"Checkpoint {checkpoints_done}/{checkpoints_total}. "
-                            f"Errors: {error_count}"
+                            f"Checkpoint {checkpoints_done}/{checkpoints_total}. Errors: {error_count}"
                         ),
                     )
 
@@ -1257,9 +1234,7 @@ class MapperToolApp(App[None]):
         next_autorun_status = existing.autorun_status
         if not has_autorun:
             next_autorun_status = "na"
-        elif existing.has_autorun is False:
-            next_autorun_status = "not_run"
-        elif next_autorun_status not in {"not_run", "passed", "failed"}:
+        elif existing.has_autorun is False or next_autorun_status not in {"not_run", "passed", "failed"}:
             next_autorun_status = "not_run"
 
         if has_autorun != existing.has_autorun or next_autorun_status != existing.autorun_status:
@@ -1326,10 +1301,8 @@ class MapperToolApp(App[None]):
         if not self._scan_in_progress:
             return
         self._scan_cancel_event.set()
-        try:
+        with contextlib.suppress(NoMatches, ScreenStackError):
             self._append_log("Scan cancel requested")
-        except (NoMatches, ScreenStackError):
-            pass
 
     async def _start_scan(self, *, drop_inventory: bool) -> None:
         """Run inventory scan asynchronously with cancellable progress modal."""
@@ -1379,10 +1352,8 @@ class MapperToolApp(App[None]):
                 )
         finally:
             if self._scan_modal is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._scan_modal.dismiss(None)
-                except Exception:
-                    pass
             self._scan_modal = None
             self._scan_in_progress = False
 

@@ -1,9 +1,11 @@
 """Sync orchestration: bulk and incremental sync from TheGamesDB."""
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 
 from tqdm import tqdm
 
 _BAR_FMT = "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+
 
 class Syncer:
     """Coordinates fetching from TheGamesDbClient and persisting via MetadataDb."""
@@ -73,7 +75,7 @@ class Syncer:
                 desc=f"  Images [{label}]",
             )
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         self._db.update_sync_log(
             platform_id=platform_id,
             last_full_sync=now,
@@ -85,10 +87,7 @@ class Syncer:
         """Fetch only changed games since the last sync."""
         log = self._db.get_sync_log(platform_id)
         if log is None:
-            raise RuntimeError(
-                f"No prior full sync for platform {platform_id}. "
-                "Run full_sync first."
-            )
+            raise RuntimeError(f"No prior full sync for platform {platform_id}. Run full_sync first.")
 
         last_edit_id = log.get("last_update_id") or 0
         updates_result = self._client.get_games_updates(last_edit_id=last_edit_id)
@@ -96,7 +95,7 @@ class Syncer:
 
         if not updates:
             # Nothing changed — still update the incremental timestamp
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             self._db.update_sync_log(
                 platform_id=platform_id,
                 last_incremental_sync=now,
@@ -135,7 +134,7 @@ class Syncer:
                 desc=f"  Images [{label}]",
             )
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         self._db.update_sync_log(
             platform_id=platform_id,
             last_incremental_sync=now,
@@ -147,11 +146,11 @@ class Syncer:
     def _fetch_reference_data(self, label: str = ""):
         suffix = f" [{label}]" if label else ""
         steps = [
-            ("genres",     self._client.get_genres),
+            ("genres", self._client.get_genres),
             ("developers", self._client.get_developers),
             ("publishers", self._client.get_publishers),
-            ("regions",    self._client.get_regions),
-            ("countries",  self._client.get_countries),
+            ("regions", self._client.get_regions),
+            ("countries", self._client.get_countries),
         ]
         pbar = tqdm(
             steps,
@@ -195,11 +194,13 @@ class Syncer:
                 self._persist_image(game_id, img)
 
     def _persist_image(self, game_id: int, img: dict) -> None:
-        self._db.upsert_image({
-            "id": img["id"],
-            "game_id": game_id,
-            "type": img.get("type"),
-            "side": img.get("side"),
-            "filename": img.get("filename"),
-            "resolution": img.get("resolution"),
-        })
+        self._db.upsert_image(
+            {
+                "id": img["id"],
+                "game_id": game_id,
+                "type": img.get("type"),
+                "side": img.get("side"),
+                "filename": img.get("filename"),
+                "resolution": img.get("resolution"),
+            }
+        )

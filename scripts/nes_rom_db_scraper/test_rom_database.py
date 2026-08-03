@@ -1,34 +1,36 @@
-"""Unit tests for the ``RomDatabase`` helper in ``scripts.scraper.rom_database``.
+"""Unit tests for the ``RomDatabase`` helper in ``scripts.nes_rom_db_scraper.rom_database``.
 
 These tests exercise schema creation, inserts, updates, upserts,
 processing of parsed records and utility functions.
 """
 
+import contextlib
 import os
 import tempfile
 import unittest
 
-try:
-    from .rom_database import RomDatabase, RomDbKey, HardwareType, hardware_from_console_type_and_region
-except ImportError:  # pragma: no cover - allow running as a script
-    from rom_database import RomDatabase, RomDbKey, HardwareType, hardware_from_console_type_and_region
+from scripts.nes_rom_db_scraper.rom_database import (
+    ControllerType,
+    HardwareType,
+    RomDatabase,
+    RomDbKey,
+    hardware_from_console_type_and_region,
+)
+
 
 class TestRomDatabase(unittest.TestCase):
     """Tests for RomDatabase: schema, insert/update, queries and helpers."""
+
     def setUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(prefix="romdb_test_", suffix=".sqlite")
         os.close(fd)
         self.db = RomDatabase(self.db_path)
 
     def tearDown(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.db.close()
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             os.unlink(self.db_path)
-        except Exception:
-            pass
 
     def test_schema_created_and_reset(self):
         """Verify initial schema is created and reset_schema recreates it."""
@@ -147,42 +149,50 @@ class TestRomDatabase(unittest.TestCase):
     def test_process_record_by_crc_ram_sum_mismatch_conflict(self):
         """RAM sum mismatch between existing and update should trigger conflict."""
         crc = "RAMSUMCONFLICT"
-        self.db.insert_rom_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.PRG_RAM_SIZE.value: 8,
-            RomDbKey.PRG_NVRAM_SIZE.value: 0,
-            RomDbKey.CHR_RAM_SIZE.value: 4,
-            RomDbKey.CHR_NVRAM_SIZE.value: 0,
-        })
+        self.db.insert_rom_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.PRG_RAM_SIZE.value: 8,
+                RomDbKey.PRG_NVRAM_SIZE.value: 0,
+                RomDbKey.CHR_RAM_SIZE.value: 4,
+                RomDbKey.CHR_NVRAM_SIZE.value: 0,
+            }
+        )
 
-        conflict_res = self.db.process_record_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.PRG_RAM_SIZE.value: 16,
-            RomDbKey.PRG_NVRAM_SIZE.value: 0,
-            RomDbKey.CHR_RAM_SIZE.value: 4,
-            RomDbKey.CHR_NVRAM_SIZE.value: 0,
-        })
+        conflict_res = self.db.process_record_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.PRG_RAM_SIZE.value: 16,
+                RomDbKey.PRG_NVRAM_SIZE.value: 0,
+                RomDbKey.CHR_RAM_SIZE.value: 4,
+                RomDbKey.CHR_NVRAM_SIZE.value: 0,
+            }
+        )
 
         self.assertEqual(conflict_res, (0, 0, 0, 1))
 
     def test_process_record_by_crc_ram_sum_match_no_conflict(self):
         """RAM sum match between existing and update should not trigger conflict."""
         crc = "RAMSUMMATCH"
-        self.db.insert_rom_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.PRG_RAM_SIZE.value: 8,
-            RomDbKey.PRG_NVRAM_SIZE.value: 0,
-            RomDbKey.CHR_RAM_SIZE.value: 4,
-            RomDbKey.CHR_NVRAM_SIZE.value: 0,
-        })
+        self.db.insert_rom_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.PRG_RAM_SIZE.value: 8,
+                RomDbKey.PRG_NVRAM_SIZE.value: 0,
+                RomDbKey.CHR_RAM_SIZE.value: 4,
+                RomDbKey.CHR_NVRAM_SIZE.value: 0,
+            }
+        )
 
-        skip_res = self.db.process_record_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.PRG_RAM_SIZE.value: 0,
-            RomDbKey.PRG_NVRAM_SIZE.value: 8,
-            RomDbKey.CHR_RAM_SIZE.value: 0,
-            RomDbKey.CHR_NVRAM_SIZE.value: 4,
-        })
+        skip_res = self.db.process_record_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.PRG_RAM_SIZE.value: 0,
+                RomDbKey.PRG_NVRAM_SIZE.value: 8,
+                RomDbKey.CHR_RAM_SIZE.value: 0,
+                RomDbKey.CHR_NVRAM_SIZE.value: 4,
+            }
+        )
 
         self.assertEqual(skip_res, (0, 0, 1, 0))
 
@@ -210,7 +220,7 @@ class TestRomDatabase(unittest.TestCase):
         """Upsert should persist all fields and allow retrieval by rom_id."""
         rom_id = 7
         col_types = self.db.list_columns_with_types()
-        col_names = [name for name in col_types.keys() if name != RomDbKey.ROM_ID.value]
+        col_names = [name for name in col_types if name != RomDbKey.ROM_ID.value]
 
         payload = {}
         int_value = 1
@@ -228,21 +238,24 @@ class TestRomDatabase(unittest.TestCase):
         for key, value in payload.items():
             self.assertEqual(str(fetched.get(key)), str(value))
 
-
     def test_hardware_ntsc_does_not_overwrite_more_specific_xml_value(self) -> None:
         """When XML import sets hardware=NES_MULTI_REGION and scraper says NES_NTSC,
         scraper must not overwrite the more-specific XML value — no conflict either."""
         crc = "MULTIREGCRC"
         # Simulate: XML import already set hardware to NES_MULTI_REGION (6)
-        self.db.insert_rom_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.NES_MULTI_REGION.value,
-        })
+        self.db.insert_rom_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.NES_MULTI_REGION.value,
+            }
+        )
         # Simulate: scraper says NTSC (0) — should be silently ignored, no conflict
-        result = self.db.process_record_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.NES_NTSC.value,
-        })
+        result = self.db.process_record_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.NES_NTSC.value,
+            }
+        )
         self.assertNotEqual(result, (0, 0, 0, 1), "Should not produce a conflict")
         # Existing more-specific value must be preserved
         row = self.db.get_rom_by_crc(crc)
@@ -251,14 +264,18 @@ class TestRomDatabase(unittest.TestCase):
     def test_hardware_ntsc_does_not_overwrite_pal(self) -> None:
         """When XML/prior import set hardware=NES_PAL, scraper NES_NTSC must not conflict or overwrite."""
         crc = "PALOVERNTSC"
-        self.db.insert_rom_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.NES_PAL.value,
-        })
-        result = self.db.process_record_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.NES_NTSC.value,
-        })
+        self.db.insert_rom_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.NES_PAL.value,
+            }
+        )
+        result = self.db.process_record_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.NES_NTSC.value,
+            }
+        )
         self.assertNotEqual(result, (0, 0, 0, 1), "Should not produce a conflict")
         row = self.db.get_rom_by_crc(crc)
         self.assertEqual(str(row[RomDbKey.HARDWARE.value]), str(HardwareType.NES_PAL.value))
@@ -266,28 +283,36 @@ class TestRomDatabase(unittest.TestCase):
     def test_hardware_conflict_between_two_specific_values(self) -> None:
         """Two genuinely different specific hardware values must still conflict."""
         crc = "HWCONFLICT"
-        self.db.insert_rom_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.NES_PAL.value,
-        })
-        result = self.db.process_record_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.NES_MULTI_REGION.value,
-        })
+        self.db.insert_rom_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.NES_PAL.value,
+            }
+        )
+        result = self.db.process_record_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.NES_MULTI_REGION.value,
+            }
+        )
         self.assertEqual(result, (0, 0, 0, 1), "Two differing specific values must conflict")
 
     def test_hardware_multi_region_existing_ignores_incoming(self) -> None:
         """When existing hardware is NES_MULTI_REGION, any incoming value must be
         silently ignored — no overwrite and no conflict reported."""
         crc = "MULTIREG_LOCK"
-        self.db.insert_rom_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.NES_MULTI_REGION.value,
-        })
-        result = self.db.process_record_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.NES_PAL.value,
-        })
+        self.db.insert_rom_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.NES_MULTI_REGION.value,
+            }
+        )
+        result = self.db.process_record_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.NES_PAL.value,
+            }
+        )
         self.assertNotEqual(result, (0, 0, 0, 1), "NES_MULTI_REGION existing must not conflict")
         row = self.db.get_rom_by_crc(crc)
         self.assertEqual(
@@ -296,19 +321,22 @@ class TestRomDatabase(unittest.TestCase):
             "NES_MULTI_REGION must be preserved",
         )
 
-
     def test_hardware_famicom_upgrades_ntsc(self) -> None:
         """When existing hardware is NES_NTSC (generic XML value) and the scraper
         detects Japan and sets FAMICOM, FAMICOM must overwrite NES_NTSC — no conflict."""
         crc = "FAMICOM_UP"
-        self.db.insert_rom_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.NES_NTSC.value,
-        })
-        result = self.db.process_record_by_crc({
-            RomDbKey.CRC.value: crc,
-            RomDbKey.HARDWARE.value: HardwareType.FAMICOM.value,
-        })
+        self.db.insert_rom_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.NES_NTSC.value,
+            }
+        )
+        result = self.db.process_record_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.HARDWARE.value: HardwareType.FAMICOM.value,
+            }
+        )
         self.assertNotEqual(result, (0, 0, 0, 1), "FAMICOM upgrading NES_NTSC must not conflict")
         row = self.db.get_rom_by_crc(crc)
         self.assertEqual(
@@ -370,6 +398,59 @@ class TestHardwareFromConsoleTypeAndRegion(unittest.TestCase):
         """NTSC without Japan country must remain NES_NTSC."""
         result = hardware_from_console_type_and_region("0", "0", country="USA")
         self.assertEqual(result, HardwareType.NES_NTSC.value)
+
+
+class TestExpansionTypeMerge(unittest.TestCase):
+    """Merge rules for the ``expansion_type`` column in process_record_by_crc.
+
+    Scraped records carry every field as a string, while the column is INTEGER
+    so existing values read back as ints. The merge rules must therefore compare
+    the two sides as strings, exactly as the ``hardware`` branch does.
+    """
+
+    def setUp(self) -> None:
+        fd, self.db_path = tempfile.mkstemp(prefix="romdb_expansion_", suffix=".sqlite")
+        os.close(fd)
+        self.db = RomDatabase(self.db_path)
+
+    def tearDown(self) -> None:
+        with contextlib.suppress(Exception):
+            self.db.close()
+        with contextlib.suppress(Exception):
+            os.unlink(self.db_path)
+
+    def _seed(self, crc: str, expansion: ControllerType) -> None:
+        self.db.insert_rom_by_crc({RomDbKey.CRC.value: crc, RomDbKey.EXPANSION_TYPE.value: str(expansion.value)})
+
+    def _stored(self, crc: str) -> object:
+        return self.db.get_rom_by_crc(crc).get(RomDbKey.EXPANSION_TYPE.value)
+
+    def test_incoming_multicart_replaces_a_specific_expansion_type(self):
+        """Given a specific type, when a multicart arrives, then it wins."""
+        crc = "EXPMULTI1"
+        self._seed(crc, ControllerType.ZAPPER_4017)
+
+        result = self.db.process_record_by_crc(
+            {RomDbKey.CRC.value: crc, RomDbKey.EXPANSION_TYPE.value: str(ControllerType.MULTICART.value)}
+        )
+
+        self.assertEqual(result, (0, 1, 0, 0), "multicart should be merged, not reported as a conflict")
+        self.assertEqual(int(self._stored(crc)), ControllerType.MULTICART.value)
+
+    def test_incoming_standard_controller_never_overwrites_a_specific_type(self):
+        """Given a specific type, when the generic standard controller arrives, then it is ignored."""
+        crc = "EXPSTD1"
+        self._seed(crc, ControllerType.ZAPPER_4017)
+
+        result = self.db.process_record_by_crc(
+            {
+                RomDbKey.CRC.value: crc,
+                RomDbKey.EXPANSION_TYPE.value: str(ControllerType.STANDARD_CONTROLLERS.value),
+            }
+        )
+
+        self.assertEqual(result, (0, 0, 1, 0), "generic standard controller should be skipped, not a conflict")
+        self.assertEqual(int(self._stored(crc)), ControllerType.ZAPPER_4017.value)
 
 
 if __name__ == "__main__":
