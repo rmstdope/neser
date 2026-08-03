@@ -899,20 +899,22 @@ impl Ppu {
     /// Returns `Some(row)` during Mode 2 (OAM Scan) when LCD is enabled.
     /// Returns `None` outside Mode 2 or when LCD is disabled.
     ///
-    /// Scan 1 (second_scanline_after_enable): OamScan starts at dot=4.
-    ///   Row 0 = dots 4–7, row 1 = dots 8–11, …, row 19 = dots 80–83.
-    /// Scan 2+ (regular): OamScan starts at dot=0.
-    ///   Row 0 = dots 0–3, row 1 = dots 4–7, …, row 19 = dots 76–79.
+    /// The PPU walks the 20 OAM rows from dot 0 of the line, one row per
+    /// M-cycle, so the row is `dot / 4`: row 0 = dots 0–3, row 1 = dots 4–7, …,
+    /// row 19 = dots 76–79.  This holds on every line, including scan 1 (the
+    /// line right after LCD enable): [`Timing::is_oam_blocked`] documents the
+    /// physical OAM scan as running from dot 0 there too, and the `[0,4)` HBlank
+    /// [`Timing::mode`] reports at the head of scan 1 is an artefact of mode
+    /// reporting, not a gap in the scan.  It does hide row 0 on that one line,
+    /// which costs nothing: row 0 is immune to all three corruption patterns.
+    ///
+    /// Mode 2 never extends past dot 79, so the result is always `<= 19` and the
+    /// callers that index OAM by row cannot run off the end.
     pub fn current_oam_row(&self) -> Option<usize> {
         if !self.registers.lcd_enabled() || self.timing.mode() != PpuMode::OamScan {
             return None;
         }
-        let oam_scan_offset = if self.timing.is_second_scanline_after_enable() {
-            4 // scan 1: OamScan starts at dot=4
-        } else {
-            0 // scan 2+: OamScan starts at dot=0
-        };
-        Some((self.timing.dot() as usize).saturating_sub(oam_scan_offset) / 4)
+        Some(self.timing.dot() as usize / 4)
     }
 
     /// Apply OAM write corruption to the given row.
@@ -1755,34 +1757,49 @@ mod tests {
 
     // ── OAM corruption: current_oam_row ───────────────────────────────────────
 
+    // NOTE (#3104): the three tests below — and the write_oam/read_oam
+    // corruption tests further down — previously asserted a row numbering
+    // shifted down by one on scan 1, encoding the very defect this issue fixed.
+    // The PPU walks OAM from dot 0 of every line, one row per M-cycle, so the
+    // row is `dot / 4` on every line; scan 1 is not special.  Under the old
+    // `(dot - 4) / 4` the last row (19) was unreachable, because scan 1's Mode 2
+    // ends at dot 80.
     #[test]
-    fn test_current_oam_row_returns_row_0_at_mode_2_start() {
-        // Given: Ppu advanced to Mode 2 on scanline 1, dot=0 → row 0/4 = 0
+    fn test_current_oam_row_is_1_at_scan_1_mode_2_start() {
+        // Given: Ppu advanced to the first dot of scan 1 that reports Mode 2.
+        // Scan 1 itself starts at dot 0 — it is Mode 2 that is first reported at
+        // dot 4, because `Timing::mode` calls dots [0,4) a "fake" HBlank there.
+        // Row 0 occupies those four dots, so the first row observable on scan 1
+        // is 1.  That costs nothing: row 0 is immune to all three corruption
+        // patterns.
         let mut ppu = Ppu::new();
         advance_to_mode_2(&mut ppu);
         assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
-        assert_eq!(ppu.current_oam_row(), Some(0));
-    }
-
-    #[test]
-    fn test_current_oam_row_returns_row_1_after_4_dot_ticks() {
-        // Given: Ppu in Mode 2 at dot=4, tick 4 more → dot=8 → row (8-4)/4 = 1
-        let mut ppu = Ppu::new();
-        advance_to_mode_2(&mut ppu);
-        tick_dots(&mut ppu, 4);
-        assert_eq!(ppu.timing.dot(), 8);
+        assert_eq!(ppu.timing.dot(), 4);
         assert_eq!(ppu.current_oam_row(), Some(1));
     }
 
     #[test]
-    fn test_current_oam_row_returns_row_18_at_dot_76() {
-        // On scan 1, OamScan runs [4,80): 19 rows (0-18). Row 18 is the last.
-        // dot=76 → row (76-4)/4 = 18. At dot=80: Mode3 starts, row=None.
+    fn test_current_oam_row_advances_one_row_per_m_cycle() {
+        // Given: Ppu in Mode 2 at dot=4, tick 4 more → dot=8 → row 8/4 = 2
+        let mut ppu = Ppu::new();
+        advance_to_mode_2(&mut ppu);
+        tick_dots(&mut ppu, 4);
+        assert_eq!(ppu.timing.dot(), 8);
+        assert_eq!(ppu.current_oam_row(), Some(2));
+    }
+
+    #[test]
+    fn test_current_oam_row_reaches_row_19_before_mode_3() {
+        // Mode 2 walks all 20 OAM rows (0-19), one per M-cycle.  Row 19 is the
+        // last, at dot=76; Mode 3 starts at dot=80 and the row goes away.
+        // blargg's oam_bug 7-timing_effect sweeps this window and depends on
+        // row 19 being reachable on the line it samples (scan 1).
         let mut ppu = Ppu::new();
         advance_to_mode_2(&mut ppu);
         tick_dots(&mut ppu, 72);
         assert_eq!(ppu.timing.dot(), 76);
-        assert_eq!(ppu.current_oam_row(), Some(18));
+        assert_eq!(ppu.current_oam_row(), Some(19));
         // Also verify dot=80 is Mode3 (None)
         tick_dots(&mut ppu, 4);
         assert_eq!(ppu.timing.dot(), 80);
@@ -2026,9 +2043,9 @@ mod tests {
         let mut ppu = Ppu::new();
         set_row_words(&mut ppu.oam, 1, [0x0002, 0x0003, 0x0004, 0x0005]);
         set_row_words(&mut ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
-        // Advance to Mode 2 on a normal scanline, then tick to row 2
+        // Advance to Mode 2, then tick to row 2 (dot 8, one row per M-cycle).
         advance_to_mode_2(&mut ppu);
-        tick_dots(&mut ppu, 8); // dot 4 + 8 = dot 12 → current_oam_row() = Some(2): (12-4)/4=2
+        tick_dots(&mut ppu, 4); // dot 4 + 4 = dot 8 → current_oam_row() = Some(2): 8/4=2
         assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
         assert_eq!(ppu.current_oam_row(), Some(2));
         // When: CPU writes to any OAM address
@@ -2060,7 +2077,7 @@ mod tests {
         set_row_words(&mut ppu.oam, 1, [0x0002, 0x0003, 0x0004, 0x0005]);
         set_row_words(&mut ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
         advance_to_mode_2(&mut ppu);
-        tick_dots(&mut ppu, 8);
+        tick_dots(&mut ppu, 4); // dot 8 → row 2
         ppu.write_oam(0xFE10, 0xAB); // written value 0xAB must NOT appear in OAM
         // If 0xAB appears anywhere in row 2, that is wrong
         for i in 0..8 {
@@ -2081,7 +2098,7 @@ mod tests {
         set_row_words(&mut ppu.oam, 1, [0x0002, 0x0003, 0x0004, 0x0005]);
         set_row_words(&mut ppu.oam, 2, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
         advance_to_mode_2(&mut ppu);
-        tick_dots(&mut ppu, 8);
+        tick_dots(&mut ppu, 4); // dot 8 → row 2
         assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
         // When: CPU reads from any OAM address during Mode 2
         let result = ppu.read_oam(0xFE10);
