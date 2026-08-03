@@ -225,16 +225,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut roms = collect_roms(root)?;
             roms.sort();
 
-            let mut first = true;
-            for rom in roms {
-                if !first {
+            for (i, rom) in roms.iter().enumerate() {
+                if i > 0 {
                     println!("============================");
                 }
-                first = false;
 
-                match read_rom_from_file(&rom, &rom_db) {
+                match read_rom_from_file(rom, &rom_db) {
                     Ok((parsed, actual_file_size_bytes)) => {
-                        print_rom_info(&rom, &parsed, actual_file_size_bytes)
+                        print_rom_info(rom, &parsed, actual_file_size_bytes)
                     }
                     Err(err) => eprintln!("{}: {err}", rom.display()),
                 }
