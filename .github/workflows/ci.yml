@@ -62,12 +62,16 @@ jobs:
             python:
               - 'scripts/**/*.py'
             shader_assets:
-              # Bare path entry detects submodule (gitlink) pointer bumps.
               # Release packaging only ships shader files reachable from the
-              # presets in src/platform/shaders.rs, so both the pin and the
-              # preset list must re-run the reachability tests in
-              # scripts/test_package_release.py. See docs/VENDOR_SUBMODULES.md.
+              # presets in src/platform/shaders.rs, so anything that can change
+              # that graph must re-run the reachability and exact-case tests in
+              # scripts/test_package_release.py. That means the preset list, the
+              # vendored presets, and the local ones under shaders/ — which
+              # SHADER_PRESETS also points at (stock.slangp, gba-lcd.slangp).
+              # The bare vendor path detects submodule (gitlink) pointer bumps.
+              # See docs/VENDOR_SUBMODULES.md.
               - 'vendor/slang-shaders'
+              - 'shaders/**'
               - 'src/platform/shaders.rs'
               - '.github/workflows/ci.yml'
             rust:
