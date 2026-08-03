@@ -1551,15 +1551,16 @@ mod tests {
         [0, 1, 2, 3].map(|i| u16::from_le_bytes([oam[base + i * 2], oam[base + i * 2 + 1]]))
     }
 
+    /// Enable the LCD and stop at OAM-scan `row` of scan 1 (dot `4 * row`).
+    ///
+    /// Scan 0 is 452 dots = 113 M-cycles and has no OAM scan, so after that many
+    /// ticks the PPU sits at dot 0 of scan 1.  Mode 2 then walks one OAM row per
+    /// M-cycle from dot 0, so `row` more ticks land on `row`.  Rows 1..=19 are
+    /// observable; row 0 lives in the 4-dot "fake" HBlank that opens scan 1 and
+    /// is immune to corruption anyway.
     fn enable_lcd_and_tick_to_row(bus: &mut DmgBus, row: usize) {
         bus.write(0xFF40, 0x91); // enable LCD → timing resets
-        // Skip scan 0 (452 dots = 113 M-cycles) plus the 4T Mode 0 gap at the start
-        // of scan 1 (1 M-cycle) → lands at dot=4 of scan 1, which is OamScan row 0.
-        for _ in 0..114 {
-            bus.tick(1);
-        }
-        // Now at dot=4 of scan 1 (OamScan row 0); tick to the desired row.
-        for _ in 0..row {
+        for _ in 0..113 + row {
             bus.tick(1); // 1 M-cycle = 4 dots = 1 OAM row
         }
     }
@@ -1635,8 +1636,7 @@ mod tests {
 
     #[test]
     fn test_notify_idu_glitch_applies_corruption_at_row_18() {
-        // Given: PPU at OamScan row 18 (dot=76 of scan 1; last valid row — OamScan [4,80)).
-        // Row 18 = dot 76: (76-4)/4 = 18.
+        // Given: PPU at OamScan row 18 (dot=72).
         // row 17: b=0x0002, w1=0x0003, c=0x0004, w3=0x0005
         // row 18: a=0x0001
         // write formula: ((0x0001^0x0004)&(0x0002^0x0004))^0x0004 = 0x0000
@@ -1644,7 +1644,7 @@ mod tests {
         let mut bus = make_bus();
         set_row_words(&mut bus.ppu.oam, 17, [0x0002, 0x0003, 0x0004, 0x0005]);
         set_row_words(&mut bus.ppu.oam, 18, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
-        enable_lcd_and_tick_to_row(&mut bus, 18); // dot=76, OamScan, row 18 (last on scan 1)
+        enable_lcd_and_tick_to_row(&mut bus, 18);
         bus.begin_instruction(); // pre-instruction snapshot (row 18)
         bus.notify_idu_glitch(0xFE00);
         let row18 = get_row_words(&bus.ppu.oam, 18);
@@ -1652,6 +1652,75 @@ mod tests {
             row18,
             [0x0000, 0x0003, 0x0004, 0x0005],
             "notify_idu_glitch at OamScan row 18 must apply write corruption"
+        );
+    }
+
+    /// Row 19 is the last of the 20 rows Mode 2 walks, and it must be reachable
+    /// on the line right after LCD enable — which is the line blargg's oam_bug
+    /// `7-timing_effect` sweeps.  Under the old scan-1 `(dot - 4) / 4` numbering
+    /// this row could never be reached, because scan 1's Mode 2 ends at dot 80.
+    #[test]
+    fn test_notify_idu_glitch_applies_corruption_at_row_19() {
+        use crate::gb::bus::GbBus;
+        let mut bus = make_bus();
+        set_row_words(&mut bus.ppu.oam, 18, [0x0002, 0x0003, 0x0004, 0x0005]);
+        set_row_words(&mut bus.ppu.oam, 19, [0x0001, 0x00AA, 0x00BB, 0x00CC]);
+        enable_lcd_and_tick_to_row(&mut bus, 19); // dot=76, last OAM row
+        bus.begin_instruction();
+        bus.notify_idu_glitch(0xFE00);
+        assert_eq!(
+            get_row_words(&bus.ppu.oam, 19),
+            [0x0000, 0x0003, 0x0004, 0x0005],
+            "notify_idu_glitch at OamScan row 19 must apply write corruption"
+        );
+    }
+
+    /// The sweep blargg's `7-timing_effect` performs: `INC DE` with `DE = $FE00`
+    /// at every M-cycle offset after `LCDC = $81`, over more than a full
+    /// scanline.  Mode 2 walks 20 OAM rows one per M-cycle and row 0 is immune,
+    /// so exactly 19 consecutive offsets must corrupt, stepping through rows
+    /// 1..=19 in order.  Asserting the whole progression rather than a count
+    /// keeps a wrong row from passing as a right total.
+    #[test]
+    fn test_oam_bug_corrupts_nineteen_consecutive_rows_after_lcd_enable() {
+        use crate::gb::bus::GbBus;
+        let mut corrupting: Vec<(u32, usize)> = Vec::new();
+        // Scan 0 (452 dots = 113 M-cycles) has no OAM scan, and scan 1 is a full
+        // 456-dot line, so sweeping 227 offsets spans exactly one Mode 2 window.
+        for offset in 0u32..113 + 114 {
+            let mut bus = make_bus();
+            bus.write(0xFF40, 0x00); // LCD off: OAM freely writable
+            for i in 0..0xA0u16 {
+                bus.write(0xFE00 + i, i as u8);
+            }
+            let before = bus.ppu.oam;
+            bus.write(0xFF40, 0x81); // LCD on, as corrupt_oam does
+            for _ in 0..offset {
+                bus.tick(1);
+            }
+            bus.begin_instruction();
+            bus.notify_idu_glitch(0xFE00);
+            if bus.ppu.oam != before {
+                let row = (0..0xA0usize)
+                    .find(|&i| bus.ppu.oam[i] != before[i])
+                    .expect("OAM differs, so some byte differs")
+                    / 8;
+                corrupting.push((offset, row));
+            }
+        }
+
+        let rows: Vec<usize> = corrupting.iter().map(|&(_, row)| row).collect();
+        assert_eq!(
+            rows,
+            (1..=19).collect::<Vec<_>>(),
+            "Mode 2 must walk rows 1..=19, one per M-cycle; got {corrupting:?}"
+        );
+        let offsets: Vec<u32> = corrupting.iter().map(|&(offset, _)| offset).collect();
+        let first = offsets[0];
+        assert_eq!(
+            offsets,
+            (first..first + 19).collect::<Vec<_>>(),
+            "the corrupting offsets must be consecutive M-cycles; got {offsets:?}"
         );
     }
 

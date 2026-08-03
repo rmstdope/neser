@@ -45,13 +45,7 @@ fn run_blargg_rom(gb: &mut Gb<DmgBus>) -> String {
 /// `$A000 == 0`, but by then the ROM has already printed at least `"\nPassed"`.
 /// We therefore reject `status == 0 AND text.is_empty()` as the init window.
 fn read_cart_ram_output(gb: &mut Gb<DmgBus>) -> Option<String> {
-    const SIGNATURE: [u8; 3] = [0xDE, 0xB0, 0x61];
-    let sig = [
-        gb.cpu.bus.read(0xA001),
-        gb.cpu.bus.read(0xA002),
-        gb.cpu.bus.read(0xA003),
-    ];
-    if sig != SIGNATURE {
+    if !cart_ram_signature_present(gb) {
         return None;
     }
     let status = gb.cpu.bus.read(0xA000);
@@ -59,19 +53,7 @@ fn read_cart_ram_output(gb: &mut Gb<DmgBus>) -> Option<String> {
         // Test still running.
         return None;
     }
-    let mut text = Vec::new();
-    let mut addr: u16 = 0xA004;
-    loop {
-        let b = gb.cpu.bus.read(addr);
-        if b == 0 {
-            break;
-        }
-        text.push(b);
-        addr = addr.wrapping_add(1);
-        if addr > 0xAFFF {
-            break;
-        }
-    }
+    let text = cart_ram_text(gb);
     // Guard against the init_text_out timing window where the three signature
     // bytes have been written but $A000 hasn't been set to $80 yet (cart RAM
     // is still all-zero from initialisation).  In that window status == 0 and
@@ -80,7 +62,41 @@ fn read_cart_ram_output(gb: &mut Gb<DmgBus>) -> Option<String> {
     if status == 0 && text.is_empty() {
         return None;
     }
-    Some(String::from_utf8_lossy(&text).into_owned())
+    Some(text)
+}
+
+/// First and last address of the ROM's zero-terminated text buffer.
+///
+/// `init_text_out` sets the write pointer to `$A004` and the ROMs that use this
+/// channel are built with 8 KB of cartridge RAM, so the buffer runs all the way
+/// to `$BFFF`: 8188 addresses, holding up to 8187 characters plus the
+/// terminator.  Stopping the scan earlier silently truncates the output, which
+/// for a long-running ROM would drop the trailing "Passed".
+const CART_RAM_TEXT_START: u16 = 0xA004;
+const CART_RAM_TEXT_END: u16 = 0xBFFF;
+
+/// True when the `$DE $B0 $61` signature is present at `$A001`–`$A003`.
+fn cart_ram_signature_present(gb: &mut Gb<DmgBus>) -> bool {
+    const SIGNATURE: [u8; 3] = [0xDE, 0xB0, 0x61];
+    [
+        gb.cpu.bus.read(0xA001),
+        gb.cpu.bus.read(0xA002),
+        gb.cpu.bus.read(0xA003),
+    ] == SIGNATURE
+}
+
+/// Read the zero-terminated text the ROM has written so far, regardless of
+/// whether it has finished.  Scans `$A004..=$BFFF`, stopping at the terminator.
+fn cart_ram_text(gb: &mut Gb<DmgBus>) -> String {
+    let mut text = Vec::new();
+    for addr in CART_RAM_TEXT_START..=CART_RAM_TEXT_END {
+        let b = gb.cpu.bus.read(addr);
+        if b == 0 {
+            break;
+        }
+        text.push(b);
+    }
+    String::from_utf8_lossy(&text).into_owned()
 }
 
 /// Step `gb` until the cartridge-RAM output (mem_timing-2 style) signals
@@ -89,6 +105,26 @@ fn read_cart_ram_output(gb: &mut Gb<DmgBus>) -> Option<String> {
 /// Also accepts serial output ending with "Passed\n" / "Failed\n" as a
 /// fallback so the function works for serial-based ROMs as well.
 fn run_blargg_rom_cart_ram(gb: &mut Gb<DmgBus>) -> String {
+    run_blargg_rom_cart_ram_with_limit(gb, BLARGG_CYCLE_LIMIT)
+}
+
+/// Prefix marking a result the ROM never actually reported.
+const TIMEOUT_PREFIX: &str = "[timed out, partial output] ";
+
+/// As [`run_blargg_rom_cart_ram`], with an explicit M-cycle budget.
+///
+/// On timeout the ROM has not written a status byte, so the completion
+/// protocol yields nothing.  Rather than returning an empty string — which
+/// says only "no result" and hides how far the ROM got — return whatever text
+/// it has printed so far, behind [`TIMEOUT_PREFIX`] so it can never be mistaken
+/// for a completed run.
+///
+/// Callers assert on `contains("Passed")`, so a run that times out in the few
+/// instructions between the ROM printing its verdict and writing the status
+/// byte now passes where it previously failed.  That window is a handful of
+/// instructions out of the whole budget, and a ROM that printed "Passed" did
+/// pass — the marker keeps the timeout visible either way.
+fn run_blargg_rom_cart_ram_with_limit(gb: &mut Gb<DmgBus>, cycle_limit: u64) -> String {
     let start = gb.cycles();
     loop {
         // Check serial output on the raw byte slice — no allocation.
@@ -99,12 +135,17 @@ fn run_blargg_rom_cart_ram(gb: &mut Gb<DmgBus>) -> String {
         if let Some(text) = read_cart_ram_output(gb) {
             return text;
         }
-        if gb.cycles().saturating_sub(start) >= BLARGG_CYCLE_LIMIT {
+        if gb.cycles().saturating_sub(start) >= cycle_limit {
             // Return whatever we have collected so far.
             if let Some(text) = read_cart_ram_output(gb) {
                 return text;
             }
-            return String::from_utf8_lossy(gb.cpu.bus.serial_output()).into_owned();
+            let partial = if cart_ram_signature_present(gb) {
+                cart_ram_text(gb)
+            } else {
+                String::from_utf8_lossy(gb.cpu.bus.serial_output()).into_owned()
+            };
+            return format!("{TIMEOUT_PREFIX}{partial}");
         }
         gb.step();
     }
@@ -739,8 +780,24 @@ fn test_oam_bug_6_timing_no_bug() {
     );
 }
 
+/// `7-timing_effect` cannot report a result through the cartridge-RAM channel.
+///
+/// For every sweep timing that corrupts, the ROM prints a 525-byte block — the
+/// sweep index, then a full 521-byte OAM dump — and a correct DMG corrupts on 19
+/// of them (Mode 2 walks 20 OAM rows, one per M-cycle, and row 0 is immune).
+/// That is `17 + 19×525 + 8 = 10 000` bytes of text against the 8188 available
+/// at `$A004..$BFFF`.
+/// `write_text_out` (`oam_bug/source/common/shell.s`) has no bounds check, so
+/// the overrun walks into `$C000`, where `copy_to_wram_then_run` placed the
+/// ROM's own code — measured: 2040 bytes of that code overwritten, cartridge
+/// RAM switched off, CPU executing rubbish.  The ROM therefore never reaches
+/// `check_crc`, on any emulator and on hardware.  Tracked in #3115.
+///
+/// The behaviour this ROM tests is covered by [`test_oam_bug_multi_rom`]
+/// instead: the multi-ROM build defines `CUSTOM_PRINT`, does not use the
+/// cartridge-RAM buffer, and reports subtest 7's verdict on screen.
 #[test]
-#[ignore = "failing: OAM corruption not emulated — tracked in #1993"]
+#[ignore = "unusable ROM build: output overruns its own $A004 text buffer into WRAM — tracked in #3115"]
 fn test_oam_bug_7_timing_effect() {
     let mut gb =
         load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/7-timing_effect.gb");
@@ -751,6 +808,22 @@ fn test_oam_bug_7_timing_effect() {
     );
 }
 
+/// The multi-ROM build runs all eight `oam_bug` subtests and reports each one's
+/// verdict on screen, including subtest 7 (`timing_effect`), which the single
+/// ROM cannot report — see [`test_oam_bug_7_timing_effect`].
+#[test]
+fn test_oam_bug_multi_rom() {
+    let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/oam_bug.gb");
+    let output = run_blargg_rom_lcd(&mut gb);
+    // Assert the subtest this suite's single-ROM coverage cannot reach first,
+    // so a regression names it rather than only failing the overall verdict.
+    assert!(
+        output.contains("07:ok"),
+        "oam_bug subtest 7 (timing_effect) must pass, got:\n{output}"
+    );
+    assert!(output.contains("Passed"), "expected Passed, got:\n{output}");
+}
+
 #[test]
 fn test_oam_bug_8_instr_effect() {
     let mut gb =
@@ -759,5 +832,84 @@ fn test_oam_bug_8_instr_effect() {
     assert!(
         output.contains("Passed"),
         "expected Passed, got: {output:?}"
+    );
+}
+
+// ── cartridge-RAM output oracle ───────────────────────────────────────────────
+
+/// The text buffer runs to `$BFFF`, not `$AFFF`.
+///
+/// Long-running ROMs print more than the 4092 bytes below `$AFFF`; stopping the
+/// scan there drops the trailing "Passed" and turns a passing run into a
+/// failing one.  Drives cartridge RAM directly (MBC1 RAM enable at `$0000`)
+/// rather than running a ROM, so the boundary is pinned exactly.
+#[test]
+fn test_cart_ram_output_reads_the_whole_8k_buffer() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/7-timing_effect.gb");
+    // Fill the buffer to its very last byte, ending with the verdict, so a scan
+    // that stops early cannot see it.  The expected extent is stated as a
+    // literal, from the cartridge geometry ($A004..$BFFF of 8 KB of RAM, minus
+    // the terminator) rather than from CART_RAM_TEXT_END — deriving it from the
+    // constant under test would make this test pass for any value of it.
+    const BUFFER_TEXT_CAPACITY: usize = 0xBFFF - 0xA004; // 8187 chars + NUL
+    let verdict = "\nPassed\n";
+    let mut text = ".".repeat(BUFFER_TEXT_CAPACITY - verdict.len());
+    text.push_str(verdict);
+    plant_cart_ram_output(&mut gb, 0x00, &text);
+
+    let output = read_cart_ram_output(&mut gb).expect("completed run must yield text");
+    assert_eq!(
+        output.len(),
+        BUFFER_TEXT_CAPACITY,
+        "the scan must cover $A004..=$BFFF, not stop at $AFFF"
+    );
+    assert!(
+        output.contains("Passed"),
+        "a verdict written above $AFFF must not be truncated away"
+    );
+}
+
+/// Write blargg's cartridge-RAM output protocol directly: enable MBC1 RAM, set
+/// the status byte and signature, then store `text` zero-terminated at `$A004`.
+///
+/// Uses literal addresses for the same reason as the test above: the helper
+/// must not inherit the bounds it is used to verify.
+fn plant_cart_ram_output(gb: &mut Gb<DmgBus>, status: u8, text: &str) {
+    const TEXT_START: u16 = 0xA004;
+    assert!(
+        text.len() <= (0xBFFF - TEXT_START) as usize,
+        "text plus terminator must fit in $A004..=$BFFF"
+    );
+    gb.cpu.bus.write(0x0000, 0x0A); // MBC1: enable cartridge RAM
+    gb.cpu.bus.write(0xA000, status);
+    for (i, b) in [0xDE, 0xB0, 0x61].iter().enumerate() {
+        gb.cpu.bus.write(0xA001 + i as u16, *b);
+    }
+    for (i, b) in text.bytes().enumerate() {
+        gb.cpu.bus.write(TEXT_START + i as u16, b);
+    }
+    gb.cpu.bus.write(TEXT_START + text.len() as u16, 0x00);
+}
+
+/// A run that exhausts its budget must report how far the ROM actually got.
+///
+/// While `$A000` still reads `$80` the completion protocol yields nothing, so
+/// the old timeout path returned `""` — indistinguishable from a ROM that
+/// produced no output at all.  Planted directly rather than run for real: the
+/// contract is "on timeout, surface the text that is there", and a hard-coded
+/// cycle budget would additionally depend on this ROM's start-up time.
+#[test]
+fn test_cart_ram_timeout_reports_partial_output() {
+    let mut gb =
+        load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/7-timing_effect.gb");
+    plant_cart_ram_output(&mut gb, 0x80, "7-timing_effect\n\npartial");
+
+    // A zero budget times out before stepping, leaving the planted state intact.
+    let output = run_blargg_rom_cart_ram_with_limit(&mut gb, 0);
+    assert_eq!(
+        output,
+        format!("{TIMEOUT_PREFIX}7-timing_effect\n\npartial"),
+        "a timed-out run must be labelled as such and carry the text printed so far"
     );
 }
