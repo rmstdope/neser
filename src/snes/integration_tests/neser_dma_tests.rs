@@ -42,6 +42,19 @@ fn assert_wram(fx: &mut FixtureRom, addr: u16, expected: u8) {
     fx.branch_fail_if_ne(expected);
 }
 
+/// Sentinel pre-filled into a destination so an untransferred cell is
+/// distinguishable from a real transfer that happened to carry the same value.
+const SENTINEL: u8 = 0xEE;
+
+/// Emits CPU code that reads the bank-`$00` register at `addr` (`$2100-$43FF`)
+/// and fails the fixture unless it holds `expected`. Same instruction shape as
+/// [`assert_wram`]; named apart so a register readback does not read as a WRAM
+/// one.
+fn assert_reg(fx: &mut FixtureRom, addr: u16, expected: u8) {
+    fx.lda_abs(addr);
+    fx.branch_fail_if_ne(expected);
+}
+
 /// Emits CPU code that reads the 24-bit address `addr` and fails the fixture
 /// unless it holds `expected`. Used for targets outside the bank-`$00` window,
 /// e.g. the LoROM SRAM window at `$70:0000`.
@@ -285,8 +298,10 @@ mod tests {
     /// implement the restriction (ares `CPU::Channel::transfer`'s `valid`
     /// predicate, Mesen2 `SnesDmaController::CopyDmaByte`). An earlier version
     /// of this vector targeted the WRAM mirror at `$0600` and so asserted a
-    /// transfer hardware does not perform; NESER does not model the restriction
-    /// yet (#3111), so this vector deliberately stays clear of it.
+    /// transfer hardware does not perform; NESER models the restriction since
+    /// #3111 (see `gpdma_wmdata_to_wram_is_refused` below), so this vector
+    /// deliberately stays on the legal side and keeps testing the live B-bus
+    /// read it was written for.
     ///
     /// The restriction is specific to WRAM on *both* sides, i.e. B-bus `$80`
     /// against a WRAM A-bus address -- a WRAM destination is perfectly legal
@@ -310,6 +325,76 @@ mod tests {
         assert_long(&mut fx, 0x70_0003, 0x44);
         fx.pass_marker_and_idle();
         run_fixture(fx.build(), "gpdma-b2a-wmdata.sfc");
+    }
+
+    /// A->B with WRAM on both sides is refused: no byte reaches `$2180`, so the
+    /// destination keeps its seed AND the WMADD counter never advances (#3111).
+    ///
+    /// WMADD is probed byuu-style (`test_dmavalid.asm`): after the transfer the
+    /// CPU pokes a marker into `$2180` and the fixture checks *where* it landed.
+    /// A transfer that wrongly ran would have advanced WMADD by 4, putting the
+    /// marker at `$0504` instead of `$0500`.
+    ///
+    /// The channel's own bookkeeping is unaffected -- `$43x2` still walks the
+    /// source and `$43x5` still drains to zero -- which is what makes this a
+    /// refused *transfer* rather than a skipped channel.
+    #[test]
+    fn gpdma_wram_to_wmdata_is_refused() {
+        let mut fx = FixtureRom::new(b"NESER DMA W2W A");
+        fx.force_blank_on();
+        for (i, byte) in [0x11u8, 0x22, 0x33, 0x44].iter().enumerate() {
+            fx.store_imm_abs(0x0400 + i as u16, *byte);
+        }
+        for i in 0..4u16 {
+            fx.store_imm_abs(0x0500 + i, SENTINEL);
+        }
+        set_wmadd(&mut fx, 0x0500);
+        // DMAP $00: A->B, increment A-bus, mode 0. Source = WRAM $7E:0400.
+        fx.setup_gpdma(0, 0x00, BBAD_WMDATA, 0x7E_0400, 4);
+        fx.trigger_gpdma(0x01);
+
+        for i in 0..4u16 {
+            assert_wram(&mut fx, 0x0500 + i, SENTINEL);
+        }
+        fx.store_imm_abs(0x2180, 0x3F);
+        assert_wram(&mut fx, 0x0500, 0x3F); // WMADD never moved
+        assert_reg(&mut fx, 0x4302, 0x04); // $43x2 still advanced by 4
+        assert_reg(&mut fx, 0x4303, 0x04);
+        assert_reg(&mut fx, 0x4305, 0x00); // $43x5 still drained
+        assert_reg(&mut fx, 0x4306, 0x00);
+
+        fx.pass_marker_and_idle();
+        run_fixture(fx.build(), "gpdma-wram-to-wmdata.sfc");
+    }
+
+    /// B->A with WRAM on both sides: `$2180` is never read (so WMADD stays put),
+    /// but the A-bus write still happens, depositing the invalid byte `0xFF`
+    /// (Mesen2 `CopyDmaByte`) rather than the WRAM byte WMADD points at (#3111).
+    #[test]
+    fn gpdma_wmdata_to_wram_is_refused() {
+        let mut fx = FixtureRom::new(b"NESER DMA W2W B");
+        fx.force_blank_on();
+        for (i, byte) in [0x11u8, 0x22, 0x33, 0x44].iter().enumerate() {
+            fx.store_imm_abs(0x0400 + i as u16, *byte);
+        }
+        for i in 0..4u16 {
+            fx.store_imm_abs(0x0500 + i, SENTINEL);
+        }
+        set_wmadd(&mut fx, 0x0400);
+        // DMAP $80: B->A, increment A-bus, mode 0. Destination = WRAM $7E:0500.
+        fx.setup_gpdma(0, 0x80, BBAD_WMDATA, 0x7E_0500, 4);
+        fx.trigger_gpdma(0x01);
+
+        for i in 0..4u16 {
+            // Not the source ramp (a real copy), and not the sentinel (a fully
+            // dropped slot) -- the write happens, with the invalid byte.
+            assert_wram(&mut fx, 0x0500 + i, 0xFF);
+        }
+        fx.store_imm_abs(0x2180, 0x3F);
+        assert_wram(&mut fx, 0x0400, 0x3F); // WMADD never moved
+
+        fx.pass_marker_and_idle();
+        run_fixture(fx.build(), "gpdma-wmdata-to-wram.sfc");
     }
 
     /// B->A GPDMA through a PPU read port carries that port's read side

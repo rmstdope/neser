@@ -82,6 +82,24 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
      Screenshots of animated screens silently show the previous frame's pixels, producing
      phantom cadence/phase "bugs" in the reference itself. Static screens are unaffected.
      **Verify the reference capture pipeline before debugging the emulator under test.**
+   - **Add `--snes.RamPowerOnState=AllZeros` whenever the ROM can display uninitialised
+     WRAM** (found in #3063/#3127). NESER zero-fills WRAM; Mesen2's SNES default is
+     `RamState::Random` (`SettingTypes.h`, `SnesConfig`). Without the flag the reference is
+     not reproducible *against itself*, so the diff measures RNG rather than emulation.
+     `test_dmatiming/demo.smc` was recorded in #3063 as a "~0.93% DMA-timing divergence"
+     for exactly this reason -- two default Mesen2 captures of that ROM differ from each
+     other by 1.06%, more than either differs from NESER. Matched, the real divergence was
+     36 px from an unrelated cause.
+     **The tell is a capture that changes between identical runs: capture twice before
+     trusting any non-zero diff.** That check costs one extra run and distinguishes "the
+     emulator is wrong" from "the reference is not a constant".
+   - **Before reading a picture-ROM's pixel diff as a timing signal, work out what the ROM
+     actually displays.** Disassembling/reading `demo.asm` showed its NMI handler is a bare
+     `RTI` (confirmable in the binary: `$40` at the handler's file offset), so two of its
+     three on-screen rows render never-written WRAM and only the third is a measurement.
+     That reframed a whole-screen CRC into a two-word assertion on `$7EC000`/`$7EC002`,
+     which is immune to power-on state and names the actual defect. Prefer extracting the
+     ROM's own measurement words over hashing its framebuffer.
 
 10. When sources disagree or remain ambiguous, report that directly.
    - Name the conflicting sources.
