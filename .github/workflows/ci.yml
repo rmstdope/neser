@@ -69,6 +69,7 @@ jobs:
               # scripts/test_package_release.py. See docs/VENDOR_SUBMODULES.md.
               - 'vendor/slang-shaders'
               - 'src/platform/shaders.rs'
+              - '.github/workflows/ci.yml'
             rust:
               - 'src/**'
               - 'Cargo.toml'
