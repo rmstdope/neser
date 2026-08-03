@@ -1,11 +1,12 @@
 """SQLite persistence layer for TheGamesDB metadata."""
+
 import json
 import sqlite3
-from typing import Any, Optional
+from typing import Any
 
-_ALLOWED_REFERENCE_TABLES = frozenset(
-    {"genres", "developers", "publishers", "regions", "countries"}
-)
+from scripts.metadata_scraper import JsonDict
+
+_ALLOWED_REFERENCE_TABLES = frozenset({"genres", "developers", "publishers", "regions", "countries"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS platforms (
@@ -99,28 +100,28 @@ CREATE TABLE IF NOT EXISTS sync_log (
 class MetadataDb:
     """SQLite-backed store for TheGamesDB metadata."""
 
-    def __init__(self, db_path: str = "metadata.db"):
+    def __init__(self, db_path: str = "metadata.db") -> None:
         self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._apply_schema()
 
-    def _apply_schema(self):
+    def _apply_schema(self) -> None:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
 
-    def close(self):
+    def close(self) -> None:
         self._conn.close()
 
-    def __enter__(self):
+    def __enter__(self) -> "MetadataDb":
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: object) -> None:
         self.close()
 
     # ── platforms ────────────────────────────────────────────────────────────
 
-    def upsert_platform(self, platform: dict):
+    def upsert_platform(self, platform: JsonDict) -> None:
         self._conn.execute(
             "INSERT INTO platforms (id, name, alias) VALUES (?, ?, ?)"
             " ON CONFLICT(id) DO UPDATE SET name=excluded.name, alias=excluded.alias",
@@ -128,23 +129,21 @@ class MetadataDb:
         )
         self._conn.commit()
 
-    def get_platform(self, platform_id: int) -> Optional[dict]:
-        row = self._conn.execute(
-            "SELECT id, name, alias FROM platforms WHERE id = ?", (platform_id,)
-        ).fetchone()
+    def get_platform(self, platform_id: int) -> JsonDict | None:
+        row = self._conn.execute("SELECT id, name, alias FROM platforms WHERE id = ?", (platform_id,)).fetchone()
         return dict(row) if row else None
 
-    def list_platforms(self) -> list[dict]:
+    def list_platforms(self) -> list[JsonDict]:
         rows = self._conn.execute("SELECT id, name, alias FROM platforms ORDER BY id").fetchall()
         return [dict(r) for r in rows]
 
     # ── reference tables (genres, developers, publishers, regions, countries) ─
 
-    def _validate_ref_table(self, table: str):
+    def _validate_ref_table(self, table: str) -> None:
         if table not in _ALLOWED_REFERENCE_TABLES:
             raise ValueError(f"Invalid reference table: {table!r}")
 
-    def upsert_reference(self, table: str, entity: dict):
+    def upsert_reference(self, table: str, entity: JsonDict) -> None:
         self._validate_ref_table(table)
         self._conn.execute(
             f"INSERT INTO {table} (id, name) VALUES (?, ?)"  # noqa: S608 (table is validated)
@@ -153,16 +152,17 @@ class MetadataDb:
         )
         self._conn.commit()
 
-    def get_reference(self, table: str, entity_id: int) -> Optional[dict]:
+    def get_reference(self, table: str, entity_id: int) -> JsonDict | None:
         self._validate_ref_table(table)
         row = self._conn.execute(
-            f"SELECT id, name FROM {table} WHERE id = ?", (entity_id,)  # noqa: S608
+            f"SELECT id, name FROM {table} WHERE id = ?",  # noqa: S608 (table is validated above)
+            (entity_id,),
         ).fetchone()
         return dict(row) if row else None
 
     # ── games ────────────────────────────────────────────────────────────────
 
-    def upsert_game(self, game: dict):
+    def upsert_game(self, game: JsonDict) -> None:
         alternates = game.get("alternates")
         if alternates is not None and not isinstance(alternates, str):
             alternates = json.dumps(alternates)
@@ -205,21 +205,21 @@ class MetadataDb:
         self._upsert_join("game_publishers", "publisher_id", game["id"], game.get("publishers") or [])
         self._conn.commit()
 
-    def _upsert_join(self, table: str, fk_col: str, game_id: int, ids: list[int]):
-        self._conn.execute(f"DELETE FROM {table} WHERE game_id = ?", (game_id,))
+    def _upsert_join(self, table: str, fk_col: str, game_id: int, ids: list[int]) -> None:
+        # table/fk_col are code constants supplied by upsert_game, never external
+        # input, and identifiers cannot be bound as parameters. Values are bound.
+        self._conn.execute(f"DELETE FROM {table} WHERE game_id = ?", (game_id,))  # noqa: S608
         for entity_id in ids:
             self._conn.execute(
-                f"INSERT OR IGNORE INTO {table} (game_id, {fk_col}) VALUES (?, ?)",
+                f"INSERT OR IGNORE INTO {table} (game_id, {fk_col}) VALUES (?, ?)",  # noqa: S608
                 (game_id, entity_id),
             )
 
-    def get_game(self, game_id: int) -> Optional[dict]:
-        row = self._conn.execute(
-            "SELECT * FROM games WHERE id = ?", (game_id,)
-        ).fetchone()
+    def get_game(self, game_id: int) -> JsonDict | None:
+        row = self._conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
         return dict(row) if row else None
 
-    def list_games(self, platform_id: int = None, game_id: int = None) -> list[dict]:
+    def list_games(self, platform_id: int | None = None, game_id: int | None = None) -> list[JsonDict]:
         query = "SELECT * FROM games WHERE 1=1"
         params: list[Any] = []
         if platform_id is not None:
@@ -232,7 +232,7 @@ class MetadataDb:
         rows = self._conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
-    def search_games(self, name: str, platform_id: int = None) -> list[dict]:
+    def search_games(self, name: str, platform_id: int | None = None) -> list[JsonDict]:
         query = "SELECT * FROM games WHERE LOWER(game_title) LIKE LOWER('%' || ? || '%')"
         params: list[Any] = [name]
         if platform_id is not None:
@@ -264,7 +264,7 @@ class MetadataDb:
 
     # ── images ───────────────────────────────────────────────────────────────
 
-    def upsert_image(self, image: dict):
+    def upsert_image(self, image: JsonDict) -> None:
         self._conn.execute(
             """INSERT INTO images (id, game_id, type, side, filename, resolution)
                VALUES (?,?,?,?,?,?)
@@ -285,7 +285,7 @@ class MetadataDb:
         )
         self._conn.commit()
 
-    def get_game_images(self, game_id: int) -> list[dict]:
+    def get_game_images(self, game_id: int) -> list[JsonDict]:
         rows = self._conn.execute(
             "SELECT id, game_id, type, side, filename, resolution FROM images WHERE game_id = ?",
             (game_id,),
@@ -305,7 +305,7 @@ class MetadataDb:
         ).fetchall()
         return {r["type"]: r["cnt"] for r in rows}
 
-    def upsert_image_base_urls(self, base_urls: dict[str, str]):
+    def upsert_image_base_urls(self, base_urls: dict[str, str]) -> None:
         for size, url in base_urls.items():
             self._conn.execute(
                 "INSERT INTO image_base_urls (size, url) VALUES (?, ?)"
@@ -321,16 +321,15 @@ class MetadataDb:
     def build_image_url(self, image_id: int, size: str) -> str:
         base_urls = self.get_image_base_urls()
         base = base_urls[size]  # raises KeyError if size unknown
-        row = self._conn.execute(
-            "SELECT filename FROM images WHERE id = ?", (image_id,)
-        ).fetchone()
+        row = self._conn.execute("SELECT filename FROM images WHERE id = ?", (image_id,)).fetchone()
         if row is None:
             raise KeyError(f"No image with id={image_id}")
-        return base + row["filename"]
+        filename: str = row["filename"]
+        return base + filename
 
     # ── sync log ─────────────────────────────────────────────────────────────
 
-    def get_sync_log(self, platform_id: int) -> Optional[dict]:
+    def get_sync_log(self, platform_id: int) -> JsonDict | None:
         row = self._conn.execute(
             "SELECT platform_id, last_full_sync, last_incremental_sync, last_update_id"
             " FROM sync_log WHERE platform_id = ?",
@@ -338,8 +337,13 @@ class MetadataDb:
         ).fetchone()
         return dict(row) if row else None
 
-    def update_sync_log(self, platform_id: int, last_update_id: int = None,
-                        last_full_sync: str = None, last_incremental_sync: str = None):
+    def update_sync_log(
+        self,
+        platform_id: int,
+        last_update_id: int | None = None,
+        last_full_sync: str | None = None,
+        last_incremental_sync: str | None = None,
+    ) -> None:
         existing = self.get_sync_log(platform_id)
         if existing is None:
             self._conn.execute(
@@ -348,7 +352,7 @@ class MetadataDb:
                 (platform_id, last_full_sync, last_incremental_sync, last_update_id),
             )
         else:
-            updates = {}
+            updates: JsonDict = {}
             if last_full_sync is not None:
                 updates["last_full_sync"] = last_full_sync
             if last_incremental_sync is not None:
@@ -357,16 +361,16 @@ class MetadataDb:
                 updates["last_update_id"] = last_update_id
             if updates:
                 set_clause = ", ".join(f"{k}=?" for k in updates)
-                params = list(updates.values()) + [platform_id]
+                params = [*list(updates.values()), platform_id]
                 self._conn.execute(
-                    f"UPDATE sync_log SET {set_clause} WHERE platform_id=?", params
+                    # set_clause is built from literal column names above; values are bound.
+                    f"UPDATE sync_log SET {set_clause} WHERE platform_id=?",  # noqa: S608
+                    params,
                 )
         self._conn.commit()
 
     # ── statistics ───────────────────────────────────────────────────────────
 
     def get_game_counts(self) -> dict[int, int]:
-        rows = self._conn.execute(
-            "SELECT platform_id, COUNT(*) AS cnt FROM games GROUP BY platform_id"
-        ).fetchall()
+        rows = self._conn.execute("SELECT platform_id, COUNT(*) AS cnt FROM games GROUP BY platform_id").fetchall()
         return {r["platform_id"]: r["cnt"] for r in rows}
