@@ -4,14 +4,18 @@
 //! ROMs were earmarked out of scope for #2883/#3049 and are automated here.
 //!
 //! Like the NMI/IRQ suites, each ROM renders a solid backdrop colour on
-//! completion (blue = PASS, red/maroon = FAIL), cross-checked against a Mesen2
+//! completion (blue = PASS, red = FAIL), cross-checked against a Mesen2
 //! headless capture (`--Video.VideoFilter=None --Video.AspectRatio=NoStretching
-//! --snes.disableFrameSkipping=true`) of the identical ROM file.
+//! --snes.disableFrameSkipping=true`) of the identical ROM file. Both colours
+//! are painted by byuu's `pass()`/`fail()` epilogues, which end in `stp`; until
+//! #3116 NESER ran through that halt and every screen here was post-halt
+//! garbage rather than the ROM's verdict.
 //!
-//! **Golden convention (#3092).** All three tests assert the Mesen2-correct
-//! blue PASS screen, not NESER's current output, so they FAIL under
-//! `cargo test --include-ignored` until #3062 lands -- the designed state, not
-//! a regression. See `kungfufurby_irq_tests`' module doc for the rationale.
+//! **Golden convention (#3092).** The two still-`#[ignore]`d tests assert the
+//! Mesen2-correct blue PASS screen, not NESER's current output, so they FAIL
+//! under `cargo test --include-ignored` until #3062 lands -- the designed
+//! state, not a regression. See `kungfufurby_irq_tests`' module doc for the
+//! rationale.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -55,32 +59,46 @@ mod tests {
     // verified by a fresh headless capture at each test's own sample frame.
     // Un-ignore each one once NESER renders the PASS backdrop (#3062).
 
-    /// #3062: NESER paints a brief red flash at frames 12-13 and then settles
-    /// on solid black from frame 14 onward; Mesen2 renders blue PASS. Same
-    /// black CRC as #2953.
+    /// #3062: the ROM's self-check FAILs -- a flat `(255, 0, 0)` fill, byuu's
+    /// `fail()` backdrop. Its four sub-tests cover HDMA init semantics, so the
+    /// verdict is now a usable HDMA finding: the ROM records which one failed
+    /// in SRAM byte 0 (`!test_number`; 0 = pass, 1-4 = the failing sub-test),
+    /// readable from the emitted `.sav`.
+    ///
+    /// Before #3116 this settled on solid black instead, because STP did not
+    /// halt: `pass()`/`fail()` ran on into `get_dma_counter`, which starts a
+    /// GPDMA and then `rts` on a stack it never set up.
     #[test]
-    #[ignore = "settles on black instead of Mesen2's blue PASS; asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
+    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdma_passes() {
         run_rom_screen_crc("test_hdma.smc", 600, 0x8695_BBB0);
     }
 
-    /// #3062: this ROM is slow -- BOTH emulators render solid black until
-    /// ~frame 1027, so the frame-600 sample this test used before #3092 could
-    /// never see the divergence (it asserted "still black", which Mesen2 also
-    /// produces). Sampled at frame 1100 instead, comfortably past the
-    /// transition: Mesen2 is stable blue PASS from frame 1029, while NESER
-    /// paints red FAIL at 1029 and settles on `0x7F21_BBD7` from frame 1031.
+    /// This ROM is slow -- BOTH emulators render solid black until ~frame 1027,
+    /// so the frame-600 sample this test used before #3092 could never see the
+    /// divergence (it asserted "still black", which Mesen2 also produces).
+    /// Sampled at frame 1100 instead, comfortably past the transition.
+    ///
+    /// Passes since #3116. The apparent HDMA divergence was the missing STP
+    /// halt: the ROM did reach `pass()` and paint blue, then fell through the
+    /// dead `stp` into `fail()` within the same scanline, so no frame ever
+    /// showed the blue.
     #[test]
-    #[ignore = "settles on a non-PASS screen where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdmasync_passes() {
         run_rom_screen_crc("test_hdmasync.smc", 1100, 0x8695_BBB0);
     }
 
-    /// #3062: NESER runs to completion but the ROM's self-check FAILS (a flat
-    /// `(66, 0, 0)` fill, settled from frame 30) where Mesen2 PASSes (blue) --
-    /// an HDMA timing behaviour NESER gets wrong.
+    /// #3062: the ROM's self-check FAILs -- a flat `(255, 0, 0)` fill, byuu's
+    /// `fail()` backdrop -- where Mesen2 PASSes. A real HDMA timing divergence:
+    /// the ROM compares 8 rows of latched H positions and channel registers
+    /// against an in-ROM `compdata` table, and leaves both in SRAM `$00..$3F`,
+    /// so the failing row is readable from the emitted `.sav`.
+    ///
+    /// Before #3116 this settled on a flat `(66, 0, 0)` instead -- not a FAIL
+    /// shade at all, but whatever the `compdata` bytes did when executed as
+    /// code past the unimplemented `stp`.
     #[test]
-    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
+    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdmatiming.smc", 600, 0x8695_BBB0);
     }

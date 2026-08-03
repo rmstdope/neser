@@ -4,22 +4,27 @@
 //! byte-identical to the tukuyomi-bsnes-tests mirror -- see
 //! `roms/snes/automated_tests/manifest.json`).
 //!
-//! Same pass/fail convention as the NMI suite: blue backdrop for PASS,
-//! red/maroon for FAIL. Verified against Mesen2 headless captures, which
-//! show blue for all six ROMs by frame 600 (`irq.smc` needs longer,
-//! matching `demo_irqtest.smc` transitioning well after frame 600 too).
+//! Same pass/fail convention as the NMI suite: blue backdrop for PASS, red
+//! for FAIL. Both are painted by byuu's `pass()`/`fail()` epilogues, which end
+//! in `stp`. Verified against Mesen2 headless captures, which show blue for all
+//! six ROMs by frame 600 (`irq.smc` needs longer, matching `demo_irqtest.smc`
+//! transitioning well after frame 600 too).
 //!
 //! All six originally failed in NESER (investigated as issue #2883
 //! increment 2, found to share `kungfufurby_nmi_tests`' interrupt-dispatch
 //! root cause, tracked in #3049). #3049's per-CPU-cycle NMI and H/V-IRQ
 //! dispatch fixes (see `src/snes/cpu/cpu.rs`) fixed `demo_irqtest.smc`,
-//! pixel-verified against Mesen2 at frame 600. The remaining five still
-//! render their FAIL backdrop and are tracked in #3093 together with
-//! `kungfufurby_nmi_tests::test_nmi_passes`: both families show the same
-//! shape (the `demo_*` ROM passes, every other ROM renders the identical
-//! maroon FAIL fill), which is evidence of one shared residual gap.
+//! pixel-verified against Mesen2 at frame 600. #3116 then fixed
+//! `test_irq4209.smc` here and `test_nmi.smc` in the NMI suite -- neither had
+//! been failing on IRQ behaviour at all: STP did not halt the CPU, so a PASS
+//! run painted blue and immediately fell through the dead `stp` into `fail()`.
+//! The `maroon` FAIL shades this doc used to record were post-halt garbage, not
+//! ROM verdicts.
 //!
-//! **Golden convention (#3092).** The five ignored tests below assert the
+//! The four still-failing ROMs now render byuu's genuine `(255, 0, 0)` FAIL
+//! backdrop and remain tracked in #3093.
+//!
+//! **Golden convention (#3092).** The ignored tests below assert the
 //! *Mesen2-correct* blue PASS screen, not NESER's current output. They
 //! therefore FAIL under `cargo test --include-ignored` until #3093 lands --
 //! that is the designed state, not a regression -- and turn green exactly
@@ -84,29 +89,28 @@ mod tests {
         run_rom_screen_crc("irq.smc", 1200, 0x8695_BBB0);
     }
 
-    /// #3093: NESER's self-check FAILs (flat maroon, settled from frame 9)
-    /// where Mesen2 PASSes (blue). Unaffected by #3049's per-cycle NMI/IRQ
-    /// dispatch fixes (identical CRC before/after).
+    /// #3093: NESER's self-check FAILs (flat `(255, 0, 0)`, byuu's `fail()`
+    /// backdrop) where Mesen2 PASSes (blue). Read as maroon before #3116, which
+    /// was post-`stp` garbage rather than the ROM's verdict.
     #[test]
-    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
+    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq_passes() {
         run_rom_screen_crc("test_irq.smc", 600, 0x8695_BBB0);
     }
 
-    /// #3093: NESER's self-check FAILs (flat maroon) where Mesen2 PASSes
-    /// (blue). Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes
-    /// (identical CRC before/after).
+    /// #3093: NESER's self-check FAILs (flat `(255, 0, 0)`, byuu's `fail()`
+    /// backdrop) where Mesen2 PASSes (blue). Read as maroon before #3116, which
+    /// was post-`stp` garbage rather than the ROM's verdict.
     #[test]
-    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
+    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq4200_passes() {
         run_rom_screen_crc("test_irq4200.smc", 600, 0x8695_BBB0);
     }
 
-    /// #3093: NESER's self-check FAILs (flat maroon) where Mesen2 PASSes
-    /// (blue). Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes
-    /// (identical CRC before/after).
+    /// Passes since #3116. The maroon screen recorded here was never a FAIL
+    /// verdict: STP did not halt, so `pass()` painted blue and then fell
+    /// through the dead `stp` into `fail()` and on into the bytes beyond.
     #[test]
-    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq4209_passes() {
         run_rom_screen_crc("test_irq4209.smc", 600, 0x8695_BBB0);
     }

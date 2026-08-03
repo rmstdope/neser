@@ -113,6 +113,10 @@ pub struct SnesCpuState {
     pub irq_line_shadow: bool,
     #[serde(default)]
     pub waiting: bool,
+    /// See Cpu::stopped (#3116): true while halted by STP. Defaults to false, so
+    /// states written before the field existed restore as a running CPU.
+    #[serde(default)]
+    pub stopped: bool,
     #[serde(default)]
     pub fast_rom: bool,
     #[serde(default)]
