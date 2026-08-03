@@ -12,12 +12,12 @@
 //! Two ROMs render a pixel-exact (0-pixel diff) match for Mesen2 and are
 //! committed goldens. `test_hdma/test_hdmasync.smc` and
 //! `test_hdma/test_hdmatiming.smc` are byte-identical byuu-suite mirrors of the
-//! KungFuFurby ROMs (md5 `acec8b53...` for the former) and share their
-//! divergence (#3062).
+//! KungFuFurby ROMs (md5 `acec8b53...` for the former); the first now passes,
+//! and the second carries the same single residual as its KungFuFurby twin.
 //!
 //! **Golden convention (#3092).** The remaining `#[ignore]`d *self-check* ROMs
 //! assert the Mesen2-correct blue PASS screen, not NESER's current output, so
-//! they FAIL under `cargo test --include-ignored` until #3062/#3063 land --
+//! they FAIL under `cargo test --include-ignored` until #3063/#3120 land --
 //! the designed state, not a regression. See `kungfufurby_irq_tests`' module
 //! doc for the rationale. `test_dmatiming_matches_mesen2` is deliberately NOT
 //! on this convention: it is a pixel-diff comparison against Mesen2's own
@@ -130,7 +130,7 @@ mod tests {
     /// to a single differing value, row 1's first latch. See
     /// `kungfufurby_hdma_tests::test_hdmatiming_passes` for the measurement.
     #[test]
-    #[ignore = "one residual value (row 1's first latch, 4 master clocks); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
+    #[ignore = "one residual value (row 1's first latch, 4 master clocks); asserts the correct PASS golden so FAILs under --include-ignored until #3120"]
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdma/test_hdmatiming.smc", 600, 0x8695_BBB0);
     }

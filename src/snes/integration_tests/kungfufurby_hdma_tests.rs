@@ -11,11 +11,11 @@
 //! #3116 NESER ran through that halt and every screen here was post-halt
 //! garbage rather than the ROM's verdict.
 //!
-//! **Golden convention (#3092).** The two still-`#[ignore]`d tests assert the
-//! Mesen2-correct blue PASS screen, not NESER's current output, so they FAIL
-//! under `cargo test --include-ignored` until #3062 lands -- the designed
-//! state, not a regression. See `kungfufurby_irq_tests`' module doc for the
-//! rationale.
+//! **Golden convention (#3092).** `test_hdmatiming_passes`, the one test still
+//! `#[ignore]`d, asserts the Mesen2-correct blue PASS screen rather than
+//! NESER's current output, so it FAILs under `cargo test --include-ignored`
+//! until #3120 lands -- the designed state, not a regression. See
+//! `kungfufurby_irq_tests`' module doc for the rationale.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -57,7 +57,7 @@ mod tests {
 
     // All three goldens below are the Mesen2-approved blue PASS screen,
     // verified by a fresh headless capture at each test's own sample frame.
-    // Un-ignore each one once NESER renders the PASS backdrop (#3062).
+    // Two of the three now render it; un-ignore the last once it does too.
 
     /// Four sub-tests covering HDMA init semantics. Passes since #3062, which
     /// took two fixes, both found by reading the sub-test number the ROM leaves
@@ -108,7 +108,7 @@ mod tests {
     /// they do not affect the verdict -- they are the unmodelled
     /// HDMA-during-GPDMA nesting noted in `src/snes/bus/dma.rs`.
     #[test]
-    #[ignore = "one residual value (row 1's first latch, 4 master clocks); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
+    #[ignore = "one residual value (row 1's first latch, 4 master clocks); asserts the correct PASS golden so FAILs under --include-ignored until #3120"]
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdmatiming.smc", 600, 0x8695_BBB0);
     }
