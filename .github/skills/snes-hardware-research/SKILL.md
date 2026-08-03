@@ -479,6 +479,52 @@ Consequences worth knowing before touching such a suite:
   invalidated by a capture-geometry change (#3001) nobody re-ran. Audit
   ignored goldens whenever a rendering or capture convention changes.
 
+### Read the ROM's pass()/fail() epilogue before blaming the subsystem under test (from #3116)
+
+A self-check ROM's screen is the output of two independent things: the
+behaviour being tested, **and** the ROM's own verdict-reporting path. If the
+verdict path is broken, the screen tells you nothing about the behaviour — but
+it looks exactly like a subsystem bug, and it will absorb unlimited
+investigation.
+
+Every ROM in byuu's "SNES TEST IMAGE" family (KungFuFurby, jonasquinn mirrors:
+`test_hdma*`, `test_irq*`, `test_nmi`, `test_dma*`, `test_vram`) ends:
+
+```asm
+pass() { ... lda #$7c : sta $2122 ... lda #$0f : sta $2100 : stp }   ; blue $7c00
+fail() { ... lda #$1f : sta $2122 ... lda #$0f : sta $2100 : stp }   ; red  $001f
+```
+
+`fail()` is assembled **directly after** `pass()`. NESER implemented `STP` as a
+no-op, so a PASS run painted blue, fell through the dead halt into `fail()` ten
+CPU cycles later — same scanline, so no frame ever showed the blue — and then
+executed the following bytes as code. Sixteen vendored binaries were affected.
+Three issues (#3062, #3063, #3093) had recorded "FAIL" screens that were
+post-halt garbage; two of them had already burned root-cause hunts on
+subsystems that were not defective, and one issue had concluded a specific
+mid-frame HDMA-disable bug purely from the colour.
+
+Habits that catch this class:
+
+- **Read the epilogue first.** The sources are vendored under
+  `roms/snes/automated_tests/snes_test_roms/jonasquinn-test-roms/*/`. Confirm
+  they match the binary you run (md5 the mirrors, or search the ROM for a
+  distinctive data table) — several ROMs ship in more than one build.
+- **A wrong FAIL shade is a red flag, not a diagnostic.** #3062 built a
+  taxonomy of red levels (r=31/14/10/8) and hypothesised the shade encoded
+  *which* check failed. Every one was post-halt garbage. If the observed colour
+  is not one the ROM's source can actually write, the ROM is not the thing
+  reporting it.
+- **Check the halt is modelled** before trusting any screen from a ROM that
+  ends in `stp` (or a `bra *` self-loop). A CPU that runs past its own halt
+  invalidates the entire suite at once.
+- **Prefer the ROM's machine-readable results** where they exist. These ROMs
+  declare 32 KB SRAM and write verdicts to bank `$70`, so the emitted `.sav`
+  names the failing sub-test with no tracing: `test_hdma.smc` byte 0 is a
+  sub-test number (0 = pass), `test_hdmatiming.smc` `$00..$3F` compares against
+  an in-ROM `compdata` table, `test_hdmasync.smc` `$000..$7FF` against
+  `test_hdmasync_data.bin`.
+
 ### Check the sample frame can actually SEE the divergence (from #3092)
 
 Before trusting any screen-CRC divergence record, capture **both** emulators
