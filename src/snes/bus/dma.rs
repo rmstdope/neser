@@ -2,6 +2,23 @@ use crate::snes::console::save_state::SnesDmaState;
 
 const DMA_REG_BYTES: usize = 0x80;
 
+/// B-bus address of WMDATA (`$2180`), the WRAM data port.
+const WMDATA_B_BUS_ADDR: u8 = 0x80;
+
+/// Byte the A-bus write deposits when a `$2180` -> WRAM transfer is refused.
+///
+/// The references disagree and neither value is hardware-verified: Mesen2
+/// `SnesDmaController::CopyDmaByte` writes `0xFF` ("the value written is
+/// invalid"), ares `CPU::Channel::readB` yields `0x00`. fullsnes says only that
+/// the transfer "isn't possible", and byuu's own `test_dmavalid` ROM asserts
+/// merely that the destination changed to something other than its seed --
+/// while noting the value is *not* MDR ("which would be #$ea"), which is why
+/// the DMA open bus is deliberately left untouched here.
+///
+/// We follow Mesen2, which the rest of this controller's byte-slot model is
+/// already built on.
+const INVALID_WRAM_TRANSFER_BYTE: u8 = 0xFF;
+
 pub trait DmaABus {
     fn dma_read_a_bus(&mut self, addr: u32, open_bus: u8) -> u8;
     fn dma_write_a_bus(&mut self, addr: u32, value: u8);
@@ -19,6 +36,14 @@ pub trait DmaABus {
     /// hardware it is every write-only PPU register plus the unused
     /// `$2184-$21FF` window.
     fn dma_read_b_bus(&mut self, addr: u8, open_bus: u8) -> u8;
+    /// True when `addr` decodes to WRAM on the A-bus: banks `$7E`/`$7F` in full,
+    /// plus the `$0000-$1FFF` mirror in banks `$00-$3F`/`$80-$BF`.
+    ///
+    /// Used only to detect the WRAM-to-WRAM transfer hardware refuses (see
+    /// [`DmaController::copy_dma_byte`]). Must be a pure address decode: it is
+    /// evaluated before the slot's first `dma_tick`, so it must not advance the
+    /// clock, read memory, or mutate any state.
+    fn dma_a_bus_is_wram(&self, addr: u32) -> bool;
     /// Advance the rest of the system (PPU/APU/input) by `master_clocks` while the DMA
     /// controller owns the bus. Real hardware keeps rendering during a general-purpose DMA
     /// (Mesen2 `SnesDmaController` advances the master clock per transferred byte), so B-bus
@@ -154,6 +179,18 @@ impl DmaController {
         // `inidisp_forgot_to_force_blank` -- and #3074 changed which CPU cycle a transfer runs
         // in, so it can move again. Re-derive which vector objects rather than trusting this
         // paragraph; only the conclusion (keep the 8) has survived every re-measurement.
+        //
+        // #3127 re-derived it once more and found evidence pulling the OTHER way, so the 8 is
+        // now known to be wrong for at least one ROM rather than merely unexplained. Measured
+        // against Mesen2 captures taken fresh (the mosaic one replayed with the identical input
+        // script, the byuu one with `--snes.RamPowerOnState=AllZeros`):
+        //
+        //     jonasquinn test_dmatiming/demo.smc  fixed 8: 4 clocks late   cpu_speed: exact
+        //     peterlemon MosaicMode5-sized        fixed 8: 0 px            cpu_speed: 12484 px
+        //
+        // So neither constant is right for both, and the difference is not a choice of divisor.
+        // The re-entrancy gap described below is the live hypothesis -- fix that before touching
+        // this literal again.
         //
         // Why the rule that is right for HDMA is not obviously right here: Mesen2 re-enters
         // `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing during a
@@ -422,22 +459,7 @@ impl DmaController {
             let a_addr = ((bank as u32) << 16) | ((a_high as u32) << 8) | (a_low as u32);
             let b_addr = bbad.wrapping_add(pattern[i % pattern.len()]);
 
-            // Each byte occupies an 8-master-clock bus slot: the read fills the
-            // first 4 clocks, and the destination write lands at the END of the
-            // slot (Mesen2 `CopyDmaByte`: ReadDma advances 4, then WriteDma
-            // advances 4 more BEFORE calling the register handler).
-            abus.dma_tick(4);
-            if direction_b_to_a {
-                let value = abus.dma_read_b_bus(b_addr, *open_bus);
-                *open_bus = value;
-                abus.dma_tick(4);
-                abus.dma_write_a_bus(a_addr, value);
-            } else {
-                let value = abus.dma_read_a_bus(a_addr, *open_bus);
-                *open_bus = value;
-                abus.dma_tick(4);
-                abus.dma_write_b_bus(b_addr, value);
-            }
+            Self::copy_dma_byte(abus, open_bus, a_addr, b_addr, direction_b_to_a);
 
             ticks += 8;
             count = count.wrapping_sub(1);
@@ -449,6 +471,65 @@ impl DmaController {
         self.set_reg(channel, 0x5, (count & 0x00FF) as u8);
         self.set_reg(channel, 0x6, (count >> 8) as u8);
         ticks
+    }
+
+    /// Moves one byte through its 8-master-clock bus slot, in either direction
+    /// (Mesen2 `SnesDmaController::CopyDmaByte`, shared by its GPDMA and HDMA
+    /// drivers for the same reason it is shared here: the WRAM rule below must
+    /// not drift between the two).
+    ///
+    /// The read fills the first 4 clocks and the destination write lands at the
+    /// END of the slot (Mesen2: `ReadDma` advances 4, then `WriteDma` advances 4
+    /// more BEFORE calling the register handler).
+    ///
+    /// fullsnes "DMA Notes": *"WRAM-to-WRAM DMA isn't possible (neither in
+    /// A-Bus to B-Bus direction, nor vice-versa). Externally, the separate
+    /// address lines are there, but the WRAM chip is unable to process both at
+    /// once."* So a slot whose B-bus address is WMDATA and whose A-bus address
+    /// is WRAM is refused:
+    ///
+    /// - A->B: neither access happens. In particular `$2180` is never written,
+    ///   so the WMADD counter does not advance.
+    /// - B->A: `$2180` is never read (again no WMADD advance), but the A-bus
+    ///   write still occurs, depositing [`INVALID_WRAM_TRANSFER_BYTE`].
+    ///
+    /// Either way the slot still costs its full 8 master clocks and the DMA open
+    /// bus is left unchanged. The channel's address/count bookkeeping is the
+    /// caller's job and runs regardless -- byuu's `test_dmavalid` checks that
+    /// `$43x2` still advanced and `$43x5` still reached zero across 1024
+    /// refused slots, and that the transfer still consumed its ~6 scanlines.
+    ///
+    /// The predicate is tested against the slot's own offset `b_addr`, not the
+    /// channel's raw BBAD: a mode-1 channel with BBAD `$7F` alternates
+    /// `$7F`/`$80`, so only every other slot is refused.
+    fn copy_dma_byte<B: DmaABus>(
+        abus: &mut B,
+        open_bus: &mut u8,
+        a_addr: u32,
+        b_addr: u8,
+        direction_b_to_a: bool,
+    ) {
+        let valid = b_addr != WMDATA_B_BUS_ADDR || !abus.dma_a_bus_is_wram(a_addr);
+        abus.dma_tick(4);
+        match (direction_b_to_a, valid) {
+            (false, true) => {
+                let value = abus.dma_read_a_bus(a_addr, *open_bus);
+                *open_bus = value;
+                abus.dma_tick(4);
+                abus.dma_write_b_bus(b_addr, value);
+            }
+            (false, false) => abus.dma_tick(4),
+            (true, true) => {
+                let value = abus.dma_read_b_bus(b_addr, *open_bus);
+                *open_bus = value;
+                abus.dma_tick(4);
+                abus.dma_write_a_bus(a_addr, value);
+            }
+            (true, false) => {
+                abus.dma_tick(4);
+                abus.dma_write_a_bus(a_addr, INVALID_WRAM_TRANSFER_BYTE);
+            }
+        }
     }
 
     fn canonical_mode(mode: u8) -> u8 {
@@ -547,20 +628,7 @@ impl DmaController {
         for offset in pattern {
             let a_addr = ((bank as u32) << 16) | addr as u32;
             let b_addr = bbad.wrapping_add(*offset);
-            // 8-clock byte slot with the destination write at the slot's end
-            // (Mesen2 CopyDmaByte), landing at its true bus clock.
-            abus.dma_tick(4);
-            if direction_b_to_a {
-                let value = abus.dma_read_b_bus(b_addr, *open_bus);
-                *open_bus = value;
-                abus.dma_tick(4);
-                abus.dma_write_a_bus(a_addr, value);
-            } else {
-                let value = abus.dma_read_a_bus(a_addr, *open_bus);
-                *open_bus = value;
-                abus.dma_tick(4);
-                abus.dma_write_b_bus(b_addr, value);
-            }
+            Self::copy_dma_byte(abus, open_bus, a_addr, b_addr, direction_b_to_a);
             addr = addr.wrapping_add(1);
         }
 
@@ -632,6 +700,14 @@ mod tests {
         fn dma_read_b_bus(&mut self, addr: u8, _open_bus: u8) -> u8 {
             self.b_bus_reads.push((self.clock, addr));
             self.b_bus_ports[addr as usize]
+        }
+
+        /// Deliberately restates the WRAM map in ares' mask form
+        /// (`CPU::Channel::transfer`) rather than delegating to the production
+        /// decoder, so these tests check the rule against an independent
+        /// statement of the spec instead of against the implementation.
+        fn dma_a_bus_is_wram(&self, addr: u32) -> bool {
+            (addr & 0xFE_0000) == 0x7E_0000 || (addr & 0x40_E000) == 0x00_0000
         }
 
         fn dma_tick(&mut self, master_clocks: u64) {
@@ -848,6 +924,219 @@ mod tests {
         assert!(
             bus.b_bus_writes.is_empty(),
             "a B->A transfer drives no B-bus writes"
+        );
+    }
+
+    // --- WRAM <-> $2180 is not a transfer hardware performs (#3111) ----------
+    // fullsnes "DMA Notes": "WRAM-to-WRAM DMA isn't possible (neither in A-Bus
+    // to B-Bus direction, nor vice-versa)." byuu's test_dmavalid ROM pins the
+    // observable consequences: no data moves, WMADD does not advance, but the
+    // channel's own bookkeeping and the transfer's cost are unaffected.
+
+    /// Arms ch0 for a GPDMA and returns the channel's charged clocks.
+    fn run_gpdma(
+        bus: &mut RecordingBus,
+        dmap: u8,
+        bbad: u8,
+        a_addr: u32,
+        count: u16,
+    ) -> (DmaController, u64) {
+        let mut dma = DmaController::new();
+        dma.write_register(0x4300, dmap);
+        dma.write_register(0x4301, bbad);
+        dma.write_register(0x4302, (a_addr & 0xFF) as u8);
+        dma.write_register(0x4303, ((a_addr >> 8) & 0xFF) as u8);
+        dma.write_register(0x4304, ((a_addr >> 16) & 0xFF) as u8);
+        dma.write_register(0x4305, (count & 0xFF) as u8);
+        dma.write_register(0x4306, (count >> 8) as u8);
+        let (charged, _) = dma.start_dma(0x01, bus, 0, 0, 8);
+        (dma, charged)
+    }
+
+    #[test]
+    fn gpdma_wram_to_wmdata_transfers_nothing_but_pays_the_full_slot() {
+        let mut bus = RecordingBus::new(0);
+        // DMAP $00: A->B, increment, mode 0. A-bus $7E1000 -> B-bus $80.
+        let (dma, charged) = run_gpdma(&mut bus, 0x00, 0x80, 0x7E_1000, 4);
+
+        assert!(
+            bus.b_bus_writes.is_empty(),
+            "WRAM -> $2180 must not write the B-bus at all"
+        );
+        // pad_start 8 + overhead 8 + channel 8 + 4 slots x 8 = 56, then the
+        // fixed 8-clock end pad -> 64. Identical to a valid transfer.
+        assert_eq!(charged, 64, "the refused slots still cost their 8 clocks");
+        assert_eq!(bus.clock, 64, "and the bus really advanced by them");
+        assert_eq!(
+            (dma.read_register(0x4302), dma.read_register(0x4303)),
+            (Some(0x04), Some(0x10)),
+            "$43x2 still advances over the refused slots"
+        );
+        assert_eq!(
+            (dma.read_register(0x4305), dma.read_register(0x4306)),
+            (Some(0x00), Some(0x00)),
+            "$43x5 still decrements to zero"
+        );
+    }
+
+    #[test]
+    fn gpdma_wmdata_to_wram_writes_the_invalid_byte_without_reading_the_b_bus() {
+        let mut bus = RecordingBus::new(0);
+        bus.b_bus_ports[0x80] = 0x5A;
+        bus.a_bus[0x1000] = 0x11;
+        bus.a_bus[0x1001] = 0x11;
+        // DMAP $80: B->A, increment, mode 0. B-bus $80 -> A-bus $7E1000.
+        let (_dma, charged) = run_gpdma(&mut bus, 0x80, 0x80, 0x7E_1000, 2);
+
+        assert!(
+            bus.b_bus_reads.is_empty(),
+            "$2180 must not be read, so WMADD cannot advance"
+        );
+        assert_eq!(
+            &bus.a_bus[0x1000..0x1002],
+            &[INVALID_WRAM_TRANSFER_BYTE, INVALID_WRAM_TRANSFER_BYTE],
+            "the A-bus write still happens, with the invalid byte -- not the \
+             port's value (0x5A) and not the untouched seed (0x11)"
+        );
+        assert_eq!(charged, 48, "clocks match a valid 2-byte transfer");
+    }
+
+    #[test]
+    fn a_non_wram_a_bus_address_still_reaches_wmdata() {
+        // $00:3000 is above the $0000-$1FFF WRAM mirror (it is the SA-1 I-RAM
+        // mirror on an SA-1 cart), and $40:0000 is outside the mirrored banks.
+        // Neither is WRAM, so both must transfer normally. Guards against an
+        // over-broad predicate such as "any low bank" or "offset < $8000".
+        for a_addr in [0x00_3000u32, 0x40_0000] {
+            let mut bus = RecordingBus::new(0);
+            bus.a_bus[(a_addr & 0xFFFF) as usize] = 0x77;
+            run_gpdma(&mut bus, 0x00, 0x80, a_addr, 1);
+            assert_eq!(
+                bus.b_bus_writes,
+                vec![(32, 0x80, 0x77)],
+                "{a_addr:#08X} is not WRAM, so $2180 must still be written"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wram_a_bus_address_is_legal_for_every_other_b_bus_port() {
+        let mut bus = RecordingBus::new(0);
+        bus.a_bus[0x1000] = 0xAA;
+        bus.a_bus[0x1001] = 0xBB;
+        // Same WRAM source, but B-bus $18 (VMDATAL) instead of $80.
+        run_gpdma(&mut bus, 0x00, 0x18, 0x7E_1000, 2);
+        assert_eq!(
+            bus.b_bus_writes,
+            vec![(32, 0x18, 0xAA), (40, 0x18, 0xBB)],
+            "the restriction is specific to WMDATA; WRAM -> VRAM is the most \
+             common DMA there is"
+        );
+    }
+
+    #[test]
+    fn the_wram_restriction_applies_per_slot_not_per_channel_bbad() {
+        let mut bus = RecordingBus::new(0);
+        for i in 0..4 {
+            bus.a_bus[0x1000 + i] = 0xC0 + i as u8;
+        }
+        // Mode 1 with BBAD $7F alternates B-bus $7F and $80: only the $80 slots
+        // are refused. Guarding on the channel's raw BBAD would drop all four.
+        run_gpdma(&mut bus, 0x01, 0x7F, 0x7E_1000, 4);
+        assert_eq!(
+            bus.b_bus_writes,
+            vec![(32, 0x7F, 0xC0), (48, 0x7F, 0xC2)],
+            "the two $7F slots transfer, the two $80 slots are refused"
+        );
+        assert_eq!(bus.clock, 64, "all four slots still cost 8 clocks each");
+    }
+
+    #[test]
+    fn a_refused_slot_leaves_the_dma_open_bus_unchanged() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        bus.a_bus[0x3000] = 0x5A;
+        bus.b_bus_ports[0x80] = 0x37;
+        // ch0: valid A->B, $003000 -> B-bus $22, one byte (drives open bus 0x5A).
+        dma.write_register(0x4300, 0x00);
+        dma.write_register(0x4301, 0x22);
+        dma.write_register(0x4302, 0x00);
+        dma.write_register(0x4303, 0x30);
+        dma.write_register(0x4304, 0x00);
+        dma.write_register(0x4305, 0x01);
+        // ch1: refused WRAM -> $2180.
+        dma.write_register(0x4310, 0x00);
+        dma.write_register(0x4311, 0x80);
+        dma.write_register(0x4312, 0x00);
+        dma.write_register(0x4313, 0x10);
+        dma.write_register(0x4314, 0x7E);
+        dma.write_register(0x4315, 0x01);
+
+        let (_charged, open_bus) = dma.start_dma(0x03, &mut bus, 0, 0, 8);
+
+        // byuu's test_dmavalid notes the byte a refused B->A slot deposits is
+        // NOT MDR; a refused slot performs no read, so it drives nothing.
+        assert_eq!(
+            open_bus, 0x5A,
+            "the refused channel must not publish 0xFF (or anything else) as MDR"
+        );
+    }
+
+    #[test]
+    fn hdma_wram_table_to_wmdata_transfers_nothing_but_still_walks_the_table() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        // Mode 2 (two bytes to one register), direct, table in WRAM at $7E3000.
+        write_hdma_channel(&mut dma, 0, 0x02, 0x80, 0x3000);
+        dma.write_register(0x4304, 0x7E);
+        bus.a_bus[0x3000] = 0x01; // one line
+        bus.a_bus[0x3001] = 0xA1;
+        bus.a_bus[0x3002] = 0xA2;
+        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+        bus.b_bus_writes.clear();
+
+        dma.hdma_do_line(0x01, &mut bus, 0, 0, 8);
+
+        assert!(
+            bus.b_bus_writes.is_empty(),
+            "an HDMA slot into $2180 from a WRAM table is refused too"
+        );
+        // The table fetches themselves are controller-internal A-bus reads, NOT
+        // transfer bytes, so they must stay unguarded: the line counter loaded
+        // and the table pointer advanced past the two data bytes.
+        assert_eq!(
+            dma.read_register(0x430A),
+            Some(0x00),
+            "the line counter loaded from the WRAM table, expired, and took the \
+             next descriptor ($3003 = 0x00, the terminator)"
+        );
+        assert_eq!(
+            (dma.read_register(0x4308), dma.read_register(0x4309)),
+            (Some(0x04), Some(0x30)),
+            "the table pointer walked past the descriptor, both data bytes and \
+             the expiry's descriptor fetch -- so the table reads were NOT \
+             refused along with the transfer"
+        );
+    }
+
+    #[test]
+    fn hdma_b_to_a_through_wmdata_writes_the_invalid_byte_into_the_wram_table() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        // DMAP $82: B->A, mode 2, direct table in WRAM at $7E3000.
+        write_hdma_channel(&mut dma, 0, 0x82, 0x80, 0x3000);
+        dma.write_register(0x4304, 0x7E);
+        bus.a_bus[0x3000] = 0x01; // one line
+        bus.b_bus_ports[0x80] = 0x5A;
+        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+
+        dma.hdma_do_line(0x01, &mut bus, 0, 0, 8);
+
+        assert!(bus.b_bus_reads.is_empty(), "$2180 is never read");
+        assert_eq!(
+            &bus.a_bus[0x3001..0x3003],
+            &[INVALID_WRAM_TRANSFER_BYTE, INVALID_WRAM_TRANSFER_BYTE],
+            "the A-bus write still lands, with the invalid byte rather than 0x5A"
         );
     }
 

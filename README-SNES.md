@@ -430,10 +430,17 @@ directory and are never committed. To approve a new or changed golden:
    Mesen2's testRunner renders only every other frame and screenshots of
    animated content show stale frames (found in #2990); the video overrides
    keep personal Mesen2 config from rescaling or filtering the capture.
-3. Pixel-diff the two captures programmatically (e.g. with PIL). Never
+3. If the ROM can display uninitialised WRAM, add
+   `--snes.RamPowerOnState=AllZeros` to match NESER, which zero-fills WRAM
+   while Mesen2's SNES default is `RamState::Random`. Without it the ground
+   truth is not even self-consistent: for `test_dmatiming/demo.smc` two
+   default Mesen2 captures differ from *each other* by 1.06%, which is what
+   produced #3063's phantom "0.93% DMA-timing divergence". A capture that
+   changes between identical runs is the tell.
+4. Pixel-diff the two captures programmatically (e.g. with PIL). Never
    approve a golden from a visual comparison alone — eyeballing has
    repeatedly missed real divergences.
-4. Only after a 0-pixel diff (or a navigator-reviewed, documented
+5. Only after a 0-pixel diff (or a navigator-reviewed, documented
    deviation), embed the approved `screen_crc32()` value in the test and
    note the approval basis.
 

@@ -122,6 +122,30 @@ mod tests {
         run_fixture(fx.build(), "hdma-nonrepeat.sfc");
     }
 
+    /// HDMA obeys the WRAM-to-WRAM restriction too (#3111): with the table in
+    /// low WRAM and the target `$2180`, every per-line slot is refused and the
+    /// capture buffer keeps its sentinel.
+    ///
+    /// The contrast is `hdma_repeat_entry_transfers_every_line` directly below,
+    /// which is the same channel shape with the table in ROM (`place_data`) and
+    /// does deposit its bytes -- so this pins the A-bus address, not HDMA into
+    /// `$2180` in general.
+    #[test]
+    fn hdma_wram_table_to_wmdata_is_refused() {
+        let mut fx = FixtureRom::new(b"NESER HDMA W2W");
+        // $83 = repeat, 3 lines; three data bytes; then terminator -- but placed
+        // in low WRAM ($00:0400 is the $7E:0400 mirror) instead of ROM.
+        for (i, byte) in [0x83u8, 0x11, 0x22, 0x33, 0x00].iter().enumerate() {
+            fx.store_imm_abs(0x0400 + i as u16, *byte);
+        }
+        run_one_hdma_frame(&mut fx, 0x00, 0x0400, 0x00);
+        for i in 0..4u16 {
+            assert_wram(&mut fx, CAPTURE + i, SENTINEL);
+        }
+        fx.pass_marker_and_idle();
+        run_fixture(fx.build(), "hdma-wram-table-wmdata.sfc");
+    }
+
     /// A repeat entry (`$80` bit set) transfers a fresh table byte on every one
     /// of its lines.
     #[test]
