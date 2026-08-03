@@ -9,9 +9,11 @@ as JSON containing fields like PRG/CHR ROM sizes, video system (NTSC/PAL),
 mapper details, and various hardware configurations.
 Requires BeautifulSoup4 for HTML parsing.
 """
+
 import argparse
 import json
-from scripts.nes_rom_db_scraper.nescartdb import NesCartDb, BASE_URL
+
+from scripts.nes_rom_db_scraper.nescartdb import BASE_URL, NesCartDb
 from scripts.nes_rom_db_scraper.rom_database import RomDatabase
 from scripts.nes_rom_db_scraper.romxml import RomXml
 
@@ -25,11 +27,13 @@ def _csv_cell(value: object) -> str:
     """Format a CSV cell value, preserving numeric zero and blanking only NULL."""
     return "" if value is None else str(value)
 
+
 def print_csv_header(field_order: list[str]) -> None:
     """Print a CSV header describing the exported fields."""
     print("# NES ROM information (CSV format)")
     print("# Fields: " + ", ".join(field_order))
     print("# Each line is a single ROM entry. Empty fields are left blank.")
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -44,11 +48,7 @@ def parse_arguments():
             "  # python main.py import nes20db.xml"
         ),
     )
-    parser.add_argument(
-        "--db",
-        default="roms.sqlite",
-        help="SQLite database file to store scraped ROM data."
-    )
+    parser.add_argument("--db", default="roms.sqlite", help="SQLite database file to store scraped ROM data.")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     list_parser = subparsers.add_parser(
@@ -99,6 +99,7 @@ def parse_arguments():
 
     args = parser.parse_args()
     return args
+
 
 def main() -> int:
     """
@@ -240,6 +241,7 @@ def main() -> int:
         # return 0
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

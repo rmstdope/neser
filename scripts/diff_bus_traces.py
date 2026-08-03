@@ -26,15 +26,16 @@ import argparse
 import re
 import sys
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable, NamedTuple, Optional
+from typing import NamedTuple
 
 
 class Event(NamedTuple):
     """One CPU bus cycle: what it did, where, and when."""
 
     kind: str  # "read" | "write" | "idle"
-    addr: Optional[int]  # None for idle cycles
+    addr: int | None  # None for idle cycles
     clk: int
 
 
@@ -49,7 +50,7 @@ _MESEN = re.compile(r"^mesen\s+(busR|busW|idle)\s+(\S+)\s+ticks=(\d+)")
 _MESEN_KINDS = {"busR": "read", "busW": "write", "idle": "idle"}
 
 
-def parse_line(line: str) -> Optional[Event]:
+def parse_line(line: str) -> Event | None:
     """Normalise one log line to an :class:`Event`, or ``None`` if it is not a bus cycle."""
     match = _NESER_READ.match(line)
     if match:
@@ -105,8 +106,7 @@ def best_alignment(a: list[Event], b: list[Event]) -> tuple[int, int]:
             score = sum(
                 1
                 for i in range(depth)
-                if a[start_a + i].kind == b[start_b + i].kind
-                and a[start_a + i].addr == b[start_b + i].addr
+                if a[start_a + i].kind == b[start_b + i].kind and a[start_a + i].addr == b[start_b + i].addr
             )
             if score > best_score:
                 best_score, best = score, (start_a, start_b)
@@ -123,8 +123,8 @@ class DiffResult:
     compared: int
     alignment: tuple[int, int] = (0, 0)
     offset_histogram: Counter = field(default_factory=Counter)
-    first_offset_change: Optional[int] = None
-    first_shape_mismatch: Optional[int] = None
+    first_offset_change: int | None = None
+    first_shape_mismatch: int | None = None
 
     @property
     def clock_exact(self) -> bool:
@@ -135,11 +135,7 @@ class DiffResult:
         across a long run of same-speed accesses (the likeliest symptom of `best_alignment`
         settling on a bogus shift) would otherwise be reported as a clean all-clear.
         """
-        return (
-            self.compared > 0
-            and len(self.offset_histogram) == 1
-            and self.first_shape_mismatch is None
-        )
+        return self.compared > 0 and len(self.offset_histogram) == 1 and self.first_shape_mismatch is None
 
 
 def diff_traces(a: list[Event], b: list[Event]) -> DiffResult:
@@ -174,7 +170,7 @@ def diff_traces(a: list[Event], b: list[Event]) -> DiffResult:
     return result
 
 
-def _format_event(event: Optional[Event]) -> str:
+def _format_event(event: Event | None) -> str:
     if event is None:
         return "<end of trace>"
     where = "------" if event.addr is None else f"{event.addr:06X}"
@@ -190,8 +186,7 @@ def format_report(a: list[Event], b: list[Event], result: DiffResult, context: i
         f"trace A: {result.length_a} cycles",
         f"trace B: {result.length_b} cycles",
         f"compared: {result.compared} ordinals"
-        + (f" (dropped {start_a} leading A / {start_b} leading B to align)"
-           if (start_a or start_b) else ""),
+        + (f" (dropped {start_a} leading A / {start_b} leading B to align)" if (start_a or start_b) else ""),
         "",
         "clock-offset histogram (B - A), most common first:",
     ]
@@ -219,13 +214,12 @@ def format_report(a: list[Event], b: list[Event], result: DiffResult, context: i
             marker = " <<<" if ordinal == anchor else ""
             offset = b[ordinal].clk - a[ordinal].clk
             lines.append(
-                f"{ordinal:>9}  {_format_event(a[ordinal]):<24}  "
-                f"{_format_event(b[ordinal]):<24}  {offset:+d}{marker}"
+                f"{ordinal:>9}  {_format_event(a[ordinal]):<24}  {_format_event(b[ordinal]):<24}  {offset:+d}{marker}"
             )
     return "\n".join(lines)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("trace_a", help="NESER trace (or any trace; A is the offset baseline)")
     parser.add_argument("trace_b", help="reference trace, e.g. Mesen2 with NESER_BUS_LOG=1")

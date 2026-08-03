@@ -1,7 +1,6 @@
-""" Stream parser for ROM XML files """
-import xml.etree.ElementTree as ET
-from typing import Dict, Optional
+"""Stream parser for ROM XML files"""
 
+import xml.etree.ElementTree as ET
 
 from scripts.nes_rom_db_scraper.rom_database import (
     ControllerType,
@@ -42,7 +41,7 @@ class RomXml:
         return count
 
     @staticmethod
-    def _normalize_label(text: Optional[str]) -> str:
+    def _normalize_label(text: str | None) -> str:
         """Normalize a label string by trimming whitespace and trailing colons.
 
         Returns an empty string for falsy input.
@@ -51,16 +50,16 @@ class RomXml:
             return ""
         return " ".join(text.strip().rstrip(":").split())
 
-    def _parse_game_element(self, game_elem) -> Dict[str, str]:
+    def _parse_game_element(self, game_elem) -> dict[str, str]:
         """Extract relevant fields from a single <game> element.
 
         Only present fields are added to the returned dict.
         """
-        data: Dict[str, str] = {}
+        data: dict[str, str] = {}
 
         for node in game_elem.iter():
             if node.tag is ET.Comment and node.text:
-                data[RomDbKey.CONSOLE_CLASS.value] = node.text.split('\\')[0].strip()
+                data[RomDbKey.CONSOLE_CLASS.value] = node.text.split("\\")[0].strip()
                 break
 
         prgrom = game_elem.find("prgrom")
@@ -168,7 +167,7 @@ class RomXml:
         """Return the number of records left to parse."""
         return self._remaining
 
-    def _patch(self, record: Dict[str, str]) -> None:
+    def _patch(self, record: dict[str, str]) -> None:
         """Apply hardcoded patches for known bad/missing data."""
         crc = record.get(RomDbKey.CRC.value)
         if not crc:
@@ -209,8 +208,7 @@ class RomXml:
         if crc in ["D74B2719", "5734EB9E", "AF4010EA", "9E382EBF", "FCE71311", "0DA28A50"]:
             record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.POWER_PAD_SIDE_A
         # No Japanese titles ever used side B of the Family Trainer Mat
-        if record.get(RomDbKey.EXPANSION_TYPE.value) == \
-            str(ControllerType.FAMILY_TRAINER_SIDE_B.value):
+        if record.get(RomDbKey.EXPANSION_TYPE.value) == str(ControllerType.FAMILY_TRAINER_SIDE_B.value):
             record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.FAMILY_TRAINER_SIDE_A.value
         # Quattro Sports (CCCAF368) did not use four score, but needed an Aladdin Deck enhancer
         if crc == "CCCAF368":
@@ -226,7 +224,7 @@ class RomXml:
         if crc in ["638DBC52", "C4C3949A"]:
             record[RomDbKey.HARDWARE.value] = HardwareType.NES_MULTI_REGION.value
 
-    def next_record(self) -> Optional[Dict[str, str]]:
+    def next_record(self) -> dict[str, str] | None:
         """Return the next parsed game record dict, or None if finished."""
         for _event, elem in self._iterator:
             # Looking for end events on <game>

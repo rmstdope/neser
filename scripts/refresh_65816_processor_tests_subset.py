@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import re
-from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,9 +13,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FULL_ROOT = REPO_ROOT / "roms/snes/automated_tests/processor_tests/65816/full/v1"
 DEFAULT_SUBSET_ROOT = REPO_ROOT / "roms/snes/automated_tests/processor_tests/65816/v1"
-DEFAULT_REPORT_JSON = (
-    REPO_ROOT / "roms/snes/automated_tests/processor_tests/65816/subset_coverage_report.json"
-)
+DEFAULT_REPORT_JSON = REPO_ROOT / "roms/snes/automated_tests/processor_tests/65816/subset_coverage_report.json"
 
 VECTOR_FILE_RE = re.compile(r"^(?P<opcode>[0-9a-f]{2})\.(?P<mode>[en])\.json$")
 MODE_ORDER = ("e", "n")

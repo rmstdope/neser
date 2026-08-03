@@ -4,10 +4,10 @@
 import unittest
 
 from scripts.gb_boot_rom.assembler import (
-    parse_number,
-    parse_line,
-    assemble_instruction,
     assemble,
+    assemble_instruction,
+    parse_line,
+    parse_number,
 )
 
 

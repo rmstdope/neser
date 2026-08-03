@@ -48,12 +48,7 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         errors = validate_manifest(modified)
 
-        self.assertTrue(
-            any(
-                "optional_local variants require refresh_command" in error
-                for error in errors
-            )
-        )
+        self.assertTrue(any("optional_local variants require refresh_command" in error for error in errors))
 
     def test_variant_integrity_metadata_is_not_required(self) -> None:
         """Variants without an integrity object are accepted."""
@@ -75,9 +70,7 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         errors = validate_manifest(modified)
 
-        self.assertTrue(
-            any("path must be repository-relative" in error for error in errors)
-        )
+        self.assertTrue(any("path must be repository-relative" in error for error in errors))
 
     def test_variant_path_must_not_contain_parent_segments(self) -> None:
         """Parent-directory traversal segments are rejected."""
@@ -97,17 +90,11 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         manifest = load_manifest()
         modified = copy.deepcopy(manifest)
-        modified["assets"][1]["source"]["ref"] = (
-            "1111111111111111111111111111111111111111"
-        )
+        modified["assets"][1]["source"]["ref"] = "1111111111111111111111111111111111111111"
 
         errors = validate_manifest(modified)
 
-        self.assertTrue(
-            any(
-                "processor_tests assets sharing source.url" in error for error in errors
-            )
-        )
+        self.assertTrue(any("processor_tests assets sharing source.url" in error for error in errors))
 
     def test_processor_tests_assets_with_different_source_urls_may_use_different_refs(
         self,
@@ -117,17 +104,11 @@ class TestValidateSnesTestAssets(unittest.TestCase):
         manifest = load_manifest()
         modified = copy.deepcopy(manifest)
         modified["assets"][1]["source"]["url"] = "https://example.invalid/alternate"
-        modified["assets"][1]["source"]["ref"] = (
-            "1111111111111111111111111111111111111111"
-        )
+        modified["assets"][1]["source"]["ref"] = "1111111111111111111111111111111111111111"
 
         errors = validate_manifest(modified)
 
-        self.assertFalse(
-            any(
-                "processor_tests assets sharing source.url" in error for error in errors
-            )
-        )
+        self.assertFalse(any("processor_tests assets sharing source.url" in error for error in errors))
 
     def test_processor_tests_source_ref_must_be_40_char_lowercase_sha(self) -> None:
         """ProcessorTests assets should pin immutable commit SHAs, not branch names."""
@@ -139,11 +120,7 @@ class TestValidateSnesTestAssets(unittest.TestCase):
         errors = validate_manifest(modified)
 
         self.assertTrue(
-            any(
-                "processor_tests assets must use a 40-char lowercase commit SHA"
-                in error
-                for error in errors
-            )
+            any("processor_tests assets must use a 40-char lowercase commit SHA" in error for error in errors)
         )
 
     def test_non_processor_tests_assets_do_not_require_sha_ref_format(self) -> None:
@@ -157,11 +134,7 @@ class TestValidateSnesTestAssets(unittest.TestCase):
         errors = validate_manifest(modified)
 
         self.assertFalse(
-            any(
-                "processor_tests assets must use a 40-char lowercase commit SHA"
-                in error
-                for error in errors
-            )
+            any("processor_tests assets must use a 40-char lowercase commit SHA" in error for error in errors)
         )
 
     def test_manifest_contains_at_least_one_rom_pass_fail_asset(self) -> None:
@@ -170,10 +143,7 @@ class TestValidateSnesTestAssets(unittest.TestCase):
         manifest = load_manifest()
 
         self.assertTrue(
-            any(
-                asset.get("suite") == "rom_pass_fail"
-                for asset in manifest.get("assets", [])
-            ),
+            any(asset.get("suite") == "rom_pass_fail" for asset in manifest.get("assets", [])),
             "expected at least one rom_pass_fail asset in SNES manifest",
         )
 
@@ -182,17 +152,11 @@ class TestValidateSnesTestAssets(unittest.TestCase):
 
         manifest = load_manifest()
         asset = next(
-            (
-                asset
-                for asset in manifest.get("assets", [])
-                if asset.get("id") == "snes-dsp-audio-golden-windows"
-            ),
+            (asset for asset in manifest.get("assets", []) if asset.get("id") == "snes-dsp-audio-golden-windows"),
             None,
         )
 
-        self.assertIsNotNone(
-            asset, "expected the snes-dsp-audio-golden-windows asset"
-        )
+        self.assertIsNotNone(asset, "expected the snes-dsp-audio-golden-windows asset")
         self.assertEqual(asset.get("suite"), "dsp_audio_golden_tests")
         self.assertEqual(asset.get("oracle_type"), "audio_sample")
 

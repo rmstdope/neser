@@ -29,7 +29,7 @@ def _clamp(value: float, min_value: float, max_value: float) -> float:
 
 def _float_to_u8(sample: float) -> int:
     """Convert a normalized sample in [-1, 1] to unsigned 8-bit [0, 255]."""
-    return int(round((_clamp(sample, -1.0, 1.0) + 1.0) * 127.5))
+    return round((_clamp(sample, -1.0, 1.0) + 1.0) * 127.5)
 
 
 def _read_wav_samples(path: Path) -> list[int]:
@@ -110,9 +110,7 @@ def parse_args() -> argparse.Namespace:
         --start: 0
         --normalize: False
     """
-    parser = argparse.ArgumentParser(
-        description="Plot raw 8-bit audio samples from a .raw or .wav file."
-    )
+    parser = argparse.ArgumentParser(description="Plot raw 8-bit audio samples from a .raw or .wav file.")
     parser.add_argument(
         "path",
         nargs="?",
@@ -151,7 +149,7 @@ def main() -> None:
         raise SystemExit("Start index out of range")
 
     end = min(len(samples), args.start + args.max_samples)
-    window = samples[args.start:end]
+    window = samples[args.start : end]
 
     if args.normalize:
         values = normalize_unsigned_8bit(window)

@@ -1,4 +1,5 @@
 """Tests for Syncer — MetadataDb and TheGamesDbClient are both mocked."""
+
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -6,21 +7,31 @@ from scripts.metadata_scraper.sync import Syncer
 
 # ── tqdm passthrough helper ───────────────────────────────────────────────────
 
+
 def _passthrough_tqdm(iterable, **kwargs):
     """Fake tqdm that iterates normally and silently accepts all tqdm method calls."""
+
     class _PbarProxy:
         def __init__(self, items):
             self._items = items
+
         def __iter__(self):
             return iter(self._items)
+
         def __getattr__(self, _):
             return lambda *a, **kw: None
+
     return _PbarProxy(list(iterable))
 
 
 # ── shared fixtures ───────────────────────────────────────────────────────────
 
-PLATFORM_NES = {"id": 7, "name": "Nintendo Entertainment System (NES)", "alias": "nintendo-entertainment-system-nes", "slug": "nes"}
+PLATFORM_NES = {
+    "id": 7,
+    "name": "Nintendo Entertainment System (NES)",
+    "alias": "nintendo-entertainment-system-nes",
+    "slug": "nes",
+}
 
 SAMPLE_GAME = {
     "id": 135,
@@ -50,8 +61,13 @@ BASE_URL = {
     "large": "https://cdn.thegamesdb.net/images/large/",
 }
 
-SAMPLE_IMAGE = {"id": 718, "type": "boxart", "side": "back",
-                "filename": "boxart/back/135-2.jpg", "resolution": "1000x1435"}
+SAMPLE_IMAGE = {
+    "id": 718,
+    "type": "boxart",
+    "side": "back",
+    "filename": "boxart/back/135-2.jpg",
+    "resolution": "1000x1435",
+}
 
 
 def _make_syncer():
@@ -237,7 +253,7 @@ class TestSyncerIncrementalSync(unittest.TestCase):
 
     def test_incremental_sync_skips_if_no_sync_log(self):
         """If no full sync has been done, incremental should raise or be a no-op."""
-        syncer, db, client = _make_syncer()
+        syncer, db, _client = _make_syncer()
         db.get_sync_log.return_value = None
 
         with self.assertRaises(RuntimeError):
@@ -279,7 +295,7 @@ class TestSyncerIncrementalSync(unittest.TestCase):
 
 class TestSyncerSyncDispatch(unittest.TestCase):
     def test_sync_calls_full_sync_when_no_prior_log(self):
-        syncer, db, client = _make_syncer()
+        syncer, db, _client = _make_syncer()
         db.get_sync_log.return_value = None
         syncer.full_sync = MagicMock()
         syncer.incremental_sync = MagicMock()
@@ -290,7 +306,7 @@ class TestSyncerSyncDispatch(unittest.TestCase):
         syncer.incremental_sync.assert_not_called()
 
     def test_sync_calls_incremental_when_prior_log_exists(self):
-        syncer, db, client = _make_syncer()
+        syncer, db, _client = _make_syncer()
         db.get_sync_log.return_value = {
             "last_full_sync": "2026-01-01T00:00:00",
             "last_incremental_sync": None,
@@ -305,7 +321,7 @@ class TestSyncerSyncDispatch(unittest.TestCase):
         syncer.full_sync.assert_not_called()
 
     def test_sync_calls_full_sync_when_force_full(self):
-        syncer, db, client = _make_syncer()
+        syncer, db, _client = _make_syncer()
         db.get_sync_log.return_value = {
             "last_full_sync": "2026-01-01T00:00:00",
             "last_incremental_sync": None,

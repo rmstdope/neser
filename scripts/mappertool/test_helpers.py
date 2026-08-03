@@ -15,7 +15,7 @@ def make_ines_rom(
     """Build a minimal iNES/NES 2.0 ROM image for tests."""
 
     header = bytearray(16)
-    header[0:4] = b"NES\x1A"
+    header[0:4] = b"NES\x1a"
     header[4] = prg_size // (16 * 1024)
     header[5] = chr_size // (8 * 1024)
 

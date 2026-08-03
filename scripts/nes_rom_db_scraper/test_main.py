@@ -4,6 +4,7 @@ import unittest
 
 from scripts.nes_rom_db_scraper.main import _csv_cell, _filter_present_fields
 
+
 class TestMainHelpers(unittest.TestCase):
     """Tests for row filtering used by list output."""
 

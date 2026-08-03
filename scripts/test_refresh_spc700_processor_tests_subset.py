@@ -49,14 +49,8 @@ class TestRefreshSpc700ProcessorTestsSubset(unittest.TestCase):
 
             files = discover_vector_files(full)
 
-            first = [
-                item.filename
-                for item in select_subset_files(files, opcodes_per_family=1)
-            ]
-            second = [
-                item.filename
-                for item in select_subset_files(files, opcodes_per_family=1)
-            ]
+            first = [item.filename for item in select_subset_files(files, opcodes_per_family=1)]
+            second = [item.filename for item in select_subset_files(files, opcodes_per_family=1)]
 
             self.assertEqual(first, second)
 
@@ -73,9 +67,7 @@ class TestRefreshSpc700ProcessorTestsSubset(unittest.TestCase):
             ):
                 _touch(full / name)
 
-            selected = select_subset_files(
-                discover_vector_files(full), opcodes_per_family=1
-            )
+            selected = select_subset_files(discover_vector_files(full), opcodes_per_family=1)
             names = [item.filename for item in selected]
 
             self.assertIn("00.json", names)
@@ -99,9 +91,7 @@ class TestRefreshSpc700ProcessorTestsSubset(unittest.TestCase):
             subset.mkdir(parents=True, exist_ok=True)
             _touch(subset / "stale.json")
 
-            selected = select_subset_files(
-                discover_vector_files(full), opcodes_per_family=1
-            )
+            selected = select_subset_files(discover_vector_files(full), opcodes_per_family=1)
             write_subset(selected, subset)
 
             self.assertFalse((subset / "stale.json").exists())
@@ -114,9 +104,7 @@ class TestRefreshSpc700ProcessorTestsSubset(unittest.TestCase):
             _touch(full / "00.json")
             _touch(full / "8d.json")
 
-            selected = select_subset_files(
-                discover_vector_files(full), opcodes_per_family=1
-            )
+            selected = select_subset_files(discover_vector_files(full), opcodes_per_family=1)
             report = build_report(selected)
 
             self.assertIn("selected_files", report)
@@ -145,9 +133,7 @@ class TestRefreshSpc700ProcessorTestsSubset(unittest.TestCase):
             ):
                 _write_vectors(full / name, 10)
 
-            selected = select_subset_files(
-                discover_vector_files(full), opcodes_per_family=1
-            )
+            selected = select_subset_files(discover_vector_files(full), opcodes_per_family=1)
             write_subset(selected, subset, max_vectors_per_file=3)
 
             for path in subset.glob("*.json"):
@@ -160,9 +146,7 @@ class TestRefreshSpc700ProcessorTestsSubset(unittest.TestCase):
             _write_vectors(full / "00.json", 10)
             _write_vectors(full / "8d.json", 10)
 
-            selected = select_subset_files(
-                discover_vector_files(full), opcodes_per_family=1
-            )
+            selected = select_subset_files(discover_vector_files(full), opcodes_per_family=1)
             full_report = build_report(selected)
             truncated_report = build_report(selected, max_vectors_per_file=2)
 
@@ -202,10 +186,7 @@ class TestRefreshSpc700ProcessorTestsSubset(unittest.TestCase):
                 _materialize_payload(files[0], max_vectors_per_file=-1)
 
     def test_default_report_path_targets_committed_report_file(self) -> None:
-        expected = (
-            REPO_ROOT
-            / "roms/snes/automated_tests/processor_tests/spc700/subset_coverage_report.json"
-        )
+        expected = REPO_ROOT / "roms/snes/automated_tests/processor_tests/spc700/subset_coverage_report.json"
         self.assertEqual(DEFAULT_REPORT_JSON, expected)
 
     def test_dry_run_does_not_write_report_file(self) -> None:

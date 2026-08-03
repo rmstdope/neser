@@ -1,9 +1,10 @@
 """Persistent ROM file database and scanner."""
 
 import csv
-from pathlib import Path
 import sys
-from typing import Callable
+from collections.abc import Callable
+from pathlib import Path
+from typing import ClassVar
 
 try:
     from scripts.sort_roms import calculate_rom_crc32, parse_ines_header
@@ -20,7 +21,7 @@ from .rom_file_record import RomFileRecord
 class RomFileDatabase:
     """Persistent CSV database for scanned ROM files."""
 
-    HEADER = [
+    HEADER: ClassVar[list[str]] = [
         "rom_path",
         "crc",
         "header_mapper",

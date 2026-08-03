@@ -33,11 +33,7 @@ ANNOTATED_MODULES = [
 
 def _tool_directories() -> list[Path]:
     """Return each immediate subdirectory of scripts/ that holds Python sources."""
-    return sorted(
-        d
-        for d in SCRIPTS_ROOT.iterdir()
-        if d.is_dir() and d.name != "__pycache__" and any(d.glob("*.py"))
-    )
+    return sorted(d for d in SCRIPTS_ROOT.iterdir() if d.is_dir() and d.name != "__pycache__" and any(d.glob("*.py")))
 
 
 class TestToolPackages(unittest.TestCase):

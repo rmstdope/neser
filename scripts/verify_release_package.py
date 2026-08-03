@@ -36,9 +36,7 @@ def verify_release_package(config: VerificationConfig) -> None:
         elif config.archive_path.suffix == ".zip":
             _verify_zip(config, required_paths, extract_root)
         else:
-            raise ReleasePackageVerificationError(
-                f"unsupported archive format: {config.archive_path}"
-            )
+            raise ReleasePackageVerificationError(f"unsupported archive format: {config.archive_path}")
 
         if config.smoke_command is not None:
             _run_smoke_command(config.smoke_command, extract_root / "neser")
@@ -119,9 +117,7 @@ def _verify_zip(
 def _verify_required_paths(required_paths: set[str], names: set[str]) -> None:
     missing_paths = sorted(required_paths - names)
     if missing_paths:
-        raise ReleasePackageVerificationError(
-            f"missing required path: {missing_paths[0]}"
-        )
+        raise ReleasePackageVerificationError(f"missing required path: {missing_paths[0]}")
 
 
 def _verify_archive_paths_are_safe(names: set[str]) -> None:
@@ -150,9 +146,7 @@ def _run_smoke_command(smoke_command: list[str], cwd: Path) -> None:
     )
     if result.returncode != 0:
         output = (result.stderr or result.stdout).strip()
-        raise ReleasePackageVerificationError(
-            f"smoke command failed with exit code {result.returncode}: {output}"
-        )
+        raise ReleasePackageVerificationError(f"smoke command failed with exit code {result.returncode}: {output}")
 
 
 def _resolve_cwd_relative_executable(smoke_command: list[str], cwd: Path) -> list[str]:

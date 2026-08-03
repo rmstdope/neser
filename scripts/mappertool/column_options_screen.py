@@ -1,6 +1,6 @@
 """Modal dialog for ROM table sorting and filtering."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -8,18 +8,18 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label
 
 if TYPE_CHECKING:
-    from .mapper_tool_app import MapperToolApp
+    pass
 
 
 class FilterDialogScreen(ModalScreen[None]):
     """Dialog for global ROM sorting and filtering."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("enter", "apply", "Apply"),
         ("escape", "cancel", "Cancel"),
     ]
 
-    SORT_OPTIONS = {
+    SORT_OPTIONS: ClassVar[dict[str, str]] = {
         "sort-mapper-asc": "mapper_asc",
         "sort-mapper-desc": "mapper_desc",
         "sort-name-asc": "name_asc",

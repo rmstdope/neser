@@ -62,11 +62,7 @@ class PackageReleaseTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         preset_paths = _read_shader_preset_paths(repo_root / "src/platform/shaders.rs")
 
-        mismatches = [
-            path
-            for path in preset_paths
-            if not path_exists_with_exact_case(repo_root, path)
-        ]
+        mismatches = [path for path in preset_paths if not path_exists_with_exact_case(repo_root, path)]
 
         self.assertEqual(mismatches, [])
 
@@ -88,25 +84,19 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
             )
             write_text(
                 repo_root / "vendor/slang-shaders/crt/preset.slangp",
-                '#reference "../common/base.slangp"\n'
-                "shader0 = pass.slang\n"
-                'textures = "lut.png"\n',
+                '#reference "../common/base.slangp"\nshader0 = pass.slang\ntextures = "lut.png"\n',
             )
             write_text(
                 repo_root / "vendor/slang-shaders/crt/pass.slang",
                 '#include "shared.inc"\n',
             )
-            write_text(
-                repo_root / "vendor/slang-shaders/crt/shared.inc", "#define TEST 1\n"
-            )
+            write_text(repo_root / "vendor/slang-shaders/crt/shared.inc", "#define TEST 1\n")
             write_bytes(repo_root / "vendor/slang-shaders/crt/lut.png")
             write_text(
                 repo_root / "vendor/slang-shaders/common/base.slangp",
                 "shader0 = base.slang\n",
             )
-            write_text(
-                repo_root / "vendor/slang-shaders/common/base.slang", "void main() {}\n"
-            )
+            write_text(repo_root / "vendor/slang-shaders/common/base.slang", "void main() {}\n")
 
             dependencies = collect_shader_dependencies(repo_root)
 
@@ -145,8 +135,7 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
             write_text(repo_root / "shaders/stock.slang", "void main() {}\n")
             write_text(
                 repo_root / "src/platform/shaders.rs",
-                'pub const SHADER_PRESETS: &[(&str, &str)] = &[("none", '
-                '"shaders/stock.slangp")];',
+                'pub const SHADER_PRESETS: &[(&str, &str)] = &[("none", "shaders/stock.slangp")];',
             )
             write_text(repo_root / "scripts/dev-only.py", "print('dev only')\n")
 
@@ -175,9 +164,7 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
                 self.assertIn("neser/LICENSE", names)
                 self.assertIn("neser/shaders/stock.slangp", names)
                 self.assertIn("neser/shaders/stock.slang", names)
-                self.assertFalse(
-                    any(name.startswith("neser/scripts/") for name in names)
-                )
+                self.assertFalse(any(name.startswith("neser/scripts/") for name in names))
 
                 binary_info = archive.getmember("neser/neser")
                 self.assertTrue(binary_info.mode & stat.S_IXUSR)
@@ -202,8 +189,7 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
             write_text(repo_root / "shaders/stock.slang", "void main() {}\n")
             write_text(
                 repo_root / "src/platform/shaders.rs",
-                'pub const SHADER_PRESETS: &[(&str, &str)] = &[("none", '
-                '"shaders/stock.slangp")];',
+                'pub const SHADER_PRESETS: &[(&str, &str)] = &[("none", "shaders/stock.slangp")];',
             )
             write_text(repo_root / "scripts/dev-only.py", "print('dev only')\n")
 
@@ -251,8 +237,7 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
             write_text(repo_root / "shaders/stock.slang", "void main() {}\n")
             write_text(
                 repo_root / "src/platform/shaders.rs",
-                'pub const SHADER_PRESETS: &[(&str, &str)] = &[("none", '
-                '"shaders/stock.slangp")];',
+                'pub const SHADER_PRESETS: &[(&str, &str)] = &[("none", "shaders/stock.slangp")];',
             )
 
             exit_code = main(
@@ -271,9 +256,7 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
             )
 
             self.assertEqual(exit_code, 0)
-            self.assertTrue(
-                (output_dir / "neser-x86_64-unknown-linux-gnu.tar.gz").exists()
-            )
+            self.assertTrue((output_dir / "neser-x86_64-unknown-linux-gnu.tar.gz").exists())
 
 
 if __name__ == "__main__":

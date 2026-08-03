@@ -12,8 +12,6 @@ Usage:
 import re
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
-
 
 # SM83 instruction encoding
 INSTRUCTIONS = {
@@ -298,11 +296,11 @@ INSTRUCTIONS = {
 class AssemblyLine:
     """Represents a parsed assembly line."""
 
-    address: Optional[int]
-    label: Optional[str]
-    instruction: Optional[str]
-    operands: List[str]
-    comment: Optional[str]
+    address: int | None
+    label: str | None
+    instruction: str | None
+    operands: list[str]
+    comment: str | None
     raw: str
     line_num: int
 
@@ -312,7 +310,7 @@ class Assembled:
     """Represents assembled bytes at an address."""
 
     address: int
-    bytes: List[int]
+    bytes: list[int]
     source: str
     comment: str
 
@@ -378,8 +376,8 @@ def parse_line(line: str, line_num: int) -> AssemblyLine:
 
 
 def assemble_instruction(
-    instr: str, operands: List[str], labels: Dict[str, int], current_addr: int
-) -> Tuple[List[int], str]:
+    instr: str, operands: list[str], labels: dict[str, int], current_addr: int
+) -> tuple[list[int], str]:
     """Assemble a single instruction to bytes."""
     # Handle DB (define byte)
     if instr == "DB":
@@ -417,9 +415,8 @@ def assemble_instruction(
         norm_ops = []
         for op in operands:
             op_upper = op.upper()
-            if op_upper in ["A", "B", "C", "D", "E", "H", "L", "AF", "BC", "DE", "HL", "SP"]:
-                norm_ops.append(op_upper)
-            elif op_upper in ["NZ", "Z", "NC"]:
+            registers = ["A", "B", "C", "D", "E", "H", "L", "AF", "BC", "DE", "HL", "SP"]
+            if op_upper in registers or op_upper in ["NZ", "Z", "NC"]:
                 norm_ops.append(op_upper)
             elif op_upper.startswith("[") and op_upper.endswith("]"):
                 inner = op_upper[1:-1]
@@ -500,8 +497,8 @@ def assemble_instruction(
         else:
             try:
                 val = parse_number(op)
-            except ValueError:
-                raise ValueError(f"Unknown label or invalid number: {op}")
+            except ValueError as err:
+                raise ValueError(f"Unknown label or invalid number: {op}") from err
 
         # For JR instructions, compute relative offset
         if instr in ["JR", "JR NZ", "JR Z", "JR NC", "JR C"]:
@@ -518,13 +515,13 @@ def assemble_instruction(
     return result, f"{instr} {', '.join(operands)}" if operands else instr
 
 
-def assemble(source: str) -> List[Assembled]:
+def assemble(source: str) -> list[Assembled]:
     """Assemble source code to bytes."""
     lines = source.split("\n")
     parsed = [parse_line(line, i + 1) for i, line in enumerate(lines)]
 
     # First pass: collect labels
-    labels: Dict[str, int] = {}
+    labels: dict[str, int] = {}
     current_addr = 0
 
     for pl in parsed:
@@ -535,9 +532,7 @@ def assemble(source: str) -> List[Assembled]:
         if pl.instruction:
             # Estimate size
             if pl.instruction == "DB":
-                size = sum(
-                    len(op) - 2 if op.startswith('"') else 1 for op in pl.operands
-                )
+                size = sum(len(op) - 2 if op.startswith('"') else 1 for op in pl.operands)
             elif pl.instruction == "DW":
                 size = len(pl.operands) * 2
             elif pl.instruction == "DS":
@@ -548,10 +543,19 @@ def assemble(source: str) -> List[Assembled]:
                 for op in pl.operands:
                     op_upper = op.upper()
                     if op_upper in [
-                        "A", "B", "C", "D", "E", "H", "L", "AF", "BC", "DE", "HL", "SP",
-                    ]:
-                        norm_ops.append(op_upper)
-                    elif op_upper in ["NZ", "Z", "NC"]:
+                        "A",
+                        "B",
+                        "C",
+                        "D",
+                        "E",
+                        "H",
+                        "L",
+                        "AF",
+                        "BC",
+                        "DE",
+                        "HL",
+                        "SP",
+                    ] or op_upper in ["NZ", "Z", "NC"]:
                         norm_ops.append(op_upper)
                     elif op_upper.startswith("[") and op_upper.endswith("]"):
                         inner = op_upper[1:-1]
@@ -562,11 +566,7 @@ def assemble(source: str) -> List[Assembled]:
                     else:
                         norm_ops.append("n")
 
-                key = (
-                    f"{pl.instruction} {', '.join(norm_ops)}"
-                    if pl.operands
-                    else pl.instruction
-                )
+                key = f"{pl.instruction} {', '.join(norm_ops)}" if pl.operands else pl.instruction
                 if key in INSTRUCTIONS:
                     _, size = INSTRUCTIONS[key]
                 else:
@@ -574,7 +574,7 @@ def assemble(source: str) -> List[Assembled]:
             current_addr += size
 
     # Second pass: assemble
-    result: List[Assembled] = []
+    result: list[Assembled] = []
     current_addr = 0
 
     for pl in parsed:
@@ -583,18 +583,14 @@ def assemble(source: str) -> List[Assembled]:
         if not pl.instruction:
             continue
 
-        bytes_out, source_str = assemble_instruction(
-            pl.instruction, pl.operands, labels, current_addr
-        )
-        result.append(
-            Assembled(current_addr, bytes_out, source_str, pl.comment or "")
-        )
+        bytes_out, source_str = assemble_instruction(pl.instruction, pl.operands, labels, current_addr)
+        result.append(Assembled(current_addr, bytes_out, source_str, pl.comment or ""))
         current_addr += len(bytes_out)
 
     return result
 
 
-def to_rust_const(assembled: List[Assembled], name: str = "ROM") -> str:
+def to_rust_const(assembled: list[Assembled], name: str = "ROM") -> str:
     """Convert assembled bytes to Rust const array format."""
     lines = []
     lines.append(f"pub const {name}: [u8; 2048] = {{")

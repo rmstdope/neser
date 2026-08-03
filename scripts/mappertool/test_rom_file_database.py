@@ -1,8 +1,8 @@
 """Unit tests for RomFileDatabase scanning and persistence."""
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from .rom_db_index import RomDbIndex
 from .rom_file_database import RomFileDatabase
@@ -171,7 +171,14 @@ class RomFileDatabaseTests(unittest.TestCase):
             self.assertTrue(any("Marked invalid ROM" in warning for warning in warnings_first))
             self.assertFalse(cancelled_first)
 
-            records_second, _, updated_second, invalid_marked_second, warnings_second, cancelled_second = db.scan_and_update(
+            (
+                records_second,
+                _,
+                updated_second,
+                invalid_marked_second,
+                warnings_second,
+                cancelled_second,
+            ) = db.scan_and_update(
                 rom_root,
                 RomDbIndex({}),
             )

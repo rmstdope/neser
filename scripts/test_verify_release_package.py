@@ -87,9 +87,7 @@ class VerifyReleasePackageTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_dir = Path(temp_dir_str)
-            package_root = create_package_tree(
-                temp_dir / "src", binary_name="neser.exe"
-            )
+            package_root = create_package_tree(temp_dir / "src", binary_name="neser.exe")
             archive_path = temp_dir / "neser-windows-x86_64.zip"
             create_zip(package_root, archive_path)
 
@@ -110,9 +108,7 @@ class VerifyReleasePackageTests(unittest.TestCase):
             archive_path = temp_dir / "neser-linux-x86_64.tar.gz"
             create_tar_gz(package_root, archive_path)
 
-            with self.assertRaisesRegex(
-                ReleasePackageVerificationError, "neser/gamecontrollerdb.txt"
-            ):
+            with self.assertRaisesRegex(ReleasePackageVerificationError, "neser/gamecontrollerdb.txt"):
                 verify_release_package(
                     VerificationConfig(
                         archive_path=archive_path,
@@ -131,9 +127,7 @@ class VerifyReleasePackageTests(unittest.TestCase):
             archive_path = temp_dir / "neser-linux-x86_64.tar.gz"
             create_tar_gz(package_root, archive_path)
 
-            with self.assertRaisesRegex(
-                ReleasePackageVerificationError, "neser/README-NES.md"
-            ):
+            with self.assertRaisesRegex(ReleasePackageVerificationError, "neser/README-NES.md"):
                 verify_release_package(
                     VerificationConfig(
                         archive_path=archive_path,
@@ -151,9 +145,7 @@ class VerifyReleasePackageTests(unittest.TestCase):
             archive_path = temp_dir / "neser-linux-x86_64.tar.gz"
             create_tar_gz(package_root, archive_path)
 
-            with self.assertRaisesRegex(
-                ReleasePackageVerificationError, "neser/shaders/stock.slang"
-            ):
+            with self.assertRaisesRegex(ReleasePackageVerificationError, "neser/shaders/stock.slang"):
                 verify_release_package(
                     VerificationConfig(
                         archive_path=archive_path,
@@ -175,9 +167,7 @@ class VerifyReleasePackageTests(unittest.TestCase):
                 link_info.linkname = "../../outside"
                 archive.addfile(link_info)
 
-            with self.assertRaisesRegex(
-                ReleasePackageVerificationError, "unsupported tar link"
-            ):
+            with self.assertRaisesRegex(ReleasePackageVerificationError, "unsupported tar link"):
                 verify_release_package(
                     VerificationConfig(
                         archive_path=archive_path,
@@ -192,9 +182,7 @@ class VerifyReleasePackageTests(unittest.TestCase):
             archive_path = Path(temp_dir_str) / "neser-linux-x86_64.tgz"
             archive_path.write_bytes(b"not an archive")
 
-            with self.assertRaisesRegex(
-                ReleasePackageVerificationError, "unsupported archive format"
-            ):
+            with self.assertRaisesRegex(ReleasePackageVerificationError, "unsupported archive format"):
                 verify_release_package(
                     VerificationConfig(
                         archive_path=archive_path,

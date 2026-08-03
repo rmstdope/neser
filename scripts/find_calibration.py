@@ -3,19 +3,22 @@
 
 import math
 
+
 def extended_gcd(a, b):
     if b == 0:
         return a, 1, 0
     g, x1, y1 = extended_gcd(b, a % b)
     return g, y1, x1 - (a // b) * y1
 
+
 def solve_crt(r1, m1, r2, m2):
-    g, p, q = extended_gcd(m1, m2)
+    g, p, _q = extended_gcd(m1, m2)
     if (r2 - r1) % g != 0:
         return None
     lcm_val = m1 * m2 // g
     sol = (r1 + m1 * ((r2 - r1) // g) * p) % lcm_val
     return sol
+
 
 # From empirical measurement: K=1, N=60510 → DIV=$A0, LY=$0A
 # At K=1, N=60000, hold=32: total_M = 5134835
@@ -127,20 +130,20 @@ solutions = []
 for H in range(20, 48):
     div_offset = ((H - 32) * 2345) % 16384
     ly_offset = H - 32  # each hold adds 1 to LY mod
-    
+
     target_div_lo = (704 - div_offset) % 16384
     target_div_hi = (767 - div_offset) % 16384
-    
+
     # Handle wraparound
     if target_div_lo > target_div_hi:
         div_ranges = [(0, target_div_hi), (target_div_lo, 16383)]
     else:
         div_ranges = [(target_div_lo, target_div_hi)]
-    
+
     target_ly_center = -ly_offset
     target_ly_lo = target_ly_center - 53
     target_ly_hi = target_ly_center + 53
-    
+
     for div_lo, div_hi in div_ranges:
         for r1 in range(div_lo, div_hi + 1):
             for r2_raw in range(target_ly_lo, target_ly_hi + 1):
@@ -163,7 +166,7 @@ for H in range(20, 48):
                                 solutions.append((H, K, N, X, r2_raw))
                                 break
 
-solutions.sort(key=lambda x: abs(x[0]-32))  # prefer hold close to 32
+solutions.sort(key=lambda x: abs(x[0] - 32))  # prefer hold close to 32
 print(f"\nFound {len(solutions)} valid solutions")
 for H, K, N, X, ly_raw in solutions[:30]:
     print(f"  hold={H:2d} K={K:3d} N={N:5d} (${N:04X}) X={X:8d} ly_raw={ly_raw:+4d}")

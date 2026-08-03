@@ -1,8 +1,8 @@
 """Unit tests for RomDbIndex."""
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from .rom_db_index import RomDbIndex
 
@@ -16,8 +16,7 @@ class RomDbIndexTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir_str:
             csv_path = Path(temp_dir_str) / "rom_db.csv"
             csv_path.write_text(
-                "# comment\n"
-                "1,Test Game,,836C4FA7,0,Licensed Japan,4,2,H,0,0,0,0,0,0,0,0,0,,,1\n",
+                "# comment\n1,Test Game,,836C4FA7,0,Licensed Japan,4,2,H,0,0,0,0,0,0,0,0,0,,,1\n",
                 encoding="utf-8",
             )
 
