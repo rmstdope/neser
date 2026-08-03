@@ -6,13 +6,9 @@ use std::rc::Rc;
 use std::time::Instant;
 
 fn main() {
-    let rom_path = std::env::args()
-        .nth(1)
-        .expect("Usage: frame_bench <rom_path> [frames]");
-    let num_frames: usize = std::env::args()
-        .nth(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(600);
+    let mut args = std::env::args().skip(1);
+    let rom_path = args.next().expect("Usage: frame_bench <rom_path> [frames]");
+    let num_frames: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(600);
 
     let rom_data = std::fs::read(&rom_path).expect("Failed to read ROM file");
     let app_context = Rc::new(RefCell::new(AppContext::new_with_config(Config::default())));
@@ -50,12 +46,12 @@ fn main() {
 
     println!("\nStability check (5 runs of {num_frames} frames):");
     for i in 0..5 {
-        let start = Instant::now();
+        let run_start = Instant::now();
         for _ in 0..num_frames {
             run_one_frame(&mut nes);
         }
-        let elapsed = start.elapsed();
-        let per_frame = elapsed.as_secs_f64() * 1000.0 / num_frames as f64;
+        let run_elapsed = run_start.elapsed();
+        let per_frame = run_elapsed.as_secs_f64() * 1000.0 / num_frames as f64;
         println!("  Run {}: {per_frame:.3}ms/frame", i + 1);
     }
 }

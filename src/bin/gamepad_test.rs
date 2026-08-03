@@ -83,6 +83,16 @@ fn print_gamepad_info(id: gilrs::GamepadId, gilrs: &gilrs::Gilrs) {
     println!("  Connected:      {}", gamepad.is_connected());
 }
 
+fn format_event_message(
+    timestamp: &str,
+    event_type: &str,
+    name: &str,
+    uuid: &str,
+    details: String,
+) -> String {
+    format!("[{timestamp}] {event_type:8} | {name:25} | UUID: {uuid} | {details}")
+}
+
 fn main() {
     println!("=== Gamepad Test Tool ===");
     println!();
@@ -135,32 +145,68 @@ fn main() {
             match event.event {
                 EventType::ButtonPressed(button, code) => {
                     println!(
-                        "[{timestamp}] PRESSED  | {name} | UUID: {uuid} | Button: {} | Code: {code:?}",
-                        button_label(button),
+                        "{}",
+                        format_event_message(
+                            &timestamp,
+                            "PRESSED",
+                            &name,
+                            &uuid,
+                            format!("Button: {} | Code: {code:?}", button_label(button))
+                        )
                     );
                 }
                 EventType::ButtonReleased(button, code) => {
                     println!(
-                        "[{timestamp}] RELEASED | {name} | UUID: {uuid} | Button: {} | Code: {code:?}",
-                        button_label(button),
+                        "{}",
+                        format_event_message(
+                            &timestamp,
+                            "RELEASED",
+                            &name,
+                            &uuid,
+                            format!("Button: {} | Code: {code:?}", button_label(button))
+                        )
                     );
                 }
                 EventType::ButtonRepeated(button, code) => {
                     println!(
-                        "[{timestamp}] REPEATED | {name} | UUID: {uuid} | Button: {} | Code: {code:?}",
-                        button_label(button),
+                        "{}",
+                        format_event_message(
+                            &timestamp,
+                            "REPEATED",
+                            &name,
+                            &uuid,
+                            format!("Button: {} | Code: {code:?}", button_label(button))
+                        )
                     );
                 }
                 EventType::ButtonChanged(button, value, code) => {
                     println!(
-                        "[{timestamp}] CHANGED  | {name} | UUID: {uuid} | Button: {} | Value: {value:.4} | Code: {code:?}",
-                        button_label(button),
+                        "{}",
+                        format_event_message(
+                            &timestamp,
+                            "CHANGED",
+                            &name,
+                            &uuid,
+                            format!(
+                                "Button: {} | Value: {value:.4} | Code: {code:?}",
+                                button_label(button)
+                            )
+                        )
                     );
                 }
                 EventType::AxisChanged(axis, value, code) => {
                     println!(
-                        "[{timestamp}] AXIS     | {name} | UUID: {uuid} | Axis: {} | Value: {value:+.4} | Code: {code:?}",
-                        axis_label(axis),
+                        "{}",
+                        format_event_message(
+                            &timestamp,
+                            "AXIS",
+                            &name,
+                            &uuid,
+                            format!(
+                                "Axis: {} | Value: {value:+.4} | Code: {code:?}",
+                                axis_label(axis)
+                            )
+                        )
                     );
                 }
                 EventType::Connected => {
@@ -169,12 +215,27 @@ fn main() {
                     println!();
                 }
                 EventType::Disconnected => {
-                    println!("[{timestamp}] DISCONNECTED | {name} | UUID: {uuid}");
+                    println!(
+                        "{}",
+                        format_event_message(
+                            &timestamp,
+                            "DISCONNECTED",
+                            &name,
+                            &uuid,
+                            String::new()
+                        )
+                    );
                 }
                 _ => {
                     println!(
-                        "[{timestamp}] OTHER    | {name} | UUID: {uuid} | {:?}",
-                        event.event
+                        "{}",
+                        format_event_message(
+                            &timestamp,
+                            "OTHER",
+                            &name,
+                            &uuid,
+                            format!("{:?}", event.event)
+                        )
                     );
                 }
             }
