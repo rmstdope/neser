@@ -82,9 +82,12 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
 ];
 """,
             )
+            # `textures` lists texture *names*; each name then has its own line
+            # giving the path. Earlier revisions of this fixture wrote
+            # `textures = "lut.png"`, which no real preset does.
             write_text(
                 repo_root / "vendor/slang-shaders/crt/preset.slangp",
-                '#reference "../common/base.slangp"\nshader0 = pass.slang\ntextures = "lut.png"\n',
+                '#reference "../common/base.slangp"\nshader0 = pass.slang\ntextures = "LUT"\nLUT = lut.png\n',
             )
             write_text(
                 repo_root / "vendor/slang-shaders/crt/pass.slang",
@@ -111,6 +114,110 @@ pub const SHADER_PRESETS: &[(&str, &str)] = &[
                     Path("vendor/slang-shaders/common/base.slang"),
                 },
             )
+
+    def _write_preset_repo(self, repo_root: Path, preset_body: str) -> None:
+        """Write a minimal repo whose single configured preset has `preset_body`."""
+
+        write_text(
+            repo_root / "src/platform/shaders.rs",
+            "pub const SHADER_PRESETS: &[(&str, &str)] = &[\n"
+            '    ("crt", "vendor/slang-shaders/crt/preset.slangp"),\n'
+            "];\n",
+        )
+        write_text(repo_root / "vendor/slang-shaders/crt/preset.slangp", preset_body)
+        write_text(repo_root / "vendor/slang-shaders/crt/pass.slang", "void main() {}\n")
+
+    def test_declared_texture_that_is_missing_fails_collection(self) -> None:
+        """A texture the preset declares must resolve, like any other reference.
+
+        Missing `.slangp`/`.slang`/`.inc` targets already raise. Textures used to
+        be matched by a loose regex and then filtered on `exists()`, which cannot
+        tell a renamed texture from a regex false positive -- so a preset could be
+        packaged without its lookup table, silently (#3123).
+        """
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            repo_root = Path(temp_dir_str)
+            self._write_preset_repo(
+                repo_root,
+                "shader0 = pass.slang\ntextures = LUT\nLUT = lut/renamed-away.png\n",
+            )
+
+            with self.assertRaises(FileNotFoundError) as caught:
+                collect_shader_dependencies(repo_root)
+
+            self.assertIn("renamed-away.png", str(caught.exception))
+
+    def test_quoted_textures_declaration_resolves_paths_and_ignores_option_keys(self) -> None:
+        """Quoted `textures = "A;B"` resolves both paths, not the adjacent option keys.
+
+        Real presets interleave `<name>_linear`, `<name>_mipmap` and
+        `<name>_wrap_mode` with the path lines, so a declared name has to match a
+        key exactly rather than as a prefix.
+        """
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            repo_root = Path(temp_dir_str)
+            self._write_preset_repo(
+                repo_root,
+                "shader0 = pass.slang\n"
+                'textures = "SamplerLUT1;SamplerLUT2"\n'
+                "SamplerLUT1 = lut/first.png\n"
+                'SamplerLUT1_mipmap = "false"\n'
+                'SamplerLUT1_linear = "true"\n'
+                'SamplerLUT1_wrap_mode = "clamp_to_border"\n'
+                # Deliberately before SamplerLUT2's own line: a parser that
+                # matched a declared name as a prefix would resolve "true" as
+                # the path here instead of the .png below.
+                'SamplerLUT2_linear = "true"\n'
+                'SamplerLUT2 = "lut/second one.png"\n',
+            )
+            write_bytes(repo_root / "vendor/slang-shaders/crt/lut/first.png")
+            write_bytes(repo_root / "vendor/slang-shaders/crt/lut/second one.png")
+
+            dependencies = collect_shader_dependencies(repo_root)
+
+            self.assertIn(Path("vendor/slang-shaders/crt/lut/first.png"), dependencies)
+            self.assertIn(Path("vendor/slang-shaders/crt/lut/second one.png"), dependencies)
+
+    def test_undeclared_image_line_does_not_fail_collection(self) -> None:
+        """A line that merely looks like an image path stays best-effort.
+
+        The loose regexes remain as a fallback for images referenced some other
+        way, so an absent one is skipped rather than raising -- only *declared*
+        textures are strict.
+        """
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            repo_root = Path(temp_dir_str)
+            self._write_preset_repo(
+                repo_root,
+                "shader0 = pass.slang\nsome_unrelated_key = not-a-texture.png\n",
+            )
+
+            dependencies = collect_shader_dependencies(repo_root)
+
+            self.assertNotIn(Path("vendor/slang-shaders/crt/not-a-texture.png"), dependencies)
+
+    def test_declared_texture_without_a_path_line_fails_collection(self) -> None:
+        """A declared name that is never assigned a path is a broken declaration.
+
+        Resolving only the `<name> = path` lines that happen to be present would
+        leave this silent, which is the failure mode #3123 exists to remove: the
+        preset promises a texture and packaging ships without it.
+        """
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            repo_root = Path(temp_dir_str)
+            self._write_preset_repo(
+                repo_root,
+                'shader0 = pass.slang\ntextures = LUT\nLUT_linear = "true"\n',
+            )
+
+            with self.assertRaises(ValueError) as caught:
+                collect_shader_dependencies(repo_root)
+
+            self.assertIn("LUT", str(caught.exception))
 
     def test_create_tar_gz_archive_uses_release_layout_and_excludes_scripts(
         self,

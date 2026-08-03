@@ -79,12 +79,16 @@ Two of those tests run against the real repository tree:
   so an upstream rename that only changes capitalisation would otherwise work locally and break on
   Linux.
 
+Textures a preset *declares* are covered too. A libretro preset names its textures
+(`textures = "SamplerLUT1;SamplerLUT2"`) and gives each a path on its own line, and those paths are
+resolved as strictly as shader stages: a renamed texture raises rather than being skipped (#3123).
+
 ### What this does not prove
 
-- **Textures are not covered.** `_collect_existing_lut` finds textures with a loose regex and then
-  filters on `exists()`, which cannot distinguish a renamed texture from a regex false positive —
-  so a preset can package and ship without its lookup table, silently. Tracked in
-  [#3123](https://github.com/rmstdope/neser/issues/3123).
+- **Undeclared image references are still best-effort.** An image path that appears somewhere other
+  than a `textures` declaration is matched by a loose regex and collected only if it exists, because
+  that pattern also matches strings that are not references at all. No preset in the tree relies on
+  this today.
 - **Appearance is not covered.** No test renders through a shader. If a bump changes how a preset
   looks, only running the emulator will show it. Check the presets you care about by hand.
 - **Preset paths are duplicated.** `src/platform/shaders.rs` is the source of truth, but the same
