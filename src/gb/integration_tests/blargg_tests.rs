@@ -780,43 +780,24 @@ fn test_oam_bug_6_timing_no_bug() {
     );
 }
 
-/// `7-timing_effect` cannot report a result through the cartridge-RAM channel.
-///
-/// For every sweep timing that corrupts, the ROM prints a 525-byte block — the
-/// sweep index, then a full 521-byte OAM dump — and a correct DMG corrupts on 19
-/// of them (Mode 2 walks 20 OAM rows, one per M-cycle, and row 0 is immune).
-/// That is `17 + 19×525 + 8 = 10 000` bytes of text against the 8188 available
-/// at `$A004..$BFFF`.
-/// `write_text_out` (`oam_bug/source/common/shell.s`) has no bounds check, so
-/// the overrun walks into `$C000`, where `copy_to_wram_then_run` placed the
-/// ROM's own code — measured: 2040 bytes of that code overwritten, cartridge
-/// RAM switched off, CPU executing rubbish.  The ROM therefore never reaches
-/// `check_crc`, on any emulator and on hardware.  Tracked in #3115.
-///
-/// The behaviour this ROM tests is covered by [`test_oam_bug_multi_rom`]
-/// instead: the multi-ROM build defines `CUSTOM_PRINT`, does not use the
-/// cartridge-RAM buffer, and reports subtest 7's verdict on screen.
-#[test]
-#[ignore = "unusable ROM build: output overruns its own $A004 text buffer into WRAM — tracked in #3115"]
-fn test_oam_bug_7_timing_effect() {
-    let mut gb =
-        load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/rom_singles/7-timing_effect.gb");
-    let output = run_blargg_rom_cart_ram(&mut gb);
-    assert!(
-        output.contains("Passed"),
-        "expected Passed, got: {output:?}"
-    );
-}
-
 /// The multi-ROM build runs all eight `oam_bug` subtests and reports each one's
-/// verdict on screen, including subtest 7 (`timing_effect`), which the single
-/// ROM cannot report — see [`test_oam_bug_7_timing_effect`].
+/// verdict on screen.
+///
+/// This is the only place subtest 7 (`timing_effect`) is checked, and there is
+/// no single-ROM test for it: `rom_singles/7-timing_effect.gb` prints far more
+/// text than the 8188-byte `$A004..$BFFF` buffer it writes into, and
+/// `write_text_out` (`oam_bug/source/common/shell.s`) has no bounds check, so
+/// the overrun walks into `$C000` — WRAM, where `copy_to_wram_then_run` placed
+/// the code the ROM is executing.  It therefore never reaches `check_crc`, on
+/// any emulator and on hardware; measurements in #3115.  The multi-ROM build
+/// defines `CUSTOM_PRINT`, uses no cartridge-RAM buffer, and is unaffected.
 #[test]
 fn test_oam_bug_multi_rom() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/oam_bug.gb");
     let output = run_blargg_rom_lcd(&mut gb);
-    // Assert the subtest this suite's single-ROM coverage cannot reach first,
-    // so a regression names it rather than only failing the overall verdict.
+    // Assert subtest 7 before the overall verdict so a regression names it.
+    // This discriminates: making `Ppu::current_oam_row` top out at row 18
+    // leaves every other subtest reporting `ok` and fails only this one.
     assert!(
         output.contains("07:ok"),
         "oam_bug subtest 7 (timing_effect) must pass, got:\n{output}"
