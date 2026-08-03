@@ -105,10 +105,18 @@ mod tests {
 
     #[test]
     fn cpu_msc_passes_all_misc_opcodes() {
-        // Settles at frame 3 with NOP/WDM/BRK/COP/WAI/STP all PASS. The ROM
-        // also prints "** Please Reset To PASS STP **" (a hardware prompt),
-        // but the settled screen already reports STP as PASS without a reset.
-        run_cputest_screen_crc("MSC/CPUMSC.sfc", 63, 0x7E06_1BD2);
+        // Settles with NOP/WDM/BRK/COP/WAI all PASS and the STP row blank
+        // behind the ROM's own "** Please Reset To PASS STP **" prompt: STP
+        // halts the CPU, so the ROM cannot reach its own result write without
+        // the reset it asks for.
+        //
+        // Until #3116 this asserted 0x7E06_1BD2, which reported STP as PASS
+        // *without* a reset -- only reachable because NESER ran straight
+        // through the halt. Re-approved against a fresh Mesen2 headless
+        // capture at the same frame (0 px; the old golden differs from Mesen2
+        // by 94 px, all inside the STP row's PASS text at x=201..231,
+        // y=95..101).
+        run_cputest_screen_crc("MSC/CPUMSC.sfc", 63, 0x28F7_F20D);
     }
 
     #[test]

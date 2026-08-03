@@ -38,6 +38,14 @@ const FLAG_NEGATIVE: u8 = 0b1000_0000;
 /// land on the same 186-clock total observed in Mesen.
 const RESET_STARTUP_DELAY_CLOCKS: u32 = 170;
 
+/// Master clocks a STP-halted CPU advances the system by per [`Cpu::step`] call. Mesen2's
+/// `SnesCpu::ProcessHaltedState` spends a stopped CPU's time through
+/// `SnesMemoryManager::IncMasterClock4()`, and -- unlike its WAI branch, which goes through
+/// `Idle()` -- deliberately never calls `ProcessCpuCycle`. So the PPU/APU keep running and
+/// the screen keeps displaying, but no CPU cycle begins: pending DMA is never dispatched and
+/// no interrupt is polled.
+const STOPPED_MASTER_CLOCKS: u32 = 4;
+
 #[derive(Clone, Copy)]
 enum BlockMoveDirection {
     Increment,
@@ -127,6 +135,11 @@ pub struct Cpu<B: SnesBus> {
     /// hardware interrupt (NMI, IRQ, or ABORT) to be asserted.
     waiting: bool,
 
+    /// True while the CPU is halted by a STP instruction (Mesen2's
+    /// `SnesCpuStopState::Stopped`). STP stops the processor clock outright: no
+    /// interrupt releases it, and only a reset restarts execution.
+    stopped: bool,
+
     /// FastROM flag: mirrors MEMSEL $420D bit 0.
     /// When true, WS2 ROM regions ($80–$BF:$8000–$FFFF, $C0–$FF) run at 6 master clocks.
     fast_rom: bool,
@@ -200,6 +213,7 @@ impl<B: SnesBus> Cpu<B> {
             nmi_arm_counter: 0,
             irq_line_shadow: false,
             waiting: false,
+            stopped: false,
             fast_rom: false,
             memory_bus_cycles: 0,
             irq_lock_step: false,
@@ -351,6 +365,7 @@ impl<B: SnesBus> Cpu<B> {
             nmi_arm_counter: self.nmi_arm_counter,
             irq_line_shadow: self.irq_line_shadow,
             waiting: self.waiting,
+            stopped: self.stopped,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
             irq_lock_step: self.irq_lock_step,
@@ -385,6 +400,7 @@ impl<B: SnesBus> Cpu<B> {
         self.nmi_arm_counter = state.nmi_arm_counter;
         self.irq_line_shadow = state.irq_line_shadow;
         self.waiting = state.waiting;
+        self.stopped = state.stopped;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
         self.irq_lock_step = state.irq_lock_step;
@@ -498,6 +514,11 @@ impl<B: SnesBus> Cpu<B> {
         self.irq_line_shadow = false;
         self.irq_lock_step = false;
         self.irq_i_shadow = true;
+        // Reset is the only thing that restarts a STPped CPU, and it also drops
+        // any WAI wait state (Mesen2 `SnesCpu::Reset` sets `StopState = Running`
+        // unconditionally, covering both).
+        self.stopped = false;
+        self.waiting = false;
         for _ in 0..RESET_STARTUP_DELAY_CLOCKS {
             self.bus.tick();
         }
@@ -673,7 +694,22 @@ impl<B: SnesBus> Cpu<B> {
     /// This method also drives `SnesBus::tick()` for every master clock cycle:
     /// - Memory accesses tick at the speed of the target address (6/8/12 master clocks).
     /// - Internal (non-memory) cycles always tick at 6 master clocks.
+    /// - A CPU halted by STP fetches nothing and returns 1, having advanced the bus by
+    ///   [`STOPPED_MASTER_CLOCKS`]; a CPU halted by WAI likewise returns 1 per idle cycle.
     pub fn step(&mut self) -> u8 {
+        // STP stops the processor clock. Nothing but a reset restarts it -- not
+        // NMI, not IRQ, not ABORT -- so this precedes every other check,
+        // including WAI's (Mesen2 `SnesCpu::Exec` dispatches to
+        // `ProcessHaltedState` before touching anything else). The system still
+        // advances, [`STOPPED_MASTER_CLOCKS`] at a time, without beginning a
+        // CPU cycle.
+        if self.stopped {
+            for _ in 0..STOPPED_MASTER_CLOCKS {
+                self.bus.tick();
+            }
+            return 1;
+        }
+
         self.extra_cycles = 0;
         self.last_page_crossed = false;
         self.memory_bus_cycles = 0;
@@ -1219,6 +1255,7 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_stp(&mut self) -> u8 {
+        self.stopped = true;
         4
     }
 
@@ -10031,14 +10068,144 @@ mod wai_stp_tests {
         assert_eq!(restored.pc, 0x0001, "PC must stay frozen while waiting");
     }
 
-    // STP (0xDB): halts CPU until reset; modeled as 4-cycle instruction.
+    // STP (0xDB): the opcode itself advances PC and costs 4 cycles, and leaves
+    // the CPU halted. Until #3116 this test asserted only the first half, which
+    // is exactly what STP-as-a-no-op produces -- it passed while the CPU ran
+    // straight on through the halt.
     #[test]
-    fn stp_advances_pc_and_returns_4_cycles() {
+    fn stp_advances_pc_costs_four_cycles_and_halts_the_cpu() {
         let mut cpu = Cpu::new(TestBus::default());
         cpu.bus.load(0x0000, &[0xDB]);
         let cycles = cpu.step();
         assert_eq!(cpu.pc, 0x0001);
         assert_eq!(cycles, 4);
+        assert!(cpu.stopped, "STP must halt the CPU");
+    }
+
+    // STP stops the processor clock: unlike WAI, no interrupt wakes it, and only
+    // a reset restarts execution (Mesen2 `SnesCpu::STP` sets
+    // `SnesCpuStopState::Stopped`, which nothing but `Reset`/`PowerOn` clears).
+    #[test]
+    fn stp_halts_until_reset_and_no_interrupt_wakes_it() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xDB, 0xEA]); // STP ; NOP
+        cpu.bus.load(0x00FFFC, &[0x00, 0x90]); // RESET vector -> $9000
+        cpu.set_flag_i(false); // an unmasked IRQ still must not wake a stopped CPU
+
+        cpu.step();
+        assert_eq!(cpu.pc, 0x0001);
+        assert!(cpu.stopped);
+
+        for _ in 0..4 {
+            assert_eq!(cpu.step(), 1, "a stopped CPU only idles");
+            assert_eq!(cpu.pc, 0x0001, "PC must not advance while stopped");
+            assert!(cpu.stopped);
+        }
+
+        // The three hardware lines that release WAI must NOT release STP.
+        cpu.nmi_pending = true;
+        cpu.irq_pending = true;
+        cpu.abort_pending = true;
+        for _ in 0..4 {
+            cpu.step();
+            assert!(cpu.stopped, "no interrupt may wake a stopped CPU");
+            assert_eq!(cpu.pc, 0x0001, "PC must stay frozen while stopped");
+        }
+
+        cpu.do_reset();
+        assert!(!cpu.stopped, "reset must restart a stopped CPU");
+        assert_eq!(cpu.pc, 0x9000, "PC from the RESET vector");
+    }
+
+    /// Counts master-clock ticks and CPU-cycle hook calls so a test can pin both
+    /// halves of the halted-CPU model.
+    #[derive(Default)]
+    struct HaltedProbeBus {
+        mem: std::collections::BTreeMap<u32, u8>,
+        ticks: u32,
+        hooks: u32,
+    }
+
+    impl SnesBus for HaltedProbeBus {
+        fn read(&self, addr: u32) -> u8 {
+            *self.mem.get(&(addr & 0xFF_FFFF)).unwrap_or(&0)
+        }
+
+        fn write(&mut self, addr: u32, value: u8) {
+            self.mem.insert(addr & 0xFF_FFFF, value);
+        }
+
+        fn tick(&mut self) {
+            self.ticks += 1;
+        }
+
+        fn gpdma_cycle_hook(&mut self) -> bool {
+            self.hooks += 1;
+            false
+        }
+    }
+
+    // Mesen2's `ProcessHaltedState` spends a stopped CPU's time through
+    // `IncMasterClock4()` and deliberately NOT `ProcessCpuCycle()` -- so the
+    // system advances 4 master clocks at a time while no CPU cycle begins.
+    // That is what freezes an armed HDMA transfer: NESER runs pending DMA from
+    // `gpdma_cycle_hook`, which a stopped CPU must never call.
+    #[test]
+    fn stopped_cpu_spends_four_master_clocks_and_runs_no_cpu_cycle() {
+        let mut bus = HaltedProbeBus::default();
+        bus.mem.insert(0x00_0000, 0xDB); // STP
+        let mut cpu = Cpu::new(bus);
+
+        cpu.step(); // execute STP itself
+        let ticks_after_stp = cpu.bus.ticks;
+        let hooks_after_stp = cpu.bus.hooks;
+
+        for step in 1..=3u32 {
+            cpu.step();
+            assert_eq!(
+                cpu.bus.ticks - ticks_after_stp,
+                4 * step,
+                "a stopped step must advance exactly 4 master clocks"
+            );
+            assert_eq!(
+                cpu.bus.hooks, hooks_after_stp,
+                "a stopped CPU must not begin a CPU cycle"
+            );
+        }
+    }
+
+    // Reset clears the WAI wait state too, not just STP's: Mesen2's
+    // `SnesCpu::Reset` sets `StopState = Running` unconditionally, and that one
+    // field covers both halts. Before #3116 `do_reset` cleared neither, so a
+    // reset issued while the CPU sat in WAI resumed into the wait loop.
+    #[test]
+    fn reset_releases_a_wai_wait_state() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xCB]); // WAI
+        cpu.bus.load(0x00FFFC, &[0x00, 0x90]); // RESET vector -> $9000
+        cpu.step();
+        assert!(cpu.waiting);
+
+        cpu.do_reset();
+
+        assert!(!cpu.waiting, "reset must release the WAI wait state");
+        assert_eq!(cpu.pc, 0x9000, "PC from the RESET vector");
+    }
+
+    #[test]
+    fn stp_stopped_state_round_trips_through_cpu_state() {
+        let mut cpu = Cpu::new(TestBus::default());
+        cpu.bus.load(0x0000, &[0xDB, 0xEA]); // STP ; NOP
+        assert_eq!(cpu.step(), 4);
+        assert!(cpu.stopped);
+
+        let state = cpu.capture_state_inner();
+        let mut restored = Cpu::new(TestBus::default());
+        restored.restore_state_inner(&state);
+
+        assert!(restored.stopped, "restored CPU must remain stopped");
+        assert_eq!(restored.step(), 1, "a restored stopped CPU only idles");
+        assert_eq!(restored.pc, 0x0001, "PC must stay frozen while stopped");
     }
 }
 

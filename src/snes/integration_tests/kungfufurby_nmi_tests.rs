@@ -6,20 +6,18 @@
 //! `roms/snes/automated_tests/manifest.json`).
 //!
 //! Each ROM renders a solid backdrop color once its self-check completes:
-//! blue for PASS, red/maroon for FAIL. Verified against Mesen2 headless
-//! captures (`--Video.VideoFilter=None --Video.AspectRatio=NoStretching
+//! blue for PASS, red for FAIL, both painted by byuu's `pass()`/`fail()`
+//! epilogues, which end in `stp`. Verified against Mesen2 headless captures
+//! (`--Video.VideoFilter=None --Video.AspectRatio=NoStretching
 //! --snes.disableFrameSkipping=true`), which show blue for all three ROMs
 //! at frame 600 (nmi.smc transitions blue between frames ~450-600;
 //! test_nmi.smc between ~30-60; demo_nmitest.smc is stable blue from
 //! frame 5).
 //!
-//! **Golden convention (#3092).** `test_nmi_passes` below asserts the
-//! Mesen2-correct blue PASS screen, not NESER's current output, so it FAILs
-//! under `cargo test --include-ignored` until #3093 lands -- the designed
-//! state, not a regression. See `kungfufurby_irq_tests`' module doc for the
-//! rationale; the IRQ family is tracked on the same issue because both show
-//! the same shape (the `demo_*` ROM passes, every other ROM renders the
-//! identical maroon FAIL fill).
+//! All three pass. `test_nmi_passes` was `#[ignore]`d under #3093 until #3116,
+//! on the strength of a maroon screen that turned out not to be a FAIL verdict:
+//! STP did not halt the CPU, so the ROM painted its blue PASS and then fell
+//! through the dead `stp` into `fail()` and on into the following bytes.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -81,25 +79,22 @@ mod tests {
     /// across the first 500k+ master clocks is byte-identical except for one
     /// pull sequence right before this ROM's RTI (`PLA` and friends have the
     /// mirror-image "internal cycle before the pull" issue, out of scope for
-    /// this fix -- see `test_nmi_passes` below and #3049's follow-up).
+    /// this fix -- see #3049's follow-up; it is not what `test_nmi_passes`
+    /// below was failing on, which #3116 settled).
     #[test]
     fn nmi_passes() {
         run_rom_screen_crc("nmi.smc", 600, 0x8695_BBB0);
     }
 
-    /// #3093: NESER's self-check FAILs where Mesen2 PASSes (blue). NESER
-    /// settles on a flat maroon `(82, 0, 0)` fill from frame 61 onward, so
-    /// frame 120 samples a stable screen.
+    /// Sampled at frame 120, comfortably past this ROM's ~frame 61 settle
+    /// point, so the screen is stable when the CRC is taken.
     ///
-    /// `nmi_passes`' #3049 per-cycle dispatch fix does NOT change this ROM's
-    /// outcome (identical CRC before/after) -- this self-checking ROM's
-    /// divergence is a different residual gap. A spike extending the
-    /// PHA/PHX/PHY internal-cycle-before-the-push fix to the full push/pull
-    /// family (PLA/PLX/PLY/PLP/PLB/PLD/PHP/PHB/PHD/PHK) was tried and
-    /// disproven -- it did not change this ROM's CRC either, so the pull-side
-    /// mirror of the PHA fix (needed to close `nmi.smc`'s own remaining
-    /// 5-line bus-trace residual, see `nmi_passes`) is NOT this ROM's root
-    /// cause. Root cause not yet identified; needs fresh investigation.
+    /// Passes since #3116. Two earlier attempts to find an NMI-side root cause
+    /// here came up empty and are worth recording, because the reason they
+    /// failed is that there was no NMI bug to find: neither `nmi_passes`' #3049
+    /// per-cycle dispatch fix nor a spike extending the PHA/PHX/PHY
+    /// internal-cycle-before-the-push fix to the full push/pull family changed
+    /// this ROM's CRC. The maroon screen was post-`stp` garbage, not a verdict.
     ///
     /// Until #3092 this test asserted `0x8662_6F50`, which matched neither a
     /// PASS nor NESER's own output -- that literal is a flat `(66, 0, 0)`
@@ -107,7 +102,6 @@ mod tests {
     /// Being `#[ignore]`d, the mismatch went unnoticed from #2883 until the
     /// #3092 audit.
     #[test]
-    #[ignore = "self-check FAILs (maroon) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_nmi_passes() {
         run_rom_screen_crc("test_nmi.smc", 120, 0x8695_BBB0);
     }
