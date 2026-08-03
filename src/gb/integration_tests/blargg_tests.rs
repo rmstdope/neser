@@ -783,14 +783,21 @@ fn test_oam_bug_6_timing_no_bug() {
 /// The multi-ROM build runs all eight `oam_bug` subtests and reports each one's
 /// verdict on screen.
 ///
-/// This is the only place subtest 7 (`timing_effect`) is checked, and there is
-/// no single-ROM test for it: `rom_singles/7-timing_effect.gb` prints far more
-/// text than the 8188-byte `$A004..$BFFF` buffer it writes into, and
-/// `write_text_out` (`oam_bug/source/common/shell.s`) has no bounds check, so
-/// the overrun walks into `$C000` — WRAM, where `copy_to_wram_then_run` placed
-/// the code the ROM is executing.  It therefore never reaches `check_crc`, on
-/// any emulator and on hardware; measurements in #3115.  The multi-ROM build
-/// defines `CUSTOM_PRINT`, uses no cartridge-RAM buffer, and is unaffected.
+/// It is the only place blargg's *verdict* for subtest 7 (`timing_effect`) is
+/// asserted, because the single-ROM build cannot report one:
+/// `rom_singles/7-timing_effect.gb` prints far more text than the 8188-byte
+/// `$A004..$BFFF` buffer it writes into, `write_text_out`
+/// (`oam_bug/source/common/shell.s`) has no bounds check, and the overrun walks
+/// into `$C000` — WRAM, where `copy_to_wram_then_run` placed the code the ROM is
+/// executing.  It therefore never reaches `check_crc`, on any emulator and on
+/// hardware; measurements in #3115.  The multi-ROM build defines `CUSTOM_PRINT`,
+/// uses no cartridge-RAM buffer, and is unaffected.
+///
+/// The behaviour behind that subtest is covered separately: `Ppu::current_oam_row`
+/// and the corruption patterns have unit tests in `gb::bus::dmg_bus` (see
+/// `test_notify_idu_glitch_applies_corruption_at_row_19`).  And the two
+/// cartridge-RAM oracle tests below load `7-timing_effect.gb` only as an MBC1
+/// 8 KB cartridge to plant bytes in — they never execute it.
 #[test]
 fn test_oam_bug_multi_rom() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/oam_bug/oam_bug.gb");
