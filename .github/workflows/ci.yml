@@ -20,6 +20,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       web_integration: ${{ steps.filter.outputs.web_integration }}
       python: ${{ steps.filter.outputs.python }}
+      shader_assets: ${{ steps.filter.outputs.shader_assets }}
       rust: ${{ steps.filter.outputs.rust }}
       nes: ${{ steps.filter.outputs.nes }}
       gb: ${{ steps.filter.outputs.gb }}
@@ -61,6 +62,19 @@ jobs:
             python:
               - 'scripts/**'
               - '.github/workflows/ci.yml'
+            shader_assets:
+              # Release packaging only ships shader files reachable from the
+              # presets in src/platform/shaders.rs, so anything that can change
+              # that graph must re-run the reachability and exact-case tests in
+              # scripts/test_package_release.py. That means the preset list, the
+              # vendored presets, and the local ones under shaders/ — which
+              # SHADER_PRESETS also points at (stock.slangp, gba-lcd.slangp).
+              # The bare vendor path detects submodule (gitlink) pointer bumps.
+              # See docs/VENDOR_SUBMODULES.md.
+              - 'vendor/slang-shaders'
+              - 'shaders/**'
+              - 'src/platform/shaders.rs'
+              - '.github/workflows/ci.yml'
             rust:
               - 'src/**'
               - 'Cargo.toml'
@@ -95,7 +109,10 @@ jobs:
   python-tests:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.python == 'true' || github.event_name == 'workflow_call'
+    if: >-
+      needs.changes.outputs.python == 'true'
+      || needs.changes.outputs.shader_assets == 'true'
+      || github.event_name == 'workflow_call'
 
     steps:
       - uses: actions/checkout@v6

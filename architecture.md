@@ -555,6 +555,9 @@ Shader presets using the Slang shading language, loaded via librashader:
 | `docs/MAPPER_CAPABILITIES.md` | Per-mapper capability matrix (banking, IRQ, audio expansion, etc.). |
 | `docs/MAPPERTOOL_UI_DESIGN.md` | Design document for the mappertool TUI. |
 | `docs/architecture-diagrams.md` | Save-state architecture diagrams (current vs proposed). |
+| `docs/SNES_TEST_ASSET_POLICY.md` | Intake, provenance, and validation rules for SNES automated-test assets. |
+| `docs/VENDOR_SUBMODULES.md` | When and how to move the vendored submodule pins (`vendor/slang-shaders`, `snes_test_roms`), how to avoid moving them by accident, and how to re-verify shader-preset reachability afterwards. |
+| `docs/improvement-plan.md` | Tracked codebase-improvement initiatives (epic #2825). |
 
 ### `.github/` — CI/CD and Automation
 

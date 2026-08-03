@@ -21,10 +21,6 @@ fn default_dma_channel_bools() -> Vec<bool> {
     vec![false; 8]
 }
 
-fn default_dma_channel_lines_left() -> Vec<u16> {
-    vec![0; 8]
-}
-
 fn default_last_hperiod() -> u16 {
     1364
 }
@@ -132,7 +128,13 @@ pub struct SnesCpuState {
 
 /// The DMA/HDMA controller's persisted state: the `$4300-$437F` channel
 /// register file plus the per-channel HDMA bookkeeping the registers don't
-/// hold (active mask, do-transfer and repeat flags, remaining line counts).
+/// hold (active mask and do-transfer flags).
+///
+/// Note: `hdma_repeat_mode` and `hdma_lines_left` were persisted here until
+/// #3062. They re-derived the line counter and repeat flag that `$43xA` already
+/// holds, and went stale the moment a ROM wrote that register mid-frame; the
+/// controller now decrements `$43xA` in place, as Mesen2 does, and the two
+/// vectors are gone. Same compatibility story as `bbus_ports` below.
 ///
 /// Note: a `bbus_ports` field (256 bytes) was persisted here until #3061. It
 /// mirrored every A->B byte so B->A transfers could read it back, which is not
@@ -149,10 +151,6 @@ pub struct SnesDmaState {
     pub hdma_active_mask: u8,
     #[serde(default = "default_dma_channel_bools")]
     pub hdma_do_transfer: Vec<bool>,
-    #[serde(default = "default_dma_channel_bools")]
-    pub hdma_repeat_mode: Vec<bool>,
-    #[serde(default = "default_dma_channel_lines_left")]
-    pub hdma_lines_left: Vec<u16>,
 }
 
 /// SA-1 enhancement chip state: control/vector registers (`$2200-$220F`), I-RAM plus its two

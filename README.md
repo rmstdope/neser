@@ -239,6 +239,9 @@ to that list is how type coverage grows.
 - `roms/` contains automated test ROMs and test assets.
 - `scripts/` contains build, packaging, test, ROM management, and metadata tools.
 - `shaders/` and `vendor/slang-shaders/` contain shader presets used by the native frontend.
+  `vendor/slang-shaders/` is a pinned submodule; see
+  [docs/VENDOR_SUBMODULES.md](docs/VENDOR_SUBMODULES.md) for when and how to move the pin, and
+  how to re-verify shader reachability afterwards.
 - [architecture.md](architecture.md) describes the codebase structure in more detail.
 
 ## License
