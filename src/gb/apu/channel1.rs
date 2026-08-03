@@ -100,7 +100,10 @@ pub struct Channel1 {
     env_period: u8, // bits 2-0 (0-7)
 
     // NR13/NR14 fields
-    freq: u16, // 11-bit frequency (NR13 low + NR14 bits 2-0 high)
+    /// 11-bit frequency (NR13 low + NR14 bits 2-0 high). Visible to the rest of
+    /// `gb::apu` so sweep-timing tests can observe the writeback the sweep step
+    /// performs, like the other deferred-sweep fields below.
+    pub(super) freq: u16,
     length_en: bool,
 
     // Internal state
@@ -344,8 +347,10 @@ impl Channel1 {
                 self.nr10_written_since_trigger = false;
             }
         }
-        // Sweep restart hold drains even if NRx2=$00 stopped the channel by
-        // disabling the DAC; the duty phase itself remains frozen while stopped.
+        // Only the duty phase freezes while stopped — including when NRx2=$00
+        // stopped the channel by disabling the DAC. The sweep restart hold is
+        // drained unconditionally by `sweep_tick`, which the APU calls
+        // separately each M-cycle, so returning here does not stall it.
         if !self.active {
             return;
         }
@@ -2728,94 +2733,6 @@ mod tests {
             ch.duty_pos,
             (duty_before + 1) & 7,
             "duty_pos should advance once"
-        );
-    }
-
-    #[test]
-    #[ignore = "#2293: traces overflow timing for Round 3 second sweep"]
-    fn test_round3_second_sweep_overflow_timing() {
-        // Replicate SameSuite channel_1_sweep Round 3 second sweep arm.
-        // Round 3: NR10=$27 (period=2, shift=7), NR13=$f0 (freq=$7f0).
-        // First sweep writeback → freq=$7ff.
-        // Second sweep: $7ff + ($7ff >> 7) = $7ff + $7f = $87e (overflow).
-        // ROM expects overflow to fire at M-cycle $3006-$3008 after second arm.
-        let mut ch = Channel1::new();
-        ch.set_model(true, CgbModel::CgbE);
-        ch.write_nr12(0x80); // volume=8
-        ch.write_nr10(0x27, false); // period=2, shift=7
-        ch.write_nr13(0xf0);
-        ch.write_nr14(0x87, false, false); // trigger, freq=$7f0
-        // Let trigger mechanics settle (restart_hold drains).
-        // CGB-E: restart_hold = 2 - lf_div + 2 = 4 (assuming lf_div=0)
-        for _ in 0..20 {
-            ch.tick();
-        }
-        assert_eq!(ch.restart_hold, 0, "restart_hold should have drained");
-        // First FS sweep arm: applies completed_addend=0 (no-op writeback),
-        // then arms calc. After drain, completed_addend becomes $f.
-        ch.clock_sweep(false);
-        drain_sweep(&mut ch);
-        println!(
-            "After first sweep cycle: freq={:#03x}, completed_addend={:#03x}",
-            ch.freq, ch.completed_addend
-        );
-        assert_eq!(
-            ch.completed_addend, 0xf,
-            "completed_addend should be $f after first calc"
-        );
-        // Second FS sweep arm: applies completed_addend=$f → freq=$7f0+$f=$7ff.
-        ch.clock_sweep(false);
-        println!("After second arm: freq={:#03x}", ch.freq);
-        assert_eq!(
-            ch.freq, 0x7ff,
-            "second arm should apply completed_addend=$f"
-        );
-        assert_eq!(
-            ch.freq, 0x7ff,
-            "second arm should apply completed_addend=$f"
-        );
-        assert!(
-            ch.is_active(),
-            "CH1 should be active after first full sweep"
-        );
-
-        // Third FS sweep arm (the one that overflows).
-        // This arms a calc for $7ff + ($7ff >> 7) = $7ff + $7f = $87e (overflow).
-        ch.clock_sweep(false); // arm at "M-cycle 0"
-        println!(
-            "After third arm: countdown={}, reload_timer={}",
-            ch.sweep_calc_countdown, ch.sweep_calc_reload_timer
-        );
-        // Count M-cycles until overflow fires (ch.active becomes false).
-        let mut m_cycle = 0;
-        for i in 0..20 {
-            let was_active = ch.is_active();
-            ch.sweep_tick();
-            let now_active = ch.is_active();
-            if i < 10 {
-                println!(
-                    "M-cycle {}: countdown={}, reload_timer={}, active={}",
-                    i + 1,
-                    ch.sweep_calc_countdown,
-                    ch.sweep_calc_reload_timer,
-                    now_active
-                );
-            }
-            if was_active && !now_active {
-                m_cycle = i + 1;
-                break;
-            }
-        }
-        println!("Round 3 overflow: fired at M-cycle {m_cycle} after third arm");
-        println!("  ROM expects overflow between M-cycle 8 and 9");
-        if m_cycle > 0 && m_cycle < 8 {
-            println!("  Observed drift: {} M-cycles too early", 8 - m_cycle);
-        }
-        // ROM expects overflow at ~M-cycle 8 (SubTest $3006-$3008 pass, $3009 fails).
-        // If neser fires at M-cycle 3-5, drift is ~5-6 M-cycles.
-        assert!(
-            (8..=9).contains(&m_cycle),
-            "overflow should fire at M-cycle 8-9, got {m_cycle}"
         );
     }
 }

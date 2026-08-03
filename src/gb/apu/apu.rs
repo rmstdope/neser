@@ -773,6 +773,7 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gb::timer::DIV_APU_BIT_NORMAL;
 
     fn powered_apu() -> Apu {
         let mut apu = Apu::new(false);
@@ -1356,4 +1357,201 @@ mod tests {
     // is actually 1 tick shorter. The countdown for the next sample is reset,
     // but the new pulse's first sample will be the next sample the old pulse
     // would have played (i.e. the current sample index or phase does not reset)"
+
+    // ── SameSuite channel_1_sweep Round 3 ─────────────────────────────────
+
+    /// Drives an [`Apu`] the way `CgbBus::tick_before_ppu` / `tick_after_ppu`
+    /// do: a simulated 16-bit DIV counter advancing 4 T-cycles per M-cycle,
+    /// with the DIV-APU edge events dispatched *before* that M-cycle's `tick`.
+    ///
+    /// This is what lets a unit test reproduce a SameSuite `SubTest` faithfully:
+    /// the frame sequencer advances because DIV bit 12 falls, not because the
+    /// test counted FS steps by hand.
+    ///
+    /// `CgbBus` batches a whole instruction's M-cycles into one `Apu::tick`
+    /// after dispatching that instruction's DIV-APU edges, so stepping one
+    /// M-cycle at a time is only equivalent while no edge falls part-way
+    /// through a multi-M-cycle instruction. In the window these tests measure
+    /// the ROM is executing `nop`s, which are one M-cycle each, so the two
+    /// orderings coincide.
+    struct DivDrivenApu {
+        apu: Apu,
+        div: u16,
+    }
+
+    impl DivDrivenApu {
+        /// Powered-off CGB APU with a DIV counter at 0, i.e. immediately after
+        /// the `ld [rDIV], a` that opens SameSuite's `SubTest` macro.
+        fn new(model: CgbModel) -> Self {
+            let mut apu = Apu::new(true);
+            apu.set_cgb_model(model);
+            Self { apu, div: 0 }
+        }
+
+        /// One CPU M-cycle.
+        fn step(&mut self) {
+            let old = self.div;
+            self.div = self.div.wrapping_add(4);
+            if old & DIV_APU_BIT_NORMAL == 0 && self.div & DIV_APU_BIT_NORMAL != 0 {
+                self.apu.clock_div_apu_secondary();
+            }
+            if old & DIV_APU_BIT_NORMAL != 0 && self.div & DIV_APU_BIT_NORMAL == 0 {
+                self.apu.clock_div_apu();
+            }
+            self.apu.tick(1);
+        }
+
+        fn run(&mut self, m_cycles: u32) {
+            for _ in 0..m_cycles {
+                self.step();
+            }
+        }
+
+        /// `ld [rDIV], a` — clears the counter, reporting a falling edge if the
+        /// DIV-APU bit was high (mirrors `Timer::write` for $FF04).
+        fn reset_div(&mut self) {
+            if self.div & DIV_APU_BIT_NORMAL != 0 {
+                self.apu.clock_div_apu();
+            }
+            self.div = 0;
+        }
+
+        /// `ldh [n], a` into an APU register, carrying the live DIV counter the
+        /// CPU would have presented at that instruction.
+        fn write(&mut self, addr: u16, val: u8) {
+            self.apu
+                .write_register_with_apu_phase_and_div_counter(addr, val, None, Some(self.div));
+        }
+
+        /// `ldh [rNR52], a` — routed the way `CgbBus` routes it, so a power-on
+        /// while the DIV-APU bit is high arms the skipped first FS event.
+        fn write_nr52(&mut self, val: u8) {
+            let div_apu_bit_high = self.div & DIV_APU_BIT_NORMAL != 0;
+            self.apu.write_nr52_with_div_state(val, div_apu_bit_high);
+        }
+
+        fn ch1_pcm(&self) -> u8 {
+            self.apu.read_pcm12() & 0x0F
+        }
+    }
+
+    /// Round 3 of `roms/gb/automated_tests/SameSuite/apu/channel_1/channel_1_sweep.asm`,
+    /// replayed one M-cycle at a time.
+    ///
+    /// Each `SubTest` resets DIV, power-cycles the APU, waits `$800` NOPs so the
+    /// APU is aligned to a known DIV-APU tick, then writes — in this order —
+    /// `NR10=$27` (period 2, shift 7), `NR11=$80`, `NR13=$f0`, `NR12=$80`
+    /// (volume 8) and `NR14=$87` (trigger, freq `$7f0`), resets DIV again, waits
+    /// N M-cycles and samples `rPCM12`.
+    ///
+    /// Ground truth is that ROM's own `CorrectResults` table. Round 3 occupies
+    /// its last six rows; the two that matter here are
+    ///
+    /// * row 16, delays `$2ffe..$3005` — all `$08` (channel still audible), with
+    ///   `$2ffe` carrying the ROM's comment "DIV ticks the APU at this moment";
+    /// * row 17, delays `$3006..$300d` — all `$00` (sweep overflow has muted it).
+    ///
+    /// A `ld a, [hl]` costs 2 M-cycles, so a sample taken at delay `$3005`
+    /// observes the APU at 7 M-cycles past that DIV-APU tick and one at `$3006`
+    /// observes it at 8. That eight-M-cycle gap is what this test pins.
+    ///
+    /// PCM12 is the observation point on purpose. It is what the ROM measures,
+    /// and it is not the same instant as the `is_active` edge: neser completes
+    /// the overflow calculation a few M-cycles earlier and keeps the output
+    /// alive across the remainder via `sweep_overflow_output_linger`. Only the
+    /// composite is ground truth here — the split between the two is an
+    /// implementation detail this ROM does not constrain.
+    ///
+    /// The end-to-end verdict lives in `test_samesuite_apu_channel_1_sweep`;
+    /// this test exists to name the M-cycle when that ROM regresses.
+    #[test]
+    fn test_samesuite_round3_sweep_overflow_mutes_pcm12_eight_mcycles_after_arm() {
+        let mut d = DivDrivenApu::new(CgbModel::CgbE);
+
+        // `xor a` / `ldh [rNR52], a` — power off (already off).
+        d.run(4);
+        d.write_nr52(0x00);
+        // `cpl` / `ldh [rNR52], a` — power on.
+        d.run(4);
+        d.write_nr52(0xFF);
+        // `ld a, \2` + `nops $800` + `ldh [rNR10], a`. The DIV-APU bit falls at
+        // T=$2000 (M-cycle 2048) inside this window, giving the single alignment
+        // tick the ROM's comment describes.
+        d.run(2053);
+        d.write(0xFF10, 0x27);
+        d.run(5);
+        d.write(0xFF11, 0x80);
+        d.run(5);
+        d.write(0xFF13, 0xF0);
+        d.run(5);
+        d.write(0xFF12, 0x80);
+        d.run(5);
+        // The trigger lands with DIV at $2084 — the exact counter value
+        // `Channel1::trigger` keys its DIV-reset sweep-timing window on, which
+        // independently confirms this replay's instruction timing.
+        assert_eq!(
+            d.div, 0x2084,
+            "NR14 trigger must land on the ROM's DIV-reset alignment"
+        );
+        d.write(0xFF14, 0x87);
+        // `ld [rDIV], a` — delays below are counted from here, as the ROM's
+        // `nops \1` are.
+        d.run(3);
+        d.reset_div();
+
+        assert_eq!(d.apu.ch1.freq, 0x7F0, "trigger loads freq from NR13/NR14");
+
+        // DIV-APU falling edges land every 2048 M-cycles. `sweep_countdown` is
+        // loaded to (period ^ 7) & 7 = 5 on trigger, so the sweep steps at FS
+        // step 2 (M-cycle 4096) only bumps it to 6; the step at FS step 6
+        // (M-cycle 12288) wraps it to 7 and arms the overflowing calculation.
+        d.run(12287);
+        assert_eq!(
+            d.apu.ch1.freq, 0x7F0,
+            "no sweep writeback before the arming step"
+        );
+        d.step();
+
+        // Harness self-check: this M-cycle carried the arming sweep step, which
+        // writes back the completed addend ($7f0 >> 7 = $f) → $7ff. The next
+        // calculation, $7ff + ($7ff >> 7) = $87e, is the one that overflows.
+        // If this trips, the replay is mis-phased — the model is not at fault.
+        assert_eq!(
+            d.apu.ch1.freq, 0x7FF,
+            "arming sweep step writes back the completed addend"
+        );
+        assert!(
+            d.apu.ch1.is_active(),
+            "channel is still audible at the arming step"
+        );
+
+        // CorrectResults row 16: audible through delay $3005 = arm + 7.
+        for n in 1..=7 {
+            d.step();
+            assert_eq!(
+                d.ch1_pcm(),
+                0x08,
+                "PCM12 must still read $08 at arm + {n} M-cycles (ROM delay ${:04x})",
+                0x2ffe + n
+            );
+        }
+
+        // CorrectResults row 17: muted from delay $3006 = arm + 8, and it stays
+        // muted for the rest of rows 17 and 18 ($3006..$3015).
+        d.step();
+        assert_eq!(
+            d.ch1_pcm(),
+            0x00,
+            "sweep overflow must mute PCM12 at arm + 8 M-cycles (ROM delay $3006)"
+        );
+        for n in 9..=23 {
+            d.step();
+            assert_eq!(
+                d.ch1_pcm(),
+                0x00,
+                "PCM12 must stay muted at arm + {n} M-cycles (ROM delay ${:04x})",
+                0x2ffe + n
+            );
+        }
+    }
 }
