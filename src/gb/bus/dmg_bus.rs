@@ -1554,10 +1554,13 @@ mod tests {
     /// Enable the LCD and stop at OAM-scan `row` of scan 1 (dot `4 * row`).
     ///
     /// Scan 0 is 452 dots = 113 M-cycles and has no OAM scan, so after that many
-    /// ticks the PPU sits at dot 0 of scan 1.  Mode 2 then walks one OAM row per
-    /// M-cycle from dot 0, so `row` more ticks land on `row`.  Rows 1..=19 are
-    /// observable; row 0 lives in the 4-dot "fake" HBlank that opens scan 1 and
-    /// is immune to corruption anyway.
+    /// ticks the PPU sits at dot 0 of scan 1.  The physical OAM scan runs from
+    /// dot 0 there — `Timing::is_oam_blocked` blocks OAM from dot 0 on scan 1 —
+    /// and walks one row per M-cycle, so `row` further ticks land on row `row`.
+    ///
+    /// Only rows 1..=19 are observable through `current_oam_row`: `Timing::mode`
+    /// reports scan 1's first four dots as HBlank, hiding row 0, which is immune
+    /// to corruption anyway.
     fn enable_lcd_and_tick_to_row(bus: &mut DmgBus, row: usize) {
         bus.write(0xFF40, 0x91); // enable LCD → timing resets
         for _ in 0..113 + row {
@@ -1567,7 +1570,7 @@ mod tests {
 
     #[test]
     fn test_notify_idu_glitch_applies_write_corruption_in_mode_2() {
-        // Given: PPU at row 2 (dot 12 of scan 1, where OamScan starts at dot=4);
+        // Given: PPU at OAM-scan row 2 (dot 8 of scan 1, one row per M-cycle);
         // OAM rows 1 and 2 have known values.
         // row 1: b=0x0002, w1=0x0003, c=0x0004, w3=0x0005
         // row 2: a=0x0001

@@ -902,10 +902,11 @@ impl Ppu {
     /// The PPU walks the 20 OAM rows from dot 0 of the line, one row per
     /// M-cycle, so the row is `dot / 4`: row 0 = dots 0–3, row 1 = dots 4–7, …,
     /// row 19 = dots 76–79.  This holds on every line, including scan 1 (the
-    /// line right after LCD enable), whose leading `[0,4)` HBlank is only a STAT
-    /// artefact — [`Timing::is_oam_blocked`] documents the physical OAM scan as
-    /// starting at dot 0 there too.  On scan 1 that HBlank hides row 0, which
-    /// costs nothing: row 0 is immune to all three corruption patterns.
+    /// line right after LCD enable): [`Timing::is_oam_blocked`] documents the
+    /// physical OAM scan as running from dot 0 there too, and the `[0,4)` HBlank
+    /// [`Timing::mode`] reports at the head of scan 1 is an artefact of mode
+    /// reporting, not a gap in the scan.  It does hide row 0 on that one line,
+    /// which costs nothing: row 0 is immune to all three corruption patterns.
     ///
     /// Mode 2 never extends past dot 79, so the result is always `<= 19` and the
     /// callers that index OAM by row cannot run off the end.
@@ -1765,10 +1766,12 @@ mod tests {
     // ends at dot 80.
     #[test]
     fn test_current_oam_row_is_1_at_scan_1_mode_2_start() {
-        // Given: Ppu advanced to Mode 2 on scan 1, which begins at dot=4.
-        // Row 0 occupies dots [0,4), reported as the "fake" HBlank on scan 1, so
-        // the first row observable here is 1.  That costs nothing: row 0 is
-        // immune to all three corruption patterns.
+        // Given: Ppu advanced to the first dot of scan 1 that reports Mode 2.
+        // Scan 1 itself starts at dot 0 — it is Mode 2 that is first reported at
+        // dot 4, because `Timing::mode` calls dots [0,4) a "fake" HBlank there.
+        // Row 0 occupies those four dots, so the first row observable on scan 1
+        // is 1.  That costs nothing: row 0 is immune to all three corruption
+        // patterns.
         let mut ppu = Ppu::new();
         advance_to_mode_2(&mut ppu);
         assert_eq!(ppu.timing.mode(), PpuMode::OamScan);
