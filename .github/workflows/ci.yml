@@ -267,9 +267,17 @@ jobs:
               -E 'not (test(nes::integration_tests) | test(gb::integration_tests) | test(gba::integration_tests) | test(snes::integration_tests))'
           fi
 
-  rust-lint-pr:
+  # One lint job for every event. This deliberately has no `if:` and no
+  # `needs: changes`: it is a required status check, so it must report on every
+  # PR, including docs-only ones. A required check that is skipped may never
+  # report and can leave a PR waiting for a status that never arrives.
+  #
+  # It replaces an earlier rust-lint-pr / rust-lint-main split whose PR half ran
+  # a weaker command. Every test in this crate lives in an inline #[cfg(test)]
+  # module, so without --all-targets clippy compiles no test code at all and
+  # cannot see lints there -- which is how #3095 landed one (closes #3103).
+  rust-lint:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
 
     steps:
       - uses: actions/checkout@v6
@@ -283,29 +291,10 @@ jobs:
           done
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
-      - name: Run clippy (PR fast path)
-        run: cargo clippy --all-features
-      - name: Check formatting
-        run: cargo fmt -- --check
-
-  rust-lint-main:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'workflow_call'
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: true
-      - name: Install native frontend system dependencies
-        run: |
-          for i in 1 2 3; do
-            sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libdbus-1-dev && break
-            echo "apt attempt $i failed (transient network); retrying after 15s..." && sleep 15
-          done
-      - name: Cache Rust dependencies and build outputs
-        uses: Swatinem/rust-cache@v2
-      - name: Run clippy (main full coverage)
-        run: cargo clippy --all-targets --all-features
+      - name: Run clippy
+        # Must stay byte-identical to the pre-merge checkpoint in
+        # .github/copilot-instructions.md and the README "Useful checks" block.
+        run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Check formatting
         run: cargo fmt -- --check
 
