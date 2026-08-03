@@ -973,6 +973,63 @@ mod tests {
         );
     }
 
+    // byuu `test_hdma.smc` sub-test 4: "if $43xa is 0 when an HDMA transfer
+    // begins (before the decrement), it will wrap to 0xff and begin a
+    // continuous transfer". The ROM arms a mode-3 channel mid-frame with
+    // $430A = 0 and its table pointer one byte past the leading terminator,
+    // then lets three lines run and checks that CGRAM ends up holding the
+    // SECOND data pair -- i.e. the first line transfers nothing, and the two
+    // after it each move one 4-byte group (#3062).
+    #[test]
+    fn hdma_zero_counter_wraps_into_a_continuous_transfer() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+        // Mode 3 (p, p, p+1, p+1) to $2121/$2122, direct addressing.
+        write_hdma_channel(&mut dma, 0, 0x03, 0x21, 0x3000);
+        // Table: a leading $00 the ROM deliberately skips, then two 4-byte groups.
+        bus.a_bus[0x3000] = 0x00;
+        for (offset, byte) in [0x00, 0x00, 0x78, 0x56, 0x00, 0x00, 0xBC, 0x9A]
+            .into_iter()
+            .enumerate()
+        {
+            bus.a_bus[0x3001 + offset] = byte;
+        }
+
+        // Frame init runs with HDMA disabled; the CPU then points the table one
+        // byte in and zeroes the counter before enabling $420C.
+        dma.hdma_init(0x00, &mut bus, 0, 0, 8);
+        dma.write_register(0x4308, 0x01);
+        dma.write_register(0x4309, 0x30);
+        dma.write_register(0x430A, 0x00);
+
+        for _ in 0..3 {
+            let base = bus.clock;
+            dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        }
+
+        let written: Vec<(u8, u8)> = bus
+            .b_bus_writes
+            .iter()
+            .map(|&(_, port, value)| (port, value))
+            .collect();
+        assert_eq!(
+            written,
+            vec![
+                // Line 1 transfers nothing: DoTransfer is only set by the
+                // decrement that wraps $00 to $FF.
+                (0x21, 0x00),
+                (0x21, 0x00),
+                (0x22, 0x78),
+                (0x22, 0x56),
+                (0x21, 0x00),
+                (0x21, 0x00),
+                (0x22, 0xBC),
+                (0x22, 0x9A),
+            ],
+            "two continuous-mode lines move one 4-byte group each"
+        );
+    }
+
     #[test]
     fn hdma_do_line_expiry_charges_indirect_pointer_load() {
         // A one-line indirect entry followed by a real next entry: on expiry

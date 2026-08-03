@@ -126,11 +126,11 @@ mod tests {
         run_rom_screen_crc("test_hdma/test_hdmasync.smc", 1100, 0x8695_BBB0);
     }
 
-    /// #3062 (byte-identical byuu mirror of KungFuFurby test_hdmatiming): NESER
-    /// self-check FAILs (flat `(255, 0, 0)`, byuu's `fail()` backdrop) where
-    /// Mesen2 PASSes (blue). Read as `(66, 0, 0)` before #3116.
+    /// #3062 (byte-identical byuu mirror of KungFuFurby test_hdmatiming): down
+    /// to a single differing value, row 1's first latch. See
+    /// `kungfufurby_hdma_tests::test_hdmatiming_passes` for the measurement.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
+    #[ignore = "one residual value (row 1's first latch, 4 master clocks); asserts the correct PASS golden so FAILs under --include-ignored until #3062"]
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdma/test_hdmatiming.smc", 600, 0x8695_BBB0);
     }
