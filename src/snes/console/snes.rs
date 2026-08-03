@@ -1341,7 +1341,7 @@ mod tests {
             .expect("dma object")
             .as_object_mut()
             .expect("dma map")
-            .remove("hdma_lines_left");
+            .remove("hdma_do_transfer");
         {
             let bus = json["bus"].as_object_mut().expect("bus object");
             bus.remove("pending_gpdma");
@@ -1371,7 +1371,7 @@ mod tests {
             loaded.version,
             crate::snes::console::save_state::SNES_SAVESTATE_VERSION
         );
-        assert_eq!(loaded.bus.dma.hdma_lines_left, vec![0; 8]);
+        assert_eq!(loaded.bus.dma.hdma_do_transfer, vec![false; 8]);
         assert!(loaded.bus.pending_gpdma.is_none());
         assert!(loaded.bus.pending_hdma.is_none());
         assert_eq!(loaded.ppu.irq_mode, 0);
