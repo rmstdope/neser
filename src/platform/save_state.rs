@@ -134,6 +134,22 @@ pub(crate) fn gzip_compress(bytes: &[u8]) -> Vec<u8> {
         .expect("gzip finalize should not fail on an in-memory buffer")
 }
 
+/// Whether the golden-fixture regeneration tests may write to the repository.
+///
+/// The four `regenerate_golden_save_state_fixture` tests are `#[ignore]`d, but
+/// `cargo test -- --include-ignored` runs them anyway, and they overwrite
+/// committed fixtures. That is destructive rather than merely untidy: each
+/// fixture's value comes from having been written by an *older* build (see the
+/// `test_golden_save_state_v*_loads` tests), so regenerating one silently turns
+/// a compatibility test into a round-trip test, in an opaque `.gz` diff.
+///
+/// Gating the write on an explicit opt-in keeps any ordinary test run
+/// non-destructive. Presence-based, matching `NESER_CAPTURE_SCREEN`.
+#[cfg(test)]
+pub(crate) fn fixture_regeneration_enabled() -> bool {
+    std::env::var_os("NESER_REGENERATE_FIXTURES").is_some()
+}
+
 /// Gzip-decompress bytes produced by [`gzip_compress`].
 ///
 /// Test-only helper used by the per-console golden-fixture loading tests.
