@@ -1,0 +1,81 @@
+# Tooling baseline for the Python tools in this directory.
+#
+# There is deliberately no [project] table and no build backend: nothing here is
+# packaged or installed. The modules are imported from the repository root as
+# scripts.<tool>.<module>, so a distribution rooted here would only double-declare
+# a layout that already works.
+#
+# Dependency groups (PEP 735) are installed with, from the repository root:
+#   pip install --group scripts/pyproject.toml:test --group scripts/pyproject.toml:dev
+#
+# ruff discovers the [tool.ruff] tables below by walking up from each file, so
+# `ruff check scripts` works from the repository root. mypy does NOT walk up and
+# must be pointed at this file explicitly:
+#   mypy --config-file scripts/pyproject.toml scripts
+
+[dependency-groups]
+test = [
+    "beautifulsoup4==4.15.0",
+    "requests==2.34.2",
+    "requests-cache==1.3.3",
+    "textual==8.2.8",
+    "tqdm==4.70.0",
+]
+dev = [
+    "mypy==2.3.0",
+    "ruff==0.16.1",
+]
+deploy = [
+    "paramiko==5.0.0",
+]
+
+[tool.ruff]
+line-length = 120
+# Deliberately one release behind the CI interpreter (3.14). At py314 the
+# FORMATTER rewrites `except (A, B):` into PEP 758's unparenthesised form, which
+# is a hard SyntaxError on 3.13 and earlier -- and because it is the formatter,
+# `ruff format --check` would enforce it. Pinning CI for reproducibility and
+# choosing a syntax floor are separate decisions; this keeps the tools readable
+# by older interpreters, which matters for release.yml, where package_release.py
+# runs on the runner's preinstalled Python with no setup-python step.
+target-version = "py313"
+
+[tool.ruff.lint]
+# ruff's default families (E4/E7/E9/F) plus import sorting, pyupgrade, bugbear,
+# comprehensions and simplification. E501 is added explicitly: the formatter
+# reflows code but cannot split long strings or comments, so without it the
+# line-length setting would never fail anything. S608 is the single flake8-bandit
+# rule already suppressed in metadata_db.py; selecting it keeps those noqa
+# directives meaningful instead of reporting them as unused (RUF100).
+select = ["E4", "E7", "E9", "E501", "F", "I", "UP", "B", "C4", "SIM", "RUF", "S608"]
+# The ambiguous-unicode rules guard against homoglyphs in untrusted source. Here
+# the characters are deliberate typography in comments and docstrings -- "8 x 8"
+# written with a multiplication sign, numeric ranges with en dashes -- so forcing
+# ASCII would only make the prose worse.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# Embeds raw NesCartDB HTML pages as parser fixtures; the longest is ~1300
+# characters and cannot be wrapped without changing what is being parsed.
+"nes_rom_db_scraper/test_nescartdb.py" = ["E501"]
+# Aggregator module that re-exports three sibling test modules so a single
+# discovery run collects them.
+"mappertool/test_textual_app.py" = ["F401", "F403"]
+
+[tool.mypy]
+python_version = "3.14"
+# py65, matplotlib and paramiko are not installed in the test environment.
+ignore_missing_imports = true
+# Silent by default. Modules opt into strict checking one at a time via the
+# override below; adding a module to that list is the whole cost of extending
+# type coverage.
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "scripts.metadata_scraper.api_client",
+    "scripts.metadata_scraper.metadata_db",
+    "scripts.nes_rom_db_scraper.rom_database",
+]
+strict = true
+ignore_errors = false
