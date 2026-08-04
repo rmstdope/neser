@@ -11,6 +11,110 @@ use std::rc::Rc;
 const PROCESSOR_TESTS_ROOT: &str = "roms/snes/automated_tests/processor_tests/65816/v1";
 const PROCESSOR_TESTS_FULL_ROOT: &str = "roms/snes/automated_tests/processor_tests/65816/full/v1";
 
+/// Opcodes whose vectors are checked cycle-by-cycle against the bus activity the vector
+/// records, not merely for total cycle count and final RAM.
+///
+/// The vectors have always carried per-cycle bus data; asserting only `cycles.len()` is why a
+/// family of internal-cycle placement bugs (#3050, #3068) could sit unnoticed behind a green
+/// suite. This list is the migration front: it is seeded with one opcode per addressing mode
+/// and read-modify-write form touched by #3068, and should grow until it covers every opcode.
+/// Opcodes outside it keep the length + final-state checks only, so unrelated instruction-set
+/// divergences do not have to be resolved before this net can be extended.
+const CYCLE_EXACT_OPCODES: &[u8] = &[
+    // Direct-page addressing modes -- one representative opcode each.
+    0xA5, // LDA dp
+    0xB5, // LDA dp,X
+    0xB6, // LDX dp,Y
+    0xA1, // LDA (dp,X)      -- native mode only, see NATIVE_ONLY_CYCLE_EXACT_OPCODES
+    0xB1, // LDA (dp),Y
+    0xB2, // LDA (dp)
+    0xA7, // LDA [dp]
+    0xB7, // LDA [dp],Y
+    0xD4, // PEI             -- native mode only, see NATIVE_ONLY_CYCLE_EXACT_OPCODES
+    // Read-modify-write forms -- one representative addressing mode each.
+    0x06, // ASL dp
+    0x16, // ASL dp,X
+    0x0E, // ASL abs
+    0x1E, // ASL abs,X
+    0x04, // TSB dp
+];
+
+/// Opcodes checked cycle-exactly in native mode only, because the references contradict each
+/// other in emulation mode.
+///
+/// Both concern where a direct-page indirect pointer's HIGH byte lands in emulation mode, and
+/// the two sources disagree in *opposite* directions, so no single rule satisfies both:
+///
+/// | | `(dp,X)`, `DL != 0` | `PEI`, `DL == 0` |
+/// |---|---|---|
+/// | ProcessorTests | carries ($002DFF -> $002E00) | wraps ($000CFF -> $000C00) |
+/// | gilyon `cputest.sfc`, Mesen2, NESER | wraps ($002D00) | carries ($000D00) |
+///
+/// NESER follows the SNES-specific sources: `cputest.sfc` is a 1610-test suite validated on
+/// real SNES hardware and asserts a genuine "Success" screen, and Mesen2 agrees with it.
+/// Applying the ProcessorTests rule to either opcode independently turns that suite's screen
+/// from Success to Failed, which is why it is not applied. ProcessorTests targets a bare WDC
+/// 65816 rather than the SNES 5A22, which may explain the split.
+///
+/// Scope of the disagreement, measured over the full corpus: `a1.e` 28/10000 vectors, `d4.e`
+/// 1/10000; `a1.n` and `d4.n` are 0/10000, hence the native-mode carve-out rather than
+/// dropping these opcodes entirely. Tracked as #3135.
+///
+/// Note that `d4 e 232` diverges in its final RAM as well as its cycles (it pushes the byte
+/// from the wrongly-wrapped address), so it fails the pre-existing final-state check whatever
+/// this list says. That failure reproduces unchanged on `origin/main` and needs the optional
+/// local full corpus to appear at all -- the committed CI subset is green either way.
+const NATIVE_ONLY_CYCLE_EXACT_OPCODES: &[u8] = &[
+    0xA1, // LDA (dp,X)
+    0xD4, // PEI
+];
+
+/// Whether this vector's bus cycles should be compared one by one.
+fn is_cycle_exact(opcode: u8, emulation_mode: bool) -> bool {
+    CYCLE_EXACT_OPCODES.contains(&opcode)
+        && !(emulation_mode && NATIVE_ONLY_CYCLE_EXACT_OPCODES.contains(&opcode))
+}
+
+/// One CPU bus cycle as observed on the bus: either an internal (no-access) cycle, or a read
+/// or write of one byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObservedCycle {
+    Internal,
+    Read(u32, u8),
+    Write(u32, u8),
+}
+
+impl fmt::Display for ObservedCycle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ObservedCycle::Internal => write!(f, "internal"),
+            ObservedCycle::Read(addr, value) => write!(f, "read  ${addr:06X} = ${value:02X}"),
+            ObservedCycle::Write(addr, value) => write!(f, "write ${addr:06X} = ${value:02X}"),
+        }
+    }
+}
+
+/// Decode one vector cycle from its 8-character signal string.
+///
+/// Positions are `vda vpa vpb rwb e m x mlb`. A cycle that drives neither VDA nor VPA is an
+/// internal cycle -- its recorded address is whatever was last left on the bus, which the CPU
+/// does not model, so only the *kind* is compared for those. The one exception is the
+/// emulation-mode read-modify-write dummy write, which asserts RWB=w with VDA low; RWB is
+/// therefore tested before the address-valid flags.
+fn decode_vector_cycle(cycle: &VectorCycle) -> ObservedCycle {
+    let signals = cycle.signals.as_bytes();
+    let writing = signals[3] == b'w';
+    let address_valid = signals[0] == b'd' || signals[1] == b'p';
+
+    match (writing, cycle.address, cycle.value) {
+        (true, Some(addr), Some(value)) => ObservedCycle::Write(addr & 0xFF_FFFF, value),
+        (false, Some(addr), Some(value)) if address_valid => {
+            ObservedCycle::Read(addr & 0xFF_FFFF, value)
+        }
+        _ => ObservedCycle::Internal,
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 struct VectorState {
     pc: u16,
@@ -95,12 +199,15 @@ fn load_vectors_from_file(path: &Path) -> Result<Vec<ProcessorTestVector>, Strin
 #[derive(Clone)]
 struct HarnessBusShared {
     mem: Rc<RefCell<HashMap<u32, u8>>>,
+    /// One entry per CPU bus cycle, in order. See [`HarnessBusShared::begin_cycle`].
+    cycles: Rc<RefCell<Vec<ObservedCycle>>>,
 }
 
 impl HarnessBusShared {
     fn new() -> Self {
         Self {
             mem: Rc::new(RefCell::new(HashMap::new())),
+            cycles: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -117,6 +224,24 @@ impl HarnessBusShared {
             self.mem.borrow_mut().insert(addr, value);
         }
     }
+
+    /// Open a new CPU bus cycle. The CPU publishes its speed exactly once at the start of
+    /// each of its three cycle-boundary functions (`tick_read`, `tick_write`,
+    /// `tick_internal_cycle`), so this fires once per CPU cycle and nowhere else. A cycle
+    /// starts out classified as internal and is reclassified if an access lands inside it.
+    fn begin_cycle(&self) {
+        self.cycles.borrow_mut().push(ObservedCycle::Internal);
+    }
+
+    fn record_access(&self, cycle: ObservedCycle) {
+        if let Some(last) = self.cycles.borrow_mut().last_mut() {
+            *last = cycle;
+        }
+    }
+
+    fn recorded_cycles(&self) -> Vec<ObservedCycle> {
+        self.cycles.borrow().clone()
+    }
 }
 
 struct HarnessBus {
@@ -131,14 +256,73 @@ impl HarnessBus {
 
 impl SnesBus for HarnessBus {
     fn read(&self, addr: u32) -> u8 {
+        let value = self.shared.read(addr);
+        self.shared
+            .record_access(ObservedCycle::Read(addr & 0xFF_FFFF, value));
+        value
+    }
+
+    /// Debugger reads are not bus cycles -- they must never disturb the recording.
+    fn read_for_debugger(&self, addr: u32) -> u8 {
         self.shared.read(addr)
     }
 
     fn write(&mut self, addr: u32, value: u8) {
         self.shared.write(addr, value);
+        self.shared
+            .record_access(ObservedCycle::Write(addr & 0xFF_FFFF, value));
     }
 
     fn tick(&mut self) {}
+
+    fn set_cpu_speed(&mut self, _speed: u8) {
+        self.shared.begin_cycle();
+    }
+}
+
+/// Compare the recorded bus cycles against the vector's, returning a rendered side-by-side
+/// diff on the first divergence.
+///
+/// Internal cycles compare by kind only: the vector records whatever address was last left on
+/// the bus during an internal cycle, which is a detail of the real chip's address latches that
+/// the CPU model does not reproduce.
+fn compare_bus_cycles(
+    name: &str,
+    expected: &[ObservedCycle],
+    actual: &[ObservedCycle],
+) -> Option<String> {
+    let matches = expected.len() == actual.len()
+        && expected
+            .iter()
+            .zip(actual)
+            .all(|(expected, actual)| match (expected, actual) {
+                (ObservedCycle::Internal, ObservedCycle::Internal) => true,
+                _ => expected == actual,
+            });
+    if matches {
+        return None;
+    }
+
+    let mut report = format!(
+        "{name}: bus cycle mismatch\n  {:<28}  {}\n",
+        "expected", "got"
+    );
+    for index in 0..expected.len().max(actual.len()) {
+        let render = |cycle: Option<&ObservedCycle>| {
+            cycle.map_or_else(|| "-".to_string(), ObservedCycle::to_string)
+        };
+        let left = render(expected.get(index));
+        let right = render(actual.get(index));
+        let differs = match (expected.get(index), actual.get(index)) {
+            (Some(ObservedCycle::Internal), Some(ObservedCycle::Internal)) => false,
+            (left, right) => left != right,
+        };
+        report.push_str(&format!(
+            "  {left:<28}  {right}{}\n",
+            if differs { "   <--" } else { "" }
+        ));
+    }
+    Some(report)
 }
 
 fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
@@ -222,6 +406,15 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
                     vector.name
                 ),
             });
+        }
+
+        if is_cycle_exact(initial_opcode, vector.initial.e != 0) {
+            let expected: Vec<ObservedCycle> =
+                vector.cycles.iter().map(decode_vector_cycle).collect();
+            let actual = shared.recorded_cycles();
+            if let Some(details) = compare_bus_cycles(&vector.name, &expected, &actual) {
+                return Err(VectorFailure { details });
+            }
         }
     }
 

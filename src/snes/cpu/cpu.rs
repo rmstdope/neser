@@ -147,6 +147,16 @@ pub struct Cpu<B: SnesBus> {
     /// Count of memory bus accesses (tick_read/tick_write calls) in the current step.
     /// Reset at the start of each step() call; used to compute internal-cycle tick counts.
     memory_bus_cycles: u8,
+
+    /// Address mask applied to the *second* byte of a multi-byte data access -- Mesen2's
+    /// `_readWriteMask`. $FF_FFFF normally, narrowed to $FFFF by the non-indirect direct-page
+    /// modes (`AddrMode_Dir`/`DirIdxX`/`DirIdxY`), so a 16-bit direct-page access at $FFFF
+    /// wraps to $0000 in bank 0 rather than carrying into bank 1.
+    ///
+    /// Reset at the start of each `step()` call, exactly as Mesen2 resets it per instruction
+    /// in `Exec()`. Because it never outlives one instruction it is deliberately absent from
+    /// the save state.
+    read_write_mask: u32,
     /// Whether a DMA transfer ran in the CPU cycle currently being executed -- Mesen2's
     /// `_state.IrqLock`. Set from `gpdma_cycle_hook`'s return value at the top of every cycle
     /// and read by `resolve_nmi_arm_counter` / `resample_irq_line`, so it is overwritten each
@@ -216,6 +226,7 @@ impl<B: SnesBus> Cpu<B> {
             stopped: false,
             fast_rom: false,
             memory_bus_cycles: 0,
+            read_write_mask: 0xFF_FFFF,
             irq_lock_step: false,
             irq_i_shadow: true,
             block_move_state: None,
@@ -713,6 +724,7 @@ impl<B: SnesBus> Cpu<B> {
         self.extra_cycles = 0;
         self.last_page_crossed = false;
         self.memory_bus_cycles = 0;
+        self.read_write_mask = 0xFF_FFFF;
         let interrupts_locked = self.irq_lock_step;
         self.irq_lock_step = false;
         let mut wai_wake_cycles: u8 = 0;
@@ -3028,7 +3040,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp(off);
         let val = self.read_m(ea);
         let result = self.inc_perform_m(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         5
     }
 
@@ -3037,7 +3049,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_x(off);
         let val = self.read_m(ea);
         let result = self.inc_perform_m(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3046,7 +3058,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs(abs);
         let val = self.read_m(ea);
         let result = self.inc_perform_m(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3055,7 +3067,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.inc_perform_m(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         7
     }
 
@@ -3064,7 +3076,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp(off);
         let val = self.read_m(ea);
         let result = self.dec_perform_m(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         5
     }
 
@@ -3073,7 +3085,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_x(off);
         let val = self.read_m(ea);
         let result = self.dec_perform_m(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3082,7 +3094,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs(abs);
         let val = self.read_m(ea);
         let result = self.dec_perform_m(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3091,7 +3103,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.dec_perform_m(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         7
     }
 
@@ -3171,7 +3183,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp(off);
         let val = self.read_m(ea);
         let result = self.asl_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         5
     }
 
@@ -3180,7 +3192,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_x(off);
         let val = self.read_m(ea);
         let result = self.asl_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3189,7 +3201,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs(abs);
         let val = self.read_m(ea);
         let result = self.asl_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3198,7 +3210,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.asl_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         7
     }
 
@@ -3230,7 +3242,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp(off);
         let val = self.read_m(ea);
         let result = self.lsr_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         5
     }
 
@@ -3239,7 +3251,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_x(off);
         let val = self.read_m(ea);
         let result = self.lsr_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3248,7 +3260,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs(abs);
         let val = self.read_m(ea);
         let result = self.lsr_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3257,7 +3269,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.lsr_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         7
     }
 
@@ -3290,7 +3302,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp(off);
         let val = self.read_m(ea);
         let result = self.rol_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         5
     }
 
@@ -3299,7 +3311,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_x(off);
         let val = self.read_m(ea);
         let result = self.rol_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3308,7 +3320,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs(abs);
         let val = self.read_m(ea);
         let result = self.rol_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3317,7 +3329,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.rol_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         7
     }
 
@@ -3350,7 +3362,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp(off);
         let val = self.read_m(ea);
         let result = self.ror_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         5
     }
 
@@ -3359,7 +3371,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_dp_x(off);
         let val = self.read_m(ea);
         let result = self.ror_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3368,7 +3380,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs(abs);
         let val = self.read_m(ea);
         let result = self.ror_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         6
     }
 
@@ -3377,7 +3389,7 @@ impl<B: SnesBus> Cpu<B> {
         let ea = self.addr_abs_x(abs, IndexedAccess::Write);
         let val = self.read_m(ea);
         let result = self.ror_perform(val);
-        self.write_m(ea, result);
+        self.write_m_rmw(ea, val, result);
         7
     }
 
@@ -3401,7 +3413,7 @@ impl<B: SnesBus> Cpu<B> {
         let mem = self.read_m(ea);
         let a = self.a;
         self.tsb_trb_z(a, mem);
-        self.write_m(ea, mem | a);
+        self.write_m_rmw(ea, mem, mem | a);
         5
     }
 
@@ -3411,7 +3423,7 @@ impl<B: SnesBus> Cpu<B> {
         let mem = self.read_m(ea);
         let a = self.a;
         self.tsb_trb_z(a, mem);
-        self.write_m(ea, mem | a);
+        self.write_m_rmw(ea, mem, mem | a);
         6
     }
 
@@ -3421,7 +3433,7 @@ impl<B: SnesBus> Cpu<B> {
         let mem = self.read_m(ea);
         let a = self.a;
         self.tsb_trb_z(a, mem);
-        self.write_m(ea, mem & !a);
+        self.write_m_rmw(ea, mem, mem & !a);
         5
     }
 
@@ -3431,7 +3443,7 @@ impl<B: SnesBus> Cpu<B> {
         let mem = self.read_m(ea);
         let a = self.a;
         self.tsb_trb_z(a, mem);
-        self.write_m(ea, mem & !a);
+        self.write_m_rmw(ea, mem, mem & !a);
         6
     }
 
@@ -3505,40 +3517,65 @@ impl<B: SnesBus> Cpu<B> {
     // bank-0 modes).  Indirect helpers read pointer bytes via self.bus.
     // -------------------------------------------------------------------------
 
-    /// Direct Page: EA = (D + offset) & 0xFFFF  [bank 0]
-    fn addr_dp(&mut self, offset: u8) -> u32 {
+    /// Charge the direct-page `DL != 0` penalty cycle, if this instruction pays one.
+    ///
+    /// It is spent HERE, immediately after the direct-page operand byte and before any
+    /// pointer or data access, because that is where the hardware spends it: Mesen2 folds
+    /// it into `ReadDirectOperandByte`, which calls `Idle()` right after `ReadOperandByte()`.
+    /// Leaving it to the generic leftover-internal-cycle tick at the end of the instruction
+    /// would keep the total cost correct but move every access inside the instruction six
+    /// clocks early -- the same defect [`Self::tick_index_penalty`] fixes for indexed modes
+    /// (#3050), on the addressing mode a ROM uses to park `D` over the I/O page (#3068).
+    ///
+    /// `extra_cycles` is still bumped because this cycle is *not* part of any opcode's base
+    /// length; `tick_pre_access_internal_cycle` bumps `memory_bus_cycles` in turn, so the
+    /// leftover computation does not tick it a second time.
+    fn tick_direct_page_penalty(&mut self) {
         if self.d & 0xFF != 0 {
             self.extra_cycles += 1;
+            self.tick_pre_access_internal_cycle();
         }
+    }
+
+    /// Direct Page: EA = (D + offset) & 0xFFFF  [bank 0]
+    fn addr_dp(&mut self, offset: u8) -> u32 {
+        self.tick_direct_page_penalty();
+        self.read_write_mask = 0xFFFF;
         (self.d as u32 + offset as u32) & 0xFFFF
     }
 
     /// Direct Page Indexed X: EA = (D + offset + X) & 0xFFFF  [bank 0]
     /// In emulation mode with D low byte = $00, wraps offset indexing within D page.
     fn addr_dp_x(&mut self, offset: u8) -> u32 {
-        if self.d & 0xFF != 0 {
-            self.extra_cycles += 1;
-        }
+        self.tick_direct_page_penalty();
+        self.read_write_mask = 0xFFFF;
         let ea = (self.d as u32 + offset as u32 + self.x as u32) & 0xFFFF;
-        if self.e && (self.d & 0x00FF) == 0 {
+        let ea = if self.e && (self.d & 0x00FF) == 0 {
             ((self.d & 0xFF00) as u32) | (ea & 0x00FF)
         } else {
             ea
-        }
+        };
+        // Mesen2 `AddrMode_DirIdxX` idles unconditionally after forming the address, before
+        // the access -- and unlike the DL penalty this one is already inside every opcode's
+        // base length, so it ticks without touching `extra_cycles`.
+        self.tick_pre_access_internal_cycle();
+        ea
     }
 
     /// Direct Page Indexed Y: EA = (D + offset + Y) & 0xFFFF  [bank 0]
     /// In emulation mode with D low byte = $00, wraps offset indexing within D page.
     fn addr_dp_y(&mut self, offset: u8) -> u32 {
-        if self.d & 0xFF != 0 {
-            self.extra_cycles += 1;
-        }
+        self.tick_direct_page_penalty();
+        self.read_write_mask = 0xFFFF;
         let ea = (self.d as u32 + offset as u32 + self.y as u32) & 0xFFFF;
-        if self.e && (self.d & 0x00FF) == 0 {
+        let ea = if self.e && (self.d & 0x00FF) == 0 {
             ((self.d & 0xFF00) as u32) | (ea & 0x00FF)
         } else {
             ea
-        }
+        };
+        // Mesen2 `AddrMode_DirIdxY`: see `addr_dp_x`.
+        self.tick_pre_access_internal_cycle();
+        ea
     }
 
     /// Absolute: EA = DBR:abs
@@ -3573,12 +3610,8 @@ impl<B: SnesBus> Cpu<B> {
     /// six clocks early -- invisible on ROM operands, observable on every indexed access to
     /// an I/O register (#3050).
     ///
-    /// The direct-page `DL != 0` penalty has the identical defect and is NOT fixed here: the
-    /// `addr_dp*` modes still add it to `extra_cycles`, so it is paid as an end-of-instruction
-    /// leftover where Mesen2 spends it right after the operand byte (`ReadDirectOperandByte`).
-    /// Any instruction using a direct-page mode with `D & 0xFF != 0` therefore still runs its
-    /// accesses six clocks early relative to Mesen2. Out of scope for #3050 (no current vector
-    /// exercises it); tracked as #3068.
+    /// See [`Self::tick_direct_page_penalty`] for the direct-page `DL != 0` cycle, which had
+    /// the identical defect and was fixed the same way in #3068.
     fn tick_index_penalty(&mut self, access: IndexedAccess) {
         if access == IndexedAccess::Write || self.last_page_crossed {
             self.tick_pre_access_internal_cycle();
@@ -3602,9 +3635,7 @@ impl<B: SnesBus> Cpu<B> {
 
     /// Direct Page Indirect: pointer at (D+offset), EA = DBR:ptr16
     fn addr_dp_ind(&mut self, offset: u8) -> u32 {
-        if self.d & 0xFF != 0 {
-            self.extra_cycles += 1;
-        }
+        self.tick_direct_page_penalty();
         let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
             ((self.d & 0xFF00) | offset as u16) as u32
         } else {
@@ -3623,9 +3654,7 @@ impl<B: SnesBus> Cpu<B> {
 
     /// Direct Page Indirect Long: 24-bit pointer at (D+offset)
     fn addr_dp_ind_long(&mut self, offset: u8) -> u32 {
-        if self.d & 0xFF != 0 {
-            self.extra_cycles += 1;
-        }
+        self.tick_direct_page_penalty();
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
         let lo = self.tick_read(ptr_addr);
         let mid_addr = (ptr_addr + 1) & 0xFFFF;
@@ -3642,9 +3671,10 @@ impl<B: SnesBus> Cpu<B> {
     /// instead of carrying into the next page. Cross-verified against the
     /// vendored snes-tests cputest ROM (test 0024) and Mesen2.
     fn addr_dp_x_ind(&mut self, offset: u8) -> u32 {
-        if self.d & 0xFF != 0 {
-            self.extra_cycles += 1;
-        }
+        self.tick_direct_page_penalty();
+        // Mesen2 `AddrMode_DirIdxIndX` spends the index idle BETWEEN the operand byte and
+        // the pointer reads, not after them.
+        self.tick_pre_access_internal_cycle();
         let wrap_low_byte = self.e && (self.d & 0x00FF) == 0;
         let ptr_addr = if wrap_low_byte {
             let dp_index = (offset as u16).wrapping_add(self.x) & 0x00FF;
@@ -3666,9 +3696,7 @@ impl<B: SnesBus> Cpu<B> {
 
     /// Direct Page Indirect Indexed Y: ptr16 at (D+offset), EA = (DBR:ptr16+Y) & 0xFF_FFFF
     fn addr_dp_ind_y(&mut self, offset: u8, access: IndexedAccess) -> u32 {
-        if self.d & 0xFF != 0 {
-            self.extra_cycles += 1;
-        }
+        self.tick_direct_page_penalty();
         let ptr_addr = if self.e && (self.d & 0x00FF) == 0 {
             ((self.d & 0xFF00) | offset as u16) as u32
         } else {
@@ -3696,9 +3724,7 @@ impl<B: SnesBus> Cpu<B> {
     /// modes, this 65816-only long-indirect pointer read never wraps within
     /// D's page, even in emulation mode with a zero D low byte.
     fn addr_dp_ind_long_y(&mut self, offset: u8) -> u32 {
-        if self.d & 0xFF != 0 {
-            self.extra_cycles += 1;
-        }
+        self.tick_direct_page_penalty();
         let ptr_addr = (self.d as u32 + offset as u32) & 0xFFFF;
         let lo = self.tick_read(ptr_addr);
         let mid_addr = (ptr_addr + 1) & 0xFFFF;
@@ -3878,7 +3904,7 @@ impl<B: SnesBus> Cpu<B> {
     /// Read two bytes little-endian using linear 24-bit addressing.
     fn read16(&mut self, addr: u32) -> u16 {
         let lo_addr = addr & 0xFF_FFFF;
-        let hi_addr = lo_addr.wrapping_add(1) & 0xFF_FFFF;
+        let hi_addr = self.second_byte_addr(lo_addr);
         let lo = self.tick_read(lo_addr);
         let hi = self.tick_read(hi_addr);
         lo as u16 | (hi as u16) << 8
@@ -3887,9 +3913,17 @@ impl<B: SnesBus> Cpu<B> {
     /// Write two bytes little-endian using linear 24-bit addressing.
     fn write16(&mut self, addr: u32, value: u16) {
         let lo_addr = addr & 0xFF_FFFF;
-        let hi_addr = lo_addr.wrapping_add(1) & 0xFF_FFFF;
+        let hi_addr = self.second_byte_addr(lo_addr);
         self.tick_write(lo_addr, value as u8);
         self.tick_write(hi_addr, (value >> 8) as u8);
+    }
+
+    /// Address of the second byte of a multi-byte data access, honouring the current
+    /// [`Self::read_write_mask`] -- Mesen2 applies `_readWriteMask` to exactly this byte in
+    /// `ReadDataWord`/`WriteWord`/`WriteWordRmw`, so a direct-page access at $FFFF wraps
+    /// within bank 0 while every other mode carries into the next bank.
+    fn second_byte_addr(&self, lo_addr: u32) -> u32 {
+        lo_addr.wrapping_add(1) & self.read_write_mask & 0xFF_FFFF
     }
 
     fn format_exec_trace_line(&self, pc: u32, bytes: &[u8; 4]) -> String {
@@ -3994,6 +4028,42 @@ impl<B: SnesBus> Cpu<B> {
         }
     }
 
+    /// The read-modify-write write-back: `ASL`/`LSR`/`ROL`/`ROR`/`INC`/`DEC`/`TSB`/`TRB`.
+    ///
+    /// Differs from [`Self::write_m`] in three ways, all of them hardware behaviour NESER
+    /// previously collapsed into a plain store (#3068):
+    ///
+    /// 1. An internal cycle is spent BETWEEN the read and the write (Mesen2 `ASL`, `IncDec`,
+    ///    `TSB`, `TRB` all call `IdleOrDummyWrite` there). Charging it as an end-of-instruction
+    ///    leftover keeps the total right but moves the write six clocks early.
+    /// 2. In emulation mode that cycle is not an idle at all but a real bus write of the
+    ///    *un-modified* value to the same address -- the 6502 read-write-write quirk
+    ///    (Mesen2 `IdleOrDummyWrite`, `SnesCpu.cpp:98`). Visible to any register with a write
+    ///    side effect.
+    /// 3. A 16-bit write-back puts the MSB on the bus first, the reverse of a plain 16-bit
+    ///    store (Mesen2 `WriteWordRmw`: "Read-modify-write instructions write the MSB first").
+    ///
+    /// Cycle cost is unchanged: the idle is already inside every RMW opcode's base length, and
+    /// the emulation-mode dummy write bumps `memory_bus_cycles` exactly as the idle would.
+    fn write_m_rmw(&mut self, addr: u32, old: u16, value: u16) {
+        let lo_addr = addr & 0xFF_FFFF;
+        if self.m_flag() {
+            if self.e {
+                self.tick_write(lo_addr, old as u8);
+            } else {
+                self.tick_pre_access_internal_cycle();
+            }
+            self.tick_write(lo_addr, value as u8);
+        } else {
+            // 16-bit implies native mode, so the dummy-write form cannot arise here.
+            self.extra_cycles += 1;
+            self.tick_pre_access_internal_cycle();
+            let hi_addr = self.second_byte_addr(lo_addr);
+            self.tick_write(hi_addr, (value >> 8) as u8);
+            self.tick_write(lo_addr, value as u8);
+        }
+    }
+
     /// Write M-flag width: 8-bit when M=1, 16-bit when M=0.
     /// Adds +1 to extra_cycles when M=0 (16-bit mode requires an extra byte write).
     fn write_m(&mut self, addr: u32, value: u16) {
@@ -4012,13 +4082,7 @@ impl<B: SnesBus> Cpu<B> {
             self.read8(addr) as u16
         } else {
             self.extra_cycles += 1;
-            if addr <= 0xFFFF {
-                let lo = self.tick_read(addr & 0xFFFF);
-                let hi = self.tick_read((addr.wrapping_add(1)) & 0xFFFF);
-                lo as u16 | (hi as u16) << 8
-            } else {
-                self.read16(addr)
-            }
+            self.read16(addr)
         }
     }
 
@@ -4029,12 +4093,7 @@ impl<B: SnesBus> Cpu<B> {
             self.write8(addr, value as u8);
         } else {
             self.extra_cycles += 1;
-            if addr <= 0xFFFF {
-                self.tick_write(addr & 0xFFFF, value as u8);
-                self.tick_write((addr.wrapping_add(1)) & 0xFFFF, (value >> 8) as u8);
-            } else {
-                self.write16(addr, value);
-            }
+            self.write16(addr, value);
         }
     }
 
@@ -4579,11 +4638,9 @@ impl<B: SnesBus> Cpu<B> {
         // Unlike the 6502-heritage (dp) indirect opcodes (ADC, AND, CMP,
         // ...), PEI's pointer read never wraps within D's page in emulation
         // mode. Cross-verified against the vendored snes-tests cputest ROM
-        // (test 0x3C4) and Mesen2.
-        if self.d & 0xFF != 0 {
-            self.extra_cycles += 1;
-        }
-        let ptr_addr = (self.d as u32 + off as u32) & 0xFFFF;
+        // (test 0x3C4) and Mesen2 -- which reaches the same address, and the
+        // same DL penalty placement, via `0xD4: AddrMode_Dir(); PEI();`.
+        let ptr_addr = self.addr_dp(off);
         let lo = self.tick_read(ptr_addr);
         let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
         let val = lo as u16 | (hi as u16) << 8;
@@ -4653,7 +4710,9 @@ mod tests {
     enum BusCycleEvent {
         Tick,
         Read(u32),
-        Write(u32),
+        /// Address and the byte placed on the bus -- the value matters for the
+        /// emulation-mode RMW dummy write, which must carry the *un-modified* value.
+        Write(u32, u8),
     }
 
     impl BusCycleRecordingBus {
@@ -4679,7 +4738,7 @@ mod tests {
         fn write(&mut self, addr: u32, value: u8) {
             self.events
                 .borrow_mut()
-                .push(BusCycleEvent::Write(addr & 0xFF_FFFF));
+                .push(BusCycleEvent::Write(addr & 0xFF_FFFF, value));
             self.mem.insert(addr & 0xFF_FFFF, value);
         }
 
@@ -4774,7 +4833,7 @@ mod tests {
         }
         expected.extend([Tick; 6]); // index penalty, BEFORE the write
         expected.extend([Tick; 6]); // the write drives the bus for its whole 6-clock cycle
-        expected.push(Write(0x00_2140));
+        expected.push(Write(0x00_2140, 0x00));
         assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
     }
 
@@ -4863,7 +4922,276 @@ mod tests {
         expected.extend([Tick; 4]);
         expected.extend([Tick; 6]); // idle, BEFORE the push
         expected.extend([Tick; 8]); // the 8-clock stack write drives the bus to its end
-        expected.push(Write(0x00_01FF));
+        expected.push(Write(0x00_01FF, 0x20)); // PHP pushes P
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// Prefix shared by every direct-page bus-order test below: the opcode byte and the
+    /// one-byte direct-page operand, both fetched from 8-clock WS1 ROM at $00:8000.
+    fn dp_opcode_and_operand_fetch() -> Vec<BusCycleEvent> {
+        let mut events = Vec::new();
+        for operand in 0u32..2 {
+            events.extend([BusCycleEvent::Tick; 4]);
+            events.push(BusCycleEvent::Read(0x00_8000 + operand));
+            events.extend([BusCycleEvent::Tick; 4]);
+        }
+        events
+    }
+
+    /// #3068: Mesen2 `ReadDirectOperandByte` spends the `DL != 0` cycle immediately after the
+    /// direct-page operand byte, before the data access. Charging it as an end-of-instruction
+    /// leftover keeps the total right but moves the access six clocks early -- exactly the
+    /// #3050 defect, on the addressing mode a ROM uses to park `D` over the I/O page.
+    #[test]
+    fn direct_page_penalty_is_paid_before_the_data_access() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0xA5, 0x3F]); // LDA $3F
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x20; // native, 8-bit A
+        cpu.pc = 0x8000;
+        cpu.d = 0x2101; // DL != 0 -> penalty; EA = $2101 + $3F = $2140
+
+        cpu.step();
+
+        let mut expected = dp_opcode_and_operand_fetch();
+        expected.extend([Tick; 6]); // DL penalty, BEFORE the data access
+        expected.extend([Tick; 2]);
+        expected.push(Read(0x00_2140));
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// Mesen2 `AddrMode_DirIdxX` idles unconditionally after forming the address. With
+    /// `DL == 0` that idle is the *only* internal cycle, so this pins it in isolation --
+    /// and it fires on ordinary `dp,X` code, not just the rare `DL != 0` case.
+    #[test]
+    fn direct_page_indexed_pays_its_index_cycle_before_the_data_access() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0xB5, 0x10]); // LDA $10,X
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x30; // native, 8-bit A and 8-bit X
+        cpu.pc = 0x8000;
+        cpu.d = 0x2100; // DL == 0 -> no direct-page penalty
+        cpu.x = 0x40; // EA = $2100 + $10 + $40 = $2150
+
+        cpu.step();
+
+        let mut expected = dp_opcode_and_operand_fetch();
+        expected.extend([Tick; 6]); // index idle, BEFORE the data access
+        expected.extend([Tick; 2]);
+        expected.push(Read(0x00_2150));
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// Both cycles together, in Mesen2's order: `ReadDirectOperandByte`'s `DL` idle first,
+    /// then `AddrMode_DirIdxX`'s index idle, then the access.
+    #[test]
+    fn direct_page_indexed_pays_the_dl_cycle_before_the_index_cycle() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0xB5, 0x10]); // LDA $10,X
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x30;
+        cpu.pc = 0x8000;
+        cpu.d = 0x2101; // DL != 0
+        cpu.x = 0x3E; // EA = $2101 + $10 + $3E = $214F
+
+        cpu.step();
+
+        let mut expected = dp_opcode_and_operand_fetch();
+        expected.extend([Tick; 6]); // DL penalty
+        expected.extend([Tick; 6]); // index idle
+        expected.extend([Tick; 2]);
+        expected.push(Read(0x00_214F));
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// Mesen2 `AddrMode_DirIdxIndX` spends its idle *between* the operand byte and the
+    /// pointer reads -- not after them, and not at the end of the instruction.
+    #[test]
+    fn direct_page_indexed_indirect_pays_its_index_cycle_before_the_pointer_reads() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0xA1, 0x10]); // LDA ($10,X)
+        bus.load(0x00_0014, &[0x40, 0x21]); // pointer -> $2140
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x30;
+        cpu.pc = 0x8000;
+        cpu.d = 0x0000; // DL == 0 -> isolates the index idle
+        cpu.x = 0x04; // pointer at $0000 + $10 + $04 = $0014
+
+        cpu.step();
+
+        let mut expected = dp_opcode_and_operand_fetch();
+        expected.extend([Tick; 6]); // index idle, BEFORE the pointer reads
+        for ptr_byte in 0u32..2 {
+            expected.extend([Tick; 4]); // WRAM mirror: 8 clocks
+            expected.push(Read(0x00_0014 + ptr_byte));
+            expected.extend([Tick; 4]);
+        }
+        expected.extend([Tick; 2]);
+        expected.push(Read(0x00_2140));
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// `(dp),Y` carries both penalties, and they straddle the pointer reads: the `DL` idle
+    /// comes from `ReadDirectOperandByte` before them, the index idle from
+    /// `AddrMode_DirIndIdxY` after them. #3050 already moved the index one; this pins the pair.
+    #[test]
+    fn direct_page_indirect_indexed_pays_dl_before_the_pointer_and_index_after() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0xB1, 0x10]); // LDA ($10),Y
+        bus.load(0x00_0111, &[0x40, 0x21]); // pointer -> $2140
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x20; // native, 8-bit A, 16-bit X -> index penalty is unconditional
+        cpu.pc = 0x8000;
+        cpu.d = 0x0101; // DL != 0; pointer at $0101 + $10 = $0111
+        cpu.y = 0;
+
+        cpu.step();
+
+        let mut expected = dp_opcode_and_operand_fetch();
+        expected.extend([Tick; 6]); // DL penalty, BEFORE the pointer reads
+        for ptr_byte in 0u32..2 {
+            expected.extend([Tick; 4]);
+            expected.push(Read(0x00_0111 + ptr_byte));
+            expected.extend([Tick; 4]);
+        }
+        expected.extend([Tick; 6]); // index idle, AFTER them
+        expected.extend([Tick; 2]);
+        expected.push(Read(0x00_2140));
+        expected.extend([Tick; 4]);
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// #3068: every read-modify-write spends an internal cycle *between* the read and the
+    /// write (Mesen2 `ASL`/`IncDec`/`TSB`/`TRB` all call `IdleOrDummyWrite`). Charging it
+    /// after the write leaves the total right but moves the write six clocks early.
+    #[test]
+    fn rmw_pays_its_internal_cycle_between_the_read_and_the_write() {
+        use BusCycleEvent::{Read, Tick, Write};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0x06, 0x10]); // ASL $10
+        bus.load(0x00_2110, &[0x21]);
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x20; // native, 8-bit A
+        cpu.pc = 0x8000;
+        cpu.d = 0x2100; // DL == 0; EA = $2110
+
+        cpu.step();
+
+        let mut expected = dp_opcode_and_operand_fetch();
+        expected.extend([Tick; 2]);
+        expected.push(Read(0x00_2110));
+        expected.extend([Tick; 4]);
+        expected.extend([Tick; 6]); // RMW idle, BETWEEN the read and the write
+        expected.extend([Tick; 6]);
+        expected.push(Write(0x00_2110, 0x42));
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// In emulation mode that internal cycle is a real bus write of the *un-modified* value
+    /// (Mesen2 `IdleOrDummyWrite`, `SnesCpu.cpp:98`) -- a 6502-heritage quirk that is visible
+    /// to any register with a write side effect. NESER emitted no dummy write at all.
+    #[test]
+    fn rmw_in_emulation_mode_dummy_writes_the_unmodified_value() {
+        use BusCycleEvent::{Read, Tick, Write};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0x06, 0x10]); // ASL $10
+        bus.load(0x00_2110, &[0x21]);
+        let mut cpu = Cpu::new(bus);
+        cpu.e = true;
+        cpu.p = 0x30;
+        cpu.pc = 0x8000;
+        cpu.d = 0x2100; // EA = $2110
+
+        cpu.step();
+
+        let mut expected = dp_opcode_and_operand_fetch();
+        expected.extend([Tick; 2]);
+        expected.push(Read(0x00_2110));
+        expected.extend([Tick; 4]);
+        expected.extend([Tick; 6]);
+        expected.push(Write(0x00_2110, 0x21)); // dummy write: the value read back, unchanged
+        expected.extend([Tick; 6]);
+        expected.push(Write(0x00_2110, 0x42)); // the real write
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// Mesen2 `WriteWordRmw`: "Read-modify-write instructions write the MSB first" -- the
+    /// reverse of a plain 16-bit store, which NESER used for both.
+    #[test]
+    fn sixteen_bit_rmw_writes_the_high_byte_first() {
+        use BusCycleEvent::{Read, Tick, Write};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0x06, 0x10]); // ASL $10
+        bus.load(0x00_2110, &[0x34, 0x12]); // $1234
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x00; // native, 16-bit A
+        cpu.pc = 0x8000;
+        cpu.d = 0x2100; // EA = $2110
+
+        cpu.step();
+
+        let mut expected = dp_opcode_and_operand_fetch();
+        for data_byte in 0u32..2 {
+            expected.extend([Tick; 2]);
+            expected.push(Read(0x00_2110 + data_byte));
+            expected.extend([Tick; 4]);
+        }
+        expected.extend([Tick; 6]); // RMW idle
+        expected.extend([Tick; 6]);
+        expected.push(Write(0x00_2111, 0x24)); // MSB first
+        expected.extend([Tick; 6]);
+        expected.push(Write(0x00_2110, 0x68));
+        assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
+    }
+
+    /// Mesen2 masks the second byte of a direct-page access with `_readWriteMask`, which
+    /// `AddrMode_Dir` sets to $FFFF -- so a 16-bit direct-page access at $FFFF wraps to
+    /// $0000 in bank 0 instead of carrying into bank 1.
+    #[test]
+    fn sixteen_bit_direct_page_access_wraps_within_bank_zero() {
+        use BusCycleEvent::{Read, Tick};
+
+        let mut bus = BusCycleRecordingBus::default();
+        bus.load(0x00_8000, &[0xA5, 0xFF]); // LDA $FF
+        let mut cpu = Cpu::new(bus);
+        cpu.e = false;
+        cpu.p = 0x00; // native, 16-bit A
+        cpu.pc = 0x8000;
+        cpu.d = 0xFF00; // DL == 0; EA = $FFFF
+
+        cpu.step();
+
+        let mut expected = dp_opcode_and_operand_fetch();
+        expected.extend([Tick; 4]);
+        expected.push(Read(0x00_FFFF));
+        expected.extend([Tick; 4]);
+        expected.extend([Tick; 4]);
+        expected.push(Read(0x00_0000)); // wraps within bank 0, not $01_0000
+        expected.extend([Tick; 4]);
         assert_eq!(cpu.bus.events.borrow().as_slice(), expected.as_slice());
     }
 
