@@ -164,13 +164,7 @@ impl GbCartridge for Mbc7 {
     fn read(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x7FFF => self.read_rom(addr),
-            0xA000..=0xBFFF => {
-                if self.access_enabled {
-                    self.read_eeprom_or_accel(addr)
-                } else {
-                    0xFF
-                }
-            }
+            0xA000..=0xBFFF if self.access_enabled => self.read_eeprom_or_accel(addr),
             _ => 0xFF,
         }
     }

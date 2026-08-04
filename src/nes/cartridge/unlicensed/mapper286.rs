@@ -104,12 +104,10 @@ impl Mapper for Mapper286 {
                 self.chr_banks[slot] = (addr & 0x1F) as i16;
                 self.base.select_chr_page(slot, self.chr_banks[slot]);
             }
-            0xA000 => {
-                // PRG banking: 4-bit bank from address bits [3:0], gated by bit 4
-                if addr & 0x10 != 0 {
-                    self.prg_banks[slot] = (addr & 0x0F) as i16;
-                    self.base.select_prg_page(slot, self.prg_banks[slot]);
-                }
+            // PRG banking: 4-bit bank from address bits [3:0], gated by bit 4
+            0xA000 if addr & 0x10 != 0 => {
+                self.prg_banks[slot] = (addr & 0x0F) as i16;
+                self.base.select_prg_page(slot, self.prg_banks[slot]);
             }
             _ => {}
         }

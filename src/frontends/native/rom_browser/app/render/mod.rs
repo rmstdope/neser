@@ -171,14 +171,14 @@ impl RomBrowserApp {
             // Remove all widget/panel borders for a clean look.
             visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
             visuals.widgets.inactive.bg_stroke =
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 75));
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(60, 60, 75));
             visuals.widgets.inactive.fg_stroke =
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 180, 195));
-            visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, theme::SELECTION_COLOR);
-            visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, theme::SELECTION_COLOR);
-            visuals.widgets.active.fg_stroke = egui::Stroke::new(2.0, theme::SELECTION_COLOR);
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(180, 180, 195));
+            visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5_f32, theme::SELECTION_COLOR);
+            visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5_f32, theme::SELECTION_COLOR);
+            visuals.widgets.active.fg_stroke = egui::Stroke::new(2.0_f32, theme::SELECTION_COLOR);
             visuals.selection.bg_fill = theme::SELECTION_COLOR;
-            visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+            visuals.selection.stroke = egui::Stroke::new(1.0_f32, egui::Color32::WHITE);
             // Rounded corners on widgets.
             visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);
             visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
@@ -544,7 +544,7 @@ impl RomBrowserApp {
                 ui.painter().rect_stroke(
                     pill_rect,
                     pill_rounding,
-                    egui::Stroke::new(1.5, pill_color),
+                    egui::Stroke::new(1.5_f32, pill_color),
                     egui::StrokeKind::Outside,
                 );
                 ui.painter().text(

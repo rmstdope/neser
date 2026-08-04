@@ -100,7 +100,7 @@ impl RomBrowserApp {
                         egui::pos2(line_rect.min.x, line_y),
                         egui::pos2(line_rect.min.x + panel_w - 48.0, line_y),
                     ],
-                    egui::Stroke::new(1.0, accent.linear_multiply(0.5)),
+                    egui::Stroke::new(1.0_f32, accent.linear_multiply(0.5)),
                 );
                 ui.add_space(16.0);
 

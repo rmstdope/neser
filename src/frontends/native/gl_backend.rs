@@ -1448,7 +1448,7 @@ fn draw_egui_scroll_rect(
     visible_size: (f32, f32),
     nametable_size: (f32, f32),
 ) {
-    let stroke = egui::Stroke::new(1.5, egui::Color32::YELLOW);
+    let stroke = egui::Stroke::new(1.5_f32, egui::Color32::YELLOW);
     for segment in
         scroll_rect_line_segments(img_origin, scroll, scale, visible_size, nametable_size)
     {

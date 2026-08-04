@@ -289,11 +289,10 @@ mod tests {
     fn make_autorun_bytes(num_frames: usize, num_checkpoints: usize) -> Vec<u8> {
         let checkpoints: Vec<AutorunCheckpoint> = (0..num_checkpoints)
             .map(|i| {
-                let frame = if num_checkpoints > 0 {
-                    ((i + 1) * num_frames / num_checkpoints).saturating_sub(1) as u32
-                } else {
-                    0
-                };
+                let frame = ((i + 1) * num_frames)
+                    .checked_div(num_checkpoints)
+                    .unwrap_or(0)
+                    .saturating_sub(1) as u32;
                 AutorunCheckpoint {
                     frame_index: frame,
                     screen_crc: (i as u32 + 1) * 0x1111,

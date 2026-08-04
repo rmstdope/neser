@@ -119,10 +119,8 @@ impl Ppu {
                     self.update_nmi_line();
                 }
             }
-            6 => {
-                if self.position.scanline == self.vblank_start_line() {
-                    self.update_nmi_line();
-                }
+            6 if self.position.scanline == self.vblank_start_line() => {
+                self.update_nmi_line();
             }
             _ => {}
         }
