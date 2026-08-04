@@ -27,6 +27,26 @@ FAMILY_ORDER = (
     "shift_rotate",
     "flag_control",
     "block_move",
+    # Cycle-exact families: one opcode per direct-page addressing mode and per
+    # read-modify-write form. These back the per-cycle bus assertions in
+    # `processor_tests_65816.rs` (`CYCLE_EXACT_OPCODES`), which pin where the CPU spends its
+    # internal cycles -- the class of bug tracked by #3050 and #3068. Selecting one opcode per
+    # *mode* rather than per mnemonic keeps the committed corpus small while covering every
+    # code path those fixes touch.
+    "dp_direct",
+    "dp_indexed_x",
+    "dp_indexed_y",
+    "dp_indexed_indirect",
+    "dp_indirect",
+    "dp_indirect_indexed",
+    "dp_indirect_long",
+    "dp_indirect_long_indexed",
+    "dp_push_indirect",
+    "rmw_direct",
+    "rmw_direct_indexed",
+    "rmw_absolute",
+    "rmw_absolute_indexed",
+    "rmw_test_bits",
 )
 
 OPCODE_FAMILY: dict[int, str] = {
@@ -65,6 +85,22 @@ OPCODE_FAMILY: dict[int, str] = {
     0x78: "flag_control",
     0x44: "block_move",
     0x54: "block_move",
+    # One representative opcode per direct-page addressing mode.
+    0xA5: "dp_direct",
+    0xB5: "dp_indexed_x",
+    0xB6: "dp_indexed_y",
+    0xA1: "dp_indexed_indirect",
+    0xB2: "dp_indirect",
+    0xB1: "dp_indirect_indexed",
+    0xA7: "dp_indirect_long",
+    0xB7: "dp_indirect_long_indexed",
+    0xD4: "dp_push_indirect",
+    # One representative addressing mode per read-modify-write form.
+    0x06: "rmw_direct",
+    0x16: "rmw_direct_indexed",
+    0x0E: "rmw_absolute",
+    0x1E: "rmw_absolute_indexed",
+    0x04: "rmw_test_bits",
 }
 
 
