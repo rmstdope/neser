@@ -1,9 +1,9 @@
-//! Automates 26 of the 29 vendored undisbeliever/snes-test-roms hardware
-//! ROMs (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`)
-//! that visually match Mesen2.
+//! Automates all 29 vendored undisbeliever/snes-test-roms hardware ROMs
+//! (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`), every
+//! one of them a 0-pixel match against a Mesen2 capture of the same frame.
 //!
 //! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen.
-//! Nine of the 26 automated here demonstrate a real, documented
+//! Fourteen of the 29 automated here demonstrate a real, documented
 //! SNES hardware bug -- the "INIDISP D7 glitch" -- where writing `$2100`
 //! shortly after the CPU/HDMA data bus held a byte with bit 7 set can
 //! corrupt sprite rendering or briefly flip force-blank, on real 3-chip/
@@ -15,24 +15,21 @@
 //! that **no known SNES emulator models**: checked Mesen2
 //! (`Core/SNES/SnesPpu.cpp`), ares (`ares/sfc/ppu/io.cpp`, Near's own
 //! current emulator), and Snes9x (`ppu.cpp`) -- all three write `$2100`
-//! deterministically with no bus-residual modeling at all (see #2949). So
-//! each golden in that glitch family is a **stability snapshot** cross-checked
-//! against Mesen2 (using `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
-//! for a comparable capture; since the BG vertical-scroll display-line fix
-//! in #2945 the two emulators' captures align byte-for-byte with no row
-//! offset): for the 2
-//! ROMs the source confirms never glitch on real hardware
-//! (`hdma_21ff_glitch_matches_mesen2`, `inidisp_hammer_0f0f_matches_mesen2`,
-//! marked below) this genuinely *is* proof of hardware accuracy; for the
-//! other 9 it only proves parity with a limitation NESER shares with every
-//! checked reference emulator, not hardware accuracy -- see #2949 before
-//! treating a mismatch here as a regression.
+//! deterministically with no bus-residual modeling at all (see #2949).
 //!
-//! The other 3 ROMs are deliberately left un-automated: cross-checking
-//! against Mesen2 exposed real NESER divergences, tracked as follow-up bugs
-//! rather than papered over with a golden that bakes in known-wrong
-//! behavior (see README-SNES.md for the full breakdown):
-//! - `hdma-2100-glitch-2ch-{0a,81}.sfc`, `hdma-21ff-2100-glitch.sfc` -- #2943
+//! **So a 0-pixel Mesen2 match does not mean the same thing for every golden
+//! here.** For the 3 ROMs the source confirms never glitch on real hardware
+//! (`hdma_21ff_glitch_matches_mesen2`, `inidisp_hammer_0f0f_matches_mesen2`,
+//! `hdma_2100_glitch_2ch_0a_matches_mesen2`, marked below) it genuinely *is*
+//! proof of hardware accuracy. For the other 11 it only proves parity with a
+//! limitation NESER shares with every checked reference emulator -- read #2949
+//! before treating a mismatch there as a regression.
+//!
+//! Captures are cross-checked with `--Video.VideoFilter=None
+//! --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true`; since
+//! the BG vertical-scroll display-line fix in #2945 the two emulators align
+//! byte-for-byte at zero row offset, so a non-zero best shift from
+//! `python -m scripts.diff_screenshots` is a bug, not a convention.
 
 use super::rom_runner::{RunConfig, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -112,6 +109,53 @@ mod tests {
         hdma_21ff_glitch_matches_mesen2,
         "hdma-21ff-glitch.sfc",
         0x3B89_56D6
+    );
+
+    // The three ROMs below were the last of the 29 left un-automated. They were
+    // held back under #2943/#3083 because their HDMA-driven per-scanline banding
+    // diverged from Mesen2, and a golden would have baked that in. On current
+    // main all three are a **0-pixel, byte-for-byte match** with a fresh Mesen2
+    // frame-600 capture (measured with `python -m scripts.diff_screenshots`, and
+    // separately confirmed by crc32 over Mesen2's own decoded pixels equalling
+    // the value asserted here). See #3083 for the measurement table.
+    //
+    // What these three pin, verified by mutation: making `hdma_transfer_due`
+    // skip scanline 0 (a one-line banding phase shift) breaks all three. Moving
+    // `HDMA_TRANSFER_POSITION` from dot 276 to 277 does NOT -- the write still
+    // lands in hblank, before the next line's dot-22 INIDISP latch. So they are
+    // a frame-phase oracle, not a within-line clock oracle; the sub-line timing
+    // is pinned by the unit tests in `bus/system_bus.rs` instead.
+    //
+    // Two HDMA channels both writing $2100, with $0A on the second channel.
+    // Confirmed by the NESdev source to be one of the three tests that do NOT
+    // glitch on real hardware, so -- like `hdma_21ff_glitch` above -- this
+    // golden genuinely is hardware-accurate, not merely Mesen2-matching.
+    undisbeliever_rom_test!(
+        hdma_2100_glitch_2ch_0a_matches_mesen2,
+        "hdma-2100-glitch-2ch-0a.sfc",
+        0x9E55_B80C
+    );
+
+    // The same two-channel setup with $81 on the second channel, which puts bit
+    // 7 on the bus ahead of the INIDISP write. Real hardware glitches (~40% of
+    // runs, "may need a few console resets"); no checked emulator models the
+    // bus-residual, so this golden is parity with a shared limitation rather
+    // than hardware accuracy. See #2949. The visible per-scanline banding IS
+    // modelled and is what the 0-pixel match confirms.
+    undisbeliever_rom_test!(
+        hdma_2100_glitch_2ch_81_matches_mesen2,
+        "hdma-2100-glitch-2ch-81.sfc",
+        0xD291_738A
+    );
+
+    // An HDMA write with bit 7 set immediately followed by an HDMA write to
+    // INIDISP -- the exact sprite-glitch trigger the NESdev source reports for
+    // its 3-chip console. Not modeled by any checked emulator; parity, not
+    // hardware accuracy. See #2949.
+    undisbeliever_rom_test!(
+        hdma_21ff_2100_glitch_matches_mesen2,
+        "hdma-21ff-2100-glitch.sfc",
+        0x5D02_D928
     );
 
     // Real hardware reliably shows a sprite glitch here (`ldx.w #$0f80 ;

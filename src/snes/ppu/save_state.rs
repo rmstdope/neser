@@ -22,6 +22,7 @@ impl Ppu {
             last_hperiod: self.last_hperiod,
             total_master_clocks: self.total_master_clocks,
             dram_refresh_position: self.dram_refresh_position,
+            hdma_init_position: self.hdma_init_position,
             line_timing_profile: self.line_timing_profile.as_u8(),
             inidisp: self.inidisp,
             nmi_enable: self.nmi_enable,
@@ -118,6 +119,7 @@ impl Ppu {
         self.last_hperiod = state.last_hperiod;
         self.total_master_clocks = state.total_master_clocks;
         self.dram_refresh_position = state.dram_refresh_position;
+        self.hdma_init_position = state.hdma_init_position;
         self.line_timing_profile = PpuLineTimingProfile::from_u8(state.line_timing_profile);
         self.inidisp = state.inidisp;
         self.nmi_enable = state.nmi_enable;
@@ -270,12 +272,39 @@ fn restore_memory(dst: &mut [u8], src: &[u8], expected: usize, name: &str) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, Ppu, PpuLineTimingProfile};
+    use super::super::{
+        DOTS_PER_SCANLINE, HDMA_INIT_BASE_POSITION, MASTER_CYCLES_PER_DOT, Ppu,
+        PpuLineTimingProfile,
+    };
 
     fn tick_scanlines(ppu: &mut Ppu, lines: u32) {
         for _ in 0..(u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT * lines) {
             ppu.tick();
         }
+    }
+
+    #[test]
+    fn save_state_round_trips_the_hdma_init_jitter() {
+        // The once-per-frame HDMA reload fires at `12 + (total master clocks & 7)`,
+        // recomputed at every scanline wrap. `dram_refresh_position` is captured but
+        // this one was not, so a state restored on scanline 0 before the trigger
+        // would reload HDMA up to 7 master clocks early, on the unjittered base.
+        let mut ppu = Ppu::new();
+        tick_scanlines(&mut ppu, 1);
+        assert_ne!(
+            ppu.hdma_init_position, HDMA_INIT_BASE_POSITION,
+            "precondition: one scanline (1364 clocks) must leave a non-zero jitter, \
+             otherwise this test cannot tell a restored value from the default"
+        );
+        let expected = ppu.hdma_init_position;
+        let state = ppu.capture_state();
+
+        let mut restored = Ppu::new();
+        restored.restore_state(&state).expect("restore");
+        assert_eq!(
+            restored.hdma_init_position, expected,
+            "the HDMA init trigger clock must survive a save-state round trip"
+        );
     }
 
     #[test]

@@ -96,6 +96,21 @@ pub(super) const DRAM_REFRESH_STOLEN_CLOCKS: u32 = 40;
 pub(super) const HDMA_INIT_BASE_POSITION: u16 = 12;
 /// HDMA per-scanline transfer: fires once per active (non-vblank) scanline at a fixed clock
 /// (no jitter). Matches Mesen2 (`_nextEventClock = 276 * 4`, i.e. dot 276).
+///
+/// fullsnes ("DMA and HDMA Transfers") gives the schedule as `H=6, V=0 reload HDMA registers`
+/// and `H=278, V=0..224 perform HDMA transfers`. The V range matches exactly -- `hdma_init_due`
+/// fires on scanline 0 and `hdma_transfer_due` on 0..=224 (0..=239 with overscan). The H figures
+/// look 2-3 dots later than the constants here, but they are not describing the same instant:
+/// this clock only *arms* the transfer (Mesen2 `BeginHdmaTransfer` + `_dmaStartDelay`), and the
+/// first B-bus write does not land until the start delay, `SyncStartDma` pad, 8-clock overhead
+/// and the slot's first 4 clocks have been paid -- i.e. around dot 280, just past fullsnes's
+/// nominal H=278. Read that way the spec and the implementation agree rather than conflict.
+///
+/// Note what the vectors do and do not settle: all 29 undisbeliever ROMs are a 0-pixel match
+/// against Mesen2 with this value, but moving it to 277 leaves every one of them unchanged
+/// (checked by mutation in #3083), because the write still lands in hblank ahead of the next
+/// line's dot-22 INIDISP latch. They pin the scanline the transfer belongs to, not its exact
+/// dot; the dot follows Mesen2, whose own event clock is the only source that states one.
 pub(super) const HDMA_TRANSFER_POSITION: u16 = 276 * (MASTER_CYCLES_PER_DOT as u16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
