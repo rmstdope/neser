@@ -83,6 +83,7 @@ Before merging or committing to main, the following checkpoint shall pass:
   ./scripts/test-dir.sh src/nes --skip-integration # NES changes, fast iteration
   ```
 - Run `cargo test --no-default-features --lib` to verify the full test suite passes before creating a PR
+- Run `cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings` and fix all findings (the host clippy run above cannot see `#[cfg(target_arch = "wasm32")]` code)
 - Run `wasm-pack test --headless --chrome --no-default-features --features wasm` and fix all warnings and ensure all tests pass
 - Run `source .venv/bin/activate && python -m unittest discover -s scripts -t . -p "test_*.py"` and ensure all tests pass
 - Run `ruff check scripts` and fix all findings (do not add `noqa` without a stated reason)

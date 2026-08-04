@@ -1443,5 +1443,5 @@ fn wasm_snes_get_audio_samples_stereo_returns_vec() {
     snes.render_frame_rgba();
     let samples = snes.get_audio_samples_stereo();
     // Should return a Vec<f32> (stereo samples are interleaved L, R, L, R, ...)
-    assert!(samples.len() % 2 == 0 || samples.is_empty());
+    assert!(samples.len().is_multiple_of(2));
 }

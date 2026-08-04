@@ -307,6 +307,27 @@ jobs:
           submodules: true
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
+      # wasm-pack installs the target itself, but the clippy step below runs
+      # first so a lint failure reports without waiting on a browser run.
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Lint wasm target (clippy)
+        # The host rust-lint job runs --all-features on the host triple, which
+        # covers the `wasm` feature but never the `wasm32` architecture. Without
+        # this step nothing lints src/frontends/web/wasm_tests.rs (1447 lines) or
+        # any #[cfg(target_arch = "wasm32")] arm.
+        #
+        # --all-features cannot be used here: the `native` feature pulls rusqlite
+        # (which cc-compiles a bundled sqlite3.c), alsa-sys, libudev-sys, ring and
+        # wayland-sys, none of which build for wasm32. --no-default-features
+        # --features wasm is the configuration every other wasm invocation in this
+        # repo uses. Do not set RUSTFLAGS here either: it would override
+        # .cargo/config.toml's [target.wasm32-unknown-unknown] rustflags.
+        #
+        # Kept on one line, unfolded, so it stays byte-identical to the copies in
+        # .github/copilot-instructions.md, README.md and bug-of-the-day.md and a
+        # plain grep can verify they still agree.
+        run: cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings
       - name: Setup wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
         with:
