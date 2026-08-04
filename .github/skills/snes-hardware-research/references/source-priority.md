@@ -67,7 +67,11 @@ Use this order when researching SNES / Super Famicom hardware details:
      - `Core/SNES/SnesMemoryManager.cpp` for bus timing, DRAM refresh, and memory access
      - `Core/SNES/Debugger/` for state inspection and tracing
    - Headless test mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
-   - Screenshot settings: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching`
+   - Screenshot settings: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching
+     --snes.disableFrameSkipping=true` (the frame-skip switch is mandatory for animated
+     content, see SKILL.md), plus `--snes.RamPowerOnState=AllZeros` for any ROM that can
+     display uninitialised WRAM
+   - Diff the captures with `python -m scripts.diff_screenshots <neser> <mesen> --shift-search 1`
    
    **Usage notes**:
    - Use only after checking fullsnes, anomie's docs, and the SNESdev wiki
