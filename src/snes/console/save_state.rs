@@ -29,12 +29,12 @@ fn default_dram_refresh_position() -> u16 {
     538
 }
 
-/// `HDMA_INIT_BASE_POSITION`, the unjittered HDMA reload clock, used as the `#[serde(default)]`
-/// fallback so a state saved before this field was captured still deserializes. The jitter it
-/// drops is at most 7 master clocks on one frame's reload, which is what the field was missing
-/// on *every* restore until it was added.
+/// The unjittered HDMA reload clock, used as the `#[serde(default)]` fallback so a state saved
+/// before this field was captured still deserializes. The jitter it drops is at most 7 master
+/// clocks on one frame's reload, which is what every restore was missing until the field was
+/// added. Referencing the constant rather than repeating its value keeps the two from drifting.
 fn default_hdma_init_position() -> u16 {
-    12
+    crate::snes::ppu::HDMA_INIT_BASE_POSITION
 }
 
 /// `$2228` BWPA's hardware reset value (fullsnes "Reset" table), used as the `#[serde(default)]`

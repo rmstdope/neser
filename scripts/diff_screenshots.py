@@ -212,7 +212,7 @@ def format_report(
         if (best.dx, best.dy) != (0, 0):
             lines.append(
                 "  WARNING: a non-zero best shift is evidence of a bug, not a capture "
-                "convention -- see README-SNES.md and the snes-hardware-research skill."
+                "convention -- see the golden approval workflow in README-SNES.md."
             )
 
     if show_rows:

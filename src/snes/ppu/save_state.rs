@@ -289,13 +289,24 @@ mod tests {
         // recomputed at every scanline wrap. `dram_refresh_position` is captured but
         // this one was not, so a state restored on scanline 0 before the trigger
         // would reload HDMA up to 7 master clocks early, on the unjittered base.
+        // The jitter is `(total master clocks & 7)`, and a 1364-clock scanline advances that
+        // phase by 4 -- so it alternates between 4 and 0 from one line to the next, and only
+        // every other line carries a value distinguishable from the unjittered default. Tick
+        // until one does instead of hard-coding a line count, which would turn any change to
+        // the scanline length or the start phase into a spurious failure here rather than in
+        // whatever actually broke.
         let mut ppu = Ppu::new();
-        tick_scanlines(&mut ppu, 1);
-        assert_ne!(
-            ppu.hdma_init_position, HDMA_INIT_BASE_POSITION,
-            "precondition: one scanline (1364 clocks) must leave a non-zero jitter, \
-             otherwise this test cannot tell a restored value from the default"
-        );
+        let mut lines = 0;
+        while ppu.hdma_init_position == HDMA_INIT_BASE_POSITION {
+            lines += 1;
+            assert!(
+                lines <= 8,
+                "no jittered HDMA init position within 8 scanlines -- the trigger clock is no \
+                 longer phase-dependent, so this test can no longer tell a restored value from \
+                 the default"
+            );
+            tick_scanlines(&mut ppu, 1);
+        }
         let expected = ppu.hdma_init_position;
         let state = ppu.capture_state();
 
