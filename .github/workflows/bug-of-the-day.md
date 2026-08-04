@@ -82,6 +82,7 @@ Run these commands and ensure success before creating the PR:
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo fmt`
 - `cargo nextest --all-features`
+- `cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings`
 - `wasm-pack test --headless --chrome --no-default-features --features wasm`
 - `source .venv/bin/activate && python -m unittest discover -s scripts -t . -p "test_*.py"`
 - `cd web && npm test`
