@@ -1059,8 +1059,8 @@ mod tests {
         // TIMEUP sets at clock 14 and the CPU line rises at clock 18 of the
         // VTIME line. byuu's test_irq.asm header claims d7 at H=10 for
         // HTIME=0, but no ROM sub-test probes it (sub-tests 1-2 are V-only,
-        // 3-4 use HTIME=1); Mesen2, which passes all four KungFuFurby IRQ
-        // ROMs, gives 14/18 (#3144).
+        // 3-4 use HTIME=1); Mesen2, which passes the entire KungFuFurby IRQ
+        // suite, gives 14/18 (#3144).
         tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32 * 4);
         tick_cycles(&mut ppu, 13);
         assert_eq!(

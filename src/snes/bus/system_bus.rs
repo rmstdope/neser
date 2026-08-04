@@ -3399,7 +3399,7 @@ mod tests {
     }
 
     #[test]
-    fn bus_timeup_reflects_irq_line_immediately_at_the_trigger_clock() {
+    fn bus_timeup_is_readable_the_tick_it_sets_before_the_cpu_line_rises() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x004207, 0x01);
         bus.write(0x004208, 0x00);
@@ -3435,7 +3435,7 @@ mod tests {
 
         assert!(!bus.poll_irq(), "IRQ line starts deasserted");
         // Cross the power-on-artifact fire on scanline 0 (see
-        // `bus_timeup_reflects_irq_line_immediately_at_the_trigger_clock`)
+        // `bus_timeup_is_readable_the_tick_it_sets_before_the_cpu_line_rises`)
         // and acknowledge it.
         while bus.ppu.borrow().position().scanline != 1 {
             bus.tick();

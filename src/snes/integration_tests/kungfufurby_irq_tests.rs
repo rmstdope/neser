@@ -116,11 +116,11 @@ mod tests {
     }
 
     /// Fixed by #3144's port of Mesen2's level+edge IRQ counter circuit: every
-    /// one of this ROM's 40 mid-scanline `$4200` enable writes needs the write
-    /// to be re-evaluated against a continuous compare level (V == VTIME for
-    /// the whole matching line), which the old single-instant point compare
-    /// could not express -- its pre-fix SRAM log was all `$FF` sentinels, not
-    /// one IRQ fired. Read as maroon before #3116, which was post-`stp`
+    /// one of this ROM's 80 mid-scanline `$4200` enable writes (40 per HTIME
+    /// setup) needs the write to be re-evaluated against a continuous compare
+    /// level (V == VTIME for the whole matching line), which the old
+    /// single-instant point compare could not express -- its pre-fix SRAM log
+    /// was all `$FF` sentinels, not one IRQ fired. Read as maroon before #3116, which was post-`stp`
     /// garbage rather than the ROM's verdict.
     ///
     /// `test_irq4200_sram_log_matches_byuu_check_table` breaks the verdict
@@ -257,9 +257,9 @@ mod tests {
     }
 
     /// Verdict path for `test_irqb_passes`: the ROM's IRQ handler logs
-    /// OPHCT/OPVCT latch reads (`$213C`/`$213D`, value byte then latch-toggle
-    /// bit) before and after re-latching via a `$4201` WRIO write and a
-    /// `$2137` strobe, for five sub-tests that each take the IRQ while
+    /// OPHCT/OPVCT latch reads (`$213C`/`$213D`, the value's low byte and then
+    /// the second read's bit 0 -- bit 8 of the 9-bit counter) before and after
+    /// re-latching via a `$4201` WRIO write and a `$2137` strobe, for five sub-tests that each take the IRQ while
     /// executing from a different address (`jmp $2137`/`$2136`/plain
     /// code/`$000000`/`$217F`). Both `pass()` and `fail()` copy the
     /// `$7F0000..$7F07FF` log to SRAM, so the bytes are readable either way;

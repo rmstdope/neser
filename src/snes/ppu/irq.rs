@@ -1,9 +1,9 @@
 //! H/V-IRQ counter circuit (issue #3144, parent #3093).
 //!
 //! A line-for-line port of Mesen2's schematic-derived IRQ circuit
-//! (`Core/SNES/InternalRegisters.h:81-162`, `UpdateIrqLevel` /
-//! `ProcessIrqCounters` / `SetIrqFlag`; schematics:
-//! <https://github.com/rgalland/SNES_S-CPU_Schematics/>). The circuit runs at
+//! (`Core/SNES/InternalRegisters.h:81-162` for `UpdateIrqLevel` /
+//! `ProcessIrqCounters`, `InternalRegisters.cpp:180-187` for `SetIrqFlag`;
+//! schematics: <https://github.com/rgalland/SNES_S-CPU_Schematics/>). The circuit runs at
 //! master-clock/4 with the signal inverted, i.e. it ticks at intra-line clocks
 //! 2, 6, 10, ... It keeps its own H/V counters (distinct from the render
 //! counters): H resets at clocks 6 and 10 and then counts 4-clock ticks, V
