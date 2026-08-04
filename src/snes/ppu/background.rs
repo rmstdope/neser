@@ -3815,4 +3815,16 @@ mod tests {
             "x=1: fine_x=1 → black (no mosaic)"
         );
     }
+
+    // Deliberate clippy violation in test code, to prove the CI gate blocks it.
+    // This PR must never be merged (issue #3103 validation).
+    #[test]
+    fn gate_validation_needless_range_loop() {
+        let values = [1u32, 2, 3];
+        let mut sum = 0u32;
+        for i in 0..values.len() {
+            sum += values[i];
+        }
+        assert_eq!(sum, 6);
+    }
 }
