@@ -171,12 +171,14 @@ impl Ppu {
             // rewrite with NMI already enabled can only discover the vblank rise itself, which
             // keeps the normal 1-cycle arm.
             0x4200 => {
-                let irq_mode = (value >> 4) & 0x03;
-                if irq_mode == 0 {
-                    self.timeup_flag = false;
-                    self.irq_line = false;
+                self.irq_mode = (value >> 4) & 0x03;
+                if self.irq_mode == 0 {
+                    // Clearing both H+V enables immediately clears the IRQ flag
+                    // and line (Mesen2 $4200 write handler). Enables are *not*
+                    // re-evaluated here -- the next 4-clock circuit tick's
+                    // `update_irq_level` picks them up.
+                    self.set_irq_flag(false);
                 }
-                self.irq_mode = irq_mode;
                 let enable = value & 0x80 != 0;
                 let arm = if enable && !self.nmi_enable { 2 } else { 1 };
                 self.nmi_enable = enable;
@@ -190,12 +192,27 @@ impl Ppu {
                     self.latch_counters();
                 }
             }
-            // HTIMEL/HTIMEH: H timer compare target.
-            0x4207 => self.htime = (self.htime & 0x0100) | value as u16,
-            0x4208 => self.htime = (self.htime & 0x00FF) | (((value as u16) & 0x01) << 8),
-            // VTIMEL/VTIMEH: V timer compare target.
-            0x4209 => self.vtime = (self.vtime & 0x0100) | value as u16,
-            0x420A => self.vtime = (self.vtime & 0x00FF) | (((value as u16) & 0x01) << 8),
+            // HTIMEL/HTIMEH, VTIMEL/VTIMEH: H/V timer compare targets. Each
+            // write re-derives the compare level at write time (Mesen2 calls
+            // `UpdateIrqLevel()` in all four handlers; the $4209 one cites Shin
+            // Nihon Pro Wrestling, where the rewrite lands between two circuit
+            // ticks and must not leave the level stuck high).
+            0x4207 => {
+                self.htime = (self.htime & 0x0100) | value as u16;
+                self.update_irq_level();
+            }
+            0x4208 => {
+                self.htime = (self.htime & 0x00FF) | (((value as u16) & 0x01) << 8);
+                self.update_irq_level();
+            }
+            0x4209 => {
+                self.vtime = (self.vtime & 0x0100) | value as u16;
+                self.update_irq_level();
+            }
+            0x420A => {
+                self.vtime = (self.vtime & 0x00FF) | (((value as u16) & 0x01) << 8);
+                self.update_irq_level();
+            }
             // VMAIN: VRAM address increment mode/step and address translation.
             0x2115 => {
                 self.vram_increment_after_high = value & 0x80 != 0;
@@ -404,11 +421,16 @@ impl Ppu {
                 }
                 value
             }
-            // TIMEUP: H/V IRQ flag. Reading acknowledges.
+            // TIMEUP: H/V IRQ flag. Reading acknowledges -- unless the flag
+            // rose within the last 4 master clocks (`need_irq` still counting
+            // down), where hardware forces it to stay set: byuu `test_irq.asm`
+            // sub-tests 6-7 read at HC+0/HC+2 and must see bit 7 both times
+            // (Mesen2 `InternalRegisters::Read` $4211 arm).
             0x4211 => {
                 let value = if self.timeup_flag { 0x80 } else { 0x00 };
-                self.timeup_flag = false;
-                self.irq_line = false;
+                if self.timeup_flag && self.need_irq == 0 {
+                    self.set_irq_flag(false);
+                }
                 value
             }
             // HVBJOY: VBlank flag (bit 7), HBlank flag (bit 6), auto-joypad busy (bit 0).
