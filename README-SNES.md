@@ -331,14 +331,16 @@ Test suites:
 - `kungfufurby_nmi_tests.rs` / `kungfufurby_irq_tests.rs` -- KungFuFurby's
   2005-2008 NMI/H-V-IRQ test ROM collection (#2883/#3049,
   `roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-ROMs/`, see its
-  README). `demo_nmitest.smc`, `nmi.smc` and `demo_irqtest.smc` match
-  Mesen2 exactly and carry approved goldens, after #3049's per-CPU-cycle
-  NMI and H/V-IRQ dispatch fixes (`Cpu::step()` now checks
-  interrupt-pending state at per-cycle rather than per-instruction
-  granularity, mirroring Mesen2's `DetectNmiSignalEdge`/`PrevIrqSource`).
-  `test_nmi.smc`, `irq.smc`, `test_irq.smc`, `test_irq4200.smc`,
-  `test_irq4209.smc` and `test_irqb.smc` remain `#[ignore]`d: unaffected by
-  either fix (identical CRCs before/after), root cause not yet identified.
+  README). `demo_nmitest.smc`, `nmi.smc`, `test_nmi.smc`,
+  `test_irq4209.smc` and `demo_irqtest.smc` match Mesen2 exactly and carry
+  approved goldens, after #3049's per-CPU-cycle NMI and H/V-IRQ dispatch
+  fixes (`Cpu::step()` now checks interrupt-pending state at per-cycle
+  rather than per-instruction granularity, mirroring Mesen2's
+  `DetectNmiSignalEdge`/`PrevIrqSource`), #3116's STP halt, and #3081's
+  `SetNmiFlag(2)` enable-mid-vblank arm (test_nmi's v1.1 test 27 is its
+  hardware witness). `irq.smc`, `test_irq.smc`, `test_irq4200.smc` and
+  `test_irqb.smc` remain `#[ignore]`d asserting their Mesen2 PASS goldens
+  (#3093; re-measured unchanged after #3081's `irq_lock_step` deletion).
 - `sour_dma_irq_tests.rs` -- Sour/SnesTests' `dma_irq_test.sfc` (#2883/#3049,
   `roms/snes/automated_tests/snes_test_roms/Sour/SnesTests/`), rebuilt
   byte-identical from source to recover its WRAM result-table address from
@@ -347,11 +349,14 @@ Test suites:
   sub-cases. The upstream README's expected-results table has a
   transcription error (`$FFFF` where the real, Mesen2-confirmed sentinel
   is `$00FF`, since the captured value is a single WRAM byte); the golden
-  CRC reflects the Mesen2-verified screen. `#[ignore]`d pending a #3049
-  follow-up: originally 8/19 sub-cases diverged (each off by exactly one
-  fewer dispatched instruction than Mesen2, the same signature as the
+  CRC reflects the Mesen2-verified screen. Both tests are active:
+  originally 8/19 sub-cases diverged (each off by exactly one fewer
+  dispatched instruction than Mesen2, the same signature as the
   KungFuFurby suites); #3049's per-cycle dispatch fixes closed 2 of those
-  8 (both `CLI+INC` sub-cases), 6 remain.
+  8 (both `CLI+INC` sub-cases) and #3065 closed the remaining 6. The
+  mechanism was later simplified by #3074 (Mesen2's per-cycle DMA
+  interrupt lock) and #3081 (instruction-granular `irq_lock_step`
+  deleted) without moving any of the 19 values.
 - `dsp_audio_golden_tests.rs` -- S-DSP audio sample golden checks: eight
   deterministic 32 kHz capture windows over synthetic in-code BRR fixtures
   (no ROM assets) covering BRR decode, ADSR, GAIN modes, pitch modulation,

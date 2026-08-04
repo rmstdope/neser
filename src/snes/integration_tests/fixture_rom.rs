@@ -94,6 +94,16 @@ impl FixtureRom {
         self.rom[HEADER + 0x19] = country;
     }
 
+    /// Points the emulation-mode IRQ/BRK vector (`$FFFE/$FFFF`, header offset
+    /// `$3E`) at `addr`, so a fixture can take a hardware IRQ into a handler
+    /// emitted with the normal program primitives. Fixtures run in the CPU's
+    /// post-reset emulation mode, so this is the vector a dispatched IRQ
+    /// fetches.
+    pub(crate) fn set_emulation_irq_vector(&mut self, addr: u16) {
+        self.rom[HEADER + 0x3E] = (addr & 0xFF) as u8;
+        self.rom[HEADER + 0x3F] = (addr >> 8) as u8;
+    }
+
     fn emit(&mut self, bytes: &[u8]) {
         assert!(
             self.cursor + bytes.len() <= HEADER,
@@ -210,6 +220,25 @@ impl FixtureRom {
     /// or compared.
     pub(crate) fn txa(&mut self) {
         self.emit(&[0x8A]);
+    }
+
+    /// `TSX` — copies the stack pointer's low byte into X, so an IRQ handler
+    /// can address the pushed frame with `LDA $01xx,X`.
+    pub(crate) fn tsx(&mut self) {
+        self.emit(&[0xBA]);
+    }
+
+    /// `CLI` — clears the interrupt-disable flag. Recognition of an already
+    /// asserted IRQ line is delayed by one instruction (the classic 6502/65816
+    /// CLI shadow), which fixtures use to place a dispatch decision exactly at
+    /// the boundary after the instruction that follows the `CLI`.
+    pub(crate) fn cli(&mut self) {
+        self.emit(&[0x58]);
+    }
+
+    /// `WAI` — halts the CPU until a hardware interrupt is asserted.
+    pub(crate) fn wai(&mut self) {
+        self.emit(&[0xCB]);
     }
 
     /// `LDA abs,X` (bank 0).

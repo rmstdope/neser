@@ -41,12 +41,19 @@ pub trait SnesBus {
         false
     }
 
-    /// Poll for a pending NMI edge from the bus (e.g. PPU VBlank NMI).
+    /// Poll for a pending NMI edge from the bus (e.g. PPU VBlank NMI), returning the
+    /// recognition-arm delay the edge carries in CPU cycles, or `0` for no edge.
     ///
-    /// NMI is edge-triggered: this returns `true` once per rising edge and consumes it.
-    /// The default returns `false` for buses without an NMI source (test buses).
-    fn poll_nmi(&mut self) -> bool {
-        false
+    /// NMI is edge-triggered: this reports each rising edge once and consumes it. The
+    /// delay mirrors Mesen2's `SnesCpu::SetNmiFlag(delay)` callers: the PPU's own
+    /// vblank edge arms with 1 (`InternalRegisters.h`, `ProcessIrqCounters`), while an
+    /// NMITIMEN write enabling NMI mid-vblank arms with 2 (`InternalRegisters.cpp`,
+    /// case `0x4200`) -- hardware-verified by byuu's `test_nmi` v1.1 test 27, where a
+    /// 16-bit `STA $4200` lands the enabling write on the store's second-to-last
+    /// cycle and the NMI must still let the following instruction complete (#3081).
+    /// The default returns `0` for buses without an NMI source (test buses).
+    fn poll_nmi(&mut self) -> u8 {
+        0
     }
 
     /// Poll whether an IRQ is currently visible to the CPU for dispatch/WAI-wake purposes

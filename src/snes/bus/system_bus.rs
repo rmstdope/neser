@@ -1527,7 +1527,7 @@ impl SnesBus for SnesSystemBus {
         }
     }
 
-    fn poll_nmi(&mut self) -> bool {
+    fn poll_nmi(&mut self) -> u8 {
         self.ppu.borrow_mut().poll_nmi()
     }
 
@@ -3390,11 +3390,12 @@ mod tests {
             bus.tick();
         }
 
-        assert!(
+        assert_eq!(
             bus.poll_nmi(),
-            "NMI edge delivered through the bus at VBlank"
+            1,
+            "NMI edge delivered through the bus at VBlank with the normal 1-cycle arm"
         );
-        assert!(!bus.poll_nmi(), "edge consumed once");
+        assert_eq!(bus.poll_nmi(), 0, "edge consumed once");
     }
 
     #[test]
