@@ -86,6 +86,8 @@ _SHADER_RE = re.compile(r"^\s*shader\d+\s*=\s*(.+)$")
 _INCLUDE_RE = re.compile(r'^\s*#include\s+"([^"]+)"')
 _LUT_QUOTED_RE = re.compile(r'"([^"]+\.(?:png|jpg|jpeg))"', re.IGNORECASE)
 _LUT_BARE_RE = re.compile(r"=\s*([^\s]+\.(?:png|jpg|jpeg))", re.IGNORECASE)
+_TEXTURES_RE = re.compile(r"^\s*textures\s*=\s*(.+?)\s*$", re.IGNORECASE)
+_KEY_VALUE_RE = re.compile(r"^\s*([^\s=]+)\s*=\s*(.+?)\s*$")
 
 
 def _read_shader_preset_paths(shaders_rs_path: Path) -> list[Path]:
@@ -122,13 +124,38 @@ def _collect_shader_file(
         processing.remove(path)
 
 
+def _read_texture_names(lines: list[str]) -> set[str]:
+    """Return the texture names a preset declares in its `textures` key(s).
+
+    A libretro preset names its textures rather than listing their paths:
+
+        textures = "SamplerLUT1;SamplerLUT2"
+        SamplerLUT1 = shaders/lut/a.png
+
+    so the names collected here are what turns a later `SamplerLUT1 = ...` line
+    into a known-real reference rather than a string that merely looks like one.
+    """
+
+    names: set[str] = set()
+    for line in lines:
+        match = _TEXTURES_RE.match(line)
+        if match:
+            value = _clean_path(match.group(1))
+            names.update(name.strip() for name in value.split(";") if name.strip())
+    return names
+
+
 def _collect_preset_dependencies(
     repo_root: Path,
     path: Path,
     dependencies: set[Path],
     processing: set[Path],
 ) -> None:
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    texture_names = _read_texture_names(lines)
+    resolved_textures: set[str] = set()
+
+    for line in lines:
         reference_match = _REFERENCE_RE.match(line)
         if reference_match:
             _collect_relative_shader_file(repo_root, path, reference_match.group(1), dependencies, processing)
@@ -146,6 +173,19 @@ def _collect_preset_dependencies(
                 )
                 continue
 
+        # A declared texture is as required as any shader stage, so resolve it
+        # through _collect_shader_file, which raises when the target is gone.
+        # The key must match a declared name exactly: presets interleave
+        # `<name>_linear` / `_mipmap` / `_wrap_mode` option lines with the paths.
+        key_value_match = _KEY_VALUE_RE.match(line)
+        if key_value_match and key_value_match.group(1) in texture_names:
+            _collect_relative_shader_file(repo_root, path, key_value_match.group(2), dependencies, processing)
+            resolved_textures.add(key_value_match.group(1))
+            continue
+
+        # Fallback for images referenced some other way. Best-effort by
+        # necessity: these patterns also match strings that are not references,
+        # so a match that does not exist is skipped rather than raised.
         for lut_path in _LUT_QUOTED_RE.findall(line):
             _collect_existing_lut(repo_root, path, lut_path, dependencies, processing)
         bare_lut_match = _LUT_BARE_RE.search(line)
@@ -157,6 +197,10 @@ def _collect_preset_dependencies(
                 dependencies,
                 processing,
             )
+
+    unassigned_textures = texture_names - resolved_textures
+    if unassigned_textures:
+        raise ValueError(f"{path}: textures declared but never assigned a path: {sorted(unassigned_textures)}")
 
 
 def _collect_include_dependencies(
