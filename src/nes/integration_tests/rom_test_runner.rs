@@ -492,7 +492,8 @@ pub(crate) mod tests {
         width: u32,
         height: u32,
     ) {
-        crate::platform::png_utils::write_rgb_png(path, rgb, width, height);
+        crate::platform::png_utils::write_rgb_png(path, rgb, width, height)
+            .expect("capture PNG should be written");
     }
 
     #[macro_export]
