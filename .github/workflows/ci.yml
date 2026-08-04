@@ -323,10 +323,11 @@ jobs:
         # --features wasm is the configuration every other wasm invocation in this
         # repo uses. Do not set RUSTFLAGS here either: it would override
         # .cargo/config.toml's [target.wasm32-unknown-unknown] rustflags.
-        run: >
-          cargo clippy --target wasm32-unknown-unknown
-          --no-default-features --features wasm
-          --all-targets -- -D warnings
+        #
+        # Kept on one line, unfolded, so it stays byte-identical to the copies in
+        # .github/copilot-instructions.md, README.md and bug-of-the-day.md and a
+        # plain grep can verify they still agree.
+        run: cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings
       - name: Setup wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
         with:
