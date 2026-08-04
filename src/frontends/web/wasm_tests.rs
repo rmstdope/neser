@@ -1444,4 +1444,14 @@ fn wasm_snes_get_audio_samples_stereo_returns_vec() {
     let samples = snes.get_audio_samples_stereo();
     // Should return a Vec<f32> (stereo samples are interleaved L, R, L, R, ...)
     assert!(samples.len().is_multiple_of(2));
+
+    // Deliberate clippy violation in wasm-only test code, to prove the wasm CI
+    // gate blocks it while the host rust-lint job stays green (issue #3133
+    // validation). This PR must never be merged.
+    let probe = [1u32, 2, 3];
+    let mut total = 0u32;
+    for i in 0..probe.len() {
+        total += probe[i];
+    }
+    assert_eq!(total, 6);
 }
