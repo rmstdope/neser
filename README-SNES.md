@@ -331,16 +331,22 @@ Test suites:
 - `kungfufurby_nmi_tests.rs` / `kungfufurby_irq_tests.rs` -- KungFuFurby's
   2005-2008 NMI/H-V-IRQ test ROM collection (#2883/#3049,
   `roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-ROMs/`, see its
-  README). `demo_nmitest.smc`, `nmi.smc`, `test_nmi.smc`,
-  `test_irq4209.smc` and `demo_irqtest.smc` match Mesen2 exactly and carry
-  approved goldens, after #3049's per-CPU-cycle NMI and H/V-IRQ dispatch
-  fixes (`Cpu::step()` now checks interrupt-pending state at per-cycle
-  rather than per-instruction granularity, mirroring Mesen2's
-  `DetectNmiSignalEdge`/`PrevIrqSource`), #3116's STP halt, and #3081's
+  README). Six of the nine automated ROMs are green -- the NMI suite
+  entirely, plus half the IRQ suite: `demo_nmitest.smc`, `nmi.smc` and
+  `demo_irqtest.smc` after #3049's per-CPU-cycle dispatch fixes
+  (`Cpu::step()` checks interrupt-pending state at per-cycle rather than
+  per-instruction granularity, mirroring Mesen2's
+  `DetectNmiSignalEdge`/`PrevIrqSource`), `test_nmi.smc` and
+  `test_irq4209.smc` after #3116 made STP halt the CPU plus #3081's
   `SetNmiFlag(2)` enable-mid-vblank arm (test_nmi's v1.1 test 27 is its
-  hardware witness). `irq.smc`, `test_irq.smc`, `test_irq4200.smc` and
-  `test_irqb.smc` remain `#[ignore]`d asserting their Mesen2 PASS goldens
-  (#3093; re-measured unchanged after #3081's `irq_lock_step` deletion).
+  hardware witness), and `test_irq4200.smc` after #3144 ported Mesen2's
+  level+edge IRQ counter circuit (`src/snes/ppu/irq.rs`), backed by
+  SRAM-verdict tests transcribed from the vendored byuu sources. Still
+  `#[ignore]`d under the #3093 tracker, split by measured root cause:
+  `test_irq.smc` (dispatch boundary one instruction early, #3146;
+  re-measured unchanged after #3081's `irq_lock_step` deletion),
+  `test_irqb.smc` (open-bus OPHCT latch 4 dots low, #3147), and `irq.smc`
+  (no source exists; re-measured once #3146 lands).
 - `sour_dma_irq_tests.rs` -- Sour/SnesTests' `dma_irq_test.sfc` (#2883/#3049,
   `roms/snes/automated_tests/snes_test_roms/Sour/SnesTests/`), rebuilt
   byte-identical from source to recover its WRAM result-table address from
