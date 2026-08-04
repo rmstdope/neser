@@ -33,7 +33,7 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
    - Key regions that are commonly mis-classified: B-Bus I/O `$2000–$3FFF` and CPU I/O `$4200–$5FFF` in banks `$00–$3F`/`$80–$BF` are **Fast (6 clocks)**, not slow. Only WRAM mirrors (`$0000–$1FFF`) and expansion (`$6000–$7FFF`) are Slow (8 clocks) in those banks.
    - WS1 ROM (banks `$00–$3F`:`$8000–$FFFF`, `$40–$7D`) is **always slow (8 clocks)**; MEMSEL only affects WS2 ROM (banks `$80–$BF`:`$8000–$FFFF` and `$C0–$FF`).
    - Document cycle penalties for MMIO, WRAM, and cartridge regions separately from base instruction cycles.
-   - Cross-check against anomie's timing docs and Tom Harte / ProcessorTests 65816 vectors; treat ares/Mesen2 as implementation evidence only.
+   - Cross-check against anomie's timing docs and Tom Harte / ProcessorTests 65816 vectors; treat ares/Mesen2 as implementation evidence only. The vectors record **per-cycle** bus activity, not just cycle counts — see "The ProcessorTests vectors carry per-cycle bus data" below for the signal encoding, and "ProcessorTests targets a bare WDC 65816, not the 5A22" for when they lose to `cputest.sfc`.
 
 5. When researching PPU modes and rendering, separate the many features.
    - BG modes 0–7 differ in layer count and bit depth; Mode 7 adds an affine matrix (rotation/scaling).
@@ -839,6 +839,74 @@ ordinal at offset 0: everything after it has drifted for good. Compute both.
 
 In #3050 the first divergence was an `abs,X` penalty-cycle ordering issue 5638
 cycles *before* the actual cause, which was a 2-clock DMA end pad.
+
+### The ProcessorTests vectors carry per-cycle bus data -- use it (from #3068)
+
+`roms/snes/automated_tests/processor_tests/65816/` vectors record **every CPU cycle** as
+`[address, value, signals]`, not just a cycle count. For years the harness asserted only
+`cycles.len()` and the final CPU/RAM state, which is precisely why a whole family of
+internal-cycle *placement* bugs (#3050, #3068) sat behind a green suite: moving an idle from
+before an access to after it keeps the total identical and the final state identical.
+
+`signals` is 8 characters, `vda vpa vpb rwb e m x mlb`:
+
+- **opcode fetch** asserts both VDA and VPA (`dp-r-m--`); **operand fetch** VPA only
+  (`-p-r-m--`); a **data access** VDA only (`d--r-m-l`). Filtering "data reads" on `vda`
+  alone silently includes the opcode fetch and shifts every index by one.
+- **Internal cycles** are `---r-m--` -- and their recorded `address` is *not* null, it is
+  whatever was last left on the bus. The discriminator is the VDA/VPA flags, never a null
+  address. (A synthetic `[null, null, ...]` sample in the harness's own unit test suggests
+  otherwise; the real corpus does not look like that.)
+- **`mlb`** (`l`) marks the locked read-modify-write bus cycles.
+- The emulation-mode RMW **dummy write** is `---wemxl`: RWB=`w` with **VDA low**. Test RWB
+  *before* the address-valid flags or it decodes as an internal cycle.
+
+Worked example, `06.n` (ASL dp, `D=$5c7c`) -- the DL penalty and the RMW idle are both
+visible in one vector:
+
+```
+[16765171, 6,   'dp-r-m--']  opcode fetch
+[16765172, 130, '-p-r-m--']  operand fetch
+[16765172, None,'---r-m--']  <- DL!=0 penalty idle, BEFORE the data read
+[23806, 104,    'd--r-m-l']  data read
+[23806, None,   '---r-m-l']  <- RMW idle, BETWEEN read and write
+[23806, 208,    'd--w-m-l']  write
+```
+
+Practicalities: the committed CI subset is truncated to 32 vectors per opcode, so a
+page-boundary edge case usually is **not** in it -- a green CI run does not mean the opcode is
+clean. Fetch the full corpus for real verification, but fetch **only the opcodes you need**
+(`raw.githubusercontent.com/SingleStepTests/ProcessorTests/main/65816/v1/<op>.<e|n>.json`,
+~5 MB each); the whole corpus is ~2.7 GB. Note `write_subset` *wipes* the subset directory, so
+the local corpus must also contain every currently-selected opcode or regeneration silently
+drops them -- verify by checking the pre-existing files come back byte-identical.
+
+### ProcessorTests targets a bare WDC 65816, not the 5A22 -- cputest.sfc wins for SNES (from #3068)
+
+Instruction 4 lists ProcessorTests as a cross-check for CPU timing. It is not an unconditional
+authority: the vectors describe a **bare WDC 65816**, while `gilyon/cputest.sfc` (1610 tests)
+was validated on **real SNES hardware**, i.e. on the 5A22 core NESER actually emulates.
+
+They genuinely conflict. In #3068, on emulation-mode direct-page indirect pointers:
+
+| | `(dp,X)`, `DL != 0` | `PEI`, `DL == 0` |
+|---|---|---|
+| ProcessorTests | carries ($002DFF -> $002E00) | wraps ($000CFF -> $000C00) |
+| `cputest.sfc`, Mesen2, NESER | wraps ($002D00) | carries ($000D00) |
+
+Opposite directions, so no single rule satisfies both. Applying the ProcessorTests rule to
+**either** opcode independently turned `cputest_passes_all_1610_tests` from its genuine
+"Success" screen to Failed -- trading a 1610-test hardware oracle for 29 of 20 000 vectors.
+
+So: **before adopting any rule change the vectors imply, run `gilyon_cpu_tests`.** If it
+breaks, the vectors lose. Prefer carving the disagreement narrowly (there, cycle-exact checks
+kept for native mode, where both agree at 0/10000, and dropped only for emulation mode) over
+disabling the whole opcode. Tracked as #3135.
+
+Corollary for existing "cross-verified against cputest test NNNN" comments: such a comment
+proves only that cputest exercises *one side* of a condition. `addr_dp_x_ind`'s claim that the
+wrap applies "regardless of D's low byte" held only because cputest never tests `DL != 0`
+there. Treat those comments as evidence about the tested side, not the general rule.
 
 ### Matching the reference's *rule* is not the same as matching its *quantity* (from #3067)
 
