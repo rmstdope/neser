@@ -11,6 +11,8 @@ from pathlib import Path
 
 from scripts.refresh_65816_processor_tests_subset import (
     DEFAULT_REPORT_JSON,
+    FAMILY_ORDER,
+    OPCODE_FAMILY,
     REPO_ROOT,
     _materialize_payload,
     build_report,
@@ -142,6 +144,48 @@ class TestRefresh65816ProcessorTestsSubset(unittest.TestCase):
             self.assertGreater(report["integrity"]["total_size_bytes"], 0)
 
             json.dumps(report)
+
+    def test_cycle_exact_opcodes_each_get_their_own_family(self) -> None:
+        """Each direct-page mode and RMW form must survive selection independently.
+
+        The per-cycle bus assertions in ``processor_tests_65816.rs`` can only run against
+        opcodes that are actually committed. Giving each mode its own family is what keeps
+        one representative of each in the subset -- if they shared a family, selection would
+        keep only one of them and silently drop coverage for the rest.
+        """
+        cycle_exact = {
+            0xA5: "dp_direct",
+            0xB5: "dp_indexed_x",
+            0xB6: "dp_indexed_y",
+            0xA1: "dp_indexed_indirect",
+            0xB2: "dp_indirect",
+            0xB1: "dp_indirect_indexed",
+            0xA7: "dp_indirect_long",
+            0xB7: "dp_indirect_long_indexed",
+            0xD4: "dp_push_indirect",
+            0x06: "rmw_direct",
+            0x16: "rmw_direct_indexed",
+            0x0E: "rmw_absolute",
+            0x1E: "rmw_absolute_indexed",
+            0x04: "rmw_test_bits",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            full = Path(tmp) / "full"
+            for opcode in cycle_exact:
+                for mode in ("e", "n"):
+                    _touch(full / f"{opcode:02x}.{mode}.json")
+
+            selected = select_subset_files(discover_vector_files(full), opcodes_per_family=1)
+            selected_opcodes = {item.opcode for item in selected}
+
+            for opcode, family in cycle_exact.items():
+                self.assertEqual(OPCODE_FAMILY[opcode], family)
+                self.assertIn(family, FAMILY_ORDER)
+                self.assertIn(opcode, selected_opcodes)
+
+            # Both the emulation and native vector files are kept for each.
+            self.assertEqual(len(selected), 2 * len(cycle_exact))
 
     def test_write_subset_can_truncate_vectors_per_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
