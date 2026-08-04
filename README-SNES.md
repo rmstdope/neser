@@ -437,9 +437,22 @@ directory and are never committed. To approve a new or changed golden:
    default Mesen2 captures differ from *each other* by 1.06%, which is what
    produced #3063's phantom "0.93% DMA-timing divergence". A capture that
    changes between identical runs is the tell.
-4. Pixel-diff the two captures programmatically (e.g. with PIL). Never
-   approve a golden from a visual comparison alone — eyeballing has
-   repeatedly missed real divergences.
+4. Pixel-diff the two captures programmatically. Never approve a golden from
+   a visual comparison alone — eyeballing has repeatedly missed real
+   divergences.
+
+   ```bash
+   python -m scripts.diff_screenshots neser.png mesen.png --shift-search 1
+   ```
+
+   The tool exits non-zero unless the two images are pixel-identical. Since
+   the BG vertical-scroll display-line fix (#2945/#2981) the two emulators
+   align byte-for-byte at zero offset, so **a non-zero best shift is evidence
+   of a bug, never a capture convention to allow for** — the exit code stays
+   non-zero even when some offset lines the two up. Add `--rows` for ROMs that
+   band by scanline (HDMA writing `$2100` per line): it prints each image's
+   per-row mean-luminance vector and the lag that best aligns them, which is
+   where a banding-phase error shows up and where a 2D shift search cannot.
 5. Only after a 0-pixel diff (or a navigator-reviewed, documented
    deviation), embed the approved `screen_crc32()` value in the test and
    note the approval basis.
