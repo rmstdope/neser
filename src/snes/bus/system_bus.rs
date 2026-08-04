@@ -1375,6 +1375,13 @@ impl DmaABus for SnesSystemBus {
         self.read_mmio(0x00_2100 | u32::from(addr))
             .unwrap_or(open_bus)
     }
+
+    fn dma_a_bus_is_wram(&self, addr: u32) -> bool {
+        // Same decoder every other A-bus path uses, so the WRAM map has exactly
+        // one definition. Mesen2 asks the equivalent question through
+        // `SnesMemoryManager::IsWorkRam` (handler type == SnesWorkRam).
+        Self::decode_wram_index(addr).is_some()
+    }
 }
 
 impl SnesBus for SnesSystemBus {
@@ -2014,16 +2021,25 @@ mod tests {
         assert_eq!(bus.read(0x004303), 0x01);
     }
 
+    /// A DMA into WMDATA goes through the same auto-incrementing WRAM port a
+    /// direct CPU store does.
+    ///
+    /// The A-bus source is cartridge SRAM, not WRAM: WRAM on both sides is a
+    /// transfer hardware refuses (#3111, see
+    /// `dma::tests::gpdma_wram_to_wmdata_transfers_nothing_but_pays_the_full_slot`).
+    /// This vector used to source from `$7E0100` and so asserted that an
+    /// impossible transfer worked; only the source address changed, the port
+    /// behaviour it pins is the same.
     #[test]
     fn dma_a_to_b_wmdata_writes_wram_and_advances_wmadd() {
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         // Point WMDATA's auto-increment pointer at $000123.
         bus.write(0x002181, 0x23);
         bus.write(0x002182, 0x01);
         bus.write(0x002183, 0x00);
 
-        bus.write(0x7E0100, 0x42);
-        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E0100, 1);
+        bus.write(0x700100, 0x42);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x700100, 1);
         bus.write(0x00420B, 0x01);
         run_pending_gpdma(&mut bus);
 
@@ -2200,9 +2216,11 @@ mod tests {
     ///
     /// The destination is cartridge SRAM, not WRAM: fullsnes "DMA Notes" says
     /// WRAM-to-WRAM DMA isn't possible in either direction, so `$2180` -> WRAM
-    /// is not a transfer hardware performs (tracked separately; NESER does not
-    /// model the restriction yet, and this vector deliberately stays clear of
-    /// it).
+    /// is not a transfer hardware performs. NESER models that since #3111
+    /// (`dma::tests::gpdma_wmdata_to_wram_writes_the_invalid_byte_without_reading_the_b_bus`),
+    /// so this vector stays on the legal side deliberately -- a WRAM
+    /// destination here would assert a refused transfer instead of the live
+    /// B-bus read it exists to pin.
     #[test]
     fn gpdma_b_to_a_reads_wmdata_live_and_advances_wmadd() {
         let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
@@ -2435,16 +2453,18 @@ mod tests {
         // called them, so HDMA never actually ran during emulation. This drives
         // the system purely through `tick()` (as real emulation does) and expects
         // the transfer to land without any manual hdma_init()/hdma_do_line() call.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         // Point WMDATA's auto-increment pointer at $000200.
         bus.write(0x002181, 0x00);
         bus.write(0x002182, 0x02);
         bus.write(0x002183, 0x00);
 
         // HDMA channel 0: direct mode, A->B, targets WMDATA ($2180, B-bus offset 0x80).
-        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E3000);
-        bus.write(0x7E3000, 0xFF); // repeat mode, plenty of lines
-        bus.write(0x7E3001, 0x7A); // data byte
+        // The table lives in cartridge SRAM because a WRAM table feeding WMDATA
+        // is a transfer hardware refuses (#3111).
+        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0xFF); // repeat mode, plenty of lines
+        bus.write(0x703001, 0x7A); // data byte
         bus.write(0x00420C, 0x01); // enable HDMA channel 0
 
         // Advance one full scanline purely via tick() -- past both the once-per-frame
@@ -2483,14 +2503,15 @@ mod tests {
         // Mesen2 _dmaStartDelay: the $420B write arms the transfer; it runs at
         // the start of the SECOND CPU cycle after the write (or, without a CPU
         // driving cycle hooks, at the +8-clock fallback).
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
-        bus.write(0x7E4000, 0x5A);
+        // Source in cartridge SRAM: WRAM -> WMDATA is refused (#3111).
+        bus.write(0x704000, 0x5A);
         bus.write(0x004300, 0x00);
         bus.write(0x004301, 0x80);
         bus.write(0x004302, 0x00);
         bus.write(0x004303, 0x40);
-        bus.write(0x004304, 0x7E);
+        bus.write(0x004304, 0x70);
         bus.write(0x004305, 0x01);
         bus.write(0x004306, 0x00);
 
@@ -2506,12 +2527,14 @@ mod tests {
         assert_eq!(bus.read(0x7E0200), 0x5A, "runs at the second cycle entry");
     }
 
-    /// Arms a one-byte GPDMA from `$7E4000` to WMDATA; `bus.read(0x7E0200)` becomes `0x5A`
-    /// once it has actually run.
+    /// Arms a one-byte GPDMA from cartridge SRAM `$704000` to WMDATA;
+    /// `bus.read(0x7E0200)` becomes `0x5A` once it has actually run. Callers
+    /// must build the bus with [`lorom_cart_with_sram`] -- a WRAM source would
+    /// make this a transfer hardware refuses (#3111).
     fn arm_one_byte_gpdma(bus: &mut SnesSystemBus) {
         set_wmadd_200(bus);
-        bus.write(0x7E4000, 0x5A);
-        write_dma_channel(bus, 0, 0x00, 0x80, 0x7E4000, 1);
+        bus.write(0x704000, 0x5A);
+        write_dma_channel(bus, 0, 0x00, 0x80, 0x704000, 1);
         bus.write(0x00420B, 0x01);
     }
 
@@ -2528,14 +2551,15 @@ mod tests {
     /// `the_cycle_hook_reports_a_transfer_for_both_dma_kinds`.
     #[test]
     fn an_armed_hdma_transfer_runs_from_the_cycle_hook() {
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
         // One direct mode-0 channel writing a single byte per line through WMDATA ($2180),
-        // so the transfer's effect is readable back out of WRAM.
-        bus.write(0x7E5000, 0x01); // one line, no repeat
-        bus.write(0x7E5001, 0x3C); // the transferred byte
-        bus.write(0x7E5002, 0x00); // terminator
-        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E5000, 0);
+        // so the transfer's effect is readable back out of WRAM. The table sits
+        // in cartridge SRAM: a WRAM table into WMDATA is refused (#3111).
+        bus.write(0x705000, 0x01); // one line, no repeat
+        bus.write(0x705001, 0x3C); // the transferred byte
+        bus.write(0x705002, 0x00); // terminator
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x705000, 0);
         bus.write(0x00420C, 0x01); // HDMAEN
         bus.hdma_init();
 
@@ -2565,7 +2589,7 @@ mod tests {
     #[test]
     fn the_cycle_hook_reports_a_transfer_for_both_dma_kinds() {
         // General-purpose.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         arm_one_byte_gpdma(&mut bus);
         assert!(
             !bus.gpdma_cycle_hook(),
@@ -2581,12 +2605,12 @@ mod tests {
         );
 
         // HDMA: same contract, and the reason NESER's model was previously half of Mesen2's.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
-        bus.write(0x7E5000, 0x01);
-        bus.write(0x7E5001, 0x3C);
-        bus.write(0x7E5002, 0x00);
-        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E5000, 0);
+        bus.write(0x705000, 0x01);
+        bus.write(0x705001, 0x3C);
+        bus.write(0x705002, 0x00);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x705000, 0);
         bus.write(0x00420C, 0x01);
         bus.hdma_init();
         bus.gpdma_cycle_hook(); // latch CPU ownership so the clock fallback stands down
@@ -2643,7 +2667,7 @@ mod tests {
     /// CPU cycle, which is what the interrupt lock keys off.
     #[test]
     fn an_armed_gpdma_waits_for_the_cycle_hook_when_a_cpu_is_driving() {
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         arm_one_byte_gpdma(&mut bus);
 
         // A CPU is driving: this is the start-delay cycle's hook entry.
@@ -2668,7 +2692,7 @@ mod tests {
     /// the hook, or bus-only harnesses would leave transfers armed forever.
     #[test]
     fn an_armed_gpdma_still_runs_from_the_fallback_without_a_cpu() {
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         arm_one_byte_gpdma(&mut bus);
 
         for _ in 0..16 {
@@ -2722,16 +2746,16 @@ mod tests {
         // costs: 8 (SyncStartDma pad, clock already 8-aligned) + 8 (overhead) +
         // 8 (channel) + 100*8 (bytes) + 8 (SyncEndDma pad, counter 8-aligned) +
         // 40 (refresh) = 872.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
         for i in 0..100u32 {
-            bus.write(0x7E4000 + i, (i & 0xFF) as u8);
+            bus.write(0x704000 + i, (i & 0xFF) as u8);
         }
         bus.write(0x004300, 0x00); // A->B, mode 0
         bus.write(0x004301, 0x80); // -> WMDATA $2180
-        bus.write(0x004302, 0x00); // A addr $7E4000
+        bus.write(0x004302, 0x00); // A addr $704000 (cartridge SRAM: WRAM -> WMDATA is refused, #3111)
         bus.write(0x004303, 0x40);
-        bus.write(0x004304, 0x7E);
+        bus.write(0x004304, 0x70);
         bus.write(0x004305, 100); // count
         bus.write(0x004306, 0x00);
 
@@ -2764,12 +2788,12 @@ mod tests {
         // and the first B-bus write lands mid-burst at clock 1144
         // (SyncStartDma pad 8 + overhead 8 + 8-clock byte slot with the write
         // at its end).
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
-        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x7E3000);
-        bus.write(0x7E3000, 0x01); // 1 line
-        bus.write(0x7E3001, 0x7A); // data byte
-        bus.write(0x7E3002, 0x00); // terminator
+        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0x01); // 1 line
+        bus.write(0x703001, 0x7A); // data byte
+        bus.write(0x703002, 0x00); // terminator
         bus.write(0x00420C, 0x01);
 
         tick_until_master_clock(&mut bus, 1105);
@@ -2794,16 +2818,16 @@ mod tests {
         // armed clock 1120 and costs pad_start 8 + overhead 8 + 4 byte slots
         // (32) + 2 speculative descriptor reads (16) + pad_end 8 = 72 clocks
         // (per-byte write clocks are pinned in dma.rs's unit tests).
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
-        write_hdma_channel(&mut bus, 0, 0x02, 0x80, 0x7E3000);
-        bus.write(0x7E3000, 0xFF); // repeat, plenty of lines
-        bus.write(0x7E3001, 0xA1);
-        bus.write(0x7E3002, 0xA2);
-        write_hdma_channel(&mut bus, 1, 0x02, 0x80, 0x7E3100);
-        bus.write(0x7E3100, 0xFF);
-        bus.write(0x7E3101, 0xB1);
-        bus.write(0x7E3102, 0xB2);
+        write_hdma_channel(&mut bus, 0, 0x02, 0x80, 0x703000);
+        bus.write(0x703000, 0xFF); // repeat, plenty of lines
+        bus.write(0x703001, 0xA1);
+        bus.write(0x703002, 0xA2);
+        write_hdma_channel(&mut bus, 1, 0x02, 0x80, 0x703100);
+        bus.write(0x703100, 0xFF);
+        bus.write(0x703101, 0xB1);
+        bus.write(0x703102, 0xB2);
         bus.write(0x00420C, 0x03);
 
         tick_until_master_clock(&mut bus, 1119);
@@ -2880,7 +2904,7 @@ mod tests {
         // bookkeeping (8 speculative reads = 64) plus pad_end 8 carries the
         // burst to 1440; the envelope must keep ticking the PPU cleanly
         // across the scanline boundary.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
         for ch in 0..7u8 {
             // mode 4 -> $2101-$2104 (OBSEL/OAM addr/data): harmless junk writes.
@@ -2891,10 +2915,12 @@ mod tests {
                 bus.write(base + j, 0x00);
             }
         }
-        write_hdma_channel(&mut bus, 7, 0x00, 0x80, 0x7E3000);
-        bus.write(0x7E3000, 0x01);
-        bus.write(0x7E3001, 0x7A);
-        bus.write(0x7E3002, 0x00);
+        // Only ch7 targets WMDATA, so only its table has to leave WRAM (#3111);
+        // ch0-6 keep their WRAM tables, which stay legal against B-bus $01.
+        write_hdma_channel(&mut bus, 7, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0x01);
+        bus.write(0x703001, 0x7A);
+        bus.write(0x703002, 0x00);
         bus.write(0x00420C, 0xFF);
 
         tick_until_master_clock(&mut bus, 1119);
@@ -2912,12 +2938,12 @@ mod tests {
     fn pending_hdma_survives_save_state_round_trip() {
         // Capture inside the armed window (trigger 1104, run 1120): the
         // restored bus must still run the line burst at the original clock.
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
-        write_hdma_channel(&mut bus, 0, 0x02, 0x80, 0x7E3000);
-        bus.write(0x7E3000, 0xFF);
-        bus.write(0x7E3001, 0xA1);
-        bus.write(0x7E3002, 0xA2);
+        write_hdma_channel(&mut bus, 0, 0x02, 0x80, 0x703000);
+        bus.write(0x703000, 0xFF);
+        bus.write(0x703001, 0xA1);
+        bus.write(0x703002, 0xA2);
         bus.write(0x00420C, 0x01);
 
         tick_until_master_clock(&mut bus, 1108); // armed at 1104, not yet run
@@ -2925,7 +2951,7 @@ mod tests {
         let bus_state = bus.capture_state();
         let ppu_state = bus.ppu_capture_state();
 
-        let mut restored = SnesSystemBus::new(lorom_test_cart());
+        let mut restored = SnesSystemBus::new(lorom_cart_with_sram());
         restored.restore_state(&bus_state).expect("restore bus");
         restored.ppu_restore_state(&ppu_state).expect("restore ppu");
 
@@ -2949,16 +2975,16 @@ mod tests {
         // Capture between the $420B write (arms only) and the transfer start:
         // the restored bus must still start the transfer via the fallback.
 
-        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
-        bus.write(0x7E4000, 0x5A);
-        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x7E4000, 1);
+        bus.write(0x704000, 0x5A);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x704000, 1);
         bus.write(0x00420B, 0x01);
 
         let bus_state = bus.capture_state();
         let ppu_state = bus.ppu_capture_state();
 
-        let mut restored = SnesSystemBus::new(lorom_test_cart());
+        let mut restored = SnesSystemBus::new(lorom_cart_with_sram());
         restored.restore_state(&bus_state).expect("restore bus");
         restored.ppu_restore_state(&ppu_state).expect("restore ppu");
 
