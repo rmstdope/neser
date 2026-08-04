@@ -13,6 +13,10 @@ fn default_irq_i_shadow() -> bool {
     true
 }
 
+fn default_nmi_edge_arm() -> u8 {
+    1
+}
+
 fn default_dma_regs() -> Vec<u8> {
     vec![0; 0x80]
 }
@@ -77,6 +81,10 @@ pub struct SnesBlockMoveState {
     pub direction: SnesBlockMoveDirection,
 }
 
+/// The `irq_lock_step` field (#2918's instruction-granular interrupt lock) was
+/// removed at an unchanged version by #3081: serde ignores the key in older
+/// states, and a freshly restored CPU has nothing to re-establish because the
+/// mechanism no longer exists.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct SnesCpuState {
     #[serde(default)]
@@ -125,8 +133,6 @@ pub struct SnesCpuState {
     pub fast_rom: bool,
     #[serde(default)]
     pub memory_bus_cycles: u8,
-    #[serde(default)]
-    pub irq_lock_step: bool,
     /// See Cpu::irq_i_shadow; defaults to true (I-set at reset) for older saves.
     #[serde(default = "default_irq_i_shadow")]
     pub irq_i_shadow: bool,
@@ -319,6 +325,10 @@ pub struct SnesPpuState {
     pub nmi_line_prev: bool,
     #[serde(default)]
     pub nmi_edge: bool,
+    /// See Ppu::nmi_edge_arm (#3081): recognition-arm delay carried by `nmi_edge`.
+    /// Defaults to 1 (the normal vblank-edge delay) for states predating the field.
+    #[serde(default = "default_nmi_edge_arm")]
+    pub nmi_edge_arm: u8,
     /// Undrained vblank-entry count (transient; drained every CPU step, so it
     /// is 0 in practice except for a state captured mid-instruction). Replaces
     /// the pre-#2990 `frame_complete: bool`, whose value old saves simply lose.

@@ -258,8 +258,17 @@ impl Ppu {
         }
     }
 
-    /// Re-evaluate the NMI line (`nmi_enable && nmi_flag`) and latch a rising edge for the CPU.
+    /// Re-evaluate the NMI line (`nmi_enable && nmi_flag`) and latch a rising edge for
+    /// the CPU with the normal 1-cycle recognition arm.
     pub(super) fn update_nmi_line(&mut self) {
+        self.update_nmi_line_arming(1);
+    }
+
+    /// Like [`Self::update_nmi_line`], but a rising edge latched by THIS call carries
+    /// `arm` CPU cycles of recognition delay. The NMITIMEN write path passes 2
+    /// (Mesen2 `SetNmiFlag(2)`, byuu test_nmi v1.1 test 27, #3081); every other
+    /// caller uses the 1-cycle wrapper.
+    pub(super) fn update_nmi_line_arming(&mut self, arm: u8) {
         let line = self.nmi_enable && self.nmi_flag;
         if line && !self.nmi_line_prev {
             trace_ppu!(2; "nmi edge y={} x={} inidisp={:02X} nmi={} vblank={}",
@@ -270,6 +279,7 @@ impl Ppu {
                 self.vblank_active as u8,
             );
             self.nmi_edge = true;
+            self.nmi_edge_arm = arm;
         }
         self.nmi_line_prev = line;
     }
@@ -726,11 +736,12 @@ mod tests {
         tick_cycles(&mut ppu, 6);
 
         assert!(ppu.in_vblank());
-        assert!(
+        assert_eq!(
             ppu.poll_nmi(),
-            "an NMI edge should be delivered at VBlank entry"
+            1,
+            "an NMI edge with the normal 1-cycle arm should be delivered at VBlank entry"
         );
-        assert!(!ppu.poll_nmi(), "the edge is consumed only once");
+        assert_eq!(ppu.poll_nmi(), 0, "the edge is consumed only once");
         assert_ne!(ppu.read_register(0x4210) & 0x80, 0, "RDNMI flag is set");
     }
 
@@ -741,20 +752,49 @@ mod tests {
         tick_to_vblank(&mut ppu);
         tick_cycles(&mut ppu, 6); // past the clock-2 flag rise
 
-        assert!(!ppu.poll_nmi(), "no edge while NMI is disabled");
+        assert_eq!(ppu.poll_nmi(), 0, "no edge while NMI is disabled");
         assert_ne!(ppu.read_register(0x4210) & 0x80, 0, "RDNMI flag still set");
     }
 
     #[test]
-    fn enabling_nmi_during_vblank_raises_an_edge() {
+    fn enabling_nmi_during_vblank_raises_an_edge_with_a_two_cycle_arm() {
         let mut ppu = Ppu::new();
         tick_to_vblank(&mut ppu);
         tick_cycles(&mut ppu, 6); // past the clock-2 flag rise
-        assert!(!ppu.poll_nmi());
+        assert_eq!(ppu.poll_nmi(), 0);
 
         ppu.write_register(0x4200, 0x80); // enable mid-VBlank while the flag is set
 
-        assert!(ppu.poll_nmi(), "enabling NMI during VBlank raises an edge");
+        assert_eq!(
+            ppu.poll_nmi(),
+            2,
+            "an edge raised by the NMITIMEN write carries Mesen2's SetNmiFlag(2) \
+             two-cycle arm, so a wide $4200 store's NMI still lets the following \
+             instruction complete (byuu test_nmi v1.1 test 27, #3081)"
+        );
+    }
+
+    /// The 2-cycle arm applies only to a disabled->enabled NMITIMEN transition
+    /// (Mesen2: `if(_nmiFlag && enableNmi && !_state.EnableNmi) SetNmiFlag(2)`).
+    /// A REWRITE with NMI already enabled that lands between the flag rise
+    /// (clock 2) and the PPU's own edge evaluation (clock 6) discovers the
+    /// vblank rise itself, and that edge must carry the normal 1-cycle arm --
+    /// it is the vblank edge, not an enable-raised one (#3081).
+    #[test]
+    fn a_nmitimen_rewrite_discovering_the_vblank_rise_arms_one_cycle() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4200, 0x80); // enabled well before vblank
+        tick_to_vblank(&mut ppu);
+        tick_cycles(&mut ppu, 3); // flag is up (clock 2), edge not yet evaluated (clock 6)
+
+        ppu.write_register(0x4200, 0x80); // rewrite, enable bit unchanged
+
+        assert_eq!(
+            ppu.poll_nmi(),
+            1,
+            "an edge discovered by a $4200 rewrite with NMI already enabled is \
+             the vblank edge and carries the normal 1-cycle arm"
+        );
     }
 
     #[test]
@@ -1444,9 +1484,9 @@ mod tests {
         tick_to_vblank(&mut ppu);
 
         tick_cycles(&mut ppu, 5);
-        assert!(!ppu.poll_nmi(), "no CPU NMI edge before hclock 6");
+        assert_eq!(ppu.poll_nmi(), 0, "no CPU NMI edge before hclock 6");
         tick_cycles(&mut ppu, 1);
-        assert!(ppu.poll_nmi(), "CPU NMI edge raised at hclock 6");
+        assert_eq!(ppu.poll_nmi(), 1, "CPU NMI edge raised at hclock 6");
     }
 
     #[test]

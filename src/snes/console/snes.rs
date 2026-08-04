@@ -1388,11 +1388,12 @@ mod tests {
     /// point the old fixture fails that test's version assertion anyway.
     /// Regenerating at an unchanged version is destructive, and this fixture is
     /// the clearest example in the repo: the committed file predates the
-    /// `nmi_arm_counter` / `irq_line_shadow` / `waiting` / `irq_lock_step` /
-    /// `irq_i_shadow` CPU fields added by #2985, #3049 and #3081, all of which
-    /// arrived without a version bump. It is the only fixture still proving
-    /// that a genuinely older v2 file loads. Overwrite it and that evidence is
-    /// gone, behind an opaque `.gz` diff.
+    /// `nmi_arm_counter` / `irq_line_shadow` / `waiting` / `irq_i_shadow` CPU
+    /// fields added by #2985 and #3049, all of which arrived without a version
+    /// bump (as did #3081's later *removal* of #2918's `irq_lock_step` field).
+    /// It is the only fixture still proving that a genuinely older v2 file
+    /// loads. Overwrite it and that evidence is gone, behind an opaque `.gz`
+    /// diff.
     ///
     /// Writing is therefore opt-in, so `cargo test -- --include-ignored` cannot
     /// clobber the fixture (#3107):

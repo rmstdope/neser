@@ -163,7 +163,13 @@ impl Ppu {
                 self.convert_to_hires();
             }
             // NMITIMEN: VBlank NMI enable (bit 7). Re-evaluate the NMI line so that enabling NMI
-            // while the VBlank flag is already set raises an edge.
+            // while the VBlank flag is already set raises an edge. An edge raised by a
+            // disabled->enabled transition carries a 2-cycle recognition arm (Mesen2's
+            // `if(_nmiFlag && enableNmi && !_state.EnableNmi) SetNmiFlag(2)`): hardware still
+            // lets the instruction after the enabling store complete even when the `$4200`
+            // write is not the store's final cycle (byuu test_nmi v1.1 test 27, #3081). A
+            // rewrite with NMI already enabled can only discover the vblank rise itself, which
+            // keeps the normal 1-cycle arm.
             0x4200 => {
                 let irq_mode = (value >> 4) & 0x03;
                 if irq_mode == 0 {
@@ -171,8 +177,10 @@ impl Ppu {
                     self.irq_line = false;
                 }
                 self.irq_mode = irq_mode;
-                self.nmi_enable = value & 0x80 != 0;
-                self.update_nmi_line();
+                let enable = value & 0x80 != 0;
+                let arm = if enable && !self.nmi_enable { 2 } else { 1 };
+                self.nmi_enable = enable;
+                self.update_nmi_line_arming(arm);
             }
             // WRIO: bit 7 gates H/V counter latching; a 1->0 transition latches.
             0x4201 => {

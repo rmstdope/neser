@@ -25,14 +25,15 @@
 //!
 //! NESER originally diverged from Mesen2 on 8 of the 19 sub-cases (every
 //! diverging value exactly one less than Mesen2's, i.e. one fewer instruction
-//! ran before dispatch). #3049's per-CPU-cycle dispatch fixes closed 2 (#5, #15);
-//! the remaining 6 (#1, #2, #4, #7 `IRQ-*`, #8, #10 `NMI-*`) were closed by #3065,
-//! which models the GPDMA halting the CPU: an interrupt asserted mid-DMA is
-//! recognized only from the second cycle after the transfer (NMI one cycle
-//! earlier than the level IRQ, for its arm-then-resolve latch), so the
-//! instruction the DMA splits does not recognize it and the write width shifts
-//! the count by one exactly as on hardware. All 19 sub-cases now match Mesen2
-//! (WRAM values and a 0-pixel-diff frame-600 screen).
+//! ran before dispatch). #3049's per-CPU-cycle dispatch fixes closed 2 (#5,
+//! #15) and #3065 closed the remaining 6 (#1, #2, #4, #7 `IRQ-*`, #8, #10
+//! `NMI-*`). The mechanism has since been simplified twice without moving any
+//! value: #3074 replaced #3065's two-cycle suppression window with Mesen2's
+//! per-cycle DMA interrupt lock (`Cpu::dma_locked_this_cycle`, set from
+//! `gpdma_cycle_hook` for exactly the cycle a transfer runs in), and #3081
+//! deleted the `$420B`/`$4200` instruction-granular `irq_lock_step` overlay,
+//! which this oracle demonstrably never depended on. All 19 sub-cases match
+//! Mesen2 (WRAM values and a 0-pixel-diff frame-600 screen).
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;

@@ -113,12 +113,14 @@ pub struct Cpu<B: SnesBus> {
     irq_pending: bool,
     abort_pending: bool,
 
-    /// One-CPU-cycle NMI edge-to-dispatch latch (mirrors Mesen2's `NmiFlagCounter`).
-    /// 0 = idle. [`Self::poll_and_arm_nmi_edge`] arms this to 1 on a freshly
-    /// polled bus edge; the *next* cycle's [`Self::resolve_nmi_arm_counter`]
-    /// decrements it to 0 and sets `nmi_pending`, modeling the real one-cycle
-    /// latency between the NMI line rising and the CPU's edge detector
-    /// recognizing it (#3049).
+    /// NMI edge-to-dispatch countdown (mirrors Mesen2's `NmiFlagCounter`).
+    /// 0 = idle. [`Self::poll_and_arm_nmi_edge`] arms this with the delay the
+    /// bus reports for the consumed edge -- 1 for the PPU's vblank edge
+    /// (#3049), 2 for an NMITIMEN enable-mid-vblank edge (Mesen2
+    /// `SetNmiFlag(2)`, #3081); each subsequent cycle's
+    /// [`Self::resolve_nmi_arm_counter`] decrements it, and reaching 0 sets
+    /// `nmi_pending`, modeling the real latency between the NMI line rising
+    /// and the CPU's edge detector recognizing it.
     nmi_arm_counter: u8,
 
     /// Most recently sampled H/V-IRQ line level (mirrors Mesen2's
@@ -168,10 +170,6 @@ pub struct Cpu<B: SnesBus> {
     /// `dma_suppress_cycles`, a 2-cycle window that had no Mesen2 counterpart and was
     /// calibrated against the clock fallback running transfers a cycle early (#3074).
     dma_locked_this_cycle: bool,
-
-    /// One-step interrupt lock used to emulate delayed IRQ/NMI recognition after
-    /// specific hardware events (e.g. writes to `$4200` and DMA start via `$420B`).
-    irq_lock_step: bool,
 
     /// The I flag value the IRQ recognition logic sees, sampled per the 65816's
     /// pre-effect rule: CLI/SEI/PLP/REP/SEP change I only for the poll AFTER the
@@ -227,7 +225,6 @@ impl<B: SnesBus> Cpu<B> {
             fast_rom: false,
             memory_bus_cycles: 0,
             read_write_mask: 0xFF_FFFF,
-            irq_lock_step: false,
             irq_i_shadow: true,
             block_move_state: None,
             bus,
@@ -379,7 +376,6 @@ impl<B: SnesBus> Cpu<B> {
             stopped: self.stopped,
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
-            irq_lock_step: self.irq_lock_step,
             irq_i_shadow: self.irq_i_shadow,
             block_move_state: self.block_move_state.map(|state| SnesBlockMoveState {
                 dst_bank: state.dst_bank,
@@ -414,7 +410,6 @@ impl<B: SnesBus> Cpu<B> {
         self.stopped = state.stopped;
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
-        self.irq_lock_step = state.irq_lock_step;
         self.irq_i_shadow = state.irq_i_shadow;
         self.block_move_state = state.block_move_state.map(|state| BlockMoveState {
             dst_bank: state.dst_bank,
@@ -523,7 +518,6 @@ impl<B: SnesBus> Cpu<B> {
         self.nmi_arm_counter = 0;
         self.dma_locked_this_cycle = false;
         self.irq_line_shadow = false;
-        self.irq_lock_step = false;
         self.irq_i_shadow = true;
         // Reset is the only thing that restarts a STPped CPU, and it also drops
         // any WAI wait state (Mesen2 `SnesCpu::Reset` sets `StopState = Running`
@@ -725,8 +719,6 @@ impl<B: SnesBus> Cpu<B> {
         self.last_page_crossed = false;
         self.memory_bus_cycles = 0;
         self.read_write_mask = 0xFF_FFFF;
-        let interrupts_locked = self.irq_lock_step;
-        self.irq_lock_step = false;
         let mut wai_wake_cycles: u8 = 0;
 
         if let Some(state) = self.block_move_state {
@@ -752,7 +744,7 @@ impl<B: SnesBus> Cpu<B> {
         // through to the normal dispatch logic below (which services the interrupt
         // if unmasked, or simply resumes the next instruction if the I flag masks it).
         if self.waiting {
-            if !interrupts_locked && (self.nmi_pending || irq_line_asserted || self.abort_pending) {
+            if self.nmi_pending || irq_line_asserted || self.abort_pending {
                 // Hardware spends TWO idle cycles between the wait-loop poll
                 // that first sees the interrupt and resuming execution: the
                 // detecting idle completes, and one more idle runs before the
@@ -770,21 +762,21 @@ impl<B: SnesBus> Cpu<B> {
         }
 
         // Poll hardware interrupts (higher priority than opcode fetch)
-        if !interrupts_locked && self.abort_pending {
+        if self.abort_pending {
             self.abort_pending = false;
             let base = self.dispatch_abort();
             return self
                 .tick_internal_cycles_for(base)
                 .saturating_add(wai_wake_cycles);
         }
-        if !interrupts_locked && self.nmi_pending {
+        if self.nmi_pending {
             self.nmi_pending = false;
             let base = self.dispatch_nmi();
             return self
                 .tick_internal_cycles_for(base)
                 .saturating_add(wai_wake_cycles);
         }
-        if !interrupts_locked && irq_line_asserted && !self.irq_i_shadow {
+        if irq_line_asserted && !self.irq_i_shadow {
             // IRQ is level-triggered: do NOT clear irq_pending here; caller must deassert
             let base = self.dispatch_irq();
             return self
@@ -1158,26 +1150,13 @@ impl<B: SnesBus> Cpu<B> {
         self.memory_bus_cycles += 1;
         let bank = (addr >> 16) as u8;
         if bank <= 0x3F || (0x80..=0xBF).contains(&bank) {
-            match (addr & 0xFFFF) as u16 {
-                0x4200 => {
-                    // Writes to NMITIMEN introduce a one-step interrupt-lock window.
-                    self.irq_lock_step = true;
-                }
-                0x420B => {
-                    // Starting DMA introduces the same lock window before IRQ/NMI recognition.
-                    //
-                    // NOTE (#3081): this instruction-granular lock has NO Mesen2 counterpart --
-                    // the reference's only DMA interrupt lock is the per-cycle `IrqLock` that
-                    // #3074 ported. Deleting this arm leaves the whole `snes::` suite green,
-                    // including the 19-value Sour hardware oracle, so it is both unpinned and
-                    // unmeasured. Left alone here rather than changed unmeasured; see #3081.
-                    if value != 0 {
-                        self.irq_lock_step = true;
-                    }
-                }
-                // MEMSEL $420D: bit 0 controls WS2 ROM speed.
-                0x420D => self.fast_rom = value & 0x01 != 0,
-                _ => {}
+            // MEMSEL $420D: bit 0 controls WS2 ROM speed. Writes to $4200 and
+            // $420B need no CPU-side interception: neither NMITIMEN nor a DMA
+            // start locks interrupt recognition in Mesen2 (#3081); the only
+            // DMA-related lock is the per-cycle `dma_locked_this_cycle`
+            // (#3074), set from `gpdma_cycle_hook` when a transfer runs.
+            if (addr & 0xFFFF) as u16 == 0x420D {
+                self.fast_rom = value & 0x01 != 0;
             }
         }
         self.trace_bus_cycle(format_args!("write ${addr:06X} = ${value:02X}"));
@@ -3866,8 +3845,9 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn poll_and_arm_nmi_edge(&mut self) {
-        if self.bus.poll_nmi() {
-            self.nmi_arm_counter = 1;
+        let arm = self.bus.poll_nmi();
+        if arm > 0 {
+            self.nmi_arm_counter = arm;
         }
     }
 
@@ -11583,6 +11563,10 @@ mod interrupt_dispatch_tests {
         nmi_once: bool,
         poll_count: u32,
         arm_nmi_at_poll: Option<u32>,
+        /// Recognition-arm delay the delivered edge carries: 1 models the PPU's
+        /// own vblank edge, 2 models an NMITIMEN enable-mid-vblank edge
+        /// (Mesen2 `SetNmiFlag(2)`, #3081).
+        nmi_arm: u8,
     }
 
     impl PollNmiBus {
@@ -11592,6 +11576,7 @@ mod interrupt_dispatch_tests {
                 nmi_once: false,
                 poll_count: 0,
                 arm_nmi_at_poll: None,
+                nmi_arm: 1,
             }
         }
 
@@ -11609,14 +11594,14 @@ mod interrupt_dispatch_tests {
             self.mem[(addr & 0xFF_FFFF) as usize] = value;
         }
         fn tick(&mut self) {}
-        fn poll_nmi(&mut self) -> bool {
+        fn poll_nmi(&mut self) -> u8 {
             if self.arm_nmi_at_poll == Some(self.poll_count) {
                 self.nmi_once = true;
             }
             self.poll_count += 1;
             let n = self.nmi_once;
             self.nmi_once = false;
-            n
+            if n { self.nmi_arm } else { 0 }
         }
     }
 
@@ -11734,15 +11719,15 @@ mod interrupt_dispatch_tests {
                 .is_some_and(|from| self.cycle.saturating_sub(1) >= from)
         }
 
-        fn poll_nmi(&mut self) -> bool {
+        fn poll_nmi(&mut self) -> u8 {
             if self.nmi_fired {
-                return false;
+                return 0;
             }
             if self.nmi_on_cycle == Some(self.cycle.saturating_sub(1)) {
                 self.nmi_fired = true;
-                return true;
+                return 1;
             }
-            false
+            0
         }
     }
 
@@ -12160,26 +12145,121 @@ mod interrupt_dispatch_tests {
         );
     }
 
+    /// #3081: Mesen2's `InternalRegisters::Write` case `0x4200` contains no
+    /// interrupt lock of any kind -- writing NMITIMEN never defers the
+    /// recognition of an already-asserted IRQ line. This replaces a vacuous
+    /// predecessor that raised the line only after the write instruction's
+    /// final `resample_irq_line`, so it held with or without the former
+    /// instruction-granular `irq_lock_step`.
     #[test]
-    fn write_4200_defers_irq_dispatch_for_one_step() {
-        let mut cpu = Cpu::new(PollIrqBus::new());
+    fn an_irq_asserted_during_a_4200_write_dispatches_at_the_next_boundary() {
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
         cpu.pc = 0x8000;
         cpu.s = 0x01FF;
         cpu.set_flag_i(false);
-        cpu.write_a(0x0010);
-        // STA $4200 ; NOP ; NOP
-        cpu.bus.load(0x008000, &[0x8D, 0x00, 0x42, 0xEA, 0xEA]);
-        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
-        cpu.bus.irq_level = false;
+        cpu.write_a(0x0020); // keep V-IRQ enabled; the lock never depended on the value
+        cpu.bus.load(0x008000, &[0x8D, 0x00, 0x42]); // STA $4200
+        cpu.bus.load(0x008003, &[0xEA]); // NOP -- must never execute; IRQ takes this slot
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
+        // The line becomes visible on STA's 3rd cycle (poll index 2), well before
+        // the instruction boundary -- same technique as
+        // `irq_level_mid_instruction_resolves_in_time_to_dispatch_right_after_that_instruction`.
+        cpu.bus.level_from_poll = Some(2);
 
-        cpu.step(); // STA $4200 (arms irq lock)
-        cpu.bus.irq_level = true;
-        cpu.step(); // lock window: should execute NOP
-        assert_eq!(cpu.pc, 0x8004, "defer window should run next opcode first");
+        cpu.step();
+        assert_eq!(cpu.pc, 0x8003, "STA $4200 executes in full");
 
         let cycles = cpu.step();
-        assert_eq!(cycles, 7, "IRQ dispatch should occur on following step");
-        assert_eq!(cpu.pc, 0x9100);
+        assert_eq!(
+            cpu.pc, 0x9100,
+            "the IRQ dispatches at the boundary right after the $4200 write; \
+             the write must not defer recognition by an instruction"
+        );
+        assert_eq!(cycles, 7, "IRQ dispatch cycles in emulation mode");
+    }
+
+    /// Enabling NMI mid-vblank while the flag is already set fires the NMI
+    /// after exactly ONE more instruction. Mesen2 models this with
+    /// `SetNmiFlag(2)` (`InternalRegisters.cpp`, case `0x4200`), a two-cycle
+    /// countdown started inside the write cycle; NESER ports it as the
+    /// 2-cycle arm the bus reports for an enable-raised edge (#3081). The
+    /// edge is armed at poll index 3, the 8-bit STA's write cycle, modelling
+    /// the PPU-side raise; contrast with
+    /// `an_nmi_armed_during_a_420b_write_dispatches_at_the_next_boundary`,
+    /// where a normal PPU edge one cycle earlier IS pending at the first
+    /// boundary.
+    ///
+    /// Note: because the write here is the store's FINAL cycle, arm values 1
+    /// and 2 both resolve before the follower's boundary and this observable
+    /// cannot tell them apart -- it pins "exactly one instruction" against
+    /// coarser regressions (arm 0 dispatches immediately, arm 3+ a further
+    /// instruction late). The 1-vs-2 discriminator is
+    /// `a_wide_nmitimen_enable_still_lets_the_following_instruction_complete`.
+    #[test]
+    fn an_nmi_enabled_mid_vblank_dispatches_after_exactly_one_instruction() {
+        let mut cpu = Cpu::new(PollNmiBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.write_a(0x0080); // NMITIMEN bit 7: enable NMI
+        cpu.bus.load(0x008000, &[0x8D, 0x00, 0x42]); // STA $4200
+        cpu.bus.load(0x008003, &[0xEA, 0xEA]); // NOP ; NOP -- exactly one executes
+        cpu.bus.load(0x00FFFA, &[0x00, 0x90]); // NMI emulation vector -> $9000
+        cpu.bus.nmi_arm = 2; // enable-raised edge (Mesen2 SetNmiFlag(2))
+        cpu.bus.arm_nmi_at_poll = Some(3); // the edge rises during STA's write cycle
+
+        cpu.step();
+        assert_eq!(cpu.pc, 0x8003, "STA $4200 executes in full");
+
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x8004,
+            "the edge from the write cycle resolves too late for the first \
+             boundary: one more instruction runs"
+        );
+
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x9000,
+            "the NMI dispatches at the second boundary -- exactly one \
+             instruction after the enabling write, as on hardware/Mesen2"
+        );
+    }
+
+    /// byuu's test_nmi v1.1 test 27 (hardware-verified): a 16-bit
+    /// `LDA #$FF80 : STA $4200 : STX $00` in vblank lands the enabling
+    /// `$4200` write on the store's SECOND-TO-LAST cycle (the `$4201` write
+    /// follows), and the NMI must still let the following instruction
+    /// complete. Only the 2-cycle arm of an enable-raised edge (Mesen2
+    /// `SetNmiFlag(2)`) gets this right -- a 1-cycle arm resolves during the
+    /// `$4201` write cycle and wrongly preempts the follower (#3081; this is
+    /// the case the deleted instruction-granular `irq_lock_step` had been
+    /// masking).
+    #[test]
+    fn a_wide_nmitimen_enable_still_lets_the_following_instruction_complete() {
+        let mut cpu = Cpu::new(PollNmiBus::new());
+        cpu.e = false; // native mode, 16-bit A
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.write_a(0xFF80);
+        cpu.bus.load(0x008000, &[0x8D, 0x00, 0x42]); // STA $4200 (writes $4200, then $4201)
+        cpu.bus.load(0x008003, &[0xEA, 0xEA]); // NOP (byuu's stx $00) ; NOP
+        cpu.bus.load(0x00FFEA, &[0x00, 0x90]); // native NMI vector -> $9000
+        cpu.bus.nmi_arm = 2; // enable-raised edge (Mesen2 SetNmiFlag(2))
+        cpu.bus.arm_nmi_at_poll = Some(3); // the $4200-write cycle, second-to-last
+
+        cpu.step();
+        assert_eq!(cpu.pc, 0x8003, "STA $4200 executes in full");
+
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x8004,
+            "the following instruction completes before the NMI (hardware: \
+             stx $00 runs, then the handler increments)"
+        );
+
+        cpu.step();
+        assert_eq!(cpu.pc, 0x9000, "the NMI dispatches after it");
     }
 
     #[test]
@@ -12294,26 +12374,66 @@ mod interrupt_dispatch_tests {
         );
     }
 
+    /// #3081: Mesen2's `$420B` handler sets only `_dmaPending`/`_dmaStartDelay`
+    /// (`SnesDmaController.cpp`) -- there is no CPU-side interrupt lock. An
+    /// interrupt already recognized at the boundary right after `STA $420B`
+    /// dispatches immediately; the DMA then runs inside the interrupt entry
+    /// sequence. The one-cycle lock that DOES exist covers only the cycle a
+    /// transfer actually runs in and is pinned by the `DmaLockBus` tests
+    /// above. This replaces a vacuous predecessor that raised the line only
+    /// after the write instruction's final `resample_irq_line`, so it held
+    /// with or without the former instruction-granular `irq_lock_step`.
     #[test]
-    fn write_420b_defers_irq_dispatch_for_one_step() {
-        let mut cpu = Cpu::new(PollIrqBus::new());
+    fn an_irq_asserted_during_a_420b_write_dispatches_at_the_next_boundary() {
+        let mut cpu = Cpu::new(PollIrqBus::new()); // emulation mode
         cpu.pc = 0x8000;
         cpu.s = 0x01FF;
         cpu.set_flag_i(false);
-        cpu.write_a(0x0001);
-        // STA $420B ; NOP ; NOP
-        cpu.bus.load(0x008000, &[0x8D, 0x0B, 0x42, 0xEA, 0xEA]);
-        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ vector -> $9100
-        cpu.bus.irq_level = false;
+        cpu.write_a(0x0001); // non-zero MDMAEN: the value the former lock keyed on
+        cpu.bus.load(0x008000, &[0x8D, 0x0B, 0x42]); // STA $420B
+        cpu.bus.load(0x008003, &[0xEA]); // NOP -- must never execute; IRQ takes this slot
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
+        // Line visible from STA's 3rd cycle (poll index 2), before the boundary.
+        cpu.bus.level_from_poll = Some(2);
 
-        cpu.step(); // STA $420B (DMA start path, arms irq lock)
-        cpu.bus.irq_level = true;
-        cpu.step(); // lock window: should execute NOP
-        assert_eq!(cpu.pc, 0x8004, "defer window should run next opcode first");
+        cpu.step();
+        assert_eq!(cpu.pc, 0x8003, "STA $420B executes in full");
 
         let cycles = cpu.step();
-        assert_eq!(cycles, 7);
-        assert_eq!(cpu.pc, 0x9100);
+        assert_eq!(
+            cpu.pc, 0x9100,
+            "the IRQ dispatches at the boundary right after the $420B write; \
+             starting a DMA must not defer recognition by an instruction"
+        );
+        assert_eq!(cycles, 7, "IRQ dispatch cycles in emulation mode");
+    }
+
+    /// NMI twin of
+    /// `an_irq_asserted_during_a_420b_write_dispatches_at_the_next_boundary`:
+    /// an NMI edge that resolves during the `STA $420B` instruction is pending
+    /// at its boundary and dispatches before the next instruction (#3081).
+    /// Poll-index arithmetic as in
+    /// `nmi_edge_mid_instruction_resolves_in_time_to_dispatch_right_after_that_instruction`.
+    #[test]
+    fn an_nmi_armed_during_a_420b_write_dispatches_at_the_next_boundary() {
+        let mut cpu = Cpu::new(PollNmiBus::new()); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.write_a(0x0001);
+        cpu.bus.load(0x008000, &[0x8D, 0x0B, 0x42]); // STA $420B
+        cpu.bus.load(0x008003, &[0xEA]); // NOP -- must never execute; NMI takes this slot
+        cpu.bus.load(0x00FFFA, &[0x00, 0x90]); // NMI emulation vector -> $9000
+        cpu.bus.arm_nmi_at_poll = Some(2); // resolved and pending by STA's final cycle
+
+        cpu.step();
+        assert_eq!(cpu.pc, 0x8003, "STA $420B executes in full");
+
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x9000,
+            "the NMI, pending at the boundary right after the $420B write, \
+             dispatches before the next instruction"
+        );
     }
 
     // =========================================================================

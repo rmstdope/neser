@@ -625,8 +625,8 @@ impl SnesBus for Sa1Bus {
     /// Edge-triggered: consumes the SNES->SA-1 NMI dispatch signal set by a CCNT bit 4 = 1
     /// write. See [`Sa1ControlRegisters`]'s doc comment for why this is edge-based (real 65816
     /// NMI hardware) rather than the level-based `sa1_nmi_pending` flag CFR exposes.
-    fn poll_nmi(&mut self) -> bool {
-        self.registers.borrow_mut().take_sa1_nmi_edge()
+    fn poll_nmi(&mut self) -> u8 {
+        u8::from(self.registers.borrow_mut().take_sa1_nmi_edge())
     }
 
     /// Level-triggered: the SNES->SA-1 IRQ line stays asserted for as long as CCNT's IRQ-pending

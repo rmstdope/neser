@@ -280,6 +280,11 @@ pub struct Ppu {
     nmi_line_prev: bool,
     /// Latched NMI rising edge awaiting delivery to the CPU (consumed by `poll_nmi`).
     nmi_edge: bool,
+    /// Recognition-arm delay (CPU cycles) the pending `nmi_edge` carries: 1 for edges
+    /// raised by the PPU's own vblank event, 2 for edges raised by an NMITIMEN write
+    /// enabling NMI mid-vblank (Mesen2 `SetNmiFlag(1)` vs `SetNmiFlag(2)`; byuu's
+    /// test_nmi v1.1 test 27, #3081). Meaningful only while `nmi_edge` is set.
+    nmi_edge_arm: u8,
     vram_increment_after_high: bool,
     vram_increment_step: u16,
     vram_address_translation: VramAddressTranslation,
@@ -519,6 +524,7 @@ impl Ppu {
             vblank_active: false,
             nmi_line_prev: false,
             nmi_edge: false,
+            nmi_edge_arm: 1,
             vram_increment_after_high: false,
             vram_increment_step: 1,
             vram_address_translation: VramAddressTranslation::None,
@@ -620,11 +626,16 @@ impl Ppu {
         self.nmi_enable
     }
 
-    /// Poll for and consume a pending NMI rising edge (for delivery to the CPU).
-    pub fn poll_nmi(&mut self) -> bool {
-        let edge = self.nmi_edge;
-        self.nmi_edge = false;
-        edge
+    /// Poll for and consume a pending NMI rising edge (for delivery to the CPU),
+    /// returning the recognition-arm delay it carries (0 = no edge). See
+    /// [`crate::snes::bus::SnesBus::poll_nmi`] for the delay semantics.
+    pub fn poll_nmi(&mut self) -> u8 {
+        if self.nmi_edge {
+            self.nmi_edge = false;
+            self.nmi_edge_arm
+        } else {
+            0
+        }
     }
 
     /// Poll the current level of the H/V IRQ line.
