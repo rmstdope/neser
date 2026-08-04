@@ -143,6 +143,12 @@ When writing code that targets or emulates SNES hardware, always verify against 
 - **65816 mode flags**: The M (accumulator) and X (index) width flags change register sizes at runtime; emulation mode (E) forces 8-bit and re-maps the stack to page 1. Misinterpreting flag state corrupts decode width and cycle counts.
 - **Open bus / MDR**: Reads of unmapped or write-only addresses return the last value on the memory data register (open bus), not zero. This also applies to *unused bits inside readable registers* (fullsnes "Unused bits" table): $4210 RDNMI bits 6-4, $4211 TIMEUP bits 6-0, $4212 HVBJOY bits 5-1, $4016 bits 7-2, $4017 bits 7-5 all read the MDR. Real code depends on it: PeterLemon's `WaitNMI` macro is `bit.w $4210` / `bpl`, where the operand high byte $42 is the last fetch before the data read, so RDNMI bit 6 reads 1 and `BIT` leaves V=1 after the loop (CPUPHL.sfc fails without this; see issue #2975).
 - **HDMA timing and mid-scanline activation**: HDMA initialization normally occurs once per frame at the start of scanline 0 (dot 0). The per-scanline transfer point is **dot 276 (clock 1104)** on each active scanline. When HDMAEN ($420C) is written **before** dot 276 on an active scanline (common pattern: H-IRQ at dots 220-232 writing HDMAEN), newly-enabled channels must initialize and transfer on that **same scanline** — not wait until the next frame. This requires: (1) tracking mid-scanline HDMAEN writes in a pending flag, (2) initializing pending channels just before dot 276, and (3) immediately clearing active-mask bits for disabled channels. Failing to support mid-scanline activation causes test ROMs like `hdmaen_latch_test.sfc` to render blank instead of showing horizontal stripes. HDMA steals 18 + 8N + indirect-access cycles at initialization and variable cycles per scanline during transfers; general-purpose DMA pauses the CPU entirely. Both interact with PPU access windows. See issue #2943.
+  **fullsnes says H=278, and that is not a conflict** (settled in #3083): its schedule table
+  gives `H=6, V=0 reload HDMA registers` and `H=278, V=0..224 perform HDMA transfers`. The V
+  range matches NESER and Mesen2 exactly. The H figures differ only because dot 276 is when the
+  transfer is *armed* — the first B-bus write does not land until the start delay,
+  `SyncStartDma` pad, 8-clock overhead and the slot's first 4 clocks are paid, around dot 280.
+  Don't "correct" the constant to 278; check which instant each source is naming first.
 - **APU is asynchronous**: The SPC700 runs on its own ~1.024 MHz clock, independent of the main CPU. Port reads/writes are the only synchronization; many games rely on exact IPL upload timing.
 - **VRAM access timing**: CPU access to VRAM/CGRAM/OAM is only safe during V/H-blank (or forced blank); the address-increment-on-read/write behavior of `$2116`–`$2119` is a frequent source of bugs.
 - **INIDISP brightness change delay**: When INIDISP ($2100) is written mid-scanline to change brightness, the hardware has a delay (several pixels) before the change becomes visible on-screen. The exact delay timing differs between hardware revisions and is not fully documented in fullsnes. Emulators implement different delay models, causing ~4-6% pixel differences in test ROMs that hammer INIDISP mid-scanline (e.g., `inidisp_brightness_delay.sfc`). These differences concentrate at brightness transition edges and don't affect real games. See issue #2973.
@@ -310,7 +316,25 @@ When verifying SNES emulator accuracy:
   3. If they differ and Mesen2 itself is suspect: **ask the user** how to
      proceed — do not approve either side arbitrarily
   4. Document the Mesen2 approval (frame, diff result) in test comments
-- **Pixel-perfect comparison**: Use Python/PIL to compare screenshots pixel-by-pixel. Don't trust visual inspection — differences of 2-4% are invisible to the eye but indicate timing bugs.
+- **Pixel-perfect comparison**: use the committed tool, don't write another one.
+
+  ```bash
+  python -m scripts.diff_screenshots neser.png mesen.png --shift-search 1 [--rows] [--out diff.png]
+  ```
+
+  Exits non-zero unless the images are pixel-identical, and stays non-zero even when some
+  offset lines them up, because a non-zero best shift is a bug and not a convention.
+  `--rows` prints each image's per-row mean-luminance vector plus the lag that best aligns
+  them — the diagnostic for ROMs that band by scanline, whose whole signal a 2D shift
+  search cannot express. `--out` writes the red-marked diff image.
+
+  Committed in #3083 precisely because this step had only ever existed as prose: every
+  investigation re-wrote a throwaway PIL script, and that is how the retracted "harmless
+  constant 1-scanline row offset" claim survived as long as it did. Don't trust visual
+  inspection — differences of 2-4% are invisible to the eye but indicate timing bugs.
+- **PNG file size is not a signal.** NESER and Mesen2 use different encoder settings, so
+  byte-for-byte identical frames can be 65 KB and 1.1 KB. Compare decoded pixels, never
+  file sizes.
 - **CRC-based integration tests**: Capture frame CRCs at known stable points (e.g., frame 600) and use as golden values for regression testing. Update test comments to reference GitHub issues for known differences.
 - **Screenshot settings for comparable captures**:
   - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true`
@@ -332,7 +356,8 @@ When verifying SNES emulator accuracy:
   to the new CRCs. Cross-check samples from every affected suite against fresh Mesen2
   captures as well; ROMs with scanline-anchored effects (HDMA banding) won't satisfy a
   pure shift and must be verified against Mesen2 directly.
-- **Example diff script**: Use PIL to iterate pixels, mark differences as red, matches as dimmed grayscale — visual diffs immediately reveal whether issues are localized (edge effects) or systematic (whole-frame shifts).
+- **Reading the diff image**: `--out` marks differences red over a dimmed greyscale base, which
+  immediately separates localized issues (edge effects) from systematic ones (whole-frame shifts).
 
 ### Approving new screen-CRC baselines (settle-probe workflow, from #2878)
 
@@ -364,9 +389,20 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    misread as `0xEFB6E03F` instead of the correct `0xEF549E7F`).
 2. **Capture and pixel-diff**: write NESER PNGs during the probe, capture
    Mesen2 headless at the same frame (`--testRunner` + Lua `print()` hex
-   dump; flags above), then diff programmatically with a ±1-row shift
-   search. Never approve by eye. Where the upstream project ships reference
+   dump; flags above), then diff with `python -m scripts.diff_screenshots
+   <neser> <mesen> --shift-search 1`. Never approve by eye. Where the upstream project ships reference
    screenshots (e.g. PeterLemon), diff those too.
+2b. **Verify the golden's power by mutation before committing it** (from #3083).
+   A golden that matches is only worth having if it would stop matching. Break
+   the behaviour it is supposed to pin and watch it fail; if it doesn't, you have
+   recorded a screenshot, not an oracle. State in the comment what the mutation
+   showed, because it is also the honest boundary of what the vector covers.
+   For the undisbeliever HDMA goldens: making `hdma_transfer_due` skip scanline 0
+   (a one-line banding phase shift) breaks all three, while moving
+   `HDMA_TRANSFER_POSITION` from dot 276 to 277 breaks none — the write still
+   lands in hblank ahead of the next line's dot-22 INIDISP latch. So they are a
+   frame-phase oracle and not a within-line clock oracle, and nobody should later
+   read a green run as evidence about sub-line timing.
 3. **Only exact matches become goldens.** Divergent ROMs stay vendored but
    un-automated, with one bug issue per distinct root cause carrying the
    pixel-diff evidence (policy in docs/SNES_TEST_ASSET_POLICY.md).
@@ -730,6 +766,38 @@ Two things make this stronger than a cross-emulator diff:
 
 Prefer relations over absolute expectations whenever a ROM renders the same content twice
 under different register settings -- design NESER-authored ROMs to make that possible.
+
+### Re-measure any issue that cites a number before planning a fix (from #3083)
+
+A pixel-diff percentage in an issue body is a measurement with a timestamp, not a
+property of the code. #3083 reported "~55-60% per-pixel difference" across 13 ROMs
+and asked for a frame-phase investigation; re-measured, every one of them was a
+0-pixel match. The issue was filed 2026-08-01 and 0df212be (`$43xA` HDMA line
+counter, #3062) merged two days later. The whole planned investigation was for a
+bug that no longer existed.
+
+Two checks, both cheap, before designing anything:
+
+```bash
+gh issue view <n> --json createdAt
+git log --oneline --since=<that date> -- src/snes    # what landed after it was filed
+```
+
+and read the close dates of every issue in the body's own "Related:" list — #3083
+named five, four of which had closed *after* it was written. A related issue closing
+later is the strongest single hint that the premise has moved.
+
+Stale premises are not limited to the headline number. #3083 also stated the affected
+ROMs "have no committed screen-CRC goldens yet"; 10 of the 13 had been automated in
+#2981. Verify each factual claim in the body against the tree, not just the one the
+title is about.
+
+When the answer is "already fixed", say so with the measurement table and close it —
+and be careful not to let a well-argued hypothesis survive its own disproof. #3083's
+leading suspect (HDMA-during-GPDMA never being armed, `dma_tick` in `system_bus.rs`)
+is a real unmodelled gap and was verified in source, but it was not what those ROMs
+were showing. It went to its own issue (#3139) instead of justifying a speculative
+restructure.
 
 ### Measure the pre-change baseline BEFORE touching golden-shifting code (from #3021)
 
