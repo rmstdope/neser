@@ -84,7 +84,7 @@ impl RomBrowserApp {
                 ui.painter().rect_stroke(
                     bar_rect,
                     egui::CornerRadius::same(8),
-                    egui::Stroke::new(1.5, accent),
+                    egui::Stroke::new(1.5_f32, accent),
                     egui::StrokeKind::Outside,
                 );
                 let text_pos = bar_rect.min + egui::vec2(14.0, 12.0);
@@ -129,12 +129,16 @@ impl RomBrowserApp {
                             );
 
                             let (bg, fg, stroke) = if is_selected {
-                                (accent, egui::Color32::WHITE, egui::Stroke::new(2.0, accent))
+                                (
+                                    accent,
+                                    egui::Color32::WHITE,
+                                    egui::Stroke::new(2.0_f32, accent),
+                                )
                             } else {
                                 (
                                     egui::Color32::from_rgb(44, 44, 58),
                                     egui::Color32::from_rgb(200, 200, 215),
-                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 75)),
+                                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(60, 60, 75)),
                                 )
                             };
 

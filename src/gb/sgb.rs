@@ -49,11 +49,9 @@ impl SgbState {
         match select {
             0x00 => self.reset_packet_decoder(),
             0x10 | 0x20 => self.receive_pulse(select == 0x10),
-            0x30 => {
-                if self.stop_pulse_seen {
-                    self.execute_command();
-                    self.reset_packet_decoder();
-                }
+            0x30 if self.stop_pulse_seen => {
+                self.execute_command();
+                self.reset_packet_decoder();
             }
             _ => {}
         }

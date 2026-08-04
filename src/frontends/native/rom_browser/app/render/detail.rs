@@ -231,7 +231,10 @@ impl RomBrowserApp {
                                                     egui::CornerRadius::same(
                                                         theme::CORNER_RADIUS as u8,
                                                     ),
-                                                    egui::Stroke::new(2.5, theme::SELECTION_COLOR),
+                                                    egui::Stroke::new(
+                                                        2.5_f32,
+                                                        theme::SELECTION_COLOR,
+                                                    ),
                                                     egui::StrokeKind::Outside,
                                                 );
                                                 ui.scroll_to_rect(rect, Some(egui::Align::Center));

@@ -535,14 +535,12 @@ impl Mapper for SuperMagicCardMapper {
                     self.wram[index] = value;
                 }
             }
-            0x8000..=0xFFFF => {
-                // $8000-$FFFF writes are register writes only when write-protection is active.
-                // Both the 2M shadow slot and the latch are updated together on each write.
-                if self.latch_enabled {
-                    let slot = prg_slot_from_addr(addr);
-                    self.prg_2m_slots[slot] = (value >> 2) & 0x3F;
-                    self.latch_value = value;
-                }
+            // $8000-$FFFF writes are register writes only when write-protection is active.
+            // Both the 2M shadow slot and the latch are updated together on each write.
+            0x8000..=0xFFFF if self.latch_enabled => {
+                let slot = prg_slot_from_addr(addr);
+                self.prg_2m_slots[slot] = (value >> 2) & 0x3F;
+                self.latch_value = value;
             }
             _ => {}
         }

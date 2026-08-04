@@ -481,10 +481,7 @@ impl DmaController {
     pub fn run_pending<B: DmaBus>(&mut self, bus: &mut B) {
         // Loop because higher-priority channels may preempt during a
         // burst. We re-check after every unit.
-        loop {
-            let Some(idx) = self.highest_immediate_ready() else {
-                break;
-            };
+        while let Some(idx) = self.highest_immediate_ready() {
             self.run_one_unit(idx, bus);
         }
     }

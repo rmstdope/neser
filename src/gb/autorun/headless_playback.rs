@@ -65,12 +65,11 @@ pub fn run_headless_playback(
 ) -> Result<HeadlessPlaybackResult, String> {
     let (start_frame, first_checkpoint_idx) = apply_start_checkpoint(gb, file, start_checkpoint)?;
 
-    let mut frame_idx = start_frame;
     let mut cp_idx = first_checkpoint_idx;
     let mut crc_mismatches = 0usize;
     let mut total_verified = 0usize;
 
-    for frame in file.frames.iter().skip(start_frame) {
+    for (frame_idx, frame) in (start_frame..).zip(file.frames.iter().skip(start_frame)) {
         // Apply controller input (GB has one player; use player1 bits)
         gb.cpu.bus.joypad.set_states(frame.player1);
 
@@ -89,8 +88,6 @@ pub fn run_headless_playback(
             total_verified += 1;
             cp_idx += 1;
         }
-
-        frame_idx += 1;
     }
 
     Ok(HeadlessPlaybackResult {
@@ -123,12 +120,11 @@ where
 {
     let (start_frame, first_checkpoint_idx) = apply_start_checkpoint(gb, file, start_checkpoint)?;
 
-    let mut frame_idx = start_frame;
     let mut cp_idx = first_checkpoint_idx;
     let mut updated = 0usize;
     let total_to_update = file.checkpoints.len().saturating_sub(first_checkpoint_idx);
 
-    for frame in file.frames.iter().skip(start_frame) {
+    for (frame_idx, frame) in (start_frame..).zip(file.frames.iter().skip(start_frame)) {
         gb.cpu.bus.joypad.set_states(frame.player1);
 
         run_one_frame(gb);
@@ -142,8 +138,6 @@ where
             on_progress(updated, total_to_update);
             cp_idx += 1;
         }
-
-        frame_idx += 1;
     }
 
     Ok(updated)
