@@ -213,10 +213,11 @@ Test suites:
   and the 239-line overscan (Y) toggle -- carry Mesen2-approved goldens and
   are un-ignored (#3092), now that the capture-geometry mismatch they were
   parked on is gone (#3001/#3034). The overscan combo's golden CRC is
-  byte-identical to colorbars' -- #3001's 224-row capture crop discards
-  exactly the rows overscan adds, so a vertically-uniform pattern like
-  hdrvtest's colorbars can't show the difference, and neither can a
-  matching Mesen2 capture (Mesen2 hits the same crop). The test therefore
+  byte-identical to colorbars' -- #3001's crop keeps a fixed 224-row
+  window but shifts its starting row by 7 when overscan is on, and a
+  vertically-uniform pattern like hdrvtest's colorbars can't show that
+  shift, so neither can a matching Mesen2 capture (Mesen2 hits the same
+  crop). The test therefore
   also asserts `RunResult::overscan_239_enabled` directly, reading the PPU's
   SETINI bit at the sample frame instead of relying on the CRC (#3096).
 - `neser_opt_tests.rs` -- NESER-authored offset-per-tile ROMs for BG modes
