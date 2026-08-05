@@ -91,40 +91,14 @@ impl Ppu {
         }
         // Super Scope: latch the aimed coordinates once the beam reaches them.
         self.process_location_latch_request();
-        // The IRQ counter circuit runs at master-clock/4 with the signal
+        // The interrupt counter circuit runs at master-clock/4 with the signal
         // inverted, ticking at intra-line clocks 2, 6, 10, ... (Mesen2
         // `InternalRegisters::ProcessIrqCounters`). Every scanline length
         // (1360/1364/1368) is divisible by 4, so the cadence holds across line
-        // and frame wraps without special-casing.
+        // and frame wraps without special-casing. Both the H/V-IRQ and the
+        // VBlank NMI events are generated there (#3144, #3145).
         if self.line_clock & 3 == 2 {
             self.process_irq_counters();
-        }
-        self.evaluate_nmi_flag_events();
-    }
-
-    /// Sub-scanline RDNMI/NMI events (anomie timing.txt INTERRUPTS; Mesen2
-    /// `InternalRegisters::ProcessIrqCounters`):
-    /// - The RDNMI vblank flag rises at intra-line clock 2 (anomie: "the
-    ///   internal timer will set its NMI output low at H=0.5") of the first
-    ///   vblank scanline, and falls at clock 2 of scanline 0.
-    /// - The CPU NMI line is raised 4 clocks later, at clock 6; a $4210 read
-    ///   in the clock 2-5 hold window returns the flag set without
-    ///   acknowledging it (see `read_register`), which is what lets a tight
-    ///   RDNMI poll loop observe the same vblank twice.
-    fn evaluate_nmi_flag_events(&mut self) {
-        match self.line_clock {
-            2 => {
-                if self.position.scanline == self.vblank_start_line() {
-                    self.nmi_flag = true;
-                } else if self.position.scanline == 0 {
-                    self.nmi_flag = false;
-                    self.update_nmi_line();
-                }
-            }
-            6 if self.position.scanline == self.vblank_start_line() => {
-                self.update_nmi_line();
-            }
-            _ => {}
         }
     }
 
@@ -214,7 +188,7 @@ impl Ppu {
         match scanline {
             _ if scanline == vblank_start_line => {
                 // Begin VBlank: a full visible frame has been produced. The RDNMI flag and CPU
-                // NMI line rise a few clocks into the line (see `evaluate_nmi_flag_events`).
+                // NMI line rise a few clocks into the line (see `Ppu::process_irq_counters`).
                 self.vblank_active = true;
                 self.pending_completed_frames = self.pending_completed_frames.saturating_add(1);
                 trace_ppu!(1; "vblank enter y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X}",
@@ -228,7 +202,7 @@ impl Ppu {
             }
             0 => {
                 // End of VBlank / top of a new frame. The RDNMI flag falls at intra-line
-                // clock 2 (see `evaluate_nmi_flag_events`).
+                // clock 2 (see `Ppu::process_irq_counters`).
                 self.vblank_active = false;
                 // Raise the once-per-frame edge the bus uses to re-arm the Super Scope
                 // aim latch before the beam sweeps the visible area.
@@ -1501,6 +1475,82 @@ mod tests {
         assert!(ppu.nmi_flag, "flag still set at hclock 0-1 of scanline 0");
         tick_cycles(&mut ppu, 2);
         assert!(!ppu.nmi_flag, "flag cleared at hclock 2 of scanline 0");
+    }
+
+    /// Pins the whole `$4210` read-hold rule against Mesen2's own formulation
+    /// (`InternalRegisters.cpp` `Read` $4210): *clear iff `_nmiFlag &&
+    /// (hClock >= 6 || scanline != nmiScanline)`*. NESER expresses it the other
+    /// way round -- hold iff `scanline == vblank_start_line() &&
+    /// (2..6).contains(&line_clock)` -- and the two differ only at clocks 0-1 of
+    /// the NMI scanline, where the flag has not risen yet so there is nothing to
+    /// acknowledge under either rule. Walking every clock of the window turns
+    /// that argument into checked facts rather than a claim in a comment: the
+    /// clock 0-1 assertions pin its *premise* (neither rule is observable there,
+    /// so they cannot be told apart), and the rest pin the behaviour the two
+    /// rules agree on (#3145).
+    #[test]
+    fn rdnmi_hold_window_matches_mesen2s_hclock_rule() {
+        let mut ppu = Ppu::new();
+        tick_to_vblank(&mut ppu); // scanline 225, intra-line clock 0
+
+        // Clocks 0-1: the flag rises at clock 2, so NESER's extra lower bound on
+        // the window is unobservable -- both rules read back an empty bit 7.
+        // This pins the premise, not a difference: widening the window to
+        // (0..6) would leave these two assertions green, which is the point.
+        for clock in 0..2 {
+            assert_eq!(
+                ppu.read_register(0x4210) & 0x80,
+                0,
+                "clock {clock} of the NMI scanline is before the flag rises"
+            );
+            tick_cycles(&mut ppu, 1);
+        }
+
+        // Clocks 2-5: the flag is up and the CPU forces it to stay up, so no
+        // read acknowledges (Mesen2's `hClock >= 6` guard).
+        for clock in 2..6 {
+            assert_ne!(
+                ppu.read_register(0x4210) & 0x80,
+                0,
+                "the flag is set at clock {clock}"
+            );
+            assert_ne!(
+                ppu.read_register(0x4210) & 0x80,
+                0,
+                "the read at clock {clock} must not acknowledge"
+            );
+            tick_cycles(&mut ppu, 1);
+        }
+
+        // Clock 6: the CPU NMI line is raised and reads acknowledge again.
+        assert_ne!(
+            ppu.read_register(0x4210) & 0x80,
+            0,
+            "the flag is still set at clock 6"
+        );
+        assert_eq!(
+            ppu.read_register(0x4210) & 0x80,
+            0,
+            "the read at clock 6 acknowledges"
+        );
+
+        // Off the NMI scanline the window does not apply at any clock: the same
+        // clock 3 that held one line earlier acknowledges here.
+        let mut ppu = Ppu::new();
+        tick_to_vblank(&mut ppu);
+        tick_scanlines(&mut ppu, 1);
+        tick_cycles(&mut ppu, 3); // scanline 226, intra-line clock 3
+
+        assert_ne!(
+            ppu.read_register(0x4210) & 0x80,
+            0,
+            "the flag stays set past the NMI scanline"
+        );
+        assert_eq!(
+            ppu.read_register(0x4210) & 0x80,
+            0,
+            "a clock-3 read off the NMI scanline acknowledges"
+        );
     }
 
     #[test]

@@ -1,45 +1,91 @@
-//! H/V-IRQ counter circuit (issue #3144, parent #3093).
+//! The S-CPU interrupt counter circuit (issues #3144 and #3145, parent #3093).
 //!
-//! A line-for-line port of Mesen2's schematic-derived IRQ circuit
+//! A line-for-line port of Mesen2's schematic-derived circuit
 //! (`Core/SNES/InternalRegisters.h:81-162` for `UpdateIrqLevel` /
 //! `ProcessIrqCounters`, `InternalRegisters.cpp:180-187` for `SetIrqFlag`;
-//! schematics: <https://github.com/rgalland/SNES_S-CPU_Schematics/>). The circuit runs at
+//! schematics: <https://github.com/rgalland/SNES_S-CPU_Schematics/>). It runs at
 //! master-clock/4 with the signal inverted, i.e. it ticks at intra-line clocks
-//! 2, 6, 10, ... It keeps its own H/V counters (distinct from the render
-//! counters): H resets at clocks 6 and 10 and then counts 4-clock ticks, V
-//! increments at clock 6 of every scanline but 0 and resets at clock 2 of
-//! scanline 0. A continuous compare *level* is derived from them, and the
-//! rising edge of that level arms a countdown (`need_irq`) that first sets the
-//! TIMEUP flag and one tick later raises the CPU-facing IRQ line.
+//! 2, 6, 10, ... and drives *both* CPU interrupt signals, exactly as the
+//! hardware does -- the H/V-IRQ (#3144) and, since #3145, the VBlank NMI. One
+//! circuit, one derivation of the line clocks: the NMI half used to re-derive
+//! clocks 2 and 6 for itself in the old `Ppu::evaluate_nmi_flag_events`
+//! (removed by #3145).
 //!
-//! This replaces the bsnes-style single-instant point compare (the old
+//! The circuit keeps its own H/V counters (distinct from the render counters):
+//! H resets at clocks 6 and 10 and then counts 4-clock ticks, V increments at
+//! clock 6 of every scanline but 0 and resets at clock 2 of scanline 0. A
+//! continuous compare *level* is derived from them, and the rising edge of that
+//! level arms a countdown (`need_irq`) that first sets the TIMEUP flag and one
+//! tick later raises the CPU-facing IRQ line.
+//!
+//! The IRQ half replaces the bsnes-style single-instant point compare (the old
 //! `evaluate_hv_irq`): the level+edge model is what byuu's `test_irq.asm` /
 //! `test_irq4200.asm` ROMs measure -- $4211 reads within 4 clocks of the flag
 //! rising do not acknowledge, register writes re-evaluate the level, and
 //! enabling a mode whose compare already holds fires an IRQ.
 //!
-//! The tests below pin those semantics; the clock numbers cited in each test
+//! The tests below pin the IRQ semantics; the clock numbers cited in each test
 //! are derived from Mesen2's model and byuu's `test_irq.asm` header (vendored
-//! under `roms/snes/automated_tests/snes_test_roms/`).
+//! under `roms/snes/automated_tests/snes_test_roms/`). The NMI clock events are
+//! pinned by the sub-scanline group in `ppu/timing.rs`'s tests.
 
 use super::Ppu;
 use crate::trace_ppu;
 
 impl Ppu {
-    /// One 4-clock tick of the IRQ counter circuit, called from
+    /// One 4-clock tick of the interrupt counter circuit, called from
     /// `Ppu::tick_one_clock` whenever `line_clock & 3 == 2` (Mesen2
-    /// `InternalRegisters::ProcessIrqCounters`, minus the NMI-flag half, which
-    /// `evaluate_nmi_flag_events` still owns until #3145 unifies it here).
+    /// `InternalRegisters::ProcessIrqCounters`).
     ///
     /// Order matters and matches Mesen2: the `need_irq` countdown resolves
-    /// first (against the *previous* tick's level edge), then the counters
-    /// advance, then the level is re-derived. DRAM-refresh stolen clocks tick
-    /// through here like any others, matching Mesen2's `IncMasterClock40`.
+    /// first (against the *previous* tick's level edge), then the counters and
+    /// the NMI events, then the IRQ level is re-derived. DRAM-refresh stolen
+    /// clocks tick through here like any others, matching Mesen2's
+    /// `IncMasterClock40`.
     ///
     /// The "IRQs can't trigger on V=261/H=339" hardware note is emergent, not
     /// coded: the V counter resets to 0 at clock 2 of scanline 0, the same
     /// tick the H counter reaches 339, so that HV conjunction is never
     /// observable.
+    ///
+    /// # The NMI half (#3145)
+    ///
+    /// The RDNMI ($4210) vblank flag rises at clock 2 of the first vblank
+    /// scanline (anomie timing.txt INTERRUPTS: "the internal timer will set its
+    /// NMI output low at H=0.5") and falls at clock 2 of scanline 0. The
+    /// CPU-facing NMI line follows 4 clocks later, at clock 6. That gap is the
+    /// $4210 read-hold window: a read landing in it returns the flag set
+    /// without acknowledging it (see `Ppu::read_register`), which is what lets
+    /// a tight RDNMI poll loop observe the same vblank twice.
+    ///
+    /// Two structural differences from Mesen2 remain. Both are pre-existing
+    /// NESER behaviour that the merge carried over unchanged, not anything it
+    /// introduced, and no ROM or measurement currently distinguishes either --
+    /// left alone deliberately, not overlooked.
+    ///
+    /// - **Where the edge is latched.** Mesen2 arms the CPU line here at clock
+    ///   6 with an unconditional `SetNmiFlag(1)`; NESER goes through
+    ///   [`Ppu::update_nmi_line`], which latches an edge only when the level
+    ///   `nmi_enable && nmi_flag` is *rising*. That level rises at clock 2,
+    ///   with the flag -- but nothing *samples* it there, since the clock-2 arm
+    ///   does not call `update_nmi_line`. In the common case clock 6 is the
+    ///   first sample and finds the rise, so the two agree; any non-disabling
+    ///   `$4200` write landing in clocks 2-5 samples it earlier, and clock 6
+    ///   then sees a level that is no longer rising and does nothing. An
+    ///   enabling write keeps its 2-cycle recognition arm (#3081)
+    ///   where Mesen2 re-arms to 1 at clock 6; a rewrite with NMI already
+    ///   enabled latches at the write where Mesen2 latches at clock 6 (see
+    ///   `a_nmitimen_rewrite_discovering_the_vblank_rise_arms_one_cycle`).
+    /// - **How the NMI scanline is derived.** Mesen2 compares against
+    ///   `_nmiScanline`, latched once per frame (`SnesPpu::UpdateNmiScanline`,
+    ///   called from `ProcessEndOfScanline` at scanline 0); NESER derives it
+    ///   live from [`Ppu::vblank_start_line`], which reads SETINI ($2133 bit 2)
+    ///   as it currently stands. So *any* overscan toggle after a frame's
+    ///   scanline-0 boundary moves NESER's NMI scanline for that frame and not
+    ///   Mesen2's. Because `Ppu::read_register`'s $4210 hold window is derived
+    ///   the same way, a toggle between clocks 2 and 6 also takes that window
+    ///   away mid-line, letting a read clear `nmi_flag` before the CPU line
+    ///   would have been raised.
     pub(super) fn process_irq_counters(&mut self) {
         if self.need_irq > 0 {
             self.need_irq -= 1;
@@ -55,7 +101,14 @@ impl Ppu {
         match self.line_clock {
             2 => {
                 self.hv_h_counter += 1;
-                if self.position.scanline == 0 {
+                // Fused exactly as Mesen2 fuses them. The `else if` can only
+                // shadow the V-counter reset if the vblank line were 0, and
+                // `vblank_start_line()` is 225 or 240.
+                if self.position.scanline == self.vblank_start_line() {
+                    self.nmi_flag = true;
+                } else if self.position.scanline == 0 {
+                    self.nmi_flag = false;
+                    self.update_nmi_line();
                     self.hv_v_counter = 0;
                 }
             }
@@ -63,6 +116,9 @@ impl Ppu {
                 self.hv_h_counter = 0;
                 if self.position.scanline > 0 {
                     self.hv_v_counter += 1;
+                }
+                if self.position.scanline == self.vblank_start_line() {
+                    self.update_nmi_line();
                 }
             }
             10 => self.hv_h_counter = 0,
