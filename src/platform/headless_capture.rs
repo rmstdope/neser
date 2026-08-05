@@ -469,9 +469,14 @@ mod tests {
             "RGB buffer should match the header dimensions"
         );
 
-        let colours: std::collections::HashSet<&[u8]> = rgb.chunks_exact(3).collect();
+        // A linear scan rather than collecting every pixel into a set: this
+        // only needs "is any pixel different from the first", which
+        // short-circuits on the second pixel for a rendered frame instead of
+        // hashing ~60k entries per test.
+        let mut pixels = rgb.chunks_exact(3);
+        let first = pixels.next().expect("capture should not be empty");
         assert!(
-            colours.len() > 1,
+            pixels.any(|pixel| pixel != first),
             "{rom} captured a single flat colour, so nothing was rendered"
         );
 

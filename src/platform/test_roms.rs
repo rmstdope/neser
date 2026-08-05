@@ -67,7 +67,9 @@ pub fn minimal_snes_rom() -> Vec<u8> {
     rom[header..header + title.len()].copy_from_slice(title);
     rom[header + 0x15] = 0x20; // LoROM, slow
     rom[header + 0x16] = 0x00; // ROM only
-    rom[header + 0x17] = 0x07; // 128 KB
+    // Size is encoded as (1 SHL n) KB (fullsnes, "Cartridge Header"), so a
+    // 64 KB image is n=6. Rounding up applies only to non-power-of-two carts.
+    rom[header + 0x17] = 0x06; // 1 << 6 = 64 KB, matching the buffer above
     rom[header + 0x18] = 0x00; // no SRAM
     rom[header + 0x1C] = 0x34; // checksum complement
     rom[header + 0x1D] = 0x12;
