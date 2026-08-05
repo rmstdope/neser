@@ -7,6 +7,7 @@ pub mod debugging;
 pub mod emulator;
 pub mod frame_benchmark;
 pub mod frontend_toasts;
+pub mod headless_capture;
 pub mod image_cache;
 pub mod metadata;
 pub mod png_utils;
