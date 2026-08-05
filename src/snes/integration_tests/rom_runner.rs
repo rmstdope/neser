@@ -533,7 +533,9 @@ fn finish_result(
         result_bytes: read_result_block(snes),
         screen_dimensions: (snes.screen_width(), snes.screen_height()),
         screen_crc32,
-        overscan_239_enabled: snes.overscan_239_enabled_for_tests().unwrap_or(false),
+        overscan_239_enabled: snes
+            .overscan_239_enabled_for_tests()
+            .expect("finish_result is only called after a ROM has been loaded"),
         screen_rgb,
         capture_path,
     }
