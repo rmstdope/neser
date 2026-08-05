@@ -279,6 +279,21 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
         help: Some("Include unofficial ROMs (hacks, homebrew, etc.) in the browser catalog"),
         has_value: false,
     },
+    CliFlag {
+        flag: "--headless",
+        help: Some("Run the ROM without a window and write one frame to a PNG (requires --output)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--frames",
+        help: Some("Frames to run before capturing with --headless (default: 60)"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--output",
+        help: Some("Destination PNG path for --headless capture"),
+        has_value: true,
+    },
 ];
 
 // ============================================================================

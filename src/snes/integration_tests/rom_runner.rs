@@ -564,7 +564,8 @@ fn maybe_write_capture_png(
         rgb,
         snes.screen_width(),
         snes.screen_height(),
-    );
+    )
+    .expect("capture PNG should be written");
     Some(path)
 }
 

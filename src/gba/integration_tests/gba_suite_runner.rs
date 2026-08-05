@@ -310,7 +310,8 @@ fn maybe_write_capture_png(gba: &Gba, suite: Suite, framebuffer_crc32: u32) {
 
     let path = capture_output_path(suite, framebuffer_crc32);
     let rgb = gba.screen_snapshot();
-    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT)
+        .expect("capture PNG should be written");
     println!(
         "[gba-suite-capture] saved {} (crc=0x{:08X})",
         path.display(),
@@ -1278,7 +1279,8 @@ fn maybe_write_mgba_png(gba: &Gba, suite_index: usize, crc: u32) {
     let file_name = format!("{key}_crc_{crc:08X}.png");
     let path = PathBuf::from("target/gba_suite_checkpoints").join(file_name);
     let rgb = gba.screen_snapshot();
-    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT)
+        .expect("capture PNG should be written");
     println!(
         "[mgba-suite-capture] saved {} (suite={key}, crc=0x{crc:08X})",
         path.display()
@@ -1489,7 +1491,8 @@ fn maybe_write_video_png(gba: &Gba, test_index: usize, view: &str, crc: u32) {
     let file_name = format!("video_{name}_{view}_crc_{crc:08X}.png");
     let path = PathBuf::from("target/gba_suite_checkpoints").join(file_name);
     let rgb = gba.screen_snapshot();
-    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT)
+        .expect("capture PNG should be written");
     println!(
         "[video-capture] saved {} (test={}, view={view}, crc=0x{crc:08X})",
         path.display(),
@@ -1505,7 +1508,8 @@ fn maybe_write_armwrestler_png(gba: &Gba, page_index: usize, crc: u32) {
     let file_name = format!("armwrestler_page{page_index}_crc_{crc:08X}.png");
     let path = PathBuf::from("target/gba_suite_checkpoints").join(file_name);
     let rgb = gba.screen_snapshot();
-    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT);
+    crate::platform::png_utils::write_rgb_png(&path, &rgb, Gba::SCREEN_WIDTH, Gba::SCREEN_HEIGHT)
+        .expect("capture PNG should be written");
     println!(
         "[armwrestler-capture] saved {} (page={page_index}, crc=0x{crc:08X})",
         path.display()

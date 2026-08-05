@@ -16,7 +16,6 @@ use nes::console::{
 use platform::app_context::AppContext;
 use platform::autorun::AutorunFormat;
 use platform::debugging::log_info;
-use platform::frontend_toasts::cartridge_load_toast_message;
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
@@ -239,18 +238,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracing_config = app_context.borrow().config().frontend.tracing;
     platform::debugging::init_tracing(tracing_config);
 
+    // Handle --headless: capture a frame to PNG and exit.
+    //
+    // Deliberately above both `native` cfg blocks below, not inside them.
+    // Capturing needs no window, so a build with `frontend` but without
+    // `native` (so without winit/glutin/egui/cpal) still captures, while the
+    // same binary run without --headless exits with "No frontend feature
+    // enabled". Moving this into the native cfg would silently remove that.
+    if platform::headless_capture::run_if_requested(&app_context)? {
+        return Ok(());
+    }
+
+    // Exactly one of these is compiled, and each is the function's tail.
+    // Hoisting `Ok(())` out to a shared trailing expression would make it
+    // unreachable in the non-native build, where `exit` diverges.
     #[cfg(feature = "native")]
     {
         run_native_frontend(app_context)?;
+        Ok(())
     }
 
     #[cfg(not(feature = "native"))]
     {
         eprintln!("No frontend feature enabled. Enable the 'native' feature.");
-        std::process::exit(1);
+        std::process::exit(1)
     }
-
-    Ok(())
 }
 
 #[cfg(feature = "native")]
@@ -340,94 +352,7 @@ fn run_native_emulator(
         Some(audio)
     };
 
-    let rom_bytes = match fs::read(rom_path) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            app_context
-                .borrow_mut()
-                .add_toast(cartridge_load_toast_message(rom_path, false));
-            return Err(err.into());
-        }
-    };
-
-    let console = match detect_system_type(rom_path) {
-        platform::emulator::SystemType::Nes => {
-            let rom_db = nes::cartridge::load_rom_db();
-            let cart = match nes::cartridge::Cartridge::load_from_file(
-                &rom_bytes,
-                rom_path,
-                Some(&rom_db),
-            ) {
-                Ok(cartridge) => {
-                    app_context
-                        .borrow_mut()
-                        .add_toast(cartridge_load_toast_message(rom_path, true));
-                    cartridge
-                }
-                Err(err) => {
-                    app_context
-                        .borrow_mut()
-                        .add_toast(cartridge_load_toast_message(rom_path, false));
-                    return Err(err.into());
-                }
-            };
-
-            let rom_timing_mode = cart.rom_timing_mode();
-            app_context
-                .borrow_mut()
-                .config_mut()
-                .apply_rom_timing_mode(rom_timing_mode);
-
-            let mut console = platform::emulator::Console::new_nes(app_context.clone());
-            {
-                let platform::emulator::Console::Nes(nes) = &mut console else {
-                    panic!("expected NES console")
-                };
-                nes.insert_cartridge(cart);
-            }
-            console
-        }
-        platform::emulator::SystemType::GameBoy => {
-            let mut console = platform::emulator::Console::new_gameboy(app_context.clone());
-            if let Err(err) = console.load_rom(&rom_bytes, rom_path) {
-                app_context
-                    .borrow_mut()
-                    .add_toast(cartridge_load_toast_message(rom_path, false));
-                return Err(err.into());
-            }
-            app_context
-                .borrow_mut()
-                .add_toast(cartridge_load_toast_message(rom_path, true));
-            console
-        }
-        platform::emulator::SystemType::Gba => {
-            let mut console = platform::emulator::Console::new_gba(app_context.clone());
-            if let Err(err) = console.load_rom(&rom_bytes, rom_path) {
-                app_context
-                    .borrow_mut()
-                    .add_toast(cartridge_load_toast_message(rom_path, false));
-                return Err(err.into());
-            }
-            app_context
-                .borrow_mut()
-                .add_toast(cartridge_load_toast_message(rom_path, true));
-            console
-        }
-        platform::emulator::SystemType::Snes => {
-            let mut console = platform::emulator::Console::new_snes(app_context.clone());
-            if let Err(err) = console.load_rom(&rom_bytes, rom_path) {
-                app_context
-                    .borrow_mut()
-                    .add_toast(cartridge_load_toast_message(rom_path, false));
-                return Err(err.into());
-            }
-            app_context
-                .borrow_mut()
-                .add_toast(cartridge_load_toast_message(rom_path, true));
-            console
-        }
-    };
-    let mut console = console;
+    let mut console = platform::rom_loader::load_console(&app_context, rom_path)?;
 
     if let Some(actual_rate) = audio_sample_rate {
         console.set_audio_sample_rate(actual_rate);
@@ -469,94 +394,11 @@ fn run_native_emulator(
     run_result.map_err(|e| e.into())
 }
 
-/// Detect the emulated system type from the file extension of a ROM path.
-///
-/// Returns [`platform::emulator::SystemType::GameBoy`] for `.gb` files
-/// (case-insensitive) and [`platform::emulator::SystemType::Nes`] for all
-/// other extensions (including `.nes` and unknown types).
-fn detect_system_type(path: &str) -> platform::emulator::SystemType {
-    use std::path::Path;
-    let ext = Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-    if ext.eq_ignore_ascii_case("gb") || ext.eq_ignore_ascii_case("gbc") {
-        platform::emulator::SystemType::GameBoy
-    } else if ext.eq_ignore_ascii_case("gba") {
-        platform::emulator::SystemType::Gba
-    } else if ext.eq_ignore_ascii_case("sfc") || ext.eq_ignore_ascii_case("smc") {
-        platform::emulator::SystemType::Snes
-    } else {
-        platform::emulator::SystemType::Nes
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::platform::autorun::AUTORUN_VERSION;
-    use crate::platform::emulator::SystemType;
     use tempfile::TempDir;
-
-    #[test]
-    fn detect_system_type_gb_extension_returns_gameboy() {
-        assert_eq!(detect_system_type("tetris.gb"), SystemType::GameBoy);
-    }
-
-    #[test]
-    fn detect_system_type_gbc_extension_returns_gameboy() {
-        assert_eq!(detect_system_type("game.gbc"), SystemType::GameBoy);
-    }
-
-    #[test]
-    fn detect_system_type_uppercase_gbc_returns_gameboy() {
-        assert_eq!(detect_system_type("GAME.GBC"), SystemType::GameBoy);
-    }
-
-    #[test]
-    fn detect_system_type_nes_extension_returns_nes() {
-        assert_eq!(detect_system_type("cpu.nes"), SystemType::Nes);
-    }
-
-    #[test]
-    fn detect_system_type_uppercase_gb_returns_gameboy() {
-        assert_eq!(detect_system_type("TETRIS.GB"), SystemType::GameBoy);
-    }
-
-    #[test]
-    fn detect_system_type_gba_extension_returns_gba() {
-        assert_eq!(detect_system_type("zelda.gba"), SystemType::Gba);
-    }
-
-    #[test]
-    fn detect_system_type_sfc_extension_returns_snes() {
-        assert_eq!(detect_system_type("game.sfc"), SystemType::Snes);
-    }
-
-    #[test]
-    fn detect_system_type_smc_extension_returns_snes() {
-        assert_eq!(detect_system_type("game.smc"), SystemType::Snes);
-    }
-
-    #[test]
-    fn detect_system_type_uppercase_sfc_returns_snes() {
-        assert_eq!(detect_system_type("GAME.SFC"), SystemType::Snes);
-    }
-
-    #[test]
-    fn detect_system_type_uppercase_smc_returns_snes() {
-        assert_eq!(detect_system_type("GAME.SMC"), SystemType::Snes);
-    }
-
-    #[test]
-    fn detect_system_type_unknown_extension_falls_back_to_nes() {
-        assert_eq!(detect_system_type("rom.unknown"), SystemType::Nes);
-    }
-
-    #[test]
-    fn detect_system_type_no_extension_falls_back_to_nes() {
-        assert_eq!(detect_system_type("noext"), SystemType::Nes);
-    }
 
     #[test]
     fn test_convert_autorun_for_rom_fails_when_autorun_file_missing() {
