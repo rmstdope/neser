@@ -25,10 +25,6 @@ fn default_dma_channel_bools() -> Vec<bool> {
     vec![false; 8]
 }
 
-fn default_last_hperiod() -> u16 {
-    1364
-}
-
 fn default_dram_refresh_position() -> u16 {
     538
 }
@@ -303,8 +299,6 @@ pub struct SnesPpuState {
     pub master_cycle_accumulator: u32,
     #[serde(default)]
     pub line_clock: u16,
-    #[serde(default = "default_last_hperiod")]
-    pub last_hperiod: u16,
     #[serde(default)]
     pub total_master_clocks: u64,
     #[serde(default = "default_dram_refresh_position")]
@@ -389,8 +383,17 @@ pub struct SnesPpuState {
     pub timeup_flag: bool,
     #[serde(default)]
     pub irq_line: bool,
+    /// IRQ counter circuit state (#3144). `None` in states written before the
+    /// circuit existed (which also carried a now-ignored `irq_edge_age` key);
+    /// restore derives approximate values from the scan position for those.
     #[serde(default)]
-    pub irq_edge_age: u32,
+    pub hv_h_counter: Option<u16>,
+    #[serde(default)]
+    pub hv_v_counter: Option<u16>,
+    #[serde(default)]
+    pub irq_level: Option<bool>,
+    #[serde(default)]
+    pub need_irq: Option<u8>,
     #[serde(default)]
     pub interlace_field: bool,
     #[serde(default)]

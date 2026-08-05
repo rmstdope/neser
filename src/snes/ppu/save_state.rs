@@ -19,7 +19,6 @@ impl Ppu {
             dot: self.position.dot,
             master_cycle_accumulator: self.master_cycle_accumulator,
             line_clock: self.line_clock,
-            last_hperiod: self.last_hperiod,
             total_master_clocks: self.total_master_clocks,
             dram_refresh_position: self.dram_refresh_position,
             hdma_init_position: self.hdma_init_position,
@@ -57,7 +56,10 @@ impl Ppu {
             vtime: self.vtime,
             timeup_flag: self.timeup_flag,
             irq_line: self.irq_line,
-            irq_edge_age: self.irq_edge_age,
+            hv_h_counter: Some(self.hv_h_counter),
+            hv_v_counter: Some(self.hv_v_counter),
+            irq_level: Some(self.irq_level),
+            need_irq: Some(self.need_irq),
             interlace_field: self.interlace_field,
             frame_has_extra_scanline: self.frame_has_extra_scanline,
             video_region: self.video_region.to_state_byte(),
@@ -117,7 +119,6 @@ impl Ppu {
         };
         self.master_cycle_accumulator = state.master_cycle_accumulator;
         self.line_clock = state.line_clock;
-        self.last_hperiod = state.last_hperiod;
         self.total_master_clocks = state.total_master_clocks;
         self.dram_refresh_position = state.dram_refresh_position;
         self.hdma_init_position = state.hdma_init_position;
@@ -156,7 +157,46 @@ impl Ppu {
         self.vtime = state.vtime & 0x01FF;
         self.timeup_flag = state.timeup_flag;
         self.irq_line = state.irq_line;
-        self.irq_edge_age = state.irq_edge_age;
+        // IRQ counter circuit (#3144): states written before the circuit
+        // existed carry `None` here (their `irq_edge_age` key is ignored).
+        // Re-derive the counters the circuit would hold at the restored scan
+        // position. H is reset on the ticks at clocks 6 and 10 and counts
+        // 4-clock ticks from there; before that it still holds the previous
+        // line's wrap value (338, bumped to 339 by the clock-2 increment) --
+        // exact for the normal 1364-clock line, one off across a short/long
+        // line, the only approximation left. V increments on the clock-6 tick
+        // (resets on the clock-2 tick of scanline 0), so before that tick it
+        // still holds the previous line -- on scanline 0, the previous frame's
+        // last. The level is re-derived from the counters so a legacy state
+        // resumed mid-matching-line doesn't see a spurious rising edge on its
+        // first circuit tick (nor, with HTIME=0, a swallowed clock-6 edge);
+        // the idle countdown means a legacy state captured mid-countdown
+        // loses at most that one in-flight IRQ.
+        let lc = self.line_clock;
+        self.hv_h_counter = state.hv_h_counter.unwrap_or(if lc >= 10 {
+            (lc - 10) / 4
+        } else if lc >= 6 {
+            0
+        } else if lc >= 2 {
+            339
+        } else {
+            338
+        });
+        self.hv_v_counter = state.hv_v_counter.unwrap_or_else(|| {
+            if self.position.scanline == 0 {
+                if lc >= 2 {
+                    0
+                } else {
+                    self.effective_scanlines_per_frame() - 1
+                }
+            } else if lc >= 6 {
+                self.position.scanline
+            } else {
+                self.position.scanline - 1
+            }
+        });
+        self.irq_level = state.irq_level.unwrap_or_else(|| self.compute_irq_level());
+        self.need_irq = state.need_irq.unwrap_or(0);
         self.interlace_field = state.interlace_field;
         self.frame_has_extra_scanline = state.frame_has_extra_scanline;
         self.video_region = SnesVideoRegion::from_state_byte(state.video_region);
@@ -413,6 +453,136 @@ mod tests {
         assert!(
             !restored.use_high_res_output,
             "a legacy state whose registers say native resumes native"
+        );
+    }
+
+    #[test]
+    fn hv_irq_circuit_state_round_trips_mid_countdown() {
+        // Capture between TIMEUP setting (clock 10 of the VTIME line) and the
+        // CPU line rising (clock 14): the restored circuit must finish the
+        // in-flight `need_irq` countdown on schedule.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4209, 0x02); // VTIME = 2, V-only IRQ
+        ppu.write_register(0x420A, 0x00);
+        ppu.write_register(0x4200, 0x20);
+        tick_scanlines(&mut ppu, 2);
+        for _ in 0..11 {
+            ppu.tick();
+        }
+        assert_ne!(ppu.read_register(0x4211) & 0x80, 0, "TIMEUP set at capture");
+        assert!(!ppu.poll_irq_dispatch(), "CPU line not yet up at capture");
+        let state = ppu.capture_state();
+
+        let mut restored = Ppu::new();
+        restored.restore_state(&state).expect("restore");
+        assert!(
+            !restored.poll_irq_dispatch(),
+            "line still down after restore"
+        );
+        for _ in 0..3 {
+            restored.tick();
+        }
+        assert!(
+            restored.poll_irq_dispatch(),
+            "the restored countdown raises the CPU line at clock 14 on schedule"
+        );
+    }
+
+    #[test]
+    fn a_state_written_before_the_irq_circuit_existed_derives_its_counters() {
+        // The circuit fields are `None` in states saved before #3144 added
+        // them. The restore derives the V counter from the scan position and
+        // the level from the derived counters -- so a legacy state resumed
+        // mid-scanline neither re-fires an already-acknowledged IRQ (the
+        // derived level is already high, no rising edge) nor misses the next
+        // line's fresh one.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4209, 0x05); // VTIME = 5, V-only IRQ
+        ppu.write_register(0x420A, 0x00);
+        ppu.write_register(0x4200, 0x20);
+        tick_scanlines(&mut ppu, 5);
+        for _ in 0..200 {
+            ppu.tick();
+        }
+        // Well past the hold window, so this read also acknowledges.
+        assert_ne!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "fired on the VTIME line"
+        );
+        assert_eq!(ppu.read_register(0x4211) & 0x80, 0, "acknowledged");
+        let mut legacy = ppu.capture_state();
+        legacy.hv_h_counter = None;
+        legacy.hv_v_counter = None;
+        legacy.irq_level = None;
+        legacy.need_irq = None;
+
+        let mut restored = Ppu::new();
+        restored.restore_state(&legacy).expect("restore");
+        // No spurious re-fire on the rest of the matching line: the derived
+        // level is already high, so the first circuit tick sees no edge.
+        for _ in 0..400 {
+            restored.tick();
+        }
+        assert_eq!(
+            restored.read_register(0x4211) & 0x80,
+            0,
+            "an acknowledged legacy IRQ must not re-fire mid-line after restore"
+        );
+
+        // ...and the derived V counter resumes normal operation: rewriting
+        // VTIME to the next line fires there as usual.
+        restored.write_register(0x4209, 0x06);
+        tick_scanlines(&mut restored, 1);
+        assert_ne!(
+            restored.read_register(0x4211) & 0x80,
+            0,
+            "the next matching line still fires after a legacy restore"
+        );
+    }
+
+    #[test]
+    fn a_legacy_state_derives_the_h_counter_from_the_line_clock() {
+        // H-only twin of the test above: HTIME=100 sets TIMEUP at clock
+        // 100*4 + 14 = 414 of every line. Capture mid-line at clock 200
+        // (real H counter (200-10)/4 = 47), drop the circuit fields, and the
+        // restored run must still fire at exactly 414 -- a derivation off by
+        // N ticks would shift the fire by 4*N clocks.
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x4207, 0x64); // HTIME = 100
+        ppu.write_register(0x4208, 0x00);
+        ppu.write_register(0x4200, 0x10); // H-only IRQ
+        tick_scanlines(&mut ppu, 1);
+        ppu.read_register(0x4211); // acknowledge line 0's fire
+        for _ in 0..200 {
+            ppu.tick();
+        }
+        assert_eq!(
+            ppu.read_register(0x4211) & 0x80,
+            0,
+            "line 1 has not fired yet at clock 200"
+        );
+        let mut legacy = ppu.capture_state();
+        legacy.hv_h_counter = None;
+        legacy.hv_v_counter = None;
+        legacy.irq_level = None;
+        legacy.need_irq = None;
+
+        let mut restored = Ppu::new();
+        restored.restore_state(&legacy).expect("restore");
+        for _ in 0..213 {
+            restored.tick();
+        }
+        assert_eq!(
+            restored.read_register(0x4211) & 0x80,
+            0,
+            "no fire before clock 414 -- the derived H counter must not run fast"
+        );
+        restored.tick();
+        assert_ne!(
+            restored.read_register(0x4211) & 0x80,
+            0,
+            "the restored line still sets TIMEUP at clock HTIME*4 + 14 = 414"
         );
     }
 

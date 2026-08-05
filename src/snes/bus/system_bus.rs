@@ -3399,50 +3399,68 @@ mod tests {
     }
 
     #[test]
-    fn bus_timeup_reflects_irq_line_immediately_at_the_trigger_clock() {
+    fn bus_timeup_is_readable_the_tick_it_sets_before_the_cpu_line_rises() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x004207, 0x01);
         bus.write(0x004208, 0x00);
         bus.write(0x004200, 0x10); // H-IRQ mode
 
-        // HTIME=1 fires at intra-scanline clock (1+1)*4 + 10 = 18.
+        // Cross the power-on-artifact fire on scanline 0 (the IRQ circuit's H
+        // counter hits HTIME=1 on its very first clock-2 increment; see
+        // `ppu::irq`) and acknowledge it. Loop on the scan position rather
+        // than counting ticks: one `bus.tick()` call spans 41 master clocks
+        // when it crosses the DRAM-refresh steal.
+        while bus.ppu.borrow().position().scanline != 1 {
+            bus.tick();
+        }
+        bus.read(0x004211);
+
+        // HTIME=1 sets TIMEUP at intra-scanline clock 1*4 + 14 = 18.
         for _ in 0..18 {
             bus.tick(); // one master clock each
         }
         assert_ne!(
             bus.read(0x004211) & 0x80,
             0,
-            "TIMEUP reflects the raw IRQ line the instant it triggers, unlike poll_irq()"
+            "TIMEUP reflects the flag the tick it sets, one tick before poll_irq()"
         );
     }
 
     #[test]
-    fn bus_poll_irq_has_a_one_dot_dispatch_delay_then_read_ack_clears_it() {
+    fn bus_poll_irq_rises_one_circuit_tick_after_timeup_then_read_ack_clears_it() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x004207, 0x01);
         bus.write(0x004208, 0x00);
         bus.write(0x004200, 0x10); // H-IRQ mode
 
         assert!(!bus.poll_irq(), "IRQ line starts deasserted");
-        // HTIME=1 fires at intra-scanline clock (1+1)*4 + 10 = 18.
+        // Cross the power-on-artifact fire on scanline 0 (see
+        // `bus_timeup_is_readable_the_tick_it_sets_before_the_cpu_line_rises`)
+        // and acknowledge it.
+        while bus.ppu.borrow().position().scanline != 1 {
+            bus.tick();
+        }
+        bus.read(0x004211);
+        assert!(!bus.poll_irq(), "acknowledging also deasserts the line");
+
+        // HTIME=1 sets TIMEUP at intra-scanline clock 18; the IRQ circuit's
+        // `need_irq` countdown only propagates the flag to the CPU-facing
+        // line on its *next* 4-clock tick (Mesen2 `ProcessIrqCounters`) -- the
+        // one-dot pipeline delay between a $4211 read seeing the flag and the
+        // CPU being able to dispatch on it.
         for _ in 0..18 {
             bus.tick(); // one master clock each
         }
-        // bsnes' `CPU::irqPoll` only turns a freshly-risen IRQ line into a CPU-visible
-        // dispatch/WAI-wake transition on the *next* 4-clock poll (it samples the
-        // previous poll's still-stale line value first) -- a fixed one-dot pipeline
-        // delay. `poll_irq()` (unlike TIMEUP) must not be visible yet at the exact
-        // trigger clock.
         assert!(
             !bus.poll_irq(),
-            "poll_irq() is not yet visible at the exact IRQ-line trigger clock"
+            "poll_irq() is not yet visible the tick TIMEUP sets"
         );
         for _ in 0..4 {
             bus.tick();
         }
         assert!(
             bus.poll_irq(),
-            "poll_irq() becomes visible one dot (4 master clocks) after the trigger"
+            "poll_irq() becomes visible one circuit tick (4 master clocks) after TIMEUP"
         );
 
         assert_ne!(bus.read(0x004211) & 0x80, 0, "TIMEUP read sees pending IRQ");

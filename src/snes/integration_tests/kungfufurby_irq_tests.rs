@@ -21,16 +21,24 @@
 //! The `maroon` FAIL shades this doc used to record were post-halt garbage, not
 //! ROM verdicts.
 //!
-//! The four still-failing ROMs now render byuu's genuine `(255, 0, 0)` FAIL
-//! backdrop and remain tracked in #3093.
+//! #3144 then ported Mesen2's level+edge IRQ counter circuit (`ppu/irq.rs`),
+//! fixing `test_irq4200.smc` -- the one ROM whose failure was circuit
+//! semantics (enable writes re-evaluated against a continuous compare level).
+//!
+//! The three still-failing ROMs render byuu's genuine `(255, 0, 0)` FAIL
+//! backdrop and split by measured root cause under the #3093 tracker:
+//! `test_irq.smc` fails only its dispatch-boundary sub-test 1 (#3146),
+//! `test_irqb.smc` only its open-bus OPHCT-latch sub-test 4 (#3147), and
+//! `irq.smc` (no source exists) is re-measured once #3146 lands.
 //!
 //! **Golden convention (#3092).** The ignored tests below assert the
 //! *Mesen2-correct* blue PASS screen, not NESER's current output. They
-//! therefore FAIL under `cargo test --include-ignored` until #3093 lands --
-//! that is the designed state, not a regression -- and turn green exactly
-//! when the underlying gap is fixed. Recording NESER's own diverging CRC
-//! instead (the convention these tests used before #3092) inverts that
-//! signal: a real fix would turn them red and read as a breakage.
+//! therefore FAIL under `cargo test --include-ignored` until their tracked
+//! fix lands -- that is the designed state, not a regression -- and turn
+//! green exactly when the underlying gap is fixed. Recording NESER's own
+//! diverging CRC instead (the convention these tests used before #3092)
+//! inverts that signal: a real fix would turn them red and read as a
+//! breakage.
 //!
 //! Every golden here was verified against a fresh Mesen2 headless capture
 //! (`--testRunner`, flags per the `snes-hardware-research` skill) at the
@@ -81,28 +89,43 @@ mod tests {
     }
 
     /// #3093: NESER's self-check FAILs (flat red) where Mesen2 PASSes (blue).
-    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
-    /// before/after).
+    /// Unaffected by #3049's per-cycle dispatch fixes and by #3144's IRQ
+    /// counter circuit port (identical CRC before/after both). No source or
+    /// disassembly exists for this ROM, so it is re-measured once #3146's
+    /// dispatch-boundary fix lands and trace-diffed against Mesen2 if still
+    /// red.
     #[test]
     #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn irq_passes() {
         run_rom_screen_crc("irq.smc", 1200, 0x8695_BBB0);
     }
 
-    /// #3093: NESER's self-check FAILs (flat `(255, 0, 0)`, byuu's `fail()`
-    /// backdrop) where Mesen2 PASSes (blue). Read as maroon before #3116, which
+    /// #3146: NESER dispatches the V-IRQ one instruction earlier than
+    /// hardware, so this ROM's sub-test 1 captures the interrupted opcode
+    /// `$EA` (nop) where hardware captures `$18` (clc). Identical before and
+    /// after #3144's IRQ counter circuit port -- the residue is on the CPU
+    /// recognition path, not the circuit. Read as maroon before #3116, which
     /// was post-`stp` garbage rather than the ROM's verdict.
+    ///
+    /// `test_irq_sram_verdict_reports_all_ten_sub_tests_pass` names the
+    /// failing sub-test when this is red.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
+    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3146"]
     fn test_irq_passes() {
         run_rom_screen_crc("test_irq.smc", 600, 0x8695_BBB0);
     }
 
-    /// #3093: NESER's self-check FAILs (flat `(255, 0, 0)`, byuu's `fail()`
-    /// backdrop) where Mesen2 PASSes (blue). Read as maroon before #3116, which
-    /// was post-`stp` garbage rather than the ROM's verdict.
+    /// Fixed by #3144's port of Mesen2's level+edge IRQ counter circuit: every
+    /// one of this ROM's 80 mid-scanline `$4200` enable writes (40 per HTIME
+    /// setup) needs the write to be re-evaluated against a continuous compare
+    /// level (V == VTIME for the whole matching line), which the old
+    /// single-instant point compare could not express -- its pre-fix SRAM log
+    /// was all `$FF` sentinels, not one IRQ fired. Read as maroon before #3116, which was post-`stp`
+    /// garbage rather than the ROM's verdict.
+    ///
+    /// `test_irq4200_sram_log_matches_byuu_check_table` breaks the verdict
+    /// down when this goes red again.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn test_irq4200_passes() {
         run_rom_screen_crc("test_irq4200.smc", 600, 0x8695_BBB0);
     }
@@ -115,11 +138,16 @@ mod tests {
         run_rom_screen_crc("test_irq4209.smc", 600, 0x8695_BBB0);
     }
 
-    /// #3093: NESER's self-check FAILs (flat red) where Mesen2 PASSes (blue).
-    /// Unaffected by #3049's per-cycle NMI/IRQ dispatch fixes (identical CRC
-    /// before/after).
+    /// #3147: sub-tests 1-3 of this ROM's OPHCT/OPVCT latch checks already
+    /// match byuu's expected bytes; sub-test 4 (IRQ while executing from open
+    /// bus via `jmp $000000`) latches an OPHCT 4 dots low. Identical before
+    /// and after #3144's IRQ counter circuit port, and unaffected by #3049's
+    /// per-cycle dispatch fixes before that.
+    ///
+    /// `test_irqb_sram_log_matches_byuu_expected_latches` names the failing
+    /// sub-test and byte when this is red.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
+    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3147"]
     fn test_irqb_passes() {
         run_rom_screen_crc("test_irqb.smc", 600, 0x8695_BBB0);
     }
@@ -130,5 +158,161 @@ mod tests {
     #[test]
     fn demo_irqtest_passes() {
         run_rom_screen_crc("demo_irqtest.smc", 600, 0x8695_BBB0);
+    }
+
+    /// Boots `file` in a bare [`Snes`](crate::snes::console::Snes) and runs it
+    /// for `frames` rendered frames so a test can inspect the verdict bytes the
+    /// ROM caches in cartridge SRAM (bank `$70`). Same pattern as
+    /// `jonasquinn_dma_tests::test_dmavalid_sub_checks_match_byuu_expectations`.
+    fn run_rom_for_sram(file: &str, frames: u32) -> crate::snes::console::Snes {
+        use crate::platform::app_context::AppContext;
+        use crate::platform::emulator::Emulator;
+        use crate::snes::console::Snes;
+        let path = Path::new(ROOT).join(file);
+        let rom = fs::read(&path)
+            .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
+        let mut snes = Snes::new(AppContext::new_with_config(
+            crate::platform::config::Config::default(),
+        ));
+        snes.load_rom(&rom, file).unwrap();
+        let mut rendered = 0u32;
+        while rendered < frames {
+            snes.run_tick();
+            if snes.is_ready_to_render() {
+                rendered += 1;
+                snes.clear_ready_to_render();
+            }
+        }
+        snes
+    }
+
+    /// Verdict path for `test_irq_passes`: a screen CRC only says blue-or-red,
+    /// so this asserts the evidence the ROM itself keeps in SRAM. byuu's
+    /// `!test_number` lives at `$700000`, is incremented as each of the ten
+    /// sub-tests starts, and is zeroed only on the path into `pass()` -- so a
+    /// non-zero value names the first failing sub-test. Sub-tests 1-4
+    /// additionally store the wrongly captured opcode byte to `$700001`.
+    /// Expectations transcribed from the vendored
+    /// `jonasquinn-test-roms/snestest_082506/test_irq.asm`, not from any
+    /// emulator's output.
+    #[test]
+    #[ignore = "fails at sub-test 1 (dispatch boundary); asserts byuu's PASS-run verdict so FAILs under --include-ignored until #3146"]
+    fn test_irq_sram_verdict_reports_all_ten_sub_tests_pass() {
+        let snes = run_rom_for_sram("test_irq.smc", 120);
+        let rd = |a: u32| snes.read_bus_for_debugger_for_tests(a).unwrap_or(0);
+        let sub_test = rd(0x70_0000);
+        let captured_opcode = rd(0x70_0001);
+        assert_eq!(
+            sub_test, 0x00,
+            "test_irq.smc failed at sub-test {sub_test} \
+             (captured opcode for sub-tests 1-4: ${captured_opcode:02X})"
+        );
+    }
+
+    /// One 20-byte block of byuu's `check:` table in `test_irq4200.asm`,
+    /// transcribed verbatim: for each of the ten `%checkirq(a,b,c,d)` rounds
+    /// per HTIME setup, every $4200 enable write that fires an IRQ logs the
+    /// interrupted A (= the enable value just written) through the `$2180`
+    /// WRAM port, and each round ends with an `$FF` sentinel. Only the
+    /// mid-scanline V-IRQ enables (`$20`) may fire on the VTIME=1 line;
+    /// H-and-HV enables (`$10`/`$30`) never hit their H compare inside the
+    /// enable window.
+    const TEST_IRQ4200_CHECK_BLOCK: [u8; 20] = [
+        0xFF, // (00,00,00,00): no IRQs
+        0xFF, // (00,10,00,10): H enables do not fire mid-line
+        0x20, 0x20, 0xFF, // (00,20,00,20): both V enables fire
+        0xFF, // (00,30,00,30): HV needs the H compare too
+        0xFF, // (10,10,10,10)
+        0x20, 0x20, 0xFF, // (10,20,10,20)
+        0xFF, // (10,30,10,30)
+        0x20, 0x20, 0x20, 0x20, 0xFF, // (20,20,20,20): every re-enable re-fires
+        0x20, 0x20, 0xFF, // (20,30,20,30)
+        0xFF, // (30,30,30,30)
+    ];
+
+    /// Verdict path for `test_irq4200_passes`: the ROM copies its `$7F0000`
+    /// IRQ-fire log to SRAM `$700000` before comparing the first `$28` bytes
+    /// against its in-ROM `check:` table (first mismatch jumps to `fail()`).
+    /// This asserts those same 40 bytes: [`TEST_IRQ4200_CHECK_BLOCK`] once for
+    /// the HTIME=0 setup and once for HTIME=$152, VTIME=1 in both.
+    /// Expectations transcribed from the vendored disassembly
+    /// `jonasquinn-test-roms/blobs/disassembly/test_irq4200.asm`. Green since
+    /// #3144's IRQ counter circuit port.
+    #[test]
+    fn test_irq4200_sram_log_matches_byuu_check_table() {
+        let snes = run_rom_for_sram("test_irq4200.smc", 120);
+        let rd = |a: u32| snes.read_bus_for_debugger_for_tests(a).unwrap_or(0);
+        let actual: Vec<u8> = (0..0x28).map(|i| rd(0x70_0000 + i)).collect();
+        let expected: Vec<u8> = TEST_IRQ4200_CHECK_BLOCK
+            .iter()
+            .chain(TEST_IRQ4200_CHECK_BLOCK.iter())
+            .copied()
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "IRQ-fire log mismatch (each byte is the $4200 enable value whose \
+             write fired an IRQ, $FF = end-of-round sentinel); \
+             actual={actual:02X?} expected={expected:02X?}"
+        );
+    }
+
+    /// Verdict path for `test_irqb_passes`: the ROM's IRQ handler logs
+    /// OPHCT/OPVCT latch reads (`$213C`/`$213D`, the value's low byte and then
+    /// the second read's bit 0 -- bit 8 of the 9-bit counter) before and after
+    /// re-latching via a `$4201` WRIO write and a `$2137` strobe, for five sub-tests that each take the IRQ while
+    /// executing from a different address (`jmp $2137`/`$2136`/plain
+    /// code/`$000000`/`$217F`). Both `pass()` and `fail()` copy the
+    /// `$7F0000..$7F07FF` log to SRAM, so the bytes are readable either way;
+    /// this asserts exactly the bytes each sub-test's own `check` block
+    /// compares. Expectations transcribed from the vendored disassembly
+    /// `jonasquinn-test-roms/blobs/disassembly/test_irqb.asm`.
+    #[test]
+    #[ignore = "fails at sub-test 4 (open-bus OPHCT latch); asserts byuu's PASS-run verdict so FAILs under --include-ignored until #3147"]
+    fn test_irqb_sram_log_matches_byuu_expected_latches() {
+        let snes = run_rom_for_sram("test_irqb.smc", 120);
+        let rd = |a: u32| snes.read_bus_for_debugger_for_tests(a).unwrap_or(0);
+        // (sub-test, SRAM offset, expected byte), in the ROM's own check order.
+        const CHECKS: [(u8, u32, u8); 32] = [
+            (1, 0x00, 0x07),
+            (1, 0x01, 0x00),
+            (1, 0x02, 0x01),
+            (1, 0x03, 0x00),
+            (1, 0x04, 0x7A),
+            (1, 0x08, 0xD0),
+            (2, 0x0C, 0x06),
+            (2, 0x0D, 0x00),
+            (2, 0x0E, 0x00),
+            (2, 0x0F, 0x00),
+            (2, 0x10, 0x7A),
+            (2, 0x14, 0xD0),
+            (3, 0x18, 0x07),
+            (3, 0x19, 0x00),
+            (3, 0x1A, 0x01),
+            (3, 0x1B, 0x00),
+            (3, 0x1C, 0x7C),
+            (3, 0x20, 0xD2),
+            (4, 0x24, 0x10),
+            (4, 0x25, 0x00),
+            (4, 0x26, 0x01),
+            (4, 0x27, 0x00),
+            (4, 0x28, 0x7A),
+            (4, 0x2C, 0xD0),
+            (5, 0x30, 0x00),
+            (5, 0x31, 0x00),
+            (5, 0x32, 0x06),
+            (5, 0x33, 0x00),
+            (5, 0x34, 0x00),
+            (5, 0x35, 0x00),
+            (5, 0x36, 0x7A),
+            (5, 0x3A, 0xCF),
+        ];
+        for (sub_test, offset, expected) in CHECKS {
+            let actual = rd(0x70_0000 + offset);
+            assert_eq!(
+                actual, expected,
+                "test_irqb sub-test {sub_test}: $70{offset:04X} = \
+                 ${actual:02X}, expected ${expected:02X} (OPHCT/OPVCT latch log)"
+            );
+        }
     }
 }

@@ -13,6 +13,7 @@
 
 mod background;
 mod framebuffer;
+mod irq;
 mod mode7;
 mod mosaic;
 mod registers;
@@ -73,10 +74,6 @@ pub(super) const DOTS_PER_SCANLINE: u16 = 341;
 pub(super) const NTSC_SCANLINES_PER_FRAME: u16 = 262;
 /// PAL scanlines per frame.
 pub(super) const PAL_SCANLINES_PER_FRAME: u16 = 312;
-/// Master clocks between the H/V-IRQ line's rising edge and the CPU noticing a
-/// dispatchable transition (one dot / one bsnes `CPU::irqPoll` cycle). See
-/// [`Ppu::poll_irq_dispatch`].
-pub(super) const IRQ_DISPATCH_EDGE_DELAY_CLOCKS: u32 = MASTER_CYCLES_PER_DOT;
 
 /// DRAM refresh: once per scanline the CPU is transparently paused for 40 master clocks so
 /// WRAM can be refreshed. The base trigger clock (5A22 CPU version 2, matching
@@ -256,10 +253,6 @@ pub struct Ppu {
     /// Master clocks elapsed since the current scanline started (bsnes "hcounter").
     /// Reset to 0 at each scanline boundary; used for cycle-accurate H/V IRQ timing.
     line_clock: u16,
-    /// Master-clock length (bsnes "hperiod") of the previously completed scanline.
-    /// Used to emulate the delayed `hcounter(n)`/`vcounter(n)` counters, which wrap
-    /// into the previous line when the delay reaches back past the line start.
-    last_hperiod: u16,
     /// Cumulative master clocks since power-on/reset. Used only for the DRAM-refresh
     /// position jitter formula (see [`DRAM_REFRESH_BASE_POSITION`]).
     total_master_clocks: u64,
@@ -329,18 +322,32 @@ pub struct Ppu {
     htime: u16,
     /// V timer target from VTIME ($4209/$420A), 9-bit.
     vtime: u16,
-    /// TIMEUP ($4211) bit 7 latch.
+    /// TIMEUP ($4211) bit 7 latch (Mesen2 `_irqFlag`). Raised by the IRQ counter
+    /// circuit's countdown one 4-clock tick before the CPU-facing line -- see
+    /// `Ppu::process_irq_counters` in `ppu/irq.rs`.
     timeup_flag: bool,
-    /// Current IRQ line level, readable instantaneously via TIMEUP ($4211).
+    /// CPU-facing H/V-IRQ line (Mesen2 `SetIrqSource(SnesIrqSource::Ppu)`),
+    /// raised one circuit tick after [`Ppu::timeup_flag`] by the `need_irq`
+    /// countdown and sampled by the CPU via [`Ppu::poll_irq_dispatch`].
     irq_line: bool,
-    /// Master clocks `irq_line` has been continuously asserted (0 on its rising edge).
-    /// bsnes' `CPU::irqPoll` only turns the level into a dispatch/WAI-wake "transition"
-    /// pulse on the *next* 4-clock poll after the line rises (it samples the previous
-    /// poll's stale line value first) -- i.e. real hardware has a fixed one-dot (4
-    /// master clock) pipeline delay before the CPU can act on a fresh H/V-IRQ. Gate
-    /// [`Ppu::poll_irq_dispatch`] on this so CPU dispatch/WAI-wake sees the same delay,
-    /// while TIMEUP reads (which reflect the raw hardware line) stay instantaneous.
-    irq_edge_age: u32,
+    /// IRQ counter circuit's H counter (Mesen2 `_hCounter`): reset at intra-line
+    /// clocks 6 and 10, incremented at clock 2 and every 4-clock tick past 10.
+    /// Compared against HTIME by `Ppu::update_irq_level`.
+    hv_h_counter: u16,
+    /// IRQ counter circuit's V counter (Mesen2 `_vCounter`): incremented at
+    /// clock 6 of every scanline but 0, reset at clock 2 of scanline 0.
+    hv_v_counter: u16,
+    /// Continuous H/V-IRQ compare level (Mesen2 `_irqLevel`): true while the
+    /// enabled timer targets match the circuit's counters. `need_irq` arms on
+    /// its rising edge.
+    irq_level: bool,
+    /// Rising-edge countdown (Mesen2 `_needIrq`), decremented each 4-clock
+    /// circuit tick: at 1 the TIMEUP flag sets, at 0 the flag propagates to the
+    /// CPU line. Armed at 2 (3 for an H-enabled edge on the clock-6 tick, the
+    /// HTIME=0 case). While non-zero, a $4211 read does not acknowledge --
+    /// hardware forces the flag set for at least 4 clocks (byuu `test_irq.asm`
+    /// sub-tests 6-7).
+    need_irq: u8,
     /// STAT78 ($213F) bit 7: interlace field flag.
     interlace_field: bool,
     /// Latched once per frame at the wrap, after the field toggle (Mesen2
@@ -510,7 +517,6 @@ impl Ppu {
             position: ScanPosition::default(),
             master_cycle_accumulator: 0,
             line_clock: 0,
-            last_hperiod: 1364,
             total_master_clocks: 0,
             dram_refresh_position: DRAM_REFRESH_BASE_POSITION,
             hdma_init_position: HDMA_INIT_BASE_POSITION,
@@ -551,7 +557,10 @@ impl Ppu {
             vtime: 0x01FF,
             timeup_flag: false,
             irq_line: false,
-            irq_edge_age: 0,
+            hv_h_counter: 0,
+            hv_v_counter: 0,
+            irq_level: false,
+            need_irq: 0,
             interlace_field: false,
             frame_has_extra_scanline: false,
             video_region,
@@ -638,20 +647,15 @@ impl Ppu {
         }
     }
 
-    /// Poll the current level of the H/V IRQ line.
-    pub fn poll_irq_level(&self) -> bool {
-        self.irq_line
-    }
-
     /// Poll whether the H/V IRQ is visible to the CPU for dispatch/WAI-wake purposes.
     ///
-    /// This gates on [`Ppu::irq_edge_age`] to reproduce the fixed one-dot (4 master
-    /// clock) pipeline delay real hardware has between the IRQ line's rising edge and
-    /// the CPU noticing a dispatchable "transition" (see the field doc for the bsnes
-    /// `CPU::irqPoll` reasoning). TIMEUP ($4211) reads are unaffected by this delay --
-    /// they use [`Ppu::poll_irq_level`]/`timeup_flag` directly, matching bsnes' `timeup()`.
+    /// [`Ppu::irq_line`] already carries the hardware pipeline delay: the IRQ
+    /// counter circuit raises it one 4-clock tick *after* the TIMEUP flag (the
+    /// `need_irq` countdown in `Ppu::process_irq_counters`), so a fresh IRQ
+    /// becomes dispatch-visible 4 master clocks after a $4211 read first sees
+    /// it -- the same one-dot delay the removed `irq_edge_age` gate modelled.
     pub fn poll_irq_dispatch(&self) -> bool {
-        self.irq_line && self.irq_edge_age >= IRQ_DISPATCH_EDGE_DELAY_CLOCKS
+        self.irq_line
     }
 
     /// Whether the PPU is currently in the VBlank period.
