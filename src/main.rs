@@ -238,6 +238,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracing_config = app_context.borrow().config().frontend.tracing;
     platform::debugging::init_tracing(tracing_config);
 
+    // Handle --headless: capture a frame to PNG and exit.
+    //
+    // Deliberately above both `native` cfg blocks below, not inside them.
+    // Capturing needs no window, so a build with `frontend` but without
+    // `native` (so without winit/glutin/egui/cpal) still captures, while the
+    // same binary run without --headless exits with "No frontend feature
+    // enabled". Moving this into the native cfg would silently remove that.
+    if platform::headless_capture::run_if_requested(&app_context)? {
+        return Ok(());
+    }
+
     #[cfg(feature = "native")]
     {
         run_native_frontend(app_context)?;

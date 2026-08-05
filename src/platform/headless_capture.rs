@@ -49,6 +49,33 @@ impl FrameStepper for Console {
     }
 }
 
+/// Run a headless capture if the configuration asks for one.
+///
+/// Returns `Ok(true)` when a capture ran and the caller should exit, and
+/// `Ok(false)` when no capture was requested and startup should continue.
+///
+/// The decision lives here rather than in `main.rs` so it can be tested: the
+/// binary's own dispatch is not reachable from the library test suite, so
+/// keeping it to a single call keeps the untested surface to a minimum.
+pub fn run_if_requested(app_context: &SharedAppContext) -> Result<bool, String> {
+    // Cloned out of the borrow before running, because the capture itself
+    // borrows the context mutably to raise its cartridge-load toast.
+    let (capture, rom_path) = {
+        let context = app_context.borrow();
+        let frontend = &context.config().frontend;
+        (frontend.headless_capture.clone(), frontend.rom_path.clone())
+    };
+
+    let Some(capture) = capture else {
+        return Ok(false);
+    };
+
+    let rom_path = rom_path.ok_or_else(|| "--headless requires a ROM path".to_string())?;
+    run(app_context, &rom_path, &capture)?;
+
+    Ok(true)
+}
+
 /// Run `rom_path` for `capture.frames` frames and write the last one to
 /// `capture.output`.
 pub fn run(
@@ -273,6 +300,94 @@ mod tests {
         assert!(
             error.contains("frame"),
             "expected the stalled frame to be named in {error:?}"
+        );
+    }
+
+    // --- dispatch ---
+
+    /// An app context whose config requests `capture` for `rom_path`.
+    fn app_context_requesting(
+        rom_path: Option<&str>,
+        capture: Option<HeadlessCapture>,
+    ) -> SharedAppContext {
+        let config = Config {
+            frontend: FrontendConfig {
+                ram_init_mode: RamInitMode::Zero,
+                rom_path: rom_path.map(str::to_string),
+                headless_capture: capture,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        Rc::new(RefCell::new(AppContext::new_with_config(config)))
+    }
+
+    #[test]
+    fn run_if_requested_does_nothing_when_no_capture_is_configured() {
+        // Given a configuration with a ROM but no capture
+        let temp = TempDir::new().expect("create temp dir");
+        let rom = write_nes_rom(&temp);
+        let context = app_context_requesting(Some(&rom), None);
+
+        // When dispatch runs
+        let ran = run_if_requested(&context).expect("no capture should not fail");
+
+        // Then it reports that startup should continue
+        assert!(!ran, "no capture was requested");
+    }
+
+    #[test]
+    fn run_if_requested_runs_the_capture_and_reports_it_ran() {
+        // Given a configuration requesting a capture
+        let temp = TempDir::new().expect("create temp dir");
+        let rom = write_nes_rom(&temp);
+        let output = temp.path().join("shot.png");
+        let context = app_context_requesting(Some(&rom), Some(capture_to(&output, 1)));
+
+        // When dispatch runs
+        let ran = run_if_requested(&context).expect("capture should succeed");
+
+        // Then it captured and told the caller to exit rather than open a window
+        assert!(ran, "a capture was requested");
+        assert!(output.exists(), "expected {} to exist", output.display());
+    }
+
+    #[test]
+    fn run_if_requested_reports_a_missing_rom_path() {
+        // Given a capture configured without a ROM path.
+        //
+        // Config validation already rejects this, so reaching it means the two
+        // have drifted apart; failing loudly beats capturing nothing silently.
+        let temp = TempDir::new().expect("create temp dir");
+        let output = temp.path().join("shot.png");
+        let context = app_context_requesting(None, Some(capture_to(&output, 1)));
+
+        // When dispatch runs
+        let error = run_if_requested(&context).expect_err("missing ROM should be reported");
+
+        // Then the failure names what is missing
+        assert!(error.contains("ROM"), "expected the ROM named in {error:?}");
+    }
+
+    #[test]
+    fn run_if_requested_propagates_a_capture_failure() {
+        // Given a capture pointing at a ROM that does not exist
+        let temp = TempDir::new().expect("create temp dir");
+        let missing = temp.path().join("nope.nes");
+        let output = temp.path().join("shot.png");
+        let context = app_context_requesting(
+            Some(&missing.to_string_lossy()),
+            Some(capture_to(&output, 1)),
+        );
+
+        // When dispatch runs
+        let error = run_if_requested(&context).expect_err("failure should propagate");
+
+        // Then the error surfaces instead of being swallowed into Ok(true),
+        // which would let the binary exit 0 having captured nothing
+        assert!(
+            error.contains("nope.nes"),
+            "expected the ROM path in {error:?}"
         );
     }
 
