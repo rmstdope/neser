@@ -91,40 +91,14 @@ impl Ppu {
         }
         // Super Scope: latch the aimed coordinates once the beam reaches them.
         self.process_location_latch_request();
-        // The IRQ counter circuit runs at master-clock/4 with the signal
+        // The interrupt counter circuit runs at master-clock/4 with the signal
         // inverted, ticking at intra-line clocks 2, 6, 10, ... (Mesen2
         // `InternalRegisters::ProcessIrqCounters`). Every scanline length
         // (1360/1364/1368) is divisible by 4, so the cadence holds across line
-        // and frame wraps without special-casing.
+        // and frame wraps without special-casing. Both the H/V-IRQ and the
+        // VBlank NMI events are generated there (#3144, #3145).
         if self.line_clock & 3 == 2 {
             self.process_irq_counters();
-        }
-        self.evaluate_nmi_flag_events();
-    }
-
-    /// Sub-scanline RDNMI/NMI events (anomie timing.txt INTERRUPTS; Mesen2
-    /// `InternalRegisters::ProcessIrqCounters`):
-    /// - The RDNMI vblank flag rises at intra-line clock 2 (anomie: "the
-    ///   internal timer will set its NMI output low at H=0.5") of the first
-    ///   vblank scanline, and falls at clock 2 of scanline 0.
-    /// - The CPU NMI line is raised 4 clocks later, at clock 6; a $4210 read
-    ///   in the clock 2-5 hold window returns the flag set without
-    ///   acknowledging it (see `read_register`), which is what lets a tight
-    ///   RDNMI poll loop observe the same vblank twice.
-    fn evaluate_nmi_flag_events(&mut self) {
-        match self.line_clock {
-            2 => {
-                if self.position.scanline == self.vblank_start_line() {
-                    self.nmi_flag = true;
-                } else if self.position.scanline == 0 {
-                    self.nmi_flag = false;
-                    self.update_nmi_line();
-                }
-            }
-            6 if self.position.scanline == self.vblank_start_line() => {
-                self.update_nmi_line();
-            }
-            _ => {}
         }
     }
 
@@ -214,7 +188,7 @@ impl Ppu {
         match scanline {
             _ if scanline == vblank_start_line => {
                 // Begin VBlank: a full visible frame has been produced. The RDNMI flag and CPU
-                // NMI line rise a few clocks into the line (see `evaluate_nmi_flag_events`).
+                // NMI line rise a few clocks into the line (see `Ppu::process_irq_counters`).
                 self.vblank_active = true;
                 self.pending_completed_frames = self.pending_completed_frames.saturating_add(1);
                 trace_ppu!(1; "vblank enter y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X}",
@@ -228,7 +202,7 @@ impl Ppu {
             }
             0 => {
                 // End of VBlank / top of a new frame. The RDNMI flag falls at intra-line
-                // clock 2 (see `evaluate_nmi_flag_events`).
+                // clock 2 (see `Ppu::process_irq_counters`).
                 self.vblank_active = false;
                 // Raise the once-per-frame edge the bus uses to re-arm the Super Scope
                 // aim latch before the beam sweeps the visible area.
