@@ -196,6 +196,57 @@ mod tests {
         assert_eq!(config.frontend.ram_init_mode, RamInitMode::Zero);
     }
 
+    /// A config file setting a seeded RAM init mode, plus `args`.
+    ///
+    /// Deliberately `seeded-random:12345` rather than `random`: the non-wasm
+    /// default is already `Random`, so a control asserting "not Zero" would
+    /// pass even if the config file were never read at all. A seed no default
+    /// produces makes both tests below prove the file was actually applied.
+    fn with_seeded_ram_init_config(items: &[&str]) -> (tempfile::NamedTempFile, Vec<String>) {
+        use std::io::Write as _;
+
+        let mut file = tempfile::NamedTempFile::new().expect("create config file");
+        writeln!(file, "ram_init_mode=seeded-random:12345").expect("write config");
+        let path = file.path().to_string_lossy().into_owned();
+
+        let mut all = vec!["--config".to_string(), path];
+        all.extend(items.iter().map(|item| item.to_string()));
+        let all = std::iter::once("neser".to_string()).chain(all).collect();
+
+        (file, all)
+    }
+
+    #[test]
+    fn headless_overrides_a_config_file_ram_init_mode() {
+        // Given a config file asking for non-deterministic RAM
+        let (_file, args) =
+            with_seeded_ram_init_config(&["--headless", "--output", "shot.png", "game.nes"]);
+
+        // When a capture is configured
+        let config = parse_config(args);
+
+        // Then the capture still gets zero RAM. Only an explicit
+        // --ram-init-mode is an error; a persistent config file is silently
+        // overridden, because otherwise anyone with a non-zero mode in their
+        // config could never capture at all.
+        assert_eq!(config.frontend.ram_init_mode, RamInitMode::Zero);
+    }
+
+    #[test]
+    fn a_config_file_ram_init_mode_survives_without_headless() {
+        // Control for the test above: without --headless the same file keeps
+        // its value, so that assertion is about the override winning and not
+        // about the config file being ignored.
+        let (_file, args) = with_seeded_ram_init_config(&["game.nes"]);
+
+        let config = parse_config(args);
+
+        assert_eq!(
+            config.frontend.ram_init_mode,
+            RamInitMode::SeededRandom(12345)
+        );
+    }
+
     #[test]
     fn headless_rejects_a_non_zero_ram_init() {
         let error = error_for(&[

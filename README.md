@@ -99,6 +99,29 @@ neser --no-audio path/to/rom
 neser --config path/to/neser.conf path/to/rom
 ```
 
+### Headless frame capture
+
+`--headless` runs a ROM without opening a window and writes a single frame to a
+PNG, then exits. It works for all four systems and is intended for scripting and
+CI — comparing a capture against a reference image, for example.
+
+```bash
+neser --headless --output shot.png path/to/rom              # 60 frames (default)
+neser --headless --frames 300 --output shot.png path/to/rom
+```
+
+`--output` is required, and both `--frames` and `--output` are rejected without
+`--headless`. The exit code is 0 on success and 1 with a message on failure, so a
+script can branch on it.
+
+Captures are reproducible: the mode forces zero-initialised RAM, takes no input,
+and refuses to combine with the autorun flags or `--tui`. The same ROM and frame
+count produce byte-identical PNGs across runs and across builds.
+
+Note that a ROM may still be showing a blank screen in its first frames — the
+default of 60 is enough for the test ROMs in `roms/`, but a ROM with a longer
+boot or intro sequence needs a larger `--frames`.
+
 ## Web frontend
 
 The browser frontend is built from the Rust WASM target and the JavaScript frontend under `web/`.
