@@ -209,13 +209,17 @@ Test suites:
   (`roms/snes/automated_tests/snes_test_roms/ddribin-hdrv-snes-test/`,
   built once with WLA-DX; see its README), driven through `rom_runner`
   input scripting (its splash screen ignores input until ~frame 300).
-  Default colorbars and the graybars pattern carry Mesen2-approved
-  goldens; the interlace (X) and 239-line overscan (Y) combos are
-  content-verified against Mesen2 (0-pixel diffs after width-halving resp.
-  at crop offset 0). The capture-geometry mismatch they were parked on is
-  gone since #3001/#3034, so both are re-approvable, but they stay
-  `#[ignore]`d with NESER CRCs until someone re-runs the input-scripted
-  Mesen2 capture.
+  All four combos -- default colorbars, graybars, the interlace (X) toggle
+  and the 239-line overscan (Y) toggle -- carry Mesen2-approved goldens and
+  are un-ignored (#3092), now that the capture-geometry mismatch they were
+  parked on is gone (#3001/#3034). The overscan combo's golden CRC is
+  byte-identical to colorbars' -- #3001's crop keeps a fixed 224-row
+  window but shifts its starting row by 7 when overscan is on, and a
+  vertically-uniform pattern like hdrvtest's colorbars can't show that
+  shift, so neither can a matching Mesen2 capture (Mesen2 hits the same
+  crop). The test therefore
+  also asserts `RunResult::overscan_239_enabled` directly, reading the PPU's
+  SETINI bit at the sample frame instead of relying on the CRC (#3096).
 - `neser_opt_tests.rs` -- NESER-authored offset-per-tile ROMs for BG modes
   2/4/6 (`roms/snes/automated_tests/snes_test_roms/neser-opt-tests/`,
   sources included; see its README) -- no redistributable third-party OPT

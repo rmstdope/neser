@@ -118,6 +118,16 @@ impl Snes {
         self.cpu.as_ref().map(|cpu| cpu.read_pc())
     }
 
+    /// Returns the PPU's SETINI overscan bit, or `None` if no ROM is loaded. Unlike
+    /// `screen_dimensions`/`screen_width`/`screen_height`, this reflects overscan
+    /// directly rather than being cropped away by `screen_snapshot_rgb`.
+    #[cfg(test)]
+    pub(crate) fn overscan_239_enabled_for_tests(&self) -> Option<bool> {
+        self.cpu
+            .as_ref()
+            .map(|cpu| cpu.bus().ppu_overscan_239_enabled_for_tests())
+    }
+
     #[cfg(test)]
     pub(crate) fn read_bus_for_debugger_for_tests(&self, addr: u32) -> Option<u8> {
         self.cpu

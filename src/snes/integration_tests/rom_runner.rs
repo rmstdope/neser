@@ -197,12 +197,24 @@ pub(crate) struct RunResult {
     /// the Rust test asserts on, instead of hiding the number behind a
     /// pass/fail marker.
     pub result_bytes: [u8; RESULT_LEN],
-    /// Active PPU output dimensions at the end of the run (256x224, or 256x239
-    /// once a fixture enables SETINI overscan).
+    /// Active PPU output dimensions at the end of the run: 512x448 once a fixture
+    /// enables hi-res/interlace, 256x224 otherwise. Not a reliable overscan indicator:
+    /// `screen_snapshot_rgb` crops to a window of this same size regardless of overscan,
+    /// but shifts the window's starting row by `OVERSCAN_CROP_TOP` (7, or 14 in hi-res)
+    /// when overscan is on, so the same dimensions can carry different content -- see
+    /// `overscan_239_enabled`.
     pub screen_dimensions: (u32, u32),
     pub screen_crc32: u32,
-    /// Final RGB888 frame (`256 * 224 * 3`, row-major, the same layout as
-    /// `Snes::screen_snapshot`), for tests that need to assert on pixels rather than on a
+    /// Whether the PPU's SETINI overscan bit (`$2133` bit 2) was set at the end of the
+    /// run. `screen_dimensions`/`screen_crc32` are not a reliable substitute: overscan
+    /// shifts `screen_snapshot_rgb`'s crop window down without changing its size, so
+    /// whether that shift changes the CRC depends on the source content -- content with
+    /// no row-to-row variation in the shifted band (e.g. hdrvtest's vertical colorbars)
+    /// hashes identically either way. Assert on this field directly when a test needs to
+    /// know overscan was actually engaged, independent of content.
+    pub overscan_239_enabled: bool,
+    /// Final RGB888 frame (row-major, dimensions matching `screen_dimensions`, the same
+    /// layout as `Snes::screen_snapshot`), for tests that need to assert on pixels rather than on a
     /// golden CRC. Populated only when the [`RunOracle::ScreenCrc`] oracle actually reached
     /// its target frame, so the marker/bus-byte suites pay no allocation -- a ScreenCrc run
     /// that instead hits the tick limit carries `None`.
@@ -526,6 +538,9 @@ fn finish_result(
         result_bytes: read_result_block(snes),
         screen_dimensions: (snes.screen_width(), snes.screen_height()),
         screen_crc32,
+        overscan_239_enabled: snes
+            .overscan_239_enabled_for_tests()
+            .expect("finish_result is only called after a ROM has been loaded"),
         screen_rgb,
         capture_path,
     }

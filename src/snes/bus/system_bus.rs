@@ -690,6 +690,14 @@ impl SnesSystemBus {
         self.ppu.borrow().frame_dimensions()
     }
 
+    /// Returns the PPU's SETINI overscan bit directly. Unlike a debugger MMIO read of
+    /// `$2133` (write-only; reads yield only open-bus/MDR), this observes the real
+    /// internal register state.
+    #[cfg(test)]
+    pub(crate) fn ppu_overscan_239_enabled_for_tests(&self) -> bool {
+        self.ppu.borrow().overscan_239_enabled()
+    }
+
     /// Returns and clears the PPU frame-complete flag (set when the PPU enters VBlank).
     pub fn take_ppu_completed_frames(&mut self) -> u32 {
         self.ppu.borrow_mut().take_completed_frames()
