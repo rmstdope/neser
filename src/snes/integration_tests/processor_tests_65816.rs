@@ -25,12 +25,12 @@ const CYCLE_EXACT_OPCODES: &[u8] = &[
     0xA5, // LDA dp
     0xB5, // LDA dp,X
     0xB6, // LDX dp,Y
-    0xA1, // LDA (dp,X)      -- native mode only, see NATIVE_ONLY_CYCLE_EXACT_OPCODES
+    0xA1, // LDA (dp,X)
     0xB1, // LDA (dp),Y
     0xB2, // LDA (dp)
     0xA7, // LDA [dp]
     0xB7, // LDA [dp],Y
-    0xD4, // PEI             -- native mode only, see NATIVE_ONLY_CYCLE_EXACT_OPCODES
+    0xD4, // PEI
     // Read-modify-write forms -- one representative addressing mode each.
     0x06, // ASL dp
     0x16, // ASL dp,X
@@ -39,41 +39,71 @@ const CYCLE_EXACT_OPCODES: &[u8] = &[
     0x04, // TSB dp
 ];
 
-/// Opcodes checked cycle-exactly in native mode only, because the references contradict each
-/// other in emulation mode.
-///
-/// Both concern where a direct-page indirect pointer's HIGH byte lands in emulation mode, and
-/// the two sources disagree in *opposite* directions, so no single rule satisfies both:
-///
-/// | | `(dp,X)`, `DL != 0` | `PEI`, `DL == 0` |
-/// |---|---|---|
-/// | ProcessorTests | carries ($002DFF -> $002E00) | wraps ($000CFF -> $000C00) |
-/// | gilyon `cputest.sfc`, Mesen2, NESER | wraps ($002D00) | carries ($000D00) |
-///
-/// NESER follows the SNES-specific sources: `cputest.sfc` is a 1610-test suite validated on
-/// real SNES hardware and asserts a genuine "Success" screen, and Mesen2 agrees with it.
-/// Applying the ProcessorTests rule to either opcode independently turns that suite's screen
-/// from Success to Failed, which is why it is not applied. ProcessorTests targets a bare WDC
-/// 65816 rather than the SNES 5A22, which may explain the split.
-///
-/// Scope of the disagreement, measured over the full corpus: `a1.e` 28/10000 vectors, `d4.e`
-/// 1/10000; `a1.n` and `d4.n` are 0/10000, hence the native-mode carve-out rather than
-/// dropping these opcodes entirely. Tracked as #3135.
-///
-/// Note that `d4 e 232` diverges in its final RAM as well as its cycles (it pushes the byte
-/// from the wrongly-wrapped address), so it fails the pre-existing final-state check whatever
-/// this list says. That failure reproduces unchanged on `origin/main` and needs the optional
-/// local full corpus to appear at all -- the committed CI subset is green either way.
-const NATIVE_ONLY_CYCLE_EXACT_OPCODES: &[u8] = &[
-    0xA1, // LDA (dp,X)
-    0xD4, // PEI
-];
-
 /// Whether this vector's bus cycles should be compared one by one.
-fn is_cycle_exact(opcode: u8, emulation_mode: bool) -> bool {
+fn is_cycle_exact(opcode: u8) -> bool {
     CYCLE_EXACT_OPCODES.contains(&opcode)
-        && !(emulation_mode && NATIVE_ONLY_CYCLE_EXACT_OPCODES.contains(&opcode))
 }
+
+/// Full-corpus ProcessorTests vector names whose expectations are known-wrong for the SNES
+/// 5A22. The bulk runner (`run_vectors_from_file`) skips exactly these names; feeding one of
+/// them to `run_vector_case` directly still reports the divergence.
+///
+/// Both groups disagree with NESER about where a direct-page indirect pointer's HIGH byte is
+/// fetched in emulation mode:
+///
+/// * The 28 `a1 e` entries -- LDA (dp,X) with E=1, DL != 0 and the pointer straddling a page
+///   boundary: the 5A22 wraps the +1 for the pointer high byte within that page (an
+///   undocumented hardware quirk); the vectors carry into the next page. Evidence for
+///   wrapping: gilyon cputest.sfc tests 02c9-02cc pass on real hardware and its README
+///   documents the exact rule, noting it applies only to this addressing mode; Mesen2
+///   implements it as `GetDirectAddressIndirectWordWithPageWrap`.
+/// * `d4 e 232` -- PEI with E=1, DL == 0 and operand $FF: PEI is a "new" 65816 instruction
+///   whose pointer fetch never wraps, even under the E=1/DL==0 wrap rule that governs the old
+///   (dp) modes; the vector wraps. Evidence for carrying: the WDC datasheet ("except for
+///   [Direct] and [Direct],Y addressing modes and the PEI instruction which will increment
+///   from 0000FE or 0000FF into the Stack area"), Bruce Clark's 65C816 tutorial section 5.11,
+///   gilyon cputest.sfc test 03c4, and Mesen2.
+///
+/// The ProcessorTests corpus is generated from an emulator model, not captured from hardware,
+/// and has a history of exactly this class of emulation-mode wrap bug (upstream issue #1
+/// regenerated the [dp]/[dp],Y vectors; issues #3, #6 and #8 were still open at the pinned
+/// revision). Full-corpus tally: 28/10000 in a1.e.json and 1/10000 in d4.e.json diverge,
+/// while a1.n.json and d4.n.json are 0/10000. Documented as intentional in #3135.
+const KNOWN_DIVERGENT_VECTORS: &[&str] = &[
+    // LDA (dp,X), E=1, DL != 0: the vector carries the pointer high-byte fetch into the next
+    // page where the 5A22 wraps within it.
+    "a1 e 847",
+    "a1 e 1067",
+    "a1 e 1516",
+    "a1 e 1587",
+    "a1 e 1708",
+    "a1 e 2020",
+    "a1 e 2050",
+    "a1 e 2225",
+    "a1 e 2640",
+    "a1 e 2918",
+    "a1 e 3217",
+    "a1 e 4107",
+    "a1 e 4328",
+    "a1 e 4506",
+    "a1 e 4868",
+    "a1 e 5038",
+    "a1 e 5114",
+    "a1 e 5220",
+    "a1 e 5941",
+    "a1 e 6032",
+    "a1 e 6120",
+    "a1 e 6469",
+    "a1 e 6486",
+    "a1 e 7148",
+    "a1 e 7805",
+    "a1 e 8287",
+    "a1 e 9387",
+    "a1 e 9677",
+    // PEI, E=1, DL == 0: the vector wraps the pointer high-byte fetch within the direct page
+    // where the 5A22 carries into the next page.
+    "d4 e 232",
+];
 
 /// One CPU bus cycle as observed on the bus: either an internal (no-access) cycle, or a read
 /// or write of one byte.
@@ -408,7 +438,7 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
             });
         }
 
-        if is_cycle_exact(initial_opcode, vector.initial.e != 0) {
+        if is_cycle_exact(initial_opcode) {
             let expected: Vec<ObservedCycle> =
                 vector.cycles.iter().map(decode_vector_cycle).collect();
             let actual = shared.recorded_cycles();
@@ -487,6 +517,9 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
 fn run_vectors_from_file(path: &Path) -> Result<(), VectorFailure> {
     let vectors = load_vectors_from_file(path).map_err(|details| VectorFailure { details })?;
     for vector in &vectors {
+        if KNOWN_DIVERGENT_VECTORS.contains(&vector.name.as_str()) {
+            continue;
+        }
         run_vector_case(vector)?;
     }
     Ok(())
@@ -1160,7 +1193,7 @@ mod tests {
     }
 
     #[test]
-    fn run_vector_case_matches_d4_e_232_when_full_vectors_available() {
+    fn run_vector_case_reports_divergence_for_d4_e_232_when_full_vectors_available() {
         let full_file = Path::new(PROCESSOR_TESTS_FULL_ROOT).join("d4.e.json");
         if !full_file.exists() {
             return;
@@ -1174,9 +1207,85 @@ mod tests {
 
         let result = run_vector_case(vector);
         assert!(
-            result.is_ok(),
-            "expected vector d4 e 232 to pass: {result:?}"
+            result.is_err(),
+            "expected vector d4 e 232 to diverge: it wraps PEI's pointer high-byte fetch, \
+             which the 5A22 does not do (see KNOWN_DIVERGENT_VECTORS)"
         );
+    }
+
+    #[test]
+    fn run_vector_case_reports_divergence_for_a1_e_847_when_full_vectors_available() {
+        let full_file = Path::new(PROCESSOR_TESTS_FULL_ROOT).join("a1.e.json");
+        if !full_file.exists() {
+            return;
+        }
+
+        let vectors = load_vectors_from_file(&full_file).expect("load a1.e.json vectors");
+        let vector = vectors
+            .iter()
+            .find(|vector| vector.name == "a1 e 847")
+            .expect("find vector a1 e 847");
+
+        let result = run_vector_case(vector);
+        assert!(
+            result.is_err(),
+            "expected vector a1 e 847 to diverge: it carries the (dp,X) pointer high-byte \
+             fetch where the 5A22 wraps within the page (see KNOWN_DIVERGENT_VECTORS)"
+        );
+    }
+
+    #[test]
+    fn known_divergent_vectors_all_diverge_when_full_vectors_available() {
+        let full_root = Path::new(PROCESSOR_TESTS_FULL_ROOT);
+        if !full_root.join("a1.e.json").exists() || !full_root.join("d4.e.json").exists() {
+            return;
+        }
+
+        let mut checked = 0;
+        for file in ["a1.e.json", "d4.e.json"] {
+            let vectors = load_vectors_from_file(&full_root.join(file)).expect("load full vectors");
+            for vector in &vectors {
+                if !KNOWN_DIVERGENT_VECTORS.contains(&vector.name.as_str()) {
+                    continue;
+                }
+                checked += 1;
+                let result = run_vector_case(vector);
+                assert!(
+                    result.is_err(),
+                    "expected {} to diverge from the hardware-backed wrap rule, but it passed",
+                    vector.name
+                );
+            }
+        }
+        assert_eq!(
+            checked,
+            KNOWN_DIVERGENT_VECTORS.len(),
+            "every KNOWN_DIVERGENT_VECTORS entry should exist in the full corpus"
+        );
+    }
+
+    #[test]
+    fn emulation_mode_a1_and_d4_vectors_are_cycle_exact_checked() {
+        // The divergent vectors are excluded by name via KNOWN_DIVERGENT_VECTORS, not by
+        // downgrading every emulation-mode a1/d4 vector to state-only checks.
+        assert!(is_cycle_exact(0xA1));
+        assert!(is_cycle_exact(0xD4));
+    }
+
+    #[test]
+    fn run_vectors_from_file_skips_known_divergent_vectors_when_full_vectors_available() {
+        for file in ["a1.e.json", "d4.e.json"] {
+            let full_file = Path::new(PROCESSOR_TESTS_FULL_ROOT).join(file);
+            if !full_file.exists() {
+                return;
+            }
+
+            let result = run_vectors_from_file(&full_file);
+            assert!(
+                result.is_ok(),
+                "expected {file} to pass with known-divergent vectors skipped: {result:?}"
+            );
+        }
     }
 
     #[test]

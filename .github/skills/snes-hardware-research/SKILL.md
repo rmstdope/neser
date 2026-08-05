@@ -967,14 +967,29 @@ Opposite directions, so no single rule satisfies both. Applying the ProcessorTes
 "Success" screen to Failed -- trading a 1610-test hardware oracle for 29 of 20 000 vectors.
 
 So: **before adopting any rule change the vectors imply, run `gilyon_cpu_tests`.** If it
-breaks, the vectors lose. Prefer carving the disagreement narrowly (there, cycle-exact checks
-kept for native mode, where both agree at 0/10000, and dropped only for emulation mode) over
-disabling the whole opcode. Tracked as #3135.
+breaks, the vectors lose. Prefer carving the disagreement narrowly over disabling the whole
+opcode. #3068 first carved by mode (cycle-exact checks dropped for all emulation-mode a1/d4
+vectors); #3135 then enumerated the full corpus -- exactly 28 `a1 e` vectors plus `d4 e 232`
+diverge, `a1.n`/`d4.n` are 0/10000 -- and replaced the mode carve-out with a named skip list
+(`KNOWN_DIVERGENT_VECTORS`), so the other 19 971 emulation-mode vectors regained full
+cycle-exact checking.
+
+#3135 also settled authority: these vectors are simply **wrong**, not "right for a different
+chip". The corpus is generated from an emulator model, not captured from hardware, and
+upstream had already regenerated the long-indirect `[dp]`/`[dp],Y` vectors for exactly this
+class of emulation-mode wrap bug (issue #1 / PR #2), with issues #3 (SBC `(dp,X)` -- the same
+dispute as ours), #6 and #8 still open at the pinned revision. For PEI the WDC datasheet itself
+documents the carry ("...and the PEI instruction which will increment from 0000FE or 0000FF
+into the Stack area"), so even a bare 65816 disagrees with the vectors there; for `(dp,X)`
+the in-page wrap is an undocumented quirk that gilyon's hardware-validated tests 02c9-02cc
+pin down and Mesen2 ports as `GetDirectAddressIndirectWordWithPageWrap`.
 
 Corollary for existing "cross-verified against cputest test NNNN" comments: such a comment
-proves only that cputest exercises *one side* of a condition. `addr_dp_x_ind`'s claim that the
-wrap applies "regardless of D's low byte" held only because cputest never tests `DL != 0`
-there. Treat those comments as evidence about the tested side, not the general rule.
+proves only that cputest exercises *one side* of a condition -- treat it as evidence about
+the tested side, not the general rule. (An earlier revision of this corollary claimed cputest
+"never tests `DL != 0`" for `addr_dp_x_ind`; that was itself wrong -- `make_cpu_tests.py`
+tests 02cb/02cc exercise exactly that case in emulation mode. Check prose claims about what a
+suite covers against the suite's generator source before repeating them.)
 
 ### Matching the reference's *rule* is not the same as matching its *quantity* (from #3067)
 
