@@ -8,6 +8,7 @@
 use crate::platform::autorun::{AutorunFormat, AutorunMode};
 use crate::platform::debugging::Tracing;
 use crate::platform::debugging::breakpoints::BreakpointKind;
+use std::path::PathBuf;
 
 pub mod cli;
 
@@ -15,6 +16,7 @@ mod audio;
 mod autorun;
 mod cartridge;
 mod debugger;
+pub(crate) mod headless;
 mod video;
 
 pub use cli::ParseResult;
@@ -22,6 +24,23 @@ pub(crate) use cli::{
     CliFlag, OPTIONAL_BOOL_FLAGS, all_cli_flags, has_negation_flag, parse_bool, parse_bool_arg,
     parse_cli_string_arg, parse_hex_u8, parse_u32_arg, print_help, validate_args,
 };
+
+/// A headless frame-capture request built from `--headless`.
+///
+/// Capture runs the ROM with no window, no GL context and no audio device,
+/// stopping once `frames` frames have finished rendering, then writes that
+/// frame to `output` as a PNG.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadlessCapture {
+    /// Number of frames to run before capturing; the capture is frame `frames`
+    /// counting from 1, so `1` captures the first rendered frame.
+    pub frames: u32,
+    /// Destination PNG path, from `--output`.
+    pub output: PathBuf,
+}
+
+/// Default frame count when `--frames` is omitted (one NTSC second).
+pub const DEFAULT_CAPTURE_FRAMES: u32 = 60;
 
 /// RAM initialization mode for power-on/hard reset.
 ///
@@ -112,6 +131,11 @@ pub struct FrontendConfig {
     /// Whether to launch the TUI ROM browser instead of the emulator.
     #[cfg_attr(not(feature = "tui"), allow(dead_code))]
     pub tui_mode: bool,
+    /// Headless frame capture request, when `--headless` was given.
+    ///
+    /// `Some` puts the emulator in capture mode: run the ROM without any
+    /// window, audio device or catalog scan, then write one frame to a PNG.
+    pub headless_capture: Option<HeadlessCapture>,
     /// RAM initialization mode for power-on/hard reset (generic across emulators).
     pub ram_init_mode: RamInitMode,
     /// Breakpoints to set on startup (from --breakpoint CLI flag).
@@ -157,6 +181,7 @@ impl Default for FrontendConfig {
             scan_cartridges: true,
             rebuild_cartridge_catalog: false,
             tui_mode: false,
+            headless_capture: None,
             #[cfg(target_arch = "wasm32")]
             ram_init_mode: RamInitMode::Zero,
             #[cfg(not(target_arch = "wasm32"))]
@@ -233,6 +258,10 @@ impl FrontendConfig {
         }
 
         autorun::apply_args(self, args, cli_ram_init_mode.as_deref())?;
+
+        // Must follow autorun: the headless/autorun conflict check reads the
+        // autorun mode that call sets.
+        headless::apply_args(self, args, cli_ram_init_mode.as_deref())?;
 
         Ok(())
     }

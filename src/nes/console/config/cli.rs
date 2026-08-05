@@ -570,6 +570,10 @@ impl Config {
         // SNES hardware (parsed by SNES config module)
         self.snes.apply_args(args)?;
 
+        // Must follow the positional ROM argument above, which is what the
+        // headless capture mode requires.
+        crate::platform::config::headless::validate_rom_path(&self.frontend)?;
+
         Ok(())
     }
 
