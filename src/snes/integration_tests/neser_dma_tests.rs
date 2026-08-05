@@ -428,6 +428,42 @@ mod tests {
         run_fixture(fx.build(), "gpdma-b2a-vram.sfc");
     }
 
+    /// #3112: a B->A VRAM read during active display must see the same
+    /// access-window gating a CPU read does -- the DMA controller drives the
+    /// live PPU register (#3061), not a shadow copy, so this is reachable
+    /// exactly the way the vector above is, just outside the window. The
+    /// first pair still returns the latch primed under forced blank
+    /// (unaffected by the window per Mesen2/ares); every later reload lands
+    /// during active display, which zeroes the prefetch instead of loading
+    /// real VRAM, so the sequence stops tracking $0000/$0001 after the first
+    /// pair -- unlike the all-forced-blank vector above, where it keeps
+    /// alternating between the two real words.
+    #[test]
+    fn gpdma_b_to_a_vram_read_during_active_display_is_gated() {
+        let mut fx = FixtureRom::new(b"NESER DMA B2A VGATE");
+        fx.force_blank_on();
+        cpu_write_vram(&mut fx, 0x0000, 0x2211);
+        cpu_write_vram(&mut fx, 0x0001, 0x4433);
+        // Rewind VMADD to 0 and prime the prefetch latch with real data
+        // before leaving forced blank.
+        fx.store_imm_abs(0x2115, 0x80);
+        fx.store_imm_abs(0x2116, 0x00);
+        fx.store_imm_abs(0x2117, 0x00);
+
+        fx.force_blank_off();
+        wait_until_vblank(&mut fx);
+        wait_until_active_display(&mut fx);
+
+        // DMAP $81: B->A, increment A-bus, mode 1 -> $2139 then $213A per word.
+        fx.setup_gpdma(0, 0x81, BBAD_VMDATAREAD, 0x00_0600, 6);
+        fx.trigger_gpdma(0x01);
+        for (i, expected) in [0x11u8, 0x22, 0x00, 0x00, 0x00, 0x00].iter().enumerate() {
+            assert_wram(&mut fx, 0x0600 + i as u16, *expected);
+        }
+        fx.pass_marker_and_idle();
+        run_fixture(fx.build(), "gpdma-b2a-vram-gated.sfc");
+    }
+
     /// A byte count of 0 means 65536 bytes (not zero): a fixed-source fill of
     /// WRAM reaches well past offset 256, proving the count did not wrap to a
     /// no-op.
