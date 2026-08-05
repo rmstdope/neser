@@ -84,6 +84,7 @@ Before merging or committing to main, the following checkpoint shall pass:
   ```
 - Run `cargo test --no-default-features --lib` to verify the full test suite passes before creating a PR
 - Run `cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings` and fix all findings (the host clippy run above cannot see `#[cfg(target_arch = "wasm32")]` code)
+- Run `cargo clippy --no-default-features --features frontend --all-targets -- -D warnings` and fix all findings (the `neser` binary requires only `frontend`, so this is a buildable configuration, but neither run above covers it — the host one enables `native`, and the wasm one is a different target. Three warnings sat unnoticed in that gap until #3137)
 - Run `wasm-pack test --headless --chrome --no-default-features --features wasm` and fix all warnings and ensure all tests pass
 - Run `source .venv/bin/activate && python -m unittest discover -s scripts -t . -p "test_*.py"` and ensure all tests pass
 - Run `ruff check scripts` and fix all findings (do not add `noqa` without a stated reason)

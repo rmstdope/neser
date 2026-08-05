@@ -295,6 +295,12 @@ jobs:
         # Must stay byte-identical to the pre-merge checkpoint in
         # .github/copilot-instructions.md and the README "Useful checks" block.
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Run clippy (frontend without native)
+        # The neser binary requires only `frontend`, so this configuration is
+        # buildable, but neither the run above nor the wasm job covers it: the
+        # former enables `native`, the latter is a different target. Three
+        # warnings sat unnoticed in that gap until #3137.
+        run: cargo clippy --no-default-features --features frontend --all-targets -- -D warnings
       - name: Check formatting
         run: cargo fmt -- --check
 

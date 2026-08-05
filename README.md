@@ -202,6 +202,7 @@ Useful checks:
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings
+cargo clippy --no-default-features --features frontend --all-targets -- -D warnings
 cargo test --no-default-features --lib
 npm test
 ruff check scripts
