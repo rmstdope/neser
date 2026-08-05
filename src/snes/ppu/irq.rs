@@ -66,11 +66,13 @@ impl Ppu {
     /// - **Where the edge is latched.** Mesen2 arms the CPU line here at clock
     ///   6 with an unconditional `SetNmiFlag(1)`; NESER goes through
     ///   [`Ppu::update_nmi_line`], which latches an edge only when the level
-    ///   `nmi_enable && nmi_flag` is *rising*. Nothing sets that level between
-    ///   clock 2 and clock 6, so in the common case the rise is found here and
-    ///   the two agree -- but any non-disabling `$4200` write landing in clocks
-    ///   2-5 finds it first, and then clock 6 sees no rising edge and does
-    ///   nothing. An enabling write keeps its 2-cycle recognition arm (#3081)
+    ///   `nmi_enable && nmi_flag` is *rising*. That level rises at clock 2,
+    ///   with the flag -- but nothing *samples* it there, since the clock-2 arm
+    ///   does not call `update_nmi_line`. In the common case clock 6 is the
+    ///   first sample and finds the rise, so the two agree; any non-disabling
+    ///   `$4200` write landing in clocks 2-5 samples it earlier, and clock 6
+    ///   then sees a level that is no longer rising and does nothing. An
+    ///   enabling write keeps its 2-cycle recognition arm (#3081)
     ///   where Mesen2 re-arms to 1 at clock 6; a rewrite with NMI already
     ///   enabled latches at the write where Mesen2 latches at clock 6 (see
     ///   `a_nmitimen_rewrite_discovering_the_vblank_rise_arms_one_cycle`).
