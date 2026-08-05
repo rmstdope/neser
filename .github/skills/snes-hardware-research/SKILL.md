@@ -448,6 +448,20 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    scene under test; parking at X=256 with a Y clear of any visible
    line is safe at every size (this interaction is also how #3003 was
    found).
+7b. **Spec-check every cartridge-header field you hand-write in a
+   synthetic ROM, including the ones nothing seems to read** (from
+   #3137). Header bytes get copied between test ROMs and drift from the
+   image they describe, and an emulator that ignores a field today may
+   use it tomorrow -- at which point the fixture is quietly wrong and
+   the failure looks like an emulator bug. `minimal_snes_rom` declared
+   ROM size `$07` on a 64 KB buffer; fullsnes ("Cartridge Header") gives
+   `$FFD7` as `(1 SHL n)` KB, so `$07` claims 128 KB and the correct
+   value is `$06`. Note the trap in the fix: a reviewer offered "reword
+   the comment or correct the value" and the comment was *accurate* about
+   what `$07` means -- rewording would have preserved a header that lies
+   about the ROM. Check the field against fullsnes and correct the
+   value. Rounding-up in that entry applies only to non-power-of-two
+   carts, so an exact power of two has an exact `n`.
 8. **Verify upstream test-ROM naming against official spec terminology
    before documenting it.** Test-ROM sources can invert or localize the
    official names: undisbeliever's `object-dropout-test.asm` calls the
