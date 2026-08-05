@@ -1063,9 +1063,10 @@ impl SnesSystemBus {
                 self.wmadd.set((wmadd + 1) & 0x1_FFFF);
                 value
             }
-            0x2181 => (self.wmadd.get() & 0xFF) as u8,
-            0x2182 => ((self.wmadd.get() >> 8) & 0xFF) as u8,
-            0x2183 => ((self.wmadd.get() >> 16) & 0x01) as u8,
+            // WMADDL/M/H ($2181-$2183): write-only on hardware (fullsnes "SNES
+            // Memory Work RAM Access"), so no read arm here -- they fall
+            // through to `_ => return None` like every other write-only
+            // register in this range (issue #3113).
             0x4214 => (self.rddiv & 0x00FF) as u8,
             0x4215 => (self.rddiv >> 8) as u8,
             0x4216 => (self.rdmpy & 0x00FF) as u8,
@@ -2045,6 +2046,12 @@ mod tests {
         bus.write(0x002181, 0x23);
         bus.write(0x002182, 0x01);
         bus.write(0x002183, 0x00);
+        // A sentinel at $000124, the position WMADD must land on after the
+        // transfer advances it by one. Read back through $2180 below --
+        // WMADDL/M ($2181/$2182) are write-only on hardware (#3113), so
+        // asserting on them would lean on a NESER-specific readback, the
+        // same reasoning as `gpdma_b_to_a_reads_wmdata_live_and_advances_wmadd`.
+        bus.write(0x7E0124, 0x99);
 
         bus.write(0x700100, 0x42);
         write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x700100, 1);
@@ -2053,9 +2060,48 @@ mod tests {
 
         // The byte must land at $000123 (via WRAM, not silently dropped).
         assert_eq!(bus.read(0x7E0123), 0x42);
-        // wmadd must have advanced by 1, just like a direct CPU write to $2180 would.
-        assert_eq!(bus.read(0x002181), 0x24);
-        assert_eq!(bus.read(0x002182), 0x01);
+        // wmadd must have advanced by 1, just like a direct CPU write to $2180
+        // would: the next WMDATA read returns the sentinel seeded at $000124.
+        assert_eq!(
+            bus.read(0x002180),
+            0x99,
+            "the DMA write advanced WMADD by one, just like a direct CPU write to $2180 would"
+        );
+    }
+
+    /// WMADDL/M/H ($2181/$2182/$2183) are write-only on hardware (fullsnes
+    /// "SNES Memory Work RAM Access": all three carry the "(W)" marking) --
+    /// a CPU read must return open bus (MDR), not the stored pointer.
+    /// Confirmed against Mesen2 (`RegisterHandlerB::Read` has no case for
+    /// these addresses, falling through to `SnesPpu::Read`'s default ->
+    /// `GetOpenBus()`) and ares (`CPU::readCPU` has no case either,
+    /// returning its `data` open-bus parameter unchanged). See issue #3113.
+    #[test]
+    fn cpu_read_of_wmadd_returns_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        // Point WMADD somewhere so a buggy readback would be observably wrong.
+        bus.write(0x002181, 0x23);
+        bus.write(0x002182, 0x01);
+        bus.write(0x002183, 0x00);
+
+        prime_mdr(&mut bus, 0x9A);
+        assert_eq!(
+            bus.read(0x002181),
+            0x9A,
+            "WMADDL is write-only; a CPU read must return open bus"
+        );
+        prime_mdr(&mut bus, 0x9B);
+        assert_eq!(
+            bus.read(0x002182),
+            0x9B,
+            "WMADDM is write-only; a CPU read must return open bus"
+        );
+        prime_mdr(&mut bus, 0x9C);
+        assert_eq!(
+            bus.read(0x002183),
+            0x9C,
+            "WMADDH is write-only; a CPU read must return open bus"
+        );
     }
 
     #[test]
@@ -2302,6 +2348,47 @@ mod tests {
             bus.read(0x7E0200),
             0x9A,
             "an unreadable B-bus port drives open bus, not the last A->B byte"
+        );
+    }
+
+    /// WMADDL/M/H ($2181/$2182/$2183) are write-only on hardware (fullsnes
+    /// "SNES Memory Work RAM Access": all three carry the "(W)" marking), so
+    /// a B->A transfer of any of them must copy open bus -- the byte the DMA
+    /// itself last drove -- not the stored WMADD pointer. Confirmed against
+    /// Mesen2 (`RegisterHandlerB::Read` has no case for these addresses,
+    /// falling through to `SnesPpu::Read`'s default -> `GetOpenBus()`) and
+    /// ares (`CPU::readCPU` has no case either, returning its `data`
+    /// open-bus parameter unchanged). See issue #3113.
+    #[test]
+    fn gpdma_b_to_a_reads_wmadd_as_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        // Point WMADD somewhere so a buggy readback would be observably wrong.
+        bus.write(0x002181, 0x23);
+        bus.write(0x002182, 0x01);
+        bus.write(0x002183, 0x00);
+
+        // Each register is transferred separately: unlike WMDATA's mode-4
+        // sibling in `gpdma_b_to_a_threads_its_own_open_bus_through_the_burst`,
+        // WMADDL/M/H don't need to be adjacent for this vector.
+        prime_mdr(&mut bus, 0x9A);
+        write_dma_channel(&mut bus, 0, 0x80, 0x81, 0x7E0300, 1);
+        bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
+
+        prime_mdr(&mut bus, 0x9B);
+        write_dma_channel(&mut bus, 0, 0x80, 0x82, 0x7E0301, 1);
+        bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
+
+        prime_mdr(&mut bus, 0x9C);
+        write_dma_channel(&mut bus, 0, 0x80, 0x83, 0x7E0302, 1);
+        bus.write(0x00420B, 0x01);
+        run_pending_gpdma(&mut bus);
+
+        assert_eq!(
+            [bus.read(0x7E0300), bus.read(0x7E0301), bus.read(0x7E0302)],
+            [0x9A, 0x9B, 0x9C],
+            "WMADDL/M/H are write-only; a B->A read must copy open bus, not the stored pointer"
         );
     }
 
