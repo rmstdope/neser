@@ -139,7 +139,7 @@ mod tests {
     use super::*;
     use crate::nes::console::{Config, RamInitMode};
     use crate::platform::app_context::AppContext;
-    use crate::platform::config::FrontendConfig;
+    use crate::platform::config::{DEFAULT_CAPTURE_FRAMES, FrontendConfig};
     use crate::platform::test_roms::minimal_nes_rom;
     use std::cell::RefCell;
     use std::path::Path;
@@ -433,6 +433,81 @@ mod tests {
             std::fs::read(&late).expect("read late"),
             "captures at 2 and 10 frames should differ",
         );
+    }
+
+    // --- per-system capture ---
+    //
+    // The runner asks the console for its dimensions, so a capture that assumed
+    // one system's resolution would silently produce wrong-sized images for the
+    // others. Expected values are the documented hardware resolutions rather
+    // than the crate's own constants, which would make the assertion circular.
+
+    /// Capture `rom` for [`DEFAULT_CAPTURE_FRAMES`] frames and return the PNG's
+    /// `(width, height)`.
+    ///
+    /// Also asserts the image is not a single flat colour. Dimensions alone
+    /// would pass on an all-black frame, which is what a silently failed load
+    /// or a capture that never advanced a frame would produce.
+    ///
+    /// The frame count matters: dmg-acid2 still renders a blank screen at 30
+    /// frames and only draws by 60, so a shorter capture would assert against
+    /// nothing. 60 is also the default `--frames`, so these exercise what a
+    /// user gets by default.
+    fn captured_dimensions(rom: &str, temp: &TempDir) -> (u32, u32) {
+        let output = temp.path().join("shot.png");
+        run(
+            &make_app_context(),
+            rom,
+            &capture_to(&output, DEFAULT_CAPTURE_FRAMES),
+        )
+        .unwrap_or_else(|err| panic!("capture of {rom} should succeed: {err}"));
+
+        let (width, height, rgb) = decode_png(&output);
+        assert_eq!(
+            rgb.len() as u32,
+            width * height * 3,
+            "RGB buffer should match the header dimensions"
+        );
+
+        let colours: std::collections::HashSet<&[u8]> = rgb.chunks_exact(3).collect();
+        assert!(
+            colours.len() > 1,
+            "{rom} captured a single flat colour, so nothing was rendered"
+        );
+
+        (width, height)
+    }
+
+    #[test]
+    fn captures_a_nes_rom_at_256x240() {
+        let temp = TempDir::new().expect("create temp dir");
+        let dimensions = captured_dimensions("roms/nes/rainwarrior/color_test.nes", &temp);
+        assert_eq!(dimensions, (256, 240));
+    }
+
+    #[test]
+    fn captures_a_game_boy_rom_at_160x144() {
+        let temp = TempDir::new().expect("create temp dir");
+        let dimensions = captured_dimensions("roms/gb/automated_tests/acid/dmg-acid2.gb", &temp);
+        assert_eq!(dimensions, (160, 144));
+    }
+
+    #[test]
+    fn captures_a_gba_rom_at_240x160() {
+        let temp = TempDir::new().expect("create temp dir");
+        let dimensions = captured_dimensions(
+            "roms/gba/automated_tests/armwrestler/armwrestler.gba",
+            &temp,
+        );
+        assert_eq!(dimensions, (240, 160));
+    }
+
+    #[test]
+    fn captures_an_snes_rom_at_256x224() {
+        let temp = TempDir::new().expect("create temp dir");
+        let dimensions =
+            captured_dimensions("roms/snes/automated_tests/blargg_apu/test_speed.smc", &temp);
+        assert_eq!(dimensions, (256, 224));
     }
 
     #[test]
