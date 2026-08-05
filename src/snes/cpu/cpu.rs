@@ -3647,8 +3647,13 @@ impl<B: SnesBus> Cpu<B> {
     /// mode the low-byte-of-D-is-zero case additionally wraps `offset+X` to
     /// 8 bits (6502-style zero-page indexing), and — regardless of D's low
     /// byte — the pointer's high-byte read always wraps within its own page
-    /// instead of carrying into the next page. Cross-verified against the
-    /// vendored snes-tests cputest ROM (test 0024) and Mesen2.
+    /// instead of carrying into the next page (an undocumented quirk in the
+    /// DL != 0 case). Cross-verified against the vendored snes-tests cputest
+    /// ROM (tests 0024 and 02c9-02cc, hardware-validated; 02cb/02cc cover
+    /// DL != 0, 02cc the page-straddling pointer) and Mesen2's
+    /// `GetDirectAddressIndirectWordWithPageWrap`. The ProcessorTests a1.e
+    /// vectors carry instead and are known-wrong here — see
+    /// `KNOWN_DIVERGENT_VECTORS` in the 65816 vector harness (#3135).
     fn addr_dp_x_ind(&mut self, offset: u8) -> u32 {
         self.tick_direct_page_penalty();
         // Mesen2 `AddrMode_DirIdxIndX` spends the index idle BETWEEN the operand byte and
@@ -4617,9 +4622,15 @@ impl<B: SnesBus> Cpu<B> {
         let off = self.fetch_byte();
         // Unlike the 6502-heritage (dp) indirect opcodes (ADC, AND, CMP,
         // ...), PEI's pointer read never wraps within D's page in emulation
-        // mode. Cross-verified against the vendored snes-tests cputest ROM
-        // (test 0x3C4) and Mesen2 -- which reaches the same address, and the
-        // same DL penalty placement, via `0xD4: AddrMode_Dir(); PEI();`.
+        // mode. This is documented behavior, not a quirk: the WDC datasheet
+        // excepts PEI from the emulation-mode direct-page wrap ("will
+        // increment from 0000FE or 0000FF into the Stack area"), as does
+        // Bruce Clark's 65C816 tutorial (section 5.11). Cross-verified
+        // against the vendored snes-tests cputest ROM (test 0x3C4) and
+        // Mesen2 -- which reaches the same address, and the same DL penalty
+        // placement, via `0xD4: AddrMode_Dir(); PEI();`. The ProcessorTests
+        // vector "d4 e 232" wraps instead and is known-wrong -- see
+        // KNOWN_DIVERGENT_VECTORS in the 65816 vector harness (#3135).
         let ptr_addr = self.addr_dp(off);
         let lo = self.tick_read(ptr_addr);
         let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
