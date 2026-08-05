@@ -249,18 +249,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // Exactly one of these is compiled, and each is the function's tail.
+    // Hoisting `Ok(())` out to a shared trailing expression would make it
+    // unreachable in the non-native build, where `exit` diverges.
     #[cfg(feature = "native")]
     {
         run_native_frontend(app_context)?;
+        Ok(())
     }
 
     #[cfg(not(feature = "native"))]
     {
         eprintln!("No frontend feature enabled. Enable the 'native' feature.");
-        std::process::exit(1);
+        std::process::exit(1)
     }
-
-    Ok(())
 }
 
 #[cfg(feature = "native")]
