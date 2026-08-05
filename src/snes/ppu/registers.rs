@@ -227,9 +227,13 @@ impl Ppu {
             }
             // VMADDL / VMADDH: VRAM word address; writing high byte prefetches.
             0x2116 => self.vram_address = (self.vram_address & 0xFF00) | value as u16,
+            // The prefetch reload triggered here shares the exact access-window
+            // gating as the $2139/$213A read-triggered reload (#3112: Mesen2's
+            // $2116/$2117 write handlers and its $2139/$213A read handlers all
+            // call the same `UpdateVramReadBuffer`).
             0x2117 => {
                 self.vram_address = (self.vram_address & 0x00FF) | ((value as u16) << 8);
-                self.vram_prefetch = self.read_vram_word(self.translated_vram_address());
+                self.reload_vram_prefetch();
             }
             // VMDATAL / VMDATAH: VRAM data write (low/high byte of the addressed word).
             // Outside VBlank/forced blank the data is silently dropped (fullsnes: "All video
@@ -270,7 +274,7 @@ impl Ppu {
                     let commit = if self.cgram_cpu_access_allowed() {
                         index
                     } else {
-                        (((self.cgram_render_index.get() as usize) << 1) | 1) & (CGRAM_SIZE - 1)
+                        self.cgram_render_cursor_index(1)
                     };
                     self.cgram[commit - 1] = self.cgram_latch;
                     self.cgram[commit] = value & 0x7F;
@@ -302,7 +306,7 @@ impl Ppu {
             0x2104 => {
                 let addr = (self.oam_address as usize) & 0x03FF;
                 if self.oam_rendering_active() {
-                    let redirected = 0x200 | ((addr & 0x1F0) >> 4);
+                    let redirected = Self::oam_render_cursor_index(addr);
                     self.oam_latch = value;
                     self.oam[redirected] = value;
                 } else if addr < 0x200 {
@@ -354,11 +358,13 @@ impl Ppu {
             // fullsnes "Increment/Prefetch in detail": return the OLD prefetch value, reload
             // the prefetch register from the OLD (pre-increment) address, then increment --
             // so the first word after setting $2116/17 is received twice (Mesen2
-            // `SnesPpu.cpp` $2139: `UpdateVramReadBuffer` before the increment).
+            // `SnesPpu.cpp` $2139: `UpdateVramReadBuffer` before the increment). The returned
+            // byte itself is never gated by the access window -- only the reload is (#3112,
+            // see `reload_vram_prefetch`).
             0x2139 => {
                 let value = (self.vram_prefetch & 0x00FF) as u8;
                 if !self.vram_increment_after_high {
-                    self.vram_prefetch = self.read_vram_word(self.translated_vram_address());
+                    self.reload_vram_prefetch();
                     self.increment_vram_address();
                 }
                 value
@@ -368,22 +374,26 @@ impl Ppu {
             0x213A => {
                 let value = ((self.vram_prefetch >> 8) & 0x00FF) as u8;
                 if self.vram_increment_after_high {
-                    self.vram_prefetch = self.read_vram_word(self.translated_vram_address());
+                    self.reload_vram_prefetch();
                     self.increment_vram_address();
                 }
                 value
             }
-            // RDOAM: OAM data read (auto-incrementing byte address).
+            // RDOAM: OAM data read (auto-incrementing byte address). During active rendering
+            // the read is redirected to the sprite unit's cursor, same as the $2104 write side
+            // (#3112, `oam_read_index`).
             0x2138 => {
-                let index = self.oam_index();
+                let index = self.oam_read_index();
                 let value = self.oam[index];
                 self.increment_oam_address();
                 value
             }
             // RDCGRAM: CGRAM data read (auto-incrementing byte address). Contributes to PPU2
-            // open bus like the other $213B/$213C/$213D/$213F reads (see OPHCT below).
+            // open bus like the other $213B/$213C/$213D/$213F reads (see OPHCT below). Outside
+            // its access window the read is redirected to the renderer's current palette entry,
+            // same as the $2122 write side (#3112, `cgram_read_index`).
             0x213B => {
-                let index = self.cgram_index();
+                let index = self.cgram_read_index();
                 // CGRAM stores 15-bit colours, so the high byte's bit 7 does not
                 // exist to be read back: PPU2 open bus drives it instead (Mesen2
                 // `((_cgram[cgAddr] >> 8) & 0x7F) | (_state.Ppu2OpenBus & 0x80)`).
@@ -564,6 +574,67 @@ impl Ppu {
     /// scanline (Mesen2 `SnesPpu.cpp` $2104 redirect condition).
     fn oam_rendering_active(&self) -> bool {
         !self.forced_blank_enabled() && self.position.scanline < self.vblank_start_line()
+    }
+
+    /// Reloads the VRAM prefetch register from the current (pre-increment) address, or
+    /// zeroes it if the access window is closed. Shared by the $2139/$213A read-triggered
+    /// reload and the $2117 write-triggered reload -- both call this in Mesen2
+    /// (`UpdateVramReadBuffer`: `CanAccessVram() ? _vram[GetVramAddress()] : 0`) and ares
+    /// (`readVRAM()` returns 0 under the same condition). Neither source claims this is
+    /// hardware-verified; Mesen2's own comment flags it as an approximation ("Unknown: does
+    /// it read from the address the ppu is currently reading from, like oam/cgram?") -- but
+    /// fullsnes is silent on the refused-read result and both independent implementations
+    /// agree on this model (#3112).
+    fn reload_vram_prefetch(&mut self) {
+        self.vram_prefetch = if self.vram_cpu_access_allowed() {
+            self.read_vram_word(self.translated_vram_address())
+        } else {
+            0
+        };
+    }
+
+    /// The high-table byte the sprite unit's cursor approximation redirects to during active
+    /// rendering, for the CPU-facing OAM address `addr`. Shared by the $2104 write redirect
+    /// and the $2138 read redirect (`oam_read_index`) below -- Mesen2 derives this from its
+    /// per-dot sprite evaluation (`GetOamAddress`); NESER approximates with the CPU-facing
+    /// address, which reproduces the essential behavior (low table protected/hidden, high
+    /// table corrupted/exposed).
+    fn oam_render_cursor_index(addr: usize) -> usize {
+        0x200 | ((addr & 0x1F0) >> 4)
+    }
+
+    /// The OAM byte index a $2138 read should use: the CPU-facing address normally, or the
+    /// same high-table cursor redirect the $2104 write side uses during active rendering
+    /// (Mesen2 `GetOamAddress`; ares `readOAM`) (#3112).
+    fn oam_read_index(&self) -> usize {
+        if self.oam_rendering_active() {
+            Self::oam_render_cursor_index((self.oam_address as usize) & 0x03FF)
+        } else {
+            self.oam_index()
+        }
+    }
+
+    /// The CGRAM byte address of the renderer's current palette entry
+    /// ([`Ppu::cgram_render_index`]), with `parity` selecting the low (0) or high (1) byte.
+    /// Shared by the $2122 write redirect (always `parity = 1`: a write commits the whole
+    /// word atomically on its odd/high byte) and the $213B read redirect (`cgram_read_index`
+    /// below), where each call reads one byte and `parity` follows the CPU's own address
+    /// toggle instead.
+    fn cgram_render_cursor_index(&self, parity: usize) -> usize {
+        (((self.cgram_render_index.get() as usize) << 1) | parity) & (CGRAM_SIZE - 1)
+    }
+
+    /// The CGRAM byte index a $213B read should use: the CPU-facing address normally, or
+    /// the renderer's current palette entry outside the access window, same as the $2122
+    /// write side (Mesen2 `InternalCgramAddress`; ares `latch.cgramAddress`) (#3112). The
+    /// low/high byte selection still follows the CPU's own address parity -- only the
+    /// palette entry is redirected.
+    fn cgram_read_index(&self) -> usize {
+        if self.cgram_cpu_access_allowed() {
+            self.cgram_index()
+        } else {
+            self.cgram_render_cursor_index(self.cgram_address as usize & 1)
+        }
     }
 
     fn vram_index(&self) -> usize {
@@ -1285,6 +1356,178 @@ mod tests {
 
         assert_eq!(ppu.oam_byte(0x40), 0x9A);
         assert_eq!(ppu.oam_byte(0x41), 0xBC);
+    }
+
+    // #3112: RDOAM/RDVRAML/RDVRAMH/RDCGRAM ($2138/$2139/$213A/$213B) were not
+    // gated by the access window at all, unlike the write side. Mesen2 and
+    // ares independently agree on a per-port model that is NOT a blanket
+    // refusal: VRAM's deferred prefetch reload zeroes instead of loading real
+    // data when blocked (both `SnesPpu::UpdateVramReadBuffer` and ares'
+    // `readVRAM()` return 0 outside the window); CGRAM/OAM reads redirect to
+    // the same internal render-cursor address the write side already
+    // redirects to (`InternalCgramAddress`/`latch.cgramAddress`,
+    // `GetOamAddress`/`latch.oamAddress`). The address/prefetch increment
+    // always happens regardless, matching the write side. fullsnes only
+    // states the general VBlank/forced-blank rule and does not describe the
+    // refused-read result, so this is implementation-agreed, not
+    // hardware-verified -- Mesen2's own source flags the VRAM zero-reload as
+    // an approximation ("Unknown: does it read from the address the ppu is
+    // currently reading from?").
+
+    #[test]
+    fn vram_reads_during_active_display_zero_the_prefetch_reload_but_address_still_increments() {
+        let mut ppu = Ppu::new();
+        // Seed two words under forced blank: $1000 = $2211, $1001 = $4433.
+        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x10);
+        ppu.write_register(0x2118, 0x11);
+        ppu.write_register(0x2119, 0x22);
+        ppu.write_register(0x2118, 0x33);
+        ppu.write_register(0x2119, 0x44);
+
+        // Rewind VMADD to $1000, still under forced blank: this primes the
+        // prefetch latch with the real word.
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x10);
+
+        ppu.write_register(0x2100, 0x0F); // display enabled
+        ppu.position.scanline = 40;
+        ppu.position.dot = 100; // active display: window closed
+
+        // The returned byte is always whatever is already latched, unaffected
+        // by the window -- only the reload the read triggers is gated.
+        assert_eq!(ppu.read_register(0x2139), 0x11);
+        assert_eq!(ppu.read_register(0x213A), 0x22);
+        // That $213A read's reload (VMAIN increment-after-high) landed during
+        // active display, so it must zero the prefetch instead of loading
+        // real VRAM, while VMADD still advances to $1001.
+
+        ppu.write_register(0x2100, 0x80); // re-enter forced blank
+        // The zeroed reload is visible on the next pair (no reload yet on
+        // this $2139/$213A pair -- increment-after-high only reloads on
+        // $213A, and this call's reload only takes effect for the pair
+        // after)...
+        assert_eq!(ppu.read_register(0x2139), 0x00);
+        assert_eq!(ppu.read_register(0x213A), 0x00);
+        // ...and that $213A read's reload succeeds now the window is open,
+        // from the CURRENT address: $33/$44 proves VMADD really advanced to
+        // $1001 while blocked (stuck-at-$1000 would replay $11/$22).
+        assert_eq!(ppu.read_register(0x2139), 0x33);
+        assert_eq!(ppu.read_register(0x213A), 0x44);
+    }
+
+    #[test]
+    fn vram_write_triggered_prefetch_reload_during_active_display_is_zeroed() {
+        let mut ppu = Ppu::new();
+        // Seed a word under forced blank: $2000 = $BBAA.
+        ppu.write_register(0x2115, 0x80);
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x20);
+        ppu.write_register(0x2118, 0xAA);
+        ppu.write_register(0x2119, 0xBB);
+
+        ppu.write_register(0x2100, 0x0F); // display enabled
+        ppu.position.scanline = 40;
+        ppu.position.dot = 100; // active display: window closed
+
+        // Setting VMADD's high byte ($2117) reloads the prefetch as a side
+        // effect (fullsnes "Increment/Prefetch in detail") through the same
+        // reload mechanism $213A uses, so it is gated by the same window
+        // (Mesen2 `$2116`/`$2117` write handlers both call
+        // `UpdateVramReadBuffer`, the same helper the read handlers use).
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x20);
+
+        assert_eq!(ppu.read_register(0x2139), 0x00);
+        assert_eq!(ppu.read_register(0x213A), 0x00);
+
+        // Re-entering forced blank and re-priming the SAME address proves the
+        // seeded data really is $AA/$BB -- the zeroed reads above were not
+        // simply an unseeded address.
+        ppu.write_register(0x2100, 0x80);
+        ppu.write_register(0x2116, 0x00);
+        ppu.write_register(0x2117, 0x20);
+        assert_eq!(ppu.read_register(0x2139), 0xAA);
+        assert_eq!(ppu.read_register(0x213A), 0xBB);
+    }
+
+    #[test]
+    fn cgram_reads_during_active_rendering_return_the_renderer_fetch_address() {
+        let mut ppu = Ppu::new();
+        // Seed three distinct palette words under forced blank: the
+        // renderer's target (word 5), the CPU's target (word $10), and the
+        // CPU's next word ($11, low byte bit 7 clear to avoid the open-bus
+        // high-byte masking quirk) to prove the address advances normally
+        // afterwards.
+        ppu.write_register(0x2121, 0x05);
+        ppu.write_register(0x2122, 0x34);
+        ppu.write_register(0x2122, 0x12);
+        ppu.write_register(0x2121, 0x10);
+        ppu.write_register(0x2122, 0xAA);
+        ppu.write_register(0x2122, 0xBB);
+        ppu.write_register(0x2121, 0x11);
+        ppu.write_register(0x2122, 0x4D);
+        ppu.write_register(0x2122, 0x2F);
+
+        ppu.cgram_render_index.set(0x05); // renderer last fetched palette word 5
+
+        ppu.write_register(0x2100, 0x0F); // display enabled
+        ppu.position.scanline = 40;
+        ppu.position.dot = 100; // inside the active-fetch window (dots 22..274)
+        ppu.write_register(0x2121, 0x10); // CPU addresses word $10
+
+        // The read is redirected to the renderer's palette entry (word 5),
+        // never seeing the CPU-addressed word $10's real content ($AA/$BB).
+        assert_eq!(ppu.read_register(0x213B), 0x34);
+        assert_eq!(ppu.read_register(0x213B), 0x12);
+
+        // CGADD still advances on the CPU's own address regardless of the
+        // redirect: re-entering forced blank, the next pair reads word $11,
+        // not a repeat of word 5 or word $10.
+        ppu.write_register(0x2100, 0x80);
+        assert_eq!(ppu.read_register(0x213B), 0x4D);
+        assert_eq!(ppu.read_register(0x213B), 0x2F);
+    }
+
+    #[test]
+    fn oam_reads_during_active_rendering_return_the_high_table_redirect() {
+        let mut ppu = Ppu::new();
+        // Seed the CPU's low-table target (word $20, byte $40/$41), the
+        // high-table redirect target the write side already uses for that
+        // address (0x200 | ((0x40 & 0x1F0) >> 4) = $204), and the CPU's next
+        // word ($21, byte $42/$43) to prove the address advances normally
+        // afterwards.
+        ppu.write_register(0x2102, 0x20);
+        ppu.write_register(0x2103, 0x00);
+        ppu.write_register(0x2104, 0x9A);
+        ppu.write_register(0x2104, 0xBC);
+        ppu.write_register(0x2102, 0x21);
+        ppu.write_register(0x2103, 0x00);
+        ppu.write_register(0x2104, 0xDE);
+        ppu.write_register(0x2104, 0xEF);
+        ppu.write_register(0x2102, 0x02);
+        ppu.write_register(0x2103, 0x01);
+        ppu.write_register(0x2104, 0x77);
+
+        ppu.write_register(0x2102, 0x20); // CPU addresses word $20 (byte $40)
+        ppu.write_register(0x2103, 0x00);
+        ppu.write_register(0x2100, 0x0F); // display enabled
+        ppu.position.scanline = 40;
+        ppu.position.dot = 100; // active rendering: window closed
+
+        // Both bytes redirect to the same high-table cursor byte $204 (the
+        // (addr & 0x1F0) mask maps both $40 and $41 there), unlike the real
+        // low-table pair $9A/$BC.
+        assert_eq!(ppu.read_register(0x2138), 0x77);
+        assert_eq!(ppu.read_register(0x2138), 0x77);
+
+        // The OAM address still advances on the CPU's own address regardless
+        // of the redirect: re-entering vblank, the next pair reads word $21,
+        // not a repeat of $40/$41 or the redirect target.
+        ppu.position.scanline = 225;
+        assert_eq!(ppu.read_register(0x2138), 0xDE);
+        assert_eq!(ppu.read_register(0x2138), 0xEF);
     }
 
     #[test]
