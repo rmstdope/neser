@@ -197,10 +197,17 @@ pub(crate) struct RunResult {
     /// the Rust test asserts on, instead of hiding the number behind a
     /// pass/fail marker.
     pub result_bytes: [u8; RESULT_LEN],
-    /// Active PPU output dimensions at the end of the run (256x224, or 256x239
-    /// once a fixture enables SETINI overscan).
+    /// Active PPU output dimensions at the end of the run: 512x448 once a fixture
+    /// enables hi-res/interlace, 256x224 otherwise. Never reflects SETINI overscan --
+    /// `screen_snapshot_rgb` always crops to 224 rows (see `overscan_239_enabled`).
     pub screen_dimensions: (u32, u32),
     pub screen_crc32: u32,
+    /// Whether the PPU's SETINI overscan bit (`$2133` bit 2) was set at the end of the
+    /// run. `screen_dimensions`/`screen_crc32` never reveal this: `screen_snapshot_rgb`
+    /// always crops to a 224-row window regardless of overscan, so a fixture that
+    /// enables overscan can render byte-identical to one that doesn't. Assert on this
+    /// field directly when a test needs to know overscan was actually engaged.
+    pub overscan_239_enabled: bool,
     /// Final RGB888 frame (`256 * 224 * 3`, row-major, the same layout as
     /// `Snes::screen_snapshot`), for tests that need to assert on pixels rather than on a
     /// golden CRC. Populated only when the [`RunOracle::ScreenCrc`] oracle actually reached
@@ -526,6 +533,7 @@ fn finish_result(
         result_bytes: read_result_block(snes),
         screen_dimensions: (snes.screen_width(), snes.screen_height()),
         screen_crc32,
+        overscan_239_enabled: snes.overscan_239_enabled_for_tests().unwrap_or(false),
         screen_rgb,
         capture_path,
     }

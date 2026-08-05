@@ -26,7 +26,7 @@
 //!   both now match Mesen2 exactly at the same geometry, so they are
 //!   ordinary committed goldens rather than divergence records.
 
-use super::rom_runner::{InputEvent, RunConfig, RunOracle, run_rom_with_oracle};
+use super::rom_runner::{InputEvent, RunConfig, RunOracle, RunResult, run_rom_with_oracle};
 use crate::snes::input::SnesButton;
 use std::fs;
 use std::path::Path;
@@ -37,7 +37,12 @@ const HDRV_ROOT: &str = "roms/snes/automated_tests/snes_test_roms/ddribin-hdrv-s
 mod tests {
     use super::*;
 
-    fn run_hdrv_screen_crc(label: &str, script: &[InputEvent], frames: u32, expected_crc: u32) {
+    fn run_hdrv_screen_crc(
+        label: &str,
+        script: &[InputEvent],
+        frames: u32,
+        expected_crc: u32,
+    ) -> RunResult {
         let path = Path::new(HDRV_ROOT).join("hdrvtest.sfc");
         let rom = fs::read(&path)
             .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
@@ -63,6 +68,7 @@ mod tests {
              rendering change, re-approve the golden per README-SNES.md",
             result.screen_crc32
         );
+        result
     }
 
     /// Tap `button` for one frame at `frame`.
@@ -101,27 +107,31 @@ mod tests {
     /// standard 224-line window for this combo, matching Mesen2's frame
     /// exactly.
     ///
-    /// Known limitation, tracked in #3096: this CRC is byte-identical to
-    /// `colorbars_default`'s golden, and the test cannot tell you why.
-    /// With overscan on, `screen_snapshot_rgb` crops the 239-line frame
-    /// to 224 rows starting at internal row `OVERSCAN_CROP_TOP` (7); with
-    /// it off, from row 0. hdrvtest's colorbars are *vertical* bars with
-    /// no horizontal structure, so a 7-row vertical shift is invisible
-    /// and both crops hash the same. The equal CRC is therefore exactly
-    /// what you would see if the Y tap registered AND exactly what you
-    /// would see if it were swallowed -- it is evidence for neither.
+    /// This CRC is byte-identical to `colorbars_default`'s golden, and by
+    /// itself proves nothing about overscan (#3096). With overscan on,
+    /// `screen_snapshot_rgb` crops the 239-line frame to 224 rows starting
+    /// at internal row `OVERSCAN_CROP_TOP` (7); with it off, from row 0.
+    /// hdrvtest's colorbars are *vertical* bars with no horizontal
+    /// structure, so a 7-row vertical shift is invisible and both crops
+    /// hash the same -- the equal CRC is exactly what you would see
+    /// whether the Y tap registered or was swallowed. A matching Mesen2
+    /// capture doesn't help either: Mesen2's overscan and non-overscan
+    /// captures are identical for the same reason.
     ///
-    /// #3095 raised the swallowed-tap possibility; this comment does not
-    /// settle it, and neither does a matching Mesen2 capture (Mesen2's
-    /// overscan and non-overscan captures are identical for the same
-    /// reason). Deciding it needs an oracle that observes the overscan
-    /// state or the rows the crop discards -- that is #3096's job.
-    ///
-    /// Un-ignored anyway because the value is Mesen2-verified and does
-    /// guard rows 0-223 against corruption; it simply asserts less than
-    /// its name suggests.
+    /// The `overscan_239_enabled` assertion below is the actual oracle for
+    /// this combo: it reads the PPU's SETINI overscan bit directly at the
+    /// sample frame, so a regression that stops the Y tap from reaching
+    /// SETINI (or stops SETINI from being honored) fails the test even
+    /// though the cropped CRC can't see it. Confirmed by instrumented
+    /// trace that the tap does register (SETINI bit 2 goes true at frame
+    /// 341, one frame after the tap, and holds through frame 650).
     #[test]
     fn overscan_toggle() {
-        run_hdrv_screen_crc("overscan", &tap(SnesButton::Y, 340), 650, 0xF745_9692);
+        let result = run_hdrv_screen_crc("overscan", &tap(SnesButton::Y, 340), 650, 0xF745_9692);
+        assert!(
+            result.overscan_239_enabled,
+            "overscan_toggle: overscan_239_enabled() was false at frame 650 -- \
+             the Y tap failed to enable SETINI overscan, or SETINI handling regressed"
+        );
     }
 }
