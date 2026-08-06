@@ -2084,24 +2084,19 @@ mod tests {
         bus.write(0x002182, 0x01);
         bus.write(0x002183, 0x00);
 
-        prime_mdr(&mut bus, 0x9A);
-        assert_eq!(
-            bus.read(0x002181),
-            0x9A,
-            "WMADDL is write-only; a CPU read must return open bus"
-        );
-        prime_mdr(&mut bus, 0x9B);
-        assert_eq!(
-            bus.read(0x002182),
-            0x9B,
-            "WMADDM is write-only; a CPU read must return open bus"
-        );
-        prime_mdr(&mut bus, 0x9C);
-        assert_eq!(
-            bus.read(0x002183),
-            0x9C,
-            "WMADDH is write-only; a CPU read must return open bus"
-        );
+        for (addr, mdr_value, name) in [
+            (0x002181, 0x9A, "WMADDL"),
+            (0x002182, 0x9B, "WMADDM"),
+            (0x002183, 0x9C, "WMADDH"),
+        ] {
+            prime_mdr(&mut bus, mdr_value);
+            assert_eq!(
+                bus.read(addr),
+                mdr_value,
+                "{} is write-only; a CPU read must return open bus",
+                name
+            );
+        }
     }
 
     #[test]
@@ -2370,23 +2365,24 @@ mod tests {
         // Each register is transferred separately: unlike WMDATA's mode-4
         // sibling in `gpdma_b_to_a_threads_its_own_open_bus_through_the_burst`,
         // WMADDL/M/H don't need to be adjacent for this vector.
-        prime_mdr(&mut bus, 0x9A);
-        write_dma_channel(&mut bus, 0, 0x80, 0x81, 0x7E0300, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-
-        prime_mdr(&mut bus, 0x9B);
-        write_dma_channel(&mut bus, 0, 0x80, 0x82, 0x7E0301, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
-
-        prime_mdr(&mut bus, 0x9C);
-        write_dma_channel(&mut bus, 0, 0x80, 0x83, 0x7E0302, 1);
-        bus.write(0x00420B, 0x01);
-        run_pending_gpdma(&mut bus);
+        let mut results = [0u8; 3];
+        for (i, (mdr_value, b_addr, a_addr)) in [
+            (0x9A, 0x81, 0x7E0300),
+            (0x9B, 0x82, 0x7E0301),
+            (0x9C, 0x83, 0x7E0302),
+        ]
+        .iter()
+        .enumerate()
+        {
+            prime_mdr(&mut bus, *mdr_value);
+            write_dma_channel(&mut bus, 0, 0x80, *b_addr, *a_addr, 1);
+            bus.write(0x00420B, 0x01);
+            run_pending_gpdma(&mut bus);
+            results[i] = bus.read(*a_addr);
+        }
 
         assert_eq!(
-            [bus.read(0x7E0300), bus.read(0x7E0301), bus.read(0x7E0302)],
+            results,
             [0x9A, 0x9B, 0x9C],
             "WMADDL/M/H are write-only; a B->A read must copy open bus, not the stored pointer"
         );
