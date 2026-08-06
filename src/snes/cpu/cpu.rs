@@ -123,15 +123,38 @@ pub struct Cpu<B: SnesBus> {
     /// and the CPU's edge detector recognizing it.
     nmi_arm_counter: u8,
 
-    /// Most recently sampled H/V-IRQ line level (mirrors Mesen2's
-    /// `PrevIrqSource`). Unlike NMI's edge, the line is non-consuming and
-    /// live, so no arm/latch counter is needed -- this is simply resampled
-    /// from `bus.poll_irq()` once per CPU cycle, at the end of
-    /// [`Self::tick_read`]/[`Self::tick_write`]/[`Self::tick_internal_cycle`]
-    /// (mirroring Mesen2's `DetectNmiSignalEdge`, called once per
-    /// `ProcessCpuCycle`), instead of once per `step()` call (#3049). See
-    /// [`Self::resample_irq_line`] for why end-of-cycle placement matters.
+    /// H/V-IRQ line level as of the START of the current CPU cycle -- Mesen2's
+    /// `PrevIrqSource`, sampled in `DetectNmiSignalEdge` from `ProcessCpuCycle`
+    /// *before* that cycle's own master clocks run. This is what the dispatch
+    /// decision in [`Self::step`] reads, so an instruction takes an IRQ only if
+    /// the line was already up when its final cycle began; a line rising
+    /// *during* that cycle is not seen until the next one (#3146).
+    ///
+    /// Distinct from [`Self::irq_wai_shadow`], which samples the same line at
+    /// the END of the cycle for WAI's wake. Mesen2 keeps them separate too
+    /// (`PrevIrqSource` vs `_waiOver`); collapsing them into one field is what
+    /// forced this sample to the wrong end of the cycle before #3146.
     irq_line_shadow: bool,
+
+    /// H/V-IRQ line level as of the END of the current CPU cycle, used only to
+    /// wake a WAI. It stands in for Mesen2's `_waiOver` and shares its key
+    /// property -- not I-flag-masked, so WAI wakes even on a masked IRQ -- but
+    /// differs in kind: `_waiOver` is a sticky latch that `DetectNmiSignalEdge`
+    /// sets and only `WAI()` clears, whereas this is a level re-derived every
+    /// cycle and forced false on a DMA-locked one. A DMA landing on the cycle
+    /// after the line rises would therefore drop it here and re-acquire it a
+    /// cycle later where Mesen2's latch would hold. That is pre-existing NESER
+    /// behaviour (the single pre-#3146 shadow was a level too), unmeasured
+    /// either way, and deliberately left alone rather than changed blind.
+    ///
+    /// The wake deliberately keeps the fresher end-of-cycle sample that
+    /// [`Self::irq_line_shadow`] gave up in #3146: sampling the wake one cycle
+    /// earlier delays WAI by an extra idle iteration, which corrupts a
+    /// DMA-timed palette/tile setup and leaves the screen permanently unpainted
+    /// in undisbeliever's `inidisp_forgot_to_force_blank.sfc` (#3049, and
+    /// re-measured under #3146: moving this sample too moves that ROM's golden
+    /// CRC from `0xBB047582` to `0x6E8D8520`).
+    irq_wai_shadow: bool,
 
     /// True while the CPU is halted by a WAI instruction, waiting for a
     /// hardware interrupt (NMI, IRQ, or ABORT) to be asserted.
@@ -220,6 +243,7 @@ impl<B: SnesBus> Cpu<B> {
             abort_pending: false,
             nmi_arm_counter: 0,
             irq_line_shadow: false,
+            irq_wai_shadow: false,
             waiting: false,
             stopped: false,
             fast_rom: false,
@@ -372,6 +396,7 @@ impl<B: SnesBus> Cpu<B> {
             abort_pending: self.abort_pending,
             nmi_arm_counter: self.nmi_arm_counter,
             irq_line_shadow: self.irq_line_shadow,
+            irq_wai_shadow: self.irq_wai_shadow,
             waiting: self.waiting,
             stopped: self.stopped,
             fast_rom: self.fast_rom,
@@ -406,6 +431,7 @@ impl<B: SnesBus> Cpu<B> {
         self.abort_pending = state.abort_pending;
         self.nmi_arm_counter = state.nmi_arm_counter;
         self.irq_line_shadow = state.irq_line_shadow;
+        self.irq_wai_shadow = state.irq_wai_shadow;
         self.waiting = state.waiting;
         self.stopped = state.stopped;
         self.fast_rom = state.fast_rom;
@@ -518,6 +544,7 @@ impl<B: SnesBus> Cpu<B> {
         self.nmi_arm_counter = 0;
         self.dma_locked_this_cycle = false;
         self.irq_line_shadow = false;
+        self.irq_wai_shadow = false;
         self.irq_i_shadow = true;
         // Reset is the only thing that restarts a STPped CPU, and it also drops
         // any WAI wait state (Mesen2 `SnesCpu::Reset` sets `StopState = Running`
@@ -726,17 +753,19 @@ impl<B: SnesBus> Cpu<B> {
         }
 
         // `nmi_pending` is kept continuously up to date by
-        // `resolve_nmi_arm_counter`/`poll_and_arm_nmi_edge`, and
-        // `irq_line_shadow` by `resample_irq_line` -- both called once per
-        // CPU cycle from `tick_read`/`tick_write`/`tick_internal_cycle`,
-        // mirroring Mesen2's `DetectNmiSignalEdge`/`PrevIrqSource`, so by the
-        // time this `step()` call starts they already reflect state as of
-        // the end of the previous cycle -- proven via a bus-trace diff
-        // against Mesen2 on the KungFuFurby nmi.smc ROM (#2883/#3049): a
-        // freshly polled edge/level now resolves in time to dispatch right
-        // after the instruction it occurred in, not an entire extra
-        // instruction later. No separate top-of-step() poll is needed.
-        let irq_line_asserted = self.irq_line_shadow || self.irq_pending;
+        // `resolve_nmi_arm_counter`/`poll_and_arm_nmi_edge`, and the two IRQ
+        // shadows by `resample_irq_line`/`resample_irq_wai_line` -- all called
+        // once per CPU cycle from `tick_read`/`tick_write`/`tick_internal_cycle`,
+        // mirroring Mesen2's `DetectNmiSignalEdge`, so by the time this `step()`
+        // call starts they already describe the previous instruction's last
+        // cycle. No separate top-of-step() poll is needed.
+        //
+        // The two shadows sample the same line at opposite ends of that cycle
+        // and are NOT interchangeable (#3146): dispatch uses the cycle-START
+        // sample (Mesen2 `PrevIrqSource`), so a line rising mid-cycle waits for
+        // the next boundary, while WAI's wake uses the cycle-END sample (Mesen2
+        // `_waiOver`) so it does not idle an extra iteration.
+        let irq_wake_asserted = self.irq_wai_shadow || self.irq_pending;
 
         // WAI: while halted, the CPU idles (advancing the master clock) until any
         // hardware interrupt (NMI, IRQ, or ABORT) is asserted — regardless of the
@@ -744,7 +773,7 @@ impl<B: SnesBus> Cpu<B> {
         // through to the normal dispatch logic below (which services the interrupt
         // if unmasked, or simply resumes the next instruction if the I flag masks it).
         if self.waiting {
-            if self.nmi_pending || irq_line_asserted || self.abort_pending {
+            if self.nmi_pending || irq_wake_asserted || self.abort_pending {
                 // Hardware spends TWO idle cycles between the wait-loop poll
                 // that first sees the interrupt and resuming execution: the
                 // detecting idle completes, and one more idle runs before the
@@ -760,6 +789,18 @@ impl<B: SnesBus> Cpu<B> {
                 return 1;
             }
         }
+
+        // Read the dispatch shadow HERE, after any WAI wake, not alongside
+        // `irq_wake_asserted` above: the two wake cycles each re-sample it, and
+        // on the wake iteration the line typically rises during exactly those
+        // cycles. Mesen2 reads it at the same point -- `ProcessHaltedState` runs
+        // its `Idle()` and only then calls `CheckForInterrupts()`, which tests
+        // `_state.PrevIrqSource` as the idle's own `ProcessCpuCycle` left it.
+        // Snapshotting before the wake instead loses the IRQ for one whole
+        // instruction, which is the divergence measured on
+        // `hdmaen_latch_test.sfc` (#3146): NESER pushed `$80B7` where Mesen2
+        // pushed `$80B5`.
+        let irq_line_asserted = self.irq_line_shadow || self.irq_pending;
 
         // Poll hardware interrupts (higher priority than opcode fetch)
         if self.abort_pending {
@@ -3783,14 +3824,16 @@ impl<B: SnesBus> Cpu<B> {
         self.memory_bus_cycles += 1;
     }
 
-    /// Opens a CPU cycle: run any pending DMA, then resolve the NMI arm counter -- Mesen2's
-    /// `ProcessCpuCycle` order (`IrqLock = ProcessPendingTransfers()` then
-    /// `DetectNmiSignalEdge()`). The hook must come first because the lock it returns governs
-    /// this very cycle's sampling (#3074); it stays ahead of every `bus.tick()`, so #3049's
-    /// reason for resolving at cycle start is unaffected.
+    /// Opens a CPU cycle: run any pending DMA, then resolve the NMI arm counter and sample the
+    /// IRQ line for dispatch -- Mesen2's `ProcessCpuCycle` order (`IrqLock =
+    /// ProcessPendingTransfers()` then `DetectNmiSignalEdge()`, which does both the
+    /// `NmiFlagCounter` half and the `PrevIrqSource` half here, ahead of the cycle's clocks).
+    /// The hook must come first because the lock it returns governs this very cycle's sampling
+    /// (#3074).
     fn begin_cpu_cycle(&mut self) {
         self.dma_locked_this_cycle = self.bus.gpdma_cycle_hook();
         self.resolve_nmi_arm_counter();
+        self.resample_irq_line();
     }
 
     /// Advances the NMI edge-to-dispatch latch by one CPU cycle. Called once
@@ -3856,21 +3899,25 @@ impl<B: SnesBus> Cpu<B> {
         }
     }
 
-    /// Resamples the H/V-IRQ line into `irq_line_shadow`, once per CPU cycle
-    /// (mirrors Mesen2's `PrevIrqSource` update inside `DetectNmiSignalEdge`).
-    /// Unlike NMI's edge, `bus.poll_irq()` is a live, non-consuming level, so
-    /// there's no arm/latch counter to split across cycle start/end -- but
-    /// the single resample must still run AFTER this cycle's own
-    /// master-clock ticking (mirroring [`Self::poll_and_arm_nmi_edge`]'s
-    /// placement), not before. Placing it before observes the line as of the
-    /// end of the cycle *before* the previous one -- one whole cycle (6
-    /// master clocks) stale -- which delays WAI's wake by one extra idle
-    /// iteration whenever the wait loop is the one polling. Caught via a
-    /// bus-trace diff against a pre-fix build on undisbeliever's
-    /// `inidisp_forgot_to_force_blank.sfc` (#3049): the stale wake corrupted
-    /// a DMA-timed palette/tile setup that follows, leaving the screen
-    /// permanently unpainted. See
-    /// `interrupt_dispatch_tests::irq_level_during_wai_wakes_as_soon_as_the_preceding_cycle_observes_it`.
+    /// Samples the H/V-IRQ line into [`Self::irq_line_shadow`] for the dispatch
+    /// decision -- Mesen2's `PrevIrqSource` update inside `DetectNmiSignalEdge`,
+    /// which `ProcessCpuCycle` runs from every `Read`/`Write`/`Idle` *before*
+    /// that call's own clock advance. Hence the call from
+    /// [`Self::begin_cpu_cycle`]: an instruction takes an IRQ only if the line
+    /// was already up when its final cycle began.
+    ///
+    /// Placing this at the *end* of the cycle instead (as NESER did until
+    /// #3146) makes an instruction see a line that rose during its own last
+    /// cycle, dispatching one whole instruction early. byuu's `test_irq.asm`
+    /// sub-test 1 measures exactly that 2-clock window: with the trigger 2
+    /// clocks into `sec`'s final cycle, hardware finishes `nop` too and pushes
+    /// `clc`'s address, where NESER pushed `nop`'s. See
+    /// `a_level_rising_inside_the_final_cycle_does_not_dispatch_at_that_boundary`
+    /// and its start-of-cycle companion, which bracket the boundary.
+    ///
+    /// WAI's wake is deliberately NOT driven from this sample -- see
+    /// [`Self::irq_wai_shadow`].
+    ///
     /// Mesen2 `DetectNmiSignalEdge`'s level half: `PrevIrqSource` is forced to 0 for the
     /// locked cycle, so an instruction boundary right after a DMA does not take the IRQ.
     /// The line is a live level, so the next unlocked cycle re-latches it (#3074).
@@ -3878,12 +3925,22 @@ impl<B: SnesBus> Cpu<B> {
         self.irq_line_shadow = !self.dma_locked_this_cycle && self.bus.poll_irq();
     }
 
+    /// Samples the H/V-IRQ line into [`Self::irq_wai_shadow`] for WAI's wake
+    /// (Mesen2's `_waiOver`), at the END of the cycle -- one cycle fresher than
+    /// [`Self::resample_irq_line`]'s dispatch sample, and gated by the same DMA
+    /// lock. Moving this to cycle start too costs an extra idle iteration
+    /// before WAI resumes and breaks `inidisp_forgot_to_force_blank.sfc`
+    /// (#3049; re-measured under #3146).
+    fn resample_irq_wai_line(&mut self) {
+        self.irq_wai_shadow = !self.dma_locked_this_cycle && self.bus.poll_irq();
+    }
+
     /// End-of-CPU-cycle interrupt sampling. The edge poll is never gated -- it is NESER's
     /// stand-in for Mesen2's PPU-side `SetNmiFlag`, which keeps running during a DMA. Only
     /// the *resolution* of the armed edge and the IRQ level latch honour the lock (#3074).
     fn end_of_cycle_interrupt_poll(&mut self) {
         self.poll_and_arm_nmi_edge();
-        self.resample_irq_line();
+        self.resample_irq_wai_line();
     }
 
     /// Read two bytes little-endian using linear 24-bit addressing.
@@ -12156,6 +12213,155 @@ mod interrupt_dispatch_tests {
         );
     }
 
+    /// Sets up byuu's `test_irq.asm` sub-test 1/2 bracket on a clock-counting
+    /// bus: `sec : nop : clc` with the IRQ line becoming visible at
+    /// `visible_at` master clocks. `sec` is an 8-clock opcode fetch followed by
+    /// a 6-clock internal cycle, so its final cycle spans clocks 8..14 -- the
+    /// two sub-tests differ only in whether the line rises at the start of that
+    /// cycle or partway through it. Returns the CPU ready for its first
+    /// `step()`.
+    fn sec_nop_clc_with_irq_visible_at(visible_at: u64) -> Cpu<ClockedIrqBus> {
+        let mut cpu = Cpu::new(ClockedIrqBus::new(visible_at)); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x008000, &[0x38, 0xEA, 0x18]); // SEC ; NOP ; CLC
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
+        assert_eq!(
+            cpu.bus.clocks, 0,
+            "no clocks are consumed before the first step"
+        );
+        cpu
+    }
+
+    /// The opcode byte sitting at the return PC the interrupt sequence pushed --
+    /// exactly what byuu's `irq_vector4` handler reads via `lda ($05,s),y`, and
+    /// the value his `cmp #$18` checks. Emulation-mode IRQ pushes PCH, PCL, P
+    /// from S=$01FF.
+    fn opcode_at_pushed_return_pc(cpu: &Cpu<ClockedIrqBus>) -> u8 {
+        let pc = u16::from_le_bytes([cpu.bus.read(0x0001FE), cpu.bus.read(0x0001FF)]);
+        cpu.bus.read(0x008000 | (pc as u32 & 0xFFFF))
+    }
+
+    /// byuu `test_irq.asm` sub-test 1, as a unit test. The V-IRQ line rises
+    /// **2 master clocks into `sec`'s final cycle** (clocks 8..14, so visible at
+    /// 10). Hardware latches the line at the *start* of a cycle, so that rise is
+    /// too late to be seen at the `sec`/`nop` boundary: `nop` runs in full and
+    /// the interrupt sequence pushes `clc`'s address, which is why byuu's
+    /// handler reads `$18` there.
+    ///
+    /// NESER sampled the level *after* each cycle's clocks (`resample_irq_line`
+    /// in `end_of_cycle_interrupt_poll`), so it saw the rise at clock 14 and
+    /// dispatched one whole instruction early, capturing `$EA` (#3146). Measured
+    /// on the ROM at master clock 1736378, 2 clocks into `sec`'s internal cycle
+    /// at 1736376..1736382, with `sec` itself landing exactly where byuu's
+    /// annotations put it (V=224 HC=4, V=225 HC=12).
+    ///
+    /// Companion: `a_level_rising_at_the_start_of_the_final_cycle_dispatches_at_that_boundary`
+    /// is the other half of byuu's 2-clock bracket.
+    #[test]
+    fn a_level_rising_inside_the_final_cycle_does_not_dispatch_at_that_boundary() {
+        let mut cpu = sec_nop_clc_with_irq_visible_at(10);
+
+        cpu.step(); // SEC
+        assert_eq!(cpu.pc, 0x8001, "SEC executed");
+        assert_eq!(
+            cpu.bus.clocks, 14,
+            "SEC is an 8-clock fetch plus a 6-clock internal cycle"
+        );
+
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x8002,
+            "the level rose 2 clocks INTO SEC's final cycle, too late to be \
+             latched at its start -- NOP must still execute"
+        );
+
+        cpu.step();
+        assert_eq!(cpu.pc, 0x9100, "the IRQ dispatches after NOP");
+        assert_eq!(
+            opcode_at_pushed_return_pc(&cpu),
+            0x18,
+            "byuu's check: the opcode at the pushed return PC is CLC ($18), not NOP ($EA)"
+        );
+    }
+
+    /// The other half of byuu's bracket (`test_irq.asm` sub-test 2, which seeks
+    /// 2 clocks later): when the line is already up as `sec`'s final cycle
+    /// *begins*, that cycle's own sample catches it and the IRQ dispatches at
+    /// the `sec`/`nop` boundary -- the pushed return PC is `nop`, so byuu's
+    /// handler reads `$EA`.
+    ///
+    /// This is the control for the test above: together they pin the boundary
+    /// to a single cycle rather than merely asserting "later is better". A fix
+    /// that sampled one cycle too late would pass the first test and fail this
+    /// one.
+    #[test]
+    fn a_level_rising_at_the_start_of_the_final_cycle_dispatches_at_that_boundary() {
+        let mut cpu = sec_nop_clc_with_irq_visible_at(8);
+
+        cpu.step(); // SEC
+        assert_eq!(cpu.pc, 0x8001, "SEC executed");
+
+        cpu.step();
+        assert_eq!(
+            cpu.pc, 0x9100,
+            "the level was up as SEC's final cycle began, so the IRQ dispatches \
+             at that boundary and NOP does not execute"
+        );
+        assert_eq!(
+            opcode_at_pushed_return_pc(&cpu),
+            0xEA,
+            "byuu's sub-test 2 check: the opcode at the pushed return PC is NOP ($EA)"
+        );
+    }
+
+    /// A WAI woken by the IRQ line must dispatch in the *same* `step()` call,
+    /// not execute one more instruction first. The wake is driven by the
+    /// end-of-cycle shadow while dispatch reads the cycle-start one, and on the
+    /// waking iteration the line typically rises during the two wake cycles
+    /// themselves -- so the dispatch shadow has to be read *after* them.
+    ///
+    /// Mesen2 reads it at that point: `ProcessHaltedState` runs its `Idle()`
+    /// and only then calls `CheckForInterrupts()`, which tests `PrevIrqSource`
+    /// as that idle's own `ProcessCpuCycle` left it. Snapshotting before the
+    /// wake loses the IRQ for a whole instruction -- measured on
+    /// `hdmaen_latch_test.sfc`, where NESER pushed `$80B7` and Mesen2 `$80B5`
+    /// (#3146). The IRQ counterpart of
+    /// `nmi_edge_that_wakes_wai_dispatches_in_the_same_step_call`.
+    #[test]
+    fn irq_level_that_wakes_wai_dispatches_in_the_same_step_call() {
+        let mut cpu = Cpu::new(ClockedIrqBus::new(u64::MAX)); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x008000, &[0xCB, 0xEA]); // WAI ; NOP -- NOP must not run
+        cpu.bus.load(0x00FFFE, &[0x00, 0x91]); // IRQ emulation vector -> $9100
+
+        cpu.step();
+        assert!(cpu.waiting, "WAI halted the CPU");
+
+        // The line rises partway through the wait, so the iteration that first
+        // observes it is also the one that must dispatch.
+        cpu.bus.visible_at = cpu.bus.clocks + 3;
+
+        let mut pc_on_wake = None;
+        for _ in 0..5 {
+            cpu.step();
+            if !cpu.waiting {
+                pc_on_wake = Some(cpu.pc);
+                break;
+            }
+        }
+
+        assert_eq!(
+            pc_on_wake,
+            Some(0x9100),
+            "the WAI wake and the IRQ dispatch must happen in one step() call; \
+             reading the dispatch shadow before the wake cycles runs NOP instead"
+        );
+    }
+
     /// #3081: Mesen2's `InternalRegisters::Write` case `0x4200` contains no
     /// interrupt lock of any kind -- writing NMITIMEN never defers the
     /// recognition of an already-asserted IRQ line. This replaces a vacuous
@@ -12573,6 +12779,31 @@ mod interrupt_dispatch_tests {
         assert_eq!(
             restored.pc, 0x9100,
             "a live IRQ level cached in the shadow must survive save/restore"
+        );
+    }
+
+    /// The WAI-wake shadow round-trips too (#3146). Without this, dropping
+    /// `irq_wai_shadow` from capture or restore would fail nothing: it defaults
+    /// to false, and a restored CPU re-establishes it on its next cycle, so the
+    /// only observable loss is a WAI restored mid-wait waking one idle late.
+    #[test]
+    fn irq_wai_shadow_round_trips_through_cpu_state() {
+        let mut cpu = Cpu::new(PollIrqBus::new());
+        cpu.e = false; // native mode, as the sibling test above
+        cpu.irq_wai_shadow = true;
+        cpu.irq_line_shadow = false; // isolate: only the wake shadow is set
+
+        let state = cpu.capture_state_inner();
+        let mut restored = Cpu::new(PollIrqBus::new());
+        restored.restore_state_inner(&state);
+
+        assert!(
+            restored.irq_wai_shadow,
+            "the WAI-wake shadow must survive save/restore"
+        );
+        assert!(
+            !restored.irq_line_shadow,
+            "and must not be confused with the dispatch shadow"
         );
     }
 
