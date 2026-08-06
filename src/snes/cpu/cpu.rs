@@ -221,6 +221,36 @@ enum IndexedAccess {
     Write,
 }
 
+/// Opcodes whose addressing mode is implied or accumulator, i.e. the ones whose
+/// single internal cycle Mesen2 routes through `IdleOrRead` (`AddrMode_Imp` /
+/// `AddrMode_Acc` in `SnesCpu.Shared.h`'s `RunOp` dispatch). 33 entries: the six
+/// accumulator shifts/inc/dec ($0A/$1A/$2A/$3A/$4A/$6A) plus 27 implied ones:
+/// the flag ops, the register transfers, the index inc/dec ($88 DEY, $C8 INY,
+/// $CA DEX, $E8 INX), XBA/XCE, NOP and STP. WAI ($CB) is deliberately absent --
+/// Mesen2 dispatches it with no addressing mode at all. Transcribed from that
+/// dispatch table rather than re-derived, so the two cannot drift.
+const IMPLIED_OR_ACCUMULATOR_OPCODES: [bool; 256] = [
+    false, false, false, false, false, false, false, false, false, false, true, false, false,
+    false, false, false, false, false, false, false, false, false, false, false, true, false, true,
+    true, false, false, false, false, false, false, false, false, false, false, false, false,
+    false, false, true, false, false, false, false, false, false, false, false, false, false,
+    false, false, false, true, false, true, true, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, true, false, false, false, false, false,
+    false, false, false, false, false, false, false, false, true, false, false, true, false, false,
+    false, false, false, false, false, false, false, false, false, false, false, false, true,
+    false, false, false, false, false, false, false, false, false, false, false, false, false,
+    true, false, false, true, false, false, false, false, false, false, false, false, false, false,
+    false, false, true, false, true, false, false, false, false, false, false, false, false, false,
+    false, false, false, false, true, false, true, true, false, false, false, false, false, false,
+    false, false, false, false, false, false, true, false, true, false, false, false, false, false,
+    false, false, false, false, false, false, false, false, true, false, true, true, false, false,
+    false, false, false, false, false, false, false, false, false, false, true, false, true, false,
+    false, false, false, false, false, false, false, false, false, false, false, false, true,
+    false, false, true, false, false, false, false, false, false, false, false, false, false,
+    false, false, true, false, true, true, false, false, false, false, false, false, false, false,
+    false, false, false, false, true, false, false, true, false, false, false, false,
+];
+
 impl<B: SnesBus> Cpu<B> {
     /// Create a new 65816 CPU in reset state (emulation mode).
     pub fn new(bus: B) -> Self {
@@ -832,6 +862,14 @@ impl<B: SnesBus> Cpu<B> {
             let operands = self.exec_trace_operands(opcode);
             trace_cpu!(1; "{}", self.format_exec_trace_line(pc_before, &operands));
         }
+        // Implied/accumulator addressing spends one internal cycle here, before
+        // the operation itself (Mesen2 `AddrMode_Imp`/`AddrMode_Acc`, which run
+        // ahead of the opcode body in `RunOp`). Running it here rather than
+        // leaving it to the trailing `tick_internal_cycles_for` is what lets
+        // `IdleOrRead` see the pre-operation flags -- notably CLI/SEI's I.
+        if IMPLIED_OR_ACCUMULATOR_OPCODES[opcode as usize] {
+            self.tick_idle_or_dummy_read();
+        }
         let base = match opcode {
             0x00 => self.op_brk(),
             0x01 => self.op_ora_dp_x_ind(),
@@ -1104,6 +1142,49 @@ impl<B: SnesBus> Cpu<B> {
         // Tick bus for internal (non-memory-access) cycles.
         self.tick_internal_cycles_for(total_bus_cycles)
             .saturating_add(wai_wake_cycles)
+    }
+
+    /// Whether an IRQ or NMI is close enough to convert an implied/accumulator
+    /// instruction's internal cycle into a dummy read -- Mesen2's `IdleOrRead`
+    /// condition, transcribed with its precedence intact
+    /// (`(!IrqLock && ((IrqSource || PrevIrqSource) && !I)) || (NmiFlagCounter == 1 || NeedNmi)`).
+    ///
+    /// `IrqSource`/`PrevIrqSource` both map onto NESER's dispatch-visible line:
+    /// the live `bus.poll_irq()` (which already carries the circuit's one-tick
+    /// delay, see `Ppu::poll_irq_dispatch`) and the sample the *opcode fetch*
+    /// cycle latched into [`Self::irq_line_shadow`] -- this runs between cycles,
+    /// so the Imp/Acc cycle has not sampled anything yet. The I test uses the
+    /// architectural flag, as Mesen2's `CheckFlag` does, not
+    /// [`Self::irq_i_shadow`] -- that shadow models the dispatch pre-effect
+    /// rule, which this is not.
+    ///
+    /// Mesen2's `!IrqLock` term is deliberately absent: `DetectNmiSignalEdge`
+    /// clears `IrqLock` unconditionally at its end (`SnesCpu.Shared.h:347`) and
+    /// `IdleOrRead` only runs after a completed `ProcessCpuCycle`, so there the
+    /// term is always true. NESER's [`Self::dma_locked_this_cycle`] is scoped to
+    /// the cycle that set it and is never cleared, so testing it here would read
+    /// the *fetch* cycle's lock and wrongly keep the 6-clock idle for the
+    /// instruction after a DMA.
+    fn interrupt_is_imminent(&self) -> bool {
+        let irq_visible = self.bus.poll_irq() || self.irq_pending || self.irq_line_shadow;
+        (irq_visible && !self.flag_i()) || self.nmi_arm_counter == 1 || self.nmi_pending
+    }
+
+    /// The implied/accumulator internal cycle: normally a 6-clock idle, but a
+    /// dummy read at PC when an interrupt is already imminent (Mesen2
+    /// `SnesCpu::IdleOrRead`). The read costs the access speed of the code bank
+    /// -- 8 master clocks in slow ROM against the idle's 6 -- and is a real bus
+    /// access, so it also refreshes open bus.
+    ///
+    /// Both arms count as a bus cycle so the trailing
+    /// [`Self::tick_internal_cycles_for`] does not run this cycle a second time.
+    fn tick_idle_or_dummy_read(&mut self) {
+        if self.interrupt_is_imminent() {
+            let pc = ((self.pbr as u32) << 16) | self.pc as u32;
+            self.tick_read(pc); // increments memory_bus_cycles itself
+        } else {
+            self.tick_pre_access_internal_cycle();
+        }
     }
 
     /// Tick the bus for the CPU-internal (non-memory-access) cycles of an
@@ -12215,11 +12296,15 @@ mod interrupt_dispatch_tests {
 
     /// Sets up byuu's `test_irq.asm` sub-test 1/2 bracket on a clock-counting
     /// bus: `sec : nop : clc` with the IRQ line becoming visible at
-    /// `visible_at` master clocks. `sec` is an 8-clock opcode fetch followed by
-    /// a 6-clock internal cycle, so its final cycle spans clocks 8..14 -- the
-    /// two sub-tests differ only in whether the line rises at the start of that
-    /// cycle or partway through it. Returns the CPU ready for its first
-    /// `step()`.
+    /// `visible_at` master clocks. `sec` is an 8-clock opcode fetch, so its
+    /// final cycle begins at clock 8; the two sub-tests differ in whether the
+    /// line is already up then or rises partway through.
+    ///
+    /// That final cycle's *length* differs between them, which is why only the
+    /// `visible_at = 10` case asserts a clock count: at `visible_at = 8` the
+    /// line is up when `tick_idle_or_dummy_read` runs, so the cycle becomes an
+    /// 8-clock dummy read (`sec` costs 16) instead of a 6-clock idle (`sec`
+    /// costs 14). Returns the CPU ready for its first `step()`.
     fn sec_nop_clc_with_irq_visible_at(visible_at: u64) -> Cpu<ClockedIrqBus> {
         let mut cpu = Cpu::new(ClockedIrqBus::new(visible_at)); // emulation mode
         cpu.pc = 0x8000;
@@ -12359,6 +12444,118 @@ mod interrupt_dispatch_tests {
             Some(0x9100),
             "the WAI wake and the IRQ dispatch must happen in one step() call; \
              reading the dispatch shadow before the wake cycles runs NOP instead"
+        );
+    }
+
+    /// The dummy read must land at PC (Mesen2 `ReadCode(_state.PC)`), not at
+    /// some other address. A clock-count assertion cannot see this: any address
+    /// in bank $00 costs the same 8 clocks, so a wrong address would be
+    /// invisible to
+    /// `an_implied_instructions_internal_cycle_becomes_a_read_when_an_irq_is_imminent`.
+    /// `RecordingIrqBus` captures the addresses instead.
+    #[test]
+    fn the_dummy_read_addresses_pc() {
+        struct RecordingIrqBus {
+            mem: Vec<u8>,
+            reads: std::cell::RefCell<Vec<u32>>,
+        }
+        impl crate::snes::bus::SnesBus for RecordingIrqBus {
+            fn read(&self, addr: u32) -> u8 {
+                self.reads.borrow_mut().push(addr);
+                self.mem[(addr & 0xFF_FFFF) as usize]
+            }
+            fn write(&mut self, _addr: u32, _value: u8) {}
+            fn tick(&mut self) {}
+            fn poll_irq(&self) -> bool {
+                true
+            }
+        }
+
+        let mut cpu = Cpu::new(RecordingIrqBus {
+            mem: vec![0; 0x100_0000],
+            reads: std::cell::RefCell::new(Vec::new()),
+        });
+        cpu.pc = 0x8000;
+        cpu.set_flag_i(false);
+        cpu.bus.mem[0x008000] = 0xEA; // NOP
+
+        cpu.step();
+
+        let reads = cpu.bus.reads.borrow().clone();
+        assert_eq!(
+            reads,
+            vec![0x00_8000, 0x00_8001],
+            "the opcode fetch at $8000, then the dummy read at the post-fetch PC $8001"
+        );
+    }
+
+    /// Mesen2 `SnesCpu::IdleOrRead` (`SnesCpu.Shared.h:386`): the single
+    /// internal cycle of an implied- or accumulator-mode instruction becomes a
+    /// **dummy read at PC** when an IRQ or NMI is already imminent -- "If an IRQ
+    /// or NMI will be triggered on the next instruction/cycle, the 6-clock idle
+    /// cycle turns into a dummy read at the current PC". In bank $00 slow ROM
+    /// that read costs 8 master clocks where the idle costs 6, so an instruction
+    /// running with an interrupt pending is 2 clocks longer.
+    ///
+    /// NESER did not model this at all until #3146. It went unnoticed because it
+    /// cancelled against the dispatch boundary being one cycle early: both
+    /// errors moved `hdmaen_latch_test.sfc`'s H-IRQ handler by a similar amount
+    /// in opposite directions, so that ROM matched Mesen2 by accident. Fixing
+    /// only the boundary moved 51 scanlines.
+    #[test]
+    fn an_implied_instructions_internal_cycle_becomes_a_read_when_an_irq_is_imminent() {
+        // The line is up from clock 0, so it is already latched by the time the
+        // opcode fetch ends -- but not before this step()'s dispatch check, so
+        // NOP still executes and pays the converted cycle itself.
+        let mut cpu = Cpu::new(ClockedIrqBus::new(0)); // emulation mode
+        cpu.pc = 0x8000;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x008000, &[0xEA]); // NOP -- AddrMode_Imp
+
+        let cycles = cpu.step();
+
+        assert_eq!(cycles, 2, "NOP is still a 2-cycle instruction");
+        assert_eq!(
+            cpu.bus.clocks, 16,
+            "8-clock opcode fetch plus an 8-clock dummy read at PC, not a 6-clock idle"
+        );
+    }
+
+    /// Control for the test above: with no interrupt imminent the same
+    /// instruction keeps its 6-clock idle, so the conversion is genuinely
+    /// conditional rather than a blanket 2-clock tax on every implied opcode.
+    #[test]
+    fn an_implied_instructions_internal_cycle_stays_an_idle_with_no_interrupt() {
+        let mut cpu = Cpu::new(ClockedIrqBus::new(u64::MAX)); // line never rises
+        cpu.pc = 0x8000;
+        cpu.set_flag_i(false);
+        cpu.bus.load(0x008000, &[0xEA]); // NOP
+
+        let cycles = cpu.step();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(
+            cpu.bus.clocks, 14,
+            "8-clock opcode fetch plus the normal 6-clock internal cycle"
+        );
+    }
+
+    /// The conversion is gated on the I flag exactly as Mesen2 gates it
+    /// (`&& !CheckFlag(ProcFlags::IrqDisable)`): a masked IRQ is not "imminent",
+    /// so the idle stays an idle. Without this the tax would apply to every
+    /// implied instruction in an I-masked critical section.
+    #[test]
+    fn a_masked_irq_does_not_convert_the_internal_cycle() {
+        let mut cpu = Cpu::new(ClockedIrqBus::new(0));
+        cpu.pc = 0x8000;
+        cpu.set_flag_i(true); // I set: the IRQ cannot dispatch
+        cpu.bus.load(0x008000, &[0xEA]); // NOP
+
+        cpu.step();
+
+        assert_eq!(
+            cpu.bus.clocks, 14,
+            "an I-masked IRQ leaves the 6-clock idle alone"
         );
     }
 
