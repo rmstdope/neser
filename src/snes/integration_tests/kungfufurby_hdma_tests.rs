@@ -11,11 +11,9 @@
 //! #3116 NESER ran through that halt and every screen here was post-halt
 //! garbage rather than the ROM's verdict.
 //!
-//! **Golden convention (#3092).** `test_hdmatiming_passes`, the one test still
-//! `#[ignore]`d, asserts the Mesen2-correct blue PASS screen rather than
-//! NESER's current output, so it FAILs under `cargo test --include-ignored`
-//! until #3120 lands -- the designed state, not a regression. See
-//! `kungfufurby_irq_tests`' module doc for the rationale.
+//! **Golden convention (#3092).** All three goldens below assert the
+//! Mesen2-correct blue PASS screen. See `kungfufurby_irq_tests`' module doc
+//! for the rationale.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -57,7 +55,6 @@ mod tests {
 
     // All three goldens below are the Mesen2-approved blue PASS screen,
     // verified by a fresh headless capture at each test's own sample frame.
-    // Two of the three now render it; un-ignore the last once it does too.
 
     /// Four sub-tests covering HDMA init semantics. Passes since #3062, which
     /// took two fixes, both found by reading the sub-test number the ROM leaves
@@ -97,18 +94,15 @@ mod tests {
     /// leaves both in SRAM `$00..$3F`, so the failing row is readable from the
     /// emitted `.sav`.
     ///
-    /// Down to **one** differing value. Rows 2-8 match exactly, including the
-    /// H=1104 trigger and `$2137` latch checks in rows 7-8. Row 1 differs only
-    /// in its first latch -- `want $014E, got $014F` -- while the second latch
-    /// in the same row matches, so it is a 4-master-clock CPU arrival
-    /// difference at one alignment, not an HDMA envelope error: `SyncStartDma`
-    /// and `SyncEndDma` are already formula-identical to Mesen2's. That places
-    /// it in the #3050 CPU-alignment family. Rows 9-12 also differ but the ROM
-    /// records them without comparing them (`cpx.w #64` stops at row 8), so
-    /// they do not affect the verdict -- they are the unmodelled
-    /// HDMA-during-GPDMA nesting noted in `src/snes/bus/dma.rs`.
+    /// #3120: row 1's first latch (`want $014E, got $014F`) was the H position
+    /// exposed to software via OPHCT/`$213C`, which `Ppu::latch_counters` read
+    /// straight off the render-dot counter instead of applying the correction
+    /// Mesen2's `SnesPpu::GetCycle()` applies across the paired long-dot
+    /// compensation region (dots 323/324 and 327/328). Fixed in
+    /// `Ppu::readable_h_position` (`src/snes/ppu/timing.rs`); all 8 compared
+    /// rows now match, including the H=1104 trigger and `$2137` latch checks
+    /// in rows 7-8.
     #[test]
-    #[ignore = "one residual value (row 1's first latch, 4 master clocks); asserts the correct PASS golden so FAILs under --include-ignored until #3120"]
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdmatiming.smc", 600, 0x8695_BBB0);
     }
