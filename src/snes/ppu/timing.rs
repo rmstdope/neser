@@ -260,9 +260,28 @@ impl Ppu {
         self.nmi_line_prev = line;
     }
 
+    /// The H position exposed to software via OPHCT/`$213C`, derived from `line_clock` the
+    /// same way Mesen2's `SnesPpu::GetCycle()` derives it from `hClock` -- NOT simply the
+    /// render-dot counter (`position.dot`). The two diverge only across the paired long-dot
+    /// compensation region (dots 323/324 and 327/328, each widened to 6 or narrowed to 2
+    /// master clocks so the scanline's total width stays correct): the render-dot counter
+    /// tracks the true pixel position there, but the readable H counter is a separate
+    /// hardware circuit that lags by up to one dot (4 clocks) through that region --
+    /// oscillating between 0 and -1 dot -- before settling at a constant one dot behind from
+    /// dot 328 onward (#3120).
+    fn readable_h_position(line_clock: u16) -> u16 {
+        if line_clock <= 1292 {
+            line_clock >> 2
+        } else if line_clock <= 1310 {
+            (line_clock - 2) >> 2
+        } else {
+            (line_clock - 4) >> 2
+        }
+    }
+
     /// Latch the current H/V counters into OPHCT/OPVCT and set the STAT78 latch flag.
     pub(super) fn latch_counters(&mut self) {
-        self.ophct_latch = self.position.dot;
+        self.ophct_latch = Self::readable_h_position(self.line_clock);
         self.opvct_latch = self.position.scanline;
         self.counter_latch_flag = true;
     }
@@ -327,6 +346,58 @@ mod tests {
                 scanline: 0,
                 dot: 1
             }
+        );
+    }
+
+    /// #3120: `latch_counters` must expose the same *readable* H position Mesen2's
+    /// `SnesPpu::GetCycle()` derives from `hClock`, not the raw render-dot counter. The two
+    /// diverge only across the paired long-dot compensation region (dots 323/324 and
+    /// 327/328, where a dot is widened to 6 or narrowed to 2 master clocks): Mesen2 reports a
+    /// value up to one dot "behind" the render position there, oscillating between 0 and -1
+    /// dot, before settling at a constant -1 dot from dot 328 onward. Table derived by
+    /// running Mesen2's exact formula (`hClock<=1292 -> hClock>>2`; `hClock<=1310 ->
+    /// (hClock-2)>>2`; else `(hClock-4)>>2`) against NESER's own
+    /// (already-correct-for-rendering) dot-width model.
+    #[test]
+    fn latch_counters_reports_mesen2s_readable_h_position_not_the_raw_render_dot() {
+        // (line_clock, raw render dot at that clock, Mesen2-readable H position)
+        let cases: &[(u16, u16, u16)] = &[
+            (100, 25, 25),    // well below the long-dot region: no correction
+            (1292, 323, 323), // first threshold boundary, still exact
+            (1310, 327, 327), // second threshold boundary, still exact
+            (1340, 335, 334), // #3120's actual test1 residual: raw dot 335, readable 334
+            (1400, 350, 349), // settled -1 offset persists well past the correction region
+        ];
+        for &(line_clock, raw_dot, expected_h) in cases {
+            let mut ppu = Ppu::new();
+            ppu.line_clock = line_clock;
+            ppu.position.dot = raw_dot;
+            ppu.latch_counters();
+            assert_eq!(
+                ppu.ophct_latch, expected_h,
+                "line_clock={line_clock}: expected readable H position {expected_h}"
+            );
+        }
+    }
+
+    /// #3120: on a `Short` profile scanline (NTSC scanline 240, interlace field 1) NESER's own
+    /// render-dot counter skips the 323/327 widening entirely (see
+    /// `ntsc_short_scanline_has_no_extra_cycles_at_dot_327` below), so `position.dot` already
+    /// equals `line_clock/4` exactly with no divergence. The readable H position must still
+    /// apply Mesen2's correction here: `SnesPpu::GetCycle()` is an unconditional function of
+    /// `hClock` alone (no scanline-type check anywhere in its source), so a real ROM reading
+    /// SLHV on this specific scanline still needs `readable_h_position`'s "-4" adjustment even
+    /// though `position.dot` is already the "true" value NESER's own model would render.
+    #[test]
+    fn latch_counters_applies_the_correction_on_a_short_profile_scanline_too() {
+        let mut ppu = Ppu::new();
+        ppu.line_timing_profile = PpuLineTimingProfile::Short;
+        ppu.line_clock = 1340;
+        ppu.position.dot = 335; // no widening on Short: raw dot is exact here
+        ppu.latch_counters();
+        assert_eq!(
+            ppu.ophct_latch, 334,
+            "the readable H correction is unconditional on hClock, not gated by scanline profile"
         );
     }
 

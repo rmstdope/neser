@@ -12,18 +12,16 @@
 //! Two ROMs render a pixel-exact (0-pixel diff) match for Mesen2 and are
 //! committed goldens. `test_hdma/test_hdmasync.smc` and
 //! `test_hdma/test_hdmatiming.smc` are byte-identical byuu-suite mirrors of the
-//! KungFuFurby ROMs (md5 `acec8b53...` for the former); the first now passes,
-//! and the second carries the same single residual as its KungFuFurby twin.
+//! KungFuFurby ROMs (md5 `acec8b53...` for the former); both now pass -- see
+//! `kungfufurby_hdma_tests::test_hdmatiming_passes` for the #3120 fix that
+//! closed the latter's residual.
 //!
-//! **Golden convention (#3092).** The remaining `#[ignore]`d *self-check* ROM
-//! (`test_hdmatiming_passes`) asserts the Mesen2-correct blue PASS screen, not
-//! NESER's current output, so it FAILs under `cargo test --include-ignored`
-//! until #3120 lands -- the designed state, not a regression. See
-//! `kungfufurby_irq_tests`' module doc for the rationale.
-//! `test_dmatiming_matches_mesen2` is deliberately NOT on this convention: it
-//! is a pixel-diff comparison against Mesen2's own render, not a PASS/FAIL
-//! self-check, so a blue backdrop is not its correct result and it keeps
-//! recording NESER's current diverging CRC.
+//! **Golden convention (#3092).** The self-check ROMs above assert the
+//! Mesen2-correct blue PASS screen. See `kungfufurby_irq_tests`' module doc
+//! for the rationale. `test_dmatiming_matches_mesen2` is deliberately NOT on
+//! this convention: it is a pixel-diff comparison against Mesen2's own
+//! render, not a PASS/FAIL self-check, so a blue backdrop is not its correct
+//! result and it keeps recording NESER's current diverging CRC.
 //!
 //! **Comparing this collection against Mesen2 needs a matched WRAM power-on
 //! state.** `test_dmatiming/demo.smc` displays uninitialised WRAM, and Mesen2's
@@ -285,11 +283,9 @@ mod tests {
         run_rom_screen_crc("test_hdma/test_hdmasync.smc", 1100, 0x8695_BBB0);
     }
 
-    /// #3062 (byte-identical byuu mirror of KungFuFurby test_hdmatiming): down
-    /// to a single differing value, row 1's first latch. See
-    /// `kungfufurby_hdma_tests::test_hdmatiming_passes` for the measurement.
+    /// #3062/#3120 (byte-identical byuu mirror of KungFuFurby test_hdmatiming).
+    /// See `kungfufurby_hdma_tests::test_hdmatiming_passes` for the fix.
     #[test]
-    #[ignore = "one residual value (row 1's first latch, 4 master clocks); asserts the correct PASS golden so FAILs under --include-ignored until #3120"]
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdma/test_hdmatiming.smc", 600, 0x8695_BBB0);
     }
