@@ -366,7 +366,7 @@ mod tests {
             (1292, 323, 323), // first threshold boundary, still exact
             (1310, 327, 327), // second threshold boundary, still exact
             (1340, 335, 334), // #3120's actual test1 residual: raw dot 335, readable 334
-            (1400, 350, 349), // settled -1 offset persists well past the correction region
+            (1360, 340, 339), // settled -1 offset persists near the end of a normal scanline
         ];
         for &(line_clock, raw_dot, expected_h) in cases {
             let mut ppu = Ppu::new();
