@@ -25,17 +25,25 @@
 //! fixing `test_irq4200.smc` -- the one ROM whose failure was circuit
 //! semantics (enable writes re-evaluated against a continuous compare level).
 //!
-//! The three still-failing ROMs render byuu's genuine `(255, 0, 0)` FAIL
-//! backdrop and split by measured root cause under the #3093 tracker:
-//! `test_irq.smc` fails only its dispatch-boundary sub-test 1 (#3146),
-//! `test_irqb.smc` only its open-bus OPHCT-latch sub-test 4 (#3147), and
-//! `irq.smc` (no source exists) is re-measured once #3146 lands.
+//! #3146 then fixed the CPU recognition boundary: the IRQ line is now sampled
+//! at the START of each CPU cycle for dispatch (Mesen2 `PrevIrqSource`), where
+//! NESER had sampled it at the end and so dispatched one instruction early.
+//! That fixed `test_irq.smc` outright -- all ten sub-tests, not just the
+//! dispatch-boundary sub-test 1 that was visible -- and also `irq.smc`, whose
+//! verdict was opaque (no source exists) and which had been slated for a Mesen2
+//! trace diff; it shared the root cause and went green with no change aimed at
+//! it.
 //!
-//! **Golden convention (#3092).** The ignored tests below assert the
-//! *Mesen2-correct* blue PASS screen, not NESER's current output. They
-//! therefore FAIL under `cargo test --include-ignored` until their tracked
-//! fix lands -- that is the designed state, not a regression -- and turn
-//! green exactly when the underlying gap is fixed. Recording NESER's own
+//! `test_irqb.smc` is the one ROM still failing, rendering byuu's genuine
+//! `(255, 0, 0)` FAIL backdrop at its open-bus OPHCT-latch sub-test 4 (#3147).
+//!
+//! **Golden convention (#3092).** Every test here asserts the
+//! *Mesen2-correct* blue PASS screen, not NESER's current output -- whether
+//! it currently passes or is still `#[ignore]`d pending a tracked fix. An
+//! ignored one therefore FAILs under `cargo test --include-ignored` until
+//! that fix lands -- the designed state, not a regression -- and turns green
+//! exactly when the underlying gap closes, at which point the `#[ignore]`
+//! comes off and the same golden keeps guarding it. Recording NESER's own
 //! diverging CRC instead (the convention these tests used before #3092)
 //! inverts that signal: a real fix would turn them red and read as a
 //! breakage.
@@ -88,29 +96,29 @@ mod tests {
         );
     }
 
-    /// #3093: NESER's self-check FAILs (flat red) where Mesen2 PASSes (blue).
-    /// Unaffected by #3049's per-cycle dispatch fixes and by #3144's IRQ
-    /// counter circuit port (identical CRC before/after both). No source or
-    /// disassembly exists for this ROM, so it is re-measured once #3146's
-    /// dispatch-boundary fix lands and trace-diffed against Mesen2 if still
-    /// red.
+    /// Was red under #3093 for a long time -- unaffected by #3049's per-cycle
+    /// dispatch fixes and by #3144's IRQ counter circuit port (identical CRC
+    /// before/after both). No source or disassembly exists for this ROM, so its
+    /// verdict was opaque and #3093 planned a Mesen2 trace diff for it. That
+    /// turned out to be unnecessary: it shares the recognition boundary
+    /// `test_irq.smc` sub-test 1 measured, and went green with #3146's
+    /// cycle-start dispatch sample without any change aimed at it.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3093"]
     fn irq_passes() {
         run_rom_screen_crc("irq.smc", 1200, 0x8695_BBB0);
     }
 
-    /// #3146: NESER dispatches the V-IRQ one instruction earlier than
-    /// hardware, so this ROM's sub-test 1 captures the interrupted opcode
-    /// `$EA` (nop) where hardware captures `$18` (clc). Identical before and
-    /// after #3144's IRQ counter circuit port -- the residue is on the CPU
-    /// recognition path, not the circuit. Read as maroon before #3116, which
-    /// was post-`stp` garbage rather than the ROM's verdict.
+    /// Fixed by #3146. NESER used to dispatch the V-IRQ one instruction early,
+    /// so sub-test 1 captured `$EA` (nop) where hardware captures `$18` (clc):
+    /// the IRQ line was sampled *after* each CPU cycle's clocks, so a line
+    /// rising 2 clocks into `sec`'s final cycle was seen at that boundary
+    /// instead of the next. Sampling at cycle start (Mesen2 `PrevIrqSource`)
+    /// fixed all ten sub-tests at once. Read as maroon before #3116, which was
+    /// post-`stp` garbage rather than the ROM's verdict.
     ///
     /// `test_irq_sram_verdict_reports_all_ten_sub_tests_pass` names the
-    /// failing sub-test when this is red.
+    /// failing sub-test if this ever goes red again.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3146"]
     fn test_irq_passes() {
         run_rom_screen_crc("test_irq.smc", 600, 0x8695_BBB0);
     }
@@ -196,7 +204,6 @@ mod tests {
     /// `jonasquinn-test-roms/snestest_082506/test_irq.asm`, not from any
     /// emulator's output.
     #[test]
-    #[ignore = "fails at sub-test 1 (dispatch boundary); asserts byuu's PASS-run verdict so FAILs under --include-ignored until #3146"]
     fn test_irq_sram_verdict_reports_all_ten_sub_tests_pass() {
         let snes = run_rom_for_sram("test_irq.smc", 120);
         let rd = |a: u32| snes.read_bus_for_debugger_for_tests(a).unwrap_or(0);

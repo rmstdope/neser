@@ -116,9 +116,15 @@ pub struct SnesCpuState {
     /// See Cpu::nmi_arm_counter (#3049): one-CPU-cycle NMI edge-to-dispatch latch.
     #[serde(default)]
     pub nmi_arm_counter: u8,
-    /// See Cpu::irq_line_shadow (#3049): most recently sampled H/V-IRQ level.
+    /// See Cpu::irq_line_shadow (#3049, #3146): H/V-IRQ level as of the start of
+    /// the current CPU cycle, which the dispatch decision reads.
     #[serde(default)]
     pub irq_line_shadow: bool,
+    /// See Cpu::irq_wai_shadow (#3146): the same line sampled at the END of the
+    /// cycle, used only to wake WAI. Defaults to false for states written before
+    /// the two samples were split; the next CPU cycle re-establishes it.
+    #[serde(default)]
+    pub irq_wai_shadow: bool,
     #[serde(default)]
     pub waiting: bool,
     /// See Cpu::stopped (#3116): true while halted by STP. Defaults to false, so
