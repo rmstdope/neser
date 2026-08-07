@@ -255,7 +255,7 @@ without thinking about it. mypy is silent by default and strict only for the
 shared data-access modules listed in `scripts/pyproject.toml`; adding a module
 to that list is how type coverage grows.
 
-[pep735]: https://peps.python.org/pep-0735/ 
+[pep735]: https://peps.python.org/pep-0735/
 
 ## Repository guide
 

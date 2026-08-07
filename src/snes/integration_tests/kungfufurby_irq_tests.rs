@@ -37,11 +37,13 @@
 //! `test_irqb.smc` is the one ROM still failing, rendering byuu's genuine
 //! `(255, 0, 0)` FAIL backdrop at its open-bus OPHCT-latch sub-test 4 (#3147).
 //!
-//! **Golden convention (#3092).** The ignored tests below assert the
-//! *Mesen2-correct* blue PASS screen, not NESER's current output. They
-//! therefore FAIL under `cargo test --include-ignored` until their tracked
-//! fix lands -- that is the designed state, not a regression -- and turn
-//! green exactly when the underlying gap is fixed. Recording NESER's own
+//! **Golden convention (#3092).** Every test here asserts the
+//! *Mesen2-correct* blue PASS screen, not NESER's current output -- whether
+//! it currently passes or is still `#[ignore]`d pending a tracked fix. An
+//! ignored one therefore FAILs under `cargo test --include-ignored` until
+//! that fix lands -- the designed state, not a regression -- and turns green
+//! exactly when the underlying gap closes, at which point the `#[ignore]`
+//! comes off and the same golden keeps guarding it. Recording NESER's own
 //! diverging CRC instead (the convention these tests used before #3092)
 //! inverts that signal: a real fix would turn them red and read as a
 //! breakage.
