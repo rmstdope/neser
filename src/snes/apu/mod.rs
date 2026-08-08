@@ -2106,12 +2106,14 @@ mod tests {
 
     #[test]
     #[ignore = "Aspirational: brief (<1 SPC cycle) host pulses require full \
-                cycle-stepping AND alignment helpers in the host. Tracked under \
-                #2908; the cycle-precise variant below is the proximate goal."]
+                cycle-stepping AND alignment helpers in the host. This is a \
+                known architectural limitation (SPC stepped per instruction, \
+                not per sub-cycle); accepted for now. Tracked under #3106."]
     fn trampoline_executes_one_micro_op_per_brief_port3_pulse() {
-        // Discriminating reproducer for #2908. Releases 10 distinct
-        // `MOV A,#imm` micro-ops via the blargg-style brief port-3 pulse and
-        // asserts the final A == the last operand released.
+        // Discriminating reproducer for #3106 (originally filed as #2908).
+        // Releases 10 distinct `MOV A,#imm` micro-ops via the blargg-style
+        // brief port-3 pulse and asserts the final A == the last operand
+        // released.
         //
         // The pulse window (4 master cycles, ≈ 20% of one SPC sub-cycle) is
         // intentionally narrow: the host writes port-3 = $FE again well before
