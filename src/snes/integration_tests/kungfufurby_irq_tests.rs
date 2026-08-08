@@ -34,8 +34,18 @@
 //! trace diff; it shared the root cause and went green with no change aimed at
 //! it.
 //!
-//! `test_irqb.smc` is the one ROM still failing, rendering byuu's genuine
-//! `(255, 0, 0)` FAIL backdrop at its open-bus OPHCT-latch sub-test 4 (#3147).
+//! `test_irqb.smc` went green in two halves under #3147. Its sub-test 4 --
+//! the one the issue was filed against, latching OPHCT `$0C` where hardware
+//! records `$10` -- turned out to be the same dispatch-boundary defect and was
+//! already fixed by the cycle-start move above; the `$0C` is exactly what a
+//! dispatch one instruction early produces there, confirmed by reverting the
+//! move and watching the whole sub-test 4 block return to its historical
+//! `0C 00 01 00 76 00 01 00 CC`. What remained was sub-test 5, and it was not
+//! an IRQ defect at all: `jmp $217F` lands in the APU comm-port mirrors
+//! (`$2144-$217F`), which NESER decoded as open bus, so the CPU ran a 6-cycle
+//! `AND (dp,X)` where hardware runs the `CLC` the ROM's SPC preamble planted.
+//! An ordinal-aligned bus-trace diff against Mesen2 matched for 197 cycles and
+//! split on exactly that fetch.
 //!
 //! **Golden convention (#3092).** Every test here asserts the
 //! *Mesen2-correct* blue PASS screen, not NESER's current output -- whether
@@ -146,16 +156,18 @@ mod tests {
         run_rom_screen_crc("test_irq4209.smc", 600, 0x8695_BBB0);
     }
 
-    /// #3147: sub-tests 1-3 of this ROM's OPHCT/OPVCT latch checks already
-    /// match byuu's expected bytes; sub-test 4 (IRQ while executing from open
-    /// bus via `jmp $000000`) latches an OPHCT 4 dots low. Identical before
-    /// and after #3144's IRQ counter circuit port, and unaffected by #3049's
-    /// per-cycle dispatch fixes before that.
+    /// Green since #3147, which took two fixes landing in different places.
+    /// Sub-test 4 (`jmp $000000` with the stack parked on the register file)
+    /// was fixed by #3146's move of the IRQ dispatch sample to cycle start:
+    /// with the old end-of-cycle sample the dispatch fired one instruction
+    /// early, at the `jml` boundary rather than after the `BIT #$83` the CPU
+    /// really runs out of low WRAM, and the interrupt sequence's `PCL` push
+    /// into `$4201` latched OPHCT `$0C` instead of `$10`. Sub-test 5 was the
+    /// APU port mirrors (`$2144-$217F`), fixed here.
     ///
     /// `test_irqb_sram_log_matches_byuu_expected_latches` names the failing
     /// sub-test and byte when this is red.
     #[test]
-    #[ignore = "self-check FAILs (red) where Mesen2 PASSes (blue); asserts the correct PASS golden so FAILs under --include-ignored until #3147"]
     fn test_irqb_passes() {
         run_rom_screen_crc("test_irqb.smc", 600, 0x8695_BBB0);
     }
@@ -266,15 +278,30 @@ mod tests {
     /// Verdict path for `test_irqb_passes`: the ROM's IRQ handler logs
     /// OPHCT/OPVCT latch reads (`$213C`/`$213D`, the value's low byte and then
     /// the second read's bit 0 -- bit 8 of the 9-bit counter) before and after
-    /// re-latching via a `$4201` WRIO write and a `$2137` strobe, for five sub-tests that each take the IRQ while
-    /// executing from a different address (`jmp $2137`/`$2136`/plain
-    /// code/`$000000`/`$217F`). Both `pass()` and `fail()` copy the
-    /// `$7F0000..$7F07FF` log to SRAM, so the bytes are readable either way;
-    /// this asserts exactly the bytes each sub-test's own `check` block
-    /// compares. Expectations transcribed from the vendored disassembly
+    /// re-latching via a `$4201` WRIO write and a `$2137` strobe, for five
+    /// sub-tests that each take the IRQ while executing from a different
+    /// address (`jmp $2137`/`$2136`/plain code/`$000000`/`$217F`). Both
+    /// `pass()` and `fail()` copy the `$7F0000..$7F07FF` log to SRAM, so the
+    /// bytes are readable either way; this asserts exactly the bytes each
+    /// sub-test's own `check` block compares. Expectations transcribed from the
+    /// vendored disassembly
     /// `jonasquinn-test-roms/blobs/disassembly/test_irqb.asm`.
+    ///
+    /// Two of the five sub-tests are not what their `jmp` target suggests.
+    /// Sub-test 4's `jmp $000000` is *not* an open-bus fetch: the ROM has just
+    /// stored its own `test4_check` long pointer to `$00/$01/$02`, so the CPU
+    /// executes `BIT #$83` out of low WRAM, and the 16 master clocks that
+    /// instruction costs are exactly what puts the interrupt sequence's `PCL`
+    /// push into `$4201` at H=16 (#3146/#3147). Sub-test 5's `jmp $217F` is the
+    /// genuinely open-bus-looking one, and it is not open bus either --
+    /// `$2144-$217F` mirror the APU comm ports, which the ROM's
+    /// `smp_return_0x18` preamble has primed to read `$18` = `CLC`. Its check
+    /// offsets are shifted by two (`+0..+6, +10` where sub-tests 1-4 use
+    /// `+0..+4, +8`) because two `$2180` WMDATA *reads* -- `CLC`'s
+    /// interrupt-imminent dummy read and the interrupt sequence's own dummy
+    /// re-read of PC, both landing on `$2180` -- advance WMADD past two
+    /// never-written log slots before the handler writes anything.
     #[test]
-    #[ignore = "fails at sub-test 4 (open-bus OPHCT latch); asserts byuu's PASS-run verdict so FAILs under --include-ignored until #3147"]
     fn test_irqb_sram_log_matches_byuu_expected_latches() {
         let snes = run_rom_for_sram("test_irqb.smc", 120);
         let rd = |a: u32| snes.read_bus_for_debugger_for_tests(a).unwrap_or(0);
@@ -313,13 +340,32 @@ mod tests {
             (5, 0x36, 0x7A),
             (5, 0x3A, 0xCF),
         ];
-        for (sub_test, offset, expected) in CHECKS {
-            let actual = rd(0x70_0000 + offset);
-            assert_eq!(
-                actual, expected,
-                "test_irqb sub-test {sub_test}: $70{offset:04X} = \
-                 ${actual:02X}, expected ${expected:02X} (OPHCT/OPVCT latch log)"
-            );
-        }
+        // Report every mismatch at once. A fail-fast loop hides the rest of the
+        // log behind the first bad byte, which is how sub-test 4's later
+        // latches went unread and sub-test 5 stayed unverified for as long as
+        // it did. Note the ROM stops at ITS first mismatch too, so once a
+        // sub-test diverges the later sub-tests never run and their slots stay
+        // at the `$00` the ROM pre-filled -- read a run of `$00`s as "never
+        // reached", not as agreement.
+        let mismatches: Vec<String> = CHECKS
+            .iter()
+            .filter_map(|&(sub_test, offset, expected)| {
+                let actual = rd(0x70_0000 + offset);
+                (actual != expected).then(|| {
+                    format!(
+                        "  sub-test {sub_test}: $70{offset:04X} = ${actual:02X}, \
+                         expected ${expected:02X}"
+                    )
+                })
+            })
+            .collect();
+        assert!(
+            mismatches.is_empty(),
+            "test_irqb OPHCT/OPVCT latch log diverges from byuu's expectations \
+             in {} of {} checked bytes:\n{}",
+            mismatches.len(),
+            CHECKS.len(),
+            mismatches.join("\n")
+        );
     }
 }

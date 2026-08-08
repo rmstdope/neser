@@ -335,22 +335,27 @@ Test suites:
 - `kungfufurby_nmi_tests.rs` / `kungfufurby_irq_tests.rs` -- KungFuFurby's
   2005-2008 NMI/H-V-IRQ test ROM collection (#2883/#3049,
   `roms/snes/automated_tests/snes_test_roms/KungFuFurby-test-ROMs/`, see its
-  README). Six of the nine automated ROMs are green -- the NMI suite
-  entirely, plus half the IRQ suite: `demo_nmitest.smc`, `nmi.smc` and
-  `demo_irqtest.smc` after #3049's per-CPU-cycle dispatch fixes
-  (`Cpu::step()` checks interrupt-pending state at per-cycle rather than
-  per-instruction granularity, mirroring Mesen2's
+  README). All nine automated ROMs are green, with nothing `#[ignore]`d:
+  `demo_nmitest.smc`, `nmi.smc` and `demo_irqtest.smc` after #3049's
+  per-CPU-cycle dispatch fixes (`Cpu::step()` checks interrupt-pending state
+  at per-cycle rather than per-instruction granularity, mirroring Mesen2's
   `DetectNmiSignalEdge`/`PrevIrqSource`), `test_nmi.smc` and
   `test_irq4209.smc` after #3116 made STP halt the CPU plus #3081's
   `SetNmiFlag(2)` enable-mid-vblank arm (test_nmi's v1.1 test 27 is its
-  hardware witness), and `test_irq4200.smc` after #3144 ported Mesen2's
-  level+edge IRQ counter circuit (`src/snes/ppu/irq.rs`), backed by
-  SRAM-verdict tests transcribed from the vendored byuu sources. Still
-  `#[ignore]`d under the #3093 tracker, split by measured root cause:
-  `test_irq.smc` (dispatch boundary one instruction early, #3146;
-  re-measured unchanged after #3081's `irq_lock_step` deletion),
-  `test_irqb.smc` (open-bus OPHCT latch 4 dots low, #3147), and `irq.smc`
-  (no source exists; re-measured once #3146 lands).
+  hardware witness), `test_irq4200.smc` after #3144 ported Mesen2's
+  level+edge IRQ counter circuit (`src/snes/ppu/irq.rs`), `test_irq.smc` and
+  `irq.smc` after #3146 moved the IRQ dispatch sample to the start of the CPU
+  cycle, and `test_irqb.smc` after #3147. All are backed by SRAM-verdict tests
+  transcribed from the vendored byuu sources.
+
+  #3147 is worth knowing about for two reasons. Its headline symptom -- an
+  OPHCT latch four dots low in sub-test 4 -- had already been fixed by #3146
+  and only needed re-measuring, so the issue's premise was stale before work
+  started. What actually remained was sub-test 5: `jmp $217F` executes out of
+  the APU comm-port mirrors at `$2144-$217F`, which `SnesSystemBus` decoded as
+  open bus rather than as ports (fullsnes: "Ports 2144h..217Fh are APU
+  mirrors, NOT open bus"), so the CPU ran a six-cycle `AND (dp,X)` where
+  hardware runs the `CLC` this ROM's SPC preamble plants in every port.
 - `sour_dma_irq_tests.rs` -- Sour/SnesTests' `dma_irq_test.sfc` (#2883/#3049,
   `roms/snes/automated_tests/snes_test_roms/Sour/SnesTests/`), rebuilt
   byte-identical from source to recover its WRAM result-table address from
