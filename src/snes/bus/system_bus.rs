@@ -1073,8 +1073,15 @@ impl SnesSystemBus {
             0x4217 => (self.rdmpy >> 8) as u8,
             0x420D => self.memsel,
             0x420C => self.hdmaen,
-            0x2140..=0x2143 => {
-                let port = (offset - 0x2140) as usize;
+            // The four APU comm ports are mirrored every four bytes across the
+            // whole $2140-$217F span -- fullsnes lists "2144h..217Fh - APU Ports
+            // 2140-2143h mirrored to 2144h..217Fh" and then says it again under
+            // "Unused Addresses in the System Region": "Ports 2144h..217Fh are
+            // APU mirrors, NOT open bus". Mesen2 `RegisterHandlerB::Read`
+            // decodes the same span as `addr & 0x03`. byuu's `test_irqb.smc`
+            // sub-test 5 jumps into the mirror and executes from it (#3147).
+            0x2140..=0x217F => {
+                let port = (offset & 3) as usize;
                 let value = self.apu.borrow().read_main_port(port);
                 trace_apu!(3; "CPU reads port[{}] -> ${:02X}", port, value);
                 value
@@ -1185,11 +1192,13 @@ impl SnesSystemBus {
                 // No special handling - HDMA logic will pick up changes naturally
                 true
             }
-            0x2140..=0x2143 => {
-                trace_apu!(2; "CPU writes port[{}] = ${:02X}", offset - 0x2140, value);
+            // Mirrored every four bytes up to $217F, exactly as on the read
+            // side above.
+            0x2140..=0x217F => {
+                trace_apu!(2; "CPU writes port[{}] = ${:02X}", offset & 3, value);
                 self.apu
                     .borrow_mut()
-                    .write_main_port((offset - 0x2140) as usize, value);
+                    .write_main_port((offset & 3) as usize, value);
                 true
             }
             0x420B => {
@@ -1347,10 +1356,13 @@ impl DmaABus for SnesSystemBus {
                 .ppu
                 .borrow_mut()
                 .write_register(0x2100 + u16::from(addr), value),
-            0x40..=0x43 => self
+            // $2140-$217F: the four comm ports, mirrored every four bytes (see
+            // the same span in `read_mmio`). This path decodes the bare B-bus
+            // address itself, so it needs the mirror independently.
+            0x40..=0x7F => self
                 .apu
                 .borrow_mut()
-                .write_main_port((addr - 0x40) as usize, value),
+                .write_main_port((addr & 3) as usize, value),
             // WMDATA/WMADD ($2180-$2183): DMA is a common way to fill WRAM
             // (e.g. transferring test/result tables), so it must go through
             // the same auto-incrementing WRAM port a direct CPU store would.
@@ -1994,6 +2006,99 @@ mod tests {
 
         bus.apu_write_spc_port_for_test(1, 0x5A);
         assert_eq!(bus.read(0x002141), 0x5A);
+    }
+
+    /// Puts the bus in byuu's `test_irqb.smc` sub-test 5 position: the ROM
+    /// uploads an SPC program so all four comm ports read `$18`, leaves `$21`
+    /// on the bus (the high byte of its own `jmp $217F` operand), and then
+    /// *executes* from `$217F`. The fetched opcode decides the whole sub-test:
+    /// `$18` is `CLC`, an implied 2-cycle instruction whose `IdleOrRead` dummy
+    /// read plus the interrupt sequence's own dummy re-read of PC both land on
+    /// `$2180` (WMDATA) and so skip two log slots; `$21` is `AND (dp,X)`, six
+    /// cycles that touch `$2180` once. Returning open bus here does not just
+    /// hand back a wrong byte -- it runs a different instruction, which is what
+    /// shifted the ROM's log by one slot and its IRQ handler by 28 clocks
+    /// (#3147).
+    ///
+    /// `$2144-$217F` are APU port mirrors, not open bus: fullsnes "Unused
+    /// Addresses in the System Region" says so twice ("2144h..217Fh - APU Ports
+    /// 2140-2143h mirrored to 2144h..217Fh" and "Ports 2144h..217Fh are APU
+    /// mirrors, NOT open bus"), and Mesen2 `RegisterHandlerB::Read`/`Write`
+    /// decode the whole `0x2140..=0x217F` span as `addr & 0x03`.
+    #[test]
+    fn opcode_fetched_from_the_217f_apu_mirror_is_the_port_value_not_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        for port in 0..4 {
+            bus.apu_write_spc_port_for_test(port, 0x18);
+        }
+
+        // Leave $21 on the bus exactly as the ROM's `jmp $217F` operand fetch
+        // does, so "port value" and "open bus" are distinguishable answers.
+        bus.write(0x7E_0000, 0x21);
+        assert_eq!(bus.read(0x7E_0000), 0x21);
+        assert_eq!(
+            bus.read(0x00_2184),
+            0x21,
+            "control: $2184 IS open bus, so the mirror below must beat this value"
+        );
+
+        assert_eq!(
+            bus.read(0x00_217F),
+            0x18,
+            "$217F mirrors APU port 3; open bus ($21) would decode as AND (dp,X) \
+             instead of the CLC the ROM relies on"
+        );
+    }
+
+    /// Every address in `$2140-$217F` selects port `addr & 3`, on both the read
+    /// and the write side, with the neighbouring WRAM-port and open-bus regions
+    /// pinned as controls so the range cannot silently grow or shrink.
+    #[test]
+    fn apu_ports_mirror_every_four_bytes_across_2140_to_217f() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        for port in 0..4 {
+            bus.apu_write_spc_port_for_test(port, 0xD0 | port as u8);
+        }
+        for addr in 0x2140..=0x217Fu32 {
+            assert_eq!(
+                bus.read(addr),
+                0xD0 | (addr & 3) as u8,
+                "${addr:04X} must mirror APU port {}",
+                addr & 3
+            );
+        }
+
+        // The upper boundary is deliberately NOT asserted here. `$2180` is an
+        // earlier arm of the same `match`, so it wins whatever this range says
+        // and any check on it would be vacuous. What actually pins the top of
+        // the mirror is `cpu_read_of_wmadd_returns_open_bus` and
+        // `gpdma_b_to_a_reads_wmadd_as_open_bus` (#3113): widening this arm to
+        // `0x2140..=0x2183` fails exactly those two and nothing else, verified
+        // by mutation while writing this test.
+
+        for (addr, port) in [(0x00_2144u32, 0usize), (0x00_217Fu32, 3usize)] {
+            bus.write(addr, 0xA0 | port as u8);
+            assert_eq!(
+                bus.apu_read_spc_port_for_test(port),
+                0xA0 | port as u8,
+                "a write to ${addr:06X} must reach APU port {port}"
+            );
+        }
+    }
+
+    /// The DMA B-bus path decodes the port range independently of the CPU one
+    /// (`dma_write_b_bus` matches on the bare B-bus address), so it needs its
+    /// own vector -- a fix applied only to `read_mmio`/`write_mmio` would leave
+    /// a DMA to `$217F` writing nowhere.
+    #[test]
+    fn dma_b_bus_reaches_the_apu_port_mirrors_too() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        bus.dma_write_b_bus(0x7F, 0x3C);
+        assert_eq!(bus.apu_read_spc_port_for_test(3), 0x3C);
+
+        bus.apu_write_spc_port_for_test(2, 0xC3);
+        assert_eq!(bus.dma_read_b_bus(0x7E, 0x21), 0xC3);
     }
 
     #[test]
