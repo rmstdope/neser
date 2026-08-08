@@ -406,6 +406,16 @@ epic-#2724 visual suites (#2879, #2880, #2881, #2883, #2884):
    lands in hblank ahead of the next line's dot-22 INIDISP latch. So they are a
    frame-phase oracle and not a within-line clock oracle, and nobody should later
    read a green run as evidence about sub-line timing.
+2c. **Mutate in BOTH directions when the fix is a range, and beware controls that
+   an earlier `match` arm makes vacuous** (from #3147). Widening
+   `$2140..=$217F` to `$2183` is caught by `cpu_read_of_wmadd_returns_open_bus`
+   and `gpdma_b_to_a_reads_wmadd_as_open_bus`, but a "$2180 is still WMDATA"
+   assertion inside the new test would *not* have caught it: `0x2180` is an
+   earlier arm of the same `match`, so it wins whatever the range says. Rust's
+   first-match-wins ordering silently neuters boundary controls in exactly the
+   bus decoders where you most want them. Run the over-wide mutation, note which
+   tests actually fail, and say so in the test rather than asserting something
+   that cannot fail.
 3. **Only exact matches become goldens.** Divergent ROMs stay vendored but
    un-automated, with one bug issue per distinct root cause carrying the
    pixel-diff evidence (policy in docs/SNES_TEST_ASSET_POLICY.md).
@@ -595,6 +605,93 @@ Habits that catch this class:
   sub-test number (0 = pass), `test_hdmatiming.smc` `$00..$3F` compares against
   an in-ROM `compdata` table, `test_hdmasync.smc` `$000..$7FF` against
   `test_hdmasync_data.bin`.
+
+### Read the ROM's SETUP preamble too, and never take "executes from open bus" on trust (from #3147)
+
+The epilogue rule above has a twin at the other end. Where a ROM deliberately
+jumps somewhere absurd -- `jmp $2137`, `jmp $000000`, `jmp $217F` -- the
+instruction stream it then executes is *engineered*, not random, and the
+engineering usually lives in the setup code. Work out what each fetch address
+actually decodes to before describing the sub-test, because a wrong description
+hides the mechanism indefinitely.
+
+`test_irqb.smc` had two such addresses and NESER's own test docs, `architecture.md`
+and `README-SNES.md` mislabelled **both** as open bus for two issue cycles:
+
+- `jmp $000000` (sub-test 4) is not open bus. The ROM has just stored its own
+  `test4_check` long pointer to `$00/$01/$02`, so the CPU executes those three
+  bytes out of low WRAM -- `BIT #$83` -- and it is precisely that instruction's
+  16 master clocks that put the interrupt sequence's third push at the H dot
+  byuu expects.
+- `jmp $217F` (sub-test 5) is not open bus either. `$2140-$217F` mirror the four
+  APU comm ports every four bytes, and the ROM's very first source comment says
+  what that is for: "Some code is uploaded to the smp to make the comm ports
+  always return #$18". `$18` is `CLC`. NESER decoded only `$2140-$2143`, returned
+  open bus (`$21`, the high byte of the ROM's own `jmp` operand), ran a six-cycle
+  `AND (dp,X)` instead of a two-cycle `CLC`, and thereby both advanced WMADD one
+  time fewer and delayed the handler by 28 clocks.
+
+Habits that catch this class:
+
+- **Read the ROM source's opening comment and its init routine**, not just the
+  sub-test body. `smp_return_0x18` existed for exactly one reason and named it.
+- **Resolve the jump target against the memory map before writing prose about
+  it.** fullsnes says the mirroring twice -- "2144h..217Fh - APU Ports
+  2140-2143h mirrored to 2144h..217Fh" and, under "Unused Addresses in the
+  System Region", "Ports 2144h..217Fh are APU mirrors, NOT open bus".
+- **Assemble the pointer bytes yourself** when a sub-test stores one and then
+  jumps at it. Locating `test4_check` in the ROM image (search for its
+  `lda $7F00xx` / `cmp #$xx` prologue; LoROM bank 0 file offset = `addr - $8000`)
+  gives the exact opcode the CPU will run.
+
+### Re-measure the WHOLE verdict log, not the byte the issue names (from #3147)
+
+The #3083 rule says re-measure before planning. #3147 shows the sharper version:
+the ROM was still failing on main, so a naive re-check of the headline symptom
+would have "confirmed" the issue -- but the failing *byte* had moved. Sub-test 4's
+`$700024` was fixed and sub-test 5 was the whole remaining gap.
+
+Two things kept that invisible, both worth fixing wherever they recur:
+
+- **A fail-fast assertion loop over a multi-byte log reports one byte and hides
+  the rest.** `test_irqb_sram_log_matches_byuu_expected_latches` asserted 32 bytes
+  in a `for` loop, so sub-test 4's later latches were never read and sub-test 5 was
+  never verified at all -- for the entire life of the issue. Collect every mismatch
+  and assert once. (Caveat to state in the message: these ROMs stop at *their* first
+  mismatch too, so later sub-tests never run and their slots keep the `$00` the ROM
+  pre-filled. A run of `$00`s means "never reached", not "agrees".)
+- **Dump the raw block before theorising.** A throwaway probe printing
+  `$700000..$70004F` in 12-byte rows cost one test run and immediately showed
+  sub-tests 1-4 byte-perfect and sub-test 5's block shifted by one slot.
+
+### Attribute an "already fixed" finding by mutation, not by bisect (from #3147)
+
+When re-measurement shows something is fixed, name *what* fixed it -- the issue
+record needs it, and it validates your model of the mechanism. A `git worktree`
+bisect is the expensive answer (full rebuild, plus the submodule symlink dance).
+The cheap one is to revert the suspected change in the working tree and re-run
+the ROM.
+
+Undoing #3146 -- moving `resample_irq_line` from `begin_cpu_cycle` back to
+`end_of_cycle_interrupt_poll` -- returned `test_irqb`'s sub-test 4 block to
+exactly its historical `0C 00 01 00 76 00 01 00 CC`, including the `$76`/`$CC`
+that a hand cycle-ledger had predicted for the "dispatch one instruction early"
+fork but which no issue had ever recorded. One rebuild, decisive attribution,
+and a confirmed model in the same step.
+
+### One address range, three decode sites (from #3147)
+
+`SnesSystemBus` decodes the B-bus register range in **three** independent places,
+and a fix applied to the obvious two looks green because nothing covers the third:
+
+- `read_mmio` -- CPU reads, and DMA B-bus reads (`dma_read_b_bus` delegates here)
+- `write_mmio` -- CPU writes
+- `dma_write_b_bus` -- DMA B-bus writes, matching on the **bare 8-bit B-bus
+  address** (`0x40..=0x7F`, not `0x2140..=0x217F`), so a range edit made by
+  search-and-replace on the `$21xx` form silently misses it
+
+Grep for both spellings when changing any B-bus range, and give the DMA path its
+own vector.
 
 ### Check the sample frame can actually SEE the divergence (from #3092)
 
@@ -1128,6 +1225,30 @@ until ! pgrep -f "Mesen --testRunner" >/dev/null 2>&1; do sleep 5; done
 
 Treat an empty capture log as "check for a concurrent instance" first, not as
 a bad Lua script -- the script is usually fine.
+
+**Second cause, for `NESER_BUS_LOG` windows specifically (from #3147): the Lua
+run ended before the window's clock.** The driver script's `emu.stop()` frame and
+the `NESER_TRACE_FROM`/`TO` window are set independently, and nothing warns you
+when they disagree -- you get an empty log that looks exactly like a dead hook.
+A `stop at frame 20` script never reaches clock 7.86M, which is where the fifth
+sub-test of a five-sub-test ROM lives (each sub-test of `test_irqb` consumes
+exactly two frames, because `seek_frame` re-syncs to the frame origin).
+
+Diagnose in this order, cheapest first:
+
+1. Confirm the hook is in the **live** dylib, not just the build tree:
+   `strings ~/Library/Application\ Support/Mesen2/MesenCore.dylib | grep 'mesen %s %06X ticks'`
+   (the app re-extracts its embedded copy over that path on every start).
+2. Confirm the run reaches the window. Drop the window entirely and add a Lua
+   `emu.addMemoryCallback` on a register the ROM writes once per sub-test,
+   printing `emu.getState()["masterClock"]` -- that both finds the anchor and
+   proves how far the run got.
+3. Only then suspect a concurrent instance.
+
+Anchoring this way is worth doing regardless: on `test_irqb` Mesen2's master
+clocks at every `$4209` write were **byte-identical** to NESER's (5003200 /
+5717932 / 6432664 / 7147434 / 7862128), so a window derived from NESER's trace
+transferred verbatim and any drift would have been visible immediately.
 
 ### Automating Screenshot Capture at Specific Frames
 
