@@ -1,6 +1,6 @@
 use crate::snes::apu::SnesApu;
 use crate::snes::bus::SnesBus;
-use crate::snes::bus::dma::{DmaABus, DmaController};
+use crate::snes::bus::dma::{DmaABus, DmaController, HDMA_KIND_INIT, HDMA_KIND_LINE};
 use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::EnhancementChip;
 use crate::snes::cartridge::Mapping;
@@ -562,6 +562,10 @@ impl SnesSystemBus {
             self.mdr.get(),
             base_clock,
             self.cpu_speed,
+            // Standalone: this path is only reached from the CPU cycle hook, i.e. with no
+            // general-purpose transfer holding the bus, so the sync pads are paid. The nested
+            // case goes through `DmaController::run_nested_hdma` instead.
+            true,
         );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
@@ -580,6 +584,8 @@ impl SnesSystemBus {
             self.mdr.get(),
             base_clock,
             self.cpu_speed,
+            // Standalone; see `hdma_init`.
+            true,
         );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
@@ -600,7 +606,7 @@ impl SnesSystemBus {
         // early on HDMAEN == 0, exactly as Mesen2's `InitHdmaChannels` does. Skipping the
         // call to avoid the lock would drop that reset and desynchronise HDMA state.
         let did_work = self.hdmaen != 0;
-        if kind == 0 {
+        if kind == HDMA_KIND_INIT {
             self.hdma_init();
         } else {
             self.hdma_do_line();
@@ -652,7 +658,7 @@ impl SnesSystemBus {
         };
         if init_due {
             let fallback = self.ppu.borrow().total_master_clocks() + 16;
-            self.pending_hdma = Some((2, 0, fallback));
+            self.pending_hdma = Some((2, HDMA_KIND_INIT, fallback));
         }
         // The per-line transfer is only ARMED when HDMAEN is non-zero at the
         // trigger clock (Mesen2 `BeginHdmaTransfer`). A ROM that enables a
@@ -661,7 +667,7 @@ impl SnesSystemBus {
         // itself reads the by-then-updated HDMAEN.
         if transfer_due && self.hdmaen != 0 {
             let fallback = self.ppu.borrow().total_master_clocks() + 16;
-            self.pending_hdma = Some((2, 1, fallback));
+            self.pending_hdma = Some((2, HDMA_KIND_LINE, fallback));
         }
     }
 
@@ -1330,11 +1336,18 @@ impl DmaABus for SnesSystemBus {
     }
 
     fn dma_tick(&mut self, master_clocks: u64) {
-        // Advance the PPU/APU/input while the DMA controller owns the bus. HDMA
-        // triggers are deliberately not processed here: `self.dma` is `mem::take`n
-        // during a transfer, so `check_hdma_triggers` would operate on an empty
-        // controller (HDMA-during-DMA remains unmodeled, as before). The
-        // DRAM-refresh stall IS paid mid-transfer (#2985, matching Mesen2's
+        // Advance the PPU/APU/input while the DMA controller owns the bus, arming any HDMA
+        // trigger the transfer sweeps past. `check_hdma_triggers` only reads the PPU and sets
+        // `pending_hdma`; it never touches `self.dma`, so it is safe to run while the
+        // controller is `mem::take`n. The armed slot is claimed by `take_due_hdma` from
+        // inside the running transfer (Mesen2 re-enters `ProcessPendingTransfers` from
+        // `RunDma`) -- until #3127 nothing polled here at all, so a transfer spanning the
+        // dot-276 trigger silently swallowed that scanline's HDMA outright.
+        //
+        // `run_overdue_pending_dma` is deliberately NOT called here: it is the no-CPU
+        // fallback and would re-enter `start_dma_transfer` on the emptied stand-in.
+        //
+        // The DRAM-refresh stall IS paid mid-transfer (#2985, matching Mesen2's
         // `SnesMemoryManager::Exec()`): a transfer crossing the once-per-scanline
         // refresh trigger takes 40 extra master clocks, ticking the whole bus so
         // every device stays on the same timeline (see `Ppu::tick`'s stall doc).
@@ -1342,12 +1355,34 @@ impl DmaABus for SnesSystemBus {
         // it exposed in the SNES<->SA-1 handshake -- fixed alongside #2985.)
         for _ in 0..master_clocks {
             self.tick_one_master_clock();
+            self.check_hdma_triggers();
             if self.ppu.borrow_mut().dram_refresh_due() {
                 for _ in 0..DRAM_REFRESH_STOLEN_CLOCKS {
                     self.tick_one_master_clock();
+                    self.check_hdma_triggers();
                 }
             }
         }
+    }
+
+    /// Hand an armed HDMA slot to the general-purpose transfer that is currently running, so
+    /// it can be executed nested (Mesen2 `ProcessPendingTransfers` re-entered from `RunDma`).
+    ///
+    /// The countdown is the same one `gpdma_cycle_hook` walks -- Mesen2's `_dmaStartDelay`,
+    /// which swallows exactly one `ProcessPendingTransfers` call. Inside a transfer those
+    /// calls come once per byte slot rather than once per CPU cycle, which is precisely
+    /// Mesen2's behaviour: an HDMA raised mid-burst starts one byte-slot late.
+    ///
+    /// HDMAEN is read HERE and not at the trigger, matching `ProcessHdmaChannels`, so a
+    /// channel disabled between the two is not transferred.
+    fn take_due_hdma(&mut self) -> Option<(u8, u8)> {
+        let (countdown, kind, fallback) = self.pending_hdma?;
+        if countdown > 1 {
+            self.pending_hdma = Some((countdown - 1, kind, fallback));
+            return None;
+        }
+        self.pending_hdma = None;
+        Some((kind, self.hdmaen))
     }
 
     fn dma_write_b_bus(&mut self, addr: u8, value: u8) {
