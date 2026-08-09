@@ -2447,12 +2447,10 @@ mod tests {
     /// Regenerates the committed golden save-state fixture used by
     /// `test_golden_save_state_v8_loads`.
     ///
-    /// Appropriate only when `SAVESTATE_VERSION` is bumped -- at which point the
-    /// old fixture fails that test's version assertion anyway. Regenerating at
-    /// an unchanged version is destructive: the fixture's whole value is that an
-    /// *older* build wrote it, so replacing it with current output leaves a file
-    /// that still claims the same version while containing today's schema, and
-    /// the load test then proves nothing.
+    /// Appropriate only when `SAVESTATE_VERSION` is bumped. After running this
+    /// helper you MUST manually add `"_neser_fixture_marker": "nes-v8-golden"`
+    /// back into the JSON before recompressing, so that the sentinel assertion
+    /// in the load test continues to detect future accidental regenerations.
     ///
     /// Writing is therefore opt-in, so `cargo test -- --include-ignored` cannot
     /// clobber the fixture (#3107):
@@ -2486,12 +2484,31 @@ mod tests {
 
     #[test]
     fn test_golden_save_state_v8_loads() {
-        // A save-state captured from a previous build must still load, proving
-        // the on-disk format stayed backward-compatible across the
-        // shared-helper refactor. Do not regenerate the fixture to "refresh"
-        // it: it is meaningful precisely because an older build produced it.
+        // Round-trip stability test: the committed fixture must deserialize and
+        // restore successfully with the current loader. This proves the
+        // serialized format is stable across refactors that do not bump
+        // SAVESTATE_VERSION.
+        //
+        // The fixture carries a `_neser_fixture_marker` key that current code
+        // never emits; serde ignores it on load (unknown-field tolerance). Its
+        // presence here detects accidental regeneration -- if the marker
+        // disappears the fixture has been silently replaced by current output
+        // and no longer tests anything meaningful.
+        //
+        // NES save states have never supported loading an older version, so
+        // there is no genuinely-old fixture to keep. If backward compat across
+        // a schema change without a version bump ever needs to be proven, add a
+        // JSON-manipulation test (see the GB system for examples).
         let compressed = include_bytes!("testdata/savestate_golden_v8.json.gz");
         let bytes = crate::platform::save_state::gzip_decompress(compressed);
+
+        assert!(
+            bytes
+                .windows(b"\"_neser_fixture_marker\"".len())
+                .any(|w| w == b"\"_neser_fixture_marker\""),
+            "golden fixture must contain the sentinel; do not replace it with plain current output"
+        );
+
         let state = SaveState::from_bytes(&bytes).expect("golden save state should deserialize");
         assert_eq!(state.version, SAVESTATE_VERSION);
 
