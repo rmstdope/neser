@@ -220,14 +220,22 @@ impl SnesSystemBus {
     }
 
     /// Applies the configured power-on pattern to every volatile RAM on the
-    /// SNES side: WRAM, the PPU's VRAM/CGRAM/OAM, ARAM, and SA-1 I-RAM when the
-    /// cartridge has an SA-1.
+    /// SNES side: WRAM, the PPU's VRAM/CGRAM/OAM, ARAM, SA-1 I-RAM when the
+    /// cartridge has an SA-1, and cartridge RAM when it is *not* battery-backed.
     ///
-    /// Battery-backed cartridge SRAM (which SA-1 BW-RAM aliases) is deliberately
-    /// excluded -- it is restored from the `.sav` file, and the NES core applies
-    /// the same rule to battery PRG-RAM.
+    /// Battery-backed cartridge SRAM (which SA-1 BW-RAM aliases) is the one
+    /// exclusion: it is restored from the `.sav` file, so filling it would
+    /// either be overwritten or corrupt a save on a cartridge whose `.sav` does
+    /// not exist yet. The NES core draws the line in the same place --
+    /// `Cartridge::initialize_ram` spares PRG-RAM only when
+    /// `battery_backed_prg_ram` is set. Plain ROM+RAM carts carry volatile work
+    /// RAM and are filled like anything else, matching Mesen2 (`BaseCartridge`
+    /// initialises `_saveRam` from `RamPowerOnState` and relies on the `.srm`
+    /// load to overwrite it).
     ///
     /// Called at power-on and again on a hard reset; a soft reset preserves RAM.
+    /// On a hard reset, [`SnesSystemBus::reset_sa1_to_power_on`] must run first
+    /// so I-RAM is not refilled underneath a running SA-1.
     pub fn initialize_power_on_ram(&mut self, mode: RamInitMode) {
         crate::platform::ram_init::initialize_ram(&mut self.wram, mode);
         self.ppu.borrow_mut().initialize_power_on_ram(mode);
@@ -235,6 +243,31 @@ impl SnesSystemBus {
         if let Some(iram) = self.sa1_iram.as_ref() {
             iram.borrow_mut().initialize_power_on_ram(mode);
         }
+        if !self.has_battery() {
+            crate::platform::ram_init::initialize_ram(&mut self.sram.borrow_mut(), mode);
+        }
+    }
+
+    /// Returns the SA-1 control registers and core to their power-on state.
+    ///
+    /// Only meaningful on a hard reset. `Sa1ControlRegisters::new` asserts
+    /// CCNT.5 (`$2200 = $20`, SA-1 held in reset), and `Sa1Core` re-runs its own
+    /// `do_reset` the next time it sees that bit released -- so this is what
+    /// makes refilling I-RAM safe. Without it the SA-1 would keep executing
+    /// from its old PC through a `ram_init_mode`-randomised I-RAM.
+    pub fn reset_sa1_to_power_on(&mut self) {
+        if let Some(registers) = self.sa1_registers.as_ref() {
+            *registers.borrow_mut() = Sa1ControlRegisters::new();
+        }
+    }
+
+    /// Whether the SA-1 is currently held in reset via CCNT.5. `false` for a
+    /// cartridge without an SA-1.
+    #[cfg(test)]
+    pub(crate) fn sa1_held_in_reset_for_tests(&self) -> bool {
+        self.sa1_registers
+            .as_ref()
+            .is_some_and(|registers| registers.borrow().is_held_in_reset())
     }
 
     /// Drains the recorded A->B B-bus write log (see [`SnesSystemBus::b_bus_writes`]).
@@ -1009,6 +1042,12 @@ impl SnesSystemBus {
     /// `None` (e.g. non-SA-1 cartridge, or a save state predating SA-1 support) leaves SA-1 at
     /// its current power-on-reset state rather than erroring -- matches this codebase's general
     /// `#[serde(default)]` backward-compatibility approach elsewhere in save states.
+    ///
+    /// Since #3128 that power-on state is only deterministic under
+    /// `ram_init_mode=zero`: I-RAM now carries the configured power-on pattern, so restoring
+    /// one of those pre-SA-1 save states under `random` yields different I-RAM contents each
+    /// time. The registers (including CCNT's reset-hold) are unaffected, so the SA-1 still
+    /// re-boots rather than running from the noise.
     fn restore_sa1_state(&mut self, state: Option<&SnesSa1State>) {
         let Some(state) = state else { return };
         let (Some(registers), Some(iram), Some(memory_control), Some(core)) = (
@@ -1755,6 +1794,67 @@ mod tests {
         assert!(
             bus.sram.borrow().iter().all(|&byte| byte == 0x00),
             "battery-backed save RAM is restored from .sav and must not be filled"
+        );
+    }
+
+    /// Cartridge SRAM is excluded from the power-on fill only when it is
+    /// battery-backed -- that is the memory restored from the `.sav` file. A
+    /// plain ROM+RAM cartridge (chipset low nibble 1, no battery) carries
+    /// volatile work RAM that powers up like any other RAM, which is what both
+    /// references do: Mesen2 fills `_saveRam` from `RamPowerOnState`
+    /// unconditionally (`BaseCartridge.cpp`), and the NES core spares PRG-RAM
+    /// only when `battery_backed_prg_ram` is set.
+    #[test]
+    fn power_on_fills_sram_only_when_it_is_not_battery_backed() {
+        let mut battery = SnesSystemBus::new(lorom_cart_with_battery_sram());
+        assert!(battery.has_battery(), "fixture must be battery-backed");
+        let mut volatile = SnesSystemBus::new(lorom_cart_with_sram());
+        assert!(
+            !volatile.has_battery(),
+            "fixture must NOT be battery-backed"
+        );
+        assert!(
+            !volatile.sram.borrow().is_empty(),
+            "fixture must have SRAM for this to mean anything"
+        );
+
+        battery.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+        volatile.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+
+        assert!(
+            battery.sram.borrow().iter().all(|&byte| byte == 0x00),
+            "battery-backed save RAM is restored from .sav and must not be filled"
+        );
+        assert!(
+            volatile.sram.borrow().iter().any(|&byte| byte != 0x00),
+            "non-battery cartridge work RAM must be filled like any other RAM"
+        );
+    }
+
+    /// A hard reset must put the SA-1 back under reset-hold *before* I-RAM is
+    /// refilled.
+    ///
+    /// `Sa1ControlRegisters::new` powers CCNT up as `$20` (fullsnes "Reset"
+    /// table: SA-1 held in reset), and `Sa1Core` only re-runs `do_reset` after
+    /// seeing that bit. Nothing else in the console reset path touches the
+    /// SA-1, so without this a hard reset would replace I-RAM with noise
+    /// underneath an SA-1 CPU still executing from its old PC -- which is the
+    /// normal state for an SA-1 game, since they run code copied into I-RAM.
+    #[test]
+    fn sa1_power_on_reset_holds_the_sa1_before_iram_is_refilled() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        // Release SA-1 from reset the way a game does, via $2200 CCNT.
+        bus.write(0x00_2200, 0x00);
+        assert!(
+            !bus.sa1_held_in_reset_for_tests(),
+            "the SA-1 must actually be released, or the test proves nothing"
+        );
+
+        bus.reset_sa1_to_power_on();
+
+        assert!(
+            bus.sa1_held_in_reset_for_tests(),
+            "a hard reset must re-assert CCNT.5 so the SA-1 re-boots"
         );
     }
 

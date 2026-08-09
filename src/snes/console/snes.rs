@@ -519,12 +519,18 @@ impl Emulator for Snes {
     }
 
     fn reset(&mut self, soft_reset: bool) {
-        // A hard reset models a power cycle, so it re-applies the configured
-        // power-on RAM pattern; a soft reset is the /RES button and RAM
-        // survives it. Same split as the NES core (`nes/bus/bus.rs::reset`).
+        // A hard reset re-applies the configured power-on RAM pattern; a soft
+        // reset is the /RES button and RAM survives it. Same split as the NES
+        // core (`nes/bus/bus.rs::reset`). Note this is a RAM-level distinction
+        // only: neither path re-initialises the PPU, DMA or input registers, so
+        // a hard reset here is not yet a full power cycle.
         let ram_init_mode = (!soft_reset).then(|| self.ram_init_mode());
         if let Some(cpu) = self.cpu.as_mut() {
             if let Some(mode) = ram_init_mode {
+                // Order matters: the SA-1 must be back under CCNT.5 reset-hold
+                // before I-RAM is refilled, or it keeps executing from its old
+                // PC through the new contents.
+                cpu.bus_mut().reset_sa1_to_power_on();
                 cpu.bus_mut().initialize_power_on_ram(mode);
             }
             // /RES resets the S-SMP alongside the 65816 (ports, timers, SPC

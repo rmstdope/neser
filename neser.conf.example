@@ -267,8 +267,9 @@ load_state=false
 # hardware-accuracy and test determinism.
 #
 # Applies to:
-#   - NES:  CPU RAM, PRG-RAM, CHR-RAM, PPU nametable and palette RAM
-#   - SNES: WRAM, VRAM, CGRAM, OAM, APU ARAM and SA-1 I-RAM
+#   - NES:  CPU RAM, PRG-RAM, CHR-RAM, OAM, PPU nametable and palette RAM
+#   - SNES: WRAM, VRAM, CGRAM, OAM, APU ARAM, SA-1 I-RAM, and cartridge RAM
+#           that is not battery-backed
 # Battery-backed save RAM is never touched on either system; it is restored
 # from the .sav file. Game Boy and GBA ignore this setting for now.
 #

@@ -15,9 +15,13 @@
 //! `FrontendConfig`, so it pins the config-to-hardware wiring and not just the
 //! fill helper (which `platform::ram_init` tests on its own).
 //!
-//! Battery-backed cartridge SRAM is deliberately excluded: it is restored from
-//! the `.sav` file, matching the NES rule that spares battery PRG-RAM
-//! (`nes/cartridge/cartridge.rs`, `test_initialize_ram_preserves_battery_backed_save_ram`).
+//! Cartridge RAM is covered too, but *only* when it is not battery-backed: a
+//! `.sav`-backed save is restored from disk, so filling it would either be
+//! overwritten or corrupt a save on a cartridge with no `.sav` yet. The NES core
+//! draws the line in the same place (`nes/cartridge/cartridge.rs`,
+//! `test_initialize_ram_preserves_battery_backed_save_ram`), and the
+//! battery-vs-volatile split itself is pinned by
+//! `system_bus::tests::power_on_fills_sram_only_when_it_is_not_battery_backed`.
 //!
 //! Fixtures are synthetic in-code images, so this suite reads no ROM assets.
 
@@ -140,8 +144,10 @@ mod tests {
         }
     }
 
-    /// Given a powered-on console, when it powers on, then battery-backed save
-    /// RAM stays clear regardless of the mode -- it is restored from `.sav`.
+    /// Given a powered-on console, then battery-backed save RAM stays clear
+    /// regardless of the mode -- it is restored from `.sav`. (The fixture's
+    /// chipset `$35` has battery bit set; the non-battery half of this rule is
+    /// covered at the bus level.)
     #[test]
     fn save_ram_is_never_filled_by_the_power_on_pattern() {
         let random = power_on(RamInitMode::Random);

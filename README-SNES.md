@@ -49,10 +49,10 @@ The generic (unprefixed) `ram_init_mode` / `--ram-init-mode` setting also
 applies to the SNES since #3128. It controls the power-on contents of WRAM,
 VRAM, CGRAM, OAM, APU ARAM and SA-1 I-RAM — `random` (the desktop default,
 matching Mesen2's `RamState::Random` and ares), `zero`, or
-`seeded-random:SEED` for a randomised but reproducible machine. Battery-backed
-save RAM is never touched; it is restored from the `.sav` file. Use `zero` when
-comparing captures against another emulator — see
-[Baseline (golden) approval workflow](#baseline-golden-approval-workflow).
+`seeded-random:SEED` for a randomised but reproducible machine. Cartridge RAM is
+filled too unless it is battery-backed — a `.sav`-backed save is left alone and
+restored from disk. Use `zero` when comparing captures against another emulator;
+see [Baseline (golden) approval workflow](#baseline-golden-approval-workflow).
 
 ## SNES input
 

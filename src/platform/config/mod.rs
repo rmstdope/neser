@@ -66,6 +66,13 @@ pub enum RamInitMode {
     /// Combines hardware-accuracy with determinism: RAM appears random but is
     /// identical across runs with the same seed. Useful for reproducible testing
     /// of RAM-sensitive code paths.
+    ///
+    /// Note that `initialize_ram` re-seeds from scratch per call, so every
+    /// buffer filled with the same seed gets the *same* byte sequence -- under
+    /// `seeded-random:N` the SNES powers up with `WRAM[i] == VRAM[i] == ARAM[i]`.
+    /// Harmless and deterministic, but it makes the resulting machine less
+    /// representative than [`Self::Random`]; prefer `Random` when the point is
+    /// to shake out reads of uninitialised memory.
     SeededRandom(u64),
 }
 

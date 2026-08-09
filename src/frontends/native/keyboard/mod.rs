@@ -229,7 +229,7 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn make_snes_console(rom_name: &str) -> Console {
-        let mut console = Console::new_snes(AppContext::new_with_config(Config::default()));
+        let mut console = Console::new_snes(crate::snes::test_support::snes_test_app_context());
         console
             .load_rom(&minimal_snes_rom(), rom_name)
             .expect("minimal SNES ROM should load");
