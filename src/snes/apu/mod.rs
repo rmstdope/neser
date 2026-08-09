@@ -10,6 +10,7 @@ pub mod ipl;
 pub mod spc700;
 pub mod timers;
 
+use crate::platform::config::RamInitMode;
 use crate::snes::apu::dsp::Sdsp;
 use crate::snes::ppu::SnesVideoRegion;
 use serde::{Deserialize, Serialize};
@@ -348,6 +349,17 @@ impl SnesApu {
             return 0.0;
         }
         self.spc_per_master_den as f32 / self.cycles_per_sample
+    }
+
+    /// Applies the configured power-on pattern to ARAM.
+    ///
+    /// ARAM is the only hardware RAM the APU owns. The IPL boot ROM is a
+    /// constant overlay, and the ports, control/test registers and timers have
+    /// defined power-on values that the boot handshake depends on, so none of
+    /// them are touched here. Mesen2 does the same: `Spc::Spc` calls
+    /// `InitializeRam(_ram, SpcRamSize)` and nothing else.
+    pub fn initialize_power_on_ram(&mut self, mode: RamInitMode) {
+        crate::platform::ram_init::initialize_ram(&mut self.aram, mode);
     }
 
     /// Read the byte at `addr` from the SPC700 address space without ticking
@@ -993,8 +1005,62 @@ impl Spc700Bus for SpcBusView<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SnesApu, SnesApuState};
+    use super::{RamInitMode, SnesApu, SnesApuState};
     use crate::snes::ppu::SnesVideoRegion;
+
+    #[test]
+    fn power_on_zero_mode_clears_aram() {
+        let mut apu = SnesApu::new(None);
+        apu.initialize_power_on_ram(RamInitMode::SeededRandom(7));
+
+        apu.initialize_power_on_ram(RamInitMode::Zero);
+
+        assert!(
+            apu.aram.iter().all(|&byte| byte == 0x00),
+            "ARAM should be all zero after a Zero power-on fill"
+        );
+    }
+
+    #[test]
+    fn power_on_seeded_mode_fills_aram_deterministically() {
+        let mut first = SnesApu::new(None);
+        let mut same_seed = SnesApu::new(None);
+        let mut other_seed = SnesApu::new(None);
+        first.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+        same_seed.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+        other_seed.initialize_power_on_ram(RamInitMode::SeededRandom(43));
+
+        assert!(
+            first.aram.iter().any(|&byte| byte != 0x00),
+            "ARAM was left zeroed -- it is not wired into the power-on fill"
+        );
+        assert_eq!(
+            first.aram, same_seed.aram,
+            "ARAM must be reproducible for the same seed"
+        );
+        assert_ne!(
+            first.aram, other_seed.aram,
+            "ARAM must differ for a different seed"
+        );
+    }
+
+    #[test]
+    fn power_on_fill_preserves_the_boot_handshake_state() {
+        // Only ARAM is hardware RAM here. The IPL overlay, the four ports and
+        // the control/test registers have defined power-on values the boot
+        // handshake depends on, so the fill must leave them alone.
+        let reference = SnesApu::new(None);
+        let mut apu = SnesApu::new(None);
+
+        apu.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+
+        assert_eq!(apu.ipl, reference.ipl, "the IPL boot ROM is not RAM");
+        assert_eq!(apu.control, reference.control, "$F1 CONTROL must survive");
+        assert_eq!(apu.test, reference.test, "$F0 TEST must survive");
+        assert_eq!(apu.main_to_spc_ports, reference.main_to_spc_ports);
+        assert_eq!(apu.spc_to_main_ports, reference.spc_to_main_ports);
+        assert_eq!(apu.aux_regs, reference.aux_regs, "$F8/$F9 must survive");
+    }
 
     /// Master clocks in one tenth of an NTSC second -- long enough for the
     /// ~0.9% NTSC/PAL master-clock difference to be many samples wide.

@@ -1,7 +1,9 @@
 //! RAM initialization utilities for configurable power-on behavior.
 //!
 //! This module provides helper functions to initialize RAM with different patterns
-//! based on the configured RAM initialization mode.
+//! based on the configured RAM initialization mode. It lives under `platform`
+//! alongside [`RamInitMode`] because every emulated system uses it; `nes::console`
+//! re-exports [`initialize_ram`] so the NES call sites keep their historical path.
 
 use crate::platform::config::RamInitMode;
 use rand::rngs::StdRng;
@@ -15,7 +17,8 @@ use rand::{Rng, SeedableRng};
 ///
 /// # Examples
 /// ```
-/// use neser::console::{initialize_ram, RamInitMode};
+/// use neser::platform::config::RamInitMode;
+/// use neser::platform::ram_init::initialize_ram;
 ///
 /// let mut ram = vec![0u8; 2048];
 /// initialize_ram(&mut ram, RamInitMode::Zero);

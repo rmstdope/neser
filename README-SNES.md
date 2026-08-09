@@ -45,6 +45,15 @@ Notes:
 - `snes-spc-ipl-path` must point to a 64-byte file; invalid files are ignored and NESER falls back to the built-in clean-room IPL ROM.
 - `multitap` on port 1 currently falls back to `standard`.
 
+The generic (unprefixed) `ram_init_mode` / `--ram-init-mode` setting also
+applies to the SNES since #3128. It controls the power-on contents of WRAM,
+VRAM, CGRAM, OAM, APU ARAM and SA-1 I-RAM — `random` (the desktop default,
+matching Mesen2's `RamState::Random` and ares), `zero`, or
+`seeded-random:SEED` for a randomised but reproducible machine. Battery-backed
+save RAM is never touched; it is restored from the `.sav` file. Use `zero` when
+comparing captures against another emulator — see
+[Baseline (golden) approval workflow](#baseline-golden-approval-workflow).
+
 ## SNES input
 
 Default keyboard mapping (native and web SNES frontends):
@@ -454,13 +463,22 @@ directory and are never committed. To approve a new or changed golden:
    Mesen2's testRunner renders only every other frame and screenshots of
    animated content show stale frames (found in #2990); the video overrides
    keep personal Mesen2 config from rescaling or filtering the capture.
-3. If the ROM can display uninitialised WRAM, add
-   `--snes.RamPowerOnState=AllZeros` to match NESER, which zero-fills WRAM
-   while Mesen2's SNES default is `RamState::Random`. Without it the ground
-   truth is not even self-consistent: for `test_dmatiming/demo.smc` two
-   default Mesen2 captures differ from *each other* by 1.06%, which is what
-   produced #3063's phantom "0.93% DMA-timing divergence". A capture that
-   changes between identical runs is the tell.
+3. If the ROM can display uninitialised RAM, add
+   `--snes.RamPowerOnState=AllZeros` to the Mesen2 command line. Mesen2's SNES
+   default is `RamState::Random`, and without the flag the ground truth is not
+   even self-consistent: for `test_dmatiming/demo.smc` two default Mesen2
+   captures differ from *each other* by 1.06%, which is what produced #3063's
+   phantom "0.93% DMA-timing divergence". A capture that changes between
+   identical runs is the tell.
+
+   Since #3128 NESER's SNES core honours the same `ram_init_mode` setting the
+   NES core uses (WRAM, VRAM, CGRAM, OAM, ARAM, SA-1 I-RAM), and its desktop
+   default is `random` too — so the *NESER* side needs pinning as well. The
+   automated suites already do it: `RunConfig` defaults to
+   `RamInitMode::Zero` (`rom_runner.rs`), and `--headless` capture forces
+   `zero` and rejects any other value. If you capture by some other route,
+   pass `--ram-init-mode zero` explicitly. `AllZeros` on one side and `random`
+   on the other measures the RNG, not the emulator.
 4. Pixel-diff the two captures programmatically. Never approve a golden from
    a visual comparison alone — eyeballing has repeatedly missed real
    divergences.

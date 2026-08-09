@@ -1,7 +1,6 @@
 mod cartridge_catalog;
 mod config;
 mod nes;
-mod ram_init;
 pub mod save_state_io;
 
 use crate::platform::app_context::SharedAppContext;
@@ -11,6 +10,7 @@ pub use crate::nes::cartridge::TimingMode;
 pub use crate::platform::config::Config;
 pub use crate::platform::config::ParseResult;
 pub use crate::platform::config::RamInitMode;
+pub use crate::platform::ram_init::initialize_ram;
 pub use cartridge_catalog::{
     CartridgeCatalogOptions, default_catalog_csv_path, refresh_cartridge_catalog,
 };
@@ -24,7 +24,6 @@ pub use config::HardwareModel;
 pub use config::NesConfig;
 pub use nes::Nes;
 pub use nes::SaveState;
-pub use ram_init::initialize_ram;
 
 pub fn log_hardware_selection(app_context: &SharedAppContext, timing_applied: bool) {
     let binding = app_context.borrow();

@@ -84,14 +84,11 @@ mod tests {
     /// instruction early.)
     #[test]
     fn dma_irq_test_wram_results_match_hardware() {
-        use crate::platform::app_context::AppContext;
         use crate::platform::emulator::Emulator;
         use crate::snes::console::Snes;
         let path = Path::new(ROOT).join("dma_irq_test.sfc");
         let rom = fs::read(&path).unwrap();
-        let mut snes = Snes::new(AppContext::new_with_config(
-            crate::platform::config::Config::default(),
-        ));
+        let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
         snes.load_rom(&rom, "dma_irq_test.sfc").unwrap();
         let mut frames = 0u32;
         while frames < 350 {

@@ -42,6 +42,7 @@ mod sa1_boot_tests;
 mod sa1_bwram_tests;
 mod sa1_iram_tests;
 mod sa1_irq_tests;
+mod snes_ram_init_tests;
 mod sour_dma_irq_tests;
 mod undisbeliever_ppu_bg_tests;
 mod undisbeliever_ppu_mode7_tests;

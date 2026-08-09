@@ -7,7 +7,6 @@
 //! This is the mechanism `SA1RamProtectionTest.sfc` (automated separately under #2962, once all
 //! of #2956's sub-issues land) depends on for its cross-CPU message passing.
 
-use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
 
@@ -73,7 +72,7 @@ fn build_sa1_iram_roundtrip_rom() -> Vec<u8> {
 #[test]
 fn sa1_and_main_cpu_exchange_data_through_shared_iram() {
     let rom = build_sa1_iram_roundtrip_rom();
-    let mut snes = Snes::new(AppContext::default());
+    let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
     snes.load_rom(&rom, "sa1-iram-roundtrip-test.sfc")
         .expect("failed to load SA-1 I-RAM roundtrip fixture ROM");
 

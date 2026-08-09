@@ -263,9 +263,14 @@ load_state=false
 # -----------------------------------------------------------------------------
 # RAM Initialization Mode
 # -----------------------------------------------------------------------------
-# Controls how all emulated RAM (CPU, PRG, CHR, PPU nametable, and palette) is
-# initialized on power-on/hard reset. This affects hardware-accuracy and test
-# determinism.
+# Controls how emulated RAM is initialized on power-on/hard reset. This affects
+# hardware-accuracy and test determinism.
+#
+# Applies to:
+#   - NES:  CPU RAM, PRG-RAM, CHR-RAM, PPU nametable and palette RAM
+#   - SNES: WRAM, VRAM, CGRAM, OAM, APU ARAM and SA-1 I-RAM
+# Battery-backed save RAM is never touched on either system; it is restored
+# from the .sav file. Game Boy and GBA ignore this setting for now.
 #
 # Valid values:
 #   - zero: Initialize all RAM to 0x00 (predictable, not hardware-accurate)
@@ -275,9 +280,11 @@ load_state=false
 #
 # Soft resets preserve RAM contents (no re-initialization).
 #
-# Default: zero (deterministic for testing and debugging)
-#
-# Note: For hardware-accurate behavior, set to "random"
+# Built-in default: random on desktop builds, zero on the web (wasm) build.
+# This file ships an explicit "ram_init_mode=zero" below, so copying it gives
+# you deterministic RAM; delete or comment that line for hardware-accurate
+# behaviour. Headless capture (--headless) and autorun record/playback force
+# zero regardless, so captures and recordings stay reproducible.
 #
 # Examples:
 #   ram_init_mode=zero

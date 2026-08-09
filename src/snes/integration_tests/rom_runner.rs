@@ -1,4 +1,5 @@
 use crate::platform::app_context::AppContext;
+use crate::platform::config::RamInitMode;
 use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
 use crate::snes::console::config::SnesHardware;
@@ -127,6 +128,12 @@ pub(crate) struct RunConfig<'a> {
     /// auto-detection from the cartridge header country, matching what a
     /// frontend does when `snes-hardware` is not configured.
     pub hardware: Option<SnesHardware>,
+    /// Power-on RAM pattern. Defaults to [`RamInitMode::Zero`] -- *not* the
+    /// platform default, which is [`RamInitMode::Random`] on native. Every
+    /// committed screen CRC in this suite was approved against a zero-filled
+    /// power-on, and ROMs that display uninitialised WRAM (`test_dmatiming`,
+    /// #3128) would otherwise be measuring the RNG rather than the emulator.
+    pub ram_init_mode: RamInitMode,
 }
 
 impl<'a> RunConfig<'a> {
@@ -139,7 +146,16 @@ impl<'a> RunConfig<'a> {
             controller_port1: SnesControllerType::Standard,
             controller_port2: SnesControllerType::Standard,
             hardware: None,
+            ram_init_mode: RamInitMode::Zero,
         }
+    }
+
+    /// Overrides the power-on RAM pattern (see [`RunConfig::ram_init_mode`]).
+    /// Only for tests that deliberately exercise a non-zero power-on; anything
+    /// asserting a screen CRC must keep the default.
+    pub(crate) const fn with_ram_init_mode(mut self, mode: RamInitMode) -> Self {
+        self.ram_init_mode = mode;
+        self
     }
 
     /// Forces the video-timing region, as `--snes-hardware` / `snes-hardware`
@@ -317,10 +333,11 @@ fn run_rom_with_oracle_and_capture(
 ) -> RunResult {
     init_tracing_from_env();
 
-    let mut app_config = crate::platform::config::Config::default();
+    let mut app_config = crate::snes::test_support::snes_test_config();
     app_config.snes.controller_port1 = config.controller_port1;
     app_config.snes.controller_port2 = config.controller_port2;
     app_config.snes.hardware = config.hardware;
+    app_config.frontend.ram_init_mode = config.ram_init_mode;
     let mut snes = Snes::new(AppContext::new_with_config(app_config));
     snes.load_rom(rom, name)
         .unwrap_or_else(|err| panic!("failed to load SNES runner ROM {name}: {err}"));
@@ -959,6 +976,43 @@ mod tests {
         assert!(
             result.result_bytes[3..].iter().all(|byte| *byte == 0),
             "untouched result bytes should stay zero"
+        );
+    }
+
+    /// The default [`RunConfig`] must pin a zero-filled power-on.
+    ///
+    /// Every committed screen CRC in this suite was approved against zero-filled
+    /// RAM, and since #3128 the SNES core honours `ram_init_mode` -- which
+    /// `Config::default()` resolves to [`RamInitMode::Random`] on native
+    /// targets. Without the pin the goldens would be measuring the RNG, and
+    /// ROMs that display uninitialised WRAM (`test_dmatiming`) would differ from
+    /// run to run. That failure mode is intermittent, so this test makes it
+    /// deterministic.
+    ///
+    /// The seeded run is the control: it uses a mode no default can produce, so
+    /// the zero assertion cannot be passing against an inert mechanism.
+    /// `result_bytes` is [`RESULT_LEN`] bytes of WRAM the fixture never writes.
+    #[test]
+    fn default_run_config_pins_a_zero_filled_power_on() {
+        let rom = pass_marker_rom();
+
+        let pinned = run_rom(&rom, "ram_init_default.sfc", short_config());
+        let seeded = run_rom(
+            &rom,
+            "ram_init_seeded.sfc",
+            short_config().with_ram_init_mode(RamInitMode::SeededRandom(12_345)),
+        );
+
+        assert!(
+            pinned.result_bytes.iter().all(|byte| *byte == 0),
+            "the default RunConfig must power on with zero-filled WRAM, or every \
+             screen golden in this suite is measuring the RNG (got {:?})",
+            pinned.result_bytes
+        );
+        assert!(
+            seeded.result_bytes.iter().any(|byte| *byte != 0),
+            "with_ram_init_mode must actually reach the console, otherwise the \
+             assertion above proves nothing"
         );
     }
 
