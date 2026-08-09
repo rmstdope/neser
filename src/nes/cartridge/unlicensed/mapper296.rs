@@ -12,7 +12,7 @@
 //! - Audio: Two-channel PCM expansion (not implemented; see Known Limitations)
 //!
 //! Register map:
-//! ```
+//! ```text
 //! $411D – Mapper Configuration (write)
 //! 7654 3210
 //! ---- -CMM

@@ -83,6 +83,7 @@ Before merging or committing to main, the following checkpoint shall pass:
   ./scripts/test-dir.sh src/nes --skip-integration # NES changes, fast iteration
   ```
 - Run `cargo test --no-default-features --lib` to verify the full test suite passes before creating a PR
+- Run `cargo test --doc` and fix all failures. Doctests are compiled only by this command, so a doc example can rot indefinitely while still looking authoritative: six of them had been failing on main until #3175, three importing the nonexistent path `neser::cartridge` and three being ASCII register diagrams rustdoc tried to compile as Rust. Fence prose blocks as ` ```text `; never silence a real example with `ignore`/`no_run` just to make the gate pass
 - Run `cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings` and fix all findings (the host clippy run above cannot see `#[cfg(target_arch = "wasm32")]` code)
 - Run `cargo clippy --no-default-features --features frontend --all-targets -- -D warnings` and fix all findings (the `neser` binary requires only `frontend`, so this is a buildable configuration, but neither run above covers it — the host one enables `native`, and the wasm one is a different target. Three warnings sat unnoticed in that gap until #3137)
 - Run `wasm-pack test --headless --chrome --no-default-features --features wasm` and fix all warnings and ensure all tests pass

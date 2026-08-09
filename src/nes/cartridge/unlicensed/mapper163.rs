@@ -36,7 +36,7 @@
 //!
 //! ## PRG Banking (Mesen formula)
 //!
-//! ```
+//! ```text
 //! bank = (reg0 & 0x0F) | ((reg2 & 0x0F) << 4)
 //! ```
 //!

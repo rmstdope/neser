@@ -301,6 +301,14 @@ jobs:
         # former enables `native`, the latter is a different target. Three
         # warnings sat unnoticed in that gap until #3137.
         run: cargo clippy --no-default-features --features frontend --all-targets -- -D warnings
+      - name: Run doctests
+        # Doctests are compiled only by `cargo test --doc`; the `--lib` runs in the
+        # rust-test jobs never touch them. Six had been failing on main until #3175
+        # (three importing the nonexistent path `neser::cartridge`, three ASCII
+        # register diagrams rustdoc tried to compile as Rust) because nothing ran
+        # this command. Fence prose blocks as ```text rather than silencing real
+        # examples with ignore/no_run.
+        run: cargo test --doc
       - name: Check formatting
         run: cargo fmt -- --check
 
