@@ -275,14 +275,18 @@ Test suites:
 - `jonasquinn_dma_tests.rs` -- canonical DMA/HDMA ROMs from the jonasquinn
   collection (#2884). `test_mdrhdma2/test_mdrhdma.sfc` (MDR-during-HDMA) and
   `hdma_midframe/demo.smc` (mid-frame HDMA visual, also matches the bundled
-  `image001.bmp`) have 0-pixel-diff Mesen2 goldens; `test_dmavalid`,
-  `test_hdmadisable` and `test_dmatiming` are `#[ignore]`d divergences
-  (#3063), and the `test_hdma/test_hdmasync.smc`/`test_hdmatiming.smc` byuu
-  mirrors share the #3062 divergence.
+  `image001.bmp`) have 0-pixel-diff Mesen2 goldens. `test_dmavalid` (#3111),
+  `test_hdmadisable` (#3116) and the `test_hdma/test_hdmasync.smc`/
+  `test_hdmatiming.smc` byuu mirrors (#3062, #3120) all pass;
+  `test_dmatiming` became a 0-px Mesen2 golden in #3127, which also
+  un-ignored `test_dmatiming_latches_hv_after_gpdma`.
 - `kungfufurby_hdma_tests.rs` -- KungFuFurby HDMA ROMs (#2884,
-  `test_hdma`/`test_hdmasync`/`test_hdmatiming`). All three are `#[ignore]`d
-  recording NESER's diverging CRC (black or red-FAIL) where Mesen2 renders a
-  blue PASS; rooted in HDMA H-position timing (#3062, #3042/#3050).
+  `test_hdma`/`test_hdmasync`/`test_hdmatiming`). All three assert the
+  Mesen2-correct blue PASS screen (#3062, #3116, #3120).
+  `test_hdmatiming_hdma_during_dma_rows_match_mesen2` additionally reads
+  rows 9-12 -- the "HDMA during DMA" measurements the ROM records but never
+  compares -- out of SRAM; it is the only vector covering HDMA nested inside
+  a general-purpose transfer (#3127).
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs
   (`roms/snes/automated_tests/snes_test_roms/absindx/`), verified with
   human-approved screen-CRC goldens. `SA1RamProtectionTest.sfc` passes all 222 sub-tests

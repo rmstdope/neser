@@ -40,18 +40,25 @@ fn sa1_ram_protection_test_passes() {
 #[test]
 fn sa1_version_code_test_matches_approved_register_dump() {
     // Golden re-approved for #2944 (per-byte DMA bus advance), #2985 (refresh
-    // stall during GPDMA), and #3021 (hardware GPDMA start/end envelope): each
-    // shift moves the ROM's SA-1 H/V counter latch to a later,
+    // stall during GPDMA), #3021 (hardware GPDMA start/end envelope) and now
+    // #3127 (end pad rounds to the CPU speed; HDMA nests inside a transfer):
+    // each shift moves the ROM's SA-1 H/V counter latch to a later,
     // hardware-plausible scan position. The #3021 shift changed 4 px in rows
     // 98-99 (one latch hex digit) vs the previous capture; every other
     // register value is identical. (Navigator-approved NESER capture per the
     // absindx policy -- this ROM misbehaves on Mesen2.)
+    //
+    // #3127's shift is the same shape, measured against a capture taken on the
+    // pre-change `origin/main` in a detached checkout: 43 px, all inside the
+    // single 8x8 glyph cell at rows 95-102 / x 232-239 -- one hex digit of the
+    // latched counter. Every other pixel of the register dump is identical, so
+    // no register VALUE moved, only the latch's scan position.
     assert_rom_screen_crc(
         ROOT,
         "SA1VersionCodeTest.sfc",
         "sa1_absindx_tests",
         150,
-        0x8D92_7D9A,
+        0xF6D7_35B3,
         RunConfig::new(400_000_000, 0),
     );
 }

@@ -106,4 +106,92 @@ mod tests {
     fn test_hdmatiming_passes() {
         run_rom_screen_crc("test_hdmatiming.smc", 600, 0x8695_BBB0);
     }
+
+    /// The four "HDMA during DMA" measurements `test_hdmatiming` records but never checks.
+    ///
+    /// The ROM runs 12 sub-tests and stores each as four words in cartridge SRAM at
+    /// `$700000 + (n-1) * 8`, but its own verdict loop stops at `cpx.w #64` -- eight rows.
+    /// Rows 9-12 are the ones its source labels "HDMA during DMA" (vendored
+    /// `jonasquinn-test-roms/test_hdma/test_hdmatiming.asm:345-522`; the KungFuFurby copy run
+    /// here is byte-identical, md5 `900bfa374d61d91bd76aafc453bd24ad`). They are identical to
+    /// each other except for 0/1/2/3 `nop`s inserted before the `$420C`/`$420B` pair, so they
+    /// sweep the CPU sync phase across the transfer -- the same alignment-sweep idea rows 1-2
+    /// use, which pad with `db $42,$00` instead.
+    ///
+    /// Each row fires a 512-byte general-purpose transfer on channel 0 and an HDMA on
+    /// channel 1 in the same breath (`sta $420c` then `sta $420b`), so the per-scanline HDMA
+    /// trigger falls **inside** the general-purpose burst. NESER dropped such triggers
+    /// entirely -- `dma_tick` never polled them -- so all four rows were wrong before #3127
+    /// (row 9 read `[88, 144, 3, 0]`). The 512-byte channel also crosses Mesen2's 8-bit byte
+    /// counter, so these rows exercise the end-pad alignment wrap at the same time.
+    ///
+    /// **The expectations below are Mesen2's, not byuu's**, and that is a deliberate choice
+    /// made on measurement. byuu did write values for these rows into the in-ROM `compdata`
+    /// table (asm:565-570), but neither reference emulator produces them, and he excluded them
+    /// from the ROM's own comparison. Measured first latches:
+    ///
+    /// ```text
+    ///                          row 9   row 10  row 11  row 12
+    ///   byuu's compdata           94       96     101      105
+    ///   ares (byuu's emulator)    91       95     100      103
+    ///   Mesen2                    95       99     104      107
+    ///   NESER (this fix)          95       99     104      107
+    /// ```
+    ///
+    /// ares reproduces `compdata` exactly on rows 1-8, so the method is sound and the
+    /// disagreement is real: all three emulators differ from the table, and from each other.
+    /// Mesen2 sits a **uniform 4 dots** above ares on every row and on both latches, which
+    /// says the two references model the nested envelope's length differently rather than
+    /// either being phase-dependent. Asserting `compdata` would pin a value nothing achieves;
+    /// asserting Mesen2's pins the reference this emulator has chosen to match (#3000, and
+    /// the #3127 navigator decision to bit-match Mesen2's DMA counter). The 4-dot
+    /// Mesen2/ares gap is recorded as an open question rather than silently resolved here.
+    ///
+    /// This is still a genuine oracle and not a photograph. It was red before the fix, and it
+    /// is the **only** vector in the suite that observes HDMA-during-GPDMA at all: making
+    /// `SnesSystemBus::take_due_hdma` return `None` (i.e. dropping the nesting entirely) turns
+    /// this test red and leaves every other SNES test green, `hdmaen_latch_test` included.
+    /// Reverting the end-pad divisor to a fixed 8 also turns it red.
+    #[test]
+    fn test_hdmatiming_hdma_during_dma_rows_match_mesen2() {
+        use crate::platform::app_context::AppContext;
+        use crate::platform::emulator::Emulator;
+        use crate::snes::console::Snes;
+        let path = Path::new(ROOT).join("test_hdmatiming.smc");
+        let rom = fs::read(&path)
+            .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
+        let mut snes = Snes::new(AppContext::new_with_config(
+            crate::platform::config::Config::default(),
+        ));
+        snes.load_rom(&rom, "test_hdmatiming.smc").unwrap();
+        let mut frames = 0u32;
+        while frames < 600 {
+            snes.run_tick();
+            if snes.is_ready_to_render() {
+                frames += 1;
+                snes.clear_ready_to_render();
+            }
+        }
+        let rd = |a: u32| snes.read_bus_for_debugger_for_tests(a).unwrap_or(0) as u16;
+        let word = |a: u32| rd(a) | (rd(a + 1) << 8);
+        let row = |n: u32| {
+            let base = 0x70_0000 + (n - 1) * 8;
+            [word(base), word(base + 2), word(base + 4), word(base + 6)]
+        };
+
+        // All four rows are compared together so a failure shows the whole shape: a uniform
+        // offset across the rows means the nested envelope's length, while one row moving
+        // alone means the sub-test's own CPU sync phase (the pattern #3120 turned on).
+        assert_eq!(
+            [row(9), row(10), row(11), row(12)],
+            // Mesen2 headless, `--snes.RamPowerOnState=AllZeros`, SRAM read at frame 600.
+            [
+                [0x005F, 0x0098, 0x0003, 0x0000],
+                [0x0063, 0x009B, 0x0003, 0x0000],
+                [0x0068, 0x00A0, 0x0003, 0x0000],
+                [0x006B, 0x00A4, 0x0003, 0x0000],
+            ],
+            "rows 9-12 vs Mesen2 (see the doc comment: byuu's compdata and ares both differ)"
+        );
+    }
 }

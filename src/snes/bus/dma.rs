@@ -50,6 +50,44 @@ pub trait DmaABus {
     /// writes must land at the scan position they really occur at. Default no-op for test
     /// doubles that don't model time.
     fn dma_tick(&mut self, _master_clocks: u64) {}
+
+    /// Claim an HDMA that fell due while a general-purpose transfer is running, so it can be
+    /// run NESTED inside that transfer (Mesen2 re-enters `ProcessPendingTransfers` from
+    /// inside `RunDma`; ares reaches the same shape through `dmaEdge`).
+    ///
+    /// Returns the pending kind ([`HDMA_KIND_INIT`] or [`HDMA_KIND_LINE`]) together with the
+    /// **live** HDMAEN, which both references re-read at run time rather than latching it at
+    /// the trigger. Implementations must burn the one-CPU-cycle start delay themselves
+    /// (Mesen2 `_dmaStartDelay`, which swallows exactly one poll) and must clear the pending
+    /// slot as they hand it over, so the bus's own cycle hook cannot run it a second time.
+    ///
+    /// Defaults to `None` for test doubles and for any caller that does not model HDMA.
+    fn take_due_hdma(&mut self) -> Option<(u8, u8)> {
+        None
+    }
+}
+
+/// [`DmaABus::take_due_hdma`] kind: the once-per-frame HDMA reload (Mesen2 `InitHdmaChannels`).
+pub const HDMA_KIND_INIT: u8 = 0;
+/// [`DmaABus::take_due_hdma`] kind: the per-scanline HDMA transfer (Mesen2 `ProcessHdmaChannels`).
+pub const HDMA_KIND_LINE: u8 = 1;
+
+/// The two running totals a transfer accumulates. They are **not** the same quantity, and
+/// conflating them is what #3067/#3074/#3127 each ran aground on.
+///
+/// `ticks` is real time: every master clock the controller hands to `dma_tick`. `align` is
+/// Mesen2's `_dmaClockCounter` -- the bookkeeping value `SyncEndDma` divides by the CPU speed
+/// -- and it deliberately differs from `ticks` in two ways, both faithful to the reference:
+///
+/// - a general-purpose channel charges `align` only `8 * (bytes mod 256)`, because Mesen2
+///   counts its byte loop in a `uint8_t` (see `run_channel`);
+/// - DRAM-refresh clocks stolen mid-transfer advance `ticks` (via the bus) but never `align`,
+///   which is the reason Mesen2 keeps a separate counter at all rather than subtracting two
+///   master-clock readings (upstream commit `542d7302`, "Fixed freeze in intro/menus in
+///   Battle Grand Prix").
+struct DmaClocks {
+    ticks: u64,
+    align: u64,
 }
 
 #[derive(Clone)]
@@ -57,6 +95,14 @@ pub struct DmaController {
     regs: [u8; DMA_REG_BYTES],
     hdma_active_mask: u8,
     hdma_do_transfer: [bool; 8],
+    /// Which general-purpose channels are still armed, i.e. Mesen2's per-channel `DmaActive`.
+    ///
+    /// Live only for the duration of a `start_dma` call, which seeds it from MDMAEN. An HDMA
+    /// running nested inside that transfer clears the bits of every HDMA-enabled channel
+    /// (Mesen2 `ProcessHdmaChannels`/`InitHdmaChannels` do `ch.DmaActive = false`), which
+    /// aborts a general-purpose transfer in flight on the same channel. Not serialised: no
+    /// save state can be taken mid-transfer.
+    dma_active_mask: u8,
 }
 
 impl DmaController {
@@ -65,6 +111,7 @@ impl DmaController {
             regs: [0; DMA_REG_BYTES],
             hdma_active_mask: 0,
             hdma_do_transfer: [false; 8],
+            dma_active_mask: 0,
         }
     }
 
@@ -135,9 +182,7 @@ impl DmaController {
         abus: &mut B,
         seed_open_bus: u8,
         base_clock: u64,
-        // Deliberately unused: general-purpose DMA rounds to a fixed 8 (see the SyncEndDma
-        // comment below). Kept so all three envelopes share a signature.
-        _cpu_speed: u8,
+        cpu_speed: u8,
     ) -> (u64, u8) {
         if mdmaen == 0 {
             return (0, seed_open_bus);
@@ -147,66 +192,105 @@ impl DmaController {
         // one full CPU cycle after the $420B write (the start-delay cycle runs
         // normally); the transfer then pauses 1-8 clocks to reach a whole
         // multiple of 8 master clocks since reset, then 8 clocks of setup
-        // overhead.
+        // overhead. `SyncStartDma` *assigns* the alignment counter the pad it just
+        // paid rather than zeroing it, so the pad counts toward the end rounding.
         let pad_start = 8 - (base_clock & 7);
         abus.dma_tick(pad_start);
-        let mut counter = pad_start;
-        counter += 8;
+        let mut clocks = DmaClocks {
+            ticks: pad_start,
+            align: pad_start,
+        };
+        clocks.ticks += 8;
+        clocks.align += 8;
         abus.dma_tick(8);
         let mut open_bus = seed_open_bus;
 
+        // Mesen2 arms `DmaActive` on the `$420B` write itself; a nested HDMA can disarm a
+        // channel before or during its transfer.
+        self.dma_active_mask = mdmaen;
+
+        // Mesen2 `ProcessPendingTransfers` re-enters itself here, before any channel runs.
+        self.run_nested_hdma(abus, &mut open_bus, &mut clocks, cpu_speed);
+
         for channel in 0u8..8 {
-            if (mdmaen & (1 << channel)) == 0 {
+            if (self.dma_active_mask & (1 << channel)) == 0 {
                 continue;
             }
 
-            counter += 8;
+            clocks.ticks += 8;
+            clocks.align += 8;
             abus.dma_tick(8);
-            counter += self.run_channel(channel, abus, &mut open_bus);
+            // Mesen2 `RunDma`, after the per-channel overhead.
+            self.run_nested_hdma(abus, &mut open_bus, &mut clocks, cpu_speed);
+            if (self.dma_active_mask & (1 << channel)) != 0 {
+                self.run_channel(channel, abus, &mut open_bus, &mut clocks, cpu_speed);
+            }
+            // `RunDma` disarms the channel on the way out, so a later nested HDMA cannot
+            // resurrect it.
+            self.dma_active_mask &= !(1 << channel);
         }
 
-        // SyncEndDma: general-purpose DMA rounds to a FIXED 8-clock cycle, unlike the two
-        // HDMA envelopes and unlike Mesen2's single speed-aware `SyncEndDma`.
+        // SyncEndDma: one pad for the whole envelope -- including any HDMA that ran nested
+        // inside it -- rounding the ALIGNMENT counter (not the elapsed clocks) up to a whole
+        // CPU cycle at the speed of the access the transfer is standing in front of.
         //
-        // Kept deliberately (#3067, re-verified after #3074). Flipping this to `cpu_speed`
-        // makes `mosaic_mode5_sized` diverge from its Mesen2-approved golden, with every other
-        // vector unchanged; the fixed 8 passes all of them. Reproduce by changing the literal
-        // below and running:
+        // #3127 replaced a fixed 8 here. That literal survived #3067 and #3074 because it
+        // reproduced Mesen2 on every vector then measured, and the reason it did is now
+        // understood: Mesen2 counts a channel's bytes in a `uint8_t` and charges
+        // `_dmaClockCounter += 8 * i` afterwards, so a >= 256-byte transfer contributes a
+        // multiple of 2048 less than its real cost. `8 * n` is a multiple of 8 for every `n`,
+        // so that mismatch is INVISIBLE while the pad rounds to 8 and only appears once it
+        // rounds to 6 or 12. Every vector #3067 measured runs a big transfer; the fixed 8 was
+        // compensating for the counter, not modelling the pad.
         //
-        //     cargo test --no-default-features --lib mosaic_mode5_sized
+        // `run_channel` now reproduces the wrap, so the two quantities agree again and the
+        // divisor can be what both references say it is. See `DmaClocks` and the sibling
+        // tests `general_purpose_dma_end_pad_rounds_to_the_upcoming_cpu_access_speed` and
+        // `general_purpose_dma_align_counter_wraps_the_byte_count_at_256`.
         //
-        // The witness has already moved once -- before #3070 it was
-        // `inidisp_forgot_to_force_blank` -- and #3074 changed which CPU cycle a transfer runs
-        // in, so it can move again. Re-derive which vector objects rather than trusting this
-        // paragraph; only the conclusion (keep the 8) has survived every re-measurement.
-        //
-        // #3127 re-derived it once more and found evidence pulling the OTHER way, so the 8 is
-        // now known to be wrong for at least one ROM rather than merely unexplained. Measured
-        // against Mesen2 captures taken fresh (the mosaic one replayed with the identical input
-        // script, the byuu one with `--snes.RamPowerOnState=AllZeros`):
-        //
-        //     jonasquinn test_dmatiming/demo.smc  fixed 8: 4 clocks late   cpu_speed: exact
-        //     peterlemon MosaicMode5-sized        fixed 8: 0 px            cpu_speed: 12484 px
-        //
-        // So neither constant is right for both, and the difference is not a choice of divisor.
-        // The re-entrancy gap described below is the live hypothesis -- fix that before touching
-        // this literal again.
-        //
-        // Why the rule that is right for HDMA is not obviously right here: Mesen2 re-enters
-        // `ProcessPendingTransfers` from inside `RunDma`, so an HDMA firing during a
-        // general-purpose transfer runs NESTED -- it pays no sync pads of its own
-        // (`needSync == false` while any channel is `DmaActive`) and folds its clocks into the
-        // same `_dmaClockCounter` that the outer `SyncEndDma` rounds. NESER cannot nest
-        // (`self.dma` is `mem::take`n for the duration), so `counter` is not necessarily the
-        // quantity Mesen2 is rounding. Revisit together with that re-entrancy.
-        //
-        // The two HDMA envelopes DO use `cpu_speed`, which is what made StarWars and
-        // hdmaen_latch_test pixel-exact in #3050.
-        let pad_end = Self::sync_end_pad(counter, 8);
+        // The re-entrancy gap this comment used to name as the live hypothesis was falsified
+        // in #3127 and then closed anyway: `test_dmatiming/demo.smc` never writes `$420C`, so
+        // no HDMA could ever have nested inside the transfer it measures. Nesting is modelled
+        // now regardless (`run_nested_hdma`), which is what `test_hdmatiming` rows 9-12 check.
+        let pad_end = Self::sync_end_pad(clocks.align, cpu_speed);
         abus.dma_tick(pad_end);
-        counter += pad_end;
+        clocks.ticks += pad_end;
 
-        (counter, open_bus)
+        (clocks.ticks, open_bus)
+    }
+
+    /// Run an HDMA that fell due while this general-purpose transfer holds the bus.
+    ///
+    /// Mesen2 re-enters `ProcessPendingTransfers` from inside `RunDma` (after the start
+    /// overhead, after each channel's overhead, and after every byte), and both HDMA entry
+    /// points then see `needSync = !HasActiveDmaChannel()` -- false, because `$420B` armed the
+    /// channels. So the nested run pays neither sync pad and its clocks fold into the same
+    /// counter the outer `SyncEndDma` rounds. ares is identical in shape: `CPU::dmaEdge`
+    /// guards both `step()` pads with `if(!dmaEnable())`.
+    fn run_nested_hdma<B: DmaABus>(
+        &mut self,
+        abus: &mut B,
+        open_bus: &mut u8,
+        clocks: &mut DmaClocks,
+        cpu_speed: u8,
+    ) {
+        let Some((kind, hdmaen)) = abus.take_due_hdma() else {
+            return;
+        };
+        // `base_clock` only feeds the SyncStartDma pad, which `need_sync = false` skips, so
+        // there is no meaningful clock to pass. `cpu_speed` is likewise unused here, but is
+        // passed honestly rather than faked so the call keeps working if that ever changes.
+        const NO_BASE_CLOCK: u64 = 0;
+        let (charged, new_open_bus) = if kind == HDMA_KIND_INIT {
+            self.hdma_init(hdmaen, abus, *open_bus, NO_BASE_CLOCK, cpu_speed, false)
+        } else {
+            self.hdma_do_line(hdmaen, abus, *open_bus, NO_BASE_CLOCK, cpu_speed, false)
+        };
+        // With both pads skipped, everything the nested run charged is bookkeeping clocks, so
+        // the one figure it returns belongs in both totals.
+        clocks.ticks += charged;
+        clocks.align += charged;
+        *open_bus = new_open_bus;
     }
 
     pub fn hdma_init<B: DmaABus>(
@@ -216,6 +300,7 @@ impl DmaController {
         seed_open_bus: u8,
         base_clock: u64,
         cpu_speed: u8,
+        need_sync: bool,
     ) -> (u64, u8) {
         // Initialize active_mask to 0xFF (all channels potentially active).
         // Channels will be cleared from active_mask when they terminate (descriptor=$00).
@@ -229,10 +314,17 @@ impl DmaController {
         }
 
         // Hardware envelope (Mesen2 InitHdmaChannels): SyncStartDma pad + 8
-        // clocks of setup overhead; SyncEndDma pad at the end.
-        let pad_start = 8 - (base_clock & 7);
-        abus.dma_tick(pad_start);
-        let mut ticks = pad_start + 8;
+        // clocks of setup overhead; SyncEndDma pad at the end. Both pads are skipped when
+        // this runs nested inside a general-purpose transfer, where Mesen2 evaluates
+        // `needSync = !HasActiveDmaChannel()` as false and the outer envelope rounds once for
+        // both (see `run_nested_hdma`).
+        let mut ticks = 0;
+        if need_sync {
+            let pad_start = 8 - (base_clock & 7);
+            abus.dma_tick(pad_start);
+            ticks = pad_start;
+        }
+        ticks += 8;
         abus.dma_tick(8);
         let mut open_bus = seed_open_bus;
 
@@ -248,6 +340,9 @@ impl DmaController {
             let a1t_high = self.get_reg(channel, 0x3);
             self.set_reg(channel, 0x8, a1t_low);
             self.set_reg(channel, 0x9, a1t_high);
+            // Mesen2 `InitHdmaChannels`: `ch.DmaActive = false`. Aborts any general-purpose
+            // transfer this channel is running (only reachable when nested).
+            self.dma_active_mask &= !(1 << channel);
 
             // Line-counter load: one 8-clock slot per enabled channel.
             abus.dma_tick(4);
@@ -288,10 +383,12 @@ impl DmaController {
             }
         }
 
-        // SyncEndDma: round the charged total up to a whole CPU cycle (see `sync_end_pad`).
-        let pad_end = Self::sync_end_pad(ticks, cpu_speed);
-        abus.dma_tick(pad_end);
-        ticks += pad_end;
+        if need_sync {
+            // SyncEndDma: round the charged total up to a whole CPU cycle (see `sync_end_pad`).
+            let pad_end = Self::sync_end_pad(ticks, cpu_speed);
+            abus.dma_tick(pad_end);
+            ticks += pad_end;
+        }
 
         (ticks, open_bus)
     }
@@ -305,6 +402,7 @@ impl DmaController {
         seed_open_bus: u8,
         base_clock: u64,
         cpu_speed: u8,
+        need_sync: bool,
     ) -> (u64, u8) {
         if hdmaen == 0 {
             return (0, seed_open_bus);
@@ -312,16 +410,28 @@ impl DmaController {
 
         // Hardware envelope (Mesen2 ProcessHdmaChannels): SyncStartDma pads
         // 1-8 clocks to a multiple of 8 master clocks since reset, then 8
-        // clocks of setup overhead.
-        let pad_start = 8 - (base_clock & 7);
-        abus.dma_tick(pad_start);
-        let mut counter = pad_start + 8;
+        // clocks of setup overhead. Both pads are skipped when this runs nested inside a
+        // general-purpose transfer (see `run_nested_hdma`).
+        let mut counter = 0;
+        if need_sync {
+            let pad_start = 8 - (base_clock & 7);
+            abus.dma_tick(pad_start);
+            counter = pad_start;
+        }
+        counter += 8;
         abus.dma_tick(8);
         let mut open_bus = seed_open_bus;
 
         // Phase A: run every active channel's transfer for this line first.
         for channel in 0u8..8 {
-            if (hdmaen & (1 << channel)) == 0 || (self.hdma_active_mask & (1 << channel)) == 0 {
+            if (hdmaen & (1 << channel)) == 0 {
+                continue;
+            }
+            // Mesen2 `ProcessHdmaChannels`: `ch.DmaActive = false` for every HDMA-enabled
+            // channel, before the finished check. Aborts a general-purpose transfer running
+            // on that channel (only reachable when nested).
+            self.dma_active_mask &= !(1 << channel);
+            if (self.hdma_active_mask & (1 << channel)) == 0 {
                 continue;
             }
             if self.hdma_do_transfer[channel as usize] {
@@ -403,11 +513,13 @@ impl DmaController {
             }
         }
 
-        // SyncEndDma: pad clocks rounding the charged total to a whole CPU cycle
-        // (see `sync_end_pad`).
-        let pad_end = Self::sync_end_pad(counter, cpu_speed);
-        abus.dma_tick(pad_end);
-        counter += pad_end;
+        if need_sync {
+            // SyncEndDma: pad clocks rounding the charged total to a whole CPU cycle
+            // (see `sync_end_pad`).
+            let pad_end = Self::sync_end_pad(counter, cpu_speed);
+            abus.dma_tick(pad_end);
+            counter += pad_end;
+        }
 
         (counter, open_bus)
     }
@@ -437,7 +549,14 @@ impl DmaController {
         value
     }
 
-    fn run_channel<B: DmaABus>(&mut self, channel: u8, abus: &mut B, open_bus: &mut u8) -> u64 {
+    fn run_channel<B: DmaABus>(
+        &mut self,
+        channel: u8,
+        abus: &mut B,
+        open_bus: &mut u8,
+        clocks: &mut DmaClocks,
+        cpu_speed: u8,
+    ) {
         let dmap = self.get_reg(channel, 0x0);
         let bbad = self.get_reg(channel, 0x1);
         let mut a_low = self.get_reg(channel, 0x2);
@@ -453,7 +572,11 @@ impl DmaController {
 
         let mut count = u16::from_le_bytes([das_low, das_high]);
         let transfer_bytes: usize = if count == 0 { 0x1_0000 } else { count as usize };
-        let mut ticks = 0u64;
+
+        // Mesen2's byte counter is a `uint8_t` (`SnesDmaController.cpp:93`), and the whole
+        // channel's alignment charge is `8 * i` applied AFTER the loop -- so this deliberately
+        // wraps at 256 while the real clocks below do not. See `DmaClocks`.
+        let mut performed: u8 = 0;
 
         for i in 0..transfer_bytes {
             let a_addr = ((bank as u32) << 16) | ((a_high as u32) << 8) | (a_low as u32);
@@ -461,16 +584,25 @@ impl DmaController {
 
             Self::copy_dma_byte(abus, open_bus, a_addr, b_addr, direction_b_to_a);
 
-            ticks += 8;
+            clocks.ticks += 8;
+            performed = performed.wrapping_add(1);
             count = count.wrapping_sub(1);
             (a_low, a_high) = Self::advance_a_address(a_low, a_high, step);
+
+            // Mesen2 re-enters `ProcessPendingTransfers` after every byte, then re-tests
+            // `channel.DmaActive` in the loop condition -- so an HDMA that disarms this
+            // channel stops the transfer here, with `$43x5` still non-zero.
+            self.run_nested_hdma(abus, open_bus, clocks, cpu_speed);
+            if (self.dma_active_mask & (1 << channel)) == 0 {
+                break;
+            }
         }
+        clocks.align += 8 * u64::from(performed);
 
         self.set_reg(channel, 0x2, a_low);
         self.set_reg(channel, 0x3, a_high);
         self.set_reg(channel, 0x5, (count & 0x00FF) as u8);
         self.set_reg(channel, 0x6, (count >> 8) as u8);
-        ticks
     }
 
     /// Moves one byte through its 8-master-clock bus slot, in either direction
@@ -664,12 +796,19 @@ mod tests {
     /// the controller's own tests pin transfer patterns and slot clocks without
     /// dragging in PPU register physics. The production path reads live
     /// registers via `SnesSystemBus::dma_read_b_bus`.
+    ///
+    /// `hdma_due_at_poll` scripts the pending-HDMA slot the real bus keeps: the payload is
+    /// handed over on that 1-based [`DmaABus::take_due_hdma`] call and never again, which
+    /// lets a test place a nested HDMA at an exact point inside a general-purpose transfer.
     struct RecordingBus {
         clock: u64,
         a_bus: Vec<u8>,
         b_bus_writes: Vec<(u64, u8, u8)>,
         b_bus_ports: Vec<u8>,
         b_bus_reads: Vec<(u64, u8)>,
+        hdma_polls: u32,
+        hdma_due_at_poll: Option<u32>,
+        hdma_payload: (u8, u8),
     }
 
     impl RecordingBus {
@@ -680,7 +819,16 @@ mod tests {
                 b_bus_writes: Vec::new(),
                 b_bus_ports: vec![0; 0x100],
                 b_bus_reads: Vec::new(),
+                hdma_polls: 0,
+                hdma_due_at_poll: None,
+                hdma_payload: (HDMA_KIND_LINE, 0),
             }
+        }
+
+        /// Make `take_due_hdma` yield `(kind, hdmaen)` on the `poll`-th call (1-based).
+        fn schedule_hdma(&mut self, poll: u32, kind: u8, hdmaen: u8) {
+            self.hdma_due_at_poll = Some(poll);
+            self.hdma_payload = (kind, hdmaen);
         }
     }
 
@@ -713,6 +861,15 @@ mod tests {
         fn dma_tick(&mut self, master_clocks: u64) {
             self.clock += master_clocks;
         }
+
+        fn take_due_hdma(&mut self) -> Option<(u8, u8)> {
+            self.hdma_polls += 1;
+            if self.hdma_due_at_poll == Some(self.hdma_polls) {
+                self.hdma_due_at_poll = None;
+                return Some(self.hdma_payload);
+            }
+            None
+        }
     }
 
     fn write_hdma_channel(dma: &mut DmaController, channel: u8, dmap: u8, bbad: u8, a_addr: u16) {
@@ -744,12 +901,12 @@ mod tests {
         bus.a_bus[0x3102] = 0xB2;
 
         let init_clock = bus.clock;
-        dma.hdma_init(0x03, &mut bus, 0, init_clock, 8);
+        dma.hdma_init(0x03, &mut bus, 0, init_clock, 8, true);
         let base_clock = bus.clock;
         assert_eq!(base_clock % 8, 0, "init ends on a CPU cycle boundary");
 
         let start = bus.clock;
-        let (counter, _) = dma.hdma_do_line(0x03, &mut bus, 0, base_clock, 8);
+        let (counter, _) = dma.hdma_do_line(0x03, &mut bus, 0, base_clock, 8, true);
 
         assert_eq!(
             bus.b_bus_writes,
@@ -809,9 +966,9 @@ mod tests {
             bus.a_bus[0x3001] = 0xA1;
             bus.a_bus[0x3002] = 0xA2;
             let init_clock = bus.clock;
-            dma.hdma_init(0x01, &mut bus, 0, init_clock, 8);
+            dma.hdma_init(0x01, &mut bus, 0, init_clock, 8, true);
             let base_clock = bus.clock;
-            let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base_clock, cpu_speed);
+            let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base_clock, cpu_speed, true);
             assert_eq!(bus.clock - base_clock, counter, "bus advanced in lockstep");
             counter
         };
@@ -843,20 +1000,25 @@ mod tests {
             write_hdma_channel(&mut dma, 0, 0x00, 0x22, 0x3000);
             bus.a_bus[0x3000] = 0x83;
             bus.a_bus[0x3001] = 0x11;
-            dma.hdma_init(0x01, &mut bus, 0, 0, cpu_speed).0
+            dma.hdma_init(0x01, &mut bus, 0, 0, cpu_speed, true).0
         };
         assert_eq!(charged(6) % 6, 0, "init ends on a whole 6-clock CPU cycle");
         assert_eq!(charged(8) % 8, 0, "init ends on a whole 8-clock CPU cycle");
         assert_ne!(charged(6), charged(8), "the speed must change the end pad");
     }
 
-    /// General-purpose DMA keeps a FIXED 8-clock end pad while the two HDMA envelopes round
-    /// to the upcoming access's speed. #3067 settled that on measurement -- see the
-    /// `SyncEndDma` comment in `start_dma` for the evidence and the re-entrancy argument. This test exists so
-    /// the asymmetry is a recorded decision, and so that a future attempt to "fix" it has to
-    /// confront the evidence rather than just Mesen2's source.
+    /// Same rule again for general-purpose DMA: all three envelopes share Mesen2's single
+    /// `SyncEndDma`, and ares reaches the identical formula from the other direction
+    /// (`ares/sfc/cpu/timing.cpp:129`, `status.clockCount - counter.dma % status.clockCount`).
+    ///
+    /// This test replaces `general_purpose_dma_end_pad_stays_on_a_fixed_eight_clock_cycle`,
+    /// which asserted `charged(6) == charged(8) == charged(12) == 64` and so **encoded the
+    /// #3127 defect**: it passed only because `start_dma` ignored its `cpu_speed` argument.
+    /// The fixed 8 was never trace-verified as a rule -- it happened to reproduce Mesen2 on
+    /// the vectors #3067 measured, all of which run a >= 256-byte transfer where Mesen2's own
+    /// byte counter wraps (see the sibling wrap test below).
     #[test]
-    fn general_purpose_dma_end_pad_stays_on_a_fixed_eight_clock_cycle() {
+    fn general_purpose_dma_end_pad_rounds_to_the_upcoming_cpu_access_speed() {
         let charged = |cpu_speed: u8| {
             let mut dma = DmaController::new();
             let mut bus = RecordingBus::new(0);
@@ -872,16 +1034,216 @@ mod tests {
             assert_eq!(bus.clock, counter, "bus advanced in lockstep");
             counter
         };
-        // pad_start 8 + overhead 8 + channel 8 + 4 byte slots (32) = 56 charged before the pad,
-        // so a fixed-8 pad gives 64 whatever the caller passes. A speed-aware pad would give
-        // 60 for both 6 and 12, which is what the two equalities below rule out.
+        // pad_start 8 + overhead 8 + channel 8 + 4 byte slots (32) = 56 charged before the pad.
+        // 56 is a whole 8-clock cycle already, so the 8 case still pays a full extra 8; 6 and
+        // 12 both need 4. The three results must not collapse to one value.
         assert_eq!(charged(8), 64, "ends on a whole 8-clock CPU cycle");
+        assert_eq!(charged(6), 60, "ends on a whole 6-clock CPU cycle");
+        assert_eq!(charged(12), 60, "ends on a whole 12-clock CPU cycle");
+    }
+
+    /// Mesen2 counts a general-purpose channel's bytes in a `uint8_t` and charges the
+    /// alignment counter in bulk afterwards (`SnesDmaController.cpp:93-99`):
+    ///
+    /// ```text
+    /// uint8_t i = 0;
+    /// do { CopyDmaByte(...); channel.TransferSize--; i++; ... } while(...);
+    /// _dmaClockCounter += 8 * i;
+    /// ```
+    ///
+    /// so a 256-byte channel contributes **zero** clocks to the end-pad alignment while still
+    /// costing its full 2048 master clocks of real time. ares does not do this
+    /// (`counter.dma` is a `u32` fed by every byte through `CPU::Channel::step`), so this is a
+    /// Mesen2 artifact rather than hardware behaviour -- deliberately reproduced because every
+    /// committed SNES screen golden is a Mesen2 capture that encodes it. #3127.
+    ///
+    /// This is the mechanism that hid the wrong divisor for two issues: `8 * n` is a multiple
+    /// of 8 for every `n`, so the wrap is invisible while the pad rounds to 8 and only appears
+    /// once it rounds to 6 or 12.
+    ///
+    /// Measured, not argued. Making `performed` an exact `u64` count -- the ares rule, and
+    /// precisely the change #3067 tried -- turns this test red **and** takes
+    /// `peterlemon_ppu_advanced_tests::mosaic_mode5_sized` from 0 px to failing, while
+    /// `test_dmatiming_latches_hv_after_gpdma` stays green. That is #3067's recorded outcome
+    /// reproduced exactly, and it is the evidence that the wrap -- not the divisor -- was the
+    /// missing piece.
+    #[test]
+    fn general_purpose_dma_align_counter_wraps_the_byte_count_at_256() {
+        // One channel, `bytes` bytes, mode 0, A-bus $3000 -> B-bus $2118, at cpu_speed 6.
+        let charged = |bytes: u16| {
+            let mut dma = DmaController::new();
+            let mut bus = RecordingBus::new(0);
+            dma.write_register(0x4300, 0x00);
+            dma.write_register(0x4301, 0x18);
+            dma.write_register(0x4302, 0x00);
+            dma.write_register(0x4303, 0x30);
+            dma.write_register(0x4304, 0x00);
+            dma.write_register(0x4305, (bytes & 0xFF) as u8);
+            dma.write_register(0x4306, (bytes >> 8) as u8);
+            let (counter, _) = dma.start_dma(0x01, &mut bus, 0, 0, 6);
+            assert_eq!(bus.clock, counter, "bus advanced in lockstep");
+            counter
+        };
+
+        // Real time is charged for every byte: 256 bytes cost 2048 clocks more than 0... but
+        // the alignment counter sees `8 * (256 as u8)` = 0 for the 256-byte channel, exactly
+        // as it sees `8 * 4` = 32 for a 4-byte one. So both end pads are computed from
+        // `pad_start 8 + overhead 8 + channel 8 + 8 * (n mod 256)`.
+        //   4 bytes  -> align 56, pad 4  -> 60 total
+        //   256 bytes-> align 24, pad 6  -> 8 + 8 + 8 + 2048 + 6 = 2078
+        //   260 bytes-> align 56, pad 4  -> 8 + 8 + 8 + 2080 + 4 = 2108
+        assert_eq!(charged(4), 60, "small transfer: no wrap");
+        assert_eq!(charged(256), 2078, "256 bytes charge the counter nothing");
+        assert_eq!(charged(260), 2108, "260 bytes charge the counter as 4 do");
+
+        // And this is precisely why the wrong divisor survived two issues: at cpu_speed 8 the
+        // alignment counter is a multiple of 8 whether or not the byte count wrapped, so the
+        // pad is a flat 8 in every case and the mismatch is unobservable. Only 6 and 12 expose
+        // it -- which is the speed both #3127 witnesses actually run at.
+        let charged_at_8 = |bytes: u16| {
+            let mut dma = DmaController::new();
+            let mut bus = RecordingBus::new(0);
+            dma.write_register(0x4300, 0x00);
+            dma.write_register(0x4301, 0x18);
+            dma.write_register(0x4302, 0x00);
+            dma.write_register(0x4303, 0x30);
+            dma.write_register(0x4304, 0x00);
+            dma.write_register(0x4305, (bytes & 0xFF) as u8);
+            dma.write_register(0x4306, (bytes >> 8) as u8);
+            dma.start_dma(0x01, &mut bus, 0, 0, 8).0
+        };
+        for bytes in [4u16, 256, 260] {
+            assert_eq!(
+                charged_at_8(bytes),
+                32 + 8 * u64::from(bytes),
+                "at cpu_speed 8 the pad is a flat 8 regardless of the wrap ({bytes} bytes)"
+            );
+        }
+    }
+
+    /// An HDMA falling due while a general-purpose transfer holds the bus runs NESTED inside
+    /// it: Mesen2 re-enters `ProcessPendingTransfers` from `RunDma` after every byte
+    /// (`SnesDmaController.cpp:96`), and both HDMA entry points then take
+    /// `needSync = !HasActiveDmaChannel()` -- false here -- so the nested run pays **no**
+    /// `SyncStartDma` pad and **no** `SyncEndDma` pad, and its clocks accumulate into the same
+    /// `_dmaClockCounter` the outer `SyncEndDma` finally rounds. ares has the identical shape
+    /// (`CPU::dmaEdge` guards both `step()` pads with `if(!dmaEnable())`).
+    ///
+    /// The absolute write clocks below pin both halves: an unpaid start pad would push the
+    /// nested B-bus write from 48 to 56, and an unpaid end pad would push the outer
+    /// transfer's second byte from 64 to 72. #3127.
+    #[test]
+    fn hdma_falling_due_inside_a_general_purpose_transfer_runs_nested_without_sync_pads() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+
+        // HDMA channel 1: mode 0 (one byte), direct, table at $003100.
+        write_hdma_channel(&mut dma, 1, 0x00, 0x24, 0x3100);
+        bus.a_bus[0x3100] = 0x83; // repeat, 3 lines
+        bus.a_bus[0x3101] = 0xB1; // the byte this line transfers
+        bus.a_bus[0x3102] = 0x82; // speculatively re-read every line
+        let init_clock = bus.clock;
+        dma.hdma_init(0x02, &mut bus, 0, init_clock, 8, true);
+
+        // General-purpose channel 0: mode 0, 4 bytes, $003000 -> $2118.
+        dma.write_register(0x4300, 0x00);
+        dma.write_register(0x4301, 0x18);
+        dma.write_register(0x4302, 0x00);
+        dma.write_register(0x4303, 0x30);
+        dma.write_register(0x4304, 0x00);
+        dma.write_register(0x4305, 0x04);
+        dma.write_register(0x4306, 0x00);
+        for (i, byte) in [0xA0u8, 0xA1, 0xA2, 0xA3].into_iter().enumerate() {
+            bus.a_bus[0x3000 + i] = byte;
+        }
+
+        // Poll 3 is the one taken right after the first general-purpose byte (poll 1 follows
+        // the 8-clock start overhead, poll 2 the channel's own 8-clock overhead).
+        bus.schedule_hdma(3, HDMA_KIND_LINE, 0x02);
+        bus.b_bus_writes.clear();
+        let start = bus.clock;
+        let (ticks, _) = dma.start_dma(0x01, &mut bus, 0, start, 6);
+
         assert_eq!(
-            charged(6),
-            64,
-            "the CPU speed does NOT change the GPDMA pad"
+            bus.b_bus_writes,
+            vec![
+                (start + 32, 0x18, 0xA0),
+                (start + 48, 0x24, 0xB1),
+                (start + 64, 0x18, 0xA1),
+                (start + 72, 0x18, 0xA2),
+                (start + 80, 0x18, 0xA3),
+            ],
+            "the nested HDMA burst is interleaved between two general-purpose byte slots"
         );
-        assert_eq!(charged(12), 64);
+        // align = pad_start 8 + overhead 8 + channel 8 + 4 bytes (32) + nested 24 = 80,
+        // so the single end pad is 6 - (80 % 6) = 4.
+        assert_eq!(ticks, 84, "one envelope, one end pad, rounded on the total");
+        assert_eq!(bus.clock - start, 84, "bus advanced in lockstep");
+    }
+
+    /// Mesen2's `ProcessHdmaChannels` clears `DmaActive` on **every** HDMA-enabled channel
+    /// (`SnesDmaController.cpp:255`), so an HDMA firing mid-transfer aborts a general-purpose
+    /// transfer running on that same channel: `RunDma`'s `while(TransferSize > 0 &&
+    /// channel.DmaActive)` terminates immediately, leaving `$43x5` non-zero and `$43x2`
+    /// wherever it had reached. #3127.
+    ///
+    /// Honest boundary: deleting the `dma_active_mask` clear in `hdma_do_line` turns **only
+    /// this test** red -- no ROM in the suite arms a channel for HDMA and general-purpose DMA
+    /// at once. So this pins the reference's rule, not an observed ROM behaviour, and nobody
+    /// should read a green suite as evidence that hardware was consulted here.
+    #[test]
+    fn an_hdma_enabled_channel_aborts_its_own_running_general_purpose_transfer() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(0);
+
+        // Channel 0 is both the HDMA channel and the general-purpose channel. Point A1T at
+        // the HDMA table for the init (which copies it into $4308/9), then repoint it at the
+        // general-purpose source.
+        write_hdma_channel(&mut dma, 0, 0x00, 0x18, 0x3100);
+        bus.a_bus[0x3100] = 0x83;
+        bus.a_bus[0x3101] = 0xB1;
+        bus.a_bus[0x3102] = 0x82;
+        let init_clock = bus.clock;
+        dma.hdma_init(0x01, &mut bus, 0, init_clock, 8, true);
+
+        dma.write_register(0x4302, 0x00);
+        dma.write_register(0x4303, 0x30);
+        dma.write_register(0x4305, 0x04);
+        dma.write_register(0x4306, 0x00);
+        for (i, byte) in [0xA0u8, 0xA1, 0xA2, 0xA3].into_iter().enumerate() {
+            bus.a_bus[0x3000 + i] = byte;
+        }
+
+        bus.schedule_hdma(3, HDMA_KIND_LINE, 0x01);
+        bus.b_bus_writes.clear();
+        let start = bus.clock;
+        let (ticks, _) = dma.start_dma(0x01, &mut bus, 0, start, 6);
+
+        assert_eq!(
+            bus.b_bus_writes,
+            vec![(start + 32, 0x18, 0xA0), (start + 48, 0x18, 0xB1)],
+            "only the byte already in flight transfers; the rest of the channel is dropped"
+        );
+        assert_eq!(
+            (
+                dma.read_register(0x4305).unwrap(),
+                dma.read_register(0x4306).unwrap()
+            ),
+            (0x03, 0x00),
+            "$43x5 is left non-zero by the abort"
+        );
+        assert_eq!(
+            (
+                dma.read_register(0x4302).unwrap(),
+                dma.read_register(0x4303).unwrap()
+            ),
+            (0x01, 0x30),
+            "$43x2 is left where the aborted transfer had reached"
+        );
+        // align = pad_start 8 + overhead 8 + channel 8 + 1 byte (8) + nested 24 = 56,
+        // pad = 6 - (56 % 6) = 4.
+        assert_eq!(ticks, 60, "the aborted bytes cost no time");
+        assert_eq!(bus.clock - start, 60, "bus advanced in lockstep");
     }
 
     /// #3061: a B->A transfer must read the B-bus itself, at the same point in
@@ -1092,10 +1454,10 @@ mod tests {
         bus.a_bus[0x3000] = 0x01; // one line
         bus.a_bus[0x3001] = 0xA1;
         bus.a_bus[0x3002] = 0xA2;
-        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x01, &mut bus, 0, 0, 8, true);
         bus.b_bus_writes.clear();
 
-        dma.hdma_do_line(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_do_line(0x01, &mut bus, 0, 0, 8, true);
 
         assert!(
             bus.b_bus_writes.is_empty(),
@@ -1128,9 +1490,9 @@ mod tests {
         dma.write_register(0x4304, 0x7E);
         bus.a_bus[0x3000] = 0x01; // one line
         bus.b_bus_ports[0x80] = 0x5A;
-        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x01, &mut bus, 0, 0, 8, true);
 
-        dma.hdma_do_line(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_do_line(0x01, &mut bus, 0, 0, 8, true);
 
         assert!(bus.b_bus_reads.is_empty(), "$2180 is never read");
         assert_eq!(
@@ -1152,11 +1514,11 @@ mod tests {
         bus.a_bus[0x3000] = 0x83; // repeat, 3 lines
         bus.a_bus[0x3001] = 0x11;
 
-        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x01, &mut bus, 0, 0, 8, true);
         let table_before = u16::from_le_bytes([dma.get_reg(0, 0x8), dma.get_reg(0, 0x9)]);
 
         let base = bus.clock;
-        dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        dma.hdma_do_line(0x01, &mut bus, 0, base, 8, true);
 
         let table_after = u16::from_le_bytes([dma.get_reg(0, 0x8), dma.get_reg(0, 0x9)]);
         assert_eq!(
@@ -1188,7 +1550,7 @@ mod tests {
         bus.a_bus[0x3000] = 0xAA;
 
         // Frame init runs with HDMA disabled, exactly as the ROM arranges.
-        dma.hdma_init(0x00, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x00, &mut bus, 0, 0, 8, true);
 
         // The CPU then writes the table pointer and counter by hand.
         dma.write_register(0x4308, 0x00);
@@ -1196,7 +1558,7 @@ mod tests {
         dma.write_register(0x430A, 0x02);
 
         let base = bus.clock;
-        dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        dma.hdma_do_line(0x01, &mut bus, 0, base, 8, true);
 
         assert_eq!(
             dma.get_reg(0, 0xA),
@@ -1215,14 +1577,14 @@ mod tests {
         write_hdma_channel(&mut dma, 0, 0x00, 0x22, 0x3000);
         bus.a_bus[0x3000] = 0xAA;
 
-        dma.hdma_init(0x00, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x00, &mut bus, 0, 0, 8, true);
 
         dma.write_register(0x4308, 0x00);
         dma.write_register(0x4309, 0x30);
         dma.write_register(0x430A, 0x01);
 
         let base = bus.clock;
-        dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        dma.hdma_do_line(0x01, &mut bus, 0, base, 8, true);
 
         assert_eq!(
             dma.get_reg(0, 0xA),
@@ -1246,14 +1608,14 @@ mod tests {
         write_hdma_channel(&mut dma, 0, 0x00, 0x22, 0x3000);
         bus.a_bus[0x3000] = 0x05;
 
-        dma.hdma_init(0x00, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x00, &mut bus, 0, 0, 8, true);
 
         dma.write_register(0x4308, 0x00);
         dma.write_register(0x4309, 0x30);
         dma.write_register(0x430A, 0x81); // repeat, one line left
 
         let base = bus.clock;
-        dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        dma.hdma_do_line(0x01, &mut bus, 0, base, 8, true);
 
         assert_eq!(
             dma.get_reg(0, 0xA),
@@ -1286,14 +1648,14 @@ mod tests {
 
         // Frame init runs with HDMA disabled; the CPU then points the table one
         // byte in and zeroes the counter before enabling $420C.
-        dma.hdma_init(0x00, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x00, &mut bus, 0, 0, 8, true);
         dma.write_register(0x4308, 0x01);
         dma.write_register(0x4309, 0x30);
         dma.write_register(0x430A, 0x00);
 
         for _ in 0..3 {
             let base = bus.clock;
-            dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+            dma.hdma_do_line(0x01, &mut bus, 0, base, 8, true);
         }
 
         let written: Vec<(u8, u8)> = bus
@@ -1337,9 +1699,9 @@ mod tests {
         bus.a_bus[0x3004] = 0x10; // its indirect ptr -> $4010
         bus.a_bus[0x3005] = 0x40;
 
-        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x01, &mut bus, 0, 0, 8, true);
         let base = bus.clock;
-        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base, 8, true);
 
         // pad 8 + overhead 8 + 1 byte slot 8 + descriptor consume 8 +
         // indirect pointer load 16 + pad_end 8.
@@ -1367,9 +1729,9 @@ mod tests {
         bus.a_bus[0x3003] = 0x00; // terminator
         bus.a_bus[0x3004] = 0x5D; // the single MSB byte
 
-        dma.hdma_init(0x01, &mut bus, 0, 0, 8);
+        dma.hdma_init(0x01, &mut bus, 0, 0, 8, true);
         let base = bus.clock;
-        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base, 8);
+        let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, base, 8, true);
 
         // pad 8 + overhead 8 + 1 byte slot 8 + descriptor consume 8 +
         // one-byte pointer load 8 + pad_end 8.

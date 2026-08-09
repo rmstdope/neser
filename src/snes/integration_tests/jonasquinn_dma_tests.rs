@@ -21,7 +21,8 @@
 //! for the rationale. `test_dmatiming_matches_mesen2` is deliberately NOT on
 //! this convention: it is a pixel-diff comparison against Mesen2's own
 //! render, not a PASS/FAIL self-check, so a blue backdrop is not its correct
-//! result and it keeps recording NESER's current diverging CRC.
+//! result. Since #3127 its CRC is a 0-px Mesen2 match rather than a recording
+//! of NESER's own diverging render.
 //!
 //! **Comparing this collection against Mesen2 needs a matched WRAM power-on
 //! state.** `test_dmatiming/demo.smc` displays uninitialised WRAM, and Mesen2's
@@ -191,29 +192,37 @@ mod tests {
         run_rom_screen_crc("test_hdmadisable/test_hdmadisable.smc", 600, 0x8695_BBB0);
     }
 
-    /// NESER diverges from Mesen2 by 36 px (0.063%) at frame 600, once both
-    /// emulators start from the same WRAM.
+    /// **0 px against Mesen2 at frame 600** since #3127 -- a real reference golden now, not a
+    /// recording of NESER's own render.
     ///
-    /// #3063 recorded this as "~0.93% (532 px)". That figure was an artifact:
-    /// the ROM's "Full" and "Diff" rows display never-written WRAM, and Mesen2
-    /// defaults to `RamState::Random`, so its capture is not reproducible even
-    /// against itself (two Random runs differ by 1.06%, i.e. more than either
-    /// differs from NESER). Re-measured with
-    /// `--snes.RamPowerOnState=AllZeros`, the divergence is 36 px confined to
-    /// the "Base" and "Diff" rows -- the `$213C`/`$213D` latch this ROM exists
-    /// to measure. `test_dmatiming_latches_hv_after_gpdma` isolates it as one
-    /// dot (4 master clocks) and carries the full diagnosis; #3127.
+    /// History worth keeping, because both earlier numbers were misleading in different ways.
+    /// #3063 recorded "~0.93% (532 px)". That was an artifact: the ROM's "Full" and "Diff"
+    /// rows display never-written WRAM and Mesen2 defaults to `RamState::Random`, so its
+    /// capture was not reproducible even against itself (two Random runs differ by 1.06%, i.e.
+    /// more than either differed from NESER). Re-measured with
+    /// `--snes.RamPowerOnState=AllZeros` the real divergence was 36 px, confined to the "Base"
+    /// and "Diff" rows -- the `$213C`/`$213D` latch this ROM exists to measure -- and
+    /// `test_dmatiming_latches_hv_after_gpdma` isolated it to one dot.
     ///
-    /// Deliberately excluded from #3092's aspirational-golden convention (this
-    /// is not an oversight): the ROM renders a picture rather than a PASS/FAIL
-    /// backdrop, so there is no blue screen to assert. The CRC below stays
-    /// NESER's own current render; the correct value would be Mesen2's exact
-    /// framebuffer hash, which is a different kind of golden -- and one that
-    /// would silently encode NESER's WRAM zero-fill (#3128).
+    /// Approved by capturing both at frame 600 and diffing:
+    ///
+    /// ```text
+    /// NESER_CAPTURE_SCREEN=1 cargo test --no-default-features --lib test_dmatiming_matches_mesen2
+    /// Mesen --testRunner --enableStdout --Video.VideoFilter=None \
+    ///       --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true \
+    ///       --snes.RamPowerOnState=AllZeros demo.smc shot.lua
+    /// python -m scripts.diff_screenshots <neser>.png <mesen>.png --shift-search 1
+    ///   -> differing pixels: 0 / 57344 (0.0000%)  IDENTICAL
+    /// ```
+    ///
+    /// The `AllZeros` flag is still load-bearing and the golden still encodes NESER's WRAM
+    /// zero-fill for the two never-written rows (#3128): re-approve with that flag or the
+    /// comparison measures RNG. Still outside #3092's aspirational-golden convention -- the
+    /// ROM renders a picture, not a PASS/FAIL backdrop -- but for the opposite reason to
+    /// before: there is nothing left to aspire to.
     #[test]
-    #[ignore = "36 px divergence from Mesen2 (4-clock GPDMA end pad); records NESER's current render, not a PASS golden; pending #3127"]
     fn test_dmatiming_matches_mesen2() {
-        run_rom_screen_crc("test_dmatiming/demo.smc", 600, 0x97B7_5364);
+        run_rom_screen_crc("test_dmatiming/demo.smc", 600, 0x9FC3_FE28);
     }
 
     /// The actual DMA-timing oracle in `test_dmatiming/demo.smc`, independent of
@@ -229,23 +238,22 @@ mod tests {
     /// `$7EC004`/`$7EC006` -- never written, because the ROM's NMI handler is a
     /// bare `RTI`).
     ///
-    /// NESER latches `(0x0024, 0x0001)`: one dot -- 4 master clocks -- late.
-    /// Ignored under #3092's aspirational-golden convention, asserting Mesen2's
-    /// value so it turns green when the cause lands. Tracked by #3127.
+    /// NESER latched `(0x0024, 0x0001)` until #3127: one dot -- 4 master clocks -- late.
     ///
-    /// The cause is located but deliberately NOT fixed here: `start_dma`'s
-    /// `sync_end_pad(counter, 8)` rounds the general-purpose end pad to a fixed
-    /// 8 where Mesen2 rounds to `cpuSpeed`. Passing `cpu_speed` makes this ROM
-    /// match exactly -- and moves `peterlemon_ppu_advanced_tests::
-    /// mosaic_mode5_sized` from 0 px to 12484 px (5.44%) against a Mesen2
-    /// capture replayed with the identical input script. Both measurements are
-    /// fresh, not inherited from #3067's write-up. So the fixed 8 is not simply
-    /// wrong, and the real difference is more likely the DMA/HDMA re-entrancy
-    /// gap `start_dma`'s comment describes: Mesen2 runs an HDMA firing mid-GPDMA
-    /// nested, folding its clocks into the same counter the outer `SyncEndDma`
-    /// rounds, which NESER cannot do while `self.dma` is `mem::take`n.
+    /// The cause was `start_dma` rounding the general-purpose end pad to a fixed 8 where both
+    /// references round to the CPU speed. Here that speed is 6 (`sta $420b` is followed by
+    /// `lda $2137`, and this ROM runs FastROM in bank `$80`), the two channels charge
+    /// `pad_start 8 + 8 + 2 * (8 + 48) = 128`, and `8 - 128 % 8 = 8` against `6 - 128 % 6 = 4`
+    /// is exactly the missing dot.
+    ///
+    /// What kept that literal in place for two issues was NOT this ROM. Making the pad
+    /// speed-aware used to move `peterlemon_ppu_advanced_tests::mosaic_mode5_sized` from 0 px
+    /// to 12484 px, and the recorded hypothesis was DMA/HDMA re-entrancy -- which cannot be
+    /// the explanation here, because `demo.smc` never writes `$420C` at all. The actual reason
+    /// is that Mesen2 counts a channel's bytes in a `uint8_t`, so the 64 KB WRAM clear in that
+    /// ROM's `SNES_INIT` charges its alignment counter nothing; `run_channel` reproduces that
+    /// now, and both ROMs are exact. See `DmaController::start_dma`.
     #[test]
-    #[ignore = "4-master-clock GPDMA end-pad divergence; asserts Mesen2's correct value so FAILs under --include-ignored until #3127"]
     fn test_dmatiming_latches_hv_after_gpdma() {
         use crate::platform::app_context::AppContext;
         use crate::platform::emulator::Emulator;
