@@ -183,7 +183,6 @@ mod tests {
     use super::*;
     use crate::nes::console::Config;
     use crate::platform::app_context::AppContext;
-    use crate::platform::config::Config as PlatformConfig;
     use crate::platform::emulator::Console;
     use crate::platform::save_state::Stateful;
     use crate::snes::input::SnesControllerType;
@@ -226,7 +225,7 @@ mod tests {
     }
 
     fn make_snes_console_with_mouse() -> Console {
-        let mut config = PlatformConfig::default();
+        let mut config = crate::snes::test_support::snes_test_config();
         config.snes.controller_port1 = SnesControllerType::Mouse;
         let app_context = AppContext::new_with_config(config);
         let mut console = Console::new_snes(app_context);
@@ -237,7 +236,7 @@ mod tests {
     }
 
     fn make_snes_console_with_mouse_on_port2() -> Console {
-        let mut config = PlatformConfig::default();
+        let mut config = crate::snes::test_support::snes_test_config();
         config.snes.controller_port2 = SnesControllerType::Mouse;
         let app_context = AppContext::new_with_config(config);
         let mut console = Console::new_snes(app_context);

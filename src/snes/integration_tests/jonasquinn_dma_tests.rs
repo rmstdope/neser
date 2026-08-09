@@ -25,12 +25,20 @@
 //! of NESER's own diverging render.
 //!
 //! **Comparing this collection against Mesen2 needs a matched WRAM power-on
-//! state.** `test_dmatiming/demo.smc` displays uninitialised WRAM, and Mesen2's
-//! SNES default is `RamState::Random` while NESER zero-fills, so a capture
-//! taken without `--snes.RamPowerOnState=AllZeros` differs from NESER *and from
-//! itself* run to run. #3063's original "~0.93% divergence" for that ROM was
+//! state on both sides.** `test_dmatiming/demo.smc` displays uninitialised
+//! WRAM, so a Mesen2 capture taken without `--snes.RamPowerOnState=AllZeros`
+//! differs from NESER *and from itself* run to run — Mesen2's SNES default is
+//! `RamState::Random`. #3063's original "~0.93% divergence" for that ROM was
 //! that artifact: two Random Mesen2 captures differ from each other by 1.06%,
 //! more than either differs from NESER.
+//!
+//! Since #3128 NESER randomises by default too, so the NESER side is pinned
+//! rather than inherently zero: these tests run through `rom_runner`, whose
+//! `RunConfig` defaults to `RamInitMode::Zero`, and the two tests below that
+//! build a console directly use `test_support::snes_test_app_context()` for the
+//! same reason. `rom_runner`'s own
+//! `default_run_config_pins_a_zero_filled_power_on` fails deterministically if
+//! that pin is ever dropped.
 
 use super::rom_runner::{RunConfig, RunExitReason, RunOracle, run_rom_with_oracle};
 use std::fs;
@@ -117,15 +125,12 @@ mod tests {
     /// the transfer's time.
     #[test]
     fn test_dmavalid_sub_checks_match_byuu_expectations() {
-        use crate::platform::app_context::AppContext;
         use crate::platform::emulator::Emulator;
         use crate::snes::console::Snes;
         let path = Path::new(ROOT).join("test_dmavalid_v01/test_dmavalid.smc");
         let rom = fs::read(&path)
             .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
-        let mut snes = Snes::new(AppContext::new_with_config(
-            crate::platform::config::Config::default(),
-        ));
+        let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
         snes.load_rom(&rom, "test_dmavalid.smc").unwrap();
         let mut frames = 0u32;
         while frames < 60 {
@@ -215,9 +220,11 @@ mod tests {
     ///   -> differing pixels: 0 / 57344 (0.0000%)  IDENTICAL
     /// ```
     ///
-    /// The `AllZeros` flag is still load-bearing and the golden still encodes NESER's WRAM
-    /// zero-fill for the two never-written rows (#3128): re-approve with that flag or the
-    /// comparison measures RNG. Still outside #3092's aspirational-golden convention -- the
+    /// The `AllZeros` flag is still load-bearing and the golden still encodes a zero-filled
+    /// power-on for the two never-written rows: re-approve with that flag or the comparison
+    /// measures RNG. Since #3128 that is true of the NESER side too -- `RunConfig` pins
+    /// `RamInitMode::Zero`, whereas a plain desktop run randomises. Still outside #3092's
+    /// aspirational-golden convention -- the
     /// ROM renders a picture, not a PASS/FAIL backdrop -- but for the opposite reason to
     /// before: there is nothing left to aspire to.
     #[test]
@@ -255,15 +262,12 @@ mod tests {
     /// now, and both ROMs are exact. See `DmaController::start_dma`.
     #[test]
     fn test_dmatiming_latches_hv_after_gpdma() {
-        use crate::platform::app_context::AppContext;
         use crate::platform::emulator::Emulator;
         use crate::snes::console::Snes;
         let path = Path::new(ROOT).join("test_dmatiming/demo.smc");
         let rom = fs::read(&path)
             .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
-        let mut snes = Snes::new(AppContext::new_with_config(
-            crate::platform::config::Config::default(),
-        ));
+        let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
         snes.load_rom(&rom, "demo.smc").unwrap();
         let mut frames = 0u32;
         while frames < 60 {

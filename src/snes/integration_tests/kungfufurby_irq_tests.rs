@@ -185,15 +185,12 @@ mod tests {
     /// ROM caches in cartridge SRAM (bank `$70`). Same pattern as
     /// `jonasquinn_dma_tests::test_dmavalid_sub_checks_match_byuu_expectations`.
     fn run_rom_for_sram(file: &str, frames: u32) -> crate::snes::console::Snes {
-        use crate::platform::app_context::AppContext;
         use crate::platform::emulator::Emulator;
         use crate::snes::console::Snes;
         let path = Path::new(ROOT).join(file);
         let rom = fs::read(&path)
             .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
-        let mut snes = Snes::new(AppContext::new_with_config(
-            crate::platform::config::Config::default(),
-        ));
+        let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
         snes.load_rom(&rom, file).unwrap();
         let mut rendered = 0u32;
         while rendered < frames {

@@ -5,7 +5,6 @@
 //! physical BW-RAM, since both sides default to block 0) and writes a transformed copy back for
 //! the main CPU to observe.
 
-use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
 
@@ -71,7 +70,7 @@ fn build_sa1_bwram_roundtrip_rom() -> Vec<u8> {
 #[test]
 fn sa1_and_main_cpu_exchange_data_through_shared_bwram() {
     let rom = build_sa1_bwram_roundtrip_rom();
-    let mut snes = Snes::new(AppContext::default());
+    let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
     snes.load_rom(&rom, "sa1-bwram-roundtrip-test.sfc")
         .expect("failed to load SA-1 BW-RAM roundtrip fixture ROM");
 

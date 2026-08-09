@@ -1,3 +1,4 @@
+use crate::platform::config::RamInitMode;
 use crate::snes::apu::SnesApu;
 use crate::snes::bus::SnesBus;
 use crate::snes::bus::dma::{DmaABus, DmaController, HDMA_KIND_INIT, HDMA_KIND_LINE};
@@ -116,20 +117,47 @@ pub struct SnesSystemBus {
     b_bus_writes: RefCell<Vec<(u8, u8)>>,
 }
 
+/// Everything a frontend can configure about a freshly powered-on SNES.
+///
+/// Grouped into a struct rather than added as further positional parameters:
+/// the constructor chain had already grown to
+/// `new_with_spc_ipl_path_and_region`, and each new knob would have extended
+/// that name again.
+#[derive(Debug, Clone)]
+pub struct SnesBusOptions {
+    /// Path to a custom 64-byte SPC700 IPL ROM image (`snes-spc-ipl-path`).
+    /// `None` uses the built-in clean-room IPL.
+    pub spc_ipl_path: Option<String>,
+    /// Video timing region, resolved from `snes-hardware` or the cartridge header.
+    pub video_region: SnesVideoRegion,
+    /// Power-on pattern for every volatile RAM (`ram_init_mode`).
+    pub ram_init_mode: RamInitMode,
+}
+
+impl Default for SnesBusOptions {
+    /// Defaults to NTSC, the built-in IPL, and a zero-filled power-on.
+    ///
+    /// The zero default is deliberately *not* the platform default
+    /// ([`RamInitMode::Random`] on native): it keeps [`SnesSystemBus::new`]
+    /// deterministic for the unit tests that use it. A frontend always passes
+    /// the configured mode explicitly via [`SnesSystemBus::new_with_options`].
+    fn default() -> Self {
+        Self {
+            spc_ipl_path: None,
+            video_region: SnesVideoRegion::Ntsc,
+            ram_init_mode: RamInitMode::Zero,
+        }
+    }
+}
+
 impl SnesSystemBus {
     pub fn new(cartridge: Cartridge) -> Self {
-        Self::new_with_spc_ipl_path(cartridge, None)
+        Self::new_with_options(cartridge, &SnesBusOptions::default())
     }
 
-    pub fn new_with_spc_ipl_path(cartridge: Cartridge, spc_ipl_path: Option<&str>) -> Self {
-        Self::new_with_spc_ipl_path_and_region(cartridge, spc_ipl_path, SnesVideoRegion::Ntsc)
-    }
-
-    pub fn new_with_spc_ipl_path_and_region(
-        cartridge: Cartridge,
-        spc_ipl_path: Option<&str>,
-        video_region: SnesVideoRegion,
-    ) -> Self {
+    pub fn new_with_options(cartridge: Cartridge, options: &SnesBusOptions) -> Self {
+        let spc_ipl_path = options.spc_ipl_path.as_deref();
+        let video_region = options.video_region;
         let mapping = cartridge.mapping();
         let rom = Rc::new(cartridge.rom().to_vec());
         let sram = Rc::new(RefCell::new(vec![0; cartridge.sram_size()]));
@@ -157,7 +185,7 @@ impl SnesSystemBus {
             } else {
                 (None, None, None, None)
             };
-        Self {
+        let mut bus = Self {
             _cartridge: cartridge,
             mapping,
             rom,
@@ -186,7 +214,60 @@ impl SnesSystemBus {
             sa1_core,
             #[cfg(test)]
             b_bus_writes: RefCell::new(Vec::new()),
+        };
+        bus.initialize_power_on_ram(options.ram_init_mode);
+        bus
+    }
+
+    /// Applies the configured power-on pattern to every volatile RAM on the
+    /// SNES side: WRAM, the PPU's VRAM/CGRAM/OAM, ARAM, SA-1 I-RAM when the
+    /// cartridge has an SA-1, and cartridge RAM when it is *not* battery-backed.
+    ///
+    /// Battery-backed cartridge SRAM (which SA-1 BW-RAM aliases) is the one
+    /// exclusion: it is restored from the `.sav` file, so filling it would
+    /// either be overwritten or corrupt a save on a cartridge whose `.sav` does
+    /// not exist yet. The NES core draws the line in the same place --
+    /// `Cartridge::initialize_ram` spares PRG-RAM only when
+    /// `battery_backed_prg_ram` is set. Plain ROM+RAM carts carry volatile work
+    /// RAM and are filled like anything else, matching Mesen2 (`BaseCartridge`
+    /// initialises `_saveRam` from `RamPowerOnState` and relies on the `.srm`
+    /// load to overwrite it).
+    ///
+    /// Called at power-on and again on a hard reset; a soft reset preserves RAM.
+    /// On a hard reset, [`SnesSystemBus::reset_sa1_to_power_on`] must run first
+    /// so I-RAM is not refilled underneath a running SA-1.
+    pub fn initialize_power_on_ram(&mut self, mode: RamInitMode) {
+        crate::platform::ram_init::initialize_ram(&mut self.wram, mode);
+        self.ppu.borrow_mut().initialize_power_on_ram(mode);
+        self.apu.borrow_mut().initialize_power_on_ram(mode);
+        if let Some(iram) = self.sa1_iram.as_ref() {
+            iram.borrow_mut().initialize_power_on_ram(mode);
         }
+        if !self.has_battery() {
+            crate::platform::ram_init::initialize_ram(self.sram.borrow_mut().as_mut_slice(), mode);
+        }
+    }
+
+    /// Returns the SA-1 control registers and core to their power-on state.
+    ///
+    /// Only meaningful on a hard reset. `Sa1ControlRegisters::new` asserts
+    /// CCNT.5 (`$2200 = $20`, SA-1 held in reset), and `Sa1Core` re-runs its own
+    /// `do_reset` the next time it sees that bit released -- so this is what
+    /// makes refilling I-RAM safe. Without it the SA-1 would keep executing
+    /// from its old PC through a `ram_init_mode`-randomised I-RAM.
+    pub fn reset_sa1_to_power_on(&mut self) {
+        if let Some(registers) = self.sa1_registers.as_ref() {
+            *registers.borrow_mut() = Sa1ControlRegisters::new();
+        }
+    }
+
+    /// Whether the SA-1 is currently held in reset via CCNT.5. `false` for a
+    /// cartridge without an SA-1.
+    #[cfg(test)]
+    pub(crate) fn sa1_held_in_reset_for_tests(&self) -> bool {
+        self.sa1_registers
+            .as_ref()
+            .is_some_and(|registers| registers.borrow().is_held_in_reset())
     }
 
     /// Drains the recorded A->B B-bus write log (see [`SnesSystemBus::b_bus_writes`]).
@@ -961,6 +1042,12 @@ impl SnesSystemBus {
     /// `None` (e.g. non-SA-1 cartridge, or a save state predating SA-1 support) leaves SA-1 at
     /// its current power-on-reset state rather than erroring -- matches this codebase's general
     /// `#[serde(default)]` backward-compatibility approach elsewhere in save states.
+    ///
+    /// Since #3128 that power-on state is only deterministic under
+    /// `ram_init_mode=zero`: I-RAM now carries the configured power-on pattern, so restoring
+    /// one of those pre-SA-1 save states under `random` yields different I-RAM contents each
+    /// time. The registers (including CCNT's reset-hold) are unaffected, so the SA-1 still
+    /// re-boots rather than running from the noise.
     fn restore_sa1_state(&mut self, state: Option<&SnesSa1State>) {
         let Some(state) = state else { return };
         let (Some(registers), Some(iram), Some(memory_control), Some(core)) = (
@@ -1617,7 +1704,8 @@ mod tests {
     use super::*;
     use crate::snes::input::SnesControllerType;
     use crate::snes::ppu::{
-        DOTS_PER_SCANLINE, HDMA_TRANSFER_POSITION, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME,
+        CGRAM_SIZE, DOTS_PER_SCANLINE, HDMA_TRANSFER_POSITION, MASTER_CYCLES_PER_DOT,
+        NTSC_SCANLINES_PER_FRAME, OAM_SIZE, VRAM_SIZE,
     };
 
     fn build_cart(
@@ -1649,6 +1737,140 @@ mod tests {
     fn lorom_cart_with_sram() -> Cartridge {
         let mut rom = vec![0u8; 0x20000];
         build_cart(&mut rom, 0x7FC0, 0x20, 0x05)
+    }
+
+    /// Every volatile RAM reachable from the bus, as (name, sampled contents),
+    /// so a memory left out of the power-on fill is named by the failure.
+    fn volatile_rams(bus: &SnesSystemBus) -> Vec<(&'static str, Vec<u8>)> {
+        let ppu = bus.ppu.borrow();
+        let mut rams = vec![
+            ("WRAM", bus.wram.clone()),
+            ("VRAM", (0..VRAM_SIZE).map(|i| ppu.vram_byte(i)).collect()),
+            (
+                "CGRAM",
+                (0..CGRAM_SIZE).map(|i| ppu.cgram_byte(i)).collect(),
+            ),
+            ("OAM", (0..OAM_SIZE).map(|i| ppu.oam_byte(i)).collect()),
+            ("ARAM", bus.apu.borrow().capture_state().aram),
+        ];
+        if let Some(sa1) = bus.capture_state().sa1 {
+            rams.push(("SA-1 I-RAM", sa1.iram));
+        }
+        rams
+    }
+
+    #[test]
+    fn power_on_ram_defaults_to_zero_so_existing_bus_tests_are_unaffected() {
+        // The plain constructor keeps the historical zero-fill; only callers
+        // that pass a mode (Snes::load_rom) can see a randomised power-on.
+        let bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+
+        for (name, contents) in volatile_rams(&bus) {
+            assert!(
+                contents.iter().all(|&byte| byte == 0x00),
+                "{name} should still be zero-filled by SnesSystemBus::new"
+            );
+        }
+    }
+
+    #[test]
+    fn power_on_seeded_mode_fills_every_volatile_ram_but_not_save_ram() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        assert!(
+            !bus.sram.borrow().is_empty(),
+            "fixture must have SRAM for the exclusion to mean anything"
+        );
+
+        bus.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+
+        let rams = volatile_rams(&bus);
+        assert_eq!(rams.len(), 6, "an SA-1 cart exposes six volatile RAMs");
+        for (name, contents) in rams {
+            assert!(
+                contents.iter().any(|&byte| byte != 0x00),
+                "{name} was left zeroed -- it is not wired into the power-on fill"
+            );
+        }
+        assert!(
+            bus.sram.borrow().iter().all(|&byte| byte == 0x00),
+            "battery-backed save RAM is restored from .sav and must not be filled"
+        );
+    }
+
+    /// Cartridge SRAM is excluded from the power-on fill only when it is
+    /// battery-backed -- that is the memory restored from the `.sav` file. A
+    /// plain ROM+RAM cartridge (chipset low nibble 1, no battery) carries
+    /// volatile work RAM that powers up like any other RAM, which is what both
+    /// references do: Mesen2 fills `_saveRam` from `RamPowerOnState`
+    /// unconditionally (`BaseCartridge.cpp`), and the NES core spares PRG-RAM
+    /// only when `battery_backed_prg_ram` is set.
+    #[test]
+    fn power_on_fills_sram_only_when_it_is_not_battery_backed() {
+        let mut battery = SnesSystemBus::new(lorom_cart_with_battery_sram());
+        assert!(battery.has_battery(), "fixture must be battery-backed");
+        let mut volatile = SnesSystemBus::new(lorom_cart_with_sram());
+        assert!(
+            !volatile.has_battery(),
+            "fixture must NOT be battery-backed"
+        );
+        assert!(
+            !volatile.sram.borrow().is_empty(),
+            "fixture must have SRAM for this to mean anything"
+        );
+
+        battery.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+        volatile.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+
+        assert!(
+            battery.sram.borrow().iter().all(|&byte| byte == 0x00),
+            "battery-backed save RAM is restored from .sav and must not be filled"
+        );
+        assert!(
+            volatile.sram.borrow().iter().any(|&byte| byte != 0x00),
+            "non-battery cartridge work RAM must be filled like any other RAM"
+        );
+    }
+
+    /// A hard reset must put the SA-1 back under reset-hold *before* I-RAM is
+    /// refilled.
+    ///
+    /// `Sa1ControlRegisters::new` powers CCNT up as `$20` (fullsnes "Reset"
+    /// table: SA-1 held in reset), and `Sa1Core` only re-runs `do_reset` after
+    /// seeing that bit. Nothing else in the console reset path touches the
+    /// SA-1, so without this a hard reset would replace I-RAM with noise
+    /// underneath an SA-1 CPU still executing from its old PC -- which is the
+    /// normal state for an SA-1 game, since they run code copied into I-RAM.
+    #[test]
+    fn sa1_power_on_reset_holds_the_sa1_before_iram_is_refilled() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart());
+        // Release SA-1 from reset the way a game does, via $2200 CCNT.
+        bus.write(0x00_2200, 0x00);
+        assert!(
+            !bus.sa1_held_in_reset_for_tests(),
+            "the SA-1 must actually be released, or the test proves nothing"
+        );
+
+        bus.reset_sa1_to_power_on();
+
+        assert!(
+            bus.sa1_held_in_reset_for_tests(),
+            "a hard reset must re-assert CCNT.5 so the SA-1 re-boots"
+        );
+    }
+
+    #[test]
+    fn power_on_zero_mode_clears_every_volatile_ram() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        bus.initialize_power_on_ram(RamInitMode::SeededRandom(7));
+
+        bus.initialize_power_on_ram(RamInitMode::Zero);
+
+        for (name, contents) in volatile_rams(&bus) {
+            assert!(
+                contents.iter().all(|&byte| byte == 0x00),
+                "{name} should be all zero after a Zero power-on fill"
+            );
+        }
     }
 
     fn sa1_test_cart() -> Cartridge {
@@ -2142,9 +2364,12 @@ mod tests {
         let path = dir.path().join("ipl.bin");
         std::fs::write(&path, [0xEAu8; 64]).expect("write custom ipl");
 
-        let mut bus = SnesSystemBus::new_with_spc_ipl_path(
+        let mut bus = SnesSystemBus::new_with_options(
             lorom_test_cart(),
-            Some(path.to_str().expect("utf8 path")),
+            &SnesBusOptions {
+                spc_ipl_path: Some(path.to_str().expect("utf8 path").to_string()),
+                ..SnesBusOptions::default()
+            },
         );
         assert_eq!(bus.apu_read_spc_memory_for_test(0xFFC0), 0xEA);
     }

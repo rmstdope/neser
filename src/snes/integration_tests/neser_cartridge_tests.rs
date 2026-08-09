@@ -16,14 +16,12 @@ mod tests {
     use super::super::cartridge_fixtures::CartFixture;
     use super::super::fixture_rom::FixtureRom;
     use super::super::rom_runner::{RunConfig, RunExitReason, run_rom};
-    use crate::platform::app_context::AppContext;
-    use crate::platform::config::Config;
     use crate::platform::emulator::Emulator;
     use crate::snes::cartridge::{Cartridge, Mapping, RomSpeed};
     use crate::snes::console::Snes;
 
     fn load_fixture(image: &[u8], name: &str) -> Snes {
-        let mut snes = Snes::new(AppContext::new_with_config(Config::default()));
+        let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
         snes.load_rom(image, name).expect("load cartridge fixture");
         snes
     }

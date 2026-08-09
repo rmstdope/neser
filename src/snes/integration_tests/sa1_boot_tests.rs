@@ -7,7 +7,6 @@
 //! the full cross-CPU IRQ handshake (later sub-issues of #2956) and are automated separately
 //! under #2962.
 
-use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
 
@@ -63,7 +62,7 @@ fn build_sa1_boot_rom() -> Vec<u8> {
 #[test]
 fn sa1_cpu_boots_and_executes_once_released_by_main_cpu() {
     let rom = build_sa1_boot_rom();
-    let mut snes = Snes::new(AppContext::default());
+    let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
     snes.load_rom(&rom, "sa1-boot-test.sfc")
         .expect("failed to load SA-1 boot fixture ROM");
 
@@ -87,7 +86,7 @@ fn sa1_cpu_boots_and_executes_once_released_by_main_cpu() {
 fn non_sa1_cartridge_has_no_sa1_cpu() {
     let mut rom = vec![0u8; 0x1_0000];
     write_lorom_header(&mut rom, b"PLAIN ROM TEST", 0x00);
-    let mut snes = Snes::new(AppContext::default());
+    let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
     snes.load_rom(&rom, "plain.sfc")
         .expect("failed to load plain ROM fixture");
 

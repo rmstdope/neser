@@ -560,7 +560,6 @@ impl GamepadManager {
 mod tests {
     use super::*;
     use crate::platform::app_context::AppContext;
-    use crate::platform::config::Config;
     use crate::platform::emulator::Emulator;
     use crate::snes::console::Snes;
     use crate::snes::input::SnesControllerType;
@@ -616,7 +615,7 @@ mod tests {
 
     #[test]
     fn release_snes_buttons_for_player_clears_only_the_targeted_port() {
-        let mut config = Config::default();
+        let mut config = crate::snes::test_support::snes_test_config();
         config.snes.controller_port2 = SnesControllerType::Multitap;
         let mut snes = Snes::new(AppContext::new_with_config(config));
         snes.load_rom(&valid_lorom_nop_rom(), "snes.sfc").unwrap();

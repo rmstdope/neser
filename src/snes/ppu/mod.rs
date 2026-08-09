@@ -23,9 +23,12 @@ mod timing;
 
 pub(super) use background::{PixelSource, ScreenPixel, ScreenTarget, WindowLayer};
 
-const VRAM_SIZE: usize = 0x10_000;
-const CGRAM_SIZE: usize = 0x200;
-const OAM_SIZE: usize = 0x220;
+use crate::platform::config::RamInitMode;
+use crate::platform::ram_init::initialize_ram;
+
+pub(super) const VRAM_SIZE: usize = 0x10_000;
+pub(super) const CGRAM_SIZE: usize = 0x200;
+pub(super) const OAM_SIZE: usize = 0x220;
 
 /// Visible framebuffer width in the common non-hires case.
 pub(super) const SCREEN_WIDTH: usize = 256;
@@ -682,6 +685,22 @@ impl Ppu {
         latch
     }
 
+    /// Applies the configured power-on pattern to the PPU's volatile memories.
+    ///
+    /// Mesen2 initialises VRAM, CGRAM and OAM from `RamPowerOnState`
+    /// (`SnesPpu::SnesPpu` calls `InitializeRam` for all three), and its SNES
+    /// default is `RamState::Random`. Only those three buffers are hardware RAM:
+    /// the framebuffer is an output surface, not memory the console powers up
+    /// with, so it stays cleared.
+    ///
+    /// The PPU powers on force-blanked (`inidisp = 0x80`), so a non-zero fill is
+    /// not displayed until a game clears INIDISP.7.
+    pub fn initialize_power_on_ram(&mut self, mode: RamInitMode) {
+        initialize_ram(&mut self.vram, mode);
+        initialize_ram(&mut self.cgram, mode);
+        initialize_ram(&mut self.oam, mode);
+    }
+
     /// Read a raw VRAM byte (test/inspection helper).
     pub fn vram_byte(&self, index: usize) -> u8 {
         self.vram[index]
@@ -842,7 +861,82 @@ impl Ppu {
 
 #[cfg(test)]
 mod tests {
-    use super::{DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, Ppu};
+    use super::{
+        CGRAM_SIZE, DOTS_PER_SCANLINE, MASTER_CYCLES_PER_DOT, NTSC_SCANLINES_PER_FRAME, OAM_SIZE,
+        Ppu, RamInitMode, VRAM_SIZE,
+    };
+
+    /// One PPU-owned memory: display name, size, and a raw byte accessor.
+    type PpuMemory = (&'static str, usize, fn(&Ppu, usize) -> u8);
+
+    /// Every PPU-owned memory, so a buffer that `initialize_power_on_ram`
+    /// forgets is named in the failure message rather than hidden behind a
+    /// combined assertion.
+    fn ppu_memories() -> [PpuMemory; 3] {
+        [
+            ("VRAM", VRAM_SIZE, Ppu::vram_byte),
+            ("CGRAM", CGRAM_SIZE, Ppu::cgram_byte),
+            ("OAM", OAM_SIZE, Ppu::oam_byte),
+        ]
+    }
+
+    #[test]
+    fn power_on_zero_mode_clears_every_ppu_memory() {
+        let mut ppu = Ppu::new();
+        // Dirty all three first, so an unimplemented fill cannot pass by luck.
+        ppu.initialize_power_on_ram(RamInitMode::SeededRandom(7));
+
+        ppu.initialize_power_on_ram(RamInitMode::Zero);
+
+        for (name, size, byte) in ppu_memories() {
+            assert!(
+                (0..size).all(|i| byte(&ppu, i) == 0x00),
+                "{name} should be all zero after a Zero power-on fill"
+            );
+        }
+    }
+
+    #[test]
+    fn power_on_seeded_mode_fills_every_ppu_memory_deterministically() {
+        let mut first = Ppu::new();
+        let mut same_seed = Ppu::new();
+        let mut other_seed = Ppu::new();
+        first.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+        same_seed.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+        other_seed.initialize_power_on_ram(RamInitMode::SeededRandom(43));
+
+        for (name, size, byte) in ppu_memories() {
+            assert!(
+                (0..size).any(|i| byte(&first, i) != 0x00),
+                "{name} was left zeroed -- it is not wired into the power-on fill"
+            );
+            assert!(
+                (0..size).all(|i| byte(&first, i) == byte(&same_seed, i)),
+                "{name} must be reproducible for the same seed"
+            );
+            assert!(
+                (0..size).any(|i| byte(&first, i) != byte(&other_seed, i)),
+                "{name} must differ for a different seed"
+            );
+        }
+    }
+
+    #[test]
+    fn power_on_fill_leaves_the_ppu_force_blanked() {
+        // A non-zero fill must not become visible output on its own: the PPU
+        // powers on force-blanked (INIDISP.7) and the fill is memory-only, so a
+        // randomised VRAM/CGRAM/OAM stays off-screen until a game clears it.
+        let mut ppu = Ppu::new();
+        let brightness_before = ppu.inidisp;
+
+        ppu.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+
+        assert_eq!(
+            ppu.inidisp, brightness_before,
+            "the power-on fill must not touch INIDISP"
+        );
+        assert_eq!(ppu.inidisp & 0x80, 0x80, "the PPU powers on force-blanked");
+    }
 
     fn render_full_frame(ppu: &mut Ppu) {
         let ticks =

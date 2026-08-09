@@ -12,7 +12,6 @@
 //! 4. SA-1, busy-polling `$2301` CFR (exactly like the real ROM), observes the response and
 //!    idles.
 
-use crate::platform::app_context::AppContext;
 use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
 
@@ -93,7 +92,7 @@ fn build_sa1_irq_roundtrip_rom() -> Vec<u8> {
 #[test]
 fn sa1_irq_round_trips_a_message_through_the_main_cpus_real_irq_handler() {
     let rom = build_sa1_irq_roundtrip_rom();
-    let mut snes = Snes::new(AppContext::default());
+    let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
     snes.load_rom(&rom, "sa1-irq-roundtrip-test.sfc")
         .expect("failed to load SA-1 IRQ roundtrip fixture ROM");
 

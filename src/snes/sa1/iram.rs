@@ -6,6 +6,8 @@
 //! bit layouts and reset values are sourced from fullsnes ("SNES Cart SA-1 I/O Map" / "Memory
 //! Control" sections), per the `snes-hardware-research` skill's source priority.
 
+use crate::platform::config::RamInitMode;
+
 /// Size of SA-1's on-chip I-RAM in bytes (fullsnes: "2Kbytes internal I-RAM").
 pub const IRAM_SIZE: usize = 0x800;
 
@@ -31,6 +33,15 @@ impl Sa1IRam {
             snes_write_protect: 0x00,
             sa1_write_protect: 0x00,
         }
+    }
+
+    /// Applies the configured power-on pattern to the 2KB I-RAM.
+    ///
+    /// Only the RAM array is filled: `$2229`/`$222A` are write-protection
+    /// registers with a defined `$00` reset value, not memory, so they keep it.
+    /// Mesen2 does the same (`Sa1::Sa1` calls `InitializeRam(_iRam, 0x800)`).
+    pub fn initialize_power_on_ram(&mut self, mode: RamInitMode) {
+        crate::platform::ram_init::initialize_ram(&mut self.data, mode);
     }
 
     fn chunk_bit(offset: usize) -> u8 {
@@ -132,6 +143,62 @@ pub fn decode_direct_offset(addr: u32) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn power_on_zero_mode_clears_iram() {
+        let mut iram = Sa1IRam::new();
+        iram.initialize_power_on_ram(RamInitMode::SeededRandom(7));
+
+        iram.initialize_power_on_ram(RamInitMode::Zero);
+
+        assert!(
+            iram.data.iter().all(|&byte| byte == 0x00),
+            "I-RAM should be all zero after a Zero power-on fill"
+        );
+    }
+
+    #[test]
+    fn power_on_seeded_mode_fills_iram_deterministically() {
+        let mut first = Sa1IRam::new();
+        let mut same_seed = Sa1IRam::new();
+        let mut other_seed = Sa1IRam::new();
+        first.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+        same_seed.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+        other_seed.initialize_power_on_ram(RamInitMode::SeededRandom(43));
+
+        assert!(
+            first.data.iter().any(|&byte| byte != 0x00),
+            "I-RAM was left zeroed -- it is not wired into the power-on fill"
+        );
+        assert_eq!(
+            first.data, same_seed.data,
+            "I-RAM must be reproducible for the same seed"
+        );
+        assert_ne!(
+            first.data, other_seed.data,
+            "I-RAM must differ for a different seed"
+        );
+    }
+
+    #[test]
+    fn power_on_fill_leaves_write_protection_registers_at_reset() {
+        // $2229/$222A are registers, not memory: fullsnes gives both a $00 reset
+        // value, so I-RAM stays fully write-protected from both CPU sides until
+        // software enables it -- a randomised fill must not unlock it.
+        let mut iram = Sa1IRam::new();
+
+        iram.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+
+        assert_eq!(iram.snes_write_protect, 0x00, "$2229 SIWP must stay reset");
+        assert_eq!(iram.sa1_write_protect, 0x00, "$222A CIWP must stay reset");
+        let before = iram.read(0);
+        iram.write_from_snes(0, before.wrapping_add(1));
+        assert_eq!(
+            iram.read(0),
+            before,
+            "writes must still be protected after a power-on fill"
+        );
+    }
 
     #[test]
     fn reads_are_never_protected() {

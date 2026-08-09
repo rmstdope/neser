@@ -82,10 +82,14 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
      Screenshots of animated screens silently show the previous frame's pixels, producing
      phantom cadence/phase "bugs" in the reference itself. Static screens are unaffected.
      **Verify the reference capture pipeline before debugging the emulator under test.**
-   - **Add `--snes.RamPowerOnState=AllZeros` whenever the ROM can display uninitialised
-     WRAM** (found in #3063/#3127). NESER zero-fills WRAM; Mesen2's SNES default is
-     `RamState::Random` (`SettingTypes.h`, `SnesConfig`). Without the flag the reference is
-     not reproducible *against itself*, so the diff measures RNG rather than emulation.
+   - **Pin the power-on RAM state on BOTH sides whenever the ROM can display uninitialised
+     RAM** (found in #3063/#3127). Mesen2's SNES default is `RamState::Random`
+     (`SettingTypes.h`, `SnesConfig`), so pass `--snes.RamPowerOnState=AllZeros`; without it
+     the reference is not reproducible *against itself* and the diff measures RNG rather
+     than emulation. Since #3128 NESER's desktop default is `random` too (`ram_init_mode`,
+     covering WRAM/VRAM/CGRAM/OAM/ARAM/SA-1 I-RAM), so pin that side as well: the automated
+     suites already do via `RunConfig`'s `RamInitMode::Zero` default, `--headless` capture
+     forces `zero`, and any other route needs an explicit `--ram-init-mode zero`.
      `test_dmatiming/demo.smc` was recorded in #3063 as a "~0.93% DMA-timing divergence"
      for exactly this reason -- two default Mesen2 captures of that ROM differ from each
      other by 1.06%, more than either differs from NESER. Matched, the real divergence was

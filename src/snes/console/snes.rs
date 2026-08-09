@@ -7,11 +7,12 @@
 //! [`Console`]: crate::platform::emulator::Console
 
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
+use crate::platform::config::RamInitMode;
 use crate::platform::debugging::log_info;
 use crate::platform::emulator::{Emulator, SystemType};
 #[cfg(test)]
 use crate::snes::bus::SnesBus;
-use crate::snes::bus::SnesSystemBus;
+use crate::snes::bus::{SnesBusOptions, SnesSystemBus};
 use crate::snes::cartridge::{Cartridge, EnhancementChip};
 use crate::snes::console::config::SnesHardware;
 use crate::snes::console::save_state::SnesSaveState;
@@ -113,6 +114,14 @@ impl Snes {
             .map(|path| path.with_extension("sav"))
     }
 
+    /// The configured power-on RAM pattern (`ram_init_mode`), read fresh from
+    /// the app context so a mid-session change applies to the next power-on or
+    /// hard reset. Generic rather than SNES-prefixed: it is the same setting the
+    /// NES core uses (`FrontendConfig::ram_init_mode`).
+    fn ram_init_mode(&self) -> RamInitMode {
+        self.app_context.borrow().config().frontend.ram_init_mode
+    }
+
     #[cfg(test)]
     pub(crate) fn cpu_pc_for_tests(&self) -> Option<u16> {
         self.cpu.as_ref().map(|cpu| cpu.read_pc())
@@ -126,6 +135,16 @@ impl Snes {
         self.cpu
             .as_ref()
             .map(|cpu| cpu.bus().ppu_overscan_239_enabled_for_tests())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bus_for_tests(&self) -> Option<&SnesSystemBus> {
+        self.cpu.as_ref().map(|cpu| cpu.bus())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bus_mut_for_tests(&mut self) -> Option<&mut SnesSystemBus> {
+        self.cpu.as_mut().map(|cpu| cpu.bus_mut())
     }
 
     #[cfg(test)]
@@ -362,15 +381,17 @@ impl Emulator for Snes {
         let config = self.app_context.borrow().config().snes.clone();
         self.active_hardware = Self::resolve_hardware_mode(config.hardware, cartridge.country());
 
-        let spc_ipl_path = config.spc_ipl_path;
         let video_region = match self.active_hardware {
             SnesHardware::Ntsc => SnesVideoRegion::Ntsc,
             SnesHardware::Pal => SnesVideoRegion::Pal,
         };
-        let bus = SnesSystemBus::new_with_spc_ipl_path_and_region(
+        let bus = SnesSystemBus::new_with_options(
             cartridge,
-            spc_ipl_path.as_deref(),
-            video_region,
+            &SnesBusOptions {
+                spc_ipl_path: config.spc_ipl_path,
+                video_region,
+                ram_init_mode: self.ram_init_mode(),
+            },
         );
         let mut cpu = Cpu::new(bus);
         cpu.configure_controllers(config.controller_port1, config.controller_port2);
@@ -497,10 +518,23 @@ impl Emulator for Snes {
         cpu.restore_save_state(&state).map_err(|e| e.to_string())
     }
 
-    fn reset(&mut self, _soft_reset: bool) {
+    fn reset(&mut self, soft_reset: bool) {
+        // A hard reset re-applies the configured power-on RAM pattern; a soft
+        // reset is the /RES button and RAM survives it. Same split as the NES
+        // core (`nes/bus/bus.rs::reset`). Note this is a RAM-level distinction
+        // only: neither path re-initialises the PPU, DMA or input registers, so
+        // a hard reset here is not yet a full power cycle.
+        let ram_init_mode = (!soft_reset).then(|| self.ram_init_mode());
         if let Some(cpu) = self.cpu.as_mut() {
+            if let Some(mode) = ram_init_mode {
+                // Order matters: the SA-1 must be back under CCNT.5 reset-hold
+                // before I-RAM is refilled, or it keeps executing from its old
+                // PC through the new contents.
+                cpu.bus_mut().reset_sa1_to_power_on();
+                cpu.bus_mut().initialize_power_on_ram(mode);
+            }
             // /RES resets the S-SMP alongside the 65816 (ports, timers, SPC
-            // clock anchor, reset vector fetch); ARAM survives.
+            // clock anchor, reset vector fetch); ARAM survives a soft reset.
             cpu.bus_mut().reset_apu();
             cpu.do_reset();
         }
@@ -527,10 +561,10 @@ impl Emulator for Snes {
 mod tests {
     use super::*;
     use crate::platform::app_context::AppContext;
-    use crate::platform::config::Config;
     use crate::snes::cartridge::Mapping;
     use crate::snes::console::config::SnesHardware;
     use crate::snes::input::SnesControllerType;
+    use crate::snes::test_support::{snes_test_app_context, snes_test_config};
     use std::time::Instant;
 
     fn valid_lorom_nop_rom() -> Vec<u8> {
@@ -561,12 +595,11 @@ mod tests {
     }
 
     fn make_snes() -> Snes {
-        let app_context = AppContext::new_with_config(Config::default());
-        Snes::new(app_context)
+        Snes::new(snes_test_app_context())
     }
 
     fn make_snes_with_hardware(hardware: Option<SnesHardware>) -> Snes {
-        let mut config = Config::default();
+        let mut config = snes_test_config();
         config.snes.hardware = hardware;
         let app_context = AppContext::new_with_config(config);
         Snes::new(app_context)
@@ -632,7 +665,7 @@ mod tests {
 
     #[test]
     fn target_frame_duration_uses_pal_when_forced_by_config() {
-        let mut config = Config::default();
+        let mut config = snes_test_config();
         config.snes.hardware = Some(SnesHardware::Pal);
         let app_context = AppContext::new_with_config(config);
         let mut snes = Snes::new(app_context);
@@ -707,7 +740,7 @@ mod tests {
 
     #[test]
     fn target_frame_duration_prefers_config_ntsc_over_pal_header_country() {
-        let mut config = Config::default();
+        let mut config = snes_test_config();
         config.snes.hardware = Some(SnesHardware::Ntsc);
         let app_context = AppContext::new_with_config(config);
         let mut snes = Snes::new(app_context);
@@ -782,7 +815,7 @@ mod tests {
 
     #[test]
     fn has_mouse_reflects_controller_config() {
-        let mut config = Config::default();
+        let mut config = snes_test_config();
         config.snes.controller_port1 = SnesControllerType::Mouse;
         let app_context = AppContext::new_with_config(config);
         let mut snes = Snes::new(app_context);
@@ -1058,7 +1091,7 @@ mod tests {
 
         // First console: load ROM, restore SRAM, save to disk.
         {
-            let mut snes1 = Snes::new(AppContext::new_with_config(Config::default()));
+            let mut snes1 = Snes::new(snes_test_app_context());
             snes1
                 .load_rom(&rom, rom_path.to_str().unwrap())
                 .expect("failed to load ROM");
@@ -1084,7 +1117,7 @@ mod tests {
 
         // Second console: load ROM (auto-loads SRAM from .sav), verify contents.
         {
-            let mut snes2 = Snes::new(AppContext::new_with_config(Config::default()));
+            let mut snes2 = Snes::new(snes_test_app_context());
             snes2
                 .load_rom(&rom, rom_path.to_str().unwrap())
                 .expect("failed to load ROM");
@@ -1134,7 +1167,7 @@ mod tests {
         // Wrong size (should be 32 KB), must be ignored.
         fs::write(&sav_path, vec![0xAB; 64]).expect("write mismatched sav");
 
-        let mut snes = Snes::new(AppContext::new_with_config(Config::default()));
+        let mut snes = Snes::new(snes_test_app_context());
         snes.load_rom(&rom, rom_path.to_str().expect("rom path utf8"))
             .expect("load rom");
 

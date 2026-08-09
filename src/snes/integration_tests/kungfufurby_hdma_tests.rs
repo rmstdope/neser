@@ -154,15 +154,12 @@ mod tests {
     /// Reverting the end-pad divisor to a fixed 8 also turns it red.
     #[test]
     fn test_hdmatiming_hdma_during_dma_rows_match_mesen2() {
-        use crate::platform::app_context::AppContext;
         use crate::platform::emulator::Emulator;
         use crate::snes::console::Snes;
         let path = Path::new(ROOT).join("test_hdmatiming.smc");
         let rom = fs::read(&path)
             .unwrap_or_else(|err| panic!("failed to read ROM {}: {err}", path.display()));
-        let mut snes = Snes::new(AppContext::new_with_config(
-            crate::platform::config::Config::default(),
-        ));
+        let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
         snes.load_rom(&rom, "test_hdmatiming.smc").unwrap();
         let mut frames = 0u32;
         while frames < 600 {
