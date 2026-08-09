@@ -222,7 +222,9 @@ impl DmaController {
             abus.dma_tick(8);
             // Mesen2 `RunDma`, after the per-channel overhead.
             self.run_nested_hdma(abus, &mut open_bus, &mut clocks, cpu_speed);
-            self.run_channel(channel, abus, &mut open_bus, &mut clocks, cpu_speed);
+            if (self.dma_active_mask & (1 << channel)) != 0 {
+                self.run_channel(channel, abus, &mut open_bus, &mut clocks, cpu_speed);
+            }
             // `RunDma` disarms the channel on the way out, so a later nested HDMA cannot
             // resurrect it.
             self.dma_active_mask &= !(1 << channel);
