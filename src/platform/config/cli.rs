@@ -228,7 +228,7 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--ram-init-mode",
         help: Some(
-            "RAM initialization mode for NES and SNES: zero, random, or seeded-random:SEED (default: random)",
+            "RAM initialization mode for NES and SNES: zero, random, or seeded-random:SEED (default: random on desktop builds)",
         ),
         has_value: true,
     },

@@ -244,7 +244,7 @@ impl SnesSystemBus {
             iram.borrow_mut().initialize_power_on_ram(mode);
         }
         if !self.has_battery() {
-            crate::platform::ram_init::initialize_ram(&mut self.sram.borrow_mut(), mode);
+            crate::platform::ram_init::initialize_ram(self.sram.borrow_mut().as_mut_slice(), mode);
         }
     }
 
