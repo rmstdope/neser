@@ -28,7 +28,7 @@
 /// ## Simple Register Set
 ///
 /// ```rust
-/// use neser::cartridge::StateSnapshot;
+/// use neser::nes::cartridge::StateSnapshot;
 ///
 /// struct ShiftRegister {
 ///     value: u8,
@@ -53,7 +53,7 @@
 /// ## Composite Register Structure
 ///
 /// ```rust
-/// use neser::cartridge::StateSnapshot;
+/// use neser::nes::cartridge::StateSnapshot;
 ///
 /// struct BankRegisters {
 ///     prg_bank: u8,
@@ -88,7 +88,7 @@
 /// ## Integration with `Mapper::registers_snapshot()`
 ///
 /// ```rust,ignore
-/// use neser::cartridge::{Mapper, StateSnapshot};
+/// use neser::nes::cartridge::{Mapper, StateSnapshot};
 ///
 /// struct MyMapper {
 ///     registers: MyRegisterSet,
@@ -138,7 +138,7 @@ pub const DEFAULT_CHR_RAM_SIZE: usize = 8192;
 ///
 /// # Example
 /// ```rust
-/// use neser::cartridge::PrgRam;
+/// use neser::nes::cartridge::PrgRam;
 ///
 /// struct MyMapper {
 ///     prg_ram: PrgRam,
@@ -390,7 +390,7 @@ impl StateSnapshot for ChrMemory {
 ///
 /// # Example
 /// ```ignore
-/// use neser::cartridge::BankedRom;
+/// use neser::nes::cartridge::BankedRom;
 ///
 /// let prg_rom = vec![0u8; 0x8000];
 /// let bank = 3usize;
@@ -495,7 +495,7 @@ impl BankedRom {
 ///
 /// # Example
 /// ```ignore
-/// use neser::cartridge::BankSwitch;
+/// use neser::nes::cartridge::BankSwitch;
 ///
 /// // PRG-ROM with 128KB (4 banks of 32KB)
 /// let prg_bank = BankSwitch::new(4);

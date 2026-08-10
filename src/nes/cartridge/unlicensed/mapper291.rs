@@ -12,7 +12,7 @@
 //! - PRG-RAM: None
 //!
 //! Outer Bank Register ($6000), write (mask: $E000):
-//! ```
+//! ```text
 //! 7654 3210
 //! ---------
 //! ?OM. .PP.
