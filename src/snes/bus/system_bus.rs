@@ -3306,6 +3306,53 @@ mod tests {
     }
 
     #[test]
+    fn gpdma_spanning_the_hdma_trigger_does_not_swallow_the_transfer() {
+        // #3139: `dma_tick` was not calling `check_hdma_triggers()`, so a GPDMA
+        // burst that spanned line_clock 1104 (the HDMA transfer trigger at dot 276)
+        // silently swallowed that scanline's HDMA transfer.  The fix calls
+        // `check_hdma_triggers()` on every master clock inside `dma_tick`, arming
+        // `pending_hdma` mid-burst; `run_nested_hdma` then claims it once the
+        // Mesen2 start-delay countdown expires.
+        //
+        // GPDMA ch1 (20 bytes, SRAM $704000 → INIDISP $00) is armed at clock 1080
+        // so its fallback fires at ~1088 and the burst spans clock 1104.
+        // The nested HDMA ch0 write (0x7A → WMDATA) must land before the burst ends.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        set_wmadd_200(&mut bus);
+
+        // HDMA ch0: mode 0 (one byte per line), source table in SRAM at $703000.
+        // Using SRAM (not WRAM) as the table address is required: WRAM→WMDATA
+        // DMA is refused by hardware (#3111), which also applies to HDMA reads.
+        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0x01); // repeat=0, 1 active line
+        bus.write(0x703001, 0x7A); // data byte
+        bus.write(0x703002, 0x00); // terminator
+        bus.write(0x00420C, 0x01); // HDMAEN: channel 0
+
+        // GPDMA ch1: 20 bytes from SRAM ($704000) → INIDISP ($2100).
+        // Writes to INIDISP (screen brightness) are harmless junk.
+        write_dma_channel(&mut bus, 1, 0x00, 0x00, 0x704000, 20);
+
+        // Let the automatic HDMA init fire (~clock 12, runs ~clock 28), then
+        // advance to just before the dot-276 / 1104-clock HDMA transfer trigger.
+        tick_until_master_clock(&mut bus, 1080);
+        assert_eq!(bus.read(0x7E0200), 0x00, "nothing before GPDMA");
+
+        // Arm GPDMA (ch1 only).  The fallback fires at ~1088, well before 1104,
+        // so the burst is live when check_hdma_triggers arms the HDMA slot.
+        bus.write(0x00420B, 0x02);
+
+        // Tick past the end of the GPDMA + nested HDMA burst.
+        tick_until_master_clock(&mut bus, 1400);
+
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x7A,
+            "HDMA transfer must run nested inside the GPDMA burst, not be swallowed"
+        );
+    }
+
+    #[test]
     fn hdma_pixel_at_x255_sees_pre_write_register_state() {
         // The last visible pixel (x=255, dot 277, clock 1108) renders BEFORE the
         // deferred HDMA writes land, so a per-line CGRAM gradient must not leak the
