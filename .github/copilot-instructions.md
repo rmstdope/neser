@@ -1,79 +1,129 @@
-# Introduction
+# Instructions for the fleet
 
-You are the driver of a programming pair that are developing a NES emulator in Rust. Your task is to follow the instructions of your navigator (the user) to the best of your ability. You should always do what the navigator asks for, but still make suggestions for improvements and fixes.
+This repository is developed partly using Cerebro (`.cerebro/cerebro`) and
+steered by one person, the navigator. The navigator only makes technical decisions on architectural
+level. Details like files, tests and approach are the agents' to decide. The navigator ranks the work,
+agrees every user-visible experience before it is built, and verifies it once it has merged. When a
+person drives a session by hand, the same rules apply: they are the navigator, the session is the
+driver, and the driver still makes suggestions for improvements and fixes.
 
-## General Instructions
+## The project
+
+Neser is a multi-system retro console emulator written in Rust: NES/Famicom, Game Boy, Game Boy
+Color, Game Boy Advance and Super Nintendo cores behind one platform layer, with a native desktop
+frontend and a WebAssembly frontend served from `web/`. Players use it to run their game ROMs and
+the well-known hardware test ROMs; developers use its headless capture and mapper verification
+tooling to compare behaviour against the hardware specifications on nesdev.org, Pan Docs, GBATek
+and fullsnes. "Working" means a game or test ROM behaves as it does on the real console: the test
+ROM suites under `roms/` pass, golden frames match, and nothing regresses in the pre-merge gate.
 
 ## Skills Usage
 
-Always select the appropriate skill for a specific task. Be sure to ALWAYS explicitly write in the chat what skills that are currently being used. Always follow the instructions in the skills to the letter.
+Always select the appropriate skill for a specific task. Be sure to ALWAYS explicitly write in the
+chat what skills that are currently being used. Always follow the instructions in the skills to the
+letter. The hardware research skills (`nes-hardware-research`, `gb-hardware-research`,
+`gba-hardware-research`, `snes-hardware-research`) are the way to answer any question about what
+the hardware does; `mapper-verification-roms` governs every verification ROM.
 
-## Development Practices
+## Producer review
 
-### Small Increments
+Nothing merges red. Before delivery, a producer obtains and addresses one independent, full review
+of the complete diff and bead. If its changes are substantial enough to make another review useful,
+the producer chooses the right follow-up scope and obtains it; minor, self-contained answers need
+not create a review loop. Unresolved findings, a red or missing check, or a reviewer that cannot
+produce a usable result go to a person.
 
-The application shall ALWAYS be developed in very small, manageable increments that can be delivered independently. Each increment should add a specific feature or improvement to the application. This approach allows for continuous feedback and adjustments based on user needs. The code base should ALWAYS have a great safety net of tests to ensure that new changes do not break existing functionality.
+Every pull request runs the full gate in `scripts/gate-full.sh` (see "Committing and Merging to
+main" below) before it is opened, and is judged by CI on the same commands. Even a failure that
+existed before the change is fixed before merging; nothing with a known red check lands on main.
+
+## Work tracking
+
+*Read by every role through `skills/beads-workflow`, which carries the commands; this section is
+where a project says anything that differs.*
+
+Planned work is tracked in beads (`bd`, prefix `nr`). GitHub issues are the inbox for outside
+requests and bug reports only: Moira, the user-feedback agent, triages each new issue with the
+navigator into a bead (linked by `external_ref gh-<n>`), keeps the issue's status comments in step
+with its bead, and closes the issue when the work has shipped. Nobody files planned work as a
+GitHub issue. Every bead is created unranked (P4) and ranked later with the navigator; a bead is
+planned in one session and implemented in another.
+
+What differs here from `beads-workflow`:
+
+- **Labels carry the area**, using the vocabulary the GitHub issues used: `nes`, `gb`, `cgb`,
+  `gba`, `snes`, `mapper`, `games`, `platform`, `web`, `refactoring`, `testing`. Put at least one
+  area label on every bead so `bd list -l snes` answers "what is open for the SNES".
+- **Mapper beads.** A bead that adds or verifies a mapper is built against the specification on
+  https://www.nesdev.org/wiki/Mapper (fallback: https://nesdev-wiki.nes.science/). When writing a
+  verification ROM under `roms/automated_tests/mapper_verification/`, NEVER read the implementation
+  of the mapper under test; the ROM must follow the specification alone. Cover every submapper.
+- **Retrospectives.** When something surprised the producer (a trap, a wrong assumption, a tool
+  that misbehaved), write `docs/retrospectives/<bead-id>.md` in the same PR and, if a skill should
+  change because of it, change the skill in that PR too.
+- **The board syncs through the Dolt remote, not git.** No `.beads/*.jsonl` is tracked. A fresh
+  clone runs `bd bootstrap` (which refuses if a database already exists, so do not run `bd list`
+  first); after that it is `bd dolt pull` and `bd dolt push`. There is no `bd sync`.
+- **Git hooks.** `core.hooksPath` points at `.githooks`, whose hooks auto-format staged Rust and
+  Python and then forward to the bd hooks under `.beads/hooks`. Running `bd init` again repoints
+  `core.hooksPath`; set it back to `.githooks`.
+- **Migrated issues.** The 17 issues that were open on 2026-09-24 became beads with
+  `external_ref gh-<n>`; the table is in `docs/migration/github-to-beads.md`. Closed issues before
+  that date stay on GitHub as history.
+
+## Development practices
+
+*Read by planners and producers when deciding how much to build at once and how to test it.*
+
+### Small increments
+
+The application shall ALWAYS be developed in very small, manageable increments that can be delivered
+independently. Each increment should add a specific feature or improvement to the application. When a
+bead is larger than one increment, split it into child beads rather than growing it. The code base
+should ALWAYS have a great safety net of tests to ensure that new changes do not break existing
+functionality.
 
 ### Test-driven Development (TDD)
 
-In the development process, the application should be developed using Test-driven Development (TDD) principles. Always use the test-driven-development skill when writing code. This means that you should write tests before writing the actual implementation code. This should be the case also when fixing bugs. First write a test that reproduces the bug, then fix the bug and verify that the test passes along with all existing tests.
-However, when trying to pinpoint a bug, you are free to add any traces, try fixes or anything else without having to write tests for that immediately. But once the issue has been pinpointed, either update existing tests or add a new test that triggers the error before applying the fix. This ensures no unnecessary modifications are done and helps to prevent regressions in the future.
+Code is written test-first. This should be the case also when fixing bugs. First write a test that
+reproduces the bug, then fix the bug and verify that the test passes along with all existing tests.
+However, when trying to pinpoint a bug, you are free to add any traces, try fixes or anything else
+without having to write tests for that immediately. But once the issue has been pinpointed, either
+update existing tests or add a new test that triggers the error before applying the fix. This
+ensures no unnecessary modifications are done and helps to prevent regressions in the future.
 
 ### Collaboration
 
-As the driver, you will collaborate closely with the navigator (the user) to ensure that the application meets their needs and expectations. Regular communication and feedback loops will be established to align development efforts with user requirements. The navigator will provide guidance on features, design, and functionality, while the driver will implement these directives in the codebase. If at any time, there are uncertainties or ambiguities in the instructions, the driver should seek clarification from the navigator to ensure that the development process remains aligned with the user's vision for the application. This should be done using the question UI/tool with predefined answers when possible, and free text options when necessary. Always strive for clear and effective communication to ensure the success of the project.
+Interactive sessions collaborate closely with the navigator to ensure that the application meets
+their needs and expectations. The navigator decides what players will see and in which order things
+get built; the session decides how. If at any time there are uncertainties or ambiguities, the
+session seeks clarification from the navigator using the question UI/tool with predefined answers
+when possible, and free text options when necessary. A session running unattended that hits a
+decision it must not make escalates the bead to the navigator as `beads-workflow` describes, rather
+than guessing.
 
 ### Design
 
-Always prefer simple design solutions. Avoid over-engineering. If unsure, ask the navigator for clarification. The design should be easy to change if need be.
+Always prefer simple design solutions. Avoid over-engineering; say so when you decline a more
+general one. If unsure, ask the navigator for clarification. The design should be easy to change if
+need be.
 
-### Four eye Principle
+### Branches, commits and pull requests
 
-All code changes must be reviewed by at least one other person (the navigator) before being merged into the main codebase. This practice helps to catch potential issues, improve code quality, and ensure adherence to coding standards and best practices. No automatic merging of code changes without review is allowed.
-Always ensure all pre-merge checks pass before merging any code changes to ensure that new changes do not introduce regressions or break existing functionality. NEVER merge code changes that have not passed all tests.
-
-### Issues and branches
-
-When starting to work on any feature that exists as a github issue, assign that feature to the user that is working on it. Each feature should have a corresponding issue in the issue tracker that describes the work to be done.
-
-If you are working on a task that is found to be larger than a small increment, break it down into smaller sub-tasks that can be completed independently. Each sub-task should have its own issue in the issue tracker and should be linked back to the main task issue for traceability. Prefix the sub-issues with ""Sub-issue (<<issue-number>>):"" to clearly indicate their relationship to the main feature issue. <<issue-number>> should be replaced with the main issue number.
-All sub-issues should be linked back to the main issue in their description to maintain clear traceability. Vice versa, all main issues should reference their sub-issues.
-
-When working on an issue, this is important:
-
-- ALWAYS assign the issue to the developer working on it.
-- ALWAYS create a new branch from **the latest main** (unless instructed otherwise) named after the issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Run `git checkout main && git pull origin main` before branching. Once the work is completed and reviewed, merge the branch back into main using a pull request.
-- ALWAYS create a pull request (PR) for merging the sub-issue branch back into main.
-- Before creating the PR, ALWAYS make sure all pre-commit checkpoints pass (see "Committing and Merging to main" below) and ALWAYS ask the navigator to review and approve the PR. Even if any issue existed previously, it shall be fixed before merging. Do not merge any code that has known issues, even if they existed before.
-- ALWAYS merge an issue branch back into main before starting to work on another issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
-
-When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the issue is a sub-issue of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
-When a sub-issue is closed, the main issue's description should be updated to reflect the completion of that sub-issue and any remaining work that needs to be done on the main issue.
-
-### Github CLI
-
-Use the comand line command 'gh' for interacting with github issues. Be careful with quoting when using gh. NEVER use backticks in the text with gh and use real newlines instead of \n.
-When creating issues, always add the appropriate labels to the issue using gh:
-
-- bug - for all bugs
-- enhancement - for any feature development
-- games - for anything that has to do with a specific game or games
-- mapper - for anything that has to do with a specific mapper or mappers
-- refactoring - for anything that has to do with refactoring the codebase
-- testing - for anything that has to do with testing
-- enhanced - for issues created or updated with AI assistance workflows
-
-### Definition of Done
-
-For any completed issue workflow task, the following is mandatory:
-
-- After creating a GitHub issue, ALWAYS run a `self-learning-skills` retrospective automatically.
-- After an issue is merged and closed, ALWAYS run a `self-learning-skills` retrospective automatically.
-- In that retrospective, ALWAYS ask the navigator for feedback and update skill documentation immediately when improvements are identified.
+Follow `beads-workflow`: one bead per branch named `<bead-id>-short-description`, commit subjects
+`feat(<bead-id>): ...` (`fix`, `docs`, `chore`), the PR title the same subject and the PR body
+naming the bead and the originating GitHub issue if one exists. Work in the worktree the fleet view
+prepared under `.cerebro/worktrees/`, never in the main checkout. Squash-merge with
+`--delete-branch` once the gate and review are green; never `--auto`. Close the bead with
+`bd close <id> --reason "Delivered in PR #NN"`, close the parent if that was its last open child,
+and `bd dolt push`.
 
 ### Committing and Merging to main
 
-Before merging or committing to main, the following checkpoint shall pass:
+`./scripts/gate-full.sh` runs the whole checkpoint below in order and stops at the first failure;
+`./scripts/gate-full.sh --fast` runs the fmt, host clippy and unit-test subset for quick iteration.
+They are what `.cerebro/project.conf` declares as `gate_full` and `gate_fast`, so a producer runs
+exactly this list before opening a pull request. Before merging to main, every item shall pass:
 
 - Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings
 - Run `cargo fmt` and fix any formatting issues
@@ -141,11 +191,3 @@ When asking questions to the user, always try to use the question UI/tool with p
 - Test ROMs live in `roms/`; keep the existing files and names intact.
 - Always keep README.md up to date with major changes to the project, especially if they affect how to run or test the emulator.
 - Always keep `architecture.md` up to date when code changes affect the project's module structure, directory layout, binaries, scripts, key design decisions, or testing strategy.
-
-## The project
-
-Placeholder until the Cerebro instruction rewrite lands (see plan phase 3).
-
-## Work tracking
-
-Placeholder until the Cerebro instruction rewrite lands (see plan phase 3).
