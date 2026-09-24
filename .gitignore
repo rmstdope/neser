@@ -95,3 +95,15 @@ test.state
 
 # TheGamesDB metadata cache
 scripts/metadata_scraper/thegamesdb_cache.sqlite
+
+# Cerebro writes these while the fleet runs; the declarations beside them are tracked.
+.cerebro/worktrees
+.cerebro/state
+.cerebro/scratch
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*

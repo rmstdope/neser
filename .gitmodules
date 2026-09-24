@@ -5,3 +5,6 @@
 [submodule "roms/snes/automated_tests/snes_test_roms"]
 	path = roms/snes/automated_tests/snes_test_roms
 	url = https://github.com/rmstdope/snes-test-roms
+[submodule ".cerebro/cerebro"]
+	path = .cerebro/cerebro
+	url = https://github.com/rmstdope/cerebro.git
