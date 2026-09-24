@@ -574,6 +574,10 @@ Shader presets using the Slang shading language, loaded via librashader:
 
 #### CI Workflows
 
+Every workflow builds with the Rust toolchain pinned in `rust-toolchain.toml` (channel, clippy,
+rustfmt, and the `wasm32-unknown-unknown` target), which rustup honours automatically. No job
+selects its own toolchain; `scripts/test_rust_toolchain.py` holds both rules.
+
 | Workflow | Description |
 | ---------- | ------------- |
 | `ci.yml` | Main CI pipeline. Runs on push to `main` and PRs. Jobs: Rust tests (cargo-nextest archive built once, run across 4 shards), the `rust-lint` gate (`cargo clippy --all-targets --all-features -- -D warnings` plus `cargo fmt -- --check`, kept byte-identical to the pre-merge checkpoint in `.github/copilot-instructions.md`), WASM build + test (`wasm-pack test`), web JS unit tests (`npm test`), web Playwright integration tests, and Python script tests (ruff, ruff format, mypy, unittest). Uses path-based change detection: per-console source filters (`src/{nes,gb,gba,snes}/**`) and per-console test-asset filters (`roms/<console>/automated_tests/**`, including `snes_test_roms` submodule pointer bumps) select which console suites run — either alone triggers that console's unit + integration tests; `src/platform` or crate-root changes run everything; other Rust changes run all unit tests while skipping every console's `integration_tests` module (mirroring `test-dir.sh --skip-integration`). |

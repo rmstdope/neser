@@ -1,0 +1,9 @@
+# The one Rust toolchain for local builds and CI. rustup reads this file for every cargo,
+# rustc, clippy and wasm-pack run in the repository and installs it on first use.
+# Bumping it is a deliberate PR that fixes any new lints in the same change; see
+# "Bumping the Rust toolchain" in README.md.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

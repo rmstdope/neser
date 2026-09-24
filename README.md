@@ -46,7 +46,8 @@ No SDL2 setup is required. The native frontend uses Rust crates for windowing, a
 
 Prerequisites:
 
-- Rust toolchain
+- Rust via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml`
+  and rustup installs it, with clippy, rustfmt and the wasm target, on the first `cargo` run
 - Platform build tools needed by Rust native dependencies
 - Node.js 20+ and npm for the web frontend
 
@@ -243,6 +244,23 @@ Run tests for a specific Rust source area:
 (`nes`/`gb`/`gba`/`snes`) for fast iteration; run without it before creating a
 PR. SNES test commands, asset policy, and the golden-baseline approval
 workflow are documented in [README-SNES.md](README-SNES.md).
+
+### Bumping the Rust toolchain
+
+Local builds and CI use the one Rust version pinned in `rust-toolchain.toml`, so a new stable
+release cannot turn CI red on unchanged code. Moving to a newer Rust is a deliberate pull request:
+
+1. Change `channel` in `rust-toolchain.toml` to the new exact version (for example `1.99.0`).
+2. Run `./scripts/gate-full.sh`; rustup installs the new toolchain on the first `cargo` call.
+3. Fix every new clippy lint and rustfmt change in the same pull request.
+
+`RUSTUP_TOOLCHAIN` in the environment beats the file. rustup's `cargo` sets it for every process
+it starts, so a shell opened from a program launched with `cargo run` inherits `stable`.
+`scripts/gate-full.sh`, `scripts/test-dir.sh`, `scripts/build_web.sh` and the pre-commit hook
+unset it. For any other command, run `unset RUSTUP_TOOLCHAIN` first, and check with `rustup show active-toolchain`.
+
+The pin uses rustup's minimal profile, so CI downloads no more than it needs. rust-analyzer needs
+the standard library source: run `rustup component add rust-src` once per pinned version.
 
 ### Python tooling
 
