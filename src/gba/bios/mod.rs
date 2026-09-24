@@ -2107,7 +2107,9 @@ mod tests {
             if gba.is_ready_to_render() {
                 let fb = gba.screen_snapshot();
                 let has_non_black = fb
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .any(|px| px[0] != 0 || px[1] != 0 || px[2] != 0);
                 if has_non_black {
                     any_non_black_frame = true;

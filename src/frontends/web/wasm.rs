@@ -211,14 +211,14 @@ impl WasmNes {
         if self.frame_rgba_buffer.len() != required {
             // Resize and pre-fill alpha; happens only on first call or overscan config change.
             self.frame_rgba_buffer.resize(required, 0xFF);
-            for chunk in self.frame_rgba_buffer.chunks_exact_mut(4) {
+            for chunk in self.frame_rgba_buffer.as_chunks_mut::<4>().0 {
                 chunk[3] = 0xFF;
             }
         }
 
         if !self.rom_loaded {
             self.frame_rgba_buffer.fill(0);
-            for chunk in self.frame_rgba_buffer.chunks_exact_mut(4) {
+            for chunk in self.frame_rgba_buffer.as_chunks_mut::<4>().0 {
                 chunk[3] = 0xFF;
             }
             // SAFETY: see doc comment above.

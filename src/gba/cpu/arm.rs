@@ -604,8 +604,7 @@ fn execute_single_data_transfer<B: Bus>(
     };
     let addr = if p { offset_addr } else { base };
 
-    let result_branch;
-    if l {
+    let result_branch = if l {
         // Load
         let value = if b_byte {
             bus.read8(addr) as u32
@@ -616,7 +615,7 @@ fn execute_single_data_transfer<B: Bus>(
             raw.rotate_right(rot)
         };
         regs.r[rd] = value;
-        result_branch = rd == 15;
+        rd == 15
     } else {
         // Store. On ARM7TDMI, storing PC writes PC+12 (R15 already reads as
         // PC+8 during execute, then store adds +4).
@@ -635,8 +634,8 @@ fn execute_single_data_transfer<B: Bus>(
             };
             bus.write32(store_addr, value);
         }
-        result_branch = false;
-    }
+        false
+    };
 
     // Writeback (post-indexing always writes back; pre-indexing only when W=1).
     if (!p || w) && !(l && rd == rn) {
@@ -1022,8 +1021,7 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
     };
     let addr = if p { offset_addr } else { base };
 
-    let result_branch;
-    if l {
+    let result_branch = if l {
         // Load
         let value = match sh {
             0b01 => {
@@ -1053,7 +1051,7 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
             _ => 0, // SH=00 would be SWP, which is handled elsewhere
         };
         regs.r[rd] = value;
-        result_branch = rd == 15;
+        rd == 15
     } else {
         // Store: only STRH (SH=01) is valid in ARMv4T.
         // SH=10 (LDRD) and SH=11 (STRD) are ARMv5TE-exclusive and undefined.
@@ -1067,8 +1065,8 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
             addr & !1
         };
         bus.write16(store_addr, value);
-        result_branch = false;
-    }
+        false
+    };
 
     // Writeback (post-indexing always writes back; pre-indexing only when W=1).
     if (!p || w) && !(l && rd == rn) {

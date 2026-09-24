@@ -409,7 +409,7 @@ mod tests {
         let rgb = ppu.screen_snapshot_rgb();
         assert_eq!(rgb.len(), 256 * 224 * 3);
         // Every pixel in the output must be red (none of the blue rows 0..6 leaked in).
-        for chunk in rgb.chunks_exact(3) {
+        for chunk in rgb.as_chunks::<3>().0 {
             assert_eq!(
                 chunk,
                 &[255, 0, 0],
@@ -712,7 +712,7 @@ mod tests {
         let (width, height) = ppu.frame_dimensions();
         assert_eq!((width, height), (512, 448));
         let rgb = ppu.screen_snapshot_rgb();
-        for chunk in rgb.chunks_exact(3) {
+        for chunk in rgb.as_chunks::<3>().0 {
             assert_eq!(chunk, &RED, "the hires overscan window starts at row 14");
         }
     }
