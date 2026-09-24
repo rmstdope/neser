@@ -256,8 +256,8 @@ release cannot turn CI red on unchanged code. Moving to a newer Rust is a delibe
 
 `RUSTUP_TOOLCHAIN` in the environment beats the file. rustup's `cargo` sets it for every process
 it starts, so a shell opened from a program launched with `cargo run` inherits `stable`.
-`scripts/gate-full.sh`, `scripts/test-dir.sh` and the pre-commit hook unset it. For any other
-command, run `unset RUSTUP_TOOLCHAIN` first, and check with `rustup show active-toolchain`.
+`scripts/gate-full.sh`, `scripts/test-dir.sh`, `scripts/build_web.sh` and the pre-commit hook
+unset it. For any other command, run `unset RUSTUP_TOOLCHAIN` first, and check with `rustup show active-toolchain`.
 
 The pin uses rustup's minimal profile, so CI downloads no more than it needs. rust-analyzer needs
 the standard library source: run `rustup component add rust-src` once per pinned version.

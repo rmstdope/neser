@@ -68,18 +68,23 @@ class RustToolchainPinTests(unittest.TestCase):
                 assert match is not None, group
                 self.assertIn("- 'rust-toolchain.toml'", match.group(1))
 
-    def test_gate_ignores_inherited_toolchain_override(self) -> None:
-        """Each repo script that runs cargo unsets RUSTUP_TOOLCHAIN, which beats the pin."""
+    def test_scripts_ignore_inherited_toolchain_override(self) -> None:
+        """Every repo script that runs cargo unsets RUSTUP_TOOLCHAIN, which beats the pin."""
 
-        for script, first_cargo in (
-            ("scripts/gate-full.sh", "\nstep cargo"),
-            ("scripts/test-dir.sh", "CMD=(cargo test"),
-            (".githooks/pre-commit", "    cargo fmt\n"),
-        ):
-            with self.subTest(script=script):
-                text = (ROOT / script).read_text(encoding="utf-8")
-                unset = text.index("unset RUSTUP_TOOLCHAIN")
-                self.assertLess(unset, text.index(first_cargo))
+        cargo_call = re.compile(r"^\s*(?:step |CMD=\()?cargo ", re.MULTILINE)
+        scripts = [*sorted((ROOT / "scripts").glob("*.sh")), ROOT / ".githooks/pre-commit"]
+        checked = []
+        for script in scripts:
+            text = script.read_text(encoding="utf-8")
+            first_cargo = cargo_call.search(text)
+            if first_cargo is None:
+                continue
+            checked.append(script.name)
+            with self.subTest(script=script.name):
+                self.assertIn("unset RUSTUP_TOOLCHAIN", text)
+                self.assertLess(text.index("unset RUSTUP_TOOLCHAIN"), first_cargo.start())
+        self.assertIn("gate-full.sh", checked)
+        self.assertIn("pre-commit", checked)
 
     def test_readme_documents_toolchain_bump(self) -> None:
         """README.md explains how to bump the pinned toolchain."""
