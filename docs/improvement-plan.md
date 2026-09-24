@@ -1,5 +1,8 @@
 # NESER Codebase Improvement Plan
 
+> Since 2026-09-24 this epic is tracked as bead `nr-658` on the Cerebro work board, with its open
+> initiatives as child beads `nr-658.1` to `nr-658.11` (see `docs/migration/github-to-beads.md`).
+
 > A prioritized, issue-ready catalogue of refactoring and quality opportunities for the
 > NESER multi-system emulator (NES / GB·CGB / GBA / SNES).
 

@@ -566,7 +566,9 @@ Shader presets using the Slang shading language, loaded via librashader:
 | `docs/architecture-diagrams.md` | Save-state architecture diagrams (current vs proposed). |
 | `docs/SNES_TEST_ASSET_POLICY.md` | Intake, provenance, and validation rules for SNES automated-test assets. |
 | `docs/VENDOR_SUBMODULES.md` | When and how to move the vendored submodule pins (`vendor/slang-shaders`, `snes_test_roms`), how to avoid moving them by accident, and how to re-verify shader-preset reachability afterwards. |
-| `docs/improvement-plan.md` | Tracked codebase-improvement initiatives (epic #2825). |
+| `docs/improvement-plan.md` | Tracked codebase-improvement initiatives (epic #2825, now bead `nr-658` on the work board). |
+| `docs/migration/github-to-beads.md` | Record of the 2026-09-24 migration of open GitHub issues to beads: the rules applied and the issue-to-bead table. |
+| `docs/retrospectives/` | One file per bead whose build surprised its producer; written in the same PR (see `CLAUDE.md`, Work tracking). |
 
 ### `.github/` — CI/CD and Automation
 
@@ -577,15 +579,38 @@ Shader presets using the Slang shading language, loaded via librashader:
 | `ci.yml` | Main CI pipeline. Runs on push to `main` and PRs. Jobs: Rust tests (cargo-nextest archive built once, run across 4 shards), the `rust-lint` gate (`cargo clippy --all-targets --all-features -- -D warnings` plus `cargo fmt -- --check`, kept byte-identical to the pre-merge checkpoint in `.github/copilot-instructions.md`), WASM build + test (`wasm-pack test`), web JS unit tests (`npm test`), web Playwright integration tests, and Python script tests (ruff, ruff format, mypy, unittest). Uses path-based change detection: per-console source filters (`src/{nes,gb,gba,snes}/**`) and per-console test-asset filters (`roms/<console>/automated_tests/**`, including `snes_test_roms` submodule pointer bumps) select which console suites run — either alone triggers that console's unit + integration tests; `src/platform` or crate-root changes run everything; other Rust changes run all unit tests while skipping every console's `integration_tests` module (mirroring `test-dir.sh --skip-integration`). |
 | `release.yml` | Release pipeline triggered by version tags (`v*.*.*`). Runs full CI, then builds Linux x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 on target-compatible runners. Each build job creates a structured release archive with `scripts/package_release.py`, verifies it with `scripts/verify_release_package.py`, and smoke-runs the packaged binary with `--version` from inside the extracted `neser/` directory. Publishes only verified `.tar.gz` and `.zip` archives to GitHub Releases with a git-cliff changelog. |
 
-#### Agentic Workflows (Copilot-powered)
+#### Retired agentic workflows
 
-| Workflow | Description |
-| ---------- | ------------- |
-| `bug-of-the-day.md` | Selects the highest-priority open bug issue, fixes it using the bug-hunter workflow, and creates a pull request. |
-| `next-mapper.md` | After a PR is closed, selects a random open mapper issue, implements it with TDD, and creates a PR. |
-| `code-simplifier.md` | Analyzes recently modified code and creates PRs with readability/maintainability improvements. |
-| `daily-repo-status.md` | Generates daily repository activity reports as GitHub issues. |
-| `issue-enhancer.md` | Automatically enhances issues with proper labeling and quality improvements. |
+`bug-of-the-day`, `next-mapper`, `code-simplifier` and `issue-enhancer` were GitHub-issue-driven
+Copilot workflows. Their sources are kept as `*.md.disabled` for reference and their compiled
+`*.lock.yml` files are gone, so nothing runs. The Cerebro fleet replaces them: the bugfixer role
+takes bug beads, the architect files refactoring beads, and Moira triages incoming issues.
+
+### `.cerebro/` and `.beads/` — the fleet and its work board
+
+Neser is developed by a fleet of AI agents run by [Cerebro](https://github.com/rmstdope/cerebro),
+mounted as the git submodule `.cerebro/cerebro`. `CLAUDE.md` (a symlink to
+`.github/copilot-instructions.md`) is the fleet's instruction file; its `## Work tracking` section
+is what differs here from Cerebro's shared `beads-workflow` skill.
+
+| Path | Description |
+| ---- | ----------- |
+| `.cerebro/cerebro/` | The Cerebro submodule: agent definitions, skills, scripts and the `cerebro-tui` fleet view. Bump with `git submodule update --remote --merge .cerebro/cerebro`. |
+| `.cerebro/project.conf` | Project declaration: name, default branch, application paths, `gate_fast` / `gate_full` (both `scripts/gate-full.sh`), worktree install command. |
+| `.cerebro/roster.conf` | The fleet: Cerebro (orchestrator), Xavier (ux), Psylocke (verifier), Moira (user-feedback), Forge (architect), Cyclops and Storm (implementers), and how the fleet view starts each. |
+| `.cerebro/agents.conf` | Which agent CLI and model each role runs on. Shared across clones. |
+| `.cerebro/traps.md` | Traps the fleet has hit and what to do about them. |
+| `.cerebro/worktrees/`, `.cerebro/state/`, `.cerebro/scratch/` | Runtime, git-ignored: one worktree per bead being built, session state files, scratch space. |
+| `.beads/` | The beads work board (prefix `nr`). `config.yaml`, `metadata.json` and `hooks/` are tracked; the embedded Dolt database is git-ignored and syncs through the Dolt remote on `origin` (`refs/dolt/data`) with `bd dolt push` / `bd dolt pull`. A fresh clone runs `bd bootstrap`. |
+| `.claude/agents/`, `.claude/skills/*`, `.github/agents/`, `.github/skills/*`, `.github/hooks/` | Relative symlinks into the submodule, written by `.cerebro/cerebro/scripts/sync-symlinks.sh` at every launch, beside the project's own skills. |
+| `.githooks/` | `pre-commit` auto-formats staged Rust and Python, then forwards to the bd hook; the other hooks are thin wrappers forwarding to `.beads/hooks/`. `core.hooksPath` points here. |
+| `scripts/gate-full.sh` | The whole pre-merge checkpoint in one script (`--fast` for the fmt, clippy and unit-test subset). CI runs the same commands job by job. |
+
+Work flows: a bead is created unranked, ranked with the navigator by Cerebro, its experience agreed
+by Xavier when it is user-visible, built test-first by a producer in its own worktree, reviewed by a
+sub-agent, squash-merged once the gate is green, and verified by Psylocke after merge. GitHub
+issues are only the inbox: Moira turns them into beads with the navigator and keeps the issue's
+status comments in step with the bead.
 
 ### Configuration
 
