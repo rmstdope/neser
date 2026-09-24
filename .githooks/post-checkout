@@ -1,0 +1,6 @@
+#!/bin/sh
+# Thin wrapper: beads (bd init) installs this hook under .beads/hooks. core.hooksPath points at
+# .githooks so the auto-format pre-commit runs, so forward every other hook to bd's copy.
+hook="$(git rev-parse --show-toplevel)/.beads/hooks/post-checkout"
+[ -x "$hook" ] && exec "$hook" "$@"
+exit 0

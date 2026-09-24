@@ -9,11 +9,19 @@
 # formatted file will include any unstaged changes in that file too.
 # In that case, review the staged diff after the commit with git show HEAD.
 
+run_bd_hook() {
+    # beads (bd init) installs its own hooks under .beads/hooks; chain to them so the board
+    # keeps working while core.hooksPath stays on .githooks for the auto-format step above.
+    if [ -x "$(git rev-parse --show-toplevel)/.beads/hooks/pre-commit" ]; then
+        exec "$(git rev-parse --show-toplevel)/.beads/hooks/pre-commit" "$@"
+    fi
+    exit 0
+}
 staged_rs=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.rs$')
 staged_py=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.py$')
 
 if [ -z "$staged_rs" ] && [ -z "$staged_py" ]; then
-    exit 0
+    run_bd_hook "$@"
 fi
 
 if [ -n "$staged_rs" ]; then
@@ -50,4 +58,4 @@ if [ -n "$staged_py" ]; then
     fi
 fi
 
-exit 0
+run_bd_hook "$@"

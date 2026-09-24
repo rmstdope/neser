@@ -141,3 +141,11 @@ When asking questions to the user, always try to use the question UI/tool with p
 - Test ROMs live in `roms/`; keep the existing files and names intact.
 - Always keep README.md up to date with major changes to the project, especially if they affect how to run or test the emulator.
 - Always keep `architecture.md` up to date when code changes affect the project's module structure, directory layout, binaries, scripts, key design decisions, or testing strategy.
+
+## The project
+
+Placeholder until the Cerebro instruction rewrite lands (see plan phase 3).
+
+## Work tracking
+
+Placeholder until the Cerebro instruction rewrite lands (see plan phase 3).
