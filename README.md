@@ -201,7 +201,23 @@ beads hooks under `.beads/hooks` that keep the work board in step with git. Runn
 again will point `core.hooksPath` at `.beads/hooks`; set it back to `.githooks` afterwards so
 both keep running.
 
-Useful checks:
+Working with the fleet: development is driven by a fleet of AI agents run by
+[Cerebro](https://github.com/rmstdope/cerebro), and planned work is tracked as beads (`bd`) on a
+board that syncs through a Dolt remote on this repository, not through git. After cloning:
+
+```bash
+git submodule update --init --recursive     # cerebro, shaders and SNES test ROMs
+bd bootstrap                                # fetch the work board (refuses if .beads has a database already)
+bd list                                     # see it; bd dolt pull / bd dolt push keep it in sync
+.cerebro/cerebro/scripts/cerebro-tui        # the fleet view (needs cargo)
+```
+
+`CLAUDE.md` describes how work moves; `docs/migration/github-to-beads.md` records how the GitHub
+issues were moved onto the board. GitHub issues remain open as the inbox for bug reports and
+requests from outside.
+
+The full pre-merge gate is one script, `./scripts/gate-full.sh` (`--fast` for the quick subset).
+Useful checks on their own:
 
 ```bash
 cargo fmt --check
