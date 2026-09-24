@@ -321,10 +321,9 @@ jobs:
           submodules: true
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
-      # wasm-pack installs the target itself, but the clippy step below runs
-      # first so a lint failure reports without waiting on a browser run.
-      - name: Add wasm target
-        run: rustup target add wasm32-unknown-unknown
+      # The wasm32 target comes with the toolchain pinned in rust-toolchain.toml.
+      # The clippy step below runs before wasm-pack so a lint failure reports
+      # without waiting on a browser run.
       - name: Lint wasm target (clippy)
         # The host rust-lint job runs --all-features on the host triple, which
         # covers the `wasm` feature but never the `wasm32` architecture. Without
@@ -387,8 +386,6 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install npm dependencies
         run: npm ci
-      - name: Add wasm target
-        run: rustup target add wasm32-unknown-unknown
       - name: Install wasm-bindgen CLI
         uses: taiki-e/install-action@v2
         with:
