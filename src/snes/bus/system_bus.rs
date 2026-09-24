@@ -3305,6 +3305,60 @@ mod tests {
         }
     }
 
+    /// A GPDMA burst spanning the HDMA trigger at `line_clock == 1104` (dot 276)
+    /// must not swallow that scanline's HDMA transfer. Before #3127 `dma_tick`
+    /// never called `check_hdma_triggers`, so the trigger was never seen and the
+    /// scanline's HDMA slot was silently lost. After the fix the trigger arms
+    /// `pending_hdma` mid-burst, and `run_nested_hdma` claims it at the next byte
+    /// boundary (Mesen2 re-enters `ProcessPendingTransfers` after every byte).
+    ///
+    /// Timing sketch (1050 % 8 == 2, so pad_start = 6):
+    /// - clock 1050: GPDMA starts (pad_start 6 + setup 8 + channel 8 = 22 clocks overhead)
+    /// - clock 1072: first byte begins; bytes 0-3 finish at 1104 without touching the trigger
+    /// - clock 1104 (inside byte 4's read phase): `check_hdma_triggers` arms `pending_hdma`
+    /// - `run_nested_hdma` at end of byte 4: countdown 2 → 1, nothing runs yet
+    /// - `run_nested_hdma` at end of byte 5: countdown 1 → 0, nested HDMA fires, writes 0x42
+    ///
+    /// Mutation proof: removing the `check_hdma_triggers` call from `dma_tick` causes
+    /// `pending_hdma` to never be set mid-burst and the assert below reads 0x00.
+    ///
+    /// #3139 acceptance criterion.
+    #[test]
+    fn hdma_transfer_is_not_swallowed_by_a_gpdma_spanning_the_trigger_clock() {
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+
+        // HDMA channel 0: direct mode 0, target WMDATA ($2180 / B-bus $80).
+        // Table at SRAM $703000: 1-line descriptor, payload 0x42, terminator.
+        set_wmadd_200(&mut bus);
+        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0x01); // 1 line, no-repeat
+        bus.write(0x703001, 0x42); // the HDMA payload
+        bus.write(0x703002, 0x00); // terminator
+        bus.write(0x00420C, 0x01); // HDMAEN = ch0
+
+        // GPDMA channel 1: A→B mode 0, target OBSEL ($2101 / B-bus $01, write-only),
+        // source WRAM $7E4000 (writing to $01 never triggers the WRAM→WMDATA refusal).
+        // 8 bytes spans clocks 1072-1135, crossing the trigger at 1104.
+        write_dma_channel(&mut bus, 1, 0x00, 0x01, 0x7E4000, 8);
+
+        // Advance to clock 1050, letting the HDMA auto-init fire via the
+        // `run_overdue_pending_dma` fallback so the controller is properly
+        // initialised before the GPDMA starts.
+        tick_until_master_clock(&mut bus, 1050);
+        assert_eq!(bus.read(0x7E0200), 0x00, "nothing transferred yet");
+
+        // Arm and start the GPDMA via the CPU cycle hook.
+        bus.write(0x00420B, 0x02); // MDMAEN = ch1
+        run_pending_gpdma(&mut bus);
+
+        // The nested HDMA line transfer must have written 0x42 to WMDATA.
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x42,
+            "HDMA nested inside GPDMA must not be swallowed by the burst (#3139)"
+        );
+    }
+
     #[test]
     fn hdma_pixel_at_x255_sees_pre_write_register_state() {
         // The last visible pixel (x=255, dot 277, clock 1108) renders BEFORE the
