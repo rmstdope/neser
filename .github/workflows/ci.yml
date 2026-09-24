@@ -53,6 +53,7 @@ jobs:
               - 'src/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
               - 'scripts/build_web.sh'
               - 'scripts/run_web.sh'
               - 'playwright.config.ts'
@@ -79,6 +80,7 @@ jobs:
               - 'src/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
               - '.github/workflows/ci.yml'
             nes:
               - 'src/nes/**'
@@ -104,6 +106,7 @@ jobs:
               - 'src/lib.rs'
               - 'src/main.rs'
               - 'Cargo.toml'
+              - 'rust-toolchain.toml'
               - 'Cargo.lock'
 
   python-tests:

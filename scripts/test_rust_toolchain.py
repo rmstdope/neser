@@ -47,22 +47,39 @@ class RustToolchainPinTests(unittest.TestCase):
         """No workflow installs or selects a toolchain other than the pinned one."""
 
         overrides = re.compile(
-            r"dtolnay/rust-toolchain|actions-rs/toolchain|rustup default"
-            r"|RUSTUP_TOOLCHAIN|cargo \+"
+            r"dtolnay/rust-toolchain|actions-rs/toolchain|RUSTUP_TOOLCHAIN"
+            r"|rustup\s+(default|override)|--toolchain|cargo \+"
+            r"|rustup[^\n]*\b(stable|beta|nightly)\b|toolchain:"
         )
-        workflows = sorted(WORKFLOWS_DIR.glob("*.yml"))
+        workflows = sorted([*WORKFLOWS_DIR.glob("*.yml"), *WORKFLOWS_DIR.glob("*.yaml")])
         self.assertTrue(workflows)
         for workflow in workflows:
             with self.subTest(workflow=workflow.name):
                 text = workflow.read_text(encoding="utf-8")
                 self.assertIsNone(overrides.search(text))
 
-    def test_gate_ignores_inherited_toolchain_override(self) -> None:
-        """The gate unsets RUSTUP_TOOLCHAIN, which would otherwise beat the pin."""
+    def test_ci_runs_every_rust_suite_when_the_pin_changes(self) -> None:
+        """A toolchain bump changes codegen everywhere, so it triggers the full Rust suites."""
 
-        gate = (ROOT / "scripts/gate-full.sh").read_text(encoding="utf-8")
-        unset = gate.index("unset RUSTUP_TOOLCHAIN")
-        self.assertLess(unset, gate.index("\nstep cargo"))
+        ci = (WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8")
+        for group in ("rust", "root_rust", "web_integration"):
+            with self.subTest(group=group):
+                match = re.search(rf"^ {{12}}{group}:\n((?: {{14}}.*\n)+)", ci, re.MULTILINE)
+                assert match is not None, group
+                self.assertIn("- 'rust-toolchain.toml'", match.group(1))
+
+    def test_gate_ignores_inherited_toolchain_override(self) -> None:
+        """Each repo script that runs cargo unsets RUSTUP_TOOLCHAIN, which beats the pin."""
+
+        for script, first_cargo in (
+            ("scripts/gate-full.sh", "\nstep cargo"),
+            ("scripts/test-dir.sh", "CMD=(cargo test"),
+            (".githooks/pre-commit", "    cargo fmt\n"),
+        ):
+            with self.subTest(script=script):
+                text = (ROOT / script).read_text(encoding="utf-8")
+                unset = text.index("unset RUSTUP_TOOLCHAIN")
+                self.assertLess(unset, text.index(first_cargo))
 
     def test_readme_documents_toolchain_bump(self) -> None:
         """README.md explains how to bump the pinned toolchain."""

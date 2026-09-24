@@ -13,9 +13,9 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-# Gate on the toolchain pinned in rust-toolchain.toml, as CI does. rustup's cargo proxy exports
-# RUSTUP_TOOLCHAIN to every process it starts, so a shell opened from anything launched with
-# `cargo run` (the Cerebro fleet view, for one) inherits `stable`, which beats the toolchain file.
+# rustup's cargo proxy exports RUSTUP_TOOLCHAIN to every process it starts, so a shell opened from
+# anything launched with `cargo run` (the Cerebro fleet view, for one) inherits `stable`, which
+# beats rust-toolchain.toml. Unset it so this runs on the pinned toolchain, as CI does.
 unset RUSTUP_TOOLCHAIN
 
 fast_only=0

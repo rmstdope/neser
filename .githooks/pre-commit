@@ -9,6 +9,11 @@
 # formatted file will include any unstaged changes in that file too.
 # In that case, review the staged diff after the commit with git show HEAD.
 
+# rustup's cargo proxy exports RUSTUP_TOOLCHAIN to every process it starts, so a shell opened from
+# anything launched with `cargo run` (the Cerebro fleet view, for one) inherits `stable`, which
+# beats rust-toolchain.toml. Unset it so this runs on the pinned toolchain, as CI does.
+unset RUSTUP_TOOLCHAIN
+
 run_bd_hook() {
     # beads (bd init) installs its own hooks under .beads/hooks; chain to them so the board
     # keeps working while core.hooksPath stays on .githooks for the auto-format step above.

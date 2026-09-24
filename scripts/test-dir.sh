@@ -21,6 +21,11 @@
 
 set -euo pipefail
 
+# rustup's cargo proxy exports RUSTUP_TOOLCHAIN to every process it starts, so a shell opened from
+# anything launched with `cargo run` (the Cerebro fleet view, for one) inherits `stable`, which
+# beats rust-toolchain.toml. Unset it so this runs on the pinned toolchain, as CI does.
+unset RUSTUP_TOOLCHAIN
+
 DIRS=()
 SKIP_INTEGRATION=false
 LIST_ONLY=false
