@@ -230,12 +230,16 @@ pub fn decoded_png_rgb_crc(path: &Path) -> u32 {
     let rgb = match info.color_type {
         png::ColorType::Rgb => raw.to_vec(),
         png::ColorType::Rgba => raw
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
             .collect(),
         png::ColorType::Grayscale => raw.iter().flat_map(|value| [*value; 3]).collect(),
         png::ColorType::GrayscaleAlpha => raw
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .flat_map(|pixel| [pixel[0]; 3])
             .collect(),
         png::ColorType::Indexed => {

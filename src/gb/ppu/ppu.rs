@@ -189,7 +189,7 @@ impl Ppu {
 
     /// Seed the CGB post-boot faded BG palette state.
     pub(crate) fn seed_cgb_boot_fade_bg_palettes(&mut self) {
-        for color in self.bg_palette_ram.chunks_exact_mut(2) {
+        for color in self.bg_palette_ram.as_chunks_mut::<2>().0 {
             color[0] = 0xFF;
             color[1] = 0x7F;
         }

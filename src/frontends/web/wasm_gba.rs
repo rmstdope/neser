@@ -149,8 +149,10 @@ impl WasmGba {
         let rgb = self.gba.framebuffer_rgb();
         for (rgba, rgb) in self
             .frame_rgba_buffer
-            .chunks_exact_mut(4)
-            .zip(rgb.chunks_exact(3))
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(rgb.as_chunks::<3>().0)
         {
             rgba[0] = rgb[0];
             rgba[1] = rgb[1];

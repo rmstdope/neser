@@ -473,7 +473,7 @@ mod tests {
         // only needs "is any pixel different from the first", which
         // short-circuits on the second pixel for a rendered frame instead of
         // hashing ~60k entries per test.
-        let mut pixels = rgb.chunks_exact(3);
+        let mut pixels = rgb.as_chunks::<3>().0.iter();
         let first = pixels.next().expect("capture should not be empty");
         assert!(
             pixels.any(|pixel| pixel != first),

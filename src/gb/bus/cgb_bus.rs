@@ -1577,7 +1577,7 @@ mod tests {
     fn cgb_skip_boot_seeds_cgb_mode_bg_palettes_to_white() {
         let bus = make_bus_post_boot();
 
-        for color in bus.ppu.bg_palette_ram.chunks_exact(2) {
+        for color in bus.ppu.bg_palette_ram.as_chunks::<2>().0 {
             assert_eq!(color, &[0xFF, 0x7F]);
         }
     }

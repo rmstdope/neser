@@ -35,7 +35,7 @@ impl ScreenBuffer {
     }
 
     pub fn fill_rgb(&mut self, r: u8, g: u8, b: u8) {
-        for pixel in self.buffer.chunks_exact_mut(Self::BYTES_PER_PIXEL) {
+        for pixel in self.buffer.as_chunks_mut::<{ Self::BYTES_PER_PIXEL }>().0 {
             pixel[0] = r;
             pixel[1] = g;
             pixel[2] = b;
@@ -120,8 +120,10 @@ mod tests {
         // Then: every pixel has the fill colour
         assert!(
             buf.snapshot()
-                .chunks_exact(ScreenBuffer::BYTES_PER_PIXEL)
-                .all(|pixel| pixel == [0xAA, 0xBB, 0xCC])
+                .as_chunks::<{ ScreenBuffer::BYTES_PER_PIXEL }>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [0xAA, 0xBB, 0xCC])
         );
     }
 
